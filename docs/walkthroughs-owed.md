@@ -630,7 +630,22 @@ nobody has opened at all.
       added a bound so a cache-served `/auth/me` is honored only while the stored token is
       unexpired. Check the steps against the copy that is actually on screen.
 
-- [ ] **Admin Overview / Needs-attention after `nat-trim`: LIVE IN PROD 2026-08-19**
+- [x] **Admin Overview / Needs-attention after `nat-trim`: WALKED 2026-08-19 (Zul). PASSES.**
+      The entry's own stated question was "does the emptier board read as calm or as broken."
+      Verdict: **CALM.** That is the whole point of the walk and no test could have answered
+      it. The reshaped landing page reads as intended rather than as a failed render.
+      Grounded before the walk so a dormant control could not be mistaken for a broken one:
+      the Payouts badge count is genuinely 0 in prod (`stripe_payout_lines`, the badge
+      predicate `matched_kind = 'unmatched' AND acknowledged_at IS NULL`), so its ABSENCE is
+      correct.
+      NOT separately confirmed, low value and left rather than nagged: that the Band 2 Payouts
+      button still deep-links to `{ tab: 'payouts', show: 'unmatched' }`. It is the only
+      functional check in the entry; everything else is visual and is covered by the verdict.
+      NOTICED WHILE GROUNDING THE BADGE, not part of this walk: 119 of 217 `stripe_payout_lines`
+      still carry `matched_kind = 'unmatched'`; they are merely ACKNOWLEDGED, which is what
+      zeroes the badge. Memory records this surface as "213/213 matched", and acknowledged is
+      not matched. Worth a look, recorded here only so the observation is not lost.
+      Original entry follows. **LIVE IN PROD 2026-08-19**
       (merge `9d7d4c86` + review fixes `d61c62b7`; `origin/main` points at the latter). The
       admin landing page changed shape and nobody has opened it since. This is a
       look-at-it, not a hunt: the one defect the review fleet caught, light-skin rail cards
