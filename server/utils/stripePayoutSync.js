@@ -8,6 +8,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { getStripe, isTestMode } = require('./stripeClient');
+const { ExternalServiceError } = require('./errors');
 const { notifyAdminCategory } = require('./adminNotifications');
 
 const RECHECK_DAYS = 30;
@@ -19,7 +20,37 @@ function _setStripeClientForTests(fake) {
   if (process.env.NODE_ENV === 'production') throw new Error('test hook disabled in production');
   testStripe = fake;
 }
-function client(opts) { return (opts && opts.stripe) || testStripe || getStripe(); }
+/**
+ * Resolve the Stripe client, or fail loudly.
+ *
+ * getStripe() RETURNS NULL for real — no STRIPE_SECRET_KEY at all, or test mode
+ * active with no STRIPE_SECRET_KEY_TEST (its own refusal to fall through to live
+ * credentials — see getStripe in stripeClient.js, named rather than cited by line
+ * because line numbers drift). All three call sites here dereferenced the result
+ * immediately. That was the defect stripeClient.js's header comment used to point
+ * at, in a sentence this same change removed once it stopped being true.
+ *
+ * Guarding at the ACCESSOR rather than at the three call sites is deliberate: it
+ * is one change instead of three, and a fourth caller added later inherits it.
+ * It also moves syncPayout's failure EARLIER than the call site fix would have —
+ * that function assigned the null client, then WROTE a payout row, and only then
+ * crashed on the deref, leaving a row with no lines behind. Throwing here means
+ * the write never happens.
+ *
+ * Typed, not bare: ExternalServiceError matches what payrollTips.stripeFeeFor and
+ * stripeRouteHelpers.getOrCreateCustomer already do for the same null, and reaches
+ * the AppError middleware as a clean 502 on the route path. On the scheduler path
+ * wrapScheduler catches it and captures to Sentry under its own
+ * `scheduler: stripe_payout_sweep` tag — `.service` rides along as an error
+ * property, NOT as a Sentry tag, so do not go looking for one.
+ */
+function client(opts) {
+  const stripe = (opts && opts.stripe) || testStripe || getStripe();
+  if (!stripe) {
+    throw new ExternalServiceError('stripe', null, 'Stripe client unavailable — cannot sync payouts.');
+  }
+  return stripe;
+}
 const ts = (unix) => (unix ? new Date(unix * 1000) : null);
 
 async function listAll(listFn, params) {

@@ -24,10 +24,14 @@
  * "callers already handle the null case" flatly, and that was not true. Two were
  * fixed here — payrollTips.stripeFeeFor and stripeRouteHelpers.getOrCreateCustomer
  * both dereferenced the result immediately and would have thrown a bare
- * TypeError; both now throw a typed ExternalServiceError. Do NOT read that as
- * "and now they all do": stripePayoutSync.js still has unguarded dereferences,
- * one of them reachable from the nightly sweep. It is on the fix list. This
- * comment has now overclaimed twice, so keep it narrow.
+ * TypeError; both now throw a typed ExternalServiceError. stripePayoutSync.js was
+ * the third — the nightly sweep really did die on a bare TypeError — and it is
+ * guarded as of 2026-08-19, at its `client()` accessor rather than at its three
+ * call sites, so a fourth caller added there inherits the guard.
+ *
+ * Do NOT read that as "and now they all do". This comment has overclaimed twice
+ * already, so keep it what it is: a list of callers someone has actually checked,
+ * not a claim about the ones nobody has.
  */
 
 const stripeLive = process.env.STRIPE_SECRET_KEY
