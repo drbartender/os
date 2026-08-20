@@ -731,7 +731,29 @@ lists every code commit live in prod that this file may not know about.
       payroll card deep link landing on the right period, and one confirm driven end to end
       on a real screen.
 
-- [ ] **CALLER COMMUNICATION — new greetings and press-1 escalation, live on both voice
+- [x] **CALLER COMMUNICATION: WALKED AND CLOSED 2026-08-20 (Zul), on the 1922 against prod.**
+      **THE FIRST PRESS-1 IN THIS SYSTEM'S HISTORY.** Verified against prod rather than taken
+      on report: call `CAe66e98f18e5baadb2a0bf00703386f0a`, line `primary`, 18:20 CDT.
+      `escalated_at` 23:20:55Z (the digit was caught and CLAIMED, 17s in),
+      `escalation_outcome` `no_answer` (the leg genuinely DIALLED and rang, it was not
+      suppressed), `duration_sec` 6 with a recording present, `delivered_at` 23:21:40Z. Door
+      to door, 62 seconds.
+      **FOUR legs proven for the first time:** the day greeting played Dallas's real recording
+      and offered press-1; the digit was caught and claimed; the escalation dialled for real;
+      and when it went unanswered the caller fell through to voicemail and the alert SMS
+      landed with its listen link.
+      **ANSWERED A CONFIG UNKNOWN nobody could read from here:** the dial FIRED, so no quiet
+      window suppressed it. Either `VM_ESCALATION_QUIET_ZUL` is unset or 18:20 CDT sits
+      outside it. Consequence worth carrying: **a press-1 at 3am would ring the PH cell too.**
+      If that is not wanted, set the quiet window in Render; the code default is no window at
+      all (`quietWindowFor` returns null on unset/empty, `voicemailLine.js:101-107`).
+      **RESIDUAL, and Dallas/Zul closed the entry knowing it: the BRIDGE itself is unproven.**
+      `escalation_accepted_at` is still NULL on every row ever. The escalation rang her own
+      phone while she was holding the phone that placed the call, so nobody has yet ANSWERED
+      an escalation and talked to a caller. Low risk (Twilio joining two legs, and the dial
+      demonstrably works), so it was deliberately not held open as its own item. If it is ever
+      wanted: call the 1922 from phone A, press 1, answer on phone B.
+      Original entry follows. **new greetings and press-1 escalation, live on both voice
       lines, never heard by a single real caller.** Lanes `caller-comms` (`328ba2f4`) +
       `cc-verify` (`ee1262f6`). Eight new recordings replaced the synthetic Polly voice:
       day and night greetings, an escalate-ack and an escalate-failed clip, per line.
