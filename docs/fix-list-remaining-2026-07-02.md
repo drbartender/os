@@ -686,7 +686,17 @@ each task's footprint honest. Written down here because the lane's ledger is not
 tracked and went away with its worktree.
 
 - **Latent 2x on `additional-bartender` the moment that catalog row acquires a
-  `minimum_hours`.** Three reviewers reported this family independently, in
+  `minimum_hours`.** **TRIGGER RE-CHECKED AGAINST PROD 2026-08-19: has NOT fired, and here is
+  the one query that re-checks it —** `SELECT slug, billing_type, minimum_hours FROM
+  service_addons WHERE minimum_hours > 0`. Today that returns exactly two rows, `banquet-server`
+  and `barback`, both `per_hour` and both `4.0`; `additional-bartender` carries none, which is
+  the whole trigger condition. Those two are NOT at risk, because `effectiveHoursFor`
+  (`addonQuantity.js:59`) applies `max(hours, minimum_hours)` to every per_hour slug EXCEPT
+  `additional-bartender` (`:58`), so reader and writer already agree on them. The fourth site
+  the module comment warns about also still agrees: `eventCreation.js:46` hardcodes
+  `STAFFING_ADDON_MIN_HOURS = 4` and its divisor (`:53-55`) forks the same way, which is correct
+  only while those two catalog rows read exactly 4.0 — so the query above is ALSO the drift
+  check for that hardcode. All four sites verified in step. Three reviewers reported this family independently, in
   three different files: Task 1 closed its instance inside `storedToInputCount`,
   Task 4's is the next bullet, Task 5 found this one in the pre-fold write. The
   sites agree on every row that exists today and disagree only here. The reader
@@ -717,9 +727,11 @@ tracked and went away with its worktree.
   definitions drifted apart in the first place. (Task 1, 4 and 5 reviews.)
 - **The cancel-line write-back dispatches on `billing_type` while the reader
   dispatches slug-first**, same family, same fix.
-  `lineItemCancel.js:499-501` restores a partially-removed row as
+  `lineItemCancel.js:518-520` (was `:499-501`; re-verified 2026-08-19, the code is
+  byte-for-byte what this entry describes, only moved) restores a partially-removed row as
   `storedIsInputCount(row.billing_type) ? remainingCount : remainingCount x
-  effectiveHoursFor(row, durationHours)`. If `additional-bartender`'s catalog row
+  effectiveHoursFor(row, durationHours)`. **Unreachability re-confirmed 2026-08-19 by repo
+  sweep: ZERO non-test `UPDATE`/`INSERT` sites against `service_addons` anywhere in `server/`.** If `additional-bartender`'s catalog row
   were ever edited off `per_hour`, `storedIsInputCount` would return true and the
   write would store a raw count into a column the slug-first reader still divides
   by hours. The reviewer verified it is unreachable through any application path
@@ -728,7 +740,9 @@ tracked and went away with its worktree.
   value. Closed by the same shared `countToStored` inverse. (Task 4 review.)
 - **The `additional-bartender` cancel target can bind to the `num_bartenders`
   OVERRIDE row's amount, but only against a STALE snapshot.**
-  `computeCancelTargets` (`lineItemCancel.js:175-182`) scans
+  `computeCancelTargets` (`lineItemCancel.js:177-182`, citation re-verified exact 2026-08-19;
+  the `matches.length > 1 ? matches[matches.length-1] : matches[0]` lone-match branch is still
+  there and the suggested `snap.staffing.extra > 0` guard is still NOT applied) scans
   `pricing_snapshot.breakdown` for labels starting "Additional Bartender" and
   deliberately takes the LAST when there is more than one, because the engine
   emits the override row first (`pricingEngine.js:458-482`) and the add-on rows
@@ -753,10 +767,16 @@ tracked and went away with its worktree.
   `drink_plan_extras` row would pin it. (Task 6 review.) (2026-08-14: partially
   closed — `refundHelpers.extensionScope.test.js` now exercises the real query on
   the default panel rails four times plus the wide-rails seam; the specific
-  `drink_plan_extras` exclusion assert is still missing.)
+  `drink_plan_extras` exclusion assert is still missing.) **RE-VERIFIED 2026-08-19 and still
+  open: `refundHelpers.extensionScope.test.js` contains ZERO mentions of `drink_plan`, and NO
+  test file anywhere exercises `loadPaymentsWithRemaining` together with `drink_plan_extras`.
+  The `routes/stripe.js:463` citation is still EXACT** (`paymentsWithRemaining: await
+  loadPaymentsWithRemaining(proposalId)`, default rails, no suite).
 - **`lab.js`'s pre-fold upsert and post-fold re-sync are pinned only by prose.**
   Both (`lab.js:303-314` and `:379-386`) are near-duplicate hand-copied logic of
   their `submit.js` twins (`:318-336` and `:424-431`), not shared code, so they
+  <!-- 2026-08-19: the lab re-sync citation is still exact (`touchedAddonIds` at lab.js:379,381);
+  the submit twin has drifted to submit.js:465,467. Substance unchanged. -->
   can drift; the lab side's only regression cover is a comment pointing at
   `submitOverride.test.js`. The scoping in particular is a live path: an
   admin-seeded `mocktail-bar` at count 2 plus a client Enhancement Lab save would
