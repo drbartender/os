@@ -2365,13 +2365,20 @@ These are not from the original ledger. They surfaced while verifying its
   not chase the balance, and do not include it in any cleanup, sweep, or reconciliation.
   Its current state may be evidence. It is listed here only so that nobody "fixes" it.
   No further detail is recorded in this file and none is needed.
-- **50 more open shifts sit on `completed` proposals** (oldest 2026-04-25, newest
-  2026-08-09). These are cosmetic rather than money: staff never see them, because the
-  open-shifts feed filters `s.event_date >= CURRENT_DATE` (`server/routes/shifts.js:195`).
-  They are the residue of the same "nothing closes a shift" gap. Worth one sweep.
-  **That sweep must exclude proposal 600 / shift 348** per the legal hold above — scope it
-  to `p.status = 'completed'`, which excludes 600 (`confirmed`) by construction, and confirm
-  the row count before running anything.
+- ~~**50 more open shifts sit on `completed` proposals.**~~ **RESOLVED, verified against prod
+  2026-08-19. Do NOT run the sweep this entry asks for; there is nothing to sweep.** Prod now
+  holds **53 shifts on completed proposals and every one is `status='completed'`** (oldest
+  2026-04-25, matching this entry's own population exactly). The shift-closure sweep drained
+  them. **Legal hold re-confirmed in the same query:** shift 348 / proposal 600 is untouched
+  (`open`, proposal still `confirmed`, event 2026-08-01), which is correct — `confirmed` was
+  never in the sweep's scope.
+  Its cited mechanism had ALSO rotted: `server/routes/shifts.js:195` is no longer
+  `s.event_date >= CURRENT_DATE`. The feed now gates on the shift END INSTANT via
+  `shiftNotFinishedSql('s','p')` (`:214`), and the only `CURRENT_DATE` left in that file is a
+  comment at `:180` describing the old behavior. So the entry's reassurance ("staff never see
+  them BECAUSE of the CURRENT_DATE filter") stopped being the reason before the rows stopped
+  existing — worth noting, because if the rows had survived the predicate change the
+  cosmetic/money classification would have needed re-deriving.
 
   **IN PROGRESS 2026-08-14, lane `shift-closure`. Scope widened from a sweep to the root
   cause, on Dallas's routing ("this seems like something for fable").** Re-measured against
@@ -4933,7 +4940,9 @@ Changes no candidate set, only the pick.
   `UPDATE shifts SET status = 'open'` on a drop/cover-request flips a shift the sweep already
   closed back to open; the next tick re-closes it, and each flip restamps `updated_at`, which
   drives the iCal SEQUENCE. Pre-existing code, newly reachable. Past events only.
-- **`shifts.js:218` kept `ORDER BY s.start_time ASC`** — the free-text sort that sorts
+- ~~**`shifts.js:218` kept `ORDER BY s.start_time ASC`**~~ **STALE 2026-08-19: that string does
+  not appear anywhere in `server/routes/shifts.js` (795 lines, zero matches). Re-derive before
+  actioning.** Original: the free-text sort that sorts
   `'7:00 PM'` before `'8:00 AM'`, which the sibling files in this same batch switched away from
   with comments explaining why. Harmless today (LIMIT 200 over 78 rows) but inconsistent with
   the batch's own stated rule.
@@ -5219,8 +5228,18 @@ exist. Purely a local-verification blocker.
    defect is the error handling, not the divergence: all eight FK statements sit in one
    `DO $$ ... EXCEPTION WHEN OTHERS THEN RAISE NOTICE`, so a single failure rolls back the whole
    block, leaves a fresh DB on NO ACTION, and never reaches `initDb`'s `unexpected` array.
-2. **`stripePayoutSync.js` has three unguarded `getStripe()` dereferences.** Two are shielded by
-   accident; the nightly `sweep()` is not and would throw a bare TypeError.
+2. **`stripePayoutSync.js` null-Stripe deref in the nightly `sweep()`. STILL REAL, but this
+   entry's description rotted — re-verified 2026-08-19.** There are no longer "three unguarded
+   `getStripe()` dereferences": a single accessor `client(opts)` at `:22`
+   (`(opts && opts.stripe) || testStripe || getStripe()`) now fronts THREE call sites, `:103`,
+   `:123` and `:220`. The refactor moved the shape and did NOT add a guard.
+   The hazard is unchanged and confirmed at the source: `getStripe()` **returns `null`** rather
+   than throwing when credentials are missing (`stripeClient.js:47-52` — it logs "refusing to
+   fall through to live credentials" and returns null). So `sweep()`'s `const stripe =
+   client(opts)` at `:220` still yields null and the next property access is a bare TypeError.
+   Fix at the accessor, not the three call sites: `client()` should throw a named error when it
+   would return null. One guard now covers all three, which the old three-site prescription
+   would not have.
 3. **The press-1 kill switch is now a trap.** `VM_ESCALATION_ENABLED=false` leaves the primary
    greeting saying "press one" with no `<Gather>` listening. Confirmed set to `true` in Render, so
    not live — but the switch can no longer be used as a switch.
