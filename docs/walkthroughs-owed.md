@@ -548,12 +548,44 @@ nobody has opened at all.
          stamps the header and `api.js` surfaces `staleAt`, both with passing tests, but no
          screen was ever wired to render it. Recorded in the fix list as its own entry. Do
          not re-walk this leg for the staleness half until that ships.
-      4. Airplane mode, cold launch with the lock due (background 30+ min, or set
-         `adminLockLastActiveAt` back in devtools, since `LOCK_AFTER_MS` is 30 min): lock screen
-         explains offline unlock needs a connection; password path visible.
+         **RE-RUN CLEAN 2026-08-19 after the first attempt was invalidated:** the first pass
+         had WiFi still associated (see the protocol trap below), so "offline" was unproven.
+         Repeated with WiFi AND mobile data off and the status bar verified: landed on the
+         same route WITH data, no lock, no Login bounce. Route restore is now genuinely proven
+         offline.
+      4. ~~Airplane mode, cold launch with the lock due: lock screen explains offline unlock
+         needs a connection; password path visible.~~ **WALKED 2026-08-19 (Dallas). PASSES on
+         the lock itself, and surfaced a real defect on the way out.** Lock fired after a
+         30-minute background. It FULLY OCCLUDED, no data behind it, so the spec section 8
+         requirement holds. Unlock offline gave "You are offline. Unlocking needs a
+         connection." with NO biometric prompt, which is correct by design:
+         `unlockWithPasskey` POSTs `assert-options` before `startAuthentication`, so it never
+         asks for a fingerprint it cannot use. **"Use password instead" landed on "Something
+         went wrong."** That is TWO defects sharing one button, both in the fix list under
+         "The offline lock screen has no working exit": the dead end is a lazy-chunk load
+         failure independent of the logout, and the logout silently UNARMS the phone (no
+         30-minute lock at all) until the user re-enrolls. Verified by a 3-lens adversarial
+         panel; my first write-up of it was wrong three ways and the corrections are in that
+         entry. Do not re-walk this leg; walk the FIX when it ships.
       5. From desktop Settings > Security: revoke the phone passkey, confirm the desktop
          logs out, the phone's next unlock fails to the password path, and re-enrollment
-         works. No automated test covers this leg.
+         works. No automated test covers this leg. **STILL OWED — this is now the ONLY
+         unproven leg.** Note the re-enrollment half was proven incidentally on 2026-08-19
+         (Dallas re-enrolled after the step-4 purge and it succeeded via the
+         `InvalidStateError` -> `{alreadyEnrolled:true}` path, no duplicate credential row),
+         so what remains is specifically the REVOKE: does the desktop log itself out, and does
+         the phone's next unlock fall to the password path.
+      **PROTOCOL TRAP, cost an hour on 2026-08-19, not in the original script:**
+      (a) **Android airplane mode does NOT reliably kill WiFi.** It remembers the radio state
+      and will leave WiFi on or auto-reconnect, so the device stays online and every "offline"
+      leg silently tests nothing. Turn WiFi and mobile data off explicitly and LOOK at the
+      status bar before starting.
+      (b) **The 30-minute clock measures BACKGROUNDED time, and any glance at the app resets
+      it to zero.** `touchLastActive` writes on hide (`visibilitychange`/`pagehide`) and
+      returning to the foreground runs `evaluate()`, which CLEARS the stamp whenever the lock
+      is not due. So: background it, then do not open it again, or the wait restarts. Related:
+      force-closing an app you just looked at writes a FRESH stamp, so the next launch is
+      seconds old and will not lock. Force-close only from an already-backgrounded state.
       FOLDED IN FROM THE ma-a/ma-b ITEM, because these legs are only walkable in the same
       offline session: the Desktop-view toggle round trip, and the offline-resume proof that
       an offline cold launch lands on the restored route behind the lock rather than
