@@ -17,10 +17,21 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ---
 
-## Status: refreshed 2026-08-20
+## Status: refreshed 2026-08-21
 
-**`origin/main` is `c0dcd5b7`, pushed 2026-08-20 at 10:47.** Whenever you edit this block,
-re-state that sha, because the next session's staleness check is a diff against it.
+**`origin/main` is `4ee51d00`, pushed 2026-08-21 (37 commits, `9cccd3da..4ee51d00`).**
+Whenever you edit this block, re-state that sha, because the next session's staleness check
+is a diff against it. The previous line named `c0dcd5b7`, pushed 2026-08-20 at 10:47.
+
+**WHAT THE 2026-08-21 PUSH ADDED, and for once none of it was missed.** The whole cohort is
+in Tier 3b under a 2026-08-21 heading. Six of the seven items were written into Tier 6 the
+evening BEFORE the push, each naming its merge sha, and moved down the moment
+`git merge-base --is-ancestor` said they were live — which is the mechanism the 8/20 cohort
+lacked when it went unrecorded for a day. The seventh, the options ladder, is the largest
+client-facing change in the drop: every proposal client now gets a drawer instead of the
+bottom-of-page panel and can rewrite their own proposal before signing. It is also the one
+item here where the owning window said outright that it called the surface finished twice
+before it was, and that only a real browser caught it both times.
 
 **WHAT MOVED SINCE THE 2026-08-19 REFRESH, and it is a lot.** 2026-08-19 was the single
 best night this list has had: four of the six walks then named as "genuinely left for a
@@ -65,7 +76,8 @@ file. They change behavior but expose no new surface, and the fix list already c
 them. This file should shrink; adding test-covered server fixes to it is how it stops.
 
 **Same rule applied again, 2026-08-20 evening, to a fix-list session's eight lanes.** The
-user-facing ones went to Tier 6 below (they are merged, not pushed). Four lanes were
+user-facing ones went to Tier 6 below, and moved to the 2026-08-21 cohort in Tier 3b when
+the push landed. Four lanes were
 deliberately given NO entry under the rule above, named here so the decision is visible
 rather than looking like an omission: `cant-overnight-ordering` (which shift an inbound CANT
 re-opens — server-only, and only observable via a real overnight text), `dead-suites-dotenv`
@@ -586,6 +598,117 @@ a push that lands after the last edit is invisible here by default. Until that i
 automated, **re-derive the cohort at the top of any walk session** rather than trusting
 the tiers: `git log --format='%h %ad %s' --date=short <the sha this file names>..origin/main -- server client/src`
 lists every code commit live in prod that this file may not know about.
+
+**THE 2026-08-21 COHORT (push `9cccd3da..4ee51d00`, 37 commits).** Seven items, and unlike the
+8/20 cohort none of them was missed: six arrived in Tier 6 the evening before with their merge
+shas attached and moved here the moment the push landed. The seventh is the options ladder,
+which is the largest client-facing change in the drop and is listed first because of it.
+
+- [ ] **The options ladder is live to every proposal client** — merges `c6927359`, `39ff7d8d`,
+      `d171662a` (lanes oo-switch-server, oo-server-display, oo-ladder-client). THE BIGGEST
+      client-facing change in this push. The bottom-of-page "See other options" panel is now a
+      drawer, the mailto hand-off is gone, and a client can rewrite their own proposal before
+      signing. Recorded here from that window's own board note, not from my verification.
+      **WALK IT ON A REAL DEVICE, and treat that as the whole point.** Everything verified so
+      far is headless Chromium on this box: nobody has dragged that sheet with a thumb. That
+      window says plainly it called this surface finished twice when it was not, and both times
+      only a real browser caught it — once when the desktop panel painted over the sticky
+      sign-and-pay rail, once when the entire BYOB half of the ladder rendered no commit button
+      at all. A later browser pass then found its own inset FIX was inert (an inline padding
+      shorthand beat the class rule, invisible to grep and to the bundle) and that the
+      extras-strip fix wiped the mobile ladder at the peek snap.
+      Specifically: drag the sheet on a phone, check the peek snap does not eat the ladder,
+      confirm the BYOB rungs actually offer a commit button, and confirm the sticky
+      sign-and-pay rail is never painted over on desktop.
+- [ ] **A live signature on a scratch proposal, because the sign assertion just armed** —
+      merge `d171662a`. `ProposalView.js` now sends `acknowledged_total` on the sign POST,
+      arming a server assertion that had existed for a week and never once fired. I read both
+      halves across the two windows before the push and the seam is built correctly (dollars
+      against dollars with a half-cent tolerance; an absent field disarms it exactly as before;
+      a 409 refetches and clears BOTH Stripe client secrets so nobody can pay against a stale
+      intent) — but no real signature has ever exercised it, and this is the last click of the
+      funnel. Sign a scratch proposal and confirm it completes. Then, if you want the assertion
+      itself proven: open the proposal in two tabs, change the total in one, and sign in the
+      other — expect "Your total changed while this page was open", a refreshed price, and NO
+      signature recorded.
+- [ ] **Contractor agreement: clause 6 renders bold instead of printing `**`** — merge
+      `40607383`, lane `agreement-bold-runs`. The signing screen printed literal
+      `**Mutual.**` and `**From Contractor.**` while the archived PDF has always rendered
+      them properly, so the person signing saw a worse document than the one that gets filed.
+      WALK ON DEV, never prod (a prod signature is a real signed contract): open the
+      contractor agreement as a staff fixture and read clause 6, "Representations &
+      Warranties". Expect two bold lead-ins and NO asterisks anywhere on the page. Then
+      compare against the generated PDF for the same clause — the whole point is that the two
+      surfaces now agree, so seeing them side by side is the actual test.
+      Frozen copy was deliberately NOT edited (V3 aliases most of V2's clause objects, so
+      editing the strings would rewrite the text of already-signed v2 agreements), which
+      means an existing signed v2 PDF must still render exactly as it did.
+
+- [ ] **Field Guide: sections open by keyboard** — merge `b7c8119b`, lane `dead-affordances`.
+      Before this, a collapsed section's text was not in the DOM at all and the header had no
+      keyboard path, so a keyboard user could not read ANY of the guide — while the
+      acknowledgment below it was a real checkbox they could tick and Continue was a real
+      button they could press. Sign what you cannot read.
+      WALK WITH THE MOUSE UNPLUGGED, which is the only way this walk means anything: Tab to a
+      section header, press Enter, confirm it expands; Tab to another, press Space, confirm
+      the same; confirm focus is visible on the header at each stop; then Tab down to the
+      acknowledgment and Continue and confirm the whole flow completes without a pointer.
+      Also check a screen reader announces expanded/collapsed if one is to hand — that is the
+      half `aria-expanded` was silently failing to provide before.
+
+- [ ] **Client shopping list: lines check by keyboard** — merge `b7c8119b`, lane
+      `dead-affordances`. PUBLIC, client-facing. Every line was a bare div with a hand-drawn
+      checkbox: no role, no tab stop, no key handler, and the only two real buttons on the
+      page are PDF download and retry, so it was a total keyboard lockout on the page a
+      client works a liquor-store aisle with.
+      WALK ON A REAL PHONE AND WITH A KEYBOARD, both: tap a few lines and confirm the tick,
+      strike-through and progress bar behave exactly as before (the mouse path was never the
+      broken one and must not have regressed), then Tab through the list and check lines with
+      Space and Enter. Reload and confirm the ticks persist — the page stores them per token
+      in localStorage, so persistence is part of the feature, not incidental.
+
+- [ ] **Staff shift list: pending cards stop looking tappable** — merge `b7c8119b`, lane
+      `dead-affordances`. `.sp-shift` handed every card a pointer cursor and a hover border
+      whether or not it opened, and MineTab renders the dead pending cards and the LIVE
+      upcoming cards into the same flex column as adjacent siblings. A bartender learned
+      "shift cards open" from one row and tapped the row above it to nothing.
+      WALK IN BOTH SKINS, which is the part that can regress invisibly: on the staff portal
+      Mine tab with at least one pending or waitlisted request, hover a pending card and
+      confirm no pointer cursor and no border change, then hover an upcoming card directly
+      beneath it and confirm it still does both. Switch skins and repeat. The light skin
+      styles the first card's top border differently, so specifically check that the FIRST
+      pending card in the list looks identical at rest and on hover.
+      Also confirm the Withdraw / Leave-waitlist button inside the pending card still works —
+      it was always live and must stay so.
+
+- [ ] **A curly apostrophe and a decomposed accent are accepted in a preferred name** —
+      merge `5117ef3e`, lane `pushgate-814-residuals`. Both were rejected by a message that
+      said apostrophes were allowed, which is the worst kind of refusal. Here because it
+      cannot be settled off a device: the whole premise is that iOS substitutes U+2019 for a
+      typed apostrophe, and that was verified in code, not on a phone.
+      WALK ON A REAL iPHONE: as a staff fixture, set a preferred name to `O'Brien` typed
+      normally (iOS will insert the curly one) and confirm it SAVES rather than refusing.
+      Then check what got stored — it should be the plain ASCII apostrophe, because the
+      validator folds on the way in.
+      THE PART WORTH WATCHING, and the reason this is not just a happy-path check: an
+      UNCHANGED name also normalizes on save, so a staffer editing only their phone number
+      can have a stored legacy name quietly repaired underneath them. That is intended, and
+      it is exactly the kind of intended-but-silent write that should be seen once by a human
+      before it is trusted. Confirm the displayed name after such a save is what you expect.
+
+- [ ] **Press-1 with the kill switch OFF plays a message instead of dead air** — merge
+      `5016dc2c`, lane `vm-press1-honesty`. NOT a normal walk and NOT urgent: this changes
+      nothing while `VM_ESCALATION_ENABLED` is `true`, which it is in Render. What it fixes is
+      the OFF state, where the offer stayed in both lines' recordings while the `<Gather>`
+      vanished, so a caller pressed 1 into a document that was not listening and dropped to
+      the beep.
+      VERIFY BY DELIBERATELY FLIPPING THE SWITCH, once, at a quiet hour: set
+      `VM_ESCALATION_ENABLED=false` in Render, call the line, let it go to the missed-call
+      greeting, press 1, and confirm you hear the recorded "sorry, nobody's available right
+      now" and then the beep — not silence. Confirm in the Twilio console that NO outbound leg
+      was dialed, which is the guarantee the switch still owes. Then set it back to `true`.
+      **This is the other window's territory** — phone work is live there — so coordinate
+      rather than flipping a production voice switch underneath it.
 
 - [~] **THE ADMIN STAFF HUB: LOOK-AT-IT HALF PASSED 2026-08-20 (Zul). MONEY SEAMS STILL OWED.**
       **VERDICT on the consolidation: it reads as ONE HUB**, not four old pages stapled under
@@ -1252,9 +1375,12 @@ lists every code commit live in prod that this file may not know about.
       Look panel / Send test / Desktop-Mobile toggles — deferred lane `mkt-compose-canvas`,
       unscheduled, awaiting Dallas's go.
       POINTER: the Overview tab gains a needs-setup card and a header segment from lane
-      `mkt-moment-setup` (`7b099746`, merged and NOT pushed). Until that ships you will not
-      see them in prod, so their absence is not a restyle finding. Once it does ship, walk
-      them in the same session as this one; the Tier 6 entry has the steps.
+      `mkt-moment-setup` (`7b099746`). **CORRECTED 2026-08-21: this said "merged and NOT
+      pushed", and it has shipped** — `git merge-base --is-ancestor 7b099746 origin/main`
+      returns 0. So the card and the header segment ARE in prod and their absence WOULD be a
+      finding. The sibling entry above had already caught the same staleness in its own copy
+      of this pointer. Its Tier 6 entry is gone with the tier's emptying; the steps live in
+      that entry above.
 - [ ] **Proposals list pagination — LIVE as of the 2026-08-13 evening push (`1dc72df6` +
       stale-response guard `92efc663`). SPLIT 2026-08-14 (routing rule 1): the pager
       MECHANICS below are the automated lane's, every one of them a deterministic state
@@ -1300,98 +1426,19 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**NO LONGER EMPTY as of 2026-08-20 evening.** It was empty earlier that day, correctly, when
-`mkt-moment-setup` shipped and moved to Tier 3b. A fix-list session then merged a run of
-user-facing changes to `main` that are NOT pushed, so they are genuinely unshipped and this
-is the tier that fits them. (Count them with `grep`, per this file's own rule above — a hard
-number written here is the thing that rots first.)
+**EMPTY AGAIN as of 2026-08-21, and the round trip is the point.** It filled on the evening of
+2026-08-20 with six merged-but-unpushed user-facing changes, and emptied the moment the
+`9cccd3da..4ee51d00` push landed on 2026-08-21: every one of their shas is now an ancestor of
+`origin/main`, so by this tier's own rule they moved to Tier 3b rather than being walked from
+here. They are the "2026-08-21 cohort" there.
 
-**Push state, written the only way it survives** (an "unpushed" marker rots the day it is
-written): each item names its merge sha. Before walking, confirm it has actually shipped with
+**The mechanism that worked, worth reusing.** Each entry named its merge sha and the tier
+carried the check rather than a marker:
 
     git merge-base --is-ancestor <sha> origin/main    # exit 0 = it is live
 
-If that returns 0, MOVE the item to Tier 3b rather than walking it from here, per this tier's
-own rule.
-
-- [ ] **Contractor agreement: clause 6 renders bold instead of printing `**`** — merge
-      `40607383`, lane `agreement-bold-runs`. The signing screen printed literal
-      `**Mutual.**` and `**From Contractor.**` while the archived PDF has always rendered
-      them properly, so the person signing saw a worse document than the one that gets filed.
-      WALK ON DEV, never prod (a prod signature is a real signed contract): open the
-      contractor agreement as a staff fixture and read clause 6, "Representations &
-      Warranties". Expect two bold lead-ins and NO asterisks anywhere on the page. Then
-      compare against the generated PDF for the same clause — the whole point is that the two
-      surfaces now agree, so seeing them side by side is the actual test.
-      Frozen copy was deliberately NOT edited (V3 aliases most of V2's clause objects, so
-      editing the strings would rewrite the text of already-signed v2 agreements), which
-      means an existing signed v2 PDF must still render exactly as it did.
-
-- [ ] **Field Guide: sections open by keyboard** — merge `b7c8119b`, lane `dead-affordances`.
-      Before this, a collapsed section's text was not in the DOM at all and the header had no
-      keyboard path, so a keyboard user could not read ANY of the guide — while the
-      acknowledgment below it was a real checkbox they could tick and Continue was a real
-      button they could press. Sign what you cannot read.
-      WALK WITH THE MOUSE UNPLUGGED, which is the only way this walk means anything: Tab to a
-      section header, press Enter, confirm it expands; Tab to another, press Space, confirm
-      the same; confirm focus is visible on the header at each stop; then Tab down to the
-      acknowledgment and Continue and confirm the whole flow completes without a pointer.
-      Also check a screen reader announces expanded/collapsed if one is to hand — that is the
-      half `aria-expanded` was silently failing to provide before.
-
-- [ ] **Client shopping list: lines check by keyboard** — merge `b7c8119b`, lane
-      `dead-affordances`. PUBLIC, client-facing. Every line was a bare div with a hand-drawn
-      checkbox: no role, no tab stop, no key handler, and the only two real buttons on the
-      page are PDF download and retry, so it was a total keyboard lockout on the page a
-      client works a liquor-store aisle with.
-      WALK ON A REAL PHONE AND WITH A KEYBOARD, both: tap a few lines and confirm the tick,
-      strike-through and progress bar behave exactly as before (the mouse path was never the
-      broken one and must not have regressed), then Tab through the list and check lines with
-      Space and Enter. Reload and confirm the ticks persist — the page stores them per token
-      in localStorage, so persistence is part of the feature, not incidental.
-
-- [ ] **Staff shift list: pending cards stop looking tappable** — merge `b7c8119b`, lane
-      `dead-affordances`. `.sp-shift` handed every card a pointer cursor and a hover border
-      whether or not it opened, and MineTab renders the dead pending cards and the LIVE
-      upcoming cards into the same flex column as adjacent siblings. A bartender learned
-      "shift cards open" from one row and tapped the row above it to nothing.
-      WALK IN BOTH SKINS, which is the part that can regress invisibly: on the staff portal
-      Mine tab with at least one pending or waitlisted request, hover a pending card and
-      confirm no pointer cursor and no border change, then hover an upcoming card directly
-      beneath it and confirm it still does both. Switch skins and repeat. The light skin
-      styles the first card's top border differently, so specifically check that the FIRST
-      pending card in the list looks identical at rest and on hover.
-      Also confirm the Withdraw / Leave-waitlist button inside the pending card still works —
-      it was always live and must stay so.
-
-- [ ] **A curly apostrophe and a decomposed accent are accepted in a preferred name** —
-      merge `5117ef3e`, lane `pushgate-814-residuals`. Both were rejected by a message that
-      said apostrophes were allowed, which is the worst kind of refusal. Here because it
-      cannot be settled off a device: the whole premise is that iOS substitutes U+2019 for a
-      typed apostrophe, and that was verified in code, not on a phone.
-      WALK ON A REAL iPHONE: as a staff fixture, set a preferred name to `O'Brien` typed
-      normally (iOS will insert the curly one) and confirm it SAVES rather than refusing.
-      Then check what got stored — it should be the plain ASCII apostrophe, because the
-      validator folds on the way in.
-      THE PART WORTH WATCHING, and the reason this is not just a happy-path check: an
-      UNCHANGED name also normalizes on save, so a staffer editing only their phone number
-      can have a stored legacy name quietly repaired underneath them. That is intended, and
-      it is exactly the kind of intended-but-silent write that should be seen once by a human
-      before it is trusted. Confirm the displayed name after such a save is what you expect.
-
-- [ ] **Press-1 with the kill switch OFF plays a message instead of dead air** — merge
-      `5016dc2c`, lane `vm-press1-honesty`. NOT a normal walk and NOT urgent: this changes
-      nothing while `VM_ESCALATION_ENABLED` is `true`, which it is in Render. What it fixes is
-      the OFF state, where the offer stayed in both lines' recordings while the `<Gather>`
-      vanished, so a caller pressed 1 into a document that was not listening and dropped to
-      the beep.
-      VERIFY BY DELIBERATELY FLIPPING THE SWITCH, once, at a quiet hour: set
-      `VM_ESCALATION_ENABLED=false` in Render, call the line, let it go to the missed-call
-      greeting, press 1, and confirm you hear the recorded "sorry, nobody's available right
-      now" and then the beep — not silence. Confirm in the Twilio console that NO outbound leg
-      was dialed, which is the guarantee the switch still owes. Then set it back to `true`.
-      **This is the other window's territory** — phone work is live there — so coordinate
-      rather than flipping a production voice switch underneath it.
+Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
+to rot. Do that again for the next thing that sits here.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
