@@ -8,6 +8,7 @@ import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
+import { splitBoldRuns } from '../utils/markdownBold';
 
 export default function Agreement() {
   const navigate = useNavigate();
@@ -203,8 +204,19 @@ export default function Agreement() {
             <p className="italic text-muted" style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
               {clause.plain}
             </p>
+            {/* The clause bodies carry **bold** lead-ins ("**Mutual.**"). The
+                archived PDF has always parsed them; this screen printed the
+                asterisks raw until 2026-08-20, so the person SIGNING saw a worse
+                document than the one that gets filed. Fixed in the renderer, not
+                the data: contractorAgreement.js deep-freezes V2 and V3 and V3
+                aliases most of V2's clause objects, so editing the strings would
+                rewrite the text of already-signed v2 agreements. */}
             <p style={{ fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>
-              {clause.formal}
+              {splitBoldRuns(clause.formal).map((run, i) => (
+                run.bold
+                  ? <strong key={i}>{run.text}</strong>
+                  : <React.Fragment key={i}>{run.text}</React.Fragment>
+              ))}
             </p>
           </section>
         ))}

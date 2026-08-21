@@ -538,6 +538,7 @@ dr-bartender/
 │   │   │   ├── proposalStatusMap.js # Shared proposal status → {label, kind} map (single source for admin status chips)
 │   │   │   ├── drinkPlanStatusMap.js # Shared drink-plan status → {label, kind} map
 │   │   │   ├── formatPhone.js  # Phone number formatting
+│   │   │   ├── markdownBold.js # Splits the frozen legal copy's `**bold**` runs for the signing screen; deliberate twin of agreementPdf.js renderMixedBoldText, minus its PDF-font character normalization
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   ├── messageTypes.js # Display-only message_log label map (messageTypeLabel) for the event-detail Messages card; falls back to the stored subject for untagged sends
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js

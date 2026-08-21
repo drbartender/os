@@ -4734,7 +4734,31 @@ command palette hides the desktop `⌘K` hint under `@media (pointer: coarse)` b
 its own `Esc` chip and ships no visible touch dismiss control. That is a missing close
 affordance, a different defect, and worth its own line.
 
-## The contractor agreement shows raw markdown asterisks on the screen people sign (found 2026-08-14)
+## ~~The contractor agreement shows raw markdown asterisks on the screen people sign~~ FIXED 2026-08-20, lane `agreement-bold-runs` (found 2026-08-14)
+
+**Fixed where the entry said to fix it: the renderer, never the data.** `client/src/utils/
+markdownBold.js` splits `**bold**` runs with the SAME pattern `agreementPdf.js`'s
+`renderMixedBoldText` already used, and `Agreement.js` maps them to `<strong>`. The frozen copy
+is untouched, so no already-signed v2 agreement changes text.
+
+One deliberate difference from the server twin, written into both files so it does not read as
+an oversight: no character normalization. The PDF rewrites bullets and em dashes to ASCII
+because its font lacks the glyphs; a browser has them, and rewriting on screen would make the
+signing surface worse to fix a problem it does not have. Parity is on the BOLD SPLIT only.
+
+**Two tests, deliberately split across the seam, because CRA cannot import from outside
+`client/src` and the real clause text therefore cannot be reached from a client test.**
+`client/src/utils/markdownBold.test.js` pins the SPLIT (order, newlines preserved for the
+`pre-wrap` paragraph, an unmatched marker left literal exactly as the server leaves it, no
+normalization). `server/data/contractorAgreement.test.js` — the file's FIRST suite — pins the
+DATA: every `**` in every clause of every version closes, no run is empty or nested, and the
+only two runs that exist today are clause 6's lead-ins. That last one is a change detector, not
+a style rule: this pair is the only thing between new copy and raw asterisks on a signed
+document, so a third run should make someone re-read them rather than land silently.
+
+Both mutation-verified. Flattening the split fails 3 client tests; adding one unmatched marker
+to the frozen copy fails 2 server tests.
+
 
 Cosmetic, but it is on a legal document at the moment of signing, and the fix is not
 where you would first look.
