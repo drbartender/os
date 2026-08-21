@@ -827,7 +827,21 @@ lists every code commit live in prod that this file may not know about.
       querying `voicemail_delivery`. Nothing branches on `escalation_outcome`; it is
       write-only observability.
 
-- [ ] **Marketing moment needs-setup card + header segment (lane `mkt-moment-setup`):
+- [x] **Marketing moment needs-setup card + header segment: PASSED 2026-08-20 (Zul), in prod.**
+      Both surfaces confirmed present on the Overview tab: the needs-setup CARD and the
+      header's "N needs setup" segment. Walked in the same session as the marketing restyle,
+      exactly as this entry advised.
+      The entry (and the restyle entry's pointer) both said the lane was merged and NOT
+      pushed, so nothing would render in prod. **That went stale: `7b099746` shipped**, and it
+      is why these were visible at all. Verified by ancestry before the walk, not assumed.
+      WHAT THIS CONFIRMS, and it is the reusable half: an open moment with an empty audience
+      used to be invisible in THREE places at once (the card list, the `open_moment_count`
+      badge, and a header reading "0 moments open" while a moment was open). A moment now
+      DECLARES which kind of empty it is. `emptyAudience: 'configure'` means a human can close
+      the gap today, so it renders a card; `'wait'` means only time changes it, so it stays
+      quiet. That is what stops a permanently-open, time-gated moment nagging daily on a young
+      book, and it is the law to preserve if this surface is ever rebuilt.
+      Original entry follows. **(lane `mkt-moment-setup`):
       PUSHED AND LIVE IN PROD.** Corrected 2026-08-20: this entry sat in Tier 6 reading
       "MERGED, NOT PUSHED" long after the commit had shipped, so a walk that was armed
       read as blocked. `7b099746` is an ancestor of `origin/main`. It is walkable now.
