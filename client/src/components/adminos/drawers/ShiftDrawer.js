@@ -20,6 +20,7 @@ import { fmtDateFull } from '../format';
 import {
   SHIFT_EQUIPMENT_OPTIONS,
   parseEquipmentArray,
+  neededCount,
 } from '../shifts';
 import EntityLink from '../../EntityLink';
 import OutOfAreaKnob from '../../../pages/admin/OutOfAreaKnob';
@@ -210,7 +211,12 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   const actionable = classifiedPending.filter(c => c.state === 'actionable');
   const waitlisted = classifiedPending.filter(c => c.state === 'waitlisted');
 
-  const totalNeeded = roster.length;
+  // The SAME rule the Event Detail card and the Overview queues use
+  // (shifts.js neededCount), against the roster this drawer already parsed. A
+  // bare roster.length here is what made one shift read "2/1 staffed" on the
+  // card and "2/0" in the drawer one click away: an empty positions_needed is a
+  // data gap, not a shift that needs nobody.
+  const totalNeeded = neededCount(roster);
   const totalApproved = approvedReqs.length;
 
   // ----- Money seam: approve -----

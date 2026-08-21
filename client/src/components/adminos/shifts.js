@@ -13,22 +13,6 @@ import {
   computeRemaining,
 } from '../../utils/staffingRoles';
 
-// Returns the parsed `positions_needed` array. Tolerates both array-shaped
-// (already parsed) and string-shaped (JSON-encoded TEXT) inputs. Empty array
-// when the value is missing/malformed.
-export function parsePositionsArray(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    try {
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
-
 // Canonical equipment tokens a shift can require, paired with human labels.
 // These tokens MUST match the keys the auto-assign scorer compares against
 // (server/utils/autoAssign.js → computeEquipmentScore equipmentMap +
@@ -44,8 +28,11 @@ export const SHIFT_EQUIPMENT_OPTIONS = [
 ];
 
 // Returns the parsed `equipment_required` array (token strings). Tolerates both
-// array-shaped (already parsed) and string-shaped (JSON-encoded TEXT) inputs,
-// the same way parsePositionsArray does. Empty array when missing/malformed.
+// array-shaped (already parsed) and string-shaped (JSON-encoded TEXT) inputs.
+// Empty array when missing/malformed. A bare JSON.parse is CORRECT here and is
+// NOT correct for positions_needed: equipment tokens are a flat string list with
+// one historical shape, while positions_needed has two and must go through
+// parsePositionsNeeded (see parsePositionsCount below).
 export function parseEquipmentArray(raw) {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === 'string') {
@@ -94,11 +81,40 @@ export function selectUpcoming(rows) {
     .sort((a, b) => a.event_date.localeCompare(b.event_date));
 }
 
-// Returns the count of position slots a shift needs (length of the JSON array).
+// The ONE fallback rule for "how many people does this shift need".
+//
+// An empty roster is a DATA GAP -- nobody declared the roles -- not a shift that
+// needs nobody, so it counts as 1. That guess is load-bearing rather than
+// cosmetic: parsePositionsCount feeds the Events dashboard's unstaffed filter,
+// its unstaffed counter, the Overview queue's `open` count and the Overview
+// unstaffed filter. Reading an empty roster literally as 0 would make every such
+// shift "fully staffed" and drop it out of all four surfaces silently.
+//
+// Exported because ShiftDrawer needs the SAME rule against the roster it has
+// already parsed for its per-role math. Two hand-written copies of this is how
+// the card came to say "2/1 staffed" while the drawer said "2/0" for one shift.
+export function neededCount(rosterArray) {
+  return (Array.isArray(rosterArray) ? rosterArray.length : 0) || 1;
+}
+
+// Returns the count of position slots a shift needs.
+//
+// Goes through parsePositionsNeeded, the client twin of
+// server/utils/positionsNeeded.js, whose header states the law this function
+// used to break: "Production holds two historical shapes: a flat string array
+// ["Bartender","Bartender"] and a legacy object array
+// [{position:'bartender',count:2}]. Every reader of positions_needed must go
+// through this, never a bare JSON.parse."
+//
+// It WAS a bare JSON.parse taking the raw array's LENGTH, so a legacy
+// object-shaped row declaring two bartenders counted as ONE position. That is a
+// staffing hole rather than a display bug: the shift leaves the unstaffed queue
+// the moment a single person is approved and the second bartender is never
+// hired. The drawer, which already used parsePositionsNeeded, said 2 for the
+// same row -- the visible half of the same defect.
 export function parsePositionsCount(s) {
   if (!s) return 1;
-  const arr = parsePositionsArray(s.positions_needed);
-  return arr.length || 1;
+  return neededCount(parsePositionsNeeded(s.positions_needed));
 }
 
 // Returns the count of approved bartenders for a shift.

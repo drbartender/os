@@ -4176,7 +4176,56 @@ run moves the fingerprint and the receipt is refused (by design; it happened
 twice on 8/14, once from my own edits and once from a spec-doc commit). The
 recovery is just rerunning `npm run gate` on the settled tree.
 
-## "N staffed" denominator disagrees between the two shift surfaces (found 2026-08-14, out-of-area walk)
+## ~~"N staffed" denominator disagrees between the two shift surfaces~~ FIXED 2026-08-20, lane `positions-needed-one-reader` (found 2026-08-14, out-of-area walk)
+
+**The entry was right that the two surfaces disagree and wrong about why, about how bad it is,
+and about which way to fix it.** All three corrections came from reading the code around it
+rather than the two lines it named.
+
+**1. The real divergence is TWO READERS, not the `|| 1`.** `client/src/components/adminos/
+shifts.js` had its own `parsePositionsArray`, a bare `JSON.parse` that took the raw array's
+LENGTH. `server/utils/positionsNeeded.js` states the law it broke, in its own header:
+*"Production holds two historical shapes: a flat string array `["Bartender","Bartender"]` and a
+legacy object array `[{position:'bartender',count:2}]`. Every reader of positions_needed must go
+through this, never a bare JSON.parse."* On the legacy shape the two readers do not differ by
+one, they differ by the declared count: `[{position:'bartender',count:2}]` is **1** to the
+dashboard and **2** to the drawer. The sharpest form of it: `remainingByRole`, in the SAME FILE,
+already used the correct reader, and so did the drawer's per-role math. Only the count did not.
+
+**2. It is a staffing hole on that shape, not a cosmetic one.** `parsePositionsCount` feeds four
+surfaces, which the entry did not enumerate: the Events dashboard's unstaffed FILTER
+(`EventsDashboard.js:254`) and its unstaffed COUNTER (`:283`), the Overview queue's `open` count
+(`overview/queueItems.js:55`), and the Overview unstaffed filter (`OverviewPage.js:274`). A shift
+declaring two bartenders in the legacy shape counts as needing one, so it leaves every unstaffed
+queue the moment ONE person is approved and the second bartender is never hired.
+
+**3. The recommended fix would have made it worse.** The entry says *"the literal reading is
+probably right"* — i.e. drop the `|| 1`. Because of those four consumers, a literal `0` for an
+empty roster reads as FULLY STAFFED and would silently hide every such shift from all four
+surfaces at once. The entry half-sensed this ("check that a 0 denominator does not paint every
+such shift green") and still recommended the wrong side. The `|| 1` is a data-gap guess and it is
+load-bearing; it is now written down as one exported rule, `neededCount`, with that reasoning
+attached, rather than being hand-copied in two places.
+
+**Fix:** `parsePositionsCount` goes through `parsePositionsNeeded` (the client twin of the server
+module), `ShiftDrawer` uses the same `neededCount` rule against the roster it has already parsed,
+and the naive `parsePositionsArray` is DELETED — it had exactly one caller and leaving a
+bare-JSON.parse reader of this column in the file is what the server law warns about. Five tests
+pin it, including one that asserts the card and the drawer return the same number for every
+shape that exists or has existed. Mutation-verified: restoring the bare parse fails 2 of them.
+Client suite 653/653 across 73 files, CI build exit 0.
+
+**PROD, checked rather than assumed — the bug has ZERO live instances, and the entry's own prod
+claims are stale.** Every one of prod's 72 shifts carries a flat, fully canonical
+`positions_needed` (58 `["Bartender"]`, 12 doubles, one triple, one quadruple); there are no
+empty arrays and no legacy object rows, so neither reader can disagree on today's data. The six
+shifts the entry named (297, 288, 248, 262, 306, 296) **no longer exist on prod, and neither do
+their six proposals** (412, 400, 322, 334, 420, 411). The entry predicted the closure sweep would
+close them; they were removed entirely instead. Prod's shift count went 78 to 72, which is
+exactly those six. Not investigated further here: the low proposal-id space is sparse generally
+(82 rows below id 500), which is what the quote-draft cleanup would leave behind, so this reads
+as ordinary reaping rather than loss. Flagged, not concluded.
+
 
 Cosmetic, prod-reachable, low priority. The same shift reads a different
 "needed" count on the Event Detail staffing card and in the ShiftDrawer one
