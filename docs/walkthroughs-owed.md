@@ -1157,7 +1157,44 @@ lists every code commit live in prod that this file may not know about.
       This is the exact class the 8/14 lane split reserved for a human: a Playwright click on
       `getByRole('button')` passes every time, because the button works.
       Note the compare-and-book spec will eventually replace this surface.
-- [ ] **Marketing redesign, FUNCTIONAL walk — all 3 phases live in prod; gates real
+- [~] **Marketing FUNCTIONAL walk: WALKED 2026-08-20 (Zul), REAL SEND PROVEN. Two checks
+      remain structurally untestable on current data.**
+      **THE SEND PATH IS PROVEN END TO END, and this was only the SECOND campaign send in this
+      system's history.** Verified in prod, not taken on report: `email_sends` id 2,
+      campaign 3, subject "Test", `client_id` 1507 (Zul's own client row,
+      `zul@drbartender.com`), `sent_at` 2026-08-21 01:33:30Z, status **`delivered`**.
+      Row 1 (2026-05-21) is still `sent` and never progressed, so **this is the first send
+      ever to reach `delivered`** — the Resend delivery callback had never completed on this
+      path before. The email genuinely arrived in an inbox.
+      **NO REAL CLIENT WAS EMAILED.** There is no send-test feature (deferred with lane
+      `mkt-compose-canvas`), and the only tag that exists is `corporate` at 9 REAL clients, so
+      the entry's "send to a tiny audience" had nothing safe to point at. She targeted her own
+      client row instead, which needs no cleanup.
+      **TWO NUMBERS SHE FLAGGED, BOTH CORRECT BEHAVIOUR — do not re-raise:**
+      (a) Contacts reads **434 emailable of 541**, not the 449 that merely HAVE an address.
+      `MAILABLE_SQL` (`marketingAudience.js:42`) subtracts 12 rows with
+      `communication_preferences->>'marketing_enabled' = 'false'`, 1 placeholder `.invalid`
+      address, and 2 with `email_status='bad'`. 449 − 12 − 1 − 2 = 434, reproduced exactly.
+      "Has an email" and "is emailable" are different questions.
+      (b) The **past-corporate audience reads 7 while the corporate TAG reads 9.** Already a
+      known recorded finding (this file's fix list, "the corporate audience reads 7 of 9,
+      correctly, but its displayed rule hides why"). The arithmetic is right; the displayed
+      rule omits the extra criterion. Rediscovering it is confirmation, not a new bug.
+      **PROVEN:** contacts list, search and filters, the contact drawer with its held-back
+      panel, the tag menu, the audience resolver, Compose's two steps with the count in the
+      Recipients tab label, the preview drawer, the "Before you send" rail, the two-stage
+      confirm, send pacing, and the delivered write-back.
+      **ALSO PROVEN, the negative half of gate-fix 1:** after a CLEAN run, leaving
+      `/marketing/compose` and returning shows **no** "Resuming campaign #N" banner. That is
+      the pass. The positive half (banner DOES appear after a quota-stopped or partly-failed
+      run) is still unproven and needs a deliberately failed send.
+      **STRUCTURALLY UNTESTABLE ON CURRENT DATA, and this is a gap in the WALK SCRIPT rather
+      than a defect:** the ">500 recipients" toast ("Send at most 500 at a time") cannot fire.
+      `MAX_RECIPIENTS = 500` (`marketingSend.js:57`) but only **434** contacts are emailable,
+      so the condition is unreachable until the list grows by 67. The all-suppressed toast
+      ("Check the held-back panel") likewise needs an audience where every member is
+      suppressed, which no current tag produces. Left open rather than ticked.
+      Original entry follows. **all 3 phases live in prod; gates real
       sends.** The
       campaign create/send flow owes a full walk BEFORE real sends: tags, resolver,
       contacts UI, extract, compliance, send pacing. Include the three gate-fix surfaces,
