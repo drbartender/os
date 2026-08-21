@@ -23,8 +23,14 @@ so tick items off as you confirm them rather than assuming the list is current.
 Whenever you edit this block, re-state that sha, because the next session's staleness check
 is a diff against it. The previous line named `c0dcd5b7`, pushed 2026-08-20 at 10:47.
 
-**WHAT THE 2026-08-21 PUSH ADDED, and for once none of it was missed.** The whole cohort is
-in Tier 3b under a 2026-08-21 heading. Six of the seven items were written into Tier 6 the
+**WHAT THE 2026-08-21 PUSH ADDED. One WAS missed — see the correction below.** The whole cohort is
+in Tier 3b under a 2026-08-21 heading. **CORRECTION, added 2026-08-21 by the window that
+merged it: the cohort was SEVEN items, not six-of-seven — the stale-proposal sweep
+(`85c1fbcf`, merged 2026-08-20) is an eighth and was absent from this file and from the
+build board entirely.** It was merged while this cohort was being assembled, which is
+exactly the race the Tier-6-then-promote mechanism is meant to survive and did not. It
+owes a ROLLOUT, not a walk, and is filed in Tier 4 because the dry run gates the live run.
+Six of the seven original items were written into Tier 6 the
 evening BEFORE the push, each naming its merge sha, and moved down the moment
 `git merge-base --is-ancestor` said they were live — which is the mechanism the 8/20 cohort
 lacked when it went unrecorded for a day. The seventh, the options ladder, is the largest
@@ -1442,6 +1448,24 @@ to rot. Do that again for the next thing that sits here.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
+- [ ] **Stale-proposal sweep rollout. Gates the sweep doing anything at all
+      (shipped dark 2026-08-21, `85c1fbcf`).** The feature is LIVE IN PROD CODE and
+      inert: `RUN_STALE_PROPOSAL_SWEEP_SCHEDULER` is unset, and it requires exactly
+      `'true'`, so `RUN_SCHEDULERS=true` will not wake it. Nothing has been archived.
+      Three steps, in order, in Render:
+      (1) set `STALE_PROPOSAL_SWEEP_DRY_RUN=true` AND
+      `RUN_STALE_PROPOSAL_SWEEP_SCHEDULER=true`, wait one hourly tick, read the logged
+      candidate list — expect roughly 115 proposals plus a separate list of past-dated
+      `accepted` ones it refuses to touch;
+      (2) confirm that list looks right, because the first real run is ONE-WAY: it voids
+      about 105 invoices and hard-deletes about 28 pending scheduled messages, and
+      un-archiving restores neither;
+      (3) clear `STALE_PROPOSAL_SWEEP_DRY_RUN` and watch the backlog tick.
+      Then confirm the admin funnel moved as expected, which is a CORRECTION and not a
+      bug: Lost up about $58,190 backdated by `sent_at`, pipeline down about 115 rows and
+      about $58k, archived count up about 115. Win rate is unaffected.
+      The DDL needs no manual step: `schema.sql` self-applies the `event_passed` CHECK
+      widening at boot. Spec: `superpowers/specs/2026-08-20-stale-proposal-sweep-design.md`.
 - [ ] **Walk Test Package: verify it is NOT `is_active` in the PROD catalog. Gates the
       options-drawer ship (2026-08-14).** It is active in the dev DB, and the drawer (plus
       the already-live options panel) renders every active non-class package as a real card
