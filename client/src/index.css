@@ -20447,17 +20447,25 @@ html[data-app="admin-os"] .pay-qr-tile {
   font-family: var(--font-display); font-size: 0.6rem; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--brass); margin-bottom: 4px;
 }
-.oo-banner-body { margin: 0; font-size: 0.9rem; line-height: 1.5; color: var(--deep-brown); }
+/* CREAM, not deep-brown. This banner sits on the page's CHALKBOARD ground, not
+   on a parchment card, so the parchment ink it shipped with measured 1.13:1:
+   near-black on near-black, invisible. The drawer two inches away had it right
+   the whole time; this was the wrong ink for where the element actually lives.
+   Cream on the tinted chalkboard measures 13.02:1. */
+.oo-banner-body { margin: 0; font-size: 0.9rem; line-height: 1.5; color: var(--cream-text); }
 .oo-banner-drift {
-  margin: 6px 0 0; font-size: 0.82rem; font-style: italic; color: var(--deep-brown);
+  margin: 6px 0 0; font-size: 0.82rem; font-style: italic; color: rgba(240, 232, 214, 0.78);
 }
 .oo-banner-failed {
-  margin: 8px 0 0; font-size: 0.82rem; font-style: italic; color: var(--deep-brown);
+  margin: 8px 0 0; font-size: 0.82rem; font-style: italic; color: var(--cream-text);
 }
 .oo-banner-undo {
   margin-top: 8px; background: none; border: none; padding: 0; cursor: pointer;
   font-family: var(--font-body); font-size: 0.82rem; font-style: italic;
-  color: var(--amber); text-decoration: underline;
+  /* brass-bright (7.64:1), not amber: the teal accent reads as a link on
+     parchment but measures 3.91:1 on this dark ground, under the 4.5 floor,
+     and undo is the banner's only action. */
+  color: var(--brass-bright); text-decoration: underline;
 }
 .oo-banner-undo:disabled { opacity: 0.6; cursor: not-allowed; }
 
