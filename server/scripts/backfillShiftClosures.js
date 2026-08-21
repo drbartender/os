@@ -126,11 +126,14 @@ async function main() {
       LEFT JOIN clients c ON c.id = p.client_id
      WHERE p.status = 'completed'
        -- Exclude the TERMINAL values rather than allowlisting the live ones, and
-       -- keep this IDENTICAL to shiftClosureSweep.js. shifts.status has no CHECK
-       -- constraint, so an allowlist silently drops real rows (dev shift #16 is
-       -- 'confirmed') — and because this same filter feeds the PLAN a human
-       -- reads, the report would have said "nothing to do" while unclosed rows
-       -- remained. That is worse than not running it.
+       -- keep this IDENTICAL to shiftClosureSweep.js. An allowlist silently drops
+       -- real rows (dev shift #16 was 'confirmed') — and because this same filter
+       -- feeds the PLAN a human reads, the report would have said "nothing to do"
+       -- while unclosed rows remained. That is worse than not running it.
+       -- Corrected 2026-08-20: this used to say shifts.status has no CHECK
+       -- constraint. It does. What is true is that the constraint had failed to
+       -- install on dev for as long as those out-of-range rows existed, silently,
+       -- which is why shiftClosureSweep.js's header now argues from that instead.
        AND s.status NOT IN ('completed', 'cancelled', 'closed')
      ORDER BY s.id
   `);

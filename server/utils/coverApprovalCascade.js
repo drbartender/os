@@ -7,7 +7,7 @@
  *      the normal staffing dashboard).
  *   2. POST /api/admin/cover-swaps/:swapToken (one-click admin email link).
  *
- * Both run the same 5-step cascade inside a transaction:
+ * Both run the same 4-step cascade inside a transaction:
  *   1. Mark the original request `status='denied'`, `dropped_at=NOW()`,
  *      `drop_reason='covered_by_request:<newId>'`, `cover_requested_at=NULL`.
  *   2. Suppress remaining `cover_broadcast` scheduled_messages for the shift
@@ -16,12 +16,22 @@
  *      (`scheduleStaffShiftMessages` is idempotent).
  *   4. If the proposal has a finalized drink plan, insert a BEO acknowledge-
  *      nudge for the new staffer at `MAX(eventStartUtc-3d, NOW()+5min)`.
- *   5. Reset shifts.status — flipped back to 'open' only when no approved,
- *      undropped staffer remains; otherwise the shift keeps its current status.
- *      Callers can re-check via the existing assignment count helpers.
- *      (Said 'staffed' until 2026-08-14, a value shifts_status_check does not
- *      permit and nothing has ever written; the column is open | filled |
- *      completed | cancelled.)
+ *
+ * shifts.status is DELIBERATELY UNTOUCHED, and there is no step 5. A cover swap
+ * denies one approved request and approves another in the same breath, so the
+ * count of approved, undropped staffers is unchanged and there is nothing for a
+ * status change to reflect. Reopening the shift here would advertise a slot that
+ * is filled.
+ *
+ * This corrects TWO earlier versions of this comment, both wrong. The first said
+ * the shift "remains 'staffed'" — a value shifts_status_check does not permit
+ * and nothing has ever written (the column is open | filled | completed |
+ * cancelled). The 2026-08-14 replacement was worse: it described a conditional
+ * write back to 'open', which is a stronger claim and equally false. There is no
+ * `UPDATE shifts SET status` anywhere in this module and neither caller wraps
+ * one around it; `maybeReopenShift` lives in staffShiftActions.js:155 and is
+ * reached only from the DROP path, which is the case where the count really does
+ * fall to zero.
  *
  * Mid-cascade failure ROLLS BACK: the original stays active, broadcast rows
  * stay pending so another teammate can still claim. Caller decides whether to

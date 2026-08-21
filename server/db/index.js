@@ -213,16 +213,26 @@ const CRITICAL_INDEXES = [
 // a NARROWED definition would drop. Adding a new value to a constraint does not
 // require touching this manifest; REMOVING one from schema.sql while it stays
 // here is meant to fail loudly.
+//
+// Every entry names its TABLE as well as its constraint. Constraint names are
+// unique per TABLE, not per schema, so two tables in `public` may legitimately
+// carry the same name; keying the catalog lookup on the name alone let whichever
+// row came back last win, and a same-named constraint on an unrelated table
+// could satisfy the contract for a real one. No such pair exists today (checked
+// against dev, 2026-08-20: zero duplicate constraint names in public), so this
+// is exactness, not a live fix -- but the guard exists to be trusted when it is
+// green, and a lookup that can silently answer about the wrong table is not.
 const CONSTRAINT_CONTRACT = [
-  { constraint: 'scheduled_messages_status_check',
+  { table: 'scheduled_messages', constraint: 'scheduled_messages_status_check',
     mustContain: ['processing', 'dead_letter', 'suppressed_by_sibling'] },
-  { constraint: 'scheduled_messages_channel_check', mustContain: ['push'] },
+  { table: 'scheduled_messages', constraint: 'scheduled_messages_channel_check',
+    mustContain: ['push'] },
   // 'event_passed' has a live writer (staleProposalSweep.js). A narrowed
   // constraint would raise 23514 on every swept row, so it must be flagged.
   // NOTE this manifest is alert-don't-wedge (Sentry + console, the boot
   // continues); the sweep's own rethrow is what turns the 23514 into a 'failed'
   // scheduler heartbeat rather than a silent green.
-  { constraint: 'proposals_archive_reason_check',
+  { table: 'proposals', constraint: 'proposals_archive_reason_check',
     mustContain: ['option_not_chosen', 'event_passed'] },
   // Same BARE DROP-then-ADD shape as archive_reason, and schema.sql calls it the
   // worst shape in the file for good reason: the two statements are separate
@@ -232,12 +242,40 @@ const CONSTRAINT_CONTRACT = [
   // the earlier site. 'suspended' has no live writer today (admin/users.js
   // validStatuses excludes it and the route throws first), so it is NOT asserted
   // here; the values that ARE written are.
-  { constraint: 'users_onboarding_status_check',
+  { table: 'users', constraint: 'users_onboarding_status_check',
     mustContain: ['in_progress', 'hired', 'deactivated'] },
   // Not a duplicate-definition case, but the same failure mode: its DO-block ADD
   // has failed outright on a populated DB (three pre-existing 'confirmed' rows on
   // dev) and left the table with NO status constraint at all, silently, forever.
-  { constraint: 'shifts_status_check', mustContain: ['open', 'completed', 'cancelled'] },
+  { table: 'shifts', constraint: 'shifts_status_check',
+    mustContain: ['open', 'completed', 'cancelled'] },
+  // AUTH, and the omission the 2026-08-14 sweep named by name. It is the worst
+  // instance of the bare DROP-then-ADD shape in the file AND a double
+  // definition: `CREATE TABLE users` carries an unnamed inline CHECK that
+  // Postgres auto-names `users_role_check` (schema.sql:16-18 says so), and
+  // schema.sql:303-305 then drops and re-adds that same name OUTSIDE a DO block.
+  // Two autocommit statements: an ADD that fails leaves users.role accepting
+  // ANY string, committed, on a table whose value decides admin/manager/staff.
+  { table: 'users', constraint: 'users_role_check',
+    mustContain: ['staff', 'admin', 'manager'] },
+  // Pricing: `applies_to` decides which add-ons an engine offers for a byob vs
+  // hosted vs class proposal. Bare DROP-then-ADD at schema.sql:2434.
+  { table: 'service_addons', constraint: 'service_addons_applies_to_check',
+    mustContain: ['byob', 'hosted', 'all', 'class'] },
+  // The client-comms ledger's terminal states. Bare DROP-then-ADD at
+  // schema.sql:4556, and the Resend webhook writes 'bounced' and 'complained':
+  // a narrowed constraint raises 23514 inside the webhook and we stop recording
+  // the two states that matter most for deliverability.
+  { table: 'message_log', constraint: 'message_log_status_check',
+    mustContain: ['sent', 'failed', 'bounced', 'complained'] },
+  //
+  // DELIBERATELY NOT HERE: email_sends_recipient_check (schema.sql:1673, the
+  // lead_id/client_id XOR). It is the same bare DROP-then-ADD shape and its
+  // absence IS a real hazard, but it enumerates no values, so `mustContain` has
+  // nothing to hold. Covering it needs a presence-only entry kind, which is a
+  // change to what this manifest MEANS rather than another row in it. Recorded
+  // in the backlog rather than bolted on as an empty array, because an entry
+  // whose mustContain is [] asserts nothing and reads exactly like one that does.
 ];
 
 // Returns the names of CRITICAL_INDEXES absent from the DB. Exported for unit
@@ -263,25 +301,40 @@ async function findViolatedConstraintContracts(db = pool) {
   // is matched as the quoted literal. That holds for varchar columns too, where
   // the cast reads ::character varying but the quoted literal is unchanged.
   const { rows } = await db.query(
-    `SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+    `SELECT t.relname AS tbl, c.conname, pg_get_constraintdef(c.oid) AS def
        FROM pg_constraint c
        JOIN pg_class t ON t.oid = c.conrelid
        JOIN pg_namespace n ON n.oid = t.relnamespace
       WHERE n.nspname = 'public' AND c.conname = ANY($1)`,
     [CONSTRAINT_CONTRACT.map((c) => c.constraint)]
   );
-  const defByName = new Map(rows.map((r) => [r.conname, r.def]));
+  // Keyed on TABLE.constraint, not the bare name: see the manifest header. A
+  // name that exists only on some other table now misses this lookup and is
+  // reported ABSENT, which is the honest answer, rather than quietly satisfying
+  // the contract with an unrelated table's definition.
+  const defByKey = new Map(rows.map((r) => [`${r.tbl}.${r.conname}`, r.def]));
 
   const violations = [];
-  for (const { constraint, mustContain } of CONSTRAINT_CONTRACT) {
-    const def = defByName.get(constraint);
+  for (const { table, constraint, mustContain } of CONSTRAINT_CONTRACT) {
+    const def = defByKey.get(`${table}.${constraint}`);
     if (!def) {
-      violations.push(`${constraint} is ABSENT — the column accepts anything`);
+      violations.push(`${table}.${constraint} is ABSENT — the column accepts anything`);
       continue;
     }
+    // Matched as the QUOTED literal, which is what makes this safe against the
+    // shape it looks unsafe against: 'open' is NOT a substring of 'reopen' once
+    // both quotes are required, and the same holds for prefixes and suffixes
+    // ('pending' vs 'pending_review', 'paid' vs 'unpaid'). Verified rather than
+    // assumed, 2026-08-20; the backlog carried the opposite claim.
+    //
+    // The residual hole is a MULTI-ARM check whose arms are about different
+    // columns, where the literal could be found in the wrong arm. Every
+    // contracted constraint here is single-column today (archive_reason's two
+    // arms are both about archive_reason), so it is latent; closing it properly
+    // needs the column name and a scoped extractor, not a tighter substring.
     const missing = mustContain.filter((v) => !def.includes(`'${v}'`));
     if (missing.length > 0) {
-      violations.push(`${constraint} is NARROWED — missing: ${missing.join(', ')}`);
+      violations.push(`${table}.${constraint} is NARROWED — missing: ${missing.join(', ')}`);
     }
   }
   return violations;

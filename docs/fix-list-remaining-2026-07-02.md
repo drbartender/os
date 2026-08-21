@@ -5174,7 +5174,16 @@ bartender. The "payroll has nothing to pay from" line above was mine and oversta
    for work already settled outside the system. Backfilling the record and backfilling a pay
    period are safe individually and dangerous together.
 
-## MINE, from this session — a comment I made WORSE, not better
+## ~~MINE, from this session — a comment I made WORSE, not better~~ FIXED 2026-08-20, lane `constraint-contract-widen`
+
+Corrected as prescribed, and the correction says so out loud: the header now records that TWO
+earlier versions were wrong (the original 'staffed', a value `shifts_status_check` does not
+permit, and the 2026-08-14 replacement's asserted conditional write), names where the real
+reopen lives (`staffShiftActions.js:155`, drop path only), and gives the reason the status is
+deliberately untouched — a cover swap denies one approved request and approves another in the
+same breath, so the approved-undropped count never moves and reopening would advertise a filled
+slot. The cascade is a 4-step cascade now; `grep` confirms no other file referenced "step 5".
+
 
 `server/utils/coverApprovalCascade.js:19-23`. The header lists a 5-step cascade whose step 5 is
 "Reset shifts.status — flipped back to 'open' only when no approved, undropped staffer
@@ -5185,7 +5194,17 @@ VALUE; my replacement is a stronger and still-false claim about BEHAVIOUR — an
 conditional write that does not exist. Correct fix: say a cover swap leaves the approved count
 unchanged so the status is deliberately untouched, and drop "step 5" from the numbered list.
 
-## Stale comments asserting `shifts.status` has NO CHECK constraint (three sites)
+## ~~Stale comments asserting `shifts.status` has NO CHECK constraint (three sites)~~ FIXED 2026-08-20, lane `constraint-contract-widen`
+
+All three corrected. The conclusion (exclude terminal values, do not allowlist) survived and is
+now argued from something true: `shifts_status_check` permits {open, filled, completed,
+cancelled} on BOTH databases, but it has been ABSENT before — silently, on dev, for as long as
+three pre-existing `'confirmed'` rows existed, because its DO-block ADD failed every boot and
+the block swallowed the error. That episode is why the constraint is in `CONSTRAINT_CONTRACT`
+at all, and it is the world the filter has to stay correct in. Also recorded at the site:
+`'closed'` is not in the constraint, so that arm is inert while the constraint holds, and it
+stays because `calendar.js` reads it identically to `'cancelled'`.
+
 
 `shiftClosureSweep.js:48-50` and `:101-106`, and `backfillShiftClosures.js:129-131`, all state
 the column "has NO CHECK constraint ... so the value space is open-ended". False on **both**
@@ -5196,7 +5215,68 @@ argued from a premise that is false, and these comments are explicitly written t
 forward. They are now also contradicted by two sibling files in the same batch
 (`db/index.js:234` asserts the constraint, `coverApprovalCascade.js:22` references it).
 
-## `CONSTRAINT_CONTRACT` covers 2 of the 20 constraints that have the shape it exists for
+## ~~`CONSTRAINT_CONTRACT` covers 2 of the 20 constraints that have the shape it exists for~~ MOSTLY FIXED 2026-08-20, lane `constraint-contract-widen`
+
+**The count in this heading was already stale when I got to it: the manifest held FIVE, not two**
+(the two named here plus `scheduled_messages_status_check`, `scheduled_messages_channel_check`
+and `shifts_status_check`). It now holds **eight**. All three of the omissions this entry named
+are in, with the values verified against the live databases rather than read off schema.sql:
+
+- **`users_role_check`** — the AUTH one, and the file's worst shape: a DOUBLE definition whose
+  second site is BARE. `CREATE TABLE users` carries an unnamed inline CHECK that Postgres
+  auto-names `users_role_check`, and `schema.sql:303-305` then drops and re-adds that same name
+  outside a DO block. Two autocommit statements, so a failed ADD commits a `users.role` column
+  that accepts any string at all.
+- **`service_addons_applies_to_check`** — decides which add-ons an engine offers per package type.
+- **`message_log_status_check`** — the Resend webhook writes `bounced` and `complained`; a
+  narrowed constraint 23514s inside the webhook and we stop recording the two states that matter
+  most for deliverability.
+
+**Verified against PROD, not just dev, before adding them** (the standing lesson: when a guard
+rests on a claim about live data, one pass has to read the live data). All eight constraints
+exist on prod with the asserted values, so these additions cannot start a boot alert there.
+
+**One live discrepancy found by that check, and it is BENIGN — recorded so nobody re-raises it:**
+prod's `proposals_archive_reason_check` is missing `'event_passed'`, while dev has it. That is
+not drift. `'event_passed'` was added to BOTH schema.sql sites by the unpushed
+`stale-proposal-sweep` lane (`85c1fbcf`); prod matches `origin/main` exactly. The boot re-applies
+schema.sql, so the value arrives with the push. The ordering is safe by default anyway, because
+`RUN_STALE_PROPOSAL_SWEEP_SCHEDULER` is opt-in and dark.
+
+**Defect 1 (catalog not scoped by table): FIXED.** Every manifest entry now names its table and
+the lookup is keyed on `table.constraint`. A name found only on some other table is now reported
+ABSENT, which is the honest answer, instead of quietly satisfying the contract with an unrelated
+table's definition. Violation messages are table-qualified too. Latent as this entry said (dev
+has zero duplicate constraint names in `public`, checked), but a guard that can answer about the
+wrong table is not one you can trust when it is green.
+
+**Defect 2 (substring match): RETRACTED — the claim is false, and I checked instead of arguing.**
+The entry said "a required value that is a substring of another permitted value would
+false-PASS". It would not: the match requires BOTH quotes, so `'open'` is not found inside
+`'reopen'`, `'pending'` is not found inside `'pending_review'`, and `'paid'` is not found inside
+`'unpaid'`. Run against all three shapes plus the varchar render; only the quoted forms match. A
+test now pins it with prefix, suffix and interior decoys.
+**The real hole is one level over, and this entry never named it:** a MULTI-ARM check whose arms
+are about different columns, where the literal is found in the wrong arm — `CHECK ((status = ANY
+(ARRAY['a','b'])) OR (kind = 'paid'))` satisfies `mustContain: ['paid']` for status. Every
+contracted constraint is single-column today (`archive_reason`'s two arms are both about
+`archive_reason`), so it is latent. Closing it needs the column name and a scoped extractor, not
+a tighter substring, so it is left open rather than half-done.
+
+**Deliberately NOT added: `email_sends_recipient_check`** (the lead_id/client_id XOR,
+`schema.sql:1673`). Same bare DROP-then-ADD shape and its absence is a real hazard, but it
+enumerates no values, so `mustContain` has nothing to hold. Covering it needs a presence-only
+entry kind, which changes what this manifest MEANS rather than adding a row to it. An entry with
+`mustContain: []` would assert nothing while reading exactly like one that does, so it was not
+bolted on. **Open: decide whether the manifest grows a presence-only kind.**
+
+**Also open, recorded not done: `server/db/index.js` is not sensitive-listed while
+`server/db/schema.sql` is.** It re-executes schema.sql on every boot and decides which DDL
+failures are swallowed, so a change there can silently disarm every guard in this section. That
+is the same "sensitivity follows the code" shape this file documents six times now. Not added in
+this lane on proportionality: unlike the `smsInbound.js` listing made the same day, these guards
+are alert-don't-wedge and decide nothing at request time. Dallas's call.
+
 
 `server/db/index.js:216-235`. The manifest's own rationale is that a BARE (non-`DO`)
 `DROP CONSTRAINT` + `ADD CONSTRAINT` runs as two autocommit statements, so a failed ADD commits

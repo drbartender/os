@@ -52,14 +52,32 @@
 //
 // ─── WHAT IS AND IS NOT A CANDIDATE ─────────────────────────────────────────
 //
-// EXCLUDE the terminal values; do not allowlist the live ones. `shifts.status`
-// has NO CHECK constraint (schema.sql: `status VARCHAR(20) DEFAULT 'open'`), so
-// the value space is open-ended and real rows already sit outside {open,filled}
-// — dev shift #16 carries 'confirmed' on a completed proposal, meets both
-// questions that actually matter, and an allowlist skipped it on every hourly
-// tick forever. Worse, backfillShiftClosures.js repeats this filter to build the
-// PLAN a human reads, so an allowlist made that report say "nothing to do" while
-// unclosed rows remained. A report that lies is worse than no report.
+// EXCLUDE the terminal values; do not allowlist the live ones.
+//
+// CORRECTED 2026-08-20. This block used to argue from "`shifts.status` has NO
+// CHECK constraint, so the value space is open-ended". That premise is FALSE on
+// both databases: `shifts_status_check` permits {open, filled, completed,
+// cancelled} and prod has carried it for a long time. The CONCLUSION survives
+// the correction, on better grounds:
+//
+//   - That constraint has been ABSENT before, silently. Its DO-block ADD failed
+//     forever on dev against three pre-existing rows carrying 'confirmed', a
+//     value nothing writes and no definition permits, and the block swallowed
+//     the error. Dev shift #16 was one of those rows: on a completed proposal,
+//     meeting both questions that actually matter, and skipped by an allowlist
+//     on every hourly tick. That episode is why `shifts_status_check` is now in
+//     `CONSTRAINT_CONTRACT` (server/db/index.js) — so this filter must stay
+//     correct in the world where the constraint is missing, because that world
+//     has happened.
+//   - The two lists fail in opposite directions. A missed entry in an allowlist
+//     drops real rows silently; a stale entry in an exclude list is inert. And
+//     backfillShiftClosures.js repeats this filter to build the PLAN a human
+//     reads, so an allowlist made that report say "nothing to do" while unclosed
+//     rows remained. A report that lies is worse than no report.
+//
+// 'closed' is not in the constraint today and so is unreachable while it holds;
+// it stays in the exclude list because calendar.js reads it identically to
+// 'cancelled', and an inert arm costs nothing.
 //
 // The excluded set is every value a downstream reader treats as TERMINAL:
 //   'completed'  already closed; excluding it makes a repeat pass touch no row,
@@ -106,11 +124,13 @@ async function sweepFinishedShiftClosures(db = pool) {
         AND p.status = 'completed'
         -- Exclude the TERMINAL values, do not allowlist the live ones. An
         -- earlier cut used IN ('open','filled') and silently skipped every
-        -- other value forever: shifts.status has no CHECK constraint
-        -- (schema.sql: status VARCHAR(20) DEFAULT 'open'), so the value space is
-        -- open-ended and rows already sit outside that pair — shift #16 on dev
-        -- carries 'confirmed' on a completed proposal and met both questions
-        -- that actually matter while being skipped on every hourly tick.
+        -- other value forever: shift #16 on dev carried 'confirmed' on a
+        -- completed proposal and met both questions that actually matter while
+        -- being skipped on every hourly tick. shifts_status_check DOES exist
+        -- (corrected 2026-08-20 — this comment used to say it did not), but it
+        -- had failed to install on dev for exactly as long as those rows
+        -- existed, which is the world this filter has to stay correct in. See
+        -- WHAT IS AND IS NOT A CANDIDATE above.
         -- 'completed' is already closed; 'cancelled' AND 'closed' both mean the
         -- EVENT was cancelled (calendar.js:432 reads them identically) and must
         -- never be resurrected. See WHAT IS AND IS NOT A CANDIDATE above.

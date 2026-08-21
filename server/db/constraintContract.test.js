@@ -27,7 +27,8 @@ after(async () => { await pool.end(); });
 // ── (a) the runtime guard ───────────────────────────────────────────────────
 
 const defFor = (values) => `CHECK ((status = ANY (ARRAY[${values.map((v) => `'${v}'::text`).join(', ')}])))`;
-const allPresent = () => CONSTRAINT_CONTRACT.map(({ constraint, mustContain }) => ({
+const allPresent = () => CONSTRAINT_CONTRACT.map(({ table, constraint, mustContain }) => ({
+  tbl: table,
   conname: constraint,
   def: defFor(mustContain),
 }));
@@ -36,6 +37,10 @@ test('manifest is never empty — an empty contract would be a vacuous guard', (
   assert.ok(CONSTRAINT_CONTRACT.length >= 1);
   for (const entry of CONSTRAINT_CONTRACT) {
     assert.ok(entry.constraint, 'every entry names a constraint');
+    // The table is load-bearing, not decoration: the lookup is keyed on it, so an
+    // entry without one can never match and would report a healthy constraint as
+    // ABSENT on every boot.
+    assert.ok(entry.table, `${entry.constraint} must name its table`);
     assert.ok(Array.isArray(entry.mustContain) && entry.mustContain.length >= 1,
       `${entry.constraint} must require at least one value, or it asserts nothing`);
   }
@@ -51,7 +56,7 @@ test('a constraint missing entirely → reported as ABSENT, not silently skipped
   const db = { query: async () => ({ rows: allPresent().filter((r) => r.conname !== absent.constraint) }) };
   const violations = await findViolatedConstraintContracts(db);
   assert.equal(violations.length, 1);
-  assert.match(violations[0], new RegExp(`^${absent.constraint} is ABSENT`));
+  assert.match(violations[0], new RegExp(`^${absent.table}\\.${absent.constraint} is ABSENT`));
   assert.ok(rest.length === 0 || !violations[0].includes(rest[0].constraint));
 });
 
@@ -63,7 +68,7 @@ test('a constraint NARROWED by one value → reported, naming the missing value'
   const target = CONSTRAINT_CONTRACT.find((c) => c.mustContain.length > 1) || CONSTRAINT_CONTRACT[0];
   const dropped = target.mustContain[0];
   const rows = allPresent().map((r) => (r.conname === target.constraint
-    ? { conname: r.conname, def: defFor(target.mustContain.filter((v) => v !== dropped)) }
+    ? { tbl: r.tbl, conname: r.conname, def: defFor(target.mustContain.filter((v) => v !== dropped)) }
     : r));
   const violations = await findViolatedConstraintContracts({ query: async () => ({ rows }) });
   assert.equal(violations.length, 1);
@@ -75,7 +80,8 @@ test('varchar columns render ::character varying and still match', async () => {
   // pg_get_constraintdef casts to the column type; shifts.status is VARCHAR, so
   // its def reads 'open'::character varying. The quoted literal is unchanged,
   // which is why the check matches on that and not on the cast.
-  const rows = CONSTRAINT_CONTRACT.map(({ constraint, mustContain }) => ({
+  const rows = CONSTRAINT_CONTRACT.map(({ table, constraint, mustContain }) => ({
+    tbl: table,
     conname: constraint,
     def: `CHECK (((status)::text = ANY ((ARRAY[${mustContain.map((v) => `'${v}'::character varying`).join(', ')}])::text[])))`,
   }));
@@ -91,6 +97,60 @@ test('scopes the catalog lookup to the public schema', async () => {
 test('propagates a catalog error (initDb wraps it into an alert, never a boot crash)', async () => {
   const db = { query: async () => { throw new Error('ECONNREFUSED'); } };
   await assert.rejects(() => findViolatedConstraintContracts(db), /ECONNREFUSED/);
+});
+
+test('a matching name on the WRONG table does not satisfy the contract', async () => {
+  // Constraint names are unique per TABLE, not per schema. Keyed on the bare
+  // name, a same-named constraint on an unrelated table could answer for a real
+  // one -- and with new Map(rows.map(...)) it would be whichever row came back
+  // last, so the answer was not even deterministic. Reporting ABSENT is the
+  // honest outcome: we did not find the constraint we contracted for.
+  const [target, ...rest] = CONSTRAINT_CONTRACT;
+  const rows = allPresent().map((r) => (r.conname === target.constraint
+    ? { ...r, tbl: 'some_other_table' } : r));
+  const violations = await findViolatedConstraintContracts({ query: async () => ({ rows }) });
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], new RegExp(`^${target.table}\\.${target.constraint} is ABSENT`));
+  assert.ok(rest.length === 0 || !violations[0].includes(rest[0].constraint));
+});
+
+test('the violation message names the TABLE, because the name alone is ambiguous', async () => {
+  const [target] = CONSTRAINT_CONTRACT;
+  const rows = allPresent().filter((r) => r.conname !== target.constraint);
+  const [v] = await findViolatedConstraintContracts({ query: async () => ({ rows }) });
+  assert.ok(v.startsWith(`${target.table}.`), `expected a table-qualified message, got: ${v}`);
+});
+
+test('the quoted-literal match is NOT fooled by a longer value containing it', async () => {
+  // The backlog recorded the opposite: "a required value that is a substring of
+  // another permitted value would false-PASS". It would not. Requiring BOTH
+  // quotes is what prevents it, and this pins that rather than leaving it as an
+  // argument. Each pair below is (contracted value, a longer value that contains
+  // it as a prefix, suffix, or interior run).
+  const [target] = CONSTRAINT_CONTRACT;
+  const wanted = target.mustContain[0];
+  for (const decoy of [`re${wanted}`, `${wanted}_review`, `x${wanted}y`]) {
+    const rows = allPresent().map((r) => (r.conname === target.constraint
+      ? { ...r, def: defFor([decoy]) } : r));
+    const violations = await findViolatedConstraintContracts({ query: async () => ({ rows }) });
+    assert.equal(violations.length, 1, `a def of only '${decoy}' must not satisfy '${wanted}'`);
+    assert.match(violations[0], /is NARROWED/);
+    assert.match(violations[0], new RegExp(wanted));
+  }
+});
+
+test('AUTH is contracted: users_role_check names all three roles', () => {
+  // Called out by name in the 2026-08-14 sweep and still uncovered on 2026-08-20.
+  // It is the file's worst shape: a double definition (the inline CHECK on
+  // CREATE TABLE auto-names to users_role_check) whose second site is a BARE
+  // drop-then-add, so a failed ADD commits a users.role column that accepts any
+  // string at all.
+  const entry = CONSTRAINT_CONTRACT.find((c) => c.constraint === 'users_role_check');
+  assert.ok(entry, 'users_role_check must be contracted');
+  assert.equal(entry.table, 'users');
+  for (const role of ['staff', 'admin', 'manager']) {
+    assert.ok(entry.mustContain.includes(role), `${role} must be asserted`);
+  }
 });
 
 test('the live dev DB satisfies the contract', async () => {
