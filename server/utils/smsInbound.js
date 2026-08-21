@@ -390,7 +390,14 @@ async function applyOptIn(sender) {
  * overclaimed. It is true when the end is KNOWN. When `end_time` is NULL the
  * end instant is ASSUMED (rule 2: start + booked length + overrun grace), so a
  * 9:00 PM start with a 4h booking is "not finished" until 05:00 the NEXT
- * morning. 11 of the 78 prod shifts have exactly that shape.
+ * morning.
+ *
+ * Do not re-quote a prod count here. The first version of this comment said
+ * "11 of the 78 prod shifts have exactly that shape", lifted from a 2026-08-16
+ * fix-list entry and never re-derived; by 2026-08-20 prod was 7 NULL-end of 72,
+ * only 3 with an evening start, and NONE of those on a live approved roster.
+ * The SHAPE is what matters, and it is reachable the moment anyone is approved
+ * onto an evening shift with no end_time.
  *
  * That leaves a real window, 00:00 to about 08:00 Chicago: a bartender who
  * finished at 01:00 and texts CANT at 02:00 meaning TOMORROW had LAST NIGHT's
@@ -401,7 +408,22 @@ async function applyOptIn(sender) {
  * shift dated before today NEVER outranks one dated today or later. It is a
  * tiebreak, not a filter — the candidate SET is still decided entirely by the
  * end instant, so nothing becomes invisible and a genuinely-overnight shift is
- * still returned when it is the only one. Then the end instant, not
+ * still returned when it is the only one.
+ *
+ * THE ACCEPTED COST, named so the next reader does not re-derive it as a bug:
+ * a staffer still ON an overnight shift at 00:30 who ALSO holds a later shift
+ * now drops the LATER one when they text CANT, where before they dropped the
+ * one they were standing in. No ordering resolves both readings of a mid-shift
+ * CANT. This side is chosen because the other destroys payroll for work already
+ * performed, and it self-corrects: the reply names the date, and alertStaffCant
+ * tells an admin.
+ *
+ * THE READ-SIDE TWIN HAS NOT MOVED: staffPortal.js's next-shift card still
+ * orders by the end instant alone, so inside this same window the card and this
+ * function can name different shifts. Open in the fix list, deliberately not
+ * changed here.
+ *
+ * Then the end instant, not
  * `s.start_time`: start_time is free text, so the old ASC sort compared
  * '7:00 PM' against '8:00 AM' as strings and put the evening shift first on a
  * two-shift day. `s.id` breaks exact ties so the pick is deterministic.
@@ -416,6 +438,14 @@ async function applyOptIn(sender) {
  * @returns {Promise<Object|null>} the shift_requests+shifts row, or null
  */
 async function findNearestApprovedShift(staffUserId, todayYmd = chicagoTodayYmd()) {
+  // Shape-guarded, because this parameter is on an EXPORTED function and
+  // $2::date accepts far more than YYYY-MM-DD: 'today' and 'yesterday' resolve
+  // in the SESSION zone, which is GMT, reintroducing the exact rollover this
+  // family exists to kill; a Date object serializes to an ISO timestamp and
+  // resolves the same wrong way; and under DateStyle ISO,MDY '01-02-2026'
+  // parses silently as January 2. Anything that is not the one shape falls back
+  // to the correct value rather than throwing on a live SMS webhook.
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(todayYmd) ? todayYmd : chicagoTodayYmd();
   const r = await pool.query(
     `SELECT sr.id AS request_id, s.id AS shift_id, s.event_date, s.start_time,
             s.status AS shift_status, s.client_name, s.event_type, s.event_type_custom,
@@ -431,7 +461,7 @@ async function findNearestApprovedShift(staffUserId, todayYmd = chicagoTodayYmd(
      ORDER BY (s.event_date < $2::date) ASC,
               ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
      LIMIT 1`,
-    [staffUserId, todayYmd]
+    [staffUserId, day]
   );
   return r.rows[0] || null;
 }
@@ -447,8 +477,13 @@ async function findNearestApprovedShift(staffUserId, todayYmd = chicagoTodayYmd(
  */
 async function resolveShiftResponder(candidateIds) {
   const withShift = [];
+  // ONE business day for the whole resolution, hoisted rather than recomputed
+  // per candidate: a loop straddling midnight would otherwise judge two
+  // candidates against two different "todays" and could return an ambiguity
+  // neither day alone produces.
+  const today = chicagoTodayYmd();
   for (const uid of candidateIds || []) {
-    const shift = await findNearestApprovedShift(uid);
+    const shift = await findNearestApprovedShift(uid, today);
     if (shift) withShift.push(uid);
   }
   if (withShift.length === 1) return { status: 'ok', staffUserId: withShift[0] };

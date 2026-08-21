@@ -5,6 +5,10 @@ const http = require('node:http');
 const express = require('express');
 
 const router = require('./voice');
+// The SLOTS table itself, so a route test can ask the emission site the same
+// question the migration path will (see 'the DAY Gather follows the GREETING
+// TABLE' below). Same module instance the router holds.
+const twiml = require('../utils/voicemailTwiml');
 
 // --- test harness: real express+http server, global urlencoded parser (Twilio
 // posts application/x-www-form-urlencoded, same as the app relies on for
@@ -457,8 +461,14 @@ test('/inbound/missed with escalation OFF still LISTENS, because the greeting st
   // var can edit an mp3, so the Gather now follows the GREETING, not the switch.
   assert.match(res.text, /<Gather[^>]*action="[^"]*\/api\/voice\/escalate\?line=zul"/);
   assert.match(res.text, /<Gather[^>]*>\s*<Play>[^<]*zul-greeting-day\.mp3<\/Play>\s*<\/Gather>/);
-  // Never ADD an offer for a feature that is off: the APPENDED prompt is still
-  // gated on the switch even though the Gather no longer is.
+  // Never ADD an offer for a feature that is off. NOTE this assertion does not
+  // by itself PROVE that: VM_GREETING_URL is unset here, so needsAppendedOffer
+  // is already false on its own and this passes either way. The guard is pinned
+  // by the NEXT test down, which sets an https override so needsAppendedOffer is
+  // true and only the `escalating &&` keeps the prompt silent. Kept here as a
+  // regression floor, not as the proof. (Corrected 2026-08-20 by review: an
+  // assertion that passes for a reason other than the one it names is the exact
+  // shape this file's own lessons warn about.)
   assert.doesNotMatch(res.text, /get someone else on the line/i);
   assert.match(res.text, /<\/Gather><Record/, 'silence still falls through to the beep');
   // And the spend guarantee is untouched: voiceEscalate.js tests the switch
@@ -1194,6 +1204,44 @@ test('escalation OFF: NIGHT emits no Gather, DAY still listens', async () => {
     // Either way the switch adds nothing spoken.
     assert.doesNotMatch(res.text, /get someone else on the line/i);
   }
+});
+
+test('the DAY Gather follows the GREETING TABLE, not just the switch', async () => {
+  // THE MIGRATION PATH, pinned at the emission site for the first time.
+  // Everything else here passes with `dayGreetingOffersPress1` deleted from
+  // voice.js's condition entirely (verified: that mutant leaves this file
+  // 75/75), because both lines ship defaultSaysOffer:true and the disjunction is
+  // degenerate on today's data. So no fixture could tell the two conditions
+  // apart, and the promise made in .env.example and in voicemailTwiml.test.js --
+  // "swap the bundled recording, flip the flag, and voice.js stops emitting the
+  // Gather with no code change" -- was only ever verified one layer down.
+  //
+  // Flipping the flag is what a real no-offer recording would do, so this asks
+  // the route the question the migration will actually ask it.
+  process.env.VM_ESCALATION_ENABLED = 'false';
+  const slot = twiml.SLOTS.greeting_day.zul;
+  const saved = slot.defaultSaysOffer;
+  try {
+    slot.defaultSaysOffer = false;
+    const res = await post('/api/voice/inbound/missed?line=zul', {
+      DialCallStatus: 'no-answer', CallSid: cs('CAtable1'), From: '+13125550147',
+    });
+    await settle();
+    assert.doesNotMatch(res.text, /<Gather/,
+      'a greeting that does not offer press 1 must not be wrapped in a Gather');
+    assert.match(res.text, /<Play>[^<]*zul-greeting-day\.mp3<\/Play><Record/,
+      'and the greeting still plays, straight into the Record');
+  } finally {
+    slot.defaultSaysOffer = saved;
+  }
+
+  // Same call, flag restored: the Gather is back. Without this half the test
+  // would pass against a route that never emits a Gather at all.
+  const back = await post('/api/voice/inbound/missed?line=zul', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAtable2'), From: '+13125550147',
+  });
+  await settle();
+  assert.match(back.text, /<Gather/, 'the offer is in the recording again, so listen again');
 });
 
 test('/inbound/missed NIGHT document is pinned byte-for-byte', async () => {

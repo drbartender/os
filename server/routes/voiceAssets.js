@@ -29,8 +29,10 @@ const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
 const ASSETS = Object.freeze({
-  // Zul's line, recorded 2026-07-24. The default target of VM_GREETING_URL, so
-  // this key is load-bearing: renaming it silently breaks her greeting.
+  // Zul's line, recorded 2026-07-24. NO LONGER any slot's default (corrected
+  // 2026-08-20): her greeting_day default became audio/zul-greeting-day.mp3 on
+  // 2026-08-19. The key stays load-bearing anyway, because anything still
+  // pointing VM_GREETING_URL at this exact URL keeps fetching it.
   'greeting.mp3': 'voicemail-greeting.mp3',
   // Dallas's line, recorded 2026-08-19 (spec 2026-08-19). 8kHz mono, the rate a
   // phone line actually carries.
@@ -85,8 +87,10 @@ const assetLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
 });
 
-// Kept at its original path: VM_GREETING_URL defaults to this exact URL, and
-// production has been fetching it since 2026-07-24.
+// Kept at its original path. It is no longer what VM_GREETING_URL defaults to
+// (corrected 2026-08-20 — that became the 2026-08-19 re-recording), but the URL
+// has been served since 2026-07-24 and anything still referencing it directly
+// must keep resolving.
 router.get('/greeting.mp3', assetLimiter, (req, res) => serveAsset(req, res, 'greeting.mp3'));
 
 router.get('/audio/:name', assetLimiter, (req, res) => serveAsset(req, res, req.params.name));

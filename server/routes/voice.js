@@ -495,9 +495,19 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
   // billed legs, and a pressed 1 lands on escalate_failed then records, exactly
   // as the quiet window and the daily cap already do. Never ADD an offer for a
   // feature that is off, hence the switch still gating the APPENDED prompt.
-  // Night emits no <Gather> at all: those greetings never mention press 1
-  // (spec 2026-08-19). A timeout falls through to the <Record> after </Gather>,
-  // so "just leave a message" needs no extra route. `line` is a fixed enum.
+  //
+  // NIGHT never gathers, switch or no switch, and carries no defaultSaysOffer to
+  // check -- the opposite doubt rule, deliberately: a night press-1 rings a
+  // sleeping phone. A night override mentioning press 1 therefore recreates the
+  // day trap undetectably, and .env.example warns where those vars are set.
+  //
+  // A timeout falls through to the <Record> after </Gather>, so "just leave a
+  // message" needs no extra route. `line` is a fixed enum. That timeout is also
+  // what this fix COSTS (adversarial review, 2026-08-20): switch off, a daytime
+  // caller who presses nothing now waits 4 silent seconds before the beep, billed
+  // per missed day call, capped only by VM_DAILY_CAP. Switch on it already
+  // existed. A pause before a beep is a pause; inviting a key nobody catches is
+  // a lie.
   const night = _deps.isNight();
   const greeting = messageVerb(night ? 'greeting_night' : 'greeting_day', line);
   const escalating = escalationEnabled();

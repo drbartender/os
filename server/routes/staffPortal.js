@@ -101,7 +101,17 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
        -- the evening shift first: a staffer with an 8am brunch and a 7pm wedding
        -- on the same day was shown the 7pm call time on the morning they were
        -- due at 8. Among shifts that have not finished, the earliest end is the
-       -- nearest one. Same ordering as findNearestApprovedShift, deliberately.
+       -- nearest one.
+       -- CORRECTED 2026-08-20: this used to claim "same ordering as
+       -- findNearestApprovedShift, deliberately". It is no longer the same.
+       -- smsInbound.js:431 gained a leading (event_date < today) term so a
+       -- past-dated overnight shift can never outrank a current one on the CANT
+       -- WRITE path. This read path did not, so between 00:00 and about 08:00
+       -- Chicago the two can name different shifts: this card can show last
+       -- night's still-unfinished shift while a CANT or CONFIRM text acts on
+       -- tonight's. Whether the card SHOULD keep showing an in-progress
+       -- overnight shift is a product call and is open in the fix list; what is
+       -- not open is that this comment must not claim a parity that is gone.
        ORDER BY ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
        LIMIT 1
     `, [userId]),

@@ -279,3 +279,24 @@ test('an overnight shift is still returned when it is the ONLY candidate', async
   assert.ok(found, 'ordering is a tiebreak; with one candidate there is nothing to break');
   assert.equal(found.shift_id, shiftId);
 });
+
+test('a malformed business day falls back instead of 22007-ing on a live webhook', async () => {
+  // The shape guard on the todayYmd seam. This parameter is on an EXPORTED
+  // function, and $2::date accepts far more than YYYY-MM-DD: 'not-a-date'
+  // raises 22007 at Bind, which on this path is a 500 out of an inbound SMS
+  // webhook; 'today' and 'yesterday' resolve in the GMT SESSION zone, which is
+  // the exact rollover this whole family exists to kill.
+  //
+  // The throw is what this pins, because it is the one case that fails loudly
+  // enough to assert on: without the guard the first call rejects.
+  const good = await findNearestApprovedShift(overnightStaffId);
+  const junk = await findNearestApprovedShift(overnightStaffId, 'not-a-date');
+  assert.ok(good, 'premise: the fixtures are live');
+  assert.equal(junk.shift_id, good.shift_id, 'junk must resolve to the same shift as the default');
+
+  // These two document the rest of the contract rather than pinning it: both
+  // are values Postgres would ACCEPT and silently misread, and with fixtures
+  // dated in the future they happen to land on the same answer either way.
+  assert.equal((await findNearestApprovedShift(overnightStaffId, 'today')).shift_id, good.shift_id);
+  assert.equal((await findNearestApprovedShift(overnightStaffId, new Date())).shift_id, good.shift_id);
+});

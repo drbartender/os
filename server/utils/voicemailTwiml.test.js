@@ -133,6 +133,11 @@ test('dayGreetingOffersPress1 reads the SLOTS flag, so a no-offer recording turn
   // would still pass. It also pins the migration path: record a greeting
   // without the sentence, flip defaultSaysOffer, and voice.js stops emitting
   // the Gather with no code change at all.
+  // MUST STAY SEQUENTIAL. Object.freeze(SLOTS) is shallow, so this write lands
+  // on shared module state and the finally is what puts it back. node --test
+  // runs top-level tests in a file in order, so the false window is invisible
+  // today; enabling concurrency for this file would make it observable to the
+  // needsAppendedOffer tests below.
   const slot = twiml.SLOTS.greeting_day.zul;
   const saved = slot.defaultSaysOffer;
   try {

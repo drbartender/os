@@ -5895,6 +5895,170 @@ the day each was written. Recorded rather than shipped because `scripts/push-gat
 sensitive-listed and a new hard-failing check belongs in a deliberate lane, not a drive-by.
 
 
+# THE REVIEW THE TWO SENSITIVE LANES WERE OWED, RUN 2026-08-20 EVENING
+
+Dallas asked whether the session's work had been properly reviewed. It had not: six of eight
+lanes were correctly a light look, but `vm-press1-honesty` (`5016dc2c`) and
+`cant-overnight-ordering` (`74aa4a5d`) touch sensitive paths and had been merged on tests and
+mutation verification alone. Five agents plus the cross-LLM pass were run against both, at his
+word. **Verdicts: 5016dc2c PASS. 74aa4a5d FAIL, on one finding, three agents independently.**
+
+`/second-opinion` came back **NO FINDINGS from both** codex and gemini (gemini on
+`gemini-pro-latest` for a spend diff). Every finding below is Claude-fleet, and every one was
+re-verified by hand before being accepted.
+
+## What it caught that the tests could not, in order of how much it stings
+
+**1. The `.env.example` correction I wrote today was ITSELF a false prescription — the THIRD in
+that same block.** FIXED. The 2026-08-19 note prescribed `VM_GREETING_URL_PRIMARY=say`; I
+retracted that correctly, and then prescribed "record a no-offer greeting, point the env var at
+it, flip `defaultSaysOffer`". Setting the env var DEFEATS the flag: both `dayGreetingOffersPress1`
+and `needsAppendedOffer` short-circuit on a playable URL and return before `defaultSaysOffer` is
+read, because an override's script is unknown. So the `<Gather>` stays — and with escalation ON
+the synthetic offer is APPENDED to the new recording, re-adding in Polly's voice the exact
+sentence it was recorded to remove. **I wrote the short-circuit myself, in the same lane.** The
+recipe that works is a code change: swap the slot's BUNDLED file and flip the flag, env unset.
+Worth sitting with: two of my own tests state the working recipe correctly, and the doc three
+files away contradicted them.
+
+**2. My "mutation-verified" claim was weaker than I stated.** FIXED. I mutated the Gather
+condition to `!night && escalating` and got 4 failures. The fleet tried the mutant I did not —
+deleting `dayGreetingOffersPress1` from the condition entirely, `listening = !night` — and
+`voice.test.js` stayed **75/75**. Both lines ship `defaultSaysOffer: true`, so the disjunction is
+degenerate on today's data and no fixture could tell the two conditions apart. The migration path
+that `.env.example` and the unit test both advertise was verified one layer down and never at the
+emission site. There is now a route test that flips the flag and asserts the Gather disappears;
+the weak mutant fails exactly it, and nothing else. **A mutant that fails proves the test can
+fail. It does not prove you chose the mutant that matters.**
+
+**3. A comment of mine claims what the test does not prove.** FIXED (reworded, not moved). At
+`voice.test.js` the assertion "never ADD an offer for a feature that is off" runs with
+`VM_GREETING_URL` unset, so `needsAppendedOffer` is already false and it passes either way. The
+guard IS covered — by the NEXT test down, which sets an override. Precisely the "assertion that
+passes for a reason other than the one named" this file already lists as a lesson.
+
+**4. My `sensitive-paths.txt` rationale made a false history claim.** FIXED. I wrote that the
+logic "moved out of the listed route and the listing did not follow". `git log -S` says
+otherwise: `findNearestApprovedShift`, `handleCant` and `sms_enabled` never lived in
+`routes/sms.js`, and `smsInbound.js` was created fresh 2026-05-21 (`720f094d`). It is the
+`paymentMethods.js` shape — never caught — and this list treats that distinction as load-bearing.
+
+**5. A stale prod figure, in a comment I wrote today.** FIXED. My JSDoc said "11 of the 78 prod
+shifts have exactly that shape", lifted from a 2026-08-16 entry and never re-derived. Prod is
+7 NULL-end of 72, only 3 with an evening start, and none on a live approved roster. The comment
+now refuses to quote a count at all and describes the shape.
+
+**6. Two stale doc claims neither commit created but the doc sweep should have caught.** FIXED.
+`ARCHITECTURE.md`'s route-table row dropped the night qualifier, reading as though escalation-on
+alone emits a Gather; and `voiceAssets.js` still asserted twice that `VM_GREETING_URL` defaults
+to the 2026-07-24 mp3, false since 2026-08-19 and the only place in the repo still saying it.
+
+**7. An undocumented asymmetry, now documented.** FIXED. `dayGreetingOffersPress1` assumes an
+unknown override DOES offer press 1; night assumes it does NOT, with no stated reason. The
+reason is good — a night press-1 rings a sleeping phone — but it was unwritten, and an operator
+pointing `VM_NIGHT_GREETING_URL*` at a recording offering a human recreates the day trap at
+night with nothing to detect it.
+
+**8. Two hardening items on the seam I introduced.** FIXED. The `todayYmd` parameter is public
+API on an exported function and `$2::date` accepts far more than `YYYY-MM-DD`: `'today'` and
+`'yesterday'` resolve in the GMT SESSION zone (the exact rollover this family exists to kill), a
+`Date` serializes the same wrong way, and `'01-02-2026'` parses silently as January 2. Now
+shape-guarded with a fallback rather than a throw on a live SMS webhook, pinned by the one case
+that fails loudly. Separately, `resolveShiftResponder` recomputed the business day per candidate;
+it is hoisted, so a loop straddling midnight cannot judge two candidates against two todays.
+
+## OPEN — DALLAS'S CALL, and the reason 74aa4a5d is a FAIL
+
+**The read-side twin did not move, and three agents found it independently.**
+`staffPortal.js` orders the staffer's own next-shift card by the end instant alone, and its
+comment claimed "same ordering as `findNearestApprovedShift`, deliberately". That claim is now
+false and IS FIXED — the comment says what is actually true and names this decision as open.
+What is NOT fixed is the divergence itself:
+
+Between 00:00 and about 08:00 Chicago, the card can show LAST NIGHT's still-unfinished shift
+while a CANT or CONFIRM text acts on TONIGHT's. One agent demonstrated it against the dev DB
+with both real ORDER BYs over the same candidate set. The CONFIRM case is the sharper one: the
+staffer reads "your next shift: A", texts CONFIRM, and `acknowledged_at` lands on B.
+
+**Reachability, checked against PROD (the agents were told not to): currently ZERO.** No staffer
+holds a live approved shift whose end instant crosses midnight. Seven shifts carry a NULL
+`end_time` and three of those start in the evening, but none has a live approved roster; the one
+overnight-wrap shift (8pm-12am, 2026-10-16) sits `open` with nobody on it. It becomes reachable
+the moment anyone is approved onto that shift or a future NULL-end evening one.
+
+The two remedies, and the agents split on them:
+- **Make them match** — add the same bound term to `staffPortal.js` (two lines,
+  `chicagoTodayYmd` is already imported there). Argues that a surface and the action taken from
+  it must never name different things, and CONFIRM decides it.
+- **Keep the divergence and say why** — the read path arguably SHOULD show an in-progress
+  overnight shift, since it is the shift you are standing in.
+
+**My recommendation: make them match.** The card is labelled "next shift", not "current shift",
+and whatever the right answer for CANT, stamping `acknowledged_at` on a shift the staffer was
+not shown is wrong under either reading. Not done here, because `staffPortal.js` is
+sensitive-listed and money-adjacent and this is a product call, not a mechanical fix.
+
+## The adversarial pass REFUTED my second claim, three ways
+
+I briefed one agent to attack two claims and default to "refuted". **Claim 1 (the kill switch
+still guarantees zero claims and zero billed outbound legs) HOLDS** — it traced every path to the
+one `&lt;Dial&gt;` and the one claim write, both behind `voiceEscalate.js:153`, and found no
+scheduler, admin route or retry job around it. Two bounds worth knowing: the switch is read at
+`:153` while the dial happens at `:225` after an awaited DB round trip, so flipping it off inside
+that ≤3s window still dials that call and a dialed leg bills to `timeLimit` (1800s default); and
+"zero billed legs" scopes to OUTBOUND only.
+
+**Claim 2 (no caller reaches silence or an application error) is REFUTED.** One of the three is
+mine:
+
+- **MINE, and now written into the code: my change adds four seconds of silence.** With the
+  switch off, a daytime caller who presses nothing waits out the `<Gather timeout="4">` before
+  the beep, where the beep used to follow the greeting immediately. Billed inbound time on every
+  missed day call, bounded by `VM_DAILY_CAP` and NOT by the escalation cap, which counts claims.
+  With the switch on it already existed. I judge it worth paying and have said so at the site: a
+  pause before a beep is a pause, being invited to press a key nobody catches is a lie. But I
+  claimed "no dead air" without qualification, and that was wrong.
+- **PRE-EXISTING, worth its own line: a failed `<Play>` fetch is silence.** Twilio skips a
+  `<Play>` whose fetch fails, and nothing validates an override URL at boot or at request time.
+  A 404, a timeout, non-audio, `voiceAssets.js`'s own 500 path, or its 300/min limiter all
+  produce a greeting-shaped hole. `voiceAssets.js` concedes this in its own comment. Not
+  introduced here; recorded because it is the same defect class the 2026-08-19 lane claimed to
+  have removed.
+- **PRE-EXISTING but newly REACHABLE: a bare 403 on the caller-facing action URL.**
+  `voiceEscalate.js:113` answers a signature failure with `res.status(403).send('Invalid
+  signature')`. `voice.js` spells out three lines away why that is wrong on a caller path (Twilio
+  plays "an application error has occurred" on a non-2xx from an action URL) and builds a
+  TwiML-returning limiter handler for exactly that reason. **Marginal impact today is zero**,
+  because escalation is ON in Render so callers can already reach `/escalate`; what my change
+  does is widen it to the switch-off state. Fix is the shape `voice.js` already uses. Not done
+  here: changing what a signature gate returns is a security-gate change and belongs in its own
+  deliberate lane, not at the end of a fix session.
+
+**Two things it could not determine, both honest limits worth carrying.** First, **nobody has
+listened to the nine mp3s.** `defaultSaysOffer` is an assertion about AUDIO that no test can
+check; only the synthetic mirrors are pinned byte-for-byte. If a NIGHT recording says "press
+one", the trap above is live today with no env var involved. That is a listen, not a grep, and
+it is now the strongest argument for the press-1 walk in `walkthroughs-owed.md`. Second, it hit
+**an unreproducible test flake**: three early runs of `voice.test.js` failed 74/75 on two
+DIFFERENT day-Gather assertions, then went green 75+ consecutive runs including 3-way parallel.
+Root cause unknown. That is the SECOND unexplained flake on this shared dev box today (the other
+was `marketingSend`), which is worth watching rather than dismissing.
+
+**Also now true and not before: `server/routes/voice.js` is 705 lines**, over the 700 soft cap
+the file was explicitly split to stay under. The review flagged it at 695; the documentation this
+review made necessary pushed it over. It owes a split.
+
+## ALSO OPEN — a listing gap the fleet found while checking mine
+
+`server/utils/smsConsent.js` is NOT sensitive-listed and writes
+`communication_preferences.sms_enabled` in the same `jsonb_set` shape as the listed
+`smsInbound.js`, AND appends `sms_consent_log` — the two reasons `routes/smsOptIn.js` is listed.
+Its own JSDoc names the twin. It is the engine behind `smsOptIn.js` (listed) and behind
+`routes/proposals/public.js`, which is ALSO unlisted and writes `sms_enabled` directly from an
+unauthenticated submit. Recommend listing both. Not done here: adding paths expands every other
+window's review load, and having just made that call once today, the second one is Dallas's.
+
+
 # SESSION WRAP 2026-08-19 — read this first if you are picking the work back up
 
 **STATE.** `origin/main` is at `23e8c1fa` (31 commits pushed today, `d61c62b7..23e8c1fa`). **3

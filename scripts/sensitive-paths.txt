@@ -109,9 +109,13 @@ server/routes/smsOptIn.js
 # same compliance field smsOptIn.js is listed for. Getting the shift pick wrong
 # has now been a P0 twice (the GMT-rollover round and the calendar-day round)
 # and a residual a third time (the NULL end_time overnight window, fixed in the
-# same lane as this line). Same "sensitivity follows the code" rule the entries
-# above and below record: the logic moved out of the listed route and the
-# listing did not follow.
+# same lane as this line). CORRECTED 2026-08-20, same day, by the review fleet:
+# this is NOT the "sensitivity followed the code out" shape the first draft of
+# this comment claimed. Checked with git log -S: findNearestApprovedShift,
+# handleCant and sms_enabled never lived in routes/sms.js, and this file was
+# created fresh on 2026-05-21 (720f094d). It is the paymentMethods.js shape
+# recorded above -- a path that was simply NEVER CAUGHT -- and this list treats
+# that distinction as load-bearing, so the rationale had to say which one.
 server/utils/smsInbound.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
