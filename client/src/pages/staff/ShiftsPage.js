@@ -580,8 +580,12 @@ function PendingRow({ shift, busy, onWithdraw }) {
   );
   const isWaitlisted = ranked.length > 0 && classifyRequest(ranked, remaining).state === 'waitlisted';
 
+  // is-static: this card has no open handler, and `.sp-shift` would otherwise
+  // hand it a pointer cursor and a hover border. Deliberately NOT made openable:
+  // whether a staffer whose request is still pending may read the event brief is
+  // a product call, not a styling one.
   return (
-    <div className="sp-shift" style={{ opacity: 0.85 }}>
+    <div className="sp-shift is-static" style={{ opacity: 0.85 }}>
       <div className="sp-shift-head">
         <span className="sp-shift-when">
           {fmtShortDate(shift.event_date)}

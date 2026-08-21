@@ -4698,6 +4698,32 @@ follows survived scrutiny. Full detail in the workflow journal
 
 **Nothing here is an emergency. Two are worth doing soon.**
 
+**ITEMS 1, 2 AND 3 ARE FIXED (2026-08-20, lane `dead-affordances`).** All three took the same
+shape of fix, which is also the shape the codebase already used: `role` + `tabIndex` +
+`onKeyDown`, matching `AvailableTab`'s live shift card. Item 4 is re-checked below and is
+partly stale. Each fix is mutation-verified, and the three surfaces now carry 11 tests between
+them where they had none: `ShiftCard.test.js` (new), `FieldGuide.test.js` (new),
+`ClientShoppingList.test.js` (new). Client suite 664/664 across 76 files, CI build exit 0.
+
+**One deliberate NON-fix, stated so it does not read as an oversight.** Item 1 offered two
+options and I took the second: the pending card stops PROMISING rather than becoming openable.
+Whether a staffer whose request is still pending may read the event brief is a product call, not
+a styling one, and the subtractive option cannot leak anything while the additive one might. If
+Dallas wants those cards openable, the handler is a two-line addition on top.
+
+The CSS half is scoped rather than reset, which is worth recording because the obvious version
+is wrong: re-asserting a resting `border-color` on `.sp-shift.is-static:hover` would have fought
+the light skin's `:first-child` ink rule and changed how a first pending card looks on hover.
+Changing the hover SELECTOR to `.sp-shift:not(.is-static):hover` leaves every resting value in
+both skins untouched.
+
+**Item 1 also turned out to be wider than the entry.** `ShiftCard.js` renders the same chassis
+with `role` and `tabIndex` correctly withheld when it has no `onClick` — the ARIA half was
+already right there — while `.sp-shift`'s pointer cursor and hover border still promised a tap.
+So the visual promise and the ARIA promise had already drifted apart in a second file. `is-static`
+now tracks `onClick` exactly, and a test asserts that as one invariant so neither half can move
+alone.
+
 ### 1. Staff shift list: pending cards look tappable and are not (medium-high)
 `client/src/pages/staff/ShiftsPage.js:584`
 
@@ -4758,6 +4784,13 @@ checklist IS the feature — a client working a liquor-store aisle. Fix: render 
 checkbox inside a `<label>` and style that.
 
 ### 4. Eleven admin-only instances (medium and below), listed for a future cleanup pass
+**RE-CHECKED 2026-08-20: two of the eleven are gone with their files.**
+`admin/TipsAdmin.js` was deleted by lane `sh-f-feedback` and `admin/StaffReviews.js` by the
+staff-hub reviews lane, so those two lines are closed by deletion rather than by fix. The other
+nine files all still exist (checked individually); their line numbers are from 2026-08-14 and
+several of those files have moved since, so re-locate by shape rather than trusting the numbers
+when this batch is picked up.
+
 Same shape, but only Dallas and Zul ever see these, so they are batch material rather
 than individual tickets:
 
@@ -4769,9 +4802,9 @@ than individual tickets:
   low-medium  index.css:12937
   low-medium  components/adminos/drawers/ShiftDrawer.js:667
   low         admin/proposalCreate/ClientSection.js:70
-  low         admin/TipsAdmin.js:160
+  low         admin/TipsAdmin.js:160        <- GONE, file deleted (sh-f-feedback)
   low         admin/BlogDashboard.js:330
-  low         admin/StaffReviews.js:495
+  low         admin/StaffReviews.js:495     <- GONE, file deleted (staff-hub reviews)
 
 **Notable negative result: the phone admin shell came back CLEAN.** Zero confirmed in
 `pages/mobile/**` and `components/mobile/**`, which is the surface I most expected to

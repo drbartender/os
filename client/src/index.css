@@ -15038,7 +15038,19 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   flex-direction: column;
   gap: 0.5rem;
 }
-.sp-shift:hover { border-color: var(--sp-line-3); }
+.sp-shift:not(.is-static):hover { border-color: var(--sp-line-3); }
+/* A card with no open handler must not promise one. `.sp-shift` carries
+   `cursor: pointer` unconditionally and the light-skin override below changes
+   padding and radius without resetting it, so the promise survived in BOTH skins
+   on the pending/waitlisted card and on any ShiftCard rendered without onClick.
+   MineTab renders the dead pending cards and the live upcoming cards into the
+   same flex column as adjacent siblings, so a bartender learns "shift cards
+   open" from one row and taps the row above it to nothing.
+   The hover rule above is SCOPED rather than reset here on purpose: re-asserting
+   a resting border-color would fight the light skin's :first-child ink rule and
+   change how a first pending card looks on hover. Scoping leaves every resting
+   value untouched. (2026-08-20 dead-affordance sweep, item 1.) */
+.sp-shift.is-static { cursor: default; }
 [data-skin="light"] .sp-shift {
   border-radius: 0;
   border: 0;

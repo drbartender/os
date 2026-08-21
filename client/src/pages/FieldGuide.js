@@ -348,9 +348,24 @@ export default function FieldGuide() {
 
       {SECTIONS.map((section, i) => (
         <div className="guide-section" key={section.num}>
+          {/* role/tabIndex/onKeyDown, not a bare div: index.css gives this full
+              button chrome (border, padding, radius, hover) and a collapsed
+              section's text is not in the DOM at all, so without a keyboard path
+              the content was unreachable while the attestation below it could
+              still be checked and signed. `aria-expanded` also needs a widget
+              role -- on an implicit generic it is dropped, so the intent here was
+              silently failing. (2026-08-20 dead-affordance sweep, item 2.) */}
           <div
             className="guide-section-header"
             onClick={() => toggle(i)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggle(i);
+              }
+            }}
+            role="button"
+            tabIndex={0}
             aria-expanded={!!open[i]}
           >
             <span className="guide-section-number">{section.num}</span>

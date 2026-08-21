@@ -74,6 +74,11 @@ export default function ShiftCard({ shift, showConfirmFlag = false, onClick, var
     'sp-shift',
     tone,
     shift.cover_needed ? 'cover-needed' : '',
+    // Same rule as the pending card in ShiftsPage: role and tabIndex are already
+    // withheld without an onClick, but `.sp-shift`'s pointer cursor and hover
+    // border are not, so the card still looked tappable. is-static withdraws the
+    // visual promise alongside the ARIA one.
+    onClick ? '' : 'is-static',
   ].filter(Boolean).join(' ');
 
   function handleKeyDown(e) {

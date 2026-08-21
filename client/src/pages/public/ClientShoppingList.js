@@ -193,6 +193,15 @@ export default function ClientShoppingList() {
         <div
           key={itemKey(section, item) + (isChecked ? '-checked-' : '-') + i}
           onClick={() => toggleItem(itemKey(section, item))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toggleItem(itemKey(section, item));
+            }
+          }}
+          role="checkbox"
+          aria-checked={isChecked}
+          tabIndex={0}
           style={isChecked ? { ...styles.itemRow, backgroundColor: 'rgba(18,22,28,0.4)' } : styles.itemRow}
         >
           <div style={styles.checkbox}>
