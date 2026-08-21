@@ -21,7 +21,9 @@ const styles = {
     backgroundImage: `url(${chalkboardBg})`,
     backgroundSize: '1200px auto',
     backgroundRepeat: 'repeat',
-    padding: '40px 16px 64px',
+    // Padding lives in the .proposal-page CLASS, not here. An inline shorthand
+    // beats any author rule without !important, so leaving it inline made the
+    // drawer-open inset silently inert and the panel covered the pay rail.
     fontFamily: 'var(--font-body)',
   },
   header: {

@@ -16,6 +16,9 @@ export default function ProposalPricingBreakdown({
   fullPaymentRequired,
   showSignAndPay,
   showPayOnly,
+  showOptionsEntry,
+  onOpenOptions,
+  entryRef,
 }) {
   const [termsExpanded, setTermsExpanded] = useState(false);
   return (
@@ -91,6 +94,23 @@ export default function ProposalPricingBreakdown({
           <p style={{ margin: '0.6rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
             Hosted minimum $550 applied.
           </p>
+        )}
+        {/* The ONE way into the options ladder. Deliberately here rather than at
+            the bottom of the page: the old entry button sat below everything, so
+            browsing scrolled the signature out of view with nothing pulling the
+            client back, which is the conversion leak this redesign exists to
+            fix. Gated on options_available (the server's cheap predicate for
+            "the switch endpoint would accept this proposal") so it can never
+            open into an apology. */}
+        {showOptionsEntry && (
+          <button type="button" className="oo-entry" onClick={onOpenOptions} ref={entryRef}>
+            <span className="oo-entry-head">
+              Want us to handle more of this? See every option, priced for your night →
+            </span>
+            <span className="oo-entry-sub">
+              From bar service only up to a fully stocked bar: switch any time before you sign.
+            </span>
+          </button>
         )}
       </div>
 

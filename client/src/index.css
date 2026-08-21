@@ -20065,6 +20065,402 @@ html[data-app="admin-os"] .pay-qr-tile {
 }
 .oo-card-groups .oo-item { font-size: 0.74rem; color: var(--deep-brown); line-height: 1.3; }
 
+/* ==========================================================================
+   Proposal options LADDER drawer (2026-08-20).
+   Benchmark: docs/design-artifacts/2026-08-20-proposal-options-ladder.dc.html
+   (byte-identical to the live claude.ai/design file, verified at build time).
+   Spec: docs/superpowers/specs/2026-08-20-proposal-options-ladder-design.md
+   § Visual contract, with its 7 named deviations.
+
+   The artifact styles inline; these are the translation into the .oo-*
+   vocabulary the shipped panel already uses. Apothecary tokens only, no new
+   fonts or colors. The drawer is one component with TWO treatments: a bottom
+   sheet under 1024px, a right-hand panel at or above it.
+   ========================================================================== */
+
+/* Entry: a link CARD in the pricing section, not a bare text link. It is the
+   only way into the drawer now that the bottom-of-page button is gone. */
+.oo-entry {
+  display: block; width: 100%; margin-top: 16px; padding: 13px 16px;
+  background: rgba(29, 140, 137, 0.08);
+  border: 1.5px solid var(--amber); border-radius: 8px;
+  cursor: pointer; text-align: left; font: inherit;
+}
+.oo-entry:hover { background: rgba(29, 140, 137, 0.16); }
+.oo-entry-head {
+  display: block; font-family: var(--font-display); font-size: 0.92rem;
+  color: var(--deep-brown); letter-spacing: 0.02em;
+}
+.oo-entry-sub {
+  display: block; font-family: var(--font-body); font-style: italic;
+  font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;
+}
+
+/* THE PAGE MAKES ROOM. Without this the desktop panel is painted OVER the
+   sticky sign-and-pay rail: the rail sits at x 856-1236, the drawer at
+   848-1280, and elementFromPoint over the Sign & Pay button returns the
+   drawer. That is the exact leak this redesign exists to close, arrived at
+   from the other direction: the old surface scrolled the signature out of
+   view, and an occluding panel makes it unreachable outright. Mobile is
+   exempt: the sheet is modal there by design. */
+/* Padding is HERE, not inline on the element: an inline shorthand outranks
+   every author rule without !important, so an inline `padding` made the inset
+   below unreachable and the panel kept covering the rail. */
+.proposal-page {
+  padding: 40px 16px 64px;
+  transition: padding-right 0.28s ease;
+}
+/* Never narrower than the panel itself. The panel is min(432px, 94vw); an inset
+   of min(448px, 38vw) undercuts it below ~1137px, sliding the rail back under
+   the drawer's edge. Take whichever is wider, capped so a huge viewport does
+   not shove the proposal into a column. */
+.proposal-page.oo-drawer-open { padding-right: min(448px, max(min(432px, 94vw), 38vw)); }
+@media (max-width: 1023px) {
+  .proposal-page.oo-drawer-open { padding-right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .proposal-page { transition: none; }
+}
+
+/* Backdrop is MOBILE ONLY. On desktop the proposal and its sticky sign rail
+   stay visible and usable beside the panel, which is the whole point: browsing
+   must never scroll the signature out of reach (the leak this redesign fixes). */
+.oo-backdrop { position: fixed; inset: 0; background: rgba(6, 8, 11, 0.62); z-index: 60; }
+
+.oo-drawer {
+  position: fixed; z-index: 61; background: #0e1218;
+  display: flex; flex-direction: column; overflow: hidden;
+  color: var(--cream-text); font-family: var(--font-body);
+}
+/* Sheet: two snap points, driven by inline height so the drag can animate it. */
+.oo-drawer-sheet {
+  left: 0; right: 0; bottom: 0;
+  border-top: 1.5px solid var(--brass); border-radius: 16px 16px 0 0;
+  box-shadow: 0 -14px 44px rgba(0, 0, 0, 0.6);
+  transition: height 0.26s ease;
+}
+/* While a finger is down the height follows the finger; animating it would
+   fight the drag and feel like lag. */
+.oo-drawer-sheet.oo-dragging { transition: none; }
+.oo-drawer-panel {
+  top: 0; right: 0; bottom: 0; width: min(432px, 94vw);
+  border-left: 1.5px solid var(--brass);
+  box-shadow: -14px 0 44px rgba(0, 0, 0, 0.5);
+  animation: oo-slide-in 0.28s ease;
+}
+@keyframes oo-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+.oo-grab {
+  touch-action: none; cursor: grab; padding: 11px 0 7px;
+  display: flex; justify-content: center; flex-shrink: 0;
+}
+.oo-grab span { width: 44px; height: 5px; border-radius: 999px; background: rgba(184, 146, 74, 0.55); }
+
+.oo-head {
+  padding: 12px 18px; border-bottom: 1px solid rgba(184, 146, 74, 0.3); flex-shrink: 0;
+}
+.oo-head-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.oo-kicker {
+  font-family: var(--font-display); font-size: 10px; letter-spacing: 0.24em;
+  text-transform: uppercase; color: var(--brass); margin-bottom: 3px;
+}
+.oo-title {
+  font-family: var(--font-display); font-weight: 400; font-size: 1.32rem;
+  line-height: 1.15; color: var(--cream-text); margin: 0;
+}
+.oo-title em { color: var(--brass-bright); font-style: italic; }
+.oo-x {
+  background: transparent; border: 1px solid rgba(184, 146, 74, 0.5);
+  color: var(--brass); border-radius: 6px; width: 32px; height: 32px;
+  font-size: 1rem; line-height: 1; cursor: pointer; flex-shrink: 0;
+}
+.oo-x:hover { background: rgba(184, 146, 74, 0.14); }
+/* eventLine is guests / hours / bars / date ONLY. Staffing never appears here:
+   a cross-ratio package would re-derive the crew on a rung move, and this line
+   promises nothing changes. */
+.oo-event { font-size: 0.8rem; color: rgba(240, 232, 214, 0.6); margin-top: 6px; }
+.oo-insurance {
+  font-size: 0.76rem; font-style: italic; color: rgba(240, 232, 214, 0.6); margin-top: 3px;
+}
+
+/* The scroller. Only this scrolls; the header and the extras strip are fixed
+   chrome, so drag and scroll never fight on the sheet. */
+.oo-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+.oo-skel { padding: 15px 18px; border-bottom: 1px solid rgba(184, 146, 74, 0.14); }
+.oo-skel i {
+  display: block; height: 13px; border-radius: 4px; margin-bottom: 7px;
+  background: linear-gradient(90deg, rgba(240, 232, 214, 0.07) 25%, rgba(240, 232, 214, 0.17) 50%, rgba(240, 232, 214, 0.07) 75%);
+  background-size: 220% 100%; animation: oo-shimmer 1.1s linear infinite;
+}
+@keyframes oo-shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-drawer-sheet, .oo-drawer-panel { transition: none; animation: none; }
+  .oo-skel i { animation: none; }
+}
+
+/* Anchor: pinned under the header so the deltas below always have their
+   reference point on screen while the list scrolls. */
+.oo-entry:focus-visible, .oo-x:focus-visible, .oo-commit:focus-visible,
+.oo-extra:focus-visible, .oo-contents-toggle:focus-visible, .oo-expand:focus-visible,
+.oo-lane-head:focus-visible, .oo-extras-collapsed:focus-visible, .oo-back:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px;
+}
+
+.oo-anchor {
+  position: sticky; top: 0; z-index: 2; background: #10151c;
+  border-bottom: 1px solid rgba(184, 146, 74, 0.4);
+  border-left: 3px solid var(--amber); padding: 9px 18px 10px;
+}
+.oo-anchor-row { display: flex; align-items: baseline; gap: 9px; }
+.oo-anchor-pill {
+  font-family: var(--font-display); font-size: 0.56rem; letter-spacing: 0.18em;
+  /* Same 3.33:1 pairing as the commit button, and this pill is the only marker
+     of which rung the client is standing on. */
+  text-transform: uppercase; color: var(--cream-text); background: var(--warm-brown);
+  border-radius: 999px; padding: 2px 9px; align-self: center; flex-shrink: 0;
+}
+.oo-anchor-name {
+  flex: 1; min-width: 0; font-family: var(--font-display); font-size: 1rem;
+  color: var(--cream-text); line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.oo-anchor-total {
+  font-family: var(--font-display); font-size: 1.1rem; color: var(--cream-text);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* Rungs are ROWS, not cards. The ladder reads top to bottom as one spectrum of
+   how much we handle; cards would break it into unrelated choices. */
+.oo-rung { padding: 13px 18px; border-bottom: 1px solid rgba(184, 146, 74, 0.14); }
+/* The zero-proof package is sideways, not up: dashed and set apart so it never
+   reads as a step on the ladder. */
+.oo-rung-sideways {
+  margin: 16px 18px 8px; border: 1px dashed rgba(184, 146, 74, 0.6);
+  border-radius: 10px; padding: 12px 14px;
+}
+.oo-rung-kicker {
+  font-family: var(--font-display); font-size: 0.56rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--brass); margin-bottom: 5px;
+}
+.oo-rung-top { display: flex; align-items: baseline; gap: 10px; }
+.oo-rung-name {
+  flex: 1; font-family: var(--font-display); font-size: 1.02rem;
+  color: var(--cream-text); line-height: 1.2;
+}
+.oo-rung-total {
+  font-family: var(--font-display); font-size: 1.12rem; color: var(--cream-text);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.oo-rung-puts {
+  margin: 4px 0 0; font-size: 0.8rem; line-height: 1.45; color: rgba(240, 232, 214, 0.62);
+}
+.oo-rung-why {
+  margin: 4px 0 0; font-size: 0.78rem; font-style: italic; color: rgba(240, 232, 214, 0.5);
+}
+/* Neutral on purpose. Sage already means "discount" in the pricing table above,
+   and a green delta would sell the downgrade. */
+.oo-rung-delta {
+  margin-top: 5px; font-family: var(--font-display); font-size: 0.92rem;
+  color: var(--brass-bright); font-variant-numeric: tabular-nums;
+}
+.oo-rung-foot {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-top: 5px;
+}
+.oo-rung-sub { font-size: 0.75rem; color: rgba(240, 232, 214, 0.62); }
+.oo-contents-toggle {
+  /* Was 86x17. The drawer's main exploratory affordance on every rung needs
+     24px of height; the negative margin keeps the baseline where it was. */
+  background: none; border: none; padding: 6px 0; margin: -6px 0; cursor: pointer;
+  min-height: 24px;
+  font-family: var(--font-body); font-size: 0.75rem; font-style: italic; color: var(--brass);
+}
+.oo-contents-toggle:hover { color: var(--brass-bright); }
+.oo-contents { margin-top: 9px; padding-left: 2px; }
+.oo-contents-group { margin-bottom: 8px; }
+.oo-contents-k {
+  font-family: var(--font-display); font-size: 0.56rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--brass); margin-bottom: 3px;
+}
+.oo-contents .oo-item { font-size: 0.76rem; line-height: 1.4; color: rgba(240, 232, 214, 0.68); }
+
+/* The break, and the one line that opens the hosted half. */
+.oo-break { display: flex; align-items: center; gap: 12px; padding: 16px 18px 10px; }
+.oo-break span {
+  font-family: var(--font-display); font-size: 0.6rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--brass); white-space: nowrap;
+}
+.oo-break i { flex: 1; height: 1px; background: rgba(184, 146, 74, 0.3); }
+.oo-expand {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  border-top: 1px solid rgba(184, 146, 74, 0.22); padding: 16px 18px; cursor: pointer;
+}
+.oo-expand:hover { background: rgba(184, 146, 74, 0.06); }
+.oo-expand-rule {
+  display: block; font-family: var(--font-display); font-size: 0.6rem;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--brass);
+}
+.oo-expand-cta {
+  display: block; margin-top: 4px; font-family: var(--font-display);
+  font-size: 1rem; color: var(--brass-bright);
+}
+.oo-lane-head {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: none; border: none; padding: 14px 18px 8px; cursor: pointer; text-align: left;
+}
+.oo-lane-head span {
+  font-family: var(--font-display); font-size: 0.6rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--brass); white-space: nowrap;
+}
+.oo-lane-head i { flex: 1; height: 1px; background: rgba(184, 146, 74, 0.3); }
+.oo-lane-head em {
+  font-style: italic; font-size: 0.72rem; color: rgba(240, 232, 214, 0.62); white-space: nowrap;
+}
+
+/* Extras strip. Collapsed to one line by default: it is a long list on some
+   packages, and a client who wants their quote should not have to scroll past
+   a menu to reach the ladder. */
+.oo-extras {
+  /* margin: 0 resets the legacy .oo-extras rule in the retired compare block,
+     which was leaving an 8px seam above and a 30px dead band below (exactly
+     over the home indicator on mobile).
+     The cap is a PERCENTAGE of the flex parent, not vh: 42vh is measured
+     against the viewport, so on a 66vh peek sheet the strip claimed 64% of it,
+     the body computed to height 0, and every rung and price disappeared. */
+  flex-shrink: 0; margin: 0; background: #0b0f14;
+  border-top: 1px solid rgba(184, 146, 74, 0.3); padding: 12px 18px 18px;
+  max-height: 45%; overflow-y: auto;
+}
+/* The desktop panel is full height, so a fixed cap reads better there. */
+@media (min-width: 1024px) {
+  .oo-extras { max-height: min(330px, 42vh); }
+}
+.oo-extras-collapsed {
+  display: block; width: 100%; text-align: left; background: none;
+  border: none; padding: 0; cursor: pointer;
+}
+.oo-extras-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.oo-extras-k {
+  display: block; font-family: var(--font-display); font-size: 0.6rem;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--brass);
+}
+.oo-extras-summary {
+  display: block; margin-top: 3px; font-size: 0.78rem; font-style: italic;
+  color: rgba(240, 232, 214, 0.55);
+}
+.oo-extras-note {
+  margin: 3px 0 9px; font-size: 0.74rem; font-style: italic; color: rgba(240, 232, 214, 0.62);
+}
+.oo-extra-rows { display: flex; flex-direction: column; gap: 6px; }
+.oo-extra-group { margin-top: 12px; }
+.oo-extra-group-k {
+  font-family: var(--font-display); font-size: 0.56rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--brass); margin-bottom: 5px;
+}
+.oo-extra {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  width: 100%; text-align: left; padding: 8px 10px; border-radius: 7px;
+  border: 1px solid rgba(184, 146, 74, 0.28); background: transparent;
+  color: var(--cream-text); font-family: var(--font-body); cursor: pointer;
+}
+.oo-extra:hover { border-color: rgba(184, 146, 74, 0.55); }
+.oo-extra-on { border-color: var(--amber); background: rgba(29, 140, 137, 0.12); }
+.oo-extra-name { font-size: 0.84rem; }
+.oo-extra-rate {
+  font-size: 0.76rem; color: rgba(240, 232, 214, 0.55);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+/* Blocked rows stay VISIBLE and say why. Hiding them would leave a client
+   hunting for an item they can see on our website; dimming them with a reason
+   turns a dead end into either "you already have it" or a nudge up a rung. */
+.oo-extra-blocked {
+  cursor: default; opacity: 0.55; border-style: dashed;
+}
+.oo-extra-blocked:hover { border-color: rgba(184, 146, 74, 0.28); }
+.oo-extra-reason {
+  font-size: 0.72rem; font-style: italic; color: var(--brass); white-space: nowrap;
+}
+
+/* Commit, and the two states that can interrupt it. All three swap IN PLACE on
+   the rung the client acted on, so their eye never leaves it. */
+/* warm-brown, not amber: cream on amber is 3.33:1, under the 4.5 AA floor, and
+   these three (commit, "Confirm at $X", "Switch & drop it") are the only
+   buttons on the surface that move money. Cream on warm-brown is 8.77:1 and
+   keeps "solid = primary" intact. */
+.oo-commit {
+  margin-top: 9px; background: var(--warm-brown); border: none; color: var(--cream-text);
+  font-family: var(--font-display); font-size: 0.66rem; letter-spacing: 0.14em;
+  text-transform: uppercase; padding: 9px 14px; border-radius: 6px; cursor: pointer;
+}
+.oo-commit:hover { background: #0d3231; }
+/* Cream on amber measures 3.33:1, under the 4.5 AA floor, and making every
+   rung solid also flattened eight rungs into eight primaries. Ghost fixes
+   both: brass-bright on the drawer ground is ~9:1, and solid amber goes back
+   to meaning "the anchor's commit". */
+.oo-commit-ghost {
+  background: transparent; border: 1px solid rgba(184, 146, 74, 0.65);
+  color: var(--brass-bright);
+}
+.oo-commit-ghost:hover { background: rgba(184, 146, 74, 0.16); color: var(--cream-text); }
+.oo-rung-act { display: flex; justify-content: flex-end; }
+.oo-commit:disabled { opacity: 0.6; cursor: not-allowed; }
+.oo-commit-busy {
+  display: inline-block; margin-top: 9px; padding: 9px 14px;
+  border: 1px solid rgba(184, 146, 74, 0.4); border-radius: 6px;
+  font-family: var(--font-display); font-size: 0.66rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: rgba(240, 232, 214, 0.75);
+}
+
+/* Not an apology: the guard worked. Show the new number and ask again. */
+.oo-reprice {
+  margin-top: 9px; border: 1px solid var(--amber); border-radius: 8px;
+  background: rgba(29, 140, 137, 0.12); padding: 11px 13px;
+}
+.oo-reprice-k, .oo-confirm-k {
+  font-family: var(--font-display); font-size: 0.6rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--amber-light); margin-bottom: 4px;
+}
+.oo-reprice-body, .oo-confirm-body {
+  margin: 0 0 9px; font-size: 0.82rem; line-height: 1.5; color: var(--cream-text);
+}
+.oo-confirm {
+  margin-top: 9px; border: 1px solid rgba(184, 146, 74, 0.55); border-radius: 8px;
+  background: rgba(184, 146, 74, 0.08); padding: 11px 13px;
+}
+.oo-confirm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.oo-anchor-dirty {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+  gap: 8px; margin-top: 7px;
+}
+.oo-anchor-note { font-size: 0.72rem; font-style: italic; color: var(--amber-light); }
+.oo-anchor-dirty .oo-commit, .oo-anchor-dirty .oo-commit-busy { margin-top: 0; }
+
+/* Landed. Top of the proposal, because the thing that changed is elsewhere on
+   the page and a client should not have to hunt for it. */
+.oo-banner {
+  border: 1px solid var(--brass); border-radius: 10px;
+  background: rgba(184, 146, 74, 0.1); padding: 13px 16px; margin-bottom: 18px;
+}
+.oo-banner-k {
+  font-family: var(--font-display); font-size: 0.6rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--brass); margin-bottom: 4px;
+}
+.oo-banner-body { margin: 0; font-size: 0.9rem; line-height: 1.5; color: var(--deep-brown); }
+.oo-banner-drift {
+  margin: 6px 0 0; font-size: 0.82rem; font-style: italic; color: var(--deep-brown);
+}
+.oo-banner-failed {
+  margin: 8px 0 0; font-size: 0.82rem; font-style: italic; color: var(--deep-brown);
+}
+.oo-banner-undo {
+  margin-top: 8px; background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--font-body); font-size: 0.82rem; font-style: italic;
+  color: var(--amber); text-decoration: underline;
+}
+.oo-banner-undo:disabled { opacity: 0.6; cursor: not-allowed; }
+
 /* Retired blast-send control on the LEGACY /email-marketing campaign screen
    (EmailCampaignDetail.js). Survives the 2026-08-14 marketing restyle: it is
    em-*, not mkt-*, and its consumer is outside /marketing. */

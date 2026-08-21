@@ -14,6 +14,8 @@ import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
 import OtherOptionsPanel from '../otherOptions/OtherOptionsPanel';
+import SwitchBanner from './SwitchBanner';
+import { postSwitch } from '../otherOptions/switchApi';
 
 // ─── Main component ───────────────────────────────────────────────
 
@@ -27,7 +29,16 @@ export default function ProposalView() {
   // Whether the client has opened the other-options panel. Closed by default:
   // most clients want the bar we quoted and should never have to step around a
   // comparison to sign for it.
-  const [showOptions, setShowOptions] = useState(false);
+  // The drawer stays MOUNTED once opened (hidden, not unmounted) so a client
+  // who closes it and reopens does not re-pay for the quote or lose their
+  // drafted extras. `drawerSeen` is that latch; `drawerOpen` is visibility.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerSeen, setDrawerSeen] = useState(false);
+  // What the last switch did, so the page can say so. Component state only: a
+  // refresh drops it, which is fine because the proposal itself shows truth and
+  // the audit row keeps the history.
+  const [switched, setSwitched] = useState(null);
+  const [undoBusy, setUndoBusy] = useState(false);
 
   // Form-level error banner (sign-and-pay section). Stripe card errors are
   // handled by Stripe Elements' own messaging inside <PaymentForm/>.
@@ -304,22 +315,99 @@ export default function ProposalView() {
   }, [serverFullRequired, paymentOption]);
 
   // Sign the proposal — called by PaymentForm before confirming payment
-  // A client picking a different bar from the comparison.
-  //
-  // DELIBERATE SEAM: this is a hand-off, not a self-serve swap, for exactly as
-  // long as the sign-time commit is unbuilt. The comparison is honest — every
-  // price on it comes from the pricing engine against this event — but the
-  // signature still commits the configuration on the proposal as it stands, so
-  // silently re-rendering the page as the new package would let someone sign
-  // for a bar we never recorded. When the commit lands, this callback becomes
-  // the real selection and the mailto goes away.
-  const handleWantOption = (option) => {
-    const subject = `About my ${option.name} option`;
-    const body = `Hi, I'd like to go with the ${option.name} option for my event.\n\n`
-      + `Name: ${proposal?.client_name || ''}\n`
-      + `Proposal: ${window.location.href.split('?')[0]}\n`;
-    window.location.href = `mailto:contact@drbartender.com?subject=${encodeURIComponent(subject)}`
-      + `&body=${encodeURIComponent(body)}`;
+  // The DELIBERATE SEAM that used to live here (a mailto hand-off, because the
+  // sign-time commit was unbuilt) is retired. The switch endpoint shipped, so
+  // picking a rung rewrites the proposal for real.
+
+  // One way in, and it self-closes the moment signing makes a switch
+  // impossible. options_available is the server's own predicate for "the
+  // switch endpoint would accept this", so the link can never open into a
+  // refusal; the client-side payable check is the same guard the pay rail uses.
+  const showOptionsEntry = !!proposal?.options_available
+    && isPayableStatus
+    && !signedThisSession.current;
+
+  const entryRef = useRef(null);
+  const openDrawer = () => {
+    setDrawerSeen(true);
+    setDrawerOpen(true);
+  };
+  // Focus goes back where it came from. Without this a keyboard user lands on
+  // <body> and has to re-traverse the whole proposal, service agreement
+  // included, to get back to where they were.
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    if (entryRef.current) entryRef.current.focus();
+  };
+
+  // A landed switch changed the money, so every cached payment intent is now
+  // for the wrong amount. Clearing the secrets makes the existing debounced
+  // effect refetch them; the server also cancels the old intents, and THAT is
+  // the safety mechanism. This half is display hygiene.
+  const adoptSwitch = ({ unknown, payload, packageName, extrasOnly, priceDrift, undoTo }) => {
+    // The drawer lost a write and cannot say whether it landed. Reconcile the
+    // PAGE too: if it did land, the totals here and the payment intents behind
+    // them are stale, and the next Pay attempt would fail for a reason this
+    // page could not explain.
+    if (unknown) {
+      axios.get(`${BASE_URL}/proposals/t/${token}`)
+        .then((fresh) => { setProposal(fresh.data); setDepositSecret(''); setFullSecret(''); })
+        .catch(() => {});
+      return;
+    }
+    setProposal(payload);
+    setDepositSecret('');
+    setFullSecret('');
+    // Let the seeding effect re-run against the new staffing basis: a different
+    // crew size moves the suggested gratuity and its floor.
+    setGratuityDirty(false);
+    setDrawerOpen(false);
+    setSwitched({ packageName, extrasOnly, priceDrift, undoTo, failed: false });
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleUndo = async () => {
+    if (!switched || !switched.undoTo) return;
+    setUndoBusy(true);
+    const r = await postSwitch(token, switched.undoTo.body);
+    setUndoBusy(false);
+    if (r.ok) {
+      setProposal(r.payload);
+      setDepositSecret('');
+      setFullSecret('');
+      setGratuityDirty(false);
+      setSwitched(null);
+      return;
+    }
+    if (r.conflict) {
+      // Prices moved between the commit and the undo, which is a real case: the
+      // pre-switch total was a contract echo an engine re-price can legitimately
+      // fail to reproduce. Reopen the drawer so they confirm the new number
+      // rather than committing one the banner never promised.
+      setSwitched((v) => (v ? { ...v, undoTo: null } : v));
+      setDrawerSeen(true);
+      setDrawerOpen(true);
+      return;
+    }
+    if (r.unknown) {
+      // The undo may well have LANDED. Saying it failed would be a false
+      // statement about their proposal, so reconcile and let the page speak
+      // for itself. switchApi keeps this case distinct precisely so the
+      // caller can tell "no" from "we do not know"; the drawer honours that
+      // and this path used to throw it away.
+      try {
+        const fresh = await axios.get(`${BASE_URL}/proposals/t/${token}`);
+        setProposal(fresh.data);
+        setDepositSecret('');
+        setFullSecret('');
+      } catch { /* the banner below still tells them where they stand */ }
+      setSwitched(null);
+      return;
+    }
+    // A real guard refusal: paid meanwhile, signed in another tab, package
+    // retired. The automatic path is genuinely closed, so say so and give
+    // them a human.
+    setSwitched((v) => (v ? { ...v, failed: true } : v));
   };
 
   const handleSign = async () => {
@@ -370,6 +458,16 @@ export default function ProposalView() {
         venue_city: venue.venue_city?.trim() || null,
         venue_state: venue.venue_state?.trim() || null,
         venue_zip: venue.venue_zip?.trim() || null,
+        // ARMS the server's sign-time total assertion. It has always existed
+        // (publicToken.js re-asserts total_price in the UPDATE's WHERE) but it
+        // self-disarms when this field is absent, and no client ever sent it,
+        // so it had never once fired. This lane is what makes that matter: it
+        // turns pre-signature rewrites into a routine self-serve action, so a
+        // switch landing between render and sign-click is now an ordinary
+        // event rather than a leaked-token edge case. Sending the total we
+        // actually rendered means a signature can only ever bind the
+        // configuration the signer saw.
+        acknowledged_total: Number(proposal.total_price),
       });
       signedThisSession.current = true;
       toast.success('Proposal accepted!');
@@ -378,7 +476,23 @@ export default function ProposalView() {
       // Server state is already updated; UI refreshes on Stripe redirect.
     } catch (err) {
       // eslint-disable-next-line no-restricted-syntax
-      const message = err.response?.data?.error || 'Failed to save signature. Please try again.';
+      const res = err.response;
+      // The total moved between render and sign. Not a failure to apologise
+      // for: the assertion working. Refetch so the page shows what they would
+      // actually be signing, and ask again.
+      if (res?.status === 409 && res?.data?.code === 'TOTAL_CHANGED') {
+        try {
+          const fresh = await axios.get(`${BASE_URL}/proposals/t/${token}`);
+          setProposal(fresh.data);
+          setDepositSecret('');
+          setFullSecret('');
+        } catch { /* fall through to the message below */ }
+        const moved = 'Your total changed while this page was open. Take another look, then sign.';
+        setFormError(moved);
+        throw new Error(moved);
+      }
+      // eslint-disable-next-line no-restricted-syntax
+      const message = res?.data?.error || 'Failed to save signature. Please try again.';
       setFormError(message);
       // eslint-disable-next-line no-restricted-syntax
       setFieldErrors(err.response?.data?.fieldErrors || {});
@@ -510,9 +624,36 @@ export default function ProposalView() {
   const isFullyPaid = proposal.status === 'balance_paid' ||
     Number(proposal.amount_paid || 0) >= Number(proposal.total_price || 0) - 0.01;
 
+  // The event facts a switch never touches. Deliberately guests/hours/bars only:
+  // a package with a different bartender ratio WOULD re-derive the crew, so the
+  // banner must not claim staffing held still.
+  const bannerFacts = [
+    proposal.guest_count != null ? `${proposal.guest_count} guests` : null,
+    proposal.event_duration_hours != null ? `${Number(proposal.event_duration_hours)} hours` : null,
+    proposal.num_bars != null ? `${proposal.num_bars} bar${Number(proposal.num_bars) === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' · ');
+
   return (
-    <div style={styles.page}>
+    <div
+      style={styles.page}
+      className={drawerOpen ? 'proposal-page oo-drawer-open' : 'proposal-page'}
+    >
       <div className="proposal-view-container">
+        {switched && (
+          <SwitchBanner
+            packageName={switched.packageName}
+            note={switched.extrasOnly
+              ? `Same package, same ${bannerFacts}, only your extras changed.`
+              : `Same ${bannerFacts}, nothing else about the night moved.`}
+            driftNote={switched.priceDrift
+              ? 'Prices were also updated since your original quote.'
+              : null}
+            undoName={switched.undoTo ? switched.undoTo.name : null}
+            onUndo={handleUndo}
+            undoBusy={undoBusy}
+            failed={switched.failed}
+          />
+        )}
         {/* ── Hero — wax-seal medallion + brass kicker + display headline ── */}
         <div className="proposal-hero">
           <div className="wax-seal lg" aria-hidden="true">
@@ -544,6 +685,9 @@ export default function ProposalView() {
               fullPaymentRequired={fullPaymentRequired}
               showSignAndPay={showSignAndPay}
               showPayOnly={showPayOnly}
+              showOptionsEntry={showOptionsEntry}
+              onOpenOptions={openDrawer}
+              entryRef={entryRef}
             />
           </div>
 
@@ -669,27 +813,28 @@ export default function ProposalView() {
           </aside>
         </div>
 
-        {/* "See other options": every bar we could run for this event, priced
-            for their real numbers, with this proposal marked as the one we
-            recommend. Opt-in — a client who wants what we sent never has to
-            open it, which is the whole reason it is a button and not the page.
-
-            The old !inOptionGroup gate is deliberately gone: suppressing the
-            comparison precisely when Dallas had sent alternatives was backwards.
-            The panel self-gates server-side (custom-priced and already-signed
-            proposals get nothing back). */}
-        <div className="oo-open">
-          <button type="button" className="oo-open-btn" onClick={() => setShowOptions((v) => !v)}>
-            {showOptions ? 'Hide other options' : 'See other options'}
-          </button>
-        </div>
-        {showOptions && <OtherOptionsPanel token={token} onWantOption={handleWantOption} />}
+        {/* The bottom-of-page entry button is GONE. It was the conversion leak:
+            it sat below the signature, so opening it scrolled the sign-and-pay
+            surface out of view with nothing pulling the client back. The single
+            entry point now lives beside the pricing total, and the panel it
+            opens is a drawer that leaves the proposal visible. */}
 
         {/* Footer */}
         <div style={styles.footer}>
           <span>contact@drbartender.com · {COMPANY_PHONE}</span>
         </div>
       </div>
+
+      {/* Mounted once seen and then kept alive: closing hides it, so the quote
+          and the client's drafted extras survive a close/reopen. */}
+      {drawerSeen && (
+        <OtherOptionsPanel
+          token={token}
+          open={drawerOpen}
+          onClose={closeDrawer}
+          onLanded={adoptSwitch}
+        />
+      )}
     </div>
   );
 }

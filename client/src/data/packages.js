@@ -266,6 +266,36 @@ export const PACKAGES = [
     serviceIncludes: SERVICE_INCLUDES,
   },
   {
+    id: 'the-refined-reaction',
+    name: 'The Refined Reaction',
+    category: 'beer-wine',
+    tagline: 'Polished. Still practical.',
+    description: 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality. Perfect for weddings, cocktail hours, and milestone celebrations.',
+    sections: [
+      {
+        heading: 'Beer',
+        items: [
+          'Stella Artois \u2013 The European lager that makes a plastic cup feel like glass.',
+          'Corona Extra \u2013 Served cold with a lime, exactly the way everyone expects.',
+        ],
+      },
+      {
+        heading: 'Wine',
+        items: [
+          'One Red & One White Wine \u2013 A step up from the house pour, chosen to please a room rather than a critic.',
+          'Sparkling Wine \u2013 For the toast, or for whoever decides the toast is happening.',
+        ],
+      },
+      {
+        heading: 'Non-Alcoholic',
+        items: [
+          'Bottled Water \u2013 Cold, and within arm\'s reach all night.',
+        ],
+      },
+    ],
+    serviceIncludes: SERVICE_INCLUDES,
+  },
+  {
     id: 'the-carbon-suspension',
     name: 'The Carbon Suspension',
     category: 'beer-wine',
@@ -324,6 +354,40 @@ export const PACKAGES = [
         heading: 'Non-Alcoholic',
         items: [
           'Bottled Water – The universal solvent. Drink it, reset, keep going.',
+        ],
+      },
+    ],
+    serviceIncludes: SERVICE_INCLUDES,
+  },
+
+  // \u2500\u2500 Mocktail Packages \u2500\u2500
+  {
+    id: 'the-clear-reaction',
+    name: 'The Clear Reaction',
+    category: 'mocktail',
+    tagline: 'Zero proof. Full effort.',
+    description: 'Mocktail Bar. Perfect for corporate, baby showers, religious/cultural events, or sober-curious crowds.',
+    sections: [
+      {
+        heading: 'Non-Alcoholic',
+        items: [
+          'Up to 4 Signature Mocktails \u2013 Your picks headline the menu, shaken to order and garnished like they matter. Your bartender improvises beyond them, so the bar is full whether you choose four or leave it to us.',
+        ],
+      },
+      {
+        heading: 'Mixers & Juices',
+        items: [
+          'Coke, Diet Coke & Sprite \u2013 The dependable three.',
+          'Club Soda & Ginger Beer \u2013 Bubbles, and bubbles with a bite.',
+          'Cranberry, Pineapple & Orange Juice \u2013 The same juices we stock behind every bar.',
+          'Fresh Lemon & Lime Juice \u2013 Unsweetened, so the drinks land balanced instead of syrupy.',
+        ],
+      },
+      {
+        heading: 'Craft Ingredients',
+        items: [
+          'Purees, Syrups & Fresh Citrus \u2013 Whatever your drinks call for. This is the part that separates a mocktail from a glass of juice.',
+          'Elaborate Garnish \u2013 Citrus, premium cherries, and whatever your picks need. Mocktails get the showy treatment, since there is no bourbon doing the heavy lifting.',
         ],
       },
     ],
