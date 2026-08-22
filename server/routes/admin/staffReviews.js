@@ -34,11 +34,35 @@ function validYmd(s) {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
-/** True when the payout is paid or its period is processing/paid (spec §3.2). */
+/**
+ * WHY a bounty line is locked, or null. The three frozen states are not equally
+ * true and the copy has to say which: telling an admin a bounty is "already
+ * paid" when the period is merely processing sends them looking for money that
+ * has not moved (fix list, 2026-08-14). 'paid' outranks 'processing' because it
+ * is the stronger fact about the same line.
+ *
+ * @returns {'paid'|'processing'|null}
+ */
+function lockReasonOf(row) {
+  if (row.payout_status === 'paid' || row.period_status === 'paid') return 'paid';
+  if (row.period_status === 'processing') return 'processing';
+  return null;
+}
+
+/** True when the payout is paid or its period is processing/paid (spec §3.2).
+ *  DERIVED from lockReasonOf so the gate and the reason cannot drift: this file
+ *  refuses a dismiss on one and now labels the button with the other. */
 function isFrozen(row) {
-  return row.payout_status === 'paid'
-    || row.period_status === 'paid'
-    || row.period_status === 'processing';
+  return lockReasonOf(row) !== null;
+}
+
+/** The lock over a whole review's ACTIVE bounty lines, or null. `removed_at` is
+ *  the payable filter, matching the refusal below and payrollProcessing.js. */
+function reviewLockOf(lines) {
+  const active = (lines || []).filter((l) => !l.removed_at);
+  if (active.some((l) => lockReasonOf(l) === 'paid')) return 'paid';
+  if (active.some((l) => lockReasonOf(l) === 'processing')) return 'processing';
+  return null;
 }
 
 /**
@@ -139,12 +163,31 @@ router.get('/staff-reviews', auth, adminOnly, asyncHandler(async (req, res) => {
               json_agg(json_build_object('user_id', c.user_id, 'name', ${NAME_EXPR}))
                 FILTER (WHERE c.user_id IS NOT NULL),
               '[]'
-            ) AS credits
+            ) AS credits,
+            bl.lock AS bounty_lock
        FROM staff_reviews r
        LEFT JOIN staff_review_credits c ON c.staff_review_id = r.id
        LEFT JOIN users u ON u.id = c.user_id
        LEFT JOIN contractor_profiles cp ON cp.user_id = c.user_id
-      GROUP BY r.id
+       -- Per-review bounty lock, so the client can DISABLE Dismiss with the
+       -- reason instead of only learning it from a 409 after the click (spec §7
+       -- promised the disable and only the refusal was ever built). Mirrors
+       -- lockReasonOf/reviewLockOf above and the refusal in the dismiss handler:
+       -- ACTIVE lines only, 'paid' outranking 'processing'. Kept as SQL rather
+       -- than a second round trip because the list is already one query.
+       LEFT JOIN LATERAL (
+         SELECT CASE
+                  WHEN bool_or(po.status = 'paid' OR pp.status = 'paid') THEN 'paid'
+                  WHEN bool_or(pp.status = 'processing') THEN 'processing'
+                END AS lock
+           FROM payout_duty_lines d
+           JOIN payouts po ON po.id = d.payout_id
+           JOIN pay_periods pp ON pp.id = po.pay_period_id
+          WHERE d.kind = 'review_bounty'
+            AND d.staff_review_id = r.id
+            AND d.removed_at IS NULL
+       ) bl ON TRUE
+      GROUP BY r.id, bl.lock
       ORDER BY (r.status = 'pending') DESC, r.review_date DESC, r.id DESC
       LIMIT $1`,
     [LIST_LIMIT]
@@ -489,8 +532,14 @@ router.post('/staff-reviews/:id/dismiss', auth, adminOnly, asyncHandler(async (r
 
     const lines = await pinBountyLines(client, id);
     const active = lines.filter((l) => !l.removed_at);
-    if (active.some(isFrozen)) {
-      throw new ConflictError('a review bounty for this review is already paid; dismiss is refused');
+    // Say which state, not "already paid" for all three. A period that is only
+    // PROCESSING has not paid anyone yet, and an admin told otherwise goes
+    // looking for money that has not moved.
+    const lock = reviewLockOf(lines);
+    if (lock) {
+      throw new ConflictError(lock === 'paid'
+        ? 'a review bounty for this review is already paid; dismiss is refused'
+        : 'a review bounty for this review is in a pay run that is processing; dismiss is refused until it finishes');
     }
     let removedLines = 0;
     for (const line of active) {

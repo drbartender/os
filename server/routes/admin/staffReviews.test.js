@@ -777,3 +777,51 @@ test('the list envelope carries the bounty figure and the all-time totals', asyn
   assert.ok(everything.rows[0].s > payable.rows[0].s,
     'this suite removed at least one bounty line, so the filter is load-bearing');
 });
+
+test('the list carries WHY a bounty is locked, and the refusal says the same thing', async () => {
+  // Spec §7 promised "dismiss refused AND the button disabled with a reason".
+  // Only the refusal was ever built, and it said "already paid" for all three
+  // frozen states — so an admin whose pay run was merely PROCESSING was told the
+  // money had moved and went looking for it. Both halves are one sentence now,
+  // derived from one lockReasonOf().
+  await setTodayPeriod('open');
+  const id = await makeReview({ stars: 5, credits: [aId] });
+  let r = await req('POST', `/api/admin/staff-reviews/${id}/confirm`, adminToken, {});
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.materialized, 1, 'premise: the bounty line exists');
+
+  const lockOf = async () => {
+    const list = await req('GET', '/api/admin/staff-reviews', adminToken);
+    assert.equal(list.status, 200);
+    const row = list.body.reviews.find((x) => x.id === id);
+    assert.ok(row, 'premise: the review is in the list');
+    return row.bounty_lock;
+  };
+
+  assert.equal(await lockOf(), null, 'an open period locks nothing, so Dismiss stays live');
+
+  await setTodayPeriod('processing');
+  assert.equal(await lockOf(), 'processing');
+  r = await req('POST', `/api/admin/staff-reviews/${id}/dismiss`, adminToken, {});
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /processing/i);
+  assert.doesNotMatch(r.body.error, /already paid/i,
+    'a processing run has paid nobody; saying so sends an admin after money that has not moved');
+
+  // 'paid' outranks 'processing': same line, stronger fact, and the copy says it.
+  await setTodayPeriod('paid');
+  assert.equal(await lockOf(), 'paid');
+  r = await req('POST', `/api/admin/staff-reviews/${id}/dismiss`, adminToken, {});
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /already paid/i);
+
+  // removed_at IS NULL is the payable filter. Without it in the lateral, a
+  // review whose lines were already dismissed would lock itself forever.
+  await pool.query(
+    "UPDATE payout_duty_lines SET removed_at = NOW() WHERE kind = 'review_bounty' AND staff_review_id = $1",
+    [id]
+  );
+  assert.equal(await lockOf(), null, 'a soft-removed line is not a lock');
+
+  await setTodayPeriod('open');
+});

@@ -12,11 +12,24 @@ import { sourceLabel } from './reviewSource';
 // all. waitingIds carries the third state: a confirm whose bounty line could
 // not be written because no pay period is open.
 //
+// LOCK COPY, one place, because the button title and the toast must not tell an
+// admin two different stories about the same row. Keyed on the server's
+// `bounty_lock` ('paid' | 'processing' | null), which is derived from the same
+// lockReasonOf() the dismiss refusal uses.
+const LOCK_REASON = {
+  paid: 'That bounty is already paid, so it cannot be dismissed.',
+  processing: 'That bounty is in a pay run that is processing. Dismiss reopens once it finishes.',
+};
+
 // A confirmed row keeps its Dismiss (spec §7): dismissal has to stay reachable
 // after a confirm, both to undo one and because the server's refusal while a
-// bounty is paid or frozen only exists for confirmed rows. The list payload
-// carries no per-review paid flag, so the button cannot state that reason up
-// front; the server's 409 is what surfaces, through onError.
+// bounty is paid or frozen only exists for confirmed rows.
+// FIXED 2026-08-21: this used to say "the list payload carries no per-review
+// paid flag, so the button cannot state that reason up front; the server's 409
+// is what surfaces". The payload carries `bounty_lock` now, so the button is
+// disabled with the reason BEFORE the click, which is what spec §7 promised and
+// only half of what was built. The 409 stays as the real gate -- a row can lock
+// between render and click -- and its sentence now names the same state.
 const statusKind = (s) => (s === 'confirmed' ? 'ok' : s === 'dismissed' ? 'warn' : 'accent');
 
 const excerptOf = (text) => (text.length > 60 ? `${text.slice(0, 60)}…` : text);
@@ -99,11 +112,20 @@ export default function ResolvedTable({ reviews, bountyCents, waitingIds, onChan
                         <button
                           type="button"
                           className="btn btn-ghost btn-sm"
-                          disabled={busyId === r.id}
+                          disabled={busyId === r.id || !!r.bounty_lock}
+                          title={r.bounty_lock ? LOCK_REASON[r.bounty_lock] : undefined}
                           onClick={() => dismiss(r.id)}
                         >
                           {busyId === r.id ? 'Dismissing…' : 'Dismiss'}
                         </button>
+                      )}
+                      {r.status === 'confirmed' && r.bounty_lock && (
+                        // The reason has to be READABLE, not only hoverable: a
+                        // title attribute is invisible on touch and to a keyboard
+                        // user, and this is the whole point of the disable.
+                        <div className="muted tiny">
+                          {r.bounty_lock === 'paid' ? 'bounty paid' : 'pay run processing'}
+                        </div>
                       )}
                     </td>
                   </tr>

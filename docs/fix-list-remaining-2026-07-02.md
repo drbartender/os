@@ -4253,7 +4253,14 @@ cosmetic bug's only live instances are about to become past/closed anyway.
 Found while walking the duty-pay out-of-area knob (walkthroughs-owed Tier 1);
 not a defect in the knob itself, which passed clean.
 
-## Review-bounty dismiss refusal says "already paid" when the period is only processing (found 2026-08-14, §7 walk)
+## ~~Review-bounty dismiss refusal says "already paid" when the period is only processing~~ FIXED 2026-08-21, lane `review-dismiss-lock` (found 2026-08-14, §7 walk)
+
+Fixed together with its sibling below, because the fix list was right that they are the same
+sentence and one lane should take both. The refusal now names the state it actually found: a
+period that is merely `processing` says so, and only a paid payout or a paid period says "already
+paid". Pinned by an assertion that the processing refusal does NOT contain "already paid", which
+is the half that was sending an admin after money that had not moved.
+
 
 Copy accuracy, one line, no money at risk. `server/routes/admin/staffReviews.js`
 refuses a dismiss whenever the bounty line is frozen, and `isFrozen` is three
@@ -6482,7 +6489,39 @@ Fix shape, small: one exported predicate builder both routes call, or, cheaper, 
 both queries against the same fixture set and asserts the counts equal the grouped feed rows. This
 is drift prevention, not a live defect. Worth doing on the next lane that touches either file.
 
-## Dismiss cannot be disabled with a reason, because the review list carries no per-review paid flag (found 2026-08-19, drift audit)
+## ~~Dismiss cannot be disabled with a reason, because the review list carries no per-review paid flag~~ FIXED 2026-08-21, lane `review-dismiss-lock` (found 2026-08-19, drift audit)
+
+Both halves built, server first as the entry prescribed, and the copy fix above folded into the
+same lane.
+
+**Server.** `GET /admin/staff-reviews` now returns `bounty_lock` per review: `'paid'`,
+`'processing'`, or null. It comes from a `LEFT JOIN LATERAL` over `payout_duty_lines` joined to
+its `payouts` and `pay_periods` rows, filtered to ACTIVE lines (`removed_at IS NULL`, the payable
+filter `payrollProcessing.js` uses), with `'paid'` outranking `'processing'` because it is the
+stronger fact about the same line.
+
+**One definition, not two.** `isFrozen` was the boolean gate and the new reason could easily have
+become a second, drifting copy of the same predicate. Instead `lockReasonOf(row)` is now the
+primitive and `isFrozen` is derived from it (`lockReasonOf(row) !== null`), so the gate that
+refuses a dismiss and the label that explains it cannot disagree. `reviewLockOf(lines)` applies
+the same rule across a review's active lines and is what both the refusal and the payload use.
+
+**Client.** Dismiss is disabled when `bounty_lock` is set, with the reason in the `title` AND as
+visible text under the button. The text is deliberate: a `title` is invisible on touch and to a
+keyboard user, so a tooltip-only reason would have rebuilt the same problem one layer up. The 409
+stays as the real gate, since a row can lock between render and click, and its sentence now names
+the same state the button does.
+
+The stale code comment in `ResolvedTable.js` that recorded this limitation ("the list payload
+carries no per-review paid flag, so the button cannot state that reason up front") is corrected
+rather than deleted.
+
+Mutation-verified, three ways: dropping `removed_at IS NULL` from the lateral fails the test
+(a dismissed review would otherwise lock itself forever), collapsing the refusal back to one
+sentence fails it, and removing the client disable fails 2 of the 4 render tests.
+`ResolvedTable.js` had no test file at all before this; it has one now. Suites: staffReviews
+20/20, client 721/721 across 82 files, CI build clean. Neither file is sensitive-listed.
+
 
 Staff-hub spec §7 promises "dismiss refused (and the button disabled with a reason) while a bounty
 is paid or frozen." Only the first half exists, and only after the click. The server refusal is
