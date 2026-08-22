@@ -1228,7 +1228,34 @@ which is the largest client-facing change in the drop and is listed first becaus
       equipment data whatsoever**, every non-cancelled dev shift is `'[]'`. So the token
       label is unobservable in both environments as they stand. Seeing it requires setting
       equipment on a dev fixture shift first; there is no "just go look" path.
-- [ ] **Bar-required transport ack + card (built 2026-08-13, unseen).** On dev
+- [x] **Bar-required transport ack + card: PASSED 2026-08-21 (Zul), on dev. All three checks.**
+      (1) **Equipment card names the bar.** Shift 14 (Sean Parent) leads with "Portable bar —
+      DRB bar pickup at the Pilsen storage unit, or bring your own". Worth stating why that is
+      the strong result: shift 14's `equipment_required` is literally `[]`, so the card can
+      ONLY be driven by the DERIVED `bar_required` (`barRequiredSql`, `shifts.queries.js:31`:
+      `num_bars > 0 AND (per_guest OR paid bar_rental)`). Nothing in the stored equipment list
+      could have produced it.
+      (2) **The transport ack gates correctly, proven as a PAIR rather than a single case.**
+      POSITIVE, shift 4302 (James Stewart, Aug 22): `equipment_required` `[]`,
+      `supply_run_required` false, so the BAR IS THE ONLY REASON transport is required. The
+      ack appeared. CONTROL, shift 10824 (Sep 4): no bar, no equipment, no supply run. **No
+      ack appeared.** So the gate fires when it should and stays quiet when it should not, and
+      no false positive is asking staff to acknowledge hauling that does not exist. A single
+      positive would not have shown that.
+      (3) **Cooler copy (brought EMPTY)** confirmed on the card and in the Field Guide kit list.
+      **FIXTURE TRAP THAT COST TIME, and would cost the next walker the same.** The original
+      script said to hit Request on shift 14. **You cannot: `marcus.j` (user 5) already holds
+      an `approved` shift_request on 13, 14 AND 15**, so there is nothing left to request and
+      the sheet never offers the ack. That reads as a missing-ack defect and is not one. The
+      other shifts the script implies (4, 12, 19) are PAST events, so they are absent from the
+      open feed entirely — the feed is upcoming-only, and on dev it holds 9 future open shifts
+      of which 8 are available to Marcus.
+      **USE THESE INSTEAD, both future, both un-requested:** 4302 (James Stewart, bar-only,
+      the clean positive) and 10824 (the control). For the HOSTED branch of the rule rather
+      than the paid-rental branch, 4306 (Madelyn Brandt) or 4307 (Julia Neave) are `per_guest`
+      AND carry a supply run, so their transport line should list multiple reasons with the
+      bar first. That hosted branch was NOT walked.
+      Original entry follows. **(built 2026-08-13, unseen).** On dev
       (`staff.localhost:3000`, marcus.j): open shift 14 (Sean Parent) — the Equipment card
       must lead with "Portable bar — DRB bar pickup at the Pilsen storage unit, or bring
       your own", and hitting Request on any bar-carrying open shift must demand the
