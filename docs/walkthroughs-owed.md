@@ -1254,7 +1254,28 @@ which is the largest client-facing change in the drop and is listed first becaus
       the clean positive) and 10824 (the control). For the HOSTED branch of the rule rather
       than the paid-rental branch, 4306 (Madelyn Brandt) or 4307 (Julia Neave) are `per_guest`
       AND carry a supply run, so their transport line should list multiple reasons with the
-      bar first. That hosted branch was NOT walked.
+      bar first.
+      **HOSTED ACKNOWLEDGMENT ALSO WALKED 2026-08-21 (Zul), shift 4306 (Madelyn Brandt), and
+      it PASSES including the client/server agreement.** A hosted shift raises TWO INDEPENDENT
+      acks, not one: the transport ack (gated on `transportRequired`) and the hosted ack
+      ("I understand what a hosted event requires and I am ready for the supply work", gated
+      on `isHosted`, `RequestSheet.js:127`). Confirmed: two checkboxes; the transport line
+      named the BAR FIRST then the supply run (the deliberate ordering in `transportLine()`,
+      bar leads as the heaviest haul); and **submit stayed DISABLED with only one ticked**,
+      which is what proves they are two gates rather than one rendered twice. A staffer cannot
+      claim a hosted bar shift having acknowledged only half of it.
+      Both ticked, the submit SUCCEEDED. Verified in the dev DB, not taken on report:
+      `shift_requests` id 18801, shift 4306, user 5, status `pending`, positions
+      `["Bartender"]`. **No 400.** That is the exact drift `shifts.approval.js:63-69` warns
+      about ("keep the two in agreement or the server 400s a request the sheet never gated"),
+      and client and server agree.
+      **STILL NOT WALKED, and dev cannot currently produce it:** the hosted branch of
+      `bar_required` IN ISOLATION. Every `per_guest` shift in the visible feed ALSO carries a
+      paid `bar_rental`, so either arm of the OR would set the flag; there is no
+      hosted-with-zero-rental open shift to separate them. Needs a seeded fixture.
+      **FIXTURE NOTE, so this walk does not poison the next one exactly as 13/14/15 did:**
+      that submit left marcus.j holding a PENDING request on 4306, so **4306 is no longer a
+      fresh test shift.** 4307 (Julia Neave) is the remaining un-requested hosted one.
       Original entry follows. **(built 2026-08-13, unseen).** On dev
       (`staff.localhost:3000`, marcus.j): open shift 14 (Sean Parent) — the Equipment card
       must lead with "Portable bar — DRB bar pickup at the Pilsen storage unit, or bring
