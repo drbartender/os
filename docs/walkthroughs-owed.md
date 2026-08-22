@@ -1496,24 +1496,20 @@ to rot. Do that again for the next thing that sits here.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
-- [ ] **Stale-proposal sweep rollout. Gates the sweep doing anything at all
-      (shipped dark 2026-08-21, `85c1fbcf`).** The feature is LIVE IN PROD CODE and
-      inert: `RUN_STALE_PROPOSAL_SWEEP_SCHEDULER` is unset, and it requires exactly
-      `'true'`, so `RUN_SCHEDULERS=true` will not wake it. Nothing has been archived.
-      Three steps, in order, in Render:
-      (1) set `STALE_PROPOSAL_SWEEP_DRY_RUN=true` AND
-      `RUN_STALE_PROPOSAL_SWEEP_SCHEDULER=true`, wait one hourly tick, read the logged
-      candidate list — expect roughly 115 proposals plus a separate list of past-dated
-      `accepted` ones it refuses to touch;
-      (2) confirm that list looks right, because the first real run is ONE-WAY: it voids
-      about 105 invoices and hard-deletes about 28 pending scheduled messages, and
-      un-archiving restores neither;
-      (3) clear `STALE_PROPOSAL_SWEEP_DRY_RUN` and watch the backlog tick.
-      Then confirm the admin funnel moved as expected, which is a CORRECTION and not a
-      bug: Lost up about $58,190 backdated by `sent_at`, pipeline down about 115 rows and
-      about $58k, archived count up about 115. Win rate is unaffected.
-      The DDL needs no manual step: `schema.sql` self-applies the `event_passed` CHECK
-      widening at boot. Spec: `superpowers/specs/2026-08-20-stale-proposal-sweep-design.md`.
+- [x] **Stale-proposal sweep rollout — DONE 2026-08-21/22. Nothing owed.** Kept as the
+      record, not as a task. Dry run first (116 candidates listed, zero writes, verified
+      id-for-id against prod), then the flag cleared and the real run executed
+      2026-08-21 21:39:51 to 21:41:33 UTC: **116 archived, 105 invoices voided, 26 pending
+      messages deleted, 110 Stripe intents cancelled, 0 shifts reaped.** Every safety
+      assertion held — nothing archived carried money, nothing archived had ever been
+      signed (`accepted_at` null on all 116), proposal 600 untouched, no paid invoice
+      voided. **Zero Stripe heal markers**, so no cancellation ever failed. Lost gained
+      $58,540 on the first run, which is the correction Dallas approved, not a regression.
+      As of 2026-08-22 09:12 UTC it has been in steady state 11.5 hours: 3 more archived
+      on later ticks (119 total), 0 pending, 0 heal markers, 0 skip emails, and
+      `scheduler_health` reads `last_status: ok` with `consecutive_failures: 0`.
+      Spec: `superpowers/specs/2026-08-20-stale-proposal-sweep-design.md`.
+
 - [ ] **Walk Test Package: verify it is NOT `is_active` in the PROD catalog. Gates the
       options-drawer ship (2026-08-14).** It is active in the dev DB, and the drawer (plus
       the already-live options panel) renders every active non-class package as a real card
