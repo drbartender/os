@@ -64,7 +64,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (0 mandates in prod) |
 | 3 | **The staff Pay screen prints the wrong day off `paid_at`** | **YES — and a prior note wrongly said this was fixed** |
 | 3 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
-| 3 | An emailed link to an archived proposal shows live CTAs | **yes — ~116 swept proposals** |
 | 3 | Un-archiving a swept proposal re-archives it within the hour | **yes** |
 | 3 | The planner quotes pre-batched at a rate it does not bill | **yes** |
 | 3 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
@@ -344,19 +343,6 @@ sitting at sent/viewed with no choice ever made.** Causation unproven; the corre
 whole reason this was raised. Remaining work is one surface: bring the emailed group link to the
 shipped panel, or port the panel's difference-marking into `PackageMatrix`. `?choose=1` and both
 redirect effects are load-bearing and untouchable.
-
-### A client on an emailed link to an archived proposal sees a live page
-
-`publicToken.js` has no status filter and the client proposal view has no `archived` branch, so a
-client holding an emailed link to an archived proposal still sees a full page with working CTAs;
-signing returns a misleading "This proposal has already been accepted" 409. Verified 2026-08-23:
-the sign path guards archived, the RENDER path does not.
-
-**The stale-proposal sweep is now live and drained 116 proposals**, so this is no longer a
-one-at-a-time manual-archive edge — it is reachable for roughly a hundred clients at once. Voided
-INVOICE links already fail gracefully (404 with "may have been voided" copy); this is the gap
-next to them. Fix: an `archived` branch in the proposal view, and reason-aware copy on the sign
-409.
 
 ### Un-archiving a swept proposal re-archives it within the hour
 

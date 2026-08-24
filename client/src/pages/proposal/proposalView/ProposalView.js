@@ -144,7 +144,16 @@ export default function ProposalView() {
         if (cancelled || redirected) return;
         axios.get(`${BASE_URL}/proposals/t/${token}`)
           .then(res => { if (!cancelled) setProposal(res.data); })
-          .catch(() => { if (!cancelled) setError('Proposal not found or has expired.'); })
+          // 404 covers three real cases the client cannot tell apart and does
+          // not need to: a mistyped link, and — since the server stopped
+          // serving archived rows — a booking that was cancelled or a quote
+          // whose event date has passed. Anything else is our fault and says
+          // so, because telling someone their proposal is gone when our server
+          // merely hiccuped is the worse error of the two.
+          .catch((err) => {
+            if (cancelled) return;
+            setError(err?.response?.status === 404 ? 'not_found' : 'load_failed');
+          })
           .finally(() => { if (!cancelled) setLoading(false); });
       });
     return () => { cancelled = true; };
@@ -557,12 +566,27 @@ export default function ProposalView() {
   }
 
   if (error) {
+    // Same shape as InvoicePage's not-found state, deliberately: this is the
+    // sibling public token page and a client who lands on either should get
+    // the same treatment and a way to reach a human. `public-error` is the
+    // shared block (index.css), already used by InvoicePage and BlogPost, so
+    // this adds no CSS.
+    const isNotFound = error === 'not_found';
     return (
       <div style={styles.page}>
         <div className="proposal-view-container">
-          <div style={{ textAlign: 'center', padding: '4rem' }}>
-            <h2 style={styles.heading}>Oops!</h2>
-            <p style={{ color: 'var(--brass)', marginTop: '0.5rem' }}>{error}</p>
+          <div className="public-error">
+            <span className="public-error-eyebrow">Proposal</span>
+            <h1>{isNotFound ? "We couldn't find that proposal." : "We couldn't load this proposal."}</h1>
+            <p className="public-error-body">
+              {isNotFound
+                ? 'The link may have been mistyped, or this proposal is no longer current. Double-check the URL, and if you got it from us by email, the latest version is in your inbox.'
+                : "Something went wrong on our end. Please try again in a moment, or reach out and we'll send you a fresh link."}
+            </p>
+            <div className="public-error-actions">
+              <a href="mailto:contact@drbartender.com" className="btn btn-primary">Email contact@drbartender.com</a>
+              <a href="https://drbartender.com" className="public-error-link">Back to drbartender.com</a>
+            </div>
           </div>
         </div>
       </div>

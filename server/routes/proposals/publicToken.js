@@ -108,6 +108,29 @@ async function buildPublicProposalPayload(token, db = pool) {
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1
+      -- An archived proposal is NOT REACHABLE by its own token, deliberately.
+      -- Without this the page rendered its full live layout — Sign & Pay and
+      -- all — for a booking that no longer exists, and signing then returned a
+      -- misleading "already been accepted" 409. The stale-proposal sweep turned
+      -- that from a manual-archive edge into ~160 live tokens at once.
+      -- This mirrors the voided-invoice precedent exactly (routes/invoices.js
+      -- puts AND i.status != 'void' on its own public token lookup): the row
+      -- simply is not found, and the client gets the ordinary not-found page rather
+      -- than a bespoke surface. Dallas, 2026-08-24: an event_passed quote
+      -- expired because the event happened without us, so there is nothing to
+      -- offer that client and no re-quote page to build.
+      -- The switch endpoint shares this function and is unaffected: it mutates
+      -- the proposal in place and never writes 'archived'.
+      --
+      -- DO NOT copy this filter up to /t/:token/resolve. That endpoint is
+      -- deliberately status-blind, and it is what makes the option-group case
+      -- correct: a losing sibling is archived 'option_not_chosen', and resolve
+      -- is how ProposalView learns the group is decided and redirects the
+      -- client to the option they actually chose. It runs BEFORE this payload,
+      -- so those clients never reach the not-found page at all. Filtering
+      -- resolve would strand them on it instead. Pinned by
+      -- publicToken.archived.test.js.
+      AND p.status <> 'archived'
   `, [token]);
 
   if (!result.rows[0]) return null;
