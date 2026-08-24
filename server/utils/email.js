@@ -74,7 +74,14 @@ async function sendEmail({ to, subject, html, text, from, replyTo, attachments, 
     subject,
     html,
     ...(text && { text }),
-    ...(effectiveReplyTo && { reply_to: effectiveReplyTo }),
+    // `replyTo`, NOT `reply_to`. The v6 SDK builds its API payload from an
+    // explicit allowlist (parseEmailToApiOptions) that reads `replyTo` and
+    // emits `reply_to` on the wire — an unknown key is dropped silently, with
+    // no error and no warning. Sending snake_case here means NO Reply-To header
+    // at all, so client replies hit the From address (no-reply@) and bounce.
+    // That shipped undetected from 2026-03-17 to 2026-08-24. Covered by
+    // email.replyTo.test.js, which asserts the header on the wire.
+    ...(effectiveReplyTo && { replyTo: effectiveReplyTo }),
     ...(attachments && attachments.length && { attachments }),
   });
 
@@ -122,7 +129,9 @@ async function sendBatchEmails(emails) {
     subject: e.subject,
     html: e.html,
     ...(e.text && { text: e.text }),
-    reply_to: e.reply_to || process.env.ADMIN_EMAIL || undefined,
+    // Input stays `reply_to` (this function's documented shape, see the JSDoc
+    // above); what the SDK needs is `replyTo`. See the note in sendEmail.
+    replyTo: e.reply_to || process.env.ADMIN_EMAIL || undefined,
   }));
 
   const { data, error } = await resend.batch.send(formatted);
