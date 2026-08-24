@@ -1191,7 +1191,7 @@ the accented spelling) or the two spellings stop matching each other.
   verified. Admin-facing money copy, so it should not stay on trust.
 - **File-size ratchet.** RED 0. Closest to the 1000 hard cap: `PotionPlanningLab.js` **998** (and
   none of its extracted hooks exist), `crud.js` 976, `smsInbound.js` 877 (natural seam: keyword and
-  opt-out handling vs the shift responder), `ProposalEditorForm.js` 867,
+  opt-out handling vs the shift responder), `ProposalEditorForm.js` 867, `ProposalView.js` 864,
   `paymentIntentSucceeded.js` 869, `CocktailMenuDashboard.js` 931, `emailTemplates.js` 819,
   `ShiftDetail.js` 810, `thumbtackAgent.js` ~790 (split candidate: the first-reply queue into
   `thumbtackAgent.replies.js`), `staffPortal.js` 785, `QuoteWizard.js` 837, `drinkPlans/submit.js`
