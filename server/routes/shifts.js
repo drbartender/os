@@ -5,7 +5,6 @@ const { geocodeAddress } = require('../utils/geocode');
 const { autoAssignShift } = require('../utils/autoAssign');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
-const { findOrCreateClient } = require('../utils/clientDedup');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
 const { logAdminAction } = require('../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../utils/businessTime');
@@ -645,96 +644,6 @@ router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
 }));
 
 // ─── Admin / Staffing manager routes ─────────────────────────────
-
-/** POST /shifts — create a new shift */
-router.post('/', auth, requireStaffing, asyncHandler(async (req, res) => {
-  const { event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes,
-          equipment_required, auto_assign_days_before, lat, lng,
-          client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
-  if (!event_date) {
-    throw new ValidationError({ event_date: 'Event date is required.' });
-  }
-
-  const pgClient = await pool.connect();
-  let shift;
-  try {
-    await pgClient.query('BEGIN');
-
-    // 1. Create or find client record
-    let clientId = null;
-    if (client_name) {
-      clientId = await findOrCreateClient(pgClient, {
-        name: client_name, email: client_email, phone: client_phone, source: 'direct',
-      });
-    }
-
-    // 2. Create a proposal record so the full event detail page works
-    const guestCountInt = guest_count ? parseInt(guest_count, 10) : 50;
-    const durationFloat = event_duration_hours ? parseFloat(event_duration_hours) : 4;
-    const proposalRes = await pgClient.query(`
-      INSERT INTO proposals (client_id, event_type, event_type_custom, event_date, event_start_time,
-                             event_duration_hours, event_location, guest_count,
-                             status, pricing_snapshot, total_price, created_by, admin_notes)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', '{}', 0, $9, $10) RETURNING *
-    `, [
-      clientId, event_type || null, event_type_custom || null,
-      event_date, start_time || null,
-      durationFloat, location || null, guestCountInt,
-      req.user.id, 'Manually created event — no contract or payment on file.'
-    ]);
-    const proposal = proposalRes.rows[0];
-
-    // 3. Create the shift linked to the proposal
-    const shiftRes = await pgClient.query(`
-      INSERT INTO shifts (event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes,
-                          equipment_required, auto_assign_days_before, lat, lng, created_by, proposal_id,
-                          client_name, client_email, client_phone, guest_count, event_duration_hours)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *
-    `, [
-      event_type || null, event_type_custom || null,
-      event_date,
-      start_time || null, end_time || null,
-      location || null,
-      // A shift always needs at least one bartender. When the caller omits
-      // positions_needed (or passes an empty array), default the roster to a
-      // single Bartender slot so no new empty-roster rows are created — an
-      // empty roster hides the shift from Available and blocks the picker.
-      JSON.stringify(
-        Array.isArray(positions_needed) && positions_needed.length > 0
-          ? positions_needed
-          : ['Bartender']
-      ),
-      notes || null,
-      equipment_required ? JSON.stringify(equipment_required) : '[]',
-      auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,
-      lat || null, lng || null,
-      req.user.id, proposal.id,
-      client_name || null, client_email || null, client_phone || null,
-      guestCountInt, durationFloat
-    ]);
-
-    await pgClient.query('COMMIT');
-    shift = shiftRes.rows[0];
-  } catch (err) {
-    try { await pgClient.query('ROLLBACK'); } catch (_e) { /* already rolled back */ }
-    throw err;
-  } finally {
-    pgClient.release();
-  }
-
-  // Geocode location in background
-  if (!lat && !lng && location) {
-    geocodeAddress(location)
-      .then(coords => {
-        if (coords) {
-          return pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
-        }
-      })
-      .catch(err => console.error('[Shifts] Geocode error:', err.message));
-  }
-
-  res.status(201).json(shift);
-}));
 
 /** PUT /shifts/:id — update a shift. Body lives in shifts.handlers.js. */
 router.put('/:id', auth, requireStaffing, asyncHandler(updateShiftHandler));

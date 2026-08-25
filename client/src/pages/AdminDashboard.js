@@ -5,7 +5,6 @@ import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
 import { fmtDateOnly, fmtTime24 } from '../components/adminos/format';
-import TimePicker from '../components/TimePicker';
 import ClickableRow from '../components/ClickableRow';
 import EntityLink from '../components/EntityLink';
 
@@ -27,9 +26,6 @@ export default function AdminDashboard() {
   const [shiftsLoading, setShiftsLoading]     = useState(false);
   const [expandedShift, setExpandedShift]     = useState(null);
   const [shiftRequests, setShiftRequests]     = useState({});
-  const [showShiftForm, setShowShiftForm]     = useState(false);
-  const [shiftForm, setShiftForm]             = useState({ event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
-  const [shiftPosInput, setShiftPosInput]     = useState('');
 
   // Messages state
   const [msgRecipients, setMsgRecipients]           = useState([]);
@@ -169,20 +165,6 @@ export default function AdminDashboard() {
     }
   }
 
-  async function createShift(e) {
-    e.preventDefault();
-    try {
-      await api.post('/shifts', { ...shiftForm, positions_needed: shiftForm.positions });
-      setShiftForm({ event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
-      setShiftPosInput('');
-      setShowShiftForm(false);
-      fetchShifts();
-      toast.success('Shift created!');
-    } catch (e) {
-      toast.error(e.message || 'Failed to create shift.');
-    }
-  }
-
   // Shared date-only formatter with this view's weekday/no-year style.
   // year:undefined cancels fmtDateOnly's default year so the output matches the
   // prior local "Mon, Jul 13" format. (Inputs here are always JSON date strings.)
@@ -305,92 +287,7 @@ export default function AdminDashboard() {
             {/* Header row */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{shifts.length} shift{shifts.length !== 1 ? 's' : ''} total</span>
-              <button className="btn btn-primary btn-sm" onClick={() => setShowShiftForm(v => !v)}>
-                {showShiftForm ? '✕ Cancel' : '+ New Shift'}
-              </button>
             </div>
-
-            {/* Create shift form */}
-            {showShiftForm && (
-              <div className="card mb-3" style={{ border: '2px solid var(--amber)' }}>
-                <h3 style={{ marginBottom: '1rem' }}>Create New Shift</h3>
-                <form onSubmit={createShift}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-                    <div>
-                      <label className="form-label">Event Date *</label>
-                      <input className="form-input" type="date" required value={shiftForm.event_date}
-                        onChange={e => setShiftForm(f => ({ ...f, event_date: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className="form-label" htmlFor="shift-start-time">Start Time</label>
-                      <TimePicker
-                        id="shift-start-time"
-                        value={shiftForm.start_time}
-                        onChange={(v) => setShiftForm(f => ({ ...f, start_time: v }))}
-                        hour24
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label" htmlFor="shift-end-time">End Time</label>
-                      <TimePicker
-                        id="shift-end-time"
-                        value={shiftForm.end_time}
-                        onChange={(v) => setShiftForm(f => ({ ...f, end_time: v }))}
-                        hour24
-                      />
-                    </div>
-                    <div>
-                      <label className="form-label">Location</label>
-                      <input className="form-input" value={shiftForm.location}
-                        onChange={e => setShiftForm(f => ({ ...f, location: e.target.value }))} />
-                    </div>
-                  </div>
-
-                  {/* Positions needed */}
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <label className="form-label">Positions Needed</label>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
-                      {shiftForm.positions.map((p, i) => (
-                        <span key={i} style={{
-                          background: 'var(--amber)', color: 'white', borderRadius: '99px',
-                          padding: '0.2rem 0.6rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.3rem'
-                        }}>
-                          {p}
-                          <button type="button" onClick={() => setShiftForm(f => ({ ...f, positions: f.positions.filter((_, j) => j !== i) }))}
-                            style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: 0, lineHeight: 1 }}>✕</button>
-                        </span>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <input className="form-input" style={{ marginBottom: 0 }} placeholder="e.g. Bartender, Bar Back…"
-                        value={shiftPosInput} onChange={e => setShiftPosInput(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const v = shiftPosInput.trim();
-                            if (v) { setShiftForm(f => ({ ...f, positions: [...f.positions, v] })); setShiftPosInput(''); }
-                          }
-                        }} />
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => {
-                        const v = shiftPosInput.trim();
-                        if (v) { setShiftForm(f => ({ ...f, positions: [...f.positions, v] })); setShiftPosInput(''); }
-                      }}>Add</button>
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <label className="form-label">Notes</label>
-                    <textarea className="form-input" rows={2} value={shiftForm.notes}
-                      onChange={e => setShiftForm(f => ({ ...f, notes: e.target.value }))} />
-                  </div>
-
-                  <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                    <button type="submit" className="btn btn-primary">Create Shift</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => setShowShiftForm(false)}>Cancel</button>
-                  </div>
-                </form>
-              </div>
-            )}
 
             {/* Shift list */}
             {shiftsLoading ? (

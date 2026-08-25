@@ -3,9 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
-import FormBanner from '../../components/FormBanner';
-import FieldError from '../../components/FieldError';
-import NumberStepper from '../../components/NumberStepper';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
@@ -21,27 +18,7 @@ import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
-import { parsePositionsCount, approvedCount, eventStatusChip, isCancelledEvent, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
-import { ROLES } from '../../utils/staffingRoles';
-
-// value stays 12h ("7:00 PM") — it is stored raw into shifts.start_time and read
-// by the staff portal, so the stored format must not change. Only the displayed
-// label flips to 24h for the admin dropdown.
-const TIME_SLOTS = [];
-for (let h = 6; h < 24; h++) {
-  for (let m = 0; m < 60; m += 30) {
-    const hh = h > 12 ? h - 12 : h === 0 ? 12 : h;
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const mm = m === 0 ? '00' : '30';
-    TIME_SLOTS.push({ value: `${hh}:${mm} ${ampm}`, label: `${String(h).padStart(2, '0')}:${mm}` });
-  }
-}
-
-// Per-role roster counts on the create form. The positions_needed array sent to
-// the server is built from these (NOT a flat Array(n).fill('Bartender')), so a
-// manual event can request banquet servers and barbacks too. Order here is the
-// display + slot-build order (bartenders first, then servers, then barbacks).
-const ROSTER_ROLES = [ROLES.BARTENDER, ROLES.BANQUET_SERVER, ROLES.BARBACK];
+import { parsePositionsCount, approvedCount, eventStatusChip, isCancelledEvent } from '../../components/adminos/shifts';
 
 // URL-backed view state (tab / status filter). Kept at module scope so
 // the hook's default identity is stable. Back restores the exact list view.
@@ -62,28 +39,6 @@ const EVENT_SORT_ACCESSORS = {
   balance: e => Number(e.proposal_total || 0) - Number(e.proposal_amount_paid || e.amount_paid || 0),
 };
 
-const EMPTY_FORM = {
-  client_name: '', client_email: '', client_phone: '',
-  event_date: '', start_time: '', end_time: '', event_duration_hours: '',
-  location: '', guest_count: '',
-  // Per-role headcount. Defaults to one bartender (the common manual event).
-  roster: { [ROLES.BARTENDER]: 1, [ROLES.BANQUET_SERVER]: 0, [ROLES.BARBACK]: 0 },
-  // Token array consumed by the auto-assign equipment scorer. Defaults empty
-  // (= no gear requirement, scorer awards full equipment credit to everyone).
-  equipment_required: [],
-};
-
-// Builds the positions_needed array (one canonical label per slot) from the
-// per-role roster counts, in display order.
-function buildPositionsFromRoster(roster) {
-  const out = [];
-  for (const role of ROSTER_ROLES) {
-    const n = Math.max(0, parseInt(roster?.[role], 10) || 0);
-    for (let i = 0; i < n; i++) out.push(role);
-  }
-  return out;
-}
-
 export default function EventsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
@@ -102,11 +57,6 @@ export default function EventsDashboard() {
       ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
       : { key, dir: 'asc' }));
   }, []);
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
-  const [fieldErrors, setFieldErrors] = useState({});
   const [reminderTarget, setReminderTarget] = useState(null);
 
   const fetchEvents = useCallback(async () => {
@@ -121,86 +71,6 @@ export default function EventsDashboard() {
   }, [toast]);
 
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
-
-  const handleField = (field, value) => {
-    setForm(f => ({ ...f, [field]: value }));
-    if (fieldErrors[field]) {
-      setFieldErrors(fe => {
-        const next = { ...fe };
-        delete next[field];
-        return next;
-      });
-    }
-  };
-
-  // Update a single role's headcount in the roster.
-  const setRosterCount = (role, value) => {
-    setForm(f => ({ ...f, roster: { ...f.roster, [role]: value } }));
-    if (fieldErrors.positions_needed) {
-      setFieldErrors(fe => {
-        const next = { ...fe };
-        delete next.positions_needed;
-        return next;
-      });
-    }
-  };
-
-  // Add/remove an equipment token from form.equipment_required. parseEquipmentArray
-  // keeps this correct whether the field holds the array default or a JSON-string
-  // seed (edit-existing case).
-  const toggleEquipment = (token, checked) => {
-    setForm(f => {
-      const current = parseEquipmentArray(f.equipment_required);
-      const next = checked
-        ? (current.includes(token) ? current : [...current, token])
-        : current.filter(t => t !== token);
-      return { ...f, equipment_required: next };
-    });
-  };
-
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    setCreateError('');
-    setFieldErrors({});
-    if (!form.event_date) {
-      setFieldErrors({ event_date: 'Event date is required.' });
-      return;
-    }
-    const positions = buildPositionsFromRoster(form.roster);
-    if (positions.length === 0) {
-      setFieldErrors({ positions_needed: 'Add at least one staff position.' });
-      return;
-    }
-    setCreating(true);
-    try {
-      const res = await api.post('/shifts', {
-        client_name: form.client_name,
-        client_email: form.client_email,
-        client_phone: form.client_phone,
-        event_date: form.event_date,
-        start_time: form.start_time,
-        end_time: form.end_time,
-        event_duration_hours: form.event_duration_hours || null,
-        location: form.location,
-        guest_count: form.guest_count || null,
-        positions_needed: positions,
-        // Send as a plain token array — POST /shifts JSON.stringifies it server
-        // side (server/routes/shifts.js). parseEquipmentArray tolerates either
-        // an array (the form default) or a JSON-string seed (edit-existing).
-        equipment_required: parseEquipmentArray(form.equipment_required),
-      });
-      toast.success('Event created.');
-      setForm(EMPTY_FORM);
-      setShowCreateForm(false);
-      const newShift = res.data;
-      navigate(`/events/${newShift.proposal_id}`);
-    } catch (err) {
-      setCreateError(err.message || 'Failed to create event.');
-      setFieldErrors(err.fieldErrors || {});
-    } finally {
-      setCreating(false);
-    }
-  };
 
   // Ref-backed dispatcher: row/kebab callbacks need access to the latest
   // navigate / drawer / toast / setReminderTarget closures, but EventRow only
@@ -297,127 +167,9 @@ export default function EventsDashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Events</div>
-          <div className="page-subtitle">Every confirmed and manually-created event. Staffing and financials in one row.</div>
-        </div>
-        <div className="page-actions">
-          <button type="button" className="btn btn-primary" onClick={() => setShowCreateForm(v => !v)}>
-            <Icon name={showCreateForm ? 'x' : 'plus'} />{showCreateForm ? 'Cancel' : 'New event'}
-          </button>
+          <div className="page-subtitle">Every confirmed event. Staffing and financials in one row.</div>
         </div>
       </div>
-
-      {showCreateForm && (
-        <div className="card" style={{ padding: '1.25rem 1.5rem', marginBottom: 'var(--gap)' }}>
-          <div className="section-title" style={{ margin: 0, marginBottom: 12 }}>New event</div>
-          <form onSubmit={handleCreate}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.85rem' }}>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Client name</div>
-                <input className="input" value={form.client_name} onChange={e => handleField('client_name', e.target.value)} aria-invalid={!!fieldErrors?.client_name} />
-                <FieldError error={fieldErrors?.client_name} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Client email</div>
-                <input className="input" type="email" value={form.client_email} onChange={e => handleField('client_email', e.target.value)} aria-invalid={!!fieldErrors?.client_email} />
-                <FieldError error={fieldErrors?.client_email} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Client phone</div>
-                <input className="input" value={form.client_phone} onChange={e => handleField('client_phone', e.target.value)} aria-invalid={!!fieldErrors?.client_phone} />
-                <FieldError error={fieldErrors?.client_phone} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Event date *</div>
-                <input className="input" type="date" required value={form.event_date} onChange={e => handleField('event_date', e.target.value)} aria-invalid={!!fieldErrors?.event_date} />
-                <FieldError error={fieldErrors?.event_date} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Start time</div>
-                <select className="select" value={form.start_time} onChange={e => handleField('start_time', e.target.value)}>
-                  <option value="">Select…</option>
-                  {TIME_SLOTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-                <FieldError error={fieldErrors?.start_time} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>End time</div>
-                <select className="select" value={form.end_time} onChange={e => handleField('end_time', e.target.value)}>
-                  <option value="">Select…</option>
-                  {TIME_SLOTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-                <FieldError error={fieldErrors?.end_time} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Duration (hours)</div>
-                <NumberStepper className="input" step={0.5} min={0.5}
-                  value={form.event_duration_hours}
-                  onChange={v => handleField('event_duration_hours', v)}
-                  ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration" />
-                <FieldError error={fieldErrors?.event_duration_hours} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Location</div>
-                <input className="input" value={form.location} onChange={e => handleField('location', e.target.value)} />
-                <FieldError error={fieldErrors?.location} />
-              </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Guest count</div>
-                <input className="input" type="number" min="1" value={form.guest_count} onChange={e => handleField('guest_count', e.target.value)} />
-                <FieldError error={fieldErrors?.guest_count} />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Staffing roster</div>
-                <div className="hstack" style={{ flexWrap: 'wrap', gap: 16 }}>
-                  {ROSTER_ROLES.map(role => (
-                    <label key={role} className="hstack" style={{ gap: 6, fontSize: 13 }}>
-                      <span style={{ minWidth: 110 }}>{role}</span>
-                      <input
-                        className="input"
-                        style={{ width: 72 }}
-                        type="number"
-                        min="0"
-                        value={form.roster[role]}
-                        onChange={e => setRosterCount(role, e.target.value)}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <FieldError error={fieldErrors?.positions_needed} />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Equipment required</div>
-                <div className="hstack" style={{ flexWrap: 'wrap', gap: 16 }}>
-                  {SHIFT_EQUIPMENT_OPTIONS.map(([token, label]) => {
-                    const selected = parseEquipmentArray(form.equipment_required);
-                    return (
-                      <label key={token} className="hstack" style={{ gap: 6, fontSize: 13, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(token)}
-                          onChange={e => toggleEquipment(token, e.target.checked)}
-                        />
-                        {label}
-                      </label>
-                    );
-                  })}
-                </div>
-                <div className="muted tiny" style={{ marginTop: 4 }}>
-                  Used to prioritize bartenders who own this gear during auto-assign.
-                </div>
-              </div>
-            </div>
-            <FormBanner error={createError} fieldErrors={fieldErrors} />
-            <div className="hstack" style={{ marginTop: 14, gap: 8 }}>
-              <button type="submit" className="btn btn-primary" disabled={creating}>
-                {creating ? 'Creating…' : 'Create event'}
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => { setShowCreateForm(false); setForm(EMPTY_FORM); setCreateError(''); setFieldErrors({}); }}>
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       <Toolbar
         tabs={tabs}
