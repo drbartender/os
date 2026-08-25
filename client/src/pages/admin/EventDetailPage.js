@@ -20,7 +20,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ServiceExtensionPanel from '../../components/adminos/ServiceExtensionPanel';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
-import { fmtDate, fmtDateFull, fmtTime24, fmtTimeRange24, relDay } from '../../components/adminos/format';
+import { fmtDate, fmtDateFull, fmtTime24, fmtTimeRange24, relDayTs } from '../../components/adminos/format';
 import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
 import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
@@ -635,7 +635,7 @@ export default function EventDetailPage() {
                           <div className="tiny muted">{a.metadata.note || a.metadata.message || ''}</div>
                         )}
                       </div>
-                      <div className="tiny muted">{a.created_at ? relDay(String(a.created_at).slice(0, 10)) : ''}</div>
+                      <div className="tiny muted">{a.created_at ? relDayTs(a.created_at) : ''}</div>
                     </div>
                   ))}
                 </div>

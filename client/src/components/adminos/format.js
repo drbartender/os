@@ -138,6 +138,18 @@ export const calcEndTime = (startTime, durationHours) => {
 // last night as sent "Tomorrow", and left every after-hours row a permanent day off.
 // Date-ONLY columns (event_date, balance_due_date) must NOT come through here: their
 // ISO date part IS the calendar day, and fmtDateOnly/relDay already handle them.
+//
+// Neither must a DATE wearing a TIMESTAMPTZ, and the admin has two. Both are stored
+// at UTC midnight, so ctDay would report the day BEFORE the one that was meant:
+//   blog_posts.published_at      the author types it into <input type="date"> and the
+//                                server stores new Date('YYYY-MM-DD')
+//   stripe_payout_lines.available_on  Stripe's availability date; 204 of 210 prod rows
+//                                sit at exactly 00:00 UTC
+// The test is data, not the column type: a real instant is spread across the clock, a
+// date wearing a timestamp piles up at UTC midnight. Check before sweeping a new field.
+//
+// For a formatted date rather than a relative day, compose: fmtDate(ctDay(ts), opts)
+// or fmtDateFull(ctDay(ts)). Both already render the placeholder when ctDay is null.
 const CT_YMD = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
 });

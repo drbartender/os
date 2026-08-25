@@ -8,7 +8,7 @@ import { useToast } from '../../../context/ToastContext';
 import { useAuth } from '../../../context/AuthContext';
 import Icon from '../../../components/adminos/Icon';
 import StatusChip from '../../../components/adminos/StatusChip';
-import { fmt$, fmtDate } from '../../../components/adminos/format';
+import { ctDay, fmt$, fmtDate } from '../../../components/adminos/format';
 import BackButton from '../../../components/adminos/BackButton';
 import {
   DEFAULT_HOURS_PER_SHIFT,
@@ -382,7 +382,7 @@ export default function AdminUserDetail() {
                   {[profile.city, profile.state].filter(Boolean).join(', ')}
                 </span>
               )}
-              <span className="hstack"><Icon name="calendar" size={12} />Joined {fmtDate(user.created_at && String(user.created_at).slice(0, 10), { year: 'numeric' })}</span>
+              <span className="hstack"><Icon name="calendar" size={12} />Joined {fmtDate(ctDay(user.created_at), { year: 'numeric' })}</span>
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>

@@ -14,7 +14,7 @@ import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
+import { ctDay, fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
 import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
@@ -592,7 +592,7 @@ export default function ProposalDetail() {
                     <dl className="dl">
                       <dt>Signed by</dt><dd>{proposal.client_signed_name || '—'}</dd>
                       <dt>Signed on</dt>
-                      <dd>{fmtDateFull(String(proposal.client_signed_at).slice(0, 10))}</dd>
+                      <dd>{fmtDateFull(ctDay(proposal.client_signed_at))}</dd>
                       <dt>Agreement version</dt>
                       <dd className="muted">{proposal.client_signature_document_version || '—'}</dd>
                     </dl>

@@ -5,7 +5,7 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmtDate } from '../../components/adminos/format';
+import { ctDay, fmtDate } from '../../components/adminos/format';
 
 // TipTap is ~200 KB; load it only when the editor actually mounts so visiting
 // the blog list (the more common path) doesn't pull the editor chunk.
@@ -24,7 +24,10 @@ function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-function formatDate(d) {
+// published_at is a DATE the author typed into <input type="date">: the server
+// stores it via new Date('YYYY-MM-DD'), i.e. UTC midnight, so the UTC slice is
+// what round-trips. Do NOT route it through ctDay, that would show the day before.
+function formatPublishDate(d) {
   if (!d) return '—';
   return fmtDate(String(d).slice(0, 10), { year: 'numeric' });
 }
@@ -334,8 +337,8 @@ export default function BlogDashboard() {
                       {post.published ? 'Published' : 'Draft'}
                     </StatusChip>
                   </td>
-                  <td className="muted">{formatDate(post.published_at)}</td>
-                  <td className="muted">{formatDate(post.created_at)}</td>
+                  <td className="muted">{formatPublishDate(post.published_at)}</td>
+                  <td className="muted">{fmtDate(ctDay(post.created_at), { year: 'numeric' })}</td>
                   <td className="shrink">
                     <div className="hstack" style={{ gap: 4 }}>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => startEdit(post)} disabled={!!editingId}>

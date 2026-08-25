@@ -1,4 +1,4 @@
-import { fmtTime24, fmtTimeRange24, ctDay, dayDiff, relDay, relDayTs } from './format';
+import { fmtTime24, fmtTimeRange24, ctDay, dayDiff, fmtDate, fmtDateFull, relDay, relDayTs } from './format';
 
 describe('fmtTime24', () => {
   test('converts server-written 12h strings', () => {
@@ -148,5 +148,34 @@ describe('relDayTs', () => {
     expect(relDayTs(null)).toBe('—');
     expect(relDayTs('')).toBe('—');
     expect(relDayTs('garbage')).toBe('—');
+  });
+});
+
+// The 12 swept call sites format a moment as a date rather than a relative day.
+// They compose rather than adding a second helper, so pin the composition.
+describe('ctDay composed with the date formatters', () => {
+  test('an evening moment formats as the Chicago day, not the UTC one', () => {
+    // prod proposal 769: 2026-08-23 19:57 Chicago, stored 2026-08-24T00:57:43Z
+    expect(fmtDate(ctDay('2026-08-24T00:57:43.004Z'), { year: 'numeric' })).toBe('Aug 23, 2026');
+    expect(fmtDateFull(ctDay('2026-08-24T00:57:43.004Z'))).toBe('Sun, Aug 23, 2026');
+  });
+
+  test('a midday moment is unchanged by the sweep', () => {
+    expect(fmtDate(ctDay('2026-08-24T17:00:00Z'), { year: 'numeric' })).toBe('Aug 24, 2026');
+  });
+
+  test('null flows through to the placeholder the call sites relied on', () => {
+    expect(fmtDate(ctDay(null), { year: 'numeric' })).toBe('—');
+    expect(fmtDateFull(ctDay(null))).toBe('—');
+  });
+});
+
+// Guard the two fields deliberately LEFT on the UTC slice: both are dates wearing a
+// TIMESTAMPTZ, stored at UTC midnight, so ctDay would report the day before.
+describe('dates wearing a timestamptz stay on the UTC slice', () => {
+  test('a UTC-midnight value would lose a day through ctDay', () => {
+    // blog published_at typed as 2026-08-25, stored new Date('2026-08-25')
+    expect(String('2026-08-25T00:00:00.000Z').slice(0, 10)).toBe('2026-08-25');
+    expect(ctDay('2026-08-25T00:00:00.000Z')).toBe('2026-08-24');
   });
 });

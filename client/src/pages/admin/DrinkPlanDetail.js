@@ -10,7 +10,7 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmtDateFull } from '../../components/adminos/format';
+import { ctDay, fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
 import EntityLink from '../../components/EntityLink';
 import SendModal, { describeSendResult } from '../../components/SendModal';
@@ -233,7 +233,7 @@ export default function DrinkPlanDetail() {
               onChange={() => switchSource('planner')}
             />
             <span style={{ fontSize: 13 }}>
-              Client planner{plan.submitted_at ? `, submitted ${fmtDateFull(String(plan.submitted_at).slice(0, 10))}` : ''}
+              Client planner{plan.submitted_at ? `, submitted ${fmtDateFull(ctDay(plan.submitted_at))}` : ''}
             </span>
           </label>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: sourceSwitching ? 'wait' : 'pointer' }}>
@@ -245,7 +245,7 @@ export default function DrinkPlanDetail() {
               onChange={() => switchSource('consult')}
             />
             <span style={{ fontSize: 13 }}>
-              Consultation form{plan.consult_filled_at ? `, ${fmtDateFull(String(plan.consult_filled_at).slice(0, 10))}` : ''}
+              Consultation form{plan.consult_filled_at ? `, ${fmtDateFull(ctDay(plan.consult_filled_at))}` : ''}
               {plan.consult_filled_by_email && (
                 <>
                   {' ('}

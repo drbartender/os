@@ -3,7 +3,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import StatusChip from '../../components/adminos/StatusChip';
 import EntityLink from '../../components/EntityLink';
-import { fmt$fromCents, fmtDate } from '../../components/adminos/format';
+import { ctDay, fmt$fromCents, fmtDate } from '../../components/adminos/format';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const PAYOUT_STATUS = { paid: 'ok', in_transit: 'info', pending: 'info', canceled: 'neutral', failed: 'danger' };
@@ -127,7 +127,7 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
         <div className="stat">
           <div className="stat-label">Last synced</div>
           <div className="stat-value" style={{ fontSize: '1rem' }}>
-            {syncing ? 'Syncing…' : (s.last_synced_at ? fmtDate(String(s.last_synced_at).slice(0, 10), { year: 'numeric' }) : 'not yet')}
+            {syncing ? 'Syncing…' : (s.last_synced_at ? fmtDate(ctDay(s.last_synced_at), { year: 'numeric' }) : 'not yet')}
           </div>
           <div className="stat-sub">
             <button className="btn btn-secondary btn-sm" onClick={() => syncNow(true)} disabled={syncing}>
@@ -194,7 +194,7 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
                   <td>
                     <strong>{p.arrival_date ? fmtDate(String(p.arrival_date).slice(0, 10), { year: 'numeric' }) : '—'}</strong>
                     <span className="muted" style={{ display: 'block', fontSize: '0.85em' }}>
-                      created {fmtDate(String(p.created_at_stripe).slice(0, 10), { year: 'numeric' })}
+                      created {fmtDate(ctDay(p.created_at_stripe), { year: 'numeric' })}
                     </span>
                   </td>
                   <td>

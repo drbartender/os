@@ -13,7 +13,7 @@ import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
 import useUrlListState from '../../hooks/useUrlListState';
-import { fmt$, fmtDate } from '../../components/adminos/format';
+import { ctDay, fmt$, fmtDate } from '../../components/adminos/format';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -225,7 +225,7 @@ export default function ClientsDashboard() {
                       {!c.email && !c.phone && <span className="muted">—</span>}
                     </td>
                     <td><StatusChip kind={src.kind}>{src.label}</StatusChip></td>
-                    <td className="muted">{fmtDate(c.created_at && String(c.created_at).slice(0, 10), { year: 'numeric' })}</td>
+                    <td className="muted">{fmtDate(ctDay(c.created_at), { year: 'numeric' })}</td>
                     <td className="num">{c.events_count != null ? c.events_count : '—'}</td>
                     <td className="num"><strong>{c.lifetime_value != null ? fmt$(c.lifetime_value) : '—'}</strong></td>
                     <td className="shrink" onMouseUp={(ev) => ev.stopPropagation()}>

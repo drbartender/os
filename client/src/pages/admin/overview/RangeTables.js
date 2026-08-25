@@ -5,7 +5,7 @@ import StatusChip from '../../../components/adminos/StatusChip';
 import ClickableRow from '../../../components/ClickableRow';
 import EntityLink from '../../../components/EntityLink';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
-import { fmt$2dp, fmt$fromCents, fmtDate } from '../../../components/adminos/format';
+import { ctDay, fmt$2dp, fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { eraOverlaps } from './OverviewPage';
 
 const STATUS_KIND = {
@@ -147,7 +147,7 @@ export default function RangeTables({ proposals = [], payments = [], summary = {
                       </span>
                     )}
                   </td>
-                  <td className="muted">{fmtDate(pp.created_at && String(pp.created_at).slice(0, 10), { year: 'numeric' })}</td>
+                  <td className="muted">{fmtDate(ctDay(pp.created_at), { year: 'numeric' })}</td>
                 </ClickableRow>
               ))}
             </tbody>

@@ -1,7 +1,7 @@
 import React from 'react';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
-import { fmtDateFull } from '../../../../components/adminos/format';
+import { ctDay, fmtDateFull } from '../../../../components/adminos/format';
 
 export default function DocumentsTab({ agreement, payment, profile, application, previewFile, previewLoading }) {
   // url + filename are derived as a PAIR from the same source (profile vs
@@ -20,7 +20,7 @@ export default function DocumentsTab({ agreement, payment, profile, application,
   const items = [
     {
       name: 'Contractor agreement',
-      sub: agreement?.signed_at ? `Signed ${fmtDateFull(String(agreement.signed_at).slice(0, 10))}` : 'Not signed yet',
+      sub: agreement?.signed_at ? `Signed ${fmtDateFull(ctDay(agreement.signed_at))}` : 'Not signed yet',
       kind: agreement?.signed_at ? 'ok' : 'warn',
       url: null,
       filename: null,
@@ -95,7 +95,7 @@ export default function DocumentsTab({ agreement, payment, profile, application,
             <div className="card-head"><h3>Signature</h3></div>
             <div className="card-body">
               <div className="tiny muted" style={{ marginBottom: 8 }}>
-                {agreement.signature_method === 'type' ? 'Typed' : 'Drawn'} on {fmtDateFull(String(agreement.signed_at).slice(0, 10))}
+                {agreement.signature_method === 'type' ? 'Typed' : 'Drawn'} on {fmtDateFull(ctDay(agreement.signed_at))}
               </div>
               {agreement.signature_method === 'type' ? (
                 <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 3 }}>

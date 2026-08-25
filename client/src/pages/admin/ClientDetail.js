@@ -8,7 +8,7 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
+import { ctDay, fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
@@ -192,7 +192,7 @@ export default function ClientDetail() {
             </div>
             <div className="muted" style={{ fontSize: 13 }}>
               {client.email || '—'}{client.phone ? ` · ${formatPhone(client.phone)}` : ''}
-              {client.created_at && ` · added ${fmtDateFull(String(client.created_at).slice(0, 10))}`}
+              {client.created_at && ` · added ${fmtDateFull(ctDay(client.created_at))}`}
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
