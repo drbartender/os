@@ -794,6 +794,40 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Staff, shifts, and the roster
 
+- **`shift_requests.position` is free text whose canonical casing is enforced only by convention,
+  and three display rules disagree about it.** The CHECK is case-INSENSITIVE
+  (`lower(position) = ANY(...)`), so `'bartender'` is a legal stored value. Two of the three
+  readers already patch around it: `ShiftDrawer` renders `canonicalizeRole(req.position) ||
+  req.position`, and the events-list hover card copied that on 2026-08-25 after shipping without
+  it (one dev row rendered a lowercase "bartender" beside a drawer saying "Bartender"). The third
+  does NOT: `parseApprovedByRole` (`client/src/components/adminos/shifts.js`) keys its per-role
+  map on the RAW string while the roster it is subtracted from is canonicalized, so a
+  non-canonical approved row counts toward `approved_count` but toward no role. The events list
+  would read a green "1/1" while the drawer and EventDetailPage read "Bartender 0/1" with an open
+  slot, for the same shift. **Currently latent**: prod holds 67 `Bartender`, 1 `Banquet Server`,
+  27 NULL, zero non-canonical, and both live write paths canonicalize. The patch is one line in
+  `parseApprovedByRole`; the fix that retires the whole class is tightening the CHECK to be
+  case-sensitive and normalizing any stragglers, which is a money-seam schema change (position is
+  the tip-split key) and wants its own lane. Do the root fix, not a third patch.
+- **An applicant who ranked no role reads as "no information" on the events list and "Any role"
+  one click away in the drawer.** An empty `requested_positions` means "any role" to
+  `autoAssign.js`, to `classifyRequest`, and to `ShiftDrawer`, which prints the string literally.
+  The requests hover card (shipped 2026-08-25, `c792c321`) renders a bare name instead, per an
+  explicit decision made before the divergence was known. **6 of 27 pending prod rows are empty**,
+  so this is the visible case rather than a corner. One word in the SQL (`'Any role'` in place of
+  the NULL) aligns them. Dallas's call, since it reverses a stated decision. Two cosmetic siblings
+  if it goes ahead: the drawer joins ranked roles with `›` and prefixes "Ranked:", the card joins
+  with a comma.
+- **The events-list waitlist gate is FLAT, not per-role, so it can hide a genuinely actionable
+  applicant.** `deriveStaffing` computes `open = roster.length - approved_count`. On a mixed
+  roster like `["Bartender","Banquet Server"]` with two Bartenders approved, `open === 0`, so the
+  events list shows no requests chip at all, while `ShiftDrawer` (per-role `remainingByRole`) and
+  EventDetailPage both correctly see an open Banquet Server slot and call that applicant
+  actionable. **Unreachable today**: zero prod shifts have a mixed-role `positions_needed`. The
+  stakes rose on 2026-08-25: the gate used to suppress a count, and now it suppresses a whole list
+  of names behind the requests hover. `remainingByRole` is already exported from the module
+  `StaffingCell` imports and the feed already carries `approved_by_role`, so closing it needs no
+  server change.
 - **`shiftEndInstant.js:190` reads `p.event_duration_hours` and ignores `shifts.event_duration_hours`.**
   The shift carries its own column (49 prod rows populated; 0 currently disagree). A
   `PUT /shifts/:id` that changes a shift's duration without touching the proposal silently drifts
@@ -1068,6 +1102,11 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Platform, schema, and test gates
 
+- **`server/middleware/corsOptions.js` is missing from README's middleware folder tree.** Added
+  2026-08-25 when CORS policy was extracted out of `server/index.js`; the README tree otherwise
+  enumerates every non-test file in that directory. `scripts/check-docs-drift.sh` does not watch
+  `server/middleware/`, which is the same blind spot the 2026-08-19 self-audit found for
+  `client/src/utils/`. One line.
 - **Two server suites cannot pass between roughly midnight and 05:00 Chicago, and one leaves FK
   debris.** Both reproduce identically on the deployed baseline, so neither is a regression; both
   were confirmed against `origin/main` on 2026-08-25 at 04:36 Chicago.
