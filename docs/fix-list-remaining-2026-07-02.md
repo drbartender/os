@@ -50,7 +50,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
-| 1 | Two refunded override'd proposals still carry the pre-refund override, backfill owed | **yes, 599 and 527, one save each, until the post-deploy backfill** |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | yes, override'd proposal with gratuity, two admin steps |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
@@ -158,23 +157,6 @@ hand. They sit $100 under `total_price` only because that is the CC deposit alre
 
 Deliberately NOT fixed alongside the drink-plan money fix: every invoice flows through that
 generator, so it is its own lane.
-
-### Two refunded override'd proposals still carry the pre-refund override (backfill owed)
-
-The refund write now lowers `total_price_override` with `total_price` (merged to main as
-7459e1a2 on 2026-08-25; check `git merge-base --is-ancestor 7459e1a2 origin/main` before
-assuming it is in prod). It does not heal rows refunded before it. Until they are backfilled,
-one proposal-editor save on either mints the refunded money back as an Additional Services
-invoice.
-
-- **599, Emiline Mccoy**: set the override to **200.00** (gratuity rate 0, so override = total).
-- **527, Shiralee Mack Perkins**: set it to **370.00**, not 350. The $20 parking fee lives inside
-  the override, which replaces the whole calculated total, adjustments included; 350 would
-  re-price to 350 and fire a $20 downward delta.
-
-Run by hand against prod AFTER the deploy (a backfill before it would drift again on the next
-refund), one `UPDATE proposals SET total_price_override = ... WHERE id = ...` each, plus a
-`proposal_activity_log` row saying why. Delete this entry when done.
 
 ### A tip refund has no gratuity scope, so cancel-line can offer it a second time
 
