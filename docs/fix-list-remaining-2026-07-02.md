@@ -1244,13 +1244,16 @@ re-grep before surgery.
 - **`shifts.positions_needed` + `equipment_required`: TEXT → JSONB.** Both store JSON text and
   require `JSON.stringify`/`JSON.parse` at every callsite and `::json` casts at query time. Needs a
   production data migration plus a callsite sweep: `autoAssign.js:141`, `admin/settings.js:132-135`
-  (badge-count `::jsonb` casts), `AdminDashboard.js:400`, `StaffShifts.js:97`, `ProposalDetail.js:156`.
+  (badge-count `::jsonb` casts), `AdminDashboard.js:302`, `StaffShifts.js:97`, `ProposalDetail.js:156`.
   `shifts.js:198` has since added an `IS JSON ARRAY` guard on top of the still-TEXT column. Belongs
   in its own spec with a rollback plan.
 - **Dead column drops**, all still present in prod: `users.calendar_token_created_at` (written never
-  read), `shifts.client_email` / `shifts.client_phone` (INSERTed via the manual-event path, never
-  SELECTed), `applications.favorite_color` (humor field — confirm intent before dropping). Batchable
-  into one guarded migration.
+  read), `applications.favorite_color` (humor field — confirm intent before dropping). Batchable
+  into one guarded migration. `shifts.client_email` / `shifts.client_phone` were listed here and are
+  NOT dead: `createEventShifts` INSERTs both on every proposal-backed shift (`eventCreation.js:316`)
+  and both are read back through the `COALESCE(c.email, s.client_email)` fallback in `shifts.js:119`
+  and `:414`. The old note blamed the manual-event path, which is gone as of 2026-08-25 and was never
+  the only writer.
 - **`pricing_snapshot` shape validator — HALF DONE.** `pricingSnapshot.js` exists
   (`PRICING_SNAPSHOT_VERSION = 1`, `readSnapshot` with legacy tolerance, the SERVER-1N warn, a
   future-version throw) and is routed through invoiceExtras, preEventHandlers, payrollAccrual,
