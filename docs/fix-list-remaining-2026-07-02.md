@@ -47,6 +47,7 @@ Ordered by how close each one is to actually costing money or a client.
 
 | # | what breaks | reachable today? |
 |---|---|---|
+| 1 | **The consult cap does not bound the rings to Dallas** | no — SHIPPED DARK; live the moment the switch flips |
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
@@ -81,6 +82,89 @@ Ordered by how close each one is to actually costing money or a client.
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Thumbtack first reply owes its next-real-lead proof | blocks trusting the pipeline |
+
+---
+
+## 0. Before `CONSULT_CALL_ENABLED` is flipped on
+
+The consult call bridge shipped to prod on 2026-08-25 (`650e5a66`) **dark**, with
+`CONSULT_CALL_ENABLED=false` set in Render first. Everything here is unreachable while it stays
+false, and all of it becomes live the moment it is flipped. The push fleet raised these; none
+blocked the deploy, all of them gate the launch call. Delete this whole section once the switch
+is on and these are closed.
+
+### The daily cap does not bound the rings to Dallas, only the Manila legs
+
+**Two independent reviewers found this separately** (the Claude toll-fraud lens and the gemini
+cross-LLM pass), which is why it is stated first. `CONSULT_CALL_DAILY_CAP` counts
+`status NOT LIKE 'skipped%'` (`consultCallChain.js:259-261`). A cancel or reschedule while a
+chain is ringing lands it in `skipped_cancelled` (`:818-824`), which stops counting and frees the
+slot. So book a public Cal.com slot, let it ring, cancel, rebook the same slot inside its open
+window, repeat. Each cycle costs up to 3 billed US legs and the cap never advances.
+
+The only code ceiling is the sweep's `FIRE_LIMIT = 20` per 60s tick (`consultCallSweep.js:52`),
+i.e. 28,800 legs/24h in theory; a 15-minute-granularity 12-hour booking page yields roughly
+**600 to 900 rings per day** on Dallas's Google Voice. The international legs and the texts ARE
+genuinely bounded at 10, because every chain that reaches the VA leg terminates in a counted
+status. Nothing in this repo asserts or verifies Cal.com's own booking limits, which are the only
+real throttle today.
+
+Note the free-the-slot behaviour is DELIBERATE (ruling R15: counting skipped rows would let junk
+bookings hold the feature down for 24h). The defect is that nothing else bounds the dial count.
+Suggested shape: a second rolling-24h counter over PLACED legs (rows with `admin_call_sid IS NOT
+NULL`, or all rows regardless of prefix), checked inside `advanceChain` before the admin claim.
+That keeps R15 and still caps the dialing.
+
+**Also correct the comments.** `openChain`'s docstring (`:236-243`) calls the cap "a toll-fraud
+BACKSTOP that bounds sustained spend", and the file header (`:29-30`) states the worst case as
+"30 rings to Dallas, 10 international legs and 10 texts". Both describe the no-cancellation case.
+CLAUDE.md's env table is accurate; the code comments are not, and they are what a maintainer
+raising the cap will read.
+
+### A real client's consult can be silently cancelled by someone else's booking
+
+`consultCallChain.js:344-378` marks every OTHER upcoming `scheduled` consult sharing a
+`booker_email` as `skipped_cancelled`, and only emails when more than one row was marked. The
+single-row case is exactly "the victim had one real consult", and it is a log line only. Reachable
+benignly (a reschedule payload with no resolvable old uid, which `calcom.js:464-472` exists
+because it happens) and abusively (book on the public page using a known client's email, then
+reschedule). The client waits for a call that never comes and nothing tells anyone. In a feature
+whose declared failure mode is silence, the one-row case is the one that must email.
+
+### `extractRescheduleOldUid` may be reading the wrong Cal.com field
+
+`calcomWebhookHelpers.js:34-40` accepts `payload.rescheduleId`, which in Cal.com is a NUMERIC
+booking id, not the uid string stored in `calcom_event_id`. If a real payload carries only that
+key, every reschedule takes the unresolved-old-uid fallthrough and the entry above fires on every
+one of them. Confirm against a real `BOOKING_RESCHEDULED` payload before the launch call: this
+single question decides whether the previous entry is rare or routine.
+
+### The strand-heal can duplicate a consult and silence the real one
+
+`calcom.js:86-125` deletes the webhook dedupe row and fully reprocesses whenever a redelivered
+event's `payload.uid` is absent from `consults`. But `handleRescheduled` RENAMES
+`calcom_event_id` old to new, so after a reschedule the old uid is legitimately gone. A Cal.com
+redelivery of an already-acked event (a manual resend, or at-least-once duplication) then creates
+a DUPLICATE `consults` row at the abandoned slot, which the sweep will ring, while the tail marks
+the client's genuine consult `skipped_cancelled`. Pre-existing mechanism, newly consequential
+because it now opens call chains. Fix shape: gate the heal on no `consults` row sharing that
+booker and slot, or record the resolved `consult_id` on the `webhook_events` row so "moved" is
+distinguishable from "never written".
+
+### Smaller, same gate
+
+- The kill switch does not gate press-1 (`voiceConsultCall.js:237-306`): flipping it off mid-ring
+  still permits one billed client leg.
+- Neither dial target is format-validated (`consultCallChain.js:724-725`, `:833`) though
+  `sendMissedText` validates its own destination and `index.js` format-checks the caller ID.
+- `VA_CELL` can reach the database: `consultCallChain.js:590-595` writes `err.message` into
+  `detail` when a throw carries no `.code`, and Twilio-adjacent messages embed the `To` number.
+  CLAUDE.md says that number lives in env only, never on a DB record.
+- `connected` is terminal and never reaped (`vaCallingScheduler.js:128`), so a `<Dial>` that fails
+  at Twilio for want of a caller ID leaves the row settled-looking forever with no alert.
+- The reaper rides `RUN_VA_CALLING_SCHEDULER` (hourly) while the sweep rides
+  `RUN_CONSULT_CALL_SWEEP_SCHEDULER`. Sweep on with VA off strands `calling_*` rows that hold a
+  cap slot for 24h with no email.
 
 ---
 
@@ -1101,6 +1185,12 @@ the accented spelling) or the two spellings stop matching each other.
 ---
 
 ## Platform, schema, and test gates
+
+- **`balanceScheduler.chicagoDay.test.js` is not in `scripts/money-smoke-list.txt`**, so the push
+  gate never runs the one suite pinning the autopay day rule. It was safer that way while the
+  suite pinned 2099 (the gate runs against `ci-smoke`, which resets from the PROD parent, so an
+  unscoped claim there would have matched prod-derived rows). Now that the fixtures are pinned to
+  1999 it is safe to list, and until it is listed the regression it was written for is ungated.
 
 - **`server/middleware/corsOptions.js` is missing from README's middleware folder tree.** Added
   2026-08-25 when CORS policy was extracted out of `server/index.js`; the README tree otherwise
