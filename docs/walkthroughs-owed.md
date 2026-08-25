@@ -1480,7 +1480,7 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**EMPTY AGAIN as of 2026-08-21, and the round trip is the point.** It filled on the evening of
+**One item as of 2026-08-25. Before that, EMPTY AGAIN as of 2026-08-21, and the round trip is the point.** It filled on the evening of
 2026-08-20 with six merged-but-unpushed user-facing changes, and emptied the moment the
 `9cccd3da..4ee51d00` push landed on 2026-08-21: every one of their shas is now an ancestor of
 `origin/main`, so by this tier's own rule they moved to Tier 3b rather than being walked from
@@ -1493,6 +1493,20 @@ carried the check rather than a marker:
 
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
+
+- [ ] **Events list staff hover** (lane events-staff-hover, merge sha `21ec7993`).
+      Live when `git merge-base --is-ancestor 21ec7993 origin/main` exits 0; move to Tier 3b then.
+      On /events, hover the Staffing column on a staffed row: a card lists everyone confirmed,
+      name and position. Already checked headless on dev in both skins, so the walk is for the
+      things a browser cannot judge: does it feel right at your real window size, is the card
+      quick enough to be useful while scanning, and does it get in the way when you are just
+      reading the list. Two specifics worth deliberately hitting: scroll to the BOTTOM of the All
+      tab and hover the last row (the card flips above the cell there, and the first version of
+      this shipped 42px below the fold), and click a row while its card is showing (it should
+      still open the event). Unstaffed rows and rows with nobody confirmed show no card at all.
+      Hover only: no phone and no keyboard path, by design, so do not go looking for one.
+      NOTE the card also appears on legacy "No roster" rows that have people assigned, which is
+      new information nothing else on that screen shows.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
