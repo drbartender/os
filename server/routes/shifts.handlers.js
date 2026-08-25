@@ -188,8 +188,12 @@ async function cancelOrUnassignShiftHandler(req, res) {
     proposalIdForDuty = proposalIdForBeo;
 
     if (mode === 'cancel') {
+      // dropped_at IS NULL: same rule as shiftReap.js. A dropped staffer keeps
+      // status 'approved' but is off the shift, so they must not be notified
+      // that it was cancelled.
       const approved = await dbClient.query(
-        "SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
+        `SELECT user_id FROM shift_requests
+          WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
         [shiftId]
       );
       affectedUserIds = approved.rows.map((r) => r.user_id);

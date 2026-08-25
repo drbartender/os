@@ -42,8 +42,14 @@ async function reapShiftsForProposal(proposalId, dbClient, errorMessage) {
     [proposalId]
   );
   for (const s of shifts.rows) {
+    // dropped_at IS NULL, matching the bartender capture below: a staffer who
+    // dropped keeps status 'approved' and is NOT on this shift any more, so
+    // notifying them about its cancellation is a message about an event they
+    // already left (and a send we pay for). The clawback below always filtered
+    // this; the notification capture did not, which is the whole bug.
     const approved = await dbClient.query(
-      "SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
+      `SELECT user_id FROM shift_requests
+        WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
       [s.id]
     );
     const userIds = approved.rows.map((r) => r.user_id);

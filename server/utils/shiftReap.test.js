@@ -174,3 +174,48 @@ test('reap releases across MULTIPLE shifts and skips already-cancelled ones', as
     [[liveOne, liveTwo, alreadyCancelled]]);
   await pool.query('DELETE FROM shifts WHERE id = ANY($1)', [[liveOne, liveTwo, alreadyCancelled]]);
 });
+
+test('a staffer who already dropped is not told the event was cancelled', async () => {
+  // Dropping leaves status = 'approved' and stamps dropped_at, so a capture
+  // that filters on status alone sweeps up someone who already left. Those
+  // userIds become the cancellation notification (actions.js reapedStaff), so
+  // the person gets told about an event they are no longer on, and it costs a
+  // send. The bartender clawback six lines below this capture has always
+  // filtered dropped_at, which is what makes the intent unambiguous: the money
+  // path was right and the messaging path was not.
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id, positions_needed)
+     VALUES (CURRENT_DATE + 20, '18:00', 'open', $1, '["Bartender","Bartender"]'::jsonb)
+     RETURNING id`,
+    [proposalId]
+  );
+  const shiftId = s.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')`,
+    [shiftId, staffAId]
+  );
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status, dropped_at)
+     VALUES ($1, $2, 'Bartender', 'approved', NOW())`,
+    [shiftId, staffBId]
+  );
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    const reaped = await reapShiftsForProposal(proposalId, dbClient, 'event cancelled');
+    const mine = reaped.find((r) => r.shiftId === shiftId);
+    assert.ok(mine, 'the shift was reaped');
+    assert.deepEqual(mine.userIds, [staffAId],
+      'only the staffer still on the shift is notified; the dropped one is not');
+    assert.deepEqual(mine.bartenderUserIds, [staffAId],
+      'the clawback capture already agreed, and still does');
+    await dbClient.query('ROLLBACK');
+  } finally {
+    dbClient.release();
+  }
+
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+});
