@@ -605,6 +605,23 @@ automated, **re-derive the cohort at the top of any walk session** rather than t
 the tiers: `git log --format='%h %ad %s' --date=short <the sha this file names>..origin/main -- server client/src`
 lists every code commit live in prod that this file may not know about.
 
+**THE 2026-08-25 COHORT.** One item, and the tier-6 mechanism carried it: it arrived there with
+its merge sha the moment the lane merged, and moved here when the push made that sha an ancestor
+of `origin/main`. Nothing had to be remembered.
+
+- [ ] **Events list staff hover is live** — merge `21ec7993` (lane events-staff-hover). On /events,
+      hover the Staffing column on a staffed row and a card lists everyone confirmed, name and
+      position. Checked headless on dev in both skins before merge, so the walk is for what a
+      browser cannot judge: whether it feels right at your real window size, whether it is quick
+      enough to be useful while scanning the list, and whether it gets in the way when you are
+      just reading. Two specifics worth deliberately hitting, both of which broke during the
+      build: scroll to the BOTTOM of the All tab and hover the last row (the card flips above the
+      cell there; the first version rendered it 42px below the fold, unreachable), and click a row
+      while its card is showing (it should still open the event). Unstaffed rows and rows with
+      nobody confirmed show no card at all. Hover only, no phone and no keyboard path, by design,
+      so do not go looking for one. NOTE the card also appears on legacy "No roster" rows that
+      have people assigned, which is information nothing else on that screen surfaces.
+
 **THE 2026-08-21 COHORT (push `9cccd3da..4ee51d00`, 37 commits).** Seven items, and unlike the
 8/20 cohort none of them was missed: six arrived in Tier 6 the evening before with their merge
 shas attached and moved here the moment the push landed. The seventh is the options ladder,
@@ -1480,11 +1497,14 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**One item as of 2026-08-25. Before that, EMPTY AGAIN as of 2026-08-21, and the round trip is the point.** It filled on the evening of
-2026-08-20 with six merged-but-unpushed user-facing changes, and emptied the moment the
-`9cccd3da..4ee51d00` push landed on 2026-08-21: every one of their shas is now an ancestor of
-`origin/main`, so by this tier's own rule they moved to Tier 3b rather than being walked from
-here. They are the "2026-08-21 cohort" there.
+**EMPTY AGAIN as of 2026-08-25, and the round trip worked a second time.** One item sat here
+from the 2026-08-25 merge until that day's push made `21ec7993` an ancestor of `origin/main`;
+it moved to Tier 3b by this tier's own rule, sha attached, nothing re-derived. That is twice now.
+
+The first round trip was 2026-08-21. The tier filled on the evening of 2026-08-20 with six
+merged-but-unpushed user-facing changes and emptied the moment the `9cccd3da..4ee51d00` push
+landed: every one of their shas became an ancestor of `origin/main`, so they moved to Tier 3b
+rather than being walked from here. They are the "2026-08-21 cohort" there.
 
 **The mechanism that worked, worth reusing.** Each entry named its merge sha and the tier
 carried the check rather than a marker:
@@ -1493,20 +1513,6 @@ carried the check rather than a marker:
 
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
-
-- [ ] **Events list staff hover** (lane events-staff-hover, merge sha `21ec7993`).
-      Live when `git merge-base --is-ancestor 21ec7993 origin/main` exits 0; move to Tier 3b then.
-      On /events, hover the Staffing column on a staffed row: a card lists everyone confirmed,
-      name and position. Already checked headless on dev in both skins, so the walk is for the
-      things a browser cannot judge: does it feel right at your real window size, is the card
-      quick enough to be useful while scanning, and does it get in the way when you are just
-      reading the list. Two specifics worth deliberately hitting: scroll to the BOTTOM of the All
-      tab and hover the last row (the card flips above the cell there, and the first version of
-      this shipped 42px below the fold), and click a row while its card is showing (it should
-      still open the event). Unstaffed rows and rows with nobody confirmed show no card at all.
-      Hover only: no phone and no keyboard path, by design, so do not go looking for one.
-      NOTE the card also appears on legacy "No roster" rows that have people assigned, which is
-      new information nothing else on that screen shows.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
