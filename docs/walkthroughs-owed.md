@@ -1517,7 +1517,8 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**REFILLED 2026-08-25 (evening) with the consult call bridge, see below.** Before that it read
+**REFILLED 2026-08-25 with the consult call bridge, see below. It is PUSHED but still dark,
+so unlike every previous occupant it does not graduate on the ancestor check.** Before that it read
 EMPTY AGAIN as of 2026-08-25, and the round trip worked a second time: one item sat here
 from the 2026-08-25 merge until that day's push made `21ec7993` an ancestor of `origin/main`;
 it moved to Tier 3b by this tier's own rule, sha attached, nothing re-derived. That is twice now.
@@ -1535,8 +1536,14 @@ carried the check rather than a marker:
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
 
-- [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, NOT yet pushed.**
+- [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, PUSHED the same day.**
       Live check, no marker to rot: `git merge-base --is-ancestor fafa0d6f origin/main` (exit 0 = pushed).
+      Verified on prod at push time: initDb created `consult_call_attempts` (17 columns, the
+      `updated_at` trigger, all 12 status values in the CHECK) and added `consults.booker_phone`,
+      with no manual DDL. `consult_call_sweep` reports `ok` on its 60-second cadence with zero
+      consecutive failures, and no `[consultCall]` caller-ID warning reached Sentry, so
+      `CONSULT_CALLER_ID` took. Zero attempt rows, and prod has zero future-dated scheduled
+      consults, so nothing has had a slot to fire on yet.
       **Unlike every other item in this tier, the push alone does NOT make this live.** It ships dark
       behind `CONSULT_CALL_ENABLED=false`, which Tier 4 below requires you to set BEFORE the push. So
       this does not graduate to Tier 3b on the push; it graduates when the walk below passes.
