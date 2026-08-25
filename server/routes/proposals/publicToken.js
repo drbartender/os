@@ -123,12 +123,23 @@ async function buildPublicProposalPayload(token, db = pool) {
       -- the proposal in place and never writes 'archived'.
       --
       -- DO NOT copy this filter up to /t/:token/resolve. That endpoint is
-      -- deliberately status-blind, and it is what makes the option-group case
-      -- correct: a losing sibling is archived 'option_not_chosen', and resolve
-      -- is how ProposalView learns the group is decided and redirects the
-      -- client to the option they actually chose. It runs BEFORE this payload,
-      -- so those clients never reach the not-found page at all. Filtering
-      -- resolve would strand them on it instead. Pinned by
+      -- deliberately status-blind, and it is what makes the GROUPED
+      -- option-group case correct: commitGroupChoice archives the losing
+      -- siblings 'option_not_chosen' and sets chosen_proposal_id in the same
+      -- transaction, so resolve reports decided + a chosen_token and
+      -- ProposalView redirects to the option the client actually chose. That
+      -- runs BEFORE this payload, so a GROUPED loser is redirected rather than
+      -- 404'd. Filtering resolve would strand exactly those clients.
+      --
+      -- Scoped deliberately, because the obvious wider claim is FALSE:
+      -- 'option_not_chosen' has a SECOND producer, sweepClientAlternatives
+      -- (proposalGroupCommit.js), which archives a client's other open unpaid
+      -- proposals on first payment selected by client_id alone, with NO
+      -- group_id predicate. Those carry group_id NULL, so resolve reports
+      -- grouped:false / decided:false, no redirect fires, and they DO land on
+      -- the not-found page. That is correct — a quote the client did not take
+      -- should close — but do not read the paragraph above as covering them.
+      -- Prod at 2026-08-25: 7 grouped, 3 ungrouped. Pinned by
       -- publicToken.archived.test.js.
       AND p.status <> 'archived'
   `, [token]);
@@ -242,6 +253,16 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
   // where the builder reads the already-bumped row is immaterial: the payload
   // coerces 'sent' to 'viewed' anyway and both are switchable. An unknown
   // token makes the UPDATE a harmless no-op and the builder returns null.
+  //
+  // THREE cases now, not two: the archived one is why this carries the same
+  // status predicate as the builder. Without it a request that 404s still
+  // bumps view_count and last_viewed_at, recording a view of a page nobody
+  // was shown. The status CASE arm is inert on an archived row either way,
+  // so this is engagement-metric honesty rather than a status hazard — but
+  // the two predicates must move together, or the bump starts describing
+  // rows the payload refuses to serve. (Found by the cross-LLM push review,
+  // 2026-08-25.) The activity-log INSERT below needs no guard: it already
+  // sits after the null check.
   const [payload] = await Promise.all([
     buildPublicProposalPayload(req.params.token),
     pool.query(
@@ -249,7 +270,7 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
          SET view_count = COALESCE(view_count, 0) + 1,
              last_viewed_at = NOW(),
              status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END
-       WHERE token = $1`,
+       WHERE token = $1 AND status <> 'archived'`,
       [req.params.token]
     ),
   ]);

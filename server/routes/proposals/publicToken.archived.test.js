@@ -141,6 +141,35 @@ test('an archived proposal 404s instead of rendering a live page', async () => {
   assert.equal(res.status, 404, `expected 404, got ${res.status}: ${res.raw}`);
 });
 
+// The side-effect half. The bump is a separate statement running in the same
+// Promise.all as the builder, so it does NOT inherit the builder's filter and
+// had to be given the same one. Without it a 404 still records a view of a page
+// nobody was shown. Two-sided on purpose: asserting the archived row alone would
+// pass identically if the bump had simply been deleted.
+test('a 404 does not record a view, while a real view still does', async () => {
+  const archived = await insertProposal({ status: 'archived', archiveReason: 'event_passed' });
+  const before = await pool.query(
+    'SELECT view_count, last_viewed_at FROM proposals WHERE id = $1', [archived.id]
+  );
+  const res = await request('GET', `/api/proposals/t/${archived.token}`);
+  assert.equal(res.status, 404, `expected 404, got ${res.status}: ${res.raw}`);
+  const after = await pool.query(
+    'SELECT view_count, last_viewed_at FROM proposals WHERE id = $1', [archived.id]
+  );
+  assert.equal(after.rows[0].view_count, before.rows[0].view_count,
+    'an archived 404 must not increment view_count');
+  assert.deepEqual(after.rows[0].last_viewed_at, before.rows[0].last_viewed_at,
+    'an archived 404 must not stamp last_viewed_at');
+
+  const live = await insertProposal({ status: 'viewed' });
+  const liveBefore = await pool.query('SELECT view_count FROM proposals WHERE id = $1', [live.id]);
+  const liveRes = await request('GET', `/api/proposals/t/${live.token}`);
+  assert.equal(liveRes.status, 200, `expected 200, got ${liveRes.status}: ${liveRes.raw}`);
+  const liveAfter = await pool.query('SELECT view_count FROM proposals WHERE id = $1', [live.id]);
+  assert.equal(Number(liveAfter.rows[0].view_count), Number(liveBefore.rows[0].view_count) + 1,
+    'a real view must still increment view_count');
+});
+
 // Reason-blind on purpose: the door closes on STATUS. A reason-keyed filter
 // would have let the 2 prod rows carrying a NULL archive_reason straight
 // through, which is the exact shape that makes a guard look green and leak.

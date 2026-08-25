@@ -152,6 +152,7 @@ export default function ProposalView() {
           // merely hiccuped is the worse error of the two.
           .catch((err) => {
             if (cancelled) return;
+            // eslint-disable-next-line no-restricted-syntax
             setError(err?.response?.status === 404 ? 'not_found' : 'load_failed');
           })
           .finally(() => { if (!cancelled) setLoading(false); });
