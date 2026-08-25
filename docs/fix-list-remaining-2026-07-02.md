@@ -430,6 +430,31 @@ remains and the only failing rule is no-jar/sub-50, honor the dollars the client
 and apply with `tip_jar` forced true. Needs a test and changes a pinned skip-reason, so it wants
 its own small lane.
 
+### Proposals sent without a `sent_at` are invisible to the Money Board
+
+29 non-draft proposals have `sent_at IS NULL`, so `qSent` (`metricsQueries.js:210`) and
+`qWinRate` (`:244`), both gated on `sent_at IS NOT NULL` (`:220`, `:257`), never count them.
+They are not drafts: 20 have a nonzero `view_count` (the client opened the proposal) and 6
+reached `completed`/`deposit_paid`/`balance_paid`/`confirmed`, so the event ran and the money
+landed. Measured 2026-08-25 against prod.
+
+Cause: the one-time backfill at `schema.sql:2624` sources the timestamp from
+`proposal_activity_log` where `details->>'to' = 'sent'` (`:2629`), so the
+`UPDATE ... WHERE sent_at IS NULL` at `:2631` skipped every row with no such transition logged.
+The column is stamped going forward by `proposalSend.js:49`, `proposalSendGroup.js:148` and
+`lifecycle.js:99`, all `COALESCE(sent_at, NOW())`, so the gap is NOT purely historical: 3 of the
+29 were created in Aug 2026, meaning at least one live send path reaches `viewed` without
+passing through those three writers.
+
+Impact is reporting-only, no client is billed wrong. The 2026 quoted count reads 613 instead of
+~642, and the win-rate denominator is short by these rows while the numerator
+(`accepted_at IS NOT NULL`) is not, so the rate reads high.
+
+Two halves, and the second is the real one: backfill the 29 from the best available proxy
+(`MIN(proposal_activity_log.created_at)`, else `created_at`), but FIRST find the send path that
+leaves the column null or the backfill just re-accrues. Start by diffing the three writers above
+against whatever moved ids 628, 681 and 764 to `viewed`.
+
 ---
 
 ## 2. Wrong on a surface a client is looking at
