@@ -73,7 +73,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
-| 3 | **Every due message in a batch can be dropped, on ~3% of deploys** | **yes, every deploy is a roll** |
 | 3 | Two dedupe guards are dropped and recreated on EVERY boot | **yes** |
 | 3 | "yes" and "cancel" are swallowed before any human sees them | **yes — 4 near-misses already** |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
@@ -460,29 +459,6 @@ client who was always going to hand a bartender $60 in cash never opens either o
 ---
 
 ## 3. Messages that vanish, double, or reach the wrong person
-
-### Every due message in a batch can be permanently dropped on ~3% of deploys
-
-**The worst thing in this section.** `scheduled_messages_status_check` is defined THREE times in
-`schema.sql` (verified 2026-08-23: `:3019`, `:3652`, `:4335`) and the earliest body omits
-`processing`, `dead_letter`, `suppressed_by_sibling`. `schema.sql` re-executes on every boot and
-is not transactional end to end, so for a few seconds of every deploy the narrow definition is
-live.
-
-The dispatcher ticks every 300s against a ~7s window, so roughly 3% of deploys collide. A
-collision does not skip a tick: the 23514 lands in the generic catch at
-`scheduledMessageDispatcher.js:638-647`, which marks the row `'failed'` — a value the NARROW list
-still permits — and `'failed'` is **TERMINAL**. Balance reminders, event-week, event-eve, nudges:
-silently gone, never retried.
-
-Prod has ZERO rows in the new states, so unlike `archive_reason` there is no data protection
-making the narrow re-add fail. With `render.yaml`'s `healthCheckPath` giving a zero-downtime
-rollover with the OLD dispatcher still live, that is a real concurrency window on every deploy.
-
-`scheduled_messages_channel_check` is the same shape (verified: `:3013` and `:3640`) — the earlier
-body omits `'push'`, which `notificationChannelResolver.js` returns. Fix both together: collapse
-each to one definition, or align the bodies, with a comment at both sites saying a new value goes
-in BOTH.
 
 ### Two dedupe guards are dropped and recreated on EVERY boot
 
