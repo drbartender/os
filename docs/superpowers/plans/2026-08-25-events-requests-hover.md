@@ -21,6 +21,8 @@
 - The `approved_staff` aggregate this one mirrors: `json_agg(json_build_object('user_id', asr.user_id, 'name', COALESCE(acp.display_name, acp.preferred_name, au.email), 'position', asr.position) ORDER BY COALESCE(...))` filtered `asr.status = 'approved' AND asr.dropped_at IS NULL`, aliases `asr`/`au`/`acp` because the outer query owns `u`. The new one needs its own distinct aliases (`psr`/`pu`/`pcp`).
 - `rc.pending_count` already exists on the feed: `COUNT(*) FILTER (WHERE sr.status = 'pending')`. The new aggregate MUST agree with it, the same way `approved_staff` agrees with `approved_count`. Note `pending_count` does NOT filter `dropped_at`, and a pending row never carries one (dropping applies to an approved assignment), so no filter is added here either. Do not add one: it would create a disagreement where none exists today.
 - `idx_shift_requests_shift_status ON shift_requests(shift_id, status)` (`server/db/schema.sql:2033`) covers the pending lookup. No new index.
+- **The `pending_staff` = `pending_count` invariant is EMPIRICAL, not structural.** `shift_requests.user_id` is nullable (`schema.sql:337`); the aggregate INNER JOINs `users`, while `rc.pending_count` joins nothing, so a pending row with a NULL `user_id` would be counted and not listed. Verified zero such rows in prod (95 rows, no null `user_id`, no null `created_at`) and none on dev. `approved_staff`, shipped this morning, carries the identical exposure, so this lane neither introduces nor worsens it. State it plainly to the consistency reviewer rather than claiming the invariant holds by construction.
+- **Dev cannot prove the ordering.** Every dev shift with more than one pending request has all of them sharing a single `created_at` (shifts 2, 3, 5 and 17 each show `COUNT(DISTINCT created_at) = 1`), so `ORDER BY created_at` alone is nondeterministic there. Prod has no ties across its 19 shifts with pending requests. Task 1 therefore orders by `created_at, id` for a stable tiebreak, and the browser pass must NOT be used to check ordering.
 - **Prod data, queried 2026-08-25 (branch `br-noisy-frog-ad99sa6l`):** `requested_positions` holds `["Bartender"]` on 56 rows (21 pending), `["Banquet Server"]` on 1 (0 pending), and an EMPTY array `[]` on 38 rows (6 still pending). **Nobody has ever ranked more than one position**, so multi-role rendering is a tolerated edge case, not the common path. The empty-array rows are legacy and are the reason the role line must degrade to a bare name.
 - `requested_positions` is a JSON-encoded TEXT column with the same two historical shapes as `positions_needed`, so it goes through `parsePositionsNeeded` and never a bare `JSON.parse`. Client precedent: `client/src/pages/staff/ShiftDetail.js:209` does exactly this. Server precedent: `server/utils/positionsNeeded.js`.
 - `client/src/components/adminos/StaffingCell.js` currently renders ONE anchor around the whole cell:
@@ -35,11 +37,14 @@
   **This means hovering the chip today shows the CONFIRMED card.** That is a live, if minor, wrongness that Task 2 corrects as a side effect of the split; it is not a regression this plan introduces.
 - `StaffHoverCard({ staff, children })` renders `.staff-hover-row` per person with `.staff-hover-name` and, when `p.position` is truthy, `.staff-hover-pos` showing `canonicalizeRole(p.position) || p.position`. It returns `children` untouched when the list is empty, so an anchor with nobody to show costs nothing and adds no wrapper. **It needs no changes for this feature.**
 - `canonicalizeRole` (`client/src/utils/staffingRoles.js:19`) returns the canonical label or `null` for anything unrecognized, so a comma-joined multi-role string will NOT canonicalize and will fall through to the raw string. That is correct and intended; see Task 1's decision on where the joining happens.
-- The staffing cell's own CSS is `html[data-app="admin-os"] .staffing-cell` (`index.css:13003`) and the hover-card rules are at `:13038`. The cell's `gap: 4` is an inline style on the div, NOT in CSS.
+- The staffing cell's own CSS is `html[data-app="admin-os"] .staffing-cell` (`index.css:13003`) and the hover-card rules are at `:13038`. **The cell's spacing does NOT come from its inline `gap: 4`.** The cell also carries the `vstack` class, and `html[data-app="admin-os"] .vstack { display: flex; flex-direction: column; gap: 0.5rem; }` (`index.css:13392`) supplies a gap of its own. Root font-size is 17px (`:109`), so that is **8.5px**, and the inline `gap: 4` is an OVERRIDE of it, not the source. Deleting the inline style therefore does not remove the dead space between the anchors, it nearly doubles it. Any fix must set the gap to zero explicitly.
+- `.staff-hover-anchor` has NO CSS rule of its own today (verified). It is a plain block wrapper.
+- **The DOM shape under `.staffing-cell` varies.** `StaffHoverCard` returns its children untouched when its list is empty, and wraps them in `<div class="staff-hover-anchor">` when it is not. So a direct child of the cell is sometimes the anchor and sometimes the wrapped line itself. A CSS rule that assumes one shape (e.g. `.staffing-line + .staffing-line`) matches only in the case where NEITHER element has a card, which is the one case that does not matter. Target `.staffing-cell > * + *` so the rule holds for every permutation.
 - `EventsDashboard.js:550` renders `<td><StaffingCell event={e} /></td>`; `StaffingCell` has exactly one consumer.
 - **Task 1's SQL was executed against the dev DB on 2026-08-25 and works.** Run against real rows it returned e.g. `[{"user_id":17,"name":"Tony K.","position":"Bartender"},{"user_id":18,"name":"Lisa C.","position":"Bartender"}]`, and `pending_staff.length` equalled `pending_count` on all five sampled rows. The `position` expression was then exercised per-row against every shape the column can hold: `[]` and `not json` and `{"a":1}` and SQL NULL all yield `null` (bare name, no crash), `["Bartender"]` yields `Bartender`, and a two-element array yields `Bartender, Banquet Server`.
 - **A trap when re-testing that expression:** with CONSTANT literals instead of a column, Postgres constant-folds both CASE branches and evaluates the invalid cast eagerly, so a literal-based test fails with `invalid input syntax for type json` even though the real query is fine. Test it against a column (a `VALUES` CTE works). The same `IS JSON ARRAY` + CASE guard is the established pattern here: `GET /shifts/unstaffed-upcoming` uses it, and `shifts.unstaffedJsonbGuard.test.js` exists because this exact hazard bit once already.
-- Suites that reach the admin feed (nine): `shifts.approval`, `eventDetails`, `shifts.assignEligibility`, `shifts.bonus`, `shifts.unstaffedJsonbGuard`, `shifts.userEvents.bucket`, `shifts.visibility.endInstant`, `shifts.withdraw`, `staffShiftActions`. **Two fail on clean main for reasons unrelated to any of this**: `shifts.visibility.endInstant` fails its own "should be finished right now (Chicago HH:MM)" premise in the small hours, and `shifts.withdraw` hits an FK violation in its own teardown (`pay_periods` still referenced by `payouts`). Establish a baseline before changing anything and compare against it; do not read either as a regression.
+- Suites that reach the admin feed (nine): `shifts.approval`, `eventDetails`, `shifts.assignEligibility`, `shifts.bonus`, `shifts.unstaffedJsonbGuard`, `shifts.userEvents.bucket`, `shifts.visibility.endInstant`, `shifts.withdraw`, `staffShiftActions`.
+- **Do NOT assume which suites fail. Measure it.** An earlier draft of this plan named two as "known-failing", and that instruction is dangerous: `shifts.visibility.endInstant` is TIME-OF-DAY dependent, failing its own "should be finished right now (Chicago HH:MM)" premise in the small hours and **passing 6/6 by morning** (observed failing at 03:29 and 04:06 Chicago, passing at 08:33 and 08:38 the same day). Telling an executor to wave it through would hide a real regression. `shifts.withdraw` is a steadier 10/11, failing on `payouts_pay_period_id_fkey` in its own teardown at `shifts.withdraw.test.js:309`, but that too is a shared-DB artifact rather than a law. Task 0 Step 2 records the real baseline on the day; every later comparison is against THAT, and any suite that was green and goes red is a regression no matter what this document says.
 
 ## Global Constraints
 
@@ -47,7 +52,7 @@
 - **Normal effort.** No money, auth, or webhook code. `server/routes/shifts.js` is not sensitive-listed.
 - **No waitlist.** Nothing in this lane may cause a full-roster row to display applicants. The chip's existing render condition (`pending > 0 && actionable && !inactive`, where `actionable = open > 0 || needed === 0`) is the gate and is NOT relaxed. A row with a full roster has no chip, therefore no anchor, therefore no card. If a change would make applicants visible on a full roster, it is wrong.
 - **No new component.** `StaffHoverCard` is reused as-is. If it appears to need changes, stop and re-read: the requirement was designed so it would not.
-- **`requested_positions` goes through `parsePositionsNeeded`,** never a bare `JSON.parse`.
+- **`requested_positions` is flattened in SQL, and that is a deliberate exception to the usual rule, which must be written into the code comment.** The standing convention is that every reader goes through `parsePositionsNeeded` (`server/utils/positionsNeeded.js`) because the column family holds TWO historical shapes: a flat string array, and a legacy object array `[{position:'bartender',count:2}]`. This plan's SQL handles only the first. On the legacy shape `jsonb_array_elements_text` would emit the object's JSON text and the card would render `{"position": "bartender", "count": 2}` beside the name. That is currently unreachable for THIS column: prod holds only `["Bartender"]` (56 rows), `["Banquet Server"]` (1) and `[]` (38), and the sole writer (`shifts.approval.js`) emits canonical flat arrays. The exception is accepted because doing it in SQL is what keeps the client and `StaffHoverCard` unchanged, but the SQL comment MUST say so, or a future reader will believe the constraint is satisfied when it is not.
 - **`pending_staff.length` must equal `rc.pending_count`** on every row, the same invariant `approved_staff` holds against `approved_count`. Pin it with an assertion.
 - **Server tests one at a time from the repo root.** Read the pass count, not the exit code.
 - **Client:** `cd client` once, then `CI=true npx react-scripts test --watchAll=false <path>`. Gate before any commit touching `client/`: `cd client && CI=true npx react-scripts build` (warnings fail it).
@@ -80,6 +85,7 @@ lanes:
       - client/src/components/adminos/StaffingCell.js
       - client/src/components/adminos/StaffingCell.test.js
       - client/src/index.css
+      - README.md
     depends_on: []
     review_fleet: [code-review, consistency-check]
 ```
@@ -101,14 +107,19 @@ cd ../worktrees/events-requests-hover && git log --oneline -1
 
 Expected: worktree at `~/projects/worktrees/events-requests-hover` on its own branch, tip equal to main. Every later `cd` is relative to that worktree.
 
-- [ ] **Step 2: Baseline the two known-failing suites BEFORE any edit**
+- [ ] **Step 2: Baseline ALL NINE reached suites BEFORE any edit**
 
 ```bash
-node --test server/routes/shifts.visibility.endInstant.test.js 2>&1 | grep -E "^ℹ (pass|fail)"
-node --test server/routes/shifts.withdraw.test.js 2>&1 | grep -E "^ℹ (pass|fail)"
+for f in shifts.approval eventDetails shifts.assignEligibility shifts.bonus \
+         shifts.unstaffedJsonbGuard shifts.userEvents.bucket \
+         shifts.visibility.endInstant shifts.withdraw staffShiftActions; do
+  printf "%-34s " "$f"
+  node --test server/routes/$f.test.js 2>&1 | grep -E "^ℹ (pass|fail)" | tr '\n' ' '
+  echo
+done
 ```
 
-Record both numbers. They are expected to be non-zero-fail on a clean tree. Any later comparison is against THESE numbers, not against zero.
+Write the nine numbers down; they are the only thing later runs are compared against. Do NOT assume any of them fails. `shifts.visibility.endInstant` fails its own time-of-day premise in the small hours and passes by morning, and `shifts.withdraw` usually fails 1 on an FK in its own teardown, but both are environment artifacts that come and go. **A suite that is green here and red later is a regression, whatever this plan says about it.** Note the wall-clock Chicago time alongside the numbers, because that is what explains the endInstant result.
 
 ---
 
@@ -139,6 +150,16 @@ test('admin feed: pending_staff lists applicants oldest first, with what they ap
   // list is a queue and the person who has waited longest leads it.
   await seedPending(shiftId, s2Id, ['Banquet Server']);
   await seedPending(shiftId, s1Id, ['Bartender']);
+  // Backdate s2 so created_at order and INSERTION order are not the same fact.
+  // Without this, a json_agg with no ORDER BY at all returns heap order, which
+  // happens to match, and the assertion below would pass against a dropped
+  // clause. That is the regression most likely to arrive later, via the LATERAL
+  // fold this plan defers.
+  await pool.query(
+    `UPDATE shift_requests SET created_at = NOW() - INTERVAL '1 hour'
+      WHERE shift_id = $1 AND user_id = $2`,
+    [shiftId, s2Id]
+  );
   // An approved person is not an applicant and must not appear here.
   await seedApproved(shiftId, adminId, 'Bartender');
 
@@ -182,7 +203,28 @@ test('admin feed: a shift with no applicants carries an empty pending_staff, not
   const shiftId = await mkShift({ positions: ['Bartender'] });
   const r = await req('GET', '/api/shifts', { token: adminToken });
   const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
   assert.deepEqual(row.pending_staff, []);
+});
+
+test('admin feed: a malformed requested_positions does not 500 the whole feed', async () => {
+  // The IS JSON ARRAY guard is a CRASH GUARD, not tidying: without it one bad
+  // legacy row raises and takes down the entire events list for every admin.
+  // This is the hazard shifts.unstaffedJsonbGuard.test.js exists for on the
+  // sibling cast, and nothing else here would notice if the guard were removed.
+  const shiftId = await mkShift({ positions: ['Bartender'] });
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions)
+     VALUES ($1, $2, 'pending', NULL, 'not json')`,
+    [shiftId, s1Id]
+  );
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  assert.equal(r.status, 200, 'one malformed row must not 500 the feed');
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.equal(row.pending_staff.length, 1);
+  assert.equal(row.pending_staff[0].position, null, 'unparseable reads as no role');
 });
 ```
 
@@ -211,6 +253,15 @@ In `server/routes/shifts.js`, in the admin branch, directly after the `... ) AS 
         --     here so the client needs no new shape: one role sends its name, an
         --     empty array sends NULL (38 legacy prod rows, the card then shows a
         --     bare name), several send a comma list (never yet seen in prod).
+        -- DELIBERATE EXCEPTION to "every reader goes through parsePositionsNeeded":
+        -- this flattens in SQL, which handles the flat-string shape only. The
+        -- legacy object shape [{position,count}] would render as raw JSON text.
+        -- Unreachable for THIS column (its only writer, shifts.approval.js, emits
+        -- canonical flat arrays; prod holds only flat arrays and empties), and
+        -- doing it here is what lets StaffHoverCard stay untouched. If that ever
+        -- stops being true, move the flatten to the client and use the parser.
+        -- The ORDER BY carries `, psr.id` because dev rows share a created_at and
+        -- the list would otherwise be nondeterministic there.
         -- Aliases psr/pu/pcp: the outer query owns u and approved_staff owns a*.
         (SELECT COALESCE(json_agg(json_build_object(
                   'user_id', psr.user_id,
@@ -223,7 +274,7 @@ In `server/routes/shifts.js`, in the admin branch, directly after the `... ) AS 
                                    ELSE '[]'::jsonb END
                             ) WITH ORDINALITY AS t(elem, ord)),
                     '')
-                ) ORDER BY psr.created_at), '[]'::json)
+                ) ORDER BY psr.created_at, psr.id), '[]'::json)
            FROM shift_requests psr
            JOIN users pu ON pu.id = psr.user_id
            LEFT JOIN contractor_profiles pcp ON pcp.user_id = psr.user_id
@@ -237,14 +288,16 @@ In `server/routes/shifts.js`, in the admin branch, directly after the `... ) AS 
 
 `node --test server/routes/shifts.approval.test.js`
 
-Expected: `# fail 0`, pass count is the Step 2 count plus 3.
+Expected: `# fail 0`, pass count is the Step 2 count plus 4 (baseline was 34 on 2026-08-25, so 38).
 
 - [ ] **Step 5: Prove the new tests have teeth**
 
 A test that never demonstrates it can fail is not a gate. Break each of these, confirm the named test goes red, then restore:
 
-1. Change `ORDER BY psr.created_at` to `ORDER BY psr.user_id` → the ordering assertion must fail.
-2. Change `status = 'pending'` to `status != 'denied'` → the "approved is not pending" assertion must fail.
+1. Change `ORDER BY psr.created_at, psr.id` to `ORDER BY psr.user_id` → the ordering assertion must fail.
+2. Delete the `ORDER BY` clause entirely → the ordering assertion must STILL fail (this is what the backdating in test 1 buys; without it heap order passes).
+3. Change `status = 'pending'` to `status != 'denied'` → the "approved is not pending" assertion must fail.
+4. Remove the `IS JSON ARRAY` guard, leaving a bare `psr.requested_positions::jsonb` → the malformed-row test must fail with a 500.
 
 Restore the file exactly (`git diff` should show only the intended addition) and re-run to green before moving on.
 
@@ -287,7 +340,9 @@ The file-size hook will warn (`shifts.js` over the 700 soft cap). That is a warn
 
 Today one `StaffHoverCard` wraps the entire cell, so hovering the chip shows the confirmed card. This splits it: the ratio keeps the confirmed card, the chip gets the requests card.
 
-**The gap matters.** The cell is a `vstack` with an inline `gap: 4`, which is dead space belonging to neither anchor. With two anchors, dragging the pointer from the ratio to the chip would cross it and leave a frame with no card, a visible blink at slow pointer speeds. Removing the inline `gap` and giving each anchor its own bottom/top padding makes the two hit areas adjacent, so the swap is immediate with no dead zone and the visual spacing is unchanged.
+**The gap is the whole problem, and it is not where it looks.** The cell carries an inline `gap: 4`, but that is an OVERRIDE of `.vstack { gap: 0.5rem }` (`index.css:13392`, 8.5px at the 17px root). Deleting the inline style would therefore make the dead zone bigger, not smaller. The gap must be zeroed explicitly, and the 4px of visual spacing re-created as PADDING on the second child, because padding belongs to that element's hit area while a flex gap belongs to nobody. Then the two hover targets are physically contiguous and the pointer crossing between them swaps the card instead of blinking it off.
+
+The selector has to survive a DOM that changes shape: `StaffHoverCard` wraps its child in `.staff-hover-anchor` only when it has someone to show, so a direct child of the cell is sometimes the anchor and sometimes the bare line. `.staffing-cell > * + *` holds in every permutation; a `.staffing-line + .staffing-line` rule would match ONLY when neither element has a card, which is precisely the case where none of this matters.
 
 **Files:**
 - Modify: `client/src/components/adminos/StaffingCell.js`
@@ -375,6 +430,26 @@ describe('two separate hover anchors', () => {
     expect(container.querySelectorAll('.staff-hover-anchor')).toHaveLength(0);
   });
 
+  test('a "No roster" row with applicants DOES get a requests card', () => {
+    // needed === 0 makes actionable true, so the chip renders and the applicants
+    // are reachable. That is deliberate and consistent with the cell's existing
+    // comment: with no declared roster we cannot tell a waitlist from someone
+    // filling a real gap, so we surface them rather than hide them. It is the
+    // one path where applicants appear without a known open slot, so pin it.
+    const event = {
+      ...ev({ needed: 0, confirmed: 0, pending: 2 }),
+      positions_needed: null,
+      approved_staff: [],
+      pending_staff: [{ user_id: 9, name: 'Roster-less Applicant', position: 'Bartender' }],
+    };
+    const { container } = render(<StaffingCell event={event} />);
+    expect(container.textContent).toContain('No roster');
+    const anchors = container.querySelectorAll('.staff-hover-anchor');
+    expect(anchors).toHaveLength(1);
+    fireEvent.mouseEnter(anchors[0]);
+    expect(screen.getByRole('tooltip').textContent).toContain('Roster-less Applicant');
+  });
+
   test('applicants with an empty confirmed roster still get their own anchor', () => {
     const event = {
       ...ev({ needed: 2, confirmed: 0, pending: 1, days: 19 }),
@@ -421,7 +496,12 @@ Then replace the return so each element owns its own card. The outer `StaffHover
   const showChip = pending > 0 && actionable && !inactive;
 
   return (
-    <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ alignItems: 'flex-start' }}>
+    // gap: 0 is LOAD-BEARING, not tidying. `vstack` supplies gap: 0.5rem, and the
+    // inline gap: 4 this replaces was overriding it DOWN. Dropping the inline
+    // style without this would widen the dead zone between the two hover targets
+    // to 8.5px. The 4px of spacing now lives in .staffing-cell > * + * padding,
+    // which belongs to the second target's hit area instead of to nobody.
+    <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ gap: 0, alignItems: 'flex-start' }}>
       {/* Two anchors, deliberately adjacent. The ratio answers "who is on this
           event", the chip answers "who wants on it". They are separate cards by
           decision (Dallas, 2026-08-25), and the spacing between them lives in
@@ -445,30 +525,46 @@ Then replace the return so each element owns its own card. The outer `StaffHover
 
 - [ ] **Step 4: Add the spacing rule**
 
-In `client/src/index.css`, immediately after the `.staff-hover-pos` rule added by the previous lane (around `:13056`), add:
+In `client/src/index.css`, immediately AFTER the closing brace of the `html[data-app="admin-os"] .staff-hover-pos { ... }` rule (locate it by name, do not trust a line number: it sits around `:13058-13061`, and `:13056` is inside `.staff-hover-row`), add:
 
 ```css
-/* The two staffing anchors sit flush against each other so the pointer can
-   cross from the ratio to the requests chip without passing through dead
-   space, which would blink the hover card off mid-gesture. The visual spacing
-   the cell used to get from `gap: 4` lives here instead. */
-html[data-app="admin-os"] .staffing-line { padding-bottom: 2px; }
-html[data-app="admin-os"] .staffing-line + .staffing-line { padding-bottom: 0; padding-top: 2px; }
+/* The two staffing hover targets must be physically contiguous, so that dragging
+   the pointer from the ratio to the requests chip SWAPS the card rather than
+   crossing dead space and blinking it off. Two things make that true:
+   the cell's flex gap is zeroed at the call site (see StaffingCell.js, where
+   `vstack` would otherwise contribute 8.5px), and the 4px of visual spacing is
+   re-created as padding on the second child, which puts it inside that child's
+   hit area instead of in a gap belonging to neither.
+   The selector is `> * + *` and not `.staffing-line + .staffing-line` because
+   StaffHoverCard wraps its child in .staff-hover-anchor only when it has someone
+   to show, so the cell's direct children are a MIX of anchors and bare lines. A
+   rule keyed on .staffing-line adjacency matches only when neither has a card. */
+html[data-app="admin-os"] .staffing-cell > * + * { padding-top: 4px; }
 ```
+
+Every direct child of the cell is a block-level div under this design (either `.staff-hover-anchor` or, when its list is empty, the `.staffing-line` it would have wrapped), which is what makes the padding land as layout rather than being ignored on an inline element.
 
 - [ ] **Step 5: Run to verify it passes**
 
 `cd client && CI=true npx react-scripts test --watchAll=false src/components/adminos/StaffingCell.test.js`
 
-Expected: PASS, 28 existing plus 8 new. If an existing test now fails on the cell's text content, read it before changing it: the rendered text must be unchanged by this restructure, and a diff there is a real regression, not a stale assertion.
+Expected: PASS, **35 total** (28 existing plus the 7 added in Step 1, plus 1 more if the "No roster" case below is added, making 36). Count them rather than trusting this number. If an existing test now fails on the cell's text content, read it before changing it: the rendered text must be unchanged by this restructure, and a diff there is a real regression, not a stale assertion.
+
+- [ ] **Step 5b: Update the README line this lane makes false**
+
+`README.md:586` currently describes the component as "StaffHoverCard (hover card under that cell listing who is confirmed, name and position; portaled and inert)". After this lane it also lists applicants. Change that parenthetical to read "hover cards under that cell: the ratio lists who is confirmed, the requests chip lists who applied; portaled and inert". The sibling lane updated this exact line, and `scripts/check-docs-drift.sh` watches `client/src/components/`.
 
 - [ ] **Step 6: Gates**
 
 ```bash
 npm run check:css-scope
-cd client && CI=true npx react-scripts test --watchAll=false src/components/adminos
-cd client && CI=true npx react-scripts build
+cd client
+CI=true npx react-scripts test --watchAll=false src/components/adminos
+CI=true npx react-scripts build
+cd ..
 ```
+
+(One `cd client`, not three: chained in a single shell the second would fail.)
 
 Expected: scope check clean, all `adminos` suites green, build exit 0 with no warnings from our own source.
 
@@ -484,20 +580,46 @@ node -e "require('dotenv').config(); const {pool}=require('./server/db'); pool.q
 
 If no dev row has both, seed one against a fixture shift and delete it afterwards.
 
-Check, and record each answer:
+**The contiguity check must be MECHANICAL.** `browser_hover` teleports the pointer with no intermediate positions and a one-frame blink is invisible in screenshots, so "drag it slowly and look" cannot verify the binding decision of this lane. jsdom loads no CSS and computes no layout, so the jest run cannot see it either. Measure the geometry instead:
+
+```js
+() => {
+  const cell = document.querySelector('.staffing-cell');
+  const kids = [...cell.children];
+  if (kids.length < 2) return 'NEED A ROW WITH BOTH A RATIO AND A CHIP';
+  const a = kids[0].getBoundingClientRect();
+  const b = kids[1].getBoundingClientRect();
+  const seamY = (a.bottom + b.top) / 2;
+  const x = a.left + Math.min(a.width, b.width) / 2;
+  const hit = document.elementFromPoint(x, seamY);
+  return {
+    rowGap: getComputedStyle(cell).rowGap,               // MUST be '0px'
+    seamGapPx: +(b.top - a.bottom).toFixed(2),           // MUST be <= 0.5
+    elementAtSeam: hit && hit.className,                 // MUST be inside an anchor, never bare .staffing-cell
+    seamIsCovered: !!(hit && hit.closest('.staff-hover-anchor')),
+  };
+}
+```
+
+`rowGap: '0px'` proves the `vstack` gap was actually zeroed rather than merely overridden downward, and `seamIsCovered: true` proves there is no sliver of cell between the two hit areas for the pointer to fall through. If either fails, the mechanism is broken no matter how it looks.
+
+Then check, and record each answer:
 1. Hovering the ratio shows the confirmed people; hovering the chip shows the applicants. Neither shows the other's list.
-2. Drag the pointer slowly from the ratio down onto the chip. The card must SWAP, not blink off and back on. This is the specific thing Step 4's CSS exists to prevent; if it blinks, the padding rule is not doing its job.
+2. The geometry probe above returns `rowGap: '0px'`, `seamGapPx <= 0.5`, `seamIsCovered: true`.
 3. Both cards flip above the anchor near the bottom of a long list, same as the confirmed card does today.
 4. Both skins.
 5. Clicking the row while either card is showing still opens the event.
 6. A full-roster row with applicants shows NO chip and NO applicant card. Verify against a real row if one exists; this is the decision the lane must not break.
+7. **New overlap introduced by the split:** the confirmed card anchors 4px below the RATIO now, not below the whole cell, so it paints over the requests chip while it is up. It is `pointer-events: none` so the chip still receives the pointer and the swap still happens, but confirm it reads acceptably rather than looking like a glitch.
+8. **Hit-area change:** the anchor used to be the outermost element in the `<td>` and spanned the full cell width; each anchor now shrinks to its own text width inside an `align-items: flex-start` column. Confirm the ratio is still comfortable to hit, and note the width if it feels fussy.
+9. Do NOT try to verify ordering here. Every dev shift with multiple pending requests has them sharing one `created_at`, so dev order is nondeterministic by construction; the ordering is pinned by the server test instead.
 
 Stop the two lane servers when done, by PID, leaving any other window's `:3000`/`:5000` alone.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add client/src/components/adminos/StaffingCell.js client/src/components/adminos/StaffingCell.test.js client/src/index.css
+git add client/src/components/adminos/StaffingCell.js client/src/components/adminos/StaffingCell.test.js client/src/index.css README.md
 git commit -F - <<'MSG'
 feat(events): hover the requests chip to see who applied
 
@@ -506,8 +628,11 @@ the confirmed card. Now the ratio and the chip each own a card: who is on the
 event, and who wants on it. Applicants come oldest first and carry the role
 they applied for.
 
-The anchors are flush by design. The cell's flex gap became padding inside
-each one so dragging between them swaps the card instead of blinking it off.
+The anchors are flush by design. The cell's flex gap is zeroed and the 4px of
+spacing moved into the second child's padding, so it belongs to that hover
+target instead of to nobody and dragging between them swaps the card instead
+of blinking it off. Zeroing is explicit because `vstack` supplies 8.5px of its
+own: the inline gap this replaces was overriding that DOWN, not creating it.
 
 A full roster still shows no chip and therefore no applicants.
 MSG
@@ -523,7 +648,7 @@ All nine server suites and the full `adminos` client directory. Record every cou
 
 - [ ] **Step 2: Pre-merge fleet**
 
-Run `code-review` and `consistency-check` against `git diff main...events-requests-hover`, in the foreground, and state the level ("light fleet, nothing sensitive-listed"). If the repo's agents are not registered in the session, run them as general-purpose agents with the standing instructions from `.claude/agents/<name>.md` inlined; a non-completing agent is not a pass. Point consistency-check specifically at whether `pending_staff` and `rc.pending_count` can ever disagree, and at whether any other surface now shows applicants differently.
+Run `code-review` and `consistency-check` against `git diff main...events-requests-hover`, in the foreground, and state the level ("light fleet, nothing sensitive-listed"). If the repo's agents are not registered in the session, run them as general-purpose agents with the standing instructions from `.claude/agents/<name>.md` inlined; a non-completing agent is not a pass. Point consistency-check specifically at two things. First, `pending_staff` vs `rc.pending_count`: the answer is that they agree empirically but NOT structurally, because `shift_requests.user_id` is nullable and the aggregate INNER JOINs `users` while the count joins nothing (zero such rows in prod or dev today, and `approved_staff` carries the same exposure), so the question is whether that is acceptable rather than whether it is true. Second, whether any other surface now shows applicants differently from this card.
 
 Findings go to Dallas as fix-now or merge-anyway. Do not loop fix-and-re-review.
 
