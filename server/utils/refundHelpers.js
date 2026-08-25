@@ -431,12 +431,39 @@ async function applyRefundReconciliation(
   // go negative while the real total_price column is clamped at 0, so refund
   // history would show a negative total the ledger never actually held.
   const totalAfter = Math.max(0, totalBefore - contractCents / 100);
+  // total_price_override rides along by the SAME contract portion. The
+  // override is the service contract (pricingEngine substitutes it for the
+  // calculated service total and layers client gratuity on top), so a refund
+  // that lowers total_price by contractCents lowers the override by
+  // contractCents too, or the two drift: the next proposal-editor save
+  // carries the stale override forward, the engine substitutes it, and the
+  // post-save pass mints an Additional Services invoice for exactly the
+  // refunded amount (prod 599, refund #14; 527, refund #11 — 2026-08-25).
+  // Same $1 on both columns; NULL stays NULL (native proposal). Extra-scope
+  // and overpayment-scope refunds carry contractCents = 0 and move neither.
+  //
+  // Gratuity dollars refunded here are contract scope too: neither the panel
+  // nor cancel passes a gratuity scope into reconciliation (gratuity_cents on
+  // the refund row feeds only the payroll clawback). Since client gratuity is
+  // re-derived from gratuity_rate at every price, lowering the override by the
+  // full amount is the only representation a later save leaves alone. Two
+  // costs, both on the fix list (2026-08-25): a later cancel-line gratuity
+  // removal re-prices to override + 0 and reads that same money as an
+  // overpayment again (the preview shows it before any second refund); and
+  // GREATEST clamps each column at 0 independently, so a refund larger than
+  // the service contract leaves total_price - override below the derived
+  // gratuity and the next re-price bills the gap. Before this change that gap
+  // was the whole refund.
   const moneyRes = await dbClient.query(
     `UPDATE proposals
         SET total_price = GREATEST(total_price - ($1 / 100.0), 0),
-            amount_paid = GREATEST(amount_paid - ($2 / 100.0), 0)
+            amount_paid = GREATEST(amount_paid - ($2 / 100.0), 0),
+            total_price_override = CASE
+              WHEN total_price_override IS NULL THEN NULL
+              ELSE GREATEST(total_price_override - ($1 / 100.0), 0)
+            END
       WHERE id = $3
-      RETURNING total_price, amount_paid`,
+      RETURNING total_price, amount_paid, total_price_override`,
     [contractCents, paidDropCents, proposalId]
   );
 
