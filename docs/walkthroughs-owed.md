@@ -1563,6 +1563,12 @@ to rot. Do that again for the next thing that sits here.
       **Do not run this from a real client's phone** — a live opt-out is a live opt-out.
 
 - [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, PUSHED the same day.**
+      **Since that merge the ring budget changed: `dialCap()` (`413eca09`, merged 2026-08-25, NOT
+      yet pushed) caps rings at the 312 at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
+      by default, counted over EVERY attempt row including cancelled ones.** That is ample for a
+      launch call, but a book-cancel-rebook rehearsal loop now spends real budget, and a trip
+      files `skipped_cap`/`dial_cap_tripped` and emails once per rolling window. If the phone
+      stops ringing mid-rehearsal, check that before suspecting the bridge.
       Live check, no marker to rot: `git merge-base --is-ancestor fafa0d6f origin/main` (exit 0 = pushed).
       Verified on prod at push time: initDb created `consult_call_attempts` (17 columns, the
       `updated_at` trigger, all 12 status values in the CHECK) and added `consults.booker_phone`,

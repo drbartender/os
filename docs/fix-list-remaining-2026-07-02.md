@@ -47,7 +47,6 @@ Ordered by how close each one is to actually costing money or a client.
 
 | # | what breaks | reachable today? |
 |---|---|---|
-| 1 | **The consult cap does not bound the rings to Dallas** | no — SHIPPED DARK; live the moment the switch flips |
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
@@ -90,34 +89,6 @@ The consult call bridge shipped to prod on 2026-08-25 (`650e5a66`) **dark**, wit
 false, and all of it becomes live the moment it is flipped. The push fleet raised these; none
 blocked the deploy, all of them gate the launch call. Delete this whole section once the switch
 is on and these are closed.
-
-### The daily cap does not bound the rings to Dallas, only the Manila legs
-
-**Two independent reviewers found this separately** (the Claude toll-fraud lens and the gemini
-cross-LLM pass), which is why it is stated first. `CONSULT_CALL_DAILY_CAP` counts
-`status NOT LIKE 'skipped%'` (`consultCallChain.js:259-261`). A cancel or reschedule while a
-chain is ringing lands it in `skipped_cancelled` (`:818-824`), which stops counting and frees the
-slot. So book a public Cal.com slot, let it ring, cancel, rebook the same slot inside its open
-window, repeat. Each cycle costs up to 3 billed US legs and the cap never advances.
-
-The only code ceiling is the sweep's `FIRE_LIMIT = 20` per 60s tick (`consultCallSweep.js:52`),
-i.e. 28,800 legs/24h in theory; a 15-minute-granularity 12-hour booking page yields roughly
-**600 to 900 rings per day** on Dallas's Google Voice. The international legs and the texts ARE
-genuinely bounded at 10, because every chain that reaches the VA leg terminates in a counted
-status. Nothing in this repo asserts or verifies Cal.com's own booking limits, which are the only
-real throttle today.
-
-Note the free-the-slot behaviour is DELIBERATE (ruling R15: counting skipped rows would let junk
-bookings hold the feature down for 24h). The defect is that nothing else bounds the dial count.
-Suggested shape: a second rolling-24h counter over PLACED legs (rows with `admin_call_sid IS NOT
-NULL`, or all rows regardless of prefix), checked inside `advanceChain` before the admin claim.
-That keeps R15 and still caps the dialing.
-
-**Also correct the comments.** `openChain`'s docstring (`:236-243`) calls the cap "a toll-fraud
-BACKSTOP that bounds sustained spend", and the file header (`:29-30`) states the worst case as
-"30 rings to Dallas, 10 international legs and 10 texts". Both describe the no-cancellation case.
-CLAUDE.md's env table is accurate; the code comments are not, and they are what a maintainer
-raising the cap will read.
 
 ### A real client's consult can be silently cancelled by someone else's booking
 
