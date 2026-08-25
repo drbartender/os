@@ -62,7 +62,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | The webhook sets `amount_paid` without checking what Stripe captured | yes |
 | 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (0 mandates in prod) |
-| 2 | **The staff Pay screen prints the wrong day off `paid_at`** | **YES — and a prior note wrongly said this was fixed** |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | Un-archiving a swept proposal re-archives it within the hour | **yes** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
@@ -310,24 +309,6 @@ its own small lane.
 ---
 
 ## 2. Wrong on a surface a client is looking at
-
-### The staff Pay screen prints the wrong day, and the note saying this was fixed is wrong
-
-**RE-VERIFIED 2026-08-23 and this is genuinely open.** A prior sweep recorded "ZERO occurrences
-of the date shape in either file". That is false. `PayPage.js:583` and `PayoutDetail.js:424` both
-define `fmtShortDate(iso)` as `String(iso).slice(0, 10)` — the UTC day — and both feed it
-`paid_at`, a TIMESTAMPTZ written by `NOW()`: `PayPage.js:375` renders
-`Paid ${fmtShortDate(pp.paid_at)}` and `PayoutDetail.js:234` the same.
-
-So a payout marked paid at 8:30pm Chicago prints the NEXT day on the staffer's own pay screen,
-while the PDF (fixed to `chicagoYmdOf`) prints the right one. Before the paystub fix the screen
-and the PDF were wrong together; now they disagree, which is worse. Worked example: paid
-2026-12-31 18:01 CST renders "Paid Fri Jan 1" on screen, the PDF says 2026-12-31, and the 1099
-counts it in 2026 (SQL extracts the year `AT TIME ZONE 'America/Chicago'`).
-
-Correct helper is `chicagoYmdOf` (`businessTime.js:67`), NOT `toCalendarYmd`. Note the OTHER
-`slice(0,10)` calls in both files take pg `DATE` columns (`payday`, period bounds) and are fine —
-fix the `paid_at` path only.
 
 ### The emailed compare link still lands on the old page
 
@@ -972,6 +953,13 @@ the accented spelling) or the two spellings stop matching each other.
 ---
 
 ## Admin UI and the two skins
+
+- **Two client-side Chicago-day helpers now exist.** `utils/chicagoDay.js` (staff skin, added
+  2026-08-25 with the paid_at fix) and `ctDay` in `components/adminos/format.js` (admin skin,
+  added the same day) are the same function. They were kept separate because `pages/staff`
+  imports nothing from `components/adminos` and one function did not justify opening that door.
+  Collapse them into the shared `utils/` copy the next time either is touched, and have
+  `format.js` import it.
 
 - **The event-detail activity timeline still reads the UTC day, not the Chicago day.**
   `EventDetailPage.js:638` does `relDay(String(a.created_at).slice(0, 10))` on
