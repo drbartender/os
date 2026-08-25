@@ -583,3 +583,89 @@ test('PUT /:id: editing equipment without supply_run leaves supply fields untouc
   assert.equal(row.rows[0].supply_run_required, false);
   assert.equal(row.rows[0].supply_run_overridden, false, 'equipment edit never touches the supply override flag');
 });
+
+// ─── GET / (admin feed): approved_staff ───────────────────────────
+
+test('admin feed: approved_staff lists confirmed people with name + position, never pending or dropped', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender', 'Banquet Server'] });
+  await seedApproved(shiftId, s1Id, 'Bartender');          // has a profile: preferred_name 'Reqi One'
+  await seedApproved(shiftId, s2Id, 'Banquet Server');     // no profile: name falls back to email
+  // A dropped approval is history, not a person on the event.
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, dropped_at)
+     VALUES ($1, $2, 'approved', 'Bartender', NOW())`,
+    [shiftId, fillerId]
+  );
+  // A pending applicant is a request, not staff. The requester's role is
+  // irrelevant to the projection; the admin user is just the fourth id we have
+  // (shift_requests is UNIQUE on shift_id + user_id, so it must be a fourth).
+  await seedPending(shiftId, adminId, ['Bartender']);
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed (LIMIT 500 reached?)');
+
+  assert.ok(Array.isArray(row.approved_staff), 'approved_staff should be a parsed json array');
+  const byUser = new Map(row.approved_staff.map((p) => [p.user_id, p]));
+  assert.deepEqual([...byUser.keys()].sort((a, b) => a - b), [s1Id, s2Id].sort((a, b) => a - b));
+  assert.equal(byUser.get(s1Id).name, 'Reqi One');
+  assert.equal(byUser.get(s1Id).position, 'Bartender');
+  assert.equal(byUser.get(s2Id).name, `approval-s2-${NONCE}@example.com`);
+  assert.equal(byUser.get(s2Id).position, 'Banquet Server');
+  // The names must add up to the ratio beside them.
+  assert.equal(Number(row.approved_count), row.approved_staff.length);
+});
+
+test('admin feed: a shift with nobody confirmed carries an empty approved_staff, not null', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender'] });
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.deepEqual(row.approved_staff, []);
+});
+
+test('admin feed: display_name wins over preferred_name, and the card list is alphabetical', async () => {
+  // Two teeth in one fixture.
+  //
+  // display_name: in prod EVERY contractor_profiles row carries one, so the
+  // first branch of COALESCE(display_name, preferred_name, email) is the only
+  // branch a real staffer takes, and it was the one branch nothing exercised.
+  // Collapse the COALESCE to (preferred_name, email) and this is what fails.
+  //
+  // ORDER BY: the card renders the array in feed order, so the ORDER BY inside
+  // json_agg is the only thing making it alphabetical. s1 is seeded FIRST but
+  // sorts SECOND, so dropping the ORDER BY fails this too. Both names are
+  // capitalized, which keeps the assertion independent of collation case rules.
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, display_name, preferred_name, position)
+     VALUES ($1, 'Filler Display', 'Filler Preferred', 'bartender')`,
+    [fillerId]
+  );
+  const shiftId = await mkShift({ positions: ['Bartender', 'Banquet Server'] });
+  await seedApproved(shiftId, s1Id, 'Bartender');      // inserted first, sorts second
+  await seedApproved(shiftId, fillerId, 'Banquet Server');
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.deepEqual(row.approved_staff.map((p) => p.name), ['Filler Display', 'Reqi One']);
+});
+
+test('admin feed: an approved row with NO position still appears, carrying position null', async () => {
+  // The comment above approved_by_role calls `AND position IS NOT NULL` a crash
+  // guard and adds "Same in all copies of this aggregate". True for
+  // jsonb_object_agg, which throws on a NULL key; WRONG for this json_agg,
+  // where a null position is an ordinary value. A reader who copies that guard
+  // here would drop these people from the card while approved_count still
+  // counts them, breaking the names-equal-the-ratio invariant.
+  const shiftId = await mkShift({ positions: ['Bartender'] });
+  await seedApproved(shiftId, s1Id, null);
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.equal(row.approved_staff.length, 1);
+  assert.equal(row.approved_staff[0].position, null);
+  assert.equal(Number(row.approved_count), row.approved_staff.length);
+});

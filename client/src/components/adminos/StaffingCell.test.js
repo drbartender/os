@@ -1,6 +1,6 @@
 import React from 'react';
-import { render } from '@testing-library/react';
-import StaffingCell, { deriveStaffing } from './StaffingCell';
+import { render, screen, fireEvent } from '@testing-library/react';
+import StaffingCell, { deriveStaffing, approvedStaffList } from './StaffingCell';
 
 // Local YYYY-MM-DD offset from today. dayDiff parses at noon local, so this
 // stays stable regardless of the runner's timezone.
@@ -143,5 +143,62 @@ describe('deriveStaffing', () => {
     });
     expect(s.inactive).toBe(false);
     expect(s.open).toBe(1);
+  });
+});
+
+describe('approvedStaffList', () => {
+  const people = [{ user_id: 1, name: 'A', position: 'Bartender' }];
+  test('returns the feed array as-is (pg parses the json column, axios decodes the body)', () => {
+    expect(approvedStaffList({ approved_staff: people })).toBe(people);
+  });
+  test('a row without the field reads as nobody', () => {
+    expect(approvedStaffList({})).toEqual([]);
+    expect(approvedStaffList(null)).toEqual([]);
+  });
+  test('a non-array value is nobody, not a parse attempt', () => {
+    expect(approvedStaffList({ approved_staff: JSON.stringify(people) })).toEqual([]);
+    expect(approvedStaffList({ approved_staff: { user_id: 1 } })).toEqual([]);
+  });
+});
+
+describe('hover card wiring', () => {
+  test('hovering a staffed cell lists the confirmed people', () => {
+    const event = { ...ev({ needed: 2, confirmed: 2 }), approved_staff: [
+      { user_id: 1, name: 'Reqi One', position: 'Bartender' },
+      { user_id: 2, name: 'Sam Two', position: 'Bartender' },
+    ] };
+    const { container } = render(<StaffingCell event={event} />);
+    expect(container.textContent).toBe('2/2');
+    fireEvent.mouseEnter(container.querySelector('.staff-hover-anchor'));
+    const card = screen.getByRole('tooltip');
+    expect(card.textContent).toContain('Reqi One');
+    expect(card.textContent).toContain('Sam Two');
+  });
+
+  test('an unstaffed cell has no hover anchor and shows the same copy as before', () => {
+    const { container } = render(<StaffingCell event={ev({ needed: 2, confirmed: 0, days: 19 })} />);
+    expect(container.querySelector('.staff-hover-anchor')).toBeNull();
+    expect(container.textContent).toContain('0/2 · 2 open');
+  });
+
+  test('a "No roster" row with nobody confirmed has no hover anchor', () => {
+    const { container } = render(
+      <StaffingCell event={{ positions_needed: null, approved_count: 0, event_date: ymd(10), approved_staff: [] }} />
+    );
+    expect(container.textContent).toBe('No roster');
+    expect(container.querySelector('.staff-hover-anchor')).toBeNull();
+  });
+
+  test('pending applicants are never in the card, only confirmed people', () => {
+    // 1/2 with one applicant: the chip says "1 request", the card says one name.
+    const event = { ...ev({ needed: 2, confirmed: 1, pending: 1, days: 19 }), approved_staff: [
+      { user_id: 1, name: 'Reqi One', position: 'Bartender' },
+    ] };
+    const { container } = render(<StaffingCell event={event} />);
+    expect(container.textContent).toContain('1 request');
+    fireEvent.mouseEnter(container.querySelector('.staff-hover-anchor'));
+    const card = screen.getByRole('tooltip');
+    expect(card.querySelectorAll('.staff-hover-row')).toHaveLength(1);
+    expect(card.textContent).not.toContain('request');
   });
 });

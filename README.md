@@ -583,7 +583,7 @@ dr-bartender/
 │   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; EventActionArea; PayoutEventRow; LogisticsTag; RoleRankPicker; RequestSheet)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # GlobalSearchButton (search-bar-shaped button that opens the ⌘K command palette; header + toolbar),
-│   │   │   │                   # StatusChip, StaffingCell (events-list staffing column: confirmed/needed with a red shortfall, plus a requests-vs-waitlist chip), RainbowDefs, Toolbar, Icon, KebabMenu, SortableTh (clickable sort headers), AddressLink,
+│   │   │   │                   # StatusChip, StaffingCell (events-list staffing column: confirmed/needed with a red shortfall, plus a requests-vs-waitlist chip), StaffHoverCard (hover card under that cell listing who is confirmed, name and position; portaled and inert), RainbowDefs, Toolbar, Icon, KebabMenu, SortableTh (clickable sort headers), AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # ServiceExtensionPanel (service-extension requests card on EventDetailPage: status chips, money, acceptance stamp, override with required reason, cancel; money IS shown here, unlike every staff surface),
 │   │   │   │                   # format, nav, shifts (shift-row helpers for admin surfaces: positions/approved counts, remainingByRole, eventStatusChip,

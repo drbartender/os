@@ -1,5 +1,6 @@
 import React from 'react';
 import StatusChip from './StatusChip';
+import StaffHoverCard from './StaffHoverCard';
 import { approvedCount } from './shifts';
 import { parsePositionsNeeded } from '../../utils/staffingRoles';
 import { dayDiff } from './format';
@@ -17,6 +18,9 @@ import { dayDiff } from './format';
 // the list staffing actually gets worked from, so the waitlist is not shown at
 // all. A full roster says one thing, the green ratio, and the waitlist count
 // still lives on the overview and on the event itself.
+//
+// The hover card (StaffHoverCard) follows the same rule: it lists confirmed
+// people only, never applicants.
 export function deriveStaffing(e) {
   const needed = parsePositionsNeeded(e?.positions_needed).length;
   const confirmed = approvedCount(e);
@@ -29,6 +33,14 @@ export function deriveStaffing(e) {
   const inactive = past || e?.status === 'cancelled' || e?.status === 'completed';
 
   return { needed, confirmed, pending, open, inactive };
+}
+
+// The confirmed people behind the ratio, from the admin feed's approved_staff
+// aggregate (server/routes/shifts.js GET /). pg parses the json column and
+// axios decodes the body, so it is an array or it is nothing; no string
+// parsing, because there is no path that delivers one.
+export function approvedStaffList(e) {
+  return Array.isArray(e?.approved_staff) ? e.approved_staff : [];
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -65,11 +77,13 @@ export default function StaffingCell({ event }) {
   const actionable = open > 0 || needed === 0;
 
   return (
-    <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ gap: 4, alignItems: 'flex-start' }}>
-      {line}
-      {pending > 0 && actionable && !inactive && (
-        <StatusChip kind="neutral">{plural(pending, 'request')}</StatusChip>
-      )}
-    </div>
+    <StaffHoverCard staff={approvedStaffList(event)}>
+      <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ gap: 4, alignItems: 'flex-start' }}>
+        {line}
+        {pending > 0 && actionable && !inactive && (
+          <StatusChip kind="neutral">{plural(pending, 'request')}</StatusChip>
+        )}
+      </div>
+    </StaffHoverCard>
   );
 }

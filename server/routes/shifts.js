@@ -121,7 +121,37 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         rc.request_count,
         rc.approved_count,
         rc.pending_count,
-        abr.approved_by_role
+        abr.approved_by_role,
+        -- Who is confirmed, for the events-list hover card. Same filter as
+        -- rc.approved_count (approved AND not dropped) so the names always add
+        -- up to the ratio beside them; same name rule as /by-proposal. Pending
+        -- applicants are deliberately absent: the cell hides the waitlist on a
+        -- full roster (StaffingCell.js header), and the card must not undo that.
+        -- Aliases are asr/au/acp because the outer query already owns u.
+        --
+        -- GATE, deliberately weaker than its siblings (decided 2026-08-25):
+        -- every other route projecting staff identities (/by-proposal,
+        -- /unstaffed-upcoming, /detail/:id, /:id/requests) is behind
+        -- requireStaffing, i.e. admin OR manager-with-can_staff. This branch is
+        -- behind requireOnboarded plus role admin/manager, so a manager with
+        -- can_staff = false sees these names where it sees none elsewhere. That
+        -- is intentional: this is the Events LIST, the roster is already the
+        -- column being read, and a manager who can open the events dashboard at
+        -- all can see the same people via the shift drawer. Prod has no
+        -- manager-role users today, so it changes nobody's access now. If a
+        -- non-staffing manager role is ever created and this should tighten,
+        -- the change is to gate the aggregate on requireStaffing's predicate
+        -- (:42), NOT to move the whole route behind it: the counts on this feed
+        -- are load-bearing for every admin surface.
+        (SELECT COALESCE(json_agg(json_build_object(
+                  'user_id', asr.user_id,
+                  'name', COALESCE(acp.display_name, acp.preferred_name, au.email),
+                  'position', asr.position
+                ) ORDER BY COALESCE(acp.display_name, acp.preferred_name, au.email)), '[]'::json)
+           FROM shift_requests asr
+           JOIN users au ON au.id = asr.user_id
+           LEFT JOIN contractor_profiles acp ON acp.user_id = asr.user_id
+          WHERE asr.shift_id = s.id AND asr.status = 'approved' AND asr.dropped_at IS NULL) AS approved_staff
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id
