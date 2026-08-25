@@ -42,6 +42,19 @@ function captureWebauthnEvent(event, extra, level = 'warning') {
   } catch (_) { /* telemetry must never break auth */ }
 }
 
+// Routine, high-volume audit events that should NOT open a Sentry issue. Every
+// successful unlock fired captureWebauthnEvent at level info, so daily passkey
+// use alone kept an issue permanently ongoing. A breadcrumb still shows the
+// unlock in the trail of any error that follows it. Enrollment and revocation
+// stay on captureWebauthnEvent: those are rare and worth seeing on their own.
+function breadcrumbWebauthnEvent(event, extra) {
+  try {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.addBreadcrumb({ category: 'webauthn', message: event, level: 'info', data: extra });
+    }
+  } catch (_) { /* telemetry must never break auth */ }
+}
+
 // The challenge the authenticator actually signed, straight out of
 // clientDataJSON. The DB consume below proves WE issued it (single-use, TTL,
 // kind); the verify call then proves the signature covers this same string.
@@ -313,7 +326,7 @@ function createWebauthnRouter(overrides = {}) {
       process.env.JWT_SECRET,
       { expiresIn: '12h' }
     );
-    captureWebauthnEvent('webauthn_unlock', { user_id: row.user_id }, 'info');
+    breadcrumbWebauthnEvent('webauthn_unlock', { user_id: row.user_id });
     res.json({
       token,
       user: {

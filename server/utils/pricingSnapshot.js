@@ -22,9 +22,6 @@
 
 const PRICING_SNAPSHOT_VERSION = 1;
 
-// Throttle: legacy-shape observability fires at most once per process per
-// context, so a scheduler iterating thousands of legacy rows logs once.
-const seenLegacyContexts = new Set();
 
 /**
  * Parse + version-gate a raw pricing_snapshot.
@@ -52,19 +49,23 @@ function readSnapshot(raw, { context = 'unknown' } = {}) {
 
   const version = snap._version;
   if (version === undefined || version === null) {
-    // Legacy (pre-stamp) snapshot: proceed as v1, tag its shape once per context.
-    if (!seenLegacyContexts.has(context)) {
-      seenLegacyContexts.add(context);
-      // Lazy require keeps @sentry/node out of the module-load graph of the
-      // pure engine (pricingEngine.js) and pure helpers (setupTime.js).
-      require('@sentry/node').captureMessage(
-        'pricingSnapshot: legacy snapshot without _version',
-        {
-          level: 'info',
-          tags: { component: 'pricingSnapshot', reason: 'legacy_no_version', context },
-        }
-      );
-    }
+    // Legacy (pre-stamp) snapshot: proceed as v1, tag its shape on the way past.
+    // Breadcrumb, not captureMessage: legacy snapshots are an expected, tolerated
+    // shape, and as an issue this was the loudest entry in the server project (85
+    // events, level info) and buried real errors. The once-per-process-per-context
+    // throttle went with it on purpose: it existed to keep captureMessage from
+    // spamming issues, but a breadcrumb that fires once per process would almost
+    // never still be in the buffer when an error finally lands, which is the only
+    // moment the snapshot's shape matters. Breadcrumbs are an in-memory ring per
+    // request scope, so firing on every read is what they are for.
+    // Lazy require keeps @sentry/node out of the module-load graph of the
+    // pure engine (pricingEngine.js) and pure helpers (setupTime.js).
+    require('@sentry/node').addBreadcrumb({
+      category: 'pricingSnapshot',
+      message: 'pricingSnapshot: legacy snapshot without _version',
+      level: 'info',
+      data: { reason: 'legacy_no_version', context },
+    });
     return snap;
   }
 

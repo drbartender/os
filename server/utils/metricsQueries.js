@@ -58,8 +58,19 @@ function resolveFilters(q = {}) {
   return { from: q.from, to: q.to, basis, includeCc };
 }
 
+// Lower bound on a computed prior window. A very wide range subtracts an
+// equally wide window off its own start, so an absurd `from` underflows past
+// year zero: the money board's date input fires mid-keystroke, and a half-typed
+// `0002-01-01` (while typing 2026) yielded a prior start of year -002023, which
+// Postgres rejects on the ::date cast with `time zone displacement out of
+// range` and 500s the whole dashboard. No prior window is the already-supported
+// answer here (the Compare toggle disables itself on null), so floor it rather
+// than clamp to a date nobody asked for. DRB has no data anywhere near 2000.
+const PRIOR_PERIOD_FLOOR_MS = Date.parse('2000-01-01T00:00:00Z');
+
 /**
- * Immediately-preceding equal-length window. null when either bound is null.
+ * Immediately-preceding equal-length window. null when either bound is null,
+ * unparseable, or when the computed window would start before the floor.
  * @returns {{from:string,to:string}|null}
  */
 function priorPeriod(from, to) {
@@ -67,10 +78,14 @@ function priorPeriod(from, to) {
   const DAY = 86400000;
   const f = Date.parse(from + 'T00:00:00Z');
   const t = Date.parse(to + 'T00:00:00Z');
+  // Unparseable bounds would carry NaN into new Date(...).toISOString(), which
+  // THROWS RangeError rather than returning a bad string.
+  if (!Number.isFinite(f) || !Number.isFinite(t)) return null;
   const lenDays = Math.round((t - f) / DAY) + 1; // inclusive
-  const priorTo = new Date(f - DAY);
-  const priorFrom = new Date(priorTo.getTime() - (lenDays - 1) * DAY);
-  const iso = (d) => d.toISOString().slice(0, 10);
+  const priorTo = f - DAY;
+  const priorFrom = priorTo - (lenDays - 1) * DAY;
+  if (!Number.isFinite(priorFrom) || priorFrom < PRIOR_PERIOD_FLOOR_MS) return null;
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
   return { from: iso(priorFrom), to: iso(priorTo) };
 }
 

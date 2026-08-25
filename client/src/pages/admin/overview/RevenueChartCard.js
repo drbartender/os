@@ -51,16 +51,24 @@ const niceCeil = (v) => {
   return step * pow;
 };
 
-// Mirror server metricsQueries.priorPeriod (equal length, immediately prior).
+// Mirror server metricsQueries.priorPeriod (equal length, immediately prior),
+// PRIOR_PERIOD_FLOOR included: a very wide range subtracts an equally wide
+// window off its own start, and a half-typed year in the date input (this fires
+// mid-keystroke) underflows past year zero. toISOString then yields an expanded
+// year like `-002023-05-16`, which the server rejects as a malformed date, so
+// Compare fired a request that could only ever 400. Null is the handled path.
+const PRIOR_PERIOD_FLOOR_MS = Date.parse('2000-01-01T00:00:00Z');
+
 function priorPeriodClient(from, to) {
   const DAY = 86400000;
   const f = Date.parse(from + 'T00:00:00Z');
   const t = Date.parse(to + 'T00:00:00Z');
   if (Number.isNaN(f) || Number.isNaN(t)) return null;
   const lenDays = Math.round((t - f) / DAY) + 1;
-  const priorTo = new Date(f - DAY);
-  const priorFrom = new Date(priorTo.getTime() - (lenDays - 1) * DAY);
-  const iso = (d) => d.toISOString().slice(0, 10);
+  const priorTo = f - DAY;
+  const priorFrom = priorTo - (lenDays - 1) * DAY;
+  if (!Number.isFinite(priorFrom) || priorFrom < PRIOR_PERIOD_FLOOR_MS) return null;
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
   return { from: iso(priorFrom), to: iso(priorTo) };
 }
 

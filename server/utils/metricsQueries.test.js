@@ -100,6 +100,26 @@ test('priorPeriod: All time (null) → null', () => {
   assert.equal(priorPeriod(null, null), null);
 });
 
+// DRBARTENDER-SERVER-24: the money board's date input fires mid-keystroke, so a
+// half-typed year reached the server as a real date. `0002-01-01` subtracted an
+// equal 2024-year window off its own start, landing the prior range in year
+// -002023, which Postgres rejected on the ::date cast and 500'd the dashboard.
+test('priorPeriod: half-typed year floors to null instead of a negative year', () => {
+  assert.equal(priorPeriod('0002-01-01', '2026-08-17'), null);
+});
+
+test('priorPeriod: unparseable bound returns null rather than throwing RangeError', () => {
+  assert.equal(priorPeriod('not-a-date', '2026-08-17'), null);
+  assert.equal(priorPeriod('2026-01-01', 'not-a-date'), null);
+});
+
+test('priorPeriod: a wide but real range still gets a window (floor is not over-eager)', () => {
+  const p = priorPeriod('2024-01-01', '2026-08-17');
+  assert.ok(p, 'expected a prior window for a two-and-a-half-year range');
+  assert.equal(p.to, '2023-12-31');
+  assert.ok(p.from > '2000-01-01', `prior from ${p.from} should sit above the floor`);
+});
+
 // ── dateClause ──
 test('dateClause: null range → empty fragment, params untouched', () => {
   const params = [];
