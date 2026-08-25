@@ -142,11 +142,26 @@ claimed this needed re-deriving because the citation was off; it was off by one 
 proposal whose `total_price_override` differs from catalog gets an invoice with a correct total
 sitting over line items that do not sum to it (Shiralee INV-0120: $450 of lines on a $270
 invoice). Verified 2026-08-23: `invoiceLineItems.js` contains no `total_price_override` reference.
-Affects native custom-priced proposals (the Edward Marx set) as well as the CC tail.
+
+**Measured against prod 2026-08-25.** 38 proposals carry an override, 13 CC transfers and 25
+native. Every affected invoice is NATIVE: 10 non-void invoices across 9 proposals. Nine of the
+ten are Deposit invoices, where the $100 due is right and only the lines behind it show catalog
+list; the tenth is Balance INV-0120. Widest spread is proposal 770, $1,100 of lines on a $425
+contract.
+
+**The CC tail is NOT part of this, and must not be "fixed".** All seven CC balance invoices sum
+EXACTLY to their own `amount_due`, because `scripts/cc-balance-invoice.js` mints the shape by
+hand. They sit $100 under `total_price` only because that is the CC deposit already sitting in
+`external_paid`, carried on the invoice as a credit. Correct by construction.
+
+**One row needs Dallas, not code.** Proposal 599 (cc_id 554129) carries `total_price_override`
+300.00 against a `total_price` of 200.00. Its payments reconcile to 200: $100 external CC
+deposit plus a $100 Balance invoice, with a separate $60 Drink Plan Extras off contract. So
+either the CC contract was $300 and $100 was never billed, or it was renegotiated down to $200
+and the override was left stale. Nothing in the schema can settle which one.
 
 Deliberately NOT fixed alongside the drink-plan money fix: every invoice flows through that
-generator, and an honest reconciling line for the CC events would depend on a fact that exists
-only in the 2024 contract PDFs. The CC tail is handled by `scripts/cc-balance-invoice.js`.
+generator, so it is its own lane.
 
 ### A client drink-plan submit re-prices add-ons at TODAY's catalog rate
 
