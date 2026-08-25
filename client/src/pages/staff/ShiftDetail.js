@@ -35,6 +35,33 @@ import {
 const RequestMoreTime = React.lazy(() => import('./RequestMoreTime'));
 
 /**
+ * The cocktail and mocktail catalogs are global reference data, but
+ * fetchDetails re-runs on every shift navigation and ShiftsPage keeps ONE
+ * instance of this page across those hops, so an un-memoized pair of GETs cost
+ * two extra round trips for every shift a staffer opened. Memoize the
+ * PROMISES at module scope: one fetch per page load, shared by every
+ * navigation and by a second mount.
+ *
+ * A rejection drops its slot so the next visit retries. Caching the failure
+ * would pin an empty drink menu for the rest of the session, which on this
+ * page means a staffer reading the brief sees no signature cocktails at all.
+ */
+const catalogPromises = { cocktails: null, mocktails: null };
+
+function fetchDrinkCatalog(kind) {
+  if (!catalogPromises[kind]) {
+    catalogPromises[kind] = api.get(`/${kind}`).then(
+      (res) => res.data?.[kind] || [],
+      () => {
+        catalogPromises[kind] = null;
+        return [];
+      }
+    );
+  }
+  return catalogPromises[kind];
+}
+
+/**
  * ShiftDetail — the staff Event Details page (spec 2026-07-22).
  *
  * URL: /shifts/:shiftId
@@ -80,6 +107,7 @@ export default function ShiftDetail() {
   const detailsRef = useRef(null);
   useEffect(() => { detailsRef.current = details; }, [details]);
   const [drinkCatalogs, setDrinkCatalogs] = useState({ cocktails: [], mocktails: [] });
+  const [logoUrl, setLogoUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [acknowledging, setAcknowledging] = useState(false);
@@ -107,8 +135,10 @@ export default function ShiftDetail() {
   const fetchSeqRef = useRef(0);
 
   // One shift-keyed fetch. The drink catalogs ride along because the menu cards
-  // resolve drink ids against them; a catalog failure is non-fatal, so the
-  // brief still renders and the catalog retries on the next visit.
+  // resolve drink ids against them, but they come from the module memo above,
+  // not the wire, on every visit after the first. Event-details itself is never
+  // cached: it carries this shift's live staffing and confirm state.
+  // A catalog failure is non-fatal, so the brief still renders.
   const fetchDetails = useCallback(async () => {
     if (!Number.isFinite(shiftId)) {
       setError('Shift not found.');
@@ -119,17 +149,14 @@ export default function ShiftDetail() {
     setLoading(true);
     setError(null);
     try {
-      const [detailsRes, cocktailsRes, mocktailsRes] = await Promise.all([
+      const [detailsRes, cocktails, mocktails] = await Promise.all([
         api.get(`/shifts/${shiftId}/event-details`),
-        api.get('/cocktails').catch(() => ({ data: { cocktails: [] } })),
-        api.get('/mocktails').catch(() => ({ data: { mocktails: [] } })),
+        fetchDrinkCatalog('cocktails'),
+        fetchDrinkCatalog('mocktails'),
       ]);
       if (seq !== fetchSeqRef.current) return;
       setDetails(detailsRes.data);
-      setDrinkCatalogs({
-        cocktails: cocktailsRes.data?.cocktails || [],
-        mocktails: mocktailsRes.data?.mocktails || [],
-      });
+      setDrinkCatalogs({ cocktails, mocktails });
     } catch (err) {
       if (seq !== fetchSeqRef.current) return;
       const msg =
@@ -165,6 +192,41 @@ export default function ShiftDetail() {
   const consultSelections = drinkPlan?.consult_selections || null;
   const isDrinkPlanFinalized = !!drinkPlan?.finalized_at;
   const proposalId = proposal?.id || null;
+
+  // The custom-menu logo used to be handed to the card as a bare API URL. A
+  // browser <img> request carries no Authorization header and GET
+  // /beo/:proposalId/logo sits behind auth + requireOnboarded, so it 401'd on
+  // every staff BEO and the logo was always blank. Fetch it through api (which
+  // attaches the token) and hand the card an object URL instead — the same
+  // shape BarMenuCard already uses for the menu print file. Revoke on cleanup:
+  // ShiftsPage keeps one instance of this page across shift navigations, so a
+  // leaked object URL per shift opened would pin the whole image in memory for
+  // the rest of the session.
+  const hasLogo = !!drinkPlan?.has_logo;
+  useEffect(() => {
+    if (!hasLogo || !proposalId) {
+      setLogoUrl(null);
+      return undefined;
+    }
+    let objectUrl = null;
+    let cancelled = false;
+    api
+      .get(`/beo/${proposalId}/logo`, { responseType: 'blob' })
+      .then((res) => {
+        if (cancelled || !res?.data) return;
+        objectUrl = URL.createObjectURL(res.data);
+        setLogoUrl(objectUrl);
+      })
+      .catch(() => {
+        // A missing or temporarily unavailable logo is cosmetic; the rest of
+        // the brief still renders and the card simply omits the image.
+        if (!cancelled) setLogoUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [hasLogo, proposalId]);
 
   // The shift this page addresses, out of every non-cancelled shift on the
   // event. Replaces the old nav-state/list-lookup shiftRow entirely.
@@ -620,9 +682,7 @@ export default function ShiftDetail() {
         menuStyle={menuStyle}
         drinkPlan={drinkPlan}
         selections={selections}
-        logoSrc={drinkPlan?.has_logo && proposalId
-          ? `${api.defaults.baseURL}/beo/${proposalId}/logo`
-          : null}
+        logoSrc={logoUrl}
       />
       <NotesCard title="Notes from the lead" body={drinkPlan?.admin_notes} />
       <NotesCard title="From the client" body={selections.notes} />
