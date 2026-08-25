@@ -50,7 +50,8 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
-| 1 | A refund on an override'd proposal is undone by the next editor save | **yes, 599 and 527, one save each** |
+| 1 | Two refunded override'd proposals still carry the pre-refund override, backfill owed | **yes, 599 and 527, one save each, until the post-deploy backfill** |
+| 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | yes, override'd proposal with gratuity, two admin steps |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
 | 1 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
@@ -158,40 +159,39 @@ hand. They sit $100 under `total_price` only because that is the CC deposit alre
 Deliberately NOT fixed alongside the drink-plan money fix: every invoice flows through that
 generator, so it is its own lane.
 
-### A contract-scope refund on an override'd proposal is undone by the next editor save
+### Two refunded override'd proposals still carry the pre-refund override (backfill owed)
 
-Three writers lower `total_price` and none of them touch `total_price_override`:
-`refundHelpers.applyRefundReconciliation` (contract scope), `proposals/cancel.js` and
-`lineItemCancel.js`. Grep verified 2026-08-25: zero references in all three. Then
-`PATCH /api/proposals/:id` carries the old override forward (`crud.js:421`), `calculateProposal`
-substitutes it as the service total (`pricingEngine.js:459`), and the save writes
-`total_price = snapshot.total` (`crud.js:555`). Post-commit, `createAdditionalInvoiceIfNeeded`
-(`crud.js:769`) sees a positive delta over locked invoices and mints an 'Additional Services'
-invoice, status `sent`, for exactly the refunded amount. Nothing emails it and
-`balanceInvoiceMonitor` only chases `confirmed`/`deposit_paid`, so on a completed event it sits
-payable and quiet. It is still a real invoice for money DRB gave back on purpose.
+The refund write now lowers `total_price_override` with `total_price` (merged to main as
+7459e1a2 on 2026-08-25; check `git merge-base --is-ancestor 7459e1a2 origin/main` before
+assuming it is in prod). It does not heal rows refunded before it. Until they are backfilled,
+one proposal-editor save on either mints the refunded money back as an Additional Services
+invoice.
 
-Two live rows. Both refunds ever issued on an override'd proposal did this, 2 for 2:
+- **599, Emiline Mccoy**: set the override to **200.00** (gratuity rate 0, so override = total).
+- **527, Shiralee Mack Perkins**: set it to **370.00**, not 350. The $20 parking fee lives inside
+  the override, which replaces the whole calculated total, adjustments included; 350 would
+  re-price to 350 and fire a $20 downward delta.
 
-- **599, Emiline Mccoy** (cc_id 554129): contract $300, refund #14 of $100 on 2026-08-03,
-  contract scope, 300 to 200. Override still 300.00. One editor save mints a $100 invoice.
-- **527, Shiralee Mack Perkins**: refund #11 of $80 on 2026-07-15, 450 to 370. Override 350.00
-  (her June drink-plan fold predates the 7/20 fold that writes the override). One editor save
-  drops the total to 350 against $370 paid, logs `overpayment_detected`, and hands the admin the
-  overpayment-refund path above, which shrinks the contract.
+Run by hand against prod AFTER the deploy (a backfill before it would drift again on the next
+refund), one `UPDATE proposals SET total_price_override = ... WHERE id = ...` each, plus a
+`proposal_activity_log` row saying why. Delete this entry when done.
 
-The realistic trigger is re-tagging a completed event's type for marketing. Only the editor can
-do that (`event_type` is written nowhere else), and `repriceSummary.js:7` already documents that
-the server bills deltas on completed events. Right for a genuine re-price, wrong for a refund
-echo.
+### A tip refund has no gratuity scope, so cancel-line can offer it a second time
 
-Already wrong today without any save: the client-portal readers prefer the override
-(`clientPortal.js:62`, `clientPortal/summary.js:17`, `changeRequestNotifications.js:37`), so
-Emiline's portal archive shows $300 for a $200 event and Shiralee's shows $350 for $370 paid.
+Neither the payment panel (`stripe.js` refund route) nor cancel passes a gratuity scope into
+`applyRefundReconciliation`; `gratuity_cents` on the refund row feeds only the payroll clawback.
+A refund of the tip is therefore contract scope and lowers `total_price` and
+`total_price_override` by the tip. Since client gratuity is re-derived from `gratuity_rate` at
+every price, that is the only representation a later save leaves alone. The cost: a later
+cancel-line "remove gratuity" on the same proposal (`lineItemCancel.js`, gratuity target)
+re-prices to override + 0, reads the already-refunded tip as an overpayment, and offers it a
+second time. The cancel-line preview shows the figure before anything moves, so it is loud, not
+silent. Surfaced by the refund-override-sync review, 2026-08-25. Before that lane the same
+two-step offered nothing and the next editor save minted the tip back as an invoice instead.
 
-Fix shape: the three writers lower the override by the contract-scope amount when it is set.
-`proposalExtrasFold.js:197` already moves the override for increases, so the pattern exists.
-Plus a two-row hand backfill, 599 to 200.00 and 527 to 370.00. Money path, own lane.
+Fix: a gratuity scope on the refund row that lowers `gratuity_rate` (or a stored gratuity
+adjustment) rather than the override. Reachable today on any override'd proposal carrying
+gratuity, two admin steps.
 
 ### A client drink-plan submit re-prices add-ons at TODAY's catalog rate
 
@@ -651,6 +651,13 @@ here by default.
 
 ## Money and payroll (internal correctness)
 
+- **A refund larger than the service contract leaves the override and total clamped apart.**
+  `applyRefundReconciliation` clamps `total_price` and `total_price_override` at 0 independently,
+  so gratuity dollars refunded beyond the override leave `total_price - override` below the
+  derived gratuity and the next re-price bills the gap (override 100 + gratuity 50, refund 120:
+  total 30, override 0, next save says 50). Pinned by name in `refundHelpers.override.test.js`.
+  Before 2026-08-25 the gap was the whole refund. Closes with the gratuity-scope entry above the
+  line.
 - **The review-bounty catch-up never runs at period open.** `materializePendingReviewLines`
   (`dutyLines.js:549`) has two callers: the next review confirm (`staffReviews.js:489`) and the
   manual `scripts/backfill-duty-lines.js`. Nothing calls it when accrual opens a period, so a
