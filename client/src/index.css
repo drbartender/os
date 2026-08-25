@@ -13479,7 +13479,10 @@ html[data-app="admin-os"] .chip.info .chip-dot { background: hsl(208 72% 56%); }
 
 /* Light-skin chip variants: higher contrast text, softer tints */
 html[data-app="admin-os"][data-skin="light"] .chip.ok { color: hsl(145 55% 32%); background: hsl(145 55% 48% / 0.14); }
-html[data-app="admin-os"][data-skin="light"] .chip.warn { color: hsl(28 88% 38%);  background: hsl(38 92% 52% / 0.16); }
+/* 34%, not 38%: the chip tint composites over BOTH --bg-1 (#fcfaf4 card) and --bg-0
+   (#f7f4ec page), and 38% measured 4.00:1 and 3.82:1 against those. 35% clears AA on the
+   card only (4.58) and still fails the page (4.38); 34% clears both (4.79 / 4.58). */
+html[data-app="admin-os"][data-skin="light"] .chip.warn { color: hsl(28 88% 34%);  background: hsl(38 92% 52% / 0.16); }
 html[data-app="admin-os"][data-skin="light"] .chip.danger { color: hsl(358 72% 40%); background: hsl(358 72% 55% / 0.14); }
 html[data-app="admin-os"][data-skin="light"] .chip.info { color: hsl(208 72% 36%); background: hsl(208 72% 52% / 0.14); }
 

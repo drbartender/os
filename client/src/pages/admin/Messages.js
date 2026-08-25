@@ -59,7 +59,7 @@ export default function Messages() {
       <h1 className="sms-page-title">Messages</h1>
       {threads.length === 0 ? (
         <div className="sms-empty">
-          No SMS conversations yet. Client and staff texts to the business number appear here.
+          No SMS conversations yet. Client texts to the business number appear here; staff texts route to the admin alert line.
         </div>
       ) : (
         <div className="sms-layout">

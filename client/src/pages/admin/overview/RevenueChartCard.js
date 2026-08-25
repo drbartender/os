@@ -253,9 +253,16 @@ export default function RevenueChartCard({ data = [], filter, basis = 'booked' }
             <button type="button" className="metrics-seg-btn ov-seg-disabled" disabled title="Monthly data">Week</button>
             <button type="button" className="metrics-seg-btn is-active" aria-pressed="true">Month</button>
           </div>
+          {/* Gated on priorWindow too, not just allTime: priorPeriodClient refuses a
+              window starting before the 2000 floor, and the toggle used to stay lit on
+              one, push a dashed Prior chip into the legend and draw nothing. */}
           <button type="button" className={`btn btn-ghost btn-sm ov-compare-btn${compareOn ? ' is-on' : ''}`}
-            aria-pressed={compareOn} disabled={allTime}
-            title={allTime ? 'Compare needs a bounded date range' : 'Overlay the prior period'}
+            aria-pressed={compareOn} disabled={allTime || !priorWindow}
+            title={allTime
+              ? 'Compare needs a bounded date range'
+              : (!priorWindow
+                ? 'No prior period for a range this wide'
+                : 'Overlay the prior period')}
             onClick={() => setCompare((c) => !c)}>Compare</button>
         </div>
       </div>
