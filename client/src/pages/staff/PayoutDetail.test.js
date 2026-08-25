@@ -65,3 +65,18 @@ test('paystub fetch failure closes the pre-opened tab and shows an error', async
   expect(await screen.findByText(/could not prepare the paystub/i)).toBeInTheDocument();
   openSpy.mockRestore();
 });
+
+// paid_at is a TIMESTAMPTZ; payday is a pg DATE. One fmtShortDate was fed both,
+// so an evening payout printed the next day on the staffer's own screen while
+// the paystub PDF printed the right one.
+test('an evening paid_at prints its Chicago day, and payday is unchanged', async () => {
+  api.get.mockResolvedValueOnce({ data: {
+    ...paidDetail,
+    period: { ...paidDetail.period, payday: '2026-12-31' },
+    payout: { ...paidDetail.payout, paid_at: '2027-01-01T00:01:00.000Z' }, // 18:01 CST
+  } });
+  renderAt();
+  expect(await screen.findByText(/Dec 31/)).toBeInTheDocument();
+  expect(screen.getByText(/Dec 31/)).toBeInTheDocument();
+  expect(screen.queryByText(/Jan 1/)).not.toBeInTheDocument();
+});

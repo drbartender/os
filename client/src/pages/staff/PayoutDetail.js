@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import PayoutEventRow from '../../components/staff/PayoutEventRow';
 import { formatMoney } from '../../utils/formatMoney';
+import { chicagoDay } from '../../utils/chicagoDay';
 
 /**
  * PayoutDetail — staff portal v2 single-pay-period detail (spec §6.7).
@@ -231,7 +232,7 @@ export default function PayoutDetail() {
         <div className="sp-period-banner-total">{formatMoney(total)}</div>
         {isPaid && payout.paid_at && (
           <div className="sp-period-banner-foot">
-            <span>Paid {fmtShortDate(payout.paid_at)}</span>
+            <span>Paid {fmtPaidDate(payout.paid_at)}</span>
           </div>
         )}
         {!isPaid && !isNoDraw && period.payday && (
@@ -429,6 +430,14 @@ function fmtShortDate(iso) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+// paid_at is a TIMESTAMPTZ, not a DATE: reduce it to its Chicago calendar day
+// before handing it to fmtShortDate, which is correct for a bare date and wrong
+// for a moment. The other fmtShortDate callers take pg DATE columns (payday,
+// period bounds) and stay as they are.
+function fmtPaidDate(ts) {
+  return fmtShortDate(chicagoDay(ts));
 }
 
 function fmtPeriodRange(startIso, endIso) {

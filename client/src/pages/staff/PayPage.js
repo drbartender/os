@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import PayoutEventRow from '../../components/staff/PayoutEventRow';
 import { formatMoney } from '../../utils/formatMoney';
+import { chicagoDay } from '../../utils/chicagoDay';
 
 /**
  * PayPage — staff portal v2 Pay tab landing (spec §6.6).
@@ -372,7 +373,7 @@ export default function PayPage() {
               </div>
               <div className="sp-paystub-foot">
                 <span>
-                  {pp.status === 'no_draw' ? 'Not drawn' : `Paid ${fmtShortDate(pp.paid_at) || '—'}`}
+                  {pp.status === 'no_draw' ? 'Not drawn' : `Paid ${fmtPaidDate(pp.paid_at) || '—'}`}
                   {Number.isFinite(pp.event_count) && (
                     <>
                       {' · '}
@@ -588,6 +589,14 @@ function fmtShortDate(iso) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+// paid_at is a TIMESTAMPTZ, not a DATE: reduce it to its Chicago calendar day
+// before handing it to fmtShortDate, which is correct for a bare date and wrong
+// for a moment. The other fmtShortDate callers take pg DATE columns (payday,
+// period bounds) and stay as they are.
+function fmtPaidDate(ts) {
+  return fmtShortDate(chicagoDay(ts));
 }
 
 // Imported history spans multiple calendar years, so the year is meaningful
