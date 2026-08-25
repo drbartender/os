@@ -605,22 +605,24 @@ automated, **re-derive the cohort at the top of any walk session** rather than t
 the tiers: `git log --format='%h %ad %s' --date=short <the sha this file names>..origin/main -- server client/src`
 lists every code commit live in prod that this file may not know about.
 
-**THE 2026-08-25 COHORT.** One item, and the tier-6 mechanism carried it: it arrived there with
-its merge sha the moment the lane merged, and moved here when the push made that sha an ancestor
-of `origin/main`. Nothing had to be remembered.
+**THE 2026-08-25 COHORT. Walked the same day, nothing owed.** One item, and the tier-6 mechanism
+carried it end to end: it arrived there with its merge sha the moment the lane merged, moved here
+when the push made that sha an ancestor of `origin/main`, and was walked within the hour. Nothing
+had to be remembered at any step.
 
-- [ ] **Events list staff hover is live** — merge `21ec7993` (lane events-staff-hover). On /events,
-      hover the Staffing column on a staffed row and a card lists everyone confirmed, name and
-      position. Checked headless on dev in both skins before merge, so the walk is for what a
-      browser cannot judge: whether it feels right at your real window size, whether it is quick
-      enough to be useful while scanning the list, and whether it gets in the way when you are
-      just reading. Two specifics worth deliberately hitting, both of which broke during the
-      build: scroll to the BOTTOM of the All tab and hover the last row (the card flips above the
-      cell there; the first version rendered it 42px below the fold, unreachable), and click a row
-      while its card is showing (it should still open the event). Unstaffed rows and rows with
-      nobody confirmed show no card at all. Hover only, no phone and no keyboard path, by design,
-      so do not go looking for one. NOTE the card also appears on legacy "No roster" rows that
-      have people assigned, which is information nothing else on that screen surfaces.
+- [x] **WALKED 2026-08-25 by Dallas, same day it shipped. Nothing owed.** Events list staff hover,
+      merge `21ec7993` (lane events-staff-hover). Hover the Staffing column on /events and a card
+      lists everyone confirmed, name and position.
+      What the walk covered: he worked the All tab down to its bottom rows, which is exactly the
+      case that shipped broken in the first build (the card rendered 42px below the fold and could
+      not be reached without leaving the anchor, which closes it) and was fixed with an
+      above-the-cell flip before merge. The flip held.
+      The one thing it turned up was not a defect: the bottom rows of the All tab have nobody
+      confirmed, so they correctly show no card. Worth recording because it is the honest weakness
+      of a hover with no empty state, there is no signal distinguishing "nobody is on this event"
+      from "the feature is broken", and it cost a few minutes to establish which.
+      Kept as the record rather than deleted, since the fold case is the thing to re-check if this
+      code is ever touched again.
 
 **THE 2026-08-21 COHORT (push `9cccd3da..4ee51d00`, 37 commits).** Seven items, and unlike the
 8/20 cohort none of them was missed: six arrived in Tier 6 the evening before with their merge
