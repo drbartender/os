@@ -50,6 +50,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
+| 1 | A refund on an override'd proposal is undone by the next editor save | **yes, 599 and 527, one save each** |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
 | 1 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
@@ -154,14 +155,43 @@ EXACTLY to their own `amount_due`, because `scripts/cc-balance-invoice.js` mints
 hand. They sit $100 under `total_price` only because that is the CC deposit already sitting in
 `external_paid`, carried on the invoice as a credit. Correct by construction.
 
-**One row needs Dallas, not code.** Proposal 599, Emiline Mccoy, 2026-08-01 at Lake Winneconne
-Park (cc_id 554129), carries `total_price_override` 300.00 against a `total_price` of 200.00. Its payments reconcile to 200: $100 external CC
-deposit plus a $100 Balance invoice, with a separate $60 Drink Plan Extras off contract. So
-either the CC contract was $300 and $100 was never billed, or it was renegotiated down to $200
-and the override was left stale. Nothing in the schema can settle which one.
-
 Deliberately NOT fixed alongside the drink-plan money fix: every invoice flows through that
 generator, so it is its own lane.
+
+### A contract-scope refund on an override'd proposal is undone by the next editor save
+
+Three writers lower `total_price` and none of them touch `total_price_override`:
+`refundHelpers.applyRefundReconciliation` (contract scope), `proposals/cancel.js` and
+`lineItemCancel.js`. Grep verified 2026-08-25: zero references in all three. Then
+`PATCH /api/proposals/:id` carries the old override forward (`crud.js:421`), `calculateProposal`
+substitutes it as the service total (`pricingEngine.js:459`), and the save writes
+`total_price = snapshot.total` (`crud.js:555`). Post-commit, `createAdditionalInvoiceIfNeeded`
+(`crud.js:769`) sees a positive delta over locked invoices and mints an 'Additional Services'
+invoice, status `sent`, for exactly the refunded amount. Nothing emails it and
+`balanceInvoiceMonitor` only chases `confirmed`/`deposit_paid`, so on a completed event it sits
+payable and quiet. It is still a real invoice for money DRB gave back on purpose.
+
+Two live rows. Both refunds ever issued on an override'd proposal did this, 2 for 2:
+
+- **599, Emiline Mccoy** (cc_id 554129): contract $300, refund #14 of $100 on 2026-08-03,
+  contract scope, 300 to 200. Override still 300.00. One editor save mints a $100 invoice.
+- **527, Shiralee Mack Perkins**: refund #11 of $80 on 2026-07-15, 450 to 370. Override 350.00
+  (her June drink-plan fold predates the 7/20 fold that writes the override). One editor save
+  drops the total to 350 against $370 paid, logs `overpayment_detected`, and hands the admin the
+  overpayment-refund path above, which shrinks the contract.
+
+The realistic trigger is re-tagging a completed event's type for marketing. Only the editor can
+do that (`event_type` is written nowhere else), and `repriceSummary.js:7` already documents that
+the server bills deltas on completed events. Right for a genuine re-price, wrong for a refund
+echo.
+
+Already wrong today without any save: the client-portal readers prefer the override
+(`clientPortal.js:62`, `clientPortal/summary.js:17`, `changeRequestNotifications.js:37`), so
+Emiline's portal archive shows $300 for a $200 event and Shiralee's shows $350 for $370 paid.
+
+Fix shape: the three writers lower the override by the contract-scope amount when it is set.
+`proposalExtrasFold.js:197` already moves the override for increases, so the pattern exists.
+Plus a two-row hand backfill, 599 to 200.00 and 527 to 370.00. Money path, own lane.
 
 ### A client drink-plan submit re-prices add-ons at TODAY's catalog rate
 
