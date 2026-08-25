@@ -809,15 +809,15 @@ the accented spelling) or the two spellings stop matching each other.
   `parseApprovedByRole`; the fix that retires the whole class is tightening the CHECK to be
   case-sensitive and normalizing any stragglers, which is a money-seam schema change (position is
   the tip-split key) and wants its own lane. Do the root fix, not a third patch.
-- **An applicant who ranked no role reads as "no information" on the events list and "Any role"
-  one click away in the drawer.** An empty `requested_positions` means "any role" to
-  `autoAssign.js`, to `classifyRequest`, and to `ShiftDrawer`, which prints the string literally.
-  The requests hover card (shipped 2026-08-25, `c792c321`) renders a bare name instead, per an
-  explicit decision made before the divergence was known. **6 of 27 pending prod rows are empty**,
-  so this is the visible case rather than a corner. One word in the SQL (`'Any role'` in place of
-  the NULL) aligns them. Dallas's call, since it reverses a stated decision. Two cosmetic siblings
-  if it goes ahead: the drawer joins ranked roles with `›` and prefixes "Ranked:", the card joins
-  with a comma.
+- **SETTLED 2026-08-25, do not re-raise: an applicant who ranked no role shows a BARE NAME on the
+  events list, and that is deliberate.** An empty `requested_positions` means "any role" to
+  `autoAssign.js`, to `classifyRequest`, and to `ShiftDrawer`, which prints the string literally,
+  so the requests hover card (shipped `c792c321`) and the drawer describe the same person
+  differently, one click apart, on 6 of 27 pending prod rows. The review surfaced it, Dallas
+  declined the change: the card stays a bare name. Recorded because the divergence is real and
+  someone will notice it again; the answer is that it was looked at and left. The one-word SQL
+  change (`'Any role'` for the NULL) is here only so nobody has to re-derive it if the call is
+  ever reversed.
 - **The events-list waitlist gate is FLAT, not per-role, so it can hide a genuinely actionable
   applicant.** `deriveStaffing` computes `open = roster.length - approved_count`. On a mixed
   roster like `["Bartender","Banquet Server"]` with two Bartenders approved, `open === 0`, so the
