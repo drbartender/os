@@ -50,7 +50,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
-| 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | yes, override'd proposal with gratuity, two admin steps |
+| 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
 | 1 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
@@ -171,9 +171,20 @@ second time. The cancel-line preview shows the figure before anything moves, so 
 silent. Surfaced by the refund-override-sync review, 2026-08-25. Before that lane the same
 two-step offered nothing and the next editor save minted the tip back as an invoice instead.
 
-Fix: a gratuity scope on the refund row that lowers `gratuity_rate` (or a stored gratuity
-adjustment) rather than the override. Reachable today on any override'd proposal carrying
-gratuity, two admin steps.
+**NOT reachable today, measured 2026-08-25.** The bug needs one proposal carrying BOTH an
+override and gratuity, and prod has zero: 15 proposals have gratuity, none of them override'd,
+and none of the 7 refunds ever issued touched gratuity. It goes live the day a negotiated
+override lands on a job that also carries a mandated tip.
+
+Fix, and why it is NOT worth building yet (Dallas, 2026-08-25): a third `total_scope` value.
+`proposal_refunds_total_scope_check` (`schema.sql:1179`) admits only 'contract' and
+'overpayment', so this needs a CHECK change, which puts `schema.sql` in the diff and pulls the
+full fleet plus the cross-LLM pass. Worse, gratuity is `round(rate * staffCount * hours, 2)`
+(`pricingEngine.js:283`) with no stored dollar figure to lower, so the scope must either
+back-solve `gratuity_rate` (lossy rounding, trips the `tip_jar OR gratuity_rate >= 50` CHECK,
+and retroactively moves payroll, since that rate is what bartenders are paid from) or add a
+stored gratuity-adjustment column that the pricing engine subtracts. Two of the highest-risk
+surfaces in the codebase against zero current exposure.
 
 ### A client drink-plan submit re-prices add-ons at TODAY's catalog rate
 
