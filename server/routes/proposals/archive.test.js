@@ -314,6 +314,63 @@ test('archived -> draft restore clears cancelled_at/by/note/archive_reason (B5 d
   assert.equal(row.archive_reason, null, 'archive_reason cleared');
 });
 
+// ── restoring out of 'archived' exempts the row from the stale sweep ──────
+test("archived -> draft writes the sweep-exemption marker", async () => {
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'sent' });
+  await pool.query("UPDATE proposals SET status = 'archived', archive_reason = 'event_passed' WHERE id = $1", [pid]);
+  const r = await patchBody(`/api/proposals/${pid}/status`, adminToken, JSON.stringify({ status: 'draft' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { rows } = await pool.query(
+    "SELECT count(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sweep_exempt'", [pid]);
+  assert.equal(rows[0].n, 1, 'restoring out of archived marks the proposal exempt');
+});
+
+test("a transition that does not leave 'archived' writes no exemption marker", async () => {
+  const clientId = await makeClient();
+  // sent -> viewed on purpose, NOT draft -> sent: the lifecycle route mints the
+  // first invoice on 'sent' (createInvoiceOnSend), and this file's teardown only
+  // deletes invoices it tracked itself, so a route-minted one breaks the cleanup
+  // with an invoices_proposal_id_fkey violation that reads as a suite failure.
+  const pid = await makeProposal(clientId, { status: 'sent' });
+  const r = await patchBody(`/api/proposals/${pid}/status`, adminToken, JSON.stringify({ status: 'viewed' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { rows } = await pool.query(
+    "SELECT count(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sweep_exempt'", [pid]);
+  assert.equal(rows[0].n, 0, 'only a restore out of archived marks exempt');
+});
+
+test("a same-status archived -> archived PATCH restores nothing and marks nothing", async () => {
+  // validStatuses includes 'archived' and the transition guard is
+  // `!force && currentStatus !== status`, so a same-status PATCH skips the state
+  // machine entirely. It must not be read as a restore: nothing moved, and a
+  // spurious marker would permanently exempt a still-archived proposal from the
+  // sweep while logging a restore that never happened.
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'sent' });
+  await pool.query("UPDATE proposals SET status = 'archived', archive_reason = 'event_passed' WHERE id = $1", [pid]);
+  const r = await patchBody(`/api/proposals/${pid}/status`, adminToken, JSON.stringify({ status: 'archived' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const row = (await pool.query('SELECT status, archive_reason FROM proposals WHERE id = $1', [pid])).rows[0];
+  assert.equal(row.status, 'archived', 'still archived');
+  const { rows } = await pool.query(
+    "SELECT count(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sweep_exempt'", [pid]);
+  assert.equal(rows[0].n, 0, 'a no-op PATCH must not exempt the proposal from the sweep');
+});
+
+test("a forced transition out of archived still marks exempt", async () => {
+  // ?force=true bypasses the state machine, so archived -> anything is possible.
+  // Every one of those IS a restore and must be exempt.
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'sent' });
+  await pool.query("UPDATE proposals SET status = 'archived', archive_reason = 'event_passed' WHERE id = $1", [pid]);
+  const r = await patchBody(`/api/proposals/${pid}/status?force=true`, adminToken, JSON.stringify({ status: 'viewed' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { rows } = await pool.query(
+    "SELECT count(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sweep_exempt'", [pid]);
+  assert.equal(rows[0].n, 1, 'a forced restore is still a restore');
+});
+
 // ── W1: the third archive door (PATCH /:id/status) reaps like the others ──
 test('W1: lifecycle PATCH -> archived soft-cancels shifts, denies requests, suppresses shift comms', async () => {
   const clientId = await makeClient();

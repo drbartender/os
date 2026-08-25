@@ -8,6 +8,7 @@ const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { SWEEP_EXEMPT_ACTION } = require('../../utils/staleProposalSweep');
 
 const router = express.Router();
 
@@ -110,6 +111,31 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
       [req.params.id, action, req.user.id, JSON.stringify({ from: currentStatus, to: status, forced: force })]
     );
+
+    // Restoring OUT of 'archived' exempts the row from the stale-proposal sweep.
+    // Without this the restore is undone within the hour: 'draft' is in
+    // SWEEP_STATUSES and the candidate query keys on status + a past event_date
+    // + amount_paid 0, none of which the restore changes, so a wrongly-swept
+    // client could not be recovered without also editing their event date or
+    // stopping the scheduler. Same transaction as the status change, so a
+    // rollback cannot leave the proposal restored but unexempt.
+    //
+    // `status !== 'archived'` is load-bearing, not defensive. 'archived' is a
+    // valid request body and the transition guard above is skipped whenever
+    // currentStatus === status, so an archived -> archived PATCH lands here
+    // having moved nothing. Without this clause it 200s, permanently exempts a
+    // still-archived proposal from the sweep, and writes an audit row claiming a
+    // restore that never happened. The state machine allows only archived ->
+    // draft, but ?force=true permits archived -> anything and every one of those
+    // IS a restore, so this keys on leaving 'archived' rather than on the target.
+    if (currentStatus === 'archived' && status !== 'archived') {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, $2, 'admin', $3, $4)`,
+        [req.params.id, SWEEP_EXEMPT_ACTION, req.user.id,
+         JSON.stringify({ restored_to: status, reason: 'restored out of archived; sweep must not re-archive' })]
+      );
+    }
 
     // Auto-create the first invoice when the proposal is sent. Runs INSIDE this
     // transaction so a proposal is never committed in 'sent' without its

@@ -54,6 +54,21 @@ const ARCHIVE_REASON = 'event_passed';
 const MAX_ARCHIVES_PER_RUN = 200;
 
 const SKIP_ACTION = 'auto_archive_skipped';
+// Written by the lifecycle route when an admin moves a proposal OUT of
+// 'archived' (the state machine allows only -> draft, but ?force=true permits
+// anything, and every one of those is a restore). 'draft' is in SWEEP_STATUSES, so without this the restore lands
+// straight back in the candidate set and re-archives on the next tick, which
+// makes the recovery path for a wrongly-swept client useless. A log marker
+// rather than a column: same idiom SKIP_CANDIDATE_SQL already uses, auditable,
+// and no migration.
+const SWEEP_EXEMPT_ACTION = 'sweep_exempt';
+// The exemption is a grace period, not immunity. A permanent one re-creates the
+// exact state this sweep was built to clear: a restored proposal whose client
+// then goes dark is past-dated, unpaid, and invisible to BOTH this query and
+// SKIP_CANDIDATE_SQL (which only looks at 'accepted'), so it would rot with no
+// notification, like the original 116. 90 days is long enough that a real
+// recovery has finished and short enough that a dead one comes back into view.
+const SWEEP_EXEMPT_DAYS = 90;
 const HEAL_ACTION = 'pi_cancel_incomplete';
 
 /**
@@ -74,14 +89,21 @@ function cancelFailureCount(res) {
 }
 
 const CANDIDATE_SQL = `
-  SELECT id, client_id, status, event_date, total_price
-    FROM proposals
-   WHERE status = ANY($1)
-     AND event_date IS NOT NULL
-     AND ((event_date + INTERVAL '2 days') AT TIME ZONE event_timezone) < NOW()
-     AND COALESCE(amount_paid, 0) = 0
-     AND id <> ALL($2)
-   ORDER BY id`;
+  SELECT p.id, p.client_id, p.status, p.event_date, p.total_price
+    FROM proposals p
+   WHERE p.status = ANY($1)
+     AND p.event_date IS NOT NULL
+     AND ((p.event_date + INTERVAL '2 days') AT TIME ZONE p.event_timezone) < NOW()
+     AND COALESCE(p.amount_paid, 0) = 0
+     AND p.id <> ALL($2)
+     AND NOT EXISTS (
+       SELECT 1 FROM proposal_activity_log l
+        WHERE l.proposal_id = p.id AND l.action = $3
+          -- COALESCE fails SAFE: a marker with no timestamp counts as fresh and
+          -- keeps the proposal out of the sweep. The column is nullable, and the
+          -- wrong direction here archives a client's proposal by surprise.
+          AND COALESCE(l.created_at, NOW()) > NOW() - make_interval(days => $4))
+   ORDER BY p.id`;
 
 // 'accepted' proposals past the same threshold. Exempt from the sweep by design,
 // so they need a signal or they rot silently the way the original 116 did.
@@ -99,7 +121,7 @@ const SKIP_CANDIDATE_SQL = `
 
 /** Rows the sweep would archive right now. Pure read. */
 async function selectCandidates(db = pool, excludeIds = LEGAL_HOLD_PROPOSAL_IDS) {
-  const { rows } = await db.query(CANDIDATE_SQL, [SWEEP_STATUSES, excludeIds]);
+  const { rows } = await db.query(CANDIDATE_SQL, [SWEEP_STATUSES, excludeIds, SWEEP_EXEMPT_ACTION, SWEEP_EXEMPT_DAYS]);
   return rows;
 }
 
@@ -528,6 +550,8 @@ module.exports = {
   ARCHIVE_REASON,
   MAX_ARCHIVES_PER_RUN,
   SKIP_ACTION,
+  SWEEP_EXEMPT_ACTION,
+  SWEEP_EXEMPT_DAYS,
   HEAL_ACTION,
   selectCandidates,
   selectSkipCandidates,

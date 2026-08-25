@@ -12,6 +12,8 @@ const {
   selectCandidates,
   archiveOne,
   SWEEP_STATUSES,
+  SWEEP_EXEMPT_ACTION,
+  SWEEP_EXEMPT_DAYS,
 } = require('./staleProposalSweep');
 
 let seq = 0;
@@ -589,4 +591,88 @@ test('a dry run that trips the runaway bound still prints the lists and sends no
     delete process.env.STALE_PROPOSAL_SWEEP_DRY_RUN;
     _setSelectCandidatesForTests(null);
   }
+});
+
+// ── Un-archiving must actually stick ──────────────────────────────────────
+// 'draft' is in SWEEP_STATUSES, so a proposal restored out of 'archived' lands
+// straight back in the candidate set and re-archives on the next tick. That is
+// the recovery path for a client we swept by mistake, so it has to work. The
+// exemption is an activity-log marker, the same idiom SKIP_CANDIDATE_SQL
+// already uses, so it is auditable instead of an invisible boolean.
+
+test('a restored proposal carrying the exemption marker is not a candidate', async () => {
+  const f = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  const before = await selectCandidates();
+  assert.ok(before.some((r) => r.id === f.proposalId),
+    'premise: without the marker this fixture IS a candidate');
+
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+     VALUES ($1, $2, 'admin', NULL, '{}'::jsonb)`,
+    [f.proposalId, SWEEP_EXEMPT_ACTION]);
+
+  const after = await selectCandidates();
+  assert.ok(!after.some((r) => r.id === f.proposalId),
+    'the marker excludes it from the sweep');
+});
+
+test('the marker is scoped to its own proposal', async () => {
+  const exempt = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  const plain = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+     VALUES ($1, $2, 'admin', NULL, '{}'::jsonb)`,
+    [exempt.proposalId, SWEEP_EXEMPT_ACTION]);
+  const rows = await selectCandidates();
+  assert.ok(!rows.some((r) => r.id === exempt.proposalId), 'exempt one is out');
+  assert.ok(rows.some((r) => r.id === plain.proposalId), 'the untouched sibling is still swept');
+});
+
+test('an unrelated activity-log action does not exempt anything', async () => {
+  const f = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+     VALUES ($1, 'status_changed', 'admin', NULL, '{}'::jsonb)`,
+    [f.proposalId]);
+  const rows = await selectCandidates();
+  assert.ok(rows.some((r) => r.id === f.proposalId),
+    'only the exemption action exempts; a routine log row must not');
+});
+
+// ── the exemption is time-boxed ───────────────────────────────────────────
+// A permanent exemption re-creates the state the sweep exists to prevent: a
+// restored proposal whose client then goes dark is past-dated, unpaid, and
+// invisible to BOTH the candidate query and the skip report, so it rots with no
+// notification. The marker buys room to finish a recovery, not immunity.
+
+async function markExempt(proposalId, daysAgo) {
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details, created_at)
+     VALUES ($1, $2, 'admin', NULL, '{}'::jsonb, NOW() - ($3 || ' days')::interval)`,
+    [proposalId, SWEEP_EXEMPT_ACTION, String(daysAgo)]);
+}
+
+test('an exemption older than the window stops exempting', async () => {
+  const f = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  await markExempt(f.proposalId, SWEEP_EXEMPT_DAYS + 1);
+  const rows = await selectCandidates();
+  assert.ok(rows.some((r) => r.id === f.proposalId),
+    'a stale exemption must not hide a dead proposal forever');
+});
+
+test('an exemption inside the window still exempts', async () => {
+  const f = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  await markExempt(f.proposalId, SWEEP_EXEMPT_DAYS - 1);
+  const rows = await selectCandidates();
+  assert.ok(!rows.some((r) => r.id === f.proposalId),
+    'a recent restore is still protected');
+});
+
+test('the newest exemption wins when a proposal was restored twice', async () => {
+  const f = await fixture({ status: 'draft', eventDate: daysAgo(5) });
+  await markExempt(f.proposalId, SWEEP_EXEMPT_DAYS + 10); // an old, expired one
+  await markExempt(f.proposalId, 1);                      // restored again yesterday
+  const rows = await selectCandidates();
+  assert.ok(!rows.some((r) => r.id === f.proposalId),
+    'an expired marker must not cancel out a fresh restore');
 });
