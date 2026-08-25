@@ -1536,6 +1536,21 @@ carried the check rather than a marker:
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
 
+- [ ] **An opt keyword now alerts a human. Merged 2026-08-25 as `81148d8b`, NOT yet pushed.**
+      Live check, no marker to rot: `git merge-base --is-ancestor 81148d8b origin/main` (exit 0 = pushed).
+      Until this shipped, a client texting *Cancel* was silently unsubscribed and nobody was
+      told, and prod holds four inbound "yes" messages that went the same way. The compliance
+      action is unchanged; what is new is the admin alert behind it.
+      **The walk is a real text, because the whole finding is that a test cannot see this.**
+      From a phone that is NOT a live client's, text `Cancel` to the DRB Twilio number, then
+      confirm the alert arrives and reads right: it must carry the word verbatim, name the
+      sender, say they are now unsubscribed, say you can no longer reply by SMS, and flag that
+      "Cancel" often means something else. Then text `START` from the same phone to undo the
+      opt-out, and confirm that alert says re-subscribed and does NOT claim replies are blocked.
+      A client sender routes to `urgent_client_reply`, so this sends Dallas an SMS as well as an
+      email; that is deliberate and matches what any other inbound client text already did.
+      **Do not run this from a real client's phone** — a live opt-out is a live opt-out.
+
 - [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, PUSHED the same day.**
       Live check, no marker to rot: `git merge-base --is-ancestor fafa0d6f origin/main` (exit 0 = pushed).
       Verified on prod at push time: initDb created `consult_call_attempts` (17 columns, the

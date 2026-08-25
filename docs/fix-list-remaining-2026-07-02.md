@@ -71,8 +71,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
-| 3 | Two dedupe guards are dropped and recreated on EVERY boot | **yes** |
-| 3 | "yes" and "cancel" are swallowed before any human sees them | **yes — 4 near-misses already** |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
 | 3 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
 | 3 | CSV lead import loses rows and reports success | yes |
@@ -541,39 +539,6 @@ client who was always going to hand a bartender $60 in cash never opens either o
 ---
 
 ## 3. Messages that vanish, double, or reach the wrong person
-
-### Two dedupe guards are dropped and recreated on EVERY boot
-
-Not the interrupted-boot case — these are bare `DROP INDEX` + `CREATE INDEX` pairs that run every
-time, so the guard is genuinely absent for the gap between the two statements on every deploy.
-Verified 2026-08-23:
-
-- `idx_scheduled_messages_pending_uniq` — `schema.sql:4361/4362`. The enqueue-dedupe guard.
-- `idx_sms_messages_twilio_sid` — `schema.sql:3144/3145`. The Twilio inbound dedupe guard.
-
-Neither is in `CRITICAL_INDEXES`, so their absence boots clean and nothing notices. A duplicate
-enqueue or a duplicate inbound SMS lands on a client.
-
-### "yes" and "cancel" are swallowed before any human sees them
-
-Verified 2026-08-23: `smsInbound.js:14-15` —
-`STOP_WORDS = ['stop','unsubscribe','end','cancel','quit']`,
-`START_WORDS = ['start','unstop','yes']`. The opt branch returns BEFORE `alertInboundClient`, so a
-matching message produces **no admin alert, no reply, and a silent preference flip.**
-
-The collision is a trap we set ourselves: the proposal drip sends *"Want to lock it in before
-someone else grabs the date?"* — a question that invites the word "yes". Prod has four inbound
-"yes" messages, every one tagged `opt_keyword: start`, every one silent. All four are Dallas's own
-Test Client, so no real client has been dropped yet. That is luck, and it is also proof the path
-fires exactly as feared.
-
-**"cancel" is the worse half:** a client texting *Cancel* almost certainly means "cancel my event",
-and today that silently unsubscribes them and tells nobody.
-
-Fix: (a) fire the admin alert for opt keywords too, so a human sees "client texted Cancel" even
-though the compliance action ran. Option (b), narrowing `yes` and `cancel` out of the match set,
-has a real compliance cost — the carrier-mandated set is STOP/STOPALL/UNSUBSCRIBE/CANCEL/END/QUIT
-and START/YES/UNSTOP. **(a) is the safer shape.**
 
 ### An unsubscribed lead can be resurrected by capitalisation
 
