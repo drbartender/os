@@ -358,6 +358,49 @@ beside `storedToInputCount` in `addonQuantity.js`, called by the two pre-fold wr
 fourth local patch is how the definitions drifted apart in the first place. The cancel-line
 write-back (`lineItemCancel.js:518`) is the same family and closes with the same inverse.
 
+### Paying in full on a deposit-terms proposal strands the remainder off the invoice ledger
+
+Found 2026-08-25 chasing Meg Henke (proposal 770). She is genuinely paid: Stripe captured
+$425, `proposals.amount_paid` = 425, status `balance_paid`. But her only invoice is the
+`Deposit` row at $100 due / $100 paid, so $325 of collected money has no invoice.
+
+Mechanism. `createInvoiceOnSend` mints the label from `payment_type` AT SEND TIME, so a
+deposit-terms send gets a `Deposit` invoice fixed at `deposit_amount`. When the client then
+picks pay-in-full at checkout, `stripeCreateIntent.js:222` flips `proposals.payment_type` to
+`'full'` but never re-shapes the already-minted invoice. The webhook credits the proposal
+correctly, then the label-blind fallback (`paymentIntentSucceeded.js:~600`) links the whole
+capture onto the only open invoice; `linkPaymentToInvoice` caps the credit at remaining due
+and drops the rest. Nothing mints a row for the remainder either, because
+`createBalanceInvoice` is gated on `paymentType === 'deposit'`.
+
+The cap is CORRECT and must stay — it is the seam-sweep M1/M2/L2 guard (`a3e2236b`,
+2026-07-02) that stops a stale intent overfilling an invoice. Before it, this same flow
+overfilled the Deposit row ($100 due / $425 paid), which kept the ledger TOTAL right by
+accident. The cap turned a cosmetic overfill into a real gap. Fix upstream, not at the cap:
+on the deposit→full upgrade, either relabel/re-amount the open Deposit invoice to
+`Full Payment` at `total_price − external_paid`, or drop the `paymentType === 'deposit'`
+gate so a `Balance` invoice mints for the remainder.
+
+Blast radius: 13 proposals since 2026-07-02, ~$4,605 of collected money missing from the
+ledger. 770 Meg Henke $325 · 767 Karen Habenicht $200 · 713 Anthony Holter $250 · 675 Angelo
+Corso $250 · 674 Raizl Lifshitz $300 · 666 Jelena Pesoli $600 · 660 Laura Millies $300 ·
+659 Jason Fowler $350 · 635 Andrea Ashford $300 · 633 Dora Travaglio $380 · 625 Allyson
+Gietl $350 · 623 William Buchar $750 · 573 Aaliyah Gaston $250. Needs a backfill alongside
+the code fix. (The OTHER ~18 proposals with a proposal-vs-ledger gap are the
+`external_paid` CC-transfer cohort — documented, different, leave alone.)
+
+NOT affected, verified in code: payroll (the fee numerator's
+`GREATEST(0, pp.amount - links.linked_cents)` term for `deposit/balance/full` explicitly
+recovers the unlinked remainder, so gratuity fee-netting is right); client-portal outstanding
+balance (`clientPortal.js:56,130` read only `sent`/`partially_paid`, and these Deposit rows
+are `paid`, so clients correctly show $0 owed); proposal-level money, which stays
+authoritative. What IS wrong: the invoice/receipt record documents a $425 payment as a $100
+deposit, and a refund on any of the 13 walks only the linked $100 at the invoice level.
+
+Sentry has been reporting this since July — `DRBARTENDER-SERVER-1E`
+`invoice_link_overflow_capped`, 6 events in 90d, including 16:44:36 on 2026-08-25 which is
+Meg's exact payment. Do not resolve that issue as noise; it is the tripwire for this bug.
+
 ### The webhook trusts its own math over what Stripe actually captured
 
 The proposal settle branch sets `amount_paid` without asserting `session.amount_total` matches.
