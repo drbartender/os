@@ -1488,7 +1488,10 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFA
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email_unique ON clients(email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_clients_created_at ON clients(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC) WHERE published = true;
-CREATE INDEX IF NOT EXISTS idx_blog_posts_slug ON blog_posts(slug);
+-- NO idx_blog_posts_slug here. blog_posts.slug is UNIQUE, so Postgres already
+-- carries blog_posts_slug_key over the same column, and the retirement further
+-- down drops this name unconditionally. Declaring it here built an index every
+-- boot for the sole purpose of dropping it a few hundred statements later.
 CREATE INDEX IF NOT EXISTS idx_proposals_event_date ON proposals(event_date);
 CREATE INDEX IF NOT EXISTS idx_proposals_autopay ON proposals(autopay_enrolled, status) WHERE autopay_enrolled = true;
 CREATE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token);
@@ -3029,13 +3032,13 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_recipient
   ON scheduled_messages(recipient_type, recipient_id);
 
 -- ─── Automated Communication Plan 2a: scheduled_messages idempotency ────
--- Partial unique index: only enforce uniqueness while the row is still pending.
--- Once a row flips to 'sent' / 'failed' / 'suppressed', a new pending row for the
--- same (entity, message_type, recipient, channel) tuple is legal again (e.g.,
--- a late T+1 reminder after the T-3 reminder already fired).
-CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_pending_uniq
-  ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
-  WHERE status = 'pending';
+-- idx_scheduled_messages_pending_uniq IS NOT DECLARED HERE. It used to be, with
+-- the narrower `WHERE status = 'pending'` predicate, and the fix-claims repair
+-- further down redefined the same name over ('pending','processing'). Two
+-- definitions of one name can never be relied on to agree: CREATE INDEX IF NOT
+-- EXISTS does not ALTER an existing index, so whichever site runs first on a
+-- fresh database wins and the other is a silent no-op. Its ONE definition now
+-- lives at the fix-claims repair site below: search for the name.
 
 -- ─── Automated Communication: scheduler_health table ────────────
 -- Each scheduler writes its last_run_at on every tick. A monitoring loop
@@ -3225,9 +3228,26 @@ CREATE INDEX IF NOT EXISTS idx_sms_messages_unread
 -- processInboundSms has a TOCTOU race under concurrent retries; the unique
 -- index makes the duplicate INSERT fail atomically (the webhook then 500s and
 -- Twilio's next retry is a safe no-op). Partial (WHERE NOT NULL) so rows with
--- no Twilio SID are unconstrained. DROP-then-CREATE so an existing non-unique
--- index of this name is upgraded on the next initDb() run.
-DROP INDEX IF EXISTS idx_sms_messages_twilio_sid;
+-- no Twilio SID are unconstrained.
+--
+-- The drop is CONDITIONAL, and that is the point. It exists to upgrade a
+-- database still carrying a NON-UNIQUE index of this name, which indexes the
+-- lookup but enforces no dedupe at all. As a bare DROP-then-CREATE it also ran
+-- on every healthy boot, and since initDb executes each statement standalone
+-- with no wrapping transaction, the dedupe guard was genuinely absent for the
+-- gap between the two — while the outgoing instance was still serving Twilio
+-- webhooks against this same database. Testing the live shape first makes a
+-- steady-state boot a no-op and leaves the upgrade path intact.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = 'idx_sms_messages_twilio_sid'
+      AND c.relnamespace = 'public'::regnamespace
+      AND (NOT i.indisunique OR i.indpred IS NULL)
+  ) THEN
+    DROP INDEX idx_sms_messages_twilio_sid;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid ON sms_messages(twilio_sid) WHERE twilio_sid IS NOT NULL;
 
 -- shift_requests.acknowledged_at records that the assigned staff member
@@ -4441,10 +4461,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_email_sends_drip_step_uniq
 -- ─── fix-claims review repair: widen the enqueue-dedupe backstop to claims ───
 -- The pending-only unique index stops guarding a row the moment the dispatcher
 -- claims it ('processing'), opening a seconds-wide window where re-enqueueing
--- the same tuple inserts a duplicate that sends later. Recreate the index over
--- BOTH live statuses so the backstop holds through the claim window. Idempotent
--- drop-then-create; same tuple, superset predicate, so existing data satisfies it.
-DROP INDEX IF EXISTS idx_scheduled_messages_pending_uniq;
+-- the same tuple inserts a duplicate that sends later. Index over BOTH live
+-- statuses so the backstop holds through the claim window. Same tuple, superset
+-- predicate, so existing data satisfies it.
+--
+-- THIS IS THE ONLY DEFINITION of this index; the narrow one above was retired.
+-- The drop is CONDITIONAL: as a bare DROP-then-CREATE it re-ran on every boot,
+-- and initDb executes each statement standalone with no wrapping transaction, so
+-- the enqueue-dedupe guard was genuinely absent for the gap between the two on
+-- every deploy. Testing the live predicate first makes a steady-state boot a
+-- no-op while still upgrading a database left on the pending-only shape.
+--
+-- The staleness test reads the live predicate and requires BOTH live statuses.
+-- 'processing' is what the pending-only shape lacks; 'pending' is asserted too
+-- so a future edit that drops it cannot read as healthy. Both index names are
+-- scoped to the public schema: an index name is unique per schema, not per
+-- database, so an unscoped catalog lookup can answer about a different object
+-- than the unqualified DROP would act on (the same trap CONSTRAINT_CONTRACT
+-- documents for constraint names in db/index.js).
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = 'idx_scheduled_messages_pending_uniq'
+      AND c.relnamespace = 'public'::regnamespace
+      AND (NOT i.indisunique
+           OR i.indpred IS NULL
+           OR pg_get_expr(i.indpred, i.indrelid) NOT LIKE '%processing%'
+           OR pg_get_expr(i.indpred, i.indrelid) NOT LIKE '%pending%')
+  ) THEN
+    DROP INDEX idx_scheduled_messages_pending_uniq;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_pending_uniq
   ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
   WHERE status IN ('pending', 'processing');

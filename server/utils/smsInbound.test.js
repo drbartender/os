@@ -626,3 +626,174 @@ test('processInboundSms > detection failure fails open to the normal path', asyn
     await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_open'");
   }
 });
+
+// ─── opt keywords are no longer swallowed (backlog §3, 2026-08-25) ───────────
+//
+// STOP_WORDS and START_WORDS are the carrier-mandated sets, and four of those
+// words carry an everyday meaning: a client texting "Cancel" almost certainly
+// means "cancel my event", and the proposal drip literally asks a question that
+// invites "Yes". Before this lane the opt branch returned before any alert, so
+// every one of those produced no admin alert, no reply, and a silent preference
+// flip. Prod has four such "yes" messages, all silent.
+//
+// The compliance action still runs first and unchanged — narrowing the keyword
+// set is a compliance change, not a bugfix. What changes is that a human sees it.
+
+const { notifyAdminCategory: realNotify } = require('./adminNotifications');
+
+/** Run `fn` with notifyAdminCategory captured; returns the calls it made. */
+async function captureAlerts(fn) {
+  const calls = [];
+  __setDeps({ notifyAdminCategory: async (a) => { calls.push(a); } });
+  try {
+    await fn();
+  } finally {
+    __setDeps({ notifyAdminCategory: realNotify });
+  }
+  return calls;
+}
+
+/** A client row on a phone of its own, torn down after `fn`. */
+async function withOptClient(phone, name, fn) {
+  const email = `opt-${phone}@example.com`;
+  await pool.query('DELETE FROM clients WHERE email = $1', [email]);
+  const c = await pool.query(
+    'INSERT INTO clients (name, email, phone) VALUES ($1, $2, $3) RETURNING id',
+    [name, email, phone]
+  );
+  const id = c.rows[0].id;
+  try {
+    return await fn(id);
+  } finally {
+    await pool.query('DELETE FROM sms_messages WHERE client_id = $1', [id]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [id]);
+  }
+}
+
+test('processInboundSms > a client texting "Cancel" alerts the admin, verbatim', async () => {
+  await withOptClient('3125550190', 'Cancel Client', async (clientId) => {
+    let result;
+    const calls = await captureAlerts(async () => {
+      result = await processInboundSms({ from: '+13125550190', body: 'Cancel', twilioSid: 'SMtest_opt_cancel' });
+    });
+
+    // The compliance half is untouched.
+    assert.strictEqual(result.outcome, 'opt_stop');
+    assert.strictEqual(result.reply, null, 'Twilio sends the mandated compliance reply, not us');
+    const after = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [clientId]);
+    assert.strictEqual(after.rows[0].communication_preferences?.sms_enabled, false);
+
+    // The half this lane adds.
+    assert.strictEqual(calls.length, 1, 'exactly one admin alert');
+    assert.strictEqual(calls[0].category, 'urgent_client_reply', 'a client texting in is urgent, same as any other inbound');
+    assert.match(calls[0].emailText, /Cancel/, 'the alert carries the word they actually sent');
+    assert.match(calls[0].emailText, /Cancel Client/, 'and who sent it');
+    assert.ok(calls[0].smsBody, 'a client opt keyword texts the admin too');
+  });
+});
+
+test('processInboundSms > the Cancel alert says the admin can no longer reply by SMS', async () => {
+  await withOptClient('3125550191', 'Reply Blocked', async () => {
+    const calls = await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550191', body: 'Cancel', twilioSid: 'SMtest_opt_cancel2' });
+    });
+    // Without this the admin opens the Messages page and texts back a client
+    // the system has just unsubscribed.
+    assert.match(calls[0].emailText, /cannot reply by SMS/i);
+  });
+});
+
+test('processInboundSms > an ambiguous opt word is flagged as ambiguous; a plain STOP is not', async () => {
+  for (const word of ['Cancel', 'End', 'Quit', 'Yes']) {
+    await withOptClient('3125550192', 'Ambiguous Sender', async () => {
+      const calls = await captureAlerts(async () => {
+        await processInboundSms({ from: '+13125550192', body: word, twilioSid: `SMtest_opt_amb_${word}` });
+      });
+      assert.match(calls[0].emailText, /often means something else/i, `"${word}" must be flagged ambiguous`);
+    });
+  }
+  for (const word of ['STOP', 'unsubscribe', 'START', 'unstop']) {
+    await withOptClient('3125550193', 'Plain Sender', async () => {
+      const calls = await captureAlerts(async () => {
+        await processInboundSms({ from: '+13125550193', body: word, twilioSid: `SMtest_opt_plain_${word}` });
+      });
+      assert.doesNotMatch(calls[0].emailText, /often means something else/i,
+        `"${word}" is unambiguous — flagging it would train the admin to ignore the flag`);
+    });
+  }
+});
+
+test('processInboundSms > a client texting "Yes" alerts, and says they are re-subscribed', async () => {
+  await withOptClient('3125550194', 'Yes Client', async () => {
+    let result;
+    const calls = await captureAlerts(async () => {
+      result = await processInboundSms({ from: '+13125550194', body: 'Yes', twilioSid: 'SMtest_opt_yes' });
+    });
+    assert.strictEqual(result.outcome, 'opt_start');
+    assert.strictEqual(calls.length, 1);
+    assert.match(calls[0].emailText, /re-subscribed/i);
+    assert.doesNotMatch(calls[0].emailText, /cannot reply by SMS/i, 'an opt-IN does not block replies');
+  });
+});
+
+test('processInboundSms > an unknown number texting an opt keyword alerts by email only', async () => {
+  try {
+    const calls = await captureAlerts(async () => {
+      const r = await processInboundSms({ from: '+19998887771', body: 'Cancel', twilioSid: 'SMtest_opt_unknown' });
+      assert.strictEqual(r.outcome, 'opt_stop');
+    });
+    assert.strictEqual(calls.length, 1, 'an unknown sender is still worth telling someone about');
+    assert.strictEqual(calls[0].category, 'routine_admin');
+    assert.strictEqual(calls[0].smsBody, undefined, 'no SMS spend on an unrecognized number');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_opt_unknown'");
+  }
+});
+
+test('processInboundSms > a staffer texting STOP is NAMED in the alert', async () => {
+  // A bartender who opts out stops receiving the CANT/CONFIRM prompts their
+  // shifts run on, so "which bartender" is the entire content of this alert.
+  const uid = await mkStaff('opt-staff@example.com', 'approved', '3125550197');
+  try {
+    const calls = await captureAlerts(async () => {
+      const r = await processInboundSms({ from: '+13125550197', body: 'STOP', twilioSid: 'SMtest_opt_staff' });
+      assert.strictEqual(r.outcome, 'opt_stop');
+    });
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].category, 'routine_admin');
+    assert.match(calls[0].emailText, new RegExp(`user ${uid}`),
+      'the alert must identify the staffer, not just say "a staff member"');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_opt_staff'");
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [uid]);
+    await pool.query('DELETE FROM users WHERE id = $1', [uid]);
+  }
+});
+
+test('processInboundSms > a failing alert never blocks the compliance action', async () => {
+  await withOptClient('3125550195', 'Alert Boom', async (clientId) => {
+    __setDeps({ notifyAdminCategory: async () => { throw new Error('resend is down'); } });
+    let result;
+    try {
+      result = await processInboundSms({ from: '+13125550195', body: 'STOP', twilioSid: 'SMtest_opt_boom' });
+    } finally {
+      __setDeps({ notifyAdminCategory: realNotify });
+    }
+    assert.strictEqual(result.outcome, 'opt_stop', 'the outcome is unchanged by an alert failure');
+    const after = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [clientId]);
+    assert.strictEqual(after.rows[0].communication_preferences?.sms_enabled, false,
+      'the carrier-mandated opt-out ran even though the alert threw');
+  });
+});
+
+test('processInboundSms > a retried opt-keyword MessageSid does not alert twice', async () => {
+  await withOptClient('3125550196', 'Retry Client', async () => {
+    const calls = await captureAlerts(async () => {
+      const first = await processInboundSms({ from: '+13125550196', body: 'Cancel', twilioSid: 'SMtest_opt_retry' });
+      assert.strictEqual(first.outcome, 'opt_stop');
+      const second = await processInboundSms({ from: '+13125550196', body: 'Cancel', twilioSid: 'SMtest_opt_retry' });
+      assert.strictEqual(second.outcome, 'duplicate');
+    });
+    assert.strictEqual(calls.length, 1, 'Twilio retries must not re-alert');
+  });
+});
