@@ -73,10 +73,13 @@ function resolveFromRow(row) {
   if (isPlaceholder) warnings.push('Address is a CC-import placeholder (.invalid); no real email exists for this client.');
   if (row.live_phone && !phone) warnings.push('Phone on file could not be parsed for SMS.');
 
-  // A placeholder can never be reported available (937ba35). The SMS body carries
-  // the proposal share link (row.token), so SMS requires the token too, layered
-  // under the existing opt-out/bad-phone reasons.
-  const emailAvailable = Boolean(email && !isPlaceholder);
+  // A placeholder can never be reported available (937ba35). BOTH bodies carry
+  // the proposal share link (row.token) — the email CTA is buildProposalUrl(token)
+  // — so neither channel is available without it, layered under the existing
+  // placeholder / opt-out / bad-phone reasons. buildProposalUrl(null) yields
+  // /proposal/null, which matches the route and dies at requireUuidToken as a
+  // 400, so the client gets an error page rather than their invoice.
+  const emailAvailable = Boolean(email && !isPlaceholder && row.token);
   const smsAvailable = smsOk && Boolean(row.token);
 
   return {
@@ -90,7 +93,8 @@ function resolveFromRow(row) {
         available: emailAvailable,
         default: defaultChannels.email && emailAvailable,
         unavailable_reason: !email ? 'No email on file.'
-          : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.' : null),
+          : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.'
+            : (!row.token ? 'Proposal has no share token.' : null)),
       },
       sms: {
         available: smsAvailable,
@@ -237,8 +241,11 @@ async function dispatch(proposalId, message, channels, ctx = {}) {
 // because SENDING IS the operation; the flag exempts it from the /send route's
 // concurrent-confirm dispatch guard (05d3ebd). The in-lane comms.js predates
 // that guard, so the flag is inert here and becomes active on merge.
+// resolveFromRow is exported for the action-level unit tests (token guard) --
+// proposals.token is NOT NULL, so a missing token can only be exercised on a
+// synthetic row. Same reason drinkPlanNudge.js exports its own.
 module.exports = {
   key, messageType, defaultChannels,
-  resolveRecipient, buildMessages, ensureSideEffects, dispatch,
+  resolveRecipient, resolveFromRow, buildMessages, ensureSideEffects, dispatch,
   dispatchWithoutSideEffects: true,
 };

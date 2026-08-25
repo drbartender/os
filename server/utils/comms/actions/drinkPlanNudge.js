@@ -83,13 +83,17 @@ function resolveFromRow(row) {
   if (isPlaceholder) warnings.push('Address is a CC-import placeholder (.invalid); no real email exists for this client.');
   if (row.live_phone && !phone) warnings.push('Phone on file could not be parsed for SMS.');
 
-  // Email needs a real, non-placeholder address (mirrors 937ba35). The SMS body
-  // carries the planner link (row.plan_token), so an available SMS channel
-  // additionally requires the token, layered under the opt-out/bad-phone reasons.
+  // Email needs a real, non-placeholder address (mirrors 937ba35) AND the plan
+  // token: BOTH bodies carry the planner link, and without the token the email
+  // CTA falls back to /plan, which is not a route (App.js mounts /plan/:token
+  // only). Offering the nudge and then mailing a dead link is worse than saying
+  // why it cannot go. The SMS channel requires it for the same reason, layered
+  // under the opt-out/bad-phone reasons.
   const emailReason = !email
     ? 'No email on file.'
-    : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.' : null);
-  const emailAvailable = Boolean(email) && !isPlaceholder;
+    : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.'
+      : (!row.plan_token ? 'Drink plan has no share token.' : null));
+  const emailAvailable = Boolean(email) && !isPlaceholder && Boolean(row.plan_token);
 
   const smsReason = !phone
     ? 'No usable phone on file.'

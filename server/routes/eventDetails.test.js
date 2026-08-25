@@ -265,6 +265,52 @@ test('event-details: a manager who is only viewing stays an admin viewer', async
   assert.strictEqual(res.body.viewer.is_assigned, false);
 });
 
+// REGRESSION (fix list 2026-08-25). The legacy branch used to hardcode
+// approved_by_role:{} and cover_requested_at:null. The staff page derives
+// `remaining` and `fullyStaffed` from approved_by_role (ShiftDetail.js), so an
+// empty object made every role read unfilled: a full manual shift kept offering
+// "Request this shift" instead of the waitlist path, and coverNeeded — read
+// straight off cover_requested_at — could never be true.
+test('event-details: a manual shift reports its real per-role fill', async () => {
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, dropped_at)
+     VALUES ($1, $2, 'approved', 'Bartender', NULL),
+            ($1, $3, 'approved', 'Barback', NULL),
+            ($1, $4, 'approved', 'Bartender', NOW())`,
+    [manualShiftId, assignedUserId, adminUserId, browsingUserId]
+  );
+  try {
+    const res = await request('GET', `/api/shifts/${manualShiftId}/event-details`, { token: assignedToken });
+    assert.strictEqual(res.status, 200);
+    const s = res.body.shifts[0];
+    // The dropped approved row is NOT a filled slot: the names on the roster and
+    // the counts beside them have to agree, so both filter the same way.
+    assert.deepStrictEqual(s.approved_by_role, { Bartender: 1, Barback: 1 });
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = ANY($2::int[])',
+      [manualShiftId, [assignedUserId, adminUserId, browsingUserId]]);
+  }
+});
+
+test('event-details: a manual shift surfaces an open cover request', async () => {
+  const r = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, cover_requested_at)
+     VALUES ($1, $2, 'approved', 'Bartender', NOW()) RETURNING id`,
+    [manualShiftId, assignedUserId]
+  );
+  try {
+    const res = await request('GET', `/api/shifts/${manualShiftId}/event-details`, { token: browsingToken });
+    assert.strictEqual(res.status, 200);
+    const s = res.body.shifts[0];
+    assert.ok(s.cover_requested_at, 'coverNeeded on the staff page is read straight off this field');
+    // No contractor_profiles row for this fixture user, so the initial chain
+    // (display_name -> preferred_name -> '?') lands on the fallback.
+    assert.strictEqual(s.cover_for_first_initial, '?');
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE id = $1', [r.rows[0].id]);
+  }
+});
+
 test('event-details: unauthenticated request is rejected', async () => {
   const res = await request('GET', `/api/shifts/${shiftId}/event-details`);
   assert.ok(res.status === 401 || res.status === 403, `expected auth rejection, got ${res.status}`);

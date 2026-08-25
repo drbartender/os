@@ -53,13 +53,48 @@ router.get('/:shiftId/event-details', auth, requireOnboarded, beoReadLimiter, as
   // render from shift data alone rather than 404 on a shift staff can see in
   // the open-shifts list.
   if (!shift.proposal_id) {
-    const my = await pool.query(
+    const myP = pool.query(
       `SELECT id, status, position, requested_positions FROM shift_requests
         WHERE shift_id = $1 AND user_id = $2 AND status != 'denied' AND dropped_at IS NULL
         ORDER BY id DESC LIMIT 1`,
       [shiftId, req.user.id]
     );
+    // Per-role fill and the cover flag come from shift_requests, the same two
+    // laterals the proposal path uses (utils/eventDetailsPayload.js). They were
+    // hardcoded to {} / null here, and ShiftDetail.js derives `remaining` and
+    // `fullyStaffed` straight off approved_by_role: every role on a manual
+    // shift read as unfilled, so a full one kept offering "Request this shift"
+    // instead of the waitlist path, and coverNeeded could never be true.
+    // Approved is filtered exactly as its siblings do (status = 'approved' AND
+    // dropped_at IS NULL) so the counts agree with the names shown beside them.
+    // Independent of the query above, so they fan out rather than queue.
+    const fillP = pool.query(
+      `SELECT abr.approved_by_role, cov.cover_requested_at, cov.cover_for_first_initial
+         FROM shifts s
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
+             FROM (SELECT position, COUNT(*) c FROM shift_requests
+                    WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
+                      AND position IS NOT NULL GROUP BY position) g
+         ) abr ON true
+         LEFT JOIN LATERAL (
+           SELECT csr.cover_requested_at,
+                  -- display_name first: a staffer with no preferred name still
+                  -- has a display name ("Nevver S."), so the banner shows "N"
+                  -- instead of "?". Same chain as eventDetailsPayload.js.
+                  UPPER(LEFT(TRIM(COALESCE(cp2.display_name, cp2.preferred_name, '?')), 1)) AS cover_for_first_initial
+             FROM shift_requests csr
+             LEFT JOIN contractor_profiles cp2 ON cp2.user_id = csr.user_id
+            WHERE csr.shift_id = s.id AND csr.cover_requested_at IS NOT NULL
+              AND csr.status = 'approved' AND csr.dropped_at IS NULL
+            ORDER BY csr.cover_requested_at ASC LIMIT 1
+         ) cov ON true
+        WHERE s.id = $1`,
+      [shiftId]
+    );
+    const [my, fill] = await Promise.all([myP, fillP]);
     const mine = my.rows[0] || null;
+    const fillRow = fill.rows[0] || {};
     const isAssigned = !!mine && mine.status === 'approved';
     const isPrivileged = req.user.role === 'admin' || req.user.role === 'manager';
     return res.json({
@@ -88,9 +123,9 @@ router.get('/:shiftId/event-details', auth, requireOnboarded, beoReadLimiter, as
         equipment_required: shift.equipment_required,
         supply_run_required: shift.supply_run_required,
         setup_minutes_before: shift.setup_minutes_before,
-        approved_by_role: {},
-        cover_requested_at: null,
-        cover_for_first_initial: null,
+        approved_by_role: fillRow.approved_by_role || {},
+        cover_requested_at: fillRow.cover_requested_at || null,
+        cover_for_first_initial: fillRow.cover_for_first_initial || null,
         my_request_id: mine ? mine.id : null,
         my_request_status: mine ? mine.status : null,
         my_position: mine ? mine.position : null,

@@ -140,12 +140,15 @@ test('nudge: a .invalid client email makes the email channel unavailable (placeh
   }
 });
 
-test('nudge: a missing drink-plan token makes SMS unavailable (937ba35 mirror, synthetic row)', async () => {
+test('nudge: a missing drink-plan token makes BOTH channels unavailable (937ba35 mirror, synthetic row)', async () => {
   // drink_plans.token is UUID NOT NULL DEFAULT gen_random_uuid(), so a nulled
-  // token cannot be persisted via UPDATE. The SMS body carries the planner link
-  // (row.plan_token), so the guard is exercised on a synthetic row through the
-  // exported pure resolveFromRow (recipient otherwise fully sendable: real email,
-  // good opted-in phone) — the ONLY reason SMS is blocked is the missing token.
+  // token cannot be persisted via UPDATE. BOTH bodies carry the planner link
+  // (row.plan_token) — without it the email CTA falls back to /plan, which is
+  // not a route (App.js only mounts /plan/:token), so the nudge would be offered
+  // and then send a client to a dead link. The guard is exercised on a synthetic
+  // row through the exported pure resolveFromRow (recipient otherwise fully
+  // sendable: real email, good opted-in phone) — the ONLY reason either channel
+  // is blocked is the missing token.
   const { resolveFromRow } = getAction('drink_plan_nudge');
   const r = resolveFromRow({
     client_name: 'Remaining Test',
@@ -158,7 +161,9 @@ test('nudge: a missing drink-plan token makes SMS unavailable (937ba35 mirror, s
   });
   assert.equal(r.channels.sms.available, false, 'no token -> the SMS planner link would go nowhere');
   assert.equal(r.channels.sms.unavailable_reason, 'Drink plan has no share token.');
-  assert.equal(r.channels.email.available, true, 'the nudge email does not require the plan token');
+  assert.equal(r.channels.email.available, false, 'no token -> the email CTA would go nowhere');
+  assert.equal(r.channels.email.default, false);
+  assert.equal(r.channels.email.unavailable_reason, 'Drink plan has no share token.');
 });
 
 test('nudge: buildMessages carries the drink-plan token in the CTA and the SMS body', async () => {

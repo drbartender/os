@@ -176,6 +176,21 @@ test('proposal_resend: a missing share token makes SMS (and email) unavailable (
   assert.equal(r.channels.email.unavailable_reason, 'Proposal has no share token.');
 });
 
+// The reenroll sibling carries the SAME planner-link CTA as drink_plan_nudge, so
+// it needs the same guard. Its SMS half already had one; its email half did not,
+// which is exactly the asymmetry the nudge fix removed (review finding, 2026-08-25).
+test('drink_plan_nudge_reenroll: BOTH channels require the planner token', () => {
+  const { resolveFromRow } = require('../../../utils/comms/actions/drinkPlanNudgeReenroll');
+  const r = resolveFromRow({
+    client_name: 'Tokenless', live_email: 'tokenless@example.com', live_phone: '+13125550123',
+    sms_opt_out: false, plan_token: null,
+  });
+  assert.equal(r.channels.sms.available, false);
+  assert.equal(r.channels.sms.unavailable_reason, 'Drink plan has no share token.');
+  assert.equal(r.channels.email.available, false, 'the email CTA links the planner too');
+  assert.equal(r.channels.email.unavailable_reason, 'Drink plan has no share token.');
+});
+
 // ─── portal_invite ───────────────────────────────────────────────────
 test('portal_invite: SMS is available but off by default', async () => {
   const r = await getAction('portal_invite').resolveRecipient(proposalId);
@@ -210,6 +225,32 @@ test('payment_reminder: resolveRecipient + balance display', async () => {
   assert.equal(r.email, LIVE_EMAIL);
   assert.equal(r.channels.email.available, true);
   assert.equal(r.channels.sms.available, true);
+});
+
+// REGRESSION (fix list 2026-08-25). The email body's CTA is
+// buildProposalUrl(row.token), so an email offered without a token produces a
+// link to nowhere: the admin sends a balance reminder whose "Pay here" button
+// leads off a cliff. SMS already required the token; email must too. Exercised
+// on a synthetic row through the exported resolveFromRow because proposals.token
+// is NOT NULL -- the recipient is otherwise fully sendable, so the missing token
+// is the ONLY reason the channel is blocked.
+test('payment_reminder: a missing proposal token makes the email unavailable, not a link to nowhere', () => {
+  const { resolveFromRow } = getAction('payment_reminder');
+  const r = resolveFromRow({
+    id: 1,
+    token: null,
+    total_price: 2000,
+    amount_paid: 1500,
+    client_name: 'Proposal Test',
+    live_email: LIVE_EMAIL,
+    live_phone: null,
+    email_status: null,
+    phone_status: null,
+    comm_prefs: {},
+  });
+  assert.equal(r.channels.email.available, false, 'no token -> the CTA would go nowhere');
+  assert.equal(r.channels.email.default, false);
+  assert.equal(r.channels.email.unavailable_reason, 'Proposal has no share token.');
 });
 
 test('payment_reminder: buildMessages renders the exact balance ($500.00) + CTA token', async () => {

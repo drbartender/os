@@ -85,11 +85,14 @@ function resolveFromRow(row) {
   if (isPlaceholder) warnings.push('Address is a CC-import placeholder (.invalid); no real email exists for this client.');
   if (row.live_phone && !phone) warnings.push('Phone on file could not be parsed for SMS.');
 
-  // A placeholder can never be reported available (937ba35). The SMS body links
-  // to the Potion Planner via the DRINK-PLAN token (row.plan_token, NOT the
-  // proposal token — planner-link token gotcha), so SMS requires that token,
-  // layered under the existing opt-out/bad-phone reasons.
-  const emailAvailable = Boolean(email && !isPlaceholder);
+  // A placeholder can never be reported available (937ba35). BOTH bodies link to
+  // the Potion Planner via the DRINK-PLAN token (row.plan_token, NOT the proposal
+  // token — planner-link token gotcha), so neither channel is available without
+  // it, layered under the existing placeholder / opt-out / bad-phone reasons.
+  // The email half used to skip this while the SMS half guarded, the same
+  // asymmetry drinkPlanNudge.js carried; plannerUrlOf falls back to /plan, which
+  // App.js does not mount (it mounts /plan/:token only).
+  const emailAvailable = Boolean(email && !isPlaceholder && row.plan_token);
   const smsAvailable = smsOk && Boolean(row.plan_token);
 
   return {
@@ -103,7 +106,8 @@ function resolveFromRow(row) {
         available: emailAvailable,
         default: defaultChannels.email && emailAvailable,
         unavailable_reason: !email ? 'No email on file.'
-          : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.' : null),
+          : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.'
+            : (!row.plan_token ? 'Drink plan has no share token.' : null)),
       },
       sms: {
         available: smsAvailable,
@@ -264,6 +268,6 @@ module.exports = {
   // minRole so managers cannot clear CC-import nudge suppression (M1).
   minRole: 'admin',
   key, messageType, defaultChannels,
-  resolveRecipient, buildMessages, ensureSideEffects, dispatch,
+  resolveRecipient, resolveFromRow, buildMessages, ensureSideEffects, dispatch,
   dispatchWithoutSideEffects: true,
 };

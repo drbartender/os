@@ -15,6 +15,9 @@ const { sanitizeHtml } = require('../../utils/emailSanitize');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { compileEmailDesign } = require('./shared');
 const { ValidationError, NotFoundError, ConflictError } = require('../../utils/errors');
+// The send owns the definition of a live run; the archive guard below defers
+// to it rather than keeping a second one.
+const { RUN_STALE_MINUTES, sendNotLiveSql } = require('../marketingSend');
 
 const router = express.Router();
 // ─── Campaign Management ──────────────────────────────────────────
@@ -206,9 +209,16 @@ router.delete('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async 
   // Never archive mid-send: the run would keep mailing while the release
   // UPDATE matches nothing, stranding the campaign archived with a
   // claim-stamp sent_at (2026-08-13 push-gate finding).
+  //
+  // Mid-send is the SEND's definition, staleness escape included. A bare
+  // `status <> 'sending'` had none, so a process death mid-send wedged the
+  // campaign in 'sending' and this route refused it forever, with no way back
+  // except hand-editing the database -- while the run claim would have handed
+  // that same abandoned claim to the next run without hesitating.
   const result = await pool.query(
-    `UPDATE email_campaigns SET status = 'archived' WHERE id = $1 AND status <> 'sending' RETURNING *`,
-    [req.params.id]
+    `UPDATE email_campaigns SET status = 'archived'
+      WHERE id = $1 AND ${sendNotLiveSql('$2')} RETURNING *`,
+    [req.params.id, RUN_STALE_MINUTES]
   );
   if (!result.rows[0]) {
     const existing = await pool.query('SELECT status FROM email_campaigns WHERE id = $1', [req.params.id]);

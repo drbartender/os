@@ -64,6 +64,22 @@ const MAX_RECIPIENTS = 500;
 // full list size breaks the relationship, and a run that overruns the window
 // loses its claim to a newer run mid-flight.
 const RUN_STALE_MINUTES = 15;
+
+/**
+ * The one definition of "no live run is holding this campaign": it is not
+ * 'sending', or it carries no claim stamp, or the stamp is older than the
+ * staleness window. The run claim below steals an abandoned claim on it, and
+ * the archive guard in emailMarketing/campaigns.js refuses on it, so the two
+ * MUST be the same predicate -- a process death mid-send otherwise wedges the
+ * row in 'sending' with a claim any new run would happily take and an archive
+ * nobody can perform. `minsParam` is the placeholder the caller binds
+ * RUN_STALE_MINUTES to.
+ */
+function sendNotLiveSql(minsParam) {
+  return `(status <> 'sending' OR sent_at IS NULL
+             OR sent_at < NOW() - make_interval(mins => ${minsParam}::int))`;
+}
+
 const PG_INT4_MAX = 2147483647;
 /**
  * Exactly ONE of our own addresses, in bare or `Name <addr>` form.
@@ -205,8 +221,7 @@ router.post('/campaigns/:id/send', auth, adminOnly, asyncHandler(async (req, res
         SET status = 'sending', sent_at = NOW(), updated_at = NOW()
       WHERE id = $1
         AND status <> 'archived'
-        AND (status <> 'sending' OR sent_at IS NULL
-             OR sent_at < NOW() - make_interval(mins => $2::int))
+        AND ${sendNotLiveSql('$2')}
       -- Return the stamp we just wrote. The release matches on it, so a run
       -- that overran the staleness window and lost its claim to a newer run
       -- cannot release the NEWER run's claim on its way out. Without this the
@@ -402,3 +417,7 @@ router.post('/campaigns/:id/send', auth, adminOnly, asyncHandler(async (req, res
 }));
 
 module.exports = router;
+// Shared with the archive guard in emailMarketing/campaigns.js so "abandoned
+// mid-send" has exactly one definition.
+module.exports.RUN_STALE_MINUTES = RUN_STALE_MINUTES;
+module.exports.sendNotLiveSql = sendNotLiveSql;
