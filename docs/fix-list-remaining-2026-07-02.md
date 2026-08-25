@@ -1431,6 +1431,17 @@ re-grep before surgery.
 
 ---
 
+- **Cal.com V2: self-host, brand, embed.** Cal.com V1 (hosted SaaS, webhook into `consults`) is live
+  and working; the consult call bridge (spec `superpowers/specs/2026-08-25-consult-call-bridge-design.md`)
+  builds on it unchanged. What Dallas and Claude talked through and have NOT designed: run Cal.com
+  ourselves on the always-on office box (Docker + Postgres + public ingress + TLS, cut the webhook
+  secret and `CAL_BOOKING_URL` over), brand the booking page (domain, logo, colors, no Cal.com
+  chrome), and embed it somewhere ours (marketing site, client portal, or the drink-plan nudge
+  flow). Ordering agreed 2026-08-25: after the call bridge ships. Before cutting a lane, weigh the
+  hosted Teams plan (branding + custom domain for a monthly fee) against exposing a home box to the
+  internet; that trade-off has not been decided. The 2026-05-26 Cal.com spec section 14 lists the
+  rest of the deferred V2 items (calendar-entry enrichment, consult admin view).
+
 ## Operational tails (not builds)
 
 - **Zul's W-9 on file is a screenshot** — `payment_profiles.w9_filename` for user 2 is
