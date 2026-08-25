@@ -1468,6 +1468,12 @@ re-grep before surgery.
 
 One line each. These exist to stop a lane being opened, not to record history.
 
+- **There is no manual event creation, by design** (Dallas, 2026-08-25). *"Real bookings I don't
+  want to build a proposal for."* An event now exists only via a proposal that gets paid. `POST
+  /shifts`, the Events-dashboard create form, and the legacy staffing form were all removed
+  because the route fabricated a `confirmed` proposal at `total_price 0` with an empty
+  `pricing_snapshot`, which is what made manual events wrong on every downstream surface. Do not
+  rebuild a create-event door, and do not read the missing button as a regression.
 - **The dev box talks to LIVE Stripe on purpose** (Dallas, 2026-08-19). *"I need to be able to do
   stuff from this box."* A `NODE_ENV` gate was built and REMOVED, and a test pins the decision so
   re-adding it reads as a product change. **Do not propose test keys for this box either** — that was
