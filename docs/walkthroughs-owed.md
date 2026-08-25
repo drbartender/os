@@ -1497,7 +1497,8 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**EMPTY AGAIN as of 2026-08-25, and the round trip worked a second time.** One item sat here
+**REFILLED 2026-08-25 (evening) with the consult call bridge, see below.** Before that it read
+EMPTY AGAIN as of 2026-08-25, and the round trip worked a second time: one item sat here
 from the 2026-08-25 merge until that day's push made `21ec7993` an ancestor of `origin/main`;
 it moved to Tier 3b by this tier's own rule, sha attached, nothing re-derived. That is twice now.
 
@@ -1514,7 +1515,39 @@ carried the check rather than a marker:
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
 
+- [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, NOT yet pushed.**
+      Live check, no marker to rot: `git merge-base --is-ancestor fafa0d6f origin/main` (exit 0 = pushed).
+      **Unlike every other item in this tier, the push alone does NOT make this live.** It ships dark
+      behind `CONSULT_CALL_ENABLED=false`, which Tier 4 below requires you to set BEFORE the push. So
+      this does not graduate to Tier 3b on the push; it graduates when the walk below passes.
+
+      The walk, which IS the launch gate: confirm the Cal.com event type's minimum booking notice
+      allows a slot a few minutes out, lowering it for the test if not. Book a slot on your own
+      Cal.com page with the 970 as the number. Expect the 312 to ring between 90 and 30 seconds
+      before the slot; the briefing should speak your own name, the slot time, and the linked
+      proposal's event date and guest count. Press 1. The 970 should ring showing the **1922**, with
+      two-way audio. Then check the row:
+      `SELECT status, answered_by, bridge_duration_sec, client_no_answer_at FROM consult_call_attempts ORDER BY id DESC LIMIT 1;`
+      should read `connected / admin / >0 / NULL`. Cancel the test booking in Cal.com afterwards and
+      delete the test client row by hand.
+
+      **Worth trying while you are in there:** press 1 during the SECOND reading of the briefing. The
+      automatic repeat sits outside the `<Gather>`, so digits are not collected during it and that
+      press is lost. It is inherited from the shipped lead router AND from spec 4.5, so it is a
+      cross-router change rather than a defect in this lane, but you should hear it once to decide
+      whether it is worth fixing for both.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
+
+- [ ] **Consult call bridge: set two Render vars BEFORE the push that carries `fafa0d6f`.**
+      `CONSULT_CALL_ENABLED=false` and `CONSULT_CALLER_ID=+12242221922`. The kill switch DEFAULTS ON,
+      so a push without the first one starts a 60-second sweep dialling `ADMIN_PHONE` for real, on a
+      feature no human has yet heard. This is the lead call bridge's own 2026-07-18 trap repeated
+      verbatim, and it is the reason that one shipped dark. Also confirm `ADMIN_PHONE`, `VA_CELL`,
+      `VOICE_CALLER_ID`, `VM_TEXT_DESTINATION` and `TWILIO_PHONE_NUMBER` are still set. After the
+      deploy, the boot log must NOT show a `[consultCall]` caller-ID warning; if it does, the client
+      leg would show Zul's 0082 instead of the 1922. Flip the switch on only when you are ready to
+      run the Tier 6 launch call above.
 
 - [x] **Stale-proposal sweep rollout — DONE 2026-08-21/22. Nothing owed.** Kept as the
       record, not as a task. Dry run first (116 candidates listed, zero writes, verified
