@@ -19,8 +19,11 @@ import { dayDiff } from './format';
 // all. A full roster says one thing, the green ratio, and the waitlist count
 // still lives on the overview and on the event itself.
 //
-// The hover card (StaffHoverCard) follows the same rule: it lists confirmed
-// people only, never applicants.
+// There are TWO hover cards, and the waitlist rule lives in `showChip`, not in
+// either card: the ratio's card lists who is confirmed, the chip's card lists
+// who applied, and the chip only renders when a slot is open. So a full roster
+// still shows no applicants, by never constructing the anchor that would carry
+// them. The confirmed card never carries applicants either way.
 export function deriveStaffing(e) {
   const needed = parsePositionsNeeded(e?.positions_needed).length;
   const confirmed = approvedCount(e);
@@ -41,6 +44,12 @@ export function deriveStaffing(e) {
 // parsing, because there is no path that delivers one.
 export function approvedStaffList(e) {
   return Array.isArray(e?.approved_staff) ? e.approved_staff : [];
+}
+
+// The applicants behind the requests chip, from the feed's pending_staff
+// aggregate. Same contract and same reasoning as approvedStaffList.
+export function pendingStaffList(e) {
+  return Array.isArray(e?.pending_staff) ? e.pending_staff : [];
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -76,14 +85,32 @@ export default function StaffingCell({ event }) {
   // miscalled a waitlist. (The old cell reported nothing at all for these rows.)
   const actionable = open > 0 || needed === 0;
 
+  const showChip = pending > 0 && actionable && !inactive;
+
   return (
-    <StaffHoverCard staff={approvedStaffList(event)}>
-      <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ gap: 4, alignItems: 'flex-start' }}>
-        {line}
-        {pending > 0 && actionable && !inactive && (
-          <StatusChip kind="neutral">{plural(pending, 'request')}</StatusChip>
-        )}
-      </div>
-    </StaffHoverCard>
+    // gap: 0 is LOAD-BEARING, not tidying. `vstack` supplies gap: 0.5rem, and the
+    // inline gap: 4 this replaces was overriding it DOWN. Dropping the inline
+    // style without this would widen the dead zone between the two hover targets
+    // to 8.5px. The 4px of spacing now lives in .staffing-cell > * + * padding,
+    // which belongs to the second target's hit area instead of to nobody.
+    <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ gap: 0, alignItems: 'flex-start' }}>
+      {/* Two anchors, deliberately adjacent. The ratio answers "who is on this
+          event", the chip answers "who wants on it". They are separate cards by
+          decision (Dallas, 2026-08-25), not one sectioned card.
+          .staffing-line is a structural wrapper with NO styles of its own: it
+          exists so every direct child of the cell is block-level, which is what
+          lets `.staffing-cell > * + *` carry the spacing whether or not
+          StaffHoverCard wrapped that child in an anchor. */}
+      <StaffHoverCard staff={approvedStaffList(event)}>
+        <div className="staffing-line">{line}</div>
+      </StaffHoverCard>
+      {showChip && (
+        <StaffHoverCard staff={pendingStaffList(event)}>
+          <div className="staffing-line">
+            <StatusChip kind="neutral">{plural(pending, 'request')}</StatusChip>
+          </div>
+        </StaffHoverCard>
+      )}
+    </div>
   );
 }

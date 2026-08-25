@@ -2,8 +2,10 @@ import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { canonicalizeRole } from '../../utils/staffingRoles';
 
-// StaffHoverCard: wraps an anchor (the staffing ratio in the events list) and,
-// while the pointer is over it, shows who is confirmed on the event.
+// StaffHoverCard: wraps an anchor in the events-list staffing cell and, while
+// the pointer is over it, shows that anchor's people. The cell uses two: the
+// staffing ratio shows who is CONFIRMED, the requests chip shows who APPLIED.
+// The component is population-agnostic; the caller decides who is in the list.
 //
 // Portaled to document.body, like KebabMenu, because the events table sits in
 // .tbl-wrap { overflow-x: auto } inside .card { overflow: hidden }: a card
@@ -26,8 +28,9 @@ import { canonicalizeRole } from '../../utils/staffingRoles';
 // Hover only. Nothing in the cell is focusable, and a tab stop on every row
 // would be noise; keyboard and touch users have the drawer and the event page.
 //
-// Confirmed people only. The cell deliberately hides the waitlist on a full
-// roster (see StaffingCell.js), and this card must not put it back.
+// The caller owns the population. The waitlist guarantee is NOT enforced here:
+// it lives in StaffingCell's `showChip`, which withholds the requests anchor
+// entirely on a full roster, so there is no card to leak it.
 const ROW_HEIGHT_PX = 24;
 const CARD_PADDING_PX = 12;
 const GAP_PX = 4;

@@ -124,8 +124,9 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         -- Who is confirmed, for the events-list hover card. Same filter as
         -- rc.approved_count (approved AND not dropped) so the names always add
         -- up to the ratio beside them; same name rule as /by-proposal. Pending
-        -- applicants are deliberately absent: the cell hides the waitlist on a
-        -- full roster (StaffingCell.js header), and the card must not undo that.
+        -- applicants are deliberately absent from THIS aggregate: they have
+        -- their own, pending_staff below, behind the chip. The full-roster
+        -- waitlist rule is enforced in StaffingCell's showChip, not here.
         -- Aliases are asr/au/acp because the outer query already owns u.
         --
         -- GATE, deliberately weaker than its siblings (decided 2026-08-25):
@@ -139,7 +140,9 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         -- all can see the same people via the shift drawer. Prod has no
         -- manager-role users today, so it changes nobody's access now. If a
         -- non-staffing manager role is ever created and this should tighten,
-        -- the change is to gate the aggregate on requireStaffing's predicate
+        -- the change is to gate BOTH staff aggregates (approved_staff and
+        -- pending_staff, which exposes applicant identities and is therefore a
+        -- slightly broader disclosure) on requireStaffing's predicate
         -- (:42), NOT to move the whole route behind it: the counts on this feed
         -- are load-bearing for every admin surface.
         (SELECT COALESCE(json_agg(json_build_object(
@@ -150,7 +153,49 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
            FROM shift_requests asr
            JOIN users au ON au.id = asr.user_id
            LEFT JOIN contractor_profiles acp ON acp.user_id = asr.user_id
-          WHERE asr.shift_id = s.id AND asr.status = 'approved' AND asr.dropped_at IS NULL) AS approved_staff
+          WHERE asr.shift_id = s.id AND asr.status = 'approved' AND asr.dropped_at IS NULL) AS approved_staff,
+        -- Who has APPLIED, for the requests chip's hover card. Sibling of
+        -- approved_staff above, with three deliberate differences:
+        --   * status = 'pending' (an approved person is not an applicant), and
+        --     no dropped_at filter, because dropping applies to an approved
+        --     assignment and a pending row never carries one. rc.pending_count
+        --     filters the same way, and pending_staff must always equal it.
+        --   * ORDER BY created_at: this is a QUEUE, and who has waited longest
+        --     is the actionable fact. The confirmed card is alphabetical because
+        --     it is a roster, which is a different question.
+        --   * the role comes from requested_positions, not position, which is
+        --     NULL until approval resolves it. Flattened to a display string
+        --     here so the client needs no new shape: one role sends its name, an
+        --     empty array sends NULL (38 legacy prod rows, the card then shows a
+        --     bare name), several send a comma list (never yet seen in prod).
+        -- DELIBERATE EXCEPTION to "every reader goes through parsePositionsNeeded":
+        -- this flattens in SQL, which handles the flat-string shape only. The
+        -- legacy object shape [{position,count}] would render as raw JSON text.
+        -- Unreachable for THIS column (its only writer, shifts.approval.js, emits
+        -- canonical flat arrays; prod holds only flat arrays and empties), and
+        -- doing it here is what lets StaffHoverCard stay untouched. If that ever
+        -- stops being true, move the flatten to the client and use the parser.
+        -- The ORDER BY carries a psr.id tiebreak because dev rows share a
+        -- created_at and the list would otherwise be nondeterministic there.
+        -- IS JSON ARRAY is a CRASH GUARD, same as on the unstaffed-upcoming cast:
+        -- one legacy row holding a non-array would raise and 500 this whole feed.
+        -- Aliases psr/pu/pcp: the outer query owns u and approved_staff owns a*.
+        (SELECT COALESCE(json_agg(json_build_object(
+                  'user_id', psr.user_id,
+                  'name', COALESCE(pcp.display_name, pcp.preferred_name, pu.email),
+                  'position', NULLIF(
+                    (SELECT string_agg(elem, ', ' ORDER BY ord)
+                       FROM jsonb_array_elements_text(
+                              CASE WHEN psr.requested_positions IS JSON ARRAY
+                                   THEN psr.requested_positions::jsonb
+                                   ELSE '[]'::jsonb END
+                            ) WITH ORDINALITY AS t(elem, ord)),
+                    '')
+                ) ORDER BY psr.created_at, psr.id), '[]'::json)
+           FROM shift_requests psr
+           JOIN users pu ON pu.id = psr.user_id
+           LEFT JOIN contractor_profiles pcp ON pcp.user_id = psr.user_id
+          WHERE psr.shift_id = s.id AND psr.status = 'pending') AS pending_staff
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id

@@ -669,3 +669,96 @@ test('admin feed: an approved row with NO position still appears, carrying posit
   assert.equal(row.approved_staff[0].position, null);
   assert.equal(Number(row.approved_count), row.approved_staff.length);
 });
+
+// ─── GET / (admin feed): pending_staff ────────────────────────────
+
+test('admin feed: pending_staff lists applicants oldest first, with what they applied for', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender', 'Banquet Server'] });
+  // s1 is inserted FIRST and s2 second, then s2 is backdated. The expected order
+  // is therefore [s2, s1], matching NEITHER the insertion order nor the physical
+  // heap order, so a json_agg with no ORDER BY at all cannot pass by luck. Do not
+  // "simplify" this by passing a backdated created_at straight into the INSERT:
+  // that puts insertion order back in agreement with the expectation and the
+  // dropped-clause mutation starts passing silently.
+  await seedPending(shiftId, s1Id, ['Bartender']);
+  await seedPending(shiftId, s2Id, ['Banquet Server']);
+  await pool.query(
+    `UPDATE shift_requests SET created_at = NOW() - INTERVAL '1 hour'
+      WHERE shift_id = $1 AND user_id = $2`,
+    [shiftId, s2Id]
+  );
+  // An approved person is not an applicant and must not appear here.
+  await seedApproved(shiftId, adminId, 'Bartender');
+  // Neither is a DENIED one. Without this row the filter can be widened from
+  // = 'pending' to != 'approved' and the whole suite stays green, so a rejected
+  // applicant would keep showing under "N requests" forever.
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions)
+     VALUES ($1, $2, 'denied', NULL, '["Bartender"]')`,
+    [shiftId, fillerId]
+  );
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+
+  assert.ok(Array.isArray(row.pending_staff), 'pending_staff should be a parsed json array');
+  assert.deepEqual(row.pending_staff.map((p) => p.user_id), [s2Id, s1Id],
+    'oldest request first, not alphabetical and not insertion-agnostic');
+  assert.equal(row.pending_staff[0].position, 'Banquet Server', 'the role they applied for');
+  assert.equal(row.pending_staff[1].position, 'Bartender');
+  assert.equal(row.pending_staff[1].name, 'Reqi One');
+  // The names must add up to the count the chip renders.
+  assert.equal(Number(row.pending_count), row.pending_staff.length);
+  // And neither an approved nor a denied person is anywhere in it.
+  assert.ok(!row.pending_staff.some((p) => p.user_id === adminId), 'approved is not pending');
+  assert.ok(!row.pending_staff.some((p) => p.user_id === fillerId), 'denied is not pending');
+});
+
+test('admin feed: an applicant who ranked nothing gets a bare name, not a crash', async () => {
+  // 38 prod rows carry an empty requested_positions array, 6 of them still
+  // pending. They predate the ranked-role picker. The card renders these as a
+  // name with no role line.
+  const shiftId = await mkShift({ positions: ['Bartender'] });
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions)
+     VALUES ($1, $2, 'pending', NULL, '[]')`,
+    [shiftId, s1Id]
+  );
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.equal(row.pending_staff.length, 1);
+  assert.equal(row.pending_staff[0].position, null, 'no ranked role means no role line');
+  assert.equal(Number(row.pending_count), row.pending_staff.length);
+});
+
+test('admin feed: a shift with no applicants carries an empty pending_staff, not null', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender'] });
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.deepEqual(row.pending_staff, []);
+});
+
+test('admin feed: a malformed requested_positions does not 500 the whole feed', async () => {
+  // The IS JSON ARRAY guard is a CRASH GUARD, not tidying: without it one bad
+  // legacy row raises and takes down the entire events list for every admin.
+  // This is the hazard shifts.unstaffedJsonbGuard.test.js exists for on the
+  // sibling cast, and nothing else here would notice if the guard were removed.
+  const shiftId = await mkShift({ positions: ['Bartender'] });
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions)
+     VALUES ($1, $2, 'pending', NULL, 'not json')`,
+    [shiftId, s1Id]
+  );
+
+  const r = await req('GET', '/api/shifts', { token: adminToken });
+  assert.equal(r.status, 200, 'one malformed row must not 500 the feed');
+  const row = r.body.find((x) => x.id === shiftId);
+  assert.ok(row, 'fixture shift missing from the admin feed');
+  assert.equal(row.pending_staff.length, 1);
+  assert.equal(row.pending_staff[0].position, null, 'unparseable reads as no role');
+});
