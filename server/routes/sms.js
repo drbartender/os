@@ -106,9 +106,10 @@ router.post('/inbound', inboundLimiter, async (req, res) => {
 });
 
 /**
- * GET /api/sms/conversations — one row per client that has any SMS, ordered by
- * the client's most recent inbound (received) message, newest first. Threads a
- * client never replied to (no inbound) sort last. Includes an unread inbound count.
+ * GET /api/sms/conversations — one row per client that has any SMS. Threads with
+ * an unread inbound come first; within each block, ordered by the client's most
+ * recent inbound (received) message, newest first. Threads a client never replied
+ * to (no inbound) sort last. Includes an unread inbound count.
  */
 router.get('/conversations', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   // Thumbtack relay echoes (metadata.thumbtack_relay = 'true') are machine
@@ -116,25 +117,33 @@ router.get('/conversations', auth, requireAdminOrManager, asyncHandler(async (re
   // count, AND the existence check, so a relay echo can never surface or
   // bump a thread. IS DISTINCT FROM keeps legacy NULL-metadata rows visible.
   //
-  // Ordering is by last_inbound_at (newest received first) so clients waiting on
-  // a reply float up and an admin's own outbound reply never bumps a handled
-  // thread. NULLS LAST keeps outbound-only threads (no inbound) at the bottom
-  // rather than the top (a Postgres DESC sort defaults NULLs first); the
-  // last_message_at tiebreak orders that outbound-only tail by recency.
+  // Ordering runs in two blocks. Unread first (2026-08-25): a thread waiting on a
+  // reply outranks every handled one no matter how old it is, so working the
+  // inbox is always top-down and an unread thread can never be pushed past the
+  // LIMIT by newer chatter. Inside each block the key is last_inbound_at (newest
+  // received first) so clients waiting on a reply float up and an admin's own
+  // outbound reply never bumps a handled thread. NULLS LAST keeps outbound-only
+  // threads (no inbound) at the bottom rather than the top (a Postgres DESC sort
+  // defaults NULLs first); the last_message_at tiebreak orders that outbound-only
+  // tail by recency. The derived table exists so the sort can use unread_count in
+  // an expression: Postgres allows a bare output alias in ORDER BY, not one
+  // wrapped in `> 0`.
   const result = await pool.query(`
-    SELECT c.id AS client_id, c.name, c.phone,
-      (SELECT COUNT(*) FROM sms_messages m
-        WHERE m.client_id = c.id AND m.direction = 'inbound' AND m.read_at IS NULL
-          AND (m.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')::int AS unread_count,
-      (SELECT MAX(m2.created_at) FROM sms_messages m2 WHERE m2.client_id = c.id
-          AND (m2.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true') AS last_message_at,
-      (SELECT MAX(m4.created_at) FROM sms_messages m4 WHERE m4.client_id = c.id
-          AND m4.direction = 'inbound'
-          AND (m4.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true') AS last_inbound_at
-    FROM clients c
-    WHERE EXISTS (SELECT 1 FROM sms_messages m3 WHERE m3.client_id = c.id
-          AND (m3.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')
-    ORDER BY last_inbound_at DESC NULLS LAST, last_message_at DESC
+    SELECT * FROM (
+      SELECT c.id AS client_id, c.name, c.phone,
+        (SELECT COUNT(*) FROM sms_messages m
+          WHERE m.client_id = c.id AND m.direction = 'inbound' AND m.read_at IS NULL
+            AND (m.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')::int AS unread_count,
+        (SELECT MAX(m2.created_at) FROM sms_messages m2 WHERE m2.client_id = c.id
+            AND (m2.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true') AS last_message_at,
+        (SELECT MAX(m4.created_at) FROM sms_messages m4 WHERE m4.client_id = c.id
+            AND m4.direction = 'inbound'
+            AND (m4.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true') AS last_inbound_at
+      FROM clients c
+      WHERE EXISTS (SELECT 1 FROM sms_messages m3 WHERE m3.client_id = c.id
+            AND (m3.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')
+    ) t
+    ORDER BY (t.unread_count > 0) DESC, t.last_inbound_at DESC NULLS LAST, t.last_message_at DESC
     LIMIT 200
   `);
   res.json(result.rows);

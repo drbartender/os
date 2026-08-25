@@ -39,7 +39,7 @@ function restoreAuthToken() {
 }
 
 let server, baseUrl;
-let adminToken, orderAdminUserId, orderClientA, orderClientB, orderClientC;
+let adminToken, orderAdminUserId, orderClientA, orderClientB, orderClientC, orderClientD, orderClientE;
 
 // Minimal request helper. Form-urlencodes an object body (Twilio posts
 // application/x-www-form-urlencoded), passes strings through untouched.
@@ -92,38 +92,63 @@ before(async () => {
     process.env.JWT_SECRET, { expiresIn: '1h' }
   );
 
-  // Three clients with controlled message timelines.
+  // Five clients with controlled message timelines. A, B and E are READ so the
+  // read-block ordering they prove is not disturbed by the unread-first sort;
+  // D is the unread discriminator and E is the thumbtack-relay discriminator.
   const ca = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order A', '3125550301') RETURNING id");
   const cb = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order B', '3125550302') RETURNING id");
   const cc = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order C', '3125550303') RETURNING id");
+  const cd = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order D', '3125550304') RETURNING id");
+  const ce = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order E', '3125550305') RETURNING id");
   orderClientA = ca.rows[0].id;
   orderClientB = cb.rows[0].id;
   orderClientC = cc.rows[0].id;
+  orderClientD = cd.rows[0].id;
+  orderClientE = ce.rows[0].id;
 
-  // A: inbound 10m ago, then an outbound reply 1m ago (most recent ACTIVITY is outbound).
+  // A: inbound 10m ago (read), then an outbound reply 1m ago (most recent ACTIVITY is outbound).
   await pool.query(
-    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, created_at) VALUES
-       ('inbound',  $1, '3125550301', 'A first', 'general', 'received', NOW() - INTERVAL '10 minutes'),
-       ('outbound', $1, '3125550301', 'A reply', 'general', 'sent',     NOW() - INTERVAL '1 minute')`,
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, read_at, created_at) VALUES
+       ('inbound',  $1, '3125550301', 'A first', 'general', 'received', NOW(), NOW() - INTERVAL '10 minutes'),
+       ('outbound', $1, '3125550301', 'A reply', 'general', 'sent',     NULL,  NOW() - INTERVAL '1 minute')`,
     [orderClientA]
   );
-  // B: inbound 5m ago, no later outbound (most recent inbound overall among A/B).
+  // B: inbound 5m ago (read), no later outbound (most recent inbound among the read block).
   await pool.query(
-    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, created_at) VALUES
-       ('inbound', $1, '3125550302', 'B waiting', 'general', 'received', NOW() - INTERVAL '5 minutes')`,
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, read_at, created_at) VALUES
+       ('inbound', $1, '3125550302', 'B waiting', 'general', 'received', NOW(), NOW() - INTERVAL '5 minutes')`,
     [orderClientB]
   );
-  // C: outbound only 2m ago (no inbound → last_inbound_at NULL → sinks).
+  // C: outbound only 2m ago (no inbound -> last_inbound_at NULL -> sinks).
   await pool.query(
     `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, created_at) VALUES
        ('outbound', $1, '3125550303', 'C outreach', 'general', 'sent', NOW() - INTERVAL '2 minutes')`,
     [orderClientC]
   );
+  // D: one UNREAD inbound 30 days ago. The oldest thread in the seeded set by a
+  // wide margin, so its position at the TOP can only come from the unread-first
+  // sort key and never from recency.
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, read_at, created_at) VALUES
+       ('inbound', $1, '3125550304', 'D was never answered', 'general', 'received', NULL, NOW() - INTERVAL '30 days')`,
+    [orderClientD]
+  );
+  // E: a real READ inbound 20m ago plus an UNREAD thumbtack-relay echo 1m ago.
+  // The relay row is machine traffic the inbox excludes, so E must neither float
+  // to the unread block nor have its last_inbound_at bumped to 1m ago. This is
+  // the shape that made the nav badge read 115 while the inbox showed nothing.
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, read_at, metadata, created_at) VALUES
+       ('inbound', $1, '3125550305', 'E real question', 'general', 'received', NOW(), '{}'::jsonb, NOW() - INTERVAL '20 minutes'),
+       ('inbound', $1, '3125550305', 'E replied to you on Thumbtack', 'general', 'received', NULL, '{"thumbtack_relay": true}'::jsonb, NOW() - INTERVAL '1 minute')`,
+    [orderClientE]
+  );
 });
 
 after(async () => {
-  await pool.query('DELETE FROM sms_messages WHERE client_id = ANY($1)', [[orderClientA, orderClientB, orderClientC]]);
-  await pool.query('DELETE FROM clients WHERE id = ANY($1)', [[orderClientA, orderClientB, orderClientC]]);
+  const seeded = [orderClientA, orderClientB, orderClientC, orderClientD, orderClientE];
+  await pool.query('DELETE FROM sms_messages WHERE client_id = ANY($1)', [seeded]);
+  await pool.query('DELETE FROM clients WHERE id = ANY($1)', [seeded]);
   await pool.query('DELETE FROM users WHERE id = $1', [orderAdminUserId]);
   process.env.NODE_ENV = ORIG_NODE_ENV;
   restoreAuthToken();
@@ -203,12 +228,13 @@ test('POST /conversations/:clientId/reply without a token is rejected (401)', as
   assert.equal(r.status, 401, r.body);
 });
 
-// ── /conversations ordering (spec 2026-07-18) ────────────────────────────────
-// The inbox orders by each client's most recent INBOUND message, newest first,
-// with outbound-only threads sinking to the bottom (NULLS LAST). A fresh
-// outbound reply must NOT bump a handled thread above one with a more recent
-// inbound message.
-test('GET /conversations orders by newest received; outbound-only sinks last', async () => {
+// ── /conversations ordering (spec 2026-07-18, unread-first 2026-08-25) ──────
+// The inbox sorts in two blocks: every thread with an unread inbound first, then
+// everything else. Within each block, ordering is by the client's most recent
+// INBOUND message, newest first, with outbound-only threads sinking to the very
+// bottom (NULLS LAST). A fresh outbound reply must NOT bump a handled thread, and
+// a thumbtack-relay echo must neither float a thread nor count as unread.
+test('GET /conversations puts unread threads first, then newest received', async () => {
   const r = await request('GET', '/api/sms/conversations', {
     headers: { Authorization: `Bearer ${adminToken}` },
   });
@@ -216,30 +242,69 @@ test('GET /conversations orders by newest received; outbound-only sinks last', a
   const rows = JSON.parse(r.body);
 
   // Global ORDER BY contract on live data (robust to other rows and to LIMIT 200):
-  // rows with a non-null last_inbound_at come first, descending; all null
-  // (outbound-only) rows sink to the end. This is exactly what NULLS LAST buys.
-  let seenNull = false, prev = null;
+  // all unread rows precede all read rows; inside each block last_inbound_at runs
+  // descending with the nulls (outbound-only) at the end.
+  let seenRead = false;
+  let prev = null;
+  let seenNull = false;
   for (const row of rows) {
+    const unread = row.unread_count > 0;
+    if (!unread) {
+      if (!seenRead) { seenRead = true; prev = null; seenNull = false; }
+    } else {
+      assert.ok(!seenRead, `an unread thread must not follow a read one: ${r.body}`);
+    }
     if (row.last_inbound_at === null) { seenNull = true; continue; }
     assert.ok(!seenNull, `a non-null last_inbound_at must not follow a null one (NULLS LAST): ${r.body}`);
     if (prev !== null) {
-      assert.ok(new Date(row.last_inbound_at) <= new Date(prev), `last_inbound_at must be descending: ${r.body}`);
+      assert.ok(new Date(row.last_inbound_at) <= new Date(prev),
+        `last_inbound_at must be descending within its block: ${r.body}`);
     }
     prev = row.last_inbound_at;
   }
 
-  // Seeded discriminator (would FAIL under the old `ORDER BY last_message_at DESC`,
+  const seeded = [orderClientA, orderClientB, orderClientC, orderClientD, orderClientE];
+  const mine = rows.filter(x => seeded.includes(x.client_id)).map(x => x.client_id);
+  assert.ok(mine.includes(orderClientA) && mine.includes(orderClientB) && mine.includes(orderClientD),
+    `seeded A, B and D must appear: ${r.body}`);
+
+  // D's inbound is 30 days old and every other seeded thread is fresher, so D
+  // riding at the top of the seeded set is the unread-first key and nothing else.
+  assert.equal(mine[0], orderClientD, `unread D must outrank every read thread: ${r.body}`);
+
+  // Read-block discriminator (would FAIL under the old `ORDER BY last_message_at DESC`,
   // which returns [A, C, B]): B (inbound 5m ago) outranks A (inbound 10m ago) even
-  // though A has a newer OUTBOUND reply (1m ago). A and B carry the most recent
-  // inbounds, so they sit at the top of the window regardless of DB scale.
-  const mine = rows
-    .filter(x => [orderClientA, orderClientB, orderClientC].includes(x.client_id))
-    .map(x => x.client_id);
-  assert.ok(mine.includes(orderClientA) && mine.includes(orderClientB), `seeded A and B must appear: ${r.body}`);
+  // though A has a newer OUTBOUND reply (1m ago).
   assert.ok(mine.indexOf(orderClientB) < mine.indexOf(orderClientA),
     `B (recent inbound) must outrank A (older inbound + newer outbound): ${r.body}`);
+
+  // E carries an unread thumbtack-relay echo from 1m ago. Excluded from both the
+  // unread count and last_inbound_at, so E stays in the read block BELOW A on the
+  // strength of its real 20m-old inbound alone.
+  if (mine.includes(orderClientE)) {
+    assert.ok(mine.indexOf(orderClientA) < mine.indexOf(orderClientE),
+      `relay echo must not float E above A: ${r.body}`);
+  }
+
   // C is outbound-only (last_inbound_at NULL): when present it must sink below A.
   if (mine.includes(orderClientC)) {
     assert.ok(mine.indexOf(orderClientA) < mine.indexOf(orderClientC), `outbound-only C must sink below A: ${r.body}`);
   }
+});
+
+// A relay echo is machine traffic: it must never raise a thread's unread badge.
+test('GET /conversations does not count thumbtack-relay echoes as unread', async () => {
+  const r = await request('GET', '/api/sms/conversations', {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(r.status, 200, r.body);
+  const rows = JSON.parse(r.body);
+
+  const e = rows.find(x => x.client_id === orderClientE);
+  assert.ok(e, `seeded E must appear: ${r.body}`);
+  assert.equal(e.unread_count, 0, `E's only unread inbound is a relay echo: ${r.body}`);
+
+  const d = rows.find(x => x.client_id === orderClientD);
+  assert.ok(d, `seeded D must appear: ${r.body}`);
+  assert.equal(d.unread_count, 1, `D's real unread inbound must count: ${r.body}`);
 });

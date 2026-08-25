@@ -26,6 +26,7 @@ let baseUrl;
 let adminToken;
 let managerToken;
 let staffToken;
+let badgeSmsClientId;
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const EMAIL_PREFIX = 'badge-counts-test-';
@@ -91,6 +92,15 @@ before(async () => {
     [applicant.id, `Badge Counts Applicant ${NONCE}`]
   );
 
+  // A client to hang SMS rows off for the unread_sms relay test below. Its
+  // messages are inserted and removed inside that test so the other counts here
+  // never see them.
+  const smsClient = await pool.query(
+    `INSERT INTO clients (name, phone) VALUES ($1, '3125550401') RETURNING id`,
+    [`Badge Counts SMS ${NONCE}`]
+  );
+  badgeSmsClientId = smsClient.rows[0].id;
+
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/admin', settingsRouter);
@@ -112,6 +122,10 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
+  if (badgeSmsClientId) {
+    await pool.query('DELETE FROM sms_messages WHERE client_id = $1', [badgeSmsClientId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [badgeSmsClientId]);
+  }
   await pool.query(`DELETE FROM users WHERE email LIKE '${EMAIL_PREFIX}%'`);
   await pool.end();
 });
@@ -150,4 +164,40 @@ test('pending_reviews rides the payload and is zeroed for managers', async () =>
   const mgr = await get('/api/admin/badge-counts', managerToken);
   assert.equal(mgr.status, 200);
   assert.equal(mgr.body.pending_reviews, 0);
+});
+
+// unread_sms must count exactly what the Messages inbox shows. Thumbtack relay
+// echoes (metadata.thumbtack_relay) are machine traffic that server/routes/sms.js
+// excludes from the inbox, so counting them here made the nav badge advertise 115
+// unread against an inbox holding none, with nothing to click.
+test('unread_sms ignores thumbtack-relay echoes and counts real inbound', async () => {
+  const before = await get('/api/admin/badge-counts', adminToken);
+  assert.equal(before.status, 200);
+  const baseline = before.body.unread_sms;
+
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, read_at, metadata, created_at) VALUES
+       ('inbound', $1, '3125550401', 'X replied to you on Thumbtack', 'general', 'received', NULL, '{"thumbtack_relay": true}'::jsonb, NOW()),
+       ('inbound', $1, '3125550401', 'Your access code is 4821',      'general', 'received', NULL, '{"thumbtack_relay": true}'::jsonb, NOW()),
+       ('inbound', $1, '3125550401', 'relay echo three',              'general', 'received', NULL, '{"thumbtack_relay": true}'::jsonb, NOW())`,
+    [badgeSmsClientId]
+  );
+
+  const afterRelay = await get('/api/admin/badge-counts', adminToken);
+  assert.equal(afterRelay.status, 200);
+  assert.equal(afterRelay.body.unread_sms, baseline,
+    'three unread relay echoes must not move the badge');
+
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, read_at, created_at) VALUES
+       ('inbound', $1, '3125550401', 'a real client question', 'general', 'received', NULL, NOW())`,
+    [badgeSmsClientId]
+  );
+
+  const afterReal = await get('/api/admin/badge-counts', adminToken);
+  assert.equal(afterReal.status, 200);
+  assert.equal(afterReal.body.unread_sms, baseline + 1,
+    'one real unread inbound must move the badge by exactly one');
+
+  await pool.query('DELETE FROM sms_messages WHERE client_id = $1', [badgeSmsClientId]);
 });

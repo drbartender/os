@@ -39,8 +39,10 @@ export default function Messages() {
   };
 
   // On first load with nothing selected, open the URL-named thread (a deliberate
-  // open, mark read) or fall back to the newest thread (a convenience, do NOT
-  // mark read). threads are newest-received-first from the server.
+  // open, mark read) or fall back to threads[0] (a convenience, do NOT mark
+  // read). The server sorts unread threads first, then newest-received, so
+  // threads[0] is the newest thread still waiting on a reply whenever one
+  // exists. Opening it must not silently clear its badge, hence markRead false.
   useEffect(() => {
     if (open.clientId || threads.length === 0) return;
     const fromUrl = listState.client

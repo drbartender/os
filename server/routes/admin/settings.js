@@ -159,8 +159,13 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
          WHERE u.onboarding_status = 'applied')::int AS new_applications,
       (SELECT COUNT(*) FROM drink_plans
          WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists,
+      -- Must match the Messages inbox exactly (server/routes/sms.js /conversations).
+      -- Thumbtack relay echoes are machine traffic the inbox hides, so counting
+      -- them here advertised 115 unread over an inbox with nothing to click.
+      -- IS DISTINCT FROM keeps legacy NULL-metadata rows counted.
       (SELECT COUNT(*) FROM sms_messages
-         WHERE direction = 'inbound' AND read_at IS NULL AND client_id IS NOT NULL)::int AS unread_sms,
+         WHERE direction = 'inbound' AND read_at IS NULL AND client_id IS NOT NULL
+           AND (metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')::int AS unread_sms,
       (SELECT COUNT(*) FROM staff_reviews WHERE status = 'pending')::int AS pending_reviews
   `);
   const counts = result.rows[0];
