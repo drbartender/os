@@ -75,12 +75,21 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
     {p.payments?.length > 0 && (<div className="cp-rx-payments"><h4>Payment history</h4>
       {p.payments.map(pay => <div key={pay.id} className="cp-leader"><span>{pay.payment_type}</span><span>{formatCents(pay.amount)}</span></div>)}</div>)}
     <div className="cp-rx-actions">
-      {!focus.booked && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Review & book</a>}
-      {focus.balance_due > 0 && <a className="btn client-btn-primary" href={focus.open_invoice_token ? `/invoice/${focus.open_invoice_token}` : `/proposal/${focus.token}`}>Pay balance</a>}
-      <ShareButton url={`/proposal/${focus.token}`} label="Share this proposal" />
-      {editable && !openRequest && !showForm && (
-        <button type="button" className="btn client-btn-secondary" onClick={() => setShowForm(true)}>Request a change</button>
-      )}
+      {/* Every action here points at /proposal/:token, directly or as the Pay
+          fallback when the sweep has voided the invoice. That token 404s once the
+          proposal is archived, so a past event gets a plain statement instead of
+          three dead ends. `editable` is already false here, so the change-request
+          button was never in play. */}
+      {focus.past ? (
+        <p className="cp-rx-passed">This event has passed.</p>
+      ) : (<>
+        {!focus.booked && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Review & book</a>}
+        {focus.balance_due > 0 && <a className="btn client-btn-primary" href={focus.open_invoice_token ? `/invoice/${focus.open_invoice_token}` : `/proposal/${focus.token}`}>Pay balance</a>}
+        <ShareButton url={`/proposal/${focus.token}`} label="Share this proposal" />
+        {editable && !openRequest && !showForm && (
+          <button type="button" className="btn client-btn-secondary" onClick={() => setShowForm(true)}>Request a change</button>
+        )}
+      </>)}
     </div>
     {showForm && (
       <ChangeRequestForm proposal={p} token={focus.token}

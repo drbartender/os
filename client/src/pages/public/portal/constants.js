@@ -1,4 +1,11 @@
 export const BOOKED = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
+
+// Statuses whose proposal is no longer reachable by its own token, so every CTA
+// pointing at /proposal/:token is a dead end. publicToken.js filters exactly
+// `status <> 'archived'` (:144), which is why this holds one value and not the
+// looser "is in the past": 'completed' still resolves, and a completed event can
+// still carry a real balance the client should be able to pay.
+export const PAST = new Set(['archived']);
 function venueLabel(p) {
   if (p.venue_name) return p.venue_name;
   if (p.venue_city && p.venue_state) return `${p.venue_city}, ${p.venue_state}`;
@@ -8,7 +15,7 @@ export function mapDetailToFocus(p) {
   const total = Number(p.total_price_override ?? p.total_price ?? 0);
   const paid = Number(p.amount_paid ?? 0);
   return {
-    token: p.token, status: p.status, booked: BOOKED.has(p.status),
+    token: p.token, status: p.status, booked: BOOKED.has(p.status), past: PAST.has(p.status),
     event_type: p.event_type, event_type_custom: p.event_type_custom,
     event_date: p.event_date, event_start_time: p.event_start_time, guest_count: p.guest_count,
     venue_label: venueLabel(p), total_price: total, amount_paid: paid, balance_due: total - paid,
@@ -21,7 +28,7 @@ export function mapDetailToFocus(p) {
 }
 export function mapArchiveRow(r) {
   return {
-    token: r.token, status: r.status, booked: BOOKED.has(r.status),
+    token: r.token, status: r.status, booked: BOOKED.has(r.status), past: PAST.has(r.status),
     event_type: r.event_type, event_type_custom: r.event_type_custom,
     event_date: r.event_date, event_start_time: null, guest_count: null,
     venue_label: 'Location TBD', total_price: Number(r.total_price ?? 0), amount_paid: 0,

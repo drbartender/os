@@ -18123,6 +18123,15 @@ html[data-app="staff"] main {
   align-items: center;
 }
 
+/* A past (archived) event replaces the whole action row with a statement: its
+   token 404s, so Review & book / Pay balance / Share would all be dead ends.
+   Muted and unbuttoned on purpose, so it never reads as something to click. */
+.cp-rx-passed {
+  margin: 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* Generic leader-dot row used inside cp-rx-* blocks. */
 .cp-leader {
   display: flex;
