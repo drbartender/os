@@ -490,7 +490,7 @@ export function pendingStaffList(e) {
 }
 ```
 
-Then replace the return so each element owns its own card. The outer `StaffHoverCard` is gone; the `gap: 4` inline style goes with it, replaced by padding on the anchors so the two hit areas touch:
+Then replace the return so each element owns its own card. The outer `StaffHoverCard` is gone and the inline `gap: 4` becomes `gap: 0`, with the spacing moving to `.staffing-cell > * + *` padding so the two hit areas touch:
 
 ```jsx
   const showChip = pending > 0 && actionable && !inactive;
@@ -644,7 +644,7 @@ MSG
 
 - [ ] **Step 1: Reached suites, one at a time, compared against the Task 0 baseline**
 
-All nine server suites and the full `adminos` client directory. Record every count. The two known-failing suites must match their baseline exactly; anything else must be green.
+All nine server suites and the full `adminos` client directory. Record every count and compare each against the Task 0 Step 2 baseline taken on the day, NOT against zero and NOT against any expectation in this document. A suite that was green at baseline and is red now is a regression, full stop. If `shifts.visibility.endInstant` differs from baseline, check the Chicago wall clock before concluding anything: it fails its own premise in the small hours and passes by morning.
 
 - [ ] **Step 2: Pre-merge fleet**
 
