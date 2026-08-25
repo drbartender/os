@@ -63,7 +63,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (0 mandates in prod) |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
-| 2 | Un-archiving a swept proposal re-archives it within the hour | **yes** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
 | 2 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
@@ -325,15 +324,6 @@ whole reason this was raised. Remaining work is one surface: bring the emailed g
 shipped panel, or port the panel's difference-marking into `PackageMatrix`. `?choose=1` and both
 redirect effects are load-bearing and untouchable.
 
-### Un-archiving a swept proposal re-archives it within the hour
-
-`archived → draft` clears `archive_reason`, but a proposal still past-dated with
-`amount_paid = 0` re-enters the sweep's candidate set on the next tick. Recovering one means
-changing its `event_date` or moving it out of a swept status in the same breath, or turning the
-scheduler off first. **This is the recovery path for a wrongly-swept client, so it needs to work.**
-Related cosmetic: `healStrandedIntents` joins `p.status = 'archived'`, so un-archiving hides any
-heal marker on that proposal forever.
-
 ### The sign 409 still tells an archived client their proposal was "already accepted"
 
 The render half of the archived door-close shipped 2026-08-25; this is the half that did not, and
@@ -584,6 +574,16 @@ here by default.
 ---
 
 ## Money and payroll (internal correctness)
+
+- **A stranded PaymentIntent on a restored proposal has no automatic retry path.**
+  `healStrandedIntents` (`staleProposalSweep.js`) joins `p.status = 'archived'`, so once a
+  proposal is restored out of archived its `pi_cancel_incomplete` marker is never picked up
+  again. A marker means a real `cancelOpenInvoiceIntents` FAILED, so there are open Stripe
+  intents against an invoice the sweep already voided; calling this cosmetic (as an earlier note
+  did) understates it. It only recovers if an admin re-archives by hand. NOT trivially fixed by
+  dropping the status join: that would let the heal pass cancel intents on a proposal that is
+  live again, which is a live-money change. Prod has zero heal markers today, so it is inert.
+  Decide the rule before touching it.
 
 - **A refund larger than the service contract leaves the override and total clamped apart.**
   `applyRefundReconciliation` clamps `total_price` and `total_price_override` at 0 independently,
