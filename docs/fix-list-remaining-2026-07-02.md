@@ -54,14 +54,14 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
 | 1 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
-| 1 | Deselecting a contracted syrup shaves the negotiated contract | no (0 such rows) |
+| 1 | Deselecting a contracted syrup shaves the negotiated contract | no (1 such row, prop 527, completed + past) |
 | 1 | A forfeited retainer leaks into a second cancellation's refund cap | yes, on a re-cancel |
-| 1 | Free-text invoice labels netted out → under-refund | the moment prop 547's $100 is paid |
-| 1 | A cancel-line destroys the marker two money readers depend on | no (only paid extras invoice is locked) |
+| 1 | Free-text invoice labels netted out → under-refund | no (547's invoice is VOID; 596 is completed) |
+| 1 | A cancel-line destroys the marker two money readers depend on | no (both paid extras invoices are locked) |
 | 1 | `additional-bartender` latches at 2x | no — trigger is a `minimum_hours` on that row |
 | 1 | The webhook sets `amount_paid` without checking what Stripe captured | yes |
 | 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
-| 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (0 mandates in prod) |
+| 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (1 mandate, at exactly $50, archived) |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
@@ -78,7 +78,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A caller can hit silence, or "an application error has occurred" | yes |
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
-| 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (0 overnight rosters) |
+| 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Thumbtack first reply owes its next-real-lead proof | blocks trusting the pipeline |
 
@@ -504,6 +504,11 @@ nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
 
+**REACHABILITY FLIPPED 2026-08-25.** This was parked on "0 overnight rosters" and that count has
+changed: prod now has two shifts whose `end_time` is before their `start_time`, and shift **353**
+is UPCOMING (2026-10-16, 8:00 PM to 12:00 AM, status `open`, **2 approved staff**). It was shelved
+on a number, and the number moved.
+
 `staffPortal.js` orders the staffer's own next-shift card by the end instant alone;
 `findNearestApprovedShift` now leads its ORDER BY with a "not dated before today" tiebreak. Between
 00:00 and about 08:00 Chicago the card can show LAST NIGHT's still-unfinished shift while a CANT
@@ -819,15 +824,6 @@ the accented spelling) or the two spellings stop matching each other.
   (`shifts.js:242`, documented in-code). A shift stays in Upcoming for the whole calendar day after
   it has ended. Erring toward "still upcoming" is the safe direction, but this route and the
   visibility family now disagree about the same shift.
-- **Legacy proposal-less shifts render fully open.** `eventDetails.js:89-91` hardcodes
-  `approved_by_role: {}` and `cover_requested_at: null`, so a filled manual shift shows "Request
-  this shift" instead of "Join waitlist" and an active cover never shows its chip. One aggregate
-  query closes it.
-- **The staff BEO logo silently 401s.** `ShiftDetail.js:~590` renders the CustomMenuCard logo
-  through a bare `<img src>` pointing at the auth-required `GET /api/beo/:id/logo`, which never
-  carries the JWT. Pre-existing, fails closed. Blob-fetch through `api.js` like BarMenuCard.
-- **`ShiftDetail.js` fetches the full cocktail + mocktail catalogs on every detail-page view**; a
-  module-level cache drops 2 requests per view. File is at 810 lines and growing.
 - **Shift 31's `positions_needed` is `["Bartender","Bartender"]` but only one bartender worked it**,
   so it reads as permanently under-staffed on the staffing card.
 - **Latent hazard if roster rows are ever backfilled for the two pre-payroll events** (shift 19 /
@@ -879,8 +875,14 @@ the accented spelling) or the two spellings stop matching each other.
   than the double-email it replaced.
 - **Deprecated resend-nudge delegation makes 3 DB round-trips vs legacy 1**, and the archived case is
   409 vs legacy 400. Compat-only route, low traffic.
-- **`paymentReminder`/`drinkPlanNudge` email availability does not require the token** although the
-  body embeds it. Harmless (no-token proposals are rare and the CTA link just dies).
+- **Every comms action now requires the token its body links to — all three guards are DEAD.**
+  Shipped 2026-08-25 for `paymentReminder`, `drinkPlanNudge` and `drinkPlanNudgeReenroll` (whose
+  email half the first sweep missed). Recorded because the entry that prompted it read as a live
+  bug and was not: `proposals.token` and `drink_plans.token` are both `UUID NOT NULL DEFAULT
+  gen_random_uuid()` (verified against prod `information_schema`, not just `schema.sql`), and each
+  `load()` drives `FROM` the token's own table, so no outer join can null it. Kept anyway for
+  consistency with `proposalResend` / `proposalSendGroup` / `shoppingListApprove` / `invoiceSend`,
+  which all already guard. Do not re-file this as a defect.
 - **Sent-but-recorded-failed duplicate seam** (`marketingSend.js:336-359`): a successful Resend call
   followed by a transient failure of the `status='sent'` UPDATE marks the row `'failed'`; a later
   retry re-sends that one recipient. Needs a single-query DB blip. At-least-once is the deliberate
@@ -889,8 +891,6 @@ the accented spelling) or the two spellings stop matching each other.
   blast; claims protect everyone mailed and the campaign unlocks after the 15-min stale window, but
   the UI says "The send failed." for a half-completed run and retry 409s until the window lapses.
   **Operational rule meanwhile: don't push to prod while a campaign is sending.**
-- **A campaign stranded `sending` by a process death is un-archivable** until a re-send recovers the
-  stale claim. Recoverable by design.
 - **`DELETE /campaigns/:id` has no client caller at all** — the 409 guard is API-only and the
   marketing UI offers no archive control. A coverage gap on an endpoint nothing calls is not a
   defect; noted so nobody re-files it.
@@ -961,20 +961,6 @@ the accented spelling) or the two spellings stop matching each other.
   Collapse them into the shared `utils/` copy the next time either is touched, and have
   `format.js` import it.
 
-- **The event-detail activity timeline still reads the UTC day, not the Chicago day.**
-  `EventDetailPage.js:638` does `relDay(String(a.created_at).slice(0, 10))` on
-  `proposal_activity_log.created_at`, a TIMESTAMPTZ. Anything logged at or after 19:00 Chicago
-  serialises with tomorrow's date, so it renders "Tomorrow" on the day it happened. This is the
-  same defect the proposals dashboard fixed on 2026-08-25, and `format.js` now explicitly names
-  "activity created_at" as a moment that must not take that path, so the doc describes a rule this
-  call site breaks. One line: `relDayTs(a.created_at)`. Display only.
-- **Compare stays lit when the prior window is refused.** `RevenueChartCard.js` gates the toggle on
-  `disabled={allTime}` and never consults `priorWindow`, so a bounded range whose prior start
-  predates the 2000 floor (e.g. from 2010 on a wide range) keeps Compare clickable, adds a dashed
-  "Prior" legend chip, and draws nothing with no explanation. Strictly better than the 400 it used
-  to fire, so cosmetic. Either fix the comment in `metricsQueries.js` (which claims the toggle
-  disables itself on null) or make it `disabled={allTime || !priorWindow}`.
-
 - **267 AA contrast failures across 26 surface/skin combinations, collapsing to about 20 root colour
   pairs** — plus 80 nodes the harness cannot measure. Seven hit ALL THIRTEEN surfaces, so they are
   token-level. Run `npm run palette:contrast`; detail lands in the gitignored
@@ -997,9 +983,6 @@ the accented spelling) or the two spellings stop matching each other.
   screen-reader users. **The 80 unmeasurable nodes are NOT passes**, they are places the tool cannot
   see, and only eyes can judge them. **The admin two-skin eyeball on House Lights is still owed by a
   human** — see `walkthroughs-owed.md`.
-- **The light warn chip fails AA app-wide** (3.84:1). The light `.chip` rule intends
-  `background: transparent`, but the fixed-hue `.chip.warn` background at `index.css:13417` wins the
-  specificity tie on source order, and the `--ms-camel`-derived text colour is light to begin with.
 - **The dark `is-warn` accent bar renders CYAN.** `.ov-payroll-block.is-warn` uses
   `hsl(var(--warn-h) ...)` and `PALETTES.dark.warn` is `{h:192}`, which IS cyan at source. The
   Overdue chip beside it is fixed amber, so an overdue payroll card shows a cyan bar and an amber
@@ -1062,11 +1045,6 @@ the accented spelling) or the two spellings stop matching each other.
   more closed by file deletion.)
 - **The command palette hides the desktop `⌘K` hint under `@media (pointer: coarse)` but keeps its
   own `Esc` chip and ships no visible touch dismiss control.** A missing close affordance.
-- **The Admin Messages empty state promises staff texts it will never show.** `Messages.js:62` reads
-  "Client and staff texts to the business number appear here", but `GET /api/sms/conversations`
-  selects FROM `clients` and staff inbound rows carry `client_id NULL`, so they are structurally
-  excluded — staff texts surface as an admin EMAIL. It actively misleads during exactly the walk
-  that checks this path. Drop "and staff", or say where they actually go.
 - **The option-group rollup splits across the 50-row page boundary.** Grouping happens client-side
   over one fetched page, so a group straddling the boundary renders on BOTH pages, each with its
   local option count. Rare and display-only. Fix needs a design call: group server-side, fetch group
