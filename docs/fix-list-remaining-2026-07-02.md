@@ -66,7 +66,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | Un-archiving a swept proposal re-archives it within the hour | **yes** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
-| 2 | The client portal offers "Review & book" on a link that now 404s | **yes, since 2026-08-25** |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
 | 2 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
 | 2 | A client's line item renames itself on a no-op fold | yes |
@@ -366,21 +365,6 @@ Still reachable even though the page now 404s: a client with the tab already ope
 sweep archives their proposal keeps a live Sign & Pay button, submits, and is told they already
 accepted something they did not. Fix is reason-aware copy on that branch — distinguish
 genuinely-already-accepted from archived, and for archived say the quote is no longer current.
-
-### The client portal offers "Review & book" on a link that now 404s
-
-Introduced by the archived door-close, 2026-08-25, and not caught before it merged.
-`clientPortal.js` has no status filter on `/client-portal/proposals/:token`, so an archived
-proposal still loads in the portal; `constants.js` then computes `booked: false` for `archived`,
-and `PrescriptionTab.js` renders a "Review & book" anchor plus a "Share this proposal" link, both
-at `/proposal/:token` — which is now the not-found page. `nextUp.js` builds the same link.
-
-Reachable through the portal's archive drill-down: a client with no active event opens a past
-event from `ArchiveList` and clicks through. The portal's home focus query is safe, it already
-filters `status <> 'archived'`; only the archive path is affected. Both states were wrong before
-and after — previously that CTA led to a live Sign & Pay for a dead booking — but a button
-pointing at a dead end is its own defect. Fix belongs in the portal: do not render a booking CTA
-for an archived proposal.
 
 ### The planner quotes a pre-batched flavor at a rate it does not bill
 
