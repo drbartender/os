@@ -4,7 +4,6 @@ import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import SendModal, { describeSendResult } from '../../components/SendModal';
-import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import StaffingCell from '../../components/adminos/StaffingCell';
 import ClickableRow from '../../components/ClickableRow';
