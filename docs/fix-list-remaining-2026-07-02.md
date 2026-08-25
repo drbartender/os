@@ -154,8 +154,8 @@ EXACTLY to their own `amount_due`, because `scripts/cc-balance-invoice.js` mints
 hand. They sit $100 under `total_price` only because that is the CC deposit already sitting in
 `external_paid`, carried on the invoice as a credit. Correct by construction.
 
-**One row needs Dallas, not code.** Proposal 599 (cc_id 554129) carries `total_price_override`
-300.00 against a `total_price` of 200.00. Its payments reconcile to 200: $100 external CC
+**One row needs Dallas, not code.** Proposal 599, Emiline Mccoy, 2026-08-01 at Lake Winneconne
+Park (cc_id 554129), carries `total_price_override` 300.00 against a `total_price` of 200.00. Its payments reconcile to 200: $100 external CC
 deposit plus a $100 Balance invoice, with a separate $60 Drink Plan Extras off contract. So
 either the CC contract was $300 and $100 was never billed, or it was renegotiated down to $200
 and the override was left stale. Nothing in the schema can settle which one.
