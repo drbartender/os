@@ -29,6 +29,12 @@ async function buildApp(secretOverride) {
   // Reset module cache so the route picks up the new env on this build.
   delete require.cache[require.resolve('./calcom')];
   const router = require('./calcom');
+  // buildApp() re-requires the router on EVERY call, so a spy installed on one
+  // instance is thrown away by the next build. Install a NO-OP tail on every
+  // build: without it each of the ~30 builds below would run the REAL
+  // consultCallTail against the shared dev database. Tests that care about the
+  // tail install their own spy on the router this returns.
+  router.__setCalcomDeps({ consultCallTail: async () => {} });
   const app = express();
   app.use('/api/calcom/webhook', express.raw({ type: 'application/json' }));
   app.use('/api/calcom', router);
@@ -41,6 +47,7 @@ async function buildApp(secretOverride) {
       resolve();
     });
   });
+  return router;
 }
 
 async function signedRequest(body, secret, headerOverride) {
@@ -108,7 +115,10 @@ after(async () => {
   } else {
     process.env.CAL_WEBHOOK_SECRET = ORIGINAL_SECRET;
   }
-  await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
+  // Every test cleans up on ENTRY and none on exit, so without this the LAST test's
+  // rows outlive the whole run. cleanupTestRows sweeps webhook_events itself, so the
+  // separate DELETE that used to stand here was redundant.
+  await cleanupTestRows();
   if (_server) await new Promise(r => _server.close(r));
   await pool.end();
 });
@@ -274,9 +284,36 @@ async function postCreated(payload) {
   return postEvent('BOOKING_CREATED', payload);
 }
 
+// A FIXED SQL fragment, never a value: nothing caller-supplied or test-supplied
+// reaches it, so interpolating it is not the interpolation the house rule bans.
+const TEST_CLIENT_PREDICATE = "email LIKE '%@calcom-test.example' OR name LIKE 'CalcomTest%'";
+
+// Every proposals row THIS file created, so the cleanup can delete exactly those
+// ids. The rows are gone from the database by the time the array is cleared, so
+// it never grows across a run.
+const createdProposalIds = [];
+
 async function cleanupTestRows() {
   await pool.query("DELETE FROM consults WHERE calcom_event_id LIKE 'test-%' OR booker_email LIKE '%@calcom-test.example'");
-  await pool.query("DELETE FROM clients WHERE email LIKE '%@calcom-test.example' OR name LIKE 'CalcomTest%'");
+  // ID-SCOPED, and that precision is the point. This file's fixture predicate is
+  // not unique to this file: drinkPlanConsult.test.js holds a client named
+  // CalcomConsultFlip at consultflip@calcom-test.example alive for its whole run,
+  // and npm test runs separate files in PARALLEL against the shared dev database.
+  // A predicate-scoped proposals delete reached that suite's proposal, and
+  // drink_plans.proposal_id is ON DELETE CASCADE, so it took that suite's drink
+  // plan with it. Deleting by recorded id cannot reach a row this file did not
+  // create, which is the only property that holds on a database we share.
+  //
+  // Still BEFORE the clients delete: proposals.client_id is ON DELETE SET NULL,
+  // so removing the client first orphans these rows rather than removing them,
+  // and an orphan is unreachable by any fixture predicate forever after.
+  // insertTestProposal makes four rows per run, and 156 of them had accumulated
+  // in the shared dev database before a proposals delete existed at all.
+  if (createdProposalIds.length > 0) {
+    await pool.query('DELETE FROM proposals WHERE id = ANY($1)', [createdProposalIds]);
+    createdProposalIds.length = 0;
+  }
+  await pool.query(`DELETE FROM clients WHERE ${TEST_CLIENT_PREDICATE}`);
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
 }
 
@@ -293,6 +330,10 @@ async function insertTestProposal(clientId, status, eventDateOffset = 30, total 
      RETURNING id`,
     [clientId, status, String(eventDateOffset), total]
   );
+  // Recorded here, on the ONE statement in this file that inserts a proposal, so
+  // cleanupTestRows can delete by id instead of by a predicate another suite's
+  // fixture also matches.
+  createdProposalIds.push(r.rows[0].id);
   return r.rows[0].id;
 }
 
@@ -703,4 +744,264 @@ test('BOOKING_NO_SHOW_UPDATED: completed row is protected (late no-show does not
   assert.equal(res.status, 200);
   const row = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-noshow-completed'");
   assert.equal(row.rows[0].status, 'completed', 'completed consult must not be flipped to no_show');
+});
+
+// ─── C6: booker phone capture + the post-commit tail ──────────────
+// Fixtures carry a per-run prefix so a crashed run cannot collide with the next
+// one; the prefix still starts with `test-` so cleanupTestRows sweeps it.
+const RUN = `test-c6-${Date.now()}`;
+
+// The spy records, as its FIRST statement, how many pooled connections are
+// checked out at the instant the tail runs (totalCount - idleCount). Node runs
+// this file's tests serially and nothing else holds a client at that moment, so
+// the number is deterministic: a handler that has NOT yet released its
+// transaction client reads 1, a released one reads 0. That single number is the
+// whole proof of the release-before-tail ordering (ruling R8), and the
+// assertion is meaningless to a reader who does not know that.
+function makeTailSpy({ throws = false } = {}) {
+  const calls = [];
+  const spy = async (opts) => {
+    const heldConnections = pool.totalCount - pool.idleCount;
+    calls.push({ opts: opts || {}, heldConnections });
+    if (throws) throw new Error('tail exploded');
+  };
+  return { calls, spy };
+}
+
+test('C6: BOOKING_CREATED stores the typed booker_phone', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  await postCreated({
+    uid: `${RUN}-phone`,
+    startTime: '2027-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Phone', email: `${RUN}-phone@calcom-test.example`, phoneNumber: '+15551110061' }],
+  });
+  const row = await pool.query('SELECT booker_phone FROM consults WHERE calcom_event_id = $1', [`${RUN}-phone`]);
+  assert.equal(row.rowCount, 1);
+  assert.equal(row.rows[0].booker_phone, '+15551110061', 'the number the booker typed is what the bridge will dial');
+});
+
+test('C6: the tail runs exactly once per create, AFTER the pooled client is released', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  const res = await postCreated({
+    uid: `${RUN}-tail-create`,
+    startTime: '2027-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest TailCreate', email: `${RUN}-tailcreate@calcom-test.example`, phoneNumber: '+15551110062' }],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 1, 'exactly one tail per filed create');
+
+  const consult = await pool.query('SELECT id FROM consults WHERE calcom_event_id = $1', [`${RUN}-tail-create`]);
+  assert.equal(calls[0].opts.consultId, consult.rows[0].id, 'the tail gets the RETURNED consult id');
+  assert.equal(calls[0].opts.bookerPhone, '+15551110062');
+  assert.equal(calls[0].opts.triggerEvent, 'BOOKING_CREATED');
+  assert.equal(calls[0].opts.unresolvedOldUid, false);
+  assert.ok(calls[0].opts.scheduledAt instanceof Date, 'scheduledAt is the RETURNED timestamptz, not the payload string');
+  // See makeTailSpy: 0 checked-out connections means handleCreated released its
+  // transaction client BEFORE calling the tail. A still-held client reads 1,
+  // which is the pool-deadlock pattern (one request holding a connection while
+  // waiting for a second one) this ordering exists to prevent.
+  assert.equal(calls[0].heldConnections, 0, 'the tail must run with no pooled client checked out');
+});
+
+test('C6: BOOKING_RESCHEDULED with a phone overwrites the stored number and the tail sees it', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email, booker_phone)
+     VALUES ($1, '2027-06-01T15:00:00Z', 'scheduled', 'CalcomTest ReschedA', $2, '+15551110001')`,
+    [`${RUN}-res-old-a`, `${RUN}-resa@calcom-test.example`]
+  );
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  const res = await postRescheduled({
+    uid: `${RUN}-res-new-a`,
+    startTime: '2027-06-08T15:00:00Z',
+    rescheduleUid: `${RUN}-res-old-a`,
+    attendees: [{ name: 'CalcomTest ReschedA', email: `${RUN}-resa@calcom-test.example`, phoneNumber: '+15559990002' }],
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /rescheduled in place/i);
+
+  const row = await pool.query('SELECT id, booker_phone FROM consults WHERE calcom_event_id = $1', [`${RUN}-res-new-a`]);
+  assert.equal(row.rows[0].booker_phone, '+15559990002', 'a reschedule that carries a phone overwrites the stored one');
+  assert.equal(calls.length, 1, 'exactly one tail per in-place reschedule');
+  assert.equal(calls[0].opts.consultId, row.rows[0].id);
+  assert.equal(calls[0].opts.bookerPhone, '+15559990002');
+  assert.equal(calls[0].opts.triggerEvent, 'BOOKING_RESCHEDULED');
+  assert.equal(calls[0].heldConnections, 0);
+});
+
+test('C6: BOOKING_RESCHEDULED without a phone keeps the stored one and the tail gets THAT', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email, booker_phone)
+     VALUES ($1, '2027-06-01T15:00:00Z', 'scheduled', 'CalcomTest ReschedB', $2, '+15551110003')`,
+    [`${RUN}-res-old-b`, `${RUN}-resb@calcom-test.example`]
+  );
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  await postRescheduled({
+    uid: `${RUN}-res-new-b`,
+    startTime: '2027-06-08T15:00:00Z',
+    rescheduleUid: `${RUN}-res-old-b`,
+    attendees: [{ name: 'CalcomTest ReschedB', email: `${RUN}-resb@calcom-test.example` }],
+  });
+
+  const row = await pool.query('SELECT booker_phone FROM consults WHERE calcom_event_id = $1', [`${RUN}-res-new-b`]);
+  assert.equal(row.rows[0].booker_phone, '+15551110003', 'a phone-less reschedule keeps the number we already had');
+  assert.equal(calls.length, 1);
+  // The payload carried no number. Passing the payload's null would file a bogus
+  // undialable row that then blocks the sweep from ever ringing this consult, so
+  // the tail must receive the RETURNED (stored) value.
+  assert.equal(calls[0].opts.bookerPhone, '+15551110003', 'the tail gets the STORED number, not the payload null');
+});
+
+test('C6: BOOKING_CANCELLED leaves booker_phone untouched and runs no tail', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email, booker_phone)
+     VALUES ($1, '2027-06-01T15:00:00Z', 'scheduled', 'CalcomTest Cancel6', $2, '+15551110004')`,
+    [`${RUN}-cancel`, `${RUN}-cancel@calcom-test.example`]
+  );
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  const res = await postCancelled({
+    uid: `${RUN}-cancel`,
+    startTime: '2027-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Cancel6', email: `${RUN}-cancel@calcom-test.example` }],
+  });
+  assert.equal(res.status, 200);
+  const row = await pool.query('SELECT status, booker_phone FROM consults WHERE calcom_event_id = $1', [`${RUN}-cancel`]);
+  assert.equal(row.rows[0].status, 'cancelled');
+  assert.equal(row.rows[0].booker_phone, '+15551110004', 'a cancel never rewrites the number');
+  assert.equal(calls.length, 0, 'a cancel moves nothing forward, so it runs no tail');
+});
+
+test('C6: the unresolved-old-uid fallthrough tells the tail unresolvedOldUid', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  await postRescheduled({
+    uid: `${RUN}-res-orphan-new`,
+    startTime: '2027-06-08T15:00:00Z',
+    rescheduleUid: `${RUN}-res-orphan-never-existed`,
+    attendees: [{ name: 'CalcomTest Orphan6', email: `${RUN}-orphan@calcom-test.example`, phoneNumber: '+15551110065' }],
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.unresolvedOldUid, true, 'the fallthrough must tell the tail the old slot could not be resolved');
+  assert.equal(calls[0].opts.triggerEvent, 'BOOKING_CREATED');
+  assert.equal(calls[0].opts.bookerEmail, `${RUN}-orphan@calcom-test.example`);
+  assert.equal(calls[0].heldConnections, 0);
+});
+
+test('C6: the Already filed fast path runs no tail', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  const payload = {
+    uid: `${RUN}-fastpath`,
+    startTime: '2027-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Fastpath', email: `${RUN}-fastpath@calcom-test.example`, phoneNumber: '+15551110066' }],
+  };
+  await postCreated(payload);
+  assert.equal(calls.length, 1, 'the first delivery files the consult and runs the tail');
+
+  // Clear the dedupe row so the identical redelivery reaches the handler again.
+  // It now takes the Already filed fast path, which writes nothing and must not
+  // re-open a chain.
+  await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
+  const second = await postCreated(payload);
+  assert.equal(second.status, 200);
+  assert.match(second.text, /already filed/i);
+  assert.equal(calls.length, 1, 'the fast path files nothing, so it runs no tail');
+});
+
+test('C6: a tail that throws still yields 200 and leaves the dedupe row in place', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy({ throws: true });
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  const res = await postCreated({
+    uid: `${RUN}-throw`,
+    startTime: '2027-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Throw', email: `${RUN}-throw@calcom-test.example`, phoneNumber: '+15551110067' }],
+  });
+  assert.equal(res.status, 200, 'a tail failure must never change the webhook status');
+  assert.equal(calls.length, 1);
+
+  // This is the proof that the tail runs OUTSIDE the transactional try. Had the
+  // rejection reached the handler catch, the webhook would have ROLLBACKed and
+  // rethrown, the route would have 500ed, and the error path would have DELETEd
+  // this dedupe row, so Cal.com would retry a booking that was already filed.
+  const dedupe = await pool.query("SELECT COUNT(*)::int n FROM webhook_events WHERE provider = 'calcom'");
+  assert.equal(dedupe.rows[0].n, 1, 'the dedupe row survives a failing tail');
+  const consult = await pool.query('SELECT id FROM consults WHERE calcom_event_id = $1', [`${RUN}-throw`]);
+  assert.equal(consult.rowCount, 1, 'the consult stays filed');
+});
+
+test('C6: the tail receives the RAW booker_email, not the validated one', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  // No dot in the domain, so normalizeBooker's validated `email` is null while
+  // bookerEmailRaw survives. consults.booker_email stores the RAW value and the
+  // tail's sibling lookup matches on it, so passing the validated one would
+  // silently match nothing (ruling R2).
+  const rawEmail = `${RUN}-rawemail@calcomtest`;
+  await postCreated({
+    uid: `${RUN}-rawemail`,
+    startTime: '2027-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest RawEmail', email: rawEmail, phoneNumber: '+15551110068' }],
+  });
+
+  const row = await pool.query('SELECT booker_email FROM consults WHERE calcom_event_id = $1', [`${RUN}-rawemail`]);
+  assert.equal(row.rows[0].booker_email, rawEmail);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.bookerEmail, rawEmail, 'the tail gets exactly what consults.booker_email stores');
+});
+
+test('C6: a reschedule that omits the email hands the tail the STORED booker_email', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email, booker_phone)
+     VALUES ($1, '2027-06-01T15:00:00Z', 'scheduled', 'CalcomTest ReschedC', $2, '+15551110005')`,
+    [`${RUN}-res-old-c`, `${RUN}-resc@calcom-test.example`]
+  );
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+
+  // The payload carries no attendee email, so normalizeBooker yields a null
+  // bookerEmailRaw and the UPDATE keeps the stored address through COALESCE.
+  // Every other field the tail receives comes from RETURNING and this one must
+  // too: the reschedule is the one handler where payload and stored can differ.
+  await postRescheduled({
+    uid: `${RUN}-res-new-c`,
+    startTime: '2027-06-08T15:00:00Z',
+    rescheduleUid: `${RUN}-res-old-c`,
+    attendees: [{ name: 'CalcomTest ReschedC', phoneNumber: '+15559990005' }],
+  });
+
+  const row = await pool.query('SELECT booker_email FROM consults WHERE calcom_event_id = $1', [`${RUN}-res-new-c`]);
+  assert.equal(row.rows[0].booker_email, `${RUN}-resc@calcom-test.example`, 'the stored address survives an email-less reschedule');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.bookerEmail, `${RUN}-resc@calcom-test.example`, 'the tail gets the STORED email, not the payload null');
 });

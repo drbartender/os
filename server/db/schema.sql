@@ -3099,6 +3099,92 @@ CREATE INDEX IF NOT EXISTS idx_consults_proposal_id ON consults(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_consults_client_id ON consults(client_id);
 CREATE INDEX IF NOT EXISTS idx_consults_scheduled_at ON consults(scheduled_at) WHERE status = 'scheduled';
 
+-- Consult call bridge (spec 2026-08-25 section 4.1). booker_phone is the number the
+-- booker typed into Cal.com, raw (<= 50 chars, MAX_PHONE_LEN upstream); it is the
+-- ONLY number the bridge ever dials. consult_call_attempts is the ring-chain state
+-- machine AND the call log, one row per (consult, slot): a reschedule opens a fresh
+-- chain for the new slot. admin_ring is part of every admin-leg claim (the row
+-- re-enters calling_admin up to three times, so status alone cannot guard).
+ALTER TABLE consults ADD COLUMN IF NOT EXISTS booker_phone TEXT;
+
+CREATE TABLE IF NOT EXISTS consult_call_attempts (
+  id               BIGSERIAL PRIMARY KEY,
+  consult_id       INTEGER NOT NULL REFERENCES consults(id) ON DELETE CASCADE,
+  scheduled_at     TIMESTAMPTZ NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','calling_admin','calling_va',
+                                       'connected','missed','failed',
+                                       'skipped_cancelled','skipped_invalid_phone',
+                                       'skipped_unconfigured','skipped_disabled',
+                                       'skipped_cap','skipped_missed_window')),
+  admin_ring       SMALLINT NOT NULL DEFAULT 0,
+  next_ring_at     TIMESTAMPTZ,
+  answered_by      TEXT CHECK (answered_by IN ('admin','va')),
+  admin_call_sid   TEXT,
+  va_call_sid      TEXT,
+  admin_call_status TEXT,
+  va_call_status   TEXT,
+  bridge_started_at   TIMESTAMPTZ,
+  bridge_duration_sec INTEGER,
+  client_no_answer_at TIMESTAMPTZ,
+  detail           TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (consult_id, scheduled_at)
+);
+
+-- READ THIS BEFORE ADDING A STATUS VALUE. The CREATE TABLE body above runs ONLY for a
+-- database that does not yet have the table, so a new value added by editing that body
+-- alone reaches fresh databases only and silently leaves dev and prod on the old list.
+-- Every future status value, and every future column, must ALSO arrive as its own
+-- idempotent statement below, in the same shape as the two that follow.
+
+-- The client-no-answer latch is its own column rather than a string in detail:
+-- placeLeg's catch writes a Twilio error code into detail earlier in the same chain,
+-- which would defeat a detail-based latch and silently drop the text. /dialend stamps
+-- this WHERE client_no_answer_at IS NULL, so the text fires exactly once.
+ALTER TABLE consult_call_attempts ADD COLUMN IF NOT EXISTS client_no_answer_at TIMESTAMPTZ;
+
+-- skipped_cap is the cap-trip marker's status. It carries the skipped% prefix so it
+-- stops matching the cap's own status NOT LIKE 'skipped%' count: as status 'failed' it
+-- would inflate the rolling 24h count and slide the window forward, and because the
+-- Cal.com booking page is PUBLIC that lets a burst of junk bookings hold the whole
+-- feature down for 24 hours past the last one. DROP-then-ADD is safe here because a DO
+-- block is atomic: the EXCEPTION handler rolls the DROP back with the failed ADD, so
+-- the table is never left unconstrained the way the bare two-statement form can.
+DO $$ BEGIN
+  ALTER TABLE consult_call_attempts DROP CONSTRAINT IF EXISTS consult_call_attempts_status_check;
+  ALTER TABLE consult_call_attempts ADD CONSTRAINT consult_call_attempts_status_check
+    CHECK (status IN ('pending','calling_admin','calling_va',
+                      'connected','missed','failed',
+                      'skipped_cancelled','skipped_invalid_phone',
+                      'skipped_unconfigured','skipped_disabled',
+                      'skipped_cap','skipped_missed_window'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_consult_call_attempts_due
+  ON consult_call_attempts(status, next_ring_at);
+CREATE INDEX IF NOT EXISTS idx_consult_call_attempts_status_created
+  ON consult_call_attempts(status, created_at);
+
+-- updated_at is trigger-maintained. Writers may still set it explicitly; the trigger
+-- makes the ones that forget correct anyway, which lead_call_attempts can do without
+-- but this table cannot: 12 statuses, three rings, four route handlers, and several
+-- planned UPDATEs that touch status without touching updated_at. Created IF ABSENT
+-- rather than DROP TRIGGER then CREATE TRIGGER on purpose: that shape re-runs on every
+-- boot replay and leaves a window in which the trigger does not exist.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_consult_call_attempts_updated_at'
+      AND tgrelid = 'consult_call_attempts'::regclass
+  ) THEN
+    CREATE TRIGGER update_consult_call_attempts_updated_at
+      BEFORE UPDATE ON consult_call_attempts
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
+
 -- ─── Comms Phase 2: Two-way SMS ─────────────────────────────────
 -- sms_messages gains inbound-message support. The table predates inbound
 -- SMS: its FKs (sender_id/recipient_id) point only at users. client_id

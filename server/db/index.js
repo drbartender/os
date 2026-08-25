@@ -268,6 +268,27 @@ const CONSTRAINT_CONTRACT = [
   // the two states that matter most for deliverability.
   { table: 'message_log', constraint: 'message_log_status_check',
     mustContain: ['sent', 'failed', 'bounced', 'complained'] },
+  // BILLED VOICE ON A TIMER, and the newest instance of the double-definition
+  // shape (2026-08-25). consult_call_attempts_status_check is written TWICE in
+  // schema.sql: once as the inline CHECK in the CREATE TABLE body, which only a
+  // fresh database ever runs, and once in an idempotent DO block, which is what
+  // dev and prod actually get. Two sites, one name, and nothing but this entry
+  // stops them drifting apart silently and forever.
+  //
+  // Load-bearing in the strong sense. The cap-trip marker insert writes
+  // 'skipped_cap' from inside the 60-second sweep, so a narrowed list raises
+  // 23514 there, the sweep's per-row catch records the fault, and the consult
+  // call bridge simply stops ringing -- in a feature whose failure mode is
+  // already silence, on a booking page the public can reach.
+  //
+  // ALL TWELVE values are asserted, not the narrowing subset the header above
+  // describes. The two definitions are byte-identical today and the whole point
+  // of contracting this one is that neither site may quietly lose a value; a
+  // thirteenth added later still needs no change here.
+  { table: 'consult_call_attempts', constraint: 'consult_call_attempts_status_check',
+    mustContain: ['pending', 'calling_admin', 'calling_va', 'connected', 'missed',
+      'failed', 'skipped_cancelled', 'skipped_invalid_phone', 'skipped_unconfigured',
+      'skipped_disabled', 'skipped_cap', 'skipped_missed_window'] },
   //
   // DELIBERATELY NOT HERE: email_sends_recipient_check (schema.sql:1673, the
   // lead_id/client_id XOR). It is the same bare DROP-then-ADD shape and its

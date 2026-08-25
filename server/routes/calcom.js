@@ -10,6 +10,7 @@ const {
   extractRescheduleOldUid,
   normalizeBooker,
 } = require('../utils/calcomWebhookHelpers');
+const { consultCallTail } = require('../utils/consultCallChain');
 
 let Sentry = null;
 try { Sentry = require('@sentry/node'); } catch (_) { /* optional in dev */ }
@@ -21,6 +22,12 @@ function sentryWarn(message, ctx = {}) {
 }
 
 const router = express.Router();
+
+// Dependency-injection seam for tests (leadCallTrigger.js __setDeps idiom).
+// calcom.test.js re-requires this router on every buildApp(), so the seam has
+// to be reinstallable rather than a one-time module-level swap.
+let _deps = { consultCallTail };
+router.__setCalcomDeps = (d) => { _deps = { ..._deps, ...d }; };
 
 router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   // Pre-check 1: secret configured. Fails closed.
@@ -154,8 +161,24 @@ router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   }
 }));
 
-// Event handlers. handleCreated implemented; others are stubs that Tasks 6, 7, 8 fill in.
-async function handleCreated(payload, res) {
+// The consult-call tail runs in its OWN try/catch, never the handler's. A
+// rejection that reached the handler catch would ROLLBACK an already-COMMITted
+// transaction, rethrow, 500 the route, and send the error path above into
+// DELETEing the dedupe row, so Cal.com would retry a booking that was already
+// filed successfully. A tail failure is a missed call chain, never a lost
+// booking, so it is logged and swallowed here.
+async function runTail(fn) {
+  try {
+    await fn();
+  } catch (err) {
+    console.error('[calcom] tail failed:', (err && err.message) || err);
+  }
+}
+
+// Event handlers. All four ship: created, cancelled, rescheduled, no-show.
+// opts.unresolvedOldUid is set only by handleRescheduled's fallthrough (this
+// booking moved off a slot Cal.com named but we could not resolve).
+async function handleCreated(payload, res, opts) {
   const { uid, startTime } = extractBookingFields(payload);
   if (!uid || !startTime) {
     sentryWarn('Cal.com BOOKING_CREATED missing uid or startTime', {
@@ -167,6 +190,9 @@ async function handleCreated(payload, res) {
   const { name, email, phone, bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
   const client = await pool.connect();
+  // Set once the post-commit path releases early; the finally then knows not to
+  // release a second time (pg throws on a double release).
+  let released = false;
   try {
     await client.query('BEGIN');
 
@@ -300,11 +326,11 @@ async function handleCreated(payload, res) {
     const consultResult = await client.query(
       `INSERT INTO consults
          (client_id, proposal_id, scheduled_at, calcom_event_id, status,
-          booker_name, booker_email)
-       VALUES ($1, $2, $3, $4, 'scheduled', $5, $6)
+          booker_name, booker_email, booker_phone)
+       VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $7)
        ON CONFLICT (calcom_event_id) DO NOTHING
-       RETURNING id`,
-      [clientId, proposalId, startTime, uid, bookerNameRaw, bookerEmailRaw]
+       RETURNING id, scheduled_at, booker_phone`,
+      [clientId, proposalId, startTime, uid, bookerNameRaw, bookerEmailRaw, phone]
     );
 
     if (consultResult.rowCount === 0 && createdClientInThisTx) {
@@ -316,12 +342,50 @@ async function handleCreated(payload, res) {
     }
 
     await client.query('COMMIT');
+
+    // Release BEFORE the tail (thumbtack.js /leads precedent). consultCallTail
+    // runs on bare pool.query, so holding this client across it would make one
+    // request occupy a pooled connection while waiting for a second one, which
+    // is the pool-deadlock pattern that has already bitten this codebase twice.
+    // The transaction is committed and nothing below touches `client`.
+    client.release();
+    released = true;
+
+    // Only a WON insert opens a chain. rowCount 0 means we lost the ON CONFLICT
+    // race (the winner's own tail covers that consult), and the Already filed
+    // fast path returned long before here: neither moved a booking, so neither
+    // may ring anyone. The tail gets the RETURNED row, never the payload: on a
+    // create they agree, but keeping one source for both handlers is what stops
+    // the reschedule case from ever passing a payload null over a stored number.
+    if (consultResult.rowCount === 1) {
+      const row = consultResult.rows[0];
+      await runTail(() => _deps.consultCallTail({
+        consultId: row.id,
+        scheduledAt: row.scheduled_at,
+        bookerPhone: row.booker_phone,
+        triggerEvent: 'BOOKING_CREATED',
+        unresolvedOldUid: Boolean(opts && opts.unresolvedOldUid),
+        // The RAW email, i.e. what consults.booker_email actually stores. The
+        // tail's sibling lookup matches on that column, and the validated
+        // `email` is null for anything that fails the format check.
+        bookerEmail: bookerEmailRaw,
+      }));
+    }
+
     return res.status(200).send('OK');
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) { /* swallow */ }
+    // ROLLBACK only while we still hold the client. pg-pool re-wraps release()
+    // but never query(), so after the post-commit release the pool may already
+    // have handed this client to another request, and a stray ROLLBACK would
+    // end SOMEONE ELSE's transaction. Unreachable today (only runTail, which
+    // swallows everything, and res.send sit between the release and the return)
+    // but the blast radius is another request's data, so it is guarded.
+    if (!released) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* swallow */ }
+    }
     throw err;
   } finally {
-    client.release();
+    if (!released) client.release();
   }
 }
 async function handleCancelled(payload, res) {
@@ -357,18 +421,36 @@ async function handleRescheduled(payload, res) {
   }
 
   const oldUid = extractRescheduleOldUid(payload);
-  const { bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
+  const { phone, bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
   if (oldUid) {
+    // COALESCE on booker_phone and booker_email: a reschedule payload that
+    // carries neither keeps what the booker gave at the original booking.
+    // RETURNING then hands the tail the STORED values, and this is the one
+    // handler where stored and payload can differ, so the tail reads EVERY
+    // field off the returned row. Passing the payload's null number would file
+    // a bogus undialable row that blocks the sweep from ever ringing this
+    // consult; passing its null email would make the tail's sibling lookup
+    // match nothing. calcom_event_id is UNIQUE, so this matches at most one row.
     const result = await pool.query(
       `UPDATE consults
        SET calcom_event_id = $1, scheduled_at = $2, status = 'scheduled',
            booker_name = COALESCE($3, booker_name),
-           booker_email = COALESCE($4, booker_email)
-       WHERE calcom_event_id = $5`,
-      [newUid, newStartTime, bookerNameRaw, bookerEmailRaw, oldUid]
+           booker_email = COALESCE($4, booker_email),
+           booker_phone = COALESCE($6, booker_phone)
+       WHERE calcom_event_id = $5
+       RETURNING id, scheduled_at, booker_phone, booker_email`,
+      [newUid, newStartTime, bookerNameRaw, bookerEmailRaw, oldUid, phone]
     );
     if (result.rowCount > 0) {
+      const row = result.rows[0];
+      await runTail(() => _deps.consultCallTail({
+        consultId: row.id,
+        scheduledAt: row.scheduled_at,
+        bookerPhone: row.booker_phone,
+        triggerEvent: 'BOOKING_RESCHEDULED',
+        bookerEmail: row.booker_email,
+      }));
       return res.status(200).send('Rescheduled in place');
     }
     // Fall through if we never saw the original create.
@@ -387,7 +469,7 @@ async function handleRescheduled(payload, res) {
       payloadShape: Object.keys(payload || {}),
     },
   });
-  return handleCreated(payload, res);
+  return handleCreated(payload, res, { unresolvedOldUid: true });
 }
 async function handleNoShow(payload, res) {
   const uid = payload?.uid;

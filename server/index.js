@@ -123,6 +123,27 @@ if (!process.env.CAL_WEBHOOK_SECRET) {
   }
 }
 
+// Consult call bridge caller ID (spec 2026-08-25). CONSULT_CALLER_ID is the
+// 1922, the company line the client sees when Dallas pressed 1, so a callback
+// rings through to him. FORMAT-checked rather than presence-checked on purpose:
+// a Render typo would make every press-1 <Dial> fail AT TWILIO while the row
+// already reads 'connected', which is terminal and is never reaped, so the
+// failure would be invisible. Unset or malformed falls back to VOICE_CALLER_ID
+// (the 0082, Zul's line), which still connects the call.
+{
+  const cid = String(process.env.CONSULT_CALLER_ID || '').trim();
+  if (!/^\+[1-9]\d{6,14}$/.test(cid)) {
+    const msg = '[consultCall] CONSULT_CALLER_ID unset or not strict E.164; consult bridges answered by Dallas will show VOICE_CALLER_ID (the 0082) until fixed';
+    console.warn(msg);
+    try {
+      const Sentry = require('@sentry/node');
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'consult-call' } });
+      }
+    } catch (_) { /* sentry optional in dev */ }
+  }
+}
+
 // Thumbtack email-harvester agent secret presence check. The agent routes fail
 // closed (401) in every environment when this is unset; warn at startup so the
 // missed config is visible even before any agent traffic arrives.
@@ -374,6 +395,7 @@ app.use('/api/sms', require('./routes/smsOptIn'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
+app.use('/api/voice/consult', require('./routes/voiceConsultCall')); // ditto
 app.use('/api/voice/escalate', require('./routes/voiceEscalate')); // ditto, before /api/voice
 app.use('/api/voice/vm', require('./routes/voicemailListen')); // ditto
 app.use('/api/voice', require('./routes/voiceAssets').router); // static audio, before the catch-all
@@ -727,6 +749,62 @@ async function start() {
         setInterval(wrapped, 60000);
       } else if (!globalScheduleDisabled) {
         clearHealthRow('first_reply_sweep');
+      }
+
+      // Consult call sweep (spec 2026-08-25 section 4.3): opens a chain for each
+      // upcoming Cal.com consult, files missed windows, and places the ring that is
+      // due. Billed voice, claim-guarded per row; the in-flight guard keeps a slow
+      // tick from overlapping the next one (service_extension_sweep precedent).
+      if (enabled('RUN_CONSULT_CALL_SWEEP_SCHEDULER')) {
+        const {
+          runConsultCallSweep, windowConstantsFault,
+        } = require('./utils/consultCallSweep');
+        // A missing or nonsense window constant binds NULL into both of the
+        // sweep's window predicates: every query returns zero rows and the
+        // scheduler writes a healthy heartbeat every 60 seconds over a bridge
+        // that is completely dead. Report it and leave the sweep UNWIRED, which
+        // is what actually prevents that; do NOT throw, because this process
+        // also runs proposals, invoices, Stripe webhooks and both portals, and
+        // none of them should go down over one feature's constant.
+        const sweepFault = windowConstantsFault();
+        if (sweepFault) {
+          console.error(`[consult_call_sweep] NOT RUNNING: ${sweepFault}`);
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(
+              new Error(`consult call sweep not running: ${sweepFault}`),
+              { tags: { scheduler: 'consult_call_sweep', fault: 'window_constants' } }
+            );
+          }
+          // Deliberately NOT clearHealthRow: that exists so the staleness
+          // monitor stays quiet about a job turned off ON PURPOSE. This one is
+          // broken, so leaving the row lets the monitor keep saying so every
+          // 15 minutes instead of only once at boot.
+        } else {
+          let consultSweepInFlight = false;
+          const wrapped = wrapScheduler('consult_call_sweep', 60, async () => {
+            if (consultSweepInFlight) {
+              // A skipped tick still records 'ok', so a wedged query would latch
+              // this guard and write a healthy heartbeat every 60 seconds while
+              // nothing rings. Same shape as service_extension_sweep, but this is
+              // the feature whose failure mode is silence, so make the skip say so.
+              console.warn('[consult_call_sweep] previous tick still in flight, skipping this one');
+              return { skipped: true };
+            }
+            consultSweepInFlight = true;
+            try {
+              return await runConsultCallSweep();
+            } finally {
+              // finally, not the end of the try: a tick that throws (the sweep
+              // rethrows so wrapScheduler records a failed run) would otherwise
+              // leave the guard latched on and kill the sweep for good.
+              consultSweepInFlight = false;
+            }
+          });
+          setTimeout(wrapped, 35000); // 60s cadence; 35s is off every sibling's boot slot
+          setInterval(wrapped, 60000);
+        }
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('consult_call_sweep');
       }
 
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).

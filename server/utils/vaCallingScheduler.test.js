@@ -3,7 +3,10 @@ const { test, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const scheduler = require('./vaCallingScheduler');
-const { checkTelegramWebhookHealth, pruneVaCallingRows, reapStaleLeadCallAttempts, reapUndeliveredVoicemails, __setDeps } = scheduler;
+const {
+  checkTelegramWebhookHealth, pruneVaCallingRows, reapStaleLeadCallAttempts,
+  reapStaleConsultCallAttempts, reapUndeliveredVoicemails, __setDeps,
+} = scheduler;
 
 // Sentinel ids so the DB prune test never touches real rows on the shared dev DB.
 const U_EXPIRED = 999000801;
@@ -11,11 +14,25 @@ const U_FRESH = 999000802;
 const TG_OLD = 999000803;
 const TG_FRESH = 999000804;
 const AUDIT_TRIGGER = 999000805; // triggered_by sentinel for call_audit test rows
+// Consult-reaper fixtures key off a STABLE prefix (the unique-per-run part is
+// appended per row), so cleanup can scope itself with one LIKE and still mop up
+// after a run that crashed before its after() hook. Nothing outside this prefix
+// is ever deleted: this is the shared dev database.
+const CONSULT_PREFIX = 'c8-consult-reap-';
 
 async function cleanup() {
   await pool.query('DELETE FROM pending_call WHERE user_id IN ($1, $2)', [U_EXPIRED, U_FRESH]);
   await pool.query('DELETE FROM telegram_update WHERE update_id IN ($1, $2)', [TG_OLD, TG_FRESH]);
   await pool.query('DELETE FROM call_audit WHERE triggered_by = $1', [AUDIT_TRIGGER]);
+  // Attempts first, then their consults. The FK cascades, but deleting both
+  // explicitly means cleanup does not silently depend on the cascade surviving
+  // a future schema edit.
+  await pool.query(
+    `DELETE FROM consult_call_attempts WHERE consult_id IN
+       (SELECT id FROM consults WHERE calcom_event_id LIKE $1)`,
+    [`${CONSULT_PREFIX}%`]
+  );
+  await pool.query('DELETE FROM consults WHERE calcom_event_id LIKE $1', [`${CONSULT_PREFIX}%`]);
 }
 
 before(cleanup);
@@ -29,11 +46,16 @@ after(async () => {
 // TELEGRAM_ALLOWED_USER_ID is set per-test by the sweep tests; snapshot it here
 // so a throw mid-test cannot leak a value into the rest of the file.
 const SAVED_TG_USER = process.env.TELEGRAM_ALLOWED_USER_ID;
+// Same reasoning for the consult kill switch: the reaper tests flip it, and a
+// leaked 'false' would silently disarm every later consult assertion.
+const SAVED_CONSULT_ENABLED = process.env.CONSULT_CALL_ENABLED;
 
 afterEach(() => {
   if (SAVED_TG_USER === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
   else process.env.TELEGRAM_ALLOWED_USER_ID = SAVED_TG_USER;
   delete process.env.VM_TEXT_DESTINATION;
+  if (SAVED_CONSULT_ENABLED === undefined) delete process.env.CONSULT_CALL_ENABLED;
+  else process.env.CONSULT_CALL_ENABLED = SAVED_CONSULT_ENABLED;
   __setDeps({
     getTelegramWebhookInfo: require('./telegram').getTelegramWebhookInfo,
     setTelegramWebhook: require('./telegram').setTelegramWebhook,
@@ -46,6 +68,8 @@ afterEach(() => {
     alertOperator: require('./voicemail').alertOperator,
     sendTelegramMessage: require('./telegram').sendTelegramMessage,
     notificationsEnabled: require('./notificationsEnabled').notificationsEnabled,
+    sendLeadCallChainEmail: require('./leadCallTrigger').sendChainEmail,
+    sendConsultCallChainEmail: require('./consultCallChain').sendChainEmail,
   });
 });
 
@@ -231,6 +255,179 @@ test('reapStaleLeadCallAttempts: reaps only stale non-terminal rows, never conne
   } finally {
     await pool.query(`DELETE FROM thumbtack_leads WHERE negotiation_id LIKE $1`, [`${RUN}-%`]);
   }
+});
+
+// ─── consult-call stale reaper (spec 2026-08-25 section 4.2, task C8) ───────
+// A consult chain can be stranded in pending/calling_* by a crash, a Twilio
+// status callback that never arrives, or a deploy landing mid-chain. The reaper
+// is what makes that visible instead of invisible.
+
+// Real consults rows with an EXPLICIT column list: dev and prod disagree on
+// column ORDER (the two amended columns arrived by ALTER TABLE), so a positional
+// INSERT is never safe on this table. calcom_event_id is UNIQUE, hence the
+// per-row unique suffix under the shared prefix.
+async function mkConsult(tag, minutesPastSlot) {
+  const { rows } = await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email, booker_phone)
+     VALUES ($1, NOW() - make_interval(mins => $2::int), 'scheduled',
+             'C8 Reap Test', 'c8-reap@example.test', '+17735550188')
+     RETURNING id`,
+    [`${CONSULT_PREFIX}${Date.now()}-${tag}-${Math.floor(Math.random() * 1e6)}`, minutesPastSlot]
+  );
+  return rows[0].id;
+}
+
+// scheduled_at is copied from the consults row IN SQL (ruling R12): a TIMESTAMPTZ
+// read into JS and written back loses sub-millisecond precision and would stop
+// matching the (consult_id, scheduled_at) UNIQUE. next_ring_at is deliberately
+// non-null so the reap's `next_ring_at = NULL` clause is actually observable.
+async function mkConsultAttempt(consultId, status) {
+  const { rows } = await pool.query(
+    `INSERT INTO consult_call_attempts (consult_id, scheduled_at, status, next_ring_at)
+     SELECT c.id, c.scheduled_at, $2, NOW() + INTERVAL '1 minute'
+       FROM consults c WHERE c.id = $1
+     RETURNING id`,
+    [consultId, status]
+  );
+  return Number(rows[0].id);
+}
+
+async function consultRows(ids) {
+  const { rows } = await pool.query(
+    'SELECT id, status, detail, next_ring_at FROM consult_call_attempts WHERE id = ANY($1)',
+    [ids]
+  );
+  return Object.fromEntries(rows.map((r) => [Number(r.id), r]));
+}
+
+test('consult reaper (enabled): stale pending and calling_va rows fail as stale_reaped, emailed once each', async () => {
+  process.env.CONSULT_CALL_ENABLED = 'true';
+  const emails = [];
+  __setDeps({ pool, sendConsultCallChainEmail: async (args) => { emails.push(args); } });
+
+  const stalePending = await mkConsultAttempt(await mkConsult('p', 45), 'pending');
+  const staleVa = await mkConsultAttempt(await mkConsult('v', 45), 'calling_va');
+  const mine = [stalePending, staleVa];
+
+  await reapStaleConsultCallAttempts();
+
+  const byId = await consultRows(mine);
+  for (const id of mine) {
+    assert.equal(byId[id].status, 'failed', `stale row ${id} reaped`);
+    assert.equal(byId[id].detail, 'stale_reaped');
+    assert.equal(byId[id].next_ring_at, null, 'a reaped chain must never ring again');
+  }
+
+  // Scoped to this run's ids on purpose: the reaper is table-wide by design, so
+  // a leftover row from another suite must not be able to move this count.
+  const mineEmailed = emails.filter((e) => mine.includes(e.attemptId));
+  assert.equal(mineEmailed.length, 2, 'exactly one email per reaped row');
+  assert.deepEqual(
+    [...new Set(mineEmailed.map((e) => e.attemptId))].sort(),
+    [...mine].sort(),
+    'one email per ROW, not two for one row and none for the other'
+  );
+  assert.ok(
+    mineEmailed.every((e) => e.reason === 'call failed'),
+    'a stranded chain IS a system fault, so it gets the failure banner'
+  );
+});
+
+test('consult reaper (enabled): a connected bridge and a five-minute-old slot are untouched', async () => {
+  process.env.CONSULT_CALL_ENABLED = 'true';
+  const emails = [];
+  __setDeps({ pool, sendConsultCallChainEmail: async (args) => { emails.push(args); } });
+
+  const connected = await mkConsultAttempt(await mkConsult('c', 45), 'connected');
+  const fresh = await mkConsultAttempt(await mkConsult('f', 5), 'pending');
+  const mine = [connected, fresh];
+
+  await reapStaleConsultCallAttempts();
+
+  const byId = await consultRows(mine);
+  assert.equal(byId[connected].status, 'connected', 'a live bridge is NEVER reaped');
+  assert.equal(byId[connected].detail, null, 'the connected row was not written at all');
+  assert.ok(byId[connected].next_ring_at, 'and it kept its own columns');
+  assert.equal(byId[fresh].status, 'pending', 'five minutes past the slot, the chain may still be mid-ring');
+  assert.equal(byId[fresh].detail, null);
+  assert.ok(byId[fresh].next_ring_at, 'a live chain keeps its next ring');
+  assert.equal(
+    emails.filter((e) => mine.includes(e.attemptId)).length, 0,
+    'nothing it did not reap is ever reported'
+  );
+});
+
+test('consult reaper (kill switch off): stale rows become skipped_disabled and ZERO emails go out', async () => {
+  process.env.CONSULT_CALL_ENABLED = 'false';
+  const emails = [];
+  __setDeps({ pool, sendConsultCallChainEmail: async (args) => { emails.push(args); } });
+
+  const stalePending = await mkConsultAttempt(await mkConsult('dp', 45), 'pending');
+  const staleVa = await mkConsultAttempt(await mkConsult('dv', 45), 'calling_va');
+  const mine = [stalePending, staleVa];
+
+  await reapStaleConsultCallAttempts();
+
+  const byId = await consultRows(mine);
+  for (const id of mine) {
+    assert.equal(byId[id].status, 'skipped_disabled', `row ${id} is parked, not failed`);
+    assert.equal(byId[id].detail, 'stale_reaped');
+    assert.equal(byId[id].next_ring_at, null);
+  }
+  // The whole point of the branch: if Dallas flips the switch off during an
+  // incident, every chain parked mid-flight would otherwise be reported to him
+  // as a system failure, one email per consult, when the system did exactly
+  // what he told it to. Unscoped on purpose, the claim is ZERO emails at all.
+  assert.equal(emails.length, 0, 'the kill switch silences the alert too');
+});
+
+// ── the two reaps and the prune cannot mask each other ─────────────────────
+
+// One stubbed pool for both directions: it throws for whichever reap's table is
+// named and records every statement, so the test can prove the OTHER reap still
+// issued its own.
+function reapGuardPool(seen, throwTable) {
+  return {
+    query: async (sql) => {
+      seen.push(sql);
+      if (sql.includes(throwTable)) throw new Error(`${throwTable} reap exploded`);
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+test('a throwing consult reap masks neither the prune nor the lead reap', async () => {
+  const seen = [];
+  let pruneCalls = 0;
+  __setDeps({
+    pruneVaCallingRows: async () => { pruneCalls += 1; return 7; },
+    sendLeadCallChainEmail: async () => { throw new Error('must not be called'); },
+    sendConsultCallChainEmail: async () => { throw new Error('must not be called'); },
+    pool: reapGuardPool(seen, 'consult_call_attempts'),
+  });
+
+  const n = await pruneVaCallingRows();
+  assert.equal(pruneCalls, 1, 'the prune ran');
+  assert.equal(n, 7, 'and its result still comes back to the caller');
+  assert.ok(seen.some((s) => s.includes('lead_call_attempts')), 'the lead reap still ran');
+  assert.ok(seen.some((s) => s.includes('consult_call_attempts')), 'the consult reap was attempted');
+});
+
+test('a throwing lead reap masks neither the prune nor the consult reap', async () => {
+  const seen = [];
+  let pruneCalls = 0;
+  __setDeps({
+    pruneVaCallingRows: async () => { pruneCalls += 1; return 7; },
+    sendLeadCallChainEmail: async () => { throw new Error('must not be called'); },
+    sendConsultCallChainEmail: async () => { throw new Error('must not be called'); },
+    pool: reapGuardPool(seen, 'lead_call_attempts'),
+  });
+
+  const n = await pruneVaCallingRows();
+  assert.equal(pruneCalls, 1, 'the prune ran');
+  assert.equal(n, 7, 'and its result still comes back to the caller');
+  assert.ok(seen.some((s) => s.includes('lead_call_attempts')), 'the lead reap was attempted');
+  assert.ok(seen.some((s) => s.includes('consult_call_attempts')), 'the consult reap still ran');
 });
 
 // ── reapUndeliveredVoicemails (spec 2026-07-22) ─────────────────────────────

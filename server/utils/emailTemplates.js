@@ -535,6 +535,86 @@ function missedLeadCallAdmin({ customerName, category, eventDate, guestCount, lo
   };
 }
 
+// ─── Consult call bridge: fault / missed-window / bad-number alert ─
+
+// Only FAULTS reach this template (spec 2026-08-25 section 5.1). A plain
+// missed chain is covered by the text to Dallas, and a cancelled or disabled
+// skip is silent. Keyed through a Map, not an object literal, so a
+// caller-supplied reason can never reach a prototype key.
+const CONSULT_CALL_BANNERS = new Map([
+  ['undialable number', 'The consult call bridge will not ring for this booking because the number cannot be dialed. Call them by hand at the slot.'],
+  ['missed window', 'The slot passed before the bridge could ring. Call them now.'],
+  ['missed, no text destination', 'Everyone missed this consult and no text destination is configured. Call them now.'],
+  // Its own reason, not folded into the line above. The text alert can fail
+  // three ways and only one of them is a missing destination: Twilio throwing
+  // is the other likely one, and telling the reader to go check an environment
+  // variable during a Twilio outage sends them somewhere they cannot fix it.
+  ['missed, text failed', 'Everyone missed this consult and the text alert could not be sent, most likely a Twilio failure rather than a setting. Call them now.'],
+  // A tripped cap and a too-late chain are NOT system faults to go look at:
+  // in both, nobody was rung and nobody will be, so they owe the reader the
+  // same call-them-by-hand instruction the four above carry.
+  ['daily cap tripped', 'The daily cap on consult calls was already reached, so the bridge will not ring for this booking. Call them by hand at the slot.'],
+  ['too late', 'Too much time had passed since the slot for the bridge to ring, so nobody was called. Call them now.'],
+  // The one path in the whole feature that turns a consult that WOULD have rung
+  // into one that silently will not. Only sent when more than one row was
+  // stopped, which is the case where at least one of them was a separate,
+  // legitimate booking rather than the slot the booker just moved.
+  ['unresolved reschedule', 'A reschedule named a booking we could not match, so this consult and every other upcoming consult for this booker were stopped and will not ring. Call them to confirm which slot is real.'],
+]);
+const CONSULT_CALL_BANNER_DEFAULT = 'The consult call bridge could not complete calls for this consult. Check the system if this repeats.';
+
+/**
+ * @param {Object} args
+ * @param {string} args.bookerName consults.booker_name (attacker-typed)
+ * @param {Date|string} args.scheduledAt consults.scheduled_at
+ * @param {string} args.reason one of: 'daily cap tripped', 'too late',
+ *   'missed window', 'undialable number', 'missed, no text destination',
+ *   'missed, text failed', 'unresolved reschedule', each a CONSULT_CALL_BANNERS
+ *   key above, or 'call failed', which is deliberately NOT a key and takes
+ *   CONSULT_CALL_BANNER_DEFAULT because it is the one reason the generic
+ *   go-look-at-the-system line is right for
+ * @param {string} args.phoneDisplay formatted E.164 when the number is valid,
+ *   the raw typed string when it is not (attacker-typed)
+ */
+function consultCallAdmin({ bookerName, scheduledAt, reason, phoneDisplay, adminUrl, proposalUrl }) {
+  const rawName = bookerName || 'Cal.com booker';
+  const rawReason = reason || 'call failed';
+  // The number rides on EVERY one of these emails: a failed chain is exactly
+  // the case where nobody was rung and no text went out, so this is the only
+  // place the number surfaces.
+  const rawPhone = phoneDisplay || 'none';
+  const slot = scheduledAt ? new Date(scheduledAt) : null;
+  const rawSlot = slot && !Number.isNaN(slot.getTime())
+    ? slot.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' })
+    : 'Not specified';
+  const banner = CONSULT_CALL_BANNERS.get(rawReason) || CONSULT_CALL_BANNER_DEFAULT;
+  // Both CTAs when both links exist (unlike the lead alert, where the proposal
+  // link supersedes the client one): a consult is booked against a client who
+  // may or may not have a proposal, and both are worth one tap.
+  const ctas = `${adminUrl ? ctaButton(adminUrl, 'View Client') : ''}${proposalUrl ? ctaButton(proposalUrl, 'Open Proposal') : ''}`;
+
+  return {
+    subject: `Consult call ${esc(rawReason)}: ${esc(rawName)}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Consult call ${esc(rawReason)}</h2>
+      <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
+        ${banner}
+      </p>
+      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${esc(rawName)}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Slot</td><td style="padding:8px 12px;">${esc(rawSlot)}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Reason</td><td style="padding:8px 12px;">${esc(rawReason)}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Number</td><td style="padding:8px 12px;">${esc(rawPhone)}</td></tr>
+      </table>
+      ${ctas}
+    `),
+    // text/plain is delivered as-is and never re-rendered as HTML, so it
+    // carries the raw values: escaping here would show a literal &amp; to the
+    // reader. Same split as missedLeadCallAdmin.
+    text: `Consult call ${rawReason}: ${rawName}. Slot: ${rawSlot}. Number: ${rawPhone}. ${banner}${adminUrl ? ` Client: ${adminUrl}` : ''}${proposalUrl ? ` Proposal: ${proposalUrl}` : ''}`,
+  };
+}
+
 function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
   const name = esc(reviewerName || 'A customer');
   const stars = rating !== null && rating !== undefined ? '★'.repeat(Math.round(rating)) + '☆'.repeat(5 - Math.round(rating)) : 'N/A';
@@ -797,6 +877,7 @@ module.exports = {
   abandonedQuote,
   newThumbtackLeadAdmin,
   missedLeadCallAdmin,
+  consultCallAdmin,
   newThumbtackReviewAdmin,
   // Tip-page feedback
   tipFeedbackAdminNotification,

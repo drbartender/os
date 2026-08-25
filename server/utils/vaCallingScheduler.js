@@ -6,7 +6,13 @@
 //                               pending_call rows + aged-out call_audit /
 //                               telegram_update rows). Re-exposed here so the
 //                               index.js scheduler block registers ONE
-//                               VA-calling maintenance module.
+//                               VA-calling maintenance module. It also carries
+//                               the two stale-chain reapers, lead-call and
+//                               consult-call. Each reaper is separately
+//                               guarded, so neither can mask the other, and
+//                               neither can swallow the prune's result on its
+//                               way out. The prune itself is deliberately NOT
+//                               guarded here: index.js wants that throw.
 //
 //   checkTelegramWebhookHealth()  The webhook heartbeat. Telegram silently
 //                               disables a webhook after repeated errors / a
@@ -25,6 +31,7 @@ const telegram = require('./telegram');
 const pendingCall = require('./pendingCall');
 const adminNotifications = require('./adminNotifications');
 const leadCallTrigger = require('./leadCallTrigger');
+const consultCallChain = require('./consultCallChain');
 const voicemail = require('./voicemail');
 const { resolveLine, E164_RE } = require('./voicemailLine');
 const { pool } = require('../db');
@@ -35,6 +42,7 @@ let deps = {
   pruneVaCallingRows: (...a) => pendingCall.pruneVaCallingRows(...a),
   notifyAdminCategory: (...a) => adminNotifications.notifyAdminCategory(...a),
   sendLeadCallChainEmail: (...a) => leadCallTrigger.sendChainEmail(...a),
+  sendConsultCallChainEmail: (...a) => consultCallChain.sendChainEmail(...a),
   deliverVoicemail: (...a) => voicemail.deliverVoicemail(...a),
   alertOperator: (...a) => voicemail.alertOperator(...a),
   sendTelegramMessage: (...a) => telegram.sendTelegramMessage(...a),
@@ -94,6 +102,47 @@ async function reapStaleLeadCallAttempts() {
   return reaped.rowCount;
 }
 
+// The consult-call sibling (spec 2026-08-25 section 4.2). A consult chain can be
+// stranded in a non-terminal state by a crash, by a Twilio status callback that
+// never arrives, or by a deploy landing mid-chain. Nothing else rescues it: the
+// sweep only opens chains inside a five-minute window around the slot, so a row
+// left in pending/calling_* just sits there and Dallas never learns the consult
+// went unanswered. This reaper is what makes that visible instead of invisible.
+//
+// Anchored on scheduled_at, NOT created_at like the lead sibling: the whole ring
+// plan finishes within twelve minutes of the slot (TOO_LATE_VA_SEC), so a slot
+// half an hour gone is unambiguously stranded, while a chain opened early for a
+// slot still in the future is not yet late at all. 'connected' is excluded, a
+// live bridge runs to its own timeLimit and is NEVER reaped.
+//
+// Kill switch off, the SAME rows are filed 'skipped_disabled' and nothing is
+// emailed. That branch is the point of the whole function, not a detail: if
+// Dallas flips the switch off during an incident, every chain parked mid-flight
+// would otherwise be reported to him as a system failure, one email per consult,
+// when the system did exactly what he told it to.
+async function reapStaleConsultCallAttempts() {
+  const enabled = consultCallChain.isEnabled();
+  const reaped = await deps.pool.query(
+    `UPDATE consult_call_attempts
+        SET status = $1, detail = $2, next_ring_at = NULL, updated_at = NOW()
+      WHERE status IN ('pending', 'calling_admin', 'calling_va')
+        AND scheduled_at < NOW() - make_interval(mins => $3::int)
+      RETURNING id`,
+    [enabled ? 'failed' : 'skipped_disabled', 'stale_reaped', consultCallChain.STALE_MINUTES]
+  );
+  // The switch silences the alert, not just the dialing.
+  if (!enabled) return reaped.rowCount;
+  for (const row of reaped.rows) {
+    // Claim winner by construction: the UPDATE above is the claim, so every id
+    // here is a row THIS pass transitioned. Exactly one email per reaped row,
+    // and none for a row it did not reap. The reason is 'call failed' rather
+    // than a skip banner because a stranded row IS a system fault, and that
+    // banner is the one that tells Dallas to go look at the system.
+    await deps.sendConsultCallChainEmail({ attemptId: Number(row.id), reason: 'call failed' });
+  }
+  return reaped.rowCount;
+}
+
 // Delegates to Task 5's pendingCall.pruneVaCallingRows(); re-exposed as the
 // single VA-calling prune entry point for index.js. The lead-call stale reap
 // rides the same hourly pass (spec 2026-07-18 section 4.5); its failure must
@@ -105,6 +154,17 @@ async function pruneVaCallingRows() {
     if (reaped > 0) console.log(`[vaCallingScheduler] reaped ${reaped} stale lead-call attempt(s)`);
   } catch (err) {
     console.error('[vaCallingScheduler] lead-call stale reap failed:', err.message);
+  }
+  // Its own guard, deliberately separate from the lead reap's: neither reap may
+  // mask the other, and neither may mask the prune. The message guard mirrors
+  // consultCallChain's captureError, because a rejection value is not
+  // guaranteed to be an Error and an unguarded err.message would throw OUT of
+  // the catch that exists to contain it, taking the prune's return with it.
+  try {
+    const reaped = await reapStaleConsultCallAttempts();
+    if (reaped > 0) console.log(`[vaCallingScheduler] reaped ${reaped} stale consult-call attempt(s)`);
+  } catch (err) {
+    console.error('[vaCallingScheduler] consult-call stale reap failed:', (err && err.message) || err);
   }
   return n;
 }
@@ -313,6 +373,7 @@ async function reapUndeliveredVoicemails() {
 module.exports = {
   pruneVaCallingRows,
   reapStaleLeadCallAttempts,
+  reapStaleConsultCallAttempts,
   reapUndeliveredVoicemails,
   checkTelegramWebhookHealth,
   __setDeps,

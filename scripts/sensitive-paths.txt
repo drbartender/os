@@ -163,6 +163,18 @@ server/utils/sentryScrub.js
 # outbound spend-cap count, and the voicemail ledger prune. Matched no glob for
 # the same reason as the two above.
 server/utils/pendingCall.js
+# Consult call bridge (2026-08-25): billed outbound voice on a timer; the client
+# leg dials a number extracted from a public webhook payload. Named one by one
+# because no pattern anywhere in this file reaches them: the scheduler glob
+# further down only matches files ending in Scheduler.js, and no server/utils
+# glob crosses '/' into server/routes.
+# calcomWebhookHelpers.js is the HMAC gate on a PUBLIC webhook and the code
+# that decides which bytes become booker_phone, the one number the bridge dials.
+server/routes/voiceConsultCall.js
+server/utils/consultCallChain.js
+server/utils/consultCallSweep.js
+server/utils/consultCallBriefing.js
+server/utils/calcomWebhookHelpers.js
 
 # Auth / guards / limits / the shared error funnel
 server/middleware/auth.js
