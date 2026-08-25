@@ -605,10 +605,28 @@ automated, **re-derive the cohort at the top of any walk session** rather than t
 the tiers: `git log --format='%h %ad %s' --date=short <the sha this file names>..origin/main -- server client/src`
 lists every code commit live in prod that this file may not know about.
 
-**THE 2026-08-25 COHORT. Walked the same day, nothing owed.** One item, and the tier-6 mechanism
-carried it end to end: it arrived there with its merge sha the moment the lane merged, moved here
-when the push made that sha an ancestor of `origin/main`, and was walked within the hour. Nothing
-had to be remembered at any step.
+**THE 2026-08-25 COHORT. Both walked the same day they merged, nothing owed.** Two items, the two
+halves of the events-list staffing hover, and the tier-6 mechanism carried both end to end: each
+arrived there with its merge sha the moment its lane merged and left when it was walked. Nothing
+had to be remembered at any step, and neither sat unwalked overnight.
+
+Worth noting for the next thing that ships here: the requests half was walked BEFORE its push,
+which is the tier working better than its own rule requires. The rule promotes on the ancestor
+check because that is when a walk becomes possible in prod; a walk that happens earlier, on dev or
+on a lane, is strictly better and just means the item never needs the check at all.
+
+- [x] **WALKED 2026-08-25 by Dallas, before it was even pushed. Nothing owed.** Events list
+      requests hover, merge `c792c321` (lane events-requests-hover). The Staffing column now has
+      TWO hover targets: the ratio lists who is CONFIRMED, the "N requests" chip lists who APPLIED
+      and for what, oldest request first.
+      The thing worth having walked was the seam between the two targets, which is the whole design
+      of the lane and broke twice on paper before it worked: the fix removes the cell's flex gap
+      and moves the spacing into the second target's padding, so dragging between them swaps the
+      card instead of blinking it off. Geometry was measured headless (computed rowGap 0px, seam
+      0px, elementFromPoint at the seam landing on an anchor); how it feels under a real hand was
+      not, and now has been.
+      Settled at the same time and NOT a defect: an applicant who ranked no role shows a bare name
+      here while the drawer calls them "Any role". Examined and left that way, see the fix list.
 
 - [x] **WALKED 2026-08-25 by Dallas, same day it shipped. Nothing owed.** Events list staff hover,
       merge `21ec7993` (lane events-staff-hover). Hover the Staffing column on /events and a card
@@ -1539,21 +1557,6 @@ to rot. Do that again for the next thing that sits here.
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
 
-- [ ] **Events list requests hover** (lane events-requests-hover, merge sha `c792c321`).
-      Live when `git merge-base --is-ancestor c792c321 origin/main` exits 0; move to Tier 3b then.
-      Sibling of the staff hover walked earlier today. On /events, the Staffing column now has TWO
-      hover targets: the ratio lists who is CONFIRMED, the "N requests" chip lists who APPLIED and
-      for what, oldest request first. Verified headless in both skins with a seeded fixture, so the
-      walk is for what a browser cannot judge.
-      What to actually try: drag the pointer slowly from the ratio down onto the chip. The card
-      should SWAP, not blink off and back on. That seam is the whole design of this lane, it broke
-      twice on paper before it worked, and the machine can only tell me the geometry is right
-      (computed rowGap 0px, seam 0px), not whether it FEELS right under a real hand.
-      Also worth hitting: a row where an applicant ranked nothing shows a bare name with no role
-      (6 such rows in prod). One click away, the shift drawer calls that same person "Any role".
-      That inconsistency is a known open question, not a bug, and seeing it may decide it.
-      A FULL roster still shows no chip and no applicants, by decision. Audited across all 87 live
-      feed rows: the one genuinely full-with-applicants row renders neither.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
