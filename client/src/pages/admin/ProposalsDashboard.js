@@ -9,7 +9,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import SortableTh from '../../components/adminos/SortableTh';
-import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
+import { fmt$, fmtDate, relDay, relDayTs } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import SourceBadge from '../../components/admin/SourceBadge';
 import EntityLink from '../../components/EntityLink';
@@ -528,8 +528,8 @@ export default function ProposalsDashboard() {
                         <div className="sub">{ARCHIVE_REASON_LABELS[p.archive_reason] || p.archive_reason}</div>
                       )}
                     </td>
-                    <td className="muted">{p.sent_at ? relDay(String(p.sent_at).slice(0, 10)) : '—'}</td>
-                    <td className="muted" title={viewTitle}>{p.last_viewed_at ? relDay(String(p.last_viewed_at).slice(0, 10)) : '—'}</td>
+                    <td className="muted">{relDayTs(p.sent_at)}</td>
+                    <td className="muted" title={viewTitle}>{relDayTs(p.last_viewed_at)}</td>
                     <td className="num"><strong>{fmt$(p.total_price)}</strong></td>
                     <td className="shrink">
                       <div className="hstack" onMouseUp={(e) => e.stopPropagation()}>

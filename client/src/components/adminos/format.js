@@ -130,20 +130,56 @@ export const calcEndTime = (startTime, durationHours) => {
   return formatTime12h(`${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`);
 };
 
-export const dayDiff = (iso) => {
+// A TIMESTAMPTZ moment (sent_at, last_viewed_at, activity created_at) reduced to
+// the calendar day it happened on in the BUSINESS timezone. `String(ts).slice(0, 10)`
+// looks like it does this but yields the UTC day: res.json serialises pg's Date as
+// ISO-UTC, so every moment at or after 19:00 Chicago (18:00 CST) already carries the
+// NEXT day's date. That is what made the proposals dashboard report a proposal sent
+// last night as sent "Tomorrow", and left every after-hours row a permanent day off.
+// Date-ONLY columns (event_date, balance_due_date) must NOT come through here: their
+// ISO date part IS the calendar day, and fmtDateOnly/relDay already handle them.
+const CT_YMD = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+export const ctDay = (ts) => {
+  if (!ts) return null;
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? null : CT_YMD.format(d);
+};
+
+// `todayYmd` (YYYY-MM-DD) overrides the browser's idea of today. Both sides anchor
+// at local noon, so the browser zone and any DST change between the two dates cancel
+// out of the subtraction. Moment-based callers pass a Chicago day on BOTH sides (see
+// relDayTs); date-only callers pass nothing and keep comparing against the local day.
+export const dayDiff = (iso, todayYmd) => {
   if (!iso) return 0;
   const d = new Date(iso + 'T12:00:00');
   if (Number.isNaN(d.getTime())) return 0;
-  const t = new Date();
-  t.setHours(12, 0, 0, 0);
+  let t;
+  if (todayYmd) {
+    t = new Date(todayYmd + 'T12:00:00');
+    if (Number.isNaN(t.getTime())) return 0;
+  } else {
+    t = new Date();
+    t.setHours(12, 0, 0, 0);
+  }
   return Math.round((d - t) / 86400000);
 };
 
-export const relDay = (iso) => {
-  const diff = dayDiff(iso);
+export const relDay = (iso, todayYmd) => {
+  const diff = dayDiff(iso, todayYmd);
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Tomorrow';
   if (diff === -1) return 'Yesterday';
   if (diff > 0) return `In ${diff}d`;
   return `${Math.abs(diff)}d ago`;
+};
+
+// relDay for a TIMESTAMPTZ moment: Chicago-keyed on both sides, so a moment can
+// never label itself as a future day. Use relDay for date-only columns, relDayTs
+// for moments. Empty or unparseable input renders the same placeholder the
+// dashboards use for a missing value.
+export const relDayTs = (ts, now = new Date()) => {
+  const day = ctDay(ts);
+  return day ? relDay(day, ctDay(now)) : '—';
 };
