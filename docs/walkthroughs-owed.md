@@ -1544,6 +1544,9 @@ to rot. Do that again for the next thing that sits here.
       consecutive failures, and no `[consultCall]` caller-ID warning reached Sentry, so
       `CONSULT_CALLER_ID` took. Zero attempt rows, and prod has zero future-dated scheduled
       consults, so nothing has had a slot to fire on yet.
+      **`CONSULT_CALL_ENABLED=false` CONFIRMED SET by Dallas 2026-08-25**, so the feature is
+      deployed and dark and the Tier 4 gate below is closed. The launch call is the only
+      remaining step: flip the switch on, then run the walk in the same sitting.
       **Unlike every other item in this tier, the push alone does NOT make this live.** It ships dark
       behind `CONSULT_CALL_ENABLED=false`, which Tier 4 below requires you to set BEFORE the push. So
       this does not graduate to Tier 3b on the push; it graduates when the walk below passes.
@@ -1567,7 +1570,9 @@ to rot. Do that again for the next thing that sits here.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
-- [ ] **Consult call bridge: set two Render vars BEFORE the push that carries `fafa0d6f`.**
+- [x] **DONE 2026-08-25, confirmed by Dallas. Consult call bridge: two Render vars, set BEFORE the push that carried `fafa0d6f`.**
+      `CONSULT_CALL_ENABLED=false` is set, so the feature is live in prod and DARK. Kept as the
+      record, not as a task. The original note follows because the reasoning is reusable:
       `CONSULT_CALL_ENABLED=false` and `CONSULT_CALLER_ID=+12242221922`. The kill switch DEFAULTS ON,
       so a push without the first one starts a 60-second sweep dialling `ADMIN_PHONE` for real, on a
       feature no human has yet heard. This is the lead call bridge's own 2026-07-18 trap repeated
