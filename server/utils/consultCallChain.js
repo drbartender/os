@@ -26,8 +26,11 @@
  * read into JS and written back is a DIFFERENT value: it matches neither the
  * sweep's `a.scheduled_at = c.scheduled_at` anti-join nor the
  * (consult_id, scheduled_at) UNIQUE. The sweep would then re-open the consult
- * on every 60 second tick until the daily cap tripped, which is 30 rings to
- * Dallas, 10 international legs and 10 texts. Every writer below therefore
+ * on every 60 second tick until the caps tripped, which is 30 rings to Dallas,
+ * 10 international legs and 10 texts at the default settings. Those numbers are
+ * the CEILING only because dialCap() enforces the ring half of them; the chain
+ * cap alone bounds openings, and a caller who cancels mid-chain frees the
+ * opening it counted. Every writer below therefore
  * takes `consultId` only and derives the slot from the consults row INSIDE the
  * SQL. Two slots are only ever compared in SQL, never as JS Date objects.
  *
@@ -69,6 +72,28 @@ const STALE_MINUTES = 30;
 // The || 10 fallback is load-bearing: an unset env var must not become
 // `count < NaN` (always false), which would cap-trip every consult.
 function dailyCap() { return parseInt(process.env.CONSULT_CALL_DAILY_CAP, 10) || 10; }
+
+/**
+ * The rolling-24h ceiling on RINGS PLACED AT DALLAS, as opposed to dailyCap(),
+ * which bounds how many chains may OPEN.
+ *
+ * Why a second counter exists. dailyCap() counts rows whose status is
+ * NOT LIKE 'skipped%', and a cancel or reschedule while a chain is ringing
+ * lands skipped_cancelled, which stops counting and frees the slot. That
+ * freeing is DELIBERATE (ruling R15): counting skipped rows would let a burst
+ * of junk bookings on the PUBLIC Cal.com page hold the whole feature down for
+ * 24 hours past the last one. The gap it left is that nothing bounded the
+ * DIALING, so "book a public slot, let it ring, cancel, rebook the same slot
+ * inside its open window" cost up to three billed US legs per cycle while the
+ * chain cap never advanced. Two independent reviewers found that separately.
+ *
+ * Derived rather than given its own env var, so the invariant this file's
+ * header has always asserted -- worst case dailyCap() chains times
+ * MAX_ADMIN_RINGS rings -- is now true by construction instead of by hope, and
+ * raising CONSULT_CALL_DAILY_CAP raises both bounds together. Inherits
+ * dailyCap()'s NaN guard for the same reason it exists there.
+ */
+function dialCap() { return dailyCap() * MAX_ADMIN_RINGS; }
 
 // Default ON, like LEAD_CALL_ENABLED. Only the literal 'false' kills it.
 function isEnabled() { return process.env.CONSULT_CALL_ENABLED !== 'false'; }
@@ -229,18 +254,46 @@ async function fileMissedWindow({ consultId }) {
 }
 
 /**
+ * Has the rolling-24h ring budget been spent?
+ *
+ * Counts admin_ring across EVERY row in the window, skipped ones INCLUDED, and
+ * that inclusion is the entire point: a ring that was placed was billed
+ * whatever the row's status became afterwards, and the bypass this closes
+ * worked precisely by turning counted rows into skipped ones. Contrast
+ * openChain's cap, which must exclude them to keep R15.
+ *
+ * created_at rather than a per-leg timestamp because no per-leg timestamp
+ * exists; a chain opens at most OPEN_AHEAD_MINUTES before its slot and every
+ * ring lands within TOO_LATE_ADMIN_SEC of it, so the row's creation instant
+ * dates its rings to well inside the hour.
+ */
+async function dialCapTripped() {
+  const r = await _deps.pool.query(
+    `SELECT COALESCE(SUM(admin_ring), 0)::int AS n FROM consult_call_attempts
+      WHERE created_at > NOW() - INTERVAL '24 hours'`
+  );
+  return Number(r.rows[0].n) >= dialCap();
+}
+
+/**
  * Open the ring chain for one consult, or record why it could not open.
  *
  * The cap and the open are ONE statement. Under READ COMMITTED a truly
  * concurrent burst can still overshoot by the number of in-flight callers
- * (each statement snapshots before the others commit); this is a toll-fraud
- * BACKSTOP that bounds sustained spend, not a hard cap. Every dialed target is
- * independently validated and timeLimit-capped.
+ * (each statement snapshots before the others commit); it is a BACKSTOP, not a
+ * hard cap. Every dialed target is independently validated and timeLimit-capped.
  *
- * The cap counts only `status NOT LIKE 'skipped%'` rows, and the cap-trip
- * marker is itself `skipped_cap` (ruling R15), so a burst of junk bookings on
- * the PUBLIC Cal.com page cannot slide the rolling window forward and hold the
- * whole feature down for 24 hours past the last one.
+ * WHAT THIS CAP DOES AND DOES NOT BOUND. It bounds how many chains may OPEN in
+ * the rolling window. It does NOT bound sustained spend, and a comment here
+ * used to say it did -- which is what a maintainer deciding whether to raise
+ * CONSULT_CALL_DAILY_CAP would have read. It counts only
+ * `status NOT LIKE 'skipped%'` rows, and the cap-trip marker is itself
+ * `skipped_cap` (ruling R15), so a burst of junk bookings on the PUBLIC Cal.com
+ * page cannot slide the rolling window forward and hold the whole feature down
+ * for 24 hours past the last one. The cost of keeping R15 is that a caller who
+ * cancels mid-chain FREES the opening this counted, so cancel-and-rebook could
+ * dial without limit. dialCap(), checked in advanceChain, is what bounds the
+ * rings; read it before reasoning about spend.
  *
  * @param {Object} args
  * @param {number} args.consultId
@@ -729,16 +782,55 @@ async function advanceChain(opts) {
   }
 
   if (adminPhone) {
+    // The DIAL cap, checked here rather than in openChain because openChain
+    // cannot know how many of its three rings a chain will actually use, and
+    // it is the ring that costs money. See dialCap() for why a second counter
+    // exists at all. This read is what makes the trip TERMINAL: the ceiling
+    // also rides in the claim's WHERE below, but a claim that merely loses
+    // leaves the row pending with its due time and the sweep would retry it
+    // every 60 seconds forever.
+    if (await dialCapTripped()) {
+      if (await claim(attemptId, 'pending', 'skipped_cap', { detail: 'dial_cap_tripped', clearNextRing: true })) {
+        // One email per rolling window: a burst is precisely when this trips,
+        // and precisely when emailing per refusal would empty the Resend quota.
+        //
+        // A COUNT, where openChain's cap email uses MIN(id). openChain INSERTS
+        // its marker, so there id order is trip order and the lowest id is the
+        // first trip. Here the marker lands on a row that already existed, and
+        // rows are refused in due-time order, not id order: an older chain
+        // refused second would still hold the lower id and email again. The
+        // count is order-independent, and it reads updated_at because that is
+        // the instant the claim above stamped, i.e. when the trip happened.
+        const seen = await _deps.pool.query(
+          `SELECT COUNT(*)::int AS n FROM consult_call_attempts
+            WHERE detail = 'dial_cap_tripped' AND updated_at > NOW() - INTERVAL '24 hours'`
+        );
+        if (Number(seen.rows[0].n) === 1) {
+          console.warn(`[consultCall] DIAL cap tripped at ${dialCap()} rings/24h, attempt ${attemptId} refused`);
+          await sendChainEmail({ attemptId, reason: 'daily dial cap tripped' });
+        }
+      }
+      return;
+    }
+
     // Its own statement rather than claim(): this is the one transition that
     // must READ BACK the ring it just took, and admin_ring < MAX_ADMIN_RINGS is
     // what stops a re-armed row from ringing a fourth time.
+    //
+    // The dial ceiling is re-asserted inside the WHERE for the same reason the
+    // chain cap and its INSERT are one statement: the read above and this write
+    // are two statements, and under READ COMMITTED a concurrent tick could slip
+    // between them. Losing here leaves the row pending, and the next tick's
+    // read files the terminal marker.
     const won = await _deps.pool.query(
       `UPDATE consult_call_attempts
           SET status = 'calling_admin', admin_ring = admin_ring + 1,
               next_ring_at = NULL, updated_at = NOW()
         WHERE id = $1 AND status = 'pending' AND admin_ring < $2
+          AND (SELECT COALESCE(SUM(admin_ring), 0) FROM consult_call_attempts
+                WHERE created_at > NOW() - INTERVAL '24 hours') < $3
         RETURNING admin_ring`,
-      [attemptId, MAX_ADMIN_RINGS]
+      [attemptId, MAX_ADMIN_RINGS, dialCap()]
     );
     if (won.rowCount !== 1) return;
     const ring = Number(won.rows[0].admin_ring);
@@ -888,6 +980,7 @@ module.exports = {
   guardStillScheduled,
   sendMissedText,
   dailyCap,
+  dialCap,
   isEnabled,
   __setDeps,
   RING_OFFSETS_SEC,

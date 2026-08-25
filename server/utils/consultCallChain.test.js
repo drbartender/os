@@ -93,10 +93,16 @@ async function nonSkippedCount() {
   return r.rows[0].n;
 }
 
-/** Drop only OUR cap markers: a live one suppresses a later test's cap email. */
+/**
+ * Drop only OUR cap markers: a live one suppresses a later test's cap email.
+ * BOTH markers, because each caps a different thing and each gates its own
+ * email on being the MIN id in the window, so a surviving dial marker silences
+ * a later dial-cap test exactly as a surviving chain marker would.
+ */
 async function clearCapMarkers() {
   await pool.query(
-    `DELETE FROM consult_call_attempts WHERE detail = 'cap_tripped' AND consult_id = ANY($1)`,
+    `DELETE FROM consult_call_attempts
+      WHERE detail IN ('cap_tripped', 'dial_cap_tripped') AND consult_id = ANY($1)`,
     [consultIds]
   );
 }
@@ -1264,4 +1270,194 @@ test('sendMissedText: never throws, and each failure reports its OWN reason', as
   } finally {
     chain.__setDeps({ pool });
   }
+});
+
+// ─── the DIAL cap: what bounds the rings to Dallas ────────────────
+//
+// Backlog section 0, found independently by two reviewers before the launch
+// call. CONSULT_CALL_DAILY_CAP counts CHAINS, not dials, and it counts only
+// rows whose status is NOT LIKE 'skipped%'. A cancel while a chain is ringing
+// lands skipped_cancelled, which stops counting and frees the slot. Ruling R15
+// makes that freeing DELIBERATE: counting skipped rows would let a burst of
+// junk bookings on the public Cal.com page hold the whole feature down for 24
+// hours. But nothing else bounded the dialing, so the loop "book a public slot,
+// let it ring, cancel, rebook the same slot" cost up to three billed US legs
+// per cycle and the chain cap never advanced.
+//
+// The dial cap counts admin_ring across EVERY row in the rolling window,
+// skipped ones included, because a ring that was placed was billed whatever
+// happened to the row afterwards. Its ceiling is dailyCap() * MAX_ADMIN_RINGS,
+// which is exactly the worst case this file's header has always claimed, so in
+// normal use it can never trip before the chain cap does.
+
+/** SUM(admin_ring) over the rolling window: legs actually dialed at Dallas. */
+async function dialedRingsLast24h() {
+  const r = await pool.query(
+    `SELECT COALESCE(SUM(admin_ring), 0)::int AS n FROM consult_call_attempts
+      WHERE created_at > NOW() - INTERVAL '24 hours'`
+  );
+  return r.rows[0].n;
+}
+
+/**
+ * A CONSULT_CALL_DAILY_CAP whose derived dial ceiling is already spent.
+ *
+ * The count cannot be padded DOWN -- this suite's own fire tests dial real
+ * rings into the same rolling window -- so the cap is derived from the live
+ * count instead of the count being forced to the cap. Pads UP only in the
+ * degenerate case of a window too empty to have a ceiling below it.
+ */
+async function capThatRefuses(tag) {
+  if (await dialedRingsLast24h() < chain.MAX_ADMIN_RINGS) {
+    await makeChainRow(`${tag}-floor`, {
+      attemptStatus: 'skipped_cancelled', adminRing: chain.MAX_ADMIN_RINGS, nextRingOffsetSec: null,
+    });
+  }
+  const now = await dialedRingsLast24h();
+  const cap = Math.floor(now / chain.MAX_ADMIN_RINGS);
+  assert.ok(cap * chain.MAX_ADMIN_RINGS <= now, 'the fixture really does leave the ceiling spent');
+  return String(cap);
+}
+
+test('dialCap: the ceiling is the chain cap times the ring plan, and never NaN', async () => {
+  await withEnv({ CONSULT_CALL_DAILY_CAP: null }, () => {
+    assert.equal(chain.dialCap(), 10 * chain.MAX_ADMIN_RINGS,
+      'unset falls back through dailyCap, never to count < NaN');
+  });
+  await withEnv({ CONSULT_CALL_DAILY_CAP: '7' }, () => {
+    assert.equal(chain.dialCap(), 7 * chain.MAX_ADMIN_RINGS, 'raising the chain cap raises the dial ceiling with it');
+  });
+  await withEnv({ CONSULT_CALL_DAILY_CAP: 'banana' }, () => {
+    assert.equal(chain.dialCap(), 10 * chain.MAX_ADMIN_RINGS);
+  });
+});
+
+test('dialCap: rings on a skipped_cancelled row STILL count — this is the bypass', async () => {
+  // The attack, proved exactly rather than approximately. The ceiling is set
+  // so that it sits ABOVE the window's current rings and AT OR BELOW them once
+  // one cancelled chain's three rings are added. So the same chain is dialed or
+  // refused purely on whether skipped rows count, which is the whole defect:
+  // before this lane they did not, and Dallas's phone had no ceiling at all.
+  const before = await dialedRingsLast24h();
+  const cap = Math.floor(before / chain.MAX_ADMIN_RINGS) + 1;
+  const ceiling = cap * chain.MAX_ADMIN_RINGS;
+  assert.ok(ceiling > before, 'headroom without the cancelled rings');
+  assert.ok(ceiling <= before + chain.MAX_ADMIN_RINGS, 'spent with them');
+
+  await withEnv({ CONSULT_CALL_DAILY_CAP: String(cap) }, async () => {
+    // Half one: with that headroom the ring goes out.
+    const ok = await makeChainRow('dial-bypass-ok');
+    await chain.advanceChain({ attemptId: ok.attemptId });
+    assert.equal(placed.length, 1, 'the ceiling is genuinely not spent yet');
+    await pool.query(
+      "UPDATE consult_call_attempts SET status = 'skipped_cancelled', admin_ring = $2 WHERE id = $1",
+      [ok.attemptId, chain.MAX_ADMIN_RINGS]
+    );
+
+    // Half two: those rings are now on a row the CHAIN cap ignores. They must
+    // still count here.
+    const victim = await makeChainRow('dial-bypass-victim');
+    await chain.advanceChain({ attemptId: victim.attemptId });
+
+    assert.equal(placed.length, 1, 'no second ring: cancelled chains do not buy free dials');
+    const row = await rowOf(victim.attemptId);
+    assert.equal(row.status, 'skipped_cap', 'the trip is TERMINAL, or the sweep retries it every 60 seconds forever');
+    assert.equal(row.detail, 'dial_cap_tripped', 'distinguishable from the chain cap trip in the attention feed');
+    assert.equal(row.admin_ring, 0, 'no ring was taken');
+    assert.equal(row.next_ring_at, null, 'a terminal row is never left holding a due time');
+  });
+  await clearCapMarkers();
+});
+
+test('dialCap: R15 survives — rings on skipped rows do not consume CHAIN slots', async () => {
+  // The dial cap must not become a back door to the behaviour R15 forbids:
+  // junk bookings on the public page still must not hold the feature down for
+  // 24 hours. The two counters therefore read the SAME rows differently, and
+  // this is that difference stated as a test. Cancelled chains below carry a
+  // full ring plan each, so the dial counter sees them; the chain counter must
+  // not, or one cancelled booking would cost a real client their call.
+  const consultId = await makeConsult('dial-r15');
+  const chainHeadroom = (await nonSkippedCount()) + 1;
+
+  for (const tag of ['a', 'b', 'c']) {
+    await makeChainRow(`dial-r15-junk-${tag}`, {
+      attemptStatus: 'skipped_cancelled', adminRing: chain.MAX_ADMIN_RINGS, nextRingOffsetSec: null,
+    });
+  }
+
+  await withEnv({ CONSULT_CALL_DAILY_CAP: String(chainHeadroom) }, async () => {
+    assert.equal(await chain.openChain({ consultId }), 'opened',
+      'nine cancelled rings did not eat the one free chain slot (R15)');
+  });
+  await pool.query('DELETE FROM consult_call_attempts WHERE consult_id = $1', [consultId]);
+});
+
+test('dialCap: with headroom the ring goes out exactly as before', async () => {
+  // Non-vacuity. Without this, a dial cap wired to refuse everything would pass
+  // every test above and take the whole feature down on the launch call.
+  const { attemptId } = await makeChainRow('dial-headroom');
+  const now = await dialedRingsLast24h();
+  // One ring of headroom, and not a drop more.
+  const cap = Math.ceil((now + 1) / chain.MAX_ADMIN_RINGS);
+  await withEnv({ CONSULT_CALL_DAILY_CAP: String(cap) }, async () => {
+    assert.ok(chain.dialCap() > now, 'the fixture really does leave headroom');
+    await chain.advanceChain({ attemptId });
+  });
+  assert.equal(placed.length, 1, 'Dallas is still rung');
+  assert.equal(placed[0].to, ADMIN_PHONE);
+  const row = await rowOf(attemptId);
+  assert.equal(row.status, 'calling_admin');
+  assert.equal(row.admin_ring, 1);
+});
+
+test('dialCap: the trip emails once per rolling window, not once per refused ring', async () => {
+  await clearCapMarkers();
+  await withEnv({ CONSULT_CALL_DAILY_CAP: await capThatRefuses('dial-email') }, async () => {
+    const a = await makeChainRow('dial-email-a');
+    await chain.advanceChain({ attemptId: a.attemptId });
+    const afterFirst = emails.length;
+    assert.equal(afterFirst, 1, 'the first refusal tells Dallas his booking page is being worked');
+
+    const b = await makeChainRow('dial-email-b');
+    await chain.advanceChain({ attemptId: b.attemptId });
+    assert.equal(emails.length, afterFirst, 'the second does not, or a burst empties the Resend quota');
+    assert.equal((await rowOf(b.attemptId)).status, 'skipped_cap', 'it is still refused and still terminal');
+  });
+  await clearCapMarkers();
+});
+
+test('dialCap: the one email is not tied to id order (an older chain refused second)', async () => {
+  // openChain's cap email gates on MIN(id) because it INSERTS its marker, so
+  // there id order IS trip order. This marker lands on a row that already
+  // existed, and the sweep refuses in due-time order: the row with the LOWER id
+  // can be refused SECOND. An id-order gate would email for that one too.
+  await clearCapMarkers();
+  const older = await makeChainRow('dial-order-older');
+  const newer = await makeChainRow('dial-order-newer');
+  assert.ok(older.attemptId < newer.attemptId, 'the fixture really does pose the order it claims');
+
+  await withEnv({ CONSULT_CALL_DAILY_CAP: await capThatRefuses('dial-idorder') }, async () => {
+    await chain.advanceChain({ attemptId: newer.attemptId });   // higher id refused FIRST
+    assert.equal(emails.length, 1);
+    await chain.advanceChain({ attemptId: older.attemptId });   // lower id refused SECOND
+    assert.equal(emails.length, 1, 'the lower id does not buy a second email');
+    assert.equal((await rowOf(older.attemptId)).status, 'skipped_cap', 'it is still refused');
+  });
+  await clearCapMarkers();
+});
+
+test('dialCap: the kill switch and the still-scheduled guard still win over it', async () => {
+  // Order matters: a disabled feature or an already-cancelled consult must be
+  // reported as such, not mislabelled as a spend trip that never happened.
+  await withEnv({ CONSULT_CALL_DAILY_CAP: await capThatRefuses('dial-order') }, async () => {
+    const off = await makeChainRow('dial-order-off');
+    await withEnv({ CONSULT_CALL_ENABLED: 'false' }, () => chain.advanceChain({ attemptId: off.attemptId }));
+    assert.equal((await rowOf(off.attemptId)).status, 'skipped_disabled');
+
+    const gone = await makeChainRow('dial-order-cancelled');
+    await pool.query("UPDATE consults SET status = 'cancelled' WHERE id = $1", [gone.consultId]);
+    await chain.advanceChain({ attemptId: gone.attemptId });
+    assert.equal((await rowOf(gone.attemptId)).status, 'skipped_cancelled');
+  });
+  await clearCapMarkers();
 });
