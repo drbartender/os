@@ -545,8 +545,19 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       alert with no URL; then restored and the URL plays again. All three.
       Link expiry is 30 days from `created_at` enforced in the route's own SQL, so the 8/11
       row's shortcut token dies 2026-09-10.
-- [ ] **Tip sign download.** Download a sign as jpg, png, and pdf, and the two-sided card as
-      pdf. Confirm a bartender with no Stripe link is not offered Card.
+- [x] **WALKED 2026-08-25 by Dallas. Nothing owed.** Tip sign download: sign as jpg, png and
+      pdf, and the two-sided card as pdf. All formats work.
+      The second half of this item, "confirm a bartender with no Stripe link is not offered
+      Card," is closed as UNREACHABLE rather than unverified, so nobody re-opens it chasing a
+      state the portal gate prevents. Prod, checked the same day: all 16 `approved` staff have
+      a `stripe_payment_link_url`, an active tip page and at least one handle, with no
+      exceptions. The 29 without a link are all `hired`, and they have no `payment_profiles`
+      row AT ALL, so they have no Venmo or Cash App either. `RequirePortal` (App.js) admits
+      only `submitted`/`reviewed`/`approved`, and `hired` is not in that list, so nobody
+      lacking a link can load the download page in the first place. Were one to somehow get
+      there, the sign would be empty of every method, not missing Card specifically, so the
+      assertion would not be the interesting failure anyway. Re-open only if the portal gate
+      widens to admit `hired`.
 - [ ] **Staff recipes: REASSIGNED to the automated lane 2026-08-14 (routing rule 1),
       mechanical render check, not a human walk.** Open a spec at the bar and confirm real
       ingredients render, not `[object Object]`.
