@@ -101,7 +101,7 @@ export default function DownloadTipSign() {
   const anyBusy = busy !== '';
 
   return (
-    <div className="dts-root drb">
+    <div className="dts-root">
       <div className="dts-panel">
         <h1>Download your sign</h1>
         <p className="dts-help">
@@ -110,7 +110,7 @@ export default function DownloadTipSign() {
         </p>
 
         <div className="dts-preview" aria-hidden="true">
-          <div className="dts-preview-inner">
+          <div className="dts-preview-inner drb">
             <SignLayout size={DISPLAY_SIGN_SIZE} name={name} tipUrl={data.url} marks={marks} />
           </div>
         </div>
@@ -166,8 +166,12 @@ export default function DownloadTipSign() {
       </div>
 
       {/* Capture surfaces. Off-screen rather than display:none, because
-          html2canvas has to be able to measure a laid-out node. */}
-      <div className="dts-capture" aria-hidden="true">
+          html2canvas has to be able to measure a laid-out node.
+          `.drb` (the chalkboard design-system scope) goes on the sign surfaces
+          and the preview only, never on the page root: its base rules paint
+          h1/h2/p cream in the display face at marketing sizes, which on the
+          white panel above read as blank lines in both portal skins. */}
+      <div className="dts-capture drb" aria-hidden="true">
         {Object.keys(SIGN_SIZES).map((size) => (
           <div
             key={size}

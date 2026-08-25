@@ -25,9 +25,14 @@
   max-width: 520px;
 }
 
+/* Headings set their colour explicitly: index.css paints every h1-h4 on the
+   non-admin hosts cream (the chalkboard default), and an explicit colour beats
+   the panel's inherited brown. Without this the titles were cream-on-white in
+   both portal skins. */
 .dts-panel h1 {
   margin: 0 0 8px;
   font-size: 22px;
+  color: #1c1610;
 }
 
 .dts-help {
@@ -69,6 +74,7 @@
   margin: 0 0 10px;
   font-size: 15px;
   letter-spacing: 0.04em;
+  color: #1c1610;
 }
 
 .dts-note {

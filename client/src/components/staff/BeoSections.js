@@ -288,6 +288,8 @@ export function RolesCard({ positionsNeeded, approvedByRole }) {
   );
 }
 
+const MENU_EXT_BY_TYPE = { 'image/png': 'png', 'image/jpeg': 'jpg', 'application/pdf': 'pdf' };
+
 /**
  * The bar menu print file. Assigned-only: this is the deliverable a working
  * staffer prints and carries, not something a browser needs.
@@ -303,12 +305,16 @@ export function BarMenuCard({ menuPrint, shiftId }) {
     try {
       const res = await api.get(`/shifts/${shiftId}/menu-print`, { responseType: 'blob' });
       // Honor the server's filename so a PNG or JPG menu is not saved as .pdf.
+      // The API is cross-origin, so the header is only readable because the
+      // server exposes it (middleware/corsOptions.js); if a proxy ever strips
+      // it, the blob's own type still names the file correctly.
       const cd = (res.headers && res.headers['content-disposition']) || '';
       const m = cd.match(/filename="([^"]+)"/);
+      const ext = MENU_EXT_BY_TYPE[res.data && res.data.type] || 'pdf';
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = m ? m[1] : 'bar-menu.pdf';
+      a.download = m ? m[1] : `bar-menu.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();

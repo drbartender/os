@@ -42,6 +42,7 @@ process.on('uncaughtException', (err) => {
 const express = require('express');
 const compression = require('compression');
 const cors = require('cors');
+const { corsDelegate } = require('./middleware/corsOptions');
 const helmet = require('helmet');
 const fileUpload = require('express-fileupload');
 const path = require('path');
@@ -184,22 +185,9 @@ const isAllowedOrigin = (origin) => {
   return false;
 };
 
-// CORS: browsers send an Origin header; we enforce an allowlist for those.
-// Server-to-server callers (Stripe/Resend/Thumbtack webhooks, Render's health probe,
-// uptime pingers) send no Origin header — they authenticate via their own signature/secret,
-// not CORS — so we pass those through with no Access-Control-Allow-Origin header.
-app.use(cors((req, callback) => {
-  if (!req.headers.origin) {
-    return callback(null, { origin: false, credentials: false });
-  }
-  callback(null, {
-    origin: (origin, cb) => {
-      if (isAllowedOrigin(origin)) return cb(null, true);
-      cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-  });
-}));
+// CORS policy (allowlist for browser origins, pass-through for origin-less
+// server callers, exposed download headers) lives in middleware/corsOptions.js.
+app.use(cors(corsDelegate(isAllowedOrigin)));
 
 // Stripe webhook needs raw body — must be registered BEFORE express.json()
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
