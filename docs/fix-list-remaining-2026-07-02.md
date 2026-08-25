@@ -47,85 +47,47 @@ Ordered by how close each one is to actually costing money or a client.
 
 | # | what breaks | reachable today? |
 |---|---|---|
-| 1 | **$20 of review bounty is unpaid**, users 212 + 206 | **YES — verified in prod 8/23** |
-| 2 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
-| 2 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
-| 2 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
-| 2 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
-| 2 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
-| 2 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
-| 2 | Deselecting a contracted syrup shaves the negotiated contract | no (0 such rows) |
-| 2 | A forfeited retainer leaks into a second cancellation's refund cap | yes, on a re-cancel |
-| 2 | Free-text invoice labels netted out → under-refund | the moment prop 547's $100 is paid |
-| 2 | A cancel-line destroys the marker two money readers depend on | no (only paid extras invoice is locked) |
-| 2 | `additional-bartender` latches at 2x | no — trigger is a `minimum_hours` on that row |
-| 2 | The webhook sets `amount_paid` without checking what Stripe captured | yes |
-| 2 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
-| 2 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (0 mandates in prod) |
-| 3 | **The staff Pay screen prints the wrong day off `paid_at`** | **YES — and a prior note wrongly said this was fixed** |
-| 3 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
-| 3 | Un-archiving a swept proposal re-archives it within the hour | **yes** |
-| 3 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
-| 3 | The client portal offers "Review & book" on a link that now 404s | **yes, since 2026-08-25** |
-| 3 | The planner quotes pre-batched at a rate it does not bill | **yes** |
-| 3 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
-| 3 | A client's line item renames itself on a no-op fold | yes |
-| 3 | The compare card jumps on the client's first tap | no (0 affected rows) |
-| 3 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
-| 3 | Signed documents do not say who is covered | yes — **blocked on the broker** |
-| 4 | **Every due message in a batch can be dropped, on ~3% of deploys** | **yes, every deploy is a roll** |
-| 4 | Two dedupe guards are dropped and recreated on EVERY boot | **yes** |
-| 4 | "yes" and "cancel" are swallowed before any human sees them | **yes — 4 near-misses already** |
-| 4 | An unsubscribed lead can be resurrected by capitalisation | yes |
-| 4 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
-| 4 | CSV lead import loses rows and reports success | yes |
-| 4 | A caller can hit silence, or "an application error has occurred" | yes |
-| 4 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
-| 4 | A placed-but-carrier-failed lead call is a quiet miss | yes |
-| 5 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (0 overnight rosters) |
-| 6 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
-| 6 | Thumbtack first reply owes its next-real-lead proof | blocks trusting the pipeline |
+| 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
+| 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
+| 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
+| 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
+| 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
+| 1 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
+| 1 | Deselecting a contracted syrup shaves the negotiated contract | no (0 such rows) |
+| 1 | A forfeited retainer leaks into a second cancellation's refund cap | yes, on a re-cancel |
+| 1 | Free-text invoice labels netted out → under-refund | the moment prop 547's $100 is paid |
+| 1 | A cancel-line destroys the marker two money readers depend on | no (only paid extras invoice is locked) |
+| 1 | `additional-bartender` latches at 2x | no — trigger is a `minimum_hours` on that row |
+| 1 | The webhook sets `amount_paid` without checking what Stripe captured | yes |
+| 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
+| 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (0 mandates in prod) |
+| 2 | **The staff Pay screen prints the wrong day off `paid_at`** | **YES — and a prior note wrongly said this was fixed** |
+| 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
+| 2 | Un-archiving a swept proposal re-archives it within the hour | **yes** |
+| 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
+| 2 | The client portal offers "Review & book" on a link that now 404s | **yes, since 2026-08-25** |
+| 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
+| 2 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
+| 2 | A client's line item renames itself on a no-op fold | yes |
+| 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
+| 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
+| 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
+| 3 | **Every due message in a batch can be dropped, on ~3% of deploys** | **yes, every deploy is a roll** |
+| 3 | Two dedupe guards are dropped and recreated on EVERY boot | **yes** |
+| 3 | "yes" and "cancel" are swallowed before any human sees them | **yes — 4 near-misses already** |
+| 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
+| 3 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
+| 3 | CSV lead import loses rows and reports success | yes |
+| 3 | A caller can hit silence, or "an application error has occurred" | yes |
+| 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
+| 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
+| 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (0 overnight rosters) |
+| 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
+| 5 | Thumbtack first reply owes its next-real-lead proof | blocks trusting the pipeline |
 
 ---
 
-## 1. Money owed right now
-
-### $20 of review bounty is unpaid, and the window to fix it closes 2026-08-24
-
-**VERIFIED AGAINST PROD 2026-08-23** (`round-tooth-34649976` / `br-noisy-frog-ad99sa6l`), not
-taken on report. Two confirmed five-star reviews carry credits and no money:
-
-| review | source | credited | owed |
-|---|---|---|---|
-| 1 | thumbtack | user 212 (tasheas@yahoo.com) | $10.00 |
-| 2 | google | user 206 (mariahhenderson99@gmail.com) | $10.00 |
-
-`SELECT count(*) FROM payout_duty_lines WHERE kind='review_bounty'` returns **0**. No line, not
-even a tombstone. `review_contest` is 0 too.
-
-**What changed since this was last written, and it matters:** a pay period covering today now
-EXISTS and is **open** (ends 2026-08-24). When this was recorded on 8/20 there was no period row
-at all, which is why both confirms returned null. The blocker has lifted on its own, and the
-money can land right now — but only by accident, because **nothing calls the catch-up except the
-next review confirm.**
-
-Root cause: `POST /admin/staff-reviews/:id/confirm` materializes the $10 line only when
-`findOpenPeriodForDate` finds an `open` period containing today. Rows are minted lazily by
-accrual, so a review confirmed into a gap returns `materialized: 0` and parks.
-`materializePendingReviewLines` exists (`dutyLines.js:549`) and has exactly ONE caller,
-`staffReviews.js:489` — the next confirm. Verified: zero callers in `payrollAccrual.js`.
-
-Fix: call `materializePendingReviewLines(client)` inside the accrual transaction right after
-`ensurePayPeriod` returns a newly-open period. Money path — its own lane, full fleet, not a
-ride-along on anything.
-
-Second, smaller gap found while verifying: `staff_reviews` has no `confirmed_at` column. Confirm
-is the state change that triggers a money write and it leaves no timestamp, so the moment a
-bounty became owed is unreconstructable. Add it on the next touch of this path.
-
----
-
-## 2. Money paths that produce a wrong number
+## 1. Money paths that produce a wrong number
 
 **Read this first — it is the root cause of the two entries beneath it.** An invoice does not
 record whether its money is inside `proposals.total_price`. Every classifier is therefore a
@@ -311,7 +273,7 @@ its own small lane.
 
 ---
 
-## 3. Wrong on a surface a client is looking at
+## 2. Wrong on a surface a client is looking at
 
 ### The staff Pay screen prints the wrong day, and the note saying this was fixed is wrong
 
@@ -459,7 +421,7 @@ client who was always going to hand a bartender $60 in cash never opens either o
 
 ---
 
-## 4. Messages that vanish, double, or reach the wrong person
+## 3. Messages that vanish, double, or reach the wrong person
 
 ### Every due message in a batch can be permanently dropped on ~3% of deploys
 
@@ -569,7 +531,7 @@ nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 
 ---
 
-## 5. Staff-facing
+## 4. Staff-facing
 
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
 
@@ -592,7 +554,7 @@ money-adjacent, so this gets the full fleet.
 
 ---
 
-## 6. Gates blocking a prod run
+## 5. Gates blocking a prod run
 
 ### `applyPackageLineup2026` cannot run yet — two gates open
 
@@ -644,6 +606,13 @@ here by default.
 
 ## Money and payroll (internal correctness)
 
+- **The review-bounty catch-up never runs at period open.** `materializePendingReviewLines`
+  (`dutyLines.js:549`) has two callers: the next review confirm (`staffReviews.js:489`) and the
+  manual `scripts/backfill-duty-lines.js`. Nothing calls it when accrual opens a period, so a
+  review confirmed into a gap parks until someone confirms another review or runs that script by
+  hand. Fix: call it inside the accrual transaction once `ensurePayPeriod` returns a newly-open
+  period. Money path, so its own lane. While in there, `staff_reviews` has no `confirmed_at`
+  column, so the moment a bounty became owed is unreconstructable; add it on the same touch.
 - **Payment history has no admin UI.** No way to see individual payments on a proposal; the panel
   shows totals only and `proposal_payments` rows are never listed. Shape: `GET /api/proposals/:id/payments`
   plus a compact table in `ProposalDetailPaymentPanel.js` (date, amount, type, method, status).
