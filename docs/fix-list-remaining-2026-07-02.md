@@ -1088,31 +1088,6 @@ the accented spelling) or the two spellings stop matching each other.
 
 ---
 
-- **The UTC-vs-Chicago day slice is still live on ten other admin surfaces.** Fixed 2026-08-25 on the
-  proposals dashboard `Sent` and `Last viewed` columns, which read "Tomorrow" for anything that
-  happened at or after 19:00 Chicago (18:00 CST). 77 of 313 prod rows were showing the wrong day in
-  `Sent` and 63 of 279 in `Last viewed`, and the shift is permanent, not just overnight: an evening
-  send reads "4d ago" on day five forever. Root cause is `String(ts).slice(0, 10)` on a TIMESTAMPTZ,
-  which yields the **UTC** calendar day, not the business one. `components/adminos/format.js` now
-  exports `ctDay` (moment to Chicago `YYYY-MM-DD`) and `relDayTs` (Chicago-keyed on both sides of the
-  comparison), covered by `format.test.js`. Do NOT sweep date-ONLY columns into this: `event_date`,
-  `arrival_date` and `balance_due_date` are DATE, and `relDay`/`fmtDate`/`fmtDateFull` are already
-  right for them. Moments still going through the slice, each off by one after 19:00 Chicago:
-
-  | call site | field | shows as |
-  |---|---|---|
-  | `EventDetailPage.js:638` | `a.created_at` (proposal_activity_log) | relative day, can print "Tomorrow" |
-  | `ProposalDetail.js:595` | `proposal.client_signed_at` | wrong calendar date |
-  | `ClientsDashboard.js:228` | `c.created_at` | wrong calendar date |
-  | `ClientDetail.js:195` | `client.created_at` | wrong calendar date |
-  | `userDetail/AdminUserDetail.js:385` | `user.created_at` | wrong calendar date |
-  | `DrinkPlanDetail.js:236, 248` | `submitted_at`, `consult_filled_at` | wrong calendar date |
-  | `userDetail/tabs/DocumentsTab.js:23, 98` | `agreement.signed_at` | wrong calendar date |
-  | `StripePayoutsTab.js:116, 130, 152, 197` | `available_on` x2, `last_synced_at`, `created_at_stripe` | wrong calendar date |
-  | `overview/RangeTables.js:150` | `pp.created_at` (proposal_payments) | wrong calendar date |
-  | `BlogDashboard.js:337, 338` | `post.published_at`, `post.created_at` | wrong calendar date |
-
-
 ## Platform, schema, and test gates
 
 - **Two server suites cannot pass between roughly midnight and 05:00 Chicago, and one leaves FK
