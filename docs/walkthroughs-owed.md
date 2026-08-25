@@ -1553,7 +1553,9 @@ to rot. Do that again for the next thing that sits here.
 
       The walk, which IS the launch gate: confirm the Cal.com event type's minimum booking notice
       allows a slot a few minutes out, lowering it for the test if not. Book a slot on your own
-      Cal.com page with the 970 as the number. Expect the 312 to ring between 90 and 30 seconds
+      Cal.com page with a phone that is NOT his own cell and is NOT the 312, which forwards to it:
+      `ADMIN_PHONE` is the 970 itself, so both legs otherwise land on one handset. Zul's line is the
+      easy answer, since she is already in the loop. Expect the 970 to ring between 90 and 30 seconds
       before the slot; the briefing should speak your own name, the slot time, and the linked
       proposal's event date and guest count. Press 1. The 970 should ring showing the **1922**, with
       two-way audio. Then check the row:
