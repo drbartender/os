@@ -1020,6 +1020,20 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **The event-detail activity timeline still reads the UTC day, not the Chicago day.**
+  `EventDetailPage.js:638` does `relDay(String(a.created_at).slice(0, 10))` on
+  `proposal_activity_log.created_at`, a TIMESTAMPTZ. Anything logged at or after 19:00 Chicago
+  serialises with tomorrow's date, so it renders "Tomorrow" on the day it happened. This is the
+  same defect the proposals dashboard fixed on 2026-08-25, and `format.js` now explicitly names
+  "activity created_at" as a moment that must not take that path, so the doc describes a rule this
+  call site breaks. One line: `relDayTs(a.created_at)`. Display only.
+- **Compare stays lit when the prior window is refused.** `RevenueChartCard.js` gates the toggle on
+  `disabled={allTime}` and never consults `priorWindow`, so a bounded range whose prior start
+  predates the 2000 floor (e.g. from 2010 on a wide range) keeps Compare clickable, adds a dashed
+  "Prior" legend chip, and draws nothing with no explanation. Strictly better than the 400 it used
+  to fire, so cosmetic. Either fix the comment in `metricsQueries.js` (which claims the toggle
+  disables itself on null) or make it `disabled={allTime || !priorWindow}`.
+
 - **267 AA contrast failures across 26 surface/skin combinations, collapsing to about 20 root colour
   pairs** — plus 80 nodes the harness cannot measure. Seven hit ALL THIRTEEN surfaces, so they are
   token-level. Run `npm run palette:contrast`; detail lands in the gitignored
@@ -1159,6 +1173,30 @@ the accented spelling) or the two spellings stop matching each other.
 
 
 ## Platform, schema, and test gates
+
+- **Two server suites cannot pass between roughly midnight and 05:00 Chicago, and one leaves FK
+  debris.** Both reproduce identically on the deployed baseline, so neither is a regression; both
+  were confirmed against `origin/main` on 2026-08-25 at 04:36 Chicago.
+  - `shifts.visibility.endInstant.test.js` fails its `before()` premise, cascading all 6 tests.
+    The `ended` fixture is built as `GREATEST(now - 30 min, midnight + 1 min)`, so in the small
+    hours it becomes a shift dated today ending at e.g. 04:06 with no `start_time`; the overnight
+    handling in `shiftEndInstant.js` then reads that as ending TOMORROW morning and the fixture is
+    classified unfinished. The product rule is right, the fixture is unsound at night. Fix: seed
+    the `ended` fixture on the PREVIOUS Chicago day when `now` is early enough that
+    `now - 30 min` lands before the overnight cutoff, rather than clamping to today's midnight.
+  - `shifts.withdraw.test.js` fails 1 of 11 on teardown ordering:
+    `payouts_pay_period_id_fkey`, deleting a `pay_periods` row while a `payouts` row still
+    references it. Delete the payout first, or cascade in the fixture cleanup.
+- **`pricingSnapshot`'s legacy-shape breadcrumb accumulates on the ROOT isolation scope.** Shipped
+  2026-08-25 in the Sentry-noise pass. In `@sentry/node` v8+, `addBreadcrumb` writes to the
+  isolation scope; HTTP requests get a per-request fork, but scheduler code (the 60s message
+  dispatcher, the hourly balance/duty/accrual runs) has no fork and writes to the root scope,
+  which is never reset for the process lifetime. `maxBreadcrumbs` is unset, so the default 100
+  fills with identical `legacy snapshot without _version` entries; worse, the OTEL request fork
+  CLONES the isolation scope, so those 100 useless entries then ride along on unrelated request
+  errors. That is precisely the outcome the change's own comment says it prevents. Not a
+  correctness bug, nothing moves. Fix: skip the breadcrumb (or keep a cheap throttle) when there
+  is no active request isolation scope. Removing the throttle was right for the request path.
 
 - **20 bare `DROP CONSTRAINT` + `ADD CONSTRAINT` pairs run as two autocommit statements**, so a
   failed ADD commits an ABSENT constraint. `email_sends_recipient_check` and the three tip FKs rank
