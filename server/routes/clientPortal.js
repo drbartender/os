@@ -5,6 +5,13 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError } = require('../utils/errors');
 const { PROPOSAL_SUMMARY_COLUMNS, shapeFocus } = require('./clientPortal/summary');
 const { requireUuidToken } = require('../utils/tokens');
+const { chicagoTodayYmd } = require('../utils/businessTime');
+
+// Injection seam for the business day — see staffPortal.js. The UTC and
+// Chicago days agree for about 19 hours a day, so without this a boundary
+// fixture is green for most of the day no matter what the code does.
+let _deps = { today: chicagoTodayYmd };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 const router = express.Router();
 
@@ -50,11 +57,23 @@ router.get('/home', asyncHandler(async (req, res) => {
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.client_id = $1 AND p.status <> 'archived' AND p.status <> 'completed'`;
+  // ONE Chicago business day for all three date compares below. They are
+  // COMPLEMENTS — >= today is the client's focus card and their upcoming count,
+  // < today drops the event into the archive list — so they must be measured
+  // against the same value or an event can land in both buckets or neither.
+  //
+  // Not CURRENT_DATE: the Postgres session runs at GMT, so from 19:00 Chicago
+  // it is already tomorrow there and the client's event happening TONIGHT
+  // disappeared from their portal into the archive, five hours before it
+  // started. A calendar day is the right question here (not the shift end
+  // instant that governs the STAFF roster): a client's event stays "upcoming"
+  // until the business day it falls on is over.
+  const today = _deps.today();
   const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
-    pool.query(`${focusSelect} AND p.event_date >= CURRENT_DATE ${BOOKED_FIRST}`, [clientId]),
+    pool.query(`${focusSelect} AND p.event_date >= $2::date ${BOOKED_FIRST}`, [clientId, today]),
     pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId]),
     pool.query(`SELECT COUNT(*)::int AS n FROM proposals
-                WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= CURRENT_DATE`, [clientId]),
+                WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= $2::date`, [clientId, today]),
     // Archive is bounded (LIMIT 50) so the landing payload can't grow without
     // limit for a repeat client; if one ever exceeds it, back the dedicated
     // /my-proposals/archive route with a paged endpoint.
@@ -63,8 +82,8 @@ router.get('/home', asyncHandler(async (req, res) => {
                 FROM proposals p WHERE p.client_id = $1 AND (
                   p.status = 'completed'
                   OR (p.status = 'archived' AND p.archive_reason = 'event_completed')
-                  OR (p.status IN ('deposit_paid','balance_paid','confirmed') AND p.event_date < CURRENT_DATE))
-                ORDER BY p.event_date DESC NULLS LAST LIMIT 50`, [clientId]),
+                  OR (p.status IN ('deposit_paid','balance_paid','confirmed') AND p.event_date < $2::date))
+                ORDER BY p.event_date DESC NULLS LAST LIMIT 50`, [clientId, today]),
     pool.query(`SELECT EXISTS(SELECT 1 FROM quote_drafts WHERE LOWER(email) = LOWER($1) AND status = 'draft') AS has`, [email]),
   ]);
   const focusRow = dated.rows[0] || nullDraft.rows[0] || null;
@@ -152,3 +171,4 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
 router.use('/', require('./clientPortal/changeRequests'));
 
 module.exports = router;
+module.exports.__setDeps = __setDeps;

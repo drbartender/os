@@ -5,6 +5,11 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { accruePayoutsForProposal } = require('./payrollAccrual');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('./autopayDurableCharge');
+const { chicagoTodayYmd } = require('./businessTime');
+
+// Injection seam for the business day — see routes/staffPortal.js.
+let _deps = { today: chicagoTodayYmd };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 // Rate-limit the no-stripe-client alert so Sentry isn't spammed every cycle.
 let stripeUnavailableLastLog = 0;
@@ -40,7 +45,12 @@ async function processAutopayCharges() {
       SET autopay_status = 'in_progress', autopay_attempted_at = NOW()
       WHERE status = 'deposit_paid'
         AND autopay_enrolled = true
-        AND balance_due_date <= CURRENT_DATE
+        -- $1 is the Chicago business day, NOT CURRENT_DATE. The session runs at
+        -- GMT, so CURRENT_DATE is already tomorrow from 19:00 Chicago: a balance
+        -- due TOMORROW was selected and charged TONIGHT, a real card charge up to
+        -- five hours before the date the client agreed to. Binding the business
+        -- day can only ever move a charge LATER, never earlier.
+        AND balance_due_date <= $1::date
         AND stripe_customer_id IS NOT NULL
         AND stripe_payment_method_id IS NOT NULL
         AND (
@@ -50,7 +60,7 @@ async function processAutopayCharges() {
         )
       RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
                 event_type, event_type_custom, balance_due_date
-    `);
+    `, [_deps.today()]);
 
     if (result.rows.length === 0) return;
 
@@ -277,4 +287,4 @@ async function processEventCompletions() {
   }
 }
 
-module.exports = { processAutopayCharges, processEventCompletions };
+module.exports = { processAutopayCharges, processEventCompletions, __setDeps };

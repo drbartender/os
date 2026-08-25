@@ -11,6 +11,7 @@ const {
   normalizeBooker,
 } = require('../utils/calcomWebhookHelpers');
 const { consultCallTail } = require('../utils/consultCallChain');
+const { chicagoTodayYmd } = require('../utils/businessTime');
 
 let Sentry = null;
 try { Sentry = require('@sentry/node'); } catch (_) { /* optional in dev */ }
@@ -230,9 +231,9 @@ async function handleCreated(payload, res, opts) {
           const created = await client.query(
             `INSERT INTO clients (name, email, phone, source, notes)
              VALUES ($1, $2, $3, 'calcom',
-                     'Auto-created from Cal.com consult booking on ' || CURRENT_DATE::text)
+                     'Auto-created from Cal.com consult booking on ' || $4::text)
              RETURNING id`,
-            [name, email, phone]
+            [name, email, phone, chicagoTodayYmd()]
           );
           await client.query('RELEASE SAVEPOINT clients_insert');
           clientId = created.rows[0].id;
@@ -280,9 +281,9 @@ async function handleCreated(payload, res, opts) {
         const created = await client.query(
           `INSERT INTO clients (name, email, phone, source, notes)
            VALUES ($1, NULL, $2, 'calcom',
-                   'Auto-created from Cal.com consult booking (no email) on ' || CURRENT_DATE::text)
+                   'Auto-created from Cal.com consult booking (no email) on ' || $3::text)
            RETURNING id`,
-          [name, phone]
+          [name, phone, chicagoTodayYmd()]
         );
         clientId = created.rows[0].id;
         createdClientInThisTx = true;
@@ -296,9 +297,9 @@ async function handleCreated(payload, res, opts) {
       const created = await client.query(
         `INSERT INTO clients (name, email, phone, source, notes)
          VALUES ($1, NULL, NULL, 'calcom',
-                 'Auto-created from Cal.com consult booking (no email, no phone) on ' || CURRENT_DATE::text)
+                 'Auto-created from Cal.com consult booking (no email, no phone) on ' || $2::text)
          RETURNING id`,
-        [name]
+        [name, chicagoTodayYmd()]
       );
       clientId = created.rows[0].id;
       createdClientInThisTx = true;

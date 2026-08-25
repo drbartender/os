@@ -1,4 +1,5 @@
 const { pool } = require('../db');
+const { chicagoTodayYmd } = require('./businessTime');
 
 /**
  * Event types that qualify for the T+11mo retention nudge.
@@ -152,9 +153,13 @@ async function clientHasUpcomingEvent(clientId, excludingProposalId) {
      WHERE client_id = $1
        AND id != $2
        AND status != 'archived'
-       AND event_date >= CURRENT_DATE
+       -- $3 is the Chicago business day, not CURRENT_DATE (GMT session zone).
+       -- From 19:00 Chicago a client whose next event is TOMORROW still read as
+       -- having one, but a client whose event is TONIGHT read as having none,
+       -- so the retention nudge could fire at someone who is booked today.
+       AND event_date >= $3::date
      LIMIT 1`,
-    [clientId, excludingProposalId]
+    [clientId, excludingProposalId, chicagoTodayYmd()]
   );
   return rows.length > 0;
 }

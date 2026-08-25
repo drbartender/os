@@ -1,10 +1,12 @@
 const { pool } = require('../db');
 const { autoAssignShift } = require('./autoAssign');
 const { getEventTypeLabel } = require('./eventTypes');
+const { chicagoTodayYmd } = require('./businessTime');
 
 /**
  * Process scheduled auto-assign for shifts approaching their event date.
- * Finds shifts where event_date - auto_assign_days_before <= today
+ * Finds shifts where event_date - auto_assign_days_before <= today (the
+ * Chicago business day, bound as a parameter)
  * and auto_assigned_at IS NULL, then runs the auto-assign algorithm.
  *
  * Runs hourly via setInterval in server/index.js.
@@ -18,9 +20,13 @@ async function processScheduledAutoAssigns() {
       WHERE s.status = 'open'
         AND s.auto_assign_days_before IS NOT NULL
         AND s.auto_assigned_at IS NULL
-        AND s.event_date - (s.auto_assign_days_before * INTERVAL '1 day') <= CURRENT_DATE
+        -- $1 is the Chicago business day, not CURRENT_DATE: the session runs at
+        -- GMT, so from 19:00 Chicago the window opened a day early and the
+        -- scheduler auto-assigned staff to a shift the evening before it was due
+        -- to be filled.
+        AND s.event_date - (s.auto_assign_days_before * INTERVAL '1 day') <= $1::date
         AND (p.id IS NULL OR p.status != 'archived')
-    `);
+    `, [chicagoTodayYmd()]);
 
     if (result.rows.length === 0) return;
 

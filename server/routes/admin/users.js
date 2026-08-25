@@ -15,6 +15,7 @@ const { seedContractorProfileFromApplication } = require('../../utils/contractor
 const { refreshDisplayName } = require('../../utils/refreshDisplayName');
 const { validatePreferredNameChange } = require('../../utils/staffDisplayName.validate');
 const { writeActivityBestEffort, writeInterviewNoteBestEffort } = require('../../utils/activityLog');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
 
 const router = express.Router();
 
@@ -184,19 +185,21 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
           // hire_date if one was already set (re-hire or status-toggle case).
           await seedContractorProfileFromApplication(client, req.params.id, existing.rows[0]?.hire_date || null);
         } else {
-          // No application on file (rare — direct admin hire) — just ensure a skeleton row with hire_date
+          // No application on file (rare — direct admin hire) — just ensure a skeleton row with hire_date.
+          // $2 (the Chicago business day), never CURRENT_DATE: the session runs at
+          // GMT, so an evening hire stamped tomorrow's date. See contractorSeed.js.
           await client.query(`
             INSERT INTO contractor_profiles (user_id, hire_date)
-            VALUES ($1, CURRENT_DATE)
-            ON CONFLICT (user_id) DO UPDATE SET hire_date = COALESCE(contractor_profiles.hire_date, CURRENT_DATE)
-          `, [req.params.id]);
+            VALUES ($1, $2::date)
+            ON CONFLICT (user_id) DO UPDATE SET hire_date = COALESCE(contractor_profiles.hire_date, $2::date)
+          `, [req.params.id, chicagoTodayYmd()]);
         }
       } else {
         // Contractor has already filled in their profile — only ensure hire_date is set
         await client.query(`
-          UPDATE contractor_profiles SET hire_date = COALESCE(hire_date, CURRENT_DATE)
+          UPDATE contractor_profiles SET hire_date = COALESCE(hire_date, $2::date)
           WHERE user_id = $1
-        `, [req.params.id]);
+        `, [req.params.id, chicagoTodayYmd()]);
       }
     }
 
@@ -586,8 +589,12 @@ router.get('/users/:id/seniority', auth, requireAdminOrManager, asyncHandler(asy
       SELECT COUNT(*) AS events_worked
       FROM shift_requests sr
       JOIN shifts s ON s.id = sr.shift_id
-      WHERE sr.user_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.event_date < CURRENT_DATE
-    `, [userId])
+      -- $2 is the Chicago business day, not CURRENT_DATE (GMT session zone), so
+      -- tonight's shift does not count as worked before it happens. Documented
+      -- mirror of the events-worked count in server/utils/autoAssign.js; the two
+      -- feed the same ranking and must not disagree.
+      WHERE sr.user_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.event_date < $2::date
+    `, [userId, chicagoTodayYmd()])
   ]);
 
   const profile = profileRes.rows[0] || {};

@@ -24,6 +24,7 @@ const { readSnapshot } = require('./pricingSnapshot');
 // definition lives in ./proposalMoneyShared (shared with refundHelpers.js
 // applyRefundReconciliation — same classification, same reason).
 const { CONTRACT_LABELS } = require('./proposalMoneyShared');
+const { chicagoTodayYmd } = require('./businessTime');
 
 // HOLD semantics for the roster sweeps (fix #4, 2026-07-13; reworked to
 // structural state after review; extended to negative-adjustment wage lines
@@ -706,8 +707,13 @@ async function maybeReaccrueForDuty(proposalId) {
   const { rows } = await pool.query(
     `SELECT 1 FROM proposals
       WHERE id = $1 AND status = 'completed'
-        AND event_date >= (CURRENT_DATE - INTERVAL '21 days')`,
-    [proposalId]
+        -- $2 is the Chicago business day, not CURRENT_DATE (GMT session zone).
+        -- The guard is deliberately generous, so the practical effect is small,
+        -- but it errs in the right direction: measured on the business day the
+        -- window stays open a few hours longer on an evening, which re-accrues
+        -- rather than silently skipping a contractor's duty lines.
+        AND event_date >= ($2::date - INTERVAL '21 days')`,
+    [proposalId, chicagoTodayYmd()]
   );
   if (!rows.length) return { skipped: true, reason: 'not_recent_completed' };
   return accruePayoutsForProposal(proposalId);

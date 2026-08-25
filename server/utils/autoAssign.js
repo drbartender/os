@@ -12,6 +12,7 @@ const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
 const { canonicalizeRole } = require('./staffingRoles');
 const { scheduleStaffShiftMessages } = require('./staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
+const { chicagoTodayYmd } = require('./businessTime');
 
 // ─── Haversine distance (miles) ──────────────────────────────────
 
@@ -198,9 +199,13 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     WHERE sr.user_id = ANY($1)
       AND sr.status = 'approved'
       AND sr.dropped_at IS NULL
-      AND s.event_date < CURRENT_DATE
+      -- $2 is the Chicago business day, not CURRENT_DATE. The session runs at
+      -- GMT, so from 19:00 Chicago TONIGHT's shift already counted as an event
+      -- the candidate had worked, inflating their ranking hours before they
+      -- poured anything. Mirrored by GET /users/:id/seniority.
+      AND s.event_date < $2::date
     GROUP BY sr.user_id
-  `, [userIds]);
+  `, [userIds, chicagoTodayYmd()]);
 
   const eventsMap = {};
   for (const row of eventsResult.rows) {

@@ -1,4 +1,11 @@
 const { refreshDisplayName } = require('./refreshDisplayName');
+const { chicagoTodayYmd } = require('./businessTime');
+
+// Injection seam for the business day. The UTC and Chicago days AGREE for about
+// 19 hours out of 24, so a clock-derived fixture proves nothing for most of the
+// day while staying green. Same shape as routes/staffPortal.js.
+let _deps = { today: chicagoTodayYmd };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 /**
  * Seed (or update) a contractor_profiles row from the user's applications row.
@@ -9,7 +16,9 @@ const { refreshDisplayName } = require('./refreshDisplayName');
  *
  * Idempotent: ON CONFLICT updates existing fields except hire_date, which is
  * preserved when already set (re-hire / status-toggle case). Pass `existingHireDate`
- * to keep an earlier hire date; pass null for a fresh hire (defaults to CURRENT_DATE).
+ * to keep an earlier hire date; pass null for a fresh hire (defaults to TODAY IN
+ * CHICAGO, bound as $3 — never SQL CURRENT_DATE, which resolves in the GMT
+ * session zone and stamps tomorrow's date on anyone hired after 19:00 Chicago).
  *
  * Must be called inside a transaction (caller owns the client).
  *
@@ -48,7 +57,7 @@ async function seedContractorProfileFromApplication(client, userId, existingHire
       a.basset_file_url, a.basset_filename,
       a.resume_file_url, a.resume_filename,
       a.headshot_file_url, a.headshot_filename,
-      COALESCE($2::date, CURRENT_DATE)
+      COALESCE($2::date, $3::date)
     FROM users u
     JOIN applications a ON a.user_id = u.id
     WHERE u.id = $1
@@ -98,10 +107,16 @@ async function seedContractorProfileFromApplication(client, userId, existingHire
       -- Preserve any existing hire_date over EXCLUDED. Callers pass the
       -- previous hire_date explicitly via $2 to keep re-hires anchored to
       -- the original date; if a caller forgets, fall back to the row's
-      -- existing value before defaulting to CURRENT_DATE. This makes the
-      -- helper internally robust against future misuse.
-      hire_date = COALESCE(EXCLUDED.hire_date, contractor_profiles.hire_date, CURRENT_DATE)
-  `, [userId, existingHireDate]);
+      -- existing value before defaulting to the Chicago business day. This
+      -- makes the helper internally robust against future misuse.
+      --
+      -- $3, not CURRENT_DATE: the Postgres session runs at GMT, so CURRENT_DATE
+      -- is already TOMORROW from 19:00 Chicago (18:00 in winter). Hiring a
+      -- contractor on a weekday evening stamped a hire_date one day in the
+      -- future, and hire_date is not cosmetic: it drives tenure and seniority
+      -- ordering (GET /users/:id/seniority), which decides roster priority.
+      hire_date = COALESCE(EXCLUDED.hire_date, contractor_profiles.hire_date, $3::date)
+  `, [userId, existingHireDate, _deps.today()]);
 
   // ONE call, here rather than in the callers. All three of them (the admin Hire
   // path, the pre-hired application submit, the register-with-application path)
@@ -117,4 +132,4 @@ async function seedContractorProfileFromApplication(client, userId, existingHire
   await refreshDisplayName(userId, client, { previousPreferredName: prevPreferredName });
 }
 
-module.exports = { seedContractorProfileFromApplication };
+module.exports = { seedContractorProfileFromApplication, __setDeps };
