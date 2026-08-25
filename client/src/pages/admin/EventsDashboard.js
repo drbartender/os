@@ -16,8 +16,9 @@ import useUrlListState from '../../hooks/useUrlListState';
 import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
-import { fmt$, fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
-import { parsePositionsCount, approvedCount, eventStatusChip, isCancelledEvent } from '../../components/adminos/shifts';
+import { fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
+import { parsePositionsCount, approvedCount, isCancelledEvent } from '../../components/adminos/shifts';
+import { eventPlanState, eventPaymentState } from '../../components/adminos/eventPlan';
 
 // URL-backed view state (tab / status filter). Kept at module scope so
 // the hook's default identity is stable. Back restores the exact list view.
@@ -26,16 +27,28 @@ const EVENT_TABS = ['upcoming', 'unstaffed', 'past', 'all'];
 
 // Sort accessors, one per sortable column. Text/date accessors return '' when
 // missing so the comparator can push blanks to the bottom; numeric accessors
-// return a number (missing => 0). Manual rows have no proposal_status, so they
-// read as blank and sort last on status in both directions like any other blank.
+// return a number (missing => 0).
+//
+// `status` sorts by MONEY OWED, not by proposal_status: the column stopped
+// being a lifecycle label when Total and Balance were dropped, and the useful
+// order is settled-first then smallest-debt-up. Cancelled and no-total rows
+// return '' so they land at the bottom like any other blank.
+//
+// `plan` sorts by who is blocked, your queue first, because the column exists
+// to answer "what do I owe" before anything else.
+const PLAN_SORT_RANK = { you: 0, client: 1, done: 2 };
 const EVENT_SORT_ACCESSORS = {
   event: e => (e.client_name || '').toLowerCase(),
   event_date: e => (e.event_date ? e.event_date.slice(0, 10) : ''),
   location: e => (typeof e.location === 'string' ? e.location.trim().toLowerCase() : ''),
   guests: e => Number(e.guest_count || e.proposal_guest_count || 0),
-  status: e => (e.proposal_status || ''),
-  total: e => Number(e.proposal_total || 0),
-  balance: e => Number(e.proposal_total || 0) - Number(e.proposal_amount_paid || e.amount_paid || 0),
+  plan: e => PLAN_SORT_RANK[eventPlanState(e).owner] ?? 3,
+  status: e => {
+    const s = eventPaymentState(e);
+    if (s.kind === 'paid') return 0;
+    if (s.kind === 'owed') return Number(e.proposal_total || 0) - Number(e.proposal_amount_paid || e.amount_paid || 0);
+    return '';
+  },
 };
 
 export default function EventsDashboard() {
@@ -193,9 +206,9 @@ export default function EventsDashboard() {
                 <SortableTh label="Location" sortKey="location" sort={sort} onSort={onSort} />
                 <SortableTh label="Guests" sortKey="guests" sort={sort} onSort={onSort} className="num" />
                 <th>Staffing</th>
+                <SortableTh label="Plan" sortKey="plan" sort={sort} onSort={onSort} />
+                <th>Prep</th>
                 <SortableTh label="Status" sortKey="status" sort={sort} onSort={onSort} />
-                <SortableTh label="Total" sortKey="total" sort={sort} onSort={onSort} className="num" />
-                <SortableTh label="Balance" sortKey="balance" sort={sort} onSort={onSort} className="num" />
                 <th />
               </tr>
             </thead>
@@ -256,13 +269,59 @@ export default function EventsDashboard() {
 // Memoized row — only re-renders when its event reference changes. Dispatch is
 // a stable callback from the parent, so list-state changes no longer rebuild
 // 5 closures × N rows.
+// Plan-cell chip colours carry the OWNER, the text carries what is owed:
+// grey = the ball is in the client's court, amber = yours, green = settled.
+const PLAN_CHIP_KIND = { client: 'neutral', you: 'warn', done: 'ok' };
+const PAY_CHIP_KIND = { paid: 'ok', owed: 'danger', cancelled: 'neutral' };
+
+// Bar and Supplies are FACTS about the event, not alarms, so they stay quiet
+// and dotless rather than competing with the Plan column's amber.
+function PrepCell({ event: e }) {
+  const tags = [];
+  if (e.bar_required) tags.push('Bar');
+  if (e.supply_run_required) tags.push('Supplies');
+  if (!tags.length) return <span className="muted">—</span>;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+      {tags.map(t => <StatusChip key={t} kind="neutral" dot={false}>{t}</StatusChip>)}
+    </div>
+  );
+}
+
+// Stacked rather than side by side: both deliverables unlock the moment the
+// planner or consult input lands, so "owes both" is the normal state and the
+// column has to stay narrow enough to live beside Staffing.
+function PlanCell({ event: e }) {
+  const { owner, tags } = eventPlanState(e);
+  if (!owner) return <span className="muted">—</span>;
+  if (owner === 'done') return <StatusChip kind="ok">Done</StatusChip>;
+  return (
+    <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
+      {tags.map(t => <StatusChip key={t} kind={PLAN_CHIP_KIND[owner]}>{t}</StatusChip>)}
+    </div>
+  );
+}
+
 const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   const [searchParams] = useSearchParams();
-  const total = Number(e.proposal_total || 0);
-  const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
-  const bal = total - paid;
   const guestCount = e.guest_count || e.proposal_guest_count;
-  const fullyPaid = total > 0 && paid >= total;
+  const pay = eventPaymentState(e);
+  const fullyPaid = pay.kind === 'paid';
+
+  // The package name earns a place only when it changes how the event runs.
+  // BYOB is ~9 in 10 bookings, so printing it on every row is wallpaper; a name
+  // here means hosted, which brings an included bar and a 1:100 staffing ratio.
+  const typeLabel = getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom });
+  const subline = [typeLabel, e.package_category === 'hosted' ? e.package_name : null]
+    .filter(Boolean).join(' · ');
+
+  // fmtDate is month+day only, which put three real 2027 bookings shoulder to
+  // shoulder with next month's. Show the year only when it is not this one, so
+  // the common row stays short.
+  const ymd = e.event_date ? e.event_date.slice(0, 10) : null;
+  const dateOpts = ymd && ymd.slice(0, 4) !== String(new Date().getFullYear())
+    ? { year: 'numeric' }
+    : undefined;
 
   const kebabItems = useMemo(() => [
     {
@@ -290,19 +349,21 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
         {e.proposal_id
           ? <RowLink to={`/events/${e.proposal_id}`}><strong>{e.client_name || 'Event'}</strong></RowLink>
           : <EntityLink to={drawerHref(searchParams, 'shift', e.id)}><strong>{e.client_name || 'Event'}</strong></EntityLink>}
-        <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
+        {subline && <div className="sub">{subline}</div>}
       </td>
       <td>
-        <div>{fmtDate(e.event_date && e.event_date.slice(0, 10))}</div>
+        <div>{fmtDate(ymd, dateOpts)}</div>
         <div className="sub">{e.start_time ? fmtTimeRange24(e.start_time, e.end_time, e.event_duration_hours) : '—'}</div>
       </td>
       <td className="muted">{(typeof e.location === 'string' && e.location.trim()) || '—'}</td>
       <td className="num">{guestCount || '—'}</td>
       <td><StaffingCell event={e} /></td>
-      <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>
-      <td className="num">{total > 0 ? <strong>{fmt$(total)}</strong> : '—'}</td>
-      <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
-        {bal > 0 ? fmt$(bal) : '—'}
+      <td><PlanCell event={e} /></td>
+      <td><PrepCell event={e} /></td>
+      <td>
+        {pay.kind === 'none'
+          ? <span className="muted">{pay.label}</span>
+          : <StatusChip kind={PAY_CHIP_KIND[pay.kind]}>{pay.label}</StatusChip>}
       </td>
       <td className="shrink" onMouseUp={(ev) => ev.stopPropagation()}>
         <KebabMenu items={kebabItems} />

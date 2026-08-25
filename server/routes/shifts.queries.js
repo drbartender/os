@@ -133,4 +133,57 @@ const USER_EVENTS_SQL = `
   ORDER BY s.event_date DESC LIMIT 500
 `;
 
-module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql };
+// ─── Admin events-list "Plan" column (2026-08-25) ──────────────────────────
+// Three facts the admin feed did not carry, feeding client/src/components/
+// adminos/eventPlan.js. Kept here rather than inline because shifts.js sits
+// against its 700-line soft cap.
+//
+// shopping_list_status is the ENTIRE client-input signal, deliberately without
+// drink_plans.status beside it: the Plan column collapses pending and draft into
+// one "Planner" state, so the plan's own status adds nothing. The list is
+// generated server-side the instant a planner is submitted or an admin fills the
+// consult form, which makes a NULL here mean "neither has happened" and
+// 'pending_review' mean "generated, waiting on ADMIN approval" (approval is what
+// makes it visible to the client; it is a handoff, not a formality). Verified in
+// prod: the column is non-null exactly when a list exists, save one legacy
+// 'reviewed' plan predating it.
+//
+// LATERAL, not the plain LEFT JOIN the staff feed uses: drink_plans.proposal_id
+// carries an index but NO unique constraint, so a second plan on one proposal
+// would silently DUPLICATE THE EVENT ROW in this list. Prod holds at most one
+// per proposal today, so this is a guard against a shape the schema permits
+// rather than a bug being fixed. The staff feed's plain join carries the same
+// latent fan-out and is left alone here.
+const planQueueSql = {
+  // Newest plan wins, matching the LATERAL guard's intent if a second ever lands.
+  drinkPlanJoin: `
+      LEFT JOIN LATERAL (
+        SELECT dp.shopping_list_status
+          FROM drink_plans dp
+         WHERE dp.proposal_id = s.proposal_id
+         ORDER BY dp.id DESC LIMIT 1
+      ) dpl ON true`,
+  // The GOVERNING consult: latest scheduled wins, so a rebooking supersedes the
+  // slot it replaced. Cancelled ones are excluded so a called-off meeting cannot
+  // read as "waiting on the consult" forever. The other three statuses are dead
+  // data (all prod rows read 'scheduled'; none has ever transitioned), so the
+  // client can only judge a consult by whether its date has passed.
+  consultJoin: `
+      LEFT JOIN LATERAL (
+        SELECT k.scheduled_at
+          FROM consults k
+         WHERE k.proposal_id = s.proposal_id AND k.status <> 'cancelled'
+         ORDER BY k.scheduled_at DESC LIMIT 1
+      ) cns ON true`,
+  // menu_done mirrors AdminMenuPrintBlock's deriveStatus: an uploaded print key
+  // and an explicit not-required flag both count as settled. Projected as a
+  // boolean because the list needs the fact, never the R2 object key.
+  select: `
+        dpl.shopping_list_status,
+        cns.scheduled_at AS consult_at,
+        (p.menu_print_key IS NOT NULL OR COALESCE(p.menu_not_required, false)) AS menu_done,
+        spk.category AS package_category,
+        spk.name AS package_name`,
+};
+
+module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql };

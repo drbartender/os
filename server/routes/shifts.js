@@ -23,7 +23,7 @@ const {
   releaseOutOfAreaLock,
   reaccrueDutyForProposal,
 } = require('../utils/serviceArea');
-const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql } = require('./shifts.queries');
+const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql } = require('./shifts.queries');
 // Request -> approval money seam extracted to keep this file under the 1000-line
 // hard cap. shifts.js still owns the route table + shared middleware; the bulky
 // handler bodies (and position resolution) live in shifts.approval.js.
@@ -195,12 +195,13 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
            FROM shift_requests psr
            JOIN users pu ON pu.id = psr.user_id
            LEFT JOIN contractor_profiles pcp ON pcp.user_id = psr.user_id
-          WHERE psr.shift_id = s.id AND psr.status = 'pending') AS pending_staff
+          WHERE psr.shift_id = s.id AND psr.status = 'pending') AS pending_staff,
+${planQueueSql.select}
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN service_packages spk ON spk.id = p.package_id
-      LEFT JOIN clients c ON c.id = p.client_id
+      LEFT JOIN clients c ON c.id = p.client_id${planQueueSql.drinkPlanJoin}${planQueueSql.consultJoin}
       LEFT JOIN LATERAL (
         SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
                COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,
