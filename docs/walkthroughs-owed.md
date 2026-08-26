@@ -1580,8 +1580,11 @@ to rot. Do that again for the next thing that sits here.
       So BOTH branches of `callerIdFor` are proven against real traffic: the 1922 when Dallas
       presses 1, the 0082 when Zul does.
       **Since that merge the ring budget changed: `dialCap()` (`413eca09`, merged 2026-08-25,
-      LIVE since the 2026-08-26 push) caps rings at the 312 at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
-      by default, counted over EVERY attempt row including cancelled ones.** That is ample for a
+      LIVE since the 2026-08-26 push) caps rings at `ADMIN_PHONE` at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
+      by default, counted over EVERY attempt row including cancelled ones.** Named as the variable
+      on purpose: which handset that is has been written down wrong three times, as the 312,
+      when Twilio's log shows the agent legs going to the 970. `ADMIN_PHONE` is unset on the dev
+      box, so only Render's env settles it. That is ample for a
       launch call, but a book-cancel-rebook rehearsal loop now spends real budget, and a trip
       files `skipped_cap`/`dial_cap_tripped` and emails once per rolling window. If the phone
       stops ringing mid-rehearsal, check that before suspecting the bridge.
