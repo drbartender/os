@@ -346,15 +346,18 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
   ```
   ```sql
   -- consultCallsForClient(clientId)
+  -- AMENDED: a.consult_id rides along as the STABLE LIST KEY. S4 renders one line per row and
+  -- needs a key that is not scheduled_at, since two consults for one client can share a slot.
   SELECT * FROM (
     SELECT DISTINCT ON (a.consult_id)
-           a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail,
+           a.consult_id, a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail,
            a.client_no_answer_at
       FROM consults c
       JOIN consult_call_attempts a ON a.consult_id = c.id
      WHERE c.client_id = $1
      ORDER BY a.consult_id, a.id DESC
-  ) t ORDER BY scheduled_at DESC LIMIT 10
+  ) t ORDER BY scheduled_at DESC, consult_id DESC LIMIT 10   -- tiebreaker: without it the order
+  -- of two rows sharing a slot is undefined and the list can reshuffle between requests
   ```
   `proposals/getOne.js`: add to the `Promise.all`, attach `consult_call: row || null`.
   `clients.js` `GET /:id`: add to the `Promise.all`, attach `consult_calls: rows`.
@@ -389,7 +392,8 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
   Test file covers every branch above.
   `ProposalDetail.js` is **975 lines against a 1000-line hard cap**, so: the import plus ONE
   `<dt>/<dd>` pair under the existing `Lead call` line, nothing else. `ClientDetail.js`: one pair per
-  `client.consult_calls` row in the Lifetime card's `<dl>`, keyed by `scheduled_at`.
+  `client.consult_calls` row in the Lifetime card's `<dl>`, **keyed by `consult_id`, not by
+  `scheduled_at`**: two consults for one client can share a slot, and a slot is not an identity.
   Client build gate `cd client && CI=true npx react-scripts build`.
   **Manual walk on dev, recorded in the commit body:** seed a `failed` consult attempt on a future
   consult and see it in the Sales tab, click through; seed a `connected` row with
