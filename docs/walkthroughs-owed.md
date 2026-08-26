@@ -1547,8 +1547,8 @@ carried the check rather than a marker:
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
 
-- [ ] **An opt keyword now alerts a human. Merged 2026-08-25 as `81148d8b`, NOT yet pushed.**
-      Live check, no marker to rot: `git merge-base --is-ancestor 81148d8b origin/main` (exit 0 = pushed).
+- [ ] **An opt keyword now alerts a human. Merged 2026-08-25 as `81148d8b`, LIVE since the 2026-08-26 push.**
+      Live check, no marker to rot: `git merge-base --is-ancestor 81148d8b origin/main` (exit 0 = live).
       Until this shipped, a client texting *Cancel* was silently unsubscribed and nobody was
       told, and prod holds four inbound "yes" messages that went the same way. The compliance
       action is unchanged; what is new is the admin alert behind it.
@@ -1563,8 +1563,8 @@ to rot. Do that again for the next thing that sits here.
       **Do not run this from a real client's phone** — a live opt-out is a live opt-out.
 
 - [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, PUSHED the same day.**
-      **Since that merge the ring budget changed: `dialCap()` (`413eca09`, merged 2026-08-25, NOT
-      yet pushed) caps rings at the 312 at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
+      **Since that merge the ring budget changed: `dialCap()` (`413eca09`, merged 2026-08-25,
+      LIVE since the 2026-08-26 push) caps rings at the 312 at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
       by default, counted over EVERY attempt row including cancelled ones.** That is ample for a
       launch call, but a book-cancel-rebook rehearsal loop now spends real budget, and a trip
       files `skipped_cap`/`dial_cap_tripped` and emails once per rolling window. If the phone
@@ -1602,14 +1602,14 @@ to rot. Do that again for the next thing that sits here.
       whether it is worth fixing for both.
 
 
-- [ ] **Client-uploaded logos are downloadable again. Merged 2026-08-26 as `a302f946`, NOT yet pushed.**
-      Live check, no marker to rot: `git merge-base --is-ancestor a302f946 origin/main` (exit 0 = pushed).
+- [ ] **Client-uploaded logos are downloadable again. Merged 2026-08-26 as `a302f946`, LIVE since the 2026-08-26 push.**
+      Live check, no marker to rot: `git merge-base --is-ancestor a302f946 origin/main` (exit 0 = live).
       Every logo a client had ever uploaded through their potion planner returned NOT_FOUND on
       download, all seven of them, from the first upload in June onward. The plan-save PUT replaced
       the selections blob wholesale, dropping the R2 key on the first save after the upload, while
       the URL built from it survived. The staff BEO reads the same key, so it had been reporting
       "no logo" on all seven events too. The files were never lost and the seven rows are already
-      backfilled, so **the data half of this is live now and needs looking at; the code half is not.**
+      backfilled, so the data half was already live; **as of the 2026-08-26 push the code half is too, and the whole thing needs looking at.**
       **The walk is two surfaces, because the backfill fixed the rows but nobody has seen either
       one render.** On the admin event-detail page for proposal 718 (Tyler Anderson), confirm the
       logo displays and "Download original" saves a real PNG. Then open the same event in the staff
