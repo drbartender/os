@@ -330,10 +330,15 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
   **AMENDED, and this one would have shipped a dead label:** both lookups must select
   `client_no_answer_at`, which the original task omitted while S4 keys the "connected, no answer"
   label on it. Without the column the label can never fire.
-  **AMENDED, from the database review:** `latestConsultCallForProposal` must DRIVE FROM `consults`,
-  not from the attempts table, or it plans as a backward whole-table PK walk on every ordinary
-  proposal page load (a proposal with no consult is the common case). The composite
-  `UNIQUE (consult_id, scheduled_at)` is what serves both read paths.
+  **AMENDED, from the database review, with its RATIONALE corrected by S3's own review.** Write
+  `latestConsultCallForProposal` driving from `consults`. The SQL below is right; the reason first
+  given here was not, and the reason is the part a future reader uses. Postgres COLLAPSES a
+  two-relation inner join and reorders freely, so the textual FROM order constrains nothing and the
+  flipped text yields the same plan. What actually prevents the backward whole-table walk on the
+  common case, an ordinary proposal that never had a consult, is `idx_consults_proposal_id` plus
+  the selectivity of the equality predicate, after which the composite
+  `UNIQUE (consult_id, scheduled_at)` serves the inner side of both read paths. So do NOT write a
+  test pinning the join TEXT believing it pins the plan: it pins a form.
   ```sql
   -- latestConsultCallForProposal(proposalId)
   SELECT a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail,
