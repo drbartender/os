@@ -47,6 +47,12 @@ Ordered by how close each one is to actually costing money or a client.
 
 | # | what breaks | reachable today? |
 |---|---|---|
+| 0 | A real client's consult is silently cancelled by someone else's booking | **yes, and the bridge is armed** |
+| 0 | The strand-heal duplicates a consult and silences the real one | **yes, on a Cal.com redelivery after any reschedule** |
+| 0 | The kill switch does not gate press-1, so flipping it off mid-ring still bills one client leg | yes |
+| 0 | A client-no-answer text that fails to send tells nobody at all | yes, if `VM_TEXT_DESTINATION` is unset |
+| 0 | A settled-looking `connected` row is never reaped, so a failed `<Dial>` alerts nobody | yes |
+| 0 | Sweep on with the VA scheduler off strands `calling_*` rows holding a cap slot for 24h | yes, if the two flags disagree |
 | 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
@@ -82,13 +88,26 @@ Ordered by how close each one is to actually costing money or a client.
 
 ---
 
-## 0. Before `CONSULT_CALL_ENABLED` is flipped on
+## 0. The consult call bridge is LIVE, and these are reachable right now
 
-The consult call bridge shipped to prod on 2026-08-25 (`650e5a66`) **dark**, with
-`CONSULT_CALL_ENABLED=false` set in Render first. Everything here is unreachable while it stays
-false, and all of it becomes live the moment it is flipped. The push fleet raised these; none
-blocked the deploy, all of them gate the launch call. Delete this whole section once the switch
-is on and these are closed.
+**Corrected 2026-08-26. This section previously said the bridge shipped dark and that everything
+here was unreachable. Both claims were wrong, and the wrong version understated live risk.**
+
+The bridge merged to main as `fafa0d6f` and shipped to prod on 2026-08-25. It is **ARMED, not
+dark.** `CONSULT_CALL_ENABLED` was flipped to true to run the launch gate, as the gate instructs,
+and nothing since has flipped it back. Both launch runs are confirmed in Twilio's call log, not
+inferred: 8/25 rang three agent legs, failed over to Zul, press 1, an 82s bridge from the 0082;
+8/26 rang once, press 1, a 93s bridge from the 1922, read off the far handset by the person it
+called. Both branches of `callerIdFor` are proven in production.
+
+**So every item below is reachable on a real client's consult today.** They were written as
+launch-gate items when the feature was believed dark. None of them is fixed. Nothing here blocked
+the deploy and nothing here has been closed since.
+
+A note worth keeping, because it is why this section was wrong for a day: a kill-switch state
+cannot be confirmed by asking, only by observing behaviour. `scheduler_health` reads `ok` whether
+the switch is on or off, so there is no remote signal that distinguishes off from idle. The only
+proof is a chain opening.
 
 ### A real client's consult can be silently cancelled by someone else's booking
 
@@ -112,10 +131,21 @@ because it now opens call chains. Fix shape: gate the heal on no `consults` row 
 booker and slot, or record the resolved `consult_id` on the `webhook_events` row so "moved" is
 distinguishable from "never written".
 
-### Smaller, same gate
+### Smaller, same feature, and all of it live too
+
+Cross-reference, because it is not consult-only: **pressing 1 during the automatic repeat does
+nothing on either bridge.** Written up in section 3, since the lead router has carried it longer.
+
 
 - The kill switch does not gate press-1 (`voiceConsultCall.js:237-306`): flipping it off mid-ring
   still permits one billed client leg.
+- **A client-no-answer text that fails to send tells nobody.** `voiceConsultCall.js:344-346`
+  fires `sendMissedText({ kind: 'client_no_answer' })` and DISCARDS the return value. Its sibling
+  path does the opposite: `finishMissed` (`consultCallChain.js:733-737`) captures the same return
+  and turns a text that did not send into the one admin email, precisely so a missed consult is
+  never invisible. So with `VM_TEXT_DESTINATION` unset or Twilio refusing, Dallas pressed 1, the
+  client never picked up, and nothing anywhere says so. Found 2026-08-26 while verifying settings
+  copy, not by a review pass. Fix is three lines, mirroring `MISSED_TEXT_EMAIL_REASON`.
 - Neither dial target is format-validated (`consultCallChain.js:724-725`, `:833`) though
   `sendMissedText` validates its own destination and `index.js` format-checks the caller ID.
 - `VA_CELL` can reach the database: `consultCallChain.js:590-595` writes `err.message` into
@@ -577,6 +607,22 @@ A VA leg Twilio PLACED that reports terminal `CallStatus='failed'` (a known PH-r
 classifies as a quiet 'missed' — no alert, not in the attention feed. So a lead goes uncalled and
 nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 `va/admin_call_status='failed'` in the feed WHERE.
+
+### Pressing 1 during the automatic repeat does nothing, on BOTH bridges
+
+`voiceConsultCall.js:219-222` and `voiceLeadCall.js:118-121` build the same TwiML: a `<Gather>`
+wraps the FIRST reading of the briefing, then a SECOND `<Say>` repeats it OUTSIDE the `</Gather>`,
+then `<Hangup/>`. Digits are only collected inside the Gather, so the repeat is audio with no
+collector behind it. Somebody still processing the first reading hears it again, presses 1, and
+gets silence and then a hangup. The repeat exists to give a second chance and is the one part of
+the flow that cannot take one.
+
+Never seen in the wild because both consult launch runs pressed 1 during the FIRST reading. That
+is also why the launch gate did not catch it: the gate's own note said to try pressing during the
+second reading, and that half was never run. Inherited from the shipped lead router and written
+into spec 4.5, so it is a cross-router defect, not a consult-lane one, and the lead bridge has
+carried it far longer. Fix shape: put both `<Say>` children inside one Gather, or give the repeat
+its own Gather pointing at the same action.
 
 ---
 
@@ -1088,6 +1134,19 @@ the accented spelling) or the two spellings stop matching each other.
 
 ---
 
+- **The lead-call family logs `err.message` unguarded, in four places.** `voiceLeadCall.js:126`,
+  `:195`, `:263` and `leadCallTrigger.js:56` all read `err.message` straight off a caught value.
+  A rejection is not guaranteed to be an Error: a `throw 'string'` or a rejected non-object makes
+  the log line itself throw, out of the catch that was supposed to contain it. The consult side
+  already does this correctly and says why in a comment (`voiceConsultCall.js:96-104`,
+  `consultCallChain.js:110-112`, both `(err && err.message) || err`), so the fix is to copy the
+  guard four times. A fifth, `leadCallTrigger.js:114`, reads `err.code || err.message` inside a
+  detail write and has the same shape.
+- **`fileDialCapTrip` at `consultCallChain.js:254` is dead.** No callers anywhere in `server/`,
+  and it is not in that module's exports. The cap-trip path that shipped goes through
+  `consultCallCaps.fileCapTrip` instead. Delete it, or the next person will read it as the live
+  path and reason about the wrong code.
+
 ## Admin UI and the two skins
 
 - **Two client-side Chicago-day helpers now exist.** `utils/chicagoDay.js` (staff skin, added
@@ -1360,6 +1419,36 @@ the accented spelling) or the two spellings stop matching each other.
   perf-category with its indexes already itemized below. `WILDLIGHT-9`/`-F` are working fallbacks
   doing their job; `WILDLIGHT-2` is 7 login-failure events in 29 days and the lockout Map covers it.
   **Do NOT resolve `DRBARTENDER-SERVER-21` as noise** — see Settled.
+
+- **`.node-version` says 26.5.0, this box runs v24.16.0.** Verified 2026-08-26. Whichever is
+  intended, the two should agree: the file is what Render and Vercel build against, so a real
+  divergence means local passes and CI builds are not running the same runtime. One line either
+  way, but decide which way rather than leaving it drifted.
+- **`drinkPlanConsult.test.js` still deletes by pattern, so it can reach another suite's rows.**
+  It and `calcom.test.js` both seed `@calcom-test.example` fixtures, and `npm test` glob-runs
+  files in parallel with no concurrency flag anywhere in the repo, so each one's pattern-scoped
+  DELETE can take out the other's live rows mid-run. `calcom.test.js` was converted to delete by
+  recorded id on 2026-08-25; this is the unconverted mirror. An id list cannot reach a row the
+  suite did not create.
+- **Dev carries accumulated fixture debris: 48 test-pattern clients and 66 proposals hanging off
+  them.** Counted 2026-08-26. None of it is FK-orphaned, so nothing is broken; it is just noise
+  that makes dev counts untrustworthy for eyeballing. Worth knowing before anyone reads a dev
+  total as real. (Checked at the same time and clean: `consults` and `consult_call_attempts` are
+  both at 0 on dev, so the consult suites do tear down fully.)
+- **ARCHITECTURE's Auth column says bare `Admin` on four rows whose code is
+  `requireAdminOrManager`.** Lines 245 (drink plans), 310 (packages), 345 (proposals getOne) and
+  425 (clients getOne). All four verified against the code on 2026-08-26: `drinkPlans.js:409`,
+  `proposals/getOne.js:17` and `clients.js:94` each take `auth, requireAdminOrManager`, and
+  `packages.js:18` applies the same pair router-wide. The same file already writes
+  `Admin/Manager` for that middleware elsewhere, so this is drift, not a convention. **No auth
+  hole: the code is correct and the doc is wrong.** Four rows want one sweep, which is why a lane
+  that touched only two of them correctly left all four alone.
+- **`thumbtack.js:509` can ROLLBACK on an already-released client.** The catch runs
+  `dbClient.query('ROLLBACK')`, but `released` is set true at `:439` and `:501`, both before the
+  post-commit tail finishes, so a throw after either point hits a released client and pg rejects
+  it. It is wrapped in its own try/catch, so nothing crashes: the cost is a misleading
+  `ROLLBACK failed` line in the logs during exactly the incident someone would be reading them
+  for. Guard the rollback on `!released`.
 
 ### Tech debt (deliberate deferrals from the 2026-04-24 full audit)
 
