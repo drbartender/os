@@ -78,7 +78,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
-| 5 | Thumbtack first reply owes its next-real-lead proof | blocks trusting the pipeline |
+| 5 | Thumbtack first reply reports "failed" on every send since 8/22 | no, the reply lands and the call fires |
 
 ---
 
@@ -638,14 +638,37 @@ client if the script runs as-is:
 `migrateDrinkMeta.js` has no such gate. Both scripts are idempotent and snapshot/skip-guarded; dry
 run first.
 
-### The Thumbtack first reply owes its next-real-lead proof
+### Thumbtack first reply reports "failed" on every send since 8/22
 
-The Clear-control dependency was fixed and is live on the box (`clearComposer()` falls through when
-no labeled control exists; the read-twice empty proof and the strict `boxText === ''` send verify
-are untouched). Agent tests 8/8, service restarted on the new code. **What it owes is the next real
-lead.** Until that lands, do not trust the pipeline. `DRBARTENDER-SERVER-22` (AggregateError on
-`pending-first-replies`) is on the same pipeline — check
-`journalctl --user -u thumbtack-agent` on the box before trusting the next lead to it.
+Every lead since 8/22 (322-327) reads `first_reply_status = 'failed'` on the proposal and fires a
+`DRBARTENDER-SERVER-1S` warning, and every one of those replies actually DELIVERED. Dallas confirmed
+lead 327 (Tanya Flowers, 8/26) landed and rang.
+
+Root cause, pinned from the diag captures, not inferred: Thumbtack now navigates the tab OFF the
+lead thread and back to `https://www.thumbtack.com/pro-leads` when Send is clicked. The post-send
+proof in `sendQuickReplyOnPage` (`thumbtack-agent/src/index.js` ~565) needs the captured template
+text visible as a thread message AND `composerText(page) === ''`, both readable only on the thread
+page. On the list page `composerBox` (a placeholder match) is not visible, so `composerText` returns
+`null`, and `null` is deliberately not `''` (the 8/03 anti-phantom law). The 12s loop can never
+close, so it returns `send_unverified`, which is terminal-by-law and reports `first-reply-failed`.
+
+Evidence: all 6 `*-send-unverified.json` captures in `~/.thumbtack-profile/diag/` are identical —
+`url: /pro-leads`, no Send button, one unmatched TEXTAREA. Our agent code has not changed since
+`fe8ec58b` on 8/11. Last verified send 8/20 19:34 (lead 321); first false failure 8/22 15:25. The
+change is Thumbtack's, and it is the THIRD silent TT UI change to break this one step.
+
+Not broken by it: no lost leads and no double sends. `first-reply-failed` still fires the day call
+inside the 240-min bound, and 6/6 got one (5 connected, 1 missed); the offer query only ever offers
+`pending`, so a flipped row is never re-driven. What is actually wrong is the status label on the
+proposal, six false `SERVER-1S` warnings, and `first_reply_sent_at` unbanked for six leads.
+
+Fix: keep the in-place proof first, and when the tab has left the thread URL after the click,
+re-open the lead URL and prove the captured text is present as a thread message. That keeps positive
+proof and survives TT flipping the behavior back. Do NOT read the redirect itself as proof of send —
+that is inference, and the fail-closed law is what has kept this pipeline honest through three UI
+changes. Agent-only change on the box: no server change, no push.
+
+Then backfill 322-327 to `sent` once the threads are eyeballed in the TT inbox.
 
 ---
 ---
