@@ -23,6 +23,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 const { extractCustomerEmail } = require('./extract');
 const { rolloverDay, underCap } = require('./cadence');
+const { snippetPattern, urlOnThread, provenDelivered } = require('./sendVerify');
 
 const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);
 // A label allowlist that parses to empty is a misconfig, not a kill switch:
@@ -231,6 +232,24 @@ async function composerText(page) {
   return box.inputValue().catch(() => null);
 }
 
+// Every editor-ish element's own text, read straight off the page. Used ONLY as
+// the phantom guard in provenDelivered. composerText reads a textarea's VALUE,
+// which is the correct read for the pinned UI — but a contenteditable composer
+// holding a restored draft is invisible to inputValue() and fully visible to
+// getByText, so that one re-skin would be enough to fake a delivery. An
+// unreadable page yields [], leaving the proof resting on Playwright not
+// matching a textarea's value: this backs that property up, it does not replace it.
+//
+// Deliberately includes hidden editors, which errs toward a false FAILURE (the
+// cheap direction: the promised call still fires). If a real delivery ever gets
+// reported send_unverified again, look HERE first — a hidden TT field caching
+// the template would block a genuine proof.
+async function editorTexts(page) {
+  return page.evaluate(() => Array.from(
+    document.querySelectorAll('textarea, [contenteditable="true"], [contenteditable=""]')
+  ).map((el) => (el.tagName === 'TEXTAREA' ? el.value : el.innerText) || '')).catch(() => []);
+}
+
 // Empty the composer WITHOUT TT's own Clear control. TT removed that control
 // from the respond panel between 2026-08-08 and 2026-08-10 (the second UI
 // change to kill this one step inside a week), which stalled every reply at
@@ -409,6 +428,39 @@ async function reportPreSendFailure(negotiationId, reason) {
   return res;
 }
 
+// Re-open the lead thread and prove the reply we just sent is ON it.
+//
+// TT navigates the tab to /pro-leads the moment Send is clicked (live since
+// 2026-08-22), which made the in-place proof unobservable and filed six
+// confirmed real deliveries as failures. Re-reading the thread restores a
+// POSITIVE proof: the redirect itself is never read as success, and anything
+// unreadable (goto fails, a login bounce, the text never rendering) falls
+// through to send_unverified exactly as before. The composer clause in
+// provenDelivered is what keeps a restored draft from posing as a delivery.
+async function reopenedThreadProvesSend(page, negotiationId, snippetRe) {
+  const reopened = await page.goto(leadInboxUrl(negotiationId), { waitUntil: 'domcontentloaded' })
+    .then(() => true).catch(() => false);
+  if (!reopened) return false;
+  // A fresh navigation, so give it the full initial-hydration budget the rest
+  // of the flow uses; the 12s in-place window assumes an already-live page.
+  const deadline = Date.now() + CFG.renderTimeoutMs;
+  while (Date.now() < deadline) {
+    // WHICH page are we scanning? Never skip this. If TT bounces the thread URL
+    // to /pro-leads (the exact route change it shipped on 8/22) or to login,
+    // the scan would run against the leads LIST, where every lead we replied to
+    // earlier shows this same template as its row preview — and a send that
+    // never committed would verify against a DIFFERENT lead's message.
+    if (!urlOnThread(page.url(), negotiationId)) return false;
+    const snippetVisible = await page.getByText(snippetRe).filter({ visible: true }).first()
+      .isVisible().catch(() => false);
+    if (snippetVisible && provenDelivered({ snippetVisible, editorTexts: await editorTexts(page), snippetRe })) {
+      return true;
+    }
+    await sleep(800);
+  }
+  return false;
+}
+
 /**
  * Drive the first reply on an already-loaded lead page, replicating the real
  * manual flow (Dallas, 2026-08-03): a pristine lead renders NO composer; the
@@ -562,10 +614,19 @@ async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSend
     // send = the captured template text appears as a thread message AND the
     // composer emptied. Indeterminate still fails toward send_unverified,
     // never toward a phantom "sent".
-    const words = filledText.trim().split(/\s+/).slice(0, 8).map(escapeRegex);
-    const snippetRe = new RegExp(words.join('\\s+'), 'i');
+    //
+    // TWO STAGES since 2026-08-26: TT now usually leaves this page on send, so
+    // the loop below is only the fast path for a tab that stays put; the real
+    // proof happens in reopenedThreadProvesSend. Both stages are positive, and
+    // both still fail closed.
+    const snippetRe = snippetPattern(filledText);
     const deadline = Date.now() + SEND_VERIFY_WAIT_MS;
+    let leftThread = false;
     while (Date.now() < deadline) {
+      // TT navigates the tab off the thread to /pro-leads on send (live since
+      // 2026-08-22): neither half of the in-place proof can ever appear on the
+      // leads list, so stop burning the window here and go re-read the thread.
+      if (!urlOnThread(page.url(), negotiationId)) { leftThread = true; break; }
       // STRICTLY '' — null means "cannot prove composer state" (box absent,
       // detached, placeholder changed) and must never count as emptied
       // (push-fleet + codex converged finding: a null here plus a text match
@@ -576,7 +637,10 @@ async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSend
       if (inThread && boxText === '') return { clickedSend: true, sent: true };
       await sleep(800);
     }
-    await captureDiag(page, negotiationId, 'send-unverified');
+    if (leftThread && await reopenedThreadProvesSend(page, negotiationId, snippetRe)) {
+      return { clickedSend: true, sent: true };
+    }
+    await captureDiag(page, negotiationId, leftThread ? 'send-unverified-reopened' : 'send-unverified');
     return { clickedSend: true, reason: 'send_unverified' };
   } catch (err) {
     log(`post-click throw (${err.message}); treating as send_unverified`);
