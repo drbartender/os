@@ -100,14 +100,6 @@ because it happens) and abusively (book on the public page using a known client'
 reschedule). The client waits for a call that never comes and nothing tells anyone. In a feature
 whose declared failure mode is silence, the one-row case is the one that must email.
 
-### `extractRescheduleOldUid` may be reading the wrong Cal.com field
-
-`calcomWebhookHelpers.js:34-40` accepts `payload.rescheduleId`, which in Cal.com is a NUMERIC
-booking id, not the uid string stored in `calcom_event_id`. If a real payload carries only that
-key, every reschedule takes the unresolved-old-uid fallthrough and the entry above fires on every
-one of them. Confirm against a real `BOOKING_RESCHEDULED` payload before the launch call: this
-single question decides whether the previous entry is rare or routine.
-
 ### The strand-heal can duplicate a consult and silence the real one
 
 `calcom.js:86-125` deletes the webhook dedupe row and fully reprocesses whenever a redelivered
