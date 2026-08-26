@@ -139,6 +139,24 @@ nothing on either bridge.** Written up in section 3, since the lead router has c
 
 - The kill switch does not gate press-1 (`voiceConsultCall.js:237-306`): flipping it off mid-ring
   still permits one billed client leg.
+- **`skipped_cancelled` is one status wearing two opposite meanings, and the dangerous one is the
+  quiet one.** `guardStillScheduled` files it when the consult genuinely went away (`cancelled`,
+  `completed`, `no_show`), which needs no attention and is correctly excluded from the
+  needs-attention feed. But `consultCallChain.js:388-398` files the SAME status, detail
+  `rescheduled_unresolved`, on consults selected explicitly by `c.status = 'scheduled' AND
+  c.scheduled_at > NOW()`: live, future bookings that the feature deliberately stopped from
+  ringing. Its own comment calls that path the only one in the feature that turns a consult that
+  would have rung into one that silently will not. Those two facts are opposites sharing a status.
+
+  The read side was taught to tell them apart 2026-08-26, so the browsing surfaces no longer say
+  "cancelled" about a live booking. The FEED exclusion is deliberately left alone: SQL cannot tell
+  the phantom old consult from a legitimate sibling row, so including the status would fire a
+  false attention item on every ordinary unresolved reschedule. The one email, gated on more than
+  one row marked, is the right mechanism. What remains owed is on the write side: give the
+  deliberate stop its own status instead of borrowing the one that means the opposite. Until then
+  the email is the only active alert, and an email that does not arrive leaves only the browsing
+  surface.
+
 - **A client-no-answer text that fails to send tells nobody.** `voiceConsultCall.js:344-346`
   fires `sendMissedText({ kind: 'client_no_answer' })` and DISCARDS the return value. Its sibling
   path does the opposite: `finishMissed` (`consultCallChain.js:733-737`) captures the same return
