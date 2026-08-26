@@ -39,6 +39,13 @@ function stripSqlComments(sql) {
 
 // ── (a) the static guard: DB-free, and the half that stops this coming back ──
 
+// DROP INDEX matcher. Deliberately wide: CONCURRENTLY is valid here because
+// initDb runs statements outside a transaction, a schema-qualified or quoted
+// name is the same index, and `DROP INDEX a, b` drops both. A narrower regex
+// silently under-reports, and this scan's whole value is that a green result
+// means something.
+const DROP_INDEX_RE = /\bDROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?((?:"?[A-Za-z_][A-Za-z0-9_]*"?\.)?"?[A-Za-z_][A-Za-z0-9_]*"?)/gi;
+
 /**
  * Index names dropped by an UNCONDITIONAL statement that this same SQL also
  * creates — the drop-then-recreate shape that leaves a boot-length hole.
@@ -54,10 +61,16 @@ function bareDropRecreatePairs(sql) {
   let bareDrops = 0;
   for (const stmt of splitStatements(sql)) {
     const body = stripSqlComments(stmt).trim();
-    if (/^DO\s*\$/i.test(body)) continue;
-    for (const m of body.matchAll(/\bDROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+    const isDo = /^DO\s*\$/i.test(body);
+    // A DO block is exempt ONLY if it actually tests the live catalog. Skipping
+    // every DO block on the assumption it is conditional let an unconditional
+    // drop return under a cargo-culted wrapper with the whole suite green --
+    // the exact defect class this file exists to prevent.
+    if (isDo && /\bpg_index\b/i.test(body)) continue;
+    for (const m of body.matchAll(DROP_INDEX_RE)) {
       bareDrops += 1;
-      if (created.has(m[1].toLowerCase())) offenders.push(m[1].toLowerCase());
+      const name = (m[1] || '').toLowerCase().replace(/^public\./, '').replace(/"/g, '');
+      if (created.has(name)) offenders.push(name);
     }
   }
   return { offenders, bareDrops, created: created.size };
@@ -86,6 +99,35 @@ test('the scan catches the defect it exists for (a green result must mean someth
   // And a legitimate RETIREMENT — dropped, never recreated — stays clean.
   const retirement = 'DROP INDEX IF EXISTS idx_demo_retired;';
   assert.deepStrictEqual(bareDropRecreatePairs(retirement).offenders, []);
+
+  // Variants an adversarial pass demonstrated slipping past the first version.
+  const variants = {
+    'DO block with no catalog test': `
+      DO $$ BEGIN DROP INDEX IF EXISTS idx_demo_guard; END $$;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_guard ON t (a);`,
+    'schema-qualified': `
+      DROP INDEX public.idx_demo_guard;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_guard ON t (a);`,
+    CONCURRENTLY: `
+      DROP INDEX CONCURRENTLY idx_demo_guard;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_guard ON t (a);`,
+    quoted: `
+      DROP INDEX IF EXISTS "idx_demo_guard";
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_guard ON t (a);`,
+  };
+  for (const [label, sql] of Object.entries(variants)) {
+    assert.deepStrictEqual(bareDropRecreatePairs(sql).offenders, ['idx_demo_guard'], `missed: ${label}`);
+  }
+
+  // A DO block that DOES test the catalog is the shape we ship, and stays clean.
+  const conditional = `
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_index i WHERE i.indisunique) THEN
+        DROP INDEX public.idx_demo_guard;
+      END IF;
+    END $$;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_demo_guard ON t (a);`;
+  assert.deepStrictEqual(bareDropRecreatePairs(conditional).offenders, []);
 });
 
 test('no DROP INDEX in schema.sql names an index schema.sql also CREATEs', () => {
@@ -143,19 +185,44 @@ const defOf = async (client, name) => {
 const GUARDS = [
   {
     name: 'idx_scheduled_messages_pending_uniq',
-    // The stale shape this migrated FROM: the pending-only predicate, which
-    // stopped guarding a row the moment the dispatcher claimed it.
-    stale: `CREATE UNIQUE INDEX idx_scheduled_messages_pending_uniq
-              ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
-              WHERE status = 'pending'`,
+    table: 'scheduled_messages',
     wants: /processing/,
+    // Every shape a check in the DO block exists to catch. Without a fixture per
+    // check, a reviewer demonstrated that DELETING a check leaves the suite green
+    // -- so each of these exists to make one condition load-bearing.
+    stale: {
+      'pending-only predicate (the shape this migrated FROM)': `
+        CREATE UNIQUE INDEX idx_scheduled_messages_pending_uniq
+          ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+          WHERE status = 'pending'`,
+      'processing-only predicate (pins the %pending% half)': `
+        CREATE UNIQUE INDEX idx_scheduled_messages_pending_uniq
+          ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+          WHERE status = 'processing'`,
+      'NOT unique (enforces nothing)': `
+        CREATE INDEX idx_scheduled_messages_pending_uniq
+          ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+          WHERE status IN ('pending', 'processing')`,
+      'WRONG column tuple (right name, wrong guard)': `
+        CREATE UNIQUE INDEX idx_scheduled_messages_pending_uniq
+          ON scheduled_messages (entity_id, entity_type, message_type)
+          WHERE status IN ('pending', 'processing')`,
+      'no predicate at all': `
+        CREATE UNIQUE INDEX idx_scheduled_messages_pending_uniq
+          ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)`,
+    },
   },
   {
     name: 'idx_sms_messages_twilio_sid',
-    // The stale shape this migrated FROM: a NON-UNIQUE index of the same name,
-    // which indexes lookups but enforces no webhook-retry dedupe at all.
-    stale: 'CREATE INDEX idx_sms_messages_twilio_sid ON sms_messages(twilio_sid) WHERE twilio_sid IS NOT NULL',
+    table: 'sms_messages',
     wants: /UNIQUE/,
+    stale: {
+      'NON-UNIQUE (the shape this migrated FROM)': 'CREATE INDEX idx_sms_messages_twilio_sid ON sms_messages(twilio_sid) WHERE twilio_sid IS NOT NULL',
+      'unique but NOT partial (pins the indpred check)': 'CREATE UNIQUE INDEX idx_sms_messages_twilio_sid ON sms_messages(twilio_sid)',
+      // Unique AND partial, so this fixture isolates the COLUMN check: it passes
+      // every other condition and is still the wrong dedupe guard.
+      'WRONG column (right name, wrong guard)': 'CREATE UNIQUE INDEX idx_sms_messages_twilio_sid ON sms_messages(id) WHERE twilio_sid IS NOT NULL',
+    },
   },
 ];
 
@@ -183,18 +250,28 @@ for (const g of GUARDS) {
     });
   });
 
-  test(`${g.name} > a boot against a STALE index still upgrades it`, async () => {
-    await inRollback(async (client) => {
-      await client.query(`DROP INDEX ${g.name}`);
-      await client.query(g.stale);
-      const staleDef = await defOf(client, g.name);
-      assert.doesNotMatch(staleDef, g.wants, 'the fixture really is the stale shape');
+  for (const [label, ddl] of Object.entries(g.stale)) {
+    test(`${g.name} > STALE (${label}) is migrated, not left alone`, async () => {
+      await inRollback(async (client) => {
+        await client.query(`DROP INDEX ${g.name}`);
+        await client.query(ddl);
+        const staleDef = await defOf(client, g.name);
+        assert.ok(staleDef, 'the stale fixture built');
 
-      for (const s of statementsFor(g.name)) await client.query(s);
+        for (const st of statementsFor(g.name)) await client.query(st);
 
-      const fixed = await defOf(client, g.name);
-      assert.ok(fixed, 'the index exists again');
-      assert.match(fixed, g.wants, 'a database still on the old shape must be migrated, not left alone');
+        const fixed = await defOf(client, g.name);
+        assert.ok(fixed, 'the index exists again');
+        assert.match(fixed, g.wants, 'a database on the old shape must be migrated');
+        assert.notStrictEqual(fixed, staleDef, 'and it must genuinely differ from the stale shape');
+        // The correct guard is on the right table with the right arity.
+        const shape = await client.query(
+          `SELECT i.indnatts, c2.relname AS tbl FROM pg_index i
+             JOIN pg_class c ON c.oid = i.indexrelid
+             JOIN pg_class c2 ON c2.oid = i.indrelid
+            WHERE c.relname = $1 AND c.relnamespace = 'public'::regnamespace`, [g.name]);
+        assert.strictEqual(shape.rows[0].tbl, g.table, 'rebuilt on the right table');
+      });
     });
-  });
+  }
 }

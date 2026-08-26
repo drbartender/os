@@ -3243,12 +3243,20 @@ DO $$ BEGIN
     SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
     WHERE c.relname = 'idx_sms_messages_twilio_sid'
       AND c.relnamespace = 'public'::regnamespace
-      AND (NOT i.indisunique OR i.indpred IS NULL)
+      AND (NOT i.indisunique
+           OR i.indpred IS NULL
+           OR i.indrelid <> 'public.sms_messages'::regclass
+           OR NOT i.indisvalid
+           OR NOT i.indisready
+           OR (SELECT array_agg(a.attname::text ORDER BY a.attname::text)
+                 FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+              IS DISTINCT FROM ARRAY['twilio_sid'])
   ) THEN
-    DROP INDEX idx_sms_messages_twilio_sid;
+    DROP INDEX public.idx_sms_messages_twilio_sid;
   END IF;
 END $$;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid ON sms_messages(twilio_sid) WHERE twilio_sid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid ON public.sms_messages(twilio_sid) WHERE twilio_sid IS NOT NULL;
 
 -- shift_requests.acknowledged_at records that the assigned staff member
 -- texted CONFIRM for the shift. shift_requests is the per-(shift,staff) row,
@@ -4477,8 +4485,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_email_sends_drip_step_uniq
 -- so a future edit that drops it cannot read as healthy. Both index names are
 -- scoped to the public schema: an index name is unique per schema, not per
 -- database, so an unscoped catalog lookup can answer about a different object
--- than the unqualified DROP would act on (the same trap CONSTRAINT_CONTRACT
--- documents for constraint names in db/index.js).
+-- than the DROP acts on (the same trap CONSTRAINT_CONTRACT documents for
+-- constraint names in db/index.js). The DDL is schema-qualified for the same
+-- reason -- an unqualified DROP resolves through search_path and could act on a
+-- different index than the one the test judged.
+--
+-- The test covers SHAPE, not only the predicate: relname + uniqueness + predicate
+-- alone would pass a same-named index over a DIFFERENT column tuple or on a
+-- DIFFERENT table, and since CRITICAL_INDEXES matches on NAME only, the wrong
+-- guard would then be live permanently with a green boot. indisvalid/indisready
+-- are in there because a failed CREATE INDEX CONCURRENTLY leaves an index that
+-- looks present and enforces nothing.
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
@@ -4487,9 +4504,16 @@ DO $$ BEGIN
       AND (NOT i.indisunique
            OR i.indpred IS NULL
            OR pg_get_expr(i.indpred, i.indrelid) NOT LIKE '%processing%'
-           OR pg_get_expr(i.indpred, i.indrelid) NOT LIKE '%pending%')
+           OR pg_get_expr(i.indpred, i.indrelid) NOT LIKE '%pending%'
+           OR i.indrelid <> 'public.scheduled_messages'::regclass
+           OR NOT i.indisvalid
+           OR NOT i.indisready
+           OR (SELECT array_agg(a.attname::text ORDER BY a.attname::text)
+                 FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+              IS DISTINCT FROM ARRAY['channel','entity_id','entity_type','message_type','recipient_id','recipient_type'])
   ) THEN
-    DROP INDEX idx_scheduled_messages_pending_uniq;
+    DROP INDEX public.idx_scheduled_messages_pending_uniq;
   END IF;
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_pending_uniq

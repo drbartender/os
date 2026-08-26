@@ -686,7 +686,9 @@ test('processInboundSms > a client texting "Cancel" alerts the admin, verbatim',
     // The half this lane adds.
     assert.strictEqual(calls.length, 1, 'exactly one admin alert');
     assert.strictEqual(calls[0].category, 'urgent_client_reply', 'a client texting in is urgent, same as any other inbound');
-    assert.match(calls[0].emailText, /Cancel/, 'the alert carries the word they actually sent');
+    // QUOTED. Bare /Cancel/ also matches the fixture's client name, so it stayed
+    // green with the word removed from the copy entirely.
+    assert.match(calls[0].emailText, /"Cancel"/, 'the alert carries the word they actually sent, verbatim');
     assert.match(calls[0].emailText, /Cancel Client/, 'and who sent it');
     assert.ok(calls[0].smsBody, 'a client opt keyword texts the admin too');
   });
@@ -761,8 +763,12 @@ test('processInboundSms > a staffer texting STOP is NAMED in the alert', async (
     });
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].category, 'routine_admin');
-    assert.match(calls[0].emailText, new RegExp(`user ${uid}`),
-      'the alert must identify the staffer, not just say "a staff member"');
+    // describeStaff returns `${name} (user N)` on success and a bare `user N`
+    // from its catch, so matching "user N" alone cannot tell a working lookup
+    // from the degraded fallback. Pin the identity it actually resolved.
+    assert.match(calls[0].emailText, /opt-staff@example\.com \(user \d+\)/,
+      'the alert must identify WHICH staffer, from a lookup that worked');
+    assert.doesNotMatch(calls[0].emailText, /A staff member/);
   } finally {
     await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_opt_staff'");
     await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [uid]);
@@ -795,5 +801,63 @@ test('processInboundSms > a retried opt-keyword MessageSid does not alert twice'
       assert.strictEqual(second.outcome, 'duplicate');
     });
     assert.strictEqual(calls.length, 1, 'Twilio retries must not re-alert');
+  });
+});
+
+test('processInboundSms > the unknown-sender alert does NOT claim a preference was stored', async () => {
+  // setSmsEnabled has no 'unknown' branch — it writes nothing, anywhere. The
+  // first version of this alert still said "they are now unsubscribed", which
+  // matters beyond wording: there is no per-number suppression list, so a
+  // clients row created later starts sms_enabled = true and the drip can text a
+  // number that already said STOP. Telling the admin it was handled hides that.
+  try {
+    const calls = await captureAlerts(async () => {
+      await processInboundSms({ from: '+19998887779', body: 'STOP', twilioSid: 'SMtest_opt_unknown_copy' });
+    });
+    assert.equal(calls.length, 1);
+    assert.doesNotMatch(calls[0].emailText, /now unsubscribed/i, 'nothing was stored, so do not say it was');
+    assert.doesNotMatch(calls[0].emailText, /cannot reply by SMS/i, 'there is no thread to reply on');
+    assert.match(calls[0].emailText, /no record for this number/i);
+    assert.match(calls[0].emailText, /carrier/i, 'and says where the opt-out DOES live');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_opt_unknown_copy'");
+  }
+});
+
+test('processInboundSms > a KNOWN client still gets the real preference copy', async () => {
+  // Non-vacuity for the branch above: the unknown wording must not leak onto
+  // the path where the preference genuinely was written.
+  await withOptClient('3125550198', 'Real Client', async (clientId) => {
+    const calls = await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550198', body: 'STOP', twilioSid: 'SMtest_opt_known_copy' });
+    });
+    assert.match(calls[0].emailText, /now unsubscribed/i);
+    assert.doesNotMatch(calls[0].emailText, /no record for this number/i);
+    const after = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [clientId]);
+    assert.strictEqual(after.rows[0].communication_preferences?.sms_enabled, false,
+      'and the preference really was written, which is what licenses the copy');
+  });
+});
+
+test('processInboundSms > the compliance action runs BEFORE the alert, not after', async () => {
+  // The file claims this ordering in two comments and nothing pinned it: with
+  // the two lines swapped every other test stayed green, because safeAlert
+  // swallows and the opt-out still lands eventually. Read the stored preference
+  // from inside the alert to catch the order itself.
+  await withOptClient('3125550199', 'Order Client', async (clientId) => {
+    let enabledAtAlertTime = 'alert never fired';
+    __setDeps({
+      notifyAdminCategory: async () => {
+        const r = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [clientId]);
+        enabledAtAlertTime = r.rows[0].communication_preferences?.sms_enabled;
+      },
+    });
+    try {
+      await processInboundSms({ from: '+13125550199', body: 'STOP', twilioSid: 'SMtest_opt_order' });
+    } finally {
+      __setDeps({ notifyAdminCategory: realNotify });
+    }
+    assert.strictEqual(enabledAtAlertTime, false,
+      'the opt-out must already be committed when the alert reads it');
   });
 });

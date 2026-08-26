@@ -8,20 +8,14 @@ const { notifyAdminCategory } = require('./adminNotifications');
 const { getEventTypeLabel } = require('./eventTypes');
 const { releaseOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
 const { chicagoTodayYmd } = require('./businessTime');
+// The opt-keyword alert COPY lives in its own module: this file is at its size
+// cap, and the wording is the substance of that fix, not decoration.
+const { buildOptKeywordAlert } = require('./smsOptKeywordCopy');
 // THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
 const { shiftNotFinishedSql, shiftEndInstantSql } = require('./shiftEndInstant');
 
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
-// Opt keywords that carry an everyday meaning as well as a compliance one. A
-// client texting "Cancel" almost certainly means "cancel my event", and the
-// proposal drip asks "Want to lock it in before someone else grabs the date?",
-// a question that invites the word "yes". Both hit the sets above and flip a
-// preference. We do NOT narrow those sets to fix that: STOP/UNSUBSCRIBE/CANCEL/
-// END/QUIT and START/YES/UNSTOP are carrier-mandated, so dropping a word is a
-// compliance change. This set only decides whether the admin alert says out
-// loud that the word may not have meant what the system just did with it.
-const AMBIGUOUS_OPT_WORDS = new Set(['cancel', 'end', 'quit', 'yes']);
 // The two default HELP keywords a Twilio Advanced Opt-Out HELP response answers.
 const HELP_WORDS = new Set(['help', 'info']);
 
@@ -720,33 +714,21 @@ async function alertStaffCant(cant) {
  * anyone else is the routine email path.
  */
 async function alertOptKeyword({ sender, from, body, optKeyword }) {
-  const isStop = optKeyword === 'stop';
+  const isClient = sender.type === 'client';
   // detectOptKeyword matches only when the WHOLE trimmed body is one keyword,
   // so this is the keyword itself; the slice is belt-and-braces against a
   // future looser matcher putting unbounded text into an SMS.
   const word = (body || '').trim().slice(0, 100);
-  const isClient = sender.type === 'client';
-  // Name a staffer the way the other staff alerts here do. A bartender who
-  // opts out stops receiving the CANT/CONFIRM prompts their shifts depend on,
-  // so "which one" is the whole content of that alert. describeStaff never
-  // throws; it degrades to "user N".
+  // Name a staffer the way the other staff alerts here do. A bartender who opts
+  // out stops receiving the CANT/CONFIRM prompts their shifts depend on, so
+  // "which one" is the whole content of that alert. describeStaff never throws.
   const staffWho = sender.type === 'staff' ? (await describeStaff(sender.staffUserId))[0] : null;
   const who = isClient
     ? (sender.client.name || 'A client')
     : (staffWho || (sender.type === 'staff' ? 'A staff member' : 'An unrecognized number'));
-
-  // The opt-out half of this sentence is the operationally important one: the
-  // admin's habit is to answer an inbound from the Messages page, and that
-  // channel is exactly what just closed.
-  const did = isStop
-    ? 'They are now unsubscribed from our texts, so you cannot reply by SMS. Use email or call instead.'
-    : 'They are now re-subscribed to our texts.';
-  const ambiguous = AMBIGUOUS_OPT_WORDS.has(word.toLowerCase())
-    ? ` Heads up: "${word}" is a carrier opt-${isStop ? 'out' : 'in'} keyword, but it often means something else. Check what they actually wanted.`
-    : '';
-
-  const line = `${who} (${from}) texted Dr. Bartender: "${word}". ${did}${ambiguous}`;
-  const subject = isStop ? `${who} texted "${word}" and is now opted out` : `${who} texted "${word}" and is now opted in`;
+  const { subject, line } = buildOptKeywordAlert({
+    senderType: sender.type, who, word, optKeyword, from,
+  });
 
   if (isClient) {
     await safeAlert('opt_keyword', async () => {

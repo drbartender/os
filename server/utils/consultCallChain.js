@@ -47,6 +47,10 @@ const { consultCallAdmin } = require('./emailTemplates');
 const { formatUsPhoneForText, clockTimeWithMinutes } = require('./consultCallBriefing');
 const { toUsE164 } = require('./usPhone');
 const { ADMIN_URL, API_URL } = require('./urls');
+// The rolling-24h spend ceilings live in their own module: this file is at its
+// size cap, and they are one cohesive idea. See it for WHY they count call_audit
+// rather than the attempt rows (the R16 reschedule clear deletes those).
+const caps = require('./consultCallCaps');
 
 // Ring plan (spec section 4.2, code constants by design: these are call
 // choreography, not operator settings). Offsets are seconds relative to
@@ -71,29 +75,6 @@ const STALE_MINUTES = 30;
 
 // The || 10 fallback is load-bearing: an unset env var must not become
 // `count < NaN` (always false), which would cap-trip every consult.
-function dailyCap() { return parseInt(process.env.CONSULT_CALL_DAILY_CAP, 10) || 10; }
-
-/**
- * The rolling-24h ceiling on RINGS PLACED AT DALLAS, as opposed to dailyCap(),
- * which bounds how many chains may OPEN.
- *
- * Why a second counter exists. dailyCap() counts rows whose status is
- * NOT LIKE 'skipped%', and a cancel or reschedule while a chain is ringing
- * lands skipped_cancelled, which stops counting and frees the slot. That
- * freeing is DELIBERATE (ruling R15): counting skipped rows would let a burst
- * of junk bookings on the PUBLIC Cal.com page hold the whole feature down for
- * 24 hours past the last one. The gap it left is that nothing bounded the
- * DIALING, so "book a public slot, let it ring, cancel, rebook the same slot
- * inside its open window" cost up to three billed US legs per cycle while the
- * chain cap never advanced. Two independent reviewers found that separately.
- *
- * Derived rather than given its own env var, so the invariant this file's
- * header has always asserted -- worst case dailyCap() chains times
- * MAX_ADMIN_RINGS rings -- is now true by construction instead of by hope, and
- * raising CONSULT_CALL_DAILY_CAP raises both bounds together. Inherits
- * dailyCap()'s NaN guard for the same reason it exists there.
- */
-function dialCap() { return dailyCap() * MAX_ADMIN_RINGS; }
 
 // Default ON, like LEAD_CALL_ENABLED. Only the literal 'false' kills it.
 function isEnabled() { return process.env.CONSULT_CALL_ENABLED !== 'false'; }
@@ -253,27 +234,36 @@ async function fileMissedWindow({ consultId }) {
   return 'filed';
 }
 
+
 /**
- * Has the rolling-24h ring budget been spent?
+ * File a terminal spend-cap refusal and tell a human, at most once per window.
  *
- * Counts admin_ring across EVERY row in the window, skipped ones INCLUDED, and
- * that inclusion is the entire point: a ring that was placed was billed
- * whatever the row's status became afterwards, and the bypass this closes
- * worked precisely by turning counted rows into skipped ones. Contrast
- * openChain's cap, which must exclude them to keep R15.
+ * TERMINAL on purpose: a bare return leaves the row pending with its due time
+ * and the sweep retries it every 60 seconds forever.
  *
- * created_at rather than a per-leg timestamp because no per-leg timestamp
- * exists; a chain opens at most OPEN_AHEAD_MINUTES before its slot and every
- * ring lands within TOO_LATE_ADMIN_SEC of it, so the row's creation instant
- * dates its rings to well inside the hour.
+ * THE EMAIL GATE FAILS TOWARD TELLING DALLAS. The first version asked whether
+ * this row was the ONLY trip in the window (`COUNT(*) = 1`), which loses the
+ * alert entirely in the case that matters most: two trips landing close enough
+ * that both COUNTs see 2, so neither emails, and a sustained attack keeps the
+ * count above 1 forever so no later trip ever emails either. Zero alerts during
+ * the abuse the cap exists to report. Counting OTHER trips instead (`id <> this
+ * one`) means a race can send a second email rather than none. For a feature
+ * whose declared failure mode is silence, duplicate mail is the correct way to
+ * be wrong.
  */
-async function dialCapTripped() {
-  const r = await _deps.pool.query(
-    `SELECT COALESCE(SUM(admin_ring), 0)::int AS n FROM consult_call_attempts
-      WHERE created_at > NOW() - INTERVAL '24 hours'`
+async function fileDialCapTrip(attemptId, detail) {
+  if (!(await claim(attemptId, 'pending', 'skipped_cap', { detail, clearNextRing: true }))) return;
+  const others = await _deps.pool.query(
+    `SELECT COUNT(*)::int AS n FROM consult_call_attempts
+      WHERE detail = $2 AND id <> $1 AND updated_at > NOW() - INTERVAL '24 hours'`,
+    [attemptId, detail]
   );
-  return Number(r.rows[0].n) >= dialCap();
+  if (Number(others.rows[0].n) === 0) {
+    console.warn(`[consultCall] ${detail} at attempt ${attemptId}; further refusals this window are silent`);
+    await sendChainEmail({ attemptId, reason: detail === 'va_leg_cap_tripped' ? 'daily international-leg cap tripped' : 'daily dial cap tripped' });
+  }
 }
+
 
 /**
  * Open the ring chain for one consult, or record why it could not open.
@@ -314,7 +304,7 @@ async function openChain({ consultId }) {
                 AND status NOT LIKE 'skipped%') < $2
      ON CONFLICT (consult_id, scheduled_at) DO NOTHING
      RETURNING id`,
-    [consultId, dailyCap(), RING_OFFSETS_SEC[1]]
+    [consultId, caps.dailyCap(), RING_OFFSETS_SEC[1]]
   );
   if (ins.rowCount === 1) {
     console.log(`[consultCall] chain ${ins.rows[0].id} opened for consult ${consultId}`);
@@ -637,6 +627,11 @@ async function placeLeg({ attemptId, leg, ring, to }) {
       await _deps.cancelBridgedCall({ callSid: call.sid }).catch(() => {});
       throw sidErr;
     }
+    // The billed-leg ledger row, written here because placeLeg is the ONE choke
+    // point every placed leg passes through -- ring 1-3 from advanceChain, the
+    // ring-3 hop to Zul from onLegTerminal, and the ADMIN_PHONE-unset VA path.
+    // After the cancel, so a leg we just cancelled is never counted as spend.
+    await caps.recordLegAudit(_deps.pool, { leg, to, callSid: call.sid }, (e) => captureError(e, `${leg}-leg-audit`));
     console.log(`[consultCall] ${leg} leg placed for attempt ${attemptId} ring ${ring} → ...${last4(to)}`);
     return true;
   } catch (err) {
@@ -789,27 +784,8 @@ async function advanceChain(opts) {
     // also rides in the claim's WHERE below, but a claim that merely loses
     // leaves the row pending with its due time and the sweep would retry it
     // every 60 seconds forever.
-    if (await dialCapTripped()) {
-      if (await claim(attemptId, 'pending', 'skipped_cap', { detail: 'dial_cap_tripped', clearNextRing: true })) {
-        // One email per rolling window: a burst is precisely when this trips,
-        // and precisely when emailing per refusal would empty the Resend quota.
-        //
-        // A COUNT, where openChain's cap email uses MIN(id). openChain INSERTS
-        // its marker, so there id order is trip order and the lowest id is the
-        // first trip. Here the marker lands on a row that already existed, and
-        // rows are refused in due-time order, not id order: an older chain
-        // refused second would still hold the lower id and email again. The
-        // count is order-independent, and it reads updated_at because that is
-        // the instant the claim above stamped, i.e. when the trip happened.
-        const seen = await _deps.pool.query(
-          `SELECT COUNT(*)::int AS n FROM consult_call_attempts
-            WHERE detail = 'dial_cap_tripped' AND updated_at > NOW() - INTERVAL '24 hours'`
-        );
-        if (Number(seen.rows[0].n) === 1) {
-          console.warn(`[consultCall] DIAL cap tripped at ${dialCap()} rings/24h, attempt ${attemptId} refused`);
-          await sendChainEmail({ attemptId, reason: 'daily dial cap tripped' });
-        }
-      }
+    if (await caps.legCapTripped(_deps.pool, caps.AUDIT_ADMIN_LEG, caps.dialCap(MAX_ADMIN_RINGS))) {
+      await caps.fileCapTrip({ pool: _deps.pool, claim, sendChainEmail, attemptId, detail: 'dial_cap_tripped' });
       return;
     }
 
@@ -817,20 +793,25 @@ async function advanceChain(opts) {
     // must READ BACK the ring it just took, and admin_ring < MAX_ADMIN_RINGS is
     // what stops a re-armed row from ringing a fourth time.
     //
-    // The dial ceiling is re-asserted inside the WHERE for the same reason the
-    // chain cap and its INSERT are one statement: the read above and this write
-    // are two statements, and under READ COMMITTED a concurrent tick could slip
-    // between them. Losing here leaves the row pending, and the next tick's
-    // read files the terminal marker.
+    // The ceiling is re-asserted inside the WHERE to NARROW the window between
+    // the read above and this write -- it does not serialize. Two concurrent
+    // advanceChain calls target DIFFERENT ids, so there is no row-lock overlap
+    // and no EvalPlanQual recheck; under READ COMMITTED both can pass the
+    // subquery at ceiling-1. The real guarantee is ceiling + rings in flight,
+    // the same backstop-not-a-cap posture openChain carries. Overshoot is small
+    // because the sweep fires rings serially; only overlapping ticks or two
+    // instances can race. Losing here leaves the row pending, and the next
+    // tick's read files the terminal marker.
     const won = await _deps.pool.query(
       `UPDATE consult_call_attempts
           SET status = 'calling_admin', admin_ring = admin_ring + 1,
               next_ring_at = NULL, updated_at = NOW()
         WHERE id = $1 AND status = 'pending' AND admin_ring < $2
-          AND (SELECT COALESCE(SUM(admin_ring), 0) FROM consult_call_attempts
-                WHERE created_at > NOW() - INTERVAL '24 hours') < $3
+          AND (SELECT COUNT(*) FROM call_audit
+                WHERE status = 'consult_placed_admin'
+                  AND created_at > NOW() - INTERVAL '24 hours') < $3
         RETURNING admin_ring`,
-      [attemptId, MAX_ADMIN_RINGS, dialCap()]
+      [attemptId, MAX_ADMIN_RINGS, caps.dialCap(MAX_ADMIN_RINGS)]
     );
     if (won.rowCount !== 1) return;
     const ring = Number(won.rows[0].admin_ring);
@@ -842,6 +823,16 @@ async function advanceChain(opts) {
 
   // ADMIN_PHONE unset: Zul takes the call, with the briefing that never says
   // Dallas missed it (he was never rung).
+  //
+  // This branch had NO ceiling in the first version, because the check sat
+  // inside `if (adminPhone)`. That left the cancel-and-rebook loop fully open in
+  // exactly the configuration where each cycle buys an INTERNATIONAL leg instead
+  // of a US ring, and admin_ring stays 0 so the old counter could never rise
+  // even in principle.
+  if (await caps.legCapTripped(_deps.pool, caps.AUDIT_VA_LEG, caps.vaLegCap())) {
+    await caps.fileCapTrip({ pool: _deps.pool, claim, sendChainEmail, attemptId, detail: 'va_leg_cap_tripped' });
+    return;
+  }
   if (!(await claim(attemptId, 'pending', 'calling_va', { clearNextRing: true }))) return;
   if (!(await placeLeg({ attemptId, leg: 'va', ring: 0, to: vaCell }))) {
     await onLegTerminal({ attemptId, leg: 'va', ring: 0, callStatus: 'create_failed' });
@@ -923,7 +914,12 @@ async function onLegTerminal(opts) {
       return;
     }
     const vaCell = process.env.VA_CELL || '';
-    if (vaCell) {
+    // The international ceiling applies to the ring-3 hop too. When it is spent
+    // we fall THROUGH to finishMissed below rather than filing a cap marker:
+    // Dallas's phone already rang three times, so the consult is a genuine miss
+    // and the existing missed path still texts him the booker's number. A cap
+    // trip here would replace that text with silence.
+    if (vaCell && !(await caps.legCapTripped(_deps.pool, caps.AUDIT_VA_LEG, caps.vaLegCap()))) {
       if (!(await claim(attemptId, 'calling_admin', 'calling_va', { ring: fromRing, clearNextRing: true }))) return;
       if (!(await placeLeg({ attemptId, leg: 'va', ring: 0, to: vaCell }))) {
         await onLegTerminal({ attemptId, leg: 'va', ring: 0, callStatus: 'create_failed' });
@@ -979,8 +975,11 @@ module.exports = {
   onLegTerminal,
   guardStillScheduled,
   sendMissedText,
-  dailyCap,
-  dialCap,
+  dailyCap: caps.dailyCap,
+  dialCap: () => caps.dialCap(MAX_ADMIN_RINGS),
+  vaLegCap: caps.vaLegCap,
+  AUDIT_ADMIN_LEG: caps.AUDIT_ADMIN_LEG,
+  AUDIT_VA_LEG: caps.AUDIT_VA_LEG,
   isEnabled,
   __setDeps,
   RING_OFFSETS_SEC,
