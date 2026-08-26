@@ -284,11 +284,17 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
                         'skipped_missed_window','skipped_cap')
        AND a.created_at > NOW() - INTERVAL '7 days'
        AND c.status = 'scheduled'
-       AND c.scheduled_at > NOW()
   ) x
   ORDER BY created_at DESC, id DESC
-  LIMIT 200
+  LIMIT 300
   ```
+  **AMENDED (rev 3): there is NO `scheduled_at > NOW()` filter, and each half carries its OWN inner
+  LIMIT.** Lead inner `LIMIT 200` (its exact pre-change capacity, so the lead half stays
+  byte-identical), consult inner `LIMIT 100`, outer `LIMIT 300` as belt and braces that can then
+  never truncate either half. Without per-half limits the consult half, which a stranger can fill
+  from the PUBLIC booking page, starves the revenue-critical lead half off the feed. Pin it with a
+  test seeding more than 100 consult rows NEWER than the lead rows, so it fails on the limits
+  rather than passing on ordering.
   **AMENDED: `skipped_cap` joins the consult status list.** It predates ruling R15 and it is the one
   fault class reachable from the PUBLIC booking page, so omitting it leaves the feed silent on
   precisely the abuse signal it exists to show.
@@ -312,6 +318,7 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
   skipped_missed_window                   -> 'missed window'
   skipped_cap + dial_cap_tripped          -> 'dial cap tripped'
   skipped_cap + va_leg_cap_tripped        -> 'international leg cap tripped'
+  skipped_cap + cap_tripped               -> 'daily cap tripped'   (chain-open cap, the DOMINANT one)
   skipped_cap + anything else             -> 'daily cap tripped'
   ```
   Everything else (type `lead-call`, priority, target/ref) is unchanged, so `NeedsYouStrip` needs no
@@ -368,6 +375,7 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
   skipped_missed_window                    -> 'missed window'
   skipped_cap + dial_cap_tripped           -> 'dial cap tripped'
   skipped_cap + va_leg_cap_tripped         -> 'international leg cap tripped'
+  skipped_cap + cap_tripped                -> 'daily cap tripped'
   skipped_cap                              -> 'daily cap tripped'
   skipped_unconfigured                     -> 'misconfigured'
   skipped_disabled                         -> 'disabled'
