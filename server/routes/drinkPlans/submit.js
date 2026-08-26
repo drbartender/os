@@ -25,6 +25,28 @@ const {
 
 const PARKING_FEE_SLUG = 'parking-fee'; // per_staff catalog slug (spec §4.3)
 
+// How every UPDATE below writes `selections`.
+//
+// This PUT replaces the column wholesale with the sanitizer's output, and
+// `_logoFilename` — the R2 key of a client-uploaded logo — is deliberately NOT
+// on that allow-list: a client able to set it would pivot the logo proxy
+// (GET /t/:token/logo) into reading any object in the bucket. The planner
+// client never holds the key either. So it exists ONLY in the stored row, and
+// a plain replace deleted it on the first save after upload — stranding the
+// file behind a `companyLogo` URL that could no longer resolve, which is how
+// every logo ever uploaded came to 404 (found 2026-08-26).
+//
+// Carry the STORED value forward instead. The row's own key survives a save;
+// the client's can still never get in, and a row that never had one is never
+// given one, so the injection guard is unchanged. Covered by
+// submitPlannerV2.test.js "logo pointer survives save and submit".
+const SELECTIONS_SET = `selections = CASE
+          WHEN $2::jsonb IS NULL THEN selections
+          WHEN selections ? '_logoFilename'
+            THEN $2::jsonb || jsonb_build_object('_logoFilename', selections->'_logoFilename')
+          ELSE $2::jsonb
+        END`;
+
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
 async function handleSubmit(req, res) {
   const { serving_type, status, paid_separately } = req.body;
@@ -130,7 +152,7 @@ async function handleSubmit(req, res) {
       const planUpd = await client.query(`
         UPDATE drink_plans SET
           serving_type = COALESCE($1, serving_type),
-          selections = COALESCE($2::jsonb, selections),
+          ${SELECTIONS_SET},
           status = $3,
           submitted_at = COALESCE($4, submitted_at),
           exploration_submitted_at = COALESCE($5, exploration_submitted_at)
@@ -625,7 +647,7 @@ async function handleSubmit(req, res) {
       result = await client.query(`
         UPDATE drink_plans SET
           serving_type = COALESCE($1, serving_type),
-          selections = COALESCE($2::jsonb, selections),
+          ${SELECTIONS_SET},
           status = $3,
           submitted_at = COALESCE($4, submitted_at),
           exploration_submitted_at = COALESCE($5, exploration_submitted_at)
@@ -671,7 +693,7 @@ async function handleSubmit(req, res) {
     result = await pool.query(`
       UPDATE drink_plans SET
         serving_type = COALESCE($1, serving_type),
-        selections = COALESCE($2::jsonb, selections),
+        ${SELECTIONS_SET},
         status = $3,
         submitted_at = COALESCE($4, submitted_at),
         exploration_submitted_at = COALESCE($5, exploration_submitted_at)
@@ -682,7 +704,7 @@ async function handleSubmit(req, res) {
     result = await pool.query(`
       UPDATE drink_plans SET
         serving_type = COALESCE($1, serving_type),
-        selections = COALESCE($2::jsonb, selections),
+        ${SELECTIONS_SET},
         status = $3,
         submitted_at = COALESCE($4, submitted_at),
         exploration_submitted_at = COALESCE($5, exploration_submitted_at)

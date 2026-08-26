@@ -115,6 +115,8 @@ before(async () => {
   await seedPlan('flipOne');
   await seedPlan('legacyPicksOnly');
   await seedPlan('legacyAddon');
+  await seedPlan('logoPersist');
+  await seedPlan('logoNever');
   await pool.query(
     'UPDATE drink_plans SET planner_version = 1 WHERE token IN ($1, $2)',
     [planTokens.legacyPicksOnly, planTokens.legacyAddon]
@@ -263,4 +265,62 @@ test('Version gate: a legacy (v1) plan never gets the flip — picks are informa
   const slugs = rows.rows.map((r) => r.slug);
   assert.ok(slugs.includes('pre-batched-mocktail'), `user-added pre-batched honored (got: ${slugs.join(',')})`);
   assert.ok(!slugs.includes('mocktail-bar'), 'no flip on a v1 plan');
+});
+
+// Logo-pointer persistence (bug found 2026-08-26: every logo ever uploaded
+// 404'd on download). `_logoFilename` is the R2 key and is deliberately NOT on
+// the sanitizer's allow-list — a client that could set it would pivot the logo
+// proxy into reading any object in the bucket. The client never holds it either.
+// So the value exists ONLY in the stored row, and the PUT's wholesale
+// `selections = $2::jsonb` replace deleted it on the first save after upload,
+// stranding the file behind a `companyLogo` URL that could no longer resolve.
+// The carry-forward must survive a save WITHOUT re-opening the injection hole.
+test('logo pointer survives save and submit, and stays un-injectable', async () => {
+  // Exactly what the upload route's atomic merge writes.
+  const stored = 'drink-plan-logos/999-1786649886800.png';
+  await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) || $1::jsonb
+      WHERE token = $2`,
+    [JSON.stringify({ companyLogo: '/api/drink-plans/t/x/logo?v=1', _logoFilename: stored }), planTokens.logoPersist]
+  );
+
+  // A draft auto-save, shaped like the real client: companyLogo echoed back,
+  // _logoFilename absent — plus an injection attempt on the same key.
+  const draft = await request('PUT', `/api/drink-plans/t/${planTokens.logoPersist}`, {
+    body: {
+      status: 'draft',
+      selections: {
+        companyLogo: '/api/drink-plans/t/x/logo?v=1',
+        menuStyle: 'custom',
+        _logoFilename: 'staff-agreements/secret.pdf',
+      },
+    },
+  });
+  assert.strictEqual(draft.status, 200);
+
+  let sel = (await pool.query('SELECT selections FROM drink_plans WHERE token = $1', [planTokens.logoPersist])).rows[0].selections;
+  assert.strictEqual(sel._logoFilename, stored, 'stored R2 key must survive the sanitized replace');
+  assert.strictEqual(sel.companyLogo, '/api/drink-plans/t/x/logo?v=1');
+  assert.strictEqual(sel.menuStyle, 'custom');
+
+  // Submit takes a different UPDATE site; the pointer has to survive that too.
+  const submitted = await request('PUT', `/api/drink-plans/t/${planTokens.logoPersist}`, {
+    body: { status: 'submitted', selections: { companyLogo: '/api/drink-plans/t/x/logo?v=1', menuStyle: 'custom' } },
+  });
+  assert.strictEqual(submitted.status, 200);
+
+  sel = (await pool.query('SELECT selections FROM drink_plans WHERE token = $1', [planTokens.logoPersist])).rows[0].selections;
+  assert.strictEqual(sel._logoFilename, stored, 'stored R2 key must survive submit');
+});
+
+// The carry-forward must not MINT a pointer where the row never had one —
+// otherwise the sanitizer's guard is gone and any caller could name an R2 key.
+test('a plan with no stored logo cannot be given one by the client', async () => {
+  const res = await request('PUT', `/api/drink-plans/t/${planTokens.logoNever}`, {
+    body: { status: 'draft', selections: { menuStyle: 'house', _logoFilename: 'staff-agreements/secret.pdf' } },
+  });
+  assert.strictEqual(res.status, 200);
+  const sel = (await pool.query('SELECT selections FROM drink_plans WHERE token = $1', [planTokens.logoNever])).rows[0].selections;
+  assert.strictEqual(sel._logoFilename, undefined);
 });
