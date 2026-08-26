@@ -1528,8 +1528,10 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**REFILLED 2026-08-25 with the consult call bridge, see below. It is PUSHED but still dark,
-so unlike every previous occupant it does not graduate on the ancestor check.** Before that it read
+**EMPTY AGAIN as of 2026-08-26.** The consult call bridge sat here from the 2026-08-25 merge
+until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on
+the ancestor check, because it shipped behind a switch. It graduated on the walk instead, which is
+the rule this tier should use for anything else that ships dark. Before that it read
 EMPTY AGAIN as of 2026-08-25, and the round trip worked a second time: one item sat here
 from the 2026-08-25 merge until that day's push made `21ec7993` an ancestor of `origin/main`;
 it moved to Tier 3b by this tier's own rule, sha attached, nothing re-derived. That is twice now.
@@ -1562,7 +1564,21 @@ to rot. Do that again for the next thing that sits here.
       email; that is deliberate and matches what any other inbound client text already did.
       **Do not run this from a real client's phone** — a live opt-out is a live opt-out.
 
-- [ ] **Consult call bridge — the launch call. Merged 2026-08-25 as `fafa0d6f`, PUSHED the same day.**
+- [x] **DONE 2026-08-26. Consult call bridge, the launch call. Merged 2026-08-25 as `fafa0d6f`.**
+      Kept as the record, not as a task. Proved across two runs, both confirmed in Twilio's own
+      call log rather than inferred, and both by a human hearing or seeing the result:
+      **2026-08-25, the failover half.** Dallas let it ring out. All three agent legs dialled
+      `+1 970` from the 888 at slot-78s, +102s and +222s (the 60-second sweep tick against
+      targets of -90/+60/+180), each `no-answer` at the 20-second timeout. The chain hopped to
+      Zul's PH cell, she answered the missed-Dallas briefing, pressed 1, and the client leg went
+      out **from the 0082**, correct for a VA-answered bridge. 82 seconds of two-way audio,
+      terminal `connected / va`, no fault, no text, nothing in Sentry.
+      **2026-08-26, the caller-ID half.** A synthetic consult, no Cal.com booking. Ring 1 to the
+      970 from the 888; Dallas answered and pressed 1; the client leg went out **from
+      `+12242221922`**, the 1922, and his buddy read it off the handset. 93-second bridge,
+      terminal `connected / admin`, `admin_ring 1`, `client_no_answer_at` null. Test rows deleted.
+      So BOTH branches of `callerIdFor` are proven against real traffic: the 1922 when Dallas
+      presses 1, the 0082 when Zul does.
       **Since that merge the ring budget changed: `dialCap()` (`413eca09`, merged 2026-08-25,
       LIVE since the 2026-08-26 push) caps rings at the 312 at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
       by default, counted over EVERY attempt row including cancelled ones.** That is ample for a
@@ -1576,9 +1592,14 @@ to rot. Do that again for the next thing that sits here.
       consecutive failures, and no `[consultCall]` caller-ID warning reached Sentry, so
       `CONSULT_CALLER_ID` took. Zero attempt rows, and prod has zero future-dated scheduled
       consults, so nothing has had a slot to fire on yet.
-      **`CONSULT_CALL_ENABLED=false` CONFIRMED SET by Dallas 2026-08-25**, so the feature is
-      deployed and dark and the Tier 4 gate below is closed. The launch call is the only
-      remaining step: flip the switch on, then run the walk in the same sitting.
+      **CORRECTION, 2026-08-26.** This block previously said the feature was deployed and DARK
+      on the strength of `CONSULT_CALL_ENABLED=false`. That was wrong from the moment the
+      2026-08-25 walk ran, and the walk itself is the proof: the sweep only opens a chain when
+      the switch is TRUE, so a chain opening at 12:10:42 and ringing three times means it was
+      already on. Dallas flipped it to run the walk, exactly as this entry instructs, and left
+      it on. **The feature has been ARMED since 2026-08-25 midday and is armed now.** Nothing
+      was harmed by the mistaken record: prod carried zero upcoming consults throughout, and
+      the only chains that have ever run are the two test walks above.
       **Unlike every other item in this tier, the push alone does NOT make this live.** It ships dark
       behind `CONSULT_CALL_ENABLED=false`, which Tier 4 below requires you to set BEFORE the push. So
       this does not graduate to Tier 3b on the push; it graduates when the walk below passes.
