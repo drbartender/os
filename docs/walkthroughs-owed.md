@@ -1602,6 +1602,24 @@ to rot. Do that again for the next thing that sits here.
       whether it is worth fixing for both.
 
 
+- [ ] **Client-uploaded logos are downloadable again. Merged 2026-08-26 as `a302f946`, NOT yet pushed.**
+      Live check, no marker to rot: `git merge-base --is-ancestor a302f946 origin/main` (exit 0 = pushed).
+      Every logo a client had ever uploaded through their potion planner returned NOT_FOUND on
+      download, all seven of them, from the first upload in June onward. The plan-save PUT replaced
+      the selections blob wholesale, dropping the R2 key on the first save after the upload, while
+      the URL built from it survived. The staff BEO reads the same key, so it had been reporting
+      "no logo" on all seven events too. The files were never lost and the seven rows are already
+      backfilled, so **the data half of this is live now and needs looking at; the code half is not.**
+      **The walk is two surfaces, because the backfill fixed the rows but nobody has seen either
+      one render.** On the admin event-detail page for proposal 718 (Tyler Anderson), confirm the
+      logo displays and "Download original" saves a real PNG. Then open the same event in the staff
+      portal and confirm the BEO now shows the logo rather than claiming there is none. Spot-check a
+      second one, ideally plan 91 (Khaitan) since it is the only JPG in the set and the only row
+      still in draft.
+      **Then, after the push, upload a NEW logo and save the plan again** — that is the half the
+      backfill cannot prove, and it is the half that was actually broken.
+
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-08-25, confirmed by Dallas. Consult call bridge: two Render vars, set BEFORE the push that carried `fafa0d6f`.**
