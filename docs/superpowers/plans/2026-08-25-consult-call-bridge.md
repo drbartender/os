@@ -262,6 +262,9 @@ lanes:
 
 ## Lane consult-call-surfacing
 
+**Revised 2026-08-26, before the lane was cut.** These tasks were written before the core lane was
+built, and six things moved underneath them. Each correction is marked AMENDED where it lands.
+
 - [ ] S1. **Attention feed union (`server/routes/admin/leadCalls.js`).** Replace the single query with:
   ```sql
   SELECT * FROM (
@@ -277,7 +280,8 @@ lanes:
            c.booker_name AS customer_name, c.proposal_id, c.client_id
       FROM consult_call_attempts a
       JOIN consults c ON c.id = a.consult_id
-     WHERE a.status IN ('failed','skipped_unconfigured','skipped_invalid_phone','skipped_missed_window')
+     WHERE a.status IN ('failed','skipped_unconfigured','skipped_invalid_phone',
+                        'skipped_missed_window','skipped_cap')
        AND a.created_at > NOW() - INTERVAL '7 days'
        AND c.status = 'scheduled'
        AND c.scheduled_at > NOW()
@@ -285,15 +289,122 @@ lanes:
   ORDER BY created_at DESC, id DESC
   LIMIT 200
   ```
-  Tests (`leadCalls.test.js`, extend): existing assertions pass with `kind: 'lead'`; a consult `failed` row appears with `kind: 'consult'` and the booker name; a consult whose slot passed is excluded; a non-`scheduled` consult is excluded; a `missed` consult is excluded. Note in the commit that between S1 and S2 a consult row renders through the old code as `leadcall-<id>` (possible key collision); harmless in-lane, the squash is the unit. Commit.
+  **AMENDED: `skipped_cap` joins the consult status list.** It predates ruling R15 and it is the one
+  fault class reachable from the PUBLIC booking page, so omitting it leaves the feed silent on
+  precisely the abuse signal it exists to show.
+  Tests (`leadCalls.test.js`, extend): existing assertions still pass with `kind: 'lead'`; a consult
+  `failed` row appears as `kind: 'consult'` with the booker name; a `skipped_cap` row appears; a
+  consult whose slot has passed is excluded; a non-`scheduled` consult is excluded; a `missed`
+  consult is excluded. Commit.
 
-- [ ] S2. **Queue item (`client/src/pages/admin/overview/queueItems.js`).** `buildLeadCallItems` keys on `r.kind`: consult rows get `id: 'consultcall-' + r.id`, `title: \`Consult call with ${r.customer_name || 'Cal.com booker'} ${CONSULT_CALL_LABELS[r.status] || 'call failed'}\`` with `CONSULT_CALL_LABELS = { failed: 'call failed', skipped_unconfigured: 'call misconfigured', skipped_invalid_phone: 'bad number', skipped_missed_window: 'missed window' }`; everything else (type `lead-call`, priority, target/ref) unchanged so `NeedsYouStrip` needs no change. Test (`queueItems.test.js`, extend): a consult row renders the consult title and a `consultcall-` id; a lead row is byte-identical to before; a lead and a consult with the same id produce distinct ids. Commit.
+- [ ] S2. **Queue item (`client/src/pages/admin/overview/queueItems.js`).** `buildLeadCallItems` keys
+  on `r.kind`. Consult rows get `id: 'consultcall-' + r.id` and a title of
+  `Consult call with ${r.customer_name || 'Cal.com booker'} ${label}`.
+  **AMENDED: the cap trip is TWO different events and the label must say which.** The dial-cap lane
+  added `detail = 'dial_cap_tripped'` (the rings to Dallas) and `detail = 'va_leg_cap_tripped'` (the
+  international legs), and BOTH land on status `skipped_cap`. They mean different things to an
+  operator: the first says the public booking page is being hammered, the second says Manila spend
+  hit its ceiling. So the consult label keys on `(status, detail)`, not status alone:
+  ```
+  failed                                  -> 'call failed'
+  skipped_unconfigured                    -> 'call misconfigured'
+  skipped_invalid_phone                   -> 'bad number'
+  skipped_missed_window                   -> 'missed window'
+  skipped_cap + dial_cap_tripped          -> 'dial cap tripped'
+  skipped_cap + va_leg_cap_tripped        -> 'international leg cap tripped'
+  skipped_cap + anything else             -> 'daily cap tripped'
+  ```
+  Everything else (type `lead-call`, priority, target/ref) is unchanged, so `NeedsYouStrip` needs no
+  edit. Tests (`queueItems.test.js`, extend): each consult label renders including both cap variants;
+  a lead row is byte-identical to before; a lead and a consult sharing an id produce distinct keys.
+  Commit.
 
-- [ ] S3. **Detail lookups + route attachments.** New `server/utils/consultCallLookups.js` exporting `latestConsultCallForProposal(proposalId)` (`SELECT a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail FROM consult_call_attempts a JOIN consults c ON c.id = a.consult_id WHERE c.proposal_id = $1 ORDER BY a.id DESC LIMIT 1` -> row or null) and `consultCallsForClient(clientId)` (`SELECT * FROM (SELECT DISTINCT ON (a.consult_id) a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail FROM consult_call_attempts a JOIN consults c ON c.id = a.consult_id WHERE c.client_id = $1 ORDER BY a.consult_id, a.id DESC) t ORDER BY scheduled_at DESC LIMIT 10`). `proposals/getOne.js`: add to the `Promise.all`, attach `consult_call: row || null`. `clients.js` `GET /:id`: add to the `Promise.all`, attach `consult_calls: rows`. Tests: `consultCallLookups.test.js` (newest attempt; null when none; one row per consult); **`proposals/getOne.consultCall.test.js`** (the `getOne.leadCall.test.js` harness: a proposal with a consult attempt returns `consult_call` with the right status, a proposal without returns `null`); **`clients.getOne.consultCalls.test.js`** (same harness style: two consults for one client, two rows newest slot first; a client with none gets `[]`). Also run the reached `getOne.leadCall.test.js` and `clients.list.test.js`. Commit.
+- [ ] S3. **Detail lookups + route attachments.** New `server/utils/consultCallLookups.js`.
+  **AMENDED, and this one would have shipped a dead label:** both lookups must select
+  `client_no_answer_at`, which the original task omitted while S4 keys the "connected, no answer"
+  label on it. Without the column the label can never fire.
+  **AMENDED, from the database review:** `latestConsultCallForProposal` must DRIVE FROM `consults`,
+  not from the attempts table, or it plans as a backward whole-table PK walk on every ordinary
+  proposal page load (a proposal with no consult is the common case). The composite
+  `UNIQUE (consult_id, scheduled_at)` is what serves both read paths.
+  ```sql
+  -- latestConsultCallForProposal(proposalId)
+  SELECT a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail,
+         a.client_no_answer_at
+    FROM consults c
+    JOIN consult_call_attempts a ON a.consult_id = c.id
+   WHERE c.proposal_id = $1
+   ORDER BY a.id DESC
+   LIMIT 1
+  ```
+  ```sql
+  -- consultCallsForClient(clientId)
+  SELECT * FROM (
+    SELECT DISTINCT ON (a.consult_id)
+           a.status, a.answered_by, a.bridge_duration_sec, a.scheduled_at, a.detail,
+           a.client_no_answer_at
+      FROM consults c
+      JOIN consult_call_attempts a ON a.consult_id = c.id
+     WHERE c.client_id = $1
+     ORDER BY a.consult_id, a.id DESC
+  ) t ORDER BY scheduled_at DESC LIMIT 10
+  ```
+  `proposals/getOne.js`: add to the `Promise.all`, attach `consult_call: row || null`.
+  `clients.js` `GET /:id`: add to the `Promise.all`, attach `consult_calls: rows`.
+  Tests: `consultCallLookups.test.js` (newest attempt; null when none; one row per consult; and an
+  explicit assertion that `client_no_answer_at` comes back, since that is the column S4 depends on);
+  `proposals/getOne.consultCall.test.js` (the `getOne.leadCall.test.js` harness); a `clients` GET
+  `/:id` case. Also run the reached `getOne.leadCall.test.js` and `clients.list.test.js`. Commit.
 
-- [ ] S4. **Label helper + detail lines.** New `client/src/utils/consultCallLabel.js`: `consultCallOutcomeLabel(cc)`: `connected` with `client_no_answer_at` NON-NULL -> `connected, no answer` (ruling R14 replaced the detail-string latch with the dedicated column, and the string `client_no_answer` is NEVER written: `placeLeg`'s catch writes a Twilio error code into `detail` earlier in the same chain, which would have defeated a detail-based latch); `connected` -> `connected (Dallas|Zul, m:ss)` (duration only when `Number.isInteger(bridge_duration_sec)`); `missed`; `failed`; `skipped_cancelled` -> `cancelled`; `skipped_invalid_phone` -> `skipped, bad number`; `skipped_missed_window` -> `missed window`; `skipped_unconfigured` -> `misconfigured`; `skipped_disabled` -> `disabled`; `pending|calling_*` -> `in progress`. `consultCallSlotLabel(cc)`: `new Date(cc.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' })` -> `Aug 14, 10:00 AM`. Test file covers every branch. `ProposalDetail.js` (975 lines; import + ONE `<dt>/<dd>` pair, nothing else): under the `Lead call` line, `{proposal.consult_call && (<><dt>Consult call</dt><dd className="muted">{consultCallSlotLabel(proposal.consult_call)}: {consultCallOutcomeLabel(proposal.consult_call)}</dd></>)}`. `ClientDetail.js`: in the Lifetime card's `<dl className="dl">` after Outstanding, one `<dt>Consult call</dt><dd className="muted">…</dd>` pair per `client.consult_calls` row (keyed by `scheduled_at`). Client build gate `cd client && CI=true npx react-scripts build`. **Manual walk on dev (record what you saw in the commit body):** seed a `failed` consult attempt for a future consult and see "Consult call with X call failed" in the Sales tab and click through to the proposal; seed a `connected` row with `bridge_duration_sec 252` and see "Consult call Aug 14, 10:00 AM: connected (Dallas, 4:12)" on both the proposal and the client page; delete the seeds. Commit.
+- [ ] S4. **Label helper + detail lines.** New `client/src/utils/consultCallLabel.js`.
+  `consultCallOutcomeLabel(cc)`:
+  ```
+  connected + client_no_answer_at NON-NULL -> 'connected, no answer'
+  connected                                -> 'connected (Dallas|Zul, m:ss)'   (duration only when integer)
+  missed                                   -> 'missed'
+  failed                                   -> 'failed'
+  skipped_cancelled                        -> 'cancelled'
+  skipped_invalid_phone                    -> 'skipped, bad number'
+  skipped_missed_window                    -> 'missed window'
+  skipped_cap + dial_cap_tripped           -> 'dial cap tripped'
+  skipped_cap + va_leg_cap_tripped         -> 'international leg cap tripped'
+  skipped_cap                              -> 'daily cap tripped'
+  skipped_unconfigured                     -> 'misconfigured'
+  skipped_disabled                         -> 'disabled'
+  pending | calling_*                      -> 'in progress'
+  ```
+  **AMENDED: the three `skipped_cap` rows are new** (R15 plus the dial-cap lane). Ruling R14's
+  column latch is already reflected above; `detail === 'client_no_answer'` is a string the code NEVER
+  writes and must not appear anywhere in this helper.
+  `consultCallSlotLabel(cc)`: `toLocaleString('en-US', { month: 'short', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' })` -> `Aug 14, 10:00 AM`.
+  Test file covers every branch above.
+  `ProposalDetail.js` is **975 lines against a 1000-line hard cap**, so: the import plus ONE
+  `<dt>/<dd>` pair under the existing `Lead call` line, nothing else. `ClientDetail.js`: one pair per
+  `client.consult_calls` row in the Lifetime card's `<dl>`, keyed by `scheduled_at`.
+  Client build gate `cd client && CI=true npx react-scripts build`.
+  **Manual walk on dev, recorded in the commit body:** seed a `failed` consult attempt on a future
+  consult and see it in the Sales tab, click through; seed a `connected` row with
+  `bridge_duration_sec 252` and see the line on both detail pages; seed one with
+  `client_no_answer_at` set and confirm it reads "connected, no answer"; delete the seeds. Commit.
 
-- [ ] S5. **Settings label, docs, lane gate.** Own commit: `NotificationSettings.js` `lead_call.label = 'Call bridge failures'`, `help = 'The lead or consult call bridge could not place calls (Twilio failure, bad config, an undialable consult number, a missed slot, or the daily cap tripped). Missed calls do not alert.'`; open Notification Settings on dev and read it. Docs commit: README tree rows for `consultCallLookups.js` and `consultCallLabel.js`, the label rename noted in the Cal.com section; ARCHITECTURE route-table rows for `GET /api/admin/lead-call-attention` (both kinds, slot-ahead filter), proposals `GET /:id` (`consult_call`), clients `GET /:id` (`consult_calls`). Resolve the README/ARCHITECTURE overlap with the core lane at merge. Suites: `leadCalls`, `consultCallLookups`, `getOne.consultCall`, `getOne.leadCall`, `clients.getOne.consultCalls`, `clients.list`, `queueItems` (`cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/overview/queueItems.test.js`), `consultCallLabel`. Fleet, all five, verdicts explicit: `security-review` (admin endpoint role guard; IDOR-free by construction), `code-review`, `database-review` (the UNION and the `DISTINCT ON` lookup are new read paths on a table indexed only on `(status, next_ring_at)` and `(status, created_at)`: confirm plans or add an index in-lane), `consistency-check` (label copy matches spec 2 and 5.3; both detail pages use the one helper), `test-review`. Squash-merge; then the quick-fix commit on main adding the launch gate to `docs/walkthroughs-owed.md`.
+- [ ] S5. **Settings label, docs, lane gate.** Own commit: `NotificationSettings.js`
+  `lead_call.label = 'Call bridge failures'`, help text covering both bridges and naming the cap
+  trips, since those are now two distinct reasons an operator can receive.
+  Docs commit: README tree rows for `consultCallLookups.js` and `consultCallLabel.js`; ARCHITECTURE
+  route rows for `GET /api/admin/lead-call-attention` (both kinds, slot-ahead filter), proposals
+  `GET /:id` (`consult_call`), clients `GET /:id` (`consult_calls`).
+  **AMENDED: the old index claim was wrong.** This task previously told the reviewer the table is
+  indexed only on `(status, next_ring_at)` and `(status, created_at)`. It is ALSO indexed on the
+  composite `UNIQUE (consult_id, scheduled_at)`, which is exactly what both new read paths use, so
+  no new index is needed and the database reviewer should be told that rather than left to rederive it.
+  Suites: `leadCalls`, `consultCallLookups`, `getOne.consultCall`, `getOne.leadCall`,
+  `clients.list`, the new clients getOne case, `queueItems` and `consultCallLabel` (client, via
+  `CI=true npx react-scripts test --watchAll=false <path>`).
+  Fleet, all five, verdicts explicit: `security-review` (admin endpoint role guard, IDOR-free by
+  construction), `code-review`, `database-review` (the UNION and the `DISTINCT ON` are new read paths;
+  confirm the plans), `consistency-check` (label copy matches spec 5.3 and both detail pages use the
+  one helper), `test-review`. Squash-merge.
 
 ## Launch checklist (ops, Dallas-driven, NOT a lane)
 
