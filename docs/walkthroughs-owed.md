@@ -1528,7 +1528,7 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**EMPTY AGAIN as of 2026-08-26.** The consult call bridge sat here from the 2026-08-25 merge
+**NO LONGER EMPTY as of 2026-08-26: one occupant, the consult call SURFACING lane, listed at the end of this tier.** Before that it read EMPTY AGAIN, because the consult call bridge sat here from the 2026-08-25 merge
 until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on
 the ancestor check, because it shipped behind a switch. It graduated on the walk instead, which is
 the rule this tier should use for anything else that ships dark. Before that it read
@@ -1642,6 +1642,32 @@ to rot. Do that again for the next thing that sits here.
       still in draft.
       **Then, after the push, upload a NEW logo and save the plan again** — that is the half the
       backfill cannot prove, and it is the half that was actually broken.
+
+
+### Consult call bridge, the READ side. Built 2026-08-26, tip `63d5def9`, NOT merged.
+
+Lane `consult-call-surfacing`, 16 commits. Belongs in this tier and not in Tier 3b because it
+genuinely has not shipped: Dallas has given no merge cue. Graduates by this tier's own rule, an
+ancestor check on the merge sha, once it lands.
+
+What to walk when it does, three surfaces:
+- **Needs attention** on the admin overview. Consult call faults now appear beside the Thumbtack
+  lead ones, with their own labels. A fault does NOT retire when the slot passes, which was a
+  deliberate correction: a failed consult is a promised call not delivered, so the slot passing
+  CREATES the obligation rather than ending it.
+- **Proposal detail** and **client detail**. The newest chain per proposal, and one line per
+  consult for a client. Check the wording on a cap trip and on a stopped reschedule.
+- **Notification settings**, the "Call bridge failures" category. One line, 199 characters, and it
+  now says explicitly that not every fault emails so the feed is worth checking too.
+
+**IT WILL LOOK BROKEN, AND THAT IS DATA, NOT A DEFECT.** Verified against prod on 2026-08-26:
+8 consults, NONE future-dated, only one carrying a `booker_phone`, and exactly one
+`consult_call_attempts` row, whose consult has neither a `proposal_id` nor a `client_id`. Both
+lookups INNER JOIN the attempts table, which is correct for a feature about call OUTCOMES. So on
+merge day all three surfaces render nothing at all. **Do not walk this until a real consult has
+booked with a phone and the sweep has rung it**, or the walk proves nothing and reads as a
+regression. The seven older consults predate the `booker_phone` column and can never produce an
+attempt.
 
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
