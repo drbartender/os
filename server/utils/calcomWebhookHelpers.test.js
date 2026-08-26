@@ -8,6 +8,7 @@ const {
   parseCalcomBody,
   extractBookingFields,
   extractRescheduleOldUid,
+  extractRescheduleOldUids,
   extractPhone,
   normalizeBooker,
 } = require('./calcomWebhookHelpers');
@@ -147,4 +148,50 @@ test('normalizeBooker: no attendees array yields Unknown booker + null email', (
   assert.equal(out.name, 'Unknown booker');
   assert.equal(out.email, null);
   assert.equal(out.phone, null);
+});
+
+// ─── reschedule old-uid CANDIDATES (backlog §0) ───────────────────
+// The single-value probe forced a guess about a payload shape nothing has ever
+// observed: prod has processed zero reschedules and webhook_events archives no
+// payloads, so "which key does Cal.com actually send" was unanswerable. Cal.com's
+// rescheduleId is a NUMERIC booking id, not the uid string consults.calcom_event_id
+// holds, so a payload carrying only that key would resolve to a number, match no
+// row, and send every reschedule down the unresolved path.
+
+test('extractRescheduleOldUids: returns every candidate, in priority order', () => {
+  assert.deepEqual(
+    extractRescheduleOldUids({
+      rescheduleUid: 'uid-A',
+      rescheduleId: 12345,
+      originalRescheduleEvent: { uid: 'uid-C' },
+      metadata: { rescheduleUid: 'uid-D' },
+    }),
+    ['uid-A', '12345', 'uid-C', 'uid-D'],
+    'the DB decides which is real; this only orders the guesses'
+  );
+});
+
+test('extractRescheduleOldUids: a NUMERIC rescheduleId no longer shadows a real uid', () => {
+  // The defect shape. With only a numeric id present the old probe returned a
+  // number and the lookup could never match; now it is one candidate among any
+  // others, and a number that matches no uid costs nothing.
+  assert.deepEqual(extractRescheduleOldUids({ rescheduleId: 98765 }), ['98765']);
+  assert.deepEqual(
+    extractRescheduleOldUids({ rescheduleId: 98765, originalRescheduleEvent: { uid: 'real-uid' } }),
+    ['98765', 'real-uid'],
+    'the real uid is still offered even when a numeric id outranks it'
+  );
+});
+
+test('extractRescheduleOldUids: coerces to string, drops empties, de-duplicates', () => {
+  assert.deepEqual(extractRescheduleOldUids({ rescheduleUid: 'same', metadata: { rescheduleUid: 'same' } }), ['same']);
+  assert.deepEqual(extractRescheduleOldUids({ rescheduleUid: '  ', rescheduleId: 0 }), ['0'],
+    'blank is dropped; a literal 0 is a real id and is kept');
+  assert.deepEqual(extractRescheduleOldUids({}), []);
+  assert.deepEqual(extractRescheduleOldUids(null), []);
+});
+
+test('extractRescheduleOldUid: still first-wins, so the priority contract holds', () => {
+  assert.equal(extractRescheduleOldUid({ rescheduleUid: 'a', rescheduleId: 'b' }), 'a');
+  assert.equal(extractRescheduleOldUid({}), null);
 });

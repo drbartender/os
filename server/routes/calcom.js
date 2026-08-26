@@ -8,6 +8,7 @@ const {
   parseCalcomBody,
   extractBookingFields,
   extractRescheduleOldUid,
+  extractRescheduleOldUids,
   normalizeBooker,
 } = require('../utils/calcomWebhookHelpers');
 const { consultCallTail } = require('../utils/consultCallChain');
@@ -421,10 +422,17 @@ async function handleRescheduled(payload, res) {
     return res.status(200).send('Malformed payload, ignored');
   }
 
-  const oldUid = extractRescheduleOldUid(payload);
+  // ALL candidate keys, resolved by the database rather than picked here. See
+  // extractRescheduleOldUids for why: Cal.com's rescheduleId is a numeric
+  // booking id, not the uid string this column stores, and no real reschedule
+  // payload has ever been observed (prod has processed zero, and webhook_events
+  // archives no payloads). Letting a numeric id simply match nothing costs
+  // nothing and removes the guess.
+  const oldUids = extractRescheduleOldUids(payload);
+  const oldUid = oldUids[0] || null;
   const { phone, bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
-  if (oldUid) {
+  if (oldUids.length) {
     // COALESCE on booker_phone and booker_email: a reschedule payload that
     // carries neither keeps what the booker gave at the original booking.
     // RETURNING then hands the tail the STORED values, and this is the one
@@ -439,9 +447,14 @@ async function handleRescheduled(payload, res) {
            booker_name = COALESCE($3, booker_name),
            booker_email = COALESCE($4, booker_email),
            booker_phone = COALESCE($6, booker_phone)
-       WHERE calcom_event_id = $5
+       WHERE id = (
+         SELECT id FROM consults
+          WHERE calcom_event_id = ANY($5::text[])
+          ORDER BY array_position($5::text[], calcom_event_id)
+          LIMIT 1
+       )
        RETURNING id, scheduled_at, booker_phone, booker_email`,
-      [newUid, newStartTime, bookerNameRaw, bookerEmailRaw, oldUid, phone]
+      [newUid, newStartTime, bookerNameRaw, bookerEmailRaw, oldUids, phone]
     );
     if (result.rowCount > 0) {
       const row = result.rows[0];
@@ -465,8 +478,12 @@ async function handleRescheduled(payload, res) {
     tags: { webhook: 'calcom', triggerEvent: 'BOOKING_RESCHEDULED' },
     extra: {
       newUid,
-      reason: oldUid ? 'old_uid_not_in_db' : 'no_old_uid_in_payload',
+      reason: oldUids.length ? 'old_uid_not_in_db' : 'no_old_uid_in_payload',
       oldUid: oldUid || null,
+      // Every candidate that failed to resolve. With payloadShape below, the
+      // FIRST real reschedule that misses answers the Cal.com payload question
+      // permanently instead of leaving it open another launch.
+      oldUidCandidates: oldUids,
       payloadShape: Object.keys(payload || {}),
     },
   });

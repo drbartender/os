@@ -643,6 +643,55 @@ test('BOOKING_RESCHEDULED: probes alternative old-uid field names', async () => 
   assert.equal(row.rowCount, 1);
 });
 
+test('BOOKING_RESCHEDULED: a NUMERIC rescheduleId does not shadow the real uid (backlog §0)', async () => {
+  // THE ENTRY THIS CLOSES. Cal.com's rescheduleId is a numeric booking id, not
+  // the uid string this column stores. Under the old first-truthy probe this
+  // payload resolved to "778899", matched nothing, and took the unresolved
+  // fallthrough -- which then marks the booker's OTHER upcoming consult
+  // skipped_cancelled and, in the single-row case, tells nobody. Prod has
+  // processed zero reschedules, so nothing could confirm which key Cal.com
+  // really sends; resolving every candidate against the DB removes the guess.
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status)
+     VALUES ('test-uid-resched-old-num', '2026-06-01T15:00:00Z', 'scheduled')`
+  );
+  await buildApp(TEST_SECRET);
+  const res = await postRescheduled({
+    uid: 'test-uid-resched-new-num',
+    startTime: '2026-06-08T15:00:00Z',
+    rescheduleId: 778899,                                  // numeric, outranks the real key
+    originalRescheduleEvent: { uid: 'test-uid-resched-old-num' },
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /rescheduled in place/i, 'the real uid still resolved');
+
+  const rows = await pool.query(
+    "SELECT calcom_event_id FROM consults WHERE calcom_event_id IN ('test-uid-resched-old-num','test-uid-resched-new-num')"
+  );
+  assert.equal(rows.rowCount, 1, 'moved in place, not duplicated as a fresh create');
+  assert.equal(rows.rows[0].calcom_event_id, 'test-uid-resched-new-num');
+});
+
+test('BOOKING_RESCHEDULED: a numeric id ALONE still falls through, and is not mistaken for a uid', async () => {
+  // Non-vacuity for the test above: the candidate list must not start matching
+  // things it should not. A numeric id with no real uid beside it resolves to
+  // nothing, exactly as before.
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status)
+     VALUES ('test-uid-resched-old-lonely', '2026-06-01T15:00:00Z', 'scheduled')`
+  );
+  await buildApp(TEST_SECRET);
+  await postRescheduled({
+    uid: 'test-uid-resched-new-lonely',
+    startTime: '2026-06-08T15:00:00Z',
+    rescheduleId: 778899,
+  });
+  const moved = await pool.query("SELECT id FROM consults WHERE calcom_event_id = 'test-uid-resched-old-lonely'");
+  assert.equal(moved.rowCount, 1, 'the original row was NOT moved by a number that matches no uid');
+});
+
 test('BOOKING_RESCHEDULED: falls through to handleCreated when old uid unresolvable', async () => {
   await cleanupTestRows();
   await buildApp(TEST_SECRET);
