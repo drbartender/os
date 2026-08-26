@@ -400,7 +400,12 @@ built, and six things moved underneath them. Each correction is marked AMENDED w
   `lead_call.label = 'Call bridge failures'`, help text covering both bridges and naming the cap
   trips, since those are now two distinct reasons an operator can receive.
   Docs commit: README tree rows for `consultCallLookups.js` and `consultCallLabel.js`; ARCHITECTURE
-  route rows for `GET /api/admin/lead-call-attention` (both kinds, slot-ahead filter), proposals
+  route rows for `GET /api/admin/lead-call-attention`. **Describe it as rev 3 actually shipped,
+  not as rev 2 read:** both kinds, the five consult fault statuses including `skipped_cap`, NO
+  slot-ahead filter (a fault outlives its slot, because the slot passing creates the callback
+  obligation rather than retiring it), `c.status = 'scheduled'` as the clearing mechanism, and
+  per-half limits of 200 lead / 100 consult under an outer 300 so the public half cannot starve
+  the lead half. Then proposals
   `GET /:id` (`consult_call`), clients `GET /:id` (`consult_calls`).
   **AMENDED: the old index claim was wrong.** This task previously told the reviewer the table is
   indexed only on `(status, next_ring_at)` and `(status, created_at)`. It is ALSO indexed on the
