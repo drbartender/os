@@ -167,6 +167,28 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
 
 ## Tier 1 — money moved, and nobody watched it land
 
+- [ ] **Sign-and-pay WITH a gratuity, end to end. Fix shipped 2026-08-28, `e8101a9d`.**
+      Between 2026-08-21 and 2026-08-28 every client who typed a gratuity was unable to pay
+      at all: the page adopted create-intent's election-inclusive total into
+      `proposal.total_price`, sign sent it as `acknowledged_total`, and the row assertion
+      rejected the signature with 409 TOTAL_CHANGED. Sign runs before charge, so
+      `confirmPayment` was never reached and the card was never submitted. See the memory
+      note on acknowledged_total being ROW truth.
+      **Why it needs a WALK and not a green suite:** the shipped test covers the merge
+      function and the error banner. Nothing automated proves a real browser now carries a
+      real signature and a real card through a real gratuity. The 8/12 election-at-payment
+      walk PASSED, and it passed against code this regression later broke, so a prior tick
+      on that entry is not cover for this one.
+      **What to watch:** the tip total renders in the pay button and the breakdown; the
+      signature commits (status leaves `viewed`); the charge is the WITH-tip amount, not the
+      base; and the webhook writes the gratuity to the proposal after it lands.
+      **Do it on a real client checkout, not a rehearsal.** Dev is armed against LIVE Stripe,
+      so there is no safe stand-in here either.
+      Also verify the negative half while you are in there: force a 409 (edit the row total
+      in another window between render and sign-click) and confirm the client now SEES
+      "Your total changed while this page was open" instead of the form silently resetting.
+
+
 - [~] **cancel-line-item — PREVIEW HALF WALKED 2026-08-12** (Dallas, proposal 678, Real
       Glassware Upgrade $125). Target matching, the fold, and the invoice math all correct:
       total $750 → $625, Balance invoice $650 → $525, Deposit untouched, no refund offered.
