@@ -68,6 +68,33 @@ const switchLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The proposal checkout (spec 2026-08-28 §3c). GET /t/:token, its /resolve,
+// and POST /stripe/create-intent/:token all drew on publicLimiter, 20 per 15
+// minutes PER IP: a page load spends three, every option/autopay/gratuity
+// change spends one, a failed sign's recovery spends two. One real client
+// retrying a blocked checkout (2026-08-28, proposal 774) spent about eighteen.
+// Keyed by token, same law as optionsQuoteLimiter: browsing must never be able
+// to spend the budget that paying depends on.
+const proposalCheckoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.params?.token || req.ip,
+  message: { error: 'Too many requests. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// The post-checkout settle poll: thirteen reads at 1.5s while the webhook
+// commits. Its own bucket so a settle can never spend the checkout's budget.
+const proposalPollLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  keyGenerator: (req) => req.params?.token || req.ip,
+  message: { error: 'Too many requests. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // IP ceiling for the token-keyed public money routes. The token keying above
 // is deliberate and stays (browsing must never spend the budget paying depends
 // on), but it means the KEY is client-supplied: a valid-format random UUID
@@ -260,6 +287,8 @@ module.exports = {
   drinkPlanWriteLimiter,
   optionsQuoteLimiter,
   switchLimiter,
+  proposalCheckoutLimiter,
+  proposalPollLimiter,
   publicTokenIpLimiter,
   logoUploadLimiter,
   clientPortalWriteLimiter,

@@ -65,11 +65,11 @@ test('the intent-load error still shows on its own', () => {
   expect(screen.getByRole('alert').textContent).toBe(LOAD_MSG);
 });
 
-test('a sign error wins over a stale intent error, and never doubles up', () => {
+test('a sign error and an intent error both show, in one banner', () => {
   render(<SignAndPaySection {...props} loadingIntent formError={SIGN_MSG} intentError={LOAD_MSG} />);
   const alerts = screen.getAllByRole('alert');
   expect(alerts).toHaveLength(1);
-  expect(alerts[0].textContent).toBe(SIGN_MSG);
+  expect(alerts[0].textContent).toBe(`${SIGN_MSG} ${LOAD_MSG}`);
 });
 
 test('no banner when nothing failed', () => {

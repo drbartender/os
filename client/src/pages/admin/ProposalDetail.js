@@ -729,6 +729,7 @@ export default function ProposalDetail() {
                         <div key={i} className="hstack" style={{ alignItems: 'flex-start' }}>
                           <div className="queue-icon info" style={{ flexShrink: 0 }}>
                             <Icon name={
+                              /fail/i.test(entry.action || '') ? 'alert' :
                               /payment|paid|deposit/i.test(entry.action || '') ? 'dollar' :
                               /sent/i.test(entry.action || '') ? 'send' :
                               /view/i.test(entry.action || '') ? 'eye' :

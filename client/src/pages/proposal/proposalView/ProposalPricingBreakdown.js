@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { resolveGratuityDisplayLabel } from '../../../utils/gratuityLabels';
 import { getPackageBySlug } from '../../../data/packages';
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
+import { fmt } from './helpers';
 import styles from './styles';
 import AgreementText from './AgreementText';
+import PaymentTermsBox from './PaymentTermsBox';
 import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
 
 export default function ProposalPricingBreakdown({
@@ -14,6 +15,8 @@ export default function ProposalPricingBreakdown({
   balanceAmount,
   balanceDueDate,
   fullPaymentRequired,
+  paid,
+  settling,
   showSignAndPay,
   showPayOnly,
   showOptionsEntry,
@@ -61,7 +64,11 @@ export default function ProposalPricingBreakdown({
         <h2 style={styles.sectionTitle}>Pricing</h2>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <tbody>
-            {lineItems.map((item, i) => (
+            {/* Settling: the row is unconfirmed (spec 2026-08-28 decision 1).
+                The contract lines stay, the webhook never rewrites those; the
+                Gratuity line and the Total are what the webhook writes, so
+                neither renders until it has. */}
+            {lineItems.filter((item) => !(settling && item.gratuity)).map((item, i) => (
               <tr key={i} style={{ borderBottom: '1px dotted rgba(28,22,16,0.22)' }}>
                 <td style={{ padding: '0.6rem 0', color: 'var(--deep-brown)', fontSize: '0.95rem' }}>
                   {resolveGratuityDisplayLabel(item.label, snapshot)}
@@ -78,7 +85,7 @@ export default function ProposalPricingBreakdown({
                 Total
               </td>
               <td style={{ padding: '0.85rem 0 0', textAlign: 'right', fontWeight: 400, fontSize: '1.35rem', color: 'var(--deep-brown)', fontFamily: 'var(--font-display)', fontVariantNumeric: 'tabular-nums' }}>
-                {snapshot ? fmt(snapshot.total) : '—'}
+                {settling ? '—' : snapshot ? fmt(snapshot.total) : '—'}
               </td>
             </tr>
           </tfoot>
@@ -131,35 +138,14 @@ export default function ProposalPricingBreakdown({
 
       {/* ── Payment Summary (always visible) ── */}
       <div style={styles.section}>
-        <h2 style={styles.sectionTitle}>Payment Terms</h2>
-        <div style={styles.paymentSummary}>
-          {fullPaymentRequired ? (
-            <>
-              <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
-                <span style={styles.paymentLabel}>Full Payment Due</span>
-                <span style={styles.paymentValue}>{snapshot ? fmt(snapshot.total) : '—'}</span>
-              </div>
-              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                This is the complete cost for your event. No separate deposit, no balance due later.
-              </p>
-            </>
-          ) : (
-            <>
-              <div style={styles.paymentRow}>
-                <span style={styles.paymentLabel}>Deposit Due at Signing</span>
-                <span style={styles.paymentValue}>{fmt(DEPOSIT_DOLLARS)}</span>
-              </div>
-              <div style={styles.paymentRow}>
-                <span style={styles.paymentLabel}>Remaining Balance</span>
-                <span style={styles.paymentValue}>{fmt(balanceAmount)}</span>
-              </div>
-              <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
-                <span style={styles.paymentLabel}>Balance Due By</span>
-                <span style={styles.paymentValue}>{formatDateShort(balanceDueDate)}</span>
-              </div>
-            </>
-          )}
-        </div>
+        <PaymentTermsBox
+          state={paid}
+          settling={settling}
+          fullPaymentRequired={fullPaymentRequired}
+          snapshotTotal={snapshot ? snapshot.total : null}
+          balanceAmount={balanceAmount}
+          balanceDueDate={balanceDueDate}
+        />
 
         {/* Potion Planner Link */}
         {proposal.drink_plan_token && (

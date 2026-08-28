@@ -26,7 +26,7 @@ export function applyIntentQuote(proposal, quote) {
     pricing_snapshot: {
       ...(proposal.pricing_snapshot || {}),
       total: quote.total_price,
-      gratuity: quote.gratuity,
+      gratuity: quote.gratuity == null ? (proposal.pricing_snapshot || {}).gratuity : quote.gratuity,
     },
   };
 }

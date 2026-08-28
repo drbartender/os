@@ -175,3 +175,30 @@ test('sub-cent noise is not a conflict; a garbage value is a 400', async () => {
   });
   assert.equal(res.status, 200, `sub-cent float noise must not block a signature: ${res.raw}`);
 });
+
+test('a TOTAL_CHANGED 409 writes a sign_failed activity row carrying the code and the acknowledged total', async () => {
+  const p = await insertSignableProposal();
+  const r = await request('POST', `/api/proposals/t/${p.token}/sign`, { body: signBody({ acknowledged_total: 999 }) });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'TOTAL_CHANGED');
+  const rows = (await pool.query(
+    "SELECT details FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sign_failed'", [p.id]
+  )).rows;
+  assert.equal(rows.length, 1, 'exactly one sign_failed row');
+  assert.equal(rows[0].details.code, 'TOTAL_CHANGED');
+  assert.equal(Number(rows[0].details.acknowledged_total), 999);
+  const views = (await pool.query(
+    "SELECT count(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'viewed'", [p.id]
+  )).rows[0].n;
+  assert.equal(views, 0, 'a failed sign is not a view');
+});
+
+test('a successful sign records the acknowledged total in the signed row', async () => {
+  const p = await insertSignableProposal();
+  const r = await request('POST', `/api/proposals/t/${p.token}/sign`, { body: signBody({ acknowledged_total: 500 }) });
+  assert.equal(r.status, 200);
+  const row = (await pool.query(
+    "SELECT details FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'signed'", [p.id]
+  )).rows[0];
+  assert.equal(Number(row.details.acknowledged_total), 500);
+});

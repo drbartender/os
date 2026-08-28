@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
@@ -6,7 +6,7 @@ import { useToast } from '../../../context/ToastContext';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { COMPANY_PHONE } from '../../../utils/constants';
 import { interpolatePackageIncludes } from '../../../utils/packageIncludes';
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
+import { fmt, DEPOSIT_DOLLARS } from './helpers';
 import styles from './styles';
 import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
 import ProposalHeader from './ProposalHeader';
@@ -14,6 +14,10 @@ import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
 import { applyIntentQuote } from './intentQuote';
+import * as Sentry from '@sentry/react';
+import { paidState, readRedirect } from './paidState';
+import { useSettle } from './useSettle';
+import PaidCard from './PaidCard';
 import OtherOptionsPanel from '../otherOptions/OtherOptionsPanel';
 import SwitchBanner from './SwitchBanner';
 import { postSwitch } from '../otherOptions/switchApi';
@@ -110,8 +114,13 @@ export default function ProposalView() {
   // mode (live vs test) always matches what the server uses for intents.
   const [stripePromise, setStripePromise] = useState(null);
 
-  // Check if returning from Stripe redirect
-  const paid = new URLSearchParams(window.location.search).get('paid') === 'true';
+  // A checkout redirect landed here. `paid` keeps its old name because
+  // isPayableStatus and the intent effect key on it, and now means "Stripe
+  // sent the client back and did NOT report failure". It does NOT mean the
+  // row is paid; the row may not be written yet (spec 2026-08-28 §1a).
+  // `pending`/`processing` count as not-failed and settle like a success.
+  const { redirected, failed: redirectFailed } = useMemo(() => readRedirect(window.location.search), []);
+  const paid = redirected && !redirectFailed;
 
   // Derived flag: is this proposal in a state where payment is still possible?
   // Mirrors the business logic used below (showSignAndPay / showPayOnly) so
@@ -172,11 +181,35 @@ export default function ProposalView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Show a success toast when returning from Stripe redirect (?paid=true)
-  useEffect(() => {
-    if (paid) toast.success('Payment received!');
+  // Settle after a checkout redirect (spec 2026-08-28 §3b). The first proposal
+  // load may have read the row BEFORE the webhook committed; never render its
+  // numbers as "paid". useSettle polls the non-mutating payment-state read
+  // until the row is in a paid state, refetches the full proposal once, and
+  // hands it back; or lands in the fallback, which asserts nothing.
+  const fetchPaymentState = useCallback(
+    () => axios.get(`${BASE_URL}/proposals/t/${token}/payment-state`).then((r) => r.data),
+    [token]
+  );
+  const fetchFreshProposal = useCallback(
+    () => axios.get(`${BASE_URL}/proposals/t/${token}`).then((r) => r.data),
+    [token]
+  );
+  const onSettled = useCallback((fresh) => {
+    setProposal(fresh);
+    toast.success('Payment received!');
+  }, [toast]);
+  const onFallback = useCallback((reason) => {
+    // A client who sat through the whole poll with no settled row is the one
+    // event worth paging on: it is either a slow webhook or a rolled-back one.
+    Sentry.captureMessage('proposal_settle_fallback', {
+      level: 'warning',
+      tags: { proposal_id: String(proposal?.id ?? ''), reason },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paid]);
+  }, [proposal?.id]);
+  const settle = useSettle({
+    active: paid, proposal, fetchState: fetchPaymentState, fetchProposal: fetchFreshProposal, onSettled, onFallback,
+  });
 
   // Seed editable venue from the loaded proposal (once).
   useEffect(() => {
@@ -234,6 +267,11 @@ export default function ProposalView() {
   useEffect(() => {
     if (!isPayableStatus) return;
     if (!paymentOption) return;
+    // Clear any stale "unable to load payment form" banner from a prior failed
+    // fetch so a fresh option/autopay toggle doesn't show an error mid-load.
+    // Deliberately NOT formError: a sign failure clears the secrets, which
+    // lands us here, and this clear would erase the explanation on its way past.
+    setIntentError('');
     // Never quote a below-floor no-jar gratuity: the server would reject it
     // (deriveGratuityRate). Drop the loading state and let the gratuity floor
     // warning + the payment-area note (SignAndPaySection) be the only UI.
@@ -256,11 +294,6 @@ export default function ProposalView() {
     // effect mid-fetch. The <Elements key={activeSecret}> prop handles remount
     // once the new clientSecret arrives.
     setLoadingIntent(true);
-    // Clear any stale "unable to load payment form" banner from a prior failed
-    // fetch so a fresh option/autopay toggle doesn't show an error mid-load.
-    // Deliberately NOT formError: a sign failure clears the secrets, which
-    // lands us here, and this clear would erase the explanation on its way past.
-    setIntentError('');
     (async () => {
       try {
         const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {
@@ -367,13 +400,14 @@ export default function ProposalView() {
     // page could not explain.
     if (unknown) {
       axios.get(`${BASE_URL}/proposals/t/${token}`)
-        .then((fresh) => { setProposal(fresh.data); setDepositSecret(''); setFullSecret(''); })
+        .then((fresh) => { setProposal(fresh.data); setDepositSecret(''); setFullSecret(''); setFormError(''); })
         .catch(() => {});
       return;
     }
     setProposal(payload);
     setDepositSecret('');
     setFullSecret('');
+    setFormError('');
     // Let the seeding effect re-run against the new staffing basis: a different
     // crew size moves the suggested gratuity and its floor.
     setGratuityDirty(false);
@@ -391,6 +425,7 @@ export default function ProposalView() {
       setProposal(r.payload);
       setDepositSecret('');
       setFullSecret('');
+      setFormError('');
       setGratuityDirty(false);
       setSwitched(null);
       return;
@@ -474,15 +509,14 @@ export default function ProposalView() {
         venue_city: venue.venue_city?.trim() || null,
         venue_state: venue.venue_state?.trim() || null,
         venue_zip: venue.venue_zip?.trim() || null,
-        // ARMS the server's sign-time total assertion. It has always existed
-        // (publicToken.js re-asserts total_price in the UPDATE's WHERE) but it
-        // self-disarms when this field is absent, and no client ever sent it,
-        // so it had never once fired. This lane is what makes that matter: it
-        // turns pre-signature rewrites into a routine self-serve action, so a
-        // switch landing between render and sign-click is now an ordinary
-        // event rather than a leaked-token edge case. Sending the total we
-        // actually rendered means a signature can only ever bind the
-        // configuration the signer saw.
+        // The ROW total the server last returned, which is what the sign
+        // UPDATE re-asserts (publicToken.js: ABS(total_price - $14) < 0.005).
+        // NOT the rendered total: the page renders pricing_snapshot.total,
+        // which may exceed this by the in-memory gratuity election that
+        // create-intent projects and never persists (see intentQuote.js).
+        // Only a real row rewrite (the options switch, which reseeds from
+        // the server payload) moves this value. Sending the projection here
+        // 409'd every gratuity-electing signature for a week in August.
         acknowledged_total: Number(proposal.total_price),
       });
       signedThisSession.current = true;
@@ -554,7 +588,10 @@ export default function ProposalView() {
         });
       });
       if (snap.gratuity && snap.gratuity.total > 0) {
-        items.push({ label: 'Gratuity', amount: snap.gratuity.total });
+        // Flagged: the one line the payment webhook rewrites (election at
+        // payment recomputes snapshot.gratuity), so the breakdown hides it
+        // while the redirect is still settling.
+        items.push({ label: 'Gratuity', amount: snap.gratuity.total, gratuity: true });
       }
     }
     return items;
@@ -613,9 +650,12 @@ export default function ProposalView() {
   // off-platform money on transferred events — instead of assuming exactly one
   // standard deposit was collected (wrong for paid-in-full, zero-collected, or
   // CC-transferred events).
-  const inPaidState = ['confirmed', 'deposit_paid', 'balance_paid', 'completed'].includes(proposal.status);
-  const balanceAmount = inPaidState
-    ? Math.max(0, totalPrice - Number(proposal.amount_paid || 0))
+  // ROW truth (spec 2026-08-28 §3d). The rendered total (snapshot) is the
+  // basis for the remainder, as balanceAmount always was; the row's
+  // total_price decides full-vs-deposit, as isFullyPaid always did.
+  const paidInfo = paidState(proposal, snapshot ? Number(snapshot.total) : undefined);
+  const balanceAmount = paidInfo.kind !== 'none'
+    ? paidInfo.remaining
     : totalPrice - DEPOSIT_DOLLARS;
 
   // Calculate balance due date (from DB or default 14 days before event)
@@ -636,13 +676,23 @@ export default function ProposalView() {
   const lastMinuteHold = !!policy.last_minute_hold;
 
   const isAlreadySigned = !!proposal.client_signed_at;
-  const isPaid = ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) || paid;
+  // ROW truth only. The URL opens the settling state; it never renders the
+  // paid card by itself.
+  const isPaid = paidInfo.kind !== 'none';
+  // Derived from the redirect and the row, not from the hook's phase, so the
+  // first committed render is already settling. useSettle starts at 'idle' and
+  // only flips inside a passive effect, one commit later; keying on that let a
+  // signed accepted row paint its pay-only section, its "unable to load
+  // payment form" line and its deposit-due rows for a frame, to a client who
+  // had just paid. The hook's phase only ever ADDS the fallback, and only
+  // while the row is unpaid: a paid row is the truth, whatever the hook says.
+  const settling = !isPaid && (settle === 'fallback' || paid);
 
   // Combined sign+pay section (new flow)
-  const showSignAndPay = !isPaid && !isAlreadySigned && ['sent', 'viewed'].includes(proposal.status);
+  const showSignAndPay = !isPaid && !settling && !isAlreadySigned && ['sent', 'viewed'].includes(proposal.status);
 
   // Pay-only section (backward compat: already signed under old flow, not yet paid)
-  const showPayOnly = !isPaid && isAlreadySigned && proposal.status === 'accepted';
+  const showPayOnly = !isPaid && !settling && isAlreadySigned && proposal.status === 'accepted';
 
   const activeSecret = paymentOption === 'full' ? fullSecret : depositSecret;
   const payLabel = paymentOption === 'full'
@@ -651,9 +701,6 @@ export default function ProposalView() {
   const payOnlyLabel = paymentOption === 'full'
     ? `Pay ${fmt(totalPrice)}`
     : `Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
-
-  const isFullyPaid = proposal.status === 'balance_paid' ||
-    Number(proposal.amount_paid || 0) >= Number(proposal.total_price || 0) - 0.01;
 
   // The event facts a switch never touches. Deliberately guests/hours/bars only:
   // a package with a different bartender ratio WOULD re-derive the crew, so the
@@ -714,6 +761,8 @@ export default function ProposalView() {
               balanceAmount={balanceAmount}
               balanceDueDate={balanceDueDate}
               fullPaymentRequired={fullPaymentRequired}
+              paid={paidInfo}
+              settling={settling}
               showSignAndPay={showSignAndPay}
               showPayOnly={showPayOnly}
               showOptionsEntry={showOptionsEntry}
@@ -723,6 +772,11 @@ export default function ProposalView() {
           </div>
 
           <aside className="proposal-pay-rail">
+            {redirectFailed && (
+              <p className="payment-policy-warn" role="status">
+                That payment did not go through. Nothing was charged. You can try again below.
+              </p>
+            )}
             {showSignAndPay && (
               <SignAndPaySection
                 mode="signAndPay"
@@ -798,50 +852,18 @@ export default function ProposalView() {
               />
             )}
 
-            {/* ── Paid state success card (replaces sign-and-pay) ── */}
-            {isPaid && (
-              <div className="proposal-paid-card">
-                <div className="proposal-paid-check" aria-hidden="true">✓</div>
-                {isFullyPaid ? (
-                  <>
-                    <h3 className="proposal-paid-title">Fully paid.</h3>
-                    <p className="proposal-paid-sub">
-                      Your booking is confirmed. We'll be in touch with event details closer to the date.
-                    </p>
-                  </>
-                ) : proposal.autopay_enrolled ? (
-                  <>
-                    <h3 className="proposal-paid-title">{Number(proposal.amount_paid || 0) > 0 ? 'Deposit received.' : 'Booking confirmed.'}</h3>
-                    <p className="proposal-paid-sub">
-                      Your remaining balance of {fmt(balanceAmount)} will be automatically charged on {formatDateShort(balanceDueDate)}.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <h3 className="proposal-paid-title">{Number(proposal.amount_paid || 0) > 0 ? 'Deposit received.' : 'Booking confirmed.'}</h3>
-                    <p className="proposal-paid-sub">
-                      Your remaining balance of {fmt(balanceAmount)} is due by {formatDateShort(balanceDueDate)}.
-                    </p>
-                  </>
-                )}
-                {/* Primary pay control for a booked-but-not-fully-paid event:
-                    route straight to the balance invoice (fix #9 — no more
-                    planner dead-end). Renders only when an open invoice exists. */}
-                {!isFullyPaid && proposal.open_invoice_token && (
-                  <a
-                    href={`/invoice/${proposal.open_invoice_token}`}
-                    className="btn btn-primary"
-                    style={{ marginTop: '4px' }}
-                  >
-                    Pay balance
-                  </a>
-                )}
-                {proposal.drink_plan_token && (
-                  <a href={`/plan/${proposal.drink_plan_token}`} className="proposal-paid-link">
-                    Open the Potion Planner →
-                  </a>
-                )}
-              </div>
+            {/* ── Paid state card (replaces sign-and-pay). Settling and fallback
+                phases render no dollar figure; paid renders from the row. ── */}
+            {(settling || isPaid) && (
+              <PaidCard
+                phase={isPaid ? 'paid' : settle === 'fallback' ? 'fallback' : 'settling'}
+                state={paidInfo}
+                autopayEnrolled={!!proposal.autopay_enrolled}
+                balanceDueDate={balanceDueDate}
+                openInvoiceToken={proposal.open_invoice_token || null}
+                drinkPlanToken={proposal.drink_plan_token || null}
+                onRefresh={() => window.location.assign(window.location.pathname)}
+              />
             )}
           </aside>
         </div>

@@ -756,6 +756,19 @@ here by default.
   live again, which is a live-money change. Prod has zero heal markers today, so it is inert.
   Decide the rule before touching it.
 
+- **create-intent mints a fresh intent beside a `succeeded`/`processing` one, so a second card
+  entry is a second real charge.** `stripeCreateIntent.js:157-167` deliberately leaves a live
+  intent alone and mints another; both webhooks credit additively. Reachable by any reload of an
+  unsettled `accepted` row, and the settle fallback card's Refresh (lane pay-settle-page,
+  2026-08-28) makes it one click: a slow-but-succeeding webhook leaves the row `accepted`, the
+  reload shows "Pay $550" to a client just told "we are still confirming". Fix: 409
+  `PAYMENT_IN_FLIGHT` when the newest `stripe_sessions` intent for the proposal is
+  `succeeded`/`processing`, the way `publicSwitch.js:264-267` already refuses a switch beside
+  any pending intent (it checks the whole pending set; create-intent's own newest-row query at
+  `stripeCreateIntent.js:129-132` makes the newest-intent check the natural shape); the client shows
+  the settling card on that code instead of a form. Server-side, its own lane, not a widening
+  of the settle lane.
+
 - **A refund larger than the service contract leaves the override and total clamped apart.**
   `applyRefundReconciliation` clamps `total_price` and `total_price_override` at 0 independently,
   so gratuity dollars refunded beyond the override leave `total_price - override` below the

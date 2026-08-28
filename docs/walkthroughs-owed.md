@@ -182,11 +182,27 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       **What to watch:** the tip total renders in the pay button and the breakdown; the
       signature commits (status leaves `viewed`); the charge is the WITH-tip amount, not the
       base; and the webhook writes the gratuity to the proposal after it lands.
+      **Added 2026-08-28 (lane pay-settle-page):** watch the REDIRECT, not a reload (a reload
+      was always right). The page after checkout must show "Confirming your payment" with NO
+      dollar figure, then settle to "Fully paid." with the with-tip amount within a few
+      seconds. While the spinner shows, the Pricing table's Total must read a dash, not the
+      pre-tip total, and there must be NO Gratuity line yet (the contract lines stay; the
+      Gratuity line is the one the webhook rewrites, so it appears with the Total once the
+      webhook lands). The Payment Terms box must read "Paid in full" and
+      never "Deposit Due at Signing". In Network: payment-state calls all 200 and no more
+      than 13, one GET /t/:token after the last, zero create-intent calls after the redirect;
+      the admin Activity rail shows exactly two viewed rows for the visit. Reload the same
+      ?paid=true URL: "Fully paid." at once, no payment-state calls.
       **Do it on a real client checkout, not a rehearsal.** Dev is armed against LIVE Stripe,
       so there is no safe stand-in here either.
-      Also verify the negative half while you are in there: force a 409 (edit the row total
-      in another window between render and sign-click) and confirm the client now SEES
-      "Your total changed while this page was open" instead of the form silently resetting.
+      Then the negative half, on a dev proposal: force a 409 (edit the row total in another
+      window between render and sign-click) and confirm the client SEES "Your total changed
+      while this page was open" instead of the form silently resetting, that a sign_failed
+      row lands in proposal_activity_log with code TOTAL_CHANGED, and that the admin Activity
+      rail draws it with the alert icon, not the green check. Then, on an unpaid accepted
+      dev proposal, load ?paid=true by hand: spinner for about 20 s, then the fallback card
+      with Refresh and no dollar figure. Know that Refresh lands on a live pay form (fix list,
+      Money section, create-intent PAYMENT_IN_FLIGHT); do not pay it.
 
 
 - [~] **cancel-line-item — PREVIEW HALF WALKED 2026-08-12** (Dallas, proposal 678, Real

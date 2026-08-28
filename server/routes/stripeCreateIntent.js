@@ -11,7 +11,7 @@
  */
 const express = require('express');
 const { pool } = require('../db');
-const { publicLimiter } = require('../middleware/rateLimiters');
+const { proposalCheckoutLimiter, publicTokenIpLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, NotFoundError, ConflictError, ExternalServiceError, ValidationError } = require('../utils/errors');
 const { getStripe } = require('../utils/stripeClient');
@@ -25,7 +25,9 @@ const router = express.Router();
 // ─── Public: create a Payment Intent for a proposal ──────────────
 
 /** POST /api/stripe/create-intent/:token — public, token-gated */
-router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is no longer available'), publicLimiter, asyncHandler(async (req, res) => {
+// Token-keyed so browsing can never spend the budget paying depends on, with the per-IP ceiling in
+// front: a public write that reaches Stripe needs one, and the token key is client-supplied (see rateLimiters.js at publicTokenIpLimiter).
+router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is no longer available'), publicTokenIpLimiter, proposalCheckoutLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');

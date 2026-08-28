@@ -51,3 +51,9 @@ test('a gratuity-less quote (client never touched the field) still matches the r
   expect(next.total_price).toBe(350);
   expect(next.pricing_snapshot.total).toBe(350);
 });
+
+test('a null gratuity in the quote keeps the prior gratuity block (staff_count, hours, floor_rate drive the floor gate)', () => {
+  const prior = { ...row, pricing_snapshot: { ...row.pricing_snapshot, gratuity: { rate: 0, total: 0, tip_jar: true, staff_count: 2, hours: 4, floor_rate: null } } };
+  const next = applyIntentQuote(prior, { total_price: 350, gratuity: null });
+  expect(next.pricing_snapshot.gratuity).toEqual(prior.pricing_snapshot.gratuity);
+});

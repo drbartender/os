@@ -398,7 +398,7 @@ export default function SignAndPaySection({
                 </div>
               )}
 
-              <FormBanner error={formError || intentError} fieldErrors={fieldErrors} />
+              <FormBanner error={[formError, intentError].filter(Boolean).join(' ')} fieldErrors={fieldErrors} />
 
               {activeSecret && stripePromise && !loadingIntent && (
                 <div className="sign-pay-stripe-wrap">
@@ -485,7 +485,7 @@ export default function SignAndPaySection({
           </div>
         )}
 
-        <FormBanner error={formError || intentError} fieldErrors={fieldErrors} />
+        <FormBanner error={[formError, intentError].filter(Boolean).join(' ')} fieldErrors={fieldErrors} />
 
         {activeSecret && stripePromise && !loadingIntent && (
           <div className="sign-pay-stripe-wrap">

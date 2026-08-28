@@ -1,7 +1,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
-const { publicLimiter, signLimiter } = require('../../middleware/rateLimiters');
+const { signLimiter, proposalCheckoutLimiter, proposalPollLimiter, publicTokenIpLimiter } = require('../../middleware/rateLimiters');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
@@ -37,7 +37,7 @@ function requireUuidToken(req, res, next) {
  *  bumping view_count or flipping sent->viewed (which the full GET below does —
  *  merely landing on a link that will be bounced must not inflate that option's
  *  engagement). */
-router.get('/t/:token/resolve', publicLimiter, requireUuidToken, asyncHandler(async (req, res) => {
+router.get('/t/:token/resolve', requireUuidToken, publicTokenIpLimiter, proposalCheckoutLimiter, asyncHandler(async (req, res) => {
   const { rows: [row] } = await pool.query(
     `SELECT p.group_id, g.token AS group_token, g.chosen_proposal_id, cp.token AS chosen_token
        FROM proposals p
@@ -52,6 +52,29 @@ router.get('/t/:token/resolve', publicLimiter, requireUuidToken, asyncHandler(as
     group_token: row.group_token || null,
     decided: row.chosen_proposal_id !== null,
     chosen_token: row.chosen_token || null,
+  });
+}));
+
+/** GET /api/proposals/t/:token/payment-state — NON-mutating. The poll target
+ *  for the post-checkout settle state (spec 2026-08-28 §3c). Returns only the
+ *  row's payment state, in dollars, and touches NOTHING: no view_count bump,
+ *  no last_viewed_at, no sent->viewed flip, no activity row. The full GET does
+ *  all four on every call, and a thirteen-attempt poll against it would record
+ *  thirteen views of a page the client is staring at once. 404 on archived is
+ *  stated here on its own; /resolve above is deliberately status-blind. */
+router.get('/t/:token/payment-state', requireUuidToken, publicTokenIpLimiter, proposalPollLimiter, asyncHandler(async (req, res) => {
+  const { rows: [row] } = await pool.query(
+    `SELECT status, amount_paid, total_price, payment_type
+       FROM proposals
+      WHERE token = $1 AND status <> 'archived'`,
+    [req.params.token]
+  );
+  if (!row) throw new NotFoundError('This proposal is no longer available');
+  res.json({
+    status: row.status,
+    amount_paid: Number(row.amount_paid || 0),
+    total_price: Number(row.total_price || 0),
+    payment_type: row.payment_type || null,
   });
 }));
 
@@ -242,7 +265,7 @@ async function buildPublicProposalPayload(token, db = pool) {
   };
 }
 
-router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req, res) => {
+router.get('/t/:token', requireUuidToken, publicTokenIpLimiter, proposalCheckoutLimiter, asyncHandler(async (req, res) => {
   // Capture IP for view logging (no third-party geo lookup for privacy)
   const rawIp = req.ip || (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '';
   const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
@@ -422,6 +445,8 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     // Disambiguate: a still-signable row can only have failed the total
     // assertion, so tell the client to re-review rather than lying that it
     // was already accepted.
+    let code = 'ALREADY_ACCEPTED';
+    let message = 'This proposal has already been accepted';
     if (ackGiven) {
       const re = await pool.query(
         'SELECT client_signed_at, status FROM proposals WHERE id = $1',
@@ -431,13 +456,27 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       const stillSignable = r && !r.client_signed_at
         && !['accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
       if (stillSignable) {
-        throw new ConflictError(
-          'The total for this proposal has changed. Please review the updated price and sign again.',
-          'TOTAL_CHANGED'
-        );
+        code = 'TOTAL_CHANGED';
+        message = 'The total for this proposal has changed. Please review the updated price and sign again.';
       }
     }
-    throw new ConflictError('This proposal has already been accepted', 'ALREADY_ACCEPTED');
+    // A blocked signature must never be silent (spec 2026-08-28 §3e). For a
+    // week in August every gratuity-electing client 409'd here and the only
+    // trace was a run of 'viewed' rows from the recovery refetch, which read
+    // as engagement. Breadcrumb it as what it is, and page Sentry.
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+       VALUES ($1, 'sign_failed', 'client', $2)`,
+      [lookup.rows[0].id, JSON.stringify({ code, acknowledged_total: ackGiven ? ackTotal : null })]
+    ).catch((err) => console.error('sign_failed activity log failed (non-blocking):', err.message));
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage('proposal_sign_failed', {
+        level: 'warning',
+        tags: { route: 'proposals/sign', code, proposal_id: String(lookup.rows[0].id) },
+        extra: { acknowledged_total: ackGiven ? ackTotal : null },
+      });
+    }
+    throw new ConflictError(message, code);
   }
   const proposal = { id: lookup.rows[0].id };
 
@@ -470,7 +509,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
 
   await pool.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated })]
+    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackGiven ? ackTotal : null })]
   );
 
   // Email notifications (non-blocking)
