@@ -20,7 +20,7 @@ const { isPlaceholderEmail } = require('../../utils/emailValidation');
 // routine_finance notice is NEVER gated.
 let _deps = { sendEmail, notifyAdminCategory };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
-const { linkPaymentToInvoice, createInvoiceOnSend } = require('../../utils/invoiceHelpers');
+const { linkOpenContractInvoice, createInvoiceOnSend, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { reapShiftsForProposal } = require('../../utils/shiftReap');
@@ -179,6 +179,11 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 
   let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
   let sweptAlternativeIds = [];
+  // Set in-tx from linkPaymentToInvoice's return when the label-blind fallback
+  // link overflowed; read in the post-commit tail to email the money-anomaly
+  // lane. Post-commit because notifyAdminCategory takes a pooled connection
+  // (one-pooled-connection rule).
+  let linkOverflow = null;
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -269,9 +274,14 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     // derived from the locked read) so an over-payment request doesn't inflate the
     // ledger beyond the proposal total, and a concurrent duplicate records only the
     // delta on top of the first submit's committed amount_paid.
-    await dbClient.query(
+    // RETURNING id: the link below needs THIS row. A "latest by created_at"
+    // re-query is not the same thing: created_at is the transaction start,
+    // and two writers serialized on the proposals lock can commit in the
+    // other order, so the re-query could hand the link a concurrent writer's
+    // payment and trip uq_invoice_payments_positive_link.
+    const insertedPayment = await dbClient.query(
       `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
-       VALUES ($1, $2, $3, 'succeeded')`,
+       VALUES ($1, $2, $3, 'succeeded') RETURNING id`,
       [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(appliedAmount * 100)]
     );
 
@@ -284,25 +294,36 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
         JSON.stringify({ amount: appliedAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
     );
 
-    // Link payment to the oldest open invoice
-    const openInvoice = await dbClient.query(
-      "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
-      [proposal.id]
-    );
-    if (openInvoice.rows[0]) {
-      const paymentRow = await dbClient.query(
-        'SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1',
-        [proposal.id]
-      );
-      if (paymentRow.rows[0]) {
-        // Use the capped applied delta (appliedAmount), never the raw admin-supplied
-        // paymentAmount — otherwise an over-payment inflates invoices.amount_paid past
-        // amount_due, wrongly flips the invoice to 'paid', and locks it, diverging the
-        // invoice ledger from the (correctly capped) proposal ledger.
-        const payAmountCents = Math.round(appliedAmount * 100);
-        await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents, dbClient);
+    // Deposit-to-full upgrade (spec 2026-08-28 §4d): the admin door to the
+    // same seam the two webhooks have. Gated on the DERIVED isFullyPaid (from
+    // the locked row), not the request's paid_in_full flag: an admin who types
+    // the full remaining amount without ticking the box is just as fully paid.
+    //
+    // payment_type is stamped only when this record is the proposal's FIRST
+    // money AND it clears the balance, i.e. the terms really were pay-in-full.
+    // A balance record on deposit terms keeps payment_type = 'deposit',
+    // matching the webhook rails, whose balance branch never touches it. The
+    // stamp exists so an archived-to-draft-to-sent recovery of a pay-in-full
+    // booking does not read 'deposit' and mint a fresh Deposit invoice.
+    //
+    // The upgrade call keeps the isFullyPaid gate alone: on a deposit_paid row
+    // the helper returns null anyway, because that Deposit invoice is paid and
+    // locked and the helper only re-derives an unlocked, unpaid, 'sent' one.
+    // Use the capped applied delta (appliedAmount), never the raw admin-supplied
+    // paymentAmount: an over-payment would inflate invoices.amount_paid past
+    // amount_due, wrongly flip the invoice to 'paid', and lock it, diverging the
+    // invoice ledger from the (correctly capped) proposal ledger.
+    const payAmountCents = Math.round(appliedAmount * 100);
+    if (isFullyPaid) {
+      if (lockedCurrentPaid === 0) {
+        await dbClient.query("UPDATE proposals SET payment_type = 'full' WHERE id = $1", [proposal.id]);
       }
+      await upgradeDepositInvoiceToFull(proposal.id, dbClient, { paymentCents: payAmountCents });
     }
+
+    // Link the payment to the oldest open invoice: the one lookup-and-link all
+    // three entrances share (off-ledger exclusion, overflow payload).
+    linkOverflow = await linkOpenContractInvoice(proposal.id, insertedPayment.rows[0].id, payAmountCents, dbClient);
 
     await dbClient.query('COMMIT');
   } catch (txErr) {
@@ -311,6 +332,9 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   } finally {
     dbClient.release();
   }
+
+  // Overflow email, post-commit and connection released (spec §4e).
+  if (linkOverflow) notifyLinkOverflow(linkOverflow);
 
   // Email notifications for payment (non-blocking)
   const notifications = [];

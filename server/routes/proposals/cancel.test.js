@@ -926,3 +926,121 @@ test('refund: an ambiguous-failure pending row nets into the capped target so a 
     assert.equal(refundsCreated.length, 0, 'no Stripe refund issued');
   } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
 });
+
+// ── Retainer survives the deposit-to-full upgrade (lane full-pay-invoice, 2026-08-28) ──
+// A deposit-terms client who pays in full has their Deposit row relabelled Full
+// Payment before the credit lands. The retainer query used to key on the label
+// alone, so those bookings cancelled with retainer 0 and refunded ~95 cents on
+// every retainer dollar. Now the upgrade breadcrumb carries the deposit amount.
+async function seedUpgradedFull({ breadcrumb = 'invoice_upgraded_to_full', eventDaysOut = 30 } = {}) {
+  seq += 1;
+  const c = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ('Jane Smith', $1) RETURNING id`,
+    [`${NONCE}-upg-${seq}@example.com`]);
+  const clientId = c.rows[0].id;
+  seededClients.push(clientId);
+  const snapshot = { breakdown: [{ label: 'Shared Gratuity', amount: 150 }] };
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_type, event_timezone, event_date,
+        event_start_time, event_duration_hours, total_price, amount_paid, pricing_snapshot, autopay_enrolled)
+     VALUES ($1, 'balance_paid', 'wedding', 'America/Chicago', (CURRENT_DATE + ($2 || ' days')::interval),
+        '18:00', 4, 1000, 1000, $3, false) RETURNING id`,
+    [clientId, String(eventDaysOut), JSON.stringify(snapshot)]);
+  const proposalId = p.rows[0].id;
+  seeded.push(proposalId);
+  const invoiceNumber = `INV${crypto.randomBytes(5).toString('hex')}`;
+  const inv = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, 'Full Payment', 100000, 100000, 'paid', true) RETURNING id`,
+    [proposalId, invoiceNumber]);
+  const invId = inv.rows[0].id;
+  const pay = await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+     VALUES ($1, 'full', 100000, 'succeeded', $2) RETURNING id`,
+    [proposalId, `pi_upg_${NONCE}_${seq}`]);
+  await pool.query(`INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 100000)`,
+    [invId, pay.rows[0].id]);
+  if (breadcrumb) {
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+       VALUES ($1, $2, 'system', $3)`,
+      [proposalId, breadcrumb, JSON.stringify({
+        invoice_id: invId, invoice_number: invoiceNumber, from_amount_due: 10000, to_amount_due: 100000,
+      })]);
+  }
+  return { proposalId, clientId, invId };
+}
+
+test('preview: a Deposit upgraded to Full Payment keeps its retainer (live upgrade breadcrumb)', async () => {
+  const o = await seedUpgradedFull({ breadcrumb: 'invoice_upgraded_to_full' });
+  try {
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/preview`, await mintAdmin(), { mode: 'client' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.retainer_cents, 10000, 'the deposit the proposal stated, read off the upgrade breadcrumb');
+    // (100000 - 10000 retainer - 15000 gratuity) * 0.95 + 15000, same as a deposit + balance booking.
+    assert.equal(r.body.refund_cents, 86250);
+  } finally { await cleanupProposal(o); }
+});
+
+test('preview: a backfilled Full Payment row keeps its retainer too', async () => {
+  const o = await seedUpgradedFull({ breadcrumb: 'invoice_backfilled_to_full' });
+  try {
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/preview`, await mintAdmin(), { mode: 'client' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.retainer_cents, 10000);
+    assert.equal(r.body.refund_cents, 86250);
+  } finally { await cleanupProposal(o); }
+});
+
+test('preview: a native Full Payment invoice (full terms from the start) has no retainer, as before', async () => {
+  const o = await seedUpgradedFull({ breadcrumb: null });
+  try {
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/preview`, await mintAdmin(), { mode: 'client' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.retainer_cents, 0);
+    // (100000 - 0 - 15000) * 0.95 + 15000
+    assert.equal(r.body.refund_cents, 95750);
+  } finally { await cleanupProposal(o); }
+});
+
+test('preview: a reversal that drains the upgraded row below its deposit shrinks the retainer with it', async () => {
+  // The B5 cap in the refund route relies on a re-read retainer never exceeding
+  // what is still on the row, exactly as it did for a reversed Deposit invoice.
+  const o = await seedUpgradedFull({ breadcrumb: 'invoice_upgraded_to_full' });
+  try {
+    await pool.query('UPDATE invoices SET amount_paid = 4000 WHERE id = $1', [o.invId]);
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/preview`, await mintAdmin(), { mode: 'client' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.retainer_cents, 4000, 'LEAST(amount_paid, from_amount_due)');
+  } finally { await cleanupProposal(o); }
+});
+
+test('execute and refund on an upgraded Full Payment row: the cancel snapshot carries the retainer and a retry refunds 0 (B5)', async () => {
+  const o = await seedUpgradedFull({ breadcrumb: 'invoice_upgraded_to_full' });
+  const prior = await setTodayPeriod('open');
+  try {
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 86250, 'the promise carries the retainer');
+    const snap = await pool.query(
+      `SELECT (details->>'refund_owed_cents')::int AS owed FROM proposal_activity_log
+        WHERE proposal_id = $1 AND action = 'cancelled' ORDER BY id DESC LIMIT 1`, [o.proposalId]);
+    assert.equal(Number(snap.rows[0].owed), 86250, 'the B5 snapshot recorded the same figure');
+
+    refundsCreated.length = 0;
+    const r1 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    assert.equal(r1.body.refunded_cents, 86250);
+    const after = await pool.query('SELECT amount_paid FROM invoices WHERE id = $1', [o.invId]);
+    assert.equal(Number(after.rows[0].amount_paid), 100000 - 86250, 'the reversal drained the upgraded row itself');
+
+    refundsCreated.length = 0;
+    const r2 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r2.status, 200, JSON.stringify(r2.body));
+    assert.equal(r2.body.refunded_cents, 0, 'retry refunds nothing on an upgraded row, exactly as on a Deposit row');
+    assert.equal(refundsCreated.length, 0);
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});

@@ -5,7 +5,9 @@
  * MONEY SEAM: every input and output is INTEGER CENTS. The cancel route
  * assembles the three cents values from invoice/payment rows
  * (amountPaidCents = sum of succeeded proposal_payments; retainerCents = the
- * Deposit invoice's amount_paid; gratuityPaidCents = extractGratuityCents(snapshot)
+ * Deposit invoice's amount_paid, or for a Deposit upgraded to Full Payment the
+ * deposit amount its upgrade breadcrumb recorded, capped at the row's
+ * amount_paid; gratuityPaidCents = extractGratuityCents(snapshot)
  * gated on the payroll funded determination) and calls this function.
  * proposals.total_price / amount_paid (DOLLARS) must NEVER enter here — mixing
  * units is a 100x error.
@@ -24,7 +26,7 @@
  * @param {'client'|'drb'} a.mode
  * @param {number} a.daysOut          whole days, notice date -> event date
  * @param {number} a.amountPaidCents  sum of succeeded proposal_payments (cents)
- * @param {number} a.retainerCents    Deposit invoice amount_paid (cents)
+ * @param {number} a.retainerCents    the forfeitable retainer (cents; see cancel.js assembleContext)
  * @param {number} a.gratuityPaidCents gratuity actually paid (cents; 0 if unfunded)
  * @returns {{refundCents:number, gratuityCents:number, excessCents:number, feeCents:number}}
  */

@@ -16,8 +16,9 @@
  *   - invoiceLineItems.js  — generateLineItemsFromProposal, writeLineItems
  *   - invoiceLifecycle.js  — formatInvoiceNumber, createInvoice, lockInvoice,
  *       refreshUnlockedInvoices, createInvoiceOnSend, createBalanceInvoice,
- *       createAdditionalInvoiceIfNeeded, findOpenInvoiceForBalance
- *   - invoiceLinking.js    — linkPaymentToInvoice
+ *       createAdditionalInvoiceIfNeeded, findOpenInvoiceForBalance,
+ *       upgradeDepositInvoiceToFull
+ *   - invoiceLinking.js    — linkPaymentToInvoice, linkOpenContractInvoice, notifyLinkOverflow
  *   - invoiceExtras.js     — writeExtrasLineItems, createDrinkPlanExtrasInvoice,
  *       findExtrasInvoice, findOrRefreshExtrasInvoice, voidExtrasInvoiceWithReconcile
  */
@@ -38,10 +39,13 @@ const {
   createBalanceInvoice,
   createAdditionalInvoiceIfNeeded,
   findOpenInvoiceForBalance,
+  upgradeDepositInvoiceToFull,
 } = require('./invoiceLifecycle');
 
 const {
   linkPaymentToInvoice,
+  linkOpenContractInvoice,
+  notifyLinkOverflow,
 } = require('./invoiceLinking');
 
 const {
@@ -64,7 +68,10 @@ module.exports = {
   createInvoiceOnSend,
   createBalanceInvoice,
   createAdditionalInvoiceIfNeeded,
+  upgradeDepositInvoiceToFull,
   linkPaymentToInvoice,
+  linkOpenContractInvoice,
+  notifyLinkOverflow,
   writeExtrasLineItems,
   createDrinkPlanExtrasInvoice,
   findExtrasInvoice,

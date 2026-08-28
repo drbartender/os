@@ -59,9 +59,14 @@ after(async () => {
 // ── M1: linker guards ────────────────────────────────────────────────────────
 
 test('normal link still credits, flips status, and locks when fully paid', async () => {
-  const { invoiceId, paymentId } = await seed({ invStatus: 'sent', amountDue: 10000 });
+  const { proposalId, invoiceId, paymentId } = await seed({ invStatus: 'sent', amountDue: 10000 });
   const res = await linkPaymentToInvoice(invoiceId, paymentId, 10000, pool);
-  assert.deepStrictEqual(res, { linked: true, creditedCents: 10000, overflowCents: 0 });
+  // The ids ride along so a caller can email an overflow from its post-commit
+  // tail (spec 2026-08-28 §4e); the assertion stays exhaustive so a future
+  // field cannot slip into this return unnoticed.
+  assert.deepStrictEqual(res, {
+    linked: true, creditedCents: 10000, overflowCents: 0, proposalId, invoiceId,
+  });
   const inv = await invoiceRow(invoiceId);
   assert.strictEqual(inv.status, 'paid');
   assert.strictEqual(inv.amount_paid, 10000);

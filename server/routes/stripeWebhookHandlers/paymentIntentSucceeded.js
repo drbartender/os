@@ -7,7 +7,7 @@ const { pool } = require('../../db');
 const { createEventShifts } = require('../../utils/eventCreation');
 const { getBookingWindow } = require('../../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
-const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance } = require('../../utils/invoiceHelpers');
+const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, linkOpenContractInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { OFF_LEDGER_INVOICE_LABELS } = require('../../utils/proposalMoneyShared');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
@@ -76,6 +76,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
       // Balance payment). Read in the post-commit tail, after release, where
       // the settle actually runs.
       let extensionSettleContext = null;
+      // Set in-tx from linkPaymentToInvoice's return when the label-blind
+      // fallback link overflowed; read in the post-commit tail to email the
+      // money-anomaly lane. Post-commit because notifyAdminCategory takes a
+      // pooled connection (one-pooled-connection rule).
+      let linkOverflow = null;
       try {
         await dbClient.query('BEGIN');
 
@@ -588,24 +593,40 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 }
               }
             } else {
-              // Off-ledger exclusion (merge-gate finding, 2026-08-03): this
-              // metadata-less fallback is label-blind, and the balance rail
-              // carries no invoice_id metadata, so a contract charge landing
-              // while the proposal's only open invoice is a pending Service
-              // Extension invoice would bind contract money to it — reading
-              // the extension paid with no settle, and hiding the payment
-              // from the refund panel's anti-join. Makes "extension invoices
-              // are paid alone" structural instead of circumstantial.
-              const openInvoice = await dbClient.query(
-                `SELECT id FROM invoices
-                  WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid')
-                    AND NOT (label = ANY($2::text[]))
-                  ORDER BY created_at ASC LIMIT 1`,
-                [proposalId, OFF_LEDGER_INVOICE_LABELS]
-              );
-              if (openInvoice.rows[0]) {
-                await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRowId, intent.amount, dbClient);
+              // Deposit-to-full upgrade (spec 2026-08-28 §4b). A full payment
+              // on a deposit-terms proposal arrives with the send-time Deposit
+              // invoice open. Re-derive it into the Full Payment invoice NOW,
+              // in this transaction, so the link below fits the whole capture
+              // instead of crediting $100 and overflowing the rest. The
+              // gratuity election was applied to total_price above, so the
+              // helper reads the final total. Same guard as createBalanceInvoice
+              // below: a stale full intent on a cancelled event or a non-chosen
+              // option never relabels and reprices its invoice.
+              if (paymentType === 'full' && !groupChoice.conflict && !archivedSettle) {
+                // Savepoint, the gratuity_apply shape above: the upgrade is not
+                // essential to recording the money, so a deterministic failure
+                // inside it (a line rewrite the schema refuses, say) degrades
+                // to "not upgraded, old link path, alerted", never to "payment
+                // never recorded, Stripe retries for days".
+                await dbClient.query('SAVEPOINT deposit_upgrade');
+                try {
+                  await upgradeDepositInvoiceToFull(proposalId, dbClient, { paymentCents: intent.amount });
+                  await dbClient.query('RELEASE SAVEPOINT deposit_upgrade');
+                } catch (upErr) {
+                  try { await dbClient.query('ROLLBACK TO SAVEPOINT deposit_upgrade'); } catch (_) { /* outer tx already aborted */ }
+                  console.error('deposit-to-full upgrade failed (non-blocking):', upErr && upErr.message);
+                  Sentry.captureMessage('deposit_upgrade_failed', {
+                    level: 'warning', tags: { rail: 'payment_intent.succeeded', proposal_id: String(proposalId) },
+                    extra: { message: upErr && upErr.message },
+                  });
+                }
               }
+              // Off-ledger exclusion (merge-gate finding, 2026-08-03: this
+              // metadata-less fallback is label-blind, and a pending Service
+              // Extension invoice must never absorb contract money) and the
+              // overflow payload live in linkOpenContractInvoice, shared with
+              // the other two entrances so the three cannot drift again.
+              linkOverflow = await linkOpenContractInvoice(proposalId, paymentRowId, intent.amount, dbClient);
             }
           }
 
@@ -836,6 +857,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { webhook: 'stripe', reap: 'option_loser' } });
           }
         }
+
+        // Overflow email, post-commit and connection released (spec §4e).
+        if (linkOverflow) notifyLinkOverflow(linkOverflow);
 
         // !conflict: no "payment received" receipt/notify for a non-chosen option
         // (the Sentry flag + manual refund is the admin path for that money).

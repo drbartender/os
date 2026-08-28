@@ -414,8 +414,8 @@ dr-bartender/
 │   │   ├── invoiceHelpers.js   # FACADE re-exporting the invoice helper siblings below (public interface unchanged)
 │   │   ├── invoiceShared.js    # Shared invoice internals (toCents, pool fallback)
 │   │   ├── invoiceLineItems.js # Line-item building/writing (generateLineItemsFromProposal, writeLineItems)
-│   │   ├── invoiceLifecycle.js # Invoice creation + balance lifecycle (createInvoiceOnSend, createBalanceInvoice, locking, refresh)
-│   │   ├── invoiceLinking.js   # Payment->invoice linking (linkPaymentToInvoice: status guard, cap, Sentry breadcrumbs)
+│   │   ├── invoiceLifecycle.js # Invoice creation + balance lifecycle (createInvoiceOnSend, createBalanceInvoice, locking, refresh, upgradeDepositInvoiceToFull: re-derives an open Deposit invoice into Full Payment before a full payment is linked)
+│   │   ├── invoiceLinking.js   # Payment->invoice linking (linkPaymentToInvoice: status guard, cap, Sentry breadcrumbs) + notifyLinkOverflow: the post-commit invoice-link overflow email to the payment_failure lane (own catch, never throws; post-commit because notifyAdminCategory takes its own pooled connection)
 │   │   ├── invoiceExtras.js    # "Drink Plan Extras" invoice create/find/refresh/void-reconcile
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
@@ -511,6 +511,7 @@ dr-bartender/
 │       ├── applyPackageLineup2026.js # One-time: apply the owner-decided 2026-07-18 package lineup (spec §5) as CONTENT — service_packages flags/slots, package_items rows, missing branded par_items, ingredient_class_addons map. Snapshots prior state for rollback; idempotent; --dry-run. NOT boot-path.
 │       ├── migrateDrinkMeta.js # One-time: fold hardcoded client drink metadata (drinkUpgrades.js enhancements, DRINK_SYRUP_MAP) into cocktails/mocktails dossier columns. Skips drinks with existing dossier data unless --force; --dry-run. NOT boot-path.
 │       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
+│       ├── backfillFullPaymentInvoices.js # One-off: full payments stranded on a Deposit invoice (the pre-fix shape: a paid, locked $100 Deposit and no invoice behind the rest). Rewrites each row to proposal_payments truth: label Full Payment, amounts to the linked payment, lines regenerated only when total_price still matches. Selection is by SHAPE; dry run by default, --apply REQUIRES an exact --expect id list, one transaction per proposal. NOT boot-path
 │       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
 │       ├── backfillShiftClosures.js # One-off: close shifts stranded 'open'/'filled' on completed proposals — same predicate as the hourly sweep, ALWAYS -> completed, never 'cancelled'. Its real value is the DRY RUN: a per-row plan plus a ROSTER GAP block naming paid events with nobody recorded. Dry-run default; --apply to write (the scheduler drains the same rows on its own)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link

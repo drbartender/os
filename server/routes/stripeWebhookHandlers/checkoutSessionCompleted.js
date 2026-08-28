@@ -7,7 +7,7 @@ const { pool } = require('../../db');
 const { createEventShifts } = require('../../utils/eventCreation');
 const { getBookingWindow } = require('../../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
-const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
+const { createInvoiceOnSend, createBalanceInvoice, linkOpenContractInvoice, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
@@ -175,6 +175,11 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
       // archived (credit is a no-op), but the proposal_payments row and the invoice
       // link still record — so the alert is what surfaces the divergence.
       let archivedSettle = null;
+      // Set in-tx from linkPaymentToInvoice's return when the label-blind
+      // fallback link overflowed; read in the post-commit tail to email the
+      // money-anomaly lane. Post-commit because notifyAdminCategory takes a
+      // pooled connection (one-pooled-connection rule).
+      let linkOverflow = null;
       try {
         await dbClient.query('BEGIN');
 
@@ -314,24 +319,64 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             await createInvoiceOnSend(proposalId, dbClient);
           }
 
-          // ── Invoice integration (parity with payment_intent.succeeded) ──
-          const openInvoice = await dbClient.query(
-            "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
-            [proposalId]
-          );
-          if (openInvoice.rows[0]) {
-            const paymentRow = await dbClient.query(
-              'SELECT id FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = $2 LIMIT 1',
-              [session.payment_intent, 'succeeded']
-            );
-            if (paymentRow.rows[0]) {
-              await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, session.amount_total, dbClient);
+          // Deposit-to-full upgrade (spec 2026-08-28 §4c): the payment-link
+          // entrance to the same seam. A full link on a deposit-terms proposal
+          // re-derives the open Deposit into Full Payment before the link
+          // below, under the same guard as createBalanceInvoice.
+          if (linkPaymentType === 'full' && !groupChoice.conflict && !archivedSettle) {
+            // Savepoint, parity with payment_intent.succeeded: the upgrade is not
+            // essential to recording the money, so a deterministic failure inside
+            // it degrades to "not upgraded, old link path, alerted", never to
+            // "payment never recorded, Stripe retries for days".
+            await dbClient.query('SAVEPOINT deposit_upgrade');
+            try {
+              await upgradeDepositInvoiceToFull(proposalId, dbClient, { paymentCents: session.amount_total });
+              await dbClient.query('RELEASE SAVEPOINT deposit_upgrade');
+            } catch (upErr) {
+              try { await dbClient.query('ROLLBACK TO SAVEPOINT deposit_upgrade'); } catch (_) { /* outer tx already aborted */ }
+              console.error('deposit-to-full upgrade failed (non-blocking):', upErr && upErr.message);
+              Sentry.captureMessage('deposit_upgrade_failed', {
+                level: 'warning', tags: { rail: 'checkout.session.completed', proposal_id: String(proposalId) },
+                extra: { message: upErr && upErr.message },
+              });
             }
           }
+
+          // Invoice integration, parity with payment_intent.succeeded: the
+          // lookup (off-ledger exclusion) and the overflow payload live in
+          // linkOpenContractInvoice, shared with the other two entrances.
+          const paymentRow = await dbClient.query(
+            'SELECT id FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = $2 LIMIT 1',
+            [session.payment_intent, 'succeeded']
+          );
+          if (paymentRow.rows[0]) {
+            linkOverflow = await linkOpenContractInvoice(proposalId, paymentRow.rows[0].id, session.amount_total, dbClient);
+          }
+          // Deposit links ONLY, parity with rail 1 (payment_intent.succeeded gates
+          // this same call on paymentType === 'deposit'). A payment link is fixed at
+          // creation and reused while it stays active, so a FULL link can capture
+          // LESS than the proposal's current total. On that short capture the Full
+          // Payment invoice above already carries the entire remainder, so a Balance
+          // minted beside it bills that remainder a second time. Same double-bill on
+          // a natively full-terms proposal paid by a short link.
           // !conflict (F2): never mint a Balance invoice on an archived non-chosen
           // option. !archivedSettle (B3): nor on a cancelled event a stale
           // Payment-Link checkout just settled on — the admin refunds it.
-          if (!groupChoice.conflict && !archivedSettle) await createBalanceInvoice(proposalId, dbClient);
+          //
+          // ACCEPTED RESIDUE of the deposit-only gate: a FULL link that captures
+          // SHORT on a proposal with no OPEN non-void invoice after the upgrade
+          // used to mint a Balance for the shortfall, and now mints nothing. Two
+          // shapes reach it: the send-time invoice voided with no re-send, or a
+          // paid, locked Deposit whose Balance an admin voided (the upgrade skips
+          // a paid Deposit). Either way nothing is open for the link to credit;
+          // the proposal ledger still records the payment
+          // in full and the admin re-sends or bills the remainder by hand. Keeping
+          // the mint for that one case would re-open the double-bill on every
+          // ordinary short full-link capture, where the Full Payment invoice
+          // already carries the entire remainder. The common case wins.
+          if (linkPaymentType === 'deposit' && !groupChoice.conflict && !archivedSettle) {
+            await createBalanceInvoice(proposalId, dbClient);
+          }
         } else {
           console.log(`Webhook: duplicate checkout.session.completed for intent ${session.payment_intent} — skipping`);
         }
@@ -377,6 +422,9 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
         // the blast reads only the proposal/client/staff rows, never shift rows,
         // so it does not depend on the shift existing first.
         if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
+        // Overflow email, post-commit and connection released (spec §4e).
+        if (linkOverflow) notifyLinkOverflow(linkOverflow);
+
         // !conflict: no receipt/notify for a non-chosen option (Sentry + manual refund).
         // !archivedSettle (B3): no conversion receipt for a stale payment on a
         // cancelled event — the payment_on_archived admin alert is that money's path.

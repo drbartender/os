@@ -110,9 +110,39 @@ async function assembleContext(executor, proposalId, noticeYmd) {
   );
   const amountPaidCents = Number(paidRes.rows[0].cents);
 
+  // The retainer is the amount the proposal STATED (agreement 2.1), not the
+  // label the money happens to sit under. A deposit-terms client who pays in
+  // full has their Deposit row upgraded to Full Payment before the credit
+  // (upgradeDepositInvoiceToFull; the backfill does the same to the old rows),
+  // so on that row the retainer is the deposit amount the upgrade breadcrumb
+  // recorded, capped at what is still on the row: a refund reversal that
+  // drains the row below its deposit shrinks the retainer with it, which is
+  // what the B5 cap in the refund route relies on. A native Full Payment
+  // invoice (full terms from the start) has no breadcrumb and no retainer,
+  // as before. Decided 2026-08-28: the retainer survives paying in full.
+  // The breadcrumb is JSONB with no shape constraint, so the read is
+  // defensive: only a numeric-looking amount is cast (neither "100.00" nor
+  // garbage can 500 the route), and a breadcrumb that lacks a usable amount falls
+  // back to the proposal's stated deposit rather than to a zero retainer.
   const retRes = await executor.query(
-    `SELECT COALESCE(SUM(amount_paid), 0)::int AS cents
-       FROM invoices WHERE proposal_id = $1 AND label = 'Deposit'`,
+    `SELECT COALESCE(SUM(
+              CASE WHEN i.label = 'Deposit' THEN i.amount_paid
+                   ELSE LEAST(i.amount_paid,
+                              COALESCE(up.from_amount_due, ROUND(p.deposit_amount * 100)::int, 0)) END), 0)::int AS cents
+       FROM invoices i
+       JOIN proposals p ON p.id = i.proposal_id
+       LEFT JOIN LATERAL (
+         SELECT 1 AS upgraded,
+                CASE WHEN l.details->>'from_amount_due' ~ '^[0-9]+(\.[0-9]+)?$'
+                     THEN (l.details->>'from_amount_due')::numeric::int END AS from_amount_due
+           FROM proposal_activity_log l
+          WHERE l.proposal_id = i.proposal_id
+            AND l.action IN ('invoice_upgraded_to_full', 'invoice_backfilled_to_full')
+            AND l.details->'invoice_id' = to_jsonb(i.id)
+          ORDER BY l.id DESC LIMIT 1
+       ) up ON true
+      WHERE i.proposal_id = $1
+        AND (i.label = 'Deposit' OR (i.label = 'Full Payment' AND up.upgraded = 1))`,
     [proposalId]
   );
   const retainerCents = Number(retRes.rows[0].cents);

@@ -193,6 +193,18 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       than 13, one GET /t/:token after the last, zero create-intent calls after the redirect;
       the admin Activity rail shows exactly two viewed rows for the visit. Reload the same
       ?paid=true URL: "Fully paid." at once, no payment-state calls.
+      **Added 2026-08-28 (lane full-pay-invoice):** after the real full payment, the
+      portal Receipts tab must show ONE invoice, "Full Payment", at the with-tip amount,
+      paid. Not "Deposit $100 paid". Then the backfill (its own runbook in the plan): after
+      --apply, Mike Boswell's INV-0336 reads Full Payment $550.00 paid, Karen Habenicht's
+      INV-0329 reads Full Payment $300.00 paid, and the Sentry issue DRBARTENDER-SERVER-1E
+      (invoice_link_overflow_capped) goes quiet. Separately, on the LIVE-upgraded proposal
+      from the real checkout above (its event more than 14 days out; the Cancel button
+      only shows on deposit_paid / balance_paid / confirmed, and the backfilled rows are
+      past events where the math takes the 14-day branch), open the admin cancel PREVIEW
+      (read-only, writes nothing) and confirm the retainer reads $100.00 and the refund
+      figure is (paid - 100 - gratuity) x 0.95 plus gratuity, not 0.95 x everything: the
+      relabel must not have erased the retainer.
       **Do it on a real client checkout, not a rehearsal.** Dev is armed against LIVE Stripe,
       so there is no safe stand-in here either.
       Then the negative half, on a dev proposal: force a 409 (edit the row total in another

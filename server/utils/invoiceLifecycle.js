@@ -1,4 +1,4 @@
-// Invoice creation & balance lifecycle (create/lock/refresh/on-send/balance/additional/find-open). Extracted verbatim from invoiceHelpers.js.
+// Invoice creation & balance lifecycle (create/lock/refresh/on-send/balance/additional/find-open/deposit-to-full). Extracted verbatim from invoiceHelpers.js.
 
 'use strict';
 
@@ -154,11 +154,18 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
       continue;
     }
 
-    // Update amount_due
-    await client.query(
-      `UPDATE invoices SET amount_due = $1, updated_at = NOW() WHERE id = $2`,
-      [amountDue, invoice.id]
+    // Update amount_due, but only if the row is still the row this loop
+    // decided on. The list above was read without a lock (one caller, the
+    // admin re-price in crud.js, runs this post-commit outside the proposals
+    // lock), and upgradeDepositInvoiceToFull can relabel, credit and lock a
+    // Deposit row between that read and this write. A WHERE on id alone would
+    // put the deposit figure back onto a locked, paid Full Payment invoice.
+    const upd = await client.query(
+      `UPDATE invoices SET amount_due = $1, updated_at = NOW()
+        WHERE id = $2 AND locked = false AND status != 'void' AND label = $3`,
+      [amountDue, invoice.id, invoice.label]
     );
+    if (upd.rowCount === 0) continue;
 
     // Replace line items
     await writeLineItems(invoice.id, lineItems, client);
@@ -401,6 +408,131 @@ async function findOpenInvoiceForBalance(proposalId, dbClient) {
   return result.rows[0] || null;
 }
 
+// ─── 13. upgradeDepositInvoiceToFull ─────────────────────────────────────────
+
+/**
+ * The deposit-to-full upgrade (spec 2026-08-28 §4a). createInvoiceOnSend
+ * mints the first invoice from payment_type AT SEND TIME (column default
+ * 'deposit'), so a client who then picks pay-in-full at checkout arrives with
+ * a $100 Deposit invoice open and a full-total payment landing. The label-blind
+ * link then credits $100 and drops the rest (linkPaymentToInvoice's cap is
+ * correct and stays; it is the seam-sweep M1/M2/L2 guard).
+ *
+ * Applied rule (2026-07-28 post-mortem): the proposal wins. Re-derive the open
+ * Deposit row FROM the proposal, in the caller's transaction, BEFORE the
+ * credit: label Full Payment, amount_due = total_price − external_paid and
+ * due_date = balance_due_date (the exact shape createInvoiceOnSend gives a
+ * native Full Payment invoice), lines regenerated. The invoice number does not
+ * change. Guarded to an unlocked, unpaid, 'sent' Deposit, row-locked: anything
+ * with money on it, locked, void, or differently labelled is never touched and
+ * null comes back.
+ *
+ * Callers, all under the same archived/conflict guard: payment_intent.succeeded,
+ * checkout.session.completed, and admin record-payment, only when the payment
+ * is a full payment.
+ *
+ * @param {number} proposalId
+ * @param {object} [opts]
+ * @param {number} [opts.paymentCents=0]  the payment the caller has ALREADY
+ *   credited to proposals.amount_paid in this transaction. Money the proposal
+ *   held before it never reached the Deposit invoice, and re-deriving
+ *   amount_due from the contract would bill that money a second time, so the
+ *   helper declines when there is any.
+ * @param {object} dbClient  REQUIRED. The caller's transaction client, and the
+ *   caller must ALREADY hold the proposals row lock inside it. Not optional and
+ *   not pool-safe: this helper runs an invoice UPDATE, a writeLineItems rewrite,
+ *   an activity-log insert, and an unserialized total_price read, so off the
+ *   pool they are four separate commits and a crash midway leaves a half-upgraded
+ *   invoice. All three entrances qualify: admin record-payment takes the row with
+ *   SELECT ... FOR UPDATE before it calls (routes/proposals/actions.js), and both
+ *   webhook rails UPDATE the proposals row earlier in the same transaction.
+ * @returns {Promise<object|null>} the updated invoice row, or null
+ */
+async function upgradeDepositInvoiceToFull(proposalId, dbClient, { paymentCents = 0 } = {}) {
+  if (!dbClient) throw new Error('upgradeDepositInvoiceToFull requires the caller transaction client');
+  const client = db(dbClient);
+
+  // The proposal FIRST, and locked: the global lock order is proposals ->
+  // invoices, and on both webhook rails the credit UPDATE that would have
+  // locked this row is status-guarded, so on a confirmed or completed
+  // proposal it matched nothing and locked nothing. A same-transaction
+  // re-lock is a no-op for the callers that already hold it. The guards are
+  // the helper's own, not the callers':
+  //   lifecycle states and a cancelled booking are never relabelled (the
+  //   credit rails skip them too, and a cancelled booking's promised refund
+  //   reads its retainer off this row);
+  //   nothing owed means nothing to relabel (a zero-due 'sent' row would
+  //   refuse every later link with no_remaining_due);
+  //   money the proposal already held never reached the Deposit invoice, so
+  //   the row is left alone and the link's overflow email says so. External
+  //   money is not "prior" in that sense: it is folded into amount_paid at
+  //   the CC transfer and netted out of amount_due below, so it is excluded
+  //   from the comparison or the netting would never be reachable.
+  const prop = await client.query(
+    `SELECT status, cancelled_at, total_price, external_paid, amount_paid, balance_due_date
+       FROM proposals WHERE id = $1 FOR UPDATE`,
+    [proposalId]
+  );
+  const p = prop.rows[0];
+  if (!p) return null;
+  if (['confirmed', 'completed', 'archived'].includes(p.status) || p.cancelled_at) return null;
+  const amountDueCents = Math.max(0, toCents(p.total_price) - toCents(p.external_paid));
+  if (amountDueCents <= 0) return null;
+  const priorPaidCents = toCents(p.amount_paid) - toCents(p.external_paid) - Number(paymentCents || 0);
+  if (priorPaidCents > 0) return null;
+
+  const inv = await client.query(
+    `SELECT id, invoice_number, amount_due
+       FROM invoices
+      WHERE proposal_id = $1 AND label = 'Deposit' AND status = 'sent'
+        AND locked = false AND amount_paid = 0
+      ORDER BY id ASC LIMIT 1
+      FOR UPDATE`,
+    [proposalId]
+  );
+  if (!inv.rows[0]) return null;
+  const target = inv.rows[0];
+
+  const upd = await client.query(
+    `UPDATE invoices
+        SET label = 'Full Payment', amount_due = $1, due_date = $2
+      WHERE id = $3
+      RETURNING *`,
+    [amountDueCents, p.balance_due_date || null, target.id]
+  );
+
+  // Same guard as the backfill: the generator builds from pricing_snapshot +
+  // addons and never reads total_price_override, so on an override'd or
+  // legacy-snapshot proposal its lines can sum to something other than the
+  // contract. Lines that contradict the contract (or no lines at all) are
+  // worse than the Deposit's stale ones, so those stay. The comparison is to
+  // total_price, not to amount_due: like createInvoiceOnSend's native Full
+  // Payment invoice, the lines describe the whole contract and external_paid
+  // is a netting on amount_due only.
+  const lineItems = await generateLineItemsFromProposal(proposalId, client);
+  const generatedCents = lineItems.reduce((sum, it) => sum + Number(it.line_total), 0);
+  const linesRegenerated = lineItems.length > 0 && generatedCents === toCents(p.total_price);
+  if (linesRegenerated) {
+    await writeLineItems(target.id, lineItems, client);
+  }
+
+  await client.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+     VALUES ($1, 'invoice_upgraded_to_full', 'system', $2)`,
+    [proposalId, JSON.stringify({
+      invoice_id: target.id,
+      invoice_number: target.invoice_number,
+      from_label: 'Deposit',
+      from_amount_due: Number(target.amount_due),
+      to_amount_due: amountDueCents,
+      lines_regenerated: linesRegenerated,
+      lines_skipped_reason: linesRegenerated ? null : 'generated_sum_mismatch',
+    })]
+  );
+
+  return upd.rows[0];
+}
+
 module.exports = {
   formatInvoiceNumber,
   createInvoice,
@@ -410,4 +542,5 @@ module.exports = {
   createBalanceInvoice,
   createAdditionalInvoiceIfNeeded,
   findOpenInvoiceForBalance,
+  upgradeDepositInvoiceToFull,
 };

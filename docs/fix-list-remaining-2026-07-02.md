@@ -390,8 +390,9 @@ on the deposit→full upgrade, either relabel/re-amount the open Deposit invoice
 `Full Payment` at `total_price − external_paid`, or drop the `paymentType === 'deposit'`
 gate so a `Balance` invoice mints for the remainder.
 
-Blast radius: 13 proposals since 2026-07-02, ~$4,605 of collected money missing from the
-ledger. 770 Meg Henke $325 · 767 Karen Habenicht $200 · 713 Anthony Holter $250 · 675 Angelo
+Blast radius: the 2026-08-25 snapshot counted 13 proposals since 2026-07-02 (~$4,605); the
+backfill's shape query reaches back further and finds 26 by shape, 25 to apply (2026-08-28
+dry run), and that query supersedes this list. The named 13: 770 Meg Henke $325 · 767 Karen Habenicht $200 · 713 Anthony Holter $250 · 675 Angelo
 Corso $250 · 674 Raizl Lifshitz $300 · 666 Jelena Pesoli $600 · 660 Laura Millies $300 ·
 659 Jason Fowler $350 · 635 Andrea Ashford $300 · 633 Dora Travaglio $380 · 625 Allyson
 Gietl $350 · 623 William Buchar $750 · 573 Aaliyah Gaston $250. Needs a backfill alongside
@@ -745,6 +746,23 @@ here by default.
 ---
 
 ## Money and payroll (internal correctness)
+
+- **Invoice line items carry a discount with the wrong sign.** `generateLineItemsFromProposal`
+  (`invoiceLineItems.js`, adjustments loop) pushes `toCents(adj.amount)` for every adjustment,
+  while `pricingEngine` negates `type === 'discount'`. A $50 goodwill discount renders as a +$50
+  line on every invoice built from the snapshot, and the lines sum to total_price + 2x the
+  discount, so the deposit-to-full upgrade and the backfill both refuse to regenerate lines on a
+  discounted proposal (`generated_sum_mismatch`, old lines kept). Dev has 0 adjustments today.
+  Fix in the generator (sign by type), then check the invoice page renders a negative line.
+  Found by the 2026-08-28 lane 2 verifier.
+- **A full or deposit capture on a `confirmed` row leaves a phantom outstanding balance.** Both
+  webhook credit UPDATEs are `WHERE status NOT IN ('confirmed','completed','archived')`, so a
+  proposal an admin advanced to `confirmed` (allowed from `accepted`, `lifecycle.js`) with its
+  Deposit invoice still open records the payment row but never increments `amount_paid`. Same
+  bug M3 fixed for the balance branch (`paymentIntentSucceeded.js` ~288-300); the full and
+  deposit branches still have it. The deposit-to-full upgrade declines on `confirmed` for parity,
+  so the $100 credit plus overflow email is what happens today. Found by the 2026-08-28 lane 2
+  verifier.
 
 - **A stranded PaymentIntent on a restored proposal has no automatic retry path.**
   `healStrandedIntents` (`staleProposalSweep.js`) joins `p.status = 'archived'`, so once a
@@ -1293,6 +1311,13 @@ the accented spelling) or the two spellings stop matching each other.
 ---
 
 ## Platform, schema, and test gates
+
+- **`idx_invoices_invoice_number` is NON-unique on dev.** `schema.sql` declares it `CREATE UNIQUE
+  INDEX IF NOT EXISTS`, but dev carries a plain index of that name, and `IF NOT EXISTS` matches on
+  the name alone, so the uniqueness never applied and boot stays green. Not in `CRITICAL_INDEXES`,
+  so nothing alerts. Dev cannot reproduce an invoice-number collision; prod's state is unverified.
+  Found by the 2026-08-28 lane 2 database review; not that lane's. Check prod, then drop and
+  recreate on dev.
 
 - **`balanceScheduler.chicagoDay.test.js` is not in `scripts/money-smoke-list.txt`**, so the push
   gate never runs the one suite pinning the autopay day rule. It was safer that way while the
