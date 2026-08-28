@@ -91,6 +91,7 @@ export default function SignAndPaySection({
   // Payment intent
   loadingIntent,
   formError,
+  intentError,
   fieldErrors,
   setFieldErrors = () => {},
   activeSecret,
@@ -397,7 +398,7 @@ export default function SignAndPaySection({
                 </div>
               )}
 
-              <FormBanner error={formError} fieldErrors={fieldErrors} />
+              <FormBanner error={formError || intentError} fieldErrors={fieldErrors} />
 
               {activeSecret && stripePromise && !loadingIntent && (
                 <div className="sign-pay-stripe-wrap">
@@ -421,7 +422,7 @@ export default function SignAndPaySection({
                 </div>
               )}
 
-              {!activeSecret && !loadingIntent && !formError && (
+              {!activeSecret && !loadingIntent && !formError && !intentError && (
                 <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }}>
                   Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
                 </p>
@@ -484,7 +485,7 @@ export default function SignAndPaySection({
           </div>
         )}
 
-        <FormBanner error={formError} fieldErrors={fieldErrors} />
+        <FormBanner error={formError || intentError} fieldErrors={fieldErrors} />
 
         {activeSecret && stripePromise && !loadingIntent && (
           <div className="sign-pay-stripe-wrap">
@@ -508,7 +509,7 @@ export default function SignAndPaySection({
           </div>
         )}
 
-        {!activeSecret && !loadingIntent && !formError && (
+        {!activeSecret && !loadingIntent && !formError && !intentError && (
           <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }}>
             Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
           </p>

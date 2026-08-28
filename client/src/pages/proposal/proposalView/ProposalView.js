@@ -13,6 +13,7 @@ import ProposalHeader from './ProposalHeader';
 import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
+import { applyIntentQuote } from './intentQuote';
 import OtherOptionsPanel from '../otherOptions/OtherOptionsPanel';
 import SwitchBanner from './SwitchBanner';
 import { postSwitch } from '../otherOptions/switchApi';
@@ -42,7 +43,17 @@ export default function ProposalView() {
 
   // Form-level error banner (sign-and-pay section). Stripe card errors are
   // handled by Stripe Elements' own messaging inside <PaymentForm/>.
+  //
+  // formError carries SIGN failures (validation, and the server's 409s). It is
+  // cleared only by the next sign attempt, never by the intent effect: a failed
+  // sign clears the client secrets, and clearing this alongside them wiped the
+  // one message explaining WHY the payment form just reset. That is how the
+  // TOTAL_CHANGED block reached a client as an unexplained bounce back to the
+  // saved-card view rather than as a sentence he could act on.
   const [formError, setFormError] = useState('');
+  // intentError carries the separate "couldn't load the payment form" failure,
+  // which the intent effect owns and is right to clear on every refetch.
+  const [intentError, setIntentError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
 
   // Signing state
@@ -247,7 +258,9 @@ export default function ProposalView() {
     setLoadingIntent(true);
     // Clear any stale "unable to load payment form" banner from a prior failed
     // fetch so a fresh option/autopay toggle doesn't show an error mid-load.
-    setFormError('');
+    // Deliberately NOT formError: a sign failure clears the secrets, which
+    // lands us here, and this clear would erase the explanation on its way past.
+    setIntentError('');
     (async () => {
       try {
         const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {
@@ -258,17 +271,10 @@ export default function ProposalView() {
         if (cancelled) return;
         // Server is the authority on the total (DD #5): adopt the recomputed
         // total + gratuity so "New total" only updates after server confirmation.
-        if (typeof res.data.total_price === 'number') {
-          setProposal(p => (p ? {
-            ...p,
-            total_price: res.data.total_price,
-            pricing_snapshot: {
-              ...(p.pricing_snapshot || {}),
-              total: res.data.total_price,
-              gratuity: res.data.gratuity,
-            },
-          } : p));
-        }
+        // applyIntentQuote keeps that projection in the SNAPSHOT (what the page
+        // renders) and off proposal.total_price (the row value the signature
+        // acknowledges) — see intentQuote.js.
+        setProposal(p => applyIntentQuote(p, res.data));
         if (option === 'full') {
           setFullSecret(res.data.clientSecret);
         } else {
@@ -279,7 +285,7 @@ export default function ProposalView() {
         if (cancelled) return;
         console.error('Failed to load payment intent:', err);
         // eslint-disable-next-line no-restricted-syntax
-        setFormError(err.response?.data?.error || 'Unable to load payment form. Please refresh the page.');
+        setIntentError(err.response?.data?.error || 'Unable to load payment form. Please refresh the page.');
       } finally {
         if (!cancelled) setLoadingIntent(false);
       }
@@ -749,6 +755,7 @@ export default function ProposalView() {
                 balanceDueDate={balanceDueDate}
                 loadingIntent={loadingIntent}
                 formError={formError}
+                intentError={intentError}
                 fieldErrors={fieldErrors}
                 activeSecret={activeSecret}
                 stripePromise={stripePromise}
@@ -782,6 +789,7 @@ export default function ProposalView() {
                 balanceDueDate={balanceDueDate}
                 loadingIntent={loadingIntent}
                 formError={formError}
+                intentError={intentError}
                 fieldErrors={fieldErrors}
                 activeSecret={activeSecret}
                 stripePromise={stripePromise}
