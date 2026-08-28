@@ -1282,7 +1282,7 @@ MSG
 - Test: `server/scripts/backfillFullPaymentInvoices.test.js`
 
 **Interfaces:**
-- Produces (module exports): `selectCandidates(db)`, `excludeReason(candidate)` returning `'legal_hold' | 'external_paid' | 'has_refund' | null`, `applyCandidate(db, candidate)` returning `{ linesRegenerated }`, `parseArgs(argv)` returning `{ apply, expect: Set<number> | null }`, `main(argv)`.
+- Produces (module exports): `selectCandidates(db)`, `excludeReason(candidate)` returning `'legal_hold' | 'external_paid' | 'has_refund' | 'cancelled' | 'other_contract_payment' | 'exceeds_contract' | null` (the shipped file supersedes this task's code block), `applyCandidate(db, candidate)` returning `{ linesRegenerated, linesSkippedReason }`, `parseArgs(argv)` returning `{ apply, expect: Set<number> | null }`, `main(argv)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1475,7 +1475,7 @@ Expected: FAIL, `Cannot find module './backfillFullPaymentInvoices'`.
  * exactly. Prints the database host and the mode before anything.
  *
  *   DATABASE_URL=<prod> node server/scripts/backfillFullPaymentInvoices.js                                # dry run
- *   DATABASE_URL=<prod> node server/scripts/backfillFullPaymentInvoices.js --apply --expect 442,450,...   # write
+ *   DATABASE_URL=<prod> node server/scripts/backfillFullPaymentInvoices.js --apply --expect <the proposal ids the dry run listed as WOULD, comma-separated>...   # write
  *
  * Idempotent: an upgraded row is no longer labelled Deposit and is not re-selected.
  * One transaction per proposal: a failure leaves the rest untouched.
@@ -1737,22 +1737,22 @@ This task runs only after lane 2 has merged to main and deployed. It is a checkl
 From the repo root on `main`, with the merged code and the prod connection string in the environment for THIS command only (the box's `.env` is the dev database):
 
 ```bash
-DATABASE_URL='<the prod Neon connection string>' node server/scripts/backfillFullPaymentInvoices.js --expect 442,450,451,452,472,479,484,494,502,556,573,579,623,625,635,659,660,666,674,675,713,767,770,774
+DATABASE_URL='<the prod Neon connection string>' node server/scripts/backfillFullPaymentInvoices.js --expect <the proposal ids the dry run listed as WOULD, comma-separated>
 ```
 
-Expected: the first line names the PROD host. Twenty-four `WOULD` lines, one `SKIP ... [has_refund]` line for 633, and `--expect matches the selection exactly.` Any refusal line means the set changed since 2026-08-28: stop and look at the diff it prints before doing anything else.
+Expected: the first line names the PROD host. One `WOULD` line per proposal to repair and one `SKIP ... [reason]` line per excluded one (633 for its refund; any `cancelled`, `other_contract_payment` or `exceeds_contract` row is a permanent hand repair, never an --expect member), and `--expect matches the selection exactly.` Any refusal line means the set changed since 2026-08-28: stop and look at the diff it prints before doing anything else.
 
-- [ ] **Step 2: Dallas reads the 24 lines**
+- [ ] **Step 2: Dallas reads the WOULD lines**
 
 Hand the dry-run output to Dallas. Only on his word:
 
 - [ ] **Step 3: Apply**
 
 ```bash
-DATABASE_URL='<the prod Neon connection string>' node server/scripts/backfillFullPaymentInvoices.js --apply --expect 442,450,451,452,472,479,484,494,502,556,573,579,623,625,635,659,660,666,674,675,713,767,770,774
+DATABASE_URL='<the prod Neon connection string>' node server/scripts/backfillFullPaymentInvoices.js --apply --expect <the proposal ids the dry run listed as WOULD, comma-separated>
 ```
 
-Expected: `24/24 applied.` Any `FAILED #N` line: that proposal rolled back on its own; the rest landed; investigate N before re-running (a re-run is safe; it selects only what is still a Deposit).
+Expected: `N/N applied.` where N is the WOULD count from the dry run Any `FAILED #N` line: that proposal rolled back on its own; the rest landed; investigate N before re-running (a re-run is safe; it selects only what is still a Deposit).
 
 - [ ] **Step 4: Verify**
 
@@ -1763,7 +1763,7 @@ SELECT proposal_id, invoice_number, label, amount_due, amount_paid, locked
   FROM invoices WHERE proposal_id IN (774, 767, 770) ORDER BY proposal_id;
 ```
 
-Expected: three `Full Payment` rows, `amount_due = amount_paid`, `locked = true`; 774 at 55000, 767 at 30000, 770 at 42500. A second dry run selects only 633.
+Expected: three `Full Payment` rows, `amount_due = amount_paid`, `locked = true`; 774 at 55000, 767 at 30000, 770 at 42500. A second dry run prints no WOULD line, only SKIPs.
 
 - [ ] **Step 5: Close the paper trail**
 
@@ -1772,7 +1772,7 @@ Delete the backlog entry named above (the ledger's rule: shipped work is deleted
 ```bash
 git add docs/fix-list-remaining-2026-07-02.md docs/walkthroughs-owed.md
 git commit -F - <<'MSG'
-docs(backlog): the stranded-remainder entry ships; 24 receipts corrected on prod
+docs(backlog): the stranded-remainder entry ships; the stranded receipts corrected on prod (count from the apply run)
 
 Deleted per the ledger's rule. Git holds it. 633 held for a manual look.
 MSG
@@ -1793,5 +1793,5 @@ MSG
 - §5d run order, backlog deletion after apply, Sentry resolve, 633 by hand: Task 8.
 - §6 lane 2: every bullet has a test above.
 - §7 docs, fleet, gate: Task 7.
-- Type consistency: `upgradeDepositInvoiceToFull(proposalId, dbClient)` and `notifyLinkOverflow({...})` carry the same names and shapes in Tasks 1 through 5; `linkPaymentToInvoice`'s extended return (`proposalId`, `invoiceId`, `creditedCents`, `overflowCents`) is what all three callers spread into `linkOverflow`; `excludeReason` returns the same three strings in code and test; `parseArgs` and `applyCandidate` shapes match their tests.
+- Type consistency: `upgradeDepositInvoiceToFull(proposalId, dbClient)` and `notifyLinkOverflow({...})` carry the same names and shapes in Tasks 1 through 5; `linkPaymentToInvoice`'s extended return (`proposalId`, `invoiceId`, `creditedCents`, `overflowCents`) is what all three callers spread into `linkOverflow`; `excludeReason` returns the same reason strings in code and test; `parseArgs` and `applyCandidate` shapes match their tests.
 - Nothing calls Stripe. Nothing touches `linkPaymentToInvoice`'s cap or status guard.
