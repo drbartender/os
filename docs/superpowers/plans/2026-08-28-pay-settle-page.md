@@ -21,9 +21,9 @@
 - Commit with explicit pathspecs (`git add <files>`), never `git add -A`. Commit messages via `git commit -F - <<'MSG'` and never contain backticks.
 - Work happens in worktree lane `pay-settle-page` off `main`. Do not run `npm install` inside the lane.
 - This lane ships alone and FIRST. Lane 2 lengthens the webhook transaction this lane tolerates.
-- Review: FULL pre-prod fleet plus `/second-opinion`. `server/routes/proposals/publicToken.js` is on `scripts/sensitive-paths.txt`. The gate line will read `client + money`, and the money smoke needs `NEON_API_KEY`.
+- Review: FULL pre-prod fleet plus `/second-opinion`. `server/routes/proposals/publicToken.js` is on `scripts/sensitive-paths.txt`. The gate line will read `money + client`, and the money smoke needs `NEON_API_KEY`.
 - `ProposalView.js` is 873 lines (over the 700 soft cap, under the 1000 hard cap). This lane nets roughly +10 to it; the ratchet allows growth under 1000. Do not add anything to it that can live in a module instead.
-- The only file the two lanes both touch is `docs/walkthroughs-owed.md`.
+- Files both lanes touch: `docs/walkthroughs-owed.md` (same Tier 1 entry; Task 10 Step 3 and lane 2's docs task both append to it), `README.md` (this lane around line 623, lane 2 around 513) and `ARCHITECTURE.md` (this lane around 352 to 374, lane 2 around 1212). Different regions; a rebase should merge clean, but read the conflict if one appears rather than taking either side blindly.
 
 ---
 
@@ -700,10 +700,16 @@ test('twenty-one calls on one token from one IP all succeed and bump nothing', a
   assert.equal(views, 0);
 });
 
-test('404 on an archived proposal and on an unknown token', async () => {
+test('404 on an archived proposal and on an unknown token, from OUR handler, not Express', async () => {
+  // Assert the body too: with no route at all Express also 404s, with no
+  // JSON body, and this test would pass by accident.
   const p = await insertProposal({ status: 'archived' });
-  assert.equal((await get(`/api/proposals/t/${p.token}/payment-state`)).status, 404);
-  assert.equal((await get(`/api/proposals/t/${crypto.randomUUID()}/payment-state`)).status, 404);
+  const a = await get(`/api/proposals/t/${p.token}/payment-state`);
+  assert.equal(a.status, 404);
+  assert.equal(a.body && a.body.error, 'This proposal is no longer available');
+  const u = await get(`/api/proposals/t/${crypto.randomUUID()}/payment-state`);
+  assert.equal(u.status, 404);
+  assert.equal(u.body && u.body.error, 'This proposal is no longer available');
 });
 
 test('a malformed token is rejected, not looked up', async () => {
@@ -715,7 +721,7 @@ test('a malformed token is rejected, not looked up', async () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run (from repo root): `node --test server/routes/proposals/publicToken.paymentState.test.js`
-Expected: the first three FAIL (route missing: 404 on the first, then the 21-call loop fails at call 1). Summary `fail 3` or `fail 4`.
+Expected: `pass 1`, `fail 3`. The first test 404s (no route), the 21-call loop fails at call 1, and the archived/unknown test fails on the body assertion (Express's own 404 has no JSON body). Only the malformed-token test passes at this point.
 
 - [ ] **Step 3: Add the two limiters**
 
@@ -754,7 +760,13 @@ Add `proposalCheckoutLimiter,` and `proposalPollLimiter,` to `module.exports` in
 
 - [ ] **Step 4: Add the route and swap the limiters in `publicToken.js`**
 
-Find the `require('../../middleware/rateLimiters')` line at the top of `server/routes/proposals/publicToken.js` and add `proposalCheckoutLimiter, proposalPollLimiter` to its destructuring. Read the file to see whether `publicLimiter` remains used anywhere else in it after the two swaps below; if not, remove it from the destructuring (an unused require is a lint warning).
+The `require('../../middleware/rateLimiters')` line at the top of `server/routes/proposals/publicToken.js` (line 4) destructures `publicLimiter` and `signLimiter`. After the two swaps below `publicLimiter` has no remaining use in this file (its only uses were lines 40 and 245), so the line becomes:
+
+```js
+const { signLimiter, proposalCheckoutLimiter, proposalPollLimiter } = require('../../middleware/rateLimiters');
+```
+
+(`publicLimiter` stays exported from `rateLimiters.js`; eight other server files still use it.)
 
 Change the resolve route's middleware from `publicLimiter` to `proposalCheckoutLimiter`:
 
@@ -793,7 +805,7 @@ router.get('/t/:token/payment-state', proposalPollLimiter, requireUuidToken, asy
 
 - [ ] **Step 5: Swap the limiter on create-intent**
 
-In `server/routes/stripeCreateIntent.js`, change the require `const { publicLimiter } = require('../middleware/rateLimiters');` to `const { proposalCheckoutLimiter } = require('../middleware/rateLimiters');` and the route line's `publicLimiter` to `proposalCheckoutLimiter`. Grep the file to confirm `publicLimiter` has no other use.
+In `server/routes/stripeCreateIntent.js`, change the require on line 14, `const { publicLimiter } = require('../middleware/rateLimiters');`, to `const { proposalCheckoutLimiter } = require('../middleware/rateLimiters');` and the route line's (line 28) `publicLimiter` to `proposalCheckoutLimiter`. Those are its only two uses in the file. Note the invoice rails (`POST /api/stripe/create-intent-for-invoice/:token` in `stripe.js` and `GET /api/invoices/t/:token`) stay on `publicLimiter`; the invoice page is out of scope for this lane (spec §3f).
 
 - [ ] **Step 6: Run the test to verify it passes**
 
@@ -869,7 +881,7 @@ test('a successful sign records the acknowledged total in the signed row', async
 });
 ```
 
-Note the file's header says the sign limiter allows 10 per hour per IP and the file already makes 4 sign POSTs; these two make 6. Under the cap.
+Note: the sign limiter allows 10 per hour per IP. The file's header comment says it makes 4 sign POSTs; it actually makes 5 (the last test posts twice). These two make 7. Under the cap, with a margin of 3; do not add a third sign POST to this file.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1488,7 +1500,7 @@ with:
   const onSettled = useCallback((fresh) => {
     setProposal(fresh);
     toast.success('Payment received!');
-  }, []);
+  }, [toast]);
   const onFallback = useCallback((reason) => {
     // A client who sat through the whole poll with no settled row is the one
     // event worth paging on: it is either a slow webhook or a rolled-back one.
@@ -1624,7 +1636,7 @@ Replace the whole block from `{/* ── Paid state success card (replaces sign-
 <FormBanner error={[formError, intentError].filter(Boolean).join(' ')} fieldErrors={fieldErrors} />
 ```
 
-and change both fallback-paragraph conditions from `{!activeSecret && !loadingIntent && !formError && !intentError && (` to `{!activeSecret && !loadingIntent && !intentError && (`. Then in `SignAndPaySection.errors.test.js`, the test `'a sign error wins over a stale intent error, and never doubles up'` now expects one alert whose text contains BOTH messages: change its last assertion to `expect(alerts[0].textContent).toBe(`${SIGN_MSG} ${LOAD_MSG}`);` and rename it `'a sign error and an intent error both show, in one banner'`.
+Leave both fallback-paragraph conditions (`!activeSecret && !loadingIntent && !formError && !intentError`) exactly as they are: `SignAndPaySection.errors.test.js` pins that the "contact us" paragraph stays suppressed while EITHER banner is up, so the client never gets two competing explanations, and the joined banner already carries the intent message (with its own "Please refresh the page" instruction) whenever both errors exist, so a failed sign followed by a failed load is no longer a dead end. Then in `SignAndPaySection.errors.test.js`, the test `'a sign error wins over a stale intent error, and never doubles up'` now expects one alert whose text contains BOTH messages: change its last assertion to `expect(alerts[0].textContent).toBe(`${SIGN_MSG} ${LOAD_MSG}`);` and rename it `'a sign error and an intent error both show, in one banner'`. Every other test in that file passes unchanged.
 
 - [ ] **Step 7: Run the proposal suites**
 
@@ -1634,12 +1646,12 @@ Expected: all PASS.
 - [ ] **Step 8: Run the full client suite**
 
 Run (from `client/`): `CI=true npx react-scripts test --watchAll=false`
-Expected: every suite PASS. There were 94 test files before this lane; expect 99 (paidState, settlePoll, useSettle, PaidCard, PaymentTermsBox) and 824 + 39 tests. Zero failures.
+Expected: every suite PASS. Baseline on main before this lane: `Test Suites: 95 passed, 95 total; Tests: 824 passed, 824 total` (one of the 95 is a `.test.jsx`). Expect **100 suites** (paidState, settlePoll, useSettle, PaidCard, PaymentTermsBox) and **864 tests** (824 + 39 in the new files + 1 appended to intentQuote in Task 8). Zero failures.
 
 - [ ] **Step 9: Build with warnings as errors**
 
 Run (from `client/`): `CI=true npx react-scripts build 2>&1 | grep -iE "error|warning|Compiled" | head`
-Expected: only the pre-existing `html2pdf.js` source-map warning. Fix any lint warning on this lane's files before commit.
+Expected: `Compiled with warnings.` with only the pre-existing `html2pdf.js` source-map line, plus a node `[DEP0176] DeprecationWarning: fs.F_OK` line that is node's, not this lane's. The build exits 0. Any `react-hooks/exhaustive-deps` or `no-unused-vars` warning on this lane's files fails the Vercel gate; fix it before commit.
 
 - [ ] **Step 10: Commit**
 
@@ -1682,7 +1694,7 @@ On the `proposal/` tree line that enumerates `proposalView/` modules, add after 
 
 - [ ] **Step 2: ARCHITECTURE**
 
-In the proposal public-route table, directly under the `/t/:token/resolve` row, add a row for `GET /api/proposals/t/:token/payment-state`: non-mutating, `proposalPollLimiter` (40/15min/token), returns `{ status, amount_paid, total_price, payment_type }` in dollars, 404 on unknown or archived; the poll target for the post-checkout settle state. Update the `/t/:token`, `/t/:token/resolve` and `/api/stripe/create-intent/:token` rows to say `proposalCheckoutLimiter` (60/15min/token) where they said `publicLimiter`.
+In the proposal public-route table, directly under the `/t/:token/resolve` row (around line 370), add a row for `GET /api/proposals/t/:token/payment-state`: non-mutating, `proposalPollLimiter` (40/15min/token), returns `{ status, amount_paid, total_price, payment_type }` in dollars, 404 on unknown or archived; the poll target for the post-checkout settle state. The existing `/t/:token` (around 352), `/t/:token/resolve` (around 370) and `POST /create-intent/:token` (around 403) rows do not name a limiter today; ADD a note to each that it sits on `proposalCheckoutLimiter` (60/15min/token), moved off `publicLimiter` 2026-08-28.
 
 - [ ] **Step 3: Walkthrough**
 
@@ -1727,5 +1739,5 @@ Then stop. Review is the FULL pre-prod fleet plus `/second-opinion` (spec §7; `
 - §3e: Task 5 (sign telemetry), Task 8 (gratuity basis), Task 9 Step 6 (formError clears, comment, intentError order, joined banner).
 - §3f: nothing touches `InvoicePage.js` or `ConfirmationStep.js`.
 - §6 lane 1: every bullet has a test above; the "redirect_status=failed renders the form" case is pinned at the helper (`readRedirect`) and by construction (Task 9 Step 4), and walked in Task 10.
-- §7: Task 10 (README, ARCHITECTURE, walkthrough, full fleet, `client + money`).
+- §7: Task 10 (README, ARCHITECTURE, walkthrough, full fleet, `money + client`).
 - Copy: no em dashes in any new string; the `'—'` glyph is the pre-existing missing-value placeholder.

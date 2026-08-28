@@ -20,7 +20,8 @@
 - One pooled connection per request (CLAUDE.md). Nothing that runs `pool.query` may be called while a handler holds a client from `pool.connect()`. The overflow email is post-commit for exactly this reason.
 - Commit with explicit pathspecs, never `git add -A`. Commit messages via `git commit -F - <<'MSG'` and never contain backticks.
 - Work happens in worktree lane `full-pay-invoice` off `main`. Do not run `npm install` inside the lane.
-- Lane 1 (`pay-settle-page`) ships FIRST. This lane adds work to the webhook transaction that lane 1's settle state tolerates. The only file both lanes touch is `docs/walkthroughs-owed.md`.
+- Lane 1 (`pay-settle-page`) ships FIRST. This lane adds work to the webhook transaction that lane 1's settle state tolerates. Files both lanes touch: `docs/walkthroughs-owed.md` (same Tier 1 entry), `README.md` (lane 1 around line 623, this lane around 513) and `ARCHITECTURE.md` (lane 1 around 352 to 374, this lane around 1212). Different regions; read any conflict rather than taking a side blindly.
+- File-size ratchet: `server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js` is 869 lines today and Task 3 adds about 20, so `scripts/check-file-size.js` will WARN (soft cap 700) and there are roughly 110 lines left before growth is blocked at 1000. Keep the Task 3 insertion to what the plan shows; do not add anything to that file that can live in a helper.
 - Review: full pre-prod fleet plus `/second-opinion` before merge. Suggested intermediate checkpoints: after Task 4, `code-review` + `consistency-check` on the three call sites; after Task 6, `security-review` on the script.
 - The prod backfill (Task 8) runs only after this lane is live on main, from its own runbook, with `--expect`.
 - No em dashes in prose written into docs or client-facing strings. The admin email body is prose; keep it dash-free.
@@ -463,7 +464,7 @@ async function notifyLinkOverflow({ proposalId, invoiceId, paymentId, amountCent
 }
 ```
 
-Add `notifyLinkOverflow` to the file's `module.exports`, and re-export it from `server/utils/invoiceHelpers.js` (add to the `require('./invoiceLinking')` destructuring and to `module.exports`).
+Add `notifyLinkOverflow` to the file's `module.exports`, and re-export it from `server/utils/invoiceHelpers.js` (add to the `require('./invoiceLinking')` destructuring and to `module.exports`). Two comments to keep true: update `linkPaymentToInvoice`'s JSDoc `@returns` line (`invoiceLinking.js` around line 42) to `{linked, reason?, creditedCents?, overflowCents?, proposalId?, invoiceId?}`, and add `notifyLinkOverflow` (and, from Task 1, `upgradeDepositInvoiceToFull`) to the header comment in `invoiceHelpers.js` (lines 17 to 22) that enumerates each sibling module's re-exports.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -666,7 +667,7 @@ Beside the other in-tx flags near the top of the handler (directly after `let ex
       let linkOverflow = null;
 ```
 
-In the label-blind fallback branch, insert ABOVE the nine-line comment that begins `// Off-ledger exclusion (merge-gate finding, 2026-08-03)`:
+In the label-blind fallback branch, insert ABOVE the eight-line comment that begins `// Off-ledger exclusion (merge-gate finding, 2026-08-03)` (around line 591):
 
 ```js
               // Deposit-to-full upgrade (spec 2026-08-28 §4b). A full payment
@@ -856,6 +857,10 @@ const contractInvoices = async (proposalId) => (await pool.query(
 
 before(async () => {
   const app = express();
+  // The raw-body mount lives in server/index.js:214, NOT in the stripe router.
+  // Without it req.body is undefined, constructEvent throws, and the webhook
+  // route 400s before the handler runs. Mirrors the lastMinute harness.
+  app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
   app.use('/api/stripe', stripeRouter);
   server = app.listen(0);
   await new Promise((r) => server.on('listening', r));
@@ -863,6 +868,11 @@ before(async () => {
 });
 
 after(async () => {
+  // Let un-awaited post-commit work land before teardown (the reference
+  // harness does the same). The scheduleDepositPaidReminders stub above is
+  // what makes it safe to skip the reference test's handler registration;
+  // do not drop that stub.
+  await new Promise((r) => setTimeout(r, 400));
   if (server) await new Promise((r) => server.close(r));
   if (proposalIds.length) {
     const ids = proposalIds;
@@ -935,6 +945,18 @@ Directly ABOVE the comment `// ── Invoice integration (parity with payment_i
           }
 ```
 
+Change its open-invoice lookup (the `SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1` query) to carry the same off-ledger exclusion the proposal-page webhook has, so all three lookups match (add `const { OFF_LEDGER_INVOICE_LABELS } = require('../../utils/proposalMoneyShared');` beside the other requires if it is not already there):
+
+```js
+          const openInvoice = await dbClient.query(
+            `SELECT id FROM invoices
+              WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid')
+                AND NOT (label = ANY($2::text[]))
+              ORDER BY created_at ASC LIMIT 1`,
+            [proposalId, OFF_LEDGER_INVOICE_LABELS]
+          );
+```
+
 Change its link line from
 
 ```js
@@ -985,8 +1007,7 @@ MSG
 
 **Files:**
 - Modify: `server/routes/proposals/actions.js` (line 23 require; the `record-payment` handler)
-- Test: `server/routes/proposals/recordPayment.fullOnDeposit.test.js`
-- Modify: `server/routes/proposals/recordPayment.invoiceCap.test.js` (its `notifyAdminCategory` stub becomes capturing; one assertion added)
+- Test: `server/routes/proposals/recordPayment.fullOnDeposit.test.js` (three cases: paid_in_full, typed full amount, and a partial record that overfills its invoice and must email the overflow lane post-commit; the existing `recordPayment.invoiceCap.test.js` is NOT touched, because its fixture caps the applied amount at exactly the invoice's remaining due and so structurally cannot overflow)
 
 **Interfaces:**
 - Consumes: `upgradeDepositInvoiceToFull`, `notifyLinkOverflow` (Tasks 1, 2); the route's own `isFullyPaid`.
@@ -1020,6 +1041,10 @@ require('../../utils/email').sendEmail = async () => ({ skipped: true });
 require('../../utils/adminNotifications').notifyAdminCategory = async () => {};
 require('../../utils/eventCreation').createEventShifts = async () => null;
 require('../../utils/marketingHandlers').onProposalSignedAndPaid = async () => {};
+// actions.js destructures notifyLinkOverflow from invoiceHelpers at require
+// time, so the capturing stub must be in place BEFORE the router is required.
+const overflowCalls = [];
+require('../../utils/invoiceHelpers').notifyLinkOverflow = async (args) => { overflowCalls.push(args); };
 
 const actionsRouter = require('./actions');
 
@@ -1027,21 +1052,21 @@ const NONCE = `${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')
 let server, baseUrl, adminId, adminToken, clientId;
 const proposalIds = [];
 
-async function seed() {
+async function seed({ totalPrice = 550, invoiceDue = 10000 } = {}) {
   const p = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours,
                             total_price, amount_paid, deposit_amount, external_paid, pricing_snapshot, payment_type, balance_due_date)
      VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'accepted', 'Cocktail Party', '6:00 PM', 4,
-             550, 0, 100, 0, '{"package": {"name": "The Core Reaction", "base_cost": 350}, "total": 550}'::jsonb, 'deposit',
+             $2, 0, 100, 0, '{"package": {"name": "The Core Reaction", "base_cost": 350}, "total": 550}'::jsonb, 'deposit',
              CURRENT_DATE + INTERVAL '16 days')
      RETURNING id`,
-    [clientId]
+    [clientId, totalPrice]
   );
   proposalIds.push(p.rows[0].id);
   const i = await pool.query(
     `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
-     VALUES ($1, $2, 'Deposit', 10000, 0, 'sent', false) RETURNING id`,
-    [p.rows[0].id, `RFD${NONCE}${proposalIds.length}`]
+     VALUES ($1, $2, 'Deposit', $3, 0, 'sent', false) RETURNING id`,
+    [p.rows[0].id, `RFD${NONCE}${proposalIds.length}`, invoiceDue]
   );
   return { proposalId: p.rows[0].id, invoiceId: i.rows[0].id };
 }
@@ -1128,31 +1153,34 @@ test('a typed amount that clears the balance, WITHOUT the paid_in_full box, take
   assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.body}`);
   await expectOneFullInvoice(s);
 });
-```
 
-And in `server/routes/proposals/recordPayment.invoiceCap.test.js`: replace the line `require('../../utils/adminNotifications').notifyAdminCategory = async () => {};` with
-
-```js
-const adminNotifyCalls = [];
-require('../../utils/adminNotifications').notifyAdminCategory = async (args) => { adminNotifyCalls.push(args); };
-```
-
-and at the end of the test `'over-payment caps the invoice credit at amount_due (does not inflate the invoice ledger)'`, after its last assertion, add:
-
-```js
-  // spec 2026-08-28 §4e: the overflow reaches the money-anomaly lane, from
-  // after the response (post-commit, connection released).
-  await new Promise((r) => setTimeout(r, 50));
-  const overflowMails = adminNotifyCalls.filter((c) => c.category === 'payment_failure' && /overflow/i.test(c.subject || ''));
-  assert.equal(overflowMails.length, 1, `expected one overflow email, got ${JSON.stringify(adminNotifyCalls.map((c) => c.subject))}`);
+test('a partial record that overfills the open invoice emails the overflow lane once, after the response', async () => {
+  // Not fully paid, so no upgrade; the open invoice is smaller than the
+  // applied amount, so the cap credits $100 and $100 overflows. The route's
+  // own cap (applied = min(amount, total - paid)) does not bite here because
+  // the total is $3000. This is the shape the existing invoiceCap test
+  // cannot produce: there the applied amount equals the invoice's due exactly.
+  overflowCalls.length = 0;
+  const s = await seed({ totalPrice: 3000, invoiceDue: 10000 });
+  const r = await postJson(`/api/proposals/${s.proposalId}/record-payment`, adminToken, { amount: 200, method: 'check' });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.body}`);
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(overflowCalls.length, 1, 'one overflow email, post-commit');
+  assert.equal(overflowCalls[0].proposalId, s.proposalId);
+  assert.equal(overflowCalls[0].invoiceId, s.invoiceId);
+  assert.equal(overflowCalls[0].creditCents, 10000);
+  assert.equal(overflowCalls[0].overflowCents, 10000);
+  const inv = (await pool.query('SELECT label, amount_paid, status FROM invoices WHERE id = $1', [s.invoiceId])).rows[0];
+  assert.equal(inv.label, 'Deposit', 'no upgrade on a partial record');
+  assert.equal(Number(inv.amount_paid), 10000);
+  assert.equal(inv.status, 'paid');
+});
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run (from repo root): `node --test server/routes/proposals/recordPayment.fullOnDeposit.test.js`
-Expected: both FAIL on `label`: `'Deposit' !== 'Full Payment'`.
-Run: `node --test server/routes/proposals/recordPayment.invoiceCap.test.js`
-Expected: the over-payment test FAILS on `overflowMails.length`: `0 !== 1`.
+Expected: `pass 0`, `fail 3`. The first two fail on `label`: `'Deposit' !== 'Full Payment'`; the third fails on `overflowCalls.length`: `0 !== 1` (the route does not call the notifier yet).
 
 - [ ] **Step 3: Add the call, the stamp, the parity exclusion, and the post-commit email**
 
@@ -1227,14 +1255,14 @@ After the transaction's `finally { dbClient.release(); }` block and before the c
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test server/routes/proposals/recordPayment.fullOnDeposit.test.js` → `pass 2`, `fail 0`.
-Run: `node --test server/routes/proposals/recordPayment.invoiceCap.test.js` → its full count, `fail 0`.
+Run: `node --test server/routes/proposals/recordPayment.fullOnDeposit.test.js` → `pass 3`, `fail 0`.
+Run: `node --test server/routes/proposals/recordPayment.invoiceCap.test.js` → its full count, `fail 0` (untouched; its `notifyAdminCategory` stub is a no-op and its fixture cannot overflow).
 Run: `node --test server/routes/proposals/recordPayment.statusGuard.test.js` and `node --test server/routes/proposals/notifyClient.test.js` → `fail 0` each.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/routes/proposals/actions.js server/routes/proposals/recordPayment.fullOnDeposit.test.js server/routes/proposals/recordPayment.invoiceCap.test.js
+git add server/routes/proposals/actions.js server/routes/proposals/recordPayment.fullOnDeposit.test.js
 git commit -F - <<'MSG'
 fix(record-payment): a fully-paid record upgrades the Deposit invoice, stamps payment_type, and emails an overflow after commit
 

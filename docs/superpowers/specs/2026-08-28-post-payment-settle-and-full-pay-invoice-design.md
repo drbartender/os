@@ -248,12 +248,13 @@ Lane 2:
 - Webhook: a deposit-terms proposal receives a `full` intent; afterwards exactly one contract invoice, Full Payment, `amount_due = amount_paid = intent.amount`, paid, locked; `invoice_payments.amount = intent.amount`; no overflow; the notify stub is not called. A `deposit` intent on the same fixture still yields Deposit paid plus Balance. A `full` intent on an archived proposal does not upgrade.
 - (rev) Checkout session: a full payment-link event on the same shape, through the signed webhook route, ends in the same one-invoice shape.
 - Admin record-payment with `paid_in_full`, and with a typed amount that clears the balance, both end in the one-invoice shape with `payment_type = 'full'` stamped.
-- `notifyLinkOverflow` sends one `payment_failure` email with the dollar figures; the existing record-payment overflow test asserts it is called once, after the response.
+- `notifyLinkOverflow` sends one `payment_failure` email with the dollar figures and is never called from inside a transaction; a partial admin record that overfills its open invoice (the one shape that can still overflow after the upgrade) asserts it is called once, after the response. The existing record-payment cap test is left alone: its fixture caps the applied amount at exactly the invoice's remaining due, so it cannot overflow.
+- The payment-link handler's open-invoice lookup gains the same off-ledger exclusion the other two have (rev), so all three lookups match, not only the three upgrade calls.
 - Backfill: dry run on a fixture returns the candidate, skips a CC-transfer row, and `excludeReason` skips 600 and a refunded row; `--apply` refuses without a matching `--expect`; the write produces the 5c shape with the full before-state; a second run writes nothing.
 
 ## 7. Review and rollout
 
-- (rev) Lane 1 touches `server/routes/proposals/publicToken.js`, a listed sensitive path: full pre-prod fleet plus `/second-opinion`. The gate line will read `client + money`.
+- (rev) Lane 1 touches `server/routes/proposals/publicToken.js`, a listed sensitive path: full pre-prod fleet plus `/second-opinion`. The gate line will read `money + client`.
 - Lane 2 and the backfill: full pre-prod fleet plus `/second-opinion`.
 - Order: lane 1 merges and ships first (decision 5). Lane 2 second. Backfill runbook after lane 2 is live.
 - (rev) Documentation, in the same change per CLAUDE.md's mandatory table: `README.md` folder tree gains `paidState.js`, `settlePoll.js`, `useSettle.js`, `PaidCard.js`, `PaymentTermsBox.js` (lane 1, plus the already-drifted `intentQuote.js` and `gratuityFloor.js`) and `server/scripts/backfillFullPaymentInvoices.js` (lane 2); `ARCHITECTURE.md`'s proposal public-route table gains `GET /t/:token/payment-state` and its limiter (lane 1) and notes the three-entrance upgrade (lane 2).
