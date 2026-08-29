@@ -464,14 +464,19 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     // week in August every gratuity-electing client 409'd here and the only
     // trace was a run of 'viewed' rows from the recovery refetch, which read
     // as engagement. Breadcrumb it as what it is, and page Sentry.
-    await pool.query(
+    // Fire-and-forget like the 'viewed' insert: the 409 does not wait on it.
+    // The proxy-validated ip rides along so a run of these rows can be told
+    // apart as one client retrying versus a leaked token being probed.
+    pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
        VALUES ($1, 'sign_failed', 'client', $2)`,
-      [lookup.rows[0].id, JSON.stringify({ code, acknowledged_total: ackGiven ? ackTotal : null })]
+      [lookup.rows[0].id, JSON.stringify({ code, acknowledged_total: ackGiven ? ackTotal : null, ip })]
     ).catch((err) => console.error('sign_failed activity log failed (non-blocking):', err.message));
     if (process.env.SENTRY_DSN_SERVER) {
+      // TOTAL_CHANGED is the state worth paging on; ALREADY_ACCEPTED is a
+      // benign double-submit or replay and only needs to be countable.
       Sentry.captureMessage('proposal_sign_failed', {
-        level: 'warning',
+        level: code === 'TOTAL_CHANGED' ? 'warning' : 'info',
         tags: { route: 'proposals/sign', code, proposal_id: String(lookup.rows[0].id) },
         extra: { acknowledged_total: ackGiven ? ackTotal : null },
       });

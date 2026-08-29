@@ -34,7 +34,10 @@ export function paidState(proposal, renderedTotal) {
   if (!isPaidState(proposal.status)) {
     return { kind: 'none', amountPaid, total, remaining, completed };
   }
-  const full = proposal.status === 'balance_paid' || completed || amountPaid >= total - 0.01;
+  // `completed` is a lifecycle state, not a payment fact: the sweep only
+  // completes fully paid events, but an admin can set it by hand with a
+  // balance still owed, and that row must say so (and keep its pay link).
+  const full = proposal.status === 'balance_paid' || amountPaid >= total - 0.01;
   return { kind: full ? 'full' : 'deposit', amountPaid, total, remaining, completed };
 }
 

@@ -68,7 +68,15 @@ export function useSettle({
         return;
       }
       if (!mounted.current) return;
-      // The poll said paid and the refetch landed, so 'paid' is the truth even
+      // The refetched ROW decides, not the poll: a refetch that comes back
+      // unsettled (a replica lag, a stale cache) must not be handed to the
+      // page as paid, and must not leave the page on the spinner forever.
+      if (!isPaidState(fresh && fresh.status)) {
+        setPhase('fallback');
+        safely('onFallback', () => latest.current.onFallback('refetch_unsettled'));
+        return;
+      }
+      // The poll said paid and the refetch agrees, so 'paid' is the truth even
       // if the caller's callback throws; only the refetch can earn 'fallback'.
       safely('onSettled', () => latest.current.onSettled(fresh));
       setPhase('paid');

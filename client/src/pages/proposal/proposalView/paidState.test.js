@@ -82,3 +82,10 @@ test('readRedirect: no paid flag is not a redirect at all', () => {
   expect(readRedirect('')).toEqual({ redirected: false, failed: false });
   expect(readRedirect('?choose=1')).toEqual({ redirected: false, failed: false });
 });
+
+test('completed with money still owed is NOT full: the status is a lifecycle fact, the money is the row', () => {
+  const s = paidState({ status: 'completed', amount_paid: '400', total_price: '550' });
+  expect(s.kind).toBe('deposit');
+  expect(s.remaining).toBe(150);
+  expect(s.completed).toBe(true);
+});

@@ -774,6 +774,14 @@ here by default.
   live again, which is a live-money change. Prod has zero heal markers today, so it is inert.
   Decide the rule before touching it.
 
+- **An async payment method (bank debit, Cash App, Klarna) traps the settle page for days.**
+  `readRedirect` treats `redirect_status=processing`/`pending` as "not failed", so every visit to the
+  return URL runs the 13-poll settle, lands in fallback, and shows copy promising "within the hour"
+  while the webhook may be days away; the Total and pay controls stay suppressed the whole time.
+  `stripeCreateIntent.js` sets neither `payment_method_types` nor `automatic_payment_methods`, so
+  whatever the Dashboard enables can be offered. Either pin the intent to cards or branch the
+  fallback on `processing` with copy that says a bank payment takes a few days. Found by the
+  2026-08-28 lane 1 fleet.
 - **create-intent mints a fresh intent beside a `succeeded`/`processing` one, so a second card
   entry is a second real charge.** `stripeCreateIntent.js:157-167` deliberately leaves a live
   intent alone and mints another; both webhooks credit additively. Reachable by any reload of an

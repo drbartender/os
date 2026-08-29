@@ -622,6 +622,7 @@ export default function EventDetailPage() {
                     <div key={i} className="hstack" style={{ alignItems: 'flex-start' }}>
                       <div className="queue-icon info" style={{ flexShrink: 0 }}>
                         <Icon name={
+                          a.action && /fail/i.test(a.action) ? 'alert' :
                           a.action === 'payment' ? 'dollar' :
                           a.action === 'sent' ? 'send' :
                           a.action === 'viewed' ? 'eye' :

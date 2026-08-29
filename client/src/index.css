@@ -10122,6 +10122,14 @@ html[data-app="admin-os"] .location-suggest-item.active {
   gap: 12px;
   color: var(--cream-text);
 }
+/* Settling and fallback are not success: neutral chrome, no sage claim. */
+.proposal-paid-card.is-pending {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.proposal-paid-card.is-pending .proposal-paid-title {
+  color: var(--cream-text);
+}
 .proposal-paid-check {
   width: 64px;
   height: 64px;

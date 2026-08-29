@@ -14,7 +14,6 @@ import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
 import { applyIntentQuote } from './intentQuote';
-import * as Sentry from '@sentry/react';
 import { paidState, readRedirect } from './paidState';
 import { useSettle } from './useSettle';
 import PaidCard from './PaidCard';
@@ -141,6 +140,12 @@ export default function ProposalView() {
     // must never bounce back (loop guard). A resolver failure falls through to
     // the normal load so grouping never blocks a plain proposal.
     const chooseParam = new URLSearchParams(window.location.search).get('choose') === '1';
+    // A Stripe return (?paid=true) must never bounce to /compare either: the
+    // group is decided by the very webhook the settle poll is about to wait
+    // for, so on the redirect /resolve reads undecided and the bounce would
+    // destroy the settle before it starts. Stripe's return_url dropped the
+    // ?choose=1 marker, so it cannot guard this on its own.
+    const stripeReturn = readRedirect(window.location.search).redirected;
     axios.get(`${BASE_URL}/proposals/t/${token}/resolve`)
       .then((res) => {
         if (cancelled) return true;
@@ -153,7 +158,7 @@ export default function ProposalView() {
           navigate(`/proposal/${r.chosen_token}?choose=1`, { replace: true });
           return true;
         }
-        if (r.grouped && !r.decided && !chooseParam) {
+        if (r.grouped && !r.decided && !chooseParam && !stripeReturn) {
           navigate(`/compare/${r.group_token}`, { replace: true });
           return true;
         }
@@ -187,11 +192,13 @@ export default function ProposalView() {
   // until the row is in a paid state, refetches the full proposal once, and
   // hands it back; or lands in the fallback, which asserts nothing.
   const fetchPaymentState = useCallback(
-    () => axios.get(`${BASE_URL}/proposals/t/${token}/payment-state`).then((r) => r.data),
+    // Timeouts: axios's default is none, and a black-holed request would pin
+    // the page on the spinner with no Refresh control (that lives in fallback).
+    () => axios.get(`${BASE_URL}/proposals/t/${token}/payment-state`, { timeout: 8000 }).then((r) => r.data),
     [token]
   );
   const fetchFreshProposal = useCallback(
-    () => axios.get(`${BASE_URL}/proposals/t/${token}`).then((r) => r.data),
+    () => axios.get(`${BASE_URL}/proposals/t/${token}`, { timeout: 8000 }).then((r) => r.data),
     [token]
   );
   const onSettled = useCallback((fresh) => {
@@ -201,14 +208,22 @@ export default function ProposalView() {
   const onFallback = useCallback((reason) => {
     // A client who sat through the whole poll with no settled row is the one
     // event worth paging on: it is either a slow webhook or a rolled-back one.
-    Sentry.captureMessage('proposal_settle_fallback', {
-      level: 'warning',
-      tags: { proposal_id: String(proposal?.id ?? ''), reason },
-    });
+    // Lazy, like index.js and ErrorBoundary: a static import would pull Sentry
+    // into this public money page's chunk for a breadcrumb almost nobody hits.
+    import('@sentry/react').then((Sentry) => {
+      Sentry.captureMessage('proposal_settle_fallback', {
+        level: 'warning',
+        tags: { proposal_id: String(proposal?.id ?? ''), reason },
+      });
+    }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposal?.id]);
+  // A real redirect always follows a signature (sign-and-pay signs first;
+  // pay-only requires a signed row), so an unsigned row with ?paid=true is a
+  // typed URL, not a payment, and never enters the settling state.
   const settle = useSettle({
-    active: paid, proposal, fetchState: fetchPaymentState, fetchProposal: fetchFreshProposal, onSettled, onFallback,
+    active: paid && !!proposal?.client_signed_at, proposal,
+    fetchState: fetchPaymentState, fetchProposal: fetchFreshProposal, onSettled, onFallback,
   });
 
   // Seed editable venue from the loaded proposal (once).
@@ -686,7 +701,7 @@ export default function ProposalView() {
   // payment form" line and its deposit-due rows for a frame, to a client who
   // had just paid. The hook's phase only ever ADDS the fallback, and only
   // while the row is unpaid: a paid row is the truth, whatever the hook says.
-  const settling = !isPaid && (settle === 'fallback' || paid);
+  const settling = !isPaid && (settle === 'fallback' || (paid && isAlreadySigned));
 
   // Combined sign+pay section (new flow)
   const showSignAndPay = !isPaid && !settling && !isAlreadySigned && ['sent', 'viewed'].includes(proposal.status);
@@ -772,7 +787,9 @@ export default function ProposalView() {
           </div>
 
           <aside className="proposal-pay-rail">
-            {redirectFailed && (
+            {/* Row-gated: the redirect params are attacker-typeable, and "Nothing
+                was charged" above a "Deposit received." card would be a false claim. */}
+            {redirectFailed && paidInfo.kind === 'none' && (
               <p className="payment-policy-warn" role="status">
                 That payment did not go through. Nothing was charged. You can try again below.
               </p>

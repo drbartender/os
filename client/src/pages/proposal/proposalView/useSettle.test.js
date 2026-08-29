@@ -152,3 +152,14 @@ test('a throwing onSettled still lands on paid: the refetch decides the phase, n
     spy.mockRestore();
   }
 });
+
+test('a settled poll whose refetch comes back unsettled reaches fallback, never renders the stale row as paid', async () => {
+  const fetchState = jest.fn(async () => ({ status: 'balance_paid' }));
+  const fetchProposal = jest.fn(async () => staleRow);
+  const onFallback = jest.fn();
+  const onSettled = jest.fn();
+  const { result } = renderHook(() => useSettle({ active: true, proposal: staleRow, fetchState, fetchProposal, onSettled, onFallback, ...fast }));
+  await waitFor(() => expect(result.current).toBe('fallback'));
+  expect(onSettled).not.toHaveBeenCalled();
+  expect(onFallback).toHaveBeenCalledWith('refetch_unsettled');
+});

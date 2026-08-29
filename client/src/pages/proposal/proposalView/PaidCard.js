@@ -14,7 +14,7 @@ export default function PaidCard({
 }) {
   if (phase === 'settling') {
     return (
-      <div className="proposal-paid-card" role="status" aria-live="polite">
+      <div className="proposal-paid-card is-pending" role="status" aria-live="polite">
         <div className="spinner" aria-hidden="true" />
         <h3 className="proposal-paid-title">Confirming your payment</h3>
         <p className="proposal-paid-sub">This usually takes a few seconds.</p>
@@ -24,7 +24,7 @@ export default function PaidCard({
 
   if (phase === 'fallback') {
     return (
-      <div className="proposal-paid-card" role="status" aria-live="polite">
+      <div className="proposal-paid-card is-pending" role="status" aria-live="polite">
         <h3 className="proposal-paid-title">We are still confirming your payment.</h3>
         <p className="proposal-paid-sub">
           You will get a confirmation email as soon as it clears. If nothing arrives within the hour,
