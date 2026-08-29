@@ -124,7 +124,8 @@ router.post(
     // `null` is spelled out because Number(null) is 0, which is finite: a
     // client sending an explicit null would price as $0.00, take a guaranteed
     // TOTAL_CHANGED 409, and on retry feed the conflict-storm breadcrumb. The
-    // sign route treats null as absent for the same reason.
+    // sign route treats null and absent identically for the same reason (both
+    // 400 since 2026-08-28).
     const ackRaw = body.acknowledged_total === null ? NaN : Number(body.acknowledged_total);
     if (!Number.isFinite(ackRaw)) {
       throw new ValidationError({ acknowledged_total: 'Please refresh the page and try again.' });

@@ -3,9 +3,10 @@
 // The switch endpoint made pre-signature rewrites routine, and the sign
 // endpoint binds no configuration: these tests pin the one change that closes
 // that seam. A sign carrying acknowledged_total commits ONLY when it matches
-// the row's total to the cent; an absent field is refused (400) since
-// 2026-08-28, matching the switch route. Harness mirrors publicToken.test.js; own file = own process = a fresh
-// signLimiter bucket (4 sign POSTs here, cap is 10/hour/IP).
+// the row's total to the cent; an absent or non-numeric field is refused
+// (400) since 2026-08-28, matching the switch route. Harness mirrors
+// publicToken.test.js; own file = own process = a fresh signLimiter bucket
+// (7 sign POSTs here, cap is 10/hour/IP: three more and the file 429s).
 
 require('dotenv').config();
 process.env.SEND_NOTIFICATIONS = 'false';
@@ -161,7 +162,8 @@ test('a sign with NO acknowledged_total is refused and writes nothing (required 
     body: signBody(),
   });
   assert.equal(res.status, 400, res.raw);
-  assert.ok(/refresh/i.test(res.raw), 'the message tells a stale bundle what to do');
+  const body = JSON.parse(res.raw);
+  assert.ok(/refresh/i.test(body.error), 'the instruction is in `error`, the one field every bundle renders');
   const row = await pool.query('SELECT status, client_signed_at FROM proposals WHERE id = $1', [p.id]);
   assert.notEqual(row.rows[0].status, 'accepted');
   assert.equal(row.rows[0].client_signed_at, null);

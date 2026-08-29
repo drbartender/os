@@ -390,15 +390,27 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   // (same TOCTOU-collapse as the status guard). REQUIRED since 2026-08-28:
   // the absent-field path existed for a cached bundle mid-flight on
   // 2026-08-14, that population is gone, and publicSwitch.js has required the
-  // field since it shipped. A stale bundle gets one "refresh" 400 and works.
-  if (req.body.acknowledged_total === undefined || req.body.acknowledged_total === null) {
-    throw new ValidationError({ acknowledged_total: 'Please refresh the page and try again.' });
+  // field since it shipped. A stale bundle gets one "refresh" 400 and works:
+  // the instruction rides in `error`, because no bundle (current or stale)
+  // renders fieldErrors.acknowledged_total, and a banner the client cannot
+  // act on would walk them into signLimiter's 10/hour. Sentry sees it at
+  // info, the document_version precedent above: one stale tab is noise, a
+  // spike after a deploy is the signal. A number is required, not anything
+  // Number() coerces: "" and false are 0, and 0 acknowledges a $0 proposal.
+  const ackRaw = req.body.acknowledged_total;
+  if (typeof ackRaw !== 'number' || !Number.isFinite(ackRaw)) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage('proposal sign POST missing acknowledged_total', {
+        level: 'info',
+        tags: { route: 'proposals/sign', issue: 'missing_acknowledged_total' },
+      });
+    }
+    throw new ValidationError(
+      { acknowledged_total: 'Please refresh the page and try again.' },
+      'Your page is out of date. Please refresh and sign again.'
+    );
   }
-  const ackGiven = true;
-  const ackTotal = ackGiven ? Number(req.body.acknowledged_total) : null;
-  if (ackGiven && !Number.isFinite(ackTotal)) {
-    throw new ValidationError({ acknowledged_total: 'Please refresh the page and try again.' });
-  }
+  const ackTotal = ackRaw;
 
   // Make the UPDATE itself the gate: WHERE clause re-asserts both that no
   // signature has been recorded yet AND that the status is still in a signable
@@ -433,7 +445,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     WHERE id = $7
       AND client_signed_at IS NULL
       AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')
-      AND ($14::numeric IS NULL OR ABS(total_price - $14::numeric) < 0.005)
+      AND ABS(total_price - $14::numeric) < 0.005
     RETURNING id
   `, [
     client_signed_name, client_signature_data, client_signature_method, ip, userAgent,
@@ -444,7 +456,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     venueToPersist ? normalizeVenueState(vStr(venue_state)) : null,
     venueToPersist ? (vStr(venue_zip) || null) : null,
     venueToPersist ? composedLocation : null,
-    ackGiven ? ackTotal : null,
+    ackTotal,
   ]);
   if (!upd.rows[0]) {
     // Disambiguate: a still-signable row can only have failed the total
@@ -452,18 +464,16 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     // was already accepted.
     let code = 'ALREADY_ACCEPTED';
     let message = 'This proposal has already been accepted';
-    if (ackGiven) {
-      const re = await pool.query(
-        'SELECT client_signed_at, status FROM proposals WHERE id = $1',
-        [lookup.rows[0].id]
-      );
-      const r = re.rows[0];
-      const stillSignable = r && !r.client_signed_at
-        && !['accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
-      if (stillSignable) {
-        code = 'TOTAL_CHANGED';
-        message = 'The total for this proposal has changed. Please review the updated price and sign again.';
-      }
+    const re = await pool.query(
+      'SELECT client_signed_at, status FROM proposals WHERE id = $1',
+      [lookup.rows[0].id]
+    );
+    const r = re.rows[0];
+    const stillSignable = r && !r.client_signed_at
+      && !['accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
+    if (stillSignable) {
+      code = 'TOTAL_CHANGED';
+      message = 'The total for this proposal has changed. Please review the updated price and sign again.';
     }
     // A blocked signature must never be silent (spec 2026-08-28 §3e). For a
     // week in August every gratuity-electing client 409'd here and the only
@@ -475,7 +485,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
        VALUES ($1, 'sign_failed', 'client', $2)`,
-      [lookup.rows[0].id, JSON.stringify({ code, acknowledged_total: ackGiven ? ackTotal : null, ip })]
+      [lookup.rows[0].id, JSON.stringify({ code, acknowledged_total: ackTotal, ip })]
     ).catch((err) => console.error('sign_failed activity log failed (non-blocking):', err.message));
     if (process.env.SENTRY_DSN_SERVER) {
       // TOTAL_CHANGED is the state worth paging on; ALREADY_ACCEPTED is a
@@ -483,7 +493,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       Sentry.captureMessage('proposal_sign_failed', {
         level: code === 'TOTAL_CHANGED' ? 'warning' : 'info',
         tags: { route: 'proposals/sign', code, proposal_id: String(lookup.rows[0].id) },
-        extra: { acknowledged_total: ackGiven ? ackTotal : null },
+        extra: { acknowledged_total: ackTotal },
       });
     }
     throw new ConflictError(message, code);
@@ -519,7 +529,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
 
   await pool.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackGiven ? ackTotal : null })]
+    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackTotal })]
   );
 
   // Email notifications (non-blocking)
