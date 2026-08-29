@@ -36,6 +36,7 @@ function httpReq(method, path, body) {
 function signBody(overrides = {}) {
   return JSON.stringify({
     client_signed_name: 'Sign Phone Client',
+    acknowledged_total: 500, // required since 2026-08-28; the seed's total_price
     client_signature_data: 'data:image/png;base64,AAAA',
     client_signature_method: 'type',
     document_version: DOC_VERSION,

@@ -3,8 +3,8 @@
 // The switch endpoint made pre-signature rewrites routine, and the sign
 // endpoint binds no configuration: these tests pin the one change that closes
 // that seam. A sign carrying acknowledged_total commits ONLY when it matches
-// the row's total to the cent; an absent field is the legacy path, byte for
-// byte. Harness mirrors publicToken.test.js; own file = own process = a fresh
+// the row's total to the cent; an absent field is refused (400) since
+// 2026-08-28, matching the switch route. Harness mirrors publicToken.test.js; own file = own process = a fresh
 // signLimiter bucket (4 sign POSTs here, cap is 10/hour/IP).
 
 require('dotenv').config();
@@ -152,16 +152,21 @@ test('a sign acknowledging a MOVED total is 409 TOTAL_CHANGED and records nothin
   assert.equal(row.rows[0].status, 'viewed', 'status untouched');
 });
 
-test('a legacy sign with NO acknowledged_total commits exactly as today', async () => {
+test('a sign with NO acknowledged_total is refused and writes nothing (required since 2026-08-28)', async () => {
   const p = await insertSignableProposal();
-  // Even against a moved total: an in-flight pre-feature tab must keep working.
+  // The guard defends the signer against a switch landing mid-flight; a caller
+  // that omits the field would sign at whatever the total is now.
   await pool.query('UPDATE proposals SET total_price = 750 WHERE id = $1', [p.id]);
   const res = await request('POST', `/api/proposals/t/${p.token}/sign`, {
     body: signBody(),
   });
-  assert.equal(res.status, 200, res.raw);
-  const row = await pool.query('SELECT status FROM proposals WHERE id = $1', [p.id]);
-  assert.equal(row.rows[0].status, 'accepted');
+  assert.equal(res.status, 400, res.raw);
+  assert.ok(/refresh/i.test(res.raw), 'the message tells a stale bundle what to do');
+  const row = await pool.query('SELECT status, client_signed_at FROM proposals WHERE id = $1', [p.id]);
+  assert.notEqual(row.rows[0].status, 'accepted');
+  assert.equal(row.rows[0].client_signed_at, null);
+  const bc = await pool.query("SELECT 1 FROM proposal_activity_log WHERE proposal_id = $1 AND action IN ('signed', 'sign_failed')", [p.id]);
+  assert.equal(bc.rowCount, 0, 'a 400 is not a 409: no breadcrumb either way');
 });
 
 test('sub-cent noise is not a conflict; a garbage value is a 400', async () => {

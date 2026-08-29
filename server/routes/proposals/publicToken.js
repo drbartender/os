@@ -387,9 +387,14 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   // token stuffing add-ons onto a total someone else pays) would commit a
   // signature to a configuration the signer never saw. The client echoes the
   // total rendered above the signature; the UPDATE's WHERE re-asserts it
-  // (same TOCTOU-collapse as the status guard). Absent field = legacy client
-  // mid-flight = no assertion, today's behavior byte for byte.
-  const ackGiven = req.body.acknowledged_total !== undefined && req.body.acknowledged_total !== null;
+  // (same TOCTOU-collapse as the status guard). REQUIRED since 2026-08-28:
+  // the absent-field path existed for a cached bundle mid-flight on
+  // 2026-08-14, that population is gone, and publicSwitch.js has required the
+  // field since it shipped. A stale bundle gets one "refresh" 400 and works.
+  if (req.body.acknowledged_total === undefined || req.body.acknowledged_total === null) {
+    throw new ValidationError({ acknowledged_total: 'Please refresh the page and try again.' });
+  }
+  const ackGiven = true;
   const ackTotal = ackGiven ? Number(req.body.acknowledged_total) : null;
   if (ackGiven && !Number.isFinite(ackTotal)) {
     throw new ValidationError({ acknowledged_total: 'Please refresh the page and try again.' });

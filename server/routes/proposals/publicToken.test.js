@@ -84,6 +84,7 @@ async function insertSignableProposal() {
 
 const validSignBody = (extra = {}) => ({
   client_signed_name: 'Test Signer',
+  acknowledged_total: 500, // required since 2026-08-28; the seed's total_price
   client_signature_data: 'data:image/png;base64,iVBORw0KGgo=',
   client_signature_method: 'draw',
   ...extra,
