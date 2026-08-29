@@ -31,6 +31,7 @@ const fakeStripe = {
 require('./stripeClient').getStripe = () => fakeStripe;
 
 const { processAutopayCharges } = require('./balanceScheduler');
+const { chicagoTodayYmd } = require('./businessTime');
 
 const MARK = `apdur-${Date.now()}`;
 let freshId, skipId, ttlId;
@@ -43,10 +44,14 @@ async function seed(mark, { autopayStatus, attemptedInterval }) {
        (client_id, status, event_type, autopay_enrolled, balance_due_date,
         stripe_customer_id, stripe_payment_method_id, total_price, amount_paid,
         autopay_status, autopay_attempted_at)
-     VALUES (NULL, 'deposit_paid', $1, true, CURRENT_DATE,
+     VALUES (NULL, 'deposit_paid', $1, true, $3::date,
              'cus_faketest', 'pm_faketest', 1000, 900, $2, ${attempted})
      RETURNING id`,
-    [mark, autopayStatus]
+    // The Chicago business day, never SQL CURRENT_DATE: the session runs at
+    // GMT, so from 19:00 Chicago CURRENT_DATE is tomorrow and the scheduler
+    // (which binds chicagoTodayYmd) would rightly see the row as not yet due.
+    // This test failed every evening for that reason until 2026-08-28.
+    [mark, autopayStatus, chicagoTodayYmd()]
   );
   return r.rows[0].id;
 }
