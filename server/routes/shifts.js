@@ -680,9 +680,16 @@ router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
   // an admin takes someone off a shift. The request row is DELETED outright, so
   // without this the bonus would stay frozen to a person with no request at all
   // and the duty line would pay them for a shift they never worked.
-  if (await releaseOutOfAreaLock(pool, ctx.shift_id, ctx.user_id)) {
-    reaccrueDutyForProposal(ctx.proposal_id);
-  }
+  await releaseOutOfAreaLock(pool, ctx.shift_id, ctx.user_id);
+  // Payroll re-accrual is deliberately NOT gated on the lock release. On a
+  // completed event the wage/tip line was already minted at auto-completion,
+  // and only accrual's orphan sweep removes an off-roster line and re-splits
+  // the tips. Prod 2026-08-24 (proposal 652): a no-show Removed after
+  // completion kept a quarter of the card tip because her shift carried no
+  // bonus, so this branch never fired. The hook is a full re-accrual on a
+  // recently-completed proposal and one cheap SELECT on anything else
+  // (maybeReaccrueForDuty), so a pre-event Remove costs nothing.
+  reaccrueDutyForProposal(ctx.proposal_id);
   if (ctx.proposal_id) {
     await suppressBeoNudgesForStaffers(ctx.proposal_id, [ctx.user_id], pool, 'staffer_unassigned: request deleted');
   }
