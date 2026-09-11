@@ -1073,6 +1073,9 @@ the accented spelling) or the two spellings stop matching each other.
     else); hosted to BYOB stages nothing until Generate is clicked, though the Events row and prep
     queue do say a list is owed. `PATCH /api/drink-plans/:id/status` likewise leaves `submitted_at`
     set, so `plan_input_landed` can disagree with a reset status (the UI only ever sends 'reviewed').
+  - The two hosted-only planner steps (`HostedGuestPrefsStep.js`, `v2/steps/HostedDrinksV2.js`) say
+    "No shopping on your end" unconditionally. A class plan reaches them through the hosted queue,
+    and for a class that is true with the supplies add-on and false without. Product-copy call.
   - Tidiness: the four-column stage-list UPDATE is copied in four writers with four WHERE guards
     (`shoppingListGen.js`, `drinkPlanConsult.js` twice, `labListRefresh.js`); a `stageShoppingList()`
     in shoppingListGen would own the SET list and the guard. `menuOwedFor` (`nextStepsCopy.js`)
