@@ -12,7 +12,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { buildCatalogSlices, resolveRecipeRow, normalizeName } = require('../utils/potionCatalog');
 const { generateShoppingList } = require('../utils/shoppingList');
-const { loadCatalog, reportUnresolvedIngredients } = require('../utils/shoppingListGen');
+const { loadCatalog, reportUnresolvedIngredients, matchKey, loadRecipeCandidates } = require('../utils/shoppingListGen');
 
 const router = express.Router();
 
@@ -122,6 +122,74 @@ function sanitizeRequestAliases(value) {
     throw new ValidationError({ request_aliases: 'Must be an array of at most 20 strings.' });
   }
   return clean;
+}
+
+// Remember a client-typed custom request as an alias on an EXISTING drink: the
+// admin's "Match to existing" action on the shopping list's needs-recipe box.
+// The matcher (shoppingListGen.matchCustomNames) is exact equality on names +
+// aliases over its CANDIDATE pool (loadRecipeCandidates: drinks that carry a
+// recipe, on- or off-menu), names first. So the collision set here is exactly
+// that pool: an alias equal to a candidate's name would be dead and one equal
+// to a candidate's alias would steal that drink's future requests, both
+// refused with a 409 naming the drink. Recipe-less rows are deliberately NOT
+// in the set: "Add recipe" mints a draft named + aliased with the client's
+// text, and an admin who then closes the drawer without a recipe must still
+// be able to point that text at the real drink (review finding: the 409
+// would otherwise dead-end them on the duplicate this action prevents). If
+// such a draft later gains a recipe, names beat aliases and the draft wins,
+// deterministically. The drink's own name, or an alias it already carries in
+// any case / apostrophe spelling, is a no-op. Cap and length mirror
+// sanitizeRequestAliases (20 per drink, the planner's 200-char custom name).
+// Two admins appending the same text to two drinks in the same instant can
+// both pass the collision read (one row lock each; a cross-table advisory
+// lock is a no-op on the Neon pooler) and land a duplicate the matcher then
+// resolves first-wins: deterministic, admin-only, accepted.
+const ALIAS_TABLES = ['cocktails', 'mocktails'];
+async function appendRequestAlias(table, id, rawAlias) {
+  if (!ALIAS_TABLES.includes(table)) throw new Error(`appendRequestAlias: unknown table ${table}`);
+  if (typeof rawAlias !== 'string' || !rawAlias.trim()) {
+    throw new ValidationError({ alias: "Type the client's request as they wrote it." });
+  }
+  const alias = rawAlias.trim();
+  if (alias.length > 200) throw new ValidationError({ alias: 'Must be 200 characters or fewer.' });
+  const key = matchKey(alias);
+  if (!key) throw new ValidationError({ alias: 'Needs at least one letter or number.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const target = await client.query(`SELECT * FROM ${table} WHERE id = $1 FOR UPDATE`, [id]);
+    const drink = target.rows[0];
+    if (!drink) throw new NotFoundError(`${table === 'cocktails' ? 'Cocktail' : 'Mocktail'} not found.`);
+    const ownAliases = drink.request_aliases || [];
+    if ([drink.name, ...ownAliases].some((s) => matchKey(s) === key)) {
+      await client.query('ROLLBACK');
+      return drink;
+    }
+    if (ownAliases.length >= 20) {
+      throw new ValidationError({ alias: 'This drink already carries 20 remembered requests.' });
+    }
+    // The target itself cannot collide here: its own name/aliases matching
+    // the key returned as the no-op above. Names before aliases, like the
+    // matcher, so the 409 names the drink the text would actually resolve to.
+    const candidates = await loadRecipeCandidates(client);
+    const taken = candidates.find((row) => matchKey(row.name) === key)
+      || candidates.find((row) => (row.request_aliases || []).some((s) => matchKey(s) === key));
+    if (taken) {
+      throw new ConflictError(`"${alias}" already matches ${taken.name}. Pick that drink instead.`);
+    }
+    const updated = await client.query(
+      `UPDATE ${table} SET request_aliases = array_append(request_aliases, $1) WHERE id = $2 RETURNING *`,
+      [alias, id]
+    );
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Batch-verify every override_item_id references an existing ACTIVE par row.
@@ -420,5 +488,6 @@ module.exports.validateRecipeRows = validateRecipeRows;
 module.exports.assertOverridesResolvable = assertOverridesResolvable;
 module.exports.nextRecipeReview = nextRecipeReview;
 module.exports.sanitizeRequestAliases = sanitizeRequestAliases;
+module.exports.appendRequestAlias = appendRequestAlias;
 module.exports.validateEnhancements = validateEnhancements;
 module.exports.validateSyrupId = validateSyrupId;

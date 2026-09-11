@@ -113,11 +113,12 @@ async function resolveCocktailIds(cocktailIds, dbClient) {
 //            needsRecipe: [{name}] }
 // Match keys additionally strip apostrophes BEFORE normalizing ("jennys" must
 // hit "Jenny's": the shared normalizer maps punctuation to a space, which
-// would keep them distinct). Scoped to matching only; slugs and par-alias
+// would keep them distinct). Straight, curly (both), and backtick, since phone
+// keyboards emit all of them. Scoped to matching only; slugs and par-alias
 // resolution keep normalizeName untouched. Mirrored client-side in
 // NeedsRecipeSection's reuse-before-create lookup.
 function matchKey(s) {
-  return normalizeName(String(s ?? '').replace(/['’]/g, ''));
+  return normalizeName(String(s ?? '').replace(/['’‘`]/g, ''));
 }
 
 function matchCustomNames(customStrings, candidateRows) {
@@ -508,6 +509,7 @@ module.exports = {
   reportUnresolvedIngredients,
   resolveDrinkIds,
   resolveCocktailIds,
+  matchKey,
   matchCustomNames,
   loadRecipeCandidates,
   buildPlannerGeneratorInput,

@@ -4,7 +4,7 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
-const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview, sanitizeRequestAliases, validateEnhancements, validateSyrupId } = require('./potions');
+const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview, sanitizeRequestAliases, appendRequestAlias, validateEnhancements, validateSyrupId } = require('./potions');
 const { normalizeName } = require('../utils/potionCatalog');
 
 const router = express.Router();
@@ -264,6 +264,11 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   );
   if (!result.rows[0]) throw new NotFoundError('Cocktail not found.');
   res.json(result.rows[0]);
+}));
+
+/** POST /api/cocktails/:id/request-aliases — remember a client-typed custom request as this drink */
+router.post('/:id/request-aliases', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  res.json(await appendRequestAlias('cocktails', req.params.id, req.body.alias));
 }));
 
 /** DELETE /api/cocktails/:id — soft delete (sets is_active = false) */

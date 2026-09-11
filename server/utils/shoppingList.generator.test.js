@@ -264,6 +264,13 @@ test('matchCustomNames: apostrophe variants match (jennys hits Jenny\'s)', () =>
   assert.equal(matched[0].name, 'Spicy Margarita');
 });
 
+test('matchCustomNames: curly open quote and backtick strip like a straight apostrophe', () => {
+  const jenny = { name: "Jenny's Lemonade", ingredients: ['lemon'] };
+  const { matched, needsRecipe } = matchCustomNames(['jenny‘s lemonade', 'jenny`s lemonade'], [jenny]);
+  assert.deepEqual(needsRecipe, []);
+  assert.equal(matched.length, 2);
+});
+
 test('matchCustomNames: duplicate normalized names are first-wins (candidate order is the contract)', () => {
   const gin = { name: 'Twin Drink', ingredients: [{ ingredient: 'gin', amount: 2, unit: 'oz' }] };
   const rum = { name: 'TWIN DRINK', ingredients: [{ ingredient: 'rum', amount: 2, unit: 'oz' }] };

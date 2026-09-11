@@ -551,6 +551,7 @@ dr-bartender/
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   ├── messageTypes.js # Display-only message_log label map (messageTypeLabel) for the event-detail Messages card; falls back to the stored subject for untagged sends
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
+│   │   │   ├── rankDrinkMatches.js # Suggestion-only fuzzy ranking of a client's custom drink text against the admin drink lists (Match existing picker); matchKey mirrors the server matcher
 │   │   │   ├── servingLabels.js # Serving-type display labels (SERVING_LABEL + servingLabel); shared by DrinkPlansDashboard + Potions PlansDrawer
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── isPlaceholderEmail.js # Mirror of server emailValidation.isPlaceholderEmail (CC-import .invalid = no email; keep in sync)
@@ -601,7 +602,7 @@ dr-bartender/
 │   │   │   │                   # PresenceStrip (sidebar time-clock strip);
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
 │   │   │   ├── SendModal/      # Shared compose-and-confirm modal for the comms registry (previews server-resolved recipient + channels, admin edits subject/body, sends with honest per-channel results; sendResult.js exports describeSendResult for per-channel toast copy); used by ShoppingListModal approve + proposal-side sends (initial creation send, resend, compare link, portal invite, balance reminder, drink-plan nudge re-enroll)
-│   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint) + NeedsRecipeSection (client-requested-drink recipe drawer: reuse-before-create, inline fold-in via regenerate, unresolved-ingredients warning) + DerivationStrip (planner-v2 demand "how we got here" strip + Client-view preview)
+│   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint) + NeedsRecipeSection (client-requested-drink resolution: Match existing picker that remembers the text as an alias on a drink we already have, or the recipe drawer with reuse-before-create; inline fold-in via regenerate; unresolved-ingredients warning) + DerivationStrip (planner-v2 demand "how we got here" strip + Client-view preview)
 │   │   │   ├── potions/        # RecipeEditor: shared structured-recipe editor (Recipes tab detail pane + shopping-list Add-recipe drawer; draft name editing, inline add-par, forwardRef flush) + RecipeEditorSections (dossier tab sections: enhancements, syrup pairing, flags)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
@@ -746,7 +747,7 @@ dr-bartender/
 ### Potions (Bar Program)
 - One admin home at `/potions` for the drink program: Menu (published catalog), Recipes (structured per-serving formulas per drink), Pars (the single par catalog with per-item call-on conditions), plus a client-plans review drawer
 - The shopping-list generator reads the live par catalog and recipes; generic recipe ingredients ("vodka") resolve to recommended purchasables ("Tito's Vodka") through catalog aliases
-- Client custom drink requests match recipes by normalized-exact name; unmatched requests surface as "recipe needed" and admins grow the catalog by adding off-menu recipes
+- Client custom drink requests match recipes by normalized-exact name or remembered alias; unmatched requests surface as "recipe needed" where admins either match the text to a drink we already have (remembered as an alias, so the next client who types it auto-matches) or grow the catalog by adding off-menu recipes
 
 ### Contractor Application & Onboarding
 - Multi-step application form with file uploads (resume, headshot, BASSET cert)
