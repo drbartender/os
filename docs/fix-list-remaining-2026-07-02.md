@@ -671,6 +671,13 @@ The card is labelled "next shift", not "current shift", and stamping `acknowledg
 the staffer was not shown is wrong under either reading. `staffPortal.js` is sensitive-listed and
 money-adjacent, so this gets the full fleet.
 
+### The staff shift page's shopping-list card never renders
+
+`BeoSections.js:492` shows `ShoppingListCard` only when `status === 'ready'`, but
+`eventDetailsPayload.js` sends `shopping_list_status` as `pending_review` / `approved` / null, so no
+staffer on any package has ever seen the card. Either the card was meant to key on `approved` or the
+payload was meant to map it; pick one. Surfaced by the hosted-no-shopping-list review, 2026-09-11.
+
 ---
 
 ## 5. Gates blocking a prod run
@@ -1048,6 +1055,33 @@ the accented spelling) or the two spellings stop matching each other.
   setting as unset (needs `??` plus query-param presence checks); flat-package revenue ignores extra
   hours while labor cost scales with them; PackagesTab fires one margin request per package on tab
   open, each re-reading all of `par_items`.
+
+- **Hosted shopping-list follow-ups (lane hosted-no-shopping-list, 2026-09-11).** The rule now
+  lives in `shoppingListGen.isHostedPlan` (server) and `client/src/utils/shoppingListOwed.js`
+  (client), both exempting cocktail classes (`bar_type='class'` may self-supply). Left open by the
+  per-lane review; none reachable in prod today:
+  - `preEventHandlers.barOptionFor` (T-30 recap) and `consultRecap.js:128` still map every
+    category-'hosted' package, classes included, to hosted, so a class client would be staged a
+    list but the T-30 email would omit the link. Zero class drink plans in prod. Switch both to the
+    same category+bar_type rule.
+  - The Enhancement Lab follow-up email (`lifecycleEmailTemplates.js:758`) tells hosted clients "the
+    lab closes when we finalize your shopping list". A hosted plan has no list, so its lab now
+    closes only on BEO finalize and the 36h nudge still sends. Pre-existing copy; decide whether the
+    lab nudge should send on hosted at all.
+  - Admin `PATCH /api/proposals/:id` can change `package_id` after a plan is submitted with no
+    drink-plan side effect: BYOB to hosted leaves the staged list in the modal (hidden everywhere
+    else); hosted to BYOB stages nothing until Generate is clicked, though the Events row and prep
+    queue do say a list is owed. `PATCH /api/drink-plans/:id/status` likewise leaves `submitted_at`
+    set, so `plan_input_landed` can disagree with a reset status (the UI only ever sends 'reviewed').
+  - Tidiness: the four-column stage-list UPDATE is copied in four writers with four WHERE guards
+    (`shoppingListGen.js`, `drinkPlanConsult.js` twice, `labListRefresh.js`); a `stageShoppingList()`
+    in shoppingListGen would own the SET list and the guard. `menuOwedFor` (`nextStepsCopy.js`)
+    duplicates the inline `menuStyle === 'custom' || 'house'` test at `MenuDesignStep.js` (logo
+    gate) and `BeoSections.js` (staff CustomMenuCard).
+- **Potions badge counts pending lists on PAST events.** `pending_shopping_lists`
+  (`server/routes/admin/settings.js`) has no date floor; on 2026-09-11 prod held 10 past-event
+  `pending_review` rows (5 BYOB, 5 package-less) padding the badge with nothing to act on. Add the
+  prep queue's upcoming-only rule to the count.
 
 ---
 
@@ -1792,6 +1826,13 @@ re-grep before surgery.
   resolution.
 - **Owed walkthroughs** live in `docs/walkthroughs-owed.md`, not here. That includes Dallas's admin
   two-skin House Lights eyeball, the press-1 listen, the Pixel walk, and the staff-hub walk.
+
+- **Clear five stale hosted shopping lists once lane hosted-no-shopping-list is live**: `drink_plans`
+  124, 37, 95, 93, 71 (all past events, all `pending_review`, never sent to anyone). Same guarded
+  UPDATE as row 136 (cleared 2026-09-11): null `shopping_list`, `shopping_list_status`,
+  `shopping_list_source` where the status is still `pending_review` and nothing was ever approved.
+  Row 130 (approved 8/25, past) stays as history. Cosmetic once live (hosted rows no longer badge or
+  queue), so tidiness, not a blocker.
 
 ---
 ---
