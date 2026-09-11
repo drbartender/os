@@ -80,7 +80,8 @@ function registerAdminShoppingListRoutes(router) {
   router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     const result = await pool.query(
       `SELECT shopping_list, shopping_list_status, shopping_list_approved_at,
-              shopping_list_approved_snapshot IS NOT NULL AS ever_approved
+              shopping_list_approved_snapshot IS NOT NULL AS ever_approved,
+              finalized_at
          FROM drink_plans WHERE id = $1`,
       [req.params.id]
     );
@@ -90,6 +91,9 @@ function registerAdminShoppingListRoutes(router) {
       shopping_list_status: result.rows[0].shopping_list_status || null,
       shopping_list_approved_at: result.rows[0].shopping_list_approved_at || null,
       ever_approved: result.rows[0].ever_approved === true,
+      // The modal locks itself while the BEO is finalized (every list write
+      // 409s behind ensureNotFinalized); seeded here so it opens read-only.
+      finalized_at: result.rows[0].finalized_at || null,
     });
   }));
 
@@ -98,7 +102,8 @@ function registerAdminShoppingListRoutes(router) {
    *  re-edit of an already-approved list reverts it to pending so the client
    *  doesn't keep reading stale numbers. */
   router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-    await ensureNotFinalized(parseInt(req.params.id, 10));
+    const planId = parseInt(req.params.id, 10);
+    await ensureNotFinalized(planId);
     const { shopping_list } = req.body;
     if (!shopping_list || typeof shopping_list !== 'object') {
       throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
@@ -109,6 +114,10 @@ function registerAdminShoppingListRoutes(router) {
     for (const key of Object.keys(shopping_list)) {
       if (key.startsWith('_')) delete shopping_list[key];
     }
+    // The lock rides inside the UPDATE too: the modal's debounced autosave can
+    // be in flight while an approve completes the derived finalize, and the
+    // pre-check above cannot see a finalize that lands after it. A zero-row
+    // UPDATE on an existing plan is that race, and it 409s like the pre-check.
     const result = await pool.query(
       `UPDATE drink_plans
          SET shopping_list = $1,
@@ -116,10 +125,14 @@ function registerAdminShoppingListRoutes(router) {
              shopping_list_approved_at = NULL,
              updated_at = NOW()
        WHERE id = $2
+         AND finalized_at IS NULL
        RETURNING id`,
-      [JSON.stringify(shopping_list), req.params.id]
+      [JSON.stringify(shopping_list), planId]
     );
-    if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+    if (!result.rows[0]) {
+      await ensureNotFinalized(planId); // throws the lock 409 when that is why
+      throw new NotFoundError('Plan not found.');
+    }
     res.json({ success: true });
   }));
 
@@ -134,7 +147,7 @@ function registerAdminShoppingListRoutes(router) {
     const action = getAction('shopping_list_approve');
     const planId = parseInt(req.params.id, 10);
 
-    const sideEffects = await action.ensureSideEffects(planId);
+    const sideEffects = await action.ensureSideEffects(planId, { sentBy: req.user.id });
     if (!sideEffects.applied) {
       // Already approved by another click — idempotent success, no re-email,
       // matching the old route's alreadyApproved contract.
@@ -146,6 +159,7 @@ function registerAdminShoppingListRoutes(router) {
         success: true,
         approved_at: check.rows[0]?.shopping_list_approved_at || null,
         alreadyApproved: true,
+        side_effects: sideEffects.beo ? { beo: sideEffects.beo } : {},
       });
     }
 
@@ -163,6 +177,7 @@ function registerAdminShoppingListRoutes(router) {
     res.json({
       success: true,
       approved_at: new Date().toISOString(),
+      side_effects: sideEffects.beo ? { beo: sideEffects.beo } : {},
       email: results.email,
       email_error: results.email_error || null,
       recipient_email: results.recipient_email || null,

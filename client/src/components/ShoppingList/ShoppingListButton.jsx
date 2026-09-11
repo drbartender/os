@@ -17,6 +17,9 @@ export default function ShoppingListButton({
   className = 'btn btn-secondary',
   style,
   iconSize = 12,
+  // Fired after any successful approve / silent publish so the owner (event
+  // card, plan detail) can refetch: the approve may have finalized the BEO.
+  onApproved,
 }) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
@@ -27,6 +30,8 @@ export default function ShoppingListButton({
   // to re-fetch the same /shopping-list endpoint on mount.
   const [initialApproveStatus, setInitialApproveStatus] = useState('idle');
   const [initialEverApproved, setInitialEverApproved] = useState(false);
+  // A finalized BEO locks every list write; the modal opens read-only.
+  const [initialLocked, setInitialLocked] = useState(false);
 
   const handleClick = async () => {
     setLoading(true);
@@ -40,6 +45,7 @@ export default function ShoppingListButton({
       // correct button label without an extra round-trip.
       setInitialApproveStatus(savedRes.data.shopping_list_status === 'approved' ? 'approved' : 'idle');
       setInitialEverApproved(savedRes.data.ever_approved === true);
+      setInitialLocked(Boolean(savedRes.data.finalized_at));
 
       if (saved) {
         // Use the saved list directly.
@@ -144,6 +150,8 @@ export default function ShoppingListButton({
             planToken={planToken}
             initialApproveStatus={initialApproveStatus}
             initialEverApproved={initialEverApproved}
+            initialLocked={initialLocked}
+            onApproved={onApproved}
           />
         </Suspense>
       )}

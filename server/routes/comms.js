@@ -145,6 +145,11 @@ router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
   res.json({
     ok: true,
     side_effects_applied: sideEffects.applied,
+    // Allow-listed side-effect report (shopping_list_approve's `beo`), so a
+    // caller can react to what the confirm did beyond sending. Allow-listed,
+    // not a blanket passthrough: an action's internal bookkeeping (group
+    // tokens, counts) must not become wire contract by default.
+    side_effects: sideEffects.beo ? { beo: sideEffects.beo } : {},
     email: results.email,
     sms: results.sms,
     email_error: results.email_error || null,

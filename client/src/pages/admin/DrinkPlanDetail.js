@@ -10,10 +10,11 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { ctDay, fmtDateFull } from '../../components/adminos/format';
+import { ctDay, fmtDateFull, fmtDateTime } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
 import EntityLink from '../../components/EntityLink';
 import SendModal, { describeSendResult } from '../../components/SendModal';
+import { beoOutcomeCopy, beoToastKind } from '../../utils/beoOutcomeCopy';
 
 const ConsultationForm = lazy(() => import('../../components/ShoppingList/ConsultationForm'));
 
@@ -40,6 +41,8 @@ export default function DrinkPlanDetail() {
   const [consultOpen, setConsultOpen] = useState(false);
   const [sourceSwitching, setSourceSwitching] = useState(false);
   const [nudgeSendOpen, setNudgeSendOpen] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [beoBusy, setBeoBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,12 +108,62 @@ export default function DrinkPlanDetail() {
   };
 
   const markReviewed = async () => {
+    if (reviewing) return;
+    setReviewing(true);
     try {
       const res = await api.patch(`/drink-plans/${id}/status`, { status: 'reviewed' });
-      setPlan(prev => ({ ...prev, status: res.data.status }));
-      toast.success('Plan marked as reviewed.');
+      // Mark reviewed can complete the derived BEO finalize; refetch so the
+      // header shows Finalized / Unfinalize, then say what happened.
+      await refetchPlan();
+      const outcome = beoOutcomeCopy(res.data.beo);
+      toast[beoToastKind(res.data.beo)](`Plan marked as reviewed.${outcome ? ' ' + outcome : ''}`);
     } catch (err) {
       toast.error(err.message || 'Failed to update status.');
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  // Manual finalize is the override path: the derived finalize never passes
+  // unpaid extras, so a 409 with that code means "show the amount, confirm,
+  // finalize anyway" (same confirm DrinkPlanCard runs from its badge).
+  const finalize = async () => {
+    if (beoBusy) return;
+    setBeoBusy(true);
+    const post = (body) => api.post(`/drink-plans/${id}/finalize`, body);
+    try {
+      try {
+        await post({});
+      } catch (err) {
+        if (err.status !== 409 || err.code !== 'unpaid_extras') throw err;
+        if (!window.confirm(`${err.message} The extras invoice stays open and can still be collected.`)) return;
+        await post({ overrideUnpaidExtras: true });
+      }
+      await refetchPlan();
+      toast.success('BEO finalized. Staff will be nudged 3 days before the event.');
+    } catch (err) {
+      // A 409 means the plan moved under us (another tab finalized, or it
+      // was unfinalized); refetch so the header shows the truth.
+      if (err.status === 409) await refetchPlan();
+      toast.error(err.message || 'Finalize failed.');
+    } finally {
+      setBeoBusy(false);
+    }
+  };
+
+  const unfinalize = async () => {
+    if (beoBusy) return;
+    if (!window.confirm('Unfinalize the BEO? Pending staff nudges will be suppressed and all acknowledgments cleared.')) return;
+    setBeoBusy(true);
+    try {
+      await api.post(`/drink-plans/${id}/unfinalize`);
+      await refetchPlan();
+      toast.success('BEO unfinalized.');
+    } catch (err) {
+      if (err.status === 409) await refetchPlan();
+      toast.error(err.message || 'Unfinalize failed.');
+    } finally {
+      setBeoBusy(false);
     }
   };
 
@@ -192,11 +245,12 @@ export default function DrinkPlanDetail() {
               {plan.proposal_id && (
                 <> · <EntityLink to={'/proposals/' + plan.proposal_id}>Open proposal</EntityLink></>
               )}
+              {plan.finalized_at && ` · BEO finalized ${fmtDateTime(plan.finalized_at)}`}
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
             {(plan.status === 'submitted' || plan.status === 'reviewed' || plan.has_shopping_list) && (
-              <ShoppingListButton planId={id} planToken={plan.token} />
+              <ShoppingListButton planId={id} planToken={plan.token} onApproved={refetchPlan} />
             )}
             <button type="button" className="btn btn-secondary" onClick={() => setConsultOpen(true)}>
               <Icon name="flask" size={12} />{plan.has_consult_selections ? 'Edit consult input' : 'Input from consult'}
@@ -208,8 +262,18 @@ export default function DrinkPlanDetail() {
               <Icon name="send" size={12} />Resend planner link
             </button>
             {plan.status === 'submitted' && (
-              <button type="button" className="btn btn-primary" onClick={markReviewed}>
-                <Icon name="check" size={12} />Mark reviewed
+              <button type="button" className="btn btn-primary" onClick={markReviewed} disabled={reviewing}>
+                <Icon name="check" size={12} />{reviewing ? 'Marking…' : 'Mark reviewed'}
+              </button>
+            )}
+            {plan.status === 'reviewed' && !plan.finalized_at && (
+              <button type="button" className="btn btn-primary" onClick={finalize} disabled={beoBusy}>
+                <Icon name="check" size={12} />{beoBusy ? 'Finalizing…' : 'Finalize BEO'}
+              </button>
+            )}
+            {plan.finalized_at && (
+              <button type="button" className="btn btn-secondary" onClick={unfinalize} disabled={beoBusy}>
+                Unfinalize
               </button>
             )}
             <button type="button" className="btn btn-ghost" onClick={deletePlan} style={{ color: 'hsl(var(--danger-h) var(--danger-s) 65%)' }}>

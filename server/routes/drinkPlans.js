@@ -8,7 +8,7 @@ const { requireUuidToken } = require('../utils/tokens');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
 const { API_URL } = require('../utils/urls');
-const { ensureNotFinalized, registerFinalizeRoute, registerUnfinalizeRoute } = require('../utils/beoFinalize');
+const { ensureNotFinalized, autoFinalizeIfEligible, beoReport, registerFinalizeRoute, registerUnfinalizeRoute } = require('../utils/beoFinalize');
 const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
@@ -477,8 +477,10 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
   res.json(result.rows[0]);
 }));
 
-/** PATCH /api/drink-plans/:id/status — update plan status */
-router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+/** PATCH /api/drink-plans/:id/status — update plan status. Carries the
+ *  drink-plan write limiter like finalize/unfinalize: a flip to reviewed now
+ *  runs the derived finalize transaction too. */
+router.patch('/:id/status', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
   await ensureNotFinalized(parseInt(req.params.id, 10));
   const { status } = req.body;
   if (!['pending', 'draft', 'submitted', 'reviewed'].includes(status)) {
@@ -490,8 +492,15 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
   );
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   // Snapshot blob stays off the wire (same as the by-proposal create path).
-  const { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
-  res.json(statusRow);
+  let { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
+  if (status !== 'reviewed') return res.json(statusRow);
+  // Mark reviewed is one of the two actions that can complete the derived
+  // finalize state (reviewed + list approved, or hosted). Never throws; the
+  // status flip above stands either way and `beo` tells the admin what
+  // happened (finalized, or why not) so the card can toast it.
+  const auto = await autoFinalizeIfEligible(parseInt(req.params.id, 10), req.user.id, 'reviewed');
+  if (auto.plan) statusRow = auto.plan;
+  res.json({ ...statusRow, beo: beoReport(auto) });
 }));
 registerFinalizeRoute(router); registerUnfinalizeRoute(router);
 // GET /:id/shopping-list, PUT /:id/shopping-list, PATCH /:id/shopping-list/approve

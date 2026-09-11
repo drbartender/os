@@ -20,6 +20,7 @@ import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import NeedsRecipeSection from './NeedsRecipeSection';
 import SendModal from '../SendModal';
+import { beoOutcomeCopy, beoToastKind } from '../../utils/beoOutcomeCopy';
 import DerivationStrip, { ClientPreview } from './DerivationStrip';
 
 // Editor / Client-view segmented toggle button styling. Active reads as an
@@ -40,7 +41,7 @@ const segBtn = (active) => ({
 // This copy gates every regenerate entry point (Reset + guest-count change).
 const REGEN_CONFIRM = 'Regenerate replaces your edits, and saving will set the list back to Needs review. Continue?';
 
-export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle', initialEverApproved = false }) {
+export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle', initialEverApproved = false, initialLocked = false, onApproved }) {
   const toast = useToast();
   const [edited, setEdited] = useState(() => deepClone(listData));
   const [guestCount, setGuestCount] = useState(listData.guestCount);
@@ -75,6 +76,24 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // this modal session; it stays true so the re-armed button reads
   // "Re-approve & Send" instead of the first-time "Approve & Send" copy.
   const [wasApproved, setWasApproved] = useState(false);
+  // Finalized BEO: every list write 409s behind the finalize lock, so the
+  // modal goes read-only (client view only, no autosave, no approve) instead
+  // of failing quietly. Seeded by the parent's GET; set here the moment an
+  // approve completes the derived finalize.
+  const [locked, setLocked] = useState(initialLocked);
+  const lockedRef = useRef(locked);
+  useEffect(() => { lockedRef.current = locked; }, [locked]);
+  useEffect(() => {
+    if (!locked) return;
+    setMode('preview');
+    // A debounced save armed before the lock landed must not fire into a
+    // finalized plan (409, then a permanent "Unsaved" on a read-only modal).
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    pendingSaveRef.current = null;
+    // Nothing can be written now, so a red "Unsaved" would be a dead end; the
+    // banner explains the read-only state instead.
+    setSaveStatus('saved');
+  }, [locked]);
   const isFirstRender = useRef(true);
   const saveTimer = useRef(null);
   // Mirror approveStatus into a ref so the debounced auto-save closure reads
@@ -108,12 +127,14 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       return;
     }
     if (!planId) return;
+    if (lockedRef.current) return; // finalized: nothing may be written
 
     setSaveStatus('unsaved');
     if (saveTimer.current) clearTimeout(saveTimer.current);
     const payload = { edited, guestCount };
     pendingSaveRef.current = payload;
     saveTimer.current = setTimeout(async () => {
+      if (lockedRef.current) return; // lock landed while the timer was armed
       setSaveStatus('saving');
       try {
         await api.put(`/drink-plans/${planId}/shopping-list`, {
@@ -152,7 +173,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // the re-approve button unmounted with the modal.
   useEffect(() => () => {
     const pending = pendingSaveRef.current;
-    if (!pending || !planId) return;
+    if (!pending || !planId || lockedRef.current) return;
     const wasApprovedAtFlush = approveStatusRef.current === 'approved';
     api.put(`/drink-plans/${planId}/shopping-list`, {
       shopping_list: {
@@ -323,7 +344,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // then open the SendModal. The status flip and the email both happen on the
   // modal's confirm (POST /comms/send); Cancel there means nothing happened.
   const handleOpenSend = async () => {
-    if (!planId) return;
+    if (!planId || lockedRef.current) return;
     // Flush any pending auto-save so the version that goes out matches what
     // admin sees on screen.
     if (saveTimer.current) {
@@ -357,6 +378,16 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     }
   };
 
+  // The approve we just did can complete the derived BEO finalize (the plan
+  // was already reviewed). Lock the modal when it did, say what happened, and
+  // let the owner refetch so its Finalized line and buttons are honest.
+  const applyBeoOutcome = (beo) => {
+    if (beo && beo.finalized) setLocked(true);
+    const copy = beoOutcomeCopy(beo);
+    if (copy) toast[beoToastKind(beo)](copy);
+    if (onApproved) onApproved();
+  };
+
   // Fires only after the SendModal's confirm resolved (any outcome). A Cancel
   // never calls this, so approve state only advances when the server really
   // flipped the status (side effects are idempotent server-side).
@@ -365,6 +396,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       setLastSend(results);
       setLastPublishSilent(false);
       setApproveStatus('approved');
+      applyBeoOutcome(results.side_effects && results.side_effects.beo);
     }
   };
 
@@ -375,7 +407,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // 'saving' across BOTH requests (no double-submit window) and never opens the
   // SendModal.
   const handleSilentPublish = async () => {
-    if (!planId) return;
+    if (!planId || lockedRef.current) return;
     if (!hasBeenPublished) {
       // First-ever publish with no notification also closes the client's Lab.
       const ok = window.confirm(
@@ -399,7 +431,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
         },
       });
       setSaveStatus('saved');
-      await api.post('/comms/send', {
+      const res = await api.post('/comms/send', {
         action: 'shopping_list_approve',
         entity_id: planId,
         channels: [],
@@ -408,6 +440,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       setLastSend(null);
       setLastPublishSilent(true);
       setApproveStatus('approved');
+      applyBeoOutcome(res.data && res.data.side_effects && res.data.side_effects.beo);
     } catch (err) {
       console.error('Silent publish failed:', err);
       // The PUT above already reverted the list to pending_review (any edit
@@ -506,7 +539,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             borderRadius: 'var(--radius-sm)',
             overflow: 'hidden',
           }}>
-            <button onClick={() => setMode('edit')} style={segBtn(mode === 'edit')}>Editor</button>
+            <button onClick={() => setMode('edit')} style={segBtn(mode === 'edit')} disabled={locked}>Editor</button>
             <button onClick={() => setMode('preview')} style={segBtn(mode === 'preview')}>Client view</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -517,6 +550,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
               value={guestCount}
               onChange={e => handleGuestCountChange(e.target.value)}
               onBlur={handleGuestCountBlur}
+              disabled={locked}
               style={{
                 width: 64, padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)',
                 border: '1px solid var(--line-2)', backgroundColor: 'var(--bg-3)',
@@ -529,7 +563,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
               {saveIndicator}
             </span>
           )}
-          {undoStack.length > 0 && (
+          {undoStack.length > 0 && !locked && (
             <button
               className="btn btn-sm btn-primary"
               onClick={undoLastDelete}
@@ -542,7 +576,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           <button
             className="btn btn-sm btn-secondary"
             onClick={() => { if (window.confirm(REGEN_CONFIRM)) regenerate(guestCount); }}
-            disabled={regenerating}
+            disabled={regenerating || locked}
             style={{ whiteSpace: 'nowrap' }}
           >
             {regenerating ? 'Regenerating…' : 'Regenerate'}
@@ -553,8 +587,22 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           }}>×</button>
         </div>
 
+        {locked && (
+          <div style={{
+            margin: '1rem 1.25rem 0',
+            background: 'var(--accent-soft)',
+            border: '1px solid var(--accent-line)',
+            borderRadius: 'var(--radius)',
+            padding: '0.55rem 0.875rem',
+            fontSize: 12, color: 'var(--ink-2)',
+          }}>
+            <span style={{ color: 'var(--ink-1)', fontWeight: 600 }}>BEO finalized.</span>{' '}
+            This list is read-only until you unfinalize on the event page.
+          </div>
+        )}
+
         {/* ── Editor: derivation strip + editable body ── */}
-        {mode === 'edit' && (
+        {mode === 'edit' && !locked && (
           <>
             <DerivationStrip derivation={edited._derivation} />
             {heldNotice && (
@@ -687,7 +735,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             <button
               className="btn btn-secondary"
               onClick={handleSilentPublish}
-              disabled={approveStatus !== 'idle' || sendOpen}
+              disabled={approveStatus !== 'idle' || sendOpen || locked}
               title="Update the client's live shopping-list link without emailing them."
             >
               {approveStatus === 'saving' ? 'Publishing…'
@@ -700,7 +748,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             <button
               className="btn btn-success"
               onClick={handleOpenSend}
-              disabled={approveStatus !== 'idle' || sendOpen}
+              disabled={approveStatus !== 'idle' || sendOpen || locked}
               title={approveTitle}
             >
               {approveLabel}

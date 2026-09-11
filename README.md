@@ -345,7 +345,7 @@ dr-bartender/
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── balanceReminderHandlers.js # Balance reminder EMAIL handlers (autopay/non-autopay T-3, due-today, late t1/t3); registered by the dispatcher at module init (registerBalanceReminderHandlers)
 │   │   ├── balanceSmsHandlers.js # Non-autopay balance reminder SMS handlers (due-today, late t1/t3)
-│   │   ├── beoFinalize.js      # BEO Finalize/Unfinalize route registrars + ensureNotFinalized guard (mounted into drinkPlans router)
+│   │   ├── beoFinalize.js      # BEO finalize lifecycle: finalizeDrinkPlan, autoFinalizeIfEligible (derived finalize, never throws; called by Mark reviewed + shopping-list approve), Finalize/Unfinalize route registrars, ensureNotFinalized guard (mounted into drinkPlans router)
 │   │   ├── beoHandlers.js      # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers
 │   │   ├── bookingWindow.js    # Pure booking-window math (last-minute ≤14-day full-payment-required predicate)
 │   │   ├── calcomWebhookHelpers.js # Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by `server/routes/calcom.js`
@@ -553,6 +553,7 @@ dr-bartender/
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
 │   │   │   ├── rankDrinkMatches.js # Suggestion-only fuzzy ranking of a client's custom drink text against the admin drink lists (Match existing picker); matchKey mirrors the server matcher
 │   │   │   ├── servingLabels.js # Serving-type display labels (SERVING_LABEL + servingLabel); shared by DrinkPlansDashboard + Potions PlansDrawer
+│   │   │   ├── beoOutcomeCopy.js # One sentence + toast level for what the derived BEO finalize did after Mark reviewed / list approve (reason codes mirror server/utils/beoFinalize.js)
 │   │   │   ├── shoppingListOwed.js # owesShoppingList(row): the ONE client predicate for "this plan row owes a shopping list" (Events Plan column, overview prep queue, Potions drawer chip). A hosted package never does; mirrors server shoppingListGen.isHostedPlan and the Potions badge count
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── isPlaceholderEmail.js # Mirror of server emailValidation.isPlaceholderEmail (CC-import .invalid = no email; keep in sync)

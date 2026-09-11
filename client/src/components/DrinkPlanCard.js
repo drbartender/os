@@ -7,6 +7,7 @@ import Icon from './adminos/Icon';
 import StatusChip from './adminos/StatusChip';
 import { fmtDateTime } from './adminos/format';
 import ShoppingListButton from './ShoppingList/ShoppingListButton';
+import { beoOutcomeCopy, beoToastKind } from '../utils/beoOutcomeCopy';
 
 // Lazy so the consult form (and its cocktail/mocktail dependency graph) stays
 // out of the bundle for sessions that never open it.
@@ -29,6 +30,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
   const [consultOpen, setConsultOpen] = useState(false);
   const [consultCatalogs, setConsultCatalogs] = useState(null);
   const [consultLoading, setConsultLoading] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
 
   const generate = async () => {
     try {
@@ -51,13 +53,23 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
   };
 
   const markReviewed = async () => {
+    if (reviewing) return;
+    setReviewing(true);
     try {
       const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
-      setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
+      // Mark reviewed can complete the derived BEO finalize (reviewed + list
+      // approved, or hosted). Refetch regardless of the outcome so the card
+      // shows the truth even when another tab won the race, then say what
+      // happened (res.data.beo: finalized, or why not).
+      setDrinkPlan(prev => ({ ...prev, status: res.data.status, finalized_at: res.data.finalized_at || prev.finalized_at }));
+      await refetch();
       if (reload) await reload(); // refresh the Messages card if a client email fired
-      toast.success('Drink plan marked as reviewed.');
+      const outcome = beoOutcomeCopy(res.data.beo);
+      toast[beoToastKind(res.data.beo)](`Drink plan marked as reviewed.${outcome ? ' ' + outcome : ''}`);
     } catch (err) {
       toast.error(err.message || 'Failed to update status.');
+    } finally {
+      setReviewing(false);
     }
   };
 
@@ -86,8 +98,8 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
       // If the server's authoritative gate rejects (409) — e.g. our badge was
       // stale and we finalized without the override — refetch so the unpaid-extras
       // badge appears and the admin can retry through the confirm flow.
-      if (err.response?.status === 409) { await refetch(); }
-      toast.error(err.response?.data?.error || err.message || 'Finalize failed.');
+      if (err.status === 409) { await refetch(); }
+      toast.error(err.message || 'Finalize failed.');
     }
   };
 
@@ -98,7 +110,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
       setDrinkPlan(res.data);
       toast.success('BEO unfinalized.');
     } catch (err) {
-      toast.error(err.response?.data?.error || err.message || 'Unfinalize failed.');
+      toast.error(err.message || 'Unfinalize failed.');
     }
   };
 
@@ -197,12 +209,13 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
                   className="btn btn-secondary btn-sm"
                   style={{ justifyContent: 'center' }}
                   iconSize={11}
+                  onApproved={refetch}
                 />
               )}
               {drinkPlan.status === 'submitted' && (
                 <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }}
-                  onClick={markReviewed}>
-                  <Icon name="check" size={11} />Mark reviewed
+                  onClick={markReviewed} disabled={reviewing}>
+                  <Icon name="check" size={11} />{reviewing ? 'Marking…' : 'Mark reviewed'}
                 </button>
               )}
               {drinkPlan.status === 'reviewed' && !drinkPlan.finalized_at && (

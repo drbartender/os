@@ -15,7 +15,7 @@ const { renderPartsEmail } = require('../render');
 const { shoppingListReadyParts } = require('../../lifecycleEmailTemplates');
 const { checkEmailDomain } = require('../../emailValidation');
 const { getEventTypeLabel } = require('../../../utils/eventTypes');
-const { ensureNotFinalized } = require('../../beoFinalize');
+const { autoFinalizeIfEligible, beoReport } = require('../../beoFinalize');
 const { NotFoundError, ConflictError } = require('../../errors');
 const { PUBLIC_SITE_URL } = require('../../urls');
 
@@ -133,9 +133,23 @@ async function buildMessages(planId) {
  * write the approved snapshot in the same UPDATE (spec 4.9). Second call
  * returns { applied: false } and changes nothing (no re-approve, no
  * re-snapshot), which is what makes a failed-dispatch Retry safe.
+ *
+ * Approving is one of the two actions that can complete the derived BEO
+ * finalize state (reviewed + list approved), so a fresh approve runs
+ * autoFinalizeIfEligible afterwards. Both branches return `beo` describing
+ * whether the plan is finalized NOW (a Retry after the approve that finalized
+ * must still say so; the send modal merges retry results over the first). An
+ * already-approved, still-unfinalized plan re-attempts too: that is how a
+ * transient finalize failure heals on the next confirm, and how the report
+ * carries the real reason instead of a bare finalized:false.
+ *
+ * The finalize lock (finalized_at) blocks only a FRESH approve: the UPDATE
+ * carries `finalized_at IS NULL`, and an already-approved list on a finalized
+ * plan is the ordinary state after auto-finalize, so it stays the idempotent
+ * no-op rather than a 409 that would break Retry.
  */
-async function ensureSideEffects(planId) {
-  await ensureNotFinalized(parseInt(planId, 10));
+async function ensureSideEffects(planId, ctx = {}) {
+  const id = parseInt(planId, 10);
   const upd = await pool.query(
     `UPDATE drink_plans
         SET shopping_list_status = 'approved',
@@ -145,20 +159,34 @@ async function ensureSideEffects(planId) {
       WHERE id = $1
         AND shopping_list IS NOT NULL
         AND shopping_list_status IS DISTINCT FROM 'approved'
+        AND finalized_at IS NULL
       RETURNING id`,
-    [planId]
+    [id]
   );
-  if (upd.rows[0]) return { applied: true };
+  if (upd.rows[0]) {
+    const auto = await autoFinalizeIfEligible(id, ctx.sentBy ?? null, 'shopping_list_approved');
+    return { applied: true, beo: beoReport(auto) };
+  }
 
   const check = await pool.query(
-    `SELECT shopping_list IS NOT NULL AS has_list, shopping_list_status FROM drink_plans WHERE id = $1`,
-    [planId]
+    `SELECT shopping_list IS NOT NULL AS has_list, shopping_list_status,
+            finalized_at IS NOT NULL AS finalized
+       FROM drink_plans WHERE id = $1`,
+    [id]
   );
   if (!check.rows[0]) throw new NotFoundError('Plan not found.');
   if (!check.rows[0].has_list) {
     throw new ConflictError('Cannot approve: this plan has no shopping list yet. Generate one first.');
   }
-  return { applied: false }; // already approved — idempotent no-op
+  if (check.rows[0].shopping_list_status !== 'approved' && check.rows[0].finalized) {
+    throw new ConflictError('Plan is finalized. Unfinalize first to change.', 'finalized');
+  }
+  if (check.rows[0].finalized) return { applied: false, beo: { finalized: true } };
+  // Already approved but not finalized: idempotent for the list, but the
+  // derived finalize gets another chance (already_finalized / not_reviewed /
+  // unpaid_extras all come back as an honest reason, never a second log row).
+  const auto = await autoFinalizeIfEligible(id, ctx.sentBy ?? null, 'shopping_list_approved');
+  return { applied: false, beo: beoReport(auto) };
 }
 
 /**
