@@ -1582,6 +1582,19 @@ which is the largest client-facing change in the drop and is listed first becaus
       blue drink from my cousin's wedding") and confirm the "No close match" line, then Cancel.
       Defects go to the fix list §"Match existing", where the accepted trade-offs are listed.
 
+- [ ] **Derived BEO finalize.** Merged 2026-09-11 in `2b414e64` (check
+      `git merge-base --is-ancestor 2b414e64 origin/main`). Walked on dev by Claude through the
+      real UI (Mark reviewed toast, Publish Quietly finalizing and locking the modal, cold-open
+      lock, detail page Finalized line); never seen in prod by Dallas. The walk: on a flat-package
+      event whose list is not yet approved, click **Mark reviewed** and read the toast ("BEO
+      finalizes when the shopping list is approved."); open the Shopping List, **Publish Quietly**
+      or **Approve & Send**, and confirm the "BEO finalized." toast, the read-only banner in the
+      modal, and the card flipping to Finalized with Unfinalize. On a hosted event, Mark reviewed
+      alone finalizes. The part that matters: an event inside three days now texts every approved
+      staffer five to ten minutes after that click, where the old Finalize click did it
+      deliberately; decide whether that timing is acceptable (Unfinalize within minutes suppresses
+      the pending rows). Defects go to the fix list §"Derived BEO finalize follow-ups".
+
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
 The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely

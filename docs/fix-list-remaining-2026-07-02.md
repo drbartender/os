@@ -1081,6 +1081,39 @@ the accented spelling) or the two spellings stop matching each other.
     in shoppingListGen would own the SET list and the guard. `menuOwedFor` (`nextStepsCopy.js`)
     duplicates the inline `menuStyle === 'custom' || 'house'` test at `MenuDesignStep.js` (logo
     gate) and `BeoSections.js` (staff CustomMenuCard).
+- **Derived BEO finalize follow-ups (lane beo-auto-finalize, merged 2026-09-11 as `2b414e64`).**
+  Finalize now fires on its own the moment a plan is reviewed and its shopping list is approved
+  (hosted: reviewed alone, per `isHostedPlan`), never over unpaid extras; the Finalize button is the
+  override and the way back after Unfinalize. Left open by the per-lane fleet (five agents, no
+  blockers); none is a defect in the new path:
+  - `beo_finalized.details.nudge_count` over-reports: `scheduleBeoNudgesForProposal`
+    (`beoHandlers.js`) counts approved staffers, not rows inserted, because `insertBeoNudgeIfMissing`
+    returns nothing when a pending/sent row already exists. Same helper is a two-query loop per
+    staffer inside the finalize transaction; one `INSERT ... SELECT ... ON CONFLICT DO NOTHING` would
+    do. Pre-existing; matters more now that finalize fires without a click.
+  - Staff on a shift whose `onboarding_status` is not yet `approved` at finalize time never get the
+    T-3 nudge: the fan-out filters on approved, and the late-assignment hook keys on shift approval,
+    which already happened. Rare; the window widens now that finalize lands weeks earlier.
+  - `PUT /:id/consult` (`drinkPlanConsult.js`) checks the finalize lock outside its transaction and
+    takes `FOR UPDATE OF dp` afterwards, so a consult save racing an approve can revert a
+    now-finalized plan's list to `pending_review`. Move the check inside the transaction, the way
+    the list PUT and the approve flip now carry `finalized_at IS NULL` in their UPDATEs.
+  - Two definitions of hosted in one flow: finalize and `shoppingListGen` use
+    `category='hosted' AND bar_type<>'class'`; the approve action's recipient logic uses
+    `pricing_type='per_guest'`. Nothing ties the two columns, so a hosted/flat row would finalize
+    with no list yet still be offered the client list email. A comment or a CHECK.
+  - The finalize and status responses still ship the `shopping_list` and `consult_selections`
+    JSONB that no caller reads (both cards refetch the lean payload). Project explicit columns.
+  - Ten prod plans sat reviewed with an approved list (or hosted) and never finalized before the
+    change: 67, 88, 89, 95, 113, 128, 133, 135, 138, 140. Nothing backfills. The upcoming ones
+    finalize on the next Publish Quietly / Approve confirm (a repeat confirm re-attempts) or the
+    Finalize button.
+  - Unpaid extras stays a manual click for good: nothing re-fires when the extras invoice is paid
+    later. Designed (the human checkpoint), noted so nobody reads it as a miss.
+  - Behavior to know, not a bug: for an event inside three days, Mark reviewed / approve now arms
+    the staff T-3 SMS about five to ten minutes later, where the old Finalize click did it
+    deliberately. Unfinalize suppresses only rows still pending.
+
 - **Potions badge counts pending lists on PAST events.** `pending_shopping_lists`
   (`server/routes/admin/settings.js`) has no date floor; on 2026-09-11 prod held 10 past-event
   `pending_review` rows (5 BYOB, 5 package-less) padding the badge with nothing to act on. Add the
