@@ -1006,10 +1006,24 @@ the accented spelling) or the two spellings stop matching each other.
   exclusion on those par rows, or teaching `PARS_100` the package's `bar_type`. Internal prep-list
   correctness; no client-facing surface until someone reads a par sheet.
 - **Custom-recipe flow residuals:** reuse-by-NAME rename gap (add-recipe reusing a drink matched by
-  name loses the match if the admin renames it in the drawer; proper fix is a small alias-append on
-  reuse). Reuse-before-create lookup downloads both full admin drink lists for a name match — fine
-  at ~43 drinks, wants a lean lookup endpoint. `loadRecipeCandidates` awaits serially after the
-  `resolveDrinkIds` Promise.all.
+  name loses the match if the admin renames it in the drawer). 2026-09-11 (`58b12b1a`, lane
+  custom-request-match): the alias-append endpoint now EXISTS (`POST /api/{cocktails,mocktails}/:id/request-aliases`)
+  but by design treats a text equal to the drink's own name as a no-op, so closing this gap still
+  needs (a) the Add-recipe reuse path to call it and (b) the own-name no-op relaxed for that
+  caller. Not built; the gap is a rename corner, not a matching failure. Reuse-before-create lookup
+  downloads both full admin drink lists for a name match — fine at ~43 drinks, wants a lean lookup
+  endpoint (the Match existing picker now shares that same fetch). `loadRecipeCandidates` awaits
+  serially after the `resolveDrinkIds` Promise.all.
+- **Match existing (custom request → existing drink) SHIPPED to main 2026-09-11 (`58b12b1a`).**
+  Needs-recipe rows carry Match existing beside Add recipe; the pick appends the client's exact text
+  to the drink's `request_aliases`, so the exact server matcher resolves it on every later plan.
+  Collision set = the matcher's candidate pool (recipe-carrying rows only; an abandoned Add-recipe
+  draft never blocks). Review nits carried, none owed: the 409 can only mis-name a drink when a
+  name-holder AND an alias-holder both exist for one key (names are checked first now); a
+  recipe-less draft that later gains a recipe via the Recipes tab retakes its text by name-beats-alias
+  with no signal (accepted over the dead end); ranker containment is word-bounded so suffix
+  fragments ("rita") no longer hit while prefixes ("marg") do. OWED: Dallas's first real use on a
+  live needs-recipe row (built + browser-untested; component suite covers the flow).
 - **`drinkPlans/submit.js` has regrown to 717 lines** (soft cap 700); next touch carries a trim.
 - **Narrow `coverageContext`'s `SELECT * FROM par_items`** (server-side; the two DrinksV2 perf items
   in this family are done).
