@@ -1570,6 +1570,18 @@ which is the largest client-facing change in the drop and is listed first becaus
       the open question. Worth trying to catch one live; report what it looks like, not as a
       bug.
 
+- [ ] **Match existing on the shopping list's needs-recipe box.** Shipped 2026-09-11 in
+      `58b12b1a` (check `git merge-base --is-ancestor 58b12b1a origin/main`). Test- and
+      CI-verified only; never opened in a browser. The walk: open an event whose shopping list
+      shows a "Client requested: recipe needed" row, click **Match existing** beside Add recipe,
+      confirm the picker pre-fills the client's text with ranked suggestions tagged Recipe ready /
+      No recipe / Mocktail / Off menu, pick the real drink, accept the fold-in prompt, and confirm
+      the regenerated list carries that drink's ingredients with the row gone from the box. Then
+      the part that matters: a second plan that types the same text must never land in the box
+      at all (the alias resolves it at generation). Also try a text that matches nothing ("the
+      blue drink from my cousin's wedding") and confirm the "No close match" line, then Cancel.
+      Defects go to the fix list §"Match existing", where the accepted trade-offs are listed.
+
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
 The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
