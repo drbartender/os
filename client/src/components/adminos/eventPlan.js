@@ -7,6 +7,7 @@
 
 import { fmt$, fmtDate, ctDay, dayDiff } from './format';
 import { isCancelledEvent } from './shifts';
+import { owesShoppingList } from '../../utils/shoppingListOwed';
 
 /**
  * The Plan cell's state.
@@ -36,11 +37,23 @@ export function eventPlanState(e, todayYmd) {
 
   const listStatus = e.shopping_list_status;
 
-  // Nothing in hand yet. shopping_list_status is the whole client-input signal:
-  // the generator runs the instant a planner is submitted or an admin fills the
-  // consult form, so a null here means neither has happened. A booked consult
-  // replaces the planner ask, because they are not going to fill one out.
-  if (!listStatus) {
+  // A hosted package never owes the client a shopping list (DRB stocks the
+  // bar), so the generator is gated off hosted plans and the Shopping List tag
+  // never appears on a hosted row, whatever its list column holds (a stale row,
+  // or a list the admin built on purpose). Same predicate as the prep queue
+  // and the Potions chip.
+  const hosted = !owesShoppingList(e);
+
+  // Two input signals, OR'd: a list exists (the generator ran on a submit or a
+  // consult save), or plan_input_landed says the plan was submitted or
+  // consult-filled. The second is the ONLY one on a hosted row, and on BYOB it
+  // covers a submit whose best-effort auto-gen skipped or threw, which used to
+  // read as "waiting on the planner" forever.
+  const inputLanded = !!listStatus || e.plan_input_landed === true;
+
+  // Nothing in hand yet. A booked consult replaces the planner ask, because
+  // they are not going to fill one out.
+  if (!inputLanded) {
     const day = ctDay(e.consult_at);
     if (!day) return { owner: 'client', tags: ['Planner'] };
     // Consult status is dead data (every prod row reads 'scheduled' and none has
@@ -51,11 +64,11 @@ export function eventPlanState(e, todayYmd) {
     return { owner: 'client', tags: [`Consult ${fmtDate(day)}`] };
   }
 
-  // Input has landed, so BOTH deliverables unlock at once. They are parallel,
-  // not sequential: showing only the list would hide the menu on every row
-  // where work is actually owed.
+  // Input has landed, so BOTH deliverables unlock at once (hosted owes only
+  // the menu). They are parallel, not sequential: showing only the list would
+  // hide the menu on every row where work is actually owed.
   const tags = [];
-  if (listStatus !== 'approved') tags.push('Shopping List');
+  if (!hosted && listStatus !== 'approved') tags.push('Shopping List');
   if (!e.menu_done) tags.push('Menu Design');
   return tags.length ? { owner: 'you', tags } : { owner: 'done', tags: [] };
 }

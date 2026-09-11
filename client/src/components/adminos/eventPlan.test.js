@@ -129,3 +129,66 @@ describe('eventPaymentState', () => {
       .toBe('$2,325');
   });
 });
+
+// A hosted package never owes the client a shopping list (DRB stocks the bar),
+// so on a hosted row the only deliverable is the menu and "input landed" is
+// read off plan_input_landed (submitted or consult-filled), not off a list that
+// is never generated. Found 2026-09-10: a hosted client two days out read as
+// owing a shopping list; nulling the row instead would have read as "waiting on
+// the planner" on a plan he had already finished.
+describe('eventPlanState on a hosted package', () => {
+  const hosted = (over = {}) => base({ package_category: 'hosted', plan_input_landed: false, ...over });
+
+  it('waits on the planner until input lands, same as BYOB', () => {
+    const s = eventPlanState(hosted(), TODAY);
+    expect(s).toEqual({ owner: 'client', tags: ['Planner'] });
+  });
+
+  it('owes only the menu once input lands', () => {
+    const s = eventPlanState(hosted({ plan_input_landed: true }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+
+  it('is done once the menu is settled', () => {
+    const s = eventPlanState(hosted({ plan_input_landed: true, menu_done: true }), TODAY);
+    expect(s).toEqual({ owner: 'done', tags: [] });
+  });
+
+  it('never owes a shopping list, even when a stale list row exists', () => {
+    const s = eventPlanState(
+      hosted({ plan_input_landed: true, shopping_list_status: 'pending_review' }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+
+  it('still hands a passed consult back to admin before input lands', () => {
+    const s = eventPlanState(hosted({ consult_at: '2026-08-20T15:00:00.000Z' }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Consult passed'] });
+  });
+
+  it('reads a stale list row as input landed even when the flag is false', () => {
+    const s = eventPlanState(hosted({ shopping_list_status: 'pending_review' }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+
+  it('a cocktail class is seeded hosted but still owes the list', () => {
+    const s = eventPlanState(
+      hosted({ package_bar_type: 'class', plan_input_landed: true, shopping_list_status: 'pending_review' }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Shopping List', 'Menu Design'] });
+  });
+});
+
+// plan_input_landed is a second input signal for EVERY row, not just hosted:
+// the auto-gen after a BYOB submit is best-effort, so a submitted plan whose
+// generation skipped or threw has no list and used to read "waiting on the
+// planner" forever, hiding both deliverables the admin actually owed.
+describe('eventPlanState on a BYOB row with input but no list', () => {
+  it('owes both deliverables once the plan is submitted, list or no list', () => {
+    const s = eventPlanState(base({ package_category: 'byob', plan_input_landed: true }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Shopping List', 'Menu Design'] });
+  });
+
+  it('still waits on the planner when nothing has landed', () => {
+    const s = eventPlanState(base({ package_category: 'byob', plan_input_landed: false }), TODAY);
+    expect(s).toEqual({ owner: 'client', tags: ['Planner'] });
+  });
+});

@@ -1,6 +1,8 @@
 import React from 'react';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../../../utils/api';
+import { nextStepsCopy, menuOwedFor } from '../../components/nextStepsCopy';
+import { owesShoppingList } from '../../../../utils/shoppingListOwed';
 
 // Celebration (spec §3.1/§3.3): the finale plus the ONE selling doorway.
 // The Enhancement Lab CTA renders only when the server says the Lab exists
@@ -51,9 +53,7 @@ export default function CelebrationV2({ plan, token, selections, paidFromRedirec
         <div style={{ marginTop: '1.25rem', padding: '0.75rem', background: 'rgba(193, 125, 60, 0.08)', borderRadius: '8px' }}>
           <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>What happens next?</p>
           <p className="text-muted text-small">
-            {(selections.menuStyle === 'custom' || selections.menuStyle === 'house')
-              ? "We'll use your selections to build your shopping list, your menu, and the run sheet for your event. Expect to hear from us within 2 business days!"
-              : "We'll use your selections to build your shopping list and the run sheet for your event. Expect to hear from us within 2 business days!"}
+            {nextStepsCopy({ voice: 'v2', hosted: !owesShoppingList(plan), menuOwed: menuOwedFor(selections) })}
           </p>
         </div>
       </div>

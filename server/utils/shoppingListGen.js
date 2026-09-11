@@ -441,6 +441,28 @@ async function buildConsultGeneratorInput(plan, dbClient) {
   };
 }
 
+// A hosted package (service_packages.category = 'hosted') never owes the client
+// a shopping list: DRB stocks the bar. Every server-side writer that STAGES a
+// list on its own initiative checks this on the plan row's joined package
+// before building anything: the post-submit auto-gen below, the admin consult
+// save (drinkPlanConsult.js), and the post-Lab refresh (labListRefresh.js).
+// The admin's explicit generate/regenerate/save routes are deliberately not
+// gated: a list built on purpose for a hosted plan is intent, not drift, but
+// it is never OWED work either: the Potions badge count (admin/settings.js)
+// and the client's utils/shoppingListOwed.js apply this same rule, so a
+// hosted list never reads as review work on any admin surface.
+// Keyed on category, the planner domain's idiom (submit.js Jack rule, lab.js,
+// preEventHandlers.barOptionFor), with the one exception pricingEngine's
+// hosted rule also carries: a cocktail CLASS is seeded category 'hosted' but
+// sells an optional supplies add-on, so a self-supplying class client still
+// needs a list and classes stay on the BYOB side here. A plan with no package
+// reads as BYOB: a spurious list is reviewable in the modal, a missing one for
+// a BYOB client is a silent gap, so unknown fails open. Client mirror:
+// client/src/utils/shoppingListOwed.js (same two fields, same answer).
+function isHostedPlan(row) {
+  return Boolean(row) && row.package_category === 'hosted' && row.package_bar_type !== 'class';
+}
+
 // Auto-generate a shopping list for a submitted drink plan and stage it as
 // `pending_review`. Strict no-overwrite semantics: only generates when no list
 // exists yet — the WHERE-clause `shopping_list IS NULL` guard keeps an admin's
@@ -451,15 +473,19 @@ async function autoGenerateShoppingList(planId, dbClient) {
   const planRes = await dbClient.query(
     `SELECT dp.id, dp.serving_type, dp.selections, dp.client_name, dp.event_date,
             dp.admin_notes, dp.shopping_list IS NOT NULL AS has_list,
-            p.guest_count, p.event_duration_hours
+            p.guest_count, p.event_duration_hours,
+            sp.category AS package_category, sp.bar_type AS package_bar_type
      FROM drink_plans dp
      LEFT JOIN proposals p ON p.id = dp.proposal_id
+     LEFT JOIN service_packages sp ON sp.id = p.package_id
      WHERE dp.id = $1`,
     [planId]
   );
   const plan = planRes.rows[0];
   if (!plan || !plan.guest_count) return null;
   if (plan.has_list) return null;
+  // Hosted: nothing to stage, so nothing to badge, queue, or approve.
+  if (isHostedPlan(plan)) return null;
 
   // Catalog load happens here, NOT inside any caller transaction; a failed
   // read degrades to the legacy constants (loadCatalog Sentry-reports it).
@@ -514,6 +540,7 @@ module.exports = {
   loadRecipeCandidates,
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
+  isHostedPlan,
   autoGenerateShoppingList,
   triggerShoppingListAutoGen,
   buildDerivation,

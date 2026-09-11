@@ -201,3 +201,53 @@ test('unread_sms ignores thumbtack-relay echoes and counts real inbound', async 
 
   await pool.query('DELETE FROM sms_messages WHERE client_id = $1', [badgeSmsClientId]);
 });
+
+// pending_shopping_lists must never count a hosted plan: a hosted package never
+// owes a shopping list (DRB stocks the bar; shoppingListGen.isHostedPlan gates
+// the writers), so a stale or admin-built hosted list in pending_review is not
+// review work and must not badge Potions. A cocktail class is seeded 'hosted'
+// but may self-supply, so it still counts. Rows are inserted and removed
+// inside the test so the other counts never see them.
+test('pending_shopping_lists skips hosted plans and counts BYOB', async () => {
+  const pkgs = await pool.query(
+    `INSERT INTO service_packages (slug, name, category, pricing_type, base_rate_4hr, base_rate_4hr_small,
+        min_guests, guests_per_bartender, bar_type, includes)
+     VALUES ($1, 'Badge Hosted', 'hosted', 'per_guest', 28, 33, 50, 100, 'full_bar', '[]'),
+            ($2, 'Badge BYOB', 'byob', 'flat', 350, NULL, NULL, 100, 'service_only', '[]'),
+            ($3, 'Badge Class', 'hosted', 'per_guest', 35, 35, 8, 100, 'class', '[]')
+     RETURNING id, category, bar_type`,
+    [`badge-hosted-${NONCE}`, `badge-byob-${NONCE}`, `badge-class-${NONCE}`]
+  );
+  const pkgIds = pkgs.rows.map((r) => r.id);
+  const proposalIds = [];
+  const planIds = [];
+  try {
+    const before = await get('/api/admin/badge-counts', adminToken);
+    assert.equal(before.status, 200);
+    for (const pkg of pkgs.rows) {
+      const p = await pool.query(
+        `INSERT INTO proposals (client_id, package_id, event_date, event_start_time, event_duration_hours,
+                                event_timezone, status, event_type, guest_count, num_bars, total_price,
+                                amount_paid, pricing_snapshot)
+         VALUES ($1, $2, CURRENT_DATE + 30, '18:00', 4, 'America/Chicago', 'deposit_paid',
+                 'birthday-party', 80, 0, 2000, 100, '{}'::jsonb) RETURNING id`,
+        [badgeSmsClientId, pkg.id]
+      );
+      proposalIds.push(p.rows[0].id);
+      const dp = await pool.query(
+        `INSERT INTO drink_plans (proposal_id, status, shopping_list, shopping_list_status, client_name)
+         VALUES ($1, 'submitted', '{}'::jsonb, 'pending_review', $2) RETURNING id`,
+        [p.rows[0].id, `Badge ${pkg.category} ${pkg.bar_type} ${NONCE}`]
+      );
+      planIds.push(dp.rows[0].id);
+    }
+    const after = await get('/api/admin/badge-counts', adminToken);
+    assert.equal(after.status, 200);
+    assert.equal(after.body.pending_shopping_lists - before.body.pending_shopping_lists, 2,
+      'the BYOB and cocktail-class pending lists count, the hosted one does not');
+  } finally {
+    if (planIds.length) await pool.query('DELETE FROM drink_plans WHERE id = ANY($1::int[])', [planIds]);
+    if (proposalIds.length) await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [proposalIds]);
+    await pool.query('DELETE FROM service_packages WHERE id = ANY($1::int[])', [pkgIds]);
+  }
+});

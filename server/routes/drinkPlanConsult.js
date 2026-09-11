@@ -21,6 +21,7 @@ const {
   buildConsultGeneratorInput,
   loadCatalog,
   reportUnresolvedIngredients,
+  isHostedPlan,
 } = require('../utils/shoppingListGen');
 
 const router = express.Router();
@@ -173,7 +174,14 @@ router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
  *  generator, persist the resulting shopping list as `pending_review`. Atomic
  *  in a single transaction: the consult_selections, audit fields, source flag,
  *  and shopping_list all move together. Re-runnable — submitting again
- *  overwrites the prior consult and regenerates. */
+ *  overwrites the prior consult and regenerates.
+ *
+ *  Hosted exception (shoppingListGen.isHostedPlan): a hosted plan never owes
+ *  a list, so on one that carries NO list the save records the consult and
+ *  `shopping_list_source = 'consult'` only (a later admin-built list then
+ *  builds from the consult) and returns `list_staged: false`. A hosted plan
+ *  that already carries a list (stale, or admin-built on purpose) behaves
+ *  exactly as BYOB: regenerated, back to pending_review. */
 router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   await ensureNotFinalized(parseInt(req.params.id, 10));
   const consult = sanitizeConsult(req.body?.consult);
@@ -193,9 +201,12 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     const planRes = await client.query(
       `SELECT dp.id, dp.client_name, dp.event_date, dp.admin_notes,
               dp.consult_filled_at, dp.proposal_id,
-              p.guest_count
+              dp.shopping_list IS NOT NULL AS has_list,
+              p.guest_count,
+              sp.category AS package_category, sp.bar_type AS package_bar_type
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
+       LEFT JOIN service_packages sp ON sp.id = p.package_id
        WHERE dp.id = $1
        FOR UPDATE OF dp`,
       [req.params.id]
@@ -219,22 +230,44 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
       });
     }
 
-    const input = await buildConsultGeneratorInput(plan, client);
-    const list = generateShoppingList(input, catalog);
+    // A hosted plan never owes a list (shoppingListGen.isHostedPlan), so no
+    // list is STAGED for one that has none: the write-up is saved, the consult
+    // is recorded as the source, and the list columns stay NULL, so nothing
+    // lands in the badge or the prep queue. A hosted plan that already carries
+    // a list (stale, or admin-built on purpose) is kept in step with the
+    // consult exactly as before, so a stale approved list stops being served
+    // until it is re-approved.
+    const stage = !isHostedPlan(plan) || plan.has_list === true;
+    const list = stage
+      ? generateShoppingList(await buildConsultGeneratorInput(plan, client), catalog)
+      : null;
 
-    await client.query(
-      `UPDATE drink_plans
-         SET consult_selections = $1::jsonb,
-             consult_filled_by_user_id = $2,
-             consult_filled_at = NOW(),
-             shopping_list = $3::jsonb,
-             shopping_list_status = 'pending_review',
-             shopping_list_approved_at = NULL,
-             shopping_list_source = 'consult',
-             updated_at = NOW()
-       WHERE id = $4`,
-      [JSON.stringify(consult), req.user.id, JSON.stringify(list), req.params.id]
-    );
+    if (!stage) {
+      await client.query(
+        `UPDATE drink_plans
+           SET consult_selections = $1::jsonb,
+               consult_filled_by_user_id = $2,
+               consult_filled_at = NOW(),
+               shopping_list_source = 'consult',
+               updated_at = NOW()
+         WHERE id = $3`,
+        [JSON.stringify(consult), req.user.id, req.params.id]
+      );
+    } else {
+      await client.query(
+        `UPDATE drink_plans
+           SET consult_selections = $1::jsonb,
+               consult_filled_by_user_id = $2,
+               consult_filled_at = NOW(),
+               shopping_list = $3::jsonb,
+               shopping_list_status = 'pending_review',
+               shopping_list_approved_at = NULL,
+               shopping_list_source = 'consult',
+               updated_at = NOW()
+         WHERE id = $4`,
+        [JSON.stringify(consult), req.user.id, JSON.stringify(list), req.params.id]
+      );
+    }
 
     // Flip linked Cal.com consults row to 'completed' as a side effect of
     // the admin saving the consult form. See spec §6. Wrapped (inside the
@@ -243,7 +276,7 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
 
     await client.query('COMMIT');
     reportUnresolvedIngredients(list, 'consult_save');
-    res.json({ success: true, shopping_list_source: 'consult' });
+    res.json({ success: true, shopping_list_source: 'consult', list_staged: stage });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* swallow rollback failure */ }
     throw err;

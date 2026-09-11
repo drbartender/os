@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import ScopeBanner from '../../components/ScopeBanner';
+import { owesShoppingList } from '../../../../utils/shoppingListOwed';
 
 // BYOB drink picking (spec §3.1): the fun part, uninterrupted. No syrup
 // radios, no upsell panels, no dollar signs. Cocktails + mocktails share one
@@ -9,6 +10,10 @@ import ScopeBanner from '../../components/ScopeBanner';
 export default function DrinksV2({ plan, selections, updateSelections, catalog, quickPick }) {
   const mocktailsOnly = quickPick === 'mocktails';
   const showCocktails = !mocktailsOnly;
+  // A hosted package whose contents are not entered yet lands here (content-
+  // readiness fallback); DRB still stocks it, so nothing here may promise a
+  // shopping list.
+  const listOwed = owesShoppingList(plan);
   // Memoized so the `|| []` fallback cannot hand a fresh array to the count
   // memo below on every render (which would defeat it entirely). Identical
   // values, stable identity.
@@ -103,11 +108,19 @@ export default function DrinksV2({ plan, selections, updateSelections, catalog, 
 
   return (
     <div>
-      <ScopeBanner
-        tone="shopping"
-        title="Builds your shopping list"
-        body="Your choices here turn into your shopping list, down to the ice cube. We'll tell you exactly what and how much to buy."
-      />
+      {listOwed ? (
+        <ScopeBanner
+          tone="shopping"
+          title="Builds your shopping list"
+          body="Your choices here turn into your shopping list, down to the ice cube. We'll tell you exactly what and how much to buy."
+        />
+      ) : (
+        <ScopeBanner
+          tone="hosted"
+          title="We stock it"
+          body="Your choices here tell us what to pour. We bring everything; no shopping on your end."
+        />
+      )}
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           {mocktailsOnly ? 'Pick Your Mocktails' : 'Pick Your Potions'}
@@ -125,7 +138,7 @@ export default function DrinksV2({ plan, selections, updateSelections, catalog, 
             <strong>{selected.length} cocktails selected</strong>
             <span>
               We recommend 2 to 4 signature cocktails for the best guest experience. More than that and
-              service slows down and the shopping list grows fast. Totally your call though!
+              service slows down{listOwed ? ' and the shopping list grows fast' : ''}. Totally your call though!
             </span>
           </div>
         </div>

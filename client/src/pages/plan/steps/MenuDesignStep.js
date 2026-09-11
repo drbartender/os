@@ -5,7 +5,7 @@ import ScopeBanner from '../components/ScopeBanner';
 import MenuPreview from '../components/MenuPreview';
 import LogoUploadField from '../components/LogoUploadField';
 
-export default function MenuDesignStep({ selections, activeModules, cocktails = [], mocktails = [], onChange }) {
+export default function MenuDesignStep({ selections, activeModules, cocktails = [], mocktails = [], onChange, hosted = false }) {
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
   const selectedMocktails = mocktails.filter(d => (selections.mocktails || []).includes(d.id));
   const [samplesOpen, setSamplesOpen] = useState(false);
@@ -14,7 +14,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
     <div>
       <ScopeBanner
         tone="aside"
-        title="Not part of your shopping list"
+        title={hosted ? 'Separate from the bar itself' : 'Not part of your shopping list'}
         body="How you'd like your drink menu displayed at the event."
       />
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
@@ -232,7 +232,10 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
 
         {selections.menuStyle === 'none' && (
           <span className="potion-field-note">
-            No printed menu will be created. Your selections still drive your shopping list.
+            {/* A hosted package never owes a shopping list; the picks still drive what DRB pours. */}
+            {hosted
+              ? 'No printed menu will be created. Your selections still drive what we pour.'
+              : 'No printed menu will be created. Your selections still drive your shopping list.'}
           </span>
         )}
 

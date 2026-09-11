@@ -5,6 +5,7 @@ import { computeCocktailGap, computeGapCost } from '../data/packageGaps';
 import { useToast } from '../../../context/ToastContext';
 import MakeItYoursPanel from './MakeItYoursPanel';
 import ScopeBanner from '../components/ScopeBanner';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 export default function SignaturePickerStep({
   selected,
@@ -125,7 +126,7 @@ export default function SignaturePickerStep({
 
   return (
     <div>
-      {plan?.package_category === 'hosted' ? (
+      {!owesShoppingList(plan) ? (
         <ScopeBanner
           tone="hosted"
           title="We're providing"

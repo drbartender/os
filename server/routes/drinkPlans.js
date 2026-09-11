@@ -236,6 +236,8 @@ router.get('/t/:token/logo', requireUuidToken('token', 'This drink plan is no lo
 
 /** GET /api/drink-plans — list all plans. Exclude selections/shopping_list JSONB blobs
  *  (each 100 KB+). Detail endpoint returns selections; shopping_list has its own route.
+ *  package_category rides along so the overview prep queue can skip hosted plans
+ *  (a hosted package never owes a shopping list; see shoppingListGen.isHostedPlan).
  *  Paginated via ?limit (default 200, max 500) + ?offset to keep the response
  *  bounded as the table grows. */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
@@ -248,9 +250,11 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
            dp.status, dp.finalized_at, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
            dp.updated_at, dp.created_by, dp.shopping_list_status, dp.selections,
            p.guest_count,
+           sp.category AS package_category, sp.bar_type AS package_bar_type,
            u.email AS created_by_email
     FROM drink_plans dp
     LEFT JOIN proposals p ON p.id = dp.proposal_id
+    LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN users u ON u.id = dp.created_by
     WHERE 1=1
   `;

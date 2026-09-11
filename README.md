@@ -553,6 +553,7 @@ dr-bartender/
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
 │   │   │   ├── rankDrinkMatches.js # Suggestion-only fuzzy ranking of a client's custom drink text against the admin drink lists (Match existing picker); matchKey mirrors the server matcher
 │   │   │   ├── servingLabels.js # Serving-type display labels (SERVING_LABEL + servingLabel); shared by DrinkPlansDashboard + Potions PlansDrawer
+│   │   │   ├── shoppingListOwed.js # owesShoppingList(row): the ONE client predicate for "this plan row owes a shopping list" (Events Plan column, overview prep queue, Potions drawer chip). A hosted package never does; mirrors server shoppingListGen.isHostedPlan and the Potions badge count
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── isPlaceholderEmail.js # Mirror of server emailValidation.isPlaceholderEmail (CC-import .invalid = no email; keep in sync)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser

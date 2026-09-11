@@ -1,4 +1,5 @@
 import React from 'react';
+import { owesShoppingList } from '../../../../utils/shoppingListOwed';
 
 // The crowd screen (spec §3.1): two questions the quantity math actually
 // uses, and nothing else. "Not sure" is a dignified first-class answer.
@@ -13,6 +14,9 @@ const PROFILES = [
 export default function CrowdV2({ plan, selections, updateSelections }) {
   const crowd = selections.crowd || { drinkers: null, unsure: false, profile: null };
   const guests = plan.guest_count || null;
+  // A hosted package never owes a shopping list: the same two answers size
+  // what DRB brings instead of what the client buys.
+  const listOwed = owesShoppingList(plan);
   const setCrowd = (patch) => updateSelections('crowd', { ...crowd, ...patch });
 
   const chips = guests ? [
@@ -25,7 +29,11 @@ export default function CrowdV2({ plan, selections, updateSelections }) {
     <div>
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>A Quick Word on Your Crowd</h2>
-        <p className="text-muted">Two questions that size your shopping list. We only ask what the math uses.</p>
+        <p className="text-muted">
+          {listOwed
+            ? 'Two questions that size your shopping list. We only ask what the math uses.'
+            : 'Two questions that size what we bring. We only ask what the math uses.'}
+        </p>
       </div>
 
       <div className="card mb-2">
@@ -33,7 +41,7 @@ export default function CrowdV2({ plan, selections, updateSelections }) {
           About how many of your {guests || ''} guests drink?
         </h3>
         <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-          This number carries real weight. It drives how much we tell you to buy.
+          This number carries real weight. {listOwed ? 'It drives how much we tell you to buy.' : 'It drives how much we bring.'}
         </p>
         <div className="pp2-drinkers-row">
           <input
@@ -72,7 +80,7 @@ export default function CrowdV2({ plan, selections, updateSelections }) {
       <div className="card">
         <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>What's their speed?</h3>
         <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-          A light thumb on the scale for the mix of what we'll {plan.package_category === 'hosted' ? 'bring' : 'tell you to buy'}. If you're guessing, that's fine.
+          A light thumb on the scale for the mix of what we'll {listOwed ? 'tell you to buy' : 'bring'}. If you're guessing, that's fine.
         </p>
         <div className="radio-group">
           {PROFILES.map(([value, label]) => (

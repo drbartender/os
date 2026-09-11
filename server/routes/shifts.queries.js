@@ -148,6 +148,14 @@ const USER_EVENTS_SQL = `
 // prod: the column is non-null exactly when a list exists, save one legacy
 // 'reviewed' plan predating it.
 //
+// plan_input_landed (submitted or consult-filled, straight off the plan) is
+// the second input signal, and eventPlan.js ORs the two for every row. It is
+// the ONLY one on a hosted row, because DRB stocks the bar and the generator
+// is gated off hosted plans (shoppingListGen.isHostedPlan); on BYOB it covers
+// the submit whose best-effort auto-gen skipped or threw, which used to read
+// as "waiting on the planner" forever. package_bar_type rides along for the
+// cocktail-class exception in that same rule.
+//
 // LATERAL, not the plain LEFT JOIN the staff feed uses: drink_plans.proposal_id
 // carries an index but NO unique constraint, so a second plan on one proposal
 // would silently DUPLICATE THE EVENT ROW in this list. Prod holds at most one
@@ -158,7 +166,8 @@ const planQueueSql = {
   // Newest plan wins, matching the LATERAL guard's intent if a second ever lands.
   drinkPlanJoin: `
       LEFT JOIN LATERAL (
-        SELECT dp.shopping_list_status
+        SELECT dp.shopping_list_status,
+               (dp.submitted_at IS NOT NULL OR dp.consult_filled_at IS NOT NULL) AS plan_input_landed
           FROM drink_plans dp
          WHERE dp.proposal_id = s.proposal_id
          ORDER BY dp.id DESC LIMIT 1
@@ -180,9 +189,11 @@ const planQueueSql = {
   // boolean because the list needs the fact, never the R2 object key.
   select: `
         dpl.shopping_list_status,
+        dpl.plan_input_landed,
         cns.scheduled_at AS consult_at,
         (p.menu_print_key IS NOT NULL OR COALESCE(p.menu_not_required, false)) AS menu_done,
         spk.category AS package_category,
+        spk.bar_type AS package_bar_type,
         spk.name AS package_name`,
 };
 

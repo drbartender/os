@@ -297,3 +297,20 @@ describe('defaultTabKey', () => {
     expect(defaultTabKey(computeTabs(base))).toBeNull();
   });
 });
+
+// A hosted package never owes a shopping list, so a hosted plan is neither
+// "needs list" nor "needs review" no matter what its list column says (the
+// generator is gated now, but stale rows and an admin's deliberate manual
+// list can still put a value there).
+describe('buildPrepItems on hosted packages', () => {
+  test('hosted plans never enter the prep queue', () => {
+    const plans = [
+      { id: 1, status: 'submitted', shopping_list_status: 'pending_review', package_category: 'hosted', client_name: 'H1', event_date: ymdFromToday(10) },
+      { id: 2, status: 'submitted', shopping_list_status: null, package_category: 'hosted', client_name: 'H2', event_date: ymdFromToday(10) },
+      { id: 3, status: 'submitted', shopping_list_status: 'pending_review', package_category: 'byob', client_name: 'B', event_date: ymdFromToday(10) },
+      { id: 4, status: 'submitted', shopping_list_status: null, package_category: null, client_name: 'N', event_date: ymdFromToday(10) },
+      { id: 5, status: 'submitted', shopping_list_status: 'pending_review', package_category: 'hosted', package_bar_type: 'class', client_name: 'K', event_date: ymdFromToday(10) },
+    ];
+    expect(buildPrepItems(plans).map(i => i.ref).sort()).toEqual([3, 4, 5]);
+  });
+});

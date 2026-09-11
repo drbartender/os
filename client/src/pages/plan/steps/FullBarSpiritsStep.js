@@ -1,5 +1,6 @@
 import React from 'react';
 import ScopeBanner from '../components/ScopeBanner';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 const SPIRITS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch'];
 
@@ -36,7 +37,7 @@ export default function FullBarSpiritsStep({ selections, onChange, plan }) {
 
   return (
     <div>
-      {plan?.package_category === 'hosted' ? (
+      {!owesShoppingList(plan) ? (
         <ScopeBanner
           tone="hosted"
           title="We're providing"

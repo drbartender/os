@@ -13,6 +13,7 @@ const {
   buildPlannerGeneratorInput,
   buildDerivationForPlan,
   applyAdminSetHolds,
+  isHostedPlan,
   SYRUP_NAME_LOOKUP,
 } = require('../../utils/shoppingListGen');
 const { normalizeName } = require('../../utils/potionCatalog');
@@ -23,18 +24,28 @@ const { normalizeName } = require('../../utils/potionCatalog');
 // touches an approved list (guarded in the UPDATE).
 async function refreshListAfterLabChange(planId) {
   try {
-    const catalog = await loadCatalog(pool);
     const planRes = await pool.query(
-      `SELECT dp.*, p.guest_count AS proposal_guest_count
-         FROM drink_plans dp LEFT JOIN proposals p ON p.id = dp.proposal_id
+      `SELECT dp.*, p.guest_count AS proposal_guest_count,
+              sp.category AS package_category, sp.bar_type AS package_bar_type
+         FROM drink_plans dp
+         LEFT JOIN proposals p ON p.id = dp.proposal_id
+         LEFT JOIN service_packages sp ON sp.id = p.package_id
         WHERE dp.id = $1`,
       [planId]
     );
     const plan = planRes.rows[0];
     if (!plan || plan.shopping_list_source === 'consult') return;
+    // The Lab is hosted-capable and this UPDATE would build a list from
+    // nothing; a hosted plan never owes one (see isHostedPlan). One that
+    // already carries a list (stale, or admin-built on purpose) is kept in
+    // step exactly as BYOB, the same policy as the consult save.
+    if (isHostedPlan(plan) && plan.shopping_list === null) return;
     plan.guest_count = plan.proposal_guest_count;
     if (!plan.guest_count) return;
 
+    // After the early returns: no transaction here, so the catalog read can sit
+    // below the guards and a hosted Lab save never loads it just to drop it.
+    const catalog = await loadCatalog(pool);
     const input = await buildPlannerGeneratorInput(plan, pool);
     const list = generateShoppingList(input, catalog);
     applyAdminSetHolds(list, plan.shopping_list);

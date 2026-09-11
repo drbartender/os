@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import MakeItYoursPanel from './MakeItYoursPanel';
 import ScopeBanner from '../components/ScopeBanner';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 export default function MocktailStep({
   selected = [],
@@ -53,7 +54,7 @@ export default function MocktailStep({
 
   return (
     <div>
-      {plan?.package_category === 'hosted' ? (
+      {!owesShoppingList(plan) ? (
         <ScopeBanner
           tone="hosted"
           title="We're providing"

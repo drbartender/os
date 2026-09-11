@@ -1,4 +1,5 @@
 import React from 'react';
+import { owesShoppingList } from '../../../../utils/shoppingListOwed';
 
 function formatEventDate(value) {
   if (!value) return null;
@@ -11,6 +12,9 @@ function formatEventDate(value) {
 // promises v2 actually keeps: costs disclose in place, nothing takes payment.
 export default function WelcomeV2({ plan, onStart }) {
   const isHosted = plan.package_category === 'hosted';
+  // Flow copy keys on the package (hosted picks within it); list copy keys on
+  // whether a list is owed at all (a class is hosted-flow but may self-supply).
+  const listOwed = owesShoppingList(plan);
   const firstName = plan.client_name ? String(plan.client_name).trim().split(/\s+/)[0] : '';
   const metaBits = [
     plan.guest_count ? `${plan.guest_count} guests` : null,
@@ -22,7 +26,9 @@ export default function WelcomeV2({ plan, onStart }) {
     isHosted
       ? { title: 'Pick what we pour', desc: <>Your <strong>{plan.package_name || 'package'}</strong> already answered the big questions. Just choose the drinks within it.</> }
       : { title: 'Choose your drinks', desc: <>Cocktails, beer and wine, spirits, whatever you'd like to pour. We turn it into <strong>your shopping list</strong>.</> },
-    { title: 'A quick word on your crowd', desc: 'Two questions that size the shopping list. We only ask what the math uses.' },
+    { title: 'A quick word on your crowd', desc: listOwed
+      ? 'Two questions that size the shopping list. We only ask what the math uses.'
+      : 'Two questions that size what we bring. We only ask what the math uses.' },
     { title: 'Design your menu card', desc: 'Custom, standard, or skip it. We print and frame it to display on the bar.' },
     { title: 'The day-of details', desc: 'Where the bar sets up, parking, power, and how we get in.' },
   ];

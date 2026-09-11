@@ -1,4 +1,5 @@
 import { dayDiff, fmtDate } from '../../../components/adminos/format';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 // Prep queue items over the Potions-enriched drink-plans list (event-side plans
 // are the canonical records; /drink-plans/:id is the admin surface for one).
@@ -16,8 +17,10 @@ function proximityPriority(eventDate) {
 }
 
 // Needs-you items for the two ball-in-your-court stages. Past events are
-// excluded (a submitted plan for a finished event is history, not a queue).
-// Uncapped: the tabbed card caps at render (6 rows + overflow link).
+// excluded (a submitted plan for a finished event is history, not a queue),
+// and so are hosted plans: a hosted package never owes a shopping list, so
+// nothing about its list column is a prep item (stale rows, admin-built
+// lists). Uncapped: the tabbed card caps at render (6 rows + overflow link).
 export function buildPrepItems(plans) {
   if (!Array.isArray(plans)) return [];
   const upcomingOnly = plans.filter(p => {
@@ -25,12 +28,13 @@ export function buildPrepItems(plans) {
     const days = dayDiff(String(p.event_date).slice(0, 10));
     return days == null || days >= 0;
   });
+  const listEligible = upcomingOnly.filter(owesShoppingList);
 
-  const needsList = upcomingOnly.filter(p =>
+  const needsList = listEligible.filter(p =>
     p.status === 'submitted'
     && p.shopping_list_status !== 'approved'
     && p.shopping_list_status !== 'pending_review');
-  const needsReview = upcomingOnly.filter(p => p.shopping_list_status === 'pending_review');
+  const needsReview = listEligible.filter(p => p.shopping_list_status === 'pending_review');
 
   const items = [
     ...needsReview.map(p => ({

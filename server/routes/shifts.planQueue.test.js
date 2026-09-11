@@ -16,7 +16,8 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // The admin GET /shifts feed carries the Plan-column facts (2026-08-25):
-// shopping_list_status, consult_at, menu_done, package_category, package_name.
+// shopping_list_status, plan_input_landed, consult_at, menu_done, package_category,
+// package_name.
 //
 // The load-bearing assertion here is the FAN-OUT one. drink_plans.proposal_id
 // has an index but no unique constraint, so the obvious `LEFT JOIN drink_plans`
@@ -27,6 +28,7 @@ if (process.env.NODE_ENV === 'production') {
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let server, baseUrl, adminId, adminToken;
 let clientId, twoPlanPid, twoPlanShift, consultPid, consultShift, menuPid, menuShift;
+let hostedPkgId, hostedPid, hostedShift;
 
 async function mkProposal(status, extraCols = '', extraVals = '') {
   const r = await pool.query(
@@ -92,6 +94,25 @@ before(async () => {
   menuPid = await mkProposal('confirmed', ', menu_not_required', ", true");
   menuShift = await mkShift(menuPid, 'Menu');
 
+  // (4) A hosted package with a SUBMITTED plan and no list. Hosted never gets
+  // a shopping list, so the Plan column reads input-landed off
+  // plan_input_landed here instead of off shopping_list_status.
+  const pkg = await pool.query(
+    `INSERT INTO service_packages (slug, name, category, pricing_type, base_rate_4hr, base_rate_4hr_small,
+        min_guests, guests_per_bartender, bar_type, includes)
+     VALUES ($1, 'PlanQueue Hosted', 'hosted', 'per_guest', 28, 33, 50, 100, 'full_bar', '[]')
+     RETURNING id`,
+    [`planqueue-hosted-${NONCE}`]
+  );
+  hostedPkgId = pkg.rows[0].id;
+  hostedPid = await mkProposal('confirmed', ', package_id', `, ${hostedPkgId}`);
+  hostedShift = await mkShift(hostedPid, 'Hosted');
+  await pool.query(
+    `INSERT INTO drink_plans (proposal_id, client_name, status, submitted_at)
+     VALUES ($1, $2, 'submitted', NOW())`,
+    [hostedPid, `Hosted ${NONCE}`]
+  );
+
   const app = express();
   app.use(express.json());
   app.use('/api/shifts', shiftsRouter);
@@ -106,14 +127,15 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
-  const pids = [twoPlanPid, consultPid, menuPid].filter(Boolean);
-  const sids = [twoPlanShift, consultShift, menuShift].filter(Boolean);
+  const pids = [twoPlanPid, consultPid, menuPid, hostedPid].filter(Boolean);
+  const sids = [twoPlanShift, consultShift, menuShift, hostedShift].filter(Boolean);
   if (sids.length) await pool.query('DELETE FROM shifts WHERE id = ANY($1::int[])', [sids]);
   if (pids.length) {
     await pool.query('DELETE FROM consults WHERE proposal_id = ANY($1::int[])', [pids]);
     await pool.query('DELETE FROM drink_plans WHERE proposal_id = ANY($1::int[])', [pids]);
     await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [pids]);
   }
+  if (hostedPkgId) await pool.query('DELETE FROM service_packages WHERE id = $1', [hostedPkgId]);
   if (clientId) await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
   if (adminId) await pool.query('DELETE FROM users WHERE id = $1', [adminId]);
   await pool.end();
@@ -138,7 +160,7 @@ test('the admin feed carries every Plan-column field', async () => {
   assert.equal(r.status, 200, `expected 200, got ${r.status} ${JSON.stringify(r.body)}`);
   const row = rowsFor(r.body, twoPlanShift)[0];
   assert.ok(row, 'the fixture event is listed');
-  for (const k of ['shopping_list_status', 'consult_at', 'menu_done', 'package_category', 'package_name']) {
+  for (const k of ['shopping_list_status', 'plan_input_landed', 'consult_at', 'menu_done', 'package_category', 'package_bar_type', 'package_name']) {
     assert.ok(k in row, `feed carries ${k}`);
   }
 });
@@ -171,4 +193,22 @@ test('an event with no drink plan and no consult reports nulls, not a missing ro
   const row = rowsFor(r.body, menuShift)[0];
   assert.equal(row.shopping_list_status, null);
   assert.equal(row.consult_at, null);
+});
+
+test('a hosted submitted plan reports input landed with no list', async () => {
+  const r = await get('/api/shifts', adminToken);
+  const row = rowsFor(r.body, hostedShift)[0];
+  assert.ok(row, 'the hosted fixture event is listed');
+  assert.equal(row.package_category, 'hosted');
+  assert.equal(row.package_bar_type, 'full_bar', 'bar_type rides along for the class exception');
+  assert.equal(row.plan_input_landed, true, 'submitted_at is the hosted input signal');
+  assert.equal(row.shopping_list_status, null, 'hosted never carries a list');
+});
+
+test('plan_input_landed is null with no plan and false on a plan never submitted', async () => {
+  const r = await get('/api/shifts', adminToken);
+  assert.equal(rowsFor(r.body, menuShift)[0].plan_input_landed, null);
+  // The two-plan fixture seeds its lists directly with no submitted_at, so the
+  // winning plan reads false here; BYOB rows read input off the list anyway.
+  assert.equal(rowsFor(r.body, twoPlanShift)[0].plan_input_landed, false);
 });

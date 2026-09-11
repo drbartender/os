@@ -8,6 +8,7 @@ import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } fr
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { fmtDateOnly } from '../../../components/adminos/format';
 import ScopeBanner from '../components/ScopeBanner';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 // Module-scoped lazy init — fetch the publishable key once and reuse the
 // loadStripe() promise across every mount of this component.
@@ -286,7 +287,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
   return (
     <div>
-      {plan?.package_category === 'hosted' ? (
+      {!owesShoppingList(plan) ? (
         <ScopeBanner
           tone="hosted"
           title="You're all set"

@@ -6,6 +6,7 @@ import api from '../../../utils/api';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { servingLabel } from '../../../utils/servingLabels';
 import { drinkPlanStatusMeta } from '../../../utils/drinkPlanStatusMap';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 // Client drink plans, compact review list (Potions design 1a). Plans are
 // usually reached from their event; this is the quick queue plus a link to
@@ -71,7 +72,7 @@ export default function PlansDrawer({ open, onClose }) {
             </div>
             <div className="potions-drawer-row-chips">
               <StatusChip kind={status.kind}>{status.label}</StatusChip>
-              {p.shopping_list_status === 'pending_review' && (
+              {p.shopping_list_status === 'pending_review' && owesShoppingList(p) && (
                 <StatusChip kind="warn">List to review</StatusChip>
               )}
             </div>

@@ -138,8 +138,12 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
         notes: notes.trim(),
         guestCountOverride: guestCountOverride ? Number(guestCountOverride) : null,
       };
-      await api.put(`/drink-plans/${planId}/consult`, { consult });
-      toast.success('Shopping list generated from consult.');
+      const res = await api.put(`/drink-plans/${planId}/consult`, { consult });
+      // A hosted plan with no list gets none from the consult (DRB stocks the
+      // bar); say so instead of sending the admin looking for a list.
+      toast.success(res?.data?.list_staged === false
+        ? 'Consult saved. No shopping list on a hosted package.'
+        : 'Shopping list generated from consult.');
       if (onSaved) onSaved();
       onClose();
     } catch (err) {

@@ -6,6 +6,8 @@ import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
 import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildHostedStepQueue, hostedActiveModules, HOSTED_GUEST_PREFS_STEP } from './data/servingTypes';
 import { DRINK_UPGRADES, PER_DRINK_UPGRADE_SLUGS } from './data/drinkUpgrades';
+import { nextStepsCopy, menuOwedFor } from './components/nextStepsCopy';
+import { owesShoppingList } from '../../utils/shoppingListOwed';
 // All step components are lazy-loaded: cuts ~18 chunks out of the initial bundle
 // for a public-facing page where most visitors only traverse a subset of the steps.
 const QuickPickStep = lazy(() => import('./steps/QuickPickStep'));
@@ -745,9 +747,7 @@ export default function PotionPlanningLab() {
                 What happens next?
               </p>
               <p className="text-muted text-small">
-                {(selections.menuStyle === 'custom' || selections.menuStyle === 'house')
-                  ? "We'll use your selections to create a shopping list, a menu, and a BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"
-                  : "We'll use your selections to create a shopping list and a BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"}
+                {nextStepsCopy({ voice: 'v1', hosted: !owesShoppingList(plan), menuOwed: menuOwedFor(selections) })}
               </p>
             </div>
           </div>
@@ -866,7 +866,7 @@ export default function PotionPlanningLab() {
         );
       case MODULE_STEP_MAP.menuDesign:
         return (
-          <MenuDesignStep
+          <MenuDesignStep hosted={!owesShoppingList(plan)}
             selections={selections}
             activeModules={activeModules}
             cocktails={cocktails}

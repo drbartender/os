@@ -244,7 +244,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PATCH | `/:id/shopping-list/approve` | Admin | **Deprecated**, kept mounted for API compatibility: delegates to the `shopping_list_approve` comms action. Runs the action's idempotent side effects (atomic flip of `shopping_list_status` to `'approved'` + approved-snapshot write) then sends the default unedited email on the default channels. New admin sends go through the compose-first `POST /api/comms/send`. |
 | GET | `/:id` | Admin | Fetch single plan by ID (includes `has_consult_selections`, `shopping_list_source`, audit fields) |
 | GET | `/:id/consult` | Admin | Fetch admin-side consult-form payload for re-populating the form |
-| PUT | `/:id/consult` | Admin | Save consult-form payload, regenerate shopping list as `pending_review` (via `drinkPlanConsult.js`) |
+| PUT | `/:id/consult` | Admin | Save consult-form payload, regenerate shopping list as `pending_review` (via `drinkPlanConsult.js`). Hosted plans with no list: records the consult as source only, stages nothing, returns `list_staged: false` |
 | PATCH | `/:id/shopping-list-source` | Admin | Flip active source between `planner` and `consult`, regenerate from chosen source (via `drinkPlanConsult.js`) |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
@@ -1590,7 +1590,7 @@ The proposal-side sends add six more actions, each ported from a now-deprecated 
 
 Located in `client/src/components/ShoppingList/` (frontend) and `server/utils/shoppingList.js` (backend mirror).
 
-**Pipeline:** drink plan submission → server auto-generates a `pending_review` list and stores it on `drink_plans.shopping_list` (JSONB). Admin reviews/edits in the modal (auto-save every 1.5s) then clicks "Approve & Send to Client" which flips `shopping_list_status` to `'approved'` and emails the client a link. Public `GET /t/:token/shopping-list` returns the list only once approved.
+**Pipeline:** drink plan submission → server auto-generates a `pending_review` list and stores it on `drink_plans.shopping_list` (JSONB). Hosted packages are the exception: DRB stocks the bar, so no list is ever STAGED for a hosted plan that has none (submit auto-gen, consult save, and Lab refresh all skip it; `shoppingListGen.isHostedPlan`, mirrored client-side by `utils/shoppingListOwed.js`). A hosted plan that already carries a list (a stale row, or one the admin built on purpose through the still-available generate/regenerate) is maintained exactly as BYOB. Cocktail classes (`bar_type='class'`) are seeded `hosted` but may self-supply, so they stay on the BYOB side of this rule everywhere. Admin reviews/edits in the modal (auto-save every 1.5s) then clicks "Approve & Send to Client" which flips `shopping_list_status` to `'approved'` and emails the client a link. Public `GET /t/:token/shopping-list` returns the list only once approved.
 
 **Two input sources.** The same generator can run from either:
 - **Planner submission** (client-facing wizard) → stored in `drink_plans.selections` JSONB

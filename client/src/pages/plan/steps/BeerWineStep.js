@@ -1,5 +1,6 @@
 import React from 'react';
 import ScopeBanner from '../components/ScopeBanner';
+import { owesShoppingList } from '../../../utils/shoppingListOwed';
 
 const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'IPA', 'Seltzer', 'Non-Alcoholic'];
 const WINE_STYLES = ['Red', 'White', 'Sparkling', 'Other'];
@@ -49,7 +50,7 @@ export default function BeerWineStep({ selections, onChange, plan }) {
 
   return (
     <div>
-      {plan?.package_category === 'hosted' ? (
+      {!owesShoppingList(plan) ? (
         <ScopeBanner
           tone="hosted"
           title="We're providing"

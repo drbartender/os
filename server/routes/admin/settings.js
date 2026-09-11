@@ -157,8 +157,15 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
       (SELECT COUNT(*) FROM applications a
          JOIN users u ON u.id = a.user_id
          WHERE u.onboarding_status = 'applied')::int AS new_applications,
-      (SELECT COUNT(*) FROM drink_plans
-         WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists,
+      -- A hosted package never owes a shopping list (shoppingListGen.isHostedPlan
+      -- gates the writers), so a stale or admin-built hosted list is not review
+      -- work and must not badge Potions. A cocktail class is seeded 'hosted' but
+      -- may self-supply, so it counts; a plan with no package still counts.
+      (SELECT COUNT(*) FROM drink_plans dp
+         LEFT JOIN proposals pp ON pp.id = dp.proposal_id
+         LEFT JOIN service_packages sp ON sp.id = pp.package_id
+         WHERE dp.shopping_list_status = 'pending_review'
+           AND (sp.category IS DISTINCT FROM 'hosted' OR sp.bar_type = 'class'))::int AS pending_shopping_lists,
       -- Must match the Messages inbox exactly (server/routes/sms.js /conversations).
       -- Thumbtack relay echoes are machine traffic the inbox hides, so counting
       -- them here advertised 115 unread over an inbox with nothing to click.
