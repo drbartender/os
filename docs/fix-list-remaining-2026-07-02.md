@@ -929,6 +929,46 @@ the webhook/refund/lockedTotal machinery stays wired for the next one.
 
 ---
 
+### Follow-ups from the 2026-09-11 review of 4ceb6204 (Remove re-accrues payroll on a completed event)
+
+The commit itself is correct for its route and safe to push; these are what the review found
+around it. All verified against code on 2026-09-11 unless marked PLAUSIBLE.
+
+- **Nine lock-gated siblings still keep a no-show's line.** `reaccrueDutyForProposal` fires
+  unconditionally only from DELETE /shifts/requests/:id (`shifts.js:692`). Deny of an approved
+  staffer (`shifts.approval.js:535`), approve (`:506`), assign (`:306`), the cover cascade
+  (`coverApprovalCascade.js:217`) and the bonus-release sites fire it only when an out-of-area
+  lock moved, and the catch-all status UPDATE in the same handler (`shifts.approval.js:542`)
+  has no hook at all. So the prod-652 shape (no-show off a completed no-bonus event, her wage
+  and tip line survives, card tips stay split N ways) recurs through every roster exit except
+  Remove. Same one-line change at each site; land them together, one test per path.
+- **The hook can silently no-op while Remove answers 200.** Period not `open`: the accrual
+  COMMITs empty with only a Sentry warning (`payrollAccrual.js:192-202`). Event older than 21
+  days: returns `{skipped}` with no signal (`:715`). Admin sees Removed, the line stays payable.
+  Surface "payroll not updated: period closed" on the response, or refuse. Related: the hook
+  also fires on non-roster deletes (a pending self-withdraw on a processed period emits the
+  warning); gate it on `ctx.status === 'approved'`.
+- **The orphan sweep deletes `confirmed` lines.** The comment at `payrollAccrual.js:559` says
+  confirmed lines are never re-held or deleted, but `toDelete` (`:577`) and the inline
+  empty-roster DELETE (`:245-250`) filter only on `adjustment_cents = 0`, no `held_state`
+  check. `admin/payroll.js:249` flips held to confirmed on any edit, and every Remove now
+  reaches the sweep. Code CONFIRMED; the live scenario (a confirmed zero-adjustment line whose
+  roster then changes) is PLAUSIBLE, not reproduced.
+- **The push gate never runs `shifts.removeReaccrue.test.js`.** `scripts/money-smoke-list.txt`
+  carries `shifts.bonus.test.js` (L84) and not its new sibling, and the gate runs only that
+  list. One line. Also the test's one-worker fixture takes the empty-roster branch, so the
+  N-to-N-1 tip re-split from the prod-652 incident is still unpinned; add a two-worker fixture.
+- **Remove writes no audit record of the deleted money line.** DELETE /shifts/requests/:id has
+  no `logAdminAction`; the out-of-area PUT beside it (`shifts.js:630`) does. Its three
+  autocommit steps (`:675-692`) also mean a throw inside `releaseOutOfAreaLock` after the row
+  DELETE leaves the hook unfired and a retry 404s (PLAUSIBLE, rare). One transaction plus the
+  audit row.
+- **Pre-existing, now reachable from Remove: the last bartender removed with a barback or
+  server still on roster splits the card-tip pool over zero bartenders.** `splitEvenly(x, 0)`
+  returns `[]` (`payrollMath.js:28`), so at `payrollAccrual.js:395-398` an already-matched tip
+  pays nobody and nothing warns. Decide the rule first (tip follows the remaining non-bartender
+  staff, or the line is held for the admin), then fix.
+
 ## Potions: catalog and planner
 
 **THE LAW, learned the hard way.** The alias index in `buildCatalogSlices` is built ONLY from
