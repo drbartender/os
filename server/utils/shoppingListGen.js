@@ -255,10 +255,39 @@ function buildDerivation({ crowd, guestCount, hours, settings = {}, counts = {} 
   };
 }
 
+// ─── Generator style from the plan row ───────────────────────────────────────
+// serving_type is the wizard's LABEL; selections.activeModules is what the
+// wizard actually enabled. The four generator keys map 1:1 to the v1/v2 quick
+// picks, so a known label is authoritative and a null label keeps the historic
+// full_bar default (hosted v2 rows store null; their lists are never owed).
+// Any OTHER non-empty label never matched a generator branch: the legacy v1
+// "Custom Setup" stored 'custom', so the list fell to the mocktails/unknown
+// recipe and read beer/wine from the beer-wine-only keys, and a custom
+// full-bar plan shipped with no pars, no beer, no wine (plan 82, 2026-09-12).
+// Those derive from activeModules; a row with neither passes through as-is.
+const GENERATOR_STYLES = new Set(['full_bar', 'sig_beer_wine', 'beer_wine', 'mocktails']);
+
+function plannerServiceStyle(plan) {
+  const label = plan ? plan.serving_type : null;
+  if (!label) return 'full_bar';
+  if (GENERATOR_STYLES.has(label)) return label;
+  const am = plan.selections && plan.selections.activeModules;
+  if (am && typeof am === 'object') {
+    if (am.fullBar) return 'full_bar';
+    // sig_beer_wine is the only non-full-bar recipe that BOTH merges drink
+    // recipes (cocktails and mocktails) AND stocks beer/wine, so mocktails
+    // alongside beer/wine route there too; beer_wine would drop the mocktails.
+    if (am.signatureDrinks || (am.beerWineOnly && am.mocktails)) return 'sig_beer_wine';
+    if (am.beerWineOnly) return 'beer_wine';
+    if (am.mocktails) return 'mocktails';
+  }
+  return label;
+}
+
 // Best-effort per-category selected-drink counts for the even per-drink split
 // display ("44 pours each"). Missing/zero counts just drop the per-drink line.
 function deriveCategoryCounts(plan, sel) {
-  const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
+  const isFullBar = plannerServiceStyle(plan) === 'full_bar';
   const beer = isFullBar ? sel.beerFromFullBar : sel.beerFromBeerWine;
   const wine = isFullBar ? sel.wineFromFullBar : sel.wineFromBeerWine;
   const countStyles = (arr, skip) => (Array.isArray(arr)
@@ -390,7 +419,8 @@ async function buildPlannerGeneratorInput(plan, dbClient) {
   const signatureCocktails = [...resolvedSigs, ...resolvedMocktails, ...matchedCustoms];
   const syrupSelfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
   const syrupNamesById = syrupSelfProvided.length > 0 ? SYRUP_NAME_LOOKUP : {};
-  const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
+  const serviceStyle = plannerServiceStyle(plan);
+  const isFullBar = serviceStyle === 'full_bar';
   const beerSelections = isFullBar ? (sel.beerFromFullBar || []) : (sel.beerFromBeerWine || []);
   const wineSelections = isFullBar ? (sel.wineFromFullBar || []) : (sel.wineFromBeerWine || []);
   return {
@@ -402,7 +432,7 @@ async function buildPlannerGeneratorInput(plan, dbClient) {
     syrupNamesById,
     eventDate: plan.event_date,
     notes: plan.admin_notes || '',
-    serviceStyle: plan.serving_type || 'full_bar',
+    serviceStyle,
     beerSelections,
     wineSelections,
     mixersForSignatureDrinks: sel.mixersForSignatureDrinks ?? null,
@@ -538,6 +568,7 @@ module.exports = {
   matchKey,
   matchCustomNames,
   loadRecipeCandidates,
+  plannerServiceStyle,
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
   isHostedPlan,

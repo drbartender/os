@@ -504,3 +504,145 @@ test('applyAdminSetHolds: no-op when the saved list carries no admin_set lines',
   // null/absent saved list is also a no-op.
   assert.deepEqual(applyAdminSetHolds(fresh, null), fresh);
 });
+
+// ─── serving_type is a label; activeModules is the truth (2026-09-14) ────────
+// A legacy v1 "Custom Setup" plan stores serving_type 'custom', a label the
+// generator never knew. It fell into the mocktails/unknown branch and read
+// beer/wine from the beer-wine-only keys (empty on a full-bar plan), so a
+// full-bar client's list shipped with no pars, no beer, no wine (plan 82,
+// 2026-09-12). The generator style now derives from selections.activeModules
+// whenever the stored label is not one of the four generator keys. Known keys
+// and a null label keep today's behavior byte-for-byte.
+
+const { plannerServiceStyle } = require('./shoppingListGen');
+
+function labelledPlan(serving_type, activeModules, extra = {}) {
+  return {
+    client_name: 'Label Co', guest_count: 140, event_date: null, admin_notes: '',
+    serving_type, event_duration_hours: 4,
+    selections: {
+      ...(activeModules ? { activeModules } : {}),
+      signatureDrinks: [], mocktails: [], customCocktails: [],
+      beerFromFullBar: ['Light / Easy Drinking', 'Craft / Local'],
+      wineFromFullBar: ['Red', 'White'],
+      beerFromBeerWine: ['Craft / Local'],
+      wineFromBeerWine: ['Rosé'],
+      ...extra,
+    },
+  };
+}
+
+const FULL_BAR_MODULES = { fullBar: true, signatureDrinks: true, mocktails: true, beerWineOnly: false };
+
+test('custom label + fullBar modules generates exactly what the full_bar preset generates', async () => {
+  const custom = labelledPlan('custom', FULL_BAR_MODULES);
+  const preset = labelledPlan('full_bar', FULL_BAR_MODULES);
+  const [customInput, presetInput] = await Promise.all([
+    buildPlannerGeneratorInput(custom, fakeDb()),
+    buildPlannerGeneratorInput(preset, fakeDb()),
+  ]);
+  assert.equal(customInput.serviceStyle, 'full_bar');
+  assert.deepEqual(customInput.beerSelections, ['Light / Easy Drinking', 'Craft / Local'],
+    'beer read from the full-bar keys, not the beer-wine-only keys');
+  assert.deepEqual(customInput.wineSelections, ['Red', 'White']);
+  assert.deepEqual(
+    stripIds(generateShoppingList(customInput, catalog)),
+    stripIds(generateShoppingList(presetInput, catalog)),
+    'custom-labelled full-bar plan builds the same list as the preset'
+  );
+});
+
+test('custom label derives every non-full-bar style from activeModules', () => {
+  const style = (am) => plannerServiceStyle(labelledPlan('custom', am));
+  assert.equal(style({ fullBar: false, signatureDrinks: true, mocktails: false, beerWineOnly: true }), 'sig_beer_wine');
+  assert.equal(style({ fullBar: false, signatureDrinks: true, mocktails: true, beerWineOnly: false }), 'sig_beer_wine',
+    'signature drinks with no beer/wine still get the mixer + garnish recipe');
+  assert.equal(style({ fullBar: false, signatureDrinks: false, mocktails: false, beerWineOnly: true }), 'beer_wine');
+  assert.equal(style({ fullBar: false, signatureDrinks: false, mocktails: true, beerWineOnly: false }), 'mocktails');
+});
+
+test('custom label + beer/wine modules reads beer and wine from the beer-wine keys', async () => {
+  const plan = labelledPlan('custom', { fullBar: false, signatureDrinks: false, mocktails: false, beerWineOnly: true });
+  const input = await buildPlannerGeneratorInput(plan, fakeDb());
+  assert.equal(input.serviceStyle, 'beer_wine');
+  assert.deepEqual(input.beerSelections, ['Craft / Local']);
+  assert.deepEqual(input.wineSelections, ['Rosé']);
+});
+
+test('a known generator key wins over activeModules (v1 presets and every v2 plan unchanged)', () => {
+  assert.equal(plannerServiceStyle(labelledPlan('beer_wine', FULL_BAR_MODULES)), 'beer_wine');
+  assert.equal(plannerServiceStyle(labelledPlan('sig_beer_wine', FULL_BAR_MODULES)), 'sig_beer_wine');
+  assert.equal(plannerServiceStyle(labelledPlan('mocktails', FULL_BAR_MODULES)), 'mocktails');
+  assert.equal(plannerServiceStyle(labelledPlan('full_bar', null)), 'full_bar');
+});
+
+test('null label keeps the full_bar default even when activeModules is present (hosted v2 shape)', () => {
+  assert.equal(plannerServiceStyle(labelledPlan(null, null)), 'full_bar');
+  assert.equal(plannerServiceStyle(labelledPlan(undefined, null)), 'full_bar');
+  const hosted = { fullBar: false, signatureDrinks: true, mocktails: true, beerWineOnly: false };
+  assert.equal(plannerServiceStyle(labelledPlan(null, hosted)), 'full_bar');
+});
+
+test('an unknown label with no activeModules passes through unchanged (pre-modules legacy rows)', () => {
+  assert.equal(plannerServiceStyle(labelledPlan('full-bar-signature', null)), 'full-bar-signature');
+  assert.equal(plannerServiceStyle(labelledPlan('custom', null)), 'custom');
+  assert.equal(plannerServiceStyle(labelledPlan('custom', 'not-an-object')), 'custom');
+  assert.equal(plannerServiceStyle(labelledPlan('custom', {})), 'custom',
+    'all-false modules derive nothing; the label passes through');
+});
+
+test('custom label + fullBar modules counts beer/wine from the full-bar keys in the derivation', async () => {
+  const plan = labelledPlan('custom', FULL_BAR_MODULES, {
+    crowd: { drinkers: 80, unsure: false, profile: 'even' },
+  });
+  const preset = { ...plan, serving_type: 'full_bar' };
+  const [d, dPreset] = await Promise.all([
+    buildDerivationForPlan(plan, fakeDb()),
+    buildDerivationForPlan(preset, fakeDb()),
+  ]);
+  assert.ok(d, 'crowd answered -> derivation present');
+  // The fixture's beer-wine keys hold ONE style each and the full-bar keys
+  // TWO, so the per-drink split differs by key set: equality with the preset
+  // proves the counts came from the full-bar keys.
+  assert.deepEqual(d.perCategory, dPreset.perCategory,
+    'custom-labelled full-bar plan derives the same per-drink split as the preset');
+  const beer = d.perCategory.find((c) => c.category === 'beer');
+  assert.equal(beer.perDrink, Math.round((beer.pours / 2) * 10) / 10, 'split across the two full-bar beer styles');
+});
+
+test('custom label + mocktails + beer/wine (no cocktails) keeps the mocktail recipes on the list', async () => {
+  // CustomSetupStep lets a client toggle mocktails + beer or wine with liquor
+  // and cocktails off. The beer_wine recipe never merges drink recipes, so
+  // that shape must route through sig_beer_wine (which merges signature
+  // cocktails AND mocktails, then beer/wine from the beer-wine keys).
+  const am = { fullBar: false, signatureDrinks: false, mocktails: true, beerWineOnly: true };
+  assert.equal(plannerServiceStyle(labelledPlan('custom', am)), 'sig_beer_wine');
+  const shirley = { id: 'shirley', name: 'Pineapple Fizz', ingredients: [{ ingredient: 'pineapple juice', amount: 3, unit: 'oz' }] };
+  const db = {
+    query: async (sql) => {
+      if (sql.includes('FROM cocktails WHERE id')) return { rows: [] };
+      if (sql.includes('FROM mocktails WHERE id')) return { rows: [shirley] };
+      if (sql.includes('FROM app_settings')) return { rows: SETTINGS_ROWS };
+      if (sql.includes('UNION ALL')) return { rows: [] };
+      throw new Error('unexpected query: ' + sql);
+    },
+  };
+  // mixersForSignatureDrinks:false switches the basic-mixer slice off, so the
+  // juice (a basic mixer in the seed catalog) can only arrive via the recipe.
+  const input = await buildPlannerGeneratorInput(
+    labelledPlan('custom', am, { mocktails: ['shirley'], mixersForSignatureDrinks: false }), db
+  );
+  assert.equal(input.serviceStyle, 'sig_beer_wine');
+  assert.deepEqual(input.beerSelections, ['Craft / Local']);
+  assert.deepEqual(input.wineSelections, ['Rosé']);
+  const hasJuice = (l) => l.everythingElse.some((i) => i.item === 'Pineapple Juice');
+  assert.ok(hasJuice(generateShoppingList(input, catalog)),
+    'the selected mocktail\'s recipe ingredient is on the list');
+  // Two controls prove the RECIPE MERGE put it there: the beer_wine recipe
+  // (the old routing for this shape) drops it, and so does sig_beer_wine
+  // with no drinks selected.
+  assert.ok(!hasJuice(generateShoppingList({ ...input, serviceStyle: 'beer_wine' }, catalog)),
+    'beer_wine would have dropped the mocktail ingredient');
+  assert.ok(!hasJuice(generateShoppingList({ ...input, signatureCocktails: [] }, catalog)),
+    'sig_beer_wine with no drinks does not stock it on its own');
+});
