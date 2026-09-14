@@ -26,28 +26,45 @@ function formatStarted(value) {
 }
 
 export const PENDING_PAYMENT_TITLE = 'Your bank payment is processing.';
+const CONTACT_EMAIL = 'contact@drbartender.com';
 
-export function pendingPaymentCopy({ amountCents, startedAt }) {
+// The body without the contact closer, so the closer can carry a real
+// mailto link: on the invoice page this address is the only way out once
+// the Pay button is gone, and on a phone plain text cannot be tapped.
+export function pendingPaymentBody({ amountCents, startedAt }) {
   const dollars = formatCents(amountCents);
   const when = formatStarted(startedAt);
   return `We received your ${dollars ? `${dollars} ` : ''}bank payment${when ? ` on ${when}` : ''}. `
     + 'Bank payments take four to six business days to clear. You will get a receipt by email when it does, '
-    + 'and nothing more is needed from you. If anything looks wrong, email contact@drbartender.com.';
+    + 'and nothing more is needed from you.';
 }
 
+// The whole copy as one string, for plain-text uses and tests.
+export function pendingPaymentCopy(args) {
+  return `${pendingPaymentBody(args)} If anything looks wrong, email ${CONTACT_EMAIL}.`;
+}
+
+export function PendingPaymentContact() {
+  return <>If anything looks wrong, email <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.</>;
+}
+
+// The title is a status line, not a section, so it is a paragraph on every
+// surface: the invoice page has one H1 and no H2, and a heading here would
+// skip a level and let a screen reader jump to it on one page but not the
+// other. The existing title class carries the display styling.
 export default function PendingPaymentCard({ amountCents, startedAt, bare = false }) {
-  const body = pendingPaymentCopy({ amountCents, startedAt });
+  const body = pendingPaymentBody({ amountCents, startedAt });
   if (bare) {
     return (
       <p className="proposal-paid-sub" role="status" aria-live="polite">
-        <strong>{PENDING_PAYMENT_TITLE}</strong> {body}
+        <strong>{PENDING_PAYMENT_TITLE}</strong> {body} <PendingPaymentContact />
       </p>
     );
   }
   return (
     <div className="proposal-paid-card is-pending" role="status" aria-live="polite">
-      <h3 className="proposal-paid-title">{PENDING_PAYMENT_TITLE}</h3>
-      <p className="proposal-paid-sub">{body}</p>
+      <p className="proposal-paid-title">{PENDING_PAYMENT_TITLE}</p>
+      <p className="proposal-paid-sub">{body} <PendingPaymentContact /></p>
     </div>
   );
 }

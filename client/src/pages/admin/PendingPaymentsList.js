@@ -29,7 +29,7 @@ export default function PendingPaymentsList({ pendingPayments }) {
           p.invoice_number || null,
         ].filter(Boolean);
         return (
-          <div key={`${p.started_at}-${i}`} className="tiny" style={{ color: 'var(--amber-700, #8a5a00)' }}>
+          <div key={`${p.started_at}-${i}`} className="tiny pending-payments-line">
             {parts.join(', ')}
           </div>
         );

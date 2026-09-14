@@ -1,5 +1,5 @@
 import React from 'react';
-import { PENDING_PAYMENT_TITLE, pendingPaymentCopy } from '../../../components/PendingPaymentCard';
+import { PENDING_PAYMENT_TITLE, pendingPaymentBody, PendingPaymentContact } from '../../../components/PendingPaymentCard';
 
 // The box the drink-plan celebration screens (v1 and v2) show after a Stripe
 // return. Bank debit in flight (spec 2026-09-14 section 8.4): Stripe appends
@@ -36,7 +36,7 @@ export default function PaymentReturnNotice({ paid, pending, failed = false }) {
     return (
       <div role="status" style={boxStyle('193, 125, 60')}>
         <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>{PENDING_PAYMENT_TITLE}</p>
-        <p className="text-muted text-small">{pendingPaymentCopy({ amountCents: null, startedAt: null })}</p>
+        <p className="text-muted text-small">{pendingPaymentBody({ amountCents: null, startedAt: null })} <PendingPaymentContact /></p>
       </div>
     );
   }

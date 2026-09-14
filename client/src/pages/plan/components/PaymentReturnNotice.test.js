@@ -25,6 +25,7 @@ test('a bank-debit return says the payment is processing and never received or s
   expect(container.textContent).toMatch(/We received your bank payment\. Bank payments take four to six business days/);
   expect(container.textContent).not.toMatch(/Payment Received|successful|\$/);
   expect(container.textContent).not.toMatch(/—/);
+  expect(container.querySelector('a').getAttribute('href')).toBe('mailto:contact@drbartender.com');
 });
 
 test('no return renders nothing', () => {

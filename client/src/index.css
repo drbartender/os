@@ -9636,6 +9636,27 @@ html[data-app="admin-os"] .location-suggest-item.active {
     align-self: start;
   }
 }
+/* Bank debit in flight (spec 2026-09-14 section 8.2). The shared card inherits
+   the proposal card's centred text; in the 280px rail that is a 188px column of
+   ten centred lines, so it reads left-aligned here. Below the two-column
+   breakpoint the rail moves above the document while a payment is pending:
+   a client who opens the link to ask "did it go through" gets the answer
+   first instead of below the whole invoice. */
+.invoice-actions .proposal-paid-card.is-pending {
+  align-items: stretch;
+  text-align: left;
+}
+.invoice-actions .proposal-paid-card.is-pending .proposal-paid-title {
+  font-size: 1.15rem;
+  text-wrap: pretty;
+}
+.invoice-actions .proposal-paid-card.is-pending .proposal-paid-sub {
+  max-width: none;
+  text-wrap: pretty;
+}
+@media (max-width: 1023px) {
+  .invoice-layout.is-pending .invoice-actions { order: -1; }
+}
 .invoice-actions-summary {
   text-align: center;
   margin-bottom: 4px;
@@ -11630,6 +11651,7 @@ html[data-app="admin-os"][data-skin="light"] .chip .chip-dot { display: none; }
 html[data-app="admin-os"][data-skin="light"] .chip.neutral { color: var(--ink-3); }
 html[data-app="admin-os"][data-skin="light"] .chip.ok { color: var(--ms-emerald); }
 html[data-app="admin-os"][data-skin="light"] .chip.warn { color: var(--ms-camel); }
+html[data-app="admin-os"][data-skin="light"] .pending-payments-line { color: var(--ms-camel); }
 html[data-app="admin-os"][data-skin="light"] .chip.danger { color: var(--ms-bordeaux); }
 html[data-app="admin-os"][data-skin="light"] .chip.info { color: var(--ms-navy); }
 html[data-app="admin-os"][data-skin="light"] .chip.violet { color: #4a2a5a; }
@@ -13472,6 +13494,11 @@ html[data-app="admin-os"] .chip.warn {
   color: hsl(38 92% 60%);
 }
 html[data-app="admin-os"] .chip.warn .chip-dot { background: hsl(38 92% 56%); }
+/* Bank debit in flight (spec 2026-09-14 section 10): the Processing line on
+   the proposal payment panel. Same warning hue as .chip.warn, weight 500 so it
+   out-ranks the neutral labels beside it: it is the line that stops a second
+   charge while money is in flight. The --amber* names are teal, never use them. */
+html[data-app="admin-os"] .pending-payments-line { color: hsl(38 92% 60%); font-weight: 500; }
 
 html[data-app="admin-os"] .chip.danger {
   background: hsl(358 72% 55% / 0.14);

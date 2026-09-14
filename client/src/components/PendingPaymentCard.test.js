@@ -14,6 +14,9 @@ test('renders the title, the amount, the start date, the clearing copy and the c
   expect(t).toMatch(/email contact@drbartender\.com/);
   expect(t).not.toMatch(/—/);
   expect(container.querySelector('[role="status"]')).not.toBeNull();
+  // The address is a real link (the only way out of the invoice page once Pay is gone), and the status is not a heading.
+  expect(container.querySelector('a').getAttribute('href')).toBe('mailto:contact@drbartender.com');
+  expect(container.querySelector('h1, h2, h3, h4')).toBeNull();
 });
 
 test('formats the start date in local time, not UTC: a Chicago-evening confirm stays on its own day', () => {

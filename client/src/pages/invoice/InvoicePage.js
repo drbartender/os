@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import * as Sentry from '@sentry/react';
-import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import api from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
@@ -134,11 +133,16 @@ export default function InvoicePage() {
   useEffect(() => {
     if (!invoice || invoice.status === 'paid' || paymentSuccess) return;
     // A bank debit in flight hides Pay and the payment element: no form to
-    // build, so no publishable-key fetch and no Stripe.js for this visit.
+    // build, so no publishable-key fetch and no Stripe.js for this visit. The
+    // Stripe.js loader is imported here, not at the top of the file: a static
+    // import injects the v3 script and its metrics frame on every load as a
+    // side effect, whether or not loadStripe is ever called.
     if (pendingPayment) return;
     if (stripePromise) return;
-    api.get('/stripe/publishable-key').then(({ data }) => {
-      if (data.key) setStripePromise(loadStripe(data.key));
+    api.get('/stripe/publishable-key').then(async ({ data }) => {
+      if (!data.key) return;
+      const { loadStripe } = await import('@stripe/stripe-js');
+      setStripePromise(loadStripe(data.key));
     }).catch(() => {});
   }, [invoice, paymentSuccess, stripePromise, pendingPayment]);
 
@@ -278,7 +282,7 @@ export default function InvoicePage() {
 
   return (
     <div className="invoice-page">
-      <div className="invoice-layout">
+      <div className={`invoice-layout${pending ? ' is-pending' : ''}`}>
         <div className="invoice-document" ref={printRef}>
           {/* Header — brass eyebrow + INVOICE + mono number on left, brand block on right */}
           <div className="invoice-header">
