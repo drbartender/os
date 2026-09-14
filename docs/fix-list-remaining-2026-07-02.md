@@ -1098,6 +1098,15 @@ the accented spelling) or the two spellings stop matching each other.
     takes `FOR UPDATE OF dp` afterwards, so a consult save racing an approve can revert a
     now-finalized plan's list to `pending_review`. Move the check inside the transaction, the way
     the list PUT and the approve flip now carry `finalized_at IS NULL` in their UPDATEs.
+  - `labListRefresh.js`'s stage UPDATE is the one `drink_plans` writer in the seam set with no
+    finalize guard (only `shopping_list_status IS DISTINCT FROM 'approved'`). Two callers: the lab
+    PUT's post-commit `setImmediate` (exposed only to a finalize landing between the lab COMMIT and
+    the deferred refresh) and `proposals/cancelLineItem.js:252` (no finalize check at all, and
+    cancels now routinely happen post-lock since finalize lands at approve). Uncovered set is a
+    hosted plan still carrying a stale unapproved list, i.e. the five rows the hosted entry above
+    already clears. Add `finalized_at IS NULL` to that UPDATE and skip the refresh on a finalized
+    plan; folds into the `stageShoppingList()` helper the hosted entry proposes. Surfaced by the
+    push-time seam sweep, 2026-09-11.
   - Two definitions of hosted in one flow: finalize and `shoppingListGen` use
     `category='hosted' AND bar_type<>'class'`; the approve action's recipient logic uses
     `pricing_type='per_guest'`. Nothing ties the two columns, so a hosted/flat row would finalize

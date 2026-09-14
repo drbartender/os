@@ -479,18 +479,25 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
 
 /** PATCH /api/drink-plans/:id/status — update plan status. Carries the
  *  drink-plan write limiter like finalize/unfinalize: a flip to reviewed now
- *  runs the derived finalize transaction too. */
+ *  runs the derived finalize transaction too. The finalize lock lives INSIDE
+ *  the UPDATE (not a pre-check): an approve in another tab can finalize the
+ *  plan between a check and the write, and a status change must never land
+ *  on a finalized plan. Zero rows on an existing plan is that lock. */
 router.patch('/:id/status', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
-  await ensureNotFinalized(parseInt(req.params.id, 10));
+  const planId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(planId)) throw new NotFoundError('Plan not found.');
   const { status } = req.body;
   if (!['pending', 'draft', 'submitted', 'reviewed'].includes(status)) {
     throw new ValidationError({ status: 'Invalid status.' });
   }
   const result = await pool.query(
-    'UPDATE drink_plans SET status = $1 WHERE id = $2 RETURNING *',
-    [status, req.params.id]
+    'UPDATE drink_plans SET status = $1 WHERE id = $2 AND finalized_at IS NULL RETURNING *',
+    [status, planId]
   );
-  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  if (!result.rows[0]) {
+    await ensureNotFinalized(planId); // throws the lock 409 when that is why
+    throw new NotFoundError('Plan not found.');
+  }
   // Snapshot blob stays off the wire (same as the by-proposal create path).
   let { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
   if (status !== 'reviewed') return res.json(statusRow);
@@ -498,7 +505,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, drinkPlanWriteLimiter, 
   // finalize state (reviewed + list approved, or hosted). Never throws; the
   // status flip above stands either way and `beo` tells the admin what
   // happened (finalized, or why not) so the card can toast it.
-  const auto = await autoFinalizeIfEligible(parseInt(req.params.id, 10), req.user.id, 'reviewed');
+  const auto = await autoFinalizeIfEligible(planId, req.user.id, 'reviewed');
   if (auto.plan) statusRow = auto.plan;
   res.json({ ...statusRow, beo: beoReport(auto) });
 }));

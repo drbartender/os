@@ -319,8 +319,13 @@ test('PATCH /:id/status reviewed on an approved-list plan finalizes, reports beo
   assert.equal(res.body.beo.finalized, true);
   assert.ok(!('shopping_list_approved_snapshot' in res.body));
 
+  // The lock is inside the status UPDATE itself (no pre-check to race): the
+  // write matches zero rows, the route translates that to the lock 409, and
+  // the finalized plan keeps its status.
   const again = await request('PATCH', `/api/drink-plans/${planId}/status`, { token: adminToken, body: { status: 'submitted' } });
   assert.equal(again.status, 409);
+  assert.equal(again.body.code, 'finalized');
+  assert.equal((await planRow(planId)).status, 'reviewed', 'a finalized plan never changes status');
 
   const put = await request('PUT', `/api/drink-plans/${planId}/shopping-list`, {
     token: adminToken, body: { shopping_list: JSON.parse(LIST) },
