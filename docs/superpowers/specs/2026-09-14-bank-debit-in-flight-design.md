@@ -27,6 +27,8 @@ Both of the 2026-08-28 fix-list entries under "An async payment method traps the
 - **D4. Reminders defer, never suppress**, while a payment is in flight. A bounced debit resumes the ladder.
 - **D5. The client gets one email when the processing event lands.** Email only, no text. It answers "did it go through" before they come back to pay again.
 - **D6. An in-flight payment expires after 14 days.** Backstop for a lost failed event: a processing row can never lock an invoice forever.
+- **D8. The three checkout rails pin their payment methods to card, Link and bank debit** (review round 2026-09-14). Every processing statement the system makes says "bank payment"; pinning makes that true by construction. Cash App, Klarna, Affirm and Amazon Pay produced two successful charges between June and September against about a hundred by card and Link. One constant, `CHECKOUT_PAYMENT_METHOD_TYPES` in `stripeRouteHelpers.js`, reversible in one line; re-adding a method means teaching the processing copy to tell methods apart.
+- **D9. A failed row is still a live intent.** A declined card leaves the intent alive at Stripe and the client can retry the same intent with a bank account. The processing handler moves `pending` and `failed` rows; the Stripe-side backstop and the autopay guard scan `failed` rows too. Found independently by the database review, the code review and the author on 2026-09-14.
 - **D7. The Stripe read on the rails fails closed.** If Stripe cannot say whether a recent intent is settling, the rail returns the existing `ExternalServiceError` ("Payment temporarily unavailable", HTTP 502, the code that class has always carried) rather than mint. Same rule as the autopay guard and the option switch.
 
 ## 3. Data model
@@ -49,6 +51,11 @@ New module `server/utils/paymentInFlight.js`:
 - `toPublicPending(rows)` returns the newest row as `{ amount_cents, started_at, invoice_id, invoice_number }` or `null`. The intent id never reaches a public payload.
 - `assertNoIntentSettlingAtStripe({ proposalId, stripe, db = pool })`: the webhook-independent backstop for the two rails. Selects `stripe_sessions` rows for the proposal with `status = 'pending'`, an intent id, and `created_at > NOW() - INTERVAL '14 days'`, newest first, LIMIT 5. Retrieves them from Stripe in parallel with the same per-request timeout the option switch uses. If any retrieved intent is `processing` or `succeeded`, throws `ConflictError(PAYMENT_IN_FLIGHT)` with the message in 5.1 built from that intent's amount and, for a processing intent, its `created` time. A `resource_missing` retrieve is skipped. Any other retrieve failure throws `ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.')`, HTTP 502 (D7).
 
+- `assertNoPaymentInFlight({ proposalId, stripe, timeZone })` (review round): what the three rails call. One DB read of the proposal's recent rows; a processing row refuses at once; otherwise the newest five pending or failed intents are read from Stripe (ten-second timeout, one network retry) and refused when `processing`, `succeeded` (its own copy: "We have already received this payment and are recording it now. Refresh the page in a moment."), or `requires_action` with `next_action.type = verify_with_microdeposits` (its own copy, "waiting on a verification step"). Returns the intents it fetched so the deposit rail's reuse branch does not retrieve the same one again.
+- `IN_FLIGHT_LATERAL_SQL` and `pendingFromLateralRow`: the polled payment-state route joins the in-flight lookup in one round trip; the definition still lives in this module.
+- `findStaleProcessingPayments()`: rows processing for more than 8 days, reported hourly by `balanceInvoiceMonitor.js` as a Sentry warning (a lost failed event is the usual cause).
+- Indexed: `idx_stripe_sessions_proposal_processing`, partial on `status = 'processing'`.
+
 Every consumer below calls this module. Nothing else reads `status = 'processing'` directly.
 
 ## 4. Webhook
@@ -60,13 +67,13 @@ Dispatched from `stripeWebhook.js` on `event.type === 'payment_intent.processing
 In one transaction:
 
 1. Resolve `invoiceId`: `Number(intent.metadata.invoice_id)` if it names an invoice whose `proposal_id` is this proposal, else NULL.
-2. `UPDATE stripe_sessions SET status = 'processing', processing_at = NOW(), invoice_id = COALESCE($invoice, invoice_id) WHERE stripe_payment_intent_id = $1 AND status = 'pending' RETURNING id`.
+2. `UPDATE stripe_sessions SET status = 'processing', processing_at = NOW(), invoice_id = COALESCE($invoice, invoice_id) WHERE stripe_payment_intent_id = $1 AND proposal_id = $proposal AND status IN ('pending', 'failed') RETURNING id` (scoped by proposal like every sibling writer; `failed` per D9).
 3. If nothing matched and no row exists for the intent at all, `INSERT` one with `status = 'processing'`, `processing_at = NOW()`, the proposal id, `intent.amount`, and the invoice id, `ON CONFLICT (stripe_payment_intent_id) DO NOTHING`. A missing row means an intent minted outside the app that still carries our metadata; the guard must see it.
 4. Only when a row actually transitioned (UPDATE rowCount 1, or the INSERT landed): insert `proposal_activity_log (action = 'payment_processing', actor_type = 'system', details = { amount, payment_intent_id, payment_type, invoice_id })`.
 
 The `status = 'pending'` guard makes a redelivery a no-op and means a processing event that arrives after the succeeded event can never downgrade a settled payment.
 
-Post-commit, best effort, only when a row transitioned: the client email in section 9.
+Post-commit, best effort, only when a row transitioned: the client email in section 9, and an admin email (review round): the signing route suppresses its own admin email when an intent is pending on the premise that a Signed and Paid email follows the succeeded webhook, which for a bank debit is days away. `urgent_booking` for a deposit or full payment, `routine_finance` otherwise.
 
 ### 4.2 Existing handlers
 
@@ -85,7 +92,7 @@ Post-commit, best effort, only when a row transitioned: the client email in sect
 
 Three rails mint intents on a proposal, and all three carry both guards. The third, `create-drink-plan-intent` (`server/routes/stripe.js`), can fold a past-due balance into its charge (`drink_plan_with_balance`), so a balance already settling by bank debit would be charged again there; found by the server lane's reader audit and the client review on 2026-09-14. Its guards sit after the `noPaymentNeeded` early return, so a plan that owes nothing still submits while a deposit is processing.
 
-Order on `create-intent-for-invoice` (`server/routes/stripe.js`): invoice fetch (404), archived guard (409), extension gate, **in-flight guard**, balance check, **Stripe backstop**, customer, create, insert. Order on the deposit rail (`stripeCreateIntent.js`): after the proposal is loaded and before the existing newest-pending-intent reuse logic: **in-flight guard**, then **Stripe backstop**, then the existing reuse and stale-cancel logic unchanged.
+Order on `create-intent-for-invoice` (`server/routes/stripe.js`): invoice fetch (404), archived guard (409), extension gate, balance check (`ALREADY_PAID` keeps its own answer), **the combined guard** (`assertNoPaymentInFlight`), customer, create, insert. Order on the deposit rail (`stripeCreateIntent.js`): after the proposal is loaded and before the existing newest-pending-intent reuse logic: **the combined guard**, whose fetched intents the reuse branch reads instead of retrieving again; the stale-cancel logic is unchanged.
 
 - **In-flight guard:** `findInFlightPayments(proposalId)` non-empty throws `ConflictError(message, 'PAYMENT_IN_FLIGHT')`.
 - **Stripe backstop:** `assertNoIntentSettlingAtStripe`.
@@ -95,8 +102,8 @@ Order on `create-intent-for-invoice` (`server/routes/stripe.js`): invoice fetch 
 
 ### 5.2 Readers of `stripe_sessions.status` that widen
 
-- `server/utils/autopayDurableCharge.js` `priorBalanceChargeSettling`: the scan becomes `status IN ('pending', 'processing')`. Stripe still decides; a processing row that Stripe now reports terminal does not block. Without this, a settling bank debit that the webhook flipped to `processing` would drop out of the scan and autopay could charge the saved card on top of it.
-- `server/routes/proposals/publicSwitch.js`, both scans (near lines 229 and 520): `status IN ('pending', 'failed', 'processing')`. A processing intent is in flight by definition.
+- `server/utils/autopayDurableCharge.js` `priorBalanceChargeSettling`: reads `findInFlightPayments` first and skips on any processing row whatever the intent's metadata (a Balance invoice paid by bank debit carries `payment_type: invoice`, which the metadata classification alone would scan past; review H1). The Stripe-side scan becomes `status IN ('pending', 'processing', 'failed')` and an `invoice` intent counts as balance-covering. Stripe still decides; a processing row that Stripe now reports terminal does not block. Without this, a settling bank debit that the webhook flipped to `processing` would drop out of the scan and autopay could charge the saved card on top of it.
+- `server/routes/proposals/publicSwitch.js`, both scans (near lines 229 and 520): `status IN ('pending', 'failed', 'processing')`. A processing intent is in flight by definition. Its 409 copy now says a bank payment clears in four to six business days and the proposal stays as it is until then.
 
 ### 5.3 Readers that stay as they are
 

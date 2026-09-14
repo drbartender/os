@@ -20,6 +20,8 @@ lanes:
       - server/routes/stripe.js                                # invoice rail guard + insert carries invoice_id (spec 5.1)
       - server/routes/stripe.invoiceIntentInFlight.test.js
       - server/routes/stripe.drinkPlanIntentInFlight.test.js   # review round: third rail (spec 5.1)
+      - server/utils/stripeRouteHelpers.js                     # review round: CHECKOUT_PAYMENT_METHOD_TYPES (spec D8)
+      - server/utils/balanceInvoiceMonitor.js                  # review round: stale processing warning (spec 3.2)
       - server/routes/stripeCreateIntent.js                    # deposit rail guard (spec 5.1)
       - server/routes/stripeCreateIntent.test.js               # exists: extend
       - server/utils/autopayDurableCharge.js                   # scan widens (spec 5.2)
@@ -68,6 +70,7 @@ lanes:
       - client/src/pages/plan/v2/steps/CelebrationV2.js        # review round (spec 8.4)
       - client/src/pages/plan/v2/steps/CelebrationV2.test.js
       - client/src/pages/plan/PotionPlanningLab.js             # review round (spec 8.4); shrinks by 9 lines
+      - client/src/pages/plan/steps/ConfirmationStep.js        # review round: surfaces the 409 message (spec 5.1)
       - README.md
     depends_on: []
     review: full            # client half of a payment path; the invoice page and proposal page are money surfaces
@@ -3147,7 +3150,7 @@ MSG
 
 ## Review round, 2026-09-14
 
-Both lanes were built as written and reviewed by the full fleet before merge. The fleet's findings and the fixes are recorded in spec sections 5.1 (third rail), 8.3 (pending copy, invoice confirm statuses) and 8.4 (drink-plan celebration screens); the footprints above carry the extra files. Two plan corrections found in execution: `ExternalServiceError` is HTTP 502, not 503 (Tasks S3 and S6 assert 502), and `invoices.invoice_number` is VARCHAR(20), so fixtures use a 16-character number.
+Both lanes were built as written and reviewed by the full fleet before merge. The fleet's findings and the fixes are recorded in spec sections 5.1 (third rail), 8.3 (pending copy, invoice confirm statuses) and 8.4 (drink-plan celebration screens); the footprints above carry the extra files. The server fleet's round added D8 (pinned payment methods), D9 (failed rows are live intents), the combined rail guard, the autopay in-flight read, the one-round-trip poll, the partial index, the admin processing email and the stale-row warning; the client fleet's second round added the failed drink-plan return, the proposal page's 409 latch and the confirmation step's 409 message. Two plan corrections found in execution: `ExternalServiceError` is HTTP 502, not 503 (Tasks S3 and S6 assert 502), and `invoices.invoice_number` is VARCHAR(20), so fixtures use a 16-character number.
 
 ## Self-review against the spec
 
