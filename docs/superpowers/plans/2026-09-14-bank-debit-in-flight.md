@@ -19,6 +19,7 @@ lanes:
       - server/routes/stripeWebhook.processing.test.js
       - server/routes/stripe.js                                # invoice rail guard + insert carries invoice_id (spec 5.1)
       - server/routes/stripe.invoiceIntentInFlight.test.js
+      - server/routes/stripe.drinkPlanIntentInFlight.test.js   # review round: third rail (spec 5.1)
       - server/routes/stripeCreateIntent.js                    # deposit rail guard (spec 5.1)
       - server/routes/stripeCreateIntent.test.js               # exists: extend
       - server/utils/autopayDurableCharge.js                   # scan widens (spec 5.2)
@@ -57,6 +58,16 @@ lanes:
       - client/src/pages/admin/PendingPaymentsList.js          # new (spec 10)
       - client/src/pages/admin/PendingPaymentsList.test.js
       - client/src/pages/admin/ProposalDetailPaymentPanel.js   # reads pending_payments, renders the list (spec 10)
+      - client/src/pages/proposal/proposalView/PaymentTermsBox.js          # review round: pending copy (spec 8.3)
+      - client/src/pages/proposal/proposalView/PaymentTermsBox.test.js
+      - client/src/pages/proposal/proposalView/ProposalPricingBreakdown.js # review round: Total prints Pending (spec 8.3)
+      - client/src/pages/proposal/proposalView/ProposalPricingBreakdown.test.js
+      - client/src/pages/plan/components/PaymentReturnNotice.js  # review round: drink-plan return notice (spec 8.4)
+      - client/src/pages/plan/components/PaymentReturnNotice.test.js
+      - client/src/pages/plan/v2/PlannerV2.js                  # review round: reads redirect_status (spec 8.4)
+      - client/src/pages/plan/v2/steps/CelebrationV2.js        # review round (spec 8.4)
+      - client/src/pages/plan/v2/steps/CelebrationV2.test.js
+      - client/src/pages/plan/PotionPlanningLab.js             # review round (spec 8.4); shrinks by 9 lines
       - README.md
     depends_on: []
     review: full            # client half of a payment path; the invoice page and proposal page are money surfaces
@@ -3133,6 +3144,10 @@ MSG
 ```
 
 ---
+
+## Review round, 2026-09-14
+
+Both lanes were built as written and reviewed by the full fleet before merge. The fleet's findings and the fixes are recorded in spec sections 5.1 (third rail), 8.3 (pending copy, invoice confirm statuses) and 8.4 (drink-plan celebration screens); the footprints above carry the extra files. Two plan corrections found in execution: `ExternalServiceError` is HTTP 502, not 503 (Tasks S3 and S6 assert 502), and `invoices.invoice_number` is VARCHAR(20), so fixtures use a 16-character number.
 
 ## Self-review against the spec
 

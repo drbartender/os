@@ -27,7 +27,7 @@ Both of the 2026-08-28 fix-list entries under "An async payment method traps the
 - **D4. Reminders defer, never suppress**, while a payment is in flight. A bounced debit resumes the ladder.
 - **D5. The client gets one email when the processing event lands.** Email only, no text. It answers "did it go through" before they come back to pay again.
 - **D6. An in-flight payment expires after 14 days.** Backstop for a lost failed event: a processing row can never lock an invoice forever.
-- **D7. The Stripe read on the rails fails closed.** If Stripe cannot say whether a recent intent is settling, the rail returns the existing 503 "Payment temporarily unavailable" rather than mint. Same rule as the autopay guard and the option switch.
+- **D7. The Stripe read on the rails fails closed.** If Stripe cannot say whether a recent intent is settling, the rail returns the existing `ExternalServiceError` ("Payment temporarily unavailable", HTTP 502, the code that class has always carried) rather than mint. Same rule as the autopay guard and the option switch.
 
 ## 3. Data model
 
@@ -47,7 +47,7 @@ New module `server/utils/paymentInFlight.js`:
 - `IN_FLIGHT_MAX_AGE_DAYS = 14`.
 - `findInFlightPayments(proposalId, db = pool)` returns, newest first: `[{ stripe_payment_intent_id, amount_cents, started_at, invoice_id, invoice_number }]` for rows where `status = 'processing' AND processing_at > NOW() - INTERVAL '14 days'`, joining `invoices` for the number. `amount_cents` is `stripe_sessions.amount` (cents, Stripe native). `started_at` is `processing_at`.
 - `toPublicPending(rows)` returns the newest row as `{ amount_cents, started_at, invoice_id, invoice_number }` or `null`. The intent id never reaches a public payload.
-- `assertNoIntentSettlingAtStripe({ proposalId, stripe, db = pool })`: the webhook-independent backstop for the two rails. Selects `stripe_sessions` rows for the proposal with `status = 'pending'`, an intent id, and `created_at > NOW() - INTERVAL '14 days'`, newest first, LIMIT 5. Retrieves them from Stripe in parallel with the same per-request timeout the option switch uses. If any retrieved intent is `processing` or `succeeded`, throws `ConflictError(PAYMENT_IN_FLIGHT)` with the message in 5.1 built from that intent's amount and, for a processing intent, its `created` time. A `resource_missing` retrieve is skipped. Any other retrieve failure throws `ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.')` (D7).
+- `assertNoIntentSettlingAtStripe({ proposalId, stripe, db = pool })`: the webhook-independent backstop for the two rails. Selects `stripe_sessions` rows for the proposal with `status = 'pending'`, an intent id, and `created_at > NOW() - INTERVAL '14 days'`, newest first, LIMIT 5. Retrieves them from Stripe in parallel with the same per-request timeout the option switch uses. If any retrieved intent is `processing` or `succeeded`, throws `ConflictError(PAYMENT_IN_FLIGHT)` with the message in 5.1 built from that intent's amount and, for a processing intent, its `created` time. A `resource_missing` retrieve is skipped. Any other retrieve failure throws `ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.')`, HTTP 502 (D7).
 
 Every consumer below calls this module. Nothing else reads `status = 'processing'` directly.
 
@@ -82,6 +82,8 @@ Post-commit, best effort, only when a row transitioned: the client email in sect
 ## 5. Guards
 
 ### 5.1 Both checkout rails
+
+Three rails mint intents on a proposal, and all three carry both guards. The third, `create-drink-plan-intent` (`server/routes/stripe.js`), can fold a past-due balance into its charge (`drink_plan_with_balance`), so a balance already settling by bank debit would be charged again there; found by the server lane's reader audit and the client review on 2026-09-14. Its guards sit after the `noPaymentNeeded` early return, so a plan that owes nothing still submits while a deposit is processing.
 
 Order on `create-intent-for-invoice` (`server/routes/stripe.js`): invoice fetch (404), archived guard (409), extension gate, **in-flight guard**, balance check, **Stripe backstop**, customer, create, insert. Order on the deposit rail (`stripeCreateIntent.js`): after the proposal is loaded and before the existing newest-pending-intent reuse logic: **in-flight guard**, then **Stripe backstop**, then the existing reuse and stale-cancel logic unchanged.
 
@@ -153,7 +155,14 @@ Amount in dollars with two decimals, date via the instant formatter the invoice 
 - `settlePoll.js`: a state carrying `pending_payment` is terminal: `{ state, reason: 'pending' }`.
 - `useSettle.js`: reason `'pending'` refetches the proposal and lands phase `'pending'` regardless of `isPaidState`. The refetch failing lands `'fallback'` as today.
 - `ProposalView.js`: `const pendingPayment = proposal.pending_payment || settlePending || null` where `settlePending` is the poll's value when the refetch did not carry one. `isPayableStatus`, `showSignAndPay` and `showPayOnly` all require `!pendingPayment`. `PaidCard` renders when `settling || isPaid || pendingPayment`, with phase `'pending'` when `pendingPayment && !isPaid`. The file is 912 lines; this lane nets under +15 to it and puts everything it can in the modules above.
-- `PaymentTermsBox` and the pricing breakdown treat a pending state like settling: no numeric claim.
+- `PaymentTermsBox` and the pricing breakdown treat a pending state like settling: no numeric claim. Decided in review 2026-09-14: settling was built for a twenty-second window and a bank debit holds it for days, so both surfaces also receive the pending flag and say so. The Total cell prints `Pending` (not a bare dash), the terms box prints "Your bank payment is processing. Your payment terms will update when it clears.", and on a deposit-paid row with a balance settling the due-by row becomes "Balance payment: Processing". The autopay branch of the paid card gives way to the processing copy too: autopay will not charge while money is in flight, so "will be automatically charged" would be false for the window.
+- A fully paid row with a pending payment (only reachable from a duplicate minted before this design, or an intent minted outside the app) keeps its "Fully paid" card and shows no processing copy. Accepted corner, not built.
+- `InvoicePage` treats only a `succeeded` confirm result as success. `processing` lands the pending card; `requires_action` (a bank account that needs microdeposit verification) or any other status shows "This bank payment still needs a verification step. Check your email from Stripe for what to do next, then come back to this page." and never claims payment. While a payment is pending the page fetches no publishable key and loads no Stripe.js. After a 409 `PAYMENT_IN_FLIGHT` the Pay button stays hidden until reload even when the row carries no processing payment yet.
+- The shared card carries a closing line, "If anything looks wrong, email contact@drbartender.com.", and formats `started_at` in the viewer's local time like every other instant on the client.
+
+### 8.4 Drink-plan celebration screens (added in review 2026-09-14)
+
+The drink-plan checkout (`ConfirmationStep.js`) confirms in full-redirect mode and returns to the planner with `?paid=true`; both celebration screens (`CelebrationV2.js`, `PotionPlanningLab.js`) rendered "Payment Received, processed successfully" on that flag alone. A bank debit returns with `redirect_status=processing`, so they claimed success for money that had not moved. One shared `client/src/pages/plan/components/PaymentReturnNotice.js` reads `paid` and `redirect_status` (`readPaymentReturn`) and renders the processing copy (no amount is known on this rail) or the received box. The server side of this rail is covered by 5.1.
 
 ## 9. Client email on processing
 
@@ -186,7 +195,8 @@ Client (jest from `client/`, `CI=true npx react-scripts test --testPathPattern=<
 - `InvoicePage.test.js`: a confirm resolving with `status: 'processing'` renders the card and no PAID stamp; a loaded invoice with `pending_payment` hides Pay; a 409 shows its message.
 - `PaidCard.test.js`: phase `'pending'`; paid plus `pendingPayment` hides Pay balance.
 - `settlePoll.test.js` and `useSettle.test.js`: the pending terminal and phase.
-- `ProposalView` tests: pay controls hidden when `pending_payment` is set.
+- `ProposalView` gating: `checkoutVisibility.test.js` pins the pure rules and is the accepted substitute for a rendered-page test (decided in review 2026-09-14; the page has no render harness and the wiring is three lines that a code reviewer verified by reading).
+- `PaymentReturnNotice.test.js` and `CelebrationV2.test.js`: a processing return says processing, a card return says received.
 
 Existing suites the change reaches are run: every `stripeWebhook.*.test.js`, `stripeCreateIntent.test.js`, `stripe.*.test.js`, `autopayDurableCharge*.test.js`, `publicSwitch*.test.js`, `balanceReminder*` and `balanceSms*` and `scheduledMessageDispatcher*` tests, `invoices*.test.js`, `publicToken*.test.js`, the client proposal-view and invoice-page suites.
 
