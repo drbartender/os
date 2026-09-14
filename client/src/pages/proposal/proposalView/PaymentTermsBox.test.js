@@ -53,3 +53,18 @@ test('a deposit-paid row shows what was paid, the true remainder, and the due da
   expect(container.textContent).toMatch(/\$450\.00/);
   expect(container.textContent).toMatch(/Balance due by/);
 });
+
+test('settling with a pending bank debit names the wait instead of the seconds-long confirming line', () => {
+  const { container } = render(<PaymentTermsBox state={none} {...base} settling pending />);
+  expect(container.textContent).toMatch(/Your bank payment is processing\. Your payment terms will update when it clears\./);
+  expect(container.textContent).not.toMatch(/Confirming your payment/);
+  expect(container.textContent).not.toMatch(/\$/);
+});
+
+test('deposit paid with a pending balance payment shows the balance as processing, not due by a date', () => {
+  const { container } = render(<PaymentTermsBox state={deposit} {...base} pending />);
+  expect(container.textContent).toMatch(/Deposit paid/);
+  expect(container.textContent).toMatch(/Remaining balance/);
+  expect(container.textContent).toMatch(/Balance paymentProcessing/);
+  expect(container.textContent).not.toMatch(/Balance due by/);
+});

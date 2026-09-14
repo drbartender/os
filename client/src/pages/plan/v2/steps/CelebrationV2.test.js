@@ -26,3 +26,23 @@ test('a hosted finish with no menu owed still says what comes next', () => {
   expect(screen.queryByText(/shopping list/i)).toBeNull();
   expect(screen.getByText(/run sheet/i)).toBeInTheDocument();
 });
+
+test('a bank-debit return (redirect_status processing) says the payment is processing, never received', () => {
+  render(<CelebrationV2 plan={plan({ package_category: 'byob' })} token="t" selections={{ menuStyle: 'none' }} paidFromRedirect pendingFromRedirect />);
+  expect(screen.getByRole('status').textContent).toMatch(/Your bank payment is processing\./);
+  expect(screen.getByRole('status').textContent).toMatch(/four to six business days/);
+  expect(screen.queryByText(/Payment Received/)).toBeNull();
+  expect(screen.queryByText(/processed successfully/)).toBeNull();
+});
+
+test('a card return still says Payment Received', () => {
+  render(<CelebrationV2 plan={plan({ package_category: 'byob' })} token="t" selections={{ menuStyle: 'none' }} paidFromRedirect pendingFromRedirect={false} />);
+  expect(screen.getByText(/Payment Received/)).toBeInTheDocument();
+  expect(screen.queryByText(/bank payment is processing/)).toBeNull();
+});
+
+test('a failed return says the payment did not go through, never received', () => {
+  render(<CelebrationV2 plan={plan({ package_category: 'byob' })} token="t" selections={{ menuStyle: 'none' }} paidFromRedirect={false} pendingFromRedirect={false} failedFromRedirect />);
+  expect(screen.getByRole('status').textContent).toMatch(/did not go through/);
+  expect(screen.queryByText(/Payment Received/)).toBeNull();
+});

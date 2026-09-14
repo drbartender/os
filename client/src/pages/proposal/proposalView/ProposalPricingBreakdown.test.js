@@ -43,3 +43,11 @@ test('not settling renders the Gratuity line and the snapshot Total', () => {
   expect(table).toMatch(/\$75/);
   expect(pricingTable(container).querySelector('tfoot').textContent).toMatch(/\$350/);
 });
+
+test('settling with a pending bank debit prints Pending for the Total instead of a bare dash, and names the wait', () => {
+  const { container } = render(<ProposalPricingBreakdown {...base} settling pendingPayment />);
+  const foot = pricingTable(container).querySelector('tfoot');
+  expect(foot.textContent).toMatch(/Pending/);
+  expect(foot.textContent).not.toMatch(/\$|—/);
+  expect(container.textContent).toMatch(/Your bank payment is processing/);
+});

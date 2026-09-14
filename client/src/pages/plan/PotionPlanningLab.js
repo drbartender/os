@@ -5,6 +5,7 @@ import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
 import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildHostedStepQueue, hostedActiveModules, HOSTED_GUEST_PREFS_STEP } from './data/servingTypes';
+import PaymentReturnNotice, { readPaymentReturn } from './components/PaymentReturnNotice';
 import { DRINK_UPGRADES, PER_DRINK_UPGRADE_SLUGS } from './data/drinkUpgrades';
 import { nextStepsCopy, menuOwedFor } from './components/nextStepsCopy';
 import { owesShoppingList } from '../../utils/shoppingListOwed';
@@ -100,10 +101,9 @@ export default function PotionPlanningLab() {
 
   // Check if returning from Stripe payment redirect. useMemo so we don't reparse
   // window.location.search on every render of this large component.
-  const paidFromRedirect = useMemo(
-    () => new URLSearchParams(window.location.search).get('paid') === 'true',
-    []
-  );
+  // paid: a Stripe return landed. pending: it was a bank debit still processing
+  // (spec 2026-09-14 section 8.4), which the celebration must not call received.
+  const { paid: paidFromRedirect, pending: pendingFromRedirect, failed: failedFromRedirect } = useMemo(() => readPaymentReturn(window.location.search), []);
 
   // Flow state
   const [step, setStep] = useState('welcome');
@@ -732,16 +732,7 @@ export default function PotionPlanningLab() {
             <p className="text-muted" style={{ marginTop: '0.75rem' }}>
               Thank you, {plan?.client_name || 'friend'}! Your drink selections have been received.
             </p>
-            {paidFromRedirect && (
-              <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(46, 125, 50, 0.08)', borderRadius: '8px', border: '1px solid rgba(46, 125, 50, 0.2)' }}>
-                <p style={{ fontWeight: 600, color: '#2e7d32', marginBottom: '0.25rem' }}>
-                  Payment Received
-                </p>
-                <p className="text-muted text-small">
-                  Your payment has been processed successfully. You'll receive a confirmation email shortly.
-                </p>
-              </div>
-            )}
+            <PaymentReturnNotice paid={paidFromRedirect} pending={pendingFromRedirect} failed={failedFromRedirect} />
             <div style={{ marginTop: '1.25rem', padding: '0.75rem', background: 'rgba(193, 125, 60, 0.08)', borderRadius: '8px' }}>
               <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>
                 What happens next?

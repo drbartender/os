@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
+import PendingPaymentsList from './PendingPaymentsList';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import NotifyConfirmModal from '../../components/comms/NotifyConfirmModal';
 import isPlaceholderEmail from '../../utils/isPlaceholderEmail';
@@ -69,13 +70,20 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // create/send/void, so a send (draft -> sent) re-labels here and in the
   // dropdown at once.
   const [invoices, setInvoices] = useState([]);
+  // Bank debit in flight (spec 2026-09-14 section 10): the same GET carries
+  // every payment still processing on this proposal.
+  const [pendingPayments, setPendingPayments] = useState([]);
   const [sendInvoice, setSendInvoice] = useState(null);
   const [voidingId, setVoidingId] = useState(null);
 
   useEffect(() => {
     let alive = true;
     api.get(`/invoices/proposal/${proposal.id}`)
-      .then(res => { if (alive) setInvoices(res.data.invoices || []); })
+      .then(res => {
+        if (!alive) return;
+        setInvoices(res.data.invoices || []);
+        setPendingPayments(res.data.pending_payments || []);
+      })
       .catch(() => { /* non-fatal: the send-invoice actions just won't render */ });
     return () => { alive = false; };
   }, [proposal.id, invoiceRefreshKey]);
@@ -413,6 +421,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
               the endpoint this panel already read. No `key` remount either —
               the prop carries every refresh, and the open/closed state now
               survives a create/send/void instead of snapping shut. */}
+          <PendingPaymentsList pendingPayments={pendingPayments} />
           <InvoiceDropdown proposalId={proposal.id} invoices={invoices} />
           {sendableInvoices.length > 0 && (
             <div className="vstack" style={{ gap: 6, marginTop: 8 }}>

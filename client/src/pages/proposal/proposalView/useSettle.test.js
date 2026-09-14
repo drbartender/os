@@ -163,3 +163,33 @@ test('a settled poll whose refetch comes back unsettled reaches fallback, never 
   expect(onSettled).not.toHaveBeenCalled();
   expect(onFallback).toHaveBeenCalledWith('refetch_unsettled');
 });
+
+test('a pending payment ends the poll, refetches once, and lands the pending phase with the payment', async () => {
+  const pendingPayment = { amount_cents: 10000, started_at: '2026-09-05T16:05:35.000Z' };
+  const states = [{ status: 'accepted', pending_payment: null }, { status: 'accepted', pending_payment: pendingPayment }];
+  let i = 0;
+  const fetchState = jest.fn(async () => states[i++]);
+  const freshRow = { ...staleRow, pending_payment: pendingPayment };
+  const fetchProposal = jest.fn(async () => freshRow);
+  const onPending = jest.fn();
+  const onSettled = jest.fn();
+  const { result } = renderHook(() => useSettle({ active: true, proposal: staleRow, fetchState, fetchProposal, onSettled, onFallback: jest.fn(), onPending, ...fast }));
+  await waitFor(() => expect(result.current).toBe('pending'));
+  expect(fetchState).toHaveBeenCalledTimes(2);
+  expect(fetchProposal).toHaveBeenCalledTimes(1);
+  expect(onPending).toHaveBeenCalledWith(freshRow, pendingPayment);
+  expect(onSettled).not.toHaveBeenCalled();
+});
+
+test('a pending poll whose refetch already shows a paid row lands paid, never a stale pending', async () => {
+  const pendingPayment = { amount_cents: 40000, started_at: '2026-09-05T16:05:35.000Z' };
+  const fetchState = jest.fn(async () => ({ status: 'deposit_paid', pending_payment: pendingPayment }));
+  const settledRow = { ...paidRow, pending_payment: null };
+  const fetchProposal = jest.fn(async () => settledRow);
+  const onPending = jest.fn();
+  const onSettled = jest.fn();
+  const { result } = renderHook(() => useSettle({ active: true, proposal: staleRow, fetchState, fetchProposal, onSettled, onFallback: jest.fn(), onPending, ...fast }));
+  await waitFor(() => expect(result.current).toBe('paid'));
+  expect(onPending).not.toHaveBeenCalled();
+  expect(onSettled).toHaveBeenCalledWith(settledRow);
+});

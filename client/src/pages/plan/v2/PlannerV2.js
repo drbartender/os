@@ -5,6 +5,7 @@ import FormBanner from '../../../components/FormBanner';
 import { useToast } from '../../../context/ToastContext';
 import { buildQueue, STEP_LABELS, requiredGaps } from './queue';
 import { QUICK_PICKS, hostedActiveModules } from '../data/servingTypes';
+import { readPaymentReturn } from '../components/PaymentReturnNotice';
 
 // Planner v2 (spec 2026-07-18 §3.1/§3.2): pure information gathering. No
 // payment UI, no upsells; any choice that creates a charge discloses it in
@@ -112,7 +113,10 @@ export default function PlannerV2({ token, initialPlan }) {
   const [saveFailed, setSaveFailed] = useState(false);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [paidFromRedirect] = useState(() => new URLSearchParams(window.location.search).get('paid') === 'true');
+  // paid: a Stripe return landed. pending: it was a bank debit still processing
+  // (spec 2026-09-14 section 8.4), which the celebration must not call received.
+  const [paymentReturn] = useState(() => readPaymentReturn(window.location.search));
+  const { paid: paidFromRedirect, pending: pendingFromRedirect, failed: failedFromRedirect } = paymentReturn;
 
   const queue = buildQueue({ isHosted, hostedShape, quickPick });
   // Pickable-pool size for the slots shape (empty pool = explicit none in the
@@ -284,7 +288,7 @@ export default function PlannerV2({ token, initialPlan }) {
       <div className="auth-page potion-app">
         <div className="page-container">
           <Suspense fallback={null}>
-            <CelebrationV2 plan={plan} token={token} selections={selections} paidFromRedirect={paidFromRedirect} />
+            <CelebrationV2 plan={plan} token={token} selections={selections} paidFromRedirect={paidFromRedirect} pendingFromRedirect={pendingFromRedirect} failedFromRedirect={failedFromRedirect} />
           </Suspense>
         </div>
       </div>

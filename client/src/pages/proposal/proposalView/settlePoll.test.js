@@ -99,3 +99,12 @@ test('attempts and interval are configurable', async () => {
   expect(calls).toBe(3);
   expect(sleeps).toEqual([10, 10]);
 });
+
+test('a state carrying pending_payment is terminal with reason pending', async () => {
+  const pendingState = { status: 'accepted', amount_paid: 0, total_price: 350, pending_payment: { amount_cents: 10000, started_at: '2026-09-05T16:05:35.000Z' } };
+  const seq = [{ status: 'accepted', pending_payment: null }, pendingState];
+  let calls = 0;
+  const out = await pollPaymentState({ fetchState: async () => seq[calls++], sleep: noSleep });
+  expect(out).toEqual({ state: pendingState, reason: 'pending' });
+  expect(calls).toBe(2);
+});

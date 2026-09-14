@@ -16,6 +16,7 @@ import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from
 import { applyIntentQuote } from './intentQuote';
 import { paidState, readRedirect } from './paidState';
 import { useSettle } from './useSettle';
+import { checkoutVisibility } from './checkoutVisibility';
 import PaidCard from './PaidCard';
 import OtherOptionsPanel from '../otherOptions/OtherOptionsPanel';
 import SwitchBanner from './SwitchBanner';
@@ -121,14 +122,17 @@ export default function ProposalView() {
   const { redirected, failed: redirectFailed } = useMemo(() => readRedirect(window.location.search), []);
   const paid = redirected && !redirectFailed;
 
-  // Derived flag: is this proposal in a state where payment is still possible?
-  // Mirrors the business logic used below (showSignAndPay / showPayOnly) so
-  // we don't load Stripe.js or create intents for paid/confirmed proposals.
-  const isPayableStatus =
-    !!proposal &&
-    !paid &&
-    !['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) &&
-    ['sent', 'viewed', 'accepted'].includes(proposal.status);
+  // Bank debit in flight (spec 2026-09-14 section 8.3): the poll's pending payment, kept until the row carries its own.
+  const [settlePendingPayment, setSettlePendingPayment] = useState(null);
+  const [payBlocked, setPayBlocked] = useState(false); // 409 PAYMENT_IN_FLIGHT latch, until reload
+  const pendingPayment = (proposal && proposal.pending_payment) || settlePendingPayment || null;
+
+  // Row truth plus the redirect and the pending state. paidInfo is computed
+  // further down from the row; here only the status matters, and the pure
+  // helper reads that. Kept as a const so the intent effects below key on it.
+  const isPayableStatus = checkoutVisibility({
+    proposal, paid, settlePhase: 'idle', isPaid: false, pendingPayment, payBlocked,
+  }).isPayableStatus;
 
   useEffect(() => {
     let cancelled = false;
@@ -218,12 +222,13 @@ export default function ProposalView() {
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposal?.id]);
+  const onPending = useCallback((fresh, pending) => { if (fresh) setProposal(fresh); setSettlePendingPayment(pending || null); }, []);
   // A real redirect always follows a signature (sign-and-pay signs first;
   // pay-only requires a signed row), so an unsigned row with ?paid=true is a
   // typed URL, not a payment, and never enters the settling state.
   const settle = useSettle({
     active: paid && !!proposal?.client_signed_at, proposal,
-    fetchState: fetchPaymentState, fetchProposal: fetchFreshProposal, onSettled, onFallback,
+    fetchState: fetchPaymentState, fetchProposal: fetchFreshProposal, onSettled, onFallback, onPending,
   });
 
   // Seed editable venue from the loaded proposal (once).
@@ -334,13 +339,15 @@ export default function ProposalView() {
         console.error('Failed to load payment intent:', err);
         // eslint-disable-next-line no-restricted-syntax
         setIntentError(err.response?.data?.error || 'Unable to load payment form. Please refresh the page.');
+        // eslint-disable-next-line no-restricted-syntax
+        if (err.response?.data?.code === 'PAYMENT_IN_FLIGHT') { setPayBlocked(true); setDepositSecret(''); setFullSecret(''); fetchFreshProposal().then((fresh) => { if (!cancelled) setProposal(fresh); }).catch(() => {}); }
       } finally {
         if (!cancelled) setLoadingIntent(false);
       }
     })();
 
     return () => { cancelled = true; };
-  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret, tipJar, gratuityTotal, gratuityDirty, gratuityBelowFloor]);
+  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret, tipJar, gratuityTotal, gratuityDirty, gratuityBelowFloor, fetchFreshProposal]);
 
   // A gratuity change invalidates both cached secrets (the full amount changes;
   // the deposit must re-stamp the new election into the intent metadata),
@@ -690,24 +697,15 @@ export default function ProposalView() {
   const fullPaymentRequired = !!policy.full_payment_required;
   const lastMinuteHold = !!policy.last_minute_hold;
 
-  const isAlreadySigned = !!proposal.client_signed_at;
   // ROW truth only. The URL opens the settling state; it never renders the
   // paid card by itself.
   const isPaid = paidInfo.kind !== 'none';
-  // Derived from the redirect and the row, not from the hook's phase, so the
-  // first committed render is already settling. useSettle starts at 'idle' and
-  // only flips inside a passive effect, one commit later; keying on that let a
-  // signed accepted row paint its pay-only section, its "unable to load
-  // payment form" line and its deposit-due rows for a frame, to a client who
-  // had just paid. The hook's phase only ever ADDS the fallback, and only
-  // while the row is unpaid: a paid row is the truth, whatever the hook says.
-  const settling = !isPaid && (settle === 'fallback' || (paid && isAlreadySigned));
-
-  // Combined sign+pay section (new flow)
-  const showSignAndPay = !isPaid && !settling && !isAlreadySigned && ['sent', 'viewed'].includes(proposal.status);
-
-  // Pay-only section (backward compat: already signed under old flow, not yet paid)
-  const showPayOnly = !isPaid && !settling && isAlreadySigned && proposal.status === 'accepted';
+  // Gating is derived from the redirect, the row and the pending payment, not
+  // from the hook's phase, so the first committed render is already settling.
+  // checkoutVisibility.js holds the rules and their reasons.
+  const { settling, showSignAndPay, showPayOnly, showPaidCard, paidCardPhase } = checkoutVisibility({
+    proposal, paid, settlePhase: settle, isPaid, pendingPayment, payBlocked,
+  });
 
   const activeSecret = paymentOption === 'full' ? fullSecret : depositSecret;
   const payLabel = paymentOption === 'full'
@@ -778,6 +776,7 @@ export default function ProposalView() {
               fullPaymentRequired={fullPaymentRequired}
               paid={paidInfo}
               settling={settling}
+              pendingPayment={!!pendingPayment}
               showSignAndPay={showSignAndPay}
               showPayOnly={showPayOnly}
               showOptionsEntry={showOptionsEntry}
@@ -869,12 +868,13 @@ export default function ProposalView() {
               />
             )}
 
-            {/* ── Paid state card (replaces sign-and-pay). Settling and fallback
-                phases render no dollar figure; paid renders from the row. ── */}
-            {(settling || isPaid) && (
+            {/* ── Paid state card (replaces sign-and-pay). Settling, pending and
+                fallback phases render no dollar claim; paid renders from the row. ── */}
+            {showPaidCard && (
               <PaidCard
-                phase={isPaid ? 'paid' : settle === 'fallback' ? 'fallback' : 'settling'}
+                phase={paidCardPhase}
                 state={paidInfo}
+                pendingPayment={pendingPayment}
                 autopayEnrolled={!!proposal.autopay_enrolled}
                 balanceDueDate={balanceDueDate}
                 openInvoiceToken={proposal.open_invoice_token || null}

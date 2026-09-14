@@ -5,6 +5,7 @@ import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import api from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
+import PendingPaymentCard from '../../components/PendingPaymentCard';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { fmtDateOnly } from '../../components/adminos/format';
@@ -25,7 +26,7 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function PaymentForm({ onSuccess }) {
+function PaymentForm({ onSuccess, onPending }) {
   const stripe = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
@@ -37,7 +38,7 @@ function PaymentForm({ onSuccess }) {
     setProcessing(true);
     setError('');
 
-    const { error: stripeError } = await stripe.confirmPayment({
+    const { error: stripeError, paymentIntent } = await stripe.confirmPayment({
       elements,
       confirmParams: { return_url: window.location.href },
       redirect: 'if_required',
@@ -46,8 +47,23 @@ function PaymentForm({ onSuccess }) {
     if (stripeError) {
       setError(stripeError.message);
       setProcessing(false);
-    } else {
+    } else if (!paymentIntent) {
+      // No error and no intent: Stripe is redirecting the browser for a method
+      // that needs it, and the return URL takes over. Say so, in case the
+      // redirect is slow or blocked; the button stays busy, never "paid".
+      setError('Taking you to your bank to finish this payment.');
+    } else if (paymentIntent.status === 'succeeded') {
       onSuccess();
+    } else if (paymentIntent.status === 'processing') {
+      // A bank debit (spec 2026-09-14 section 8.2): confirm returned no
+      // error, but the money has not moved. Never "Payment successful".
+      onPending({ amount_cents: paymentIntent.amount, started_at: new Date().toISOString(), invoice_id: null, invoice_number: null });
+    } else {
+      // requires_action (a bank account that needs microdeposit verification)
+      // or any status Stripe adds later: no money has moved. Only succeeded is
+      // success; never claim it for anything else.
+      setError('This bank payment still needs a verification step. Check your email from Stripe for what to do next, then come back to this page.');
+      setProcessing(false);
     }
   };
 
@@ -76,6 +92,13 @@ export default function InvoicePage() {
   const [stripePromise, setStripePromise] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // Bank debit in flight (spec 2026-09-14 section 8.2). Seeded from the
+  // payload on load, set by the confirm result in the seconds before the
+  // webhook lands. Any in-flight payment on the proposal hides Pay (D3).
+  const [pendingPayment, setPendingPayment] = useState(null);
+  // The rail's Stripe-side refusal (409 PAYMENT_IN_FLIGHT before the row has a
+  // processing payment): the banner explains and Pay stays hidden until reload.
+  const [payBlocked, setPayBlocked] = useState(false);
   // Service-extension terms gate (spec 2026-07-25 decision 8). Non-null only
   // for an extension invoice, so every ordinary invoice renders exactly as before.
   const [extension, setExtension] = useState(null);
@@ -97,6 +120,7 @@ export default function InvoicePage() {
           // The server nests `extension` INSIDE `invoice`; reading a top-level
           // `data.extension` would silently stay null and leave the gate open.
           setExtension(data.invoice?.extension || null);
+          setPendingPayment(data.invoice?.pending_payment || null);
         }
       } catch (err) {
         if (!cancelled) setError({ status: err.status, message: err.message });
@@ -109,11 +133,23 @@ export default function InvoicePage() {
 
   useEffect(() => {
     if (!invoice || invoice.status === 'paid' || paymentSuccess) return;
+    // A bank debit in flight hides Pay and the payment element: no form to
+    // build, so no publishable-key fetch and no Stripe.js for this visit.
+    if (pendingPayment) return;
     if (stripePromise) return;
     api.get('/stripe/publishable-key').then(({ data }) => {
       if (data.key) setStripePromise(loadStripe(data.key));
     }).catch(() => {});
-  }, [invoice, paymentSuccess, stripePromise]);
+  }, [invoice, paymentSuccess, stripePromise, pendingPayment]);
+
+  const refetchInvoice = useCallback(() => (
+    api.get(`/invoices/t/${token}`).then(({ data }) => {
+      setInvoice(data.invoice);
+      setExtension(data.invoice?.extension || null);
+      // Keep a locally known pending payment if the row does not carry one yet.
+      setPendingPayment((cur) => data.invoice?.pending_payment || cur);
+    }).catch(err => console.error('Invoice refetch failed:', err))
+  ), [token]);
 
   const handlePayClick = useCallback(async () => {
     setFormError('');
@@ -125,18 +161,22 @@ export default function InvoicePage() {
     } catch (err) {
       setFormError(err.message || 'Failed to initiate payment.');
       setFieldErrors(err.fieldErrors || {});
+      if (err.code === 'PAYMENT_IN_FLIGHT') { setPayBlocked(true); refetchInvoice(); }
     }
-  }, [token]);
+  }, [token, refetchInvoice]);
 
   const handlePaymentSuccess = useCallback(() => {
     setPaymentSuccess(true);
     setShowPayment(false);
     toast.success('Payment received!');
-    api.get(`/invoices/t/${token}`).then(({ data }) => {
-      setInvoice(data.invoice);
-      setExtension(data.invoice?.extension || null);
-    }).catch(err => console.error('Invoice refetch after payment failed:', err));
-  }, [token, toast]);
+    refetchInvoice();
+  }, [refetchInvoice, toast]);
+
+  const handlePaymentPending = useCallback((pending) => {
+    setPendingPayment(pending);
+    setShowPayment(false);
+    refetchInvoice();
+  }, [refetchInvoice]);
 
   const acceptTerms = async () => {
     if (accepting) return;
@@ -229,6 +269,9 @@ export default function InvoicePage() {
 
   const isPaid = invoice.status === 'paid' || paymentSuccess;
   const balanceDue = invoice.amount_due - invoice.amount_paid;
+  // A bank debit is still settling on this proposal: no Balance Due call to
+  // action, no payment element, no second intent (spec 2026-09-14 section 8.2).
+  const pending = !isPaid && (!!pendingPayment || payBlocked);
   // Server-derived: an extension invoice cannot reach the payment element
   // before terms acceptance. Always false for ordinary invoices.
   const paymentBlockedByTerms = Boolean(extension?.is_extension && extension.requires_acceptance);
@@ -363,7 +406,7 @@ export default function InvoicePage() {
         <div className="invoice-actions">
           <FormBanner error={formError} fieldErrors={fieldErrors} />
 
-          {!isPaid && balanceDue > 0 && (
+          {!isPaid && !pending && balanceDue > 0 && (
             <div className="invoice-actions-summary">
               <div className="invoice-actions-eyebrow">Balance Due</div>
               <div className="invoice-actions-total">{formatCurrency(balanceDue)}</div>
@@ -376,6 +419,8 @@ export default function InvoicePage() {
               <div className="invoice-actions-total">{formatCurrency(invoice.amount_due)}</div>
             </div>
           )}
+
+          {pending && pendingPayment && <PendingPaymentCard amountCents={pendingPayment.amount_cents} startedAt={pendingPayment.started_at} />}
 
           {extension?.is_extension && !extension.terms && extension.requires_acceptance && !paymentSuccess && (
             <section className="invoice-extension-terms">
@@ -403,16 +448,16 @@ export default function InvoicePage() {
             </section>
           )}
 
-          {!isPaid && balanceDue > 0 && !showPayment && (
+          {!isPaid && !pending && balanceDue > 0 && !showPayment && (
             <button className="btn btn-primary invoice-pay-btn" onClick={handlePayClick} disabled={paymentBlockedByTerms}>
               Pay {formatCurrency(balanceDue)}
             </button>
           )}
 
-          {showPayment && !paymentBlockedByTerms && clientSecret && stripePromise && (
+          {showPayment && !pending && !paymentBlockedByTerms && clientSecret && stripePromise && (
             <div className="invoice-payment-wrap">
               <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
-                <PaymentForm onSuccess={handlePaymentSuccess} />
+                <PaymentForm onSuccess={handlePaymentSuccess} onPending={handlePaymentPending} />
               </Elements>
             </div>
           )}

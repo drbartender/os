@@ -62,3 +62,37 @@ test('paid + full never offers Pay balance, even with an open invoice token', ()
   expect(screen.getByText(/Fully paid/)).toBeTruthy();
   expect(screen.queryByText(/Pay balance/)).toBeNull();
 });
+
+const pendingPayment = { amount_cents: 40000, started_at: '2026-09-05T16:05:35.000Z', invoice_id: 363, invoice_number: 'INV-0363' };
+
+test('pending phase renders the processing card alone: no pay link, no paid claim', () => {
+  const { container } = render(<PaidCard phase="pending" state={none} pendingPayment={pendingPayment} {...base} />);
+  expect(container.textContent).toMatch(/Your bank payment is processing\./);
+  expect(container.textContent).toMatch(/\$400\.00 bank payment on September 5/);
+  expect(container.textContent).not.toMatch(/Deposit received|Fully paid|Confirming your payment/);
+  expect(screen.queryByText(/Pay balance/)).toBeNull();
+});
+
+test('paid + deposit with a pending balance payment replaces the due-by line and hides Pay balance', () => {
+  const { container } = render(<PaidCard phase="paid" state={deposit} pendingPayment={pendingPayment} {...base} openInvoiceToken="inv-tok" />);
+  expect(container.textContent).toMatch(/Deposit received\./);
+  expect(container.textContent).toMatch(/Your bank payment is processing\./);
+  expect(container.textContent).not.toMatch(/is due by/);
+  expect(screen.queryByText(/Pay balance/)).toBeNull();
+});
+
+test('paid + deposit + autopay with a pending balance payment never promises an automatic charge', () => {
+  // Autopay will not charge while money is in flight (the server scan skips a
+  // settling intent), so the autopay sentence would be false for the window.
+  const { container } = render(<PaidCard phase="paid" state={deposit} pendingPayment={pendingPayment} {...base} autopayEnrolled openInvoiceToken={null} />);
+  expect(container.textContent).toMatch(/Deposit received\./);
+  expect(container.textContent).toMatch(/Your bank payment is processing\./);
+  expect(container.textContent).not.toMatch(/automatically charged/);
+  expect(container.textContent).not.toMatch(/\$450\.00/);
+});
+
+test('paid + pending renders the processing copy inside the one paid card, never a card inside a card', () => {
+  const { container } = render(<PaidCard phase="paid" state={deposit} pendingPayment={pendingPayment} {...base} openInvoiceToken="inv-tok" />);
+  expect(container.querySelectorAll('.proposal-paid-card').length).toBe(1);
+  expect(container.querySelectorAll('h3').length).toBe(1);
+});

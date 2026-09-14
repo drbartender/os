@@ -17,6 +17,7 @@ export default function ProposalPricingBreakdown({
   fullPaymentRequired,
   paid,
   settling,
+  pendingPayment = false,
   showSignAndPay,
   showPayOnly,
   showOptionsEntry,
@@ -85,7 +86,7 @@ export default function ProposalPricingBreakdown({
                 Total
               </td>
               <td style={{ padding: '0.85rem 0 0', textAlign: 'right', fontWeight: 400, fontSize: '1.35rem', color: 'var(--deep-brown)', fontFamily: 'var(--font-display)', fontVariantNumeric: 'tabular-nums' }}>
-                {settling ? '—' : snapshot ? fmt(snapshot.total) : '—'}
+                {settling ? (pendingPayment ? 'Pending' : '—') : snapshot ? fmt(snapshot.total) : '—'}
               </td>
             </tr>
           </tfoot>
@@ -141,6 +142,7 @@ export default function ProposalPricingBreakdown({
         <PaymentTermsBox
           state={paid}
           settling={settling}
+          pending={!!pendingPayment}
           fullPaymentRequired={fullPaymentRequired}
           snapshotTotal={snapshot ? snapshot.total : null}
           balanceAmount={balanceAmount}

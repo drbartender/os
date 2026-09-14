@@ -1,16 +1,24 @@
 import React from 'react';
 import { fmt, formatDateShort } from './helpers';
+import PendingPaymentCard from '../../../components/PendingPaymentCard';
 
-// The card that replaces sign-and-pay once money is involved. Three phases:
+// The card that replaces sign-and-pay once money is involved. Four phases:
 //   settling  : a checkout redirect just landed and the row is not yet in a
 //               paid state. NO dollar figure, no pay link, no claim.
 //   fallback  : the poll budget ran out or was blocked. Still no numbers and
 //               still no claim: a webhook that rolled back produces exactly
 //               this state, so "your payment went through" would be a lie.
+//   pending   : a bank debit is processing (spec 2026-09-14). The shared card, no pay link, no paid claim.
 //   paid      : the row is settled; every figure below comes from `state`,
-//               which paidState() derived from the row.
+//               which paidState() derived from the row. With a pendingPayment
+//               (a balance settling by bank debit) BOTH deposit branches, the
+//               due-by line and the autopay line, give way to the processing
+//               copy, and Pay balance is hidden: autopay will not charge while
+//               money is in flight, so "will be automatically charged" would
+//               be false for the whole window.
 export default function PaidCard({
   phase, state, autopayEnrolled, balanceDueDate, openInvoiceToken, drinkPlanToken, onRefresh,
+  pendingPayment = null,
 }) {
   if (phase === 'settling') {
     return (
@@ -37,6 +45,10 @@ export default function PaidCard({
     );
   }
 
+  if (phase === 'pending') {
+    return <PendingPaymentCard amountCents={pendingPayment?.amount_cents} startedAt={pendingPayment?.started_at} />;
+  }
+
   const isFullyPaid = state.kind === 'full';
   return (
     <div className="proposal-paid-card">
@@ -50,22 +62,23 @@ export default function PaidCard({
               : "Your booking is confirmed. We'll be in touch with event details closer to the date."}
           </p>
         </>
-      ) : autopayEnrolled ? (
-        <>
-          <h3 className="proposal-paid-title">{state.amountPaid > 0 ? 'Deposit received.' : 'Booking confirmed.'}</h3>
-          <p className="proposal-paid-sub">
-            Your remaining balance of {fmt(state.remaining)} will be automatically charged on {formatDateShort(balanceDueDate)}.
-          </p>
-        </>
       ) : (
         <>
           <h3 className="proposal-paid-title">{state.amountPaid > 0 ? 'Deposit received.' : 'Booking confirmed.'}</h3>
-          <p className="proposal-paid-sub">
-            Your remaining balance of {fmt(state.remaining)} is due by {formatDateShort(balanceDueDate)}.
-          </p>
+          {pendingPayment ? (
+            <PendingPaymentCard bare amountCents={pendingPayment.amount_cents} startedAt={pendingPayment.started_at} />
+          ) : autopayEnrolled ? (
+            <p className="proposal-paid-sub">
+              Your remaining balance of {fmt(state.remaining)} will be automatically charged on {formatDateShort(balanceDueDate)}.
+            </p>
+          ) : (
+            <p className="proposal-paid-sub">
+              Your remaining balance of {fmt(state.remaining)} is due by {formatDateShort(balanceDueDate)}.
+            </p>
+          )}
         </>
       )}
-      {!isFullyPaid && openInvoiceToken && (
+      {!isFullyPaid && !pendingPayment && openInvoiceToken && (
         <a href={`/invoice/${openInvoiceToken}`} className="btn btn-primary" style={{ marginTop: '4px' }}>
           Pay balance
         </a>

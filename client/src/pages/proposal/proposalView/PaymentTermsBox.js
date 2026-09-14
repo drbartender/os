@@ -8,19 +8,23 @@ const NONE = { kind: 'none', amountPaid: 0, total: 0, remaining: 0, completed: f
 // states the terms (deposit at signing, remainder by the due date). Once the
 // ROW is in a paid state it states what happened, from paidState(): never
 // "Deposit Due at Signing" on a booking that is paid. While a checkout
-// redirect is settling it states nothing numeric at all.
+// redirect is settling it states nothing numeric at all. `pending` (a bank
+// debit still processing, spec 2026-09-14) names that state in the settling
+// copy, and on a deposit-paid row turns the due-by row into a processing row.
 //
 // Renders a fragment: the caller's section div wraps this AND the Potion
 // Planner link AND the mobile CTA, so this component must not bring its own.
 // `state` defaults to the none shape so the component is safe on its own.
 export default function PaymentTermsBox({
-  state = NONE, settling = false, fullPaymentRequired, snapshotTotal, balanceAmount, balanceDueDate,
+  state = NONE, settling = false, pending = false, fullPaymentRequired, snapshotTotal, balanceAmount, balanceDueDate,
 }) {
   let rows;
   if (settling) {
     rows = (
       <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-        Confirming your payment.
+        {pending
+          ? 'Your bank payment is processing. Your payment terms will update when it clears.'
+          : 'Confirming your payment.'}
       </p>
     );
   } else if (state.kind === 'full') {
@@ -42,8 +46,8 @@ export default function PaymentTermsBox({
           <span style={styles.paymentValue}>{fmt(state.remaining)}</span>
         </div>
         <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
-          <span style={styles.paymentLabel}>Balance due by</span>
-          <span style={styles.paymentValue}>{formatDateShort(balanceDueDate)}</span>
+          <span style={styles.paymentLabel}>{pending ? 'Balance payment' : 'Balance due by'}</span>
+          <span style={styles.paymentValue}>{pending ? 'Processing' : formatDateShort(balanceDueDate)}</span>
         </div>
       </>
     );

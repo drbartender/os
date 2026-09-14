@@ -2,7 +2,8 @@ import { isPaidState } from './paidState';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Bounded poll for the proposal's payment state after a checkout redirect.
+// Bounded poll for the proposal's payment state after a checkout redirect. It
+// ends on either terminal answer: a paid state, or a payment still processing.
 // 13 attempts at 1.5s is about 20 seconds, the budget spec §3b gives the
 // webhook before the page gives up. A 5xx or a network error is a miss (the
 // thing being waited on is the webhook, not the network). Any 4xx stops the
@@ -20,6 +21,10 @@ export async function pollPaymentState({
     try {
       const state = await fetchState();
       if (state && isPaidState(state.status)) return { state, reason: 'settled' };
+      // Bank debit in flight (spec 2026-09-14 section 8.3): a processing
+      // payment is a terminal answer too. The webhook may be days away; the
+      // page shows the processing card instead of twenty seconds of spinner.
+      if (state && state.pending_payment) return { state, reason: 'pending' };
     } catch (err) {
       // eslint-disable-next-line no-restricted-syntax -- fetchState is raw axios (this public token route bypasses the api instance); err.status covers the api-instance shape too
       const status = (err && err.response && err.response.status) || (err && err.status);

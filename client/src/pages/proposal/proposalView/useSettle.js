@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { isPaidState } from './paidState';
 import { pollPaymentState } from './settlePoll';
 
-// Owns the post-redirect phase: 'idle' | 'settling' | 'paid' | 'fallback'.
+// Owns the post-redirect phase: 'idle' | 'settling' | 'paid' | 'fallback' | 'pending'.
 //
 // Latched on a ref keyed by proposal id so the settle runs ONCE per loaded
 // proposal, and cancelled ONLY on unmount. An earlier draft kept the phase in
@@ -18,13 +18,14 @@ function safely(name, fn) {
 
 export function useSettle({
   active, proposal, fetchState, fetchProposal, onSettled, onFallback,
+  onPending = () => {},
   attempts = 13, intervalMs = 1500,
 }) {
   const [phase, setPhase] = useState('idle');
   const startedFor = useRef(null);
   const mounted = useRef(true);
-  const latest = useRef({ fetchState, fetchProposal, onSettled, onFallback });
-  latest.current = { fetchState, fetchProposal, onSettled, onFallback };
+  const latest = useRef({ fetchState, fetchProposal, onSettled, onFallback, onPending });
+  latest.current = { fetchState, fetchProposal, onSettled, onFallback, onPending };
 
   useEffect(() => {
     mounted.current = true;
@@ -71,6 +72,22 @@ export function useSettle({
       // The refetched ROW decides, not the poll: a refetch that comes back
       // unsettled (a replica lag, a stale cache) must not be handed to the
       // page as paid, and must not leave the page on the spinner forever.
+      if (reason === 'pending') {
+        // The poll saw a processing payment. If the refetched ROW is already in
+        // a paid state the debit settled in the gap and the row wins: handing
+        // the page a stale pending payment would hide Pay balance on a payable
+        // row. Otherwise hand the page the fresh row and the payment (the row
+        // may not carry it yet if the webhook lagged the state read by a beat)
+        // and land pending. Only the refetch failing above earns fallback.
+        if (isPaidState(fresh && fresh.status)) {
+          safely('onSettled', () => latest.current.onSettled(fresh));
+          setPhase('paid');
+          return;
+        }
+        safely('onPending', () => latest.current.onPending(fresh, (fresh && fresh.pending_payment) || state.pending_payment));
+        setPhase('pending');
+        return;
+      }
       if (!isPaidState(fresh && fresh.status)) {
         setPhase('fallback');
         safely('onFallback', () => latest.current.onFallback('refetch_unsettled'));

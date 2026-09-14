@@ -3,12 +3,13 @@ import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../../../utils/api';
 import { nextStepsCopy, menuOwedFor } from '../../components/nextStepsCopy';
 import { owesShoppingList } from '../../../../utils/shoppingListOwed';
+import PaymentReturnNotice from '../../components/PaymentReturnNotice';
 
 // Celebration (spec §3.1/§3.3): the finale plus the ONE selling doorway.
 // The Enhancement Lab CTA renders only when the server says the Lab exists
 // (plan.lab_enabled, set by the pp2-lab lane) — deploy-seam rule: the CTA can
 // never 404.
-export default function CelebrationV2({ plan, token, selections, paidFromRedirect }) {
+export default function CelebrationV2({ plan, token, selections, paidFromRedirect, pendingFromRedirect = false, failedFromRedirect = false }) {
   const labEnabled = plan.lab_enabled === true;
 
   const openLab = () => {
@@ -32,12 +33,9 @@ export default function CelebrationV2({ plan, token, selections, paidFromRedirec
           everything you chose is on its way.
         </p>
 
-        {paidFromRedirect && (
-          <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(46, 125, 50, 0.08)', borderRadius: '8px', border: '1px solid rgba(46, 125, 50, 0.2)' }}>
-            <p style={{ fontWeight: 600, color: '#2e7d32', marginBottom: '0.25rem' }}>Payment Received</p>
-            <p className="text-muted text-small">Your payment was processed successfully. You'll receive a confirmation email shortly.</p>
-          </div>
-        )}
+        {/* Bank debit in flight (spec 2026-09-14 section 8.4): a processing
+            redirect is not a received payment. The amount is not known here. */}
+        <PaymentReturnNotice paid={paidFromRedirect} pending={pendingFromRedirect} failed={failedFromRedirect} />
 
         {labEnabled && (
           <div className="pp2-lab-invite">
