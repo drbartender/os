@@ -6,6 +6,7 @@
  * off-session charge for the same balance.
  */
 const { pool } = require('../db');
+const { findInFlightPayments, STRIPE_RETRIEVE_OPTS } = require('./paymentInFlight');
 
 /**
  * (a) Durable charge record. Persist a freshly-created balance PaymentIntent
@@ -57,6 +58,13 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
  *     intent no longer matches the new balanceCents and the guard would miss it →
  *     double charge. Whether the intent COVERS the balance is the true discriminator,
  *     read from Stripe metadata below (see CLASSIFICATION above).
+ *   - 'processing' is included since 2026-09-14 (bank debit in flight): the
+ *     payment_intent.processing webhook flips a settling row to 'processing',
+ *     and a pending-only scan would drop exactly the intent this guard exists
+ *     to see. Stripe still decides: a processing row Stripe now reports terminal
+ *     does not block. 'failed' rides along for the same reason publicSwitch
+ *     scans it: a declined card leaves the intent live at Stripe, and a retry
+ *     on the same intent with a bank account settles it.
  *   - Newest-first, LIMIT 25: other 'pending' rows (invoice checkout, drink-plan
  *     payment) also carry intent ids, so a single newest row could be a non-balance
  *     intent shadowing an older settling balance intent. We scan a bounded window
@@ -75,12 +83,22 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
  * balance-covering intent do we allow the charge.
  */
 async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
+  // Bank debit in flight (spec 2026-09-14, review H1): a processing row on the
+  // proposal blocks the off-session charge whatever the intent's metadata
+  // says. A Balance INVOICE paid by bank debit carries payment_type 'invoice'
+  // and no balance_amount_cents, so the metadata classification below would
+  // scan past it while the money is still moving, and the saved card would be
+  // charged on top of it on the due date.
+  const inFlight = await findInFlightPayments(proposalId, db);
+  if (inFlight[0]) {
+    return { skip: true, reason: 'in_flight', priorIntentId: inFlight[0].stripe_payment_intent_id, priorStatus: 'processing' };
+  }
   const prior = await db.query(
     `SELECT stripe_payment_intent_id
        FROM stripe_sessions
       WHERE proposal_id = $1
         AND stripe_payment_intent_id IS NOT NULL
-        AND status = 'pending'
+        AND status IN ('pending', 'processing', 'failed')
       ORDER BY created_at DESC
       LIMIT 25`,
     [proposalId]
@@ -91,7 +109,7 @@ async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
     const priorIntentId = row.stripe_payment_intent_id;
     let intent;
     try {
-      intent = await stripe.paymentIntents.retrieve(priorIntentId);
+      intent = await stripe.paymentIntents.retrieve(priorIntentId, STRIPE_RETRIEVE_OPTS);
     } catch (e) {
       // Can't confirm it's safe to re-charge → SKIP (fail closed). The claim
       // stays for the webhook/reconcile; an admin can force it once Stripe is
@@ -99,7 +117,9 @@ async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
       return { skip: true, reason: 'retrieve_failed', priorIntentId };
     }
     const m = intent?.metadata || {};
-    const coversBalance = m.payment_type === 'balance' || Number(m.balance_amount_cents || 0) > 0;
+    // 'invoice' rides along since 2026-09-14: the Balance invoice paid on the
+    // public invoice page is the ordinary way a client settles the balance.
+    const coversBalance = m.payment_type === 'balance' || m.payment_type === 'invoice' || Number(m.balance_amount_cents || 0) > 0;
     if (!coversBalance) {
       // A deposit / invoice / full / drink_plan_extras (balance 0) intent — not our
       // charge, it does not settle the outstanding balance. Keep scanning.

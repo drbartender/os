@@ -770,6 +770,35 @@ function enhancementLabFollowup({ clientName, eventTypeLabel = 'event', labUrl, 
   };
 }
 
+/**
+ * Bank debit in flight (spec 2026-09-14 section 9). Sent once when Stripe
+ * reports a client's PaymentIntent `processing`. A bank debit takes four to
+ * six business days to clear and NO receipt goes out until it does, so this
+ * is the only thing the client hears in that window. amountCents is cents.
+ * paymentType 'deposit' reads "deposit"; everything else reads "payment".
+ * eventDate is already formatted (or null). No em dashes.
+ */
+function bankPaymentProcessingClient({ clientName, amountCents, paymentType, eventTypeLabel = 'event', eventDate, proposalUrl }) {
+  const name = clientName || 'there';
+  const dollars = `$${(Number(amountCents || 0) / 100).toFixed(2)}`;
+  const noun = paymentType === 'deposit' ? 'deposit' : 'payment';
+  const dateHtml = eventDate ? ` on ${esc(eventDate)}` : '';
+  const dateText = eventDate ? ` on ${eventDate}` : '';
+  return {
+    subject: 'We received your bank payment',
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Bank Payment Received</h2>
+      <p>Hi ${esc(firstNameOf(name))},</p>
+      <p>We received your <strong>${dollars}</strong> ${noun} for your <strong>${esc(eventTypeLabel)}</strong>${dateHtml}. It is a bank payment, so it is still processing.</p>
+      <p>Bank payments take four to six business days to clear. You will get a receipt by email when it does, and nothing more is needed from you.</p>
+      ${ctaButton(proposalUrl, 'View your proposal')}
+      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
+      <p>Cheers, Dallas</p>
+    `),
+    text: `Hi ${firstNameOf(name)}, we received your ${dollars} ${noun} for your ${eventTypeLabel}${dateText}. It is a bank payment, so it is still processing. Bank payments take four to six business days to clear. You will get a receipt by email when it does, and nothing more is needed from you. View your proposal: ${proposalUrl}. Cheers, Dallas`,
+  };
+}
+
 module.exports = {
   // Shared brand shell pieces, exported for server/utils/comms/render.js (the
   // compose-modal renderer) so it reproduces the exact same wrapper.
@@ -798,4 +827,5 @@ module.exports = {
   changeRequestDeclined,
   cancellationConfirmation,
   enhancementLabFollowup,
+  bankPaymentProcessingClient,
 };

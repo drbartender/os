@@ -79,6 +79,7 @@ before(async () => {
 after(async () => {
   if (createdProposalIds.size > 0) {
     const ids = [...createdProposalIds];
+    await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = ANY($1::int[])', [ids]);
     await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = ANY($1)', [ids]);
     await pool.query('DELETE FROM proposals WHERE id = ANY($1)', [ids]);
   }
@@ -93,7 +94,9 @@ test('returns the four fields as numbers, in dollars', async () => {
   const p = await insertProposal({ status: 'balance_paid', amountPaid: 550, totalPrice: 550, paymentType: 'full' });
   const r = await get(`/api/proposals/t/${p.token}/payment-state`);
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { status: 'balance_paid', amount_paid: 550, total_price: 550, payment_type: 'full' });
+  // pending_payment joined the payload 2026-09-14 (bank debit in flight, spec
+  // section 7); this deepEqual pins the WHOLE body, so the new key belongs here.
+  assert.deepEqual(r.body, { status: 'balance_paid', amount_paid: 550, total_price: 550, payment_type: 'full', pending_payment: null });
 });
 
 test('twenty-one calls on one token from one IP all succeed and bump nothing', async () => {
@@ -127,4 +130,29 @@ test('404 on an archived proposal and on an unknown token, from OUR handler, not
 test('a malformed token is rejected, not looked up', async () => {
   const r = await get('/api/proposals/t/not-a-uuid/payment-state');
   assert.ok(r.status === 400 || r.status === 404, `got ${r.status}`);
+});
+
+test('payment-state and the full GET carry pending_payment when a bank debit is processing', async () => {
+  const p = await insertProposal({ status: 'accepted', amountPaid: 0 });
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 10000, 'processing', NOW() - INTERVAL '1 hour')`,
+    [p.id, `pi_pstate_${Date.now()}`]
+  );
+  const state = await get(`/api/proposals/t/${p.token}/payment-state`);
+  assert.equal(state.status, 200);
+  assert.equal(state.body.status, 'accepted');
+  assert.equal(state.body.pending_payment.amount_cents, 10000);
+  assert.ok(state.body.pending_payment.started_at);
+  assert.equal('stripe_payment_intent_id' in state.body.pending_payment, false);
+  const full = await get(`/api/proposals/t/${p.token}`);
+  assert.equal(full.status, 200);
+  assert.equal(full.body.pending_payment.amount_cents, 10000);
+});
+
+test('payment-state carries pending_payment: null when nothing is in flight', async () => {
+  const p = await insertProposal();
+  const state = await get(`/api/proposals/t/${p.token}/payment-state`);
+  assert.equal(state.status, 200);
+  assert.equal(state.body.pending_payment, null);
 });

@@ -18,8 +18,9 @@ const {
 
 // Shared helpers extracted to a sibling module (also used by the create-intent
 // sub-router) so create-intent's gratuity logic doesn't grow this over-cap file.
-const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('../utils/autopayDurableCharge');
+const { assertNoPaymentInFlight } = require('../utils/paymentInFlight');
 
 // create-intent lives in its own module (extracted in the gratuity split).
 router.use(require('./stripeCreateIntent'));
@@ -47,7 +48,7 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
            p.id AS proposal_id, p.status AS proposal_status,
            p.total_price, p.amount_paid, p.event_date,
            p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
-           p.event_type, p.event_type_custom, p.pricing_snapshot,
+           p.event_type, p.event_type_custom, p.pricing_snapshot, p.event_timezone,
            c.email AS client_email, c.name AS client_name
     FROM drink_plans dp
     JOIN proposals p ON p.id = dp.proposal_id
@@ -98,6 +99,13 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
     return res.json({ noPaymentNeeded: true, extrasAmount: 0, balanceOptionAvailable: false });
   }
 
+  // Bank debit in flight (spec 2026-09-14 section 5.1): this rail can fold the
+  // outstanding balance into the charge (drink_plan_with_balance), so a balance
+  // already settling by bank debit would be charged again here. Same two guards
+  // as the invoice and deposit rails, placed AFTER the noPaymentNeeded return so
+  // a plan that owes nothing still submits while a deposit is processing.
+  await assertNoPaymentInFlight({ proposalId: data.proposal_id, stripe, timeZone: data.event_timezone });
+
   let paymentScenario;
   let totalCharge;
   let pastDueAmount = 0;
@@ -137,6 +145,7 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
     paymentIntent = await stripe.paymentIntents.create({
       amount: amountCents,
       currency: 'usd',
+      payment_method_types: [...CHECKOUT_PAYMENT_METHOD_TYPES],
       customer: customerId,
       description: `Drink Plan Extras — ${eventLabelFor(data)}`,
       receipt_email: data.client_email || undefined,
@@ -255,6 +264,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
 
     paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
+      payment_method_types: [...PAYMENT_LINK_METHOD_TYPES],
       metadata: { proposal_id: String(proposal.id), payment_type: linkPaymentType },
       after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(proposal.token)}?paid=true` } },
     });
@@ -545,6 +555,7 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
   const invRes = await pool.query(`
     SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
            p.id AS proposal_id, p.status AS proposal_status, p.event_type, p.event_type_custom, p.stripe_customer_id,
+           p.event_timezone,
            c.email AS client_email, c.name AS client_name
     FROM invoices i
     JOIN proposals p ON p.id = i.proposal_id
@@ -604,6 +615,16 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
     throw new ConflictError('This invoice has already been paid in full', 'ALREADY_PAID');
   }
 
+  // Bank debit in flight (spec 2026-09-14 section 5.1): a payment already
+  // settling on this proposal refuses a second intent. Any in-flight payment
+  // blocks, not only one for this invoice (D3): a second payment on an event
+  // that already has money settling is far more likely a duplicate than a
+  // legitimate second bill. Proposal 784 paid its Balance twice this way.
+  // After the ALREADY_PAID check so a paid invoice keeps its own answer; one
+  // DB read, then the Stripe-side backstop that does not depend on the
+  // processing webhook and fails closed on an outage (D7).
+  await assertNoPaymentInFlight({ proposalId: inv.proposal_id, stripe, timeZone: inv.event_timezone });
+
   const customerId = await getOrCreateCustomer({
     id: inv.proposal_id,
     stripe_customer_id: inv.stripe_customer_id,
@@ -616,6 +637,7 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
     paymentIntent = await stripe.paymentIntents.create({
       amount: balanceCents,
       currency: 'usd',
+      payment_method_types: [...CHECKOUT_PAYMENT_METHOD_TYPES],
       customer: customerId,
       description: `${inv.invoice_number} — ${inv.client_name || 'Dr. Bartender'}`,
       receipt_email: inv.client_email || undefined,
@@ -631,10 +653,10 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
   }
 
   await pool.query(
-    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-     VALUES ($1, $2, $3, 'pending')
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, invoice_id)
+     VALUES ($1, $2, $3, 'pending', $4)
      ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
-    [inv.proposal_id, paymentIntent.id, balanceCents]
+    [inv.proposal_id, paymentIntent.id, balanceCents, inv.invoice_id]
   );
 
   res.json({ clientSecret: paymentIntent.client_secret });

@@ -5,7 +5,7 @@ const { esc } = require('./htmlEscape');
 const { resolveChannelFallback } = require('./channelFallback');
 const { leadUnsubscribedByEmail } = require('./marketingAudience');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
-const { SuppressMessageError, QuotaExceededError } = require('./errors');
+const { SuppressMessageError, DeferMessageError, QuotaExceededError } = require('./errors');
 const { deferRowForQuota, maybeAlertQuotaOnce } = require('./emailQuotaDefer');
 const { dispatchPushRow } = require('./pushDispatch');
 // Dead-letter recovery + the balance-reminder email handlers were extracted to
@@ -576,7 +576,7 @@ async function dispatchRow(row) {
             SET status = 'deferred',
                 scheduled_for = scheduled_for + INTERVAL '24 hours',
                 error_message = 'deferred: daily per-channel cooldown (spec 7.4)'
-          WHERE id = $1`,
+          WHERE id = $1 AND status = 'processing'`,
         [row.id]
       );
       return;
@@ -617,6 +617,28 @@ async function dispatchRow(row) {
         );
       } catch (markErr) {
         console.error('[scheduledMessageDispatcher] failed to mark row suppressed:', markErr.message);
+        await releaseClaim(row.id);
+      }
+      return;
+    }
+    // DeferMessageError is "right touch, wrong moment" (a balance reminder while
+    // a bank debit is still processing, spec 2026-09-14 section 6). Push the row
+    // a day out from NOW, not from its own scheduled_for: an overdue row bumped
+    // from its past timestamp would be due again on the next tick and loop. The
+    // reactivation pass below flips it back to 'pending' when it comes due.
+    if (err instanceof DeferMessageError) {
+      const cappedReason = String(err.reason || '').slice(0, 480);
+      try {
+        await pool.query(
+          `UPDATE scheduled_messages
+              SET status = 'deferred',
+                  scheduled_for = NOW() + INTERVAL '24 hours',
+                  error_message = $2
+            WHERE id = $1 AND status = 'processing'`,
+          [row.id, `deferred: ${cappedReason}`]
+        );
+      } catch (deferErr) {
+        console.error('[scheduledMessageDispatcher] failed to defer row:', deferErr.message);
         await releaseClaim(row.id);
       }
       return;

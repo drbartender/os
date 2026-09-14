@@ -21,7 +21,8 @@
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
-const { SuppressMessageError } = require('./errors');
+const { SuppressMessageError, DeferMessageError } = require('./errors');
+const { findInFlightPayments } = require('./paymentInFlight');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { proposalUrl } = require('./urls');
@@ -33,9 +34,9 @@ const DAY_SECONDS = 86400;
  * Load proposal + client fields a balance SMS handler needs. A gone/archived
  * proposal throws a plain Error (the dispatcher marks 'failed'). An
  * already-cleared balance (client paid before the reminder fired) and the
- * contact-deliverability skips (no phone, bad phone, SMS opted out) throw
- * SuppressMessageError so the row is recorded 'suppressed' without alerting
- * Sentry. Per spec 7.3 the SMS half of this multi-channel pair suppresses on a
+ * contact-deliverability skips throw SuppressMessageError; a balance with a
+ * bank debit still processing throws DeferMessageError so the row waits a day
+ * instead. Per spec 7.3 the SMS half of this multi-channel pair suppresses on a
  * dead channel while the email half still fires.
  */
 async function loadBalanceSmsContext(proposalId) {
@@ -57,6 +58,8 @@ async function loadBalanceSmsContext(proposalId) {
   if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
   const balanceDue = Number(ctx.total_price) - Number(ctx.amount_paid);
   if (!(balanceDue > 0)) throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
+  // Bank debit in flight (spec 2026-09-14 section 6): defer, never suppress.
+  if ((await findInFlightPayments(ctx.id)).length) throw new DeferMessageError('payment_in_flight');
   return ctx;
 }
 

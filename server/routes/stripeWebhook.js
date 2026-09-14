@@ -13,6 +13,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { getLiveClient, getTestClient, isTestMode } = require('../utils/stripeClient');
 
 const handlePaymentIntentSucceeded = require('./stripeWebhookHandlers/paymentIntentSucceeded');
+const handlePaymentIntentProcessing = require('./stripeWebhookHandlers/paymentIntentProcessing');
 const handlePaymentIntentFailed = require('./stripeWebhookHandlers/paymentIntentFailed');
 const handleCheckoutSessionCompleted = require('./stripeWebhookHandlers/checkoutSessionCompleted');
 const handleChargeRefunded = require('./stripeWebhookHandlers/chargeRefunded');
@@ -88,6 +89,14 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
   if (event.type === 'payment_intent.succeeded') {
     await handlePaymentIntentSucceeded(event);
+    if (res.headersSent) return;
+  }
+
+  // Bank debit in flight (spec 2026-09-14): a processing intent is recorded so
+  // the rails, the reminder ladder and the client pages can see it. Idempotent
+  // on the row's own pending state; nothing to early-ack.
+  if (event.type === 'payment_intent.processing') {
+    await handlePaymentIntentProcessing(event);
     if (res.headersSent) return;
   }
 

@@ -60,6 +60,10 @@ const UNAVAILABLE_MSG =
 // switch, which is the safe direction: better a failed switch than a rewritten
 // total behind a live intent.
 const STRIPE_CALL_TIMEOUT_MS = 10000;
+// Retrieves carry one network retry as well (bank debit in flight, review
+// 2026-09-14): these run inside the FOR UPDATE window, so the SDK's default
+// two retries could hold the proposal row lock for half a minute.
+const { STRIPE_RETRIEVE_OPTS } = require('../../utils/paymentInFlight');
 
 // Landed-switch grinding breadcrumb. The 409-storm log below catches a token
 // that keeps FAILING; this catches one that keeps SUCCEEDING. Multi-commit
@@ -225,9 +229,10 @@ router.post(
       // switch, retry the card in the still-open tab, and the old amount is
       // recorded against the new configuration. That is precisely the harm
       // this block exists to prevent.
+      // 'processing' (bank debit in flight, 2026-09-14) is in flight by definition.
       const pend = await client.query(
         `SELECT stripe_payment_intent_id FROM stripe_sessions
-          WHERE proposal_id = $1 AND status IN ('pending', 'failed')
+          WHERE proposal_id = $1 AND status IN ('pending', 'failed', 'processing')
             AND stripe_payment_intent_id IS NOT NULL`,
         [p.id]
       );
@@ -247,7 +252,7 @@ router.post(
           // holds the proposal row (and a pooled connection) against the
           // payment webhook for minutes. A timeout throw lands on the abort
           // path, which is the safe direction.
-          return await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, { timeout: STRIPE_CALL_TIMEOUT_MS });
+          return await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, STRIPE_RETRIEVE_OPTS);
         } catch (e) {
           const gone = e && (e.code === 'resource_missing' || e.statusCode === 404);
           if (!gone) throw e;
@@ -264,7 +269,7 @@ router.post(
       // first one dead at Stripe while the DB rolled back.)
       if (intents.some((i) => i.status === 'processing' || i.status === 'succeeded')) {
         throw new ConflictError(
-          'A payment for this proposal is already in progress. Give it a moment, then refresh.',
+          'A payment for this proposal is already in progress. If it was a card, give it a moment and refresh. If it was a bank payment, it clears in four to six business days, and your proposal stays as it is until then.',
           'PAYMENT_IN_FLIGHT'
         );
       }
@@ -518,12 +523,12 @@ router.post(
     try {
       const late = switchedProposalId ? await pool.query(
         `SELECT stripe_payment_intent_id FROM stripe_sessions
-          WHERE proposal_id = $1 AND status IN ('pending', 'failed')
+          WHERE proposal_id = $1 AND status IN ('pending', 'failed', 'processing')
             AND stripe_payment_intent_id IS NOT NULL`,
         [switchedProposalId]
       ) : { rows: [] };
       for (const row of late.rows) {
-        const intent = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, { timeout: STRIPE_CALL_TIMEOUT_MS });
+        const intent = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, STRIPE_RETRIEVE_OPTS);
         if (['processing', 'succeeded', 'canceled'].includes(intent.status)) continue;
         await stripe.paymentIntents.cancel(intent.id, { timeout: STRIPE_CALL_TIMEOUT_MS });
         await pool.query(

@@ -29,6 +29,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
+const { findStaleProcessingPayments, STALE_PROCESSING_DAYS } = require('./paymentInFlight');
 
 const OVER_ACTION = 'invoice_over_bill';
 const UNDER_ACTION = 'balance_invoice_missing';
@@ -252,8 +253,22 @@ async function monitorMissingBalanceInvoices() {
     await notifyAdminCategory({ category: 'payment_failure', subject, emailHtml, emailText });
   }
 
-  console.log(`[balance_invoice_monitor] candidates=${candidates} alerted=${alerted} throttled=${throttled}`);
-  return { candidates, alerted, throttled };
+  // Bank debit in flight (spec 2026-09-14, review F4): a processing row that
+  // has outlived any bank debit's window means the payment_failed event was
+  // lost or never subscribed. Until the row expires it blocks every checkout
+  // on that proposal and defers every reminder, and nothing else would say so.
+  // Sentry only (it groups repeats); the row itself is never touched.
+  const stale = await findStaleProcessingPayments();
+  for (const row of stale) {
+    const line = `stale_processing_payment: proposal ${row.proposal_id}, $${(row.amount_cents / 100).toFixed(2)} processing since ${new Date(row.processing_at).toISOString()} (over ${STALE_PROCESSING_DAYS} days)`;
+    console.warn(`[balance_invoice_monitor] ${line}`);
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage(line, { level: 'warning', tags: { monitor: 'balance_invoice', issue: 'stale_processing_payment' } });
+    }
+  }
+
+  console.log(`[balance_invoice_monitor] candidates=${candidates} alerted=${alerted} throttled=${throttled} stale_processing=${stale.length}`);
+  return { candidates, alerted, throttled, staleProcessing: stale.length };
 }
 
 module.exports = {

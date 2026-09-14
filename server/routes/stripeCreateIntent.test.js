@@ -12,6 +12,7 @@ process.env.STRIPE_TEST_MODE_UNTIL = '';
 // cancelled — the whole election-at-payment contract lives in those three.
 const createCalls = [];
 const cancelCalls = [];
+const retrieveCalls = [];
 let retrieveResult = null; // set per-test to script the pending-intent branch
 const fakeStripe = {
   customers: {
@@ -27,6 +28,7 @@ const fakeStripe = {
       };
     },
     retrieve: async (id) => {
+      retrieveCalls.push(id);
       if (retrieveResult && retrieveResult.id === id) return retrieveResult;
       const err = new Error(`No such payment_intent: ${id}`);
       err.code = 'resource_missing';
@@ -136,7 +138,7 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
-beforeEach(() => { retrieveResult = null; });
+beforeEach(() => { retrieveResult = null; retrieveCalls.length = 0; });
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
@@ -316,4 +318,58 @@ test('mandate: untouched chooser (no election keys) charges total_price with no 
   const call = createCalls[createCalls.length - 1];
   assert.equal(call.amount, 55000, 'total_price verbatim (mandate already inside)');
   assert.equal(call.metadata.tip_jar, undefined, 'no election metadata: webhook must not touch gratuity');
+});
+
+test('PAYMENT_IN_FLIGHT: a processing row on the proposal refuses before any Stripe call', async () => {
+  const p = await seedProposal();
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 10000, 'processing', NOW() - INTERVAL '1 day')`,
+    [p.id, `pi_${NONCE}_inflight_row`]
+  );
+  const before = createCalls.length;
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'deposit' });
+  assert.equal(res.status, 409, res.body);
+  const body = JSON.parse(res.body);
+  assert.equal(body.code, 'PAYMENT_IN_FLIGHT');
+  assert.match(body.error, /\$100\.00 payment for this event has been processing since/);
+  assert.equal(createCalls.length, before, 'nothing minted');
+});
+
+test('PAYMENT_IN_FLIGHT: the newest pending intent that Stripe reports processing refuses instead of minting beside it', async () => {
+  const p = await seedProposal();
+  const piId = `pi_${NONCE}_stripe_processing`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status) VALUES ($1, $2, 10000, 'pending')`,
+    [p.id, piId]
+  );
+  retrieveResult = { id: piId, status: 'processing', amount: 10000, created: Math.floor(Date.now() / 1000), metadata: {} };
+  const before = createCalls.length;
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'deposit' });
+  assert.equal(res.status, 409, res.body);
+  assert.equal(JSON.parse(res.body).code, 'PAYMENT_IN_FLIGHT');
+  assert.equal(createCalls.length, before, 'the fix-list defect: no fresh intent beside a settling one');
+  assert.ok(!cancelCalls.includes(piId), 'a settling intent is never cancelled');
+});
+
+test('the rail pins the payment methods it offers, and reads a reusable pending intent from Stripe once, not twice', async () => {
+  const p = await seedProposal();
+  const piId = `pi_${NONCE}_reuse_once`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status) VALUES ($1, $2, 10000, 'pending')`,
+    [p.id, piId]
+  );
+  retrieveResult = { id: piId, status: 'requires_payment_method', amount: 10000, client_secret: 'secret_reused', metadata: {} };
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'deposit' });
+  assert.equal(res.status, 200, res.body);
+  assert.equal(JSON.parse(res.body).clientSecret, 'secret_reused', 'the metadata-less pending intent is reused');
+  assert.equal(retrieveCalls.filter((id) => id === piId).length, 1, 'the guard fetched it; the reuse branch did not fetch it again');
+});
+
+test('a fresh intent carries payment_method_types card, link, us_bank_account', async () => {
+  const p = await seedProposal();
+  const before = createCalls.length;
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'deposit' });
+  assert.equal(res.status, 200, res.body);
+  assert.deepEqual(createCalls[before].payment_method_types, ['card', 'link', 'us_bank_account']);
 });

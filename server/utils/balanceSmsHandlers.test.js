@@ -106,3 +106,35 @@ test('balance_late_t3_sms handler > suppresses when balance is already zero', as
   assert.strictEqual(rows[0].status, 'suppressed');
   assert.match(rows[0].error_message, /balance_not_positive/);
 });
+
+test('balance_late_t1_sms handler > defers a day while a bank debit is processing, never sends', async () => {
+  _clearHandlersForTest();
+  registerBalanceSmsHandlers();
+  const { __setSmsDeps } = require('./sms');
+  let sent = 0;
+  __setSmsDeps({ sendSMS: async () => { sent += 1; return { sid: `stub-${Date.now()}` }; } });
+  try {
+    await pool.query(
+      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+       VALUES ($1, $2, 90000, 'processing', NOW() - INTERVAL '2 days')`,
+      [proposalId, `pi_balsms_${Date.now()}`]
+    );
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+       VALUES ($1, 'proposal', 'balance_late_t1_sms', 'client', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+      [proposalId, clientId]
+    );
+    await dispatchPending();
+    const { rows } = await pool.query(
+      "SELECT status, error_message, scheduled_for > NOW() + INTERVAL '23 hours' AS pushed FROM scheduled_messages WHERE entity_id=$1 AND message_type='balance_late_t1_sms'",
+      [proposalId]
+    );
+    assert.strictEqual(rows[0].status, 'deferred');
+    assert.strictEqual(rows[0].error_message, 'deferred: payment_in_flight');
+    assert.strictEqual(rows[0].pushed, true);
+    assert.strictEqual(sent, 0);
+  } finally {
+    __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
+    await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = $1', [proposalId]);
+  }
+});

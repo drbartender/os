@@ -11,6 +11,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { OFF_LEDGER_INVOICE_LABELS } = require('../utils/proposalMoneyShared');
 const { renderExtensionTerms } = require('../data/extensionTermsCopy');
+const { findInFlightPayments, toPublicPending } = require('../utils/paymentInFlight');
 
 const router = express.Router();
 
@@ -50,7 +51,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   const invoice = result.rows[0];
 
   // Parallel fetch line items and payments
-  const [lineItemsRes, paymentsRes, refundsRes, extRes] = await Promise.all([
+  const [lineItemsRes, paymentsRes, refundsRes, extRes, inFlight] = await Promise.all([
     pool.query(
       `SELECT id, description, quantity::float8 AS quantity, unit_price, line_total, source_type
          FROM invoice_line_items
@@ -132,6 +133,10 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
         ORDER BY id DESC LIMIT 1`,
       [invoice.id]
     ),
+    // Bank debit in flight (spec 2026-09-14 section 7): the newest processing
+    // payment on this invoice's proposal. Any in-flight payment on the
+    // proposal is reported (D3); for_this_invoice says whether it is this one.
+    findInFlightPayments(invoice.proposal_id),
   ]);
   let extension = null;
   if (extRes.rows[0]) {
@@ -171,6 +176,8 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
       payments: paymentsRes.rows,
       refunds: refundsRes.rows,
       extension,
+      pending_payment: toPublicPending(inFlight),
+      pending_payment_for_this_invoice: !!(inFlight[0] && inFlight[0].invoice_id === invoice.id),
     },
   });
 }));
@@ -211,18 +218,26 @@ router.get('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(as
     throw new ValidationError({ proposalId: 'Invalid proposal ID.' });
   }
 
-  const result = await pool.query(
-    `SELECT
-       id, token, proposal_id, invoice_number, label,
-       amount_due, amount_paid, status, due_date,
-       locked, locked_at, created_at, updated_at
-     FROM invoices
-     WHERE proposal_id = $1
-     ORDER BY created_at ASC`,
-    [proposalId]
-  );
+  const [result, inFlight] = await Promise.all([
+    pool.query(
+      `SELECT
+         id, token, proposal_id, invoice_number, label,
+         amount_due, amount_paid, status, due_date,
+         locked, locked_at, created_at, updated_at
+       FROM invoices
+       WHERE proposal_id = $1
+       ORDER BY created_at ASC`,
+      [proposalId]
+    ),
+    findInFlightPayments(proposalId),
+  ]);
 
-  res.json({ invoices: result.rows });
+  // pending_payments: bank debits still processing on this proposal (spec
+  // 2026-09-14 section 10), newest first, intent id stripped.
+  res.json({
+    invoices: result.rows,
+    pending_payments: inFlight.map(({ amount_cents, started_at, invoice_id, invoice_number }) => ({ amount_cents, started_at, invoice_id, invoice_number })),
+  });
 }));
 
 /**

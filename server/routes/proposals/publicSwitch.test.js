@@ -741,3 +741,21 @@ test('atomicity: a failing invoice refresh rolls back the ENTIRE switch', async 
     `SELECT 1 FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'package_switched'`, [p.id]);
   assert.equal(log.rows.length, 0, 'no audit row for a rolled-back switch');
 });
+
+test('PAYMENT_IN_FLIGHT: a row already flipped to processing by the webhook blocks the switch', async () => {
+  const p = await insertProposal();
+  const piId = `pi_procrow_${crypto.randomBytes(4).toString('hex')}`;
+  scriptedIntents.set(piId, { id: piId, status: 'processing' });
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 35000, 'processing', NOW())`, [p.id, piId]);
+  const quote = await quoteFor(p.token);
+  const res = await request('POST', `/api/proposals/t/${p.token}/switch`, {
+    body: { package_id: hostedPkgId, tier_addon_id: null, extra_addon_ids: [], acknowledged_total: optionTotal(quote, hostedPkgId) },
+  });
+  assert.equal(res.status, 409, res.raw);
+  assert.equal(res.body.code, 'PAYMENT_IN_FLIGHT');
+  const row = await rowOf(p.id);
+  assert.equal(row.package_id, byobPkgId, 'row untouched while money is in flight');
+  assert.ok(!cancelCalls.includes(piId), 'a settling intent is never canceled');
+});

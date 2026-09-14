@@ -249,6 +249,12 @@ const CONSTRAINT_CONTRACT = [
   // dev) and left the table with NO status constraint at all, silently, forever.
   { table: 'shifts', constraint: 'shifts_status_check',
     mustContain: ['open', 'completed', 'cancelled'] },
+  // Bank debit in flight (spec 2026-09-14): the payment_intent.processing
+  // webhook writes 'processing' and stripeCreateIntent writes 'canceled'. A
+  // narrowed definition would raise 23514 on every processing delivery, and
+  // Stripe would retry it for three days against a wall.
+  { table: 'stripe_sessions', constraint: 'stripe_sessions_status_check',
+    mustContain: ['processing', 'canceled'] },
   // AUTH, and the omission the 2026-08-14 sweep named by name. It is the worst
   // instance of the bare DROP-then-ADD shape in the file AND a double
   // definition: `CREATE TABLE users` carries an unnamed inline CHECK that

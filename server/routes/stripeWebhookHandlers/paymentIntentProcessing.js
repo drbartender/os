@@ -1,0 +1,109 @@
+// server/routes/stripeWebhookHandlers/paymentIntentProcessing.js
+// stripeWebhook concern: payment_intent.processing (spec 2026-09-14 section
+// 4.1). A bank debit confirms into `processing` and settles four to six
+// business days later. This handler is the ONLY writer of
+// stripe_sessions.status = 'processing'; the succeeded and payment_failed
+// handlers release it. Every consumer reads it through
+// utils/paymentInFlight.js.
+//
+// Idempotency is the row's own state: only a still-pending row moves, so a
+// redelivery, or a processing event delivered after succeeded or
+// payment_failed, matches nothing and changes nothing. One activity row per
+// real transition. The client email runs post-commit, after release.
+const { pool } = require('../../db');
+const { notifyClientBankPaymentProcessing, notifyAdminBankPaymentProcessing } = require('../../utils/bankPaymentProcessingNotify');
+
+module.exports = async function handlePaymentIntentProcessing(event) {
+  const intent = event.data.object;
+  const proposalId = Number(intent.metadata?.proposal_id);
+  if (!Number.isInteger(proposalId) || proposalId <= 0) return;
+  const paymentType = intent.metadata?.payment_type || 'deposit';
+  const metaInvoiceId = Number(intent.metadata?.invoice_id);
+  const amountCents = Number(intent.amount) || 0;
+
+  // Event-level idempotency, the same ledger payment_failed uses: Stripe
+  // redelivers at least once, and a queued retry of THIS event can land after
+  // payment_failed has already released the row for a bounced debit. The
+  // row's own state guards most of that (below); the ledger guards the rest.
+  const firstSeen = await pool.query(
+    `INSERT INTO webhook_events (provider, event_id) VALUES ('stripe', $1)
+     ON CONFLICT (provider, event_id) DO NOTHING RETURNING event_id`,
+    [event.id]
+  );
+  if (firstSeen.rowCount === 0) {
+    console.log(`Webhook: duplicate payment_intent.processing delivery for event ${event.id} (proposal ${proposalId}), skipping`);
+    return;
+  }
+
+  const dbClient = await pool.connect();
+  let transitioned = false;
+  try {
+    await dbClient.query('BEGIN');
+
+    // Ownership check, the same rule as the succeeded handler's invoice link:
+    // an invoice id that does not belong to this proposal is stored as NULL.
+    let invoiceId = null;
+    if (Number.isInteger(metaInvoiceId) && metaInvoiceId > 0) {
+      const own = await dbClient.query(
+        'SELECT id FROM invoices WHERE id = $1 AND proposal_id = $2',
+        [metaInvoiceId, proposalId]
+      );
+      if (own.rows[0]) invoiceId = metaInvoiceId;
+    }
+
+    // Scoped by proposal as well as intent id, like every sibling writer, so a
+    // row can never take another proposal's invoice. A 'failed' row moves too,
+    // but only one that never processed: a declined card leaves the intent
+    // live and Stripe lets the client retry the same intent with a bank
+    // account (processing_at still NULL). A row that processed and then
+    // bounced has processing_at set and must stay released, or a late
+    // redelivery would lock the proposal again and email "received" for
+    // money that came back. 'succeeded' and 'processing' never move.
+    const upd = await dbClient.query(
+      `UPDATE stripe_sessions
+          SET status = 'processing', processing_at = NOW(), invoice_id = COALESCE($2, invoice_id)
+        WHERE stripe_payment_intent_id = $1 AND proposal_id = $3
+          AND (status = 'pending' OR (status = 'failed' AND processing_at IS NULL))
+        RETURNING id`,
+      [intent.id, invoiceId, proposalId]
+    );
+    transitioned = upd.rowCount === 1;
+
+    if (!transitioned) {
+      // No pending row. Either the intent was already released (redelivery,
+      // or processing delivered after succeeded), in which case the unique
+      // index makes this a no-op, or the intent was minted outside the app
+      // and still carries our metadata, in which case the guard must see it.
+      const ins = await dbClient.query(
+        `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at, invoice_id)
+         VALUES ($1, $2, $3, 'processing', NOW(), $4)
+         ON CONFLICT (stripe_payment_intent_id) DO NOTHING
+         RETURNING id`,
+        [proposalId, intent.id, amountCents, invoiceId]
+      );
+      transitioned = ins.rowCount === 1;
+    }
+
+    if (transitioned) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_processing', 'system', $2)`,
+        [proposalId, JSON.stringify({ amount: amountCents, payment_intent_id: intent.id, payment_type: paymentType, invoice_id: invoiceId })]
+      );
+    }
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch (_) { /* connection already dead */ }
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  // Post-commit, after release: the notifier takes its own pooled connection
+  // (one pooled connection per request). Fire and forget, like the receipt.
+  if (transitioned) {
+    notifyClientBankPaymentProcessing({ proposalId, amountCents, paymentType })
+      .catch((err) => console.error('bank payment processing notify failed (non-blocking):', err && err.message));
+    notifyAdminBankPaymentProcessing({ proposalId, amountCents, paymentType })
+      .catch((err) => console.error('bank payment processing admin notify failed (non-blocking):', err && err.message));
+  }
+};

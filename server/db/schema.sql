@@ -1416,9 +1416,12 @@ END $$;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate_change_origin;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS tip_jar;
---   (stripe_sessions_status_check 'canceled' widening below is NOT auto-reverted:
---    re-tighten only by re-running the original 3-value CHECK from main, and only
---    if no row has status='canceled'.)
+--   (stripe_sessions_status_check widenings below ('canceled', then 'processing'
+--    for bank debit in flight, 2026-09-14) are NOT auto-reverted: re-tighten only
+--    by re-running the earlier CHECK, and only if no row carries the value being
+--    dropped. The 2026-09-14 change also added stripe_sessions.processing_at,
+--    stripe_sessions.invoice_id with FK stripe_sessions_invoice_id_fkey, and the
+--    partial index idx_stripe_sessions_proposal_processing.)
 
 -- ─── Last-Minute Booking Hold ─────────────────────────────────────
 -- Set TRUE by the Stripe webhook (payment_intent.succeeded) when a paid
@@ -2009,7 +2012,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE stripe_sessions DROP CONSTRAINT IF EXISTS stripe_sessions_status_check;
-  ALTER TABLE stripe_sessions ADD CONSTRAINT stripe_sessions_status_check CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled'));
+  ALTER TABLE stripe_sessions ADD CONSTRAINT stripe_sessions_status_check CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled', 'processing'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 DO $$ BEGIN
@@ -2385,6 +2388,25 @@ CREATE TABLE IF NOT EXISTS invoice_payments (
 
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice_id ON invoice_payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_payment_id ON invoice_payments(payment_id);
+
+-- ─── Bank debit in flight (spec 2026-09-14) ─────────────────────
+-- A PaymentIntent that Stripe reports `processing` (a bank debit, four to six
+-- business days to settle) is recorded on its stripe_sessions row so the
+-- checkout rails, the balance reminder ladder, the client pages and the admin
+-- panel can see it. The payment_intent.processing webhook is the only writer.
+-- processing_at is the "started" instant every surface shows (created_at is
+-- when the intent was minted, which can be earlier than the confirm).
+-- invoice_id names the invoice the money is for; NULL for deposit / full /
+-- drink-plan / autopay intents. Lives here, not next to the table, because
+-- invoices is created later in this file and the FK needs it to exist.
+ALTER TABLE stripe_sessions ADD COLUMN IF NOT EXISTS processing_at TIMESTAMPTZ;
+ALTER TABLE stripe_sessions ADD COLUMN IF NOT EXISTS invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL;
+-- Backs every in-flight lookup (both public GETs, the polled payment-state
+-- route, the rails, the reminder ladder): the older partial index covers only
+-- status = 'pending'. Tiny by construction, a handful of rows at a time.
+CREATE INDEX IF NOT EXISTS idx_stripe_sessions_proposal_processing
+  ON stripe_sessions(proposal_id, processing_at DESC)
+  WHERE status = 'processing';
 
 -- Upgrade: refund attribution on reversal rows. applyRefundReconciliation
 -- stamps each negative reversal row with the proposal_refunds id it belongs

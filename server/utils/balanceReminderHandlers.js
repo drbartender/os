@@ -15,7 +15,8 @@ const emailTemplates = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { proposalUrl } = require('./urls');
 const { sendEmail } = require('./email');
-const { SuppressMessageError } = require('./errors');
+const { SuppressMessageError, DeferMessageError } = require('./errors');
+const { findInFlightPayments } = require('./paymentInFlight');
 
 function lastFour(_proposal) {
   // last4 is not stored on proposals today (only stripe_payment_method_id).
@@ -28,6 +29,13 @@ async function sendBalanceReminder({ entity, recipient, paymentMode }) {
   const balanceDue = Number(entity.total_price) - Number(entity.amount_paid);
   if (balanceDue <= 0) {
     throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
+  }
+
+  // Bank debit in flight (spec 2026-09-14 section 6): the balance is still
+  // owed on the row, but the money is on its way. Defer, never suppress, so a
+  // bounced debit resumes the ladder instead of silencing it.
+  if ((await findInFlightPayments(entity.id)).length) {
+    throw new DeferMessageError('payment_in_flight');
   }
   const tpl = emailTemplates.paymentReminderClient({
     clientName: recipient.name,
@@ -52,6 +60,13 @@ async function sendBalanceLate({ entity, recipient, daysLate }) {
   const balanceDue = Number(entity.total_price) - Number(entity.amount_paid);
   if (balanceDue <= 0) {
     throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
+  }
+
+  // Bank debit in flight (spec 2026-09-14 section 6): the balance is still
+  // owed on the row, but the money is on its way. Defer, never suppress, so a
+  // bounced debit resumes the ladder instead of silencing it.
+  if ((await findInFlightPayments(entity.id)).length) {
+    throw new DeferMessageError('payment_in_flight');
   }
   const tpl = emailTemplates.paymentReminderLate({
     clientName: recipient.name,

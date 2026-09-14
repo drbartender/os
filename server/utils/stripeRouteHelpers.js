@@ -10,6 +10,19 @@ const { ExternalServiceError } = require('./errors');
 const { getEventTypeLabel } = require('./eventTypes');
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT, 10) || 10000; // $100.00
+// The payment methods the three client checkout rails offer (spec 2026-09-14,
+// review round). Pinned so every "bank payment" statement the system makes
+// about a processing intent is true by construction: only a bank debit sits in
+// processing for days. Cash App, Klarna, Affirm and Amazon Pay produced two
+// successful charges between June and September 2026 against about a hundred
+// by card and Link; re-adding one means also teaching the processing copy to
+// tell methods apart. Tip payment links pin their own list (tipPaymentLinks.js).
+const CHECKOUT_PAYMENT_METHOD_TYPES = Object.freeze(['card', 'link', 'us_bank_account']);
+// The admin-issued Payment Link rail settles through checkout.session.completed,
+// which credits only a session Stripe reports paid; a bank debit through a link
+// would return unpaid and its later async success event is not handled, so the
+// money would never be credited. That rail therefore offers no bank debit.
+const PAYMENT_LINK_METHOD_TYPES = Object.freeze(['card', 'link']);
 
 function eventLabelFor(row) {
   return getEventTypeLabel({ event_type: row?.event_type, event_type_custom: row?.event_type_custom });
@@ -57,4 +70,4 @@ async function getOrCreateCustomer(proposal) {
   return customer.id;
 }
 
-module.exports = { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer };
+module.exports = { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer };

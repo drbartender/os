@@ -278,3 +278,27 @@ test('still alerts on an overpaid proposal that DOES have an open invoice', asyn
   assert.equal(rows.length, 1);
   assert.equal(rows[0].action, OVER_ACTION);
 });
+
+test('reports a processing payment older than eight days (bank debit in flight, review F4) and leaves the row alone', async () => {
+  const c = await pool.query(`INSERT INTO clients (name, email, source) VALUES ('Stale Processing Fixture', $1, 'other') RETURNING id`, [`monitor-stale-${process.pid}-${Date.now()}@example.com`]);
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, guest_count, total_price, amount_paid, deposit_amount, status)
+     VALUES ($1, '2026-12-01', 50, 500, 100, 100, 'deposit_paid') RETURNING id`, [c.rows[0].id]
+  );
+  const proposalId = p.rows[0].id;
+  try {
+    await pool.query(
+      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+       VALUES ($1, $2, 40000, 'processing', NOW() - INTERVAL '9 days')`, [proposalId, `pi_stale_${process.pid}_${Date.now()}`]
+    );
+    const r = await monitorMissingBalanceInvoices();
+    assert.ok(r.staleProcessing >= 1, `expected at least one stale processing row, got ${r.staleProcessing}`);
+    const row = await pool.query('SELECT status FROM stripe_sessions WHERE proposal_id = $1', [proposalId]);
+    assert.equal(row.rows[0].status, 'processing', 'alert-only: the row is never touched');
+  } finally {
+    await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [c.rows[0].id]);
+  }
+});

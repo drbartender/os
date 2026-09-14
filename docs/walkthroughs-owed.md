@@ -167,6 +167,16 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
 
 ## Tier 1 — money moved, and nobody watched it land
 
+- [ ] **First real bank debit after the 2026-09-14 deploy (bank debit in flight).** Cannot be
+      rehearsed: dev talks to live Stripe and a debit is real money. On the first client who
+      pays by bank: confirm the `stripe_sessions` row went `processing` with `processing_at`
+      and (for a Balance) `invoice_id`; the `payment_processing` activity entry is on the
+      proposal; the client's invoice or proposal page shows "Your bank payment is
+      processing."; the admin payment panel shows the Processing line; any balance reminder
+      row for that proposal went `deferred`; and the "We received your bank payment" email
+      left (Resend log). Then on settlement: the row went `succeeded`, the reminders were
+      reactivated or suppressed as paid, and the receipt went out. Also known and deliberate: any processing payment on an autopay proposal parks the saved-card charge (autopay_status stays in_progress) until the debit settles plus the 72h re-claim, so a small drink-plan debit near a due date can push the balance charge past it; the scheduler's Sentry warning names the proposal.
+
 - [ ] **Sign-and-pay WITH a gratuity, end to end. Fix shipped 2026-08-28, `e8101a9d`.**
       Between 2026-08-21 and 2026-08-28 every client who typed a gratuity was unable to pay
       at all: the page adopted create-intent's election-inclusive total into

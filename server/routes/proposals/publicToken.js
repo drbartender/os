@@ -14,6 +14,7 @@ const { isVenueComplete, composeVenueLocation, validateVenue, normalizeVenueStat
 const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../utils/agreementVersions');
 const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
+const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
 
 const router = express.Router();
 
@@ -63,10 +64,15 @@ router.get('/t/:token/resolve', requireUuidToken, publicTokenIpLimiter, proposal
  *  thirteen views of a page the client is staring at once. 404 on archived is
  *  stated here on its own; /resolve above is deliberately status-blind. */
 router.get('/t/:token/payment-state', requireUuidToken, publicTokenIpLimiter, proposalPollLimiter, asyncHandler(async (req, res) => {
+  // Bank debit in flight (spec 2026-09-14 section 8.3): the settle poll ends
+  // the moment the row shows a processing payment. Still non-mutating, and
+  // still ONE round trip: this is polled up to thirteen times per redirect,
+  // so the in-flight lookup rides a LATERAL join instead of a second query.
   const { rows: [row] } = await pool.query(
-    `SELECT status, amount_paid, total_price, payment_type
-       FROM proposals
-      WHERE token = $1 AND status <> 'archived'`,
+    `SELECT p.status, p.amount_paid, p.total_price, p.payment_type, pp.*
+       FROM proposals p
+       ${IN_FLIGHT_LATERAL_SQL}
+      WHERE p.token = $1 AND p.status <> 'archived'`,
     [req.params.token]
   );
   if (!row) throw new NotFoundError('This proposal is no longer available');
@@ -75,6 +81,7 @@ router.get('/t/:token/payment-state', requireUuidToken, publicTokenIpLimiter, pr
     amount_paid: Number(row.amount_paid || 0),
     total_price: Number(row.total_price || 0),
     payment_type: row.payment_type || null,
+    pending_payment: pendingFromLateralRow(row),
   });
 }));
 
@@ -172,7 +179,7 @@ async function buildPublicProposalPayload(token, db = pool) {
   const proposal = result.rows[0];
 
   // Parallelize the non-dependent fetches: addons + drink plan
-  const [addonsRes, dpRes] = await Promise.all([
+  const [addonsRes, dpRes, inFlight] = await Promise.all([
     db.query(
       'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [proposal.id]
@@ -181,6 +188,8 @@ async function buildPublicProposalPayload(token, db = pool) {
       'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
       [proposal.id]
     ),
+    // Bank debit in flight (spec 2026-09-14 section 7).
+    findInFlightPayments(proposal.id, db),
   ]);
 
   const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
@@ -248,6 +257,7 @@ async function buildPublicProposalPayload(token, db = pool) {
     ...publicProposal,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
+    pending_payment: toPublicPending(inFlight),
     venue_complete: isVenueComplete(proposal),
     client_phone_prefill: clientPhonePrefill,
     // Display flip. The GET's own side effect flips the row sent->viewed, so

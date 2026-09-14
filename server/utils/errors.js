@@ -69,6 +69,22 @@ class SuppressMessageError extends Error {
 }
 
 /**
+ * Handler-side "right touch, wrong moment" signal (spec 2026-09-14 section 6):
+ * a balance reminder while a bank debit is still processing. The dispatcher
+ * moves the row to 'deferred' with scheduled_for = NOW() + 24h and its
+ * reactivation pass re-queues it when due; the row is never marked suppressed
+ * or failed. Plain Error subclass like SuppressMessageError: internal, never an
+ * AppError, never exposed to a client. Only handlers may throw it.
+ */
+class DeferMessageError extends Error {
+  constructor(reason) {
+    super(`message deferred: ${reason}`);
+    this.name = 'DeferMessageError';
+    this.reason = reason;
+  }
+}
+
+/**
  * Transport-layer signal that the email provider (Resend) rejected a send
  * because the account's daily sending quota / rate limit is exhausted. Like
  * SuppressMessageError this is a plain Error subclass (NOT an AppError): it is a
@@ -96,5 +112,6 @@ module.exports = {
   PaymentError,
   PayloadTooLargeError,
   SuppressMessageError,
+  DeferMessageError,
   QuotaExceededError,
 };

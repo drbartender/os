@@ -898,6 +898,7 @@ module.exports = {
   lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
   gratuityStaffingChange: lifecycle.gratuityStaffingChange,
   portalInvite: lifecycle.portalInvite,
+  bankPaymentProcessingClient: lifecycle.bankPaymentProcessingClient,
   // Pre-event reminder emails (Plan 2c)
   eventWeekReminderClient,
   longLeadT30RecapClient,

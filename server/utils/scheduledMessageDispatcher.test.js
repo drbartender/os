@@ -8,6 +8,7 @@ const {
   _clearHandlersForTest,
   dispatchPending,
 } = require('./scheduledMessageDispatcher');
+const { DeferMessageError } = require('./errors');
 
 // Use unique-per-test client/proposal IDs so we don't collide with real data.
 // Setup: create a throwaway client + proposal once, reuse across tests.
@@ -1085,4 +1086,28 @@ test('re-resolve > increments counter and enqueues retry when channels still res
   assert.strictEqual(retry.suppression_key, `${suppKey}:retry1`);
   assert.strictEqual(Number(retry.rc), 1);
   assert.strictEqual(retry.channel, 'sms');
+});
+
+test('dispatcher > DeferMessageError moves the row to deferred a day out from NOW, never failed', async () => {
+  registerHandler('disp_test_defer', async () => { throw new DeferMessageError('payment_in_flight'); });
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+       VALUES ($1, 'proposal', 'disp_test_defer', 'client', $2, 'email', NOW() - INTERVAL '3 days')`,
+      [testProposalId, testClientId]
+    );
+    await dispatchPending();
+    const { rows } = await pool.query(
+      `SELECT status, error_message, EXTRACT(EPOCH FROM (scheduled_for - NOW())) AS secs_out
+         FROM scheduled_messages WHERE message_type = 'disp_test_defer'`
+    );
+    assert.strictEqual(rows[0].status, 'deferred');
+    assert.strictEqual(rows[0].error_message, 'deferred: payment_in_flight');
+    // From NOW, not from the row's own three-day-old scheduled_for: bumped from
+    // its past timestamp it would be due again on the next tick and loop.
+    assert.ok(Number(rows[0].secs_out) > 23 * 3600, `expected about 24h out, got ${rows[0].secs_out}s`);
+    assert.ok(Number(rows[0].secs_out) <= 24 * 3600 + 60);
+  } finally {
+    await pool.query("DELETE FROM scheduled_messages WHERE message_type = 'disp_test_defer'");
+  }
 });

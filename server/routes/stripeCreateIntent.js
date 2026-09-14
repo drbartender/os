@@ -17,7 +17,8 @@ const { AppError, NotFoundError, ConflictError, ExternalServiceError, Validation
 const { getStripe } = require('../utils/stripeClient');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { deriveGratuityRate, gratuityBasisFromSnapshot, recomputeSnapshotGratuity } = require('../utils/pricingEngine');
-const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { assertNoPaymentInFlight, STRIPE_RETRIEVE_OPTS } = require('../utils/paymentInFlight');
 const { requireUuidToken } = require('../utils/tokens');
 
 const router = express.Router();
@@ -40,7 +41,7 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price,
            p.event_date, p.event_start_time, p.event_duration_hours,
            p.stripe_customer_id, p.deposit_amount, p.gratuity_floor_rate,
-           p.pricing_snapshot,
+           p.pricing_snapshot, p.event_timezone,
            c.email AS client_email, c.name AS client_name
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
@@ -115,6 +116,12 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     ? Math.round(Number(effTotal) * 100)   // the ONE dollars->cents seam in this flow
     : DEPOSIT_AMOUNT;
 
+  // Bank debit in flight (spec 2026-09-14 section 5.1). Runs BEFORE the reuse
+  // and stale-cancel logic below, so a settling intent is never reused, never
+  // cancelled, and never minted beside. The Stripe read is the backstop that
+  // does not depend on the processing webhook and fails closed on an outage.
+  const { intents: fetchedIntents } = await assertNoPaymentInFlight({ proposalId: proposal.id, stripe, timeZone: proposal.event_timezone });
+
   // Intent identity = (amount, election metadata). A deposit is $100 regardless
   // of election, so amount alone can no longer identify an intent (spec §3).
   //
@@ -132,7 +139,15 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
   );
   if (existing.rows[0]) {
     try {
-      const intent = await stripe.paymentIntents.retrieve(existing.rows[0].stripe_payment_intent_id);
+      // The guard above already fetched the newest pending intents; reuse
+      // its read instead of asking Stripe for the same one again. A null
+      // entry means Stripe reported it gone: fall through and mint fresh.
+      const pendingId = existing.rows[0].stripe_payment_intent_id;
+      if (fetchedIntents.has(pendingId) && fetchedIntents.get(pendingId) === null) {
+        throw Object.assign(new Error(`No such payment_intent: ${pendingId}`), { code: 'resource_missing' });
+      }
+      const intent = fetchedIntents.get(pendingId)
+        || await stripe.paymentIntents.retrieve(pendingId, STRIPE_RETRIEVE_OPTS);
       const intentMeta = (intent.metadata && intent.metadata.tip_jar !== undefined)
         ? { tip_jar: intent.metadata.tip_jar, gratuity_rate: intent.metadata.gratuity_rate }
         : null;
@@ -155,9 +170,9 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
       }
       // Stale-intent safety: cancel when the identity (amount OR election)
       // no longer matches, so a stale tab can't confirm an old total/election.
-      // Only when still cancelable — if the client already confirmed it in
-      // another tab (succeeded/processing), leave it for the webhook to
-      // reconcile; the additive amount_paid credit records what was charged.
+      // A succeeded/processing intent never reaches here any more (the
+      // in-flight guards above refuse the request), so the status filter is
+      // belt and braces for the one retrieve this branch makes itself.
       if ((!amountMatch || !metaMatch)
           && !['succeeded', 'processing', 'canceled'].includes(intent.status)) {
         await stripe.paymentIntents.cancel(intent.id);
@@ -184,6 +199,7 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
   const intentParams = {
     amount,
     currency: 'usd',
+    payment_method_types: [...CHECKOUT_PAYMENT_METHOD_TYPES],
     customer: customerId,
     description: isFullPay
       ? `Full Payment — ${eventLabelFor(proposal)}`

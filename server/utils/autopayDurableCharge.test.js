@@ -86,8 +86,11 @@ test('priorBalanceChargeSettling > (b) SKIP when a NEWER non-balance intent shad
   const invId = `pi_${MARK}_newinv`;
   await seedSession(balId, 30000, '2 hours'); // older
   await seedSession(invId, 40000);            // newer (NOW)
+  // Since 2026-09-14 an 'invoice' intent counts as balance-covering (the public
+  // invoice page is how a client settles the balance), so the genuinely
+  // non-balance shadow here is an extras-only drink-plan intent.
   const stripe = fakeStripe({
-    [invId]: { id: invId, status: 'succeeded', metadata: { payment_type: 'invoice' } },
+    [invId]: { id: invId, status: 'succeeded', metadata: { payment_type: 'drink_plan_extras', balance_amount_cents: '0' } },
     [balId]: { id: balId, status: 'succeeded', metadata: { payment_type: 'balance' } },
   });
   const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
@@ -203,4 +206,44 @@ test('priorBalanceChargeSettling > (i) a covering intent with balance_amount_cen
   assert.equal(r.skip, true, 'a plain balance intent (no balance_amount_cents) must still block');
   assert.equal(r.reason, 'settling');
   assert.equal(r.priorStatus, 'processing');
+});
+
+test('priorBalanceChargeSettling > a row the processing webhook flipped to processing is still scanned and blocks', async () => {
+  await clearSessions();
+  const priorId = `pi_${MARK}_procrow`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 40000, 'processing', NOW() - INTERVAL '1 day')`, [propId, priorId]
+  );
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'processing', metadata: { payment_type: 'balance' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a settling bank debit must block the saved-card charge');
+  // The DB read answers before any Stripe call now (review H1), so the reason
+  // names the row state rather than Stripe's.
+  assert.equal(r.reason, 'in_flight');
+});
+
+test('priorBalanceChargeSettling > a processing row blocks by itself, whatever its metadata (an invoice paid by bank debit)', async () => {
+  await clearSessions();
+  const priorId = `pi_${MARK}_invproc`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 40000, 'processing', NOW() - INTERVAL '2 days')`, [propId, priorId]
+  );
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'processing', metadata: { payment_type: 'invoice', invoice_id: '999' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a Balance invoice settling by bank debit must stop the saved-card charge');
+  assert.equal(r.reason, 'in_flight');
+});
+
+test('priorBalanceChargeSettling > a FAILED row whose intent Stripe reports processing blocks (decline then bank retry)', async () => {
+  await clearSessions();
+  const priorId = `pi_${MARK}_failproc`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status) VALUES ($1, $2, 40000, 'failed')`, [propId, priorId]
+  );
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'processing', metadata: { payment_type: 'balance' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true);
+  assert.equal(r.reason, 'settling');
 });
