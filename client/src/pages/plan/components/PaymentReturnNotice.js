@@ -27,8 +27,8 @@ export default function PaymentReturnNotice({ paid, pending, failed = false }) {
   if (failed) {
     return (
       <div role="status" style={boxStyle('183, 65, 14')}>
-        <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>That payment did not go through.</p>
-        <p className="text-muted text-small">Nothing was charged. Your selections are saved, and we will be in touch about payment.</p>
+        <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>We did not get a confirmation for that payment.</p>
+        <p className="text-muted text-small">Your selections are saved, and we will be in touch about payment.</p>
       </div>
     );
   }

@@ -267,7 +267,7 @@ test('the same event id delivered twice is a no-op the second time, even after t
   assert.equal(log.n, 1);
 });
 
-test('a failed row that had already processed (a bounced debit) never moves back to processing', async () => {
+test('a bounced debit (failed row with a processing timestamp) stays released unless Stripe says the intent is processing again', async () => {
   const p = await seedProposal();
   const piId = `pi_${NONCE}_bounced`;
   await pool.query(
@@ -275,12 +275,21 @@ test('a failed row that had already processed (a bounced debit) never moves back
      VALUES ($1, $2, 40000, 'failed', NOW() - INTERVAL '3 days')`,
     [p, piId]
   );
+  scripted.set(piId, { id: piId, status: 'requires_payment_method' });
   const r = await postWebhook(processingEvent({ id: `evt_${NONCE}_bounced_new`, piId, proposalId: p }));
   assert.equal(r.status, 200);
-  const sess = await one('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId]);
-  assert.equal(sess.status, 'failed');
+  assert.equal((await one('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId])).status, 'failed');
   const log = await one(`SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_processing'`, [p]);
   assert.equal(log.n, 0);
+  // The client retries the same intent with another bank account: Stripe now
+  // reports processing, and this fresh event records the second debit.
+  scripted.set(piId, { id: piId, status: 'processing' });
+  const r2 = await postWebhook(processingEvent({ id: `evt_${NONCE}_bounced_retry`, piId, proposalId: p }));
+  assert.equal(r2.status, 200);
+  const after = await one('SELECT status, processing_at > NOW() - INTERVAL \'1 minute\' AS fresh FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId]);
+  assert.equal(after.status, 'processing');
+  assert.equal(after.fresh, true, 'processing_at restamped for the new debit');
+  assert.equal((await one(`SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_processing'`, [p])).n, 1);
 });
 
 test('a FAILED row stays failed when Stripe does not report the intent processing (a delayed processing event after a real failure)', async () => {

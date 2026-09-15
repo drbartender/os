@@ -43,6 +43,6 @@ test('a card return still says Payment Received', () => {
 
 test('a failed return says the payment did not go through, never received', () => {
   render(<CelebrationV2 plan={plan({ package_category: 'byob' })} token="t" selections={{ menuStyle: 'none' }} paidFromRedirect={false} pendingFromRedirect={false} failedFromRedirect />);
-  expect(screen.getByRole('status').textContent).toMatch(/did not go through/);
+  expect(screen.getByRole('status').textContent).toMatch(/did not get a confirmation/);
   expect(screen.queryByText(/Payment Received/)).toBeNull();
 });

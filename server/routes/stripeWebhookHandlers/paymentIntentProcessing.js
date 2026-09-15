@@ -81,18 +81,18 @@ module.exports = async function handlePaymentIntentProcessing(event, stripe) {
     }
 
     // Scoped by proposal as well as intent id, like every sibling writer, so a
-    // row can never take another proposal's invoice. A 'failed' row moves too,
-    // but only one that never processed: a declined card leaves the intent
-    // live and Stripe lets the client retry the same intent with a bank
-    // account (processing_at still NULL). A row that processed and then
-    // bounced has processing_at set and must stay released, or a late
-    // redelivery would lock the proposal again and email "received" for
-    // money that came back. 'succeeded' and 'processing' never move.
+    // row can never take another proposal's invoice. A 'failed' row moves only
+    // when Stripe confirmed above that the intent is processing right now:
+    // that covers a declined card retried as a bank debit, and a bounced
+    // debit retried with another bank account on the same intent. A late or
+    // out-of-order processing event finds Stripe saying otherwise and leaves
+    // the row released; a true redelivery never gets past the ledger.
+    // 'succeeded' and 'processing' never move.
     const upd = await dbClient.query(
       `UPDATE stripe_sessions
           SET status = 'processing', processing_at = NOW(), invoice_id = COALESCE($2, invoice_id)
         WHERE stripe_payment_intent_id = $1 AND proposal_id = $3
-          AND (status = 'pending' OR (status = 'failed' AND processing_at IS NULL AND $4::boolean))
+          AND (status = 'pending' OR (status = 'failed' AND $4::boolean))
         RETURNING id`,
       [intent.id, invoiceId, proposalId, failedRowMayMove]
     );

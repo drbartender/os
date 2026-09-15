@@ -35,8 +35,8 @@ test('no return renders nothing', () => {
 
 test('a failed return says the payment did not go through and never Payment Received', () => {
   const { container } = render(<PaymentReturnNotice {...readPaymentReturn('?paid=true&redirect_status=failed')} />);
-  expect(container.querySelector('[role="status"]').textContent).toMatch(/That payment did not go through\./);
-  expect(container.textContent).toMatch(/Nothing was charged/);
+  expect(container.querySelector('[role="status"]').textContent).toMatch(/We did not get a confirmation for that payment\./);
+  expect(container.textContent).toMatch(/selections are saved/);
   expect(container.textContent).not.toMatch(/Payment Received|successful|processing/);
 });
 
