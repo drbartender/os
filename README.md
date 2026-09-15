@@ -286,7 +286,7 @@ dr-bartender/
 │   │   ├── stripeWebhook.js    # Webhook signature verification + per-event dispatch (handlers live in stripeWebhookHandlers/)
 │   │   ├── stripeWebhookHandlers/ # Per-event webhook handler modules (extracted verbatim from stripeWebhook.js)
 │   │   │   ├── paymentIntentSucceeded.js # deposit/full/balance/invoice/drink-plan settlement + group commit + invoice links
-│   │   │   ├── paymentIntentProcessing.js # bank debit in flight: records `processing` on stripe_sessions, one activity row, client email (spec 2026-09-14)
+│   │   │   ├── paymentIntentProcessing.js # bank debit in flight: records `processing` on stripe_sessions (event-id ledger inside the transaction; a failed row revives only when Stripe reports the intent processing), one activity row, client and admin emails (spec 2026-09-14)
 │   │   │   ├── checkoutSessionCompleted.js # tip-page sessions + Payment-Link deposit/full settlement
 │   │   │   ├── chargeRefunded.js  # refund reconciliation + tip clawback
 │   │   │   ├── paymentIntentFailed.js # failure recording (monotonic guard) + notifications
@@ -343,7 +343,7 @@ dr-bartender/
 │   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js); anchors 10am event-local
 │   │   ├── businessTime.js     # Canonical business-time primitives: eventLocalToUtc (DST-aware) + chicagoTodayYmd
 │   │   ├── autopayDurableCharge.js # Durable autopay charge record + stale-reclaim double-charge guard (F1)
-│   │   ├── bankPaymentProcessingNotify.js # "we received your bank payment" client email, post-commit, email only (spec 2026-09-14)
+│   │   ├── bankPaymentProcessingNotify.js # "we received your bank payment" client email (email only, gated like the receipt) plus the admin email (urgent_booking for a deposit or full payment, routine_finance otherwise), post-commit (spec 2026-09-14)
 │   │   ├── paymentInFlight.js  # THE in-flight payment definition (processing < 14d) + the rails' Stripe backstop; every consumer reads through it
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── balanceReminderHandlers.js # Balance reminder EMAIL handlers (autopay/non-autopay T-3, due-today, late t1/t3); registered by the dispatcher at module init (registerBalanceReminderHandlers)
