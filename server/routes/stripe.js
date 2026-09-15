@@ -417,7 +417,7 @@ router.get('/refunds/:id', auth, requireAdminOrManager, asyncHandler(async (req,
   // in history as if a refund actually happened. Only resolved rows show.
   const { rows } = await pool.query(
     `SELECT id, amount, reason, total_price_before, total_price_after,
-            stripe_refund_id, status, created_at
+            stripe_refund_id, status, total_scope, created_at
        FROM proposal_refunds
       WHERE proposal_id = $1 AND status <> 'pending'
       ORDER BY created_at DESC`,
@@ -440,7 +440,16 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   if (!stripe) throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
 
   const proposalId = req.params.id;
-  const { amount, reason, idempotency_key, notify_client } = req.body;
+  const { amount, reason, idempotency_key, notify_client, total_scope } = req.body;
+  // Which money rule this refund follows (spec 2026-09-15). 'contract' is the
+  // historical default (Approach A: the refund corrects the contract total).
+  // 'overpayment' returns money held beyond the contract and leaves the total
+  // alone — the admin decides on the panel, because the derived figure sets
+  // the default and the cap but must never silently change what a refund does.
+  const scope = total_scope === undefined || total_scope === null ? 'contract' : String(total_scope);
+  if (scope !== 'contract' && scope !== 'overpayment') {
+    throw new AppError('Unknown refund scope.', 400, 'INVALID_SCOPE');
+  }
   const cleanReason = String(reason || '').trim();
   if (!cleanReason) throw new AppError('A refund reason is required.', 400, 'REASON_REQUIRED');
   if (!idempotency_key || typeof idempotency_key !== 'string') {
@@ -468,12 +477,30 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   // doubles that exceed the charge, not a repeated PARTIAL amount.
   // Shared with the cancel-line flow (extracted verbatim 2026-07-24): one
   // source of truth for per-charge refund headroom.
-  const { planRefund, loadPaymentsWithRemaining } = require('../utils/refundHelpers');
+  const {
+    planRefund, loadPaymentsWithRemaining, availableOverpaymentCents, overpaymentRefusalMessage,
+  } = require('../utils/refundHelpers');
+  // Advisory cap: this read is a read-then-act, so it exists for the message.
+  // The authoritative assertion runs inside refundExecute under the proposals
+  // row lock, in the same transaction that writes the pending row, using the
+  // SAME helper and the SAME message builder so the two can never disagree.
+  // A malformed amount is left to planRefund's INVALID_AMOUNT below: refusing it
+  // here would report an overpayment problem for what is really a typo.
+  const requestedCents = Math.round(Number(amount) * 100);
+  if (scope === 'overpayment' && Number.isFinite(requestedCents) && requestedCents > 0) {
+    const avail = await availableOverpaymentCents(proposalId);
+    if (requestedCents > avail.availableCents) {
+      throw new AppError(overpaymentRefusalMessage(avail), 400, 'REFUND_EXCEEDS_OVERPAYMENT');
+    }
+  }
   const plan = planRefund({
     paymentsWithRemaining: await loadPaymentsWithRemaining(proposalId),
     requestedDollars: amount,
     amountPaidDollars: Number(proposal.amount_paid),
     totalPriceDollars: Number(proposal.total_price),
+    // Overpayment scope carries its own targeting rule: the charge holding the
+    // most uncredited headroom among those that can cover the refund.
+    scope,
   });
   if (!plan.ok) {
     // AppError → `.message` surfaces as response `error` → admin toast.
@@ -498,6 +525,8 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     idempotencyKey: `refund-${proposalId}-${idempotency_key}`,
     totalPriceBeforeDollars: Number(proposal.total_price),
     totalPriceAfterDollars: plan.totalPriceAfterDollars,
+    totalScope: scope,
+    enforceOverpaymentCap: scope === 'overpayment',
   });
 
   const after = await pool.query(
@@ -509,7 +538,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   );
 
   // Refund client notification: non-blocking, gated on recon.applied (to
-  // avoid a double-send between this route and the charge.refunded webhook,
+  // avoid a double-send between this route and the refund.created webhook,
   // whose backstop only notifies when IT applies the reconciliation) AND —
   // notify-client contract, 2026-07-22 — on the admin's explicit opt-in.
   // Absent/false = no email (fail-quiet, same as record-payment's receipt).

@@ -73,8 +73,11 @@ const LABELS = `
 // has a negative owed, so `0 > -6000` is true and a proposal with NO open
 // invoice at all would be reported as over-billed, with "$0.00 payable" and
 // email copy claiming the pay button works. Prod proposal 599 (Emiline, paid
-// $360 against a $300 total) is exactly that shape, is deliberately out of
-// scope for the derivation work, and would otherwise alert every 24h forever.
+// $360 against a $300 total) is exactly that shape and would otherwise alert
+// every 24h forever. Its $60 is a paid Drink Plan Extras invoice, so its NETTED
+// overpayment is zero (refundHelpers.overpaymentCents, 2026-09-15) and the
+// admin surfaces no longer call it overpaid; this guard is about over-BILLING,
+// which is a different question, so it stands unchanged.
 //
 // Note this counts every open invoice EXCEPT off-ledger labels, including
 // bespoke labels the derivation leaves alone (syrup-only extras, manual fees)

@@ -288,7 +288,8 @@ dr-bartender/
 │   │   │   ├── paymentIntentSucceeded.js # deposit/full/balance/invoice/drink-plan settlement + group commit + invoice links
 │   │   │   ├── paymentIntentProcessing.js # bank debit in flight: records `processing` on stripe_sessions (event-id ledger inside the transaction; a failed row revives only when Stripe reports the intent processing), one activity row, client and admin emails (spec 2026-09-14)
 │   │   │   ├── checkoutSessionCompleted.js # tip-page sessions + Payment-Link deposit/full settlement
-│   │   │   ├── chargeRefunded.js  # refund reconciliation + tip clawback
+│   │   │   ├── refundCreated.js  # refund reconciliation (dashboard + in-app backstop): scope from the pending row, else Stripe's duplicate reason or the netted overpayment (spec 2026-09-15)
+│   │   │   ├── chargeRefunded.js  # tip clawback ONLY (the Charge carries no refunds list on the account API version; reconciliation moved to refundCreated.js)
 │   │   │   ├── paymentIntentFailed.js # failure recording (monotonic guard) + notifications
 │   │   │   ├── disputes.js        # dispute funds withdrawn/reinstated
 │   │   │   └── payout.js          # payout mirror sync (live-only)
@@ -809,7 +810,7 @@ dr-bartender/
 - **Presence tracker**: Desk/available/away strip at the top of the sidebar with a derived "Leads →" pointer (who answers the next lead), an admin-only time-clock drawer with weekly/monthly totals, and a stale-desk nudge (Telegram for Zul, SMS for Dallas) that auto-flips ignored desks to away so totals stay honest.
 - **Staffing**: Application review, hire/reject, interview notes, user management, SMS messaging (compose, recipient picker, shift invitation templates, grouped message history)
 - **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
-- **Partial Refunds**: Admin partial refunds via Stripe — Approach-A `total_price` correction + audit ledger (`proposal_refunds`), idempotent `charge.refunded` webhook-backstopped
+- **Partial Refunds**: Admin partial refunds via Stripe — the admin picks the money rule per refund (contract correction, Approach-A, or overpayment return that leaves the contract alone), capped at the netted overpayment under a row lock; audit ledger (`proposal_refunds`), idempotent, `refund.created` webhook-backstopped and the reconciler for dashboard-issued refunds
 - **Clients**: CRM with source tracking (direct, Thumbtack, referral, website)
 - **Drink Plans**: Auto-created when proposals become events; accessed from event detail page; client receives email with questionnaire link
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories

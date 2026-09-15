@@ -242,3 +242,143 @@ test('reversal invoice_payments row is stamped with the refund row id (per-invoi
   // invoice 1, payment 9, -take, refund row id 1 (the fake INSERT..RETURNING id)
   assert.deepEqual(rev.params, [1, 9, -20000, 1]);
 });
+
+// ── preferUncredited (spec 2026-09-15 D4) ──────────────────────────────────
+// Overpaid dollars are the ones no invoice was ever credited, so an
+// overpayment refund should land on the charge carrying that headroom. The
+// preference is bounded: it only replaces the target with a charge that can
+// COVER the refund, because the rejection message below names the target's
+// headroom as "the largest refundable payment".
+const payU = (id, intent, remainingCents, uncreditedCents) => ({
+  id, stripe_payment_intent_id: intent, remainingCents, uncreditedCents,
+});
+
+test('preferUncredited targets the charge holding the uncredited money, not the largest', () => {
+  const r = planRefund({
+    paymentsWithRemaining: [
+      payU(1, 'pi_dep', 120000, 0),      // biggest, fully credited to an invoice
+      payU(2, 'pi_overflow', 90000, 40000), // smaller, carries the overpayment
+    ],
+    requestedDollars: 400,
+    amountPaidDollars: 2100,
+    totalPriceDollars: 1700,
+    preferUncredited: true,
+    scope: 'overpayment',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.targetPaymentId, 2);
+  assert.equal(r.totalPriceAfterDollars, 1700, 'overpayment scope previews no change to the total');
+});
+
+test('preferUncredited falls back to largest-remaining when no uncredited charge can cover it, so the cap message stays true', () => {
+  const r = planRefund({
+    paymentsWithRemaining: [
+      payU(1, 'pi_big', 120000, 0),
+      payU(2, 'pi_small', 30000, 30000),
+    ],
+    requestedDollars: 1500, // 150000c: nothing covers it
+    amountPaidDollars: 2100,
+    totalPriceDollars: 600,
+    preferUncredited: true,
+    scope: 'overpayment',
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'EXCEEDS_SINGLE_CHARGE');
+  assert.equal(r.maxRefundableCents, 120000, 'names the TRUE maximum, not the small uncredited charge');
+});
+
+test('preferUncredited falls back to the only charge that can cover the amount', () => {
+  // pi_small carries MORE uncredited money, but cannot cover the refund; pi_big
+  // can, and carries enough uncredited money to satisfy the overpayment rule.
+  const r = planRefund({
+    paymentsWithRemaining: [
+      payU(1, 'pi_big', 120000, 60000),
+      payU(2, 'pi_small', 30000, 30000),
+    ],
+    requestedDollars: 500, // 50000c: only pi_big covers it
+    amountPaidDollars: 2100,
+    totalPriceDollars: 1600,
+    preferUncredited: true,
+    scope: 'overpayment',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.targetPaymentId, 1, 'the only charge that can cover it wins');
+});
+
+test('an overpayment split across charges so no single one covers it is refused, not silently reversed', () => {
+  // The no-spanning rule plus the uncredited rule together: $500 of excess sits
+  // as $300 + $200 on two charges. Neither can carry the whole refund, and the
+  // charge that CAN carry the amount has no uncredited money, so the walk would
+  // have reversed credited invoice money while total_price stood.
+  const r = planRefund({
+    paymentsWithRemaining: [
+      payU(1, 'pi_big', 120000, 0),
+      payU(2, 'pi_small', 30000, 30000),
+    ],
+    requestedDollars: 500,
+    amountPaidDollars: 2100,
+    totalPriceDollars: 1600,
+    preferUncredited: true,
+    scope: 'overpayment',
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
+  assert.equal(r.maxUncreditedCents, 30000, 'names what CAN be returned');
+});
+
+test('without preferUncredited a tie on remaining is broken by id, not by row order', () => {
+  const a = planRefund({
+    paymentsWithRemaining: [payU(9, 'pi_b', 50000, 0), payU(4, 'pi_a', 50000, 0)],
+    requestedDollars: 100, amountPaidDollars: 1000, totalPriceDollars: 1000,
+  });
+  const b = planRefund({
+    paymentsWithRemaining: [payU(4, 'pi_a', 50000, 0), payU(9, 'pi_b', 50000, 0)],
+    requestedDollars: 100, amountPaidDollars: 1000, totalPriceDollars: 1000,
+  });
+  assert.equal(a.targetPaymentId, 4);
+  assert.equal(b.targetPaymentId, 4);
+});
+
+test('an overpayment refund is refused when the target charge has no uncredited headroom', () => {
+  // The external_paid shape: the charge exists and has refund headroom, but
+  // every cent of it was credited to an invoice, so refunding it under
+  // overpayment scope would reverse invoice money while total_price stands.
+  const r = planRefund({
+    paymentsWithRemaining: [payU(1, 'pi_bal', 50000, 0)],
+    requestedDollars: 400,
+    amountPaidDollars: 900,
+    totalPriceDollars: 500,
+    preferUncredited: true,
+    scope: 'overpayment',
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
+  assert.equal(r.maxUncreditedCents, 0);
+  assert.match(r.message, /not on a refundable Stripe charge/);
+});
+
+test('an overpayment refund is capped at the uncredited headroom and names it', () => {
+  const r = planRefund({
+    paymentsWithRemaining: [payU(1, 'pi_bal', 90000, 10000)],
+    requestedDollars: 400,
+    amountPaidDollars: 900,
+    totalPriceDollars: 500,
+    preferUncredited: true,
+    scope: 'overpayment',
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
+  assert.equal(r.maxUncreditedCents, 10000);
+  assert.match(r.message, /Only \$100\.00 of this overpayment/);
+});
+
+test('contract scope is never subject to the uncredited rule', () => {
+  const r = planRefund({
+    paymentsWithRemaining: [payU(1, 'pi_bal', 50000, 0)],
+    requestedDollars: 400,
+    amountPaidDollars: 900,
+    totalPriceDollars: 500,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.targetPaymentId, 1);
+});

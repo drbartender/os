@@ -20,6 +20,22 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   const totalPrice = Number(proposal.total_price || 0);
   const amountPaid = Number(proposal.amount_paid || 0);
   const balanceDue = totalPrice - amountPaid;
+  // Server-derived (spec 2026-09-15). NOT amountPaid - totalPrice: that raw
+  // difference counts a paid Drink Plan Extras or manual invoice as excess, so
+  // it calls proposals overpaid that are not (prod 599). overpaymentCents nets
+  // that money out, and it is the same figure the refund route caps against.
+  const overpaymentCents = Number(proposal.overpayment_cents || 0);
+  // Largest single Stripe charge still refundable. A refund never spans charges,
+  // so with zero here NO refund of any scope is possible.
+  const maxRefundableCents = Number(proposal.max_refundable_cents || 0);
+  // How much of the overpayment can actually come back through Stripe: an
+  // overpayment refund must come off money no invoice was ever credited, and
+  // the excess can be external (external_paid rolls into amount_paid with no
+  // charge behind it) or already applied to an invoice. Say that here rather
+  // than let the admin fill in a form the server will refuse.
+  const overpaymentRefundableCents = Math.min(
+    overpaymentCents, Number(proposal.max_overpayment_refundable_cents || 0)
+  );
   // "Paid in full" needs BOTH a paid lifecycle status AND no outstanding
   // balance. A refund can leave a 'confirmed'/'completed' proposal (lifecycle
   // statuses refundHelpers.js intentionally does NOT demote) with a positive
@@ -96,6 +112,11 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   const [showRefund, setShowRefund] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
   const [refundReason, setRefundReason] = useState('');
+  // Which money rule this refund follows. Defaults ON when the proposal is
+  // overpaid, because that is the likely intent, but the admin decides: the
+  // derived figure sets the default and the cap, it never changes silently
+  // what the refund does (spec 2026-09-15 D1).
+  const [refundIsOverpayment, setRefundIsOverpayment] = useState(false);
   const [refundKey, setRefundKey] = useState('');
   const [issuingRefund, setIssuingRefund] = useState(false);
   const [refunds, setRefunds] = useState([]);
@@ -126,6 +147,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
         ? window.crypto.randomUUID()
         : String(Date.now()) + Math.random().toString(16).slice(2)
     );
+    setRefundIsOverpayment(overpaymentCents > 0);
     setShowRefund(true);
   };
 
@@ -134,6 +156,31 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   const issueRefund = () => {
     if (!refundAmount || Number(refundAmount) <= 0) { toast.error('Enter a valid amount.'); return; }
     if (!refundReason.trim()) { toast.error('A reason is required.'); return; }
+    // Mirror the server's two refusals here so the admin is never asked about
+    // emailing a client for a refund the server is about to reject.
+    const requestedCents = Math.round(Number(refundAmount) * 100);
+    if (refundIsOverpayment && requestedCents > overpaymentCents) {
+      const amt = fmt$2dp(overpaymentCents / 100);
+      toast.error(
+        overpaymentCents > 0
+          ? `This proposal is overpaid by ${amt}. Refund up to ${amt} as an overpayment, or uncheck the box to correct the contract instead.`
+          : 'This proposal is not overpaid, so there is nothing to return as an overpayment. Uncheck the box to correct the contract instead.'
+      );
+      return;
+    }
+    if (refundIsOverpayment && requestedCents > overpaymentRefundableCents) {
+      const amt = fmt$2dp(overpaymentRefundableCents / 100);
+      toast.error(
+        overpaymentRefundableCents > 0
+          ? `Only ${amt} of this overpayment sits on a refundable Stripe charge. Refund up to ${amt} as an overpayment; the rest was paid outside Stripe or is already applied to an invoice, so return that part by hand.`
+          : 'This overpayment is not on a refundable Stripe charge: it was paid outside Stripe, or it is already applied to an invoice. Return it by hand.'
+      );
+      return;
+    }
+    if (requestedCents > maxRefundableCents) {
+      toast.error(`Largest refundable payment is ${fmt$2dp(maxRefundableCents / 100)}. Issue this as separate refunds of ${fmt$2dp(maxRefundableCents / 100)} or less.`);
+      return;
+    }
     if (!clientEmailUsable) { doIssueRefund(false); return; }
     setRefundNoticePrompt(true);
   };
@@ -146,6 +193,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
         reason: refundReason.trim(),
         idempotency_key: refundKey,
         notify_client: notifyClient,
+        total_scope: refundIsOverpayment ? 'overpayment' : 'contract',
       });
       (res.data.notifications || []).forEach((n) => {
         if (n.email === 'failed') toast.error(`Refunded, but the notice failed to send: ${n.email_error || 'unknown error'}`);
@@ -345,10 +393,15 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     <div className="card">
       <div className="card-head">
         <h3>Payment</h3>
-        {amountPaid > totalPrice ? (
-          // Durable overpayment signal (§6): derived from amount_paid > total_price
-          // (e.g. a price-down on a paid proposal). Admin issues the refund.
-          <StatusChip kind="warn">Overpaid {fmt$2dp(amountPaid - totalPrice)}, issue a refund</StatusChip>
+        {overpaymentCents > 0 ? (
+          // Durable overpayment signal (§6), netted: money held beyond the
+          // contract once off-contract invoice money is taken out. With no Stripe
+          // charge left to refund against, say so here rather than let the admin
+          // discover it at submit.
+          <StatusChip kind="warn">
+            Overpaid {fmt$2dp(overpaymentCents / 100)}
+            {overpaymentRefundableCents > 0 ? ', issue a refund' : ', return it by hand'}
+          </StatusChip>
         ) : isFullyPaid ? (
           <StatusChip kind="ok">Paid in full</StatusChip>
         ) : balanceDue > 0 && amountPaid > 0 ? (
@@ -588,7 +641,14 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
         {/* Issue refund */}
         {amountPaid > 0 && (
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line-1)' }}>
-            {!showRefund ? (
+            {maxRefundableCents <= 0 ? (
+              // Every Stripe charge is fully refunded, or the money came in
+              // off-platform (external_paid rolls into amount_paid with no charge
+              // behind it). Either way the route can only refuse, so say it here.
+              <p className="tiny muted" style={{ margin: 0 }}>
+                No Stripe payment on this proposal can be refunded. Return this by hand.
+              </p>
+            ) : !showRefund ? (
               <button type="button" className="btn btn-ghost btn-sm" onClick={openRefund}>
                 <Icon name="dollar" size={11} />Issue refund
               </button>
@@ -602,6 +662,15 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
                   <textarea className="input" placeholder="Reason"
                     value={refundReason} onChange={e => setRefundReason(e.target.value)}
                     rows={2} style={{ resize: 'vertical' }} />
+                  {overpaymentCents > 0 && (
+                    <label className="tiny" style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                      <input type="checkbox" checked={refundIsOverpayment} disabled={issuingRefund}
+                        onChange={e => setRefundIsOverpayment(e.target.checked)} />
+                      <span>
+                        This returns an overpayment. The contract total stays at {fmt$2dp(totalPrice)}.
+                      </span>
+                    </label>
+                  )}
                   <div className="hstack" style={{ gap: 6 }}>
                     <button type="button" className="btn btn-primary btn-sm"
                       onClick={issueRefund} disabled={issuingRefund}>
@@ -624,6 +693,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
                     </span>{' '}
                     · {r.reason} ·{' '}
                     {new Date(r.created_at).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                    {r.total_scope === 'overpayment' && <> · overpayment</>}
                     {r.status !== 'succeeded' && <> · <em>{r.status}</em></>}
                     <div className="muted">
                       total {fmt$2dp(Number(r.total_price_before))} → {fmt$2dp(Number(r.total_price_after))}

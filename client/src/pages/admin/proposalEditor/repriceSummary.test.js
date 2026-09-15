@@ -240,3 +240,34 @@ describe('buildRepriceSummary', () => {
     });
   });
 });
+
+// Netting off-contract money (spec 2026-09-15). amount_paid carries money that
+// is NOT inside total_price (a paid Drink Plan Extras or manual invoice), so the
+// raw difference calls a proposal overpaid that is not. The BALANCE prediction
+// stays on the raw figure deliberately: the server derives balance due from raw
+// amount_paid whatever the money was for.
+test('off-contract money does not make a price drop read as an overpayment', () => {
+  // Prod 599's shape: paid 260 on a 200 total, $60 of it a paid extras invoice.
+  const s = buildRepriceSummary({
+    status: 'balance_paid', totalPrice: 200, amountPaid: 260, newTotal: 200.01,
+    offContractPaidCents: 6000,
+  });
+  // Contract money is exactly 200, so this is not an overpayment situation.
+  expect((s.lines || []).join(' ')).not.toMatch(/overpaid/i);
+});
+
+test('a genuine overpayment still reports, netted', () => {
+  const s = buildRepriceSummary({
+    status: 'balance_paid', totalPrice: 500, amountPaid: 960, newTotal: 400,
+    offContractPaidCents: 6000,
+  });
+  // 960 paid - 60 off-contract = 900 contract money against a new 400 total.
+  expect(s.lines.join(' ')).toMatch(/overpaid by \$500\.00/);
+});
+
+test('without the netting term the behaviour is unchanged (old callers keep working)', () => {
+  const s = buildRepriceSummary({
+    status: 'balance_paid', totalPrice: 500, amountPaid: 900, newTotal: 400,
+  });
+  expect(s.lines.join(' ')).toMatch(/overpaid by \$500\.00/);
+});

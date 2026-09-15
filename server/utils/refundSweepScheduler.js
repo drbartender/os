@@ -7,7 +7,7 @@
  * a pending row deliberately blocks refund headroom (e97dfec). Two failure
  * quadrants leave that pending row with no healer:
  *   1. A crash between the INSERT and Stripe success → no refund exists at
- *      Stripe, so no charge.refunded webhook ever adopts it. It strands forever,
+ *      Stripe, so no refund.created webhook ever adopts it. It strands forever,
  *      permanently under-refunding and invisible in the admin history view.
  *   2. An ambiguous Stripe error (connection timeout, 5xx) now LEAVES the row
  *      pending (refundExecute split), so a real refund may exist at Stripe while

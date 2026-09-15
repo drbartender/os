@@ -13,7 +13,7 @@ function __setDeps(d) { _deps = { ..._deps, ...d }; }
  * Send the client-facing refund notification email for a proposal. The caller
  * is responsible for calling applyRefundReconciliation first and only invoking
  * this when recon.applied === true (to avoid double-emails on idempotent
- * retries between the in-app refund route and the charge.refunded webhook),
+ * retries between the in-app refund route and the refund.created webhook),
  * AND — notify-client contract, 2026-07-22 — only when the admin opted in
  * (in-app route: notify_client === true; cancel flow: the dialog's
  * suppress_client_email checkbox not set). The webhook/sweeper backstops keep

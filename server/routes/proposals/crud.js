@@ -624,13 +624,27 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       );
     }
     if (rec.overpaid) {
-      await dbClient.query(
-        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-         VALUES ($1, 'overpayment_detected', 'admin', $2, $3)`,
-        [req.params.id, req.user.id, JSON.stringify({
-          amount_paid: Number(old.amount_paid), total_price: snapshot.total, overpaid_cents: rec.overpaidCents,
-        })]
-      );
+      // Net out money that is in amount_paid but never in total_price (a paid
+      // Drink Plan Extras or manual invoice) before calling it an overpayment.
+      // reconcileProposalPaymentStatus is pure and its STATUS decision stays on
+      // the raw columns, deliberately: a proposal whose paid figure covers the
+      // total is fully paid whatever the money was for. Only the "we are
+      // holding too much" claim needs the netting, and it is the same figure
+      // the panel chip and the cancel-line preview report (spec 2026-09-15).
+      const { offContractPaidCents } = require('../../utils/refundHelpers');
+      const offContract = await offContractPaidCents(req.params.id, dbClient);
+      const nettedOverpaidCents = Math.max(0, rec.overpaidCents - offContract);
+      if (nettedOverpaidCents > 0) {
+        await dbClient.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+           VALUES ($1, 'overpayment_detected', 'admin', $2, $3)`,
+          [req.params.id, req.user.id, JSON.stringify({
+            amount_paid: Number(old.amount_paid), total_price: snapshot.total,
+            overpaid_cents: nettedOverpaidCents,
+            off_contract_paid_cents: offContract,
+          })]
+        );
+      }
     }
     // Replace proposal add-ons — single bulk INSERT
     await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [req.params.id]);

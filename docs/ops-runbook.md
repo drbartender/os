@@ -83,11 +83,16 @@ orchestration in the route anymore; never describe or rebuild one.
 2. **Refund it at Stripe** (full or partial) against that payment. Do not
    attempt the admin refund button for this: the extension payment is not in
    its candidate list, and that is intentional.
-3. **Adoption is automatic.** The `charge.refunded` webhook routes the
+3. **Adoption is automatic.** The `refund.created` webhook routes the
    dashboard refund through `applyRefundReconciliation`, which classifies the
    linked invoice label as off-ledger and records the refund without touching
    contract money (the stale-pending refund sweeper is the backstop for any
-   refund row stuck pending).
+   refund row stuck pending). Since 2026-09-15 this is `refund.created`, not
+   `charge.refunded`: the account API version no longer puts a `refunds` list
+   on the Charge, so the old handler silently reconciled nothing. An extension
+   refund lands `contract` scope, which is harmless because `Service Extension`
+   is not a contract label: the contract portion computes to zero and the
+   off-ledger rule keeps `amount_paid` still.
 
 ### What to expect afterwards
 

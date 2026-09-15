@@ -584,7 +584,7 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
 
     // Already-refunded caps how much of the target remains. 'pending' counts:
     // a pending row means refundExecute reached Stripe but reconciliation
-    // hasn't landed (the charge.refunded webhook adopts it) — that money may
+    // hasn't landed (the refund.created webhook adopts it) — that money may
     // already be out, so a retry with a fresh idempotency key must NOT
     // re-issue it. A stranded pre-Stripe pending row blocks conservatively
     // (under-refund beats double-refund) until it resolves.
@@ -675,8 +675,9 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
 
   // Notification tail runs AFTER the client is released. One aggregate refund
   // notification (gated on any applied to avoid a duplicate with the
-  // charge.refunded webhook backstop), now also honoring the dialog's
-  // suppress checkbox.
+  // reconciliation backstops: the stale-pending sweeper emails when IT adopts,
+  // and refund.created emails only for a refund no in-app path issued), now
+  // also honoring the dialog's suppress checkbox.
   const notifications = [];
   if (anyApplied && refundedCents > 0 && !suppressClientEmail) {
     const r = await sendRefundClientNotification({ proposalId: req.params.id, amountCents: refundedCents, source: 'cancel_refund' });

@@ -177,6 +177,31 @@ the verdict: `git merge-base --is-ancestor <sha> origin/main`.
       left (Resend log). Then on settlement: the row went `succeeded`, the reminders were
       reactivated or suppressed as paid, and the receipt went out. Also known and deliberate: any processing payment on an autopay proposal parks the saved-card charge (autopay_status stays in_progress) until the debit settles plus the 72h re-claim, so a small drink-plan debit near a due date can push the balance charge past it; the scheduler's Sentry warning names the proposal.
 
+- [ ] **First overpayment refund from the payment panel (refund scope, shipped 2026-09-15).**
+      Needs a genuinely overpaid proposal, so it cannot be rehearsed on dev (live Stripe, real
+      money). On the next one: the Payment card should read "Overpaid $X, issue a refund" with X
+      NETTED (a paid Drink Plan Extras invoice must not count), the refund form should offer
+      "This returns an overpayment. The contract total stays at $T." checked by default, and
+      after confirming, `total_price` must be UNCHANGED while `amount_paid` drops. Check the
+      invoice too: a duplicate payment credited to no invoice must leave every invoice untouched.
+      The refund history line should read "overpayment". Try one over the cap first and confirm
+      the refusal names the netted figure before the email prompt appears.
+
+- [ ] **First Stripe-dashboard refund of a TIP after the 2026-09-15 deploy.** Subscribing
+      `charge.refunded` makes the payroll tip clawback fire from a webhook for the first time ever
+      (its handler existed and never ran, because the event was not subscribed). Confirm the
+      bartender's `tips.refunded_amount_cents` moved by the refunded amount and that their pay
+      period reflects it. Note there is no reverse path: a bank tip refund that later FAILS leaves
+      the bartender docked, which is on the fix list.
+
+- [ ] **First Stripe-dashboard refund after the 2026-09-15 deploy (refund.created).** Until this
+      deploy a dashboard refund never reached the database at all. Issue one from the Stripe
+      dashboard and confirm within a minute: a `proposal_refunds` row appears with the real
+      `stripe_refund_id`, `total_scope` is `overpayment` when the reason was "duplicate" (or when
+      the proposal was already overpaid) and `contract` otherwise, `amount_paid` moved, and
+      `total_price` moved ONLY on contract scope. Also confirm the client got the refund email
+      (the dashboard path owns that notice, unlike a panel refund).
+
 - [ ] **Sign-and-pay WITH a gratuity, end to end. Fix shipped 2026-08-28, `e8101a9d`.**
       Between 2026-08-21 and 2026-08-28 every client who typed a gratuity was unable to pay
       at all: the page adopted create-intent's election-inclusive total into

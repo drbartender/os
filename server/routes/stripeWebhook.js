@@ -17,6 +17,7 @@ const handlePaymentIntentProcessing = require('./stripeWebhookHandlers/paymentIn
 const handlePaymentIntentFailed = require('./stripeWebhookHandlers/paymentIntentFailed');
 const handleCheckoutSessionCompleted = require('./stripeWebhookHandlers/checkoutSessionCompleted');
 const handleChargeRefunded = require('./stripeWebhookHandlers/chargeRefunded');
+const handleRefundCreated = require('./stripeWebhookHandlers/refundCreated');
 const { handleDisputeFundsWithdrawn, handleDisputeFundsReinstated } = require('./stripeWebhookHandlers/disputes');
 const handlePayout = require('./stripeWebhookHandlers/payout');
 
@@ -110,6 +111,15 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
   if (event.type === 'checkout.session.completed') {
     await handleCheckoutSessionCompleted(event, res);
+    if (res.headersSent) return;
+  }
+
+  // Refund reconciliation (spec 2026-09-15). refund.created carries the Refund
+  // object itself, so it survives the account API version that stripped the
+  // refunds list off the Charge. charge.refunded below keeps ONLY the tip
+  // clawback, which reads charge.amount_refunded and is version-proof.
+  if (event.type === 'refund.created') {
+    await handleRefundCreated(event);
     if (res.headersSent) return;
   }
 

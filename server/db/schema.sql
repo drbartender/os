@@ -1119,7 +1119,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_intent_unique
 -- by the refund, so balance-due stays $0 and nothing that computes
 -- total_price − amount_paid needs to learn about refunds. This table is
 -- the admin-facing history + the idempotency anchor shared by the
--- synchronous refund route and the charge.refunded webhook backstop.
+-- synchronous refund route, the refund.created webhook backstop and the
+-- stale-pending sweeper.
 CREATE TABLE IF NOT EXISTS proposal_refunds (
   id SERIAL PRIMARY KEY,
   proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE RESTRICT,
@@ -1168,7 +1169,7 @@ ALTER TABLE proposal_refunds ADD COLUMN IF NOT EXISTS gratuity_cents INTEGER;
 -- Cancel-line-item refunds (2026-07-24): 'overpayment' refunds return money the
 -- client overpaid AFTER the fold already corrected total_price, so reconciliation
 -- must not re-lower the total (double-lower). Durable on the row because the
--- charge.refunded webhook and the stale-pending sweeper adopt pending rows in a
+-- refund.created webhook and the stale-pending sweeper adopt pending rows in a
 -- later process with no memory of the issuing caller.
 ALTER TABLE proposal_refunds ADD COLUMN IF NOT EXISTS total_scope TEXT NOT NULL DEFAULT 'contract';
 DO $$ BEGIN

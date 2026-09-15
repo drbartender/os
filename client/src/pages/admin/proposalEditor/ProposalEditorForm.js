@@ -501,6 +501,7 @@ export default function ProposalEditorForm({
       status: proposal.status,
       totalPrice: proposal.total_price,
       amountPaid: proposal.amount_paid,
+      offContractPaidCents: proposal.off_contract_paid_cents,
       // Stale preview = unknown total: fall into the generic-confirm branch
       // rather than comparing against an outdated number (see previewStale).
       newTotal: (!previewStale && editPreview) ? editPreview.total : null,

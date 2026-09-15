@@ -16,7 +16,12 @@ const usd = (n) => '$' + Number(n).toLocaleString('en-US', {
 // Returns null when no confirmation is needed (unbooked, or total unmoved).
 // Returns { unknown: true, lines } when booked but the live preview failed.
 // Otherwise { oldTotal, newTotal, delta, paid, newBalance, lines }.
-export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal }) {
+// offContractPaidCents (proposals payload) is money inside amount_paid that is
+// NOT inside total_price: a paid Drink Plan Extras or manual invoice. It has to
+// come out before any claim that the client is overpaid, or a proposal that
+// simply bought syrups reads as owed a refund (prod 599). Same netting the
+// payment panel chip and the refund route use (spec 2026-09-15).
+export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal, offContractPaidCents = 0 }) {
   if (!BOOKED_STATUSES.includes(status)) return null;
 
   if (newTotal == null) {
@@ -32,10 +37,13 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal }
   if (Math.abs(delta) < 0.005) return null;
 
   const paid = Number(amountPaid) || 0;
-  // Already overpaid BEFORE this edit: recorded payments exceeded the old
-  // total. Same paid-vs-total derivation the payment panel's Overpaid chip
-  // uses. It changes what an increase actually does, so it gets its own copy.
-  const wasOverpaid = paid - oldTotal > 0.005;
+  // Contract money only: what is left of amount_paid once off-contract invoice
+  // money is netted out. Every overpaid claim below is derived from THIS.
+  const contractPaid = paid - (Number(offContractPaidCents) || 0) / 100;
+  // Already overpaid BEFORE this edit: contract payments exceeded the old
+  // total. Same netted derivation the payment panel's Overpaid chip uses. It
+  // changes what an increase actually does, so it gets its own copy.
+  const wasOverpaid = contractPaid - oldTotal > 0.005;
   const lines = [];
   if (delta > 0) {
     // Demotion is NOT unconditional. proposalStatus.reconcileProposalPaymentStatus
@@ -53,6 +61,9 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal }
       // balance-bearing invoice is locked). What the old copy got wrong is the
       // money consequence: against an existing overpayment the increase is
       // absorbed first, so "billed to the client" overstates it.
+      // RAW paid here on purpose: this predicts the BALANCE DUE, which the
+      // server derives from raw amount_paid whatever the money was for. Only
+      // the "overpaid" claims below are netted.
       const newlyDue = next - paid;
       if (newlyDue > 0.005) {
         // The proposal-level figure and the INVOICE figure can diverge here, so
@@ -71,9 +82,9 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal }
         // and the invoice comes out equal to the balance. `amount_paid` enters
         // neither server function, so the narrower claim is true in every
         // flavor, and the "may" carries the rest.
-        lines.push(`The ${usd(delta)} increase outruns the ${usd(paid - oldTotal)} the client had overpaid, so ${usd(newlyDue)} becomes the new balance due. Note the invoice written for the increase is the full ${usd(delta)}: it is not reduced by recorded payments, so the client may see a larger figure than the balance.`);
+        lines.push(`The ${usd(delta)} increase outruns the ${usd(contractPaid - oldTotal)} the client had overpaid, so ${usd(newlyDue)} becomes the new balance due. Note the invoice written for the increase is the full ${usd(delta)}: it is not reduced by recorded payments, so the client may see a larger figure than the balance.`);
       } else {
-        const stillOver = paid - next;
+        const stillOver = contractPaid - next;
         lines.push(
           `An invoice for the ${usd(delta)} increase is still written, but recorded payments of ${usd(paid)} already cover the new total: `
           + (stillOver > 0.005
@@ -87,8 +98,8 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal }
       // Additional Services invoice is only minted when invoices are locked.
       lines.push(`The ${usd(delta)} increase will be billed to the client (added to the open balance invoice, or as a new Additional Services invoice).`);
     }
-  } else if (next < paid) {
-    lines.push(`Client is now overpaid by ${usd(paid - next)}. A refund is likely owed.`);
+  } else if (next < contractPaid) {
+    lines.push(`Client is now overpaid by ${usd(contractPaid - next)}. A refund is likely owed.`);
   }
   lines.push('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.');
 

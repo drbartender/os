@@ -53,7 +53,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 0 | A client-no-answer text that fails to send tells nobody at all | yes, if `VM_TEXT_DESTINATION` is unset |
 | 0 | A settled-looking `connected` row is never reaped, so a failed `<Dial>` alerts nobody | yes |
 | 0 | Sweep on with the VA scheduler off strands `calling_*` rows holding a cap slot for 24h | yes, if the two flags disagree |
-| 1 | Refunding an overpayment shrinks the contract instead of clearing it | no (0 overpaid rows) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -187,36 +186,92 @@ callers, plus a hand backfill of the few ambiguous existing rows; `sumOffContrac
 then becomes a single column read, correct by construction. Same root cause as the pulled
 invoice-derivation rewrite — **do them together, provenance first.**
 
-### Refunding a true overpayment shrinks the contract instead of clearing it
+### ~~Refunding a true overpayment shrinks the contract~~ — CLOSED 2026-09-15
 
-REAL, unfixed, and **do not re-attempt naively.** Refunding an overpayment lowers `total_price`
-AND `amount_paid` by the same amount, so the proposal stays overpaid by exactly the same figure
-and the contract silently shrinks on every attempt. Measured: total 2300 / paid 2500, refund
-$200 → total 2100 / paid 2300, still overpaid $200.
+Fixed in the refund-scope lane (spec `docs/superpowers/specs/2026-09-15-refund-scope-design.md`).
+The admin now picks the money rule on the payment panel: `'overpayment'` returns money held beyond
+the contract and leaves `total_price` alone, `'contract'` keeps the historical Approach-A
+correction. The scope was already honored by `applyRefundReconciliation` and already carried on the
+row for webhook and sweeper adoption; the panel path was the caller that never said which.
 
-A fix was written and REVERTED before shipping. It derived the excess as
-`amount_paid - total_price`, which is wrong in this schema: Drink Plan Extras (syrup-only
-pay-now) and manual-label invoices roll into `amount_paid` and never into `total_price`, so the
-difference counts them as overpayment and subtracts them twice. Two reviewers reproduced it — a
-$150 goodwill refund on a 2000/2150 proposal left the total at 2000 instead of 1850, and a $1100
-refund on a deposit-stage 1000/1300 proposal left a $100 phantom balance the autopay scheduler
-would have charged. It also made the multi-split loops order-dependent.
+**Why the 2026-07-26 attempt failed and this one does not.** That one derived the excess inside
+reconciliation as `amount_paid - total_price`, which counts a paid Drink Plan Extras or manual
+invoice as overpayment and then subtracts it twice. Nothing is derived inside reconciliation now.
+The cap and the checkbox default come from `overpaymentCents` (`refundHelpers.js`), which nets
+`sumOffContractPaidCents` out, the same formula cancel-line has used since 2026-07-24.
 
-**Half the fix is already on the shelf and wired to the wrong path.** The netting term EXISTS —
-`sumOffContractPaidCents` (`invoiceExtras.js:340`) — and is verified wired ONLY into cancel-line's
-`overpaymentCents` (`lineItemCancel.js:701`). The payment-panel refund path still issues
-`'contract'` scope and still shrinks the total.
+**Two rules the design fleet added before any code was written** (both are money-path law now):
+- Overpayment scope consumes the payment's UNCREDITED headroom before walking invoice links.
+  `linkPaymentToInvoice` caps an invoice credit at that invoice's remaining due while the webhook
+  rolls the whole intent into `amount_paid`, so an overpaying payment is part-credited. Reversing
+  credited money for cents that were never on an invoice left a LOCKED invoice demanding money on
+  an unchanged contract. The old rule was correct only for cancel-line, where `refreshUnlockedInvoices`
+  had already corrected the demand in the same transaction.
+- The cap is asserted under the proposals row lock in the transaction that writes the pending row,
+  so two concurrent submits cannot both spend the same excess and drop `amount_paid` below
+  `total_price` (which would demote the status and disarm autopay).
 
-Candidate fix: net out still-outstanding non-contract invoice money before deriving the excess,
-read BEFORE the invoice walk decrements it. Verify against the multi-split loops in
-`proposals/cancel.js` and the cancel-line route for order-independence, and against the RC1
-fixtures in `refundHelpers.scope.test.js`.
+**Prod 784 was healed the same day** through the existing stale-pending sweeper (a pending
+`overpayment` row for the dashboard refund, adopted by unique amount): `amount_paid` 900 to 500,
+`total_price` still 500, both invoices untouched.
 
-Prod exposure today is ZERO (the only proposal with `amount_paid > total_price` is a paid Drink
-Plan Extras invoice, not an overpayment). **Related, same cause:** after a FAILED cancel-line
-refund the dialog sends the admin to the payment panel, which can only issue `'contract'` scope
-and would lower a total the fold already corrected. Until this is fixed, the safe recovery on
-that path is a manual Stripe-dashboard refund; the `charge.refunded` webhook reconciles it.
+**The related cancel-line note is closed too.** After a FAILED cancel-line refund the dialog sends
+the admin to the payment panel; that panel can now issue `'overpayment'` scope, so it no longer
+lowers a total the fold already corrected. A manual Stripe-dashboard refund is still fine, and the
+`refund.created` webhook now actually reconciles it (see below).
+
+### A bank refund that fails at the bank leaves a succeeded row (and a docked bartender)
+
+Opened 2026-09-15 by the refund-scope lane, deliberately not built there. `refund.created`
+reconciles a refund at `pending` as well as `succeeded`, because a bank refund sits pending for
+days and that is what the stale-pending sweeper already adopts. If the customer's bank returns it,
+Stripe fires `refund.failed`, which nothing subscribes to and no handler reverses: the
+`proposal_refunds` row stays `succeeded`, `amount_paid` stays lowered, and the client shows as owed
+money that never left. For a TIP the same event docks a bartender permanently: `clawbackTip` only
+moves `tips.refunded_amount_cents` FORWARD (the dispute-won rewind is the sole reversal path).
+
+Same shape as the bank-debit-in-flight problem closed 2026-09-14: an event nobody subscribed to,
+a state nobody could see. The fix is a `refund.failed` subscription plus a reverse reconciliation,
+which does not exist in any form today. Exposure is low and bounded (bank refunds are rare here,
+and a returned one is visible in the Stripe dashboard), but it is silent, which is what makes it
+worth writing down.
+
+### Three smaller refund residuals, all opened 2026-09-15
+
+- **The client refund notice ignores the admin's notify-client answer on any adopting path.** The
+  panel asks "email a refund notice?" and passes the answer to the route, but the answer is not
+  carried on the `proposal_refunds` row, so the stale-pending sweeper (which adopts rows whose
+  in-app reconciliation failed) emails unconditionally. Pre-existing; the new `refund.created`
+  handler sidesteps it by staying silent for any refund carrying a `proposal_refund_row_id`, so its
+  failure mode is a MISSED notice rather than an unwanted one. A real fix needs the answer on the
+  row, i.e. a schema change.
+- **A dashboard refund on a partially-overpaid proposal lands `contract` and over-shrinks the
+  total** by the excess portion. Scope is binary and the alternative (leaving the total too high)
+  fires reminders at a client who owes nothing, so the handler picks contract and raises a Sentry
+  warning naming both figures; the admin corrects the total in the editor.
+- **`applyRefundReconciliation`'s (intent, amount) pending heuristic is now unreachable.** Every
+  caller passes an explicit `pendingRowId` or `allowPendingHeuristic: false`. It was flagged in the
+  2026-07-26 push review as able to rewrite a refund's money semantics in either direction.
+  Removing it is a small, safe follow-up.
+- **The overpayment cap nets only PENDING OVERPAYMENT refunds.** Two other writers move the same
+  money and are invisible to it: a concurrent contract-scope refund whose charge is linked to a
+  non-contract-labeled invoice (it drops `amount_paid` without dropping `total_price`, so it
+  consumes excess), and a cancel-line fold (which computes its own figure and deliberately does not
+  enforce the cap). Both need genuine concurrency on one proposal. The failure lands in the safe
+  direction: `amount_paid` below `total_price` demotes the status and disarms autopay, recoverable
+  in the editor, and the per-charge headroom plus Stripe's own cap still make it impossible to
+  return more than the client paid. Closing it means netting the non-contract portion of pending
+  contract rows, which needs the invoice labels behind each pending row.
+- **Three files crossed the 700-line soft cap in the refund-scope lane:** `refundHelpers.js` (789),
+  `ProposalDetailPaymentPanel.js` (767) and `stripe.js` (703). None is near the 1000-line hard cap,
+  but `refundHelpers.js` now carries the planner, the reconciler and four derivation helpers, which
+  is the natural split line (a `refundDerivations.js` for the netting and headroom functions).
+- **`proposal_refunds(payment_id)` has no index.** Three subqueries filter on it (the pre-existing
+  `remainingCents`, plus the new `uncreditedCents` and headroom reads), and Postgres does not
+  share the two identical subplans, so the lane doubles the per-row scan count. The table holds 8
+  rows in prod and grows a handful per year, so this is textbook rather than real. Deliberately NOT
+  added in the refund-scope lane because that spec decided no schema change. `CREATE INDEX IF NOT
+  EXISTS idx_proposal_refunds_payment_id ON proposal_refunds(payment_id);` when it ever matters.
 
 ### An additional invoice bills the client for money DRB is already holding
 
@@ -822,9 +877,10 @@ here by default.
   one, no corruption, admin sees a 500. A gratuity-removal refund passes no `gratuityCents`, so
   `proposal_refunds.gratuity_cents` is NULL for the one cancel kind the column describes. The
   preview's `locked_invoices` line promises "a locked invoice for $X stands" but the fully-paid path
-  deliberately drops that invoice's `amount_due`. RC4 (adopt the caller's own pending row by id) was
-  applied to `refundExecute` and the sweeper but NOT to the `charge.refunded` webhook, which has the
-  row id on `refundObj.metadata.proposal_refund_row_id`. The by-id adoption lookup checks only
+  deliberately drops that invoice's `amount_due`. RC4 (adopt the caller's own pending row by id) is now applied on
+  every path: `refundExecute`, the sweeper, and (2026-09-15) the `refund.created` webhook, which
+  reads the row id off `refund.metadata.proposal_refund_row_id` and suppresses the (intent, amount)
+  heuristic entirely when there is none. The by-id adoption lookup checks only
   `id + status + stripe_refund_id IS NULL`, dropping the corroborating predicates — safe today,
   cheap to harden.
 - **`computeCancelTargets` enumerates targets for a package-less proposal** but `applyLineItemCancel`

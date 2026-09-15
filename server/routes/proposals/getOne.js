@@ -10,6 +10,9 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError } = require('../../utils/errors');
 const { setupTimeDisplay } = require('../../utils/setupTime');
 const { getMessageLogForProposal } = require('../../utils/messageLog');
+const {
+  nettedOverpaymentCents, offContractPaidCents, loadPaymentsWithRemaining,
+} = require('../../utils/refundHelpers');
 
 const router = express.Router();
 
@@ -42,7 +45,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog, leadCall, firstReply] = await Promise.all([
+  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -75,6 +78,12 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
         LIMIT 1`,
       [req.params.id]
     ),
+    // Refund-side derived money (spec 2026-09-15). THE overpaid figure for
+    // every admin surface: the raw amount_paid - total_price difference counts
+    // a paid Drink Plan Extras or manual invoice as excess, which is why prod
+    // 599 reads overpaid on three screens today and is not.
+    offContractPaidCents(req.params.id),
+    loadPaymentsWithRemaining(req.params.id),
   ]);
 
   const fr = firstReply.rows[0];
@@ -87,6 +96,23 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   res.json({
     ...row,
     setup_time_display: setupTimeDisplay(row),
+    // Netted overpayment, the same figure and the same key the cancel-line
+    // preview returns. off_contract_paid_cents is the netting term, so the
+    // editor can net a HYPOTHETICAL new total without a second round trip.
+    // max_refundable_cents is the largest single Stripe charge still
+    // refundable: no refund spans charges, and a positive overpayment can be
+    // external money with no charge behind it, which the panel must say
+    // before the admin fills in a form the server will refuse.
+    // max_overpayment_refundable_cents is the largest UNCREDITED headroom on any
+    // one charge. An overpayment refund must come off money no invoice was
+    // credited, so this, not max_refundable_cents, is what a positive
+    // overpayment can actually be returned through Stripe.
+    overpayment_cents: nettedOverpaymentCents(row.amount_paid, row.total_price, offContract),
+    off_contract_paid_cents: offContract,
+    max_refundable_cents: refundable.reduce((m, p) => Math.max(m, p.remainingCents), 0),
+    max_overpayment_refundable_cents: refundable.reduce(
+      (m, p) => Math.max(m, Math.min(p.remainingCents, p.uncreditedCents)), 0
+    ),
     // SERVER-15: pg returns the now-NUMERIC quantity as a string; coerce to a number.
     addons: addons.rows.map(a => ({ ...a, quantity: a.quantity === null ? null : Number(a.quantity) })),
     activity: activity.rows,

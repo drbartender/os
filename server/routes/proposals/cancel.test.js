@@ -706,7 +706,7 @@ test('refund: a pending refund row (Stripe reached, unreconciled) is netted, so 
     // Simulate a prior /cancel/refund attempt that reached Stripe on the balance
     // charge but died before reconciliation: the row stays 'pending' (with
     // stripe_refund_id NULL — reconciliation is what stamps it) until the
-    // charge.refunded webhook adopts it. A fresh-idempotency-key retry follows.
+    // refund.created webhook adopts it. A fresh-idempotency-key retry follows.
     await pool.query(
       `INSERT INTO proposal_refunds
          (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,

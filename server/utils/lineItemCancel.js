@@ -17,6 +17,7 @@ const { readSnapshot } = require('./pricingSnapshot');
 const { storedToInputCount, countLabelFor, effectiveHoursFor, storedIsInputCount } = require('./addonQuantity');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('./proposalExtrasFold');
 const { sumOffContractPaidCents, extrasLinesAreFolded } = require('./invoiceExtras');
+const { nettedOverpaymentCents } = require('./refundHelpers');
 const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems } = require('./invoiceHelpers');
 const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons } = require('./eventCreation');
 const { rosterCounts } = require('./positionsNeeded');
@@ -707,11 +708,12 @@ async function applyLineItemCancel(client, {
     snapshot,
     statusChanged,
     newStatus: proposal.status,
-    overpaymentCents: Math.max(
-      0,
-      Math.round(fingerprint.amount_paid * 100)
-        - toCents(snapshot.total)
-        - offContractPaidCents
+    // Same netting the panel and the admin payload use, through the one pure
+    // function, so the two can never drift (lane code review, 2026-09-15). The
+    // total here is the NEW, not-yet-committed one, which is the only reason
+    // this cannot just call the async overpaymentCents helper.
+    overpaymentCents: nettedOverpaymentCents(
+      fingerprint.amount_paid, snapshot.total, offContractPaidCents
     ),
     removedLabel,
     lockedInvoices,

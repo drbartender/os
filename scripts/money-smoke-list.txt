@@ -58,6 +58,14 @@ server/routes/stripeWebhook.gratuityApply.test.js
 server/utils/balanceInvoiceMonitor.test.js
 server/routes/invoices.refunds.test.js
 server/utils/refundHelpers.test.js
+
+# Refund scope (spec 2026-09-15): the overpayment cap asserted under the
+# proposals row lock, the uncredited-headroom rule, and the dashboard
+# reconciler. The helper suites above cover the derivations; these two cover
+# the money paths that spend them, so a gate without them would pass a change
+# that shrinks a contract or double-spends an overpayment.
+server/routes/stripe.refundScope.test.js
+server/routes/stripeWebhook.refundCreated.test.js
 server/utils/invoiceLifecycle.additionalInvoice.test.js
 server/utils/invoiceLifecycle.external.test.js
 server/utils/invoiceLifecycle.voidRemint.test.js

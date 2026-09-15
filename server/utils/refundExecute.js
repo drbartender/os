@@ -34,32 +34,70 @@
  * @param {string} [a.totalScope]           'contract' (default: Approach A, refund lowers
  *                                          total_price) or 'overpayment' (cancel-line: the fold
  *                                          already corrected total_price; refund must not re-lower)
+ * @param {boolean} [a.enforceOverpaymentCap] overpayment scope only: assert the refund fits
+ *                                          inside the netted excess WHILE HOLDING the proposals
+ *                                          row lock, in the same transaction that writes the
+ *                                          pending row. The admin panel sets it; cancel-line does
+ *                                          not (its figure is its own fold, already applied).
  * @returns {Promise<{refund:object, recon:{applied:boolean}, refundRowId:number}>}
  */
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { PaymentError, ExternalServiceError } = require('./errors');
-const { applyRefundReconciliation } = require('./refundHelpers');
+const { AppError, PaymentError, ExternalServiceError } = require('./errors');
+const {
+  applyRefundReconciliation, availableOverpaymentCents, overpaymentRefusalMessage,
+} = require('./refundHelpers');
 
 async function refundExecute({
   stripe, proposalId, paymentId, paymentIntentId, amountCents, reason,
   issuedBy, idempotencyKey, totalPriceBeforeDollars, totalPriceAfterDollars,
-  gratuityCents = null, totalScope = 'contract',
+  gratuityCents = null, totalScope = 'contract', enforceOverpaymentCap = false,
 }) {
   // 1. Pending row BEFORE Stripe. gratuity_cents (nullable) records the gratuity
   //    portion of THIS refund for audit; the existing admin route passes null,
   //    so its behavior is unchanged (column stays NULL). total_scope rides the
   //    row so webhook/sweeper adoption applies the same total_price rule.
-  const pendRes = await pool.query(
-    `INSERT INTO proposal_refunds
+  const INSERT_PENDING = `INSERT INTO proposal_refunds
        (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
         total_price_before, total_price_after, issued_by, status, gratuity_cents, total_scope)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10)
-     RETURNING id`,
-    [proposalId, paymentId, paymentIntentId, amountCents, reason,
-     totalPriceBeforeDollars, totalPriceAfterDollars, issuedBy, gratuityCents, totalScope]
-  );
-  const pendingRowId = pendRes.rows[0].id;
+     RETURNING id`;
+  const pendingParams = [proposalId, paymentId, paymentIntentId, amountCents, reason,
+    totalPriceBeforeDollars, totalPriceAfterDollars, issuedBy, gratuityCents, totalScope];
+
+  let pendingRowId;
+  if (enforceOverpaymentCap && totalScope === 'overpayment') {
+    // The cap has to be asserted under the proposals row lock, in the SAME
+    // transaction that writes the pending row: the route's own read is a
+    // read-then-act, so two admin windows (or a double submit with distinct
+    // idempotency keys) could both pass it and both fire real money out,
+    // dropping amount_paid below total_price, demoting the status and
+    // disarming autopay. Here the loser sees the winner's pending row.
+    // Succeeded refunds need no netting term — they already lowered
+    // amount_paid, so overpaymentCents has them. Pending ones have not.
+    // Nothing reaches Stripe before this COMMITs.
+    const capClient = await pool.connect();
+    try {
+      await capClient.query('BEGIN');
+      await capClient.query('SELECT id FROM proposals WHERE id = $1 FOR UPDATE', [proposalId]);
+      const avail = await availableOverpaymentCents(proposalId, capClient);
+      if (amountCents > avail.availableCents) {
+        await capClient.query('ROLLBACK');
+        throw new AppError(overpaymentRefusalMessage(avail), 400, 'REFUND_EXCEEDS_OVERPAYMENT');
+      }
+      const res = await capClient.query(INSERT_PENDING, pendingParams);
+      await capClient.query('COMMIT');
+      pendingRowId = res.rows[0].id;
+    } catch (err) {
+      try { await capClient.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
+      throw err;
+    } finally {
+      capClient.release();
+    }
+  } else {
+    const pendRes = await pool.query(INSERT_PENDING, pendingParams);
+    pendingRowId = pendRes.rows[0].id;
+  }
 
   // 2. Stripe. metadata carries the pending row id + proposal id so the
   //    stranded-pending sweeper (refundSweepScheduler.js) can match a refund
@@ -131,7 +169,7 @@ async function refundExecute({
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(dbErr, { tags: { util: 'refundExecute', proposalId } });
     }
-    // Money already left via Stripe; the charge.refunded webhook backstop adopts
+    // Money already left via Stripe; the refund.created webhook backstop adopts
     // our pending row and reconciles. Surface (not a silent success).
     console.error('Refund reconciliation failed (webhook will backstop):', dbErr);
     throw new ExternalServiceError(

@@ -63,8 +63,19 @@ const CANCEL_LINE_REFUND_RAILS = Object.freeze([
  * @param {number} proposalId
  * @param {object} [dbClient]  held tx client, or the shared pool
  * @param {object} [opts]
+ * UNCREDITED HEADROOM (2026-09-15, spec section 4b): a payment can exceed the
+ * invoice it paid. linkPaymentToInvoice caps the invoice credit at that
+ * invoice's remaining due and returns the rest as overflow, while the webhook
+ * rolls the WHOLE intent into proposals.amount_paid. So part of an overpaying
+ * payment sits in amount_paid with no invoice behind it, and refunding that
+ * part must not reverse an invoice credit that is still owed. uncreditedCents
+ * is that part, net of what earlier refunds already took:
+ *   amount - Σ invoice_payments (reversals are negative) - Σ succeeded+pending refunds
+ * A refund either absorbs headroom or reverses a link, so subtracting the
+ * refunds collapses "headroom already consumed" into the same expression.
+ *
  * @param {string[]} [opts.rails]  payment_type rails treated as refundable
- * @returns {Promise<{id:number, stripe_payment_intent_id:string, remainingCents:number}[]>}
+ * @returns {Promise<{id:number, stripe_payment_intent_id:string, remainingCents:number, uncreditedCents:number}[]>}
  */
 async function loadPaymentsWithRemaining(proposalId, dbClient = pool, { rails = PANEL_REFUND_RAILS } = {}) {
   const res = await dbClient.query(
@@ -73,7 +84,15 @@ async function loadPaymentsWithRemaining(proposalId, dbClient = pool, { rails = 
             pp.amount
               - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
                            WHERE pr.payment_id = pp.id AND pr.status IN ('succeeded', 'pending')), 0)
-              AS "remainingCents"
+              AS "remainingCents",
+            GREATEST(
+              pp.amount
+                - COALESCE((SELECT SUM(ip2.amount) FROM invoice_payments ip2
+                             WHERE ip2.payment_id = pp.id), 0)
+                - COALESCE((SELECT SUM(pr2.amount) FROM proposal_refunds pr2
+                             WHERE pr2.payment_id = pp.id AND pr2.status IN ('succeeded', 'pending')), 0),
+              0)
+              AS "uncreditedCents"
        FROM proposal_payments pp
       WHERE pp.proposal_id = $1
         AND pp.status = 'succeeded'
@@ -84,13 +103,15 @@ async function loadPaymentsWithRemaining(proposalId, dbClient = pool, { rails = 
                 FROM invoice_payments ip
                 JOIN invoices i ON i.id = ip.invoice_id
                WHERE ip.payment_id = pp.id
-                 AND i.label = ANY($3::text[]))`,
+                 AND i.label = ANY($3::text[]))
+      ORDER BY pp.id ASC`,
     [proposalId, rails, OFF_LEDGER_INVOICE_LABELS]
   );
   return res.rows.map((r) => ({
     id: r.id,
     stripe_payment_intent_id: r.stripe_payment_intent_id,
     remainingCents: Number(r.remainingCents),
+    uncreditedCents: Number(r.uncreditedCents),
   }));
 }
 
@@ -135,11 +156,23 @@ function planOverpaymentSplits({ paymentsWithRemaining, overpaymentCents }) {
  * @param {number|string} args.requestedDollars  raw admin input
  * @param {number} args.amountPaidDollars         proposals.amount_paid
  * @param {number} args.totalPriceDollars         proposals.total_price
+ * @param {string} [args.scope]                   'contract' (default) or 'overpayment'.
+ *        An overpayment refund leaves total_price alone (so the preview must too),
+ *        prefers the charge carrying the most UNCREDITED headroom among charges that
+ *        can cover the amount, and is refused outright when even that charge cannot
+ *        cover it from uncredited money.
+ * @param {boolean} [args.preferUncredited]       defaults to scope === 'overpayment'.
+ *        Derived, not independent: the refusal below judges the chosen target, so a
+ *        caller that asked for overpayment scope WITHOUT the preference would be
+ *        refused against a charge the planner never preferred.
  * @returns {{ok:true, amountCents:number, targetPaymentId:number,
  *            targetIntentId:string, totalPriceAfterDollars:number}
  *          | {ok:false, code:string, message:string, maxRefundableCents?:number}}
  */
-function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars, totalPriceDollars }) {
+function planRefund({
+  paymentsWithRemaining, requestedDollars, amountPaidDollars, totalPriceDollars,
+  scope = 'contract', preferUncredited = scope === 'overpayment',
+}) {
   const n = Number(requestedDollars);
   if (!Number.isFinite(n) || n <= 0) {
     return { ok: false, code: 'INVALID_AMOUNT', message: 'Enter a refund amount greater than $0.00.' };
@@ -151,7 +184,22 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
     return { ok: false, code: 'NO_REFUNDABLE_PAYMENT', message: 'No Stripe payment on this proposal is available to refund.' };
   }
 
-  const target = candidates.reduce((a, b) => (b.remainingCents > a.remainingCents ? b : a));
+  // Largest remaining first, id ascending on a tie so the pick is deterministic
+  // (it used to depend on row order). preferUncredited then REPLACES the target
+  // only with a charge that can cover the whole amount, so the rejection below
+  // still reports the true maximum when nothing can.
+  const byRemaining = [...candidates].sort(
+    (a, b) => b.remainingCents - a.remainingCents || a.id - b.id
+  );
+  let target = byRemaining[0];
+  if (preferUncredited) {
+    const covering = candidates
+      .filter((p) => p.remainingCents >= amountCents)
+      .sort((a, b) => (Number(b.uncreditedCents) || 0) - (Number(a.uncreditedCents) || 0)
+        || b.remainingCents - a.remainingCents
+        || a.id - b.id);
+    if (covering.length > 0) target = covering[0];
+  }
 
   if (amountCents > target.remainingCents) {
     return {
@@ -177,7 +225,40 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
   // contract refund the SQL floor + EXCEEDS_AMOUNT_PAID + the per-charge cap
   // already bound it. totalPriceAfterDollars below is a non-negative
   // worst-case (all-contract) PREVIEW the reconciliation overwrites.
-  const totalAfterCents = Math.max(0, Math.round(Number(totalPriceDollars) * 100) - amountCents);
+  // An overpayment refund must come off money no invoice was ever credited.
+  // If the chosen charge cannot cover it from its uncredited headroom, the
+  // remainder would walk the invoice links and reverse CREDITED money while
+  // total_price stands, leaving a settled invoice demanding less than the
+  // contract. That is exactly the defect section 4b closes, and the absorption
+  // rule alone only closes it when the headroom is big enough. It is also how a
+  // genuinely unrefundable overpayment surfaces: money taken outside Stripe
+  // (external_paid rolls into amount_paid with no charge behind it) leaves every
+  // charge fully credited, so there is nothing here to return through Stripe.
+  // Cancel-line does NOT come through here: it plans its own splits and its fold
+  // has already corrected the invoice demand, which is what makes reversing
+  // credited money right on that path and wrong on this one.
+  if (scope === 'overpayment') {
+    const targetUncredited = Number(target.uncreditedCents) || 0;
+    if (amountCents > targetUncredited) {
+      const maxUncredited = candidates.reduce(
+        (m, p) => Math.max(m, Number(p.uncreditedCents) || 0), 0
+      );
+      return {
+        ok: false,
+        code: 'OVERPAYMENT_NOT_ON_A_CHARGE',
+        maxUncreditedCents: maxUncredited,
+        message: maxUncredited > 0
+          ? `Only ${fmtUSD(maxUncredited)} of this overpayment sits on a refundable Stripe charge. Refund up to ${fmtUSD(maxUncredited)} as an overpayment; the rest was paid outside Stripe or is already applied to an invoice, so return that part by hand.`
+          : 'This overpayment is not on a refundable Stripe charge: it was paid outside Stripe, or it is already applied to an invoice. Return it by hand.',
+      };
+    }
+  }
+
+  // Overpayment scope never lowers total_price, so its preview must not either:
+  // this snapshot is what the pending row carries if the refund never reconciles.
+  const totalAfterCents = scope === 'overpayment'
+    ? Math.round(Number(totalPriceDollars) * 100)
+    : Math.max(0, Math.round(Number(totalPriceDollars) * 100) - amountCents);
 
   return {
     ok: true,
@@ -206,6 +287,10 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
  * that invoice but leave total_price intact.
  *
  * @param {object} a
+ * @param {boolean} [a.allowPendingHeuristic=true]  when no pendingRowId is given,
+ *        may a pending row be adopted by (intent, amount)? The refund.created
+ *        handler passes false: a dashboard refund has no pending row of its own,
+ *        and a stranded one of the same amount would silently re-scope it.
  * @param {number} a.proposalId
  * @param {string} a.stripeRefundId
  * @param {string} a.paymentIntentId
@@ -219,7 +304,7 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
 async function applyRefundReconciliation(
   {
     proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, reason,
-    issuedBy, totalScope = null, pendingRowId = null,
+    issuedBy, totalScope = null, pendingRowId = null, allowPendingHeuristic = true,
   },
   dbClient
 ) {
@@ -257,23 +342,36 @@ async function applyRefundReconciliation(
   // stranded pending row of the same amount on the same charge would silently
   // rewrite the money semantics of a later, unrelated refund in either
   // direction (push review, 2026-07-26). refundExecute knows exactly which row
-  // it wrote; the heuristic remains for adoption paths that do not (the
-  // charge.refunded webhook and the stale-pending sweeper).
-  const pending = pendingRowId
-    ? await dbClient.query(
-        `SELECT id, total_scope FROM proposal_refunds
-          WHERE id = $1 AND status = 'pending' AND stripe_refund_id IS NULL`,
-        [pendingRowId]
-      )
-    : await dbClient.query(
-        `SELECT id, total_scope FROM proposal_refunds
-          WHERE stripe_payment_intent_id = $1 AND amount = $2
-            AND status = 'pending' AND stripe_refund_id IS NULL
-          ORDER BY created_at ASC LIMIT 1`,
-        [paymentIntentId, amountCents]
-      );
+  // it wrote, the sweeper resolves it from Stripe, and the refund.created
+  // webhook validates the id Stripe echoed back before using it. So no caller
+  // reaches the heuristic below any more; it is kept only so a future adoption
+  // path that genuinely has no row id still has a defined behavior, and it must
+  // be opted into with allowPendingHeuristic.
+  let pending = { rows: [] };
+  if (pendingRowId) {
+    // Scoped to THIS proposal (lane security review, 2026-09-15). The row id can
+    // arrive from Stripe metadata, and the heuristic it replaced constrained
+    // intent AND amount, so an unconstrained lookup would have LESS validation
+    // than the path it replaced: another proposal's pending row could decide
+    // this refund's money rule and be marked succeeded against this refund's id,
+    // stranding its own refund forever. A row that does not match leaves
+    // pending.rows empty and the caller's explicit scope stands.
+    pending = await dbClient.query(
+      `SELECT id, total_scope FROM proposal_refunds
+        WHERE id = $1 AND proposal_id = $2 AND status = 'pending' AND stripe_refund_id IS NULL`,
+      [pendingRowId, proposalId]
+    );
+  } else if (allowPendingHeuristic) {
+    pending = await dbClient.query(
+      `SELECT id, total_scope FROM proposal_refunds
+        WHERE stripe_payment_intent_id = $1 AND amount = $2
+          AND status = 'pending' AND stripe_refund_id IS NULL
+        ORDER BY created_at ASC LIMIT 1`,
+      [paymentIntentId, amountCents]
+    );
+  }
   // total_price rule for THIS refund. The row is the source of truth (the
-  // charge.refunded webhook and the stale-pending sweeper adopt pending rows
+  // refund.created webhook and the stale-pending sweeper adopt pending rows
   // with no memory of the issuing caller); the param covers a direct call from
   // refundExecute before adoption; 'contract' is the historical default.
   const scope = (pending.rows[0] && pending.rows[0].total_scope)
@@ -311,7 +409,52 @@ async function applyRefundReconciliation(
   // (./proposalMoneyShared), same classification payrollAccrual uses.
   let nonContractCents = 0;
   let offLedgerCents = 0;
+  let absorbedCents = 0;
   if (paymentId !== null && paymentId !== undefined) {
+    // UNCREDITED HEADROOM FIRST (spec 2026-09-15 section 4b). A payment can
+    // exceed the invoice it paid: linkPaymentToInvoice caps the credit at that
+    // invoice's remaining due, while the webhook rolls the WHOLE intent into
+    // proposals.amount_paid. Those uncredited cents are on no invoice, so an
+    // overpayment refund of them must reverse no invoice. Reversing anyway left
+    // a LOCKED invoice demanding money on an unchanged contract, or flipped an
+    // unlocked one to partially_paid with a phantom balance on a live pay link.
+    // The old rule was correct only for cancel-line, where refreshUnlockedInvoices
+    // had already corrected the demand in the same transaction; there the payment
+    // is fully credited, headroom is 0, and this block is a no-op.
+    //
+    // headroom = amount - Σ links (reversals are negative) - Σ OTHER succeeded
+    // refunds on this charge. A refund either absorbs headroom or reverses a
+    // link, so that last term is exactly "headroom already consumed" and a
+    // second overpayment refund correctly finds none. This row is already
+    // 'succeeded' by now, hence the id exclusion.
+    //
+    // Skipped for a payment linked to an off-ledger invoice: those dollars never
+    // entered amount_paid, so absorbing them would drop money that is not there.
+    // Extension invoices are minted alone and paid alone (headroom is
+    // structurally 0), so this guard states the rule rather than relying on it.
+    if (scope === 'overpayment') {
+      const offLedgerLink = await dbClient.query(
+        `SELECT 1 FROM invoice_payments ip
+           JOIN invoices i ON i.id = ip.invoice_id
+          WHERE ip.payment_id = $1 AND i.label = ANY($2::text[]) LIMIT 1`,
+        [paymentId, OFF_LEDGER_INVOICE_LABELS]
+      );
+      if (offLedgerLink.rowCount === 0) {
+        const hr = await dbClient.query(
+          `SELECT GREATEST(
+                    pp.amount
+                      - COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip
+                                   WHERE ip.payment_id = pp.id), 0)
+                      - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
+                                   WHERE pr.payment_id = pp.id AND pr.status = 'succeeded'
+                                     AND pr.id <> $2), 0),
+                    0)::int AS headroom
+             FROM proposal_payments pp WHERE pp.id = $1`,
+          [paymentId, refundRowId]
+        );
+        absorbedCents = Math.min(amountCents, Number(hr.rows[0]?.headroom || 0));
+      }
+    }
     const links = await dbClient.query(
       `SELECT ip.invoice_id,
               i.label AS invoice_label,
@@ -325,7 +468,7 @@ async function applyRefundReconciliation(
         ORDER BY ip.invoice_id ASC`,
       [paymentId]
     );
-    let remaining = amountCents;
+    let remaining = amountCents - absorbedCents;
     for (const link of links.rows) {
       if (remaining <= 0) break;
       const take = Math.min(remaining, link.net_applied);
@@ -527,6 +670,7 @@ async function applyRefundReconciliation(
       issuedBy,
       JSON.stringify({
         amount: amountCents, reason, stripe_refund_id: stripeRefundId,
+        total_scope: scope, uncredited_absorbed_cents: absorbedCents,
         contract_cents: contractCents, non_contract_cents: nonContractCents,
         total_price_before: totalBefore, total_price_after: totalAfter,
         status_before: statusBefore, status_after: statusAfter,
@@ -539,8 +683,107 @@ async function applyRefundReconciliation(
   return { applied: true };
 }
 
+/**
+ * Money paid on this proposal that is NOT inside proposals.total_price: a paid
+ * Drink Plan Extras invoice whose lines were never folded, a manual label.
+ * Thin pass-through to the ONE derivation (invoiceExtras), so the panel, the
+ * editor and cancel-line can never drift apart on what "off contract" means.
+ * Lazy require: invoiceExtras pulls in the invoice lifecycle, and this module
+ * is required from inside it at other depths.
+ *
+ * @param {number} proposalId
+ * @param {object} [dbClient]  REQUIRED from any in-transaction caller (one
+ *                             pooled connection per request; a pool fallback
+ *                             inside a held transaction is the deadlock).
+ * @returns {Promise<number>} cents
+ */
+function offContractPaidCents(proposalId, dbClient = pool) {
+  const { sumOffContractPaidCents } = require('./invoiceExtras');
+  return sumOffContractPaidCents(proposalId, dbClient);
+}
+
+/**
+ * The netted overpayment: money held beyond the contract, with off-contract
+ * invoice money taken out first. THE definition for every surface that says
+ * "overpaid" and the cap on an overpayment-scope refund.
+ *
+ * The raw `amount_paid - total_price` difference is NOT overpayment in this
+ * schema, which is why the 2026-07-26 attempt was reverted: a paid Drink Plan
+ * Extras invoice rolls into amount_paid and never into total_price, so the raw
+ * difference counts it as excess and a refund then subtracts it twice. Same
+ * formula cancel-line already uses (lineItemCancel.js overpaymentCents), same
+ * response key name as its preview.
+ *
+ * Note amount_paid includes external_paid, so a positive figure here can be
+ * money with no Stripe charge behind it. Callers that offer a refund must check
+ * refundable headroom separately (loadPaymentsWithRemaining).
+ *
+ * @param {number} proposalId
+ * @param {object} [dbClient]  as above
+ * @returns {Promise<number>} cents, floored at 0
+ */
+function nettedOverpaymentCents(amountPaidDollars, totalPriceDollars, offContractCents) {
+  const paidCents = Math.round(Number(amountPaidDollars || 0) * 100);
+  const totalCents = Math.round(Number(totalPriceDollars || 0) * 100);
+  return Math.max(0, paidCents - totalCents - (Number(offContractCents) || 0));
+}
+
+/**
+ * The overpayment still AVAILABLE to return, and the parts it is made of.
+ * Succeeded refunds need no netting (they already lowered amount_paid); pending
+ * overpayment refunds have not landed yet, so they must be held back or two
+ * concurrent submits spend the same excess twice.
+ *
+ * Shared by the route's advisory check and refundExecute's authoritative one
+ * (which calls it under the proposals row lock), so the two can never name
+ * different figures to the admin.
+ */
+async function availableOverpaymentCents(proposalId, dbClient = pool) {
+  const excessCents = await overpaymentCents(proposalId, dbClient);
+  const res = await dbClient.query(
+    `SELECT COALESCE(SUM(amount), 0)::int AS cents FROM proposal_refunds
+      WHERE proposal_id = $1 AND status = 'pending' AND total_scope = 'overpayment'`,
+    [proposalId]
+  );
+  const pendingCents = Number(res.rows[0].cents);
+  return { excessCents, pendingCents, availableCents: Math.max(0, excessCents - pendingCents) };
+}
+
+/**
+ * Why an overpayment refund was refused, in the admin's terms. The three cases
+ * are genuinely different acts, and naming the wrong one is dangerous: telling
+ * an admin "not overpaid, uncheck the box" when the real cause is a refund in
+ * flight steers them onto the CONTRACT path, which carries no cap and would
+ * shrink the contract by the amount already being returned (lane security
+ * review, 2026-09-15).
+ */
+function overpaymentRefusalMessage({ excessCents, pendingCents, availableCents }) {
+  if (excessCents <= 0) {
+    return 'This proposal is not overpaid, so there is nothing to return as an overpayment. Uncheck the box to correct the contract instead.';
+  }
+  if (pendingCents > 0) {
+    return `A ${fmtUSD(pendingCents)} refund on this proposal has not settled yet, which leaves ${fmtUSD(availableCents)} of the ${fmtUSD(excessCents)} overpayment available. Wait for it to settle before returning more. Do not uncheck the box: that would correct the contract instead of returning the overpayment.`;
+  }
+  return `This proposal is overpaid by ${fmtUSD(availableCents)}. Refund up to ${fmtUSD(availableCents)} as an overpayment, or uncheck the box to correct the contract instead.`;
+}
+
+async function overpaymentCents(proposalId, dbClient = pool) {
+  const res = await dbClient.query(
+    'SELECT total_price, amount_paid FROM proposals WHERE id = $1',
+    [proposalId]
+  );
+  if (!res.rows[0]) return 0;
+  const offContract = await offContractPaidCents(proposalId, dbClient);
+  return nettedOverpaymentCents(res.rows[0].amount_paid, res.rows[0].total_price, offContract);
+}
+
 module.exports = {
   planRefund,
+  offContractPaidCents,
+  overpaymentCents,
+  nettedOverpaymentCents,
+  availableOverpaymentCents,
+  overpaymentRefusalMessage,
   fmtUSD,
   applyRefundReconciliation,
   loadPaymentsWithRemaining,

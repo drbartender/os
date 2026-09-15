@@ -181,7 +181,9 @@ test('contract scope (default) still drops total_price and amount_due', async ()
 
 test('webhook-style adoption honors the stored row scope', async () => {
   const o = await seedOverpaid({ pendingScope: 'overpayment' });
-  // No totalScope param, exactly as chargeRefunded calls it: the ROW decides.
+  // No totalScope param, exactly as the stale-pending sweeper calls it: the
+  // ROW decides. (refund.created passes an explicit scope instead, and only
+  // when it has no validated row of its own.)
   const recon = await reconcile(o, { refundId: `re_${NONCE}_3` });
   assert.equal(recon.applied, true);
   const p = (await pool.query('SELECT total_price FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
@@ -288,4 +290,152 @@ test('RC4: adoption matches the caller OWN pending row, not a same-amount strand
   assert.equal(adopted.id, mine.rows[0].id, 'must adopt the row the caller created');
   const p = (await pool.query('SELECT total_price FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
   assert.equal(Number(p.total_price), 800, "own row's overpayment scope must win, not the stranded contract row");
+});
+
+// ── Uncredited headroom (spec 2026-09-15 section 4b) ────────────────────────
+// A payment can EXCEED the invoice it paid: linkPaymentToInvoice caps the
+// invoice credit at that invoice's remaining due, while the webhook rolls the
+// whole intent into proposals.amount_paid. Those uncredited cents sit on no
+// invoice, so an overpayment refund of them must reverse no invoice. Before
+// this rule the walk reversed CREDITED money instead, leaving a locked invoice
+// demanding money on an unchanged contract.
+async function seedOverflow({ label = 'Balance', locked = true, payCents = 90000, dueCents = 50000 } = {}) {
+  seq += 1;
+  const c = await pool.query(
+    'INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING id',
+    [`Overflow Test ${NONCE}`, `${NONCE}-of-${seq}@example.com`]
+  );
+  seededClients.push(c.rows[0].id);
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_type, event_timezone,
+                            event_date, event_start_time, event_duration_hours,
+                            total_price, amount_paid, pricing_snapshot, autopay_enrolled)
+     VALUES ($1, 'balance_paid', 'wedding', 'America/Chicago',
+             CURRENT_DATE + 30, '18:00', 4, $2, $3, '{}'::jsonb, false)
+     RETURNING id`,
+    [c.rows[0].id, dueCents / 100, payCents / 100]
+  );
+  const proposalId = p.rows[0].id;
+  seededProposals.push(proposalId);
+  const inv = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, $3, $4, $4, 'paid', $5) RETURNING id`,
+    [proposalId, `INV${crypto.randomBytes(5).toString('hex')}`, label, dueCents, locked]
+  );
+  const intent = `pi_of_${NONCE}_${seq}`;
+  const pay = await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+     VALUES ($1, 'balance', $2, 'succeeded', $3) RETURNING id`,
+    [proposalId, payCents, intent]
+  );
+  // Credited only up to the invoice's due, exactly as linkPaymentToInvoice does.
+  await pool.query('INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, $3)',
+    [inv.rows[0].id, pay.rows[0].id, dueCents]);
+  return { proposalId, invId: inv.rows[0].id, paymentId: pay.rows[0].id, intent };
+}
+
+const money = (pid) => pool.query('SELECT total_price, amount_paid, status FROM proposals WHERE id = $1', [pid])
+  .then((r) => r.rows[0]);
+const invoiceRow = (id) => pool.query('SELECT amount_due, amount_paid, status FROM invoices WHERE id = $1', [id])
+  .then((r) => r.rows[0]);
+
+test('overpayment scope absorbs UNCREDITED headroom: the locked invoice is untouched and the contract stands', async () => {
+  // $900 paid, $500 contract, the invoice was only ever credited $500.
+  const o = await seedOverflow();
+  const r = await reconcile(o, { refundId: `re_${NONCE}_of1`, amountCents: 40000, totalScope: 'overpayment' });
+  assert.equal(r.applied, true);
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.total_price), 500, 'contract stands');
+  assert.equal(Number(m.amount_paid), 500, 'amount_paid drops by the full refund');
+  assert.equal(m.status, 'balance_paid', 'paid still covers the total, so no demotion');
+  const inv = await invoiceRow(o.invId);
+  assert.equal(inv.amount_due, 50000, 'locked invoice still demands what the contract says');
+  assert.equal(inv.amount_paid, 50000, 'its credit is untouched');
+  assert.equal(inv.status, 'paid');
+  const links = await pool.query('SELECT COUNT(*)::int AS n FROM invoice_payments WHERE payment_id = $1', [o.paymentId]);
+  assert.equal(links.rows[0].n, 1, 'no reversal row: these cents were on no invoice');
+  const log = await pool.query(
+    `SELECT details FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'refund_issued'`,
+    [o.proposalId]
+  );
+  assert.equal(log.rows[0].details.total_scope, 'overpayment');
+  assert.equal(log.rows[0].details.uncredited_absorbed_cents, 40000);
+});
+
+test('a SECOND overpayment refund on the same charge finds no headroom left and reverses the invoice', async () => {
+  const o = await seedOverflow();
+  await reconcile(o, { refundId: `re_${NONCE}_of2a`, amountCents: 40000, totalScope: 'overpayment' });
+  // Headroom is spent; this one must come off the credited money.
+  await reconcile(o, { refundId: `re_${NONCE}_of2b`, amountCents: 10000, totalScope: 'overpayment' });
+  const inv = await invoiceRow(o.invId);
+  assert.equal(inv.amount_paid, 40000, 'the credit is reversed the second time');
+  assert.equal(inv.amount_due, 40000, 'locked invoice drops its demand too, so it stays settled');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.amount_paid), 400, 'both refunds left amount_paid');
+  assert.equal(Number(m.total_price), 500, 'overpayment scope never lowers the contract');
+});
+
+test('a payment linked to an OFF-LEDGER invoice never absorbs headroom, and its refund leaves amount_paid alone', async () => {
+  const o = await seedOverflow({ label: 'Service Extension', payCents: 90000, dueCents: 50000 });
+  await reconcile(o, { refundId: `re_${NONCE}_of3`, amountCents: 20000, totalScope: 'overpayment' });
+  const inv = await invoiceRow(o.invId);
+  assert.equal(inv.amount_paid, 30000, 'the extension invoice IS reversed: absorption was skipped');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.amount_paid), 900, 'off-ledger dollars never entered amount_paid, so they never leave it');
+  assert.equal(Number(m.total_price), 500, 'and the contract is untouched');
+});
+
+test('contract scope ignores headroom entirely: the invoice walk is unchanged', async () => {
+  const o = await seedOverflow();
+  await reconcile(o, { refundId: `re_${NONCE}_of4`, amountCents: 20000, totalScope: 'contract' });
+  const inv = await invoiceRow(o.invId);
+  assert.equal(inv.amount_paid, 30000, 'contract scope still reverses credited money');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.total_price), 300, 'and still lowers the contract by the contract portion');
+});
+
+test('a pendingRowId belonging to ANOTHER proposal is never adopted (defense in depth)', async () => {
+  // The webhook validates the row id Stripe echoed back before passing it, but
+  // the reconciler must not depend on that: the id is externally supplied, and
+  // an unscoped lookup would let another proposal's row decide this refund's
+  // money rule AND be stamped succeeded against this refund's id, stranding its
+  // own refund forever.
+  const victim = await seedOverpaid({ pendingScope: 'overpayment', pendingCents: 20000 });
+  const victimRow = await pool.query(
+    `SELECT id FROM proposal_refunds WHERE proposal_id = $1 AND status = 'pending'`,
+    [victim.proposalId]
+  );
+  const other = await seedOverflow();
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    await applyRefundReconciliation({
+      proposalId: other.proposalId,
+      stripeRefundId: `re_${NONCE}_crossproposal`,
+      paymentIntentId: other.intent,
+      paymentId: other.paymentId,
+      amountCents: 20000,
+      reason: 'cross-proposal attempt',
+      issuedBy: null,
+      totalScope: 'contract',
+      pendingRowId: victimRow.rows[0].id,
+    }, dbClient);
+    await dbClient.query('COMMIT');
+  } finally {
+    dbClient.release();
+  }
+  const untouched = await pool.query(
+    'SELECT status, stripe_refund_id, total_scope FROM proposal_refunds WHERE id = $1',
+    [victimRow.rows[0].id]
+  );
+  assert.equal(untouched.rows[0].status, 'pending', "the other proposal's row is left alone");
+  assert.equal(untouched.rows[0].stripe_refund_id, null);
+  const fresh = await pool.query(
+    'SELECT proposal_id, total_scope FROM proposal_refunds WHERE stripe_refund_id = $1',
+    [`re_${NONCE}_crossproposal`]
+  );
+  assert.equal(Number(fresh.rows[0].proposal_id), other.proposalId, 'a fresh row on the right proposal');
+  assert.equal(fresh.rows[0].total_scope, 'contract', "the caller's scope stood, not the foreign row's");
+  const vm = await money(victim.proposalId);
+  assert.equal(Number(vm.amount_paid), 1000, "the other proposal's money never moved");
 });
