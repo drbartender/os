@@ -282,7 +282,7 @@ export default function InvoicePage() {
 
   return (
     <div className="invoice-page">
-      <div className={`invoice-layout${pending ? ' is-pending' : ''}`}>
+      <div className={`invoice-layout${pending && pendingPayment ? ' is-pending' : ''}`}>
         <div className="invoice-document" ref={printRef}>
           {/* Header — brass eyebrow + INVOICE + mono number on left, brand block on right */}
           <div className="invoice-header">

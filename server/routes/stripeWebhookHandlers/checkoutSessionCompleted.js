@@ -148,9 +148,11 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
       // Delayed-settlement guard (M9): a Checkout Session can complete with funds not
       // yet captured (payment_status 'unpaid'/'no_payment_required') for a delayed-
       // notification payment method. There are no async_payment_succeeded/failed
-      // handlers and the proposal Payment Link does not pin payment_method_types, so
-      // recording this as a succeeded proposal payment would credit unsettled funds.
-      // Card-only today makes this a latent guard; ack without recording payment or
+      // handlers, so recording this as a succeeded proposal payment would credit
+      // unsettled funds. The proposal Payment Link pins card and link
+      // (PAYMENT_LINK_METHOD_TYPES, 2026-09-14 spec D10) precisely so no delayed
+      // method reaches it, which makes this a latent guard; keep it, it is the
+      // backstop if that pin is ever widened. Ack without recording payment or
       // side effects when the session is present-but-not-paid.
       if (session.payment_status && session.payment_status !== 'paid') {
         console.warn(`Webhook: checkout.session.completed for proposal ${proposalId} has payment_status '${session.payment_status}' (not paid), acking without recording payment`);

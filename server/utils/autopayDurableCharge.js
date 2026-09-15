@@ -121,7 +121,7 @@ async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
     // public invoice page is the ordinary way a client settles the balance.
     const coversBalance = m.payment_type === 'balance' || m.payment_type === 'invoice' || Number(m.balance_amount_cents || 0) > 0;
     if (!coversBalance) {
-      // A deposit / invoice / full / drink_plan_extras (balance 0) intent — not our
+      // A deposit / full / drink_plan_extras (balance 0) intent — not our
       // charge, it does not settle the outstanding balance. Keep scanning.
       continue;
     }

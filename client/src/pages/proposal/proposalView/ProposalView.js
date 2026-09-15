@@ -875,6 +875,7 @@ export default function ProposalView() {
                 phase={paidCardPhase}
                 state={paidInfo}
                 pendingPayment={pendingPayment}
+                blockedMessage={intentError}
                 autopayEnrolled={!!proposal.autopay_enrolled}
                 balanceDueDate={balanceDueDate}
                 openInvoiceToken={proposal.open_invoice_token || null}

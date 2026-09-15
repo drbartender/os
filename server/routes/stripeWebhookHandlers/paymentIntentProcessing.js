@@ -39,11 +39,20 @@ module.exports = async function handlePaymentIntentProcessing(event, stripe) {
       try {
         // No network retry here: this runs before the ack, and Stripe gives a
         // delivery 30 seconds. One attempt at ten keeps the headroom; a slow
-        // Stripe leaves the row released, which is the safe answer anyway.
+        // Stripe fails the delivery below and Stripe retries it.
         const live = await stripe.paymentIntents.retrieve(intent.id, { ...STRIPE_RETRIEVE_OPTS, maxNetworkRetries: 0 });
         failedRowMayMove = live && live.status === 'processing';
       } catch (err) {
-        console.warn(`Webhook: could not confirm intent ${intent.id} at Stripe before reviving a failed row (left failed): ${err && err.message}`);
+        // Unknown at Stripe is "stay released". Anything else (network, a
+        // Stripe 5xx, the timeout) is a real unknown: throw here, before the
+        // ledger insert, so the delivery 500s with no ledger row and Stripe
+        // retries it. Swallowing it would acknowledge the event with the row
+        // still failed and the real debit invisible for its whole window.
+        if (err && err.code === 'resource_missing') {
+          console.warn(`Webhook: intent ${intent.id} is unknown at Stripe; its failed row stays failed`);
+        } else {
+          throw err;
+        }
       }
     }
   }

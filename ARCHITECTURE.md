@@ -1171,7 +1171,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `amount` (cents), `status`: pending | succeeded | failed | canceled | processing
 - `processing_at` (TIMESTAMPTZ, bank debit in flight, spec 2026-09-14): stamped by the `payment_intent.processing` webhook; "started" on every surface
 - `invoice_id` FK→invoices (nullable, ON DELETE SET NULL): the invoice a processing payment is for; set by the invoice checkout rail at insert and by the processing webhook from intent metadata after an ownership check
-- Partial index `idx_stripe_sessions_proposal_processing` on `(proposal_id, processing_at DESC) WHERE status = 'processing'` backs every in-flight lookup; the older `idx_stripe_sessions_proposal_pending` covers only pending rows
+- Partial index `idx_stripe_sessions_proposal_processing` on `(proposal_id, processing_at DESC) WHERE status = 'processing'` backs every in-flight lookup; the older `idx_stripe_sessions_proposal_pending` covers only pending rows; the plain `idx_stripe_sessions_proposal_id` backs the combined guard and the autopay scan, which read pending, processing and failed rows together
 
 **proposal_payments** — Individual payment records
 - `proposal_id` FK, `stripe_payment_intent_id`

@@ -2,13 +2,17 @@ import React from 'react';
 import { fmt, formatDateShort } from './helpers';
 import PendingPaymentCard from '../../../components/PendingPaymentCard';
 
-// The card that replaces sign-and-pay once money is involved. Four phases:
+// The card that replaces sign-and-pay once money is involved. Five phases:
 //   settling  : a checkout redirect just landed and the row is not yet in a
 //               paid state. NO dollar figure, no pay link, no claim.
 //   fallback  : the poll budget ran out or was blocked. Still no numbers and
 //               still no claim: a webhook that rolled back produces exactly
 //               this state, so "your payment went through" would be a lie.
 //   pending   : a bank debit is processing (spec 2026-09-14). The shared card, no pay link, no paid claim.
+//   blocked   : the rail refused a new payment (409) and the reloaded row has
+//               no processing payment yet. The rail's own message is the copy
+//               (`blockedMessage`): it names which of three states applies,
+//               and only one of them is a processing bank debit.
 //   paid      : the row is settled; every figure below comes from `state`,
 //               which paidState() derived from the row. With a pendingPayment
 //               (a balance settling by bank debit) BOTH deposit branches, the
@@ -16,9 +20,12 @@ import PendingPaymentCard from '../../../components/PendingPaymentCard';
 //               copy, and Pay balance is hidden: autopay will not charge while
 //               money is in flight, so "will be automatically charged" would
 //               be false for the whole window.
+const BLOCKED_FALLBACK = 'We could not start another payment for this event. Refresh the page in a moment, '
+  + 'and if it still shows as unpaid, email contact@drbartender.com.';
+
 export default function PaidCard({
   phase, state, autopayEnrolled, balanceDueDate, openInvoiceToken, drinkPlanToken, onRefresh,
-  pendingPayment = null,
+  pendingPayment = null, blockedMessage = '',
 }) {
   if (phase === 'settling') {
     return (
@@ -47,6 +54,18 @@ export default function PaidCard({
 
   if (phase === 'pending') {
     return <PendingPaymentCard amountCents={pendingPayment?.amount_cents} startedAt={pendingPayment?.started_at} />;
+  }
+
+  if (phase === 'blocked') {
+    return (
+      <div className="proposal-paid-card is-pending" role="status" aria-live="polite">
+        <h3 className="proposal-paid-title">A payment for this event is already underway.</h3>
+        <p className="proposal-paid-sub">{blockedMessage || BLOCKED_FALLBACK}</p>
+        <button type="button" className="btn" onClick={onRefresh} style={{ marginTop: '4px' }}>
+          Refresh
+        </button>
+      </div>
+    );
   }
 
   const isFullyPaid = state.kind === 'full';

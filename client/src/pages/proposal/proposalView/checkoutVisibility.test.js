@@ -50,13 +50,22 @@ test('signed accepted row, plain visit, nothing pending: pay-only section', () =
   expect(v.isPayableStatus).toBe(true);
 });
 
-test('a 409 latch (payBlocked) gates exactly like a pending payment until reload', () => {
-  const v = checkoutVisibility({ proposal: signedAccepted, paid: false, settlePhase: 'idle', isPaid: false, pendingPayment: null, payBlocked: true });
-  expect(v.isPayableStatus).toBe(false);
-  expect(v.showSignAndPay).toBe(false);
-  expect(v.showPayOnly).toBe(false);
-  expect(v.showPaidCard).toBe(true);
-  expect(v.paidCardPhase).toBe('pending');
+test('a 409 latch (payBlocked) with no pending payment gates the pay controls and lands the blocked phase, not the processing card', () => {
+  for (const proposal of [unsignedSent, signedAccepted]) {
+    const v = checkoutVisibility({ proposal, paid: false, settlePhase: 'idle', isPaid: false, pendingPayment: null, payBlocked: true });
+    expect(v.settling).toBe(true);
+    expect(v.isPayableStatus).toBe(false);
+    expect(v.showSignAndPay).toBe(false);
+    expect(v.showPayOnly).toBe(false);
+    expect(v.showPaidCard).toBe(true);
+    expect(v.paidCardPhase).toBe('blocked');
+  }
   const paidRow = checkoutVisibility({ proposal: depositPaid, paid: false, settlePhase: 'idle', isPaid: true, pendingPayment: null, payBlocked: true });
   expect(paidRow.paidCardPhase).toBe('paid');
+});
+
+test('a 409 latch whose reload found the processing row lands the pending phase (the row wins over the latch)', () => {
+  const v = checkoutVisibility({ proposal: signedAccepted, paid: false, settlePhase: 'idle', isPaid: false, pendingPayment: pending, payBlocked: true });
+  expect(v.paidCardPhase).toBe('pending');
+  expect(v.showPayOnly).toBe(false);
 });

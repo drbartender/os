@@ -73,6 +73,24 @@ test('pending phase renders the processing card alone: no pay link, no paid clai
   expect(screen.queryByText(/Pay balance/)).toBeNull();
 });
 
+test('blocked phase shows the rail\'s own 409 message, never the processing card, and offers refresh', () => {
+  const onRefresh = jest.fn();
+  const message = 'A bank payment for this event is waiting on a verification step. Check your email from Stripe to finish it, and it will clear four to six business days after that. If you would rather pay another way, email contact@drbartender.com.';
+  const { container } = render(<PaidCard phase="blocked" state={none} blockedMessage={message} {...base} onRefresh={onRefresh} />);
+  expect(container.textContent).toMatch(/already underway/);
+  expect(container.textContent).toMatch(/waiting on a verification step/);
+  expect(container.textContent).not.toMatch(/Your bank payment is processing|We received your|nothing more is needed/);
+  expect(screen.queryByText(/Pay balance/)).toBeNull();
+  screen.getByRole('button', { name: /Refresh/ }).click();
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+});
+
+test('blocked phase with no message falls back to a neutral line that claims nothing', () => {
+  const { container } = render(<PaidCard phase="blocked" state={none} {...base} />);
+  expect(container.textContent).toMatch(/could not start another payment/);
+  expect(container.textContent).not.toMatch(/\$|processing|received/i);
+});
+
 test('paid + deposit with a pending balance payment replaces the due-by line and hides Pay balance', () => {
   const { container } = render(<PaidCard phase="paid" state={deposit} pendingPayment={pendingPayment} {...base} openInvoiceToken="inv-tok" />);
   expect(container.textContent).toMatch(/Deposit received\./);

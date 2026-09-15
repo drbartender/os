@@ -1420,8 +1420,9 @@ END $$;
 --    for bank debit in flight, 2026-09-14) are NOT auto-reverted: re-tighten only
 --    by re-running the earlier CHECK, and only if no row carries the value being
 --    dropped. The 2026-09-14 change also added stripe_sessions.processing_at,
---    stripe_sessions.invoice_id with FK stripe_sessions_invoice_id_fkey, and the
---    partial index idx_stripe_sessions_proposal_processing.)
+--    stripe_sessions.invoice_id with FK stripe_sessions_invoice_id_fkey, the
+--    partial index idx_stripe_sessions_proposal_processing and the plain
+--    index idx_stripe_sessions_proposal_id.)
 
 -- ─── Last-Minute Booking Hold ─────────────────────────────────────
 -- Set TRUE by the Stripe webhook (payment_intent.succeeded) when a paid
@@ -2400,13 +2401,29 @@ CREATE INDEX IF NOT EXISTS idx_invoice_payments_payment_id ON invoice_payments(p
 -- drink-plan / autopay intents. Lives here, not next to the table, because
 -- invoices is created later in this file and the FK needs it to exist.
 ALTER TABLE stripe_sessions ADD COLUMN IF NOT EXISTS processing_at TIMESTAMPTZ;
-ALTER TABLE stripe_sessions ADD COLUMN IF NOT EXISTS invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL;
+ALTER TABLE stripe_sessions ADD COLUMN IF NOT EXISTS invoice_id INTEGER;
+-- The FK in its own guarded block: ADD COLUMN IF NOT EXISTS skips the whole
+-- statement once the column exists, so an inline REFERENCES would never be
+-- re-applied to a column that got added without it.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'stripe_sessions_invoice_id_fkey'
+  ) THEN
+    ALTER TABLE stripe_sessions ADD CONSTRAINT stripe_sessions_invoice_id_fkey
+      FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 -- Backs every in-flight lookup (both public GETs, the polled payment-state
 -- route, the rails, the reminder ladder): the older partial index covers only
 -- status = 'pending'. Tiny by construction, a handful of rows at a time.
 CREATE INDEX IF NOT EXISTS idx_stripe_sessions_proposal_processing
   ON stripe_sessions(proposal_id, processing_at DESC)
   WHERE status = 'processing';
+-- The combined guard (assertNoPaymentInFlight) and the autopay scan read
+-- pending, processing AND failed rows for one proposal; the two partial
+-- indexes above cover one status each, so those reads need the plain key.
+CREATE INDEX IF NOT EXISTS idx_stripe_sessions_proposal_id
+  ON stripe_sessions(proposal_id);
 
 -- Upgrade: refund attribution on reversal rows. applyRefundReconciliation
 -- stamps each negative reversal row with the proposal_refunds id it belongs

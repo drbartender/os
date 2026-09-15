@@ -14,7 +14,11 @@ const scripted = new Map();
 // the PaymentIntent read.
 const realLive = require('../utils/stripeClient').getLiveClient();
 const fakeStripe = { webhooks: realLive.webhooks, paymentIntents: { retrieve: async (id) => {
-  if (scripted.has(id)) return scripted.get(id);
+  if (scripted.has(id)) {
+    const s = scripted.get(id);
+    if (s instanceof Error) throw s; // a scripted outage
+    return s;
+  }
   const e = new Error('No such payment_intent'); e.code = 'resource_missing'; throw e;
 } } };
 require('../utils/stripeClient').getLiveClient = () => fakeStripe;
@@ -307,6 +311,25 @@ test('a FAILED row stays failed when Stripe does not report the intent processin
   await seedSession(p, piId2, 'failed');
   await postWebhook(processingEvent({ id: `evt_${NONCE}_stale_gone`, piId: piId2, proposalId: p }));
   assert.equal((await one('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId2])).status, 'failed');
+});
+
+test('a Stripe outage during the failed-row confirmation fails the delivery, so Stripe retries it instead of dropping the revival', async () => {
+  const p = await seedProposal();
+  const piId = `pi_${NONCE}_outage`;
+  await seedSession(p, piId, 'failed');
+  const outage = new Error('read ECONNRESET'); outage.code = 'ECONNRESET';
+  scripted.set(piId, outage);
+  const evt = processingEvent({ id: `evt_${NONCE}_outage`, piId, proposalId: p });
+  const r1 = await postWebhook(evt);
+  assert.equal(r1.status, 500, r1.body);
+  assert.equal((await one('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId])).status, 'failed', 'unconfirmed means released');
+  const ledger = await one("SELECT COUNT(*)::int AS n FROM webhook_events WHERE provider = 'stripe' AND event_id = $1", [evt.id]);
+  assert.equal(ledger.n, 0, 'no ledger row, so the retry is processed');
+  // Stripe is back and reports the intent processing: the retry revives the row.
+  scripted.set(piId, { id: piId, status: 'processing' });
+  const r2 = await postWebhook(evt);
+  assert.equal(r2.status, 200, r2.body);
+  assert.equal((await one('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId])).status, 'processing');
 });
 
 test('a delivery whose transaction fails leaves no ledger row, so the retry is processed instead of dropped', async () => {
