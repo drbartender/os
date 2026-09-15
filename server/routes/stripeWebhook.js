@@ -96,7 +96,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   // the rails, the reminder ladder and the client pages can see it. Idempotent
   // on the row's own pending state; nothing to early-ack.
   if (event.type === 'payment_intent.processing') {
-    await handlePaymentIntentProcessing(event);
+    await handlePaymentIntentProcessing(event, stripeForEvent);
     if (res.headersSent) return;
   }
 

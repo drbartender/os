@@ -6,6 +6,20 @@ process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
 process.env.STRIPE_WEBHOOK_SECRET_TEST = '';
 process.env.STRIPE_TEST_MODE_UNTIL = '';
 
+// The handler asks Stripe before reviving a FAILED row (event order is not
+// guaranteed). Scripted per test; never the live client.
+const scripted = new Map();
+// The dispatcher verifies signatures through the client's webhooks helper
+// (pure HMAC, no network), so the fake keeps the real helper and stubs only
+// the PaymentIntent read.
+const realLive = require('../utils/stripeClient').getLiveClient();
+const fakeStripe = { webhooks: realLive.webhooks, paymentIntents: { retrieve: async (id) => {
+  if (scripted.has(id)) return scripted.get(id);
+  const e = new Error('No such payment_intent'); e.code = 'resource_missing'; throw e;
+} } };
+require('../utils/stripeClient').getLiveClient = () => fakeStripe;
+require('../utils/stripeClient').getTestClient = () => null;
+
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -209,10 +223,11 @@ test('an event with no proposal_id is acked and writes nothing', async () => {
   assert.equal(sess.n, 0);
 });
 
-test('a FAILED row moves to processing: a declined card retried as a bank debit on the same intent', async () => {
+test('a FAILED row moves to processing when Stripe confirms the intent is processing: a declined card retried as a bank debit', async () => {
   const p = await seedProposal();
   const piId = `pi_${NONCE}_after_fail`;
   await seedSession(p, piId, 'failed');
+  scripted.set(piId, { id: piId, status: 'processing' });
   const r = await postWebhook(processingEvent({ id: `evt_${NONCE}_after_fail`, piId, proposalId: p }));
   assert.equal(r.status, 200, r.body);
   const sess = await one('SELECT status, processing_at FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId]);
@@ -266,4 +281,36 @@ test('a failed row that had already processed (a bounced debit) never moves back
   assert.equal(sess.status, 'failed');
   const log = await one(`SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_processing'`, [p]);
   assert.equal(log.n, 0);
+});
+
+test('a FAILED row stays failed when Stripe does not report the intent processing (a delayed processing event after a real failure)', async () => {
+  const p = await seedProposal();
+  const piId = `pi_${NONCE}_stale_order`;
+  await seedSession(p, piId, 'failed');
+  scripted.set(piId, { id: piId, status: 'requires_payment_method' });
+  const r = await postWebhook(processingEvent({ id: `evt_${NONCE}_stale_order`, piId, proposalId: p }));
+  assert.equal(r.status, 200);
+  const sess = await one('SELECT status, processing_at FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId]);
+  assert.equal(sess.status, 'failed');
+  assert.equal(sess.processing_at, null);
+  // Unknown at Stripe is also "stay released".
+  const piId2 = `pi_${NONCE}_stale_gone`;
+  await seedSession(p, piId2, 'failed');
+  await postWebhook(processingEvent({ id: `evt_${NONCE}_stale_gone`, piId: piId2, proposalId: p }));
+  assert.equal((await one('SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [piId2])).status, 'failed');
+});
+
+test('a delivery whose transaction fails leaves no ledger row, so the retry is processed instead of dropped', async () => {
+  // A proposal id that does not exist: the session UPDATE matches nothing and
+  // the fallback INSERT violates the proposals foreign key, so the transaction
+  // rolls back and the handler throws (Stripe sees a 500 and retries).
+  const ghost = 2147483000;
+  const piId = `pi_${NONCE}_ghost`;
+  const evt = processingEvent({ id: `evt_${NONCE}_ghost`, piId, proposalId: ghost });
+  const r1 = await postWebhook(evt);
+  assert.equal(r1.status, 500, r1.body);
+  const ledger = await one("SELECT COUNT(*)::int AS n FROM webhook_events WHERE provider = 'stripe' AND event_id = $1", [evt.id]);
+  assert.equal(ledger.n, 0, 'the ledger row rolled back with the failed transaction');
+  const r2 = await postWebhook(evt);
+  assert.equal(r2.status, 500, 'the retry is processed again, not silently acknowledged');
 });

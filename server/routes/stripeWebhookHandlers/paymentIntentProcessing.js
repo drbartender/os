@@ -12,8 +12,9 @@
 // real transition. The client email runs post-commit, after release.
 const { pool } = require('../../db');
 const { notifyClientBankPaymentProcessing, notifyAdminBankPaymentProcessing } = require('../../utils/bankPaymentProcessingNotify');
+const { STRIPE_RETRIEVE_OPTS } = require('../../utils/paymentInFlight');
 
-module.exports = async function handlePaymentIntentProcessing(event) {
+module.exports = async function handlePaymentIntentProcessing(event, stripe) {
   const intent = event.data.object;
   const proposalId = Number(intent.metadata?.proposal_id);
   if (!Number.isInteger(proposalId) || proposalId <= 0) return;
@@ -21,24 +22,49 @@ module.exports = async function handlePaymentIntentProcessing(event) {
   const metaInvoiceId = Number(intent.metadata?.invoice_id);
   const amountCents = Number(intent.amount) || 0;
 
-  // Event-level idempotency, the same ledger payment_failed uses: Stripe
-  // redelivers at least once, and a queued retry of THIS event can land after
-  // payment_failed has already released the row for a bounced debit. The
-  // row's own state guards most of that (below); the ledger guards the rest.
-  const firstSeen = await pool.query(
-    `INSERT INTO webhook_events (provider, event_id) VALUES ('stripe', $1)
-     ON CONFLICT (provider, event_id) DO NOTHING RETURNING event_id`,
-    [event.id]
+  // A 'failed' row is allowed to move (a declined card retried as a bank
+  // debit on the same intent), but Stripe does not promise event order: a
+  // payment_failed delivered BEFORE a delayed processing event would leave a
+  // failed row that this event must not revive. So a failed row moves only
+  // when Stripe itself reports the intent processing right now; unknown means
+  // it stays released (fail closed). Read BEFORE the transaction so no pooled
+  // connection waits on Stripe.
+  let failedRowMayMove = false;
+  const current = await pool.query(
+    'SELECT status FROM stripe_sessions WHERE stripe_payment_intent_id = $1 AND proposal_id = $2',
+    [intent.id, proposalId]
   );
-  if (firstSeen.rowCount === 0) {
-    console.log(`Webhook: duplicate payment_intent.processing delivery for event ${event.id} (proposal ${proposalId}), skipping`);
-    return;
+  if (current.rows[0] && current.rows[0].status === 'failed') {
+    if (stripe) {
+      try {
+        const live = await stripe.paymentIntents.retrieve(intent.id, STRIPE_RETRIEVE_OPTS);
+        failedRowMayMove = live && live.status === 'processing';
+      } catch (err) {
+        console.warn(`Webhook: could not confirm intent ${intent.id} at Stripe before reviving a failed row (left failed): ${err && err.message}`);
+      }
+    }
   }
 
   const dbClient = await pool.connect();
   let transitioned = false;
   try {
     await dbClient.query('BEGIN');
+
+    // Event-level idempotency, the same ledger payment_failed uses: Stripe
+    // redelivers at least once, and a queued retry of THIS event can land
+    // after payment_failed has already released the row for a bounced debit.
+    // Inside the transaction on purpose: if anything below fails, the ledger
+    // row rolls back with it and Stripe's retry is processed, not dropped.
+    const firstSeen = await dbClient.query(
+      `INSERT INTO webhook_events (provider, event_id) VALUES ('stripe', $1)
+       ON CONFLICT (provider, event_id) DO NOTHING RETURNING event_id`,
+      [event.id]
+    );
+    if (firstSeen.rowCount === 0) {
+      await dbClient.query('ROLLBACK');
+      console.log(`Webhook: duplicate payment_intent.processing delivery for event ${event.id} (proposal ${proposalId}), skipping`);
+      return;
+    }
 
     // Ownership check, the same rule as the succeeded handler's invoice link:
     // an invoice id that does not belong to this proposal is stored as NULL.
@@ -63,9 +89,9 @@ module.exports = async function handlePaymentIntentProcessing(event) {
       `UPDATE stripe_sessions
           SET status = 'processing', processing_at = NOW(), invoice_id = COALESCE($2, invoice_id)
         WHERE stripe_payment_intent_id = $1 AND proposal_id = $3
-          AND (status = 'pending' OR (status = 'failed' AND processing_at IS NULL))
+          AND (status = 'pending' OR (status = 'failed' AND processing_at IS NULL AND $4::boolean))
         RETURNING id`,
-      [intent.id, invoiceId, proposalId]
+      [intent.id, invoiceId, proposalId, failedRowMayMove]
     );
     transitioned = upd.rowCount === 1;
 
