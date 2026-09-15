@@ -112,6 +112,11 @@ lanes:
   # Phase numbers are wave labels; the depends_on edges are what serialize.
   # Declared, not planned here. Each gets its own plan when its turn comes,
   # and inherits its review_fleet from this map.
+  # 2026-09-15: ma-e-events and ma-f-proposals-search are REFINED by
+  # docs/superpowers/plans/2026-09-15-mobile-admin-events-list.md into
+  # ma-e1-events-list (planned there), ma-e2-event-detail, ma-e3-edit-sheet,
+  # ma-f1-proposals-list, ma-f2-proposal-detail, ma-f3-search (declared there).
+  # The entries below stay for the record; that plan's lane map is current.
   - id: ma-c-push
     phase: 2
     scope: >
