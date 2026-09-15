@@ -53,6 +53,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 0 | A client-no-answer text that fails to send tells nobody at all | yes, if `VM_TEXT_DESTINATION` is unset |
 | 0 | A settled-looking `connected` row is never reaped, so a failed `<Dial>` alerts nobody | yes |
 | 0 | Sweep on with the VA scheduler off strands `calling_*` rows holding a cap slot for 24h | yes, if the two flags disagree |
+| 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -236,7 +237,7 @@ which does not exist in any form today. Exposure is low and bounded (bank refund
 and a returned one is visible in the Stripe dashboard), but it is silent, which is what makes it
 worth writing down.
 
-### Three smaller refund residuals, all opened 2026-09-15
+### Smaller refund residuals, all opened 2026-09-15
 
 - **The client refund notice ignores the admin's notify-client answer on any adopting path.** The
   panel asks "email a refund notice?" and passes the answer to the route, but the answer is not
@@ -262,8 +263,8 @@ worth writing down.
   in the editor, and the per-charge headroom plus Stripe's own cap still make it impossible to
   return more than the client paid. Closing it means netting the non-contract portion of pending
   contract rows, which needs the invoice labels behind each pending row.
-- **Three files crossed the 700-line soft cap in the refund-scope lane:** `refundHelpers.js` (789),
-  `ProposalDetailPaymentPanel.js` (767) and `stripe.js` (703). None is near the 1000-line hard cap,
+- **Three files crossed the 700-line soft cap in the refund-scope lane:** `refundHelpers.js`,
+  `ProposalDetailPaymentPanel.js` and `stripe.js` (run `npm run check:filesize` for current counts). None is near the 1000-line hard cap,
   but `refundHelpers.js` now carries the planner, the reconciler and four derivation helpers, which
   is the natural split line (a `refundDerivations.js` for the netting and headroom functions).
 - **`proposal_refunds(payment_id)` has no index.** Three subqueries filter on it (the pre-existing
@@ -880,9 +881,9 @@ here by default.
   deliberately drops that invoice's `amount_due`. RC4 (adopt the caller's own pending row by id) is now applied on
   every path: `refundExecute`, the sweeper, and (2026-09-15) the `refund.created` webhook, which
   reads the row id off `refund.metadata.proposal_refund_row_id` and suppresses the (intent, amount)
-  heuristic entirely when there is none. The by-id adoption lookup checks only
-  `id + status + stripe_refund_id IS NULL`, dropping the corroborating predicates — safe today,
-  cheap to harden.
+  heuristic entirely when there is none. The by-id adoption lookup was hardened on 2026-09-15: the
+  reconciler scopes it by `proposal_id`, and the `refund.created` handler validates the id Stripe
+  echoed back against proposal, charge, amount and pending status before adopting anything.
 - **`computeCancelTargets` enumerates targets for a package-less proposal** but `applyLineItemCancel`
   throws `NO_PACKAGE`, so every button 409s.
 - **`additional-bartender` cancel target can bind to the override row's amount**, but only against a

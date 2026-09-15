@@ -320,10 +320,11 @@ test('an overpayment split across charges so no single one covers it is refused,
     totalPriceDollars: 1600,
     preferUncredited: true,
     scope: 'overpayment',
+    contractInvoiceSlackCents: 0,
   });
   assert.equal(r.ok, false);
   assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
-  assert.equal(r.maxUncreditedCents, 30000, 'names what CAN be returned');
+  assert.equal(r.maxOverpaymentRefundableCents, 30000, "names what CAN be returned");
 });
 
 test('without preferUncredited a tie on remaining is broken by id, not by row order', () => {
@@ -339,6 +340,43 @@ test('without preferUncredited a tie on remaining is broken by id, not by row or
   assert.equal(b.targetPaymentId, 4);
 });
 
+test('the headline overpayment is ALLOWED: paid in full by card, then repriced down', () => {
+  // A contract paid in full credits the whole charge to a Balance invoice, which
+  // then locks. Repricing down leaves that invoice demanding the old figure, so
+  // there is no uncredited money anywhere — and reversing part of the credit is
+  // exactly the right correction, because it brings the invoice back to the
+  // contract rather than below it. Refusing this was a real defect: it left the
+  // admin with a permanent overpayment or the uncapped contract path.
+  const r = planRefund({
+    paymentsWithRemaining: [payU(1, 'pi_full', 100000, 0)],
+    requestedDollars: 200,
+    amountPaidDollars: 1000,
+    totalPriceDollars: 800,
+    scope: 'overpayment',
+    contractInvoiceSlackCents: 20000, // invoice still demands 1000 against an 800 contract
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.targetPaymentId, 1);
+  assert.equal(r.totalPriceAfterDollars, 800, 'and it still leaves the contract alone');
+});
+
+test('the same refund is refused once the invoices already match the contract', () => {
+  // Money taken outside Stripe: every charge is fully credited AND the invoices
+  // agree with the contract, so reversing a credit would push a settled invoice
+  // BELOW the contract. Same headroom as the case above, opposite right answer.
+  const r = planRefund({
+    paymentsWithRemaining: [payU(1, 'pi_full', 100000, 0)],
+    requestedDollars: 200,
+    amountPaidDollars: 1000,
+    totalPriceDollars: 800,
+    scope: 'overpayment',
+    contractInvoiceSlackCents: 0,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
+  assert.match(r.message, /None of this overpayment can be returned through Stripe/);
+});
+
 test('an overpayment refund is refused when the target charge has no uncredited headroom', () => {
   // The external_paid shape: the charge exists and has refund headroom, but
   // every cent of it was credited to an invoice, so refunding it under
@@ -350,11 +388,12 @@ test('an overpayment refund is refused when the target charge has no uncredited 
     totalPriceDollars: 500,
     preferUncredited: true,
     scope: 'overpayment',
+    contractInvoiceSlackCents: 0,
   });
   assert.equal(r.ok, false);
   assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
-  assert.equal(r.maxUncreditedCents, 0);
-  assert.match(r.message, /not on a refundable Stripe charge/);
+  assert.equal(r.maxOverpaymentRefundableCents, 0);
+  assert.match(r.message, /None of this overpayment can be returned through Stripe/);
 });
 
 test('an overpayment refund is capped at the uncredited headroom and names it', () => {
@@ -365,10 +404,11 @@ test('an overpayment refund is capped at the uncredited headroom and names it', 
     totalPriceDollars: 500,
     preferUncredited: true,
     scope: 'overpayment',
+    contractInvoiceSlackCents: 0,
   });
   assert.equal(r.ok, false);
   assert.equal(r.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
-  assert.equal(r.maxUncreditedCents, 10000);
+  assert.equal(r.maxOverpaymentRefundableCents, 10000);
   assert.match(r.message, /Only \$100\.00 of this overpayment/);
 });
 

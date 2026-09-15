@@ -28,11 +28,13 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // Largest single Stripe charge still refundable. A refund never spans charges,
   // so with zero here NO refund of any scope is possible.
   const maxRefundableCents = Number(proposal.max_refundable_cents || 0);
-  // How much of the overpayment can actually come back through Stripe: an
-  // overpayment refund must come off money no invoice was ever credited, and
-  // the excess can be external (external_paid rolls into amount_paid with no
-  // charge behind it) or already applied to an invoice. Say that here rather
-  // than let the admin fill in a form the server will refuse.
+  // How much of the overpayment can actually come back through Stripe. Two
+  // things fund it: money no invoice was ever credited, and whatever the
+  // contract invoices still over-demand after a reprice (paying in full then
+  // repricing down leaves a LOCKED invoice demanding the old figure, and
+  // reversing part of that credit is the correction). Money taken outside
+  // Stripe funds neither, so say so here rather than let the admin fill in a
+  // form the server will refuse.
   const overpaymentRefundableCents = Math.min(
     overpaymentCents, Number(proposal.max_overpayment_refundable_cents || 0)
   );
@@ -161,10 +163,15 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     const requestedCents = Math.round(Number(refundAmount) * 100);
     if (refundIsOverpayment && requestedCents > overpaymentCents) {
       const amt = fmt$2dp(overpaymentCents / 100);
+      // Never tell the admin to uncheck the box when the shortfall might be a
+      // refund still in flight: the contract path has no overpayment cap, so
+      // that instruction would shrink the contract by money already going back.
+      // The panel cannot see pending refunds, so it defers to the server rather
+      // than guessing which cause applies.
       toast.error(
         overpaymentCents > 0
-          ? `This proposal is overpaid by ${amt}. Refund up to ${amt} as an overpayment, or uncheck the box to correct the contract instead.`
-          : 'This proposal is not overpaid, so there is nothing to return as an overpayment. Uncheck the box to correct the contract instead.'
+          ? `This proposal is overpaid by ${amt}. Refund up to ${amt} as an overpayment.`
+          : 'There is nothing to return as an overpayment right now. If a refund is already in flight, wait for it to settle; otherwise uncheck the box to correct the contract instead.'
       );
       return;
     }
@@ -172,8 +179,8 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
       const amt = fmt$2dp(overpaymentRefundableCents / 100);
       toast.error(
         overpaymentRefundableCents > 0
-          ? `Only ${amt} of this overpayment sits on a refundable Stripe charge. Refund up to ${amt} as an overpayment; the rest was paid outside Stripe or is already applied to an invoice, so return that part by hand.`
-          : 'This overpayment is not on a refundable Stripe charge: it was paid outside Stripe, or it is already applied to an invoice. Return it by hand.'
+          ? `Only ${amt} of this overpayment can be returned through Stripe. Refund up to ${amt} as an overpayment; the rest was paid outside Stripe, so return that part by hand.`
+          : 'None of this overpayment can be returned through Stripe: it was paid outside Stripe, and the invoices already match the contract. Return it by hand.'
       );
       return;
     }

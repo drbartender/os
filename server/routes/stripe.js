@@ -479,6 +479,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   // source of truth for per-charge refund headroom.
   const {
     planRefund, loadPaymentsWithRemaining, availableOverpaymentCents, overpaymentRefusalMessage,
+    contractInvoiceSlackCents,
   } = require('../utils/refundHelpers');
   // Advisory cap: this read is a read-then-act, so it exists for the message.
   // The authoritative assertion runs inside refundExecute under the proposals
@@ -499,8 +500,10 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     amountPaidDollars: Number(proposal.amount_paid),
     totalPriceDollars: Number(proposal.total_price),
     // Overpayment scope carries its own targeting rule: the charge holding the
-    // most uncredited headroom among those that can cover the refund.
+    // most uncredited headroom among those that can cover the refund, and its
+    // own allowance, which adds whatever the contract invoices over-demand.
     scope,
+    contractInvoiceSlackCents: scope === 'overpayment' ? await contractInvoiceSlackCents(proposalId) : 0,
   });
   if (!plan.ok) {
     // AppError → `.message` surfaces as response `error` → admin toast.

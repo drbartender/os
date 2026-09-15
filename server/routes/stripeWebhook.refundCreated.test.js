@@ -139,6 +139,7 @@ after(async () => {
   // The rethrow test orphans its payment row (proposal_id nulled), so it is not
   // covered by the proposal-scoped deletes above.
   await pool.query('DELETE FROM proposal_payments WHERE stripe_payment_intent_id LIKE $1', [`pi_rc_${NONCE}%`]);
+  await pool.query('DELETE FROM stripe_sessions WHERE stripe_payment_intent_id LIKE $1', [`pi_rc_${NONCE}%`]);
   if (clientIds.length) await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [clientIds]);
   await pool.end();
 });
@@ -248,19 +249,33 @@ test('a failed or canceled refund reconciles nothing', async () => {
   assert.equal(Number(m.amount_paid), 900, 'money untouched');
 });
 
-test('a refund with no succeeded payment row is skipped, never reconciled blind', async () => {
-  // paymentId null would skip the whole invoice walk, dropping total_price by
-  // the full amount with no non-contract and no off-ledger netting.
+test('a refund with no succeeded payment row is never reconciled blind', async () => {
+  // Reconciling with a null paymentId would skip the whole invoice walk and drop
+  // total_price by the full amount with no non-contract and no off-ledger
+  // netting. Whether it is ACKED or RETRIED depends on whether the charge is
+  // ours: metadata naming a proposal says it is, so the delivery fails and
+  // Stripe retries rather than dropping a real refund.
   const o = await seed({ overpaid: false, totalPrice: 500, payCents: 40000 });
   await pool.query(`UPDATE proposal_payments SET status = 'failed' WHERE id = $1`, [o.paymentId]);
   const r = await postWebhook(refundEvent({
     id: `evt_${NONCE}_nopay`, refundId: `re_${NONCE}_nopay`, intent: o.intent,
     metadata: { proposal_id: String(o.proposalId) },
   }));
-  assert.equal(r.status, 200);
+  assert.equal(r.status, 500, 'ours but unrecorded: retried');
   assert.equal(await refundRow(`re_${NONCE}_nopay`), undefined);
   const m = await money(o.proposalId);
   assert.equal(Number(m.total_price), 500, 'nothing moved');
+});
+
+test('a refund on a charge that is not ours at all is acked and dropped, not retried forever', async () => {
+  // No payment row, no session row, no metadata: a tip refund or a foreign
+  // charge. Retrying that would 500 for days on something we will never record.
+  const r = await postWebhook(refundEvent({
+    id: `evt_${NONCE}_foreigncharge`, refundId: `re_${NONCE}_foreigncharge`,
+    intent: `pi_notours_${NONCE}`,
+  }));
+  assert.equal(r.status, 200);
+  assert.equal(await refundRow(`re_${NONCE}_foreigncharge`), undefined);
 });
 
 test('a refund with no payment_intent is skipped', async () => {
@@ -420,4 +435,91 @@ test('two concurrent dashboard refunds cannot both classify against the same ove
   const m = await money(o.proposalId);
   assert.equal(Number(m.amount_paid), 100, 'both refunds came off amount_paid');
   assert.equal(Number(m.total_price), 100, 'and exactly one of them corrected the contract');
+});
+
+test('an in-app refund that already reconciled is silent: no second row, no money movement', async () => {
+  // refundExecute reconciles its OWN pending row inside the request, so by the
+  // time Stripe delivers refund.created the row is already succeeded with the
+  // refund id. Warning there would fire on EVERY panel refund and drown the one
+  // alert that catches a forged row id.
+  const o = await seed({ overpaid: true, payCents: 40000, linkCents: 0 });
+  const refundId = `re_${NONCE}_already`;
+  const row = await pool.query(
+    `INSERT INTO proposal_refunds
+       (proposal_id, payment_id, stripe_payment_intent_id, stripe_refund_id, amount, reason,
+        total_price_before, total_price_after, issued_by, status, total_scope)
+     VALUES ($1, $2, $3, $4, 40000, 'panel refund', 500, 500, NULL, 'succeeded', 'overpayment')
+     RETURNING id`,
+    [o.proposalId, o.paymentId, o.intent, refundId]
+  );
+  await pool.query('UPDATE proposals SET amount_paid = 500 WHERE id = $1', [o.proposalId]);
+  const r = await postWebhook(refundEvent({
+    id: `evt_${NONCE}_already`, refundId, intent: o.intent, amount: 40000,
+    reason: 'duplicate', metadata: { proposal_refund_row_id: String(row.rows[0].id) },
+  }));
+  assert.equal(r.status, 200, r.body);
+  const count = await one(
+    'SELECT COUNT(*)::int AS n FROM proposal_refunds WHERE proposal_id = $1', [o.proposalId]
+  );
+  assert.equal(count.n, 1, 'no duplicate row');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.amount_paid), 500, 'no second drop');
+  assert.equal(Number(m.total_price), 500);
+});
+
+test('a dashboard refund on a FULLY CREDITED charge corrects the contract instead of reversing invoice credits', async () => {
+  // The panel refuses this outright; the webhook cannot (the money has moved),
+  // so it picks the rule the charge can honor. Landing overpayment here would
+  // walk the invoice links and leave a settled invoice demanding less than an
+  // unchanged contract.
+  const o = await seed({ overpaid: true, totalPrice: 500, payCents: 50000, linkCents: 50000 });
+  const r = await postWebhook(refundEvent({
+    id: `evt_${NONCE}_credited`, refundId: `re_${NONCE}_credited`, intent: o.intent,
+    amount: 40000, reason: 'duplicate',
+  }));
+  assert.equal(r.status, 200, r.body);
+  const row = await refundRow(`re_${NONCE}_credited`);
+  assert.equal(row.total_scope, 'contract', 'the charge holds no uncredited money');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.total_price), 100, 'the contract was corrected, which is the honest rule here');
+});
+
+test('a refund on one of our charges whose payment row is not recorded yet fails the delivery so Stripe retries', async () => {
+  // Acking would lose it forever: a dashboard refund has no pending row for the
+  // sweeper to heal. A stripe_sessions row is what says the charge is ours.
+  const o = await seed({ overpaid: false, totalPrice: 500, payCents: 40000 });
+  await pool.query('DELETE FROM invoice_payments WHERE payment_id = $1', [o.paymentId]);
+  await pool.query('DELETE FROM proposal_payments WHERE id = $1', [o.paymentId]);
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+     VALUES ($1, $2, 40000, 'pending')`,
+    [o.proposalId, o.intent]
+  );
+  const r = await postWebhook(refundEvent({
+    id: `evt_${NONCE}_early`, refundId: `re_${NONCE}_early`, intent: o.intent,
+  }));
+  assert.equal(r.status, 500, 'retried, not dropped');
+  assert.equal(await refundRow(`re_${NONCE}_early`), undefined);
+  await pool.query('DELETE FROM stripe_sessions WHERE stripe_payment_intent_id = $1', [o.intent]);
+});
+
+test('charge.refunded no longer reconciles: it records no refund row and moves no money', async () => {
+  // Its reconciliation half was removed because the Charge object carries no
+  // refunds list at this account API version, so it had been no-oping silently.
+  // Subscribing it now is purely for the payroll tip clawback.
+  const o = await seed({ overpaid: true, payCents: 40000, linkCents: 0 });
+  const evt = {
+    id: `evt_${NONCE}_chg`, type: 'charge.refunded', livemode: true,
+    data: { object: { id: `ch_${NONCE}`, object: 'charge', payment_intent: o.intent,
+      amount: 40000, amount_refunded: 40000, refunded: true, metadata: {} } },
+  };
+  const r = await postWebhook(evt);
+  assert.equal(r.status, 200, r.body);
+  const rows = await one(
+    'SELECT COUNT(*)::int AS n FROM proposal_refunds WHERE proposal_id = $1', [o.proposalId]
+  );
+  assert.equal(rows.n, 0, 'no refund row from charge.refunded');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.amount_paid), 900, 'and no money moved');
+  assert.equal(Number(m.total_price), 500);
 });

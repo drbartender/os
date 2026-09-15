@@ -73,11 +73,23 @@ module.exports = async function handleRefundCreated(event) {
     [paymentIntentId]
   );
   if (!payRow.rows[0]) {
-    if (refund.metadata?.proposal_id) {
-      warn('refund names a proposal but no succeeded payment row matches its intent; not reconciled', {
+    // Distinguish "not ours" from "ours, not recorded yet". Every proposal
+    // checkout rail writes a stripe_sessions row when the intent is minted,
+    // long before payment; tips have none. So a session row means this IS our
+    // charge and the payment_intent.succeeded delivery simply has not been
+    // processed yet — refunding seconds after paying, or a slow delivery.
+    // Acking there would drop the refund permanently, because a dashboard
+    // refund has no pending row for the sweeper to heal. Throw instead: Stripe
+    // retries with backoff and the payment row will exist by then.
+    const session = await pool.query(
+      'SELECT 1 FROM stripe_sessions WHERE stripe_payment_intent_id = $1 LIMIT 1',
+      [paymentIntentId]
+    );
+    if (session.rowCount > 0 || refund.metadata?.proposal_id) {
+      warn('refund is on one of our charges but its payment row is not recorded yet; failing the delivery so Stripe retries', {
         refundId: refund.id, paymentIntentId, amount: refund.amount,
-        metaProposalId: String(refund.metadata.proposal_id),
       });
+      throw new Error(`refund.created: no succeeded payment row yet for ${paymentIntentId}`);
     }
     return; // a tip refund or a charge that is not ours
   }
@@ -128,18 +140,28 @@ module.exports = async function handleRefundCreated(event) {
       // path it replaced. A row that does not match every predicate is not ours
       // to adopt: fall through to the derived scope instead.
       const own = await dbClient.query(
-        `SELECT id, reason, issued_by FROM proposal_refunds
-          WHERE id = $1 AND proposal_id = $2 AND stripe_payment_intent_id = $3
-            AND amount = $4 AND status = 'pending' AND stripe_refund_id IS NULL`,
-        [namedRowId, proposalId, paymentIntentId, refund.amount]
+        `SELECT id, reason, issued_by, status, stripe_refund_id, stripe_payment_intent_id, amount
+           FROM proposal_refunds WHERE id = $1 AND proposal_id = $2`,
+        [namedRowId, proposalId]
       );
-      if (own.rows[0]) {
-        pendingRowId = own.rows[0].id;
+      const r = own.rows[0];
+      const sameCharge = r && r.stripe_payment_intent_id === paymentIntentId
+        && Number(r.amount) === refund.amount;
+      if (r && sameCharge && r.stripe_refund_id === refund.id) {
+        // The issuing path already reconciled this exact refund in its own
+        // request. Nothing to adopt and nothing wrong: fall through to the
+        // reconciler, whose refund-id idempotency check returns applied=false.
+        // Deliberately silent — warning here would fire on EVERY successful
+        // panel refund and drown the one alert that catches a forged row id.
+        reason = r.reason;
+        issuedBy = r.issued_by;
+      } else if (r && sameCharge && r.status === 'pending' && r.stripe_refund_id === null) {
+        pendingRowId = r.id;
         // Keep the audit line the issuing path's, not this handler's.
-        reason = own.rows[0].reason;
-        issuedBy = own.rows[0].issued_by;
+        reason = r.reason;
+        issuedBy = r.issued_by;
       } else {
-        warn('refund names a pending row that does not match this proposal, charge and amount; deriving the scope instead', {
+        warn('refund names a row that does not match this proposal, charge and amount; deriving the scope instead', {
           refundId: refund.id, namedRowId, proposalId, paymentIntentId, amount: refund.amount,
         });
       }
@@ -152,11 +174,32 @@ module.exports = async function handleRefundCreated(event) {
       // LOWERING rule from it alone would silently reproduce the bug this spec
       // closes: a genuine overpayment refunded with the default reason would
       // shrink the contract.
-      const { overpaymentCents } = require('../../utils/refundHelpers');
-      excessCents = await overpaymentCents(proposalId, dbClient);
-      totalScope = (refund.reason === 'duplicate' || excessCents >= refund.amount)
-        ? 'overpayment'
-        : 'contract';
+      const {
+        availableOverpaymentCents, uncreditedHeadroomCents, contractInvoiceSlackCents,
+        paymentIsOffLedger,
+      } = require('../../utils/refundHelpers');
+      // AVAILABLE, not raw: a pending overpayment refund has not lowered
+      // amount_paid yet, so the raw excess would let the same money be spent
+      // twice by two dashboard refunds in the same window.
+      excessCents = (await availableOverpaymentCents(proposalId, dbClient)).availableCents;
+      // And the money has to actually be ON THIS CHARGE. The panel refuses when
+      // it is not; the webhook cannot refuse (the money has moved), so it picks
+      // the rule the charge can honor instead. Reversing credited invoice money
+      // under overpayment scope would leave a settled invoice demanding less
+      // than an unchanged contract, which is the defect section 4b closes.
+      const offLedger = await paymentIsOffLedger(paymentId, dbClient);
+      const headroom = offLedger
+        ? 0
+        : (await uncreditedHeadroomCents(paymentId, dbClient, { includePending: true }))
+          + (await contractInvoiceSlackCents(proposalId, dbClient));
+      const wantsOverpayment = refund.reason === 'duplicate' || excessCents >= refund.amount;
+      totalScope = (wantsOverpayment && headroom >= refund.amount) ? 'overpayment' : 'contract';
+      if (wantsOverpayment && totalScope === 'contract' && !offLedger) {
+        warn('refund looked like an overpayment but its charge holds too little uncredited money, so it corrects the contract instead', {
+          refundId: refund.id, proposalId, paymentId, amount: refund.amount,
+          availableOverpaymentCents: excessCents, overpaymentAllowanceCents: headroom,
+        });
+      }
     }
 
     const { applyRefundReconciliation } = require('../../utils/refundHelpers');

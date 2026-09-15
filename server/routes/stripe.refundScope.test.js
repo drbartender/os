@@ -271,7 +271,7 @@ test('an overpayment that is not on a refundable charge is refused and says to r
   });
   assert.equal(r.status, 400, r.raw);
   assert.equal(r.body.code, 'OVERPAYMENT_NOT_ON_A_CHARGE');
-  assert.match(r.body.error, /not on a refundable Stripe charge/);
+  assert.match(r.body.error, /None of this overpayment can be returned through Stripe/);
   const inv = await one('SELECT amount_due, amount_paid FROM invoices WHERE id = $1', [o.invId]);
   assert.equal(inv.amount_due, 50000, 'the invoice was never touched');
   assert.equal(inv.amount_paid, 50000);
@@ -308,4 +308,74 @@ test('a malformed amount reports INVALID_AMOUNT, not an overpayment problem', as
   });
   assert.equal(r.status, 400);
   assert.equal(r.body.code, 'INVALID_AMOUNT');
+});
+
+test('a refund in flight is named as the reason even when it has consumed the whole excess', async () => {
+  // The branch-order trap: excessCents can be 0 while the real cause is an
+  // outstanding refund. Saying "not overpaid, uncheck the box" there would send
+  // the admin down the CONTRACT path, which has no cap, while money is already
+  // on its way back.
+  const o = await seed({ overpaidBy: 0 });
+  await pool.query(
+    `INSERT INTO proposal_refunds
+       (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
+        total_price_before, total_price_after, issued_by, status, total_scope)
+     VALUES ($1, $2, $3, 40000, 'in flight', 500, 500, NULL, 'pending', 'overpayment')`,
+    [o.proposalId, o.dupPaymentId, `pi_rs_d_${NONCE}_${seq}`]
+  );
+  const r = await request('POST', `/api/stripe/refund/${o.proposalId}`, {
+    token: adminToken,
+    body: { amount: 100, reason: 'second window', idempotency_key: key(), total_scope: 'overpayment' },
+  });
+  assert.equal(r.status, 400, r.raw);
+  assert.equal(r.body.code, 'REFUND_EXCEEDS_OVERPAYMENT');
+  assert.match(r.body.error, /has not settled yet/);
+  assert.doesNotMatch(r.body.error, /not overpaid/);
+});
+
+test('the headline overpayment works end to end: paid in full by card, then repriced down', async () => {
+  // No uncredited money anywhere — the charge is fully credited to a LOCKED
+  // Balance invoice that still demands the pre-reprice figure. Refusing this was
+  // the defect the push-time code review caught: it is the case the editor's own
+  // "a refund is likely owed" line announces, and the reconciler handles it
+  // correctly, so the route must not stand in the way.
+  seq += 1;
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, email_status) VALUES ('Repriced Down', $1, 'bad') RETURNING id`,
+    [`refund-scope-reprice-${NONCE}-${seq}@example.com`]
+  );
+  clientIds.push(c.rows[0].id);
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, total_price, amount_paid, deposit_amount, pricing_snapshot, event_timezone)
+     VALUES ($1, 'balance_paid', 800, 1000, 100, '{}'::jsonb, 'America/Chicago') RETURNING id`,
+    [c.rows[0].id]
+  );
+  const proposalId = p.rows[0].id;
+  proposalIds.push(proposalId);
+  // The invoice locked at the ORIGINAL 1000 and the reprice left it there.
+  const inv = await pool.query(
+    `INSERT INTO invoices (proposal_id, token, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, $3, 'Balance', 100000, 100000, 'paid', true) RETURNING id`,
+    [proposalId, crypto.randomUUID(), `INV-${crypto.randomBytes(6).toString('hex')}`]
+  );
+  const pay = await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+     VALUES ($1, 'balance', 100000, 'succeeded', $2) RETURNING id`,
+    [proposalId, `pi_rs_r_${NONCE}_${seq}`]
+  );
+  await pool.query('INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 100000)',
+    [inv.rows[0].id, pay.rows[0].id]);
+
+  const r = await request('POST', `/api/stripe/refund/${proposalId}`, {
+    token: adminToken,
+    body: { amount: 200, reason: 'repriced down, returning the excess', idempotency_key: key(), total_scope: 'overpayment' },
+  });
+  assert.equal(r.status, 200, r.raw);
+  const m = await money(proposalId);
+  assert.equal(Number(m.total_price), 800, 'the contract stands at the repriced figure');
+  assert.equal(Number(m.amount_paid), 800, 'and the excess came off');
+  const after = await one('SELECT amount_due, amount_paid, status FROM invoices WHERE id = $1', [inv.rows[0].id]);
+  assert.equal(after.amount_due, 80000, 'the stale locked invoice came back to the contract');
+  assert.equal(after.amount_paid, 80000);
+  assert.equal(after.status, 'paid', 'no phantom balance on a live pay link');
 });

@@ -439,3 +439,21 @@ test('a pendingRowId belonging to ANOTHER proposal is never adopted (defense in 
   const vm = await money(victim.proposalId);
   assert.equal(Number(vm.amount_paid), 1000, "the other proposal's money never moved");
 });
+
+test('cancel-line geometry: a full payment credited only to a Deposit invoice absorbs headroom and leaves that invoice alone', async () => {
+  // 22 of 103 succeeded prod payments carry uncredited headroom, and this is the
+  // dominant shape: a `full` payment linked only to the $100 Deposit invoice.
+  // Cancel-line issues overpayment-scope refunds, so this block DOES fire there.
+  // The deposit really was paid and its invoice should keep saying so; before
+  // the headroom rule the walk zeroed it instead. Pinning the delta because the
+  // cancel-line suites use only fully-credited or wholly-unlinked fixtures.
+  const o = await seedOverflow({ label: 'Deposit', payCents: 100000, dueCents: 10000 });
+  await reconcile(o, { refundId: `re_${NONCE}_cl`, amountCents: 20000, totalScope: 'overpayment' });
+  const inv = await invoiceRow(o.invId);
+  assert.equal(inv.amount_due, 10000, 'the Deposit invoice still demands its deposit');
+  assert.equal(inv.amount_paid, 10000, 'and still records it as paid');
+  assert.equal(inv.status, 'paid');
+  const m = await money(o.proposalId);
+  assert.equal(Number(m.amount_paid), 800, 'the refund came off the uncredited part');
+  assert.equal(Number(m.total_price), 100, 'overpayment scope never re-lowers the folded total');
+});

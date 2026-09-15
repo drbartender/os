@@ -12,6 +12,7 @@ const { setupTimeDisplay } = require('../../utils/setupTime');
 const { getMessageLogForProposal } = require('../../utils/messageLog');
 const {
   nettedOverpaymentCents, offContractPaidCents, loadPaymentsWithRemaining,
+  contractInvoiceSlackCents,
 } = require('../../utils/refundHelpers');
 
 const router = express.Router();
@@ -45,7 +46,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable] = await Promise.all([
+  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable, invoiceSlack] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -84,6 +85,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     // 599 reads overpaid on three screens today and is not.
     offContractPaidCents(req.params.id),
     loadPaymentsWithRemaining(req.params.id),
+    contractInvoiceSlackCents(req.params.id),
   ]);
 
   const fr = firstReply.rows[0];
@@ -111,7 +113,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     off_contract_paid_cents: offContract,
     max_refundable_cents: refundable.reduce((m, p) => Math.max(m, p.remainingCents), 0),
     max_overpayment_refundable_cents: refundable.reduce(
-      (m, p) => Math.max(m, Math.min(p.remainingCents, p.uncreditedCents)), 0
+      (m, p) => Math.max(m, Math.min(p.remainingCents, p.uncreditedCents + invoiceSlack)), 0
     ),
     // SERVER-15: pg returns the now-NUMERIC quantity as a string; coerce to a number.
     addons: addons.rows.map(a => ({ ...a, quantity: a.quantity === null ? null : Number(a.quantity) })),

@@ -58,10 +58,10 @@ test('a genuinely overpaid proposal shows the netted amount and offers a refund'
   expect(screen.getByText(/issue a refund/)).toBeInTheDocument();
 });
 
-test('an overpayment with no UNCREDITED money behind it says to return it by hand, not to issue a refund', async () => {
-  // The external_paid shape: every Stripe charge is fully credited to an
-  // invoice, so there is nothing to return through Stripe even though charges
-  // exist and the proposal really is overpaid.
+test('an overpayment that cannot be returned through Stripe says to return it by hand, not to issue a refund', async () => {
+  // The external_paid shape: every Stripe charge is fully credited AND the
+  // invoices already match the contract, so reversing a credit would push a
+  // settled invoice below the contract. Nothing to return through Stripe.
   renderPanel({ max_overpayment_refundable_cents: 0 });
   expect(screen.getByText(/Overpaid \$400\.00/)).toBeInTheDocument();
   expect(screen.getByText(/return it by hand/)).toBeInTheDocument();
@@ -74,7 +74,7 @@ test('an overpayment refund above the uncredited headroom is refused before the 
   fireEvent.change(screen.getByPlaceholderText('Reason'), { target: { value: 'duplicate' } });
   fireEvent.click(screen.getByRole('button', { name: /Confirm refund/ }));
   await waitFor(() => expect(mockToast.error).toHaveBeenCalled());
-  expect(mockToast.error.mock.calls[0][0]).toMatch(/Only \$100\.00 of this overpayment sits on a refundable Stripe charge/);
+  expect(mockToast.error.mock.calls[0][0]).toMatch(/Only \$100\.00 of this overpayment can be returned through Stripe/);
   expect(api.post).not.toHaveBeenCalled();
 });
 

@@ -161,6 +161,10 @@ function planOverpaymentSplits({ paymentsWithRemaining, overpaymentCents }) {
  *        prefers the charge carrying the most UNCREDITED headroom among charges that
  *        can cover the amount, and is refused outright when even that charge cannot
  *        cover it from uncredited money.
+ * @param {number} [args.contractInvoiceSlackCents] how much the contract invoices
+ *        over-demand relative to total_price; returnable as an overpayment on top of
+ *        a charge's uncredited headroom, because reversing that credit brings a stale
+ *        invoice back to the contract rather than below it.
  * @param {boolean} [args.preferUncredited]       defaults to scope === 'overpayment'.
  *        Derived, not independent: the refusal below judges the chosen target, so a
  *        caller that asked for overpayment scope WITHOUT the preference would be
@@ -172,6 +176,7 @@ function planOverpaymentSplits({ paymentsWithRemaining, overpaymentCents }) {
 function planRefund({
   paymentsWithRemaining, requestedDollars, amountPaidDollars, totalPriceDollars,
   scope = 'contract', preferUncredited = scope === 'overpayment',
+  contractInvoiceSlackCents: slackCents = 0,
 }) {
   const n = Number(requestedDollars);
   if (!Number.isFinite(n) || n <= 0) {
@@ -238,18 +243,19 @@ function planRefund({
   // has already corrected the invoice demand, which is what makes reversing
   // credited money right on that path and wrong on this one.
   if (scope === 'overpayment') {
-    const targetUncredited = Number(target.uncreditedCents) || 0;
-    if (amountCents > targetUncredited) {
-      const maxUncredited = candidates.reduce(
-        (m, p) => Math.max(m, Number(p.uncreditedCents) || 0), 0
+    const slack = Math.max(0, Number(slackCents) || 0);
+    const allowance = (Number(target.uncreditedCents) || 0) + slack;
+    if (amountCents > allowance) {
+      const maxAllowance = candidates.reduce(
+        (m, p) => Math.max(m, Math.min(p.remainingCents, (Number(p.uncreditedCents) || 0) + slack)), 0
       );
       return {
         ok: false,
         code: 'OVERPAYMENT_NOT_ON_A_CHARGE',
-        maxUncreditedCents: maxUncredited,
-        message: maxUncredited > 0
-          ? `Only ${fmtUSD(maxUncredited)} of this overpayment sits on a refundable Stripe charge. Refund up to ${fmtUSD(maxUncredited)} as an overpayment; the rest was paid outside Stripe or is already applied to an invoice, so return that part by hand.`
-          : 'This overpayment is not on a refundable Stripe charge: it was paid outside Stripe, or it is already applied to an invoice. Return it by hand.',
+        maxOverpaymentRefundableCents: maxAllowance,
+        message: maxAllowance > 0
+          ? `Only ${fmtUSD(maxAllowance)} of this overpayment can be returned through Stripe. Refund up to ${fmtUSD(maxAllowance)} as an overpayment; the rest was paid outside Stripe, so return that part by hand.`
+          : 'None of this overpayment can be returned through Stripe: it was paid outside Stripe, and the invoices already match the contract. Return it by hand.',
       };
     }
   }
@@ -419,8 +425,12 @@ async function applyRefundReconciliation(
     // a LOCKED invoice demanding money on an unchanged contract, or flipped an
     // unlocked one to partially_paid with a phantom balance on a live pay link.
     // The old rule was correct only for cancel-line, where refreshUnlockedInvoices
-    // had already corrected the demand in the same transaction; there the payment
-    // is fully credited, headroom is 0, and this block is a no-op.
+    // had already corrected the demand in the same transaction. This block is NOT
+    // a no-op there: 22 of 103 succeeded prod payments carry uncredited headroom
+    // (typically a `full` payment linked only to a $100 Deposit invoice), so a
+    // cancel-line refund on one now absorbs headroom instead of reversing that
+    // Deposit credit. That is the better outcome — the deposit really was paid
+    // and its invoice should keep saying so — and the cancel-line suites pin it.
     //
     // headroom = amount - Σ links (reversals are negative) - Σ OTHER succeeded
     // refunds on this charge. A refund either absorbs headroom or reverses a
@@ -433,26 +443,11 @@ async function applyRefundReconciliation(
     // Extension invoices are minted alone and paid alone (headroom is
     // structurally 0), so this guard states the rule rather than relying on it.
     if (scope === 'overpayment') {
-      const offLedgerLink = await dbClient.query(
-        `SELECT 1 FROM invoice_payments ip
-           JOIN invoices i ON i.id = ip.invoice_id
-          WHERE ip.payment_id = $1 AND i.label = ANY($2::text[]) LIMIT 1`,
-        [paymentId, OFF_LEDGER_INVOICE_LABELS]
-      );
-      if (offLedgerLink.rowCount === 0) {
-        const hr = await dbClient.query(
-          `SELECT GREATEST(
-                    pp.amount
-                      - COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip
-                                   WHERE ip.payment_id = pp.id), 0)
-                      - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
-                                   WHERE pr.payment_id = pp.id AND pr.status = 'succeeded'
-                                     AND pr.id <> $2), 0),
-                    0)::int AS headroom
-             FROM proposal_payments pp WHERE pp.id = $1`,
-          [paymentId, refundRowId]
-        );
-        absorbedCents = Math.min(amountCents, Number(hr.rows[0]?.headroom || 0));
+      if (!(await paymentIsOffLedger(paymentId, dbClient))) {
+        const headroom = await uncreditedHeadroomCents(paymentId, dbClient, {
+          excludeRefundRowId: refundRowId,
+        });
+        absorbedCents = Math.min(amountCents, headroom);
       }
     }
     const links = await dbClient.query(
@@ -718,9 +713,15 @@ function offContractPaidCents(proposalId, dbClient = pool) {
  * money with no Stripe charge behind it. Callers that offer a refund must check
  * refundable headroom separately (loadPaymentsWithRemaining).
  *
- * @param {number} proposalId
- * @param {object} [dbClient]  as above
- * @returns {Promise<number>} cents, floored at 0
+ * PURE, and the single definition of the arithmetic. Callers that already hold
+ * the proposal row (the admin payload, cancel-line's fold against a new total)
+ * use this directly rather than re-reading; `overpaymentCents` below is the
+ * async wrapper that fetches for callers that do not.
+ *
+ * @param {number|string} amountPaidDollars  proposals.amount_paid (NUMERIC dollars)
+ * @param {number|string} totalPriceDollars  proposals.total_price (NUMERIC dollars)
+ * @param {number} offContractCents          the netting term, in cents
+ * @returns {number} cents, floored at 0
  */
 function nettedOverpaymentCents(amountPaidDollars, totalPriceDollars, offContractCents) {
   const paidCents = Math.round(Number(amountPaidDollars || 0) * 100);
@@ -758,13 +759,92 @@ async function availableOverpaymentCents(proposalId, dbClient = pool) {
  * review, 2026-09-15).
  */
 function overpaymentRefusalMessage({ excessCents, pendingCents, availableCents }) {
-  if (excessCents <= 0) {
-    return 'This proposal is not overpaid, so there is nothing to return as an overpayment. Uncheck the box to correct the contract instead.';
-  }
+  // Order matters: a refund in flight is checked FIRST. When it has consumed the
+  // whole excess, excessCents can be 0 while the real cause is the outstanding
+  // refund, and "not overpaid, uncheck the box" would steer the admin onto the
+  // uncapped contract path while money is already on its way back.
   if (pendingCents > 0) {
     return `A ${fmtUSD(pendingCents)} refund on this proposal has not settled yet, which leaves ${fmtUSD(availableCents)} of the ${fmtUSD(excessCents)} overpayment available. Wait for it to settle before returning more. Do not uncheck the box: that would correct the contract instead of returning the overpayment.`;
   }
+  if (excessCents <= 0) {
+    return 'This proposal is not overpaid, so there is nothing to return as an overpayment. Uncheck the box to correct the contract instead.';
+  }
   return `This proposal is overpaid by ${fmtUSD(availableCents)}. Refund up to ${fmtUSD(availableCents)} as an overpayment, or uncheck the box to correct the contract instead.`;
+}
+
+/**
+ * Cents of this payment that no invoice was ever credited: the part that sits in
+ * proposals.amount_paid with nothing behind it on the invoice side, because
+ * linkPaymentToInvoice caps a credit at that invoice's remaining due while the
+ * webhook rolls the WHOLE intent into amount_paid.
+ *
+ * THE definition, shared by the reconciler (which excludes the row it is
+ * applying, already marked succeeded), the panel's locked pre-flight and the
+ * dashboard scope decision, so the three cannot drift.
+ *
+ * includePending nets refunds that have reached Stripe but not reconciled:
+ * conservative, and what every pre-flight check wants. The reconciler passes
+ * false because a pending row is not yet money out of this charge.
+ */
+async function uncreditedHeadroomCents(paymentId, dbClient = pool, {
+  excludeRefundRowId = null, includePending = false,
+} = {}) {
+  const statuses = includePending ? ['succeeded', 'pending'] : ['succeeded'];
+  const { rows } = await dbClient.query(
+    `SELECT GREATEST(
+              pp.amount
+                - COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip
+                             WHERE ip.payment_id = pp.id), 0)
+                - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
+                             WHERE pr.payment_id = pp.id
+                               AND pr.status = ANY($2::text[])
+                               AND ($3::int IS NULL OR pr.id <> $3)), 0),
+              0)::int AS headroom
+       FROM proposal_payments pp WHERE pp.id = $1`,
+    [paymentId, statuses, excludeRefundRowId]
+  );
+  return Number(rows[0]?.headroom || 0);
+}
+
+/**
+ * How much the CONTRACT invoices currently demand beyond what the contract says.
+ *
+ * This is the other half of what an overpayment refund may return, and it is
+ * what a per-charge headroom test alone gets wrong. Paying a contract in full by
+ * card credits the whole charge to a Balance invoice, which then LOCKS; repricing
+ * the proposal down afterwards leaves that invoice demanding the old figure while
+ * `total_price` is lower. There is no uncredited money anywhere, yet reversing
+ * part of that credit is exactly the right correction: it brings the invoice back
+ * to the contract. That is the commonest overpayment there is, and it is the case
+ * the editor's own "a refund is likely owed" line announces.
+ *
+ * Contrast money taken outside Stripe: there the invoices already agree with the
+ * contract, slack is zero, and reversing a credit would push a settled invoice
+ * BELOW the contract. Same headroom, opposite right answer, and only this figure
+ * tells them apart.
+ */
+async function contractInvoiceSlackCents(proposalId, dbClient = pool) {
+  const { rows } = await dbClient.query(
+    `SELECT GREATEST(
+              COALESCE((SELECT SUM(i.amount_due) FROM invoices i
+                         WHERE i.proposal_id = p.id AND i.status <> 'void'
+                           AND i.label = ANY($2::text[])), 0)
+              - ROUND(p.total_price * 100), 0)::int AS slack
+       FROM proposals p WHERE p.id = $1`,
+    [proposalId, CONTRACT_LABELS]
+  );
+  return Number(rows[0]?.slack || 0);
+}
+
+/** True when this payment funded an off-ledger invoice (Service Extension). */
+async function paymentIsOffLedger(paymentId, dbClient = pool) {
+  const res = await dbClient.query(
+    `SELECT 1 FROM invoice_payments ip
+       JOIN invoices i ON i.id = ip.invoice_id
+      WHERE ip.payment_id = $1 AND i.label = ANY($2::text[]) LIMIT 1`,
+    [paymentId, OFF_LEDGER_INVOICE_LABELS]
+  );
+  return res.rowCount > 0;
 }
 
 async function overpaymentCents(proposalId, dbClient = pool) {
@@ -782,6 +862,9 @@ module.exports = {
   offContractPaidCents,
   overpaymentCents,
   nettedOverpaymentCents,
+  uncreditedHeadroomCents,
+  contractInvoiceSlackCents,
+  paymentIsOffLedger,
   availableOverpaymentCents,
   overpaymentRefusalMessage,
   fmtUSD,

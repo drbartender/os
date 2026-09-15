@@ -46,6 +46,7 @@ const { pool } = require('../db');
 const { AppError, PaymentError, ExternalServiceError } = require('./errors');
 const {
   applyRefundReconciliation, availableOverpaymentCents, overpaymentRefusalMessage,
+  uncreditedHeadroomCents, contractInvoiceSlackCents, paymentIsOffLedger, fmtUSD,
 } = require('./refundHelpers');
 
 async function refundExecute({
@@ -77,19 +78,47 @@ async function refundExecute({
     // amount_paid, so overpaymentCents has them. Pending ones have not.
     // Nothing reaches Stripe before this COMMITs.
     const capClient = await pool.connect();
+    let rolledBack = false;
     try {
       await capClient.query('BEGIN');
       await capClient.query('SELECT id FROM proposals WHERE id = $1 FOR UPDATE', [proposalId]);
       const avail = await availableOverpaymentCents(proposalId, capClient);
       if (amountCents > avail.availableCents) {
+        rolledBack = true;
         await capClient.query('ROLLBACK');
         throw new AppError(overpaymentRefusalMessage(avail), 400, 'REFUND_EXCEEDS_OVERPAYMENT');
+      }
+      // The PROPOSAL cap is not enough on its own: the refund also has to come
+      // off money no invoice was credited ON THIS CHARGE. planRefund checks that
+      // on an unlocked read, so two concurrent submits could both see the same
+      // headroom, both pass the proposal cap, and the loser would then reverse
+      // credited invoice money while total_price stood. Re-assert it here, where
+      // the winner's pending row is already visible.
+      if (!(await paymentIsOffLedger(paymentId, capClient))) {
+        const headroom = await uncreditedHeadroomCents(paymentId, capClient, { includePending: true });
+        const slack = await contractInvoiceSlackCents(proposalId, capClient);
+        const allowance = headroom + slack;
+        if (amountCents > allowance) {
+          rolledBack = true;
+          await capClient.query('ROLLBACK');
+          throw new AppError(
+            allowance > 0
+              ? `Only ${fmtUSD(allowance)} of this overpayment can be returned through Stripe. Refund up to ${fmtUSD(allowance)} as an overpayment; the rest was paid outside Stripe, so return that part by hand.`
+              : 'None of this overpayment can be returned through Stripe: it was paid outside Stripe, and the invoices already match the contract. Return it by hand.',
+            400,
+            'OVERPAYMENT_NOT_ON_A_CHARGE'
+          );
+        }
       }
       const res = await capClient.query(INSERT_PENDING, pendingParams);
       await capClient.query('COMMIT');
       pendingRowId = res.rows[0].id;
     } catch (err) {
-      try { await capClient.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
+      // A deliberate refusal already rolled back; a second ROLLBACK would run
+      // against a closed transaction and log a Postgres notice for nothing.
+      if (!rolledBack) {
+        try { await capClient.query('ROLLBACK'); } catch (_) { /* transaction never opened */ }
+      }
       throw err;
     } finally {
       capClient.release();

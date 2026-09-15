@@ -271,8 +271,9 @@ server/utils/onboardingPromotion.js
 # listed file. Every path below writes proposals.total_price / amount_paid,
 # invoice amount_due / amount_paid, or issues a Stripe refund.
 #
-# Webhook handlers: chargeRefunded is the refund backstop (and the tip
-# clawback), paymentIntentSucceeded is the amount_paid roll-up, payout mirrors
+# Webhook handlers: refundCreated reconciles every refund (dashboard-issued or
+# as the backstop for an in-app one) and chargeRefunded is now the tip clawback
+# alone, paymentIntentSucceeded is the amount_paid roll-up, payout mirrors
 # Stripe payouts, disputes move money out. stripeWebhook.js (listed above) is
 # now only the signature check + dispatch.
 server/routes/stripeWebhookHandlers/*.js
