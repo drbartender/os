@@ -37,7 +37,10 @@ module.exports = async function handlePaymentIntentProcessing(event, stripe) {
   if (current.rows[0] && current.rows[0].status === 'failed') {
     if (stripe) {
       try {
-        const live = await stripe.paymentIntents.retrieve(intent.id, STRIPE_RETRIEVE_OPTS);
+        // No network retry here: this runs before the ack, and Stripe gives a
+        // delivery 30 seconds. One attempt at ten keeps the headroom; a slow
+        // Stripe leaves the row released, which is the safe answer anyway.
+        const live = await stripe.paymentIntents.retrieve(intent.id, { ...STRIPE_RETRIEVE_OPTS, maxNetworkRetries: 0 });
         failedRowMayMove = live && live.status === 'processing';
       } catch (err) {
         console.warn(`Webhook: could not confirm intent ${intent.id} at Stripe before reviving a failed row (left failed): ${err && err.message}`);

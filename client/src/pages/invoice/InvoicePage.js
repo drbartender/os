@@ -139,11 +139,11 @@ export default function InvoicePage() {
     // side effect, whether or not loadStripe is ever called.
     if (pendingPayment) return;
     if (stripePromise) return;
-    api.get('/stripe/publishable-key').then(async ({ data }) => {
-      if (!data.key) return;
-      const { loadStripe } = await import('@stripe/stripe-js');
-      setStripePromise(loadStripe(data.key));
-    }).catch(() => {});
+    Promise.all([api.get('/stripe/publishable-key'), import('@stripe/stripe-js')])
+      .then(([{ data }, { loadStripe }]) => {
+        if (data.key) setStripePromise(loadStripe(data.key));
+      })
+      .catch(() => {});
   }, [invoice, paymentSuccess, stripePromise, pendingPayment]);
 
   const refetchInvoice = useCallback(() => (
