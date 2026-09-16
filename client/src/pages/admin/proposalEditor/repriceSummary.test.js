@@ -271,3 +271,92 @@ test('without the netting term the behaviour is unchanged (old callers keep work
   });
   expect(s.lines.join(' ')).toMatch(/overpaid by \$500\.00/);
 });
+
+// 2026-09-16: the server ladder now restores balance_paid when paid covers the
+// corrected total (prod 823 stranded a fully-paid event at deposit_paid). The
+// modal predicts that move on the same rounded-cents boundary the server uses.
+describe('buildRepriceSummary: deposit_paid returning to paid in full', () => {
+  const REBUILD = 'Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.';
+  const PROMO = 'This event will return to paid in full.';
+
+  it('decrease to exactly what was paid: promotion line, no overpaid line', () => {
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '455', amountPaid: '425', newTotal: 425,
+    });
+    expect(s.lines).toEqual([PROMO, REBUILD]);
+  });
+
+  it('decrease below what was paid: promotion line plus the overpaid line', () => {
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '455', amountPaid: '425', newTotal: 400,
+    });
+    expect(s.lines).toEqual([
+      PROMO,
+      'Client is now overpaid by $25.00. A refund is likely owed.',
+      REBUILD,
+    ]);
+  });
+
+  it('increase that paid still covers: promotion line, never the demotion line', () => {
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '400', amountPaid: '425', newTotal: 425,
+    });
+    const all = s.lines.join(' ');
+    expect(s.lines[0]).toBe(PROMO);
+    expect(all).not.toContain('drop back to deposit paid');
+    expect(all).toContain('lands exactly paid in full');
+  });
+
+  it('decrease that still leaves a balance: no promotion line', () => {
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '2000', amountPaid: '100', newTotal: 1700,
+    });
+    expect(s.lines).toEqual([REBUILD]);
+  });
+
+  it('pins the boundary: one cent short stays deposit paid, one cent inside promotes', () => {
+    const short = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '1300', amountPaid: '1200', newTotal: 1200.01,
+    });
+    expect(short.lines.join(' ')).not.toContain(PROMO);
+    const inside = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '1300', amountPaid: '1200', newTotal: 1199.99,
+    });
+    expect(inside.lines[0]).toBe(PROMO);
+  });
+
+  it('nothing paid never promotes, even to a zero total', () => {
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '1000', amountPaid: '0', newTotal: 0.01,
+    });
+    expect(s.lines.join(' ')).not.toContain(PROMO);
+  });
+
+  it('gates on RAW paid like the server: off-contract money still promotes, while the overpaid line stays netted', () => {
+    // paid 425 covers the new 425 total (server promotes on raw columns), but
+    // 50.00 of it is a paid syrup invoice, so contract money is 375 and the
+    // client is NOT overpaid: promotion line, no refund line.
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '455', amountPaid: '425', newTotal: 425, offContractPaidCents: 5000,
+    });
+    expect(s.lines).toEqual([PROMO, REBUILD]);
+  });
+
+  it('a fully comped event (new total 0) promotes and reports the held deposit as overpaid', () => {
+    const s = buildRepriceSummary({
+      status: 'deposit_paid', totalPrice: '455', amountPaid: '100', newTotal: 0,
+    });
+    expect(s.lines).toEqual([
+      PROMO,
+      'Client is now overpaid by $100.00. A refund is likely owed.',
+      REBUILD,
+    ]);
+  });
+
+  it('balance_paid rows never get the promotion line', () => {
+    const s = buildRepriceSummary({
+      status: 'balance_paid', totalPrice: '2000', amountPaid: '2000', newTotal: 1700,
+    });
+    expect(s.lines.join(' ')).not.toContain(PROMO);
+  });
+});

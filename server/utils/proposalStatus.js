@@ -2,15 +2,24 @@
 /**
  * Shared payment-status reconciliation (spec §6). PURE — no DB, no Stripe.
  *
- * The DEMOTE-only ladder was historically inline in refundHelpers.js; it is now
- * shared so every price/payment move (refund, admin edit, checkout recompute)
- * keeps proposals.status honest in BOTH directions. A move never PROMOTES
- * (promotion happens only on a money-IN event); it demotes a now-underpaid
- * proposal so no surface shows "Paid in full" when it isn't, and flags an
- * overpayment for an admin-issued refund when amount_paid > total_price.
+ * The ladder was historically inline in refundHelpers.js (demote-only); it is
+ * now shared so every price/payment move (refund, admin edit, lab/extras fold,
+ * checkout recompute) keeps proposals.status honest in BOTH directions. It
+ * demotes a now-underpaid proposal so no surface shows "Paid in full" when it
+ * isn't, and it RESTORES balance_paid when the corrected total is back at or
+ * below what was paid, flagging any excess for an admin-issued refund.
  *
- * Only the pure payment statuses (deposit_paid / balance_paid) demote.
- * 'confirmed'/'completed' are lifecycle states and are left untouched.
+ * Why promotion lives here (2026-09-16, prod proposal 823): the ladder used to
+ * demote only, on the theory that promotion belongs to a money-IN event. A
+ * client added an Enhancement Lab syrup to a fully-paid proposal (demoted,
+ * correctly) and removed it a minute later; nothing ever put balance_paid
+ * back. Auto-complete keys on that label, so the event never completed,
+ * payroll never accrued, and the bartender missed the pay run. A fully-paid
+ * row is fully paid whichever direction the last move came from.
+ *
+ * Only the pure payment statuses (deposit_paid / balance_paid) move. Pre-
+ * payment statuses never promote (money-in is still the only door INTO the
+ * ladder), and 'confirmed'/'completed' are lifecycle states left untouched.
  *
  * @returns {{status:string, changed:boolean, autopayDisarmed:boolean,
  *            overpaid:boolean, overpaidCents:number}}
@@ -21,11 +30,21 @@ function reconcileProposalPaymentStatus({ status, amountPaid, totalPrice }) {
   const overpaid = paidCents > totalCents;
   const overpaidCents = overpaid ? paidCents - totalCents : 0;
 
+  // A total we cannot read (nullable column; undefined/''/NaN from a caller)
+  // never promotes: the webhook's SQL reads "paid >= NULL" as not paid, and
+  // promoting here would make the two disagree in the fail-open direction. A
+  // genuine $0 total (a fully comped event: pricingEngine clamps an
+  // over-discount at 0) DOES promote, exactly as the webhook's "paid >= 0"
+  // does; refusing it would strand the comped event at deposit_paid, the same
+  // failure class as prod 823.
+  const totalKnown = totalPrice !== null && totalPrice !== undefined && totalPrice !== ''
+    && Number.isFinite(Number(totalPrice));
+
   let next = status;
   if (status === 'balance_paid' || status === 'deposit_paid') {
     if (paidCents <= 0) next = 'accepted';
     else if (paidCents < totalCents) next = 'deposit_paid';
-    // paidCents >= totalCents → unchanged (still fully paid at the corrected total)
+    else if (totalKnown) next = 'balance_paid'; // fully paid at the corrected total, either direction
   }
   const changed = next !== status;
   // CRITICAL (mirrors refundHelpers): only the was-fully-paid transition disarms

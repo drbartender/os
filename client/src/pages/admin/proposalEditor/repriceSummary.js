@@ -45,12 +45,25 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal, 
   // changes what an increase actually does, so it gets its own copy.
   const wasOverpaid = contractPaid - oldTotal > 0.005;
   const lines = [];
+  // Status prediction mirrors proposalStatus.reconcileProposalPaymentStatus,
+  // which compares RAW amount_paid to the new total in rounded cents and moves
+  // the paid ladder in BOTH directions: balance_paid drops to deposit_paid when
+  // the new total outruns paid (and autopay is unenrolled), and deposit_paid
+  // returns to balance_paid once paid covers the new total again (2026-09-16,
+  // prod 823: a demote with no way back stranded a fully-paid event at
+  // deposit_paid and it never auto-completed). Neither move is unconditional:
+  // an increase an existing overpayment still covers keeps balance_paid and
+  // autopay armed, and a decrease that still leaves a balance stays deposit
+  // paid. Promising a move the server does not perform names a consequence
+  // that does not happen, so both lines are gated on the server's boundary.
+  // The same rounded-cents comparison the server makes (paidCents >= totalCents,
+  // both > 0), so the two agree on every input, not only whole-cent totals.
+  const paidCents = Math.round(paid * 100);
+  const nextCents = Math.round(next * 100);
+  if (status === 'deposit_paid' && paidCents > 0 && Number.isFinite(nextCents) && paidCents >= nextCents) {
+    lines.push('This event will return to paid in full.');
+  }
   if (delta > 0) {
-    // Demotion is NOT unconditional. proposalStatus.reconcileProposalPaymentStatus
-    // leaves the status alone whenever paid >= the new total, so an increase an
-    // existing overpayment still covers keeps the event balance_paid and keeps
-    // autopay armed. Promising a demotion there would name a consequence the
-    // server does not perform.
     if (status === 'balance_paid' && next - paid > 0.005) {
       lines.push('This event will drop back to deposit paid and autopay will be unenrolled.');
     }

@@ -11,7 +11,8 @@
 // ─── WHY 'accepted' IS EXEMPT ───────────────────────────────────────────────
 //
 // It reads like a courtesy ("a signed agreement deserves admin eyes") and it is
-// also the money guard. reconcileProposalPaymentStatus (proposalStatus.js:26-28)
+// also the money guard. reconcileProposalPaymentStatus (proposalStatus.js, the
+// paid <= 0 arm of the ladder)
 // demotes a fully refunded proposal to 'accepted': amount_paid is 0 but there is
 // a real payment history. Sweeping 'accepted' would stamp a refunded booking
 // 'event_passed' — "a lead that never booked" — which is false and destroys the

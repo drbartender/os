@@ -586,17 +586,20 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       persistTipJar, resolvedGratuityRate, gratuityOrigin, resolvedFloorRate
     ]);
 
-    // Re-evaluate payment status when a price increase outruns what's been paid
-    // (CLAUDE.md: never leave a proposal marked paid when it isn't). A fully-paid
-    // proposal whose new total exceeds amount_paid is no longer paid in full —
-    // demote balance_paid -> deposit_paid so the UI stops showing "Paid in full"
-    // and re-enables the "Record outside payment" action. The matching $325-style
+    // Re-evaluate payment status when a price move changes whether what's been
+    // paid covers the total (CLAUDE.md: never leave a proposal marked paid when
+    // it isn't, and never leave a fully-paid one reading "Deposit paid"). A
+    // fully-paid proposal whose new total exceeds amount_paid drops
+    // balance_paid -> deposit_paid so the UI stops showing "Paid in full" and
+    // re-enables the "Record outside payment" action. The matching $325-style
     // "Additional Services" invoice is created post-commit by
     // createAdditionalInvoiceIfNeeded (below) and is the client's pay surface.
     // MANUAL ONLY: if autopay was enrolled, clear it so the balance scheduler
     // cannot charge the saved card off an admin price edit.
-    // Keep payment status honest after a price move in EITHER direction (§6),
-    // and surface a durable overpayment signal for the admin refund flow.
+    // Keep payment status honest after a price move in EITHER direction (§6):
+    // the shared ladder also restores balance_paid when a decrease (or a
+    // re-save at the original price) brings the total back under what was
+    // paid, and surfaces a durable overpayment signal for the admin refund flow.
     // NOTE (merge w/ client-portal-editing, decision A): the change-request branch
     // also demoted 'confirmed' here; we keep the shared reconcile helper's rule —
     // confirmed/completed are lifecycle states, left untouched — and collect any
@@ -605,15 +608,15 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       status: old.status, amountPaid: old.amount_paid, totalPrice: snapshot.total,
     });
     if (rec.changed) {
-      const demoted = await dbClient.query(
+      const reconciled = await dbClient.query(
         rec.autopayDisarmed
           ? `UPDATE proposals SET status = $1, autopay_enrolled = false, autopay_status = NULL WHERE id = $2 RETURNING *`
           : `UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *`,
         [rec.status, req.params.id]
       );
       // Keep the row we return (and hand to the reschedule hooks) in sync with the
-      // demotion, so the PATCH response doesn't report a stale status.
-      updatedRow.rows[0] = demoted.rows[0];
+      // status move, so the PATCH response doesn't report a stale status.
+      updatedRow.rows[0] = reconciled.rows[0];
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'status_changed', 'admin', $2, $3)`,

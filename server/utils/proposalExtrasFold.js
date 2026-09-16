@@ -11,8 +11,8 @@
  *
  * MUST run inside the caller's transaction with `proposal` selected FOR
  * UPDATE; every query uses the passed `client` (one-pooled-connection rule).
- * Mutates `proposal.status` in memory on a payment-status demotion so the
- * caller's post-commit reporting sees the real state.
+ * Mutates `proposal.status` in memory on a payment-status move (demote or
+ * restore) so the caller's post-commit reporting sees the real state.
  *
  * @param {object} args
  * @param {object} args.client        transaction client (required)
@@ -30,7 +30,7 @@
  * @param {Array}  [args.adjustmentsBefore]   pre-change adjustments; omit
  *                 (with After) to use proposal.adjustments on both legs
  * @param {Array}  [args.adjustmentsAfter]    post-change adjustments
- * @param {string} args.statusChangeReason activity-log reason on a demotion
+ * @param {string} args.statusChangeReason activity-log reason on a status move
  * @returns {Promise<{snapshot: object, statusChanged: boolean}>}
  *
  * Leg contract (cancel-line, 2026-07-24): callers changing staffing or
@@ -198,11 +198,13 @@ async function foldExtrasIntoProposal({
     [snapshot.total, JSON.stringify(snapshot), proposal.id, effectiveOverride]
   );
 
-  // F2 (CLAUDE.md cross-cutting: price up -> re-evaluate payment status).
-  // The extras just raised total_price; a fully-paid proposal that now
-  // owes must not keep showing "Paid in Full". Mirror crud.js: demote
-  // balance_paid -> deposit_paid and disarm autopay only on the
-  // was-fully-paid transition. reconcile is pure; the UPDATE uses the
+  // F2 (CLAUDE.md cross-cutting: price moved -> re-evaluate payment status).
+  // The extras just moved total_price; a fully-paid proposal that now owes
+  // must not keep showing "Paid in Full", and a deposit_paid row whose paid
+  // covers the new total (a lab add then remove, prod 823) must return to
+  // balance_paid or it never auto-completes. Mirror crud.js: the shared
+  // ladder moves both ways; autopay is disarmed only on the was-fully-paid
+  // demotion. reconcile is pure; the UPDATE uses the
   // SAME tx client (one-connection rule). Keep proposal.status honest in
   // memory so the caller's post-commit reporting sees the real state.
   const rec = reconcileProposalPaymentStatus({

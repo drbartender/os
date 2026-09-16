@@ -575,7 +575,7 @@ test('fully-paid removal computes overpaymentCents without demotion', async () =
   await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
     assert.equal(result.newTotal, 2300);
     assert.equal(result.overpaymentCents, 20000); // paid 2500 vs new total 2300
-    assert.equal(result.statusChanged, false);    // demote-only ladder: still fully paid
+    assert.equal(result.statusChanged, false);    // still fully paid: the ladder has nowhere to move
     assert.equal(result.newStatus, 'balance_paid');
   });
 });

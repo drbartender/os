@@ -439,10 +439,10 @@ async function handleSubmit(req, res) {
 
           // Contract-safe reprice + payment-status re-eval. The override-delta
           // math (Jack Van Dyke lesson), snapshot recompute, total/override
-          // write, and F2 balance_paid demotion moved VERBATIM to
+          // write, and F2 payment-status reconcile (demote or restore) moved VERBATIM to
           // utils/proposalExtrasFold.js so the Enhancement Lab folds through
           // the exact same sequence (one money path, two callers). Mutates
-          // proposal.status in memory on demotion, as before.
+          // proposal.status in memory on a status move, as before.
           const { snapshot } = await foldExtrasIntoProposal({
             client,
             proposal,

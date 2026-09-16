@@ -611,12 +611,13 @@ async function applyRefundReconciliation(
   // here and status-driven surfaces — the payment panel's "Paid in full" chip,
   // the record-payment gate, the Paid tab — go stale, leaving a proposal
   // marked paid when it isn't (CLAUDE.md cross-cutting rule). Mirror that
-  // rule, DEMOTE-only:
+  // rule via the shared ladder (proposalStatus.js), which moves in BOTH
+  // directions since 2026-09-16:
   //   amount_paid <= 0           → 'accepted'      (nothing held)
   //   amount_paid <  total_price → 'deposit_paid'  (partial — balance owed)
-  //   amount_paid >= total_price → unchanged       (contract refund: still
-  //                                 fully paid at the corrected total)
-  // Only the pure payment statuses are demoted. 'confirmed'/'completed' are
+  //   amount_paid >= total_price → 'balance_paid'  (fully paid at the corrected
+  //                                 total; a no-op for a balance_paid row)
+  // Only the pure payment statuses move. 'confirmed'/'completed' are
   // lifecycle states ('completed' is state-machine-terminal) — a refund is an
   // accounting correction, not an un-confirmation; the panel's display guard
   // keeps THOSE from showing "Paid in full" beside a balance. Direct UPDATE
