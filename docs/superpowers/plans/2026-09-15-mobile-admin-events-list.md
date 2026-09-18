@@ -15,23 +15,24 @@
 **Scope:** Lane ma-e1-events-list only. It refines the foundation plan's declared `ma-e-events` lane (`docs/superpowers/plans/2026-08-13-mobile-admin-foundation.md`, Lane map) into the list now and the detail, staffing sheet and edit sheet as their own lanes, declared below. Manual shifts on the phone list open the EXISTING desktop `ShiftDrawer` in this lane as the no-dead-end interim; lane ma-e2-event-detail replaces that with the phone assignment sheet. Nothing in this lane writes; every endpoint it touches is a read.
 
 **Proven context (verified against the repo 2026-09-15, not from memory):**
-- `server/routes/shifts.js` (786 lines): the admin branch of `GET /` is `:103-216`. `isManager` at `:104`; `pool.query` opens at `:106`; the projection runs `SELECT s.*,` (`:107`) through `) abr ON true` (`:212`); `ORDER BY s.event_date ASC` `:213`; `LIMIT 500` `:214`; `return res.json(result.rows)` `:216`. The handler reads NO query params today. It projects `rc.pending_count` (`:121`, defined `:203`), `rc.approved_count` (approved AND `dropped_at IS NULL`), `bar_required` via `barRequiredSql('p','spk')`, `COALESCE(p.guest_count, s.guest_count) AS proposal_guest_count`, `COALESCE(c.name, s.client_name) AS client_name`, `p.status AS proposal_status`, `s.*` (so `event_date`, `start_time`, `end_time`, `location`, `positions_needed`, `status`, `event_type`, `event_type_custom`, `proposal_id`, `supply_run_required`). Imports already present: `shiftNotFinishedSql` (`:12`), `barRequiredSql`, `planQueueSql` from `./shifts.queries` (`:26`).
+- `server/routes/shifts.js` (786 lines, last changed 2026-08-29): the admin branch of `GET /` is `:103-221`. `isManager` at `:104`; `pool.query(` opens at `:107`; `SELECT s.*,` is `:108`; the projection body runs from `u.email AS created_by_email,` (`:109`) through `) abr ON true` (`:217`); `ORDER BY s.event_date ASC` `:218`; `LIMIT 500` `:219`; `return res.json(result.rows)` `:221` (anchors re-verified 2026-09-18 by the plan fleet; the 9/15 numbers were stale). The handler reads NO query params today. It projects `rc.pending_count` (`:122`, defined `:208`), `rc.approved_count` (approved AND `dropped_at IS NULL`), `bar_required` via `barRequiredSql('p','spk')`, `COALESCE(p.guest_count, s.guest_count) AS proposal_guest_count`, `COALESCE(c.name, s.client_name) AS client_name`, `p.status AS proposal_status`, `s.*` (so `event_date`, `start_time`, `end_time`, `location`, `positions_needed`, `status`, `event_type`, `event_type_custom`, `proposal_id`, `supply_run_required`). Imports already present: `shiftNotFinishedSql` (`:12`), `barRequiredSql`, `planQueueSql` from `./shifts.queries` (`:26`).
 - `server/routes/shifts.queries.js` (200 lines) exports `{ STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql }` (`:200`) and imports `shiftNotFinishedSql` only (`:10`). `planQueueSql` is `{ select, drinkPlanJoin, consultJoin }` (`:165`).
 - `server/utils/shiftEndInstant.js` exports `shiftNotFinishedSql(s, p)` (`:206`, `<end instant> > NOW()`) and its exact complement `shiftFinishedSql(s, p)` (`:219`). The `unstaffed_events` badge SQL in `server/routes/admin/settings.js:143-157` is `shiftNotFinishedSql('s','p') AND s.status = 'open' AND s.positions_needed IS JSON ARRAY AND jsonb_array_length(s.positions_needed::jsonb) > 0 AND (approved-and-not-dropped count) < jsonb_array_length(...)`. `GET /shifts/unstaffed-upcoming` (`shifts.js:264-297`) uses the same fragment and its header (`:255-264`) forbids the two drifting.
 - `shifts.supply_run_required` (`server/db/schema.sql:4069`) is the Supplies flag; there is no `supply_run` column.
-- No server test today calls the admin branch of `GET /shifts` (grep over `server/routes/**/*.test.js`). Client callers of the bare feed: `client/src/pages/AdminDashboard.js:62`, `client/src/pages/admin/EventsDashboard.js:76`, `client/src/pages/admin/overview/OverviewPage.js:205`, `client/src/pages/staff/ShiftsPage.js:127,175`. None passes a query string, so the legacy shape must not change.
+- Server suites that already call the admin branch of `GET /shifts`: `server/routes/shifts.planQueue.test.js` (seven admin GETs at `:159-209`, reading seven admin-branch columns) and, through the same mount, the other `server/routes/shifts*.test.js` suites and `server/routes/eventDetails.test.js`; Task 1 and Task 8 run all of them. Client callers of the bare feed: `client/src/pages/AdminDashboard.js:62`, `client/src/pages/admin/EventsDashboard.js:76`, `client/src/pages/admin/overview/OverviewPage.js:205`, `client/src/pages/staff/ShiftsPage.js:127,175`. None passes a query string, so the legacy shape must not change.
 - Test harness exemplar: `server/routes/shifts.visibility.endInstant.test.js` (`require('dotenv').config()` first; `node:test`; production refusal guard `:43`; nonce'd fixtures; `get(path, token)` helper `:61-79`; `makeUser` `:82-91`; `tokenFor` `:92`; `seedShift` `:94-105`; Chicago clock derivation in `before()` `:107-135`). Suites run ONE AT A TIME from the repo root against the shared dev DB.
 - `client/src/pages/admin/EventsDashboard.js` (373 lines): `export default function EventsDashboard()` at `:54`; `api.get('/shifts')` at `:76`; row click `:93-95` (proposal rows navigate to `/events/:proposal_id`, manual rows `drawer.open('shift', e.id)`); `ShiftDrawer` mounted `:233-237`; `LIST_DEFAULTS` `:25`.
 - `client/src/hooks/useUrlListState.js`: `[state, setState]` over declared keys, `replace: true` always, undeclared params (`drawer`, `drawerId`) pass through. `client/src/hooks/useDrawerParam.js`: `{ kind, id, open, close }`, replace semantics (fine for this lane: the interim drawer is the desktop one).
-- `client/src/context/MobileViewContext.js` exposes `{ isPhone, desktopView(screenKey), setDesktopView }` via `useMobileView()`. `client/src/utils/screenKey.js` already maps `/events` to `events-list`. `client/src/components/AdminLayout.js:232-256` renders the phone chrome with `<main className="m-main" id="main-content"><Outlet context={{ badges, refreshBadges }} /></main>`: the page renders INSIDE the scrolling `.m-main`, so a sticky apparatus row must be sticky inside that container, and scroll restore reads `document.getElementById('main-content')`.
-- `client/src/utils/api.js:16-28`: every response carries `res.staleAt` when the service worker served it (`x-sw-cached-at`). `client/src/utils/staleTime.js:8` `formatStaleAt(iso, now) -> "as of 2:14 PM" | null`. Nothing imports it today; the `.m-stale` CSS exists (`index.css:20993-20998`).
+- `client/src/context/MobileViewContext.js` exposes `{ isPhone, desktopView(screenKey), setDesktopView }` via `useMobileView()`. `client/src/utils/screenKey.js` already maps `/events` to `events-list`. `client/src/components/AdminLayout.js:232-256` renders the phone chrome with `<main className="m-main" id="main-content"><Outlet context={{ badges, refreshBadges }} /></main>`: the page renders INSIDE the scrolling `.m-main`, so a sticky apparatus row must be sticky inside that container, and scroll restore reads `document.getElementById('main-content')`. `AdminLayout.js:228-229` sets `Sentry.setTag('surface', 'mobile-admin')` on the global scope while the phone chrome is mounted (cleared on unmount), so every phone component's errors already carry the spec section 10 tag; no per-component tagging is needed.
+- `client/src/utils/api.js:16-28`: every response carries `res.staleAt` when the service worker served it (`x-sw-cached-at`). `client/src/utils/staleTime.js:8` `formatStaleAt(iso, now) -> "as of 2:14 PM" | null`, with its test at `client/src/utils/staleTime.test.js`. Nothing imports it today; the `.m-stale` CSS exists (`index.css:20993-20998`). The benchmark (`renderVals` `:1611-1613`) has TWO stale states: live = `as of <fetch time>` with no dot, cache-served = `offline copy · as of <cached time>` with the amber dot, and only the time sits inside `.m-stale-time` (numeric font), so Task 4 adds a time-only formatter beside `formatStaleAt`.
+- `scripts/mobile-capture.js:107` builds `http://${entry.host}:3000`, so `"host": "localhost"` reaches the admin app (`App.js` `getSiteContext`), its 390x844 viewport sits under the 700px fork, and `authAssert` is enforced (`:128-132`).
 - `client/public/admin-sw.js:182-197`: `/api/shifts` is allowlisted by exact pathname; the Cache API keys on the full URL, so each `scope`/`offset`/`needs_staff` combination is its own cached entry. Nothing in the SW needs to change; this lane does not touch it.
-- `client/src/index.css` (21309 lines): the mobile block is `:20934-21235` (`.m-shell` .. `.m-enroll-yes`), scoped `html[data-app="admin-os"]`, no media queries by design. `.m-seg`, `.m-seg-btn`, `.m-seg-btn.active`, `.m-seg-note` exist (`:21133-21159`) with light-skin squaring (`:21164-21176`). `.chip` family exists (`:12995+`, kinds neutral/ok/warn/danger/info/violet/accent) and `.tag` exists. NO `.m-card`, `.m-rail`, `.m-listbar`, `.m-skel`, `.m-end`, `.m-empty` exist. The Staff hub block begins at `:21237`.
+- `client/src/index.css` (21309 lines): the mobile block is `:20934-21235` (`.m-shell` .. `.m-enroll-yes`), scoped `html[data-app="admin-os"]`, no media queries by design. `.m-seg`, `.m-seg-btn`, `.m-seg-btn.active`, `.m-seg-note` exist (`:21133-21159`) with light-skin squaring (`:21164-21176`). `.chip` family exists (`:12995+`, kinds neutral/ok/warn/danger/info/violet/accent) and `.tag` exists. NO `.m-card`, `.m-rail`, `.m-listbar`, `.m-skel`, `.m-end`, `.m-empty` exist. The Staff hub block's comment opens at `:21237` (`/* ====`), its text `Staff hub chrome` is `:21238`, and `.m-enroll-yes` closes the mobile block at `:21235`. `--fs-body` and `--fs-meta` are NOT defined anywhere in `index.css` (the only use, `.m-stale` at `:20994`, carries a fallback); the design system defines them in `docs/design-artifacts/_ds/.../tokens/typography.css:19,21` as 13px and 11.5px, so Task 3 defines them on `html[data-app="admin-os"]`. No `@keyframes m-pulse` exists yet.
 - Design-system mobile CSS to fold from: `docs/design-artifacts/_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-mobile.css` (`.m-card`, `.m-card-title`, `.m-card-meta`, `.m-card-chip` and the light-skin squaring).
-- Client helpers: `client/src/components/adminos/shifts.js` exports `isCancelledEvent(e)` (`:66`), `parsePositionsCount(s)` (`:115`, empty roster counts as 1 by law), `approvedCount(s)` (`:121`). `client/src/components/adminos/format.js` exports `fmtTimeRange24(start, end, durationHours)` (`:96`, returns `"19:00–23:00 · 4h"` when both ends are known) and `dayDiff(iso, todayYmd)` (`:166`). `client/src/utils/eventTypes.js` exports `getEventTypeLabel(row)` (`:8`, reads `event_type` and `event_type_custom`). `StatusChip` (`client/src/components/adminos/StatusChip.js`) takes `kind`. `Icon` (`client/src/components/adminos/Icon.js`) needs an explicit `size`; names used here exist: `calendar`, `check`, `right`.
+- Client helpers: `client/src/components/adminos/shifts.js` exports `isCancelledEvent(e)` (`:66`), `parsePositionsCount(s)` (`:115`, empty roster counts as 1 by law), `approvedCount(s)` (`:121`). `client/src/components/adminos/format.js` exports `fmtTimeRange24(start, end, durationHours)` (`:96`, returns `"19:00–23:00 · 4h"` when both ends are known) and `dayDiff(iso, todayYmd)` (`:166`). `client/src/utils/eventTypes.js` exports `getEventTypeLabel(row)` (`:8`, reads `event_type` and `event_type_custom`). The table in `client/src/data/eventTypes.js` has no `wedding` id (ids are `wedding-reception`, `rehearsal-dinner`, ..., `other`), so `wedding` falls back to `event`; fixtures use `wedding-reception` (label `Wedding Reception`). `StatusChip` (`client/src/components/adminos/StatusChip.js`) takes `kind`. `Icon` (`client/src/components/adminos/Icon.js`) needs an explicit `size`; names used here exist: `calendar`, `check`, `right`.
 - Client test patterns: `client/src/components/mobile/MobileTabBar.test.js` (real `MemoryRouter`, `import '@testing-library/jest-dom'` first line); `client/src/pages/admin/CancelEventDialog.test.js:7` mocks `utils/api` with `jest.mock('../../utils/api', () => ({ __esModule: true, default: { post: jest.fn() } }))`.
 - `scripts/mobile-capture.manifest.json` has NO admin-host page; `accounts.admin = { id: 1, tokenVersion: 0 }`; page fields are `name, host, path, auth, settleMs, authAssert, scrollableAllow, tokenQuery`. `npm run mobile:check` runs it (dev-only by construction).
-- Docs anchors: `README.md:622` is the `pages/mobile/` tree line; `ARCHITECTURE.md:440` is the `GET /` row of the Shifts route table; `docs/walkthroughs-owed.md` is the owed-walk ledger; `docs/fix-list-remaining-2026-07-02.md:1725` is the "Mobile admin: every phone-first DATA screen" entry.
+- Docs anchors: `README.md:622` is the `pages/mobile/` tree line; `ARCHITECTURE.md:440` is the `GET /` row of the Shifts route table; `docs/walkthroughs-owed.md` is the owed-walk ledger; `docs/fix-list-remaining-2026-07-02.md:1808` is the "Mobile admin: every phone-first DATA screen" entry (`:1725` is the JSON-column migration item).
 - None of `server/routes/shifts.js`, `server/routes/shifts.queries.js`, `client/src/pages/admin/EventsDashboard.js`, `client/src/index.css` is in `scripts/sensitive-paths.txt`.
 
 ## Global Constraints
@@ -39,12 +40,13 @@
 - **No em dashes** in copy, comments, commit messages or docs. Commas, colons, parentheses, the middle dot.
 - **One fork, one breakpoint:** the phone branch comes from `useMobileView()` only. No new media queries; every new rule lives in the mobile block of `index.css`, scoped `html[data-app="admin-os"]`, both skins.
 - **Legacy feed shape is frozen:** `GET /shifts` with no `scope` returns the same bare array with the same columns and order it returns today. The scoped mode is opt-in.
-- **Chip predicate = badge predicate:** the `needs_staff` filter is the `unstaffed_events` fragment (end-instant helper, JSON-array guards, approved-and-not-dropped versus `positions_needed`) and a test pins the two to the same rows. Never `event_date >= CURRENT_DATE`.
+- **Chip predicate = badge predicate, at the event level:** a shift's `needs_staff` flag is the `unstaffed_events` fragment (end-instant helper, JSON-array guards, approved-and-not-dropped versus `positions_needed`); the chip keeps every shift of any EVENT that has a flagged shift, so a mixed event (one shift open, one staffed) stays whole and its card still says "2 shifts". A test pins the flagged shift set to the badge rows and the chip's event set to the badge's event set. The chip runs inside the upcoming scope, which also drops cancelled and archived events; today archiving reaps shifts to `cancelled`, so the badge's `status = 'open'` excludes the same rows and the two agree exactly. If a writer ever archives without reaping, the badge counts a shift the chip hides, and this sentence is where to look. Never `event_date >= CURRENT_DATE`.
+- **One bucket per shift:** Upcoming = not finished (the shift end instant, the same boundary as the badge) AND live (not cancelled, proposal not archived). Past = finished OR cancelled OR archived, whatever the date, so a cancelled event with a future date sits on Past where the benchmark's muted Cancelled card lives instead of vanishing from the phone. Spec section 4's feed-grounding sentence said calendar day for the scope boundary; this plan uses the end instant so scope and chip share one boundary and the UTC `CURRENT_DATE` trap cannot come back (a finished same-day event moves to Past at its end instant, not at midnight); the spec sentence is amended in the fold commit.
 - **Paging is by event:** an event's shifts never split across pages.
-- **Staleness line:** `formatStaleAt(res.staleAt)` renders inside `.m-stale` on every cache-served list. A test asserts the call site.
+- **Staleness line, two states:** every loaded list carries `.m-stale`: live = `as of <fetch time>` with no dot; cache-served (`res.staleAt` present) = `offline copy · as of <cached time>` with the amber dot. Only the time sits inside `.m-stale-time`. A test asserts both states at the call site.
 - **Writes: none in this lane.** Reads degrade per spec section 7.
 - **44px minimum tap targets;** the whole card is the target; the apparatus row is sticky inside `.m-main`.
-- **Copy from the benchmark, verbatim:** "Upcoming", "Past", "Needs staff", "as of", "first sync · fetching events", "Show more", "End of upcoming · N events", "End of history · N events", "Nothing on the calendar" / "Booked proposals land here on their event date.", "No past events" / "Finished events will land here.", "Fully staffed" / "Every upcoming shift is covered. New applications will show up here.", "N request(s)", "Cancelled", "Manual · tap to staff", "Bar", "Supplies", "N shifts".
+- **Copy from the benchmark, verbatim:** "Upcoming", "Past", "Needs staff", "as of" (live), "offline copy · as of" (cache-served, amber dot), "first sync · fetching events", "Show more", "End of upcoming · N events", "End of history · N events", "Nothing on the calendar" / "Booked proposals land here on their event date.", "No past events" / "Finished events will land here.", "Fully staffed" / "Every upcoming shift is covered. New applications will show up here.", "N request(s)", "Cancelled", "Manual · tap to staff", "Bar", "Supplies", "N shifts".
 - **Server tests:** `node --test <file>` one suite at a time from the repo root; `require('dotenv').config()` on the first line; `NODE_ENV !== 'production'` guard; nonce'd fixtures cleaned in `after`.
 - **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/`.
 - **File-size ratchet:** `shifts.js` is 786 lines (yellow); this lane makes it SHORTER by moving the projection out. New files aim under 300 lines.
@@ -72,6 +74,8 @@ lanes:
       - server/routes/shifts.adminScoped.test.js
       - client/src/utils/eventCards.js
       - client/src/utils/eventCards.test.js
+      - client/src/utils/staleTime.js
+      - client/src/utils/staleTime.test.js
       - client/src/pages/mobile/EventsListPhone.js
       - client/src/pages/mobile/EventsListPhone.test.js
       - client/src/pages/admin/EventsDashboard.js
@@ -96,7 +100,9 @@ lanes:
       (the phone ShiftDrawer: roster with inline Approve / Deny / Remove and
       confirms, role rows, alphabetical picker with search, seniority and
       distance meta, failure and offline states). Replaces the ma-e1 interim
-      drawer for manual shifts. Route-dead fallback dispatch on 404/403 reads.
+      drawer for manual shifts. Owns the push-history variant of
+      useDrawerParam (spec section 3: Android Back closes the sheet, never
+      leaves the page). Route-dead fallback dispatch on 404/403 reads.
     footprint: []  # declared in its own plan
     depends_on: [ma-e1-events-list]
     review_fleet: [code-review, consistency-check, security-review, ui-ux-review]  # assign/approve carry position, the payroll seam
@@ -142,31 +148,38 @@ lanes:
 
 ---
 
-### Task 1: Scoped, event-paged admin feed on `GET /shifts`
+### Task 1: Scoped, event-paged admin feed on `GET /shifts` (two commits: 1a the move, 1b the scoped mode)
 
 **Files:**
 - Modify: `server/routes/shifts.queries.js` (append the moved projection and the scoped builder; extend the import and the export)
-- Modify: `server/routes/shifts.js:103-216` (the admin branch)
+- Modify: `server/routes/shifts.js:103-221` (the admin branch)
 - Test: `server/routes/shifts.adminScoped.test.js` (new)
 
 **Interfaces:**
 - Consumes: `shiftNotFinishedSql`, `shiftFinishedSql` from `server/utils/shiftEndInstant.js`; `barRequiredSql`, `planQueueSql` already in `shifts.queries.js`.
-- Produces: `adminShiftsSelectSql(extraColumns = '')` (string: the SELECT through `) abr ON true`), `adminScopedShiftsSql(scope)` (string with `$1` offset, `$2` limit, `$3` needs_staff boolean), and the HTTP contract: `GET /api/shifts?scope=upcoming|past&limit=60&offset=0&needs_staff=1` answers `{ scope, offset, limit, total_events, needs_staff_events, has_more, next_offset, rows }` where `rows` are the legacy row shape plus `event_key` (text, `p<proposal_id>` or `s<shift_id>`) and `needs_staff` (boolean). Without `scope` the response is the legacy bare array.
+- Produces: `adminShiftsSelectSql(extraColumns = '')` (string: the SELECT through `) abr ON true`), `adminScopedShiftsSql(scope)` (string with `$1` offset in events, `$2` limit in events, `$3` needs_staff boolean), and the HTTP contract: `GET /api/shifts?scope=upcoming|past&limit=60&offset=0&needs_staff=1` answers `{ scope, offset, limit, total_events, scope_events, needs_staff_events, has_more, next_offset, rows }`. `total_events` counts the events in the current filter; `scope_events` counts the events in the scope regardless of the chip; `needs_staff_events` counts the events with at least one flagged shift (always 0 on `past`). `rows` are the legacy row shape plus `event_key` (text, `p<proposal_id>` or `s<shift_id>`) and `needs_staff` (boolean, per shift). Without `scope` the response is the legacy bare array, byte-identical.
+
+**Bucket law (Global Constraints, restated in SQL terms):** upcoming = `shiftNotFinishedSql('s','p') AND s.status <> 'cancelled' AND COALESCE(p.status, '') <> 'archived'`; past = `(shiftFinishedSql('s','p') OR s.status = 'cancelled' OR COALESCE(p.status, '') = 'archived')`. Every shift is in exactly one. The chip keeps whole events: `event_key IN (SELECT event_key FROM base WHERE needs_staff)`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `server/routes/shifts.adminScoped.test.js`. Copy the harness pieces verbatim from `server/routes/shifts.visibility.endInstant.test.js` (`:31-105`: dotenv, node:test imports, the production guard, `NONCE`, `get`, `makeUser`, `tokenFor`) and its Express app bootstrap from the same file's `before()` (the block that builds `app`, mounts `/api/shifts`, adds the error middleware and listens on an ephemeral port). Then:
+Create `server/routes/shifts.adminScoped.test.js`. Copy the harness pieces verbatim from `server/routes/shifts.visibility.endInstant.test.js` (`:31-105`: dotenv, node:test imports, the production guard, `NONCE`, `get`, `makeUser`, `tokenFor`) and its Express app bootstrap from `before()` at `:204-216` (builds `app`, mounts `/api/shifts`, `/api/admin`, `/api/messages`, adds the `AppError` middleware, listens on an ephemeral port). Then:
 
 ```js
 const EMAIL_PREFIX = `admin-scoped-${NONCE}-`;
 const CLIENT_TAG = `AdminScoped ${NONCE}`;
-let adminToken, staffToken, staffId, clientId, propA, propB;
+// Filled in at Step 2 from the CURRENT code, before the move: the exact sorted
+// column list the legacy admin array returns. Pinning it is what makes the
+// "verbatim" projection move a verified claim instead of a trusted one.
+const LEGACY_KEYS = [];
+let adminToken, staffToken, staffId, clientId, propA, propB, propC;
 const S = {}; // fixture key -> shift id
 
+// proposals.token is UUID NOT NULL DEFAULT gen_random_uuid(): leave it to the default.
 async function seedProposal(label, extra = {}) {
   const r = await pool.query(
-    `INSERT INTO proposals (client_id, status, event_date, guest_count, event_type, total_price, amount_paid, token)
-     VALUES ($1, $2, $3::date, $4, 'wedding', 1000, 100, gen_random_uuid()::text) RETURNING id`,
+    `INSERT INTO proposals (client_id, status, event_date, guest_count, event_type, total_price, amount_paid)
+     VALUES ($1, $2, $3::date, $4, 'wedding-reception', 1000, 100) RETURNING id`,
     [clientId, extra.status || 'deposit_paid', extra.date, extra.guests || 100]
   );
   return r.rows[0].id;
@@ -180,6 +193,9 @@ async function seedShift(key, { date, start = '18:00', end = '23:00', positions 
   S[key] = r.rows[0].id;
   return S[key];
 }
+async function approve(shiftId, userId) {
+  await pool.query(`INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'approved', 'Bartender')`, [shiftId, userId]);
+}
 const ymdOffset = (days) => {
   const d = new Date(); d.setUTCHours(12, 0, 0, 0); d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
@@ -192,35 +208,59 @@ before(async () => {
   const c = await pool.query(`INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555550000') RETURNING id`,
     [CLIENT_TAG, `${EMAIL_PREFIX}client@example.com`]);
   clientId = c.rows[0].id;
-  propA = await seedProposal('A', { date: ymdOffset(2) });        // two shifts, unstaffed
-  propB = await seedProposal('B', { date: ymdOffset(9) });        // one shift, fully staffed
+  propA = await seedProposal('A', { date: ymdOffset(2) });   // two shifts, both unstaffed
+  propB = await seedProposal('B', { date: ymdOffset(9) });   // one shift, fully staffed
+  propC = await seedProposal('C', { date: ymdOffset(6) });   // MIXED: one staffed, one open
   await seedShift('a1', { date: ymdOffset(2), positions: '["Bartender","Bartender","Bartender"]', proposalId: propA });
   await seedShift('a2', { date: ymdOffset(2), start: '17:00', end: '22:00', positions: '["Banquet Server"]', proposalId: propA });
-  await seedShift('manual', { date: ymdOffset(4) });              // proposal_id NULL
+  await seedShift('manual', { date: ymdOffset(4) });         // proposal_id NULL
   await seedShift('b1', { date: ymdOffset(9), proposalId: propB });
-  await pool.query(`INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'approved', 'Bartender')`, [S.b1, staffId]);
-  await seedShift('cancelled', { date: ymdOffset(3), status: 'cancelled' });
+  await approve(S.b1, staffId);
+  await seedShift('c1', { date: ymdOffset(6), proposalId: propC });
+  await approve(S.c1, staffId);
+  await seedShift('c2', { date: ymdOffset(6), start: '17:00', end: '22:00', proposalId: propC });
+  await seedShift('cancelled', { date: ymdOffset(3), status: 'cancelled' });   // future-dated, cancelled
   await seedShift('past', { date: ymdOffset(-3) });
 });
 
 after(async () => {
   await pool.query(`DELETE FROM shift_requests WHERE shift_id = ANY($1::int[])`, [Object.values(S)]);
   await pool.query(`DELETE FROM shifts WHERE id = ANY($1::int[])`, [Object.values(S)]);
-  await pool.query(`DELETE FROM proposals WHERE id = ANY($1::int[])`, [[propA, propB]]);
+  await pool.query(`DELETE FROM proposals WHERE id = ANY($1::int[])`, [[propA, propB, propC]]);
   await pool.query(`DELETE FROM clients WHERE id = $1`, [clientId]);
   await pool.query(`DELETE FROM users WHERE email LIKE $1`, [`${EMAIL_PREFIX}%`]);
   await pool.end();
   server.close();
 });
 
-const mine = (rows) => rows.filter(r => String(r.client_name || '').startsWith(CLIENT_TAG) || Object.values(S).includes(r.id));
+const ALL = () => Object.values(S);
+const mine = (rows) => rows.filter(r => ALL().includes(r.id));
 const ids = (rows) => mine(rows).map(r => r.id).sort((a, b) => a - b);
+const sorted = (xs) => [...xs].sort((a, b) => a - b);
 
-test('legacy call: bare array, every fixture present, no scoped columns', async () => {
+// The badge predicate, restated over the fixtures only. This is the truth the
+// chip must match (routes/admin/settings.js unstaffed_events).
+async function badgeShiftIds() {
+  const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
+  const r = await pool.query(`
+    SELECT s.id FROM shifts s LEFT JOIN proposals p ON p.id = s.proposal_id
+     WHERE ${shiftNotFinishedSql('s', 'p')} AND s.status = 'open'
+       AND s.positions_needed IS JSON ARRAY
+       AND jsonb_array_length(s.positions_needed::jsonb) > 0
+       AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
+           < jsonb_array_length(s.positions_needed::jsonb)
+       AND s.id = ANY($1::int[])`, [ALL()]);
+  return sorted(r.rows.map(x => x.id));
+}
+
+test('legacy call: bare array, every fixture present, the column set unchanged, no scoped columns', async () => {
   const r = await get('/api/shifts', adminToken);
   assert.equal(r.status, 200);
   assert.ok(Array.isArray(r.body));
-  assert.deepEqual(ids(r.body), Object.values(S).sort((a, b) => a - b));
+  assert.deepEqual(ids(r.body), sorted(ALL()));
+  const keys = Object.keys(r.body[0]).sort();
+  console.log('LEGACY_KEYS', JSON.stringify(keys));   // Step 2 pastes this into LEGACY_KEYS, then this line goes
+  if (LEGACY_KEYS.length) assert.deepEqual(keys, LEGACY_KEYS);
   assert.equal('event_key' in r.body[0], false);
 });
 
@@ -231,49 +271,45 @@ test('scope=upcoming pages by EVENT: both shifts of proposal A arrive together o
   // The dev DB holds other upcoming events; walk pages until our proposal A page appears.
   let page = r.body, found = null, guard = 0;
   while (page && guard++ < 400) {
-    const rows = mine(page.rows);
-    if (rows.length) { found = page; break; }
+    if (mine(page.rows).length) { found = page; break; }
     if (!page.has_more) break;
     page = (await get(`/api/shifts?scope=upcoming&limit=1&offset=${page.next_offset}`, adminToken)).body;
   }
   assert.ok(found, 'proposal A never paged in');
-  assert.deepEqual(ids(found.rows), [S.a1, S.a2].sort((a, b) => a - b));
+  assert.deepEqual(ids(found.rows), sorted([S.a1, S.a2]));
   assert.equal(found.rows.every(x => x.event_key === `p${propA}`), true);
   assert.equal(found.limit, 1);
 });
 
-test('scope=upcoming excludes cancelled and past; scope=past includes them, newest first', async () => {
+test('one bucket per shift: upcoming = live and unfinished; past = finished OR cancelled OR archived, newest first', async () => {
   const up = (await get('/api/shifts?scope=upcoming&limit=200', adminToken)).body;
-  const upIds = ids(up.rows);
-  assert.ok(upIds.includes(S.a1) && upIds.includes(S.manual) && upIds.includes(S.b1));
-  assert.ok(!upIds.includes(S.cancelled) && !upIds.includes(S.past));
+  assert.deepEqual(ids(up.rows), sorted([S.a1, S.a2, S.manual, S.b1, S.c1, S.c2]));
   const past = (await get('/api/shifts?scope=past&limit=200', adminToken)).body;
-  const pastRows = mine(past.rows);
-  assert.deepEqual(pastRows.map(r => r.id), [S.past]);
-  // Past is newest first across the whole page, not just ours.
+  assert.deepEqual(ids(past.rows), sorted([S.past, S.cancelled]), 'a future-dated cancelled shift lives on Past');
+  assert.equal(past.needs_staff_events, 0);
   const dates = past.rows.map(r => String(r.event_date).slice(0, 10));
   for (let i = 1; i < dates.length; i++) assert.ok(dates[i - 1] >= dates[i], 'past not descending');
 });
 
-test('needs_staff=1 returns exactly the badge predicate rows (chip = badge, verbatim)', async () => {
-  const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
-  const badge = await pool.query(`
-    SELECT s.id FROM shifts s LEFT JOIN proposals p ON p.id = s.proposal_id
-     WHERE ${shiftNotFinishedSql('s', 'p')} AND s.status = 'open'
-       AND s.positions_needed IS JSON ARRAY
-       AND jsonb_array_length(s.positions_needed::jsonb) > 0
-       AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
-           < jsonb_array_length(s.positions_needed::jsonb)
-       AND s.id = ANY($1::int[])`, [Object.values(S)]);
-  const expected = badge.rows.map(r => r.id).sort((a, b) => a - b);
-  assert.deepEqual(expected, [S.a1, S.a2, S.manual].sort((a, b) => a - b), 'fixture premise');
-  const r = (await get('/api/shifts?scope=upcoming&needs_staff=1&limit=200', adminToken)).body;
-  assert.deepEqual(ids(r.rows), expected);
-  assert.equal(r.rows.every(x => x.needs_staff === true), true);
-  // needs_staff_events counts EVENTS (A is one event with two unstaffed shifts) over the whole scope.
+test('needs_staff: the per-shift flag is the badge predicate; the chip keeps whole events', async () => {
+  const badge = await badgeShiftIds();
+  assert.deepEqual(badge, sorted([S.a1, S.a2, S.manual, S.c2]), 'fixture premise: c1 is staffed, c2 is open');
   const all = (await get('/api/shifts?scope=upcoming&limit=200', adminToken)).body;
+  // Flag truth, row by row.
+  assert.deepEqual(sorted(mine(all.rows).filter(x => x.needs_staff).map(x => x.id)), badge);
+  // Chip rows: every shift of any event that has a flagged shift. Proposal C stays whole.
+  const chip = (await get('/api/shifts?scope=upcoming&needs_staff=1&limit=200', adminToken)).body;
+  assert.deepEqual(ids(chip.rows), sorted([S.a1, S.a2, S.manual, S.c1, S.c2]));
+  assert.equal(mine(chip.rows).find(x => x.id === S.c1).needs_staff, false, 'the staffed shift rides along with its event, unflagged');
+  // Event sets agree between chip and badge.
+  const keyOf = (id) => all.rows.find(x => x.id === id).event_key;
+  assert.deepEqual([...new Set(mine(chip.rows).map(x => x.event_key))].sort(), [...new Set(badge.map(keyOf))].sort());
+  // Counts: needs_staff_events counts EVENTS over the whole scope; scope_events ignores the chip.
   const distinctNeedy = new Set(all.rows.filter(x => x.needs_staff).map(x => x.event_key)).size;
   assert.equal(all.needs_staff_events, distinctNeedy);
+  assert.equal(chip.needs_staff_events, distinctNeedy);
+  assert.equal(chip.scope_events, all.total_events);
+  assert.ok(chip.total_events <= chip.scope_events);
 });
 
 test('limit and offset clamp; totals and has_more are consistent', async () => {
@@ -282,8 +318,7 @@ test('limit and offset clamp; totals and has_more are consistent', async () => {
   assert.equal(r.offset, 0);
   assert.equal(r.has_more, r.offset + r.limit < r.total_events);
   assert.equal(r.next_offset, r.offset + r.limit);
-  const distinct = new Set(r.rows.map(x => x.event_key)).size;
-  assert.ok(distinct <= r.limit);
+  assert.ok(new Set(r.rows.map(x => x.event_key)).size <= r.limit);
 });
 
 test('a staff token ignores scope and gets the staff array', async () => {
@@ -293,12 +328,12 @@ test('a staff token ignores scope and gets the staff array', async () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run the test against the unmodified code and pin the legacy column set**
 
 Run: `node --test server/routes/shifts.adminScoped.test.js`
-Expected: the legacy test passes; every scoped test FAILS (`r.body.rows` undefined because the route still answers a bare array).
+Expected: the legacy test passes and prints `LEGACY_KEYS [...]`; every scoped test FAILS (`r.body.rows` undefined). Paste the printed sorted list into `LEGACY_KEYS`, delete the `console.log` line, re-run: the legacy test still passes, now with the column pin live.
 
-- [ ] **Step 3: Move the projection into `shifts.queries.js` and add the scoped builder**
+- [ ] **Step 3a: Move the projection into `shifts.queries.js` (behavior-inert)**
 
 In `server/routes/shifts.queries.js`: change line 10 to `const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInstant');`. Append before `module.exports`:
 
@@ -306,7 +341,7 @@ In `server/routes/shifts.queries.js`: change line 10 to `const { shiftNotFinishe
 // ── Admin branch of GET /shifts ────────────────────────────────────────────
 // One row per shift with the proposal, client, request counts and roster
 // aggregates that the Events dashboard, the Overview page and the phone Events
-// list read. Moved here from shifts.js (2026-09-15) so the scoped, event-paged
+// list read. Moved here from shifts.js (2026-09-18) so the scoped, event-paged
 // variant below reuses the projection verbatim: two hand-maintained copies is
 // how a column goes missing on one screen and not the other.
 //
@@ -315,19 +350,61 @@ In `server/routes/shifts.queries.js`: change line 10 to `const { shiftNotFinishe
 function adminShiftsSelectSql(extraColumns = '') {
   return `
     SELECT s.*,${extraColumns}
-      <PASTE shifts.js lines 108 through 212 here VERBATIM: from "u.email AS created_by_email," through ") abr ON true">
+      <PASTE shifts.js lines 109 through 217 here VERBATIM: from "u.email AS created_by_email," through ") abr ON true">
   `;
 }
+```
 
+Extend the export: `module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql, adminShiftsSelectSql };`
+
+In `server/routes/shifts.js`: extend the `:26` import to include `adminShiftsSelectSql`, and replace `:107-221` (from `const result = await pool.query(\`` through `return res.json(result.rows);`) with:
+
+```js
+    // Legacy shape, frozen: the desktop dashboard, the Overview page and the
+    // staff pages read this bare array with no params.
+    const result = await pool.query(`${adminShiftsSelectSql()}
+      ORDER BY s.event_date ASC
+      LIMIT 500
+    `);
+    return res.json(result.rows);
+```
+
+`shifts.js` must end SHORTER than 786 lines (about 680 after this step).
+
+- [ ] **Step 4a: Verify the move changed nothing, then commit it**
+
+Run: `node --test server/routes/shifts.adminScoped.test.js` (legacy test green with the column pin; scoped tests still red), then `node --test server/routes/shifts.planQueue.test.js` (green, same pass count as on `main`).
+
+```bash
+git add server/routes/shifts.js server/routes/shifts.queries.js server/routes/shifts.adminScoped.test.js && git commit -F - -- server/routes/shifts.js server/routes/shifts.queries.js server/routes/shifts.adminScoped.test.js <<'MSG'
+refactor(shifts): move the admin list projection into shifts.queries.js
+
+Verbatim move so the phone Events feed can share one SELECT with the
+desktop dump. The legacy response is pinned column for column by the
+new suite; no behavior changes in this commit.
+MSG
+```
+
+- [ ] **Step 3b: Add the scoped builder and the route branch**
+
+Append to `shifts.queries.js` after `adminShiftsSelectSql`:
+
+```js
 // The phone Events list (spec 2026-08-13-mobile-admin section 4, amended
-// 2026-09-15). Pages by EVENT (proposal, or the shift itself when manual) so
-// a two-shift wedding never splits across pages. $1 offset in events, $2 limit
-// in events, $3 needs_staff boolean.
+// 2026-09-15 and 2026-09-18). Pages by EVENT (proposal, or the shift itself
+// when manual) so a two-shift wedding never splits across pages. $1 offset in
+// events, $2 limit in events, $3 needs_staff boolean.
 //
 // `needs_staff` is the unstaffed_events badge predicate from
 // routes/admin/settings.js, restated over this projection's rc.approved_count
 // (the same approved-and-not-dropped count). Change one, change both, in the
-// same commit; shifts.adminScoped.test.js pins the two to the same rows.
+// same commit; shifts.adminScoped.test.js pins the two to the same rows. The
+// chip keeps whole events: a flagged shift pulls its siblings along.
+//
+// Bucket law: every shift is in exactly one scope. Upcoming = not finished
+// (the end instant, never a calendar day) and live. Past = finished, or
+// cancelled, or archived, whatever the date, which is where the muted
+// Cancelled card lives.
 const NEEDS_STAFF_SQL = `(s.status = 'open'
       AND s.positions_needed IS JSON ARRAY
       AND jsonb_array_length(s.positions_needed::jsonb) > 0
@@ -335,12 +412,9 @@ const NEEDS_STAFF_SQL = `(s.status = 'open'
 
 function adminScopedShiftsSql(scope) {
   const upcoming = scope === 'upcoming';
-  // Upcoming = has not finished (end instant, never a calendar day) and is
-  // live. Past = has finished, cancelled and archived included: that is the
-  // history the Past tab exists for.
   const scopeWhere = upcoming
     ? `${shiftNotFinishedSql('s', 'p')} AND s.status <> 'cancelled' AND COALESCE(p.status, '') <> 'archived'`
-    : shiftFinishedSql('s', 'p');
+    : `(${shiftFinishedSql('s', 'p')} OR s.status = 'cancelled' OR COALESCE(p.status, '') = 'archived')`;
   const rankOrder = upcoming ? 'event_date ASC, event_key ASC' : 'event_date DESC, event_key DESC';
   const extra = `
         COALESCE('p' || s.proposal_id::text, 's' || s.id::text) AS event_key,
@@ -350,12 +424,15 @@ function adminScopedShiftsSql(scope) {
       ${adminShiftsSelectSql(extra)}
       WHERE ${scopeWhere}
     ), scoped AS (
-      SELECT * FROM base WHERE ($3::boolean IS NOT TRUE OR needs_staff)
+      SELECT * FROM base
+       WHERE $3::boolean IS NOT TRUE
+          OR event_key IN (SELECT event_key FROM base WHERE needs_staff)
     ), ranked AS (
       SELECT scoped.*, DENSE_RANK() OVER (ORDER BY ${rankOrder}) AS event_rank FROM scoped
     )
     SELECT ranked.*,
            (SELECT MAX(event_rank) FROM ranked) AS total_events,
+           (SELECT COUNT(DISTINCT event_key) FROM base) AS scope_events,
            (SELECT COUNT(DISTINCT event_key) FROM base WHERE needs_staff) AS needs_staff_events
       FROM ranked
      WHERE event_rank > $1 AND event_rank <= $1 + $2
@@ -364,9 +441,7 @@ function adminScopedShiftsSql(scope) {
 }
 ```
 
-Extend the export: `module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql, adminShiftsSelectSql, adminScopedShiftsSql };`
-
-Then in `server/routes/shifts.js`: extend the `:26` import to include `adminShiftsSelectSql, adminScopedShiftsSql`, and replace the admin branch (`:106-216`, everything from `const result = await pool.query(\`` through `return res.json(result.rows);`) with:
+Add `adminScopedShiftsSql` to the export. Then in `server/routes/shifts.js`, extend the import again and replace the Step 3a block with:
 
 ```js
     const scope = req.query.scope;
@@ -380,18 +455,20 @@ Then in `server/routes/shifts.js`: extend the `:26` import to include `adminShif
       return res.json(result.rows);
     }
     // Phone Events list: scoped, paged by event, with totals. See
-    // adminScopedShiftsSql for the predicate law.
+    // adminScopedShiftsSql for the predicate and bucket law.
     const limit = clampInt(req.query.limit, 1, 200, 60);
     const offset = clampInt(req.query.offset, 0, 1000000, 0);
     const needsStaff = scope === 'upcoming' && req.query.needs_staff === '1';
     const result = await pool.query(adminScopedShiftsSql(scope), [offset, limit, needsStaff]);
     const first = result.rows[0];
     const totalEvents = first ? Number(first.total_events) : 0;
-    const needsStaffEvents = first ? Number(first.needs_staff_events) : 0;
-    const rows = result.rows.map(({ event_rank, total_events, needs_staff_events, ...row }) => row);
+    const scopeEvents = first ? Number(first.scope_events) : 0;
+    const needsStaffEvents = first && scope === 'upcoming' ? Number(first.needs_staff_events) : 0;
+    const rows = result.rows.map(({ event_rank, total_events, scope_events, needs_staff_events, ...row }) => row);
     return res.json({
       scope, offset, limit,
       total_events: totalEvents,
+      scope_events: scopeEvents,
       needs_staff_events: needsStaffEvents,
       has_more: offset + limit < totalEvents,
       next_offset: offset + limit,
@@ -411,31 +488,34 @@ function clampInt(raw, min, max, dflt) {
 }
 ```
 
-Delete the moved lines from `shifts.js` (the file must end SHORTER than 786 lines; the ratchet forbids growth past the cap and the hook warns above 700).
+Known limits, stated: an empty page (an offset past the end) carries no totals, so the route answers zeros with `has_more: false`; the client only requests offsets the previous envelope named. `total_events`, `scope_events` and `event_rank` arrive from pg as strings (bigint); the `Number()` calls above are load-bearing.
 
-- [ ] **Step 4: Run the test to verify it passes, in both timezones**
+- [ ] **Step 4b: Run the test to verify it passes, in both timezones**
 
 Run: `node --test server/routes/shifts.adminScoped.test.js` then `TZ=UTC node --test server/routes/shifts.adminScoped.test.js`
 Expected: all 6 tests PASS in both runs (read the pass count; a missing dotenv line shows as ECONNREFUSED, not as a failure).
 
 - [ ] **Step 5: Run the suites this change reaches, one at a time**
 
-Run, each from the repo root: `node --test server/routes/shifts.visibility.endInstant.test.js` (then again with `TZ=UTC`), `node --test server/routes/shifts.unstaffedJsonbGuard.test.js`, `node --test server/routes/admin/settings.badgeCounts.test.js`, `node --test server/routes/shifts.assignEligibility.test.js`.
-Expected: every suite green with the same pass counts as on `main` before this task.
+From the repo root, each `server/routes/shifts*.test.js` file in turn (`ls server/routes/shifts*.test.js` lists them; run `shifts.visibility.endInstant.test.js` in both TZs), then `server/routes/eventDetails.test.js` and `server/routes/admin/settings.badgeCounts.test.js`.
+Expected: every suite green with the same pass counts as on `main` before this task. `shifts.js` ends at about 707 lines (shorter than 786; still over the 700 soft cap, which warns and does not block).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Commit the scoped mode**
 
 ```bash
 git add server/routes/shifts.js server/routes/shifts.queries.js server/routes/shifts.adminScoped.test.js && git commit -F - -- server/routes/shifts.js server/routes/shifts.queries.js server/routes/shifts.adminScoped.test.js <<'MSG'
 feat(shifts): scoped, event-paged admin feed for the phone Events list
 
 GET /shifts?scope=upcoming|past pages by event with limit and offset,
-filters needs_staff on the unstaffed_events badge predicate, and answers
-an envelope with totals. The legacy call with no scope keeps its bare
-array. The admin projection moves into shifts.queries.js so both modes
-share one SELECT.
+filters needs_staff on the unstaffed_events badge predicate at the event
+level, and answers an envelope with totals. The legacy call with no
+scope keeps its bare array.
 MSG
 ```
+
+- [ ] **Step 7: Checkpoint review before any client task builds on the envelope**
+
+Dispatch `consistency-check` on the Task 1 diff (the chip predicate versus `routes/admin/settings.js` and `/unstaffed-upcoming`; the envelope field names versus Task 4's reads) and a narrow `database-review` on the query shape only (the DENSE_RANK window plus the three scalar subqueries over `ranked` and `base` per page; no schema changes). Fold findings before Task 2.
 
 ---
 
@@ -470,7 +550,7 @@ MSG
 import { groupShiftRows, railParts } from './eventCards';
 
 const row = (over = {}) => ({
-  id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding', event_type_custom: null,
+  id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding-reception', event_type_custom: null,
   event_date: '2026-08-15', start_time: '18:00', end_time: '23:00', location: 'Grove on the River',
   proposal_guest_count: 140, positions_needed: '["Bartender","Bartender","Bartender"]',
   approved_count: 2, pending_count: 2, status: 'open', proposal_status: 'deposit_paid',
@@ -487,7 +567,7 @@ test('two rows with one proposal become one card with slots, filled and pending 
   expect(c).toMatchObject({ key: 'p10', manual: false, id: 10, shiftCount: 2, slots: 4, filled: 3, open: 1, pending: 2, full: false, cancelled: false, barRental: true, supplies: true, isToday: false });
   expect(c.shiftIds).toEqual([1, 2]);
   expect(c.clientName).toBe('Henderson');
-  expect(c.kind).toBe('Wedding');
+  expect(c.kind).toBe('Wedding Reception');
   expect(c.timeRange).toBe('18:00–23:00 · 5h');   // first shift's range
   expect(c.venue).toBe('Grove on the River');
   expect(c.guests).toBe(140);
@@ -610,7 +690,7 @@ export function groupShiftRows(rows, { todayYmd } = {}) {
 }
 ```
 
-Note on `getEventTypeLabel`: it returns the type's label from `data/eventTypes.js` (e.g. `wedding` renders "Wedding"); if the test's expectation `'Wedding'` does not match that table's label text, fix the TEST to the table's label, never the table.
+Note on `getEventTypeLabel`: it returns the type's label from `data/eventTypes.js`; `wedding-reception` renders "Wedding Reception" and an unknown id falls back to "event". Fix a TEST to the table's label, never the table.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -636,7 +716,7 @@ MSG
 - Modify: `client/src/index.css` (insert into the mobile block, right before the `Staff hub chrome` comment at `:21237`)
 
 **Interfaces:**
-- Produces the class vocabulary `EventsListPhone` (and later the proposals list) renders: `.m-listbar`, `.m-chip-toggle(.on)`, `.m-stale-dot`, `.m-card(.m-card-row, .m-card-cancelled, .m-card-more, .m-card-skel)`, `.m-rail(.m-rail-dow, .m-rail-day, .m-rail-mon, .today)`, `.m-card-body`, `.m-card-head`, `.m-card-title`, `.m-card-kind`, `.m-card-guests`, `.m-card-meta`, `.m-card-foot`, `.m-frac(.full, .open, .past)`, `.m-shiftnote`, `.m-tags`, `.m-tag(.bar, .supplies, .manual)`, `.m-skel-bar`, `.m-end`, `.m-empty(.m-empty-title, .m-empty-body)`, `.m-showmore`.
+- Produces the class vocabulary `EventsListPhone` (and later the proposals list) renders, and nothing else: `.m-events`, `.m-listbar`, `.m-chip-toggle(.on)` with `.m-chip-count`, `.m-stale-dot` (the `.m-stale` and `.m-stale-time` rules already exist), `.m-card(.m-card-cancelled, .m-card-more, .m-card-skel)`, `.m-rail(.m-rail-dow, .m-rail-day, .m-rail-mon, .today)`, `.m-card-body`, `.m-card-head`, `.m-card-title`, `.m-card-kind`, `.m-card-guests`, `.m-card-meta`, `.m-card-foot`, `.m-frac(.full, .past)`, `.m-shiftnote`, `.m-tags`, `.m-tag(.bar, .supplies)` (the Manual tag is a plain `.m-tag`, as the benchmark renders it), `.m-showmore`, `.m-shownof`, `.m-end`, `.m-empty(.ok, .m-empty-title, .m-empty-body)`, `.m-skel-note`, `.m-skel-rail`, `.m-skel-bar(.thin)`, plus the two type tokens `--fs-body` and `--fs-meta`. Task 4 Step 4b greps the component's classNames against this block so the list above and the CSS cannot drift.
 
 - [ ] **Step 1: Add the rules**
 
@@ -648,6 +728,9 @@ Insert this block before `/* ====...Staff hub chrome` (values come from `compone
    Card rules folded from the design system's components-mobile.css; the
    date rail, fraction, tags and list states promote the benchmark's inline
    treatment to classes. Lists are date-ordered cards, never tables. ---- */
+/* Type tokens the design system defines (tokens/typography.css) and index.css
+   never did; the mobile block is their first consumer. */
+html[data-app="admin-os"] { --fs-body: 13px; --fs-meta: 11.5px; }
 html[data-app="admin-os"] .m-listbar {
   position: sticky; top: 0; z-index: 2;
   display: flex; align-items: center; gap: 8px;
@@ -749,7 +832,7 @@ html[data-app="admin-os"][data-skin="light"] .m-card-more .m-showmore { color: v
 html[data-app="admin-os"][data-skin="light"] .m-empty.ok { color: var(--ms-emerald); }
 ```
 
-Before committing, confirm every custom property used exists in `index.css` (`grep -c -- '--ms-navy' client/src/index.css` etc. for `--ms-navy`, `--ms-emerald`, `--ms-bordeaux`, `--accent-soft`, `--accent-ink`, `--row-hover`, `--shadow-card`, `--radius-lg`, `--radius-sm`, `--fs-body`, `--fs-meta`, `--font-numeric`, `--font-mono`, `--info-h`, `--ok-h`, `--danger-h`, `--warn-h`, `--accent-h`). Any that is missing gets the design system's value from `docs/design-artifacts/_ds/.../tokens/colors.css` added to the same block with a comment, never a bare hex.
+Every custom property in the block was verified present in `index.css` on 2026-09-18 except `--fs-body` and `--fs-meta`, which the block now defines from the design system's typography tokens. If a later token rename lands before this lane merges, re-run the grep (`grep -c -- '--ms-navy' client/src/index.css` and so on) and take any missing value from `docs/design-artifacts/_ds/.../tokens/*.css`, never a bare hex.
 
 - [ ] **Step 2: Build gate**
 
@@ -774,14 +857,32 @@ MSG
 ### Task 4: `EventsListPhone`
 
 **Files:**
+- Modify: `client/src/utils/staleTime.js` (add the time-only formatter)
+- Test: `client/src/utils/staleTime.test.js` (extend)
 - Create: `client/src/pages/mobile/EventsListPhone.js`
 - Test: `client/src/pages/mobile/EventsListPhone.test.js`
 
 **Interfaces:**
-- Consumes: `groupShiftRows`, `railParts` (Task 2); `formatStaleAt`; `useUrlListState`; `useDrawerParam`; `ShiftDrawer` (`components/adminos/drawers/ShiftDrawer`); `StatusChip`; `Icon`; the Task 1 envelope; the Task 3 classes.
-- Produces: default export `EventsListPhone()` rendering the whole list body (the chrome supplies header and tab bar). URL state: `?scope=past` (default upcoming, omitted from the URL), `?needs=1`. Persists scroll in `sessionStorage` under `m-events-scroll:<scope>:<needs>`.
+- Consumes: `groupShiftRows`, `railParts` (Task 2); `formatStaleTime` (this task); `useUrlListState`; `useDrawerParam`; `ShiftDrawer` (`components/adminos/drawers/ShiftDrawer`); `StatusChip`; `Icon`; the Task 1 envelope; the Task 3 classes.
+- Produces: `formatStaleTime(iso, now) -> "2:14 PM" | "Aug 13, 2:14 PM" | null` beside `formatStaleAt`; default export `EventsListPhone()` rendering the whole list body (the chrome supplies header and tab bar). URL state: `?scope=past` (default upcoming, omitted from the URL), `?needs=1`. Persists scroll in `sessionStorage` under `m-events-scroll:<scope>:<needs>` for the life of one launch (a cold launch of the installed app lands at the top by design).
 
 - [ ] **Step 1: Write the failing tests**
+
+Append to `client/src/utils/staleTime.test.js`:
+
+```js
+import { formatStaleTime } from './staleTime';
+
+test('formatStaleTime returns the time alone, with the day when it is not today', () => {
+  const now = new Date('2026-08-13T20:00:00');
+  expect(formatStaleTime('2026-08-13T14:14:00', now)).toBe('2:14 PM');
+  expect(formatStaleTime('2026-08-12T14:14:00', now)).toBe('Aug 12, 2:14 PM');
+  expect(formatStaleTime(null, now)).toBeNull();
+  expect(formatStaleTime('garbage', now)).toBeNull();
+});
+```
+
+Create `client/src/pages/mobile/EventsListPhone.test.js`:
 
 ```js
 import React from 'react';
@@ -797,13 +898,15 @@ jest.mock('../../context/ToastContext', () => ({ useToast: () => ({ success: jes
 jest.mock('../../components/adminos/drawers/ShiftDrawer', () => ({ __esModule: true, default: ({ open, shiftId }) => (open ? <div data-testid="shift-drawer">drawer {shiftId}</div> : null) }));
 
 const row = (over = {}) => ({
-  id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding',
+  id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding-reception',
   event_date: '2999-08-15', start_time: '18:00', end_time: '23:00', location: 'Grove on the River',
   proposal_guest_count: 140, positions_needed: '["Bartender","Bartender","Bartender"]',
   approved_count: 2, pending_count: 2, status: 'open', proposal_status: 'deposit_paid',
   bar_required: true, supply_run_required: true, ...over,
 });
-const envelope = (rows, over = {}) => ({ data: { scope: 'upcoming', offset: 0, limit: 60, total_events: rows.length, needs_staff_events: 1, has_more: false, next_offset: 60, rows }, ...over });
+const env = (rows, over = {}) => ({
+  data: { scope: 'upcoming', offset: 0, limit: 60, total_events: rows.length, scope_events: rows.length, needs_staff_events: 1, has_more: false, next_offset: 60, rows, ...over },
+});
 
 function LocationProbe() { const l = useLocation(); return <div data-testid="loc">{l.pathname + l.search}</div>; }
 function mount(initial = '/events') {
@@ -820,7 +923,7 @@ function mount(initial = '/events') {
 beforeEach(() => { jest.clearAllMocks(); window.sessionStorage.clear(); });
 
 test('fetches scope=upcoming by default and renders one card per event with the benchmark facts', async () => {
-  api.get.mockResolvedValue(envelope([row(), row({ id: 2, positions_needed: '["Banquet Server"]', approved_count: 1, pending_count: 0 })]));
+  api.get.mockResolvedValue(env([row(), row({ id: 2, positions_needed: '["Banquet Server"]', approved_count: 1, pending_count: 0 })]));
   mount();
   expect(await screen.findByText('Henderson')).toBeInTheDocument();
   expect(api.get).toHaveBeenCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } });
@@ -833,13 +936,16 @@ test('fetches scope=upcoming by default and renders one card per event with the 
   expect(screen.getByText(/End of upcoming/)).toBeInTheDocument();
 });
 
-test('the Needs staff chip writes ?needs=1 and refetches with needs_staff=1; Past hides the chip and drops needs', async () => {
-  api.get.mockResolvedValue(envelope([row()]));
+test('the Needs staff chip writes ?needs=1, refetches with needs_staff=1, hides the end divider; Past hides the chip and drops needs', async () => {
+  api.get.mockResolvedValue(env([row()], { needs_staff_events: 1 }));
   mount();
   await screen.findByText('Henderson');
+  expect(screen.getByRole('button', { name: /Needs staff/ })).toHaveTextContent('1');
   fireEvent.click(screen.getByRole('button', { name: /Needs staff/ }));
   await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0, needs_staff: 1 } }));
   expect(screen.getByTestId('loc')).toHaveTextContent('/events?needs=1');
+  await screen.findByText('Henderson');
+  expect(screen.queryByText(/End of upcoming/)).toBeNull();
   fireEvent.click(screen.getByRole('radio', { name: 'Past' }));
   await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'past', limit: 60, offset: 0 } }));
   expect(screen.getByTestId('loc')).toHaveTextContent('/events?scope=past');
@@ -848,8 +954,8 @@ test('the Needs staff chip writes ?needs=1 and refetches with needs_staff=1; Pas
 
 test('Show more appends the next page and the end divider counts events', async () => {
   api.get
-    .mockResolvedValueOnce(envelope([row()], { data: { scope: 'upcoming', offset: 0, limit: 1, total_events: 2, needs_staff_events: 0, has_more: true, next_offset: 1, rows: [row()] } }))
-    .mockResolvedValueOnce({ data: { scope: 'upcoming', offset: 1, limit: 1, total_events: 2, needs_staff_events: 0, has_more: false, next_offset: 2, rows: [row({ id: 3, proposal_id: 11, event_key: 'p11', client_name: 'Okafor' })] } });
+    .mockResolvedValueOnce({ data: { scope: 'upcoming', offset: 0, limit: 1, total_events: 2, scope_events: 2, needs_staff_events: 0, has_more: true, next_offset: 1, rows: [row()] } })
+    .mockResolvedValueOnce({ data: { scope: 'upcoming', offset: 1, limit: 1, total_events: 2, scope_events: 2, needs_staff_events: 0, has_more: false, next_offset: 2, rows: [row({ id: 3, proposal_id: 11, event_key: 'p11', client_name: 'Okafor' })] } });
   mount();
   await screen.findByText('Henderson');
   const more = screen.getByRole('button', { name: /Show more/ });
@@ -861,36 +967,45 @@ test('Show more appends the next page and the end divider counts events', async 
   expect(screen.getByText('End of upcoming · 2 events')).toBeInTheDocument();
 });
 
-test('a cache-served response renders the staleness line from res.staleAt (the call site)', async () => {
-  api.get.mockResolvedValue({ ...envelope([row()]), staleAt: new Date().toISOString() });
+test('a live response renders "as of <fetch time>" with no dot', async () => {
+  api.get.mockResolvedValue(env([row()]));
   mount();
   await screen.findByText('Henderson');
-  expect(screen.getByText(/^as of /)).toHaveClass('m-stale-time');
+  const stale = screen.getByText(/^as of/).closest('.m-stale');
+  expect(stale.querySelector('.m-stale-dot')).toBeNull();
+  expect(stale.querySelector('.m-stale-time').textContent).toMatch(/\d{1,2}:\d{2} (AM|PM)$/);
+  expect(screen.queryByText(/offline copy/)).toBeNull();
 });
 
-test('a live response renders no staleness line', async () => {
-  api.get.mockResolvedValue(envelope([row()]));
+test('a cache-served response renders "offline copy · as of <cached time>" with the dot (the call site)', async () => {
+  api.get.mockResolvedValue({ ...env([row()]), staleAt: '2026-08-13T14:14:00' });
   mount();
   await screen.findByText('Henderson');
-  expect(screen.queryByText(/^as of /)).toBeNull();
+  const stale = screen.getByText(/offline copy · as of/).closest('.m-stale');
+  expect(stale.querySelector('.m-stale-dot')).not.toBeNull();
+  expect(stale.querySelector('.m-stale-time')).toHaveTextContent('2:14 PM');
 });
 
-test('empty states: Upcoming, Past, and Needs staff with nothing open', async () => {
-  api.get.mockResolvedValue(envelope([]));
+test('empty states: Upcoming, Past, Needs staff with nothing open, Needs staff on an empty calendar', async () => {
+  api.get.mockResolvedValue(env([]));
   mount();
   expect(await screen.findByText('Nothing on the calendar')).toBeInTheDocument();
-  api.get.mockResolvedValue({ data: { scope: 'past', offset: 0, limit: 60, total_events: 0, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
+  api.get.mockResolvedValue({ data: { scope: 'past', offset: 0, limit: 60, total_events: 0, scope_events: 0, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
   fireEvent.click(screen.getByRole('radio', { name: 'Past' }));
   expect(await screen.findByText('No past events')).toBeInTheDocument();
-  api.get.mockResolvedValue({ data: { scope: 'upcoming', offset: 0, limit: 60, total_events: 3, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
+  api.get.mockResolvedValue({ data: { scope: 'upcoming', offset: 0, limit: 60, total_events: 0, scope_events: 3, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
   fireEvent.click(screen.getByRole('radio', { name: 'Upcoming' }));
   await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } }));
   fireEvent.click(await screen.findByRole('button', { name: /Needs staff/ }));
   expect(await screen.findByText('Fully staffed')).toBeInTheDocument();
+  api.get.mockResolvedValue({ data: { scope: 'upcoming', offset: 0, limit: 60, total_events: 0, scope_events: 0, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
+  fireEvent.click(screen.getByRole('button', { name: /Needs staff/ }));   // off
+  fireEvent.click(screen.getByRole('button', { name: /Needs staff/ }));   // on again, empty calendar
+  expect(await screen.findByText('Nothing on the calendar')).toBeInTheDocument();
 });
 
 test('a booked card navigates to the event detail; a manual card opens the shift drawer', async () => {
-  api.get.mockResolvedValue(envelope([row(), row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null, proposal_guest_count: null })]));
+  api.get.mockResolvedValue(env([row(), row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null, proposal_guest_count: null })]));
   mount();
   await screen.findByText('Henderson');
   fireEvent.click(screen.getByRole('button', { name: /Night Market/ }));
@@ -900,7 +1015,7 @@ test('a booked card navigates to the event detail; a manual card opens the shift
 });
 
 test('a failed load shows an inline retry, never a silent empty list', async () => {
-  api.get.mockRejectedValueOnce({ status: 0, message: 'Network error. Check your connection.' }).mockResolvedValueOnce(envelope([row()]));
+  api.get.mockRejectedValueOnce({ status: 0, message: 'Network error. Check your connection.' }).mockResolvedValueOnce(env([row()]));
   mount();
   expect(await screen.findByText(/Couldn't load events/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -910,10 +1025,28 @@ test('a failed load shows an inline retry, never a silent empty list', async () 
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventsListPhone.test.js`
-Expected: FAIL, `Cannot find module './EventsListPhone'`.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/staleTime.test.js src/pages/mobile/EventsListPhone.test.js`
+Expected: FAIL, `formatStaleTime is not a function` and `Cannot find module './EventsListPhone'`.
 
-- [ ] **Step 3: Write the component**
+- [ ] **Step 3: Add the formatter, then write the component**
+
+Append to `client/src/utils/staleTime.js` (keep `formatStaleAt` as is):
+
+```js
+// The time alone, for the benchmark's two-state line where the label
+// ("as of" live, "offline copy · as of" cache-served) is rendered by the screen
+// and only the time sits in .m-stale-time. Same day rule as formatStaleAt.
+export function formatStaleTime(iso, now = new Date()) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString('en-US', TIME);
+  return sameDay ? time : `${d.toLocaleDateString('en-US', DAY)}, ${time}`;
+}
+```
+
+Create `client/src/pages/mobile/EventsListPhone.js`:
 
 ```js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -922,7 +1055,7 @@ import api from '../../utils/api';
 import useUrlListState from '../../hooks/useUrlListState';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import { groupShiftRows, railParts } from '../../utils/eventCards';
-import { formatStaleAt } from '../../utils/staleTime';
+import { formatStaleTime } from '../../utils/staleTime';
 import StatusChip from '../../components/adminos/StatusChip';
 import Icon from '../../components/adminos/Icon';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
@@ -934,7 +1067,8 @@ import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 // and groups the per-shift rows into one card per event.
 //
 // Manual shifts (no proposal, so no detail page) open the desktop ShiftDrawer
-// here as the no-dead-end interim; lane ma-e2 swaps in the phone sheet.
+// here as the no-dead-end interim; lane ma-e2 swaps in the phone sheet and
+// owns the push-history Back behavior. This drawer keeps replace semantics.
 const PAGE = 60;
 const LIST_DEFAULTS = { scope: 'upcoming', needs: '' };
 const SCROLL_KEY = (scope, needs) => `m-events-scroll:${scope}:${needs ? 1 : 0}`;
@@ -951,7 +1085,8 @@ export default function EventsListPhone() {
 
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(null);      // last envelope minus rows
-  const [staleAt, setStaleAt] = useState(null);
+  const [staleAt, setStaleAt] = useState(null); // x-sw-cached-at when the SW served it
+  const [fetchedAt, setFetchedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
@@ -973,6 +1108,7 @@ export default function EventsListPhone() {
       setRows(prev => (append ? prev.concat(page) : page));
       setMeta(rest);
       setStaleAt(res.staleAt || null);
+      setFetchedAt(new Date().toISOString());
     } catch (err) {
       if (seq !== reqSeq.current) return;
       setError(err && err.message ? err.message : 'Network error. Check your connection.');
@@ -986,6 +1122,8 @@ export default function EventsListPhone() {
 
   // List scroll restore (spec section 9): the scroll container is the chrome's
   // .m-main, keyed per scope + chip so Past does not inherit Upcoming's offset.
+  // sessionStorage lives for one launch: Back from a detail restores, a cold
+  // launch of the installed app lands at the top on purpose.
   useEffect(() => {
     const host = scrollHost();
     if (!host) return undefined;
@@ -1010,8 +1148,10 @@ export default function EventsListPhone() {
   }, [loading, scope, needs]);
 
   const cards = useMemo(() => groupShiftRows(rows), [rows]);
-  const stale = formatStaleAt(staleAt);
+  const cachedTime = formatStaleTime(staleAt);
+  const liveTime = formatStaleTime(fetchedAt);
   const totalEvents = meta ? Number(meta.total_events || 0) : 0;
+  const scopeEvents = meta ? Number(meta.scope_events || 0) : 0;
   const hasMore = !!(meta && meta.has_more);
   const needsCount = meta ? Number(meta.needs_staff_events || 0) : 0;
 
@@ -1020,10 +1160,11 @@ export default function EventsListPhone() {
     else navigate(`/events/${card.tapTarget.id}`);
   };
 
+  // Benchmark renderVals: the chip's empty state is "Fully staffed" only when
+  // the scope has events at all; an empty calendar says so even with the chip on.
   let empty = null;
   if (!loading && !error && cards.length === 0) {
-    if (needs && totalEvents > 0) empty = { ok: true, icon: 'check', title: 'Fully staffed', body: 'Every upcoming shift is covered. New applications will show up here.' };
-    else if (needs) empty = { ok: true, icon: 'check', title: 'Fully staffed', body: 'Every upcoming shift is covered. New applications will show up here.' };
+    if (needs && scopeEvents > 0) empty = { ok: true, icon: 'check', title: 'Fully staffed', body: 'Every upcoming shift is covered. New applications will show up here.' };
     else if (scope === 'past') empty = { icon: 'calendar', title: 'No past events', body: 'Finished events will land here.' };
     else empty = { icon: 'calendar', title: 'Nothing on the calendar', body: 'Booked proposals land here on their event date.' };
   }
@@ -1070,10 +1211,10 @@ export default function EventsListPhone() {
 
       {!loading && !error && (
         <>
-          {stale && (
+          {(cachedTime || liveTime) && (
             <div className="m-stale">
-              <span className="m-stale-dot" aria-hidden="true" />
-              <span className="m-stale-time">{stale}</span>
+              {cachedTime && <span className="m-stale-dot" aria-hidden="true" />}
+              <span>{cachedTime ? 'offline copy · as of' : 'as of'} <span className="m-stale-time">{cachedTime || liveTime}</span></span>
             </div>
           )}
           {cards.map(card => <EventCard key={card.key} card={card} past={scope === 'past'} onTap={onTap} />)}
@@ -1090,7 +1231,7 @@ export default function EventsListPhone() {
               <span className="m-shownof">{cards.length} of {totalEvents}</span>
             </button>
           )}
-          {!hasMore && cards.length > 0 && (
+          {!hasMore && !needs && cards.length > 0 && (
             <div className="m-end"><span>{scope === 'past' ? 'End of history' : 'End of upcoming'} · {totalEvents} {totalEvents === 1 ? 'event' : 'events'}</span></div>
           )}
         </>
@@ -1134,7 +1275,7 @@ function EventCard({ card, past, onTap }) {
             </>
           )}
           <span className="m-tags">
-            {card.manual && <span className="m-tag manual">Manual · tap to staff</span>}
+            {card.manual && <span className="m-tag">Manual · tap to staff</span>}
             {card.barRental && <span className="m-tag bar">Bar</span>}
             {card.supplies && <span className="m-tag supplies">Supplies</span>}
           </span>
@@ -1145,22 +1286,35 @@ function EventCard({ card, past, onTap }) {
 }
 ```
 
-Notes for the implementer: `setListState({ scope: '' })` clears the param because `''` equals the default; `aria-label` on the card is the benchmark's title text so the tests and screen readers name the target; the `empty` branches for `needs` collapse to one (keep the single branch, the duplicate above is a reminder that the "Fully staffed" copy applies whenever the chip is on and nothing matches).
+Notes for the implementer: `setListState({ scope: '' })` clears the param because `''` equals the default; `aria-label` on the card is the benchmark's title text so the tests and screen readers name the target; with the chip on, Show more still renders when the server says `has_more` (honest paging) but the end divider does not (the benchmark hides it while filtering, and its count would be the filtered count).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventsListPhone.test.js`
-Expected: 8 PASS.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/staleTime.test.js src/pages/mobile/EventsListPhone.test.js`
+Expected: staleTime suite green including the new case; EventsListPhone 9 PASS.
+
+- [ ] **Step 4b: The CSS/markup seam receipt**
+
+Run from `client/`:
+
+```bash
+grep -oE 'className=\{?[`"'"'"'][^`"'"'"']+' src/pages/mobile/EventsListPhone.js | grep -oE 'm-[a-z0-9-]+' | sort -u > /tmp/m-used.txt
+grep -oE '\.m-[a-z0-9-]+' src/index.css | tr -d . | sort -u > /tmp/m-defined.txt
+comm -23 /tmp/m-used.txt /tmp/m-defined.txt
+```
+
+Expected: empty output (every `m-*` class the component emits has a rule). A non-empty line is either a typo in the component or a missing rule in Task 3; fix whichever it is before committing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add client/src/pages/mobile/EventsListPhone.js client/src/pages/mobile/EventsListPhone.test.js && git commit -F - -- client/src/pages/mobile/EventsListPhone.js client/src/pages/mobile/EventsListPhone.test.js <<'MSG'
+git add client/src/utils/staleTime.js client/src/utils/staleTime.test.js client/src/pages/mobile/EventsListPhone.js client/src/pages/mobile/EventsListPhone.test.js && git commit -F - -- client/src/utils/staleTime.js client/src/utils/staleTime.test.js client/src/pages/mobile/EventsListPhone.js client/src/pages/mobile/EventsListPhone.test.js <<'MSG'
 feat(mobile): the phone Events list
 
 Upcoming / Past switch, Needs staff chip, one card per event, Show more,
-end divider, skeleton, empty states, the staleness line on cache-served
-reads, scroll restore, and taps into the detail or the shift drawer.
+end divider, skeleton, empty states, the two-state staleness line (live
+"as of", cache-served "offline copy · as of" with the dot), scroll
+restore within a launch, and taps into the detail or the shift drawer.
 MSG
 ```
 
@@ -1183,33 +1337,37 @@ import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen } from '@testing-library/react';
 
-const mobileView = { isPhone: false, desktopView: jest.fn(() => false), setDesktopView: jest.fn() };
-jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mobileView }));
+// `mock` prefix: babel-plugin-jest-hoist only lets a jest.mock factory close over
+// variables named mock*, and this one calls jest.fn() so the pure-const exemption
+// does not apply.
+const mockMobileView = { isPhone: false, desktopView: jest.fn(() => false), setDesktopView: jest.fn() };
+jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockMobileView }));
 jest.mock('../mobile/EventsListPhone', () => ({ __esModule: true, default: () => <div data-testid="phone-list" /> }));
 // The desktop body pulls in the toolbar, drawers and api; stub what it needs to mount.
 jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(() => Promise.resolve({ data: [] })) } }));
 jest.mock('../../context/ToastContext', () => ({ useToast: () => ({ success: jest.fn(), error: jest.fn(), info: jest.fn() }) }));
-jest.mock('react-router-dom', () => ({ ...jest.requireActual('react-router-dom'), useNavigate: () => jest.fn(), useSearchParams: () => [new URLSearchParams(), jest.fn()] }));
-
+import { MemoryRouter } from 'react-router-dom';
 import EventsDashboard from './EventsDashboard';
 
+const mount = () => render(<MemoryRouter initialEntries={['/events']}><EventsDashboard /></MemoryRouter>);
+
 test('phone width without a Desktop-view override renders the phone list', () => {
-  mobileView.isPhone = true; mobileView.desktopView.mockReturnValue(false);
-  render(<EventsDashboard />);
+  mockMobileView.isPhone = true; mockMobileView.desktopView.mockReturnValue(false);
+  mount();
   expect(screen.getByTestId('phone-list')).toBeInTheDocument();
-  expect(mobileView.desktopView).toHaveBeenCalledWith('events-list');
+  expect(mockMobileView.desktopView).toHaveBeenCalledWith('events-list');
 });
 
 test('phone width with the Desktop-view override renders the desktop dashboard', () => {
-  mobileView.isPhone = true; mobileView.desktopView.mockReturnValue(true);
-  render(<EventsDashboard />);
+  mockMobileView.isPhone = true; mockMobileView.desktopView.mockReturnValue(true);
+  mount();
   expect(screen.queryByTestId('phone-list')).toBeNull();
   expect(screen.getByText('Events')).toBeInTheDocument();   // the desktop page title
 });
 
 test('desktop width renders the desktop dashboard', () => {
-  mobileView.isPhone = false;
-  render(<EventsDashboard />);
+  mockMobileView.isPhone = false;
+  mount();
   expect(screen.queryByTestId('phone-list')).toBeNull();
 });
 ```
@@ -1274,7 +1432,7 @@ Append to `pages`:
       "authAssert": ".m-listbar" }
 ```
 
-If `mobile-capture.js` derives the URL from `host` in a way that does not accept bare `localhost` (check its URL construction near the `pages` loop), use the host string the recipe says the admin app answers on and note it in the commit.
+`"host": "localhost"` is right: the script builds `http://${entry.host}:3000` (`scripts/mobile-capture.js:107`) and the admin app answers on plain localhost.
 
 - [ ] **Step 2: Run the capture**
 
@@ -1289,9 +1447,12 @@ Using `playwright-core` with the bundled Chromium at 390x844, a dev admin JWT, a
 - C3: the Needs staff chip count equals the count of distinct `event_key` values with `needs_staff` true in a direct `GET /api/shifts?scope=upcoming&limit=200` response for the same JWT.
 - C4: the chip rows (needs on) equal the badge: compare the set of shift ids in `GET /api/shifts?scope=upcoming&needs_staff=1&limit=200` with `GET /api/admin/badge-counts` `unstaffed_events` count of shifts (the count must equal the number of rows).
 - C5: `elementFromPoint` on the center of the first card and on the Show more row returns the button itself (nothing overlays them).
-- C6: a manual-shift card opens the drawer; Android Back (history back) closes it and stays on `/events`.
+- C6: a manual-shift card opens the desktop drawer; its Approve and Deny rows pass an `elementFromPoint` probe at their centers at 390px width (the interim is a primary action reachable from this screen). Closing it through its own close control returns to the list. Android Back from the open drawer LEAVES the list (the interim drawer keeps `useDrawerParam`'s replace semantics); the phone sheet in lane ma-e2 owns the push variant and the Back-closes-the-sheet law.
 - C7: offline: set the context offline after a live load, reload; the list renders from cache with the `as of` line and the amber dot (the SW serves `/api/shifts?scope=upcoming&limit=60&offset=0` on transport failure). Assert the `.m-stale-time` text starts with "as of".
 - C8: both skins: switch Lighting to House Lights on More, return to Events, screenshot; compare against the benchmark's light Events screen (cards squared, fraction bordeaux/emerald, tags navy/emerald).
+- C9: open a card's detail, go Back: the list restores its scroll offset (within one launch). Then kill and cold-launch the installed app on the same route: the list lands at the top (sessionStorage does not survive a cold launch; route restore does, and a stale offset over a re-fetched list is not worth restoring). Record both as the intended reading of spec section 9.
+
+Record C1 to C9 results in the "Browser checks" section at the end of this plan, on main, before the merge.
 
 Then run the ui-ux-review lane agent against the benchmark's Events tab (dark and light, Upcoming, Past, Needs staff, empty, Show more, end divider) with the dev server running; adherence to the artifact is its primary benchmark.
 
@@ -1323,11 +1484,11 @@ Replace the `GET /` row with: `| GET | \`/\` | Yes | List shifts (staff see open
 
 - [ ] **Step 3: walkthroughs-owed**
 
-Add under the open items: `- [ ] **Phone Events list (lane ma-e1, merged <date>).** Pixel, installed PWA, prod data: Upcoming opens on today, Past shows history newest first with cancelled cards muted, the Needs staff chip matches the tab badge's meaning (chip counts events, badge counts shifts), Show more pages without splitting a two-shift event, airplane mode shows the "as of" line, a manual shift opens the drawer and Back closes it. Both skins.`
+Add under the open items: `- [ ] **Phone Events list (lane ma-e1, merged <date>).** Pixel, installed PWA, prod data: Upcoming opens on today, Past shows history newest first with cancelled cards muted, the Needs staff chip matches the tab badge's meaning (chip counts events, badge counts shifts), Show more pages without splitting a two-shift event, airplane mode shows the "offline copy · as of" line with the dot while a live load shows "as of" alone, a manual shift opens the drawer (Back leaves the list until the ma-e2 sheet lands). Both skins.`
 
 - [ ] **Step 4: fix list**
 
-Amend the `:1725` entry's first sentence to record that the Events list is built by lane ma-e1 (this plan) and that the detail, staffing sheet, edit sheet, proposals list and detail, and search are declared lanes in this plan's lane map, keeping the staleness-line paragraph's history but marking it CLOSED for the list (the call site now exists and is tested).
+Amend the `:1808` entry's first sentence to record that the Events list is built by lane ma-e1 (this plan) and that the detail, staffing sheet, edit sheet, proposals list and detail, and search are declared lanes in this plan's lane map, keeping the staleness-line paragraph's history but marking it CLOSED for the list (the call site now exists and is tested).
 
 - [ ] **Step 5: Commit**
 
@@ -1343,7 +1504,7 @@ MSG
 
 - [ ] **Step 1: Server suites, one at a time from the repo root**
 
-`node --test server/routes/shifts.adminScoped.test.js` (and with `TZ=UTC`), `server/routes/shifts.visibility.endInstant.test.js` (both TZs), `server/routes/shifts.unstaffedJsonbGuard.test.js`, `server/routes/admin/settings.badgeCounts.test.js`, `server/routes/shifts.assignEligibility.test.js`. Read every pass count.
+`node --test server/routes/shifts.adminScoped.test.js` (and with `TZ=UTC`), then every `server/routes/shifts*.test.js` file one at a time (`ls server/routes/shifts*.test.js` lists them; `shifts.visibility.endInstant.test.js` in both TZs), `server/routes/eventDetails.test.js`, `server/routes/admin/settings.badgeCounts.test.js`. Read every pass count and compare each with the same suite on `main` before the lane.
 
 - [ ] **Step 2: Client suites and build**
 
@@ -1366,4 +1527,13 @@ Squash-merge through `os` on `main` via `scripts/merge-lane.sh`; then `npm insta
 1. **Spec coverage.** Section 3 fork and Visual contract: Tasks 3, 4, 5, 6. Section 4 List: card layout, date order, Upcoming / Past, Needs staff = badge predicate, feed extension with scope and paging, pending chip from `rc.pending_count`, one card per event, manual shifts open the sheet (interim drawer here, sheet in ma-e2): Tasks 1, 2, 4. Section 7 offline staleness line: Task 4 with the call-site test; allowlist untouched (query strings cache separately, documented in Proven context). Section 9 list scroll restore: Task 4. Section 10 inline errors with retry: Task 4. Section 11 per-screen gate: Task 6. Docs law: Task 7. Not in this lane, declared: detail, sheet, edit sheet, proposals, search.
 2. **Placeholder scan.** One deliberate paste instruction in Task 1 Step 3 (the projection moves verbatim; retyping 105 lines of SQL into a plan is how a column goes missing); the line anchors are in Proven context. No TBDs.
 3. **Type consistency.** `groupShiftRows(rows, { todayYmd })` and `railParts(ymd)` (Task 2) match their uses in Task 4; the envelope fields (`total_events`, `needs_staff_events`, `has_more`, `next_offset`, `rows`) match between Task 1's route, its test, and Task 4's reads; `tapTarget.kind` is `'event' | 'shift'` in both; the screen key `events-list` matches `screenKey.js`.
+5. **Plan fleet 2026-09-18 (fidelity, decomposition, feasibility; 3 blockers, 9 warnings, 8 suggestions, all folded):** needs_staff filtered per shift row and split mixed events (fixed: event-level membership plus a mixed fixture); the proposals fixture cast `gen_random_uuid()::text` into a uuid column (fixed: the default supplies the token); the Task 5 mock closed over a non-`mock`-prefixed variable (fixed); the scope boundary and the future-dated-cancelled bucket were re-decisions the spec never recorded (decided, stated above, spec amended); the Sentry surface tag finding was false (AdminLayout sets it globally); stale line now has the benchmark's two states with a time-only span; filtering suppresses the end divider and the envelope carries `scope_events` so the empty-state split is decidable; legacy column set pinned; the plan-queue suite and every shifts suite run; line anchors, `wedding` label, the two type tokens and the fix-list anchor corrected; Task 1 split into a move commit and a feature commit with a consistency-check plus a query-shape database-review at that checkpoint.
 4. **Known judgment calls, stated:** paging by DENSE_RANK over a CTE re-runs the full admin projection per page (the projection is the same query the desktop runs once for all rows; with LIMIT applied after ranking, Postgres still materializes the scope, so a page costs about what the desktop dump costs today; acceptable at this table size, and the desktop already does it). The Needs staff chip count comes from the server per response so the chip is right even before the first page is scrolled. `supply_run_required` is the Supplies flag (the design prompt said `supply_run`; the column is `supply_run_required`).
+
+## Browser checks (lane ma-e1, filled in during Task 6)
+
+- C1 to C9: pending.
+
+## Lane review round, as-built deltas (ma-e1)
+
+- Pending: filled in after the lane fleet, before the merge.
