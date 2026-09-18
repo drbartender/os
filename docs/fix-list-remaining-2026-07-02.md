@@ -54,8 +54,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 0 | A settled-looking `connected` row is never reaped, so a failed `<Dial>` alerts nobody | yes |
 | 0 | Sweep on with the VA scheduler off strands `calling_*` rows holding a cap slot for 24h | yes, if the two flags disagree |
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
-| 1 | A bartender is unpaid for prod 823 (event 2026-09-12): a fully-paid row stranded at `deposit_paid` never completed or accrued | **yes, until the period-121 recovery runs** |
-| 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -70,6 +68,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | The webhook sets `amount_paid` without checking what Stripe captured | yes |
 | 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (1 mandate, at exactly $50, archived) |
+| 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
@@ -180,47 +179,6 @@ nothing on either bridge.** Written up in section 3, since the lead router has c
 ---
 
 ## 1. Money paths that produce a wrong number
-
-### The Enhancement Lab can delete an admin-added shelf addon and shave the contract
-
-Lab ownership lives only in `drink_plans.selections.addOns[slug].labAdded`; the lab PUT's
-collision guard (`lab.js`, "Planner already carries this slug") reads those selections and never
-`proposal_addons`. So a shelf addon an admin priced on the editor (`champagne-toast`,
-`champagne-coupe-upgrade`, `real-glassware`, or the hosted NA trio) with no selections entry is
-OFFERED by the lab: ticking it marks the contract row `labAdded` (and the upsert rewrites it at
-catalog rate, quantity 1); unticking it lands the slug in `removedSlugs` and the DELETE removes
-the contract row, so the fold prices the after leg without it and `total_price` drops by the
-addon's full price. A crafted submit can plant `labAdded` directly (`submitSanitize` copies addon
-metadata raw). Once paid covers the shaved total the reconcile ladder now reads `balance_paid`,
-so the under-billed row looks clean instead of odd. Found by the 2026-09-16 security review of
-the ladder change; pre-existing.
-
-**Exposure measured 2026-09-16:** two future booked proposals carry an admin-added shelf addon
-with no lab entry, both `soft-drink-addon`: 606 (v1 plan, the lab is v2-only, unreachable) and
-607 ($350 line, v2 plan 102 still `pending`, so the lab is not open yet). Reachable the moment
-plan 102 is submitted.
-
-**Fix (lab.js + submitSanitize.js):** load `addonsBefore` before the selections rebuild and treat
-any slug present there without a `labAdded` flag as admin-owned (never accept it as lab-added,
-never put it in `removedSlugs`); strip `labAdded` in `sanitizeSelections` (server-owned flag).
-Test: "contract addon survives tick-then-untick" in `lab.test.js` (its :339 case covers
-planner-owned entries only).
-
-### A bartender is unpaid: prod 823 was stranded at `deposit_paid` and never accrued — recovery pending
-
-Prod 823 (event 2026-09-12, one bartender, user 207) was paid in full on 09-09. The client then
-added and removed an Enhancement Lab syrup inside one minute; the reconcile ladder demoted the row
-on the add and, being demote-only, never restored it on the remove. Auto-complete keys on
-`balance_paid`/`confirmed`, so the event never completed, payroll never accrued, and pay period
-121 (09-08..09-14) was processed and paid on 09-15 without the row. The ladder now promotes
-(`server/utils/proposalStatus.js`, 2026-09-16) and the re-price modal predicts it. No other prod
-row is in this state (sweep 09-16: 557 is the owner's own no-draw event, 600 is the legal hold).
-
-**Owed: the recovery, which writes prod and needs Dallas's OK.** Flip period 121 back to `open`
-and 823 to `balance_paid` in one guarded block; let the hourly autocomplete (or an admin
-"Completed" click) run the real accrual (4.5h at $20 plus the $75 gratuity net of the live-fetched
-Stripe fee; no tips, no duty lines); then Process, pay and mark paid on the payroll screen so 121
-finalizes back to `paid`. Delete this entry once user 207's payout in period 121 reads `paid`.
 
 **Read this first — it is the root cause of the two entries beneath it.** An invoice does not
 record whether its money is inside `proposals.total_price`. Every classifier is therefore a
@@ -567,6 +525,31 @@ leaves the column null or the backfill just re-accrues. Start by diffing the thr
 against whatever moved ids 628, 681 and 764 to `viewed`.
 
 ---
+
+### The Enhancement Lab can delete an admin-added shelf addon and shave the contract
+
+Lab ownership lives only in `drink_plans.selections.addOns[slug].labAdded`; the lab PUT's
+collision guard (`lab.js`, "Planner already carries this slug") reads those selections and never
+`proposal_addons`. So a shelf addon an admin priced on the editor (`champagne-toast`,
+`champagne-coupe-upgrade`, `real-glassware`, or the hosted NA trio) with no selections entry is
+OFFERED by the lab: ticking it marks the contract row `labAdded` (and the upsert rewrites it at
+catalog rate, quantity 1); unticking it lands the slug in `removedSlugs` and the DELETE removes
+the contract row, so the fold prices the after leg without it and `total_price` drops by the
+addon's full price. A crafted submit can plant `labAdded` directly (`submitSanitize` copies addon
+metadata raw). Once paid covers the shaved total the reconcile ladder now reads `balance_paid`,
+so the under-billed row looks clean instead of odd. Found by the 2026-09-16 security review of
+the ladder change; pre-existing.
+
+**Exposure measured 2026-09-16:** two future booked proposals carry an admin-added shelf addon
+with no lab entry, both `soft-drink-addon`: 606 (v1 plan, the lab is v2-only, unreachable) and
+607 ($350 line, v2 plan 102 still `pending`, so the lab is not open yet). Reachable the moment
+plan 102 is submitted.
+
+**Fix (lab.js + submitSanitize.js):** load `addonsBefore` before the selections rebuild and treat
+any slug present there without a `labAdded` flag as admin-owned (never accept it as lab-added,
+never put it in `removedSlugs`); strip `labAdded` in `sanitizeSelections` (server-owned flag).
+Test: "contract addon survives tick-then-untick" in `lab.test.js` (its :339 case covers
+planner-owned entries only).
 
 ## 2. Wrong on a surface a client is looking at
 

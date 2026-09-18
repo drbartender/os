@@ -82,6 +82,21 @@ test('a MISSING total never promotes (fail closed, matches the webhook reading p
     const b = reconcileProposalPaymentStatus({ status: 'balance_paid', amountPaid: 425, totalPrice });
     assert.strictEqual(b.status, 'balance_paid', String(totalPrice));
     assert.strictEqual(b.changed, false, String(totalPrice));
+    // An unreadable total is not an overpayment either (the raw comparison
+    // would call the whole amount paid "over" a total of nothing).
+    assert.strictEqual(r.overpaid, false, String(totalPrice));
+    assert.strictEqual(r.overpaidCents, 0, String(totalPrice));
+  }
+});
+
+test('an unparseable amount paid moves nothing and flags nothing (fail closed; NaN skips both demote arms)', () => {
+  for (const amountPaid of ['1,000', 'abc', '$425', 'Infinity', Infinity]) {
+    for (const status of ['deposit_paid', 'balance_paid']) {
+      const r = reconcileProposalPaymentStatus({ status, amountPaid, totalPrice: 425 });
+      assert.strictEqual(r.status, status, `${status} ${String(amountPaid)}`);
+      assert.strictEqual(r.changed, false, `${status} ${String(amountPaid)}`);
+      assert.strictEqual(r.overpaid, false, `${status} ${String(amountPaid)}`);
+    }
   }
 });
 

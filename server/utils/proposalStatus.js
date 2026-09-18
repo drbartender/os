@@ -27,24 +27,30 @@
 function reconcileProposalPaymentStatus({ status, amountPaid, totalPrice }) {
   const paidCents = Math.round(Number(amountPaid || 0) * 100);
   const totalCents = Math.round(Number(totalPrice || 0) * 100);
-  const overpaid = paidCents > totalCents;
-  const overpaidCents = overpaid ? paidCents - totalCents : 0;
 
-  // A total we cannot read (nullable column; undefined/''/NaN from a caller)
-  // never promotes: the webhook's SQL reads "paid >= NULL" as not paid, and
-  // promoting here would make the two disagree in the fail-open direction. A
+  // Fail closed on anything we cannot read. A total that is missing (nullable
+  // column; undefined/''/NaN from a caller) never promotes: the webhook's SQL
+  // reads "paid >= NULL" as not paid, and promoting here would make the two
+  // disagree in the fail-open direction. An amount paid that does not parse
+  // (a formatted string, Infinity) skips BOTH demote arms because NaN compares
+  // false, so without this guard it would fall straight into the promotion
+  // (cross-LLM review, 2026-09-16); it moves nothing and flags nothing. A
   // genuine $0 total (a fully comped event: pricingEngine clamps an
   // over-discount at 0) DOES promote, exactly as the webhook's "paid >= 0"
   // does; refusing it would strand the comped event at deposit_paid, the same
-  // failure class as prod 823.
+  // failure class as prod 823. Falsy amountPaid coerces to 0 above and takes
+  // the accepted arm, as it always has.
   const totalKnown = totalPrice !== null && totalPrice !== undefined && totalPrice !== ''
     && Number.isFinite(Number(totalPrice));
+  const paidKnown = Number.isFinite(paidCents);
+  const overpaid = totalKnown && paidKnown && paidCents > totalCents;
+  const overpaidCents = overpaid ? paidCents - totalCents : 0;
 
   let next = status;
   if (status === 'balance_paid' || status === 'deposit_paid') {
     if (paidCents <= 0) next = 'accepted';
     else if (paidCents < totalCents) next = 'deposit_paid';
-    else if (totalKnown) next = 'balance_paid'; // fully paid at the corrected total, either direction
+    else if (totalKnown && paidKnown) next = 'balance_paid'; // fully paid at the corrected total, either direction
   }
   const changed = next !== status;
   // CRITICAL (mirrors refundHelpers): only the was-fully-paid transition disarms

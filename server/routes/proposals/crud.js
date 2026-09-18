@@ -926,7 +926,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // Change-request approved client email (spec 5). The PATCH stamped the request
     // approved in-transaction (E2); the single client touch fires here post-commit,
     // best-effort. Re-read the proposal fresh so the email's total and balance
-    // reflect the post-commit invoice/demotion cascade above.
+    // reflect the post-commit invoice/status-reconcile cascade above.
     if (change_request_id) {
       try {
         const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');

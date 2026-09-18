@@ -56,8 +56,9 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal, 
   // autopay armed, and a decrease that still leaves a balance stays deposit
   // paid. Promising a move the server does not perform names a consequence
   // that does not happen, so both lines are gated on the server's boundary.
-  // The same rounded-cents comparison the server makes (paidCents >= totalCents,
-  // both > 0), so the two agree on every input, not only whole-cent totals.
+  // The same rounded-cents comparison the server makes (paidCents >= totalCents
+  // with paid > 0 and a readable total), so the two agree on every input, not
+  // only whole-cent totals. A zero total promotes: a fully comped event is paid.
   const paidCents = Math.round(paid * 100);
   const nextCents = Math.round(next * 100);
   if (status === 'deposit_paid' && paidCents > 0 && Number.isFinite(nextCents) && paidCents >= nextCents) {
