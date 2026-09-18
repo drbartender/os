@@ -1480,7 +1480,7 @@ Change the `pages/mobile/` tree line to name both pages: `mobile/  # Phone-first
 
 - [ ] **Step 2: ARCHITECTURE**
 
-Replace the `GET /` row with: `| GET | \`/\` | Yes | List shifts (staff see open upcoming; admin see **all**, cancelled included, as a bare array). Admin only: \`?scope=upcoming\|past&limit=60&offset=0&needs_staff=1\` switches to the phone Events feed: paged by EVENT, envelope \`{ scope, offset, limit, total_events, needs_staff_events, has_more, next_offset, rows }\`, rows carry \`event_key\` and \`needs_staff\` (the unstaffed_events badge predicate, pinned by shifts.adminScoped.test.js). |`
+Replace the `GET /` row with: `| GET | \`/\` | Yes | List shifts (staff see open upcoming; admin see **all**, cancelled included, as a bare array). Admin only: \`?scope=upcoming\|past&limit=60&offset=0&needs_staff=1\` switches to the phone Events feed: paged by EVENT, envelope \`{ scope, offset, limit, total_events, scope_events, needs_staff_events, has_more, next_offset, rows }\` (total_events = events in the current filter, scope_events = events in the scope regardless of the chip, needs_staff_events = events with a flagged shift, 0 on past), rows carry \`event_key\` and \`needs_staff\` (the unstaffed_events badge predicate, pinned by shifts.adminScoped.test.js). |`
 
 - [ ] **Step 3: walkthroughs-owed**
 
