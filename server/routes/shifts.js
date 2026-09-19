@@ -23,7 +23,9 @@ const {
   releaseOutOfAreaLock,
   reaccrueDutyForProposal,
 } = require('../utils/serviceArea');
-const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql } = require('./shifts.queries');
+// barRequiredSql / planQueueSql left with the projection in shifts.queries.js:
+// the admin SELECT was their only consumer here.
+const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, adminShiftsSelectSql, adminScopedShiftsSql } = require('./shifts.queries');
 // Request -> approval money seam extracted to keep this file under the 1000-line
 // hard cap. shifts.js still owns the route table + shared middleware; the bulky
 // handler bodies (and position resolution) live in shifts.approval.js.
@@ -34,6 +36,14 @@ const { requestShiftHandler, assignShiftHandler, approveOrDenyRequestHandler } =
 const { updateShiftHandler, cancelOrUnassignShiftHandler } = require('./shifts.handlers');
 
 const router = express.Router();
+
+// Query-string integers for the scoped admin feed: NaN falls to the default,
+// out-of-range clamps. Never trusts the raw string.
+function clampInt(raw, min, max, dflt) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(max, Math.max(min, n));
+}
 
 // ─── Permission helpers ────────────────────────────────────────────
 
@@ -104,121 +114,47 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
   const isManager = req.user.role === 'admin' || req.user.role === 'manager';
 
   if (isManager) {
-    const result = await pool.query(`
-      SELECT s.*,
-        u.email AS created_by_email,
-        p.total_price AS proposal_total,
-        p.amount_paid AS proposal_amount_paid,
-        COALESCE(p.guest_count, s.guest_count) AS proposal_guest_count,
-        p.token AS proposal_token,
-        p.status AS proposal_status,
-        -- Derived, never stored (fix list 2026-08-13): see barRequiredSql.
-        ${barRequiredSql('p', 'spk')} AS bar_required,
-        COALESCE(c.name, s.client_name) AS client_name,
-        COALESCE(c.phone, s.client_phone) AS client_phone,
-        COALESCE(c.email, s.client_email) AS client_email,
-        rc.request_count,
-        rc.approved_count,
-        rc.pending_count,
-        abr.approved_by_role,
-        -- Who is confirmed, for the events-list hover card. Same filter as
-        -- rc.approved_count (approved AND not dropped) so the names always add
-        -- up to the ratio beside them; same name rule as /by-proposal. Pending
-        -- applicants are deliberately absent from THIS aggregate: they have
-        -- their own, pending_staff below, behind the chip. The full-roster
-        -- waitlist rule is enforced in StaffingCell's showChip, not here.
-        -- Aliases are asr/au/acp because the outer query already owns u.
-        --
-        -- GATE, deliberately weaker than its siblings (decided 2026-08-25):
-        -- every other route projecting staff identities (/by-proposal,
-        -- /unstaffed-upcoming, /detail/:id, /:id/requests) is behind
-        -- requireStaffing, i.e. admin OR manager-with-can_staff. This branch is
-        -- behind requireOnboarded plus role admin/manager, so a manager with
-        -- can_staff = false sees these names where it sees none elsewhere. That
-        -- is intentional: this is the Events LIST, the roster is already the
-        -- column being read, and a manager who can open the events dashboard at
-        -- all can see the same people via the shift drawer. Prod has no
-        -- manager-role users today, so it changes nobody's access now. If a
-        -- non-staffing manager role is ever created and this should tighten,
-        -- the change is to gate BOTH staff aggregates (approved_staff and
-        -- pending_staff, which exposes applicant identities and is therefore a
-        -- slightly broader disclosure) on requireStaffing's predicate
-        -- (:42), NOT to move the whole route behind it: the counts on this feed
-        -- are load-bearing for every admin surface.
-        (SELECT COALESCE(json_agg(json_build_object(
-                  'user_id', asr.user_id,
-                  'name', COALESCE(acp.display_name, acp.preferred_name, au.email),
-                  'position', asr.position
-                ) ORDER BY COALESCE(acp.display_name, acp.preferred_name, au.email)), '[]'::json)
-           FROM shift_requests asr
-           JOIN users au ON au.id = asr.user_id
-           LEFT JOIN contractor_profiles acp ON acp.user_id = asr.user_id
-          WHERE asr.shift_id = s.id AND asr.status = 'approved' AND asr.dropped_at IS NULL) AS approved_staff,
-        -- Who has APPLIED, for the requests chip's hover card. Sibling of
-        -- approved_staff above, with three deliberate differences:
-        --   * status = 'pending' (an approved person is not an applicant), and
-        --     no dropped_at filter, because dropping applies to an approved
-        --     assignment and a pending row never carries one. rc.pending_count
-        --     filters the same way, and pending_staff must always equal it.
-        --   * ORDER BY created_at: this is a QUEUE, and who has waited longest
-        --     is the actionable fact. The confirmed card is alphabetical because
-        --     it is a roster, which is a different question.
-        --   * the role comes from requested_positions, not position, which is
-        --     NULL until approval resolves it. Flattened to a display string
-        --     here so the client needs no new shape: one role sends its name, an
-        --     empty array sends NULL (38 legacy prod rows, the card then shows a
-        --     bare name), several send a comma list (never yet seen in prod).
-        -- DELIBERATE EXCEPTION to "every reader goes through parsePositionsNeeded":
-        -- this flattens in SQL, which handles the flat-string shape only. The
-        -- legacy object shape [{position,count}] would render as raw JSON text.
-        -- Unreachable for THIS column (its only writer, shifts.approval.js, emits
-        -- canonical flat arrays; prod holds only flat arrays and empties), and
-        -- doing it here is what lets StaffHoverCard stay untouched. If that ever
-        -- stops being true, move the flatten to the client and use the parser.
-        -- The ORDER BY carries a psr.id tiebreak because dev rows share a
-        -- created_at and the list would otherwise be nondeterministic there.
-        -- IS JSON ARRAY is a CRASH GUARD, same as on the unstaffed-upcoming cast:
-        -- one legacy row holding a non-array would raise and 500 this whole feed.
-        -- Aliases psr/pu/pcp: the outer query owns u and approved_staff owns a*.
-        (SELECT COALESCE(json_agg(json_build_object(
-                  'user_id', psr.user_id,
-                  'name', COALESCE(pcp.display_name, pcp.preferred_name, pu.email),
-                  'position', NULLIF(
-                    (SELECT string_agg(elem, ', ' ORDER BY ord)
-                       FROM jsonb_array_elements_text(
-                              CASE WHEN psr.requested_positions IS JSON ARRAY
-                                   THEN psr.requested_positions::jsonb
-                                   ELSE '[]'::jsonb END
-                            ) WITH ORDINALITY AS t(elem, ord)),
-                    '')
-                ) ORDER BY psr.created_at, psr.id), '[]'::json)
-           FROM shift_requests psr
-           JOIN users pu ON pu.id = psr.user_id
-           LEFT JOIN contractor_profiles pcp ON pcp.user_id = psr.user_id
-          WHERE psr.shift_id = s.id AND psr.status = 'pending') AS pending_staff,
-${planQueueSql.select}
-      FROM shifts s
-      LEFT JOIN users u ON u.id = s.created_by
-      LEFT JOIN proposals p ON p.id = s.proposal_id
-      LEFT JOIN service_packages spk ON spk.id = p.package_id
-      LEFT JOIN clients c ON c.id = p.client_id${planQueueSql.drinkPlanJoin}${planQueueSql.consultJoin}
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
-               COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,
-               COUNT(*) FILTER (WHERE sr.status = 'pending') AS pending_count
-        FROM shift_requests sr WHERE sr.shift_id = s.id
-      ) rc ON true
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
-        FROM (SELECT position, COUNT(*) c FROM shift_requests
-              WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
-                AND position IS NOT NULL
-              GROUP BY position) g
-      ) abr ON true
+    const scope = req.query.scope;
+    if (scope !== 'upcoming' && scope !== 'past') {
+      // Legacy shape, frozen: the desktop dashboard, the Overview page and the
+      // staff pages read this bare array with no params.
+      const result = await pool.query(`${adminShiftsSelectSql()}
       ORDER BY s.event_date ASC
       LIMIT 500
     `);
-    return res.json(result.rows);
+      return res.json(result.rows);
+    }
+    // Phone Events list: scoped, paged by event, with totals. See
+    // adminScopedShiftsSql for the predicate and bucket law.
+    const limit = clampInt(req.query.limit, 1, 200, 60);
+    const offset = clampInt(req.query.offset, 0, 1000000, 0);
+    const needsStaff = scope === 'upcoming' && req.query.needs_staff === '1';
+    const result = await pool.query(adminScopedShiftsSql(scope), [offset, limit, needsStaff]);
+    // The totals ride a one-row CTE with the page LEFT JOINed on, so there is
+    // always a row 0 to read them from, even when the page itself is empty.
+    // The bigint counts arrive from pg as strings; the Number() calls are
+    // load-bearing, and the || 0 covers total_events being NULL on an empty page.
+    const first = result.rows[0] || {};
+    const totalEvents = Number(first.total_events || 0);
+    const scopeEvents = Number(first.scope_events || 0);
+    const needsStaffEvents = scope === 'upcoming' ? Number(first.needs_staff_events || 0) : 0;
+    // Drop the LEFT JOIN's placeholder (every shift column SQL NULL, which pg
+    // hands back as JS null) before the strip, then take the window keys and
+    // the three totals off each real row: they are envelope-level facts and
+    // never belong on a shift.
+    const rows = result.rows
+      .filter((r) => r.id !== null)
+      // eslint-disable-next-line no-unused-vars
+      .map(({ event_rank, event_first_date, event_last_date, total_events, scope_events, needs_staff_events, ...row }) => row);
+    return res.json({
+      scope, offset, limit,
+      total_events: totalEvents,
+      scope_events: scopeEvents,
+      needs_staff_events: needsStaffEvents,
+      has_more: offset + limit < totalEvents,
+      next_offset: offset + limit,
+      rows,
+    });
   }
 
   // Staff path. SQL extracted to ./shifts.queries to keep this file under

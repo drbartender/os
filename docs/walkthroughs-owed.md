@@ -1779,6 +1779,15 @@ booked with a phone and the sweep has rung it**, or the walk proves nothing and 
 regression. The seven older consults predate the `booker_phone` column and can never produce an
 attempt.
 
+- [ ] **Phone Events list (lane ma-e1, merged <date>).** Pixel, installed PWA, prod data:
+      Upcoming opens on today, Past shows history newest first with cancelled cards muted, the
+      Needs staff chip matches the tab badge's meaning (chip counts events, badge counts shifts),
+      Show more pages without splitting a two-shift event, airplane mode shows the
+      "offline copy · as of" line with the dot while a live load shows "as of" alone, a manual
+      shift opens the drawer (Back leaves the list until the ma-e2 sheet lands). Both skins.
+      Graduates by this tier's own rule once it lands: `git merge-base --is-ancestor <merge sha>
+      origin/main` (exit 0 = live). Fill the date and the sha at merge; do not leave a marker to rot.
+
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

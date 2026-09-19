@@ -20991,6 +20991,9 @@ html[data-app="admin-os"] .m-brandmark {
   line-height: 1;
 }
 html[data-app="admin-os"] .m-stale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-meta, 11.5px);
   color: var(--ink-3);
   margin: 0 0 0.5rem;
@@ -21233,6 +21236,133 @@ html[data-app="admin-os"] .m-enroll-no {
   font-size: 0.85rem;
 }
 html[data-app="admin-os"] .m-enroll-yes { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---- Mobile admin: Events list (spec 2026-08-13 section 4, benchmark
+   docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Events tab).
+   Card rules folded from the design system's components-mobile.css; the
+   date rail, fraction, tags and list states promote the benchmark's inline
+   treatment to classes. Lists are date-ordered cards, never tables. ---- */
+/* Type tokens the design system defines (tokens/typography.css) and index.css
+   never did; the mobile block is their first consumer. */
+html[data-app="admin-os"] { --fs-body: 13px; --fs-meta: 11.5px; }
+html[data-app="admin-os"] .m-listbar {
+  /* top matches the bar's own negative margin, not 0: the bar is pulled out of
+     .m-main's 0.75rem padding, so sticking it at the scroller's content edge
+     left a 0.75rem band above it where the cards scrolled through. */
+  position: sticky; top: -0.75rem; z-index: 2;
+  display: flex; align-items: center; gap: 8px;
+  margin: -0.75rem -0.75rem 0.5rem; padding: 10px 12px 6px;
+  background: var(--bg-0);
+}
+html[data-app="admin-os"] .m-listbar .m-seg { flex: none; }
+html[data-app="admin-os"] .m-listbar .m-seg-btn { flex: none; padding: 0 14px; }
+html[data-app="admin-os"] .m-chip-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 16px; border-radius: 999px;
+  border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-2);
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+html[data-app="admin-os"] .m-chip-toggle .m-chip-count { font-family: var(--font-numeric); font-size: 11px; opacity: 0.9; }
+html[data-app="admin-os"] .m-chip-toggle.on {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: hsl(var(--accent-h) var(--accent-s) 62%);
+}
+html[data-app="admin-os"] .m-stale-dot {
+  width: 6px; height: 6px; flex: none; border-radius: 50%;
+  background: hsl(var(--warn-h) var(--warn-s) 52%);
+}
+
+/* Card: one large tap target. */
+html[data-app="admin-os"] .m-card {
+  display: flex; flex-direction: row; align-items: stretch; gap: 12px;
+  width: 100%; padding: 10px 14px 10px 10px; margin: 0 0 0.5rem;
+  background: var(--bg-2); border: 1px solid var(--line-1); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card); color: var(--ink-1); font-family: var(--font-ui);
+  text-align: left; cursor: pointer;
+}
+html[data-app="admin-os"] .m-card:active { background: var(--row-hover); }
+html[data-app="admin-os"] .m-rail {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  width: 46px; flex: none; border-right: 1px solid var(--line-1); padding-right: 10px;
+}
+html[data-app="admin-os"] .m-rail-dow { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-3); }
+html[data-app="admin-os"] .m-rail-day { font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--ink-1); }
+html[data-app="admin-os"] .m-rail-mon { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-4); }
+html[data-app="admin-os"] .m-rail.today .m-rail-day,
+html[data-app="admin-os"] .m-rail.today .m-rail-mon { color: var(--accent); }
+html[data-app="admin-os"] .m-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+html[data-app="admin-os"] .m-card-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+html[data-app="admin-os"] .m-card-title {
+  flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html[data-app="admin-os"] .m-card-kind { color: var(--ink-3); font-weight: 400; }
+html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
+html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
+html[data-app="admin-os"] .m-card-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: hsl(var(--danger-h) var(--danger-s) 70%); }
+html[data-app="admin-os"] .m-frac.full { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .m-frac.past { font-weight: 400; color: var(--ink-3); }
+html[data-app="admin-os"] .m-shiftnote { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-tags { margin-left: auto; display: inline-flex; gap: 4px; }
+html[data-app="admin-os"] .m-tag {
+  display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line-2); background: var(--bg-3); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;
+}
+html[data-app="admin-os"] .m-tag-bar { background: hsl(var(--info-h) var(--info-s) 52% / 0.14); border-color: hsl(var(--info-h) var(--info-s) 52% / 0.35); color: hsl(var(--info-h) var(--info-s) 66%); }
+html[data-app="admin-os"] .m-tag-supplies { background: hsl(var(--ok-h) var(--ok-s) 50% / 0.14); border-color: hsl(var(--ok-h) var(--ok-s) 50% / 0.35); color: hsl(var(--ok-h) var(--ok-s) 58%); }
+html[data-app="admin-os"] .m-card-cancelled .m-rail-dow,
+html[data-app="admin-os"] .m-card-cancelled .m-rail-day { color: var(--ink-4); }
+html[data-app="admin-os"] .m-card-cancelled .m-card-title { color: var(--ink-3); }
+
+/* Show more, end divider, empty and skeleton states. */
+html[data-app="admin-os"] .m-card-more { align-items: center; justify-content: center; gap: 8px; min-height: 48px; background: var(--bg-1); }
+html[data-app="admin-os"] .m-card-more .m-showmore { font-size: var(--fs-body); font-weight: 600; color: hsl(var(--accent-h) var(--accent-s) 62%); }
+html[data-app="admin-os"] .m-card-more .m-shownof { font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); }
+/* A failed append never takes the list down (the page error owns that); this
+   line sits under Show more and offers the same page again. */
+html[data-app="admin-os"] .m-more-error {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 0.5rem; padding: 0 2px;
+  font-size: var(--fs-meta); color: var(--ink-3);
+}
+html[data-app="admin-os"] .m-more-error .m-retry-btn { flex: none; }
+/* Retry is a real action, not a segment: it used to borrow .m-seg-btn.active
+   and measure 32px wide. */
+html[data-app="admin-os"] .m-retry-btn {
+  min-height: 44px; min-width: 88px; padding: 0 16px;
+  border: none; border-radius: var(--radius);
+  background: var(--accent); color: #fff;
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+html[data-app="admin-os"] .m-end { display: flex; align-items: center; gap: 10px; padding: 12px 8px 6px; }
+html[data-app="admin-os"] .m-end::before, html[data-app="admin-os"] .m-end::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
+html[data-app="admin-os"] .m-end span { flex: none; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 70px 24px 40px; text-align: center; color: var(--ink-4); }
+html[data-app="admin-os"] .m-empty.ok { color: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .m-empty-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink-2); }
+html[data-app="admin-os"] .m-empty-body { font-size: var(--fs-meta); color: var(--ink-3); max-width: 230px; line-height: 1.55; }
+html[data-app="admin-os"] .m-skel-note { text-align: center; padding: 4px 0 12px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-card-skel { pointer-events: none; padding: 12px 14px 12px 10px; }
+html[data-app="admin-os"] .m-skel-rail { width: 46px; height: 42px; flex: none; border-radius: var(--radius-sm); background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite; }
+html[data-app="admin-os"] .m-skel-bar { height: 11px; border-radius: 3px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite; }
+html[data-app="admin-os"] .m-skel-bar.thin { height: 9px; }
+@keyframes m-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* House Lights: squared, editorial, and the light-skin semantic hues. */
+html[data-app="admin-os"][data-skin="light"] .m-card { border-radius: 0; box-shadow: none; border-color: var(--line-2); }
+html[data-app="admin-os"][data-skin="light"] .m-chip-toggle { border-radius: 0; }
+html[data-app="admin-os"][data-skin="light"] .m-retry-btn { border-radius: 0; color: var(--bg-0); }
+html[data-app="admin-os"][data-skin="light"] .m-chip-toggle.on { color: var(--accent-ink); }
+html[data-app="admin-os"][data-skin="light"] .m-frac { color: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .m-frac.full { color: var(--ms-emerald); }
+html[data-app="admin-os"][data-skin="light"] .m-frac.past { color: var(--ink-3); }
+html[data-app="admin-os"][data-skin="light"] .m-tag-bar { background: hsl(var(--info-h) var(--info-s) 36% / 0.08); border-color: hsl(var(--info-h) var(--info-s) 36% / 0.4); color: var(--ms-navy); }
+html[data-app="admin-os"][data-skin="light"] .m-tag-supplies { background: hsl(var(--ok-h) var(--ok-s) 30% / 0.08); border-color: hsl(var(--ok-h) var(--ok-s) 30% / 0.4); color: var(--ms-emerald); }
+html[data-app="admin-os"][data-skin="light"] .m-card-more .m-showmore { color: var(--accent); }
+html[data-app="admin-os"][data-skin="light"] .m-empty.ok { color: var(--ms-emerald); }
 
 /* ==========================================================================
    Staff hub chrome (spec 2026-08-19-admin-staff-hub-design.md §3).

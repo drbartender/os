@@ -1806,15 +1806,33 @@ re-grep before surgery.
 ## Unbuilt projects and design sessions
 
 - **Mobile admin: every phone-first DATA screen.** The shell shipped and is live; the app did not.
-  `client/src/pages/mobile/` holds exactly ONE file, `MorePage.js`. There is no phone Events list or
+  **AMENDED 2026-09-18: the Events LIST is built, by lane `ma-e1-events-list` of
+  `docs/superpowers/plans/2026-09-15-mobile-admin-events-list.md`, and the screens after it are no
+  longer undeclared work.** That plan's lane map declares the event detail plus the assignment
+  (staffing) sheet as `ma-e2-event-detail`, the ONE edit sheet both details share as
+  `ma-e3-edit-sheet`, the proposals list as `ma-f1-proposals-list`, the proposal detail as
+  `ma-f2-proposal-detail`, and full-screen search as `ma-f3-search`, each with its own plan, its own
+  dependencies and its own review fleet. **Declared is not built: only `ma-e1` has code**, so the
+  original finding below still stands for every other screen.
+  `client/src/pages/mobile/` held exactly ONE file, `MorePage.js`, until that lane added
+  `EventsListPhone.js`. There is no phone Events
   detail, no phone Proposals list or detail, no assignment sheet, and no sheet component at all — so
   the decision-log line "mobile sheets push history so Android Back closes the sheet" has nothing
-  implementing it. The Events and Proposals tabs route to the ORDINARY DESKTOP ADMIN PAGES, neither
-  of which has a phone branch, which is precisely the "CSS retrofit" shape the spec's decision log
-  rejects. **Whether to build them at all is Dallas's call.**
+  implementing it. The Events tab now forks to the phone list at phone width (lane `ma-e1`,
+  `EventsDashboard` reads `useMobileView()` and renders `EventsListPhone`); the Proposals tab still
+  routes to the ORDINARY DESKTOP ADMIN PAGE with no phone branch, the "CSS retrofit" shape the
+  spec's decision log rejects, until `ma-f1` lands.
+  **Whether to build them at all is Dallas's call.**
 
   **The offline staleness line belongs to whichever lane builds those screens** — do not open a lane
-  for it alone. The chain is built and green at both ends and disconnected in the middle:
+  for it alone. **CLOSED FOR THE LIST 2026-09-18 (lane `ma-e1-events-list`): the call site now
+  exists and is tested.** `client/src/pages/mobile/EventsListPhone.js` imports `formatStaleTime`
+  from `utils/staleTime.js` and renders the `.m-stale` element under the list: "as of <time>" on a
+  live load, and "offline copy · as of <cached time>" with the dot when the service worker answered
+  from cache. Both are asserted at the CALL SITE, in `EventsListPhone.test.js`, which is what this
+  entry demanded. **Still OPEN for every other phone screen**, and the original finding follows
+  verbatim because it still describes them.
+  The chain is built and green at both ends and disconnected in the middle:
   `admin-sw.js:86` stamps `x-sw-cached-at`, `api.js` surfaces it as `response.staleAt`, and
   `staleTime.js` `formatStaleAt` renders "as of 1:47 PM" — and **nothing imports it.** The `.m-stale`
   element its own header comment says "screen lanes render" appears nowhere except that comment.

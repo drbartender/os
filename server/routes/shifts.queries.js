@@ -5,9 +5,16 @@
  * cover_requested_at + cover_for_first_initial + payout_id projections.
  * The LATERAL subqueries are not reused elsewhere (yet) but live here as
  * sibling exports to keep the route handler readable.
+ *
+ * It also owns the ADMIN list projection, adminShiftsSelectSql (the bare-array
+ * legacy feed the Events dashboard, the Overview page and the staff pages
+ * read), and adminScopedShiftsSql, the scoped, event-paged builder behind
+ * GET /shifts?scope=upcoming|past that the phone Events list reads. The scoped
+ * builder splices its window keys into the same projection text rather than
+ * restating it, so the two feeds cannot drift a column apart.
  */
 
-const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
+const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInstant');
 
 // Staff-side GET /api/shifts list. Projects BEO (drink plan + own ack) and
 // cover (any active cover-requesting shift_request on this shift + the
@@ -197,4 +204,229 @@ const planQueueSql = {
         spk.name AS package_name`,
 };
 
-module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql };
+// ── Admin branch of GET /shifts ────────────────────────────────────────────
+// One row per shift with the proposal, client, request counts and roster
+// aggregates that the Events dashboard, the Overview page and the phone Events
+// list read. Moved here from shifts.js (2026-09-18) so the scoped, event-paged
+// variant below reuses the projection verbatim: two hand-maintained copies is
+// how a column goes missing on one screen and not the other.
+//
+// `extraColumns` is spliced right after `SELECT s.*,` so the scoped builder
+// can add its window keys without touching the legacy text.
+function adminShiftsSelectSql(extraColumns = '') {
+  return `
+    SELECT s.*,${extraColumns}
+        u.email AS created_by_email,
+        p.total_price AS proposal_total,
+        p.amount_paid AS proposal_amount_paid,
+        COALESCE(p.guest_count, s.guest_count) AS proposal_guest_count,
+        p.token AS proposal_token,
+        p.status AS proposal_status,
+        -- Derived, never stored (fix list 2026-08-13): see barRequiredSql.
+        ${barRequiredSql('p', 'spk')} AS bar_required,
+        COALESCE(c.name, s.client_name) AS client_name,
+        COALESCE(c.phone, s.client_phone) AS client_phone,
+        COALESCE(c.email, s.client_email) AS client_email,
+        rc.request_count,
+        rc.approved_count,
+        rc.pending_count,
+        abr.approved_by_role,
+        -- Who is confirmed, for the events-list hover card. Same filter as
+        -- rc.approved_count (approved AND not dropped) so the names always add
+        -- up to the ratio beside them; same name rule as /by-proposal. Pending
+        -- applicants are deliberately absent from THIS aggregate: they have
+        -- their own, pending_staff below, behind the chip. The full-roster
+        -- waitlist rule is enforced in StaffingCell's showChip, not here.
+        -- Aliases are asr/au/acp because the outer query already owns u.
+        --
+        -- GATE, deliberately weaker than its siblings (decided 2026-08-25):
+        -- every other route projecting staff identities (/by-proposal,
+        -- /unstaffed-upcoming, /detail/:id, /:id/requests) is behind
+        -- requireStaffing, i.e. admin OR manager-with-can_staff. This branch is
+        -- behind requireOnboarded plus role admin/manager, so a manager with
+        -- can_staff = false sees these names where it sees none elsewhere. That
+        -- is intentional: this is the Events LIST, the roster is already the
+        -- column being read, and a manager who can open the events dashboard at
+        -- all can see the same people via the shift drawer. Prod has no
+        -- manager-role users today, so it changes nobody's access now. If a
+        -- non-staffing manager role is ever created and this should tighten,
+        -- the change is to gate BOTH staff aggregates (approved_staff and
+        -- pending_staff, which exposes applicant identities and is therefore a
+        -- slightly broader disclosure) on requireStaffing's predicate
+        -- (:42), NOT to move the whole route behind it: the counts on this feed
+        -- are load-bearing for every admin surface.
+        (SELECT COALESCE(json_agg(json_build_object(
+                  'user_id', asr.user_id,
+                  'name', COALESCE(acp.display_name, acp.preferred_name, au.email),
+                  'position', asr.position
+                ) ORDER BY COALESCE(acp.display_name, acp.preferred_name, au.email)), '[]'::json)
+           FROM shift_requests asr
+           JOIN users au ON au.id = asr.user_id
+           LEFT JOIN contractor_profiles acp ON acp.user_id = asr.user_id
+          WHERE asr.shift_id = s.id AND asr.status = 'approved' AND asr.dropped_at IS NULL) AS approved_staff,
+        -- Who has APPLIED, for the requests chip's hover card. Sibling of
+        -- approved_staff above, with three deliberate differences:
+        --   * status = 'pending' (an approved person is not an applicant), and
+        --     no dropped_at filter, because dropping applies to an approved
+        --     assignment and a pending row never carries one. rc.pending_count
+        --     filters the same way, and pending_staff must always equal it.
+        --   * ORDER BY created_at: this is a QUEUE, and who has waited longest
+        --     is the actionable fact. The confirmed card is alphabetical because
+        --     it is a roster, which is a different question.
+        --   * the role comes from requested_positions, not position, which is
+        --     NULL until approval resolves it. Flattened to a display string
+        --     here so the client needs no new shape: one role sends its name, an
+        --     empty array sends NULL (38 legacy prod rows, the card then shows a
+        --     bare name), several send a comma list (never yet seen in prod).
+        -- DELIBERATE EXCEPTION to "every reader goes through parsePositionsNeeded":
+        -- this flattens in SQL, which handles the flat-string shape only. The
+        -- legacy object shape [{position,count}] would render as raw JSON text.
+        -- Unreachable for THIS column (its only writer, shifts.approval.js, emits
+        -- canonical flat arrays; prod holds only flat arrays and empties), and
+        -- doing it here is what lets StaffHoverCard stay untouched. If that ever
+        -- stops being true, move the flatten to the client and use the parser.
+        -- The ORDER BY carries a psr.id tiebreak because dev rows share a
+        -- created_at and the list would otherwise be nondeterministic there.
+        -- IS JSON ARRAY is a CRASH GUARD, same as on the unstaffed-upcoming cast:
+        -- one legacy row holding a non-array would raise and 500 this whole feed.
+        -- Aliases psr/pu/pcp: the outer query owns u and approved_staff owns a*.
+        (SELECT COALESCE(json_agg(json_build_object(
+                  'user_id', psr.user_id,
+                  'name', COALESCE(pcp.display_name, pcp.preferred_name, pu.email),
+                  'position', NULLIF(
+                    (SELECT string_agg(elem, ', ' ORDER BY ord)
+                       FROM jsonb_array_elements_text(
+                              CASE WHEN psr.requested_positions IS JSON ARRAY
+                                   THEN psr.requested_positions::jsonb
+                                   ELSE '[]'::jsonb END
+                            ) WITH ORDINALITY AS t(elem, ord)),
+                    '')
+                ) ORDER BY psr.created_at, psr.id), '[]'::json)
+           FROM shift_requests psr
+           JOIN users pu ON pu.id = psr.user_id
+           LEFT JOIN contractor_profiles pcp ON pcp.user_id = psr.user_id
+          WHERE psr.shift_id = s.id AND psr.status = 'pending') AS pending_staff,
+${planQueueSql.select}
+      FROM shifts s
+      LEFT JOIN users u ON u.id = s.created_by
+      LEFT JOIN proposals p ON p.id = s.proposal_id
+      LEFT JOIN service_packages spk ON spk.id = p.package_id
+      LEFT JOIN clients c ON c.id = p.client_id${planQueueSql.drinkPlanJoin}${planQueueSql.consultJoin}
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
+               COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,
+               COUNT(*) FILTER (WHERE sr.status = 'pending') AS pending_count
+        FROM shift_requests sr WHERE sr.shift_id = s.id
+      ) rc ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
+        FROM (SELECT position, COUNT(*) c FROM shift_requests
+              WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
+                AND position IS NOT NULL
+              GROUP BY position) g
+      ) abr ON true
+  `;
+}
+
+// The phone Events list (spec 2026-08-13-mobile-admin section 4, amended
+// 2026-09-15 and 2026-09-18). Pages by EVENT (proposal, or the shift itself
+// when manual) so a two-shift wedding never splits across pages. $1 offset in
+// events, $2 limit in events, $3 needs_staff boolean.
+//
+// `needs_staff` is the unstaffed_events badge predicate from
+// routes/admin/settings.js, restated over this projection's rc.approved_count
+// (the same approved-and-not-dropped count). Change one, change both, in the
+// same commit; shifts.adminScoped.test.js pins the two to the same rows. The
+// chip keeps whole events: a flagged shift pulls its siblings along.
+//
+// It carries its OWN end-instant term rather than leaning on the scope's WHERE,
+// so the flag means "staffing is still possible" in every scope it is read in.
+// Without it the predicate silently changed meaning on Past (where nothing
+// supplies the guard) to "was never fully staffed", and 24 finished dev rows
+// came back flagged beside an envelope reporting needs_staff_events: 0.
+// Scope-independent is the whole point: the flag travels with the row.
+//
+// Bucket law: every shift is in exactly one scope. Upcoming = not finished
+// (the end instant, never a calendar day) and live. Past = finished, or
+// cancelled, or archived, whatever the date, which is where the muted
+// Cancelled card lives.
+// COALESCEd to a real boolean, never NULL. positions_needed is nullable, and
+// NULL IS JSON ARRAY evaluates to NULL rather than false, so an open unfinished
+// shift with no positions row would otherwise ship needs_staff: null and every
+// client truthiness check would quietly disagree with the badge. Same guard
+// covers a NULL s.status.
+const NEEDS_STAFF_SQL = `COALESCE((${shiftNotFinishedSql('s', 'p')}
+      AND s.status = 'open'
+      AND s.positions_needed IS JSON ARRAY
+      AND jsonb_array_length(s.positions_needed::jsonb) > 0
+      AND rc.approved_count < jsonb_array_length(s.positions_needed::jsonb)), false)`;
+
+function adminScopedShiftsSql(scope) {
+  const upcoming = scope === 'upcoming';
+  // COALESCE on BOTH statuses: a bare s.status <> 'cancelled' is NULL, not
+  // true, on a NULL-status shift, so such a row would fall out of Upcoming and
+  // out of Past and vanish from the phone entirely. Every shift lands in
+  // exactly one bucket, including the ones with no status at all.
+  const scopeWhere = upcoming
+    ? `${shiftNotFinishedSql('s', 'p')} AND COALESCE(s.status, '') <> 'cancelled' AND COALESCE(p.status, '') <> 'archived'`
+    : `(${shiftFinishedSql('s', 'p')} OR COALESCE(s.status, '') = 'cancelled' OR COALESCE(p.status, '') = 'archived')`;
+  // Rank on the EVENT's own date, not the row's. A proposal whose shifts sit on
+  // two dates would otherwise take two ranks: the event would split across
+  // pages and MAX(event_rank) would exceed COUNT(DISTINCT event_key), drifting
+  // has_more and next_offset. event_first_date/event_last_date are functions of
+  // event_key, so every shift of an event shares one rank.
+  const rankOrder = upcoming
+    ? 'event_first_date ASC, event_key ASC'
+    : 'event_last_date DESC, event_key DESC';
+  // Inside one event the rows run in DATE order before start_time, so a
+  // multi-date card reads forwards on Upcoming and backwards on Past. Load
+  // bearing: eventCards takes the card's date from its first row, so a card
+  // whose rows arrived start_time-first would be dated by whichever shift
+  // happened to start earliest rather than by when the event begins.
+  const dateOrder = upcoming ? 'ASC' : 'DESC';
+  const extra = `
+        COALESCE('p' || s.proposal_id::text, 's' || s.id::text) AS event_key,
+        ${NEEDS_STAFF_SQL} AS needs_staff,`;
+  return `
+    WITH base AS (
+      ${adminShiftsSelectSql(extra)}
+      WHERE ${scopeWhere}
+    ), scoped AS (
+      SELECT base.*,
+             MIN(event_date) OVER (PARTITION BY event_key) AS event_first_date,
+             MAX(event_date) OVER (PARTITION BY event_key) AS event_last_date
+        FROM base
+       WHERE $3::boolean IS NOT TRUE
+          OR event_key IN (SELECT event_key FROM base WHERE needs_staff)
+    ), ranked AS (
+      SELECT scoped.*, DENSE_RANK() OVER (ORDER BY ${rankOrder}) AS event_rank FROM scoped
+    ), totals AS (
+      SELECT COUNT(DISTINCT event_key) AS scope_events,
+             COUNT(DISTINCT event_key) FILTER (WHERE needs_staff) AS needs_staff_events
+        FROM base
+    )
+    -- Driven FROM totals, which is one row whatever base holds, with the page
+    -- LEFT JOINed on. An EMPTY page therefore still returns exactly one row
+    -- carrying the totals and NULL for every shift column, instead of no rows
+    -- at all. That matters at offset 0: the chip with nothing needing staff
+    -- makes scoped empty, and totals read off an empty result would report a
+    -- scope of zero events on a full calendar, which is the one state the
+    -- "Fully staffed" screen has to tell apart from an empty scope. The route
+    -- drops the placeholder by filtering on a NULL id.
+    SELECT ranked.*,
+           totals.scope_events,
+           totals.needs_staff_events,
+           (SELECT MAX(event_rank) FROM ranked) AS total_events
+      FROM totals
+      LEFT JOIN ranked ON ranked.event_rank > $1 AND ranked.event_rank <= $1 + $2
+     ORDER BY ranked.event_rank ASC NULLS LAST,
+              ranked.event_date ${dateOrder} NULLS LAST,
+              ranked.start_time ASC NULLS LAST,
+              ranked.id ASC NULLS LAST
+  `;
+}
+
+module.exports = {
+  STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql, planQueueSql,
+  adminShiftsSelectSql, adminScopedShiftsSql,
+};

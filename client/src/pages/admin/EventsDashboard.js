@@ -19,6 +19,8 @@ import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
 import { parsePositionsCount, approvedCount, isCancelledEvent } from '../../components/adminos/shifts';
 import { eventPlanState, eventPaymentState } from '../../components/adminos/eventPlan';
+import { useMobileView } from '../../context/MobileViewContext';
+import EventsListPhone from '../mobile/EventsListPhone';
 
 // URL-backed view state (tab / status filter). Kept at module scope so
 // the hook's default identity is stable. Back restores the exact list view.
@@ -51,7 +53,7 @@ const EVENT_SORT_ACCESSORS = {
   },
 };
 
-export default function EventsDashboard() {
+function EventsDashboardDesktop() {
   const navigate = useNavigate();
   const toast = useToast();
   const drawer = useDrawerParam();
@@ -371,3 +373,13 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
     </ClickableRow>
   );
 });
+
+// Route-level fork (spec 2026-08-13-mobile-admin section 3): the URL and the
+// route table stay the same; at phone width the phone list renders unless
+// this screen is pinned to Desktop view. The fork lives here, above the
+// desktop body's hooks, so hook order never changes between branches.
+export default function EventsDashboard() {
+  const { isPhone, desktopView } = useMobileView();
+  if (isPhone && !desktopView('events-list')) return <EventsListPhone />;
+  return <EventsDashboardDesktop />;
+}
