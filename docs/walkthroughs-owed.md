@@ -1779,7 +1779,7 @@ booked with a phone and the sweep has rung it**, or the walk proves nothing and 
 regression. The seven older consults predate the `booker_phone` column and can never produce an
 attempt.
 
-- [ ] **Phone Events list (lane ma-e1, merged <date>).** Pixel, installed PWA, prod data:
+- [ ] **Phone Events list (lane ma-e1, merged 2026-09-18, d1dc829f, not yet pushed).** Pixel, installed PWA, prod data:
       Upcoming opens on today, Past shows history newest first with cancelled cards muted, the
       Needs staff chip matches the tab badge's meaning (chip counts events, badge counts shifts),
       Show more pages without splitting a two-shift event, airplane mode shows the
