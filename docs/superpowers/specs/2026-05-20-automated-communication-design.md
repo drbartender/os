@@ -1165,6 +1165,8 @@ When a client books a second event:
 - Retention nudge anchors on the new event's completion date
 - No "already a customer, skip" logic to suppress messages
 
+**Amendment 2026-09-22 (one drip per client per event).** "Per-proposal" above means per EVENT. A second open proposal for the same client and the same `event_date` (a second option sent solo, outside a compare group) joins the drip an open sibling already started while that drip is still in flight (any pending, deferred, or processing touch on a sent/viewed/modified sibling); it does not enroll its own. Once a sibling's sequence has fully delivered, a new option is a fresh conversation and enrolls normally. When the option that owns the drip is archived, its undelivered touches are re-created on the surviving open option on the original timeline (rebuilt from the archived option's delivered history and anchor, because three archive doors delete pending rows before the reap runs); nothing already delivered repeats. A survivor is a sent/viewed/modified sibling that has never been nurtured for the event: a booked sibling never inherits and a sibling that already ran its own sequence never gets it twice. Archive and sign+pay now suppress cooldown-deferred drip touches as well as pending ones. Both rules live in `server/utils/dripSiblings.js`. Cause: Jan Carabelli received touch 1 twice, the second one hours after she had replied; the 7.4 cooldown only defers a collision by a day, it never suppresses one.
+
 ---
 
 ## 8. Infrastructure

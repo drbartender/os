@@ -12,6 +12,7 @@ const {
   cancelMarketingForProposal,
   onProposalSignedAndPaid,
 } = require('./marketingHandlers');
+const { DRIP_TOUCHES } = require('./dripSiblings');
 
 let clientId;
 let proposalId;
@@ -158,6 +159,255 @@ test('scheduleDripForProposal > does not enroll an already-advanced proposal', a
   assert.strictEqual(Number(rows[0].count), 0);
 });
 
+
+// One drip per client per EVENT. Jan Carabelli (2026-09-19): a second solo
+// option for the same October 17 event enrolled its own six-touch drip, so she
+// got "Did you get the proposal?" twice, the second one hours after she had
+// replied. A sibling proposal (same client, same event_date, not archived)
+// with a live drip row means this proposal joins that conversation instead of
+// starting another. Spec 7.10 "new drip per proposal" is about a second EVENT
+// and still holds (different event_date test below).
+async function insertSibling({ eventDateSql, status = 'sent' }) {
+  const r = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type)
+     SELECT client_id, ${eventDateSql}, $2, event_type FROM proposals WHERE id = $1
+     RETURNING id`,
+    [proposalId, status]
+  );
+  return r.rows[0].id;
+}
+async function dripCount(id) {
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type LIKE 'drip_touch_%'",
+    [id]
+  );
+  return Number(rows[0].count);
+}
+async function removeSibling(id) {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [id]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [id]);
+}
+
+test('scheduleDripForProposal > a second open proposal for the same client + event date joins the existing drip (no second enrollment)', async () => {
+  await scheduleDripForProposal(proposalId);
+  // Mirror Jan: the first option's touch 1 already went out, the rest is pending.
+  await pool.query(
+    `UPDATE scheduled_messages SET status = 'sent', sent_at = NOW()
+     WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'drip_touch_1'`,
+    [proposalId]
+  );
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(secondId);
+    assert.strictEqual(await dripCount(secondId), 0, 'second option must not start its own drip');
+    assert.strictEqual(await dripCount(proposalId), 6, 'first option keeps its drip untouched');
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('scheduleDripForProposal > a second proposal for a DIFFERENT event date still gets its own drip (spec 7.10 repeat customer)', async () => {
+  await scheduleDripForProposal(proposalId);
+  const secondId = await insertSibling({ eventDateSql: "event_date + INTERVAL '30 days'" });
+  try {
+    await scheduleDripForProposal(secondId);
+    assert.strictEqual(await dripCount(secondId), 6);
+    assert.strictEqual(await dripCount(proposalId), 6);
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('scheduleDripForProposal > an archived sibling for the same event does not block enrollment', async () => {
+  await scheduleDripForProposal(proposalId);
+  await cancelMarketingForProposal(proposalId);
+  await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(secondId);
+    assert.strictEqual(await dripCount(secondId), 6, 'the replacement option is the live conversation now');
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('scheduleDripForProposal > a sibling whose drip already finished does not block a new option (in-flight only)', async () => {
+  // Review finding: counting 'sent' rows as live would make a delivered drip
+  // block forever. A revised quote months later is a fresh conversation.
+  await scheduleDripForProposal(proposalId);
+  await pool.query(
+    `UPDATE scheduled_messages SET status = 'sent', sent_at = NOW()
+     WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type LIKE 'drip_touch_%'`,
+    [proposalId]
+  );
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(secondId);
+    assert.strictEqual(await dripCount(secondId), 6);
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+// ── cancelMarketingForProposal: drip hand-off on archive ──
+const DAY = 86400000;
+function offsetOf(type) { return DRIP_TOUCHES.find(t => t.messageType === type).offsetDays * DAY; }
+async function markSent(id, type) {
+  await pool.query(
+    `UPDATE scheduled_messages SET status = 'sent', sent_at = NOW()
+     WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = $2`,
+    [id, type]
+  );
+}
+async function survivorRows(id) {
+  const { rows } = await pool.query(
+    `SELECT message_type, status, scheduled_for, payload FROM scheduled_messages
+     WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
+    [id]
+  );
+  return rows;
+}
+const REMAINING_AFTER_TOUCH_1 = ['drip_touch_2', 'drip_touch_3', 'drip_touch_4', 'drip_touch_5_email', 'drip_touch_5_sms'];
+
+test('cancelMarketingForProposal > archiving the drip owner re-creates the undelivered touches on the surviving option (PATCH door: rows still present)', async () => {
+  // Jan one step further: hosted A owns the drip, BYOB B was sent solo and
+  // joined it. Dallas archives A because BYOB is the real quote. B must
+  // inherit the REMAINING touches on A's timeline (no repeat of touch 1),
+  // not be left with nothing.
+  await scheduleDripForProposal(proposalId);
+  await markSent(proposalId, 'drip_touch_1');
+  const before = await survivorRows(proposalId);
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(secondId);
+    assert.strictEqual(await dripCount(secondId), 0, 'B joined A\'s drip');
+
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await cancelMarketingForProposal(proposalId);
+
+    const after = await survivorRows(secondId);
+    assert.deepStrictEqual(after.map(r => r.message_type), REMAINING_AFTER_TOUCH_1, 'B owns exactly the five touches A had not sent yet');
+    assert.ok(after.every(r => r.status === 'pending'));
+    for (const r of after) {
+      const orig = before.find(b => b.message_type === r.message_type);
+      assert.strictEqual(new Date(r.scheduled_for).getTime(), new Date(orig.scheduled_for).getTime(), `${r.message_type} keeps A's timeline`);
+      assert.strictEqual(r.payload.handed_off_from, proposalId);
+    }
+    const aRows = await pool.query(
+      `SELECT message_type, status, error_message FROM scheduled_messages
+       WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
+      [proposalId]
+    );
+    assert.strictEqual(aRows.rows.find(r => r.message_type === 'drip_touch_1').status, 'sent', 'delivered history stays on A');
+    const rest = aRows.rows.filter(r => r.message_type !== 'drip_touch_1');
+    assert.strictEqual(rest.length, 5);
+    assert.ok(rest.every(r => r.status === 'suppressed' && /handed off to proposal \d+/.test(r.error_message)));
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('cancelMarketingForProposal > hand-off still works when the archive door already DELETED the pending rows (admin archive endpoint, cancel, stale sweep)', async () => {
+  await scheduleDripForProposal(proposalId);
+  await markSent(proposalId, 'drip_touch_1');
+  const touch1 = (await survivorRows(proposalId)).find(r => r.message_type === 'drip_touch_1');
+  const anchorMs = new Date(touch1.scheduled_for).getTime() - offsetOf('drip_touch_1');
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(secondId);
+    assert.strictEqual(await dripCount(secondId), 0);
+    // Mirror actions.js / cancel.js / staleProposalSweep.js: the transaction
+    // archives AND deletes pending comms, then the reap runs post-commit.
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await pool.query(
+      "DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'",
+      [proposalId]
+    );
+    await cancelMarketingForProposal(proposalId);
+
+    const after = await survivorRows(secondId);
+    assert.deepStrictEqual(after.map(r => r.message_type), REMAINING_AFTER_TOUCH_1);
+    for (const r of after) {
+      assert.strictEqual(new Date(r.scheduled_for).getTime(), anchorMs + offsetOf(r.message_type), `${r.message_type} rebuilt on A's anchor`);
+      assert.strictEqual(r.payload.handed_off_from, proposalId);
+    }
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('cancelMarketingForProposal > a sibling that already ran its own sequence never inherits (no second nurture)', async () => {
+  // B's six touches all delivered weeks ago; a revised option A enrolled fresh
+  // (in-flight-only rule) and is now archived. B must not get touches 2-5 again.
+  const olderId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(olderId);
+    await pool.query(
+      `UPDATE scheduled_messages SET status = 'sent', sent_at = NOW()
+       WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type LIKE 'drip_touch_%'`,
+      [olderId]
+    );
+    await scheduleDripForProposal(proposalId);
+    assert.strictEqual(await dripCount(proposalId), 6, 'A enrolled fresh: B has nothing in flight');
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await cancelMarketingForProposal(proposalId);
+    assert.strictEqual(await dripCount(olderId), 6, 'B still has only its own six delivered rows');
+    const { rows } = await pool.query(
+      "SELECT status FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [proposalId]
+    );
+    assert.ok(rows.every(r => r.status === 'suppressed'));
+  } finally {
+    await removeSibling(olderId);
+  }
+});
+
+test('scheduleDripForProposal > a BOOKED sibling with a stranded deferred drip row does not block a new option', async () => {
+  const bookedId = await insertSibling({ eventDateSql: 'event_date', status: 'deposit_paid' });
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+       VALUES ($1, 'proposal', 'drip_touch_2', 'client', $2, 'email', NOW() + INTERVAL '1 day', 'deferred')`,
+      [bookedId, clientId]
+    );
+    await scheduleDripForProposal(proposalId);
+    assert.strictEqual(await dripCount(proposalId), 6);
+  } finally {
+    await removeSibling(bookedId);
+  }
+});
+
+test('onProposalSignedAndPaid > suppresses a cooldown-deferred drip touch too, not only pending ones', async () => {
+  await scheduleDripForProposal(proposalId);
+  await pool.query(
+    `UPDATE scheduled_messages SET status = 'deferred', scheduled_for = scheduled_for + INTERVAL '24 hours'
+     WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'drip_touch_2'`,
+    [proposalId]
+  );
+  await onProposalSignedAndPaid(proposalId);
+  const { rows } = await pool.query(
+    "SELECT message_type, status FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type LIKE 'drip_touch_%'",
+    [proposalId]
+  );
+  assert.ok(rows.every(r => r.status === 'suppressed'), JSON.stringify(rows));
+});
+
+test('cancelMarketingForProposal > no hand-off to a booked sibling: the drip is simply suppressed', async () => {
+  await scheduleDripForProposal(proposalId);
+  const secondId = await insertSibling({ eventDateSql: 'event_date', status: 'deposit_paid' });
+  try {
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await cancelMarketingForProposal(proposalId);
+    assert.strictEqual(await dripCount(secondId), 0);
+    const { rows } = await pool.query(
+      `SELECT status FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
+      [proposalId]
+    );
+    assert.strictEqual(rows.length, 6);
+    assert.ok(rows.every(r => r.status === 'suppressed'));
+  } finally {
+    await removeSibling(secondId);
+  }
+});
 // ── scheduleReviewRequest ──
 test('scheduleReviewRequest > inserts a review_request row 2 days after event_date', async () => {
   await scheduleReviewRequest(proposalId);

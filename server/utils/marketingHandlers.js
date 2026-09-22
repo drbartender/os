@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
+const { DRIP_TOUCHES, hasLiveSiblingDrip, handOffDripToSibling } = require('./dripSiblings');
 const { sendEmail } = require('./email');
 const tpl = require('./marketingEmailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
@@ -85,7 +86,9 @@ async function loadProposalForHandler(proposalId) {
  *
  * Idempotent: re-calling on an already-enrolled proposal is a no-op (the
  * dispatcher's scheduleMessage upserts on the natural key
- * (entity_type, entity_id, message_type, recipient_id, channel)).
+ * (entity_type, entity_id, message_type, recipient_id, channel)). That key
+ * is per PROPOSAL; cross-proposal ownership (one drip per client per event)
+ * is dripSiblings.js.
  */
 async function scheduleDripForProposal(proposalId) {
   const proposal = await loadProposalForHandler(proposalId);
@@ -95,69 +98,21 @@ async function scheduleDripForProposal(proposalId) {
   // future status defaults to "no drip". ('signed' was never a real status.)
   if (!['sent', 'viewed', 'modified'].includes(proposal.status)) return;
   if (!proposal.client_id) return;
+  if (await hasLiveSiblingDrip(proposalId)) return;
 
   const anchor = new Date(); // time-of-send moment
-  const day = 86400000;
-  // Six independent idempotent INSERTs — run concurrently (each
-  // scheduleMessage takes its own pooled connection). Email halves: touches
-  // 2 (+7d), 4 (+14d), 5-email (+21d). SMS halves (Phase 3): touch 1 (+1d),
-  // touch 3 (+10d), touch 5-sms (+21d).
-  await Promise.all([
-    scheduleMessage({
-      entityType: 'proposal',
-      entityId: proposalId,
-      messageType: 'drip_touch_2',
-      recipientType: 'client',
-      recipientId: proposal.client_id,
-      channel: 'email',
-      scheduledFor: new Date(anchor.getTime() + 7 * day),
-    }),
-    scheduleMessage({
-      entityType: 'proposal',
-      entityId: proposalId,
-      messageType: 'drip_touch_4',
-      recipientType: 'client',
-      recipientId: proposal.client_id,
-      channel: 'email',
-      scheduledFor: new Date(anchor.getTime() + 14 * day),
-    }),
-    scheduleMessage({
-      entityType: 'proposal',
-      entityId: proposalId,
-      messageType: 'drip_touch_5_email',
-      recipientType: 'client',
-      recipientId: proposal.client_id,
-      channel: 'email',
-      scheduledFor: new Date(anchor.getTime() + 21 * day),
-    }),
-    scheduleMessage({
-      entityType: 'proposal',
-      entityId: proposalId,
-      messageType: 'drip_touch_1',
-      recipientType: 'client',
-      recipientId: proposal.client_id,
-      channel: 'sms',
-      scheduledFor: new Date(anchor.getTime() + 1 * day),
-    }),
-    scheduleMessage({
-      entityType: 'proposal',
-      entityId: proposalId,
-      messageType: 'drip_touch_3',
-      recipientType: 'client',
-      recipientId: proposal.client_id,
-      channel: 'sms',
-      scheduledFor: new Date(anchor.getTime() + 10 * day),
-    }),
-    scheduleMessage({
-      entityType: 'proposal',
-      entityId: proposalId,
-      messageType: 'drip_touch_5_sms',
-      recipientType: 'client',
-      recipientId: proposal.client_id,
-      channel: 'sms',
-      scheduledFor: new Date(anchor.getTime() + 21 * day),
-    }),
-  ]);
+  // Six independent idempotent INSERTs, run concurrently (each scheduleMessage
+  // takes its own pooled connection). Offsets + channels live in DRIP_TOUCHES
+  // (dripSiblings.js) so the archive hand-off rebuilds the same timeline.
+  await Promise.all(DRIP_TOUCHES.map((t) => scheduleMessage({
+    entityType: 'proposal',
+    entityId: proposalId,
+    messageType: t.messageType,
+    recipientType: 'client',
+    recipientId: proposal.client_id,
+    channel: t.channel,
+    scheduledFor: new Date(anchor.getTime() + t.offsetDays * 86400000),
+  })));
 }
 
 /**
@@ -315,12 +270,19 @@ async function scheduleRetentionNudge(proposalId) {
  * WHERE clauses (Plan 1's Task 12-14).
  */
 async function cancelMarketingForProposal(proposalId) {
+  // Every caller is an archive door. If this proposal owned the client's drip
+  // for the event and an open, never-nurtured sibling option survives, the
+  // unsent touches are re-created on it first (see dripSiblings.js); the
+  // suppress below then only reaches what is left on this row.
+  await handOffDripToSibling(proposalId);
+  // 'deferred' too: a touch parked by the 24h cooldown is still in flight and
+  // would otherwise reactivate and fire for an archived proposal.
   await pool.query(
     `UPDATE scheduled_messages
      SET status = 'suppressed'
      WHERE entity_type = 'proposal'
        AND entity_id = $1
-       AND status = 'pending'`,
+       AND status IN ('pending', 'deferred')`,
     [proposalId]
   );
 }
@@ -534,7 +496,7 @@ async function onProposalSignedAndPaid(proposalId) {
             error_message = 'proposal signed and paid'
       WHERE entity_type = 'proposal'
         AND entity_id = $1
-        AND status = 'pending'
+        AND status IN ('pending', 'deferred')
         AND message_type IN (
           'drip_touch_1', 'drip_touch_2', 'drip_touch_3',
           'drip_touch_4', 'drip_touch_5_email', 'drip_touch_5_sms'
