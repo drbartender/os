@@ -39,6 +39,26 @@ bottom, in one line each, because their whole job is to stop a lane being opened
 ---
 ---
 
+### Dallas's 2026-09-22 drop, where each of the twelve landed
+
+Triaged against code and prod the same day (2026-09-22). Build order is the order below; the
+first three sit above the divider.
+
+1. **BEO finalize still needs clicks, and two 9/26 events can never finalize** → §4 Staff-facing.
+2. **"Copy compare link" bounces the client to the sign page** → §2.
+3. **Margarita salt lands at four or more containers** → §2.
+4. Supplies chip is grey on the desktop events list → Admin UI (one word).
+5. Show when an event was booked → Admin UI (client-only).
+6. Admin cannot download the menu print file → Admin UI (one route, one button).
+7. "Package details" never shows what is in The Foundation → Admin UI.
+8. Planner answers beside the shopping list → Potions.
+9. Fresh-squeezed juice add-on → Potions (needs a rate from Dallas).
+10. Staff opt-in for "menu is ready to print" → Staff, shifts, and the roster.
+11. Additional clients on a proposal → Unbuilt projects (design call first).
+12. Review request research → Unbuilt projects (the funnel numbers are there).
+
+---
+
 # ▲ OWED — these can bite
 
 Ordered by how close each one is to actually costing money or a client.
@@ -77,6 +97,8 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
+| 2 | "Copy compare link" hands the client the sign page, not the comparison | **yes: group 20, made 9/22, one sent + one draft** |
+| 2 | The shopping list asks for four or more containers of margarita salt | yes, on any salt-rimmed menu |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
 | 3 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
 | 3 | CSV lead import loses rows and reports success | yes |
@@ -84,6 +106,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
+| 4 | Two 9/26 events carry an approved list on a plan that can NEVER finalize, so their staff get no T-3 BEO text | **YES: plans 143 + 99, T-3 is 9/23** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Thumbtack first-reply verify is FIXED and live, owes its next-real-lead proof | no, and the fix cannot regress it |
 
@@ -636,6 +659,53 @@ sibling has at `:339`, so a syrup already on the list from another path is pushe
 `shoppingListGen.js:390-401` handles the same input separately — check both when fixing; they are
 not copies of one function.
 
+### "Copy compare link" hands the client the sign page, not the comparison
+
+Dallas, 2026-09-22: *"when I click 'copy compare link' in the alternative section of a proposal it
+doesn't give me the comparison. it just goes straight to a contract."* Reproduced in prod the same
+day: group 20 (created 2026-09-22) holds 858 `viewed` and 872 `draft`.
+
+The button (`AlternativesPanel.js`, `copyCompareLink`) builds `/compare/<group token>`, the same
+URL the options email sends. The public group endpoint (`compareGroup.js`, `VISIBLE_STATUSES`)
+drops every `draft` option, and `ProposalCompare.js` hard-redirects (`replace: true`) to
+`/proposal/<token>?choose=1`, the sign-and-pay page, whenever it is left with ONE visible option
+or the group is decided. So the link is right and the page is doing what it was built to do; the
+admin surface lies about it. "Copy compare link" renders unconditionally on any grouped proposal,
+where "Send options" is gated on `hasDraft && !decided`, so the copy is offered before the second
+option has ever been sent.
+
+Fix is on the admin side, two parts. (1) Gate or relabel the button: while any option is still
+`draft`, say "Send options first: the compare page only shows sent options" (or disable it); once
+decided, hide it. (2) If Dallas wants to SEE the comparison himself before sending, the admin
+preview endpoint already exists and has no caller: `GET /api/proposals/group/:token/preview`
+(`compareGroup.js`) ignores the visibility gate. A "Preview comparison" link beside the copy
+button is the missing piece; the public compare page would need an admin-preview mode or a sibling
+route to read from it. Do not touch the redirect effects or `?choose=1` (both load-bearing, see the
+entry above).
+
+### The shopping list asks for four or more containers of margarita salt
+
+Dallas: *"Generally only need one container of margarita salt."* Prod par row `margarita-salt`:
+`qty_per_100 = 1`, `size = container`, `in_full_bar = false`, alias `margarita salt` (same shape for
+`tajin`). Because it is not in the full-bar baseline it only ever reaches a list through a recipe
+ingredient, and that path ignores `qty_per_100` entirely: `mergeSignatureRecipes`
+(`server/utils/shoppingList.js`, the "Add missing items" loop) lands any recipe-resolved item not
+already on the list at `Math.max(1, Math.ceil(guestCount / 25))`, then adds +1 per additional
+signature drink that uses it. 100 guests = 4 containers; two salt-rimmed drinks = 5. The comment
+above the loop calls this a deliberate v1 carry-over ("quantities are usually right"). The buffer
+multipliers in `shoppingListGen.js` are display metadata and never touch the number.
+
+Same defect for every non-baseline recipe item: prod has 67 active `in_full_bar = false` rows
+(mint, basil, cucumber, Tajin, sanding sugar, orgeat, grenadine, every flavored syrup, every
+specialty spirit, and so on), all carrying a `qty_per_100` the generator never reads on this path.
+
+Fix, smallest true one: in that loop, when the resolved row has a par row (`slices.byId`, whose
+`qty` IS `qty_per_100`), use `scaleQty(parRow.qty, guestCount)` (the baseline's own
+`ceil(q × guests / 100)`) instead of `guests / 25`; keep the +1-per-extra-drink boost; legacy-map
+fallback rows (no par id) keep the old rule. Salt then lands at 1 up to 100 guests and 2 above,
+which matches "generally one". Run `potionCatalog.test.js` and the shoppingList suites; this
+changes every recipe-derived quantity, so eyeball one real BYOB list before and after.
+
 ### Signed documents do not say who is covered
 
 Three copy changes, each to a document a real person signs or receives. **Blocked on Dallas
@@ -759,6 +829,49 @@ money-adjacent, so this gets the full fleet.
 `eventDetailsPayload.js` sends `shopping_list_status` as `pending_review` / `approved` / null, so no
 staffer on any package has ever seen the card. Either the card was meant to key on `approved` or the
 payload was meant to map it; pick one. Surfaced by the hosted-no-shopping-list review, 2026-09-11.
+
+### BEO finalize still needs admin clicks, and an admin-built plan can never finalize at all
+
+Dallas, 2026-09-22: *"finalize BEO needs some work. It shouldn't take an admin click."* The derived
+finalize from 2026-09-11 (`2b414e64`) is on origin/main and firing in prod: 7 auto-finalizes since
+9/14 (6 on list approve, 1 on Mark reviewed). What is left is three real holes, verified in prod
+the same day:
+
+- **A plan the client never submitted cannot finalize, from any surface.** Finalize (manual and
+  derived) requires `drink_plans.status = 'reviewed'`; the only writer of `reviewed` is
+  `PATCH /drink-plans/:id/status`, and the only UI that sends it is "Mark reviewed", which
+  `DrinkPlanCard.js` / `DrinkPlanDetail.js` render ONLY while `status === 'submitted'`. When Dallas
+  builds the list himself from the consult (`shopping_list_source = 'consult'`) the plan stays
+  `draft`, the approve flips the list to `approved` (that UPDATE has no status guard), and nothing
+  can ever move it to `reviewed`. **Plans 143 (prop 842) and 99 (prop 604) are exactly this, both for
+  events on 2026-09-26.** `scheduleBeoNudgesForProposal` runs only inside finalize, so their
+  bartenders get no T-3 BEO text (T-3 is 9/23). Prod history says this is the normal admin path,
+  not a corner: 8 past events plus these 2 sit `draft`/`pending` + `approved`, never finalized.
+- **Three pre-deploy plans are still waiting for a click**: 128 (prop 685, 10/03), 135 (prop 797,
+  10/04), 140 (prop 789, 12/19), all `reviewed` + `approved`, none with unpaid extras. Of the ten
+  the 9/11 entry listed, Dallas hand-clicked Finalize on 133 and 138 (both day-of, 9/14 and 9/19);
+  the rest were past events.
+- **After Unfinalize nothing re-fires.** Plan 82 (prop 535, 10/10, 140 guests) auto-finalized 9/14,
+  was unfinalized 9/17, and sits `reviewed` + `approved` + unfinalized. Also observed: 847 and 855
+  each went finalize / unfinalize / finalize two or three times inside two minutes on 9/18 (the
+  approve-and-send fired once, the rest were quiet re-approves), which is the lock-at-approve cost
+  Dallas accepted on 9/11 showing up in practice.
+
+"Mark reviewed" is the click he is describing. For a BYOB plan it is redundant with approving the
+list: approving IS the review, and the admin who built a consult list has reviewed it by
+definition. Recommendation, one change: make the approve action (`shoppingListApprove.js`,
+`ensureSideEffects`) set `status = 'reviewed'` when the plan is `draft` / `pending` / `submitted`
+with non-empty `selections`, then let the existing
+`autoFinalizeIfEligible(..., 'shopping_list_approved')` run. That closes all three holes at once
+(the 143/99 shape finalizes on the next Publish Quietly; the pre-deploy three and plan 82 finalize
+on one Publish Quietly each, or the button) and keeps `status` semantics intact (`finalized` still
+implies `reviewed`). Hosted plans keep Mark reviewed as their trigger on purpose: they owe no list,
+and finalizing on client submit would slam the Enhancement Lab shut the moment the client hits
+send. **Needs Dallas's yes: "approving the list counts as reviewing the plan."** Do not add a cron,
+a backfill, or a new required click.
+
+Until it ships, 143 and 99 can be finalized only by writing `status = 'reviewed'` on the row (a
+guarded prod UPDATE), after which the Finalize button appears and the click schedules the nudges.
 
 ---
 
@@ -1177,10 +1290,9 @@ the accented spelling) or the two spellings stop matching each other.
     with no list yet still be offered the client list email. A comment or a CHECK.
   - The finalize and status responses still ship the `shopping_list` and `consult_selections`
     JSONB that no caller reads (both cards refetch the lean payload). Project explicit columns.
-  - Ten prod plans sat reviewed with an approved list (or hosted) and never finalized before the
-    change: 67, 88, 89, 95, 113, 128, 133, 135, 138, 140. Nothing backfills. The upcoming ones
-    finalize on the next Publish Quietly / Approve confirm (a repeat confirm re-attempts) or the
-    Finalize button.
+  - Of the ten prod plans that sat reviewed + approved before the change, three upcoming ones still
+    wait (128, 135, 140). "BEO finalize still needs admin clicks" in §4 above owns that fix, and the
+    bigger hole it found (admin-built plans never reach `reviewed`). Nothing backfills.
   - Unpaid extras stays a manual click for good: nothing re-fires when the extras invoice is paid
     later. Designed (the human checkpoint), noted so nobody reads it as a miss.
   - Behavior to know, not a bug: for an event inside three days, Mark reviewed / approve now arms
@@ -1192,10 +1304,58 @@ the accented spelling) or the two spellings stop matching each other.
   `pending_review` rows (5 BYOB, 5 package-less) padding the badge with nothing to act on. Add the
   prep queue's upcoming-only rule to the count.
 
+- **Planner answers beside the shopping list (Dallas, 2026-09-22: *"I want to see the answers from
+  the potion planner on the shopping list. I often click back and forth."*).** The list is a portal
+  modal (`ShoppingListModal.jsx`, opened from `ShoppingListButton.jsx` on `/drink-plans/:id`,
+  `/events/:id` and `/proposals/:id`); the planner recap is `DrinkPlanSelections.js`, mounted in
+  exactly one place, the Selections card on `/drink-plans/:id`, which the modal covers. On the event
+  and proposal pages there is no recap at all. The answers are `drink_plans.selections` (already on
+  `GET /drink-plans/:id` and `/by-proposal/:id`); the consult answers (`consult_selections`) have NO
+  read-only recap anywhere, only the `ConsultationForm.jsx` editor, and `shopping_list_source` says
+  which of the two fed the list. `DerivationStrip.jsx` inside the modal already shows the derived
+  numbers (drinkers × hours × pace), so the slot exists. Build: a collapsible side rail (desktop) or
+  top section (narrow) inside the modal rendering `DrinkPlanSelections` for the source that fed the
+  list, plus a compact read-only consult recap when the source is `consult`. Modal-only; no new
+  endpoint.
+- **Fresh-squeezed juice add-on (Dallas, 2026-09-22).** No such add-on exists; juice is only ever
+  bundled today (`full-mixers-only`, `the-full-compound` and `soft-drink-addon` all list bottled OJ,
+  cranberry and pineapple) and every juice par row is shelf-stable bottled. **Needs from Dallas
+  before it can land: the rate and billing type (per guest like `house-made-ginger-beer` at $2.50,
+  or flat like a syrup bottle), whether it is `applies_to` all or BYOB-only, and whether it is a
+  per-drink upgrade (like ginger beer) or a bar-wide swap.** The last add-on that shipped end to end
+  (`8c1a0b0d`, NA beer) touched two files; the surfaces have accreted since and a two-file add now
+  misbehaves quietly. Checklist, verified: `schema.sql` seed INSERT (`ON CONFLICT (slug) DO
+  NOTHING`) with `category` from the six in `client/src/data/addonCategories.js` (the quote wizard
+  filters by that map with no catch-all, so a null category is invisible) and the slug in the
+  `requires_provisioning` allowlist (drives `supply_run_required`); `ADDON_ICONS`;
+  `ADDON_TAGLINES` in `quoteWizard/helpers.js`; `DRINK_UPGRADES` in
+  `client/src/pages/plan/data/drinkUpgrades.js` if it is per-drink (mirrors ginger beer); a `case`
+  in `shoppingListAddonCoverage.js` `computeStripSet` so the BYOB list stops telling the client to
+  buy bottled juice DRB is now squeezing (unmapped slugs are silently skipped); `BUNDLE_INCLUDED` /
+  `BUNDLE_UNAVAILABLE` in `bundleConfig.js` AND its CJS twin `server/utils/proposalRules.js` if a
+  bundle should cover it; `par_items` rows (lemon / lime / orange garnish rows exist) if the prep
+  list should scale citrus. `OFF_LEDGER_INVOICE_LABELS` is not involved (add-on money folds through
+  the normal `addon` line path).
+
 ---
 
 ## Staff, shifts, and the roster
 
+- **Staff opt-in for "the menu is ready to print" (Dallas, 2026-09-22).** The per-topic opt-in
+  machinery already ships: `users.staff_notification_preferences` (8 categories × push/sms/email),
+  `notificationChannelResolver.js`, `PATCH /staff-notifications`, and the matrix at
+  `client/src/pages/staff/account/NotificationsSection.js`. Two facts to know before building.
+  (1) Only ONE of the eight categories has a producer (`cover_needed`, `coverBroadcast.js`); the
+  other seven, `beo_finalized` included, are configurable and never fire through the resolver, so
+  most of that matrix is a control that lies (separate cleanup, noted here so nobody assumes the
+  plumbing is exercised). (2) "Menu ready" has no event: `POST /proposals/:id/menu-print`
+  (`menuPrint.js`) uploads to R2 and its only side effect is `reaccrueDuty`; no activity-log row, no
+  message. Build: a `menu_ready` category added in all FOUR mirrors (schema default JSONB, resolver
+  `DEFAULT_CHANNELS`, route allow-list, `NotificationsSection` list + defaults), default OFF since
+  opt-in is the ask, and an `enqueueCategorizedMessage` call beside `reaccrueDuty` fanning out to
+  approved, non-dropped staff on the proposal's shifts the way `beoHandlers.js` selects them. Copy:
+  one line with the event name and date; the download stays behind the existing assigned-staff
+  route (`GET /shifts/:shiftId/menu-print`).
 - **`shift_requests.position` is free text whose canonical casing is enforced only by convention,
   and three display rules disagree about it.** The CHECK is case-INSENSITIVE
   (`lower(position) = ANY(...)`), so `'bartender'` is a legal stored value. Two of the three
@@ -1403,6 +1563,40 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **Supplies chip on the events list is grey (Dallas: *"the grey is too incognito"*, maybe blue).**
+  Desktop: `PrepCell` in `EventsDashboard.js` renders `Bar` and `Supplies` as `StatusChip
+  kind="neutral" dot={false}` by design ("facts, not alarms"). A blue chip token already exists and
+  `StatusChip` accepts it: `kind="info"` (`.chip.info`, fixed hue 208, both skins). One-word change
+  for Supplies. Phone (`EventsListPhone.js`): Supplies is already GREEN (`.m-tag-supplies`, `--ok`)
+  and Bar is already BLUE (`.m-tag-bar`, `--info`), so making phone Supplies blue collides with Bar;
+  leave the phone row alone unless Dallas says otherwise.
+- **Show when an event was booked (Dallas: *"I want to know when an event was booked."*).** No
+  surface shows it. The right column is `proposals.accepted_at` (stamped `COALESCE(accepted_at,
+  NOW())` by public sign-and-pay, admin status → accepted, and admin record-payment; the Stripe
+  webhooks do NOT stamp it, so a pay-without-sign row can be NULL). It is already on the
+  `EventDetailPage` payload (`GET /proposals/:id` is `SELECT p.*`) and never rendered. Render
+  "Booked <date>" in the event header beside the event date, as `COALESCE(accepted_at,
+  client_signed_at, first succeeded proposal_payments.created_at)`. Client-only for the detail
+  page; an events-list column would need the field added to the `/shifts` list query.
+- **Admin cannot download the menu print file.** `AdminMenuPrintBlock.js` (event detail, "Bar menu
+  print") has Upload / Replace / Remove / "No menu needed" and no download or preview; the only
+  read route is the assigned-staff one, `GET /shifts/:shiftId/menu-print` (`eventDetails.js`; admin
+  bypasses the assignment check but it is keyed by shift). Add `GET /proposals/:id/menu-print` next
+  to the POST/PATCH/DELETE in `menuPrint.js` (same R2 proxy + traversal guard as the staff route)
+  and a Download button on the card when status is `ready`. The file is the finished PRINT file
+  Dallas uploaded, not a client artifact: the client only ever supplies a brief
+  (`selections.menuTheme` / `drinkNaming` / `menuDesignNotes`) and a logo.
+- **"Package details" never shows what is in The Foundation (Dallas: *"when I click on package
+  details I need to see the add-on details as well"*).** The disclosure on `EventDetailPage.js`
+  (and its twin on `ProposalDetail.js`) renders the hard-coded `PACKAGES` catalog
+  (`client/src/data/packages.js`) or `service_packages.includes`, and nothing about the proposal's
+  add-ons; add-ons reach the page only as `PricingBreakdown` lines, a label and a dollar amount.
+  Bundle contents live in `BUNDLE_INCLUDED` (`bundleConfig.js`, re-exported by
+  `client/src/utils/proposalRules.js`): the-foundation = ice-delivery-only + cups-disposables-only
+  + bottled-water-only. `BundlePicker.js` already renders exactly that list with names from the
+  add-on catalog. Build: under the package list in the same disclosure, one block per proposal
+  add-on with its `service_addons.description`, and for a bundle the included component names. No
+  schema change.
 - **Two client-side Chicago-day helpers now exist.** `utils/chicagoDay.js` (staff skin, added
   2026-08-25 with the paid_at fix) and `ctDay` in `components/adminos/format.js` (admin skin,
   added the same day) are the same function. They were kept separate because `pages/staff`
@@ -1888,6 +2082,36 @@ re-grep before surgery.
   phone/messaging, 30-90 min generic arrival), quote-resume, and in-portal sign/pay/lab. Overview,
   Potion, Receipts and Prescription tabs are real now, and a per-event route token + ArchiveList give
   a partial multi-event switcher.
+- **Additional clients on a proposal (Dallas, 2026-09-22: *"ability to add additional clients to a
+  proposal."*).** Today a proposal has exactly one person: `proposals.client_id` → a flat `clients`
+  row (name, email, phone); every comms action resolves ONE address off that join; portal login
+  resolves an email to ONE `clients` row (`clientAuth.js`); the contract says "designate a single
+  point of contact". The only second person anywhere is the drink plan's day-of contact
+  (`selections.logistics.dayOfContact`, name + phone, no email, no portal). Nothing in the schema
+  blocks it, and `sendEmail` already takes an array for `to` (`email.js`). Shape that fits: a
+  `proposal_contacts` join table (`proposal_id`, `client_id`, role label, `is_primary`), keep
+  `proposals.client_id` as the primary so nothing downstream moves, a second picker slot in
+  `proposalCreate/ClientSection.js`, and the contact block on `ProposalDetail` / `EventDetailPage`.
+  **The design call that decides the size:** does the second client only get CC'd (proposal sends,
+  shopping list, portal invite: each comms action's recipient resolution gains the extra
+  addresses), or do they get their own portal login and the ability to sign (then `clientAuth.js`
+  must resolve an email to a SET of proposals and the sign path needs a rule for whose signature
+  counts)? CC-only is a lane; portal identity is a project. Brainstorm first.
+- **Review request research (Dallas, 2026-09-22).** The pipeline already exists and runs; the
+  research question is why it produces almost no Google reviews. Facts, prod 2026-09-22: the
+  `review_request` email fires at event_date + 2 days, 10am local (`marketingHandlers.js`,
+  scheduled by the hourly auto-complete and by a manual status → completed): 56 sent, 3 suppressed.
+  It links to `/feedback/:token`; 13 clients answered (23%), ratings 5,5,5,2,5,5,5,5,5,5,3,5,5, and
+  every rating lands in `post_event_feedback` (the schema comment saying 4-5★ never hit the table is
+  wrong; `recordFeedback` inserts first, then routes). A rating of 4+ is redirected to
+  `PUBLIC_GOOGLE_REVIEW_URL`, which silently falls back to plain `https://google.com` when unset, so
+  11 people were sent toward Google and `staff_reviews` holds ONE Google review, entered by hand.
+  There is no SMS ask, no second nudge, no admin "send review request now", no link from a redirect
+  to the bartender's $10 bounty (`staff_reviews.proposal_id` exists, nothing on the feedback path
+  writes it), and the review URL is env-only. The tip thank-you page and the CheckCherry wrap-up
+  email carry their own Google CTAs. **First thing to check: that `PUBLIC_GOOGLE_REVIEW_URL` is
+  actually set on Render.** Then the research is about the funnel after the redirect; the August
+  research covered the at-event ask and its FTC lines, this is the post-event one.
 - **Menu design page.** A real workflow over the planner-captured menu prefs
   (`menuStyle`/`menuTheme`/`drinkNaming`/`menuDesignNotes`), producing a real artifact and the
   done-state that then powers "menu to design" Prep queue items. Dallas has page ideas to brainstorm.
