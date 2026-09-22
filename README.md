@@ -389,6 +389,7 @@ dr-bartender/
 │   │   ├── drinkPlanAccess.js  # Pure post-booking drink-plan access guard (fail-safe pre-booking allowlist)
 │   │   ├── drinkPlanNudge.js   # Drink-plan / Potion Planner nudge: email + SMS touch and scheduling
 │   │   ├── dripSmsHandlers.js  # Unsigned-proposal drip SMS handlers (touches 1, 3, 5-sms)
+│   │   ├── dripSiblings.js     # One drip per client per event: sibling-option skip + archive hand-off
 │   │   ├── email.js            # Resend email wrapper (send + batch)
 │   │   ├── emailBlockRenderer.js # Designed-email block → email-safe HTML renderer (tables + inline styles; single source of truth for how a designed campaign looks)
 │   │   ├── emailDesign.js      # Design compiler: sanitizes block rich-text + renders design_json → html_body/text_body
