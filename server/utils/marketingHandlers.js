@@ -68,7 +68,7 @@ function buildUnsubscribeUrl(clientId) {
 async function loadProposalForHandler(proposalId) {
   const { rows } = await pool.query(`
     SELECT p.id, p.token, p.event_date, p.event_type, p.event_type_custom,
-           p.event_timezone, p.status, p.client_id, p.created_at,
+           p.event_timezone, p.status, p.client_id, p.created_at, p.drip_stopped_at,
            c.name AS client_name, c.email AS client_email,
            c.email_status, c.phone_status
     FROM proposals p
@@ -98,6 +98,12 @@ async function scheduleDripForProposal(proposalId) {
   // future status defaults to "no drip". ('signed' was never a real status.)
   if (!['sent', 'viewed', 'modified'].includes(proposal.status)) return;
   if (!proposal.client_id) return;
+  // Admin "Stop follow-ups" is one-way for THIS proposal: a later
+  // modified->sent PATCH, a restore, or a re-send must not re-enroll it
+  // (its old rows are 'suppressed', which neither the sibling check nor
+  // scheduleMessage's pending-only ON CONFLICT would notice). Only a NEW
+  // proposal starts a fresh sequence.
+  if (proposal.drip_stopped_at) return;
   if (await hasLiveSiblingDrip(proposalId)) return;
 
   const anchor = new Date(); // time-of-send moment

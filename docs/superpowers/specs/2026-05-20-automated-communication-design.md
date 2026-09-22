@@ -148,6 +148,8 @@ Hi, Dallas here. Just sent your proposal for the [event_type] on [event_date]. V
 - `proposals.status = 'signed'` (sign+pay coupling means this implies paid too)
 - `proposals.status = 'archived'` (admin archived for any reason)
 - Client opted out via STOP keyword (SMS only) or unsubscribe (email only)
+- **Admin "Stop follow-ups" (added 2026-09-22).** `POST /api/proposals/:id/stop-drip` suppresses the event's in-flight drip touches on every open option of the client with the same `event_date` and stamps `proposals.drip_stopped_at` on each. One-way: a stopped proposal never hands its drip off on archive and never inherits one; only a NEW proposal starts a fresh sequence (a resend does not). Operational touches are untouched.
+- **Not a suppression: a client reply.** Decided 2026-09-22. A reply never pauses or stops the drip; the admin button is the manual off switch.
 
 **Channels alternate per touch:**
 

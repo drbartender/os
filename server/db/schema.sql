@@ -5090,6 +5090,13 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS remote_fee_prompted_at TIMESTAMPT
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lat NUMERIC(9,6);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lng NUMERIC(9,6);
 
+-- 2026-09-22 admin "Stop follow-ups": stamps every open proposal in the event's
+-- conversation (same client_id + event_date) when the unsigned-proposal drip is
+-- stopped by hand. A stopped proposal never hands its drip off on archive and
+-- never inherits one (server/utils/dripSiblings.js). One-way; a resend starts a
+-- fresh sequence on a new proposal.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS drip_stopped_at TIMESTAMPTZ;
+
 -- ─── Marketing tags and Do-not-contact (spec 2026-08-11) ───────────
 -- Human-set marketing classification. Corporate is NEVER inferred: the email
 -- domain measures as a coin flip in both directions (of 30 clients who booked

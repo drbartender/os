@@ -38,8 +38,11 @@
  *    (no drip row pending, processing, deferred, or sent): a booked sibling
  *    never inherits, a sibling that already ran its own sequence never gets
  *    it twice, and the compare-group loser archives run after the winner is
- *    paid, so they find no survivor. Inserts use the same natural-key
- *    ON CONFLICT as scheduleMessage.
+ *    paid, so they find no survivor. An admin "Stop follow-ups"
+ *    (proposals.drip_stopped_at, routes/proposals/stopDrip.js) is final on
+ *    both sides: a stopped owner hands nothing off and a stopped sibling
+ *    never inherits. Inserts use the same natural-key ON CONFLICT as
+ *    scheduleMessage.
  *
  * Not addressed: two solo sends for the same client + date that overlap in
  * flight can both pass hasLiveSiblingDrip (read-then-write). Advisory locks
@@ -58,7 +61,9 @@ const DRIP_TOUCHES = [
   { messageType: 'drip_touch_5_sms',   channel: 'sms',   offsetDays: 21 },
 ];
 const DAY_MS = 86400000;
-const OPEN_STATUSES = "('sent', 'viewed', 'modified')";
+/** Unsigned, in-conversation statuses: the only ones a drip runs on. */
+const OPEN_STATUS_LIST = ['sent', 'viewed', 'modified'];
+const OPEN_STATUSES = `(${OPEN_STATUS_LIST.map((s) => `'${s}'`).join(', ')})`;
 const IN_FLIGHT = "('pending', 'processing', 'deferred')";
 
 async function hasLiveSiblingDrip(proposalId) {
@@ -98,6 +103,8 @@ async function handOffDripToSibling(archivedProposalId) {
         AND sib.status IN ${OPEN_STATUSES}
       WHERE me.id = $1
         AND me.status = 'archived'
+        AND me.drip_stopped_at IS NULL
+        AND sib.drip_stopped_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM scheduled_messages x
            WHERE x.entity_type = 'proposal'
@@ -159,4 +166,4 @@ async function handOffDripToSibling(archivedProposalId) {
   return { survivorId: s.survivor_id, created };
 }
 
-module.exports = { DRIP_TOUCHES, hasLiveSiblingDrip, handOffDripToSibling };
+module.exports = { DRIP_TOUCHES, OPEN_STATUS_LIST, hasLiveSiblingDrip, handOffDripToSibling };

@@ -267,6 +267,7 @@ dr-bartender/
 │   │   │   ├── cancel.js       # Cancel booked events (fix #7): /:id/cancel/preview, /:id/cancel, /:id/cancel/refund — archive + shift-cancel + comms-delete + invoice-void + idempotent tip clawback + agreement refund
 │   │   │   ├── cancelLineItem.js # Cancel line item: /:id/cancel-line/targets|preview|(execute) — one-motion removal + post-commit overpayment-scoped refunds (mounted before getOne)
 │   │   │   ├── remoteStaffing.js # Remote Staffing Fee support for the admin send surfaces: /:id/remote-staffing-check (venue distance, active-staff counts, server-derived suggestion, on-demand venue geocode) + /:id/remote-fee-prompt-answered (asks once). Carved out of crud.js at the size ratchet; mounted before getOne
+│   │   │   ├── stopDrip.js     # POST /:id/stop-drip: admin one-way stop of the event's unsigned-proposal drip (every open option, same client + event_date); stamps proposals.drip_stopped_at
 │   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
 │   │   ├── serviceExtensions/  # On-site service extension (staff-requested added bar time), mounted at /api/service-extensions
 │   │   │   ├── index.js        # Composition router; auth differs per file so it is applied inside each one (publicAccept mounted first)

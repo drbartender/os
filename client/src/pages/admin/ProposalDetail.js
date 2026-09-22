@@ -19,6 +19,7 @@ import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
+import ProposalDetailStopDrip from './ProposalDetailStopDrip';
 import CancelEventDialog from './CancelEventDialog';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
@@ -434,7 +435,10 @@ export default function ProposalDetail() {
               {proposal.guest_count != null && ` · ${proposal.guest_count} guests`}
             </div>
           </div>
-          <div className="page-actions" style={{ flexShrink: 0 }}>
+          {/* Eight actions now (Stop follow-ups joined 2026-09-22). Let the row
+              wrap instead of pushing the main pane into horizontal scroll at
+              laptop widths, and keep the title column at least ~300px. */}
+          <div className="page-actions" style={{ flex: '0 1 auto', flexWrap: 'wrap', justifyContent: 'flex-end', rowGap: 6, maxWidth: 'calc(100% - 300px)' }}>
             <button type="button" className="btn btn-ghost" onClick={copyPublicLink}>
               <Icon name="copy" size={12} />{linkCopied ? 'Copied!' : 'Copy link'}
             </button>
@@ -480,6 +484,7 @@ export default function ProposalDetail() {
                 <Icon name="x" size={12} />{archiving ? 'Archiving…' : 'Archive'}
               </button>
             )}
+            <ProposalDetailStopDrip proposal={proposal} editing={editing} onStopped={loadProposal} />
             {!editing && ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) && (
               <button type="button" className="btn btn-ghost" onClick={() => setShowCancelDialog(true)}>
                 <Icon name="x" size={12} />Cancel event

@@ -24,6 +24,7 @@ router.use('/', require('./groups'));
 router.use('/', require('./notifyPreflight'));
 router.use('/', require('./menuPrint'));
 router.use('/', require('./remoteStaffing')); // /:id/remote-staffing-check, /:id/remote-fee-prompt-answered
+router.use('/', require('./stopDrip')); // /:id/stop-drip: admin one-way stop of the event's unsigned-proposal drip
 router.use('/', require('./crud'));
 router.use('/', require('./list'));
 router.use('/', require('./metricsSplit'));

@@ -391,6 +391,59 @@ test('onProposalSignedAndPaid > suppresses a cooldown-deferred drip touch too, n
   assert.ok(rows.every(r => r.status === 'suppressed'), JSON.stringify(rows));
 });
 
+test('cancelMarketingForProposal > an admin-stopped drip never hands off on archive', async () => {
+  // Stop follow-ups (drip_stopped_at) on the owner, then archive it: the
+  // survivor must NOT get the touches rebuilt. Rows are marked 'suppressed'
+  // (survives the delete-door), and the stamp is the durable signal.
+  await scheduleDripForProposal(proposalId);
+  await markSent(proposalId, 'drip_touch_1');
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await scheduleDripForProposal(secondId);
+    await pool.query(
+      `UPDATE scheduled_messages SET status = 'suppressed', error_message = 'stopped by admin'
+       WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`, [proposalId]);
+    await pool.query('UPDATE proposals SET drip_stopped_at = NOW() WHERE id = ANY($1::int[])', [[proposalId, secondId]]);
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await cancelMarketingForProposal(proposalId);
+    assert.strictEqual(await dripCount(secondId), 0, 'stopped drip stays stopped');
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('cancelMarketingForProposal > a stopped survivor never inherits either', async () => {
+  // Owner A was never stopped (its drip is live); the sibling B was stamped
+  // stopped earlier. Archiving A must not rebuild A's touches on B.
+  await scheduleDripForProposal(proposalId);
+  const secondId = await insertSibling({ eventDateSql: 'event_date' });
+  try {
+    await pool.query('UPDATE proposals SET drip_stopped_at = NOW() WHERE id = $1', [secondId]);
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await cancelMarketingForProposal(proposalId);
+    assert.strictEqual(await dripCount(secondId), 0);
+  } finally {
+    await removeSibling(secondId);
+  }
+});
+
+test('scheduleDripForProposal > a stopped proposal never re-enrolls (stop is one-way across every send door)', async () => {
+  // Review finding: after "Stop follow-ups" every rows is 'suppressed', which
+  // neither hasLiveSiblingDrip nor scheduleMessage's pending-only ON CONFLICT
+  // sees, so the next modified->sent PATCH would insert six fresh touches.
+  await scheduleDripForProposal(proposalId);
+  await pool.query(
+    `UPDATE scheduled_messages SET status = 'suppressed', error_message = 'stopped by admin'
+     WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`, [proposalId]);
+  await pool.query('UPDATE proposals SET drip_stopped_at = NOW() WHERE id = $1', [proposalId]);
+  await scheduleDripForProposal(proposalId);
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type LIKE 'drip_touch_%'",
+    [proposalId]);
+  assert.strictEqual(rows.length, 6);
+  assert.ok(rows.every(r => r.status === 'suppressed'), 'no fresh pending rows');
+});
+
 test('cancelMarketingForProposal > no hand-off to a booked sibling: the drip is simply suppressed', async () => {
   await scheduleDripForProposal(proposalId);
   const secondId = await insertSibling({ eventDateSql: 'event_date', status: 'deposit_paid' });
