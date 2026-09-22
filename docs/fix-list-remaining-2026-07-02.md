@@ -44,7 +44,7 @@ bottom, in one line each, because their whole job is to stop a lane being opened
 Triaged against code and prod the same day (2026-09-22). Build order is the order below; the
 first three sit above the divider.
 
-1. **BEO finalize still needs clicks, and two 9/26 events can never finalize** → §4 Staff-facing.
+1. BEO finalize clicks → SHIPPED 2026-09-22 (lane beo-approve-is-review, `3934cffc`, not pushed); residuals under Potions → Derived BEO finalize follow-ups.
 2. **"Copy compare link" bounces the client to the sign page** → §2.
 3. **Margarita salt lands at four or more containers** → §2.
 4. Supplies chip is grey on the desktop events list → Admin UI (one word).
@@ -106,7 +106,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
-| 4 | Two 9/26 events carry an approved list on a plan that can NEVER finalize, so their staff get no T-3 BEO text | **YES: plans 143 + 99, T-3 is 9/23** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Thumbtack first-reply verify is FIXED and live, owes its next-real-lead proof | no, and the fix cannot regress it |
 
@@ -830,49 +829,6 @@ money-adjacent, so this gets the full fleet.
 staffer on any package has ever seen the card. Either the card was meant to key on `approved` or the
 payload was meant to map it; pick one. Surfaced by the hosted-no-shopping-list review, 2026-09-11.
 
-### BEO finalize still needs admin clicks, and an admin-built plan can never finalize at all
-
-Dallas, 2026-09-22: *"finalize BEO needs some work. It shouldn't take an admin click."* The derived
-finalize from 2026-09-11 (`2b414e64`) is on origin/main and firing in prod: 7 auto-finalizes since
-9/14 (6 on list approve, 1 on Mark reviewed). What is left is three real holes, verified in prod
-the same day:
-
-- **A plan the client never submitted cannot finalize, from any surface.** Finalize (manual and
-  derived) requires `drink_plans.status = 'reviewed'`; the only writer of `reviewed` is
-  `PATCH /drink-plans/:id/status`, and the only UI that sends it is "Mark reviewed", which
-  `DrinkPlanCard.js` / `DrinkPlanDetail.js` render ONLY while `status === 'submitted'`. When Dallas
-  builds the list himself from the consult (`shopping_list_source = 'consult'`) the plan stays
-  `draft`, the approve flips the list to `approved` (that UPDATE has no status guard), and nothing
-  can ever move it to `reviewed`. **Plans 143 (prop 842) and 99 (prop 604) are exactly this, both for
-  events on 2026-09-26.** `scheduleBeoNudgesForProposal` runs only inside finalize, so their
-  bartenders get no T-3 BEO text (T-3 is 9/23). Prod history says this is the normal admin path,
-  not a corner: 8 past events plus these 2 sit `draft`/`pending` + `approved`, never finalized.
-- **Three pre-deploy plans are still waiting for a click**: 128 (prop 685, 10/03), 135 (prop 797,
-  10/04), 140 (prop 789, 12/19), all `reviewed` + `approved`, none with unpaid extras. Of the ten
-  the 9/11 entry listed, Dallas hand-clicked Finalize on 133 and 138 (both day-of, 9/14 and 9/19);
-  the rest were past events.
-- **After Unfinalize nothing re-fires.** Plan 82 (prop 535, 10/10, 140 guests) auto-finalized 9/14,
-  was unfinalized 9/17, and sits `reviewed` + `approved` + unfinalized. Also observed: 847 and 855
-  each went finalize / unfinalize / finalize two or three times inside two minutes on 9/18 (the
-  approve-and-send fired once, the rest were quiet re-approves), which is the lock-at-approve cost
-  Dallas accepted on 9/11 showing up in practice.
-
-"Mark reviewed" is the click he is describing. For a BYOB plan it is redundant with approving the
-list: approving IS the review, and the admin who built a consult list has reviewed it by
-definition. Recommendation, one change: make the approve action (`shoppingListApprove.js`,
-`ensureSideEffects`) set `status = 'reviewed'` when the plan is `draft` / `pending` / `submitted`
-with non-empty `selections`, then let the existing
-`autoFinalizeIfEligible(..., 'shopping_list_approved')` run. That closes all three holes at once
-(the 143/99 shape finalizes on the next Publish Quietly; the pre-deploy three and plan 82 finalize
-on one Publish Quietly each, or the button) and keeps `status` semantics intact (`finalized` still
-implies `reviewed`). Hosted plans keep Mark reviewed as their trigger on purpose: they owe no list,
-and finalizing on client submit would slam the Enhancement Lab shut the moment the client hits
-send. **Needs Dallas's yes: "approving the list counts as reviewing the plan."** Do not add a cron,
-a backfill, or a new required click.
-
-Until it ships, 143 and 99 can be finalized only by writing `status = 'reviewed'` on the row (a
-guarded prod UPDATE), after which the Finalize button appears and the click schedules the nudges.
-
 ---
 
 ## 5. Gates blocking a prod run
@@ -1258,11 +1214,37 @@ the accented spelling) or the two spellings stop matching each other.
     in shoppingListGen would own the SET list and the guard. `menuOwedFor` (`nextStepsCopy.js`)
     duplicates the inline `menuStyle === 'custom' || 'house'` test at `MenuDesignStep.js` (logo
     gate) and `BeoSections.js` (staff CustomMenuCard).
-- **Derived BEO finalize follow-ups (lane beo-auto-finalize, merged 2026-09-11 as `2b414e64`).**
-  Finalize now fires on its own the moment a plan is reviewed and its shopping list is approved
-  (hosted: reviewed alone, per `isHostedPlan`), never over unpaid extras; the Finalize button is the
-  override and the way back after Unfinalize. Left open by the per-lane fleet (five agents, no
-  blockers); none is a defect in the new path:
+- **Derived BEO finalize follow-ups (lane beo-auto-finalize `2b414e64` 2026-09-11; lane
+  beo-approve-is-review `3934cffc` 2026-09-22).** Since 9/22 approving the shopping list IS the
+  review: the Mark reviewed click is gone, the list approve is the only derived trigger, the finalize
+  UPDATE is the sole writer of `status='reviewed'` (a refused finalize changes nothing), Unfinalize
+  returns a never-submitted plan to `draft`, and the Finalize BEO button shows on a submitted or
+  reviewed plan, or a draft whose list is approved, never beside an unapproved list (it is the
+  hosted click, the unpaid-extras override, and the way back after Unfinalize). Owed by Dallas:
+  the walkthrough in `docs/walkthroughs-owed.md`. Residuals, none a defect in the new path:
+  - **Six plans approved before the change wait for ONE click each; nothing re-fires on deploy.**
+    143 (prop 842, 9/26), 99 (prop 604, 9/26), 128 (685, 10/03), 135 (797, 10/04), 140 (789,
+    12/19), and 82 (535, 10/10, unfinalized 9/17). All six show Finalize BEO after the deploy
+    (draft + approved qualifies now). T-3 for the 9/26 pair is 9/23; the click arms the staff text
+    five to ten minutes later.
+  - **Client submit UPDATEs carry no `finalized_at` guard** (`drinkPlans/submit.js`: the three
+    submit UPDATEs keyed `WHERE token = $6` and the draft branch). A client submit whose pre-check
+    ran before an approve's commit and whose UPDATE lands after its finalize leaves a finalized row
+    with `status='submitted'` and replaced selections; the extras branch also folds add-ons into
+    the proposal post-finalize. Request-duration window, pre-existing via API, now reachable by
+    approving a consult-built list while the client is mid-planner. Fix: `AND finalized_at IS NULL`
+    on all four (the draft branch's status guard no longer covers the approve-to-finalize gap since
+    the approve does not write status), with zero-row handling that ROLLBACKs and throws the
+    finalized 409. submit.js is a money path over its line cap: its own lane, with the trim.
+  - **Consult-only plans cannot finalize at all.** The consult save writes `consult_selections`,
+    never `selections`, and finalize requires non-empty `selections` (`no_selections`). Prod shapes:
+    57, 110, 65 (past), and 148 (prop 869, event 9/22). Decide whether finalize should accept
+    `consult_selections` when `shopping_list_source = 'consult'`; the staff BEO payload already
+    carries both. Today the button renders once such a plan's list is approved and the click 409s
+    with the toast; the walkthrough names it so it is not read as a bug.
+  - **A submitted BYOB plan with NO staged list finalizes in one click** (auto-gen skipped or threw;
+    the gate passes on a null list status). Pre-existing at two clicks; the PrepQueue "needs list"
+    row is the only signal.
   - `beo_finalized.details.nudge_count` over-reports: `scheduleBeoNudgesForProposal`
     (`beoHandlers.js`) counts approved staffers, not rows inserted, because `insertBeoNudgeIfMissing`
     returns nothing when a pending/sent row already exists. Same helper is a two-query loop per
@@ -1290,12 +1272,9 @@ the accented spelling) or the two spellings stop matching each other.
     with no list yet still be offered the client list email. A comment or a CHECK.
   - The finalize and status responses still ship the `shopping_list` and `consult_selections`
     JSONB that no caller reads (both cards refetch the lean payload). Project explicit columns.
-  - Of the ten prod plans that sat reviewed + approved before the change, three upcoming ones still
-    wait (128, 135, 140). "BEO finalize still needs admin clicks" in §4 above owns that fix, and the
-    bigger hole it found (admin-built plans never reach `reviewed`). Nothing backfills.
   - Unpaid extras stays a manual click for good: nothing re-fires when the extras invoice is paid
     later. Designed (the human checkpoint), noted so nobody reads it as a miss.
-  - Behavior to know, not a bug: for an event inside three days, Mark reviewed / approve now arms
+  - Behavior to know, not a bug: for an event inside three days, the list approve now arms
     the staff T-3 SMS about five to ten minutes later, where the old Finalize click did it
     deliberately. Unfinalize suppresses only rows still pending.
 
