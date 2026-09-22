@@ -1617,16 +1617,21 @@ which is the largest client-facing change in the drop and is listed first becaus
       blue drink from my cousin's wedding") and confirm the "No close match" line, then Cancel.
       Defects go to the fix list §"Match existing", where the accepted trade-offs are listed.
 
-- [ ] **Derived BEO finalize.** Merged 2026-09-11 in `2b414e64` (check
-      `git merge-base --is-ancestor 2b414e64 origin/main`). Walked on dev by Claude through the
-      real UI (Mark reviewed toast, Publish Quietly finalizing and locking the modal, cold-open
-      lock, detail page Finalized line); never seen in prod by Dallas. The walk: on a flat-package
-      event whose list is not yet approved, click **Mark reviewed** and read the toast ("BEO
-      finalizes when the shopping list is approved."); open the Shopping List, **Publish Quietly**
-      or **Approve & Send**, and confirm the "BEO finalized." toast, the read-only banner in the
-      modal, and the card flipping to Finalized with Unfinalize. On a hosted event, Mark reviewed
-      alone finalizes. The part that matters: an event inside three days now texts every approved
-      staffer five to ten minutes after that click, where the old Finalize click did it
+- [ ] **Derived BEO finalize, now with approve as the review.** Merged 2026-09-11 in `2b414e64`
+      and reshaped 2026-09-22 by lane `beo-approve-is-review` (Mark reviewed removed; approving the
+      shopping list finalizes, and finalize stamps reviewed; the Finalize button is the hosted click).
+      The 9/11 version was walked on dev by Claude through the real UI (Mark reviewed toast, Publish
+      Quietly finalizing and locking the modal, cold-open lock, detail page Finalized line); the 9/22
+      reshape is covered by suites only. Never seen in prod by Dallas. The walk: on a flat-package
+      event whose client submitted the planner, open the Shopping List straight away (no Mark
+      reviewed button anywhere), **Publish Quietly** or **Approve & Send**, and confirm the
+      "BEO finalized." toast, the read-only banner in the modal, and the card flipping to Finalized
+      with Unfinalize. Then the shape that used to be stuck: an event whose list YOU built from the
+      consult while the plan sat in draft with the client's saved picks (plans 143 and 99 were this
+      on 9/22) finalizes on that same approve; a consult-only plan the client never opened (no
+      selections) still cannot finalize at all, that is on the ledger, not a bug in this walk. On a hosted event, the Finalize BEO button shows as soon as the client submits
+      and one click finalizes. The part that matters: an event inside three days texts every
+      approved staffer five to ten minutes after the approve, where the old Finalize click did it
       deliberately; decide whether that timing is acceptable (Unfinalize within minutes suppresses
       the pending rows). Defects go to the fix list §"Derived BEO finalize follow-ups".
 

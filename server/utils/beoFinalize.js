@@ -8,45 +8,46 @@
 // straightforward to grep for; they all share the same
 // scheduleBeoNudgesForProposal / proposal_activity_log dance.
 //
-// Since 2026-09-11 finalize is DERIVED, not clicked: a plan finalizes the
-// moment it is reviewed AND its shopping list is approved (a hosted package
-// never owes a list, so reviewed alone is enough there), never over unpaid
-// extras. The two admin actions that can complete that state (Mark reviewed,
-// shopping-list approve) call autoFinalizeIfEligible; whichever lands last
-// fires it. The manual route stays as the override for unpaid extras and the
-// way back after Unfinalize.
+// Since 2026-09-11 finalize is DERIVED, not clicked, and since 2026-09-22
+// approving the shopping list IS the review: a plan finalizes the moment its
+// list is approved (never over unpaid extras), and the "Mark reviewed" click
+// is gone. Finalize no longer asks for status='reviewed' beforehand; it stamps
+// it in the same UPDATE as finalized_at and is the ONLY writer of 'reviewed'
+// (the approve flip does not touch status, so a refused finalize never locks
+// the client's planner), which keeps `finalized` implying `reviewed` for every
+// reader of that status. The shopping-list approve is the ONLY derived
+// trigger, so the derived predicate is simply "the list is approved". A hosted
+// package never owes a list, so its one click is the manual route below, which
+// works from any unfinalized plan with selections; the manual route is also
+// the override for unpaid extras and the way back after Unfinalize.
 //
-// The single UPDATE enforces every preflight (status='reviewed', not already
-// finalized, non-empty selections, proposal exists and not archived, and in
-// auto mode the list-approved-or-hosted predicate) atomically; on rowCount=0
-// the helper reads the row back to translate the failure into the right
-// 404 / 409 with a machine-readable code.
+// The single UPDATE enforces every preflight (not already finalized,
+// non-empty selections, proposal exists and not archived, and in auto mode
+// the list-approved predicate) atomically; on rowCount=0 the helper
+// reads the row back to translate the failure into the right 404 / 409 with a
+// machine-readable code.
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { NotFoundError, ConflictError } = require('./errors');
 const { scheduleBeoNudgesForProposal, suppressBeoNudgesForProposal } = require('./beoHandlers');
 const { findExtrasInvoice } = require('./invoiceHelpers');
-const { isHostedPlan } = require('./shoppingListGen');
 const asyncHandler = require('../middleware/asyncHandler');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { drinkPlanWriteLimiter } = require('../middleware/rateLimiters');
 
-// A hosted package never owes the client a shopping list (DRB stocks the bar),
-// so it needs no approved list to finalize. This is shoppingListGen.isHostedPlan
-// (category 'hosted' EXCEPT a cocktail class, which sells an optional supplies
-// add-on and stays on the BYOB side) spelled as SQL, because it has to sit
-// inside the finalize UPDATE's WHERE: a list edit that reverts the status to
-// pending_review between a pre-check and the UPDATE must make the UPDATE
-// match zero rows, not finalize over it. The JS helper explains the refusal.
-const LIST_APPROVED_OR_HOSTED_SQL =
-  `(dp.shopping_list_status = 'approved'
-    OR (sp.category = 'hosted' AND sp.bar_type IS DISTINCT FROM 'class'))`;
+// The derived predicate sits inside the finalize UPDATE's WHERE, not in a
+// pre-check: a list edit that reverts the status to pending_review between a
+// check and the UPDATE must make the UPDATE match zero rows, not finalize over
+// it. (A hosted package never owes a list, so the approve action that fires
+// this can only reach a hosted plan through a list built on purpose, in which
+// case the list IS approved; hosted otherwise finalizes from the manual route.)
+const LIST_APPROVED_SQL = `dp.shopping_list_status = 'approved'`;
 
-// The only two admin actions that can complete the derived state. opts.auto
-// is used as a truthiness switch on the SQL above and as a JSON detail, never
+// The one admin action that completes the derived state. opts.auto is used
+// as a truthiness switch on the SQL above and as a JSON detail, never
 // interpolated; the allow-list makes that provable rather than inferred.
-const AUTO_TRIGGERS = new Set(['reviewed', 'shopping_list_approved']);
+const AUTO_TRIGGERS = new Set(['shopping_list_approved']);
 
 /**
  * Finalize a drink plan inside one transaction.
@@ -55,14 +56,14 @@ const AUTO_TRIGGERS = new Set(['reviewed', 'shopping_list_approved']);
  * @param {number|null} actorId  admin whose click caused this (finalized_by)
  * @param {object} [opts]
  * @param {boolean} [opts.overrideUnpaidExtras]  manual "finalize anyway"
- * @param {string}  [opts.auto]  trigger name ('reviewed' | 'shopping_list_approved')
- *        when called by autoFinalizeIfEligible; adds the list-approved-or-hosted
- *        predicate to the UPDATE and is recorded as details.trigger.
- * @returns the drink_plans row (approved-snapshot blob stripped)
+ * @param {string}  [opts.auto]  trigger name ('shopping_list_approved') when
+ *        called by autoFinalizeIfEligible; adds the list-approved predicate to
+ *        the UPDATE and is recorded as details.trigger.
+ * @returns the drink_plans row (approved-snapshot blob stripped); status is
+ *          'reviewed' on it, stamped by the finalize UPDATE itself
  * @throws NotFoundError | ConflictError(code) where code is one of not_linked,
- *         archived, no_selections, already_finalized, not_reviewed,
- *         list_not_approved, unpaid_extras (carries .unpaidExtrasCents),
- *         finalize_refused.
+ *         archived, no_selections, already_finalized, list_not_approved,
+ *         unpaid_extras (carries .unpaidExtrasCents), finalize_refused.
  */
 async function finalizeDrinkPlan(planId, actorId, opts = {}) {
   const trigger = opts.auto || 'manual';
@@ -71,29 +72,25 @@ async function finalizeDrinkPlan(planId, actorId, opts = {}) {
     await client.query('BEGIN');
     const upd = await client.query(
       `UPDATE drink_plans dp
-          SET finalized_at = NOW(), finalized_by = $2
+          SET finalized_at = NOW(), finalized_by = $2, status = 'reviewed'
          FROM proposals p
-         LEFT JOIN service_packages sp ON sp.id = p.package_id
         WHERE dp.id = $1
           AND dp.proposal_id = p.id
           AND dp.proposal_id IS NOT NULL
-          AND dp.status = 'reviewed'
           AND dp.finalized_at IS NULL
           AND p.status != 'archived'
           AND COALESCE(dp.selections, '{}'::jsonb) != '{}'::jsonb
-          ${opts.auto ? `AND ${LIST_APPROVED_OR_HOSTED_SQL}` : ''}
+          ${opts.auto ? `AND ${LIST_APPROVED_SQL}` : ''}
         RETURNING dp.*, dp.proposal_id`,
       [planId, actorId]
     );
     if (upd.rowCount === 0) {
       const check = await client.query(
-        `SELECT dp.status, dp.finalized_at, dp.proposal_id, dp.shopping_list_status,
+        `SELECT dp.finalized_at, dp.proposal_id, dp.shopping_list_status,
                 COALESCE(dp.selections, '{}'::jsonb) = '{}'::jsonb AS empty_selections,
-                p.status AS proposal_status,
-                sp.category AS package_category, sp.bar_type AS package_bar_type
+                p.status AS proposal_status
            FROM drink_plans dp
            LEFT JOIN proposals p ON p.id = dp.proposal_id
-           LEFT JOIN service_packages sp ON sp.id = p.package_id
           WHERE dp.id = $1`,
         [planId]
       );
@@ -108,8 +105,7 @@ async function finalizeDrinkPlan(planId, actorId, opts = {}) {
       if (!row.proposal_id) throw new ConflictError('Plan not linked to a proposal.', 'not_linked');
       if (row.proposal_status === 'archived') throw new ConflictError('Proposal is archived.', 'archived');
       if (row.empty_selections) throw new ConflictError('Plan has no selections.', 'no_selections');
-      if (row.status !== 'reviewed') throw new ConflictError('Plan is not reviewed.', 'not_reviewed');
-      if (opts.auto && row.shopping_list_status !== 'approved' && !isHostedPlan(row)) {
+      if (opts.auto && row.shopping_list_status !== 'approved') {
         throw new ConflictError('Shopping list is not approved.', 'list_not_approved');
       }
       throw new ConflictError('Finalize refused.', 'finalize_refused');
@@ -171,22 +167,22 @@ async function finalizeDrinkPlan(planId, actorId, opts = {}) {
 }
 
 // Skip reasons that are the ordinary "not there yet" state of a plan; logging
-// them on every Mark reviewed / approve would be noise.
-const QUIET_SKIPS = new Set(['not_reviewed', 'list_not_approved', 'already_finalized']);
+// them on every approve would be noise.
+const QUIET_SKIPS = new Set(['list_not_approved', 'already_finalized']);
 
 /**
- * Derived finalize. Called by the two admin actions that can complete the
- * reviewed + list-approved state; finalizes when every guard holds and
- * otherwise reports why. Never throws for anything the database says: the
- * caller's own write (status flip, list approve) has already committed and
- * must not fail because the BEO could not finalize. The one throw is the
- * unknown-trigger guard below, a programmer error raised before any DB work.
- * The manual Finalize button remains the fallback for every non-finalized
- * outcome.
+ * Derived finalize. Called by the shopping-list approve, the one admin action
+ * that completes the list-approved state; finalizes when every
+ * guard holds and otherwise reports why. Never throws for anything the
+ * database says: the caller's own write (the list approve) has already
+ * committed and must not fail because the BEO could not finalize. The one
+ * throw is the unknown-trigger guard below, a programmer error raised before
+ * any DB work. The manual Finalize button remains the fallback for every
+ * non-finalized outcome.
  *
  * @param {number} planId
  * @param {number|null} actorId
- * @param {'reviewed'|'shopping_list_approved'} trigger
+ * @param {'shopping_list_approved'} trigger
  * @returns {Promise<{finalized: boolean, reason?: string, plan?: object, unpaid_extras_cents?: number}>}
  *   `finalized` is "the plan is finalized now" (true on already_finalized
  *   too); `plan` is present only when THIS call finalized.
@@ -251,7 +247,12 @@ function registerFinalizeRoute(router) {
 // for the proposal. Sent rows stay sent — that's the audit trail. The single
 // transaction covers all three writes plus the proposal_activity_log entry.
 // Nothing re-fires the derived finalize afterwards until the admin re-approves
-// an edited list or presses Finalize.
+// an edited list or presses Finalize. Status stays 'reviewed' for a plan the
+// client submitted (the review happened; only the BEO is reopened). A plan the
+// client never submitted (finalized off an admin-built list, submitted_at
+// NULL) goes back to 'draft': 'reviewed' without finalized_at would read to
+// the public planner as "already submitted" and lock a client out of a plan
+// they never sent.
 function registerUnfinalizeRoute(router) {
   router.post('/:id/unfinalize', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
     const planId = parseInt(req.params.id, 10);
@@ -260,7 +261,9 @@ function registerUnfinalizeRoute(router) {
     try {
       await client.query('BEGIN');
       const upd = await client.query(
-        `UPDATE drink_plans SET finalized_at = NULL, finalized_by = NULL
+        `UPDATE drink_plans
+            SET finalized_at = NULL, finalized_by = NULL,
+                status = CASE WHEN submitted_at IS NULL THEN 'draft' ELSE status END
           WHERE id = $1 AND finalized_at IS NOT NULL
           RETURNING *, proposal_id`,
         [planId]

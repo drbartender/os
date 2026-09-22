@@ -134,9 +134,16 @@ async function buildMessages(planId) {
  * returns { applied: false } and changes nothing (no re-approve, no
  * re-snapshot), which is what makes a failed-dispatch Retry safe.
  *
- * Approving is one of the two actions that can complete the derived BEO
- * finalize state (reviewed + list approved), so a fresh approve runs
- * autoFinalizeIfEligible afterwards. Both branches return `beo` describing
+ * Approving the list IS the review (2026-09-22): there is no "Mark reviewed"
+ * click any more, and approving is the one action that completes the derived
+ * BEO finalize state, so a fresh approve runs autoFinalizeIfEligible
+ * afterwards. This UPDATE deliberately does NOT write drink_plans.status: the
+ * finalize UPDATE is the sole writer of 'reviewed' (it stamps it in the same
+ * statement as finalized_at), so a refused finalize (no_selections on a
+ * consult-built list the client never opened, unpaid_extras, archived) leaves
+ * the plan's status alone and the client's planner link keeps working. That
+ * is also what lets the already-approved retry below heal a plan approved
+ * before this rule. Both branches return `beo` describing
  * whether the plan is finalized NOW (a Retry after the approve that finalized
  * must still say so; the send modal merges retry results over the first). An
  * already-approved, still-unfinalized plan re-attempts too: that is how a
@@ -183,7 +190,7 @@ async function ensureSideEffects(planId, ctx = {}) {
   }
   if (check.rows[0].finalized) return { applied: false, beo: { finalized: true } };
   // Already approved but not finalized: idempotent for the list, but the
-  // derived finalize gets another chance (already_finalized / not_reviewed /
+  // derived finalize gets another chance (already_finalized / list_not_approved /
   // unpaid_extras all come back as an honest reason, never a second log row).
   const auto = await autoFinalizeIfEligible(id, ctx.sentBy ?? null, 'shopping_list_approved');
   return { applied: false, beo: beoReport(auto) };

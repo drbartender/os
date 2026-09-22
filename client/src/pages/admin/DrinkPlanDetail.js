@@ -14,7 +14,6 @@ import { ctDay, fmtDateFull, fmtDateTime } from '../../components/adminos/format
 import BackButton from '../../components/adminos/BackButton';
 import EntityLink from '../../components/EntityLink';
 import SendModal, { describeSendResult } from '../../components/SendModal';
-import { beoOutcomeCopy, beoToastKind } from '../../utils/beoOutcomeCopy';
 
 const ConsultationForm = lazy(() => import('../../components/ShoppingList/ConsultationForm'));
 
@@ -41,7 +40,6 @@ export default function DrinkPlanDetail() {
   const [consultOpen, setConsultOpen] = useState(false);
   const [sourceSwitching, setSourceSwitching] = useState(false);
   const [nudgeSendOpen, setNudgeSendOpen] = useState(false);
-  const [reviewing, setReviewing] = useState(false);
   const [beoBusy, setBeoBusy] = useState(false);
 
   useEffect(() => {
@@ -104,23 +102,6 @@ export default function DrinkPlanDetail() {
       setNotesFieldErrors(err.fieldErrors || {});
     } finally {
       setSaving(false);
-    }
-  };
-
-  const markReviewed = async () => {
-    if (reviewing) return;
-    setReviewing(true);
-    try {
-      const res = await api.patch(`/drink-plans/${id}/status`, { status: 'reviewed' });
-      // Mark reviewed can complete the derived BEO finalize; refetch so the
-      // header shows Finalized / Unfinalize, then say what happened.
-      await refetchPlan();
-      const outcome = beoOutcomeCopy(res.data.beo);
-      toast[beoToastKind(res.data.beo)](`Plan marked as reviewed.${outcome ? ' ' + outcome : ''}`);
-    } catch (err) {
-      toast.error(err.message || 'Failed to update status.');
-    } finally {
-      setReviewing(false);
     }
   };
 
@@ -261,12 +242,18 @@ export default function DrinkPlanDetail() {
             <button type="button" className="btn btn-secondary" onClick={() => setNudgeSendOpen(true)}>
               <Icon name="send" size={12} />Resend planner link
             </button>
-            {plan.status === 'submitted' && (
-              <button type="button" className="btn btn-primary" onClick={markReviewed} disabled={reviewing}>
-                <Icon name="check" size={12} />{reviewing ? 'Marking…' : 'Mark reviewed'}
-              </button>
-            )}
-            {plan.status === 'reviewed' && !plan.finalized_at && (
+            {/* Approving the shopping list finalizes a BYOB plan on its own; this
+                button is the one click for a hosted plan (no list to approve), the
+                unpaid-extras override, and the way back after Unfinalize. It never
+                sits beside a staged-but-unapproved list (approve is the path there),
+                and never on a draft the client is still working through: a draft
+                qualifies only once its list is approved, which is the consult-first
+                shape (the admin built and approved the list before the client ever
+                submitted), never a client mid-planner. */}
+            {(plan.status === 'submitted' || plan.status === 'reviewed'
+                || plan.shopping_list_status === 'approved')
+              && plan.shopping_list_status !== 'pending_review'
+              && !plan.finalized_at && (
               <button type="button" className="btn btn-primary" onClick={finalize} disabled={beoBusy}>
                 <Icon name="check" size={12} />{beoBusy ? 'Finalizing…' : 'Finalize BEO'}
               </button>

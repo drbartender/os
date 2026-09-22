@@ -11,6 +11,12 @@ import PaymentReturnNotice from '../../components/PaymentReturnNotice';
 // never 404.
 export default function CelebrationV2({ plan, token, selections, paidFromRedirect, pendingFromRedirect = false, failedFromRedirect = false }) {
   const labEnabled = plan.lab_enabled === true;
+  // A plan the client never submitted can still be finalized (Dr. Bartender
+  // built it from the consult and approved the list, 2026-09-22). That client
+  // chose nothing here and no confirmation email went out, so the filed copy
+  // would be a lie; say what actually happened instead. `finalized` is the
+  // boolean GET /t/:token keeps (it strips the finalized_at stamp itself).
+  const adminBuilt = !plan.submitted_at && plan.finalized === true;
 
   const openLab = () => {
     // Attach-rate observability (plan §pp2-planner.5): best-effort marker.
@@ -22,15 +28,19 @@ export default function CelebrationV2({ plan, token, selections, paidFromRedirec
     <div style={{ textAlign: 'center', paddingTop: '3rem' }}>
       <div className="card">
         <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#127881;</div>
-        <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>Formulas Filed!</h2>
+        <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>{adminBuilt ? 'Your Bar Plan Is Set' : 'Formulas Filed!'}</h2>
         <img
           src="/images/potion-bartender.png"
           alt="Dr. Bartender"
           style={{ maxWidth: '120px', margin: '1rem auto', display: 'block', opacity: 0.9 }}
         />
         <p className="text-muted" style={{ marginTop: '0.75rem' }}>
-          Thank you, {plan.client_name || 'friend'}! Your selections are in. A confirmation email with
-          everything you chose is on its way.
+          {adminBuilt ? (
+            <>Thank you, {plan.client_name || 'friend'}! Your bar plan was built with you on your consult and is now finalized. Nothing else is needed from you. If anything should change, just reach out.</>
+          ) : (
+            <>Thank you, {plan.client_name || 'friend'}! Your selections are in. A confirmation email with
+            everything you chose is on its way.</>
+          )}
         </p>
 
         {/* Bank debit in flight (spec 2026-09-14 section 8.4): a processing
@@ -51,7 +61,9 @@ export default function CelebrationV2({ plan, token, selections, paidFromRedirec
         <div style={{ marginTop: '1.25rem', padding: '0.75rem', background: 'rgba(193, 125, 60, 0.08)', borderRadius: '8px' }}>
           <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>What happens next?</p>
           <p className="text-muted text-small">
-            {nextStepsCopy({ voice: 'v2', hosted: !owesShoppingList(plan), menuOwed: menuOwedFor(selections) })}
+            {adminBuilt
+              ? 'Everything is already built from your consult, so there is nothing to wait on. Reach out with any questions before the day.'
+              : nextStepsCopy({ voice: 'v2', hosted: !owesShoppingList(plan), menuOwed: menuOwedFor(selections) })}
           </p>
         </div>
       </div>

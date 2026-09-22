@@ -1,6 +1,9 @@
 // Single source of truth for the proposal-summary fields /home and the detail
 // endpoint both expose. NOTE: drink_plan_token / drink_plan_submitted_at are
-// appended by the consuming query's drink_plans join, NOT part of this column list.
+// appended by the consuming query's drink_plans join, NOT part of this column
+// list, and drink_plan_submitted_at is COALESCE(submitted_at, finalized_at):
+// it means "the client has nothing left to do on the planner", not "the client
+// submitted" (an admin-built plan finalizes without a submit, 2026-09-22).
 const { BOOKED_SET: BOOKED } = require('../../utils/proposalStatus');
 const PROPOSAL_SUMMARY_COLUMNS = [
   'p.token', 'p.status', 'p.archive_reason', 'p.event_type', 'p.event_type_custom',

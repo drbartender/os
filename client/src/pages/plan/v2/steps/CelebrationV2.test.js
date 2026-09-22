@@ -46,3 +46,26 @@ test('a failed return says the payment did not go through, never received', () =
   expect(screen.getByRole('status').textContent).toMatch(/did not get a confirmation/);
   expect(screen.queryByText(/Payment Received/)).toBeNull();
 });
+
+// Approving the shopping list is the review (2026-09-22): a plan Dr. Bartender
+// built from the consult can finalize without the client ever submitting. That
+// client chose nothing here and no confirmation email went out, so the filed
+// copy must not run.
+test('a finalized plan the client never submitted says the plan is set, never that selections are in', () => {
+  // `finalized` is the boolean the public route keeps; the route strips the
+  // finalized_at stamp, so a prop built with the stamp would be a dead branch.
+  render(<CelebrationV2 plan={plan({ package_category: 'byob', submitted_at: null, finalized: true })} token="t" selections={{ menuStyle: 'none' }} paidFromRedirect={false} />);
+  expect(screen.getByText(/Your Bar Plan Is Set/)).toBeInTheDocument();
+  expect(screen.getByText(/built with you on your consult/)).toBeInTheDocument();
+  expect(screen.queryByText(/Formulas Filed/)).toBeNull();
+  expect(screen.queryByText(/confirmation email/)).toBeNull();
+  expect(screen.queryByText(/Expect to hear from us/)).toBeNull();
+  expect(screen.getByText(/nothing to wait on/)).toBeInTheDocument();
+});
+
+test('a client-submitted plan keeps the filed copy even once finalized', () => {
+  render(<CelebrationV2 plan={plan({ package_category: 'byob', submitted_at: '2026-09-20T00:00:00Z', finalized: true })} token="t" selections={{ menuStyle: 'none' }} paidFromRedirect={false} />);
+  expect(screen.getByText(/Formulas Filed/)).toBeInTheDocument();
+  expect(screen.getByText(/confirmation email/)).toBeInTheDocument();
+  expect(screen.getByText(/Expect to hear from us/)).toBeInTheDocument();
+});

@@ -1,12 +1,14 @@
 require('dotenv').config();
 
-// Derived BEO finalize (lane beo-auto-finalize, 2026-09-11). A drink plan
-// finalizes on its own the moment it is reviewed AND its shopping list is
-// approved (hosted packages need no list), never over unpaid extras. The two
-// admin actions that can complete that state (Mark reviewed, shopping-list
-// approve) call autoFinalizeIfEligible; whichever lands last fires it. The
-// manual Finalize button stays the override path for unpaid extras and the
-// post-Unfinalize state. Runs against the dev DB; every row is torn down.
+// Derived BEO finalize (lane beo-auto-finalize, 2026-09-11; reshaped by lane
+// beo-approve-is-review, 2026-09-22). A drink plan finalizes on its own the
+// moment its shopping list is approved: approving the list IS the review, so
+// finalize no longer asks for status='reviewed' beforehand and stamps it
+// itself (the approve flip stamps it too). The list approve is the ONLY
+// derived trigger; a hosted package owes no list, so its one click is the
+// manual Finalize button, which now works from any unfinalized plan that has
+// selections. Never over unpaid extras. Runs against the dev DB; every row is
+// torn down.
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -165,50 +167,74 @@ after(async () => {
 
 // ─── autoFinalizeIfEligible ──────────────────────────────────────────────────
 
-test('flat + approved list + reviewed: the reviewed trigger finalizes and records the trigger', async () => {
-  const { proposalId, planId } = await seedPlan();
-  const r = await autoFinalizeIfEligible(planId, adminUserId, 'reviewed');
+test('the reviewed trigger is gone: it is a programmer error, not a skip', async () => {
+  await assert.rejects(() => autoFinalizeIfEligible(999999999, adminUserId, 'reviewed'), /unknown trigger reviewed/);
+});
+
+test('approved list + submitted plan: the approve trigger finalizes, stamps reviewed, records the trigger', async () => {
+  const { proposalId, planId } = await seedPlan({ status: 'submitted' });
+  const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
   assert.equal(r.finalized, true);
   assert.ok(r.plan && r.plan.finalized_at);
+  assert.equal(r.plan.status, 'reviewed', 'finalize stamps reviewed itself');
   assert.ok(!('shopping_list_approved_snapshot' in r.plan), 'snapshot blob stays off the returned plan');
   const row = await planRow(planId);
   assert.ok(row.finalized_at);
   assert.equal(row.finalized_by, adminUserId);
+  assert.equal(row.status, 'reviewed');
   const log = await logRows(proposalId, 'beo_finalized');
   assert.equal(log.length, 1);
-  assert.equal(log[0].details.trigger, 'reviewed');
+  assert.equal(log[0].details.trigger, 'shopping_list_approved');
 });
 
-test('flat + pending list + reviewed: skips with list_not_approved', async () => {
-  const { proposalId, planId } = await seedPlan({ listStatus: 'pending_review' });
-  const r = await autoFinalizeIfEligible(planId, adminUserId, 'reviewed');
+test('approved list + draft plan (the admin built the list from the consult): finalizes and stamps reviewed', async () => {
+  const { planId } = await seedPlan({ status: 'draft' });
+  const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
+  assert.equal(r.finalized, true);
+  assert.equal((await planRow(planId)).status, 'reviewed');
+});
+
+test('approved list + plan already reviewed: finalizes the same way', async () => {
+  const { planId } = await seedPlan();
+  const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
+  assert.equal(r.finalized, true);
+  assert.equal((await planRow(planId)).status, 'reviewed');
+});
+
+test('pending list: skips with list_not_approved and never stamps reviewed', async () => {
+  const { proposalId, planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
+  const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
   assert.deepEqual({ finalized: r.finalized, reason: r.reason }, { finalized: false, reason: 'list_not_approved' });
-  assert.equal((await planRow(planId)).finalized_at, null);
+  const row = await planRow(planId);
+  assert.equal(row.finalized_at, null);
+  assert.equal(row.status, 'submitted', 'a refused finalize leaves status alone');
   assert.equal((await logRows(proposalId, 'beo_finalized')).length, 0);
 });
 
-test('hosted package + reviewed + no list at all: finalizes', async () => {
+test('hosted package + no list: the derived trigger has nothing to fire on (list_not_approved); the manual button is the hosted path', async () => {
   const pkg = await seedPackage({ category: 'hosted' });
-  const { planId } = await seedPlan({ packageId: pkg, listStatus: null });
-  const r = await autoFinalizeIfEligible(planId, adminUserId, 'reviewed');
-  assert.equal(r.finalized, true);
-  assert.ok((await planRow(planId)).finalized_at);
+  const { planId } = await seedPlan({ packageId: pkg, listStatus: null, status: 'submitted' });
+  const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
+  assert.equal(r.finalized, false);
+  assert.equal(r.reason, 'list_not_approved');
+  assert.equal((await planRow(planId)).status, 'submitted');
+});
+
+test('hosted package + no list + submitted: the manual Finalize button is the one click, and it stamps reviewed', async () => {
+  const pkg = await seedPackage({ category: 'hosted' });
+  const { proposalId, planId } = await seedPlan({ packageId: pkg, listStatus: null, status: 'submitted' });
+  const plan = await finalizeDrinkPlan(planId, adminUserId);
+  assert.ok(plan.finalized_at);
+  assert.equal(plan.status, 'reviewed');
+  assert.equal((await logRows(proposalId, 'beo_finalized'))[0].details.trigger, 'manual');
 });
 
 test('cocktail class (category hosted, bar_type class) + no approved list: skips like BYOB', async () => {
   const pkg = await seedPackage({ category: 'hosted', barType: 'class' });
   const { planId } = await seedPlan({ packageId: pkg, listStatus: 'pending_review' });
-  const r = await autoFinalizeIfEligible(planId, adminUserId, 'reviewed');
-  assert.equal(r.finalized, false);
-  assert.equal(r.reason, 'list_not_approved');
-});
-
-test('submitted + approved list: the list trigger skips with not_reviewed', async () => {
-  const { planId } = await seedPlan({ status: 'submitted' });
   const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
   assert.equal(r.finalized, false);
-  assert.equal(r.reason, 'not_reviewed');
-  assert.equal((await planRow(planId)).finalized_at, null);
+  assert.equal(r.reason, 'list_not_approved');
 });
 
 test('unpaid extras: skips with the amount, never overrides, writes no audit row', async () => {
@@ -228,18 +254,19 @@ test('unpaid extras: skips with the amount, never overrides, writes no audit row
   assert.equal(audit[0].details.amount_cents, 6000);
 });
 
-test('empty selections: skips with no_selections', async () => {
-  const { planId } = await seedPlan({ selections: '{}' });
-  const r = await autoFinalizeIfEligible(planId, adminUserId, 'reviewed');
+test('empty selections: skips with no_selections and never stamps reviewed', async () => {
+  const { planId } = await seedPlan({ status: 'submitted', selections: '{}' });
+  const r = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
   assert.equal(r.finalized, false);
   assert.equal(r.reason, 'no_selections');
+  assert.equal((await planRow(planId)).status, 'submitted');
 });
 
 test('already finalized: skips with already_finalized and writes no second log row', async () => {
   const { proposalId, planId } = await seedPlan();
-  assert.equal((await autoFinalizeIfEligible(planId, adminUserId, 'reviewed')).finalized, true);
+  assert.equal((await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved')).finalized, true);
   const again = await autoFinalizeIfEligible(planId, adminUserId, 'shopping_list_approved');
-  assert.equal(again.finalized, true, 'finalized means "finalized now", so the losing trigger still says true');
+  assert.equal(again.finalized, true, 'finalized means "finalized now", so a repeat still says true');
   assert.equal(again.reason, 'already_finalized');
   assert.equal(again.plan, undefined, 'only the call that finalized carries the plan');
   assert.equal((await logRows(proposalId, 'beo_finalized')).length, 1);
@@ -248,30 +275,31 @@ test('already finalized: skips with already_finalized and writes no second log r
 test('plan with no proposal: skips with not_linked and never throws', async () => {
   const dp = await pool.query(
     `INSERT INTO drink_plans (status, selections, shopping_list, shopping_list_status)
-     VALUES ('reviewed', $1::jsonb, $2::jsonb, 'approved') RETURNING id`, [SELECTIONS, LIST]
+     VALUES ('submitted', $1::jsonb, $2::jsonb, 'approved') RETURNING id`, [SELECTIONS, LIST]
   );
   orphanPlanIds.push(dp.rows[0].id);
-  const r = await autoFinalizeIfEligible(dp.rows[0].id, adminUserId, 'reviewed');
+  const r = await autoFinalizeIfEligible(dp.rows[0].id, adminUserId, 'shopping_list_approved');
   assert.equal(r.finalized, false);
   assert.equal(r.reason, 'not_linked');
 });
 
 test('unknown plan id: skips with not_found and never throws', async () => {
-  const r = await autoFinalizeIfEligible(999999999, adminUserId, 'reviewed');
+  const r = await autoFinalizeIfEligible(999999999, adminUserId, 'shopping_list_approved');
   assert.equal(r.finalized, false);
   assert.equal(r.reason, 'not_found');
 });
 
 // ─── shopping_list_approve side effects ──────────────────────────────────────
 
-test('ensureSideEffects on a reviewed plan approves AND finalizes; the retry reports finalized without re-running', async () => {
-  const { proposalId, planId } = await seedPlan({ listStatus: 'pending_review' });
+test('ensureSideEffects on a submitted plan approves, stamps reviewed, finalizes; the retry reports finalized without re-running', async () => {
+  const { proposalId, planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
   const a = getAction('shopping_list_approve');
   const first = await a.ensureSideEffects(planId, { sentBy: adminUserId });
   assert.equal(first.applied, true);
   assert.equal(first.beo.finalized, true);
   const row = await planRow(planId);
   assert.equal(row.shopping_list_status, 'approved');
+  assert.equal(row.status, 'reviewed', 'approving the list is the review');
   assert.ok(row.finalized_at);
   assert.equal(row.finalized_by, adminUserId);
   assert.equal((await logRows(proposalId, 'beo_finalized'))[0].details.trigger, 'shopping_list_approved');
@@ -283,41 +311,86 @@ test('ensureSideEffects on a reviewed plan approves AND finalizes; the retry rep
   assert.equal((await logRows(proposalId, 'beo_finalized')).length, 1);
 });
 
-test('ensureSideEffects on an already-approved, unfinalized plan re-attempts: honest reason first, finalize once reviewed', async () => {
+test('ensureSideEffects on an already-approved, unfinalized submitted plan: one repeat confirm finalizes it (the pre-deploy shape heals)', async () => {
   const { proposalId, planId } = await seedPlan({ status: 'submitted', listStatus: 'approved' });
-  const a = getAction('shopping_list_approve');
-  const first = await a.ensureSideEffects(planId, { sentBy: adminUserId });
-  assert.equal(first.applied, false);
-  assert.equal(first.beo.finalized, false);
-  assert.equal(first.beo.reason, 'not_reviewed', 'a repeat confirm carries the real reason, not a bare false');
-
-  await pool.query("UPDATE drink_plans SET status = 'reviewed' WHERE id = $1", [planId]);
-  const second = await a.ensureSideEffects(planId, { sentBy: adminUserId });
-  assert.equal(second.applied, false);
-  assert.equal(second.beo.finalized, true, 'the repeat confirm heals a plan that became eligible');
-  assert.ok((await planRow(planId)).finalized_at);
+  const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
+  assert.equal(r.applied, false, 'the list was already approved');
+  assert.equal(r.beo.finalized, true);
+  const row = await planRow(planId);
+  assert.ok(row.finalized_at);
+  assert.equal(row.status, 'reviewed');
   assert.equal((await logRows(proposalId, 'beo_finalized')).length, 1);
 });
 
-test('ensureSideEffects on a submitted plan approves but reports not_reviewed', async () => {
-  const { planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
+test('ensureSideEffects on a draft plan with a consult-built list: approves, stamps reviewed, finalizes', async () => {
+  const { planId } = await seedPlan({ status: 'draft', listStatus: 'pending_review' });
+  const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
+  assert.equal(r.applied, true);
+  assert.equal(r.beo.finalized, true);
+  const row = await planRow(planId);
+  assert.equal(row.status, 'reviewed');
+  assert.ok(row.finalized_at);
+});
+
+test('ensureSideEffects with unpaid extras: approves, reports unpaid_extras, and leaves status alone for the button to finish', async () => {
+  const { planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review', withUnpaidExtras: true });
   const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
   assert.equal(r.applied, true);
   assert.equal(r.beo.finalized, false);
-  assert.equal(r.beo.reason, 'not_reviewed');
-  assert.equal((await planRow(planId)).shopping_list_status, 'approved');
+  assert.equal(r.beo.reason, 'unpaid_extras');
+  assert.equal(r.beo.unpaid_extras_cents, 6000);
+  const row = await planRow(planId);
+  assert.equal(row.shopping_list_status, 'approved');
+  assert.equal(row.status, 'submitted', 'only the finalize UPDATE writes reviewed; a refused finalize changes nothing');
+  assert.equal(row.finalized_at, null);
+});
+
+test('ensureSideEffects on a pending plan with a consult-built list and empty selections: approves, refuses no_selections, status stays pending and the planner link keeps working', async () => {
+  // The shape the per-lane review caught: Dallas publishes the consult list
+  // before the client ever opens the planner. Stamping reviewed here would
+  // brick the client's link (the public PUT refuses submitted/reviewed plans).
+  const { planId } = await seedPlan({ status: 'pending', listStatus: 'pending_review', selections: '{}' });
+  const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
+  assert.equal(r.applied, true);
+  assert.equal(r.beo.finalized, false);
+  assert.equal(r.beo.reason, 'no_selections');
+  const row = await planRow(planId);
+  assert.equal(row.shopping_list_status, 'approved');
+  assert.equal(row.status, 'pending');
+  assert.equal(row.finalized_at, null);
+  const tokenRow = await pool.query('SELECT token FROM drink_plans WHERE id = $1', [planId]);
+  const put = await request('PUT', `/api/drink-plans/t/${tokenRow.rows[0].token}`, {
+    body: { selections: { signatureDrinks: ['sd_1'] }, status: 'draft' },
+  });
+  assert.equal(put.status, 200, `the client can still save their planner after the approve (${JSON.stringify(put.body)})`);
+  assert.equal((await planRow(planId)).status, 'draft');
+});
+
+test('finalizeDrinkPlan (manual) on a draft plan with selections works and stamps reviewed', async () => {
+  const { proposalId, planId } = await seedPlan({ status: 'draft', listStatus: 'pending_review' });
+  const plan = await finalizeDrinkPlan(planId, adminUserId);
+  assert.ok(plan.finalized_at);
+  assert.equal(plan.status, 'reviewed');
+  assert.equal((await logRows(proposalId, 'beo_finalized'))[0].details.trigger, 'manual');
 });
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-test('PATCH /:id/status reviewed on an approved-list plan finalizes, reports beo, strips the snapshot; the lock then holds', async () => {
-  const { planId } = await seedPlan({ status: 'submitted' });
+test('PATCH /:id/status is a plain setter now: reviewed on an approved-list plan does not finalize and carries no beo report', async () => {
+  const { proposalId, planId } = await seedPlan({ status: 'submitted' });
   const res = await request('PATCH', `/api/drink-plans/${planId}/status`, { token: adminToken, body: { status: 'reviewed' } });
   assert.equal(res.status, 200);
   assert.equal(res.body.status, 'reviewed');
-  assert.ok(res.body.finalized_at, 'response carries the fresh finalized_at');
-  assert.equal(res.body.beo.finalized, true);
+  assert.equal(res.body.finalized_at, null);
+  assert.equal(res.body.beo, undefined);
   assert.ok(!('shopping_list_approved_snapshot' in res.body));
+  assert.equal((await logRows(proposalId, 'beo_finalized')).length, 0);
+});
+
+test('the lock holds after a derived finalize: status PATCH 409s, list PUT 409s, list GET seeds finalized_at', async () => {
+  const { planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
+  const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
+  assert.equal(r.beo.finalized, true);
 
   // The lock is inside the status UPDATE itself (no pre-check to race): the
   // write matches zero rows, the route translates that to the lock 409, and
@@ -337,28 +410,53 @@ test('PATCH /:id/status reviewed on an approved-list plan finalizes, reports beo
   assert.ok(get.body.finalized_at, 'the modal can seed its locked state from the list GET');
 });
 
-test('PATCH /:id/status reviewed on a pending-list plan stays unfinalized and says why', async () => {
+test('POST /:id/finalize (manual) from a submitted plan works, stamps reviewed, and no longer leaks the snapshot blob', async () => {
   const { planId } = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
-  const res = await request('PATCH', `/api/drink-plans/${planId}/status`, { token: adminToken, body: { status: 'reviewed' } });
-  assert.equal(res.status, 200);
-  assert.equal(res.body.finalized_at, null);
-  assert.equal(res.body.beo.finalized, false);
-  assert.equal(res.body.beo.reason, 'list_not_approved');
-});
-
-test('PATCH /:id/status reviewed with unpaid extras stays unfinalized and reports the cents', async () => {
-  const { planId } = await seedPlan({ status: 'submitted', withUnpaidExtras: true });
-  const res = await request('PATCH', `/api/drink-plans/${planId}/status`, { token: adminToken, body: { status: 'reviewed' } });
-  assert.equal(res.status, 200);
-  assert.equal(res.body.finalized_at, null);
-  assert.equal(res.body.beo.reason, 'unpaid_extras');
-  assert.equal(res.body.beo.unpaid_extras_cents, 6000);
-});
-
-test('POST /:id/finalize (manual) still works and no longer leaks the snapshot blob', async () => {
-  const { planId } = await seedPlan({ listStatus: 'pending_review' });
   const res = await request('POST', `/api/drink-plans/${planId}/finalize`, { token: adminToken });
   assert.equal(res.status, 200);
   assert.ok(res.body.finalized_at);
+  assert.equal(res.body.status, 'reviewed');
   assert.ok(!('shopping_list_approved_snapshot' in res.body));
+});
+
+test('POST /:id/finalize (manual) still refuses an empty plan with no_selections', async () => {
+  const { planId } = await seedPlan({ status: 'submitted', selections: '{}' });
+  const res = await request('POST', `/api/drink-plans/${planId}/finalize`, { token: adminToken });
+  assert.equal(res.status, 409);
+  assert.equal(res.body.code, 'no_selections');
+});
+
+test('GET /t/:token after a derived finalize on a never-submitted plan says finalized: true and never ships the stamp', async () => {
+  const { planId } = await seedPlan({ status: 'draft', listStatus: 'pending_review' });
+  const r = await getAction('shopping_list_approve').ensureSideEffects(planId, { sentBy: adminUserId });
+  assert.equal(r.beo.finalized, true);
+  const tokenRow = await pool.query('SELECT token FROM drink_plans WHERE id = $1', [planId]);
+  const get = await request('GET', `/api/drink-plans/t/${tokenRow.rows[0].token}`);
+  assert.equal(get.status, 200);
+  assert.equal(get.body.finalized, true, 'the celebration copy keys on this boolean');
+  assert.equal(get.body.submitted_at, null);
+  assert.ok(!('finalized_at' in get.body), 'the stamp itself stays off the public payload');
+  assert.equal(get.body.status, 'reviewed');
+});
+
+test('unfinalize returns a never-submitted plan to draft, and leaves a client-submitted plan reviewed', async () => {
+  const built = await seedPlan({ status: 'draft', listStatus: 'pending_review' });
+  assert.equal((await getAction('shopping_list_approve').ensureSideEffects(built.planId, { sentBy: adminUserId })).beo.finalized, true);
+  const un1 = await request('POST', `/api/drink-plans/${built.planId}/unfinalize`, { token: adminToken });
+  assert.equal(un1.status, 200);
+  const row1 = await planRow(built.planId);
+  assert.equal(row1.finalized_at, null);
+  assert.equal(row1.status, 'draft', 'reviewed without finalized_at would read as already submitted to the client');
+  const tokenRow = await pool.query('SELECT token FROM drink_plans WHERE id = $1', [built.planId]);
+  const put = await request('PUT', `/api/drink-plans/t/${tokenRow.rows[0].token}`, {
+    body: { selections: { signatureDrinks: ['sd_1', 'sd_2'] }, status: 'draft' },
+  });
+  assert.equal(put.status, 200, `the client can pick their planner back up (${JSON.stringify(put.body)})`);
+
+  const sent = await seedPlan({ status: 'submitted', listStatus: 'pending_review' });
+  await pool.query('UPDATE drink_plans SET submitted_at = NOW() WHERE id = $1', [sent.planId]);
+  assert.equal((await getAction('shopping_list_approve').ensureSideEffects(sent.planId, { sentBy: adminUserId })).beo.finalized, true);
+  const un2 = await request('POST', `/api/drink-plans/${sent.planId}/unfinalize`, { token: adminToken });
+  assert.equal(un2.status, 200);
+  assert.equal((await planRow(sent.planId)).status, 'reviewed');
 });

@@ -350,7 +350,7 @@ dr-bartender/
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── balanceReminderHandlers.js # Balance reminder EMAIL handlers (autopay/non-autopay T-3, due-today, late t1/t3); registered by the dispatcher at module init (registerBalanceReminderHandlers)
 │   │   ├── balanceSmsHandlers.js # Non-autopay balance reminder SMS handlers (due-today, late t1/t3)
-│   │   ├── beoFinalize.js      # BEO finalize lifecycle: finalizeDrinkPlan, autoFinalizeIfEligible (derived finalize, never throws; called by Mark reviewed + shopping-list approve), Finalize/Unfinalize route registrars, ensureNotFinalized guard (mounted into drinkPlans router)
+│   │   ├── beoFinalize.js      # BEO finalize lifecycle: finalizeDrinkPlan, autoFinalizeIfEligible (derived finalize, never throws; called by the shopping-list approve, the only derived trigger), Finalize/Unfinalize route registrars, ensureNotFinalized guard (mounted into drinkPlans router)
 │   │   ├── beoHandlers.js      # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers
 │   │   ├── bookingWindow.js    # Pure booking-window math (last-minute ≤14-day full-payment-required predicate)
 │   │   ├── calcomWebhookHelpers.js # Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by `server/routes/calcom.js`
@@ -559,7 +559,7 @@ dr-bartender/
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
 │   │   │   ├── rankDrinkMatches.js # Suggestion-only fuzzy ranking of a client's custom drink text against the admin drink lists (Match existing picker); matchKey mirrors the server matcher
 │   │   │   ├── servingLabels.js # Serving-type display labels (SERVING_LABEL + servingLabel); shared by DrinkPlansDashboard + Potions PlansDrawer
-│   │   │   ├── beoOutcomeCopy.js # One sentence + toast level for what the derived BEO finalize did after Mark reviewed / list approve (reason codes mirror server/utils/beoFinalize.js)
+│   │   │   ├── beoOutcomeCopy.js # One sentence + toast level for what the derived BEO finalize did after a list approve (reason codes mirror server/utils/beoFinalize.js)
 │   │   │   ├── shoppingListOwed.js # owesShoppingList(row): the ONE client predicate for "this plan row owes a shopping list" (Events Plan column, overview prep queue, Potions drawer chip). A hosted package never does; mirrors server shoppingListGen.isHostedPlan and the Potions badge count
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── isPlaceholderEmail.js # Mirror of server emailValidation.isPlaceholderEmail (CC-import .invalid = no email; keep in sync)
@@ -880,7 +880,7 @@ dr-bartender/
 - **Consult call bridge** (spec 2026-08-25): every booked slot auto-rings Dallas from the 888 with a spoken briefing (booker name, slot time, and the linked proposal's event date and guest count) 90 seconds before the slot, again at +60s and +180s; press 1 bridges him to the booker from the 1922, press 9 replays (3 plays max), and a third unanswered ring hops to Zul. A 60-second sweep is the only clock: it opens the chain, files the slots that passed with nobody ringing, and hands each due ring to the claim-guarded driver. Only FAULTS email (undialable number, missed window, cap tripped, chain failure, a stranded chain the hourly reaper picks up, an unresolved reschedule that stopped more than one of a booker's upcoming consults), via the shared `lead_call` category; a chain that simply rang nobody texts Dallas the booker's number instead, as does a bridged call the client never picks up. Kill switch `CONSULT_CALL_ENABLED=false`; rolling-24h `CONSULT_CALL_DAILY_CAP`; the client leg only ever dials `toUsE164`-validated output, checked at chain open and again at press-1.
 
 ### BEO (Banquet Event Order)
-- Admin Finalizes a reviewed drink plan via the DrinkPlanCard, locking every mutation route on the plan (status, notes, shopping list, logo, consult, source flip, delete) until Unfinalize.
+- Admin Finalizes a drink plan via the DrinkPlanCard (a submitted or reviewed plan, or a draft whose list is already approved, never one whose list sits unapproved; approving the list finalizes a BYOB plan on its own), locking every mutation route on the plan (status, notes, shopping list, logo, consult, source flip, delete) until Unfinalize.
 - On Finalize, BEO nudge rows are scheduled to fire 3 days before the event for every approved staffer on every non-cancelled shift; a late assignment after Finalize back-fills its own nudge via `scheduleStaffShiftMessages`.
 - Each staffer opens the BEO from the staff portal, sees event details + drink menu + add-ons + logistics + custom-menu logo + special notes, and confirms read-receipt with one tap (`POST /api/beo/:proposalId/acknowledge` stamps `shift_requests.beo_acknowledged_at`).
 - Per-staffer "Confirmed [time]" pills surface on the admin EventDetailPage so the operator knows at a glance who has read the BEO.

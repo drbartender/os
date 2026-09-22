@@ -142,8 +142,8 @@ before(async () => {
     );
   } else {
     const dp = await pool.query(
-      `INSERT INTO drink_plans (proposal_id, status, selections)
-       VALUES ($1, 'reviewed', '{"signatureDrinks":["sd_1"]}'::jsonb) RETURNING id`,
+      `INSERT INTO drink_plans (proposal_id, status, selections, submitted_at)
+       VALUES ($1, 'reviewed', '{"signatureDrinks":["sd_1"]}'::jsonb, NOW()) RETURNING id`,
       [proposalId]
     );
     drinkPlanId = dp.rows[0].id;
@@ -230,12 +230,21 @@ test('POST /:id/finalize > 409 already_finalized when finalized_at set', async (
   assert.strictEqual(res.status, 409);
 });
 
-test('POST /:id/finalize > 409 not_reviewed when status is submitted', async () => {
+test('POST /:id/finalize > succeeds from submitted too (approving is the review) and stamps reviewed', async () => {
   await pool.query("UPDATE drink_plans SET finalized_at = NULL, status='submitted' WHERE id = $1", [drinkPlanId]);
   await pool.query("DELETE FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1", [proposalId]);
   const res = await request('POST', `/api/drink-plans/${drinkPlanId}/finalize`, { token: adminToken });
-  assert.strictEqual(res.status, 409);
-  await pool.query("UPDATE drink_plans SET status='reviewed' WHERE id = $1", [drinkPlanId]);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.status, 'reviewed');
+  assert.ok(res.body.finalized_at);
+  // Leave the plan exactly as the old refusal test did (unfinalized, reviewed)
+  // so the tests after this one see the state they were written against.
+  await pool.query("UPDATE drink_plans SET finalized_at = NULL, finalized_by = NULL, status='reviewed' WHERE id = $1", [drinkPlanId]);
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1", [proposalId]);
+  await pool.query(
+    "DELETE FROM proposal_activity_log WHERE id = (SELECT MAX(id) FROM proposal_activity_log WHERE proposal_id=$1 AND action='beo_finalized')",
+    [proposalId]
+  );
 });
 
 test('POST /:id/finalize > 409 no_selections when empty', async () => {

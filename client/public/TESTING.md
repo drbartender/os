@@ -214,7 +214,6 @@ This is the big one. You'll act as the client who just submitted the quote in Pa
 - [ ] Find your submission (status: Submitted) → open it
 - [ ] Verify all selections are listed correctly
 - [ ] Add an admin note like "Test note"
-- [ ] Change the status to "Reviewed"
 - [ ] Click "Generate Shopping List"
 - [ ] A shopping list appears with quantities for spirits, beers, wines, mixers, syrups
 - [ ] Copy the client-facing shopping list link (ends in `/shopping-list/…`)
@@ -872,7 +871,7 @@ For the thorough regression pass. This is a flat list of every page on every sub
 - [ ] Search
 - [ ] Filter by status
 - [ ] Copy link button
-- [ ] Detail page: admin notes, mark reviewed, generate shopping list
+- [ ] Detail page: admin notes, generate shopping list (approving the list is the review; there is no mark-reviewed step)
 
 #### `/admin/hiring`
 - [ ] Applications tab — filters, search, pagination, inline status change

@@ -39,15 +39,18 @@ router.get('/home', asyncHandler(async (req, res) => {
   // the oldest still-payable invoice (status sent|partially_paid) so Next-Up can
   // route "Pay balance" straight to the invoice page instead of the planner.
   // partially_paid is load-bearing: sent-only would re-dead-end a part-payer.
+  // drink_plan_submitted_at is COALESCE(submitted_at, finalized_at): a plan Dr.
+  // Bartender built from the consult and finalized was never client-submitted,
+  // and the portal must read it as done or Next-Up nags for a planner that is locked.
   const BOOKED_FIRST = `ORDER BY (p.status IN ('deposit_paid','balance_paid','confirmed')) DESC,
                                  p.event_date ASC, p.event_start_time ASC NULLS LAST, p.created_at DESC LIMIT 1`;
   const focusSelect = `
     SELECT ${PROPOSAL_SUMMARY_COLUMNS},
-           dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at,
+           dp.token AS drink_plan_token, COALESCE(dp.submitted_at, dp.finalized_at) AS drink_plan_submitted_at,
            oi.open_invoice_token, oi.open_invoice_label
     FROM proposals p
     LEFT JOIN LATERAL (
-      SELECT token, submitted_at FROM drink_plans
+      SELECT token, submitted_at, finalized_at FROM drink_plans
       WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $1)
       ORDER BY id LIMIT 1
     ) dp ON true
@@ -112,7 +115,7 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       p.client_signature_document_version,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       p.venue_name, p.venue_city, p.venue_state, p.total_price_override,
-      dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at,
+      dp.token AS drink_plan_token, COALESCE(dp.submitted_at, dp.finalized_at) AS drink_plan_submitted_at,
       oi.open_invoice_token, oi.open_invoice_label,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
@@ -121,7 +124,7 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
     LEFT JOIN LATERAL (
-      SELECT token, submitted_at FROM drink_plans
+      SELECT token, submitted_at, finalized_at FROM drink_plans
       WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)
       ORDER BY id LIMIT 1
     ) dp ON true

@@ -7,7 +7,6 @@ import Icon from './adminos/Icon';
 import StatusChip from './adminos/StatusChip';
 import { fmtDateTime } from './adminos/format';
 import ShoppingListButton from './ShoppingList/ShoppingListButton';
-import { beoOutcomeCopy, beoToastKind } from '../utils/beoOutcomeCopy';
 
 // Lazy so the consult form (and its cocktail/mocktail dependency graph) stays
 // out of the bundle for sessions that never open it.
@@ -30,7 +29,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
   const [consultOpen, setConsultOpen] = useState(false);
   const [consultCatalogs, setConsultCatalogs] = useState(null);
   const [consultLoading, setConsultLoading] = useState(false);
-  const [reviewing, setReviewing] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
 
   const generate = async () => {
     try {
@@ -52,28 +51,8 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
     }
   };
 
-  const markReviewed = async () => {
-    if (reviewing) return;
-    setReviewing(true);
-    try {
-      const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
-      // Mark reviewed can complete the derived BEO finalize (reviewed + list
-      // approved, or hosted). Refetch regardless of the outcome so the card
-      // shows the truth even when another tab won the race, then say what
-      // happened (res.data.beo: finalized, or why not).
-      setDrinkPlan(prev => ({ ...prev, status: res.data.status, finalized_at: res.data.finalized_at || prev.finalized_at }));
-      await refetch();
-      if (reload) await reload(); // refresh the Messages card if a client email fired
-      const outcome = beoOutcomeCopy(res.data.beo);
-      toast[beoToastKind(res.data.beo)](`Drink plan marked as reviewed.${outcome ? ' ' + outcome : ''}`);
-    } catch (err) {
-      toast.error(err.message || 'Failed to update status.');
-    } finally {
-      setReviewing(false);
-    }
-  };
-
   const finalize = async () => {
+    if (finalizing) return;
     // Soft-warn on unpaid drink-plan extras. The server is the real gate (it
     // re-detects the open extras invoice and requires overrideUnpaidExtras); this
     // confirm is UX, and we forward the override only after the admin agrees.
@@ -82,6 +61,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
       const dollars = (unpaidCents / 100).toFixed(2);
       if (!window.confirm(`This plan has $${dollars} in unpaid extras. Finalize anyway? The extras invoice stays open and can still be collected.`)) return;
     }
+    setFinalizing(true);
     try {
       const res = await api.post(
         `/drink-plans/${drinkPlan.id}/finalize`,
@@ -100,6 +80,8 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
       // badge appears and the admin can retry through the confirm flow.
       if (err.status === 409) { await refetch(); }
       toast.error(err.message || 'Finalize failed.');
+    } finally {
+      setFinalizing(false);
     }
   };
 
@@ -108,6 +90,11 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
     try {
       const res = await api.post(`/drink-plans/${drinkPlan.id}/unfinalize`);
       setDrinkPlan(res.data);
+      // The unfinalize response is the bare row; pull the by-proposal payload
+      // so the derived fields (has_shopping_list, extras_unpaid_cents) survive.
+      // Matters now that an admin-built plan comes back as draft: without it
+      // the Shopping List button would vanish from the card until a reload.
+      await refetch();
       toast.success('BEO unfinalized.');
     } catch (err) {
       toast.error(err.message || 'Unfinalize failed.');
@@ -212,15 +199,20 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
                   onApproved={refetch}
                 />
               )}
-              {drinkPlan.status === 'submitted' && (
-                <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }}
-                  onClick={markReviewed} disabled={reviewing}>
-                  <Icon name="check" size={11} />{reviewing ? 'Marking…' : 'Mark reviewed'}
-                </button>
-              )}
-              {drinkPlan.status === 'reviewed' && !drinkPlan.finalized_at && (
-                <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }} onClick={finalize}>
-                  <Icon name="check" size={11} />Finalize BEO
+              {/* Approving the shopping list finalizes a BYOB plan on its own; this
+                  button is the one click for a hosted plan (no list to approve), the
+                  unpaid-extras override, and the way back after Unfinalize. It never
+                  sits beside a staged-but-unapproved list (approve is the path there),
+                  and never on a draft the client is still working through: a draft
+                  qualifies only once its list is approved, which is the consult-first
+                  shape (the admin built and approved the list before the client ever
+                  submitted), never a client mid-planner. */}
+              {(drinkPlan.status === 'submitted' || drinkPlan.status === 'reviewed'
+                  || drinkPlan.shopping_list_status === 'approved')
+                && drinkPlan.shopping_list_status !== 'pending_review'
+                && !drinkPlan.finalized_at && (
+                <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }} onClick={finalize} disabled={finalizing}>
+                  <Icon name="check" size={11} />{finalizing ? 'Finalizing…' : 'Finalize BEO'}
                 </button>
               )}
               {drinkPlan.finalized_at && (

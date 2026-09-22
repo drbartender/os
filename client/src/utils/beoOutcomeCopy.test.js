@@ -5,10 +5,14 @@ test('finalized reads as done', () => {
   expect(beoToastKind({ finalized: true })).toBe('success');
 });
 
-test('the two "not yet" states name the missing action and stay success-level', () => {
+test('the one "not yet" state names the missing action and stays success-level', () => {
   expect(beoOutcomeCopy({ finalized: false, reason: 'list_not_approved' })).toBe('BEO finalizes when the shopping list is approved.');
-  expect(beoOutcomeCopy({ finalized: false, reason: 'not_reviewed' })).toBe('BEO finalizes when the plan is marked reviewed.');
   expect(beoToastKind({ finalized: false, reason: 'list_not_approved' })).toBe('success');
+});
+
+test('not_reviewed is no longer a reason the server sends; it reads as the generic fallback', () => {
+  expect(beoOutcomeCopy({ finalized: false, reason: 'not_reviewed' })).toBe('BEO not finalized. Use Finalize BEO.');
+  expect(beoToastKind({ finalized: false, reason: 'not_reviewed' })).toBe('info');
 });
 
 test('unpaid extras carries the amount in dollars and points at the override', () => {

@@ -378,8 +378,8 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     }
   };
 
-  // The approve we just did can complete the derived BEO finalize (the plan
-  // was already reviewed). Lock the modal when it did, say what happened, and
+  // The approve we just did is the review, and can complete the derived BEO
+  // finalize. Lock the modal when it did, say what happened, and
   // let the owner refetch so its Finalized line and buttons are honest.
   const applyBeoOutcome = (beo) => {
     if (beo && beo.finalized) setLocked(true);

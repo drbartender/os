@@ -8,7 +8,7 @@ const { requireUuidToken } = require('../utils/tokens');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
 const { API_URL } = require('../utils/urls');
-const { ensureNotFinalized, autoFinalizeIfEligible, beoReport, registerFinalizeRoute, registerUnfinalizeRoute } = require('../utils/beoFinalize');
+const { ensureNotFinalized, registerFinalizeRoute, registerUnfinalizeRoute } = require('../utils/beoFinalize');
 const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
@@ -91,6 +91,10 @@ router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer 
   // v2 only.
   plan.lab_enabled = plan.planner_version >= 2 &&
     plan.shopping_list_status !== 'approved' && !plan.finalized_at;
+  // The client screens need to know a plan IS finalized (since 2026-09-22 an
+  // admin-built plan finalizes without a client submit, and the celebration
+  // copy must not claim selections the client never made), never the stamp.
+  plan.finalized = Boolean(plan.finalized_at);
   delete plan.shopping_list_status;
   delete plan.finalized_at;
   res.json(plan);
@@ -477,12 +481,14 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
   res.json(result.rows[0]);
 }));
 
-/** PATCH /api/drink-plans/:id/status — update plan status. Carries the
- *  drink-plan write limiter like finalize/unfinalize: a flip to reviewed now
- *  runs the derived finalize transaction too. The finalize lock lives INSIDE
- *  the UPDATE (not a pre-check): an approve in another tab can finalize the
- *  plan between a check and the write, and a status change must never land
- *  on a finalized plan. Zero rows on an existing plan is that lock. */
+/** PATCH /api/drink-plans/:id/status — update plan status. A plain setter
+ *  since 2026-09-22 (approving the shopping list is the review and the only
+ *  derived-finalize trigger; nothing in the UI sends 'reviewed' any more).
+ *  Carries the drink-plan write limiter like finalize/unfinalize. The
+ *  finalize lock lives INSIDE the UPDATE (not a pre-check): an approve in
+ *  another tab can finalize the plan between a check and the write, and a
+ *  status change must never land on a finalized plan. Zero rows on an
+ *  existing plan is that lock. */
 router.patch('/:id/status', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
   const planId = parseInt(req.params.id, 10);
   if (!Number.isFinite(planId)) throw new NotFoundError('Plan not found.');
@@ -499,15 +505,12 @@ router.patch('/:id/status', auth, requireAdminOrManager, drinkPlanWriteLimiter, 
     throw new NotFoundError('Plan not found.');
   }
   // Snapshot blob stays off the wire (same as the by-proposal create path).
-  let { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
-  if (status !== 'reviewed') return res.json(statusRow);
-  // Mark reviewed is one of the two actions that can complete the derived
-  // finalize state (reviewed + list approved, or hosted). Never throws; the
-  // status flip above stands either way and `beo` tells the admin what
-  // happened (finalized, or why not) so the card can toast it.
-  const auto = await autoFinalizeIfEligible(planId, req.user.id, 'reviewed');
-  if (auto.plan) statusRow = auto.plan;
-  res.json({ ...statusRow, beo: beoReport(auto) });
+  // A plain setter since 2026-09-22: approving the shopping list is the
+  // review and the only derived-finalize trigger, so flipping status here
+  // finalizes nothing (no UI sends 'reviewed' any more; it is kept for API
+  // callers and for resetting a plan to draft/pending).
+  const { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
+  res.json(statusRow);
 }));
 registerFinalizeRoute(router); registerUnfinalizeRoute(router);
 // GET /:id/shopping-list, PUT /:id/shopping-list, PATCH /:id/shopping-list/approve

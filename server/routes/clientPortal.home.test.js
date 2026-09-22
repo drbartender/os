@@ -157,6 +157,29 @@ test('detail endpoint exposes drink_plan_token + venue trio (parity)', async () 
   assert.ok('drink_plan_token' in res.body.proposal);
   assert.equal(res.body.proposal.venue_city, 'Chicago');
 });
+// Approving the shopping list is the review (2026-09-22): a plan Dr. Bartender
+// built from the consult can finalize without the client ever submitting, and
+// the portal must read that as done or Next-Up nags for a planner that is locked.
+test('focus: a finalized plan the client never submitted reads as done', async () => {
+  const c = await mkClient('dp-finalized');
+  const p = await mkProposal(c.id, { status: 'balance_paid', date: '2099-11-01', total: '2500.00', paid: '2500.00' });
+  await pool.query(
+    `INSERT INTO drink_plans (proposal_id, status, selections, submitted_at, finalized_at)
+     VALUES ($1, 'reviewed', '{"signatureDrinks":["sd_1"]}'::jsonb, NULL, NOW())`, [p.id]
+  );
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.token, p.token);
+  assert.equal(res.body.focus.drink_plan_submitted, true);
+});
+
+test('focus: an unsubmitted, unfinalized plan still reads as not done', async () => {
+  const c = await mkClient('dp-open');
+  const p = await mkProposal(c.id, { status: 'balance_paid', date: '2099-11-02', total: '2500.00', paid: '2500.00' });
+  await pool.query('INSERT INTO drink_plans (proposal_id, submitted_at) VALUES ($1, NULL)', [p.id]);
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.drink_plan_submitted, false);
+});
+
 test('detail endpoint: unowned token -> 404 (JSON, not HTML)', async () => {
   const a = await mkClient('own'); const b = await mkClient('other');
   const p = await mkProposal(a.id, { status: 'sent', date: '2099-01-01' });
