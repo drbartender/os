@@ -21301,7 +21301,11 @@ html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-n
 html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
 html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: hsl(var(--danger-h) var(--danger-s) 70%); }
+/* Open slots read RED, the same literal the desktop staffing column uses
+   (.staffing-ratio.staffing-short): the After Hours palette sets --danger-h to
+   262 inline (UserPrefsContext.js, not this file's 352), so a computed danger
+   colour paints the fraction violet. Dallas, 2026-09-24. */
+html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; }
 html[data-app="admin-os"] .m-frac.full { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-frac.past { font-weight: 400; color: var(--ink-3); }
 html[data-app="admin-os"] .m-shiftnote { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
@@ -21312,7 +21316,10 @@ html[data-app="admin-os"] .m-tag {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;
 }
 html[data-app="admin-os"] .m-tag-bar { background: hsl(var(--info-h) var(--info-s) 52% / 0.14); border-color: hsl(var(--info-h) var(--info-s) 52% / 0.35); color: hsl(var(--info-h) var(--info-s) 66%); }
-html[data-app="admin-os"] .m-tag-supplies { background: hsl(var(--ok-h) var(--ok-s) 50% / 0.14); border-color: hsl(var(--ok-h) var(--ok-s) 50% / 0.35); color: hsl(var(--ok-h) var(--ok-s) 58%); }
+/* Supplies takes the After Hours violet the fraction used to wear (the skin's
+   danger hue at the tag recipe), so the two cues no longer share a colour. The
+   House Lights twin below keeps its emerald. Dallas, 2026-09-24. */
+html[data-app="admin-os"] .m-tag-supplies { background: hsl(var(--danger-h) var(--danger-s) 52% / 0.14); border-color: hsl(var(--danger-h) var(--danger-s) 52% / 0.35); color: hsl(var(--danger-h) var(--danger-s) 70%); }
 html[data-app="admin-os"] .m-card-cancelled .m-rail-dow,
 html[data-app="admin-os"] .m-card-cancelled .m-rail-day { color: var(--ink-4); }
 html[data-app="admin-os"] .m-card-cancelled .m-card-title { color: var(--ink-3); }
