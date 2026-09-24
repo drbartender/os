@@ -44,7 +44,7 @@ bottom, in one line each, because their whole job is to stop a lane being opened
 Triaged against code and prod the same day (2026-09-22). Build order is the order below; the
 first three sit above the divider.
 
-1. BEO finalize clicks → SHIPPED 2026-09-22 (lane beo-approve-is-review, `3934cffc`, not pushed); residuals under Potions → Derived BEO finalize follow-ups.
+1. BEO finalize clicks → SHIPPED 2026-09-22 (lane beo-approve-is-review, `3934cffc`, pushed 2026-09-24); residuals under Potions → Derived BEO finalize follow-ups.
 2. **"Copy compare link" bounces the client to the sign page** → §2.
 3. **Margarita salt lands at four or more containers** → §2.
 4. Supplies chip is grey on the desktop events list → Admin UI (one word).
@@ -728,6 +728,40 @@ client who was always going to hand a bartender $60 in cash never opens either o
 
 ## 3. Messages that vanish, double, or reach the wrong person
 
+### A signed-but-unpaid client keeps getting the unsigned-proposal drip, and Stop cannot reach it
+
+Signing sets `status='accepted'` (`publicToken.js`, the sign UPDATE) and suppresses no drip rows;
+only sign-plus-pay does (`onProposalSignedAndPaid`). At send time the drip handlers refuse only
+`archived` (`marketingHandlers.js` loadHandlerContext, `dripSmsHandlers.js` loadDripSmsContext), so
+a client who signs and abandons checkout keeps getting "Did you get the proposal?" through touch 5.
+The new Stop follow-ups button (`630f1ed3`, live 2026-09-24) cannot reach it: its route header
+claims a signature stops the drip, but `OPEN_STATUS_LIST` is sent/viewed/modified, so the button is
+hidden on an accepted proposal, a direct POST answers 409 DRIP_NOT_ACTIVE, an accepted sibling is
+left out of the whole-event stop, and `hasLiveSiblingDrip` ignores an accepted option's live touches
+(a second option sent solo beside one enrolls a second drip, the shape `c07be1eb` was opened for).
+Pre-existing send behaviour; the batch made it reachable from the button. Fix at the sign, where
+the scheduler's own allowlist already excludes accepted: suppress `drip_touch_%` pending/deferred
+rows in the sign transition (one call), and let the stop route and the sibling check treat
+accepted as drip-live until then. Found by the 2026-09-24 push-time fleet (code-review and
+consistency lenses), verified by hand.
+
+**Same family, narrower, same lane:**
+- **The stop stamp is never read at send time.** `drip_stopped_at` is checked only at enrollment
+  (`scheduleDripForProposal`) and at hand-off. Stop suppresses `pending` and `deferred` rows; a row
+  in `processing` when Stop commits is skipped and can come back (the cooldown defer parks it
+  `deferred` for 24h, `releaseClaim` and the 10-minute stranded-claim reaper return it to `pending`),
+  and an archive hand-off that read `sib.drip_stopped_at IS NULL` before the stop's commit inserts
+  fresh pending touches on a proposal the admin just saw "Follow-ups stopped" on. Fix: in both drip
+  handlers, throw `SuppressMessageError('drip_stopped')` when the proposal carries the stamp; the
+  handler SELECT already carries the column. Three reviewers (codex, code-review, database).
+- **The archive hand-off can resurrect a failed touch at a past time.** `handOffDripToSibling`
+  treats only `sent` and `processing` as delivered, so a touch that ended `failed` (terminal) or
+  `suppressed_by_sibling` on the archived option is re-created on the survivor at anchor plus offset.
+  When that instant is already past, the dispatcher sends it on the next tick, out of order and
+  after later touches. Fix: skip any touch type that has a row of any status on the archived option
+  (the archive doors delete the pending ones first), or re-create only touches whose computed time
+  is still ahead of NOW().
+
 ### An unsubscribed lead can be resurrected by capitalisation
 
 `idx_email_leads_email` is UNIQUE on raw `email`, not `LOWER(email)` (verified `schema.sql:1522`),
@@ -1278,6 +1312,23 @@ the accented spelling) or the two spellings stop matching each other.
     the staff T-3 SMS about five to ten minutes later, where the old Finalize click did it
     deliberately. Unfinalize suppresses only rows still pending.
 
+  - **The manual finalize enforces none of what the button encodes** (push-time review 2026-09-24).
+    `beoFinalize.js` manual mode finalizes any linked, unarchived, unfinalized plan with selections:
+    no status check, no `shopping_list_status <> 'pending_review'`. The "never beside an unapproved
+    list, never mid-planner" rule lives only in the two React conditions (`DrinkPlanCard`,
+    `DrinkPlanDetail`). A stale admin tab, or a direct call, can finalize a draft over a list that
+    went back to `pending_review` and stamp `reviewed`, which is the planner-lockout state. Mirror
+    the predicate in the manual UPDATE's WHERE with its own refusal reason.
+  - `PATCH /drink-plans/:id/status` still accepts `'reviewed'` with no UI caller, the one API door
+    left that can set `reviewed` without `finalized_at`. Drop it from the allow-list or retire the
+    route.
+  - The v1 planner (`PotionPlanningLab.js`) restores only `draft` and `submitted`, so a v1 draft
+    auto-finalized by a list approve opens a blank welcome wizard whose final submit 409s. Only
+    plans 101 and 103 are still v1; they go away with the legacy wizard (Potions, planner v2).
+  - `DrinkPlanCard` Unfinalize has no in-flight flag (Finalize does); a double click sends a second
+    POST that 409s with a spurious "Plan is not finalized" toast. `DrinkPlanDetail` already guards
+    with `beoBusy`.
+
 - **Potions badge counts pending lists on PAST events.** `pending_shopping_lists`
   (`server/routes/admin/settings.js`) has no date floor; on 2026-09-11 prod held 10 past-event
   `pending_review` rows (5 BYOB, 5 package-less) padding the badge with nothing to act on. Add the
@@ -1435,6 +1486,20 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Comms and marketing
 
+- **Drip residuals from the 2026-09-24 push-time fleet, none reachable without a race or a DB
+  blip** (the reachable ones sit in §3):
+  - `cancelMarketingForProposal` runs `handOffDripToSibling` before its own suppress UPDATE with no
+    guard, so a transient error in the hand-off skips the suppress, and in `cancel.js` and both
+    `actions.js` loops the change-request reap in the same try. The dispatcher's archived gate still
+    stops any send. Wrap the hand-off in its own try/catch (Sentry).
+  - Stop follow-ups locks the target proposal then its siblings, never the `clients` row the
+    documented order starts from (`proposalGroupCommit.js`), so a Stop overlapping a first payment
+    on a sibling can deadlock; Postgres aborts one, Stripe retries the webhook. Take the client lock
+    first.
+  - On the stale-sweep door the hand-off can re-create touches on a past-dated sibling the same run
+    is about to archive; clears itself when that sibling goes. Noted so nobody re-files it.
+  - Doc drift: `proposals.drip_stopped_at` is missing from ARCHITECTURE.md's schema section (the
+    route table has it); `ProposalDetailStopDrip.js` is missing from the README admin pages list.
 - **Comms-action SMS never lands in `sms_messages`.** `proposalResend` and friends go out via bare
   `sendSMS` + `message_log` only, so the Messages/ClientDetail conversation view shows client
   replies without the outbound touch they answer. Dual-write an outbound row, or move comms SMS onto
