@@ -23,6 +23,22 @@ export function railParts(ymd) {
   };
 }
 
+// The card's place line: "City, ST" from the proposal's structured venue
+// (venue_city / venue_state, projected by the SCOPED admin feed only). The full
+// address stays in `venue` (shifts.location) for the ma-e2 detail header; the
+// list names the town (Dallas, 2026-09-24: "the full address can be in the
+// details"). venue_state is stored as the full name (VenueAddressFields
+// VENUE_STATES); legacy rows carry 'IL'-style codes, which pass through, and an
+// unknown name renders as stored rather than being guessed at.
+const STATE_CODES = { Illinois: 'IL', Indiana: 'IN', Michigan: 'MI', Minnesota: 'MN', Wisconsin: 'WI' };
+export function placeOf(row) {
+  const city = String(row?.venue_city ?? '').trim();
+  if (!city) return '';
+  const st = String(row?.venue_state ?? '').trim();
+  const code = STATE_CODES[st] || st;
+  return code ? `${city}, ${code}` : city;
+}
+
 function finishCard(card, todayYmd) {
   const first = card.shifts[0];
   const slots = card.shifts.reduce((a, s) => a + parsePositionsCount(s), 0);
@@ -50,6 +66,7 @@ function finishCard(card, todayYmd) {
     isToday: !!ymd && dayDiff(ymd, todayYmd) === 0,
     timeRange: first.start_time ? fmtTimeRange24(first.start_time, first.end_time, first.event_duration_hours) : '',
     venue: first.location || '',
+    place: placeOf(first),
     guests: first.proposal_guest_count ?? first.guest_count ?? null,
     slots,
     filled,

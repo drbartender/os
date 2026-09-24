@@ -260,10 +260,15 @@ function EventCard({ card, past, onTap }) {
       </span>
       <span className="m-card-body">
         <span className="m-card-head">
-          <span className="m-card-title">{card.clientName}{card.kind ? <span className="m-card-kind"> · {card.kind}</span> : null}</span>
+          <span className="m-card-title">{card.clientName}</span>
           {card.guests != null && <span className="m-card-guests">{card.guests} <small>GUESTS</small></span>}
         </span>
-        <span className="m-card-meta">{[card.timeRange, card.venue].filter(Boolean).join(' · ')}</span>
+        {/* The kind gets its own line (Dallas, 2026-09-24): beside the name it
+            was ellipsised on nearly every card. The meta line names the town
+            (card.place); the full address is the detail page's job. A manual
+            shift has no structured venue and keeps its free-text location. */}
+        {card.kind ? <span className="m-card-kind">{card.kind}</span> : null}
+        <span className="m-card-meta">{[card.timeRange, card.place || card.venue].filter(Boolean).join(' · ')}</span>
         <span className="m-card-foot">
           {card.cancelled ? (
             <StatusChip kind="neutral">Cancelled</StatusChip>

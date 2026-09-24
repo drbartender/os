@@ -13,6 +13,7 @@ jest.mock('../../components/adminos/drawers/ShiftDrawer', () => ({ __esModule: t
 const row = (over = {}) => ({
   id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding-reception',
   event_date: '2999-08-15', start_time: '18:00', end_time: '23:00', location: 'Grove on the River',
+  venue_city: 'Rockford', venue_state: 'Illinois',
   proposal_guest_count: 140, positions_needed: '["Bartender","Bartender","Bartender"]',
   approved_count: 2, pending_count: 2, status: 'open', proposal_status: 'deposit_paid',
   bar_required: true, supply_run_required: true, ...over,
@@ -156,7 +157,8 @@ test('a nameless manual card is titled by its venue, and by nothing else when th
   const manual = (over) => env([row({ id: 7, proposal_id: null, event_key: 's7', client_name: null, event_type: null, proposal_guest_count: null, ...over })]);
   api.get.mockResolvedValue(manual({ location: 'Grant Park' }));
   const view = mount();
-  expect((await screen.findByText('Grant Park')).textContent).toBe('Grant Park · Manual shift');
+  expect((await screen.findByText('Grant Park')).textContent).toBe('Grant Park');
+  expect(screen.getByText('Manual shift')).toHaveClass('m-card-kind');   // its own line, not part of the title
   view.unmount();
 
   api.get.mockResolvedValue(manual({ location: null }));
@@ -164,6 +166,17 @@ test('a nameless manual card is titled by its venue, and by nothing else when th
   const bare = await screen.findByText('Manual shift');
   expect(bare).toHaveClass('m-card-title');
   expect(bare.textContent).toBe('Manual shift');   // no dangling separator
+  expect(document.querySelector('.m-card-kind')).toBeNull();   // an empty kind renders no line at all
+});
+
+test('the kind sits on its own line and the meta line names the town, never the street address', async () => {
+  api.get.mockResolvedValue(env([row()]));
+  mount();
+  await screen.findByText('Henderson');
+  expect(screen.getByText('Henderson')).toHaveClass('m-card-title');
+  expect(screen.getByText('Wedding Reception')).toHaveClass('m-card-kind');
+  expect(screen.getByText(/· Rockford, IL$/)).toHaveClass('m-card-meta');
+  expect(screen.queryByText(/Grove on the River/)).toBeNull();
 });
 
 test('a failed load shows an inline retry, never a silent empty list', async () => {

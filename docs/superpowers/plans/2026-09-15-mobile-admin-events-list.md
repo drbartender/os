@@ -537,7 +537,7 @@ Dispatch `consistency-check` on the Task 1 diff (the chip predicate versus `rout
 //   clientName: string, kind: string,
 //   ymd: 'YYYY-MM-DD'|null, isToday: boolean,
 //   timeRange: string,           // "19:00–23:00 · 4h" or "" when no start
-//   venue: string, guests: number|null,
+//   venue: string, place: string, guests: number|null,
 //   slots: number, filled: number, open: number, pending: number, full: boolean,
 //   cancelled: boolean, barRental: boolean, supplies: boolean,
 //   tapTarget: { kind: 'event', id } | { kind: 'shift', id },

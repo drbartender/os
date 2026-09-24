@@ -386,7 +386,12 @@ function adminScopedShiftsSql(scope) {
   const dateOrder = upcoming ? 'ASC' : 'DESC';
   const extra = `
         COALESCE('p' || s.proposal_id::text, 's' || s.id::text) AS event_key,
-        ${NEEDS_STAFF_SQL} AS needs_staff,`;
+        ${NEEDS_STAFF_SQL} AS needs_staff,
+        -- Phone-only (Dallas, 2026-09-24): the card's town line reads the
+        -- proposal's structured venue. Spliced here, not into the base
+        -- projection, so the legacy bare array stays pinned without them.
+        p.venue_city,
+        p.venue_state,`;
   return `
     WITH base AS (
       ${adminShiftsSelectSql(extra)}

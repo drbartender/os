@@ -1,8 +1,9 @@
-import { groupShiftRows, railParts } from './eventCards';
+import { groupShiftRows, railParts, placeOf } from './eventCards';
 
 const row = (over = {}) => ({
   id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding-reception', event_type_custom: null,
   event_date: '2026-08-15', start_time: '18:00', end_time: '23:00', event_duration_hours: 5, location: 'Grove on the River',
+  venue_city: 'Rockford', venue_state: 'Illinois',
   proposal_guest_count: 140, positions_needed: '["Bartender","Bartender","Bartender"]',
   approved_count: 2, pending_count: 2, status: 'open', proposal_status: 'deposit_paid',
   bar_required: true, supply_run_required: true, ...over,
@@ -20,9 +21,23 @@ test('two rows with one proposal become one card with slots, filled and pending 
   expect(c.clientName).toBe('Henderson');
   expect(c.kind).toBe('Wedding Reception');
   expect(c.timeRange).toBe('18:00–23:00 · 5h');   // first shift's range
-  expect(c.venue).toBe('Grove on the River');
+  expect(c.venue).toBe('Grove on the River');   // the full address, for the detail header
+  expect(c.place).toBe('Rockford, IL');          // the town, for the list line
   expect(c.guests).toBe(140);
   expect(c.tapTarget).toEqual({ kind: 'event', id: 10 });
+});
+
+test('place is "City, ST" off the structured venue; codes pass through; no city means no place', () => {
+  expect(placeOf({ venue_city: 'Rockford', venue_state: 'Illinois' })).toBe('Rockford, IL');
+  expect(placeOf({ venue_city: 'Merrillville', venue_state: 'IN' })).toBe('Merrillville, IN');
+  expect(placeOf({ venue_city: 'Chicago', venue_state: null })).toBe('Chicago');
+  expect(placeOf({ venue_city: null, venue_state: 'Illinois' })).toBe('');
+  expect(placeOf({ venue_city: ' Peoria ', venue_state: 'Somewhere Else' })).toBe('Peoria, Somewhere Else');
+  // A manual shift has no proposal, so no structured venue: the card keeps its
+  // free-text location for the list line.
+  const [manual] = groupShiftRows([row({ id: 7, proposal_id: null, event_key: 's7', venue_city: null, venue_state: null })]);
+  expect(manual.place).toBe('');
+  expect(manual.venue).toBe('Grove on the River');
 });
 
 test('a manual shift is its own card and taps into the shift', () => {

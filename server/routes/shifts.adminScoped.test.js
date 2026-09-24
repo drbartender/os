@@ -187,6 +187,7 @@ test('legacy call: bare array, every fixture present, the column set unchanged, 
   const keys = Object.keys(r.body[0]).sort();
   assert.deepEqual(keys, LEGACY_KEYS);
   assert.equal('event_key' in r.body[0], false);
+  assert.equal('venue_city' in r.body[0], false);
 });
 
 // The dev DB holds other upcoming events; walk one-event pages until ours shows.
@@ -216,6 +217,10 @@ test('scope=upcoming pages by EVENT: both shifts of proposal A arrive together o
   assert.ok(LEGACY_KEYS.every(k => k in found.rows[0]),
     `scoped row is missing legacy columns: ${LEGACY_KEYS.filter(k => !(k in found.rows[0])).join(', ')}`);
   assert.ok('event_key' in found.rows[0] && 'needs_staff' in found.rows[0]);
+  // Phone-only columns (2026-09-24): the card's town line reads the proposal's
+  // structured venue; the legacy array above stays byte-identical.
+  assert.ok('venue_city' in found.rows[0] && 'venue_state' in found.rows[0],
+    'scoped row is missing venue_city / venue_state');
 });
 
 test('a MULTI-DATE event still occupies exactly one page: ranking is by the event first date, not the row', async () => {

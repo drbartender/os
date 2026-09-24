@@ -21274,7 +21274,7 @@ html[data-app="admin-os"] .m-stale-dot {
 
 /* Card: one large tap target. */
 html[data-app="admin-os"] .m-card {
-  display: flex; flex-direction: row; align-items: stretch; gap: 12px;
+  display: flex; flex-direction: row; align-items: stretch; gap: 8px;
   width: 100%; padding: 10px 14px 10px 10px; margin: 0 0 0.5rem;
   background: var(--bg-2); border: 1px solid var(--line-1); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card); color: var(--ink-1); font-family: var(--font-ui);
@@ -21283,7 +21283,7 @@ html[data-app="admin-os"] .m-card {
 html[data-app="admin-os"] .m-card:active { background: var(--row-hover); }
 html[data-app="admin-os"] .m-rail {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-  width: 46px; flex: none; border-right: 1px solid var(--line-1); padding-right: 10px;
+  width: 44px; flex: none; border-right: 1px solid var(--line-1); padding-right: 7px;
 }
 html[data-app="admin-os"] .m-rail-dow { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-3); }
 html[data-app="admin-os"] .m-rail-day { font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--ink-1); }
@@ -21296,7 +21296,10 @@ html[data-app="admin-os"] .m-card-title {
   flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-html[data-app="admin-os"] .m-card-kind { color: var(--ink-3); font-weight: 400; }
+/* The kind is its own line under the name (Dallas, 2026-09-24), ellipsised
+   only as a backstop for a very long custom type. The rail gap above is 8px
+   and the rail 44px wide for the same reason: the body was cramped. */
+html[data-app="admin-os"] .m-card-kind { display: block; font-size: var(--fs-meta); color: var(--ink-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
 html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
