@@ -1256,11 +1256,6 @@ the accented spelling) or the two spellings stop matching each other.
   reviewed plan, or a draft whose list is approved, never beside an unapproved list (it is the
   hosted click, the unpaid-extras override, and the way back after Unfinalize). Owed by Dallas:
   the walkthrough in `docs/walkthroughs-owed.md`. Residuals, none a defect in the new path:
-  - **Six plans approved before the change wait for ONE click each; nothing re-fires on deploy.**
-    143 (prop 842, 9/26), 99 (prop 604, 9/26), 128 (685, 10/03), 135 (797, 10/04), 140 (789,
-    12/19), and 82 (535, 10/10, unfinalized 9/17). All six show Finalize BEO after the deploy
-    (draft + approved qualifies now). T-3 for the 9/26 pair is 9/23; the click arms the staff text
-    five to ten minutes later.
   - **Client submit UPDATEs carry no `finalized_at` guard** (`drinkPlans/submit.js`: the three
     submit UPDATEs keyed `WHERE token = $6` and the draft branch). A client submit whose pre-check
     ran before an approve's commit and whose UPDATE lands after its finalize leaves a finalized row
