@@ -89,6 +89,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (1 mandate, at exactly $50, archived) |
 | 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
+| 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25** |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
@@ -572,6 +573,29 @@ any slug present there without a `labAdded` flag as admin-owned (never accept it
 never put it in `removedSlugs`); strip `labAdded` in `sanitizeSelections` (server-owned flag).
 Test: "contract addon survives tick-then-untick" in `lab.test.js` (its :339 case covers
 planner-owned entries only).
+
+---
+
+### A client can re-quote around an admin surcharge, and booking archives the surcharged proposal
+
+Happened 2026-09-25 (client 1948, event 9/26). Thumbtack proposal 880 went out at $475: $350
+Core Reaction plus two hand-added `adjustments`, Rush Booking Fee $75 and Travel Fee $50. The
+client opened it twice, ran the public quote wizard twice (882, 883, both $350 at catalog with
+no adjustments), opened 880 once more, then signed and paid 883 in full ($350 + $150 no-jar
+gratuity = $500). Inside that settle, `sweepClientAlternatives` (`proposalGroupCommit.js`)
+archived 880 and 882 as `option_not_chosen`. The $125 was never billed and nobody was told.
+
+Two gaps. `POST /public/submit` (`public.js`) matches the client by email/phone and then mints a
+`sent`, immediately bookable proposal at catalog price without looking at that client's open
+admin-priced proposals. And the sweep archives a proposal carrying admin `adjustments` with no
+admin alert. Nothing charges a rush fee automatically either, so the wizard books a next-day
+event at list even though `last_minute_hold` already knows it is last-minute.
+
+Fix shape needs Dallas's call. Candidate: when the matched client has an open
+(`sent`/`viewed`/`modified`) proposal with non-empty `adjustments`, mint the wizard proposal as
+`draft` and alert admin, or email the existing link to the on-file address (never hand its token
+to the unauthenticated submitter). Separately, alert admin whenever the sweep archives a proposal
+with non-empty `adjustments`.
 
 ## 2. Wrong on a surface a client is looking at
 
