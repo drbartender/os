@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const {
   calculateProposal, getStaffNoun, gratuityLineAmount, deriveGratuityRate,
   computeGratuityBasis, gratuityBasisFromSnapshot, recomputeSnapshotGratuity,
-  GRATUITY_FLOOR_RATE, calculateSyrupCost,
+  GRATUITY_FLOOR_RATE, calculateSyrupCost, extraHourCharge,
 } = require('./pricingEngine');
 
 const BYOB = {
@@ -250,6 +250,31 @@ for (const c of P4_CASES) {
     assert.strictEqual(snap.floor_applied, c.expectReason !== null, 'floor_applied');
   });
 }
+
+// extraHourCharge: the package's extra-hour rate for hours past what was booked
+// (service extensions, 2026-09-26). Same tier + billed-guest rules as the base.
+test('extraHourCharge: flat bills hours x extra_hour_rate, including half hours', () => {
+  assert.strictEqual(extraHourCharge(BYOB, 100, 1), 150);
+  assert.strictEqual(extraHourCharge(BYOB, 100, 0.5), 75);
+  assert.strictEqual(extraHourCharge(BYOB, 100, 2.5), 375);
+});
+
+test('extraHourCharge: per-guest bills billed heads x hours x the tier rate', () => {
+  assert.strictEqual(extraHourCharge(HOSTED_FULLBAR, 100, 1), 500);   // standard tier, 100 heads
+  assert.strictEqual(extraHourCharge(HOSTED_FULLBAR, 10, 1), 125);    // 10 guests bill as 25 heads
+  const tiered = { ...HOSTED_FULLBAR, extra_hour_rate: 5, extra_hour_rate_small: 7 };
+  assert.strictEqual(extraHourCharge(tiered, 40, 1), 280);            // under min_guests: small rate
+  assert.strictEqual(extraHourCharge(tiered, 60, 1), 300);            // standard rate
+});
+
+test('extraHourCharge: $0 for a zero-rate class and for non-positive or bad hours', () => {
+  const zeroClass = { ...HOSTED_CLASS, extra_hour_rate: 0, extra_hour_rate_small: 0 };
+  assert.strictEqual(extraHourCharge(zeroClass, 20, 1), 0);
+  assert.strictEqual(extraHourCharge(BYOB, 100, 0), 0);
+  assert.strictEqual(extraHourCharge(BYOB, 100, -1), 0);
+  assert.strictEqual(extraHourCharge(BYOB, 100, NaN), 0);
+  assert.strictEqual(extraHourCharge({ ...BYOB, extra_hour_rate: null }, 100, 1), 0);
+});
 
 test('P4 staffing + gratuity surcharge stay keyed on ACTUAL guests, not billed guests', () => {
   const addons = [{ id: 9, slug: 'additional-bartender', name: 'Additional Bartender',

@@ -59,6 +59,39 @@ function isCocktailFullyCovered(cocktail, pkg) {
 }
 
 /**
+ * The hosted rate tier for a guest count: the billed heads plus the per-guest
+ * rates that apply to them. ONE source for hostedBaseComponents and
+ * extraHourCharge, so an extension can never bill a different tier than the
+ * one the booking was priced at.
+ */
+function hostedRateTier(pkg, guestCount) {
+  const billedGuests = Math.max(guestCount, Number(pkg.min_billed_guests || 0));
+  const isSmall = pkg.min_guests && guestCount < pkg.min_guests; // rate tier on ACTUAL guests
+  return {
+    billedGuests,
+    rate4hr: Number(isSmall ? pkg.base_rate_4hr_small : pkg.base_rate_4hr),
+    rate3hr: isSmall ? (pkg.base_rate_3hr_small || pkg.base_rate_3hr) : pkg.base_rate_3hr,
+    extraRate: Number(isSmall ? (pkg.extra_hour_rate_small || pkg.extra_hour_rate) : pkg.extra_hour_rate),
+  };
+}
+
+/**
+ * The package's extra-hour rate applied to `hours` of added service, in dollars:
+ * hours x extra_hour_rate on a flat package, billed heads x hours x the tier's
+ * extra-hour rate on a per-guest one. This is what an hour past the BOOKED
+ * duration costs on an on-site extension (serviceExtensionPricing.js), including
+ * an hour that falls inside the 4-hour base, which the catalog alone prices at
+ * $0. Proposal pricing and quoting never call it.
+ */
+function extraHourCharge(pkg, guestCount, hours) {
+  const h = Number(hours);
+  if (!(h > 0)) return 0;
+  if (pkg.pricing_type === 'flat') return h * (Number(pkg.extra_hour_rate) || 0);
+  const { billedGuests, extraRate } = hostedRateTier(pkg, guestCount);
+  return billedGuests * h * (extraRate || 0);
+}
+
+/**
  * Hosted per-guest base, split into the pre-floor amount and the billed-guest
  * count, so calculateBaseCost and calculateProposal share ONE source of truth
  * for the 25-guest billing minimum (P4, fix #8).
@@ -75,11 +108,7 @@ function isCocktailFullyCovered(cocktail, pkg) {
  * and their math is unchanged.
  */
 function hostedBaseComponents(pkg, guestCount, durationHours) {
-  const billedGuests = Math.max(guestCount, Number(pkg.min_billed_guests || 0));
-  const isSmall = pkg.min_guests && guestCount < pkg.min_guests; // rate tier on ACTUAL guests
-  const rate4hr = Number(isSmall ? pkg.base_rate_4hr_small : pkg.base_rate_4hr);
-  const rate3hr = isSmall ? (pkg.base_rate_3hr_small || pkg.base_rate_3hr) : pkg.base_rate_3hr;
-  const extraRate = Number(isSmall ? (pkg.extra_hour_rate_small || pkg.extra_hour_rate) : pkg.extra_hour_rate);
+  const { billedGuests, rate4hr, rate3hr, extraRate } = hostedRateTier(pkg, guestCount);
   let rawBase;
   if (rate3hr && durationHours <= 3) rawBase = billedGuests * Number(rate3hr);
   else if (durationHours <= 4) rawBase = billedGuests * rate4hr;
@@ -614,7 +643,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
 
 module.exports = {
   calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing,
-  calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage,
+  calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage, extraHourCharge,
   computeCocktailGap, packageSuppressedAddons, isCocktailFullyCovered,
   getStaffNoun, computeGratuityBasis, gratuityBasisFromSnapshot, gratuityLineAmount,
   deriveGratuityRate, recomputeSnapshotGratuity,

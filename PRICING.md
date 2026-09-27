@@ -14,7 +14,7 @@ All packages include setup & breakdown, a cooler, a custom menu graphic, and $2M
 
 | Package | Price | Notes |
 |---|---|---|
-| **The Core Reaction** | **$350** flat, up to 4 hrs. **+$100/hr** beyond 4 hrs. | Client provides all alcohol/supplies (or shops from our custom list). Includes 1 bartender, bar tools, menu planning session, event-specific shopping list. No 3-hour discount — a 3-hour event still bills the 4-hour rate. |
+| **The Core Reaction** | **$350** flat, up to 4 hrs. **+$100/hr** beyond 4 hrs. | Client provides all alcohol/supplies (or shops from our custom list). Includes 1 bartender, bar tools, menu planning session, event-specific shopping list. No 3-hour discount — a 3-hour event still bills the 4-hour rate. Extending on site still bills $100/hr for every hour past what was booked (see [On-Site Service Extension](#on-site-service-extension)). |
 
 ### Hosted Full Bar
 
@@ -206,6 +206,10 @@ A separate, optional gratuity the client can pre-pay at checkout, on top of the 
 ### Drink Plan Extras
 
 If a client's final drink selections (chosen after booking, via the drink-plan tool) push the total above what was already quoted and paid, the difference is billed separately as a "Drink Plan Extras" charge. There's no fixed price — it's whatever the computed delta is.
+
+### On-Site Service Extension
+
+When the bartender requests more time at the event, the client pays a separate "Service Extension" invoice for it. **Every hour past what was booked bills at the package's extra-hour rate**, in half-hour steps, even an hour that falls inside the package's 4-hour base (decided 2026-09-26). The Core Reaction is $100/hr, so a 3-hour booking extended to 4 hours pays $100 even though the $350 base already covers 4 hours. Hosted packages bill their per-guest extra-hour rate on the billed-guest count; a package whose extra-hour rate is $0 (every class today) extends for free. Over-ratio staffing, hourly add-ons, and the client's gratuity rate for the added time ride on top. The booking's own discounts do not reduce the extra time, even on a fully comped booking. Max 3 hours per request, never past the 2:00 AM curfew.
 
 ### Price Adjustments / Custom Total
 

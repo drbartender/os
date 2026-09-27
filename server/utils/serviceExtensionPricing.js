@@ -18,10 +18,14 @@
  * cancel (per_guest_timed and per_hour carry duration terms), so the real
  * proposal_addons rows are loaded.
  *
+ * One deliberate departure from the pure engine delta: the PACKAGE line bills
+ * every added hour at the package's extra-hour rate, even an hour inside the
+ * 4-hour base (Dallas, 2026-09-26). See computeExtensionDelta.
+ *
  * READ-ONLY. This function never writes. The caller persists.
  */
 
-const { calculateProposal, isHostedPackage } = require('./pricingEngine');
+const { calculateProposal, isHostedPackage, extraHourCharge } = require('./pricingEngine');
 const { loadRepriceAddons } = require('./proposalExtrasFold');
 const { eventEndInstantForDuration, maxDurationHoursBeforeCurfew } = require('./eventEndInstant');
 // JS pre-screen for the free-text start time (no cycle: serviceCurfew only
@@ -113,7 +117,7 @@ function staffGratuityCentsOf(snapshot) {
 async function computeExtensionDelta({ client, proposalId, requestedDurationHours }) {
   const propRes = await client.query(
     `SELECT id, package_id, guest_count, event_duration_hours, num_bars, num_bartenders,
-            gratuity_rate, tip_jar, adjustments, total_price_override
+            gratuity_rate, tip_jar, total_price_override
        FROM proposals WHERE id = $1`,
     [proposalId]
   );
@@ -163,7 +167,12 @@ async function computeExtensionDelta({ client, proposalId, requestedDurationHour
     numBartenders: proposal.num_bartenders,
     addons,
     syrupSelections: [], // no duration term, cancels across the legs
-    adjustments: proposal.adjustments || [],
+    // The booking's adjustments are fixed dollars with no duration term, so
+    // they cancel across the legs EXCEPT through calculateProposal's
+    // Math.max(0, ...) clamp: a discount larger than the booked subtotal (a
+    // comped event) pins the before leg at $0 and swallows part of the added
+    // hours. Leaving them out of both legs makes the delta exact.
+    adjustments: [],
     totalPriceOverride: null, // price the delta at CATALOG
     gratuityRate: proposal.gratuity_rate,
     tipJar: proposal.tip_jar,
@@ -172,17 +181,29 @@ async function computeExtensionDelta({ client, proposalId, requestedDurationHour
   const before = calculateProposal({ ...common, durationHours: contracted });
   const after = calculateProposal({ ...common, durationHours: requested });
 
-  // The whole delta is the total delta. The gratuity share of it comes from the
-  // pooled payroll labels, and service is whatever is left. Deriving service as
-  // the remainder (rather than differencing a separate service figure) means the
-  // three numbers can never fail to reconcile.
-  const amountCents = totalCentsOf(after) - totalCentsOf(before);
+  // Every hour past what was BOOKED bills at the package's extra-hour rate
+  // (Dallas, 2026-09-26). The catalog alone prices an hour inside the 4-hour
+  // base at $0: a 3h Core Reaction already pays the 4h $350, so a 3h -> 4h
+  // extension used to invoice gratuity only while DRB paid the bartender the
+  // extra hour (prop 842). The package line of the delta is therefore the
+  // LARGER of the catalog difference and the extra-hour charge for the added
+  // hours, so no extension ever prices below what the catalog already charged.
+  // Staffing, timed add-ons and gratuity stay the engine's own difference.
+  const catalogPackageDeltaCents = toCents(after.package.base_cost) - toCents(before.package.base_cost);
+  const extraHourCents = toCents(extraHourCharge(pkg, proposal.guest_count, added));
+  const packageUpliftCents = Math.max(0, extraHourCents - catalogPackageDeltaCents);
+
+  // The whole delta is the total delta plus that uplift. The gratuity share of
+  // it comes from the pooled payroll labels, and service is whatever is left.
+  // Deriving service as the remainder (rather than differencing a separate
+  // service figure) means the three numbers can never fail to reconcile.
+  const amountCents = totalCentsOf(after) - totalCentsOf(before) + packageUpliftCents;
   const gratuityDeltaCents = staffGratuityCentsOf(after) - staffGratuityCentsOf(before);
   const serviceDeltaCents = amountCents - gratuityDeltaCents;
 
   // Catalog totals are monotonic in duration for every current package, so a
-  // negative delta means pathological pricing data (e.g. a >100% negative
-  // adjustment binding the zero clamp at both durations). That is corruption to
+  // negative delta means pathological pricing data (e.g. a negative rate
+  // written straight to the catalog). That is corruption to
   // surface loudly, not a shape to invoice: throw rather than hand the create
   // route a negative amount. Zero stays legal (D13, the acceptance-only path).
   if (amountCents < 0) {
