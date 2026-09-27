@@ -16,9 +16,19 @@
 // CURRENT_AGREEMENT_VERSION MUST equal the client module's version:
 //   client/src/data/eventServicesAgreement.js -> EVENT_SERVICES_AGREEMENT.version.
 // Bump both together when the agreement text changes.
+//
+// DEPLOY ORDER: a new version must be ACCEPTED here, and live on Render, before
+// the client bundle that sends it ships (Vercel usually finishes first). So a
+// version lands in KNOWN one push ahead of the client bump that makes it
+// CURRENT. v4 (Section 8.1, Additional Time pricing and invoicing, 2026-09-27)
+// is in that state: accepted, not yet sent by any client.
 const LEGACY_AGREEMENT_VERSION = 'event-services-agreement-v2';
 const CURRENT_AGREEMENT_VERSION = 'event-services-agreement-v3';
-const KNOWN_AGREEMENT_VERSIONS = [LEGACY_AGREEMENT_VERSION, CURRENT_AGREEMENT_VERSION];
+const KNOWN_AGREEMENT_VERSIONS = [
+  LEGACY_AGREEMENT_VERSION,
+  CURRENT_AGREEMENT_VERSION,
+  'event-services-agreement-v4',
+];
 
 module.exports = {
   LEGACY_AGREEMENT_VERSION,
