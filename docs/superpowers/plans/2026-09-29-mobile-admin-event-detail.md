@@ -18,29 +18,30 @@
 - `server/routes/shifts.js` (722 lines): `requireStaffing` `:51-55` (admin, or manager with `can_staff`); `withOutOfAreaContext` `:71-95`; `withHomeDistance(row, shift)` `:102-108` strips `staff_lat`/`staff_lng` and adds `home_distance_miles` via `roundMiles(milesBetween(...))` from `server/utils/serviceArea.js` (imported `:16-25`); `GET /by-proposal/:proposalId` `:333-386` selects `s.*`, `rc.request_count`, `rc.approved_count`, `approved_staff`, `requesters` (json objects with `request_id, user_id, name, status, position, dropped_at, staff_lat, staff_lng`, denied rows excluded) and `abr.approved_by_role`, with NO join to `proposals` and NO `requested_positions`; `GET /detail/:id` `:389-435` returns `{ shift, requests }` where `requests` is `sr.*` plus `staff_name, staff_email, staff_city, staff_reliable_transportation` and the derived distance, joined to `proposals p`; `DELETE /requests/:requestId` `:597-634` is a hard delete followed by `releaseOutOfAreaLock`, `reaccrueDutyForProposal` and BEO nudge suppression; `POST /:id/assign` `:682`; `PUT /requests/:requestId` `:701`. It imports `shiftNotFinishedSql` (`:12`) but not `shiftFinishedSql`.
 - `server/routes/shifts.approval.js` (656 lines, sensitive-listed, NOT touched by this lane): `assignShiftHandler` `:250-432` 400s without a canonical `position` (`:254-255`), 404s an ineligible user (`:265-269`), upserts the request as approved clearing every drop marker, stamps the Out-of-Area lock, logs an over-fill to `proposal_activity_log` but ACCEPTS it, then sends the staffer an SMS and an email and may fire the client staffing confirmation. `approveOrDenyRequestHandler` `:440-648`: the `denied` branch (`:525-541`) updates the row and sends NOTHING; both notification blocks sit inside `if (status === 'approved')` (`:551`).
 - `server/utils/shiftEndInstant.js` exports `shiftFinishedSql(s, p)` (`:219-221`); the proposal alias may be LEFT JOINed (the zone COALESCEs to America/Chicago).
-- `server/routes/admin/users.js` (729 lines): `GET /active-staff` `:465-543`, guarded inline (admin, or manager with `can_staff`), `limit` capped at 100, ordered by `COALESCE(cp.display_name, cp.preferred_name, u.email)`, returning `{ staff, total, page, pages }`. A staff row has exactly these 20 keys: `cc_id, city, created_at, display_name, email, equipment_cooler, equipment_portable_bar, equipment_table_with_spandex, id, import_source, onboarding_completed, onboarding_status, phone, positions_interested, preferred_name, reliable_transportation, role, signed_at, state, travel_distance`. No seniority, no coordinates. `GET /users/:id/seniority` `:580-624` computes `events_worked` as live approved, not-dropped requests on shifts with `event_date < chicagoTodayYmd()` plus `contractor_profiles.historical_events_worked`; `server/utils/autoAssign.js:194-208` is its documented mirror.
+- `server/routes/admin/users.js` (729 lines): `GET /active-staff` `:465-542`, guarded inline (admin, or manager with `can_staff`), `limit` capped at 100, ordered by `COALESCE(cp.display_name, cp.preferred_name, u.email)`, returning `{ staff, total, page, pages }`. A staff row has exactly these 20 keys: `cc_id, city, created_at, display_name, email, equipment_cooler, equipment_portable_bar, equipment_table_with_spandex, id, import_source, onboarding_completed, onboarding_status, phone, positions_interested, preferred_name, reliable_transportation, role, signed_at, state, travel_distance`. No seniority, no coordinates. `GET /users/:id/seniority` `:580-624` computes `events_worked` as live approved, not-dropped requests on shifts with `event_date < chicagoTodayYmd()` plus `contractor_profiles.historical_events_worked`; `server/utils/autoAssign.js:194-208` is its documented mirror.
 - Client callers of `/admin/active-staff`: `AdminDashboard.js:49`, `StaffDashboard.js:77`, `staffHub/reviews/ReviewsPage.js:41`, `drawers/ShiftDrawer.js:142`. None passes `shift_id`.
 - `server/routes/contractor.js:26-31` `sanitizeProfile` strips `seniority_adjustment`, `historical_events_worked` and `preferred_name_reviewed_at` from a contractor's OWN profile. It is not on any path this lane touches; the seniority GET already serves `events_worked` to admins and managers.
 - `server/routes/proposals/getOne.js:21-129` `GET /proposals/:id` (`requireAdminOrManager`) returns `p.*` plus `client_name, client_email, client_phone, package_name`, `setup_time_display` (24h `HH:MM`, server-derived), the refund-side derived fields, `addons`, `activity`, `messageLog`. It carries NO payments list and NO in-flight payments.
 - `server/routes/invoices.js:215-241` `GET /invoices/proposal/:proposalId` returns `{ invoices, pending_payments }`; invoice rows carry `label, amount_due, amount_paid, status, due_date, invoice_number` (cents) and no paid date; `pending_payments` rows carry `amount_cents, started_at, invoice_id, invoice_number` (the bank debit in flight, spec 2026-09-14). `invoices.js` is sensitive-listed and is NOT touched by this lane.
 - `server/routes/drinkPlans.js:381-411` `GET /drink-plans/by-proposal/:proposalId` 404s when the proposal has no drink plan. The day-of contact is `selections.logistics.dayOfContact = { name, phone }`; there is no note or relationship field anywhere in the planner (`client/src/pages/plan/v2/PlannerV2.js:49`).
 - `client/public/admin-sw.js` (392 lines, sensitive-listed): `SW_VERSION = 'admin-sw-2026-08-14-v8'` (`:30`); `API_EXACT` `:182-193` holds `/api/shifts`, `/api/proposals`, `/api/admin/badge-counts`, `/api/admin/search`, `/api/admin/active-staff`, `/api/auth/me`; `isAllowlisted` `:194-197` adds `/^\/api\/proposals\/\d+$/` and the `/api/shifts/by-proposal/` prefix. `/api/shifts/detail/:id`, `/api/drink-plans/by-proposal/:id` and `/api/invoices/proposal/:id` are NOT allowlisted. The Cache API keys on the full URL, so `?shift_id=` makes each shift's candidate list its own entry. The file's top level only declares constants and functions and registers listeners on `self`, so it loads in a `vm` context with a stub `self`.
-- `client/src/hooks/useDrawerParam.js` (49 lines): `{ kind, id, open, close }`, both writes `replace: true`, plus the named export `drawerHref`. No test file exists for it. Callers: `EventsDashboard.js`, `EventDetailPage.js`, `EventsListPhone.js` and other desktop pages, all relying on replace semantics.
+- `client/src/hooks/useDrawerParam.js` (49 lines): `{ kind, id, open, close }`, both writes `replace: true`, plus the named export `drawerHref`. No test file exists for it. Exactly three callers, `EventsDashboard.js`, `EventDetailPage.js` and `EventsListPhone.js`, all relying on replace semantics. The app's router is `<BrowserRouter>` (`App.js:689`), which keeps its position in `window.history.state.idx`.
 - `client/src/utils/staffingRoles.js` (112 lines) exports `ROLES, CANONICAL_LABELS, canonicalizeRole, isBartender, parsePositionsNeeded, rosterCounts, computeRemaining, classifyRequest, isEventFullyStaffed, ASSIGN_ROLE_PREFERENCE, defaultAssignRole`. `classifyRequest(requested, remaining)` treats an EMPTY ranked list as "any open role". `client/src/components/adminos/shifts.js` exports `neededCount` (`:96`, an empty roster counts as 1), `parsePositionsCount` (`:115`), `isCancelledEvent` (`:66`).
-- `client/src/components/adminos/drawers/ShiftDrawer.js` (803 lines) is the desktop reference: approvals go through `POST /shifts/:id/assign { user_id, position }` (`:243-246`), never through the PUT; deny is `PUT /shifts/requests/:id { status: 'denied' }` (`:263`); remove is `DELETE /shifts/requests/:id` behind a `window.confirm` (`:276-279`); approved means `status === 'approved' && !dropped_at` (`:166-169`).
+- `client/src/components/adminos/drawers/ShiftDrawer.js` (803 lines) is the desktop reference: approvals go through `POST /shifts/:id/assign { user_id, position }` (`:261-264`), never through the PUT; deny is `PUT /shifts/requests/:id { status: 'denied' }` (`:278`); remove is `DELETE /shifts/requests/:id` behind a `window.confirm` (`:290-293`); approved means `status === 'approved' && !dropped_at` (`:161-164`). Reference only: this lane does not edit it.
 - `client/src/pages/admin/EventDetailPage.js` (657 lines): `export default function EventDetailPage()` at `:38`; reads `GET /proposals/:id` and `GET /shifts/by-proposal/:id` together (`:120-123`) and `GET /drink-plans/by-proposal/:id` separately (`:144`); the payment panel reads `GET /invoices/proposal/:id` (`ProposalDetailPaymentPanel.js:98`) and computes `balanceDue = total_price - amount_paid` and "paid in full" as a paid status AND `balanceDue <= 0` (`:20-47`).
-- `client/src/components/AdminLayout.js` (304 lines): `outletCtx = useMemo(() => ({ badges, refreshBadges: fetchBadges }), ...)` at `:139`; `screenKey = routeScreenKey(location.pathname)` `:179`; the `mobile-route-dead` listener `:217-223` navigates to `/events` with replace; the phone branch `:232-256` renders `<MobileHeader title screenKey onBack />` and the scroll host `<main className="m-main" id="main-content">`. `client/src/components/mobile/MobileHeader.js` (53 lines) has no detail variant and no test. `client/src/utils/screenKey.js` already maps `/events/:id` to `event-detail`.
-- `client/src/pages/mobile/EventsListPhone.js` (291 lines): imports the desktop `ShiftDrawer` (`:10`), uses `useDrawerParam()` with replace semantics (`:37`), opens manual shifts with `drawer.open('shift', id)` (`:143`), mounts the interim drawer only while open (`:229-236`). Its test stubs `ShiftDrawer` (`EventsListPhone.test.js:11`).
+- `client/src/components/AdminLayout.js` (304 lines): `outletCtx = useMemo(() => ({ badges, refreshBadges: fetchBadges }), ...)` at `:139`; `screenKey = routeScreenKey(location.pathname)` `:179`; the `mobile-route-dead` listener `:217-223` navigates to `/events` with replace; the phone branch `:232-256` renders `<MobileHeader title screenKey onBack />` and the scroll host `<main className="m-main" id="main-content">`. `client/src/components/mobile/MobileHeader.js` (52 lines) has no detail variant and no test. `AdminLayout.js:228-229` sets `Sentry.setTag('surface', 'mobile-admin')` on the global scope while the phone chrome is mounted, so every phone component here already reports with the spec section 10 tag; no component tags itself. `client/src/utils/screenKey.js` already maps `/events/:id` to `event-detail`.
+- `client/src/pages/mobile/EventsListPhone.js` (291 lines): imports the desktop `ShiftDrawer` (`:10`), uses `useDrawerParam()` with replace semantics (`:36`), opens manual shifts with `drawer.open('shift', id)` (`:143`), mounts the interim drawer only while open (`:233-243`). Its test stubs `ShiftDrawer` (`EventsListPhone.test.js:11`).
 - `client/src/utils/eventCards.js` exports `eventKeyOf, railParts, placeOf, groupShiftRows`; `client/src/utils/staleTime.js` exports `formatStaleAt, formatStaleTime`; `client/src/utils/setupTime.js` exports `subtractMinutesFromTime, formatSetupTime`; `client/src/components/adminos/format.js` exports `fmt$2dp` (dollars), `fmt$fromCents` (cents), `fmtDate`, `fmtTime24`, `fmtTimeRange24`, `dayDiff`; `client/src/components/VenueAddressFields.js:100` exports `venueMapQuery`; `client/src/utils/gratuityLabels.js:10` exports `resolveGratuityDisplayLabel`; `client/src/utils/api.js` rejects with `{ message, code, fieldErrors, status }` (`status: 0`, `code: 'NETWORK_ERROR'` on a transport failure) and sets `res.staleAt` on a cache-served response.
 - `client/src/index.css` (21449 lines): the mobile block runs `:20934-21375`; the Events list rules are `:21240-21375`; the Staff hub block's comment opens at `:21377`. `.m-more-list` and `.m-more-row` exist (`:21075-21103`). NO `.m-sheet*`, `.m-section*`, `.m-stepper*`, `.m-pill*` or `.m-dhead*` rule exists. `.staff-pill` does not exist anywhere in `client/src`. The lock is `z-index: 10000` (`:21185`), the return pill 39 (`:21110`). Icon names used here all exist in `client/src/components/adminos/Icon.js`: `left, right, external, users, userplus, dollar, pen, check, clock, x`.
 - Design-system CSS to fold from: `docs/design-artifacts/_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-mobile.css:158-214` (`.m-sheet-scrim`, `.m-sheet`, `.m-sheet-handle`, `.m-sheet-title`, `.m-sheet-row`, light-skin squaring `:322`) and `components-admin.css:326-331` (`.staff-pills`, `.staff-pill`, `.staff-count`).
-- `eslint.config.mjs:62` sets `no-throw-literal: error`, and the client build runs with `CI=true`, so a thrown object literal fails the build. Throw `Error` instances.
-- `scripts/mobile-capture.js` resolves `:token` in a page path from `tokenQuery` (`:101-105`), fails a page only on horizontal overflow, and reports taps under 36px and text under 12px without failing.
+- The client lints with `eslint-config-react-app`, which sets `no-throw-literal: warn`, and the client build runs with `CI=true`, where a warning is fatal. So a thrown object literal fails the build: throw `Error` instances. (`eslint.config.mjs:62` carries the same rule as an error, for `server/**` only.)
+- `scripts/mobile-capture.js` resolves `:token` in a page path from `tokenQuery` (`:102-106`), fails a page only on horizontal overflow, and reports taps under 36px and text under 12px without failing.
 - `scripts/sensitive-paths.txt` lists `client/public/admin-sw.js` (`:382`), `server/routes/shifts.approval.js` (`:77`) and `server/routes/invoices.js` (`:296`). It does not list `server/routes/shifts.js`, `server/routes/admin/users.js`, `client/src/hooks/useDrawerParam.js` or anything under `client/src/pages/mobile/`.
-- Prod, read 2026-09-28 (Neon `round-tooth-34649976`, read-only): 16 active staff, 10 of them geocoded; 20 upcoming live shifts, 10 geocoded; 0 upcoming manual shifts; 0 upcoming multi-shift events; 0 upcoming shifts with an empty, object-shaped or mixed-role roster; 16 pending requests on upcoming shifts; 54 drink plans carry a day-of contact. So distance is absent for half of what Dallas will look at, and the per-shift grouping, the manual sheet and the "Approve as" rows are exercised today only by fixtures.
+- Prod, read 2026-09-28 (Neon `round-tooth-34649976`, read-only): 16 active staff, 10 of them geocoded; 20 upcoming live shifts, 10 geocoded; 0 upcoming manual shifts; 0 upcoming multi-shift events; 0 upcoming shifts with an empty, object-shaped or mixed-role roster; 16 pending requests on upcoming shifts; 54 drink plans carry a day-of contact. So distance is absent for half of what Dallas will look at, and the per-shift grouping, the manual sheet and the "Approve as" rows are exercised today only by fixtures. Read 2026-09-29: of 83 approved, not-dropped requests all-time (9 on upcoming shifts), none has a NULL or non-canonical `position`; the column is nullable, so Task 4 still counts such a row as filling a slot.
+- Design system, compared 2026-09-29 (DesignSync `get_file`, project `72035042-c993-47e2-9dc8-c452b7bf5fa4`): the rules this lane folds from match the vendored copies rule for rule, in `components-mobile.css` the bottom-sheet family and the light-skin squaring (which gives `.m-more-list` `border-color: var(--line-2)` and `box-shadow: none`), in `components-admin.css` the staffing pills. That was a comparison of those rules, not a byte compare of the two files; the byte compare covered the shell benchmark.
 - Main carries two unpushed phone commits from another window, `9a73d5ba` and `a84555c3` (card place line, kind line, fraction and tag colours). They changed `eventCards.js`, `EventsListPhone.js` and `index.css`; the line numbers above were read AFTER them.
 
-**Decisions this plan makes (each is recorded in the spec by the fold commit on main):**
+**Decisions this plan makes (each is recorded in the spec: section 3 "Plan decisions of 2026-09-29", section 4 and section 7). They are the complete list of intended departures from the benchmark: `ui-ux-review` treats them as the contract, and any other difference is a finding.**
 1. **The Deny confirm tells the truth.** The benchmark copy reads "They are notified and the request is closed." The server notifies nobody on a deny. Phone copy: `Deny <name>'s application? The request closes. They are not notified.` Adding a notification is server work on a sensitive file and is not in this lane.
 2. **Assign always shows the role step.** In the benchmark a candidate row with one open role assigns on a single tap. An assignment texts and emails a real person and writes the payroll seam, and a stray tap while scrolling a list is the likeliest phone mistake there is. So a candidate tap always opens the "Assign as" rows, one row when one role is open. An applicant's Approve with exactly one open role that the applicant ranked stays direct (it is already the second tap: row, then Approve). A waitlisted applicant, whose ranked roles are all full, always gets the "Approve as" rows, even for one open role, because that role is one they did not ask for.
 3. **The phone never over-fills.** With no open role, Approve is disabled and the Assign section is absent. Over-filling is a deliberate desktop action. Because the server accepts an over-fill, the sheet re-reads the shift immediately before an approve or an assign and refuses when the chosen role is no longer open.
@@ -51,13 +52,21 @@
 8. **Financials reads what the desktop panel reads.** Lines from `pricing_snapshot.breakdown`, total and paid from the proposal row, payments from the invoices read (label, state, amount, no paid date because none is stored on the invoice), the bank debit in flight as its own row and a "Processing" chip. The benchmark's "Updated total" label becomes "Total": nothing here is an update.
 9. **The day-of contact has no note.** The benchmark draws "Marcus Keller · the client"; the planner stores a name and a phone only.
 10. **Edit details opens the Desktop view of this screen** until lane ma-e3 lands, with the trailing label "desktop view"; on a cache-served read it reads "needs connection" and does nothing.
-11. **A shift with no declared roles** (none upcoming in prod) is read-only for approve and assign with the note "No roles are declared on this shift. Staff it from desktop view."
+11. **A shift with no declared roles** (none upcoming in prod) is read-only for approve and assign with the note "No roles are declared on this shift. Staff it from desktop view." The note shows in the sheet and, in place of the "Assign staff" row, on the detail's staffing card.
+12. **Contacts are tap targets.** The benchmark draws the client's phone and email as plain 12px and 11px text. Spec section 4 makes the phone tap-to-call and tap-to-text, and a tap target is 44px. So each number and address is a 44px row in the link colour, and each phone carries a bordered "Text" button.
+13. **Money shows cents, and a negative shows a true minus sign.** The benchmark draws whole dollars. Real totals carry cents and the desktop panel shows them; the phone must never round a balance.
+14. **The when line carries the duration and, outside the current year, the year** ("SAT AUG 15 · 18:00–23:00 · 5h"), on the detail and in the sheet head. The list card already does; the rail has no year, and an event next January otherwise reads as this one. Dates in the money rows are uppercase like the rail ("due AUG 8").
+15. **A per-shift head leads with the start time, and with the date when the event spans more than one day** ("16:00 · Bartenders"). The benchmark labels a shift by its roles alone, which cannot tell apart the two Bartender shifts of a two-day event.
+16. **A cancelled event says so.** A "Cancelled" chip on the when line (in place of "Today") and on Financials, no fraction in the Staffing head, and no Edit details row: there is nothing to edit on a cancelled event from the phone. Where nothing is owed but the status is not a paid one, the Financials chip reads "No balance" rather than claim "Paid". The benchmark draws neither case.
+17. **The offline banner and a picker that failed to load each carry a Retry.** A cache-served roster is often a slow connection, not a lost one, and without a Retry the only way to try again is to close the sheet.
+18. **Rostered rows are alphabetical,** as the desktop card's are. The benchmark keeps fixture order.
 
 ## Global Constraints
 
 - **No em dashes** in copy, comments, commit messages or docs. Commas, colons, parentheses, the middle dot. A missing value renders as nothing, never as a dash glyph.
 - **One fork, one breakpoint:** the phone branch comes from `useMobileView()` only. No new width media queries; every new rule lives in the mobile block of `index.css`, scoped `html[data-app="admin-os"]`, both skins.
-- **Unique `m-*` class names for everything, modifiers included.** `.m-tag.bar` collided with the design system's `.bar` rule in ma-e1. Write `m-act-danger`, never `m-act danger`. The only bare classes allowed are the existing primitives `chip` and `chip-dot` through `StatusChip`.
+- **Unique `m-*` class names for everything this lane ADDS, modifiers included.** `.m-tag.bar` collided with the design system's `.bar` rule in ma-e1. Write `m-act-danger`, never `m-act danger`. Two things that already exist are reused as they are: the primitives `chip` and `chip-dot` through `StatusChip`, and the ma-e1 fraction with its states, `m-frac`, `m-frac full` and `m-frac past`.
+- **Rows inside a detail section are `m-section-item`; rows inside the sheet are `m-sheet-row`.** Same declarations, two names: spec section 3 forbids shipping the sheet's row class inside a detail screen.
 - **`position` is the payroll seam.** Every approve and assign sends an explicit canonical `position` that was visible on screen before the tap. Never defaulted, never inferred, never sent as anything `canonicalizeRole` would reject. The phone never calls `defaultAssignRole`.
 - **Writes go through the desktop's endpoints, unchanged:** `POST /shifts/:id/assign { user_id, position }` for approve and assign, `PUT /shifts/requests/:id { status: 'denied' }`, `DELETE /shifts/requests/:id`. This lane edits no write handler and does not touch `server/routes/shifts.approval.js`.
 - **One write at a time.** While a write is in flight every action button in the sheet is disabled, guarded by a ref so a double tap cannot fire two requests.
@@ -67,11 +76,12 @@
 - **Staleness line, two states,** on the detail: live = `as of <fetch time>` with no dot; cache-served = `offline copy · as of <cached time>` with the amber dot. Only the time sits inside `.m-stale-time`.
 - **Sticky rows** inside the scroll host `main#main-content` use `top: -0.75rem` (the host's own padding), never `top: 0`.
 - **44px minimum tap targets** for every button and link this lane adds.
-- **Copy from the benchmark, verbatim, except where Decisions 1, 8, 9, 10 and 11 replace it:** "Contacts", "Client", "Day-of contact", "day-of set", "day-of pending", "Not received yet. Collected with the drink plan; often the client themselves.", "Staffing", "Assign staff · N open", "Pending", "Waitlisted", "Financials", "Package & extras", "Payments", "Balance due", "due <date>", "due date not set", "Paid in full", "Paid", "Edit details", "needs connection", "On this shift", "Approve", "Deny", "Remove from shift", "Keep", "Remove", "Approve as", "Assign as", "N open", "Assign", "Search active staff", "Retry", "just assigned", "No connection. Staffing actions need the server; the roster below is the cached copy.", "Past event · roster is read-only", "Cancelled · roster is read-only", the Remove confirm `Remove <name> from this shift? Payroll re-accrues and any out-of-area lock is released.`, the no-match line `No active staff matches "<query>".`
+- **Copy from the benchmark, verbatim, except where the decisions above replace it:** "Contacts", "Client", "Day-of contact", "day-of set", "day-of pending", "Not received yet. Collected with the drink plan; often the client themselves.", "Staffing", "Assign staff · N open", "Pending", "Waitlisted", "Financials", "Package & extras", "Payments", "Balance due", "due <date>", "due date not set", "Paid in full", "Paid", "Edit details", "needs connection", "On this shift", "Approve", "Deny", "Remove from shift", "Keep", "Remove", "Approve as", "Assign as", "N open", "Assign", "Search active staff", "Retry", "just assigned", "No connection. Staffing actions need the server; the roster below is the cached copy.", "Past event · roster is read-only", "Cancelled · roster is read-only", the Remove confirm `Remove <name> from this shift? Payroll re-accrues and any out-of-area lock is released.`, "Offline", "Today", "GUESTS", the setup line `setup from <HH:MM> · <N> min before`, the picker head `Assign · <role> × <N>`, the no-match line `No active staff matches “<query>”.` (curly quotes, as drawn), and the Deny confirm with the typographic apostrophe the benchmark uses.
+- **Added copy, with no benchmark source, held here so a reviewer can check it:** "Text", "No phone or email on file.", "The day-of contact needs a connection.", "Loading the day-of contact", "Loading the roster", "Loading the event", "Loading the payment detail", "Staffing needs staffing access.", "Couldn't load staffing.", "Couldn't load this event", "No shifts created for this event yet." (the desktop card's line), "Total", "Paid to date", "Payment detail needs a connection.", "No payments yet.", "Bank payment processing", "started <DATE>", "part paid · <$> of <$>", "paid", "bank payment in flight", "Processing", "No balance", "Cancelled", "desktop view", "Everyone active is already on this shift.", "Couldn't load the staff list.", "The roster changed. Check the open roles and try again.", "Something went wrong. Try again.", "Network error. Check your connection." (the api client's own), "No roles are declared on this shift. Staff it from desktop view.", and the Deny confirm `Deny <name>’s application? The request closes. They are not notified.`
 - **Server tests:** `node --test <file>` one suite at a time from the repo root; `require('dotenv').config()` on the first line; `process.env.SEND_NOTIFICATIONS = 'false'` before any require; `NODE_ENV !== 'production'` guard; nonce'd fixtures deleted BY RECORDED ID in `after`. Read the pass count, not only the fail count.
 - **Client tests:** no `setupTests.js` exists, so `import '@testing-library/jest-dom'` in every test file; a `jest.mock` factory may close over `mock`-prefixed names only; CRA runs `resetMocks: true`, so set mock return values inside each test or a `beforeEach`; a ToastContext stub must be one stable object.
 - **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/`.
-- **File-size ratchet:** `shifts.js` (722) and `users.js` (729) are in the yellow zone; the new SQL lives in a new util so each grows by under 20 lines. New files aim under 300 lines.
+- **File-size ratchet:** `shifts.js` (722) and `users.js` (729) are in the yellow zone; the new SQL lives in a new util so each grows by under 20 lines. New files stay under 400 lines (the two components land at about 365 and 385; CLAUDE.md calls 300 to 600 fine for a focused page or component).
 - **Explicit staging only;** commit messages carry NO backticks; stage and commit in one command chain; never `npm install` inside the lane (it replaces the shared `node_modules` symlink).
 - **Docs law:** README folder tree (new page, component, utils, server util), ARCHITECTURE route table (the three extended reads) and PWA section (allowlist), walkthroughs-owed (the Pixel walk), the fix-list entry.
 
@@ -85,7 +95,7 @@ The five conditions the spec implies and that are most likely to bite Dallas on 
 4. **Android Back with a sheet that arrived by deep link or cold route restore,** so no history entry sits behind it. Expected: Back closes the sheet and stays on the page. Pinned in Task 3 (`a deep-linked sheet gets an entry seeded behind it`).
 5. **A bank debit in flight on the event** (rare, five ACH charges since June, and the one that double-charged proposal 784). Expected: the Financials chip reads "Processing" and the balance row says a payment is in flight, including offline. Pinned in Task 7 (`a payment in flight wins the chip`) and Task 2 (the invoices read is cached).
 
-Also pinned, lower on the list: a proposal with no pricing snapshot still renders a total (Task 7); a request with an empty or unparseable `requested_positions` renders "Any role" and classifies like the desktop (Task 4); a manager without `can_staff` gets the detail without staffing instead of being thrown back to the list (Task 8); a drink-plan 404 is "no day-of contact", not an error (Task 8).
+Also pinned, lower on the list: a proposal with no pricing snapshot still renders a total (Task 7); a request with an empty or unparseable `requested_positions` renders "Any role" and classifies like the desktop (Task 4); a manager without `can_staff` gets the detail without staffing instead of being thrown back to the list (Task 8b); a drink-plan 404 is "no day-of contact", not an error (Task 8b); an approval with no role on file still fills its slot, so the phone never offers it again (Task 4); a failure box never outlives the action it belongs to (Task 6); a staffing reload that lands after the screen moved to another event is dropped (Task 8b).
 
 ## Lane map
 
@@ -125,6 +135,8 @@ lanes:
       - client/src/utils/staffingSheet.test.js
       - client/src/utils/eventDetailView.js
       - client/src/utils/eventDetailView.test.js
+      - client/src/utils/mobileDetailCss.test.js
+      - client/src/utils/mobileClassContract.test.js
       - client/src/components/mobile/AssignmentSheet.js
       - client/src/components/mobile/AssignmentSheet.test.js
       - client/src/components/mobile/MobileHeader.js
@@ -138,23 +150,33 @@ lanes:
       - client/src/pages/admin/EventDetailPage.fork.test.js
       - client/src/index.css
       - scripts/mobile-capture.manifest.json
+      - scripts/sensitive-paths.txt
       - README.md
       - ARCHITECTURE.md
       - docs/walkthroughs-owed.md
       - docs/fix-list-remaining-2026-07-02.md
     depends_on: []  # ma-e1-events-list is merged (d1dc829f) and live
-    review_fleet: [code-review, consistency-check, security-review, database-review, ui-ux-review, second-opinion]
-    # security-review: position is the payroll seam, admin-sw.js is sensitive-listed,
-    # and two reads start serving seniority and distance. database-review: new SQL.
-    # ui-ux-review judges against the benchmark, Event detail and Assignment sheet.
-    # second-opinion: a sensitive path is in the footprint.
+    review_fleet: [code-review, consistency-check, security-review, database-review, performance-review, ui-ux-review, second-opinion]
+    # A sensitive path (client/public/admin-sw.js) is in the footprint, so this is
+    # the full fleet. security-review: position is the payroll seam, and two reads
+    # start serving seniority and distance. database-review: new SQL.
+    # performance-review: by-proposal and detail gain a second round trip,
+    # active-staff with shift_id gains three queries, and each shift_id is its
+    # own cache entry. ui-ux-review judges against the benchmark, Event detail
+    # and Assignment sheet, with the eighteen decisions as the contract.
 
   # Declared in the 2026-09-15 plan, unchanged, each with its own plan when its turn comes:
   # ma-e3-edit-sheet (depends on this lane), ma-f1-proposals-list, ma-f2-proposal-detail
   # (depends on this lane for the section and sheet CSS), ma-f3-search.
 ```
 
-**Task order and checkpoints.** Tasks 1 and 2 are the server and service worker contract; a security-review and database-review checkpoint runs on them before any client task builds on the contract (the ma-d lane's checkpoint caught a real leak at exactly this point). Tasks 3, 4 and 7 are pure and independent of each other. Task 5 (CSS) precedes the two components that use it. Task 6 (sheet) precedes Task 8 (detail), which mounts it. Task 9 wires both in. Task 10 is the browser gate, Task 11 the docs, Task 12 the lane close.
+**Task order.** Tasks run in the order written, one implementer each. Tasks 1 and 2 are the server and service worker contract. Tasks 3 and 4 are pure and independent of each other; Task 7 is pure and imports `buildShiftView` from Task 4, so it cannot run before it. Task 5 (CSS) precedes the components that use it. Task 6 (sheet) precedes Task 8b (detail), which mounts it; Task 8a (header and layout) precedes 8b. Task 9 wires both in. Task 10 is the browser gate, Task 11 the docs, Task 12 the lane close.
+
+**Who writes what.** An implementer sees this header and their own task, commits only the paths their task names, and REPORTS anything the plan should record. The plan and the spec live on main and are edited there by the orchestrator, never from the lane (the pre-commit guard blocks a plan or spec commit off main). So the Browser checks table, the as-built deltas and any footprint amendment are written by the orchestrator from the implementers' reports.
+
+**Checkpoint A, after Tasks 1 and 2 and before Task 3 is dispatched: security-review and database-review on the contract.** Run by the orchestrator on the diff of Tasks 1 and 2 (the ma-d lane's checkpoint caught a real leak at exactly this point). Brief for security-review: who can read `events_worked` and `home_distance_miles` (it must be exactly the `requireStaffing` set); whether any path returns a raw coordinate; whether `shift_id` lets someone who could not already list shifts probe for their existence; whether the three new allowlist patterns can match a public token route or any path outside the three named reads; and what the newly cached PAYLOADS carry at rest (`GET /invoices/proposal/:id` returns each invoice's public `token`; `GET /proposals/:id`, cached since ma-b, already carries the proposal's), with a verdict on whether that footprint is acceptable under spec section 7's per-user namespace and purge rules. Brief for database-review: the `loadEventsWorked` plan on the dev database (`EXPLAIN ANALYZE` with 16 ids), the added `LEFT JOIN proposals` on by-proposal, and that `finished` is computed per row without a second scan. Findings fold into Tasks 1 and 2. A finding that changes the CONTRACT (a field name, a shape, a status code) is folded by the orchestrator into the text of Tasks 4, 6, 7 and 8b on main before any of them is dispatched.
+
+**A known flaky test, not this lane's.** `EventsListPhone.test.js`, "scroll offsets are saved only after the loaded list has been restored", fails intermittently when many suites run together and passes alone, with and without this lane's changes (seen in the plan fleet's scratch runs, 2026-09-29). If it fails in a multi-suite run, re-run that file alone before treating it as a regression.
 
 ---
 ### Task 1: Staffing meta on the three reads (events worked, distance, finished, ranked roles)
@@ -162,7 +184,7 @@ lanes:
 **Files:**
 - Create: `server/utils/staffingMeta.js`
 - Modify: `server/routes/shifts.js` (imports `:12` and `:26`; `GET /by-proposal/:proposalId` `:333-386`; `GET /detail/:id` `:389-435`)
-- Modify: `server/routes/admin/users.js` (imports `:1-18`; `GET /active-staff` `:465-543`)
+- Modify: `server/routes/admin/users.js` (imports `:1-18`; `GET /active-staff` `:465-542`)
 - Test: `server/routes/shifts.staffingMeta.test.js`
 
 **Interfaces:**
@@ -170,7 +192,7 @@ lanes:
 - Produces, for Tasks 4, 6, 7 and 8:
   - `GET /shifts/detail/:id` -> `{ shift, requests }`; `shift` gains `finished: boolean` and `proposal_status: string | null`; every `requests[]` row gains `events_worked: number`.
   - `GET /shifts/by-proposal/:id` -> array; every shift gains `finished: boolean`; every `requesters[]` row gains `requested_positions` (the stored ranked list, a JSON string or array) and `events_worked: number`.
-  - `GET /admin/active-staff?limit=100&shift_id=<id>` -> `{ staff, total, page, pages }`; every `staff[]` row gains `events_worked: number` and `home_distance_miles: number | null`. Without `shift_id` the row has exactly its 20 legacy keys. `shift_id` that is not a positive integer is a 400; a `shift_id` that matches no shift is a 404.
+  - `GET /admin/active-staff?limit=100&shift_id=<id>` -> `{ staff, total, page, pages }`; every `staff[]` row gains `events_worked: number` and `home_distance_miles: number | null`. Without `shift_id` the row has exactly its 20 legacy keys. A `shift_id` that is not a positive integer within the int4 range is a 400; a `shift_id` that matches no shift is a 404.
   - `server/utils/staffingMeta.js` exports `loadEventsWorked(userIds, db?) -> Promise<Map<number, number>>` and `candidateMeta(shiftId, userIds, db?) -> Promise<Map<number, { events_worked, home_distance_miles }> | null>` (null when the shift does not exist).
 
 - [ ] **Step 1: Write the failing test**
@@ -429,7 +451,8 @@ test('active-staff with a venue that has no coordinates returns null distances',
 });
 
 test('active-staff refuses a malformed shift_id and 404s an unknown one', async () => {
-  for (const bad of ['abc', '0', '-4', '1.5', '']) {
+  // The last one passes a digits-only check and overflows int4 in the query.
+  for (const bad of ['abc', '0', '-4', '1.5', '', '99999999999']) {
     const r = await get(`/api/admin/active-staff?limit=100&shift_id=${encodeURIComponent(bad)}`, adminToken);
     assert.equal(r.status, 400, `shift_id=${JSON.stringify(bad)} should be a 400`);
   }
@@ -555,7 +578,7 @@ const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInst
 const { loadEventsWorked } = require('../utils/staffingMeta');
 ```
 
-In `GET /by-proposal/:proposalId`, make four edits and no others:
+In `GET /by-proposal/:proposalId` (the handler that opens at `:333`), make four edits and no others. **Two of the anchors below also occur in `GET /unstaffed-upcoming`:** `abr.approved_by_role` followed by `FROM shifts s` sits at `:208-209` there and at `:364-365` here. Edit the pair at `:364-365`. An edit applied to the wrong handler still parses, and the test for this step is what tells you.
 
 1. In the `requesters` `json_build_object`, add one pair after `'dropped_at', sr.dropped_at,`:
 
@@ -563,7 +586,7 @@ In `GET /by-proposal/:proposalId`, make four edits and no others:
                 'requested_positions', sr.requested_positions,
 ```
 
-2. In the outer SELECT list, add one column after `abr.approved_by_role` (put a comma after `abr.approved_by_role`):
+2. In the outer SELECT list, add one column after `abr.approved_by_role` at `:364` (put a comma after `abr.approved_by_role`):
 
 ```sql
       -- Past or not, by the shift END INSTANT in the event zone, never by the
@@ -571,7 +594,7 @@ In `GET /by-proposal/:proposalId`, make four edits and no others:
       (${shiftFinishedSql('s', 'p')}) AS finished
 ```
 
-3. Directly after `FROM shifts s`, add the join the expression needs:
+3. Directly after `FROM shifts s` at `:365`, add the join the expression needs:
 
 ```sql
     LEFT JOIN proposals p ON p.id = s.proposal_id
@@ -627,7 +650,9 @@ In `GET /active-staff`, directly after the permission check and before `const pa
   // response is byte-identical to what every desktop caller reads today.
   const wantsMeta = req.query.shift_id !== undefined;
   const metaShiftId = Number(req.query.shift_id);
-  if (wantsMeta && !(Number.isInteger(metaShiftId) && metaShiftId > 0 && /^\d+$/.test(String(req.query.shift_id)))) {
+  // Digits only, and inside int4: a longer run of digits is a valid Number and
+  // an overflow in the query, which would answer 500 instead of 400.
+  if (wantsMeta && !(/^\d+$/.test(String(req.query.shift_id)) && metaShiftId > 0 && metaShiftId <= 2147483647)) {
     throw new ValidationError({ shift_id: 'shift_id must be a positive integer.' });
   }
 ```
@@ -680,10 +705,6 @@ Raw home coordinates never leave the server. events_worked is pinned to the
 seniority route by test.
 MSG
 ```
-
-### Checkpoint A (after Tasks 1 and 2): security-review and database-review on the contract
-
-Run both agents on the diff of Tasks 1 and 2 before any client task starts. Brief for security-review: who can read `events_worked` and `home_distance_miles` (it must be exactly the `requireStaffing` set), whether any path returns a raw coordinate, whether `shift_id` can be used to probe for shift existence by someone who could not already list shifts, and whether the three new allowlist patterns can match a public token route or any path outside the three named reads. Brief for database-review: the `loadEventsWorked` plan on the dev database (`EXPLAIN ANALYZE` with 16 ids), the added `LEFT JOIN proposals` on by-proposal, and that `finished` is computed per row without a second scan. Findings fold into Tasks 1 and 2 before Task 3 begins.
 
 ---
 ### Task 2: Service worker allowlist for the detail and sheet reads
@@ -812,7 +833,7 @@ Expected: PASS, 29 tests.
 - [ ] **Step 5: Run the suite that guards the purge contract**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/adminSw.purge.test.js`
-Expected: PASS, unchanged. The purge keys on the `admin-api-` and `admin-shell-` prefixes, so the version bump is covered by the activate sweep.
+Expected: PASS, unchanged. That suite covers the CLIENT-side purge (`purgeMobileAdminState`). The service worker's own activate sweep, which drops the v8 caches by their `admin-api-` and `admin-shell-` prefixes when v9 takes over, has no unit test; it is checked in the browser gate (Task 10, D12).
 
 - [ ] **Step 6: Commit**
 
@@ -826,7 +847,7 @@ no sub-resource matches. The allowlist now has a test, loaded through vm.
 MSG
 ```
 
-Then run **Checkpoint A** (described under Task 1) before starting Task 3.
+Report to the orchestrator that the contract is ready: Checkpoint A (in the header) runs before Task 3 is dispatched.
 
 ---
 
@@ -838,10 +859,11 @@ Then run **Checkpoint A** (described under Task 1) before starting Task 3.
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
-- Produces: `useDrawerParam({ push = false } = {}) -> { kind, id, focus, open, close }`.
-  - `open(kind, id, { focus } = {})` writes `?drawer=<kind>&drawerId=<id>` and, when `focus` is given, `&drawerFocus=<focus>`. With `push: false` (the default, every desktop caller) it REPLACES the history entry exactly as today. With `push: true` it PUSHES an entry carrying `location.state.mSheet === true`.
-  - `close()` with `push: true` on an entry this hook pushed goes back one entry; otherwise it replaces the entry with the three drawer params removed.
-  - With `push: true`, a location that arrives with drawer params and no `mSheet` state (deep link, cold route restore) has one entry seeded behind it, so Back closes the sheet and stays on the page.
+- Produces: `useDrawerParam({ push = false, kinds = null } = {}) -> { kind, id, focus, open, close }`.
+  - `kinds` is the list of drawer kinds that are phone sheets, for example `['shift']`. Push behaviour applies to those kinds only; `null` means every kind. Callers pass a module-scope array.
+  - `open(kind, id, { focus } = {})` writes `?drawer=<kind>&drawerId=<id>` and, when `focus` is given, `&drawerFocus=<focus>`. With `push: false` (the default, every desktop caller), or for a kind that is not listed, it REPLACES the history entry exactly as today. With `push: true` and a listed kind it PUSHES an entry carrying `location.state.mSheet === true`.
+  - `close()` goes back one entry when the entry carries that flag AND something sits behind it (`window.history.state.idx > 0`; unknown position counts as yes). Otherwise it replaces the entry with the three drawer params removed.
+  - With `push: true`, a location that arrives with a listed kind and no `mSheet` state (deep link, cold route restore) has one entry seeded behind it, so Back closes the sheet and stays on the page.
   - `focus` is `string | null`.
   - The named export `drawerHref(searchParams, kind, id)` is unchanged.
 
@@ -853,12 +875,12 @@ Create `client/src/hooks/useDrawerParam.test.js`:
 import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import useDrawerParam from './useDrawerParam';
 
 // Back is navigate(-1): the same history pop Android's hardware Back fires.
 function Probe({ push }) {
-  const drawer = useDrawerParam(push ? { push: true } : undefined);
+  const drawer = useDrawerParam(push ? { push: true, kinds: ['shift'] } : undefined);
   const location = useLocation();
   const navigate = useNavigate();
   return (
@@ -869,6 +891,7 @@ function Probe({ push }) {
       <div data-testid="focus">{drawer.focus || 'none'}</div>
       <button type="button" onClick={() => drawer.open('shift', 17)}>open</button>
       <button type="button" onClick={() => drawer.open('shift', 17, { focus: 42 })}>open-focused</button>
+      <button type="button" onClick={() => drawer.open('invoices', 13)}>open-invoices</button>
       <button type="button" onClick={() => drawer.close()}>close</button>
       <button type="button" onClick={() => navigate(-1)}>back</button>
     </div>
@@ -973,12 +996,61 @@ test('opening without a focus drops a focus left over from an earlier open', asy
   tap('open');
   await waitFor(() => expect(loc()).toBe('/events?drawer=shift&drawerId=17'));
 });
+
+test('a kind that is not a sheet keeps replace semantics and is never seeded, even in push mode', async () => {
+  mount({ push: true });
+  tap('open-invoices');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past&drawer=invoices&drawerId=13'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('a deep link to a kind that is not a sheet gains no history entry', async () => {
+  mount({ push: true, entries: ['/before', '/events?drawer=invoices&drawerId=13'] });
+  expect(screen.getByTestId('kind')).toHaveTextContent('invoices');
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+describe('against the real browser history', () => {
+  afterEach(() => { window.history.replaceState(null, '', '/'); });
+
+  test('an entry that claims it was pushed but has nothing behind it still closes', async () => {
+    // What a duplicated tab or a trimmed history leaves: the flag, at index 0.
+    window.history.replaceState({ usr: { mSheet: true }, key: 'orphan', idx: 0 }, '', '/events?scope=past&drawer=shift&drawerId=17');
+    render(
+      <BrowserRouter>
+        <Routes><Route path="/events" element={<Probe push />} /></Routes>
+      </BrowserRouter>
+    );
+    expect(screen.getByTestId('kind')).toHaveTextContent('shift');
+    tap('close');
+    await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('none'));
+    expect(window.location.pathname + window.location.search).toBe('/events?scope=past');
+  });
+
+  test('open pushes exactly one entry and close pops it', async () => {
+    window.history.replaceState(null, '', '/events?scope=past');
+    render(
+      <BrowserRouter>
+        <Routes><Route path="/events" element={<Probe push />} /></Routes>
+      </BrowserRouter>
+    );
+    const before = window.history.length;
+    tap('open');
+    await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+    expect(window.history.length).toBe(before + 1);
+    tap('close');
+    await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('none'));
+    expect(window.location.pathname + window.location.search).toBe('/events?scope=past');
+  });
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/hooks/useDrawerParam.test.js`
-Expected: the two default-mode tests PASS (today's behaviour). The push-mode tests FAIL because `open` replaces (Back lands on `/before` instead of `/events?scope=past`); the focus tests FAIL (`focus` is `undefined`, and the URL carries no `drawerFocus`).
+Expected: `Tests: 6 failed, 7 passed, 13 total` (measured against today's hook in a scratch copy, 2026-09-29). The seven that PASS describe behaviour today's replace-only hook already has, and they must keep passing: both default-mode tests, both non-sheet-kind tests, the two `close()` tests (closing by replace lands on the same URL), and the orphan entry. The six that FAIL: "Back closes the sheet", "opening, closing and opening again", "a deep-linked sheet gets an entry seeded", both focus tests, and "open pushes exactly one entry". Do not "fix" a passing test.
 
 - [ ] **Step 3: Implement the option**
 
@@ -997,6 +1069,15 @@ function withoutDrawer(params) {
   const next = new URLSearchParams(params);
   KEYS.forEach((k) => next.delete(k));
   return next;
+}
+
+// Is there an entry behind this one? BrowserRouter keeps its position in
+// window.history.state.idx. Where that is unknown (MemoryRouter in tests) the
+// answer is yes, because the flag on the entry is then the only evidence.
+function canGoBack() {
+  const state = typeof window !== 'undefined' && window.history ? window.history.state : null;
+  if (!state || typeof state.idx !== 'number') return true;
+  return state.idx > 0;
 }
 
 /**
@@ -1019,15 +1100,18 @@ function withoutDrawer(params) {
  * states (re-opening drawers in a loop) instead of returning to the previous
  * page. Keep both `replace: true`.
  *
- * `{ push: true }` (phone bottom sheets, spec 2026-08-13-mobile-admin section
- * 3): open PUSHES one entry, so Android's hardware Back closes the sheet and
- * stays on the page. close() pops that same entry, so opening and closing a
- * sheet any number of times leaves history exactly as it found it. A sheet
- * that arrives by deep link or cold route restore has no entry behind it, so
- * one is seeded: the current entry is replaced by the bare page and the sheet
- * is pushed on top.
+ * `{ push: true, kinds: ['shift'] }` (phone bottom sheets, spec
+ * 2026-08-13-mobile-admin section 3): for the listed kinds, open PUSHES one
+ * entry, so Android's hardware Back closes the sheet and stays on the page.
+ * close() pops that same entry, so opening and closing a sheet any number of
+ * times leaves history exactly as it found it. A sheet that arrives by deep
+ * link or cold route restore has no entry behind it, so one is seeded: the
+ * current entry is replaced by the bare page and the sheet is pushed on top.
+ * A kind that is not listed keeps the default, so a desktop drawer link opened
+ * on the phone never gains an entry for a sheet that does not exist. Omitting
+ * `kinds` pushes for every kind.
  */
-export default function useDrawerParam({ push = false } = {}) {
+export default function useDrawerParam({ push = false, kinds = null } = {}) {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -1035,6 +1119,12 @@ export default function useDrawerParam({ push = false } = {}) {
   const id = params.get('drawerId');
   const focus = params.get('drawerFocus');
   const pushed = !!(location.state && location.state[SHEET_STATE]);
+  // A string, so an inline array from the caller cannot churn the callbacks.
+  const kindList = Array.isArray(kinds) ? kinds.join(',') : null;
+  const pushes = useCallback(
+    (k) => push && (kindList === null || kindList.split(',').includes(k)),
+    [push, kindList]
+  );
 
   const open = useCallback((newKind, newId, { focus: newFocus } = {}) => {
     const next = new URLSearchParams(params);
@@ -1042,21 +1132,24 @@ export default function useDrawerParam({ push = false } = {}) {
     next.set('drawerId', String(newId));
     if (newFocus === undefined || newFocus === null) next.delete('drawerFocus');
     else next.set('drawerFocus', String(newFocus));
-    if (push) setParams(next, { state: { [SHEET_STATE]: true } });
+    if (pushes(newKind)) setParams(next, { state: { [SHEET_STATE]: true } });
     else setParams(next, { replace: true });
-  }, [params, setParams, push]);
+  }, [params, setParams, pushes]);
 
   const close = useCallback(() => {
-    if (push && pushed) { navigate(-1); return; }
+    // Pop only an entry this hook pushed AND that has something behind it. An
+    // entry that carries the flag with nothing behind it (a duplicated tab, a
+    // history the browser trimmed) would otherwise never close.
+    if (pushed && pushes(kind) && canGoBack()) { navigate(-1); return; }
     setParams(withoutDrawer(params), { replace: true });
-  }, [params, setParams, push, pushed, navigate]);
+  }, [params, setParams, pushes, pushed, kind, navigate]);
 
   // Seed an entry behind a sheet that has none. The ref latch is what makes
   // this safe under StrictMode, which runs an effect twice with the same
   // closure: the second run sees the same location.key and stops.
   const seededFor = useRef(null);
   useEffect(() => {
-    if (!push || !kind || !id || pushed) return;
+    if (!kind || !id || pushed || !pushes(kind)) return;
     if (seededFor.current === location.key) return;
     seededFor.current = location.key;
     const bare = withoutDrawer(params).toString();
@@ -1064,7 +1157,7 @@ export default function useDrawerParam({ push = false } = {}) {
     navigate({ pathname: location.pathname, search: location.search }, { state: { [SHEET_STATE]: true } });
     // params is derived from location.search, which is already a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [push, kind, id, pushed, location.key, location.pathname, location.search, navigate]);
+  }, [pushes, kind, id, pushed, location.key, location.pathname, location.search, navigate]);
 
   return { kind, id, focus, open, close };
 }
@@ -1082,9 +1175,7 @@ export function drawerHref(searchParams, kind, id) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/hooks/useDrawerParam.test.js`
-Expected: PASS, 9 tests.
-
-If the seeding test fails because the second `navigate` runs against a stale location, do NOT reach for `setTimeout`. Replace the two `navigate` calls with one `navigate(bare, { replace: true })` and let the next render's effect (kind now absent) be re-armed by a `pendingOpen` ref that pushes the saved search on the following run. State the change in the task report.
+Expected: PASS, 13 tests. The two navigations in one effect were proven against react-router 6.30 before this plan was cut (plain history, the data router, `BrowserRouter` on jsdom and under StrictMode): the stack ends `[..., bare page, sheet]`, and StrictMode seeds once.
 
 - [ ] **Step 5: Run the suites that use the hook**
 
@@ -1100,11 +1191,13 @@ Expected: PASS, unchanged counts. These cover the replace-mode callers.
 cd client && CI=true npx react-scripts build && cd .. && git add client/src/hooks/useDrawerParam.js client/src/hooks/useDrawerParam.test.js && git commit -F - <<'MSG'
 feat(hooks): push-history option on useDrawerParam for phone sheets
 
-With push true, open pushes one history entry so Android Back closes the
-sheet and stays on the page, close pops that entry, and a sheet that arrives
-by deep link or cold route restore gets an entry seeded behind it. The
-default is unchanged: every desktop caller keeps replace semantics. Adds the
-optional drawerFocus param and the hook's first test file.
+With push true, open pushes one history entry for the listed sheet kinds so
+Android Back closes the sheet and stays on the page, close pops that entry
+when something sits behind it, and a sheet that arrives by deep link or cold
+route restore gets an entry seeded behind it. The default is unchanged:
+every desktop caller keeps replace semantics, and so does any kind that is
+not a sheet. Adds the optional drawerFocus param and the hook's first test
+file.
 MSG
 ```
 
@@ -1211,6 +1304,24 @@ describe('buildShiftView', () => {
     expect(v.filled).toBe(1);
     expect(v.open).toBe(2);
     expect(v.rows.map((r) => r.requestId)).toEqual([1]);
+  });
+
+  test('an approval with no role on file still fills a slot, so the phone never offers it again', () => {
+    const s = shift({ positions_needed: '["Bartender","Bartender"]' });
+    const v = buildShiftView(s, [approved(1, 'Bartender'), approved(2, null)]);
+    expect(v).toMatchObject({ slots: 2, filled: 2, open: 0, full: true, count: '2/2', mix: 'Bartender 2/2' });
+    expect(v.openRoles).toEqual([]);
+    expect(v.rows.map((r) => [r.requestId, r.meta])).toEqual([[1, 'Bartender'], [2, 'Staff']]);
+    // Two roles: the unplaced approval takes the first one with room.
+    const two = buildShiftView(shift({ positions_needed: '["Bartender","Barback"]' }), [approved(1, 'Bartender'), approved(2, 'not a role')]);
+    expect(two.openRoles).toEqual([]);
+    expect(two.mix).toBe('Bartender 1/1 · Barback 1/1');
+  });
+
+  test('an approved role the roster never declared does not fill a declared slot (desktop parity)', () => {
+    const v = buildShiftView(shift({ positions_needed: '["Bartender","Bartender"]' }), [approved(1, 'Barback')]);
+    expect(v).toMatchObject({ filled: 0, open: 2, count: '0/2' });
+    expect(v.rows[0].meta).toBe('Barback');
   });
 
   test('a denied request is not a row', () => {
@@ -1457,6 +1568,16 @@ export function buildShiftView(shift, rawRequests, { justAssigned = [] } = {}) {
 
   const approvedByRole = {};
   for (const r of approved) if (r.position) approvedByRole[r.position] = (approvedByRole[r.position] || 0) + 1;
+  // An approval with no role on file (none in prod as of 2026-09-29, but the
+  // column is nullable) still occupies a slot. Left uncounted, the phone would
+  // show a filled slot as open and offer it again, which is an over-fill. It
+  // takes the first role with room, in roster order: the same attribution
+  // remainingByRole makes for a legacy row.
+  for (const r of approved) {
+    if (r.position) continue;
+    const room = roleOrder.find((role) => needed[role] - (approvedByRole[role] || 0) > 0) || roleOrder[0];
+    if (room) approvedByRole[room] = (approvedByRole[room] || 0) + 1;
+  }
   const remaining = computeRemaining(roster, approvedByRole);
   const openRoles = roleOrder
     .map((role) => ({ role, open: Math.max(0, remaining[role] || 0) }))
@@ -1585,7 +1706,7 @@ export function confirmCopy(kind, name) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/staffingSheet.test.js`
-Expected: PASS, 29 tests.
+Expected: PASS, 31 tests.
 
 - [ ] **Step 5: Build and commit**
 
@@ -1610,7 +1731,7 @@ MSG
 
 **Interfaces:**
 - Consumes: the existing `.m-header`, `.m-iconbtn`, `.m-stale`, `.m-stale-dot`, `.m-stale-time`, `.m-frac` (with its existing `full` and `past` states), `.m-retry-btn`, `.m-empty` rules and the `chip` primitives.
-- Produces the class vocabulary Tasks 6 and 8 render with. Header: `m-header-detail`, `m-dhead`, `m-dhead-line`, `m-dhead-title`, `m-dhead-kind`, `m-dhead-guests`, `m-dhead-venue`. Detail body: `m-detail-when`, `m-detail-whenline`, `m-detail-setup`, `m-section`, `m-section-row`, `m-section-name`, `m-section-sum`, `m-section-num`, `m-section-caret`, `m-section-caret-open`, `m-section-label`, `m-section-note`, `m-contact`, `m-contact-name`, `m-contact-line`, `m-contact-link`, `m-contact-act`, `m-shift-head`, `m-shift-label`, `m-money-row`, `m-money-main`, `m-money-label`, `m-money-sub`, `m-money-amt`, `m-money-total`, `m-money-bal`, `m-money-flight`, `m-money-paid`, `m-edit-note`, `m-edit-note-locked`. People: `m-sheet-row`, `m-person`, `m-avatar`, `m-avatar-app`, `m-person-main`, `m-person-name`, `m-person-meta`, `m-person-check`, `m-person-go`, `m-person-go-off`, `m-assign-row`. Sheet: `m-sheet-scrim`, `m-sheet`, `m-sheet-handle`, `m-sheet-head`, `m-sheet-title`, `m-sheet-kind`, `m-sheet-when`, `m-pills`, `m-pill`, `m-pill-filled`, `m-pill-pending`, `m-pill-count`, `m-sheet-mix`, `m-sheet-venue`, `m-sheet-body`, `m-sheet-sec`, `m-sheet-sec-line`, `m-sheet-item`, `m-sheet-note`, `m-sheet-note-dot`, `m-sheet-note-text`, `m-acts`, `m-act`, `m-act-primary`, `m-act-quiet`, `m-act-danger`, `m-act-confirm`, `m-confirm`, `m-confirm-copy`, `m-confirm-btns`, `m-fail`, `m-fail-msg`, `m-fail-retry`, `m-role-label`, `m-role-name`, `m-role-open`, `m-sheet-searchwrap`, `m-sheet-search`, `m-sheet-nomatch`, `m-sheet-state`.
+- Produces the class vocabulary Tasks 6, 8a and 8b render with. Header: `m-header-detail`, `m-dhead`, `m-dhead-line`, `m-dhead-title`, `m-dhead-kind`, `m-dhead-guests`, `m-dhead-venue`. Detail body: `m-detail-when`, `m-detail-whenline`, `m-detail-setup`, `m-section`, `m-section-row`, `m-section-name`, `m-section-sum`, `m-section-num`, `m-section-caret`, `m-section-caret-open`, `m-section-label`, `m-section-note`, `m-section-item`, `m-contact`, `m-contact-name`, `m-contact-line`, `m-contact-link`, `m-contact-act`, `m-shift-head`, `m-shift-label`, `m-money-row`, `m-money-main`, `m-money-label`, `m-money-sub`, `m-money-amt`, `m-money-total`, `m-money-bal`, `m-money-flight`, `m-money-paid`, `m-money-pay`, `m-edit-note`, `m-edit-note-locked`. People: `m-sheet-row`, `m-person`, `m-avatar`, `m-avatar-app`, `m-person-main`, `m-person-name`, `m-person-meta`, `m-person-check`, `m-person-go`, `m-person-go-off`, `m-assign-row`. Sheet: `m-sheet-scrim`, `m-sheet`, `m-sheet-handle`, `m-sheet-head`, `m-sheet-title`, `m-sheet-kind`, `m-sheet-when`, `m-pills`, `m-pill`, `m-pill-filled`, `m-pill-pending`, `m-pill-count`, `m-sheet-mix`, `m-sheet-venue`, `m-sheet-body`, `m-sheet-sec`, `m-sheet-sec-line`, `m-sheet-item`, `m-sheet-note`, `m-sheet-note-dot`, `m-sheet-note-text`, `m-acts`, `m-act`, `m-act-primary`, `m-act-quiet`, `m-act-danger`, `m-act-confirm`, `m-confirm`, `m-confirm-copy`, `m-confirm-btns`, `m-fail`, `m-fail-msg`, `m-fail-retry`, `m-role-label`, `m-role-name`, `m-role-open`, `m-sheet-searchwrap`, `m-sheet-search`, `m-sheet-nomatch`, `m-sheet-state`.
 
 **Two colour laws, both learned on the Events list:**
 - **Red is a literal in After Hours.** The dark skin sets `--danger-h` to 262 inline (`UserPrefsContext.js`), so `hsl(var(--danger-h) ...)` paints VIOLET. Dallas saw it on 2026-09-24 and had it changed. Anything that must read red (Remove, the confirm box, a failed save) uses `#ff4d4d` in the base rule and `var(--ms-bordeaux)` in the light-skin rule.
@@ -1634,11 +1755,11 @@ const VOCABULARY = [
   'm-header-detail', 'm-dhead', 'm-dhead-line', 'm-dhead-title', 'm-dhead-kind', 'm-dhead-guests', 'm-dhead-venue',
   'm-detail-when', 'm-detail-whenline', 'm-detail-setup',
   'm-section', 'm-section-row', 'm-section-name', 'm-section-sum', 'm-section-num', 'm-section-caret',
-  'm-section-caret-open', 'm-section-label', 'm-section-note',
+  'm-section-caret-open', 'm-section-label', 'm-section-note', 'm-section-item',
   'm-contact', 'm-contact-name', 'm-contact-line', 'm-contact-link', 'm-contact-act',
   'm-shift-head', 'm-shift-label',
   'm-money-row', 'm-money-main', 'm-money-label', 'm-money-sub', 'm-money-amt', 'm-money-total', 'm-money-bal',
-  'm-money-flight', 'm-money-paid', 'm-edit-note', 'm-edit-note-locked',
+  'm-money-flight', 'm-money-paid', 'm-money-pay', 'm-edit-note', 'm-edit-note-locked',
   'm-sheet-row', 'm-person', 'm-avatar', 'm-avatar-app', 'm-person-main', 'm-person-name', 'm-person-meta',
   'm-person-check', 'm-person-go', 'm-person-go-off', 'm-assign-row',
   'm-sheet-scrim', 'm-sheet', 'm-sheet-handle', 'm-sheet-head', 'm-sheet-title', 'm-sheet-kind', 'm-sheet-when',
@@ -1651,7 +1772,7 @@ const VOCABULARY = [
 ];
 
 test('the block exists, between the Events list rules and the Staff hub block', () => {
-  expect(css.indexOf(START)).toBeGreaterThan(css.indexOf('.m-empty.ok'));
+  expect(css.indexOf(START)).toBeGreaterThan(css.lastIndexOf('.m-empty.ok'));
   expect(css.indexOf(END)).toBeGreaterThan(css.indexOf(START));
   expect(css.indexOf('Staff hub chrome')).toBeGreaterThan(css.indexOf(END));
 });
@@ -1691,6 +1812,10 @@ test('the sheet sits above the chrome and below the lock', () => {
   expect(css).toMatch(/\.m-lock \{[^}]*z-index: 10000/);
 });
 
+test('House Lights sections keep the border and the flat surface the More list has', () => {
+  expect(block).toMatch(/\[data-skin="light"\] \.m-section \{[^}]*border-color: var\(--line-2\);[^}]*box-shadow: none;/);
+});
+
 test('the h3 type token is defined beside the other two', () => {
   expect(css).toMatch(/html\[data-app="admin-os"\] \{[^}]*--fs-body: 13px;[^}]*--fs-meta: 11\.5px;[^}]*--fs-h3: 13px;/);
 });
@@ -1699,7 +1824,7 @@ test('the h3 type token is defined beside the other two', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/mobileDetailCss.test.js`
-Expected: FAIL. The block does not exist, so `block` is empty and every vocabulary case fails.
+Expected: `Tests: 95 failed, 3 passed, 98 total` (measured in a scratch copy, 2026-09-29). The block does not exist, so `block` is empty: all 90 vocabulary cases fail, and so do the placement, red-literal, z-index, House Lights and type-token tests. Three tests PASS on the empty block and mean nothing yet ("every rule is scoped", "no bare modifier", "no width media query and no dash glyph"); they start to bite in Step 5.
 
 - [ ] **Step 3: Define the type token**
 
@@ -1768,6 +1893,8 @@ html[data-app="admin-os"] .m-section-row:disabled { cursor: default; }
 html[data-app="admin-os"] .m-section-name { flex: 1; }
 html[data-app="admin-os"] .m-section-sum { flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); }
 html[data-app="admin-os"] .m-section-num { flex: none; font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-section-row .m-frac,
+html[data-app="admin-os"] .m-shift-head .m-frac { flex: none; font-size: 12px; }
 html[data-app="admin-os"] .m-section-caret { flex: none; display: flex; color: var(--ink-4); transition: transform 120ms ease; }
 html[data-app="admin-os"] .m-section-caret.m-section-caret-open { transform: rotate(90deg); }
 html[data-app="admin-os"] .m-section-label {
@@ -1804,14 +1931,18 @@ html[data-app="admin-os"] .m-shift-label {
 }
 
 /* People rows: the staffing card, the sheet roster and the picker share them */
-html[data-app="admin-os"] .m-sheet-row {
+html[data-app="admin-os"] .m-sheet-row,
+html[data-app="admin-os"] .m-section-item {
   display: flex; align-items: center; gap: 0.75rem; width: 100%; min-height: 48px; padding: 0 1rem;
   background: none; border: none; border-top: 1px solid var(--line-1);
   color: var(--ink-1); font-size: var(--fs-body); font-family: var(--font-ui); text-align: left; cursor: pointer;
 }
-html[data-app="admin-os"] .m-sheet-row:active { background: var(--row-hover); }
-html[data-app="admin-os"] .m-sheet-row:disabled { cursor: default; }
-html[data-app="admin-os"] .m-sheet-row.m-person { padding-top: 7px; padding-bottom: 7px; }
+html[data-app="admin-os"] .m-sheet-row:active,
+html[data-app="admin-os"] .m-section-item:active { background: var(--row-hover); }
+html[data-app="admin-os"] .m-sheet-row:disabled,
+html[data-app="admin-os"] .m-section-item:disabled { cursor: default; }
+html[data-app="admin-os"] .m-sheet-row.m-person,
+html[data-app="admin-os"] .m-section-item.m-person { padding-top: 7px; padding-bottom: 7px; }
 html[data-app="admin-os"] .m-avatar {
   width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center;
   border-radius: var(--radius-sm); background: var(--bg-3); color: var(--ink-2);
@@ -1824,7 +1955,8 @@ html[data-app="admin-os"] .m-person-meta { font-family: var(--font-numeric); fon
 html[data-app="admin-os"] .m-person-check { flex: none; display: flex; color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-person-go { flex: none; font-size: 12.5px; font-weight: 600; color: hsl(var(--accent-h) var(--accent-s) 62%); }
 html[data-app="admin-os"] .m-person-go.m-person-go-off { color: var(--ink-4); }
-html[data-app="admin-os"] .m-sheet-row.m-assign-row { color: hsl(var(--accent-h) var(--accent-s) 62%); font-weight: 600; }
+html[data-app="admin-os"] .m-sheet-row.m-assign-row,
+html[data-app="admin-os"] .m-section-item.m-assign-row { color: hsl(var(--accent-h) var(--accent-s) 62%); font-weight: 600; }
 
 /* Financials */
 html[data-app="admin-os"] .m-money-row { padding: 7px 16px; display: flex; align-items: center; gap: 8px; }
@@ -1832,6 +1964,7 @@ html[data-app="admin-os"] .m-money-main { flex: 1; min-width: 0; display: flex; 
 html[data-app="admin-os"] .m-money-label { font-size: var(--fs-body); color: var(--ink-2); }
 html[data-app="admin-os"] .m-money-sub { font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-money-amt { flex: none; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-1); }
+html[data-app="admin-os"] .m-money-row.m-money-pay { padding: 6px 16px; }
 html[data-app="admin-os"] .m-money-row.m-money-total { border-top: 1px solid var(--line-2); padding: 9px 16px; }
 html[data-app="admin-os"] .m-money-total .m-money-label,
 html[data-app="admin-os"] .m-money-total .m-money-amt { font-weight: 600; color: var(--ink-1); }
@@ -1886,10 +2019,11 @@ html[data-app="admin-os"] .m-sheet-sec.m-sheet-sec-line { border-top: 1px solid 
 html[data-app="admin-os"] .m-sheet-item { border-top: 1px solid var(--line-1); }
 html[data-app="admin-os"] .m-sheet-item > .m-sheet-row { border-top: none; }
 html[data-app="admin-os"] .m-sheet-note {
-  margin: 10px 16px 2px; padding: 10px 12px; display: flex; gap: 8px; align-items: center;
+  margin: 10px 16px 2px; padding: 10px 12px; display: flex; gap: 8px; align-items: flex-start;
   border: 1px solid var(--line-2); border-radius: var(--radius);
 }
-html[data-app="admin-os"] .m-sheet-note-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: hsl(var(--warn-h) var(--warn-s) 52%); }
+html[data-app="admin-os"] .m-sheet-note .m-fail-retry { align-self: center; }
+html[data-app="admin-os"] .m-sheet-note-dot { width: 6px; height: 6px; flex: none; margin-top: 5px; border-radius: 50%; background: hsl(var(--warn-h) var(--warn-s) 52%); }
 html[data-app="admin-os"] .m-sheet-note-text { flex: 1; font-size: var(--fs-meta); color: var(--ink-2); line-height: 1.5; }
 html[data-app="admin-os"] .m-sheet-state { padding: 22px 16px; text-align: center; font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5; }
 
@@ -1916,7 +2050,7 @@ html[data-app="admin-os"] .m-fail {
 }
 html[data-app="admin-os"] .m-fail-msg { flex: 1; font-size: var(--fs-meta); color: #ff4d4d; line-height: 1.5; }
 html[data-app="admin-os"] .m-fail-retry {
-  flex: none; min-height: 44px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: var(--radius);
+  flex: none; min-height: 44px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--radius);
   background: var(--bg-2); color: var(--ink-1); font-family: var(--font-ui); font-size: 12px; font-weight: 600; cursor: pointer;
 }
 html[data-app="admin-os"] .m-fail-retry:disabled { opacity: 0.45; cursor: default; }
@@ -1937,6 +2071,7 @@ html[data-app="admin-os"] .m-sheet-search:disabled { opacity: 0.5; }
 html[data-app="admin-os"] .m-sheet-nomatch { padding: 18px 16px 8px; text-align: center; font-size: var(--fs-meta); color: var(--ink-3); }
 
 /* House Lights: squared corners, the skin's own ink for links, red, green and amber */
+html[data-app="admin-os"][data-skin="light"] .m-section { border-color: var(--line-2); box-shadow: none; }
 html[data-app="admin-os"][data-skin="light"] .m-section,
 html[data-app="admin-os"][data-skin="light"] .m-sheet,
 html[data-app="admin-os"][data-skin="light"] .m-sheet-note,
@@ -1950,7 +2085,8 @@ html[data-app="admin-os"][data-skin="light"] .m-avatar { border-radius: 0; }
 html[data-app="admin-os"][data-skin="light"] .m-dhead-venue,
 html[data-app="admin-os"][data-skin="light"] .m-contact-link,
 html[data-app="admin-os"][data-skin="light"] .m-person-go,
-html[data-app="admin-os"][data-skin="light"] .m-sheet-row.m-assign-row { color: var(--accent); }
+html[data-app="admin-os"][data-skin="light"] .m-sheet-row.m-assign-row,
+html[data-app="admin-os"][data-skin="light"] .m-section-item.m-assign-row { color: var(--accent); }
 html[data-app="admin-os"][data-skin="light"] .m-person-go.m-person-go-off { color: var(--ink-4); }
 html[data-app="admin-os"][data-skin="light"] .m-avatar.m-avatar-app { color: var(--accent-ink); }
 html[data-app="admin-os"][data-skin="light"] .m-act.m-act-primary { color: var(--bg-0); }
@@ -1976,7 +2112,7 @@ html[data-app="admin-os"][data-skin="light"] .m-sheet-note-dot { background: var
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/mobileDetailCss.test.js`
-Expected: PASS (the vocabulary cases plus seven structural tests).
+Expected: PASS, 98 tests (90 vocabulary cases plus eight structural tests).
 
 - [ ] **Step 6: Run the palette scope check and the build**
 
@@ -2006,7 +2142,7 @@ MSG
 
 **Interfaces:**
 - Consumes: Task 1's reads (`GET /shifts/detail/:id` -> `{ shift, requests }`; `GET /admin/active-staff` with `params: { limit: 100, shift_id }` -> `{ staff }`); Task 4's `buildShiftView`, `candidatesOf`, `roleStep`, `confirmCopy`, `READ_ONLY_NOTE`; Task 5's classes; `groupShiftRows` and `railParts` from `client/src/utils/eventCards.js`; `api` (`res.staleAt` on a cache-served read; rejections shaped `{ message, code, status }`).
-- Produces, for Tasks 8 and 9: the default export `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`.
+- Produces, for Tasks 8b and 9: the default export `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`. Both owners mount it with `key={drawer.id}`, so its state never carries from one shift to the next.
   - `shiftId: number` (required). `focusUserId: string | number | null` expands that person's row once the roster loads.
   - `onClose()` is called by the scrim, by Escape, and on a dead read when no `onDead` is given. The component never touches the URL; its owner does.
   - `onChanged()` is called after every successful write, once the sheet has re-read its roster.
@@ -2017,7 +2153,7 @@ MSG
 - Approve and Assign both `POST /shifts/:id/assign { user_id, position }`. Deny is `PUT /shifts/requests/:requestId { status: 'denied' }`. Remove is `DELETE /shifts/requests/:requestId`. Same endpoints, same bodies as the desktop drawer.
 - Before an approve or an assign is sent, the sheet re-reads the shift. A cache-served re-read is a lost connection; a roster in which the chosen role is no longer open is a refusal ("The roster changed. Check the open roles and try again."). Only then does the POST go out.
 - One write at a time, held by a ref. After a success the sheet re-reads the roster and the picker and calls `onChanged`. After a server refusal it re-reads the roster so the screen shows the truth. After a transport failure it re-reads nothing.
-- A failure renders under the row it came from, with Retry, which repeats the same write. If that row is gone after the re-read, the failure renders at the top of the body.
+- A failure renders under the row it came from, with Retry, which repeats the same write. If that row is gone after the re-read, the failure renders at the top of the body. Opening any other action (Approve, Deny, Remove) drops the failure box first, so Retry can never repeat a write the screen has moved on from.
 - A cache-served roster, a finished shift and a cancelled shift are read-only. A shift with no declared roles allows Deny and Remove and blocks Approve and Assign.
 
 - [ ] **Step 1: Write the failing test**
@@ -2164,7 +2300,7 @@ test('with no open role Approve is disabled, the picker is absent, and Deny stil
 
 test('Deny asks first, Keep backs out, and the confirm does not promise a notification', async () => {
   serve({ detail: payload([reqRow(3, { staff_name: 'Jo Ellis' })]) });
-  mount();
+  const h = mount();
   tap(await screen.findByRole('button', { name: /Jo Ellis/ }));
   tap(screen.getByRole('button', { name: 'Deny' }));
   expect(screen.getByText('Deny Jo Ellis’s application? The request closes. They are not notified.')).toBeInTheDocument();
@@ -2175,6 +2311,45 @@ test('Deny asks first, Keep backs out, and the confirm does not promise a notifi
   tap(screen.getByRole('button', { name: 'Deny' }));
   tap(screen.getByRole('button', { name: 'Deny' }));
   await waitFor(() => expect(api.put).toHaveBeenCalledWith('/shifts/requests/3', { status: 'denied' }));
+  await waitFor(() => expect(h.onChanged).toHaveBeenCalledTimes(1));
+});
+
+test('a failed Deny or Remove stays inline with Retry, and Retry repeats that same write', async () => {
+  serve({ detail: payload([onShift(1, 'Bartender', { staff_name: 'Lena Park' }), reqRow(3, { staff_name: 'Jo Ellis' })]) });
+  api.put.mockRejectedValueOnce(NETWORK);
+  api.delete.mockRejectedValueOnce({ status: 404, message: 'Request not found.' });
+  const h = mount();
+  tap(await screen.findByRole('button', { name: /Jo Ellis/ }));
+  tap(screen.getByRole('button', { name: 'Deny' }));
+  tap(screen.getByRole('button', { name: 'Deny' }));
+  expect(await screen.findByText("No connection, didn't save.")).toBeInTheDocument();
+  expect(h.onChanged).not.toHaveBeenCalled();
+  tap(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+  expect(api.put).toHaveBeenLastCalledWith('/shifts/requests/3', { status: 'denied' });
+  await waitFor(() => expect(h.onChanged).toHaveBeenCalledTimes(1));
+
+  tap(screen.getByRole('button', { name: /Lena Park/ }));
+  tap(screen.getByRole('button', { name: 'Remove from shift' }));
+  tap(screen.getByRole('button', { name: 'Remove' }));
+  expect(await screen.findByText('Request not found.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  await waitFor(() => expect(api.get.mock.calls.filter((c) => c[0] === '/shifts/detail/17').length).toBeGreaterThanOrEqual(3));
+});
+
+test('a failure box goes away when a different action is opened, so Retry can never repeat a stale write', async () => {
+  serve({ detail: payload([reqRow(3, { staff_name: 'Jo Ellis' })]) });
+  api.put.mockRejectedValueOnce(NETWORK);
+  mount();
+  tap(await screen.findByRole('button', { name: /Jo Ellis/ }));
+  tap(screen.getByRole('button', { name: 'Deny' }));
+  tap(screen.getByRole('button', { name: 'Deny' }));
+  expect(await screen.findByText("No connection, didn't save.")).toBeInTheDocument();
+  tap(screen.getByRole('button', { name: 'Deny' }));          // asks again
+  expect(screen.queryByText("No connection, didn't save.")).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  tap(screen.getByRole('button', { name: 'Keep' }));
+  expect(api.put).toHaveBeenCalledTimes(1);
 });
 
 test('Remove asks first and names payroll and the out-of-area lock', async () => {
@@ -2568,10 +2743,19 @@ export default function AssignmentSheet({ shiftId, focusUserId = null, onClose, 
     setConfirm(null);
     setFailure(null);
   };
+  // Opening a different intent drops the failure box: its Retry repeats the
+  // write that failed, and that must never be a write the screen has moved on
+  // from (a failed Deny, then Approve, then Retry sending the Deny).
   const onApprove = (row) => {
     const step = roleStep(view, row);
+    setFailure(null);
     if (step.kind === 'direct') place(row.key, row.userId, step.role);
     else if (step.kind === 'pick') setPickKey((cur) => (cur === row.key ? null : row.key));
+  };
+  const ask = (row, kind) => {
+    setFailure(null);
+    setPickKey(null);
+    setConfirm({ key: row.key, kind });
   };
   const onCandidate = (c) => {
     setFailure(null);
@@ -2631,14 +2815,14 @@ export default function AssignmentSheet({ shiftId, focusUserId = null, onClose, 
           <div className="m-acts">
             {row.kind === 'rostered' ? (
               <button type="button" className="m-act m-act-danger" disabled={busy || offline}
-                onClick={() => setConfirm({ key: row.key, kind: 'remove' })}>Remove from shift</button>
+                onClick={() => ask(row, 'remove')}>Remove from shift</button>
             ) : (
               <>
                 <button type="button" className="m-act m-act-primary"
                   disabled={busy || offline || step.kind === 'blocked'}
                   onClick={() => onApprove(row)}>Approve</button>
                 <button type="button" className="m-act m-act-quiet" disabled={busy || offline}
-                  onClick={() => setConfirm({ key: row.key, kind: 'deny' })}>Deny</button>
+                  onClick={() => ask(row, 'deny')}>Deny</button>
               </>
             )}
           </div>
@@ -2762,12 +2946,12 @@ export default function AssignmentSheet({ shiftId, focusUserId = null, onClose, 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/AssignmentSheet.test.js`
-Expected: PASS, 26 tests, no `act(...)` warning in the output. If a warning names a state update after a test returned, the test is missing an `await waitFor` on the last effect it triggers; fix the test, never silence the warning.
+Expected: PASS, 28 tests, and no "not wrapped in act(...)" warning in the output (the suite ran clean in a scratch copy, 2026-09-29; the one `ReactDOMTestUtils.act is deprecated` line is library noise every suite prints). If a warning names a state update after a test returned, that test is missing an `await` on the last effect it triggers; fix the test, never silence the warning.
 
 - [ ] **Step 5: Check the file size and build**
 
 Run: `wc -l client/src/components/mobile/AssignmentSheet.js && cd client && CI=true npx react-scripts build`
-Expected: under 330 lines; the build exits 0 with no warning. If the file passes 330, move `renderRosterRow` and `renderCandidate` into `client/src/components/mobile/AssignmentSheetRows.js` as two components taking the same values as props, add that path to the lane footprint in this plan, and say so in the task report.
+Expected: about 365 lines, under the 400 in Global Constraints; the build exits 0 with no warning.
 
 - [ ] **Step 6: Commit**
 
@@ -2794,11 +2978,11 @@ MSG
 
 **Interfaces:**
 - Consumes: `buildShiftView` from Task 4; `railParts` from `client/src/utils/eventCards.js`; `fmtTimeRange24, fmtTime24, fmt$2dp, fmt$fromCents, fmtDate, dayDiff` from `client/src/components/adminos/format.js`; `getEventTypeLabel` from `client/src/utils/eventTypes.js`; `venueMapQuery` from `client/src/components/VenueAddressFields.js`; `resolveGratuityDisplayLabel` from `client/src/utils/gratuityLabels.js`; `formatPhone` from `client/src/utils/formatPhone.js`. Response shapes: `GET /proposals/:id`, `GET /shifts/by-proposal/:id` (Task 1), `GET /drink-plans/by-proposal/:id`, `GET /invoices/proposal/:id`.
-- Produces, for Task 8:
+- Produces, for Task 8b:
   - `headerOf(proposal) -> { title, kind, guests, venue, mapHref }` (the object `MobileHeader` renders; `mapHref` is `null` when there is no location)
   - `whenOf(proposal, { todayYmd } = {}) -> { text, isToday }`
   - `setupOf(proposal) -> string | null` ("from 17:15 · 45 min before")
-  - `contactsOf(proposal, plan) -> { summary, client: { phone, telHref, smsHref, email, mailHref }, dayOf: { name, phone, telHref, smsHref } | null }`
+  - `contactsOf(proposal, plan) -> { summary, client: { phone, telHref, smsHref, email, mailHref }, dayOf: { name, phone, telHref, smsHref } | null }`. Both `phone` values are FORMATTED for display ("(312) 555-0142") whatever shape was stored; the hrefs carry the dialable digits.
   - `staffingOf(shifts, proposal) -> { count, state: 'open' | 'full' | 'closed', groups: [{ shiftId, showHead, label, view }] }` where `view` is Task 4's `ShiftView`
   - `financialsOf(proposal, invoicesPayload) -> { lines: [{ label, amount }], total, payments: [{ key, label, sub, amount }] | null, pending: [{ key, label, sub, amount }], balance: { amount, sub, inFlight } | null, paidInFull, paidToDate, chip: { kind, label } }`
   - `earliestStale(...stamps) -> string | null`
@@ -2911,6 +3095,11 @@ describe('contactsOf', () => {
     expect(c.dayOf).toEqual({ name: 'Marcus Keller', phone: '(312) 555-0142', telHref: 'tel:3125550142', smsHref: 'sms:3125550142' });
     expect(c.summary).toBe('day-of set');
   });
+  test('a day-of phone stored as bare digits is shown formatted, like the client number', () => {
+    const c = contactsOf(proposal(), { selections: { logistics: { dayOfContact: { name: 'Marcus Keller', phone: '3125550142' } } } });
+    expect(c.dayOf).toEqual({ name: 'Marcus Keller', phone: '(312) 555-0142', telHref: 'tel:3125550142', smsHref: 'sms:3125550142' });
+  });
+
   test('a day-of contact with a name and no phone has no links', () => {
     const c = contactsOf(proposal(), { selections: { logistics: { dayOfContact: { name: 'Priya Shah', phone: '' } } } });
     expect(c.dayOf).toEqual({ name: 'Priya Shah', phone: '', telHref: null, smsHref: null });
@@ -2984,7 +3173,7 @@ describe('financialsOf', () => {
     expect(f.lines).toEqual([
       { label: 'Signature bar', amount: '$2,800.00' },
       { label: 'Mobile bar rental', amount: '$450.00' },
-      { label: 'Loyalty discount', amount: '-$50.00' },
+      { label: 'Loyalty discount', amount: `${String.fromCharCode(0x2212)}$50.00` },
       { label: 'Champagne service', amount: '$450.50' },
     ]);
     expect(f.total).toBe('$3,650.00');
@@ -3023,7 +3212,7 @@ describe('financialsOf', () => {
 
   test('a balance shows what is owed and when', () => {
     const f = financialsOf(proposal(), invoices([inv(1)]));
-    expect(f.balance).toEqual({ amount: '$1,750.00', sub: 'due Aug 8', inFlight: false });
+    expect(f.balance).toEqual({ amount: '$1,750.00', sub: 'due AUG 8', inFlight: false });
     expect(f.paidInFull).toBe(false);
     expect(f.paidToDate).toBe('$1,900.00');
     expect(f.chip).toEqual({ kind: 'warn', label: 'Balance due' });
@@ -3052,9 +3241,20 @@ describe('financialsOf', () => {
     expect(f.chip).toEqual({ kind: 'info', label: 'Processing' });
     expect(f.pending).toHaveLength(1);
     expect(f.pending[0]).toMatchObject({ key: 'p0', label: 'Bank payment processing', amount: '$1,750.00' });
-    expect(f.pending[0].sub).toMatch(/^started [A-Z][a-z]{2} \d{1,2} · INV-0363$/);
+    expect(f.pending[0].sub).toMatch(/^started [A-Z]{3} \d{1,2} · INV-0363$/);
     expect(f.balance).toMatchObject({ amount: '$1,750.00', inFlight: true });
-    expect(f.balance.sub).toBe('due Aug 8 · bank payment in flight');
+    expect(f.balance.sub).toBe('due AUG 8 · bank payment in flight');
+  });
+
+  test('bad money and bad dates never render a dash glyph', () => {
+    const f = financialsOf(
+      proposal({ balance_due_date: 'soon', pricing_snapshot: { breakdown: [{ label: 'Odd line', amount: 'n/a' }] } }),
+      invoices([inv(1, { amount_due: null, amount_paid: 5000, status: 'partially_paid' })], [{ amount_cents: null, started_at: null, invoice_number: null }])
+    );
+    expect(JSON.stringify(f).includes(String.fromCharCode(0x2014))).toBe(false);
+    expect(f.balance.sub).toBe('due date not set · bank payment in flight');
+    expect(f.lines).toEqual([{ label: 'Odd line', amount: '$0.00' }]);
+    expect(f.pending[0].amount).toBe('$0.00');
   });
 
   test('a payment in flight with no invoice number and no readable date still renders', () => {
@@ -3110,9 +3310,7 @@ import { resolveGratuityDisplayLabel } from './gratuityLabels';
 import { formatPhone } from './formatPhone';
 import { buildShiftView } from './staffingSheet';
 import { venueMapQuery } from '../components/VenueAddressFields';
-import {
-  fmtTimeRange24, fmtTime24, fmt$2dp, fmt$fromCents, fmtDate, dayDiff,
-} from '../components/adminos/format';
+import { fmtTimeRange24, fmtTime24, fmt$2dp, dayDiff } from '../components/adminos/format';
 
 const text = (v) => String(v === null || v === undefined ? '' : v).trim();
 const ymdOf = (v) => (v ? String(v).slice(0, 10) : null);
@@ -3123,12 +3321,24 @@ function readJson(value) {
   try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' ? parsed : null; } catch { return null; }
 }
 
-// Signed dollars to the cent: "-$50.00", never "$-50.00".
+// Signed dollars to the cent, with a true minus sign as the design draws it.
+// A value that is not a number renders as zero: the shared formatters answer a
+// dash glyph for bad input, and phone copy carries none.
+const MINUS = String.fromCharCode(0x2212);
 function dollars(n) {
   const num = Number(n);
-  if (!Number.isFinite(num)) return fmt$2dp(0);
-  return num < 0 ? `-${fmt$2dp(Math.abs(num))}` : fmt$2dp(num);
+  if (n === null || n === undefined || n === '' || !Number.isFinite(num)) return fmt$2dp(0);
+  return num < 0 ? `${MINUS}${fmt$2dp(Math.abs(num))}` : fmt$2dp(num);
 }
+const fromCents = (n) => (n === null || n === undefined ? dollars(0) : dollars(Number(n) / 100));
+
+// "AUG 8": uppercase like the rail and the when line. Empty for a bad date.
+function monthDay(date) {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
+}
+const dayOfYmd = (ymd) => (/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || '')) ? monthDay(new Date(`${ymd}T12:00:00`)) : '');
+const dayOfInstant = (iso) => (iso ? monthDay(new Date(iso)) : '');
 
 export function headerOf(proposal) {
   const p = proposal || {};
@@ -3199,7 +3409,7 @@ export function contactsOf(proposal, plan) {
       email,
       mailHref: email ? `mailto:${email}` : null,
     },
-    dayOf: name ? { name, phone: dayOfPhone, ...phoneLinks(dayOfPhone) } : null,
+    dayOf: name ? { name, phone: dayOfPhone ? formatPhone(dayOfPhone) : '', ...phoneLinks(dayOfPhone) } : null,
   };
 }
 
@@ -3233,12 +3443,6 @@ export function staffingOf(shifts, proposal) {
 
 const PAID_STATUSES = ['balance_paid', 'confirmed', 'completed'];
 
-function shortDay(iso) {
-  const d = new Date(iso);
-  if (!iso || Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
 export function financialsOf(proposal, invoicesPayload) {
   const p = proposal || {};
   const total = Number(p.total_price || 0);
@@ -3264,8 +3468,8 @@ export function financialsOf(proposal, invoicesPayload) {
         return {
           key: `i${i.id}`,
           label: text(i.label) || text(i.invoice_number) || 'Payment',
-          sub: got >= due ? 'paid' : `part paid · ${fmt$fromCents(got)} of ${fmt$fromCents(due)}`,
-          amount: fmt$fromCents(got),
+          sub: got >= due ? 'paid' : `part paid · ${fromCents(got)} of ${fromCents(due)}`,
+          amount: fromCents(got),
         };
       })
     : null;
@@ -3274,12 +3478,12 @@ export function financialsOf(proposal, invoicesPayload) {
   // client's hands and has not settled. Four to six days for an ACH.
   const pending = payload && Array.isArray(payload.pending_payments)
     ? payload.pending_payments.map((pp, i) => {
-      const started = shortDay(pp.started_at);
+      const started = dayOfInstant(pp.started_at);
       return {
         key: `p${i}`,
         label: 'Bank payment processing',
         sub: [started ? `started ${started}` : null, text(pp.invoice_number) || null].filter(Boolean).join(' · '),
-        amount: fmt$fromCents(pp.amount_cents),
+        amount: fromCents(pp.amount_cents),
       };
     })
     : [];
@@ -3287,8 +3491,8 @@ export function financialsOf(proposal, invoicesPayload) {
   const archived = p.status === 'archived';
   const paidInFull = PAID_STATUSES.includes(p.status) && owed <= 0;
   const inFlight = pending.length > 0;
-  const due = ymdOf(p.balance_due_date);
-  const dueText = due ? `due ${fmtDate(due)}` : 'due date not set';
+  const due = dayOfYmd(ymdOf(p.balance_due_date));
+  const dueText = due ? `due ${due}` : 'due date not set';
 
   let chip;
   if (archived) chip = { kind: 'neutral', label: 'Cancelled' };
@@ -3327,7 +3531,7 @@ export function earliestStale(...stamps) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/eventDetailView.test.js`
-Expected: PASS, 37 tests.
+Expected: PASS, 39 tests.
 
 - [ ] **Step 5: Build and commit**
 
@@ -3344,21 +3548,20 @@ MSG
 ```
 
 ---
-### Task 8: `EventDetailPhone` and the rich detail header
+### Task 8a: The rich detail header and the layout hand-off
 
 **Files:**
 - Modify: `client/src/components/mobile/MobileHeader.js`
 - Modify: `client/src/components/AdminLayout.js` (`outletCtx` `:139`; the phone branch's `<MobileHeader>` `:245-249`)
-- Create: `client/src/pages/mobile/EventDetailPhone.js`
-- Test: `client/src/components/mobile/MobileHeader.test.js` (new), `client/src/pages/mobile/EventDetailPhone.test.js`
+- Test: `client/src/components/mobile/MobileHeader.test.js` (new)
 
 **Interfaces:**
-- Consumes: Task 3's `useDrawerParam({ push: true }) -> { kind, id, focus, open, close }`; Task 6's `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`; Task 7's `headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale`; Task 5's classes; `formatStaleTime` from `client/src/utils/staleTime.js`; `useMobileView()` -> `{ setDesktopView(screenKey, on) }`; the four reads.
-- Produces:
-  - `MobileHeader({ title, screenKey, onBack, detail })` where `detail` is `null` or Task 7's header object `{ title, kind, guests, venue, mapHref }`. With `detail` the header renders the rich variant and the title is an `h1`.
-  - The outlet context gains `setHeaderDetail(detail | null)`. It is `{ badges, refreshBadges, setHeaderDetail }`.
-  - The default export `EventDetailPhone()` (no props; reads `:id` from the route). Task 9 mounts it.
-  - Window event `mobile-route-dead` dispatched when `GET /proposals/:id` answers 404 or 403.
+- Consumes: Task 5's header classes; `useMobileView()` -> `{ setDesktopView(screenKey, on) }`; `usePalette()` -> `{ openPalette }`.
+- Produces, for Task 8b:
+  - `MobileHeader({ title, screenKey, onBack, backLabel = 'Back', detail })` where `detail` is `null` or the header object `{ title, kind, guests, venue, mapHref }` (Task 7's `headerOf`). With `detail` the header renders the rich variant and the title is an `h1`.
+  - The outlet context gains `setHeaderDetail(detail | null)`. It is `{ badges, refreshBadges, setHeaderDetail }`. The layout clears the detail on every pathname change.
+
+This task changes the chrome every phone screen renders inside. It has no automated test for the layout threading itself (mounting `AdminLayout` needs the whole app); that is checked by Task 8b's page suite from the other side, by D1 in the browser gate, and by the chrome suites in Step 5, which must not change.
 
 - [ ] **Step 1: Write the failing header test**
 
@@ -3418,6 +3621,11 @@ test('no venue, no link; a venue with no map query is plain text; no guests, no 
   expect(screen.getByText(/Grove on the River/)).toBeInTheDocument();
 });
 
+test('the back arrow can name where it goes', () => {
+  render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} backLabel="Back to Events" detail={DETAIL} />);
+  expect(screen.getByRole('button', { name: 'Back to Events' })).toBeInTheDocument();
+});
+
 test('the Desktop-view escape still switches this screen', () => {
   render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={DETAIL} />);
   fireEvent.click(screen.getByRole('button', { name: 'Switch to desktop view' }));
@@ -3428,7 +3636,7 @@ test('the Desktop-view escape still switches this screen', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/MobileHeader.test.js`
-Expected: the first, second and fifth tests PASS; the third and fourth FAIL (no heading, no link, no `m-header-detail`).
+Expected: three tests PASS (the list screen, the detail screen with no data yet, the Desktop-view escape) and three FAIL: the rich header (no heading, no link, no `m-header-detail`), the no-venue variant, and the back label (today's label is always "Back").
 
 - [ ] **Step 3: Add the rich variant to the header**
 
@@ -3457,13 +3665,13 @@ import { useMobileView } from '../../context/MobileViewContext';
 // the chrome bring their own. The rich title IS an h1: the phone detail screen
 // renders no other heading, and a page with none is a page a screen reader
 // cannot name.
-export default function MobileHeader({ title, screenKey, onBack = null, detail = null }) {
+export default function MobileHeader({ title, screenKey, onBack = null, backLabel = 'Back', detail = null }) {
   const { openPalette } = usePalette();
   const { setDesktopView } = useMobileView();
   return (
     <header className={`m-header${detail ? ' m-header-detail' : ''}`}>
       {onBack ? (
-        <button type="button" className="m-iconbtn" onClick={onBack} aria-label="Back">
+        <button type="button" className="m-iconbtn" onClick={onBack} aria-label={backLabel}>
           <Icon name="left" size={20} />
         </button>
       ) : (
@@ -3519,8 +3727,6 @@ export default function MobileHeader({ title, screenKey, onBack = null, detail =
 }
 ```
 
-The guests test reads `screen.getByText('140')`: the count and the `GUESTS` label are separate text nodes of the same span, so if that query finds nothing, wrap the number in its own `<span>` inside `.m-dhead-guests`, move the class assertion to `screen.getByText('140').parentElement`, and keep the markup otherwise identical.
-
 - [ ] **Step 4: Thread the header detail through the layout**
 
 In `client/src/components/AdminLayout.js`, replace the `outletCtx` definition (`:139`) with:
@@ -3541,23 +3747,55 @@ In `client/src/components/AdminLayout.js`, replace the `outletCtx` definition (`
   );
 ```
 
-(The comment that begins "One context object for BOTH shells" already sits above the old definition; keep one copy.) In the phone branch, add the prop to `<MobileHeader>`:
+(The comment that begins "One context object for BOTH shells" already sits above the old definition; keep one copy.) In the phone branch, add two props to `<MobileHeader>`:
 
 ```js
           <MobileHeader
             title={screenTitle(screenKey)}
             screenKey={screenKey}
             onBack={isDetail ? onBack : null}
+            backLabel={screenKey === 'proposal-detail' ? 'Back to Proposals' : 'Back to Events'}
             detail={isDetail ? headerDetail : null}
           />
 ```
 
 - [ ] **Step 5: Run the header test and the chrome suites**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile src/pages/mobile/MorePage`
-Expected: `MobileHeader.test.js` PASS, 5 tests; every other suite in the folder unchanged. If no `MorePage` test exists the pattern matches nothing and that is fine.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile src/context`
+Expected: `MobileHeader.test.js` PASS, 6 tests; every other suite in those folders unchanged.
 
-- [ ] **Step 6: Write the failing page test**
+- [ ] **Step 6: Build and commit**
+
+```bash
+wc -l client/src/components/AdminLayout.js && cd client && CI=true npx react-scripts build && cd .. && git add client/src/components/mobile/MobileHeader.js client/src/components/mobile/MobileHeader.test.js client/src/components/AdminLayout.js && git commit -F - <<'MSG'
+feat(phone chrome): rich detail header, handed over through the outlet
+
+MobileHeader gains a detail variant: client and kind as the page heading,
+guests, and the venue as an external map link. A phone detail screen hands
+the chrome its header through the outlet context, and the layout clears it
+on every route change so one event's header never sits over another screen.
+The back arrow names where it goes.
+MSG
+```
+
+Expected: the layout at about 315 lines; the build exits 0 with no warning.
+
+---
+
+### Task 8b: `EventDetailPhone`, the phone event detail
+
+**Files:**
+- Create: `client/src/pages/mobile/EventDetailPhone.js`
+- Test: `client/src/pages/mobile/EventDetailPhone.test.js`, `client/src/utils/mobileClassContract.test.js` (new)
+
+**Interfaces:**
+- Consumes: Task 3's `useDrawerParam({ push: true, kinds }) -> { kind, id, focus, open, close }`; Task 6's `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`; Task 7's `headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale`; Task 8a's outlet context `{ badges, refreshBadges, setHeaderDetail }`; Task 5's classes; `formatStaleTime` from `client/src/utils/staleTime.js`; `useMobileView()` -> `{ setDesktopView(screenKey, on) }`; the four reads.
+- Produces:
+  - The default export `EventDetailPhone()` (no props; reads `:id` from the route). Task 9 mounts it.
+  - Window event `mobile-route-dead`, dispatched when `GET /proposals/:id` answers 404 or 403. No other read dispatches it.
+  - `client/src/utils/mobileClassContract.test.js`, which Task 9 extends.
+
+- [ ] **Step 1: Write the failing page test**
 
 Create `client/src/pages/mobile/EventDetailPhone.test.js`:
 
@@ -3660,10 +3898,11 @@ test('makes its four reads and hands the chrome the rich header', async () => {
   for (const url of ['/proposals/13', '/shifts/by-proposal/13', '/drink-plans/by-proposal/13', '/invoices/proposal/13']) {
     expect(api.get).toHaveBeenCalledWith(url);
   }
-  expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({
+  // The header is handed over in an effect, one tick after the rows paint.
+  await waitFor(() => expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({
     title: 'Alexis Henderson', kind: 'Wedding Reception', guests: 140,
     mapHref: expect.stringContaining('query=12%20River%20Rd'),
-  }));
+  })));
 });
 
 test('the header is cleared when the screen goes away', async () => {
@@ -3751,7 +3990,7 @@ test('Financials: lines, total, payments and the balance', async () => {
   expect(screen.getByText('Deposit')).toBeInTheDocument();
   expect(screen.getByText('$100.00')).toBeInTheDocument();
   expect(screen.getByText('$1,750.00')).toBeInTheDocument();
-  expect(screen.getByText('due Aug 8')).toBeInTheDocument();
+  expect(screen.getByText('due AUG 8')).toBeInTheDocument();
 });
 
 test('a bank payment in flight shows on the chip, as a row, and on the balance', async () => {
@@ -3762,8 +4001,8 @@ test('a bank payment in flight shows on the chip, as a row, and on the balance',
   tap(section('Financials'));
   expect(screen.getByText('Bank payment processing')).toBeInTheDocument();
   expect(screen.getByText(/^started .* · INV-0363$/)).toBeInTheDocument();
-  expect(screen.getByText('due Aug 8 · bank payment in flight')).toBeInTheDocument();
-  expect(screen.getByText('due Aug 8 · bank payment in flight').closest('.m-money-row')).toHaveClass('m-money-bal', 'm-money-flight');
+  expect(screen.getByText('due AUG 8 · bank payment in flight')).toBeInTheDocument();
+  expect(screen.getByText('due AUG 8 · bank payment in flight').closest('.m-money-row')).toHaveClass('m-money-bal', 'm-money-flight');
 });
 
 test('paid in full', async () => {
@@ -3950,24 +4189,57 @@ test('changing the event id reloads and never shows the previous event', async (
   await screen.findByText('Person 1');
   tap(screen.getByRole('button', { name: 'go to 14' }));
   // The previous event leaves the screen at once, before the new one lands.
-  await waitFor(() => expect(screen.queryByText('Person 1')).toBeNull());
+  expect(screen.queryByText('Person 1')).toBeNull();
   expect(await screen.findByText('No shifts created for this event yet.')).toBeInTheDocument();
-  expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'June Marrow' }));
-  expect(screen.queryByText('setup from 17:15 · 45 min before')).toBeInTheDocument();
+  await waitFor(() => expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'June Marrow' })));
+  expect(screen.getByText('setup from 17:15 · 45 min before')).toBeInTheDocument();
+});
+
+test('a reload of the staffing card that lands after the screen moved to another event is dropped', async () => {
+  let release;
+  let reads13 = 0;
+  serve({
+    '/shifts/by-proposal/13': () => {
+      reads13 += 1;
+      if (reads13 === 1) return { data: [shift(1)] };
+      return { then: (resolve) => { release = () => resolve({ data: [shift(1, { requesters: [person(9, { name: 'Late Arrival' })] })] }); } };
+    },
+    '/proposals/14': { data: { ...PROPOSAL, id: 14, client_name: 'June Marrow' } },
+    '/shifts/by-proposal/14': { data: [] },
+    '/drink-plans/by-proposal/14': { reject: { status: 404, message: 'none' } },
+    '/invoices/proposal/14': { data: { invoices: [], pending_payments: [] } },
+  });
+  mount({ initial: '/events/13?drawer=shift&drawerId=1' });
+  await screen.findByText('Person 1');
+  tap(screen.getByRole('button', { name: 'stub changed' }));   // starts the slow reload for 13
+  tap(screen.getByRole('button', { name: 'go to 14' }));
+  expect(await screen.findByText('No shifts created for this event yet.')).toBeInTheDocument();
+  await waitFor(() => expect(typeof release).toBe('function'));
+  release();
+  await waitFor(() => expect(api.get.mock.calls.filter((c) => c[0] === '/shifts/by-proposal/13')).toHaveLength(2));
+  expect(screen.queryByText('Late Arrival')).toBeNull();
+  expect(screen.getByText('No shifts created for this event yet.')).toBeInTheDocument();
+});
+
+test('a shift with no declared roles shows the note on the card instead of an Assign row', async () => {
+  serve({ '/shifts/by-proposal/13': { data: [shift(1, { positions_needed: '[]', requesters: [] })] } });
+  mount();
+  expect(await screen.findByText('No roles are declared on this shift. Staff it from desktop view.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Assign staff/ })).toBeNull();
 });
 ```
 
-- [ ] **Step 7: Run it to verify it fails**
+- [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventDetailPhone.test.js`
 Expected: FAIL, `Cannot find module './EventDetailPhone'`.
 
-- [ ] **Step 8: Write the page**
+- [ ] **Step 3: Write the page**
 
 Create `client/src/pages/mobile/EventDetailPhone.js`:
 
 ```js
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import api from '../../utils/api';
 import useDrawerParam from '../../hooks/useDrawerParam';
@@ -3995,6 +4267,9 @@ import {
 // line, the Out-of-Area Bonus knob. The Edit details row opens that Desktop
 // view until the edit sheet (lane ma-e3) lands.
 const LOAD_FAILED = 'Network error. Check your connection.';
+const ROSTERLESS = 'No roles are declared on this shift. Staff it from desktop view.';
+// The kinds of drawer that are phone sheets here. Module scope: one identity.
+const SHEETS = ['shift'];
 const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
 const FRAC = { open: 'm-frac', full: 'm-frac full', closed: 'm-frac past' };
 
@@ -4023,7 +4298,10 @@ export default function EventDetailPhone() {
   const outlet = useOutletContext() || {};
   const { setHeaderDetail, refreshBadges } = outlet;
   const { setDesktopView } = useMobileView();
-  const drawer = useDrawerParam({ push: true });
+  const drawer = useDrawerParam({ push: true, kinds: SHEETS });
+  // The id the screen is showing NOW, for reads that can land after it moved on.
+  const showing = useRef(id);
+  showing.current = id;
 
   const [proposal, setProposal] = useState(null);
   const [shifts, setShifts] = useState({ state: 'loading', rows: [] });     // loading | ready | denied | failed
@@ -4079,6 +4357,7 @@ export default function EventDetailPhone() {
   const reloadShifts = useCallback(() => {
     api.get(`/shifts/by-proposal/${id}`)
       .then((res) => {
+        if (showing.current !== id) return;   // the screen moved to another event
         setShifts({ state: 'ready', rows: Array.isArray(res.data) ? res.data : [] });
         setStale((prev) => ({ ...prev, shifts: res.staleAt || null }));
       })
@@ -4210,7 +4489,7 @@ export default function EventDetailPhone() {
                   </div>
                 )}
                 {g.view.rows.map((row) => (
-                  <button key={row.key} type="button" className="m-sheet-row m-person"
+                  <button key={row.key} type="button" className="m-section-item m-person"
                     onClick={() => drawer.open('shift', g.shiftId, { focus: row.userId })}>
                     <span className={`m-avatar${row.kind === 'rostered' ? '' : ' m-avatar-app'}`} aria-hidden="true">{row.initials}</span>
                     <span className="m-person-main">
@@ -4222,11 +4501,14 @@ export default function EventDetailPhone() {
                     {row.kind === 'rostered' && <span className="m-person-check"><Icon name="check" size={16} /></span>}
                   </button>
                 ))}
-                {!g.view.closedReason && g.view.open > 0 && (
-                  <button type="button" className="m-sheet-row m-assign-row" onClick={() => drawer.open('shift', g.shiftId)}>
+                {!g.view.closedReason && !g.view.rosterless && g.view.open > 0 && (
+                  <button type="button" className="m-section-item m-assign-row" onClick={() => drawer.open('shift', g.shiftId)}>
                     <Icon name="userplus" size={18} />
                     {`Assign staff · ${g.view.open} open`}
                   </button>
+                )}
+                {!g.view.closedReason && g.view.rosterless && (
+                  <div className="m-section-note">{ROSTERLESS}</div>
                 )}
               </div>
             ))}
@@ -4271,7 +4553,7 @@ export default function EventDetailPhone() {
               <div className="m-section-note">No payments yet.</div>
             )}
             {(fin.payments || []).map((pay) => (
-              <div className="m-money-row" key={pay.key}>
+              <div className="m-money-row m-money-pay" key={pay.key}>
                 <span className="m-money-main">
                   <span className="m-money-label">{pay.label}</span>
                   <span className="m-money-sub">{pay.sub}</span>
@@ -4280,7 +4562,7 @@ export default function EventDetailPhone() {
               </div>
             ))}
             {fin.pending.map((pay) => (
-              <div className="m-money-row" key={pay.key}>
+              <div className="m-money-row m-money-pay" key={pay.key}>
                 <span className="m-money-main">
                   <span className="m-money-label">{pay.label}</span>
                   {pay.sub ? <span className="m-money-sub">{pay.sub}</span> : null}
@@ -4329,6 +4611,7 @@ export default function EventDetailPhone() {
 
       {sheetOpen && (
         <AssignmentSheet
+          key={drawer.id}
           shiftId={Number(drawer.id)}
           focusUserId={drawer.focus}
           onClose={drawer.close}
@@ -4341,42 +4624,80 @@ export default function EventDetailPhone() {
 }
 ```
 
-- [ ] **Step 9: Run the page test to verify it passes**
+- [ ] **Step 4: Run the page test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventDetailPhone.test.js`
-Expected: PASS, 27 tests, no `act(...)` warning.
+Expected: PASS, 29 tests, and no "not wrapped in act(...)" warning. The header assertions sit inside `waitFor` on purpose: the page hands its header to the chrome in an effect, one tick after the rows paint.
 
-- [ ] **Step 10: Check sizes and build**
+- [ ] **Step 5: Write the class-contract test**
 
-Run: `wc -l client/src/pages/mobile/EventDetailPhone.js client/src/components/AdminLayout.js && cd client && CI=true npx react-scripts build`
-Expected: the page under 330 lines, the layout under 320; the build exits 0 with no warning. If the page passes 330, move the Financials section into `client/src/pages/mobile/EventDetailMoney.js` as a component taking `{ fin, moneyState, open, onToggle }`, add that path to the lane footprint in this plan, and say so in the task report.
+jsdom applies no CSS, so a class a component uses and the stylesheet never defines is invisible to every other test. This one reads the three sources that render this lane's classes.
 
-- [ ] **Step 11: Commit**
+Create `client/src/utils/mobileClassContract.test.js`:
+
+```js
+import '@testing-library/jest-dom';
+import fs from 'fs';
+import path from 'path';
+
+const read = (rel) => fs.readFileSync(path.resolve(__dirname, '..', rel), 'utf8');
+const css = read('index.css');
+const SOURCES = [
+  'components/mobile/AssignmentSheet.js',
+  'components/mobile/MobileHeader.js',
+  'pages/mobile/EventDetailPhone.js',
+];
+
+// Every m-* token that appears inside a string or template literal in the
+// source. Comments are stripped first so prose cannot add or hide a class.
+function classesIn(source) {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  return [...new Set(code.match(/\bm-[a-z][a-z0-9-]*/g) || [])];
+}
+
+test.each(SOURCES)('%s uses only classes the stylesheet defines', (rel) => {
+  const missing = classesIn(read(rel)).filter((name) => !new RegExp(`\\.${name}(?![a-z0-9-])`).test(css));
+  expect(missing).toEqual([]);
+});
+```
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/mobileClassContract.test.js`
+Expected: PASS, 3 tests. A failure names the class: either it is a typo in the component, or Task 5's block is missing a rule, in which case add the rule to the block in `index.css`, add the name to the vocabulary in `mobileDetailCss.test.js`, and say so in the task report.
+
+- [ ] **Step 6: Check the size and build**
+
+Run: `wc -l client/src/pages/mobile/EventDetailPhone.js && cd client && CI=true npx react-scripts build`
+Expected: about 385 lines, under the 400 in Global Constraints; the build exits 0 with no warning.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add client/src/components/mobile/MobileHeader.js client/src/components/mobile/MobileHeader.test.js client/src/components/AdminLayout.js client/src/pages/mobile/EventDetailPhone.js client/src/pages/mobile/EventDetailPhone.test.js && git commit -F - <<'MSG'
-feat(phone detail): the event detail screen and its rich header
+git add client/src/pages/mobile/EventDetailPhone.js client/src/pages/mobile/EventDetailPhone.test.js client/src/utils/mobileClassContract.test.js && git commit -F - <<'MSG'
+feat(phone detail): the event detail screen
 
-Header with the venue as a map link, the when and setup lines, Contacts as
-tap targets with the drink-plan day-of contact, Staffing grouped per shift,
-Financials with the bank debit in flight, and an Edit details row that opens
-the Desktop view until the edit sheet lands. Four reads, each allowed to fail
-alone; only a dead proposal read dispatches mobile-route-dead. The chrome
-header takes its detail through the outlet context.
+The when and setup lines, Contacts as tap targets with the drink-plan day-of
+contact, Staffing grouped per shift, Financials with the bank debit in
+flight, and an Edit details row that opens the Desktop view until the edit
+sheet lands. Four reads, each allowed to fail alone; only a dead proposal
+read dispatches mobile-route-dead. A staffing reload that lands after the
+screen moved to another event is dropped. Adds a class-contract test,
+because jsdom cannot see a missing CSS rule.
 MSG
 ```
 
 ---
+
 ### Task 9: Wire it in: fork `EventDetailPage`, give the list the sheet
 
 **Files:**
 - Modify: `client/src/pages/admin/EventDetailPage.js` (imports `:1-34`; the default export `:38`; end of file)
-- Modify: `client/src/pages/mobile/EventsListPhone.js` (header comment `:12-20`; imports `:2-10`; `useDrawerParam()` `:37`; the interim drawer mount `:226-236`)
+- Modify: `client/src/pages/mobile/EventsListPhone.js` (header comment `:12-20`; imports `:2-10`; the constants `:22-25`; `useDrawerParam()` `:36`; the interim drawer mount `:233-243`)
 - Modify: `client/src/pages/mobile/EventsListPhone.test.js` (the `ShiftDrawer` mock `:10-11`; the manual-card test `:146-154`)
-- Test: `client/src/pages/admin/EventDetailPage.fork.test.js` (new), `client/src/utils/mobileClassContract.test.js` (new)
+- Modify: `client/src/utils/mobileClassContract.test.js` (one more test)
+- Test: `client/src/pages/admin/EventDetailPage.fork.test.js` (new)
 
 **Interfaces:**
-- Consumes: Task 8's `EventDetailPhone`; Task 6's `AssignmentSheet`; Task 3's `useDrawerParam({ push: true })`; `useMobileView()` -> `{ isPhone, desktopView(screenKey) }`.
+- Consumes: Task 8b's `EventDetailPhone` and its `mobileClassContract.test.js`; Task 6's `AssignmentSheet`; Task 3's `useDrawerParam({ push: true, kinds })`; `useMobileView()` -> `{ isPhone, desktopView(screenKey) }`.
 - Produces: `/events/:id` renders `EventDetailPhone` at phone width unless the `event-detail` screen is pinned to Desktop view; a manual shift on the phone list opens `AssignmentSheet`; the desktop `ShiftDrawer` is no longer imported by any file under `client/src/pages/mobile/`.
 
 - [ ] **Step 1: Write the failing fork test**
@@ -4539,6 +4860,8 @@ test('a change made in the sheet reloads the list', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'stub changed' }));
   await waitFor(() => expect(api.get.mock.calls.length).toBe(before + 1));
   expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } });
+  // Let the reloaded list land inside the test.
+  expect(await screen.findByText('Night Market pop-up')).toBeInTheDocument();
 });
 
 test('a dead manual shift closes the sheet and keeps the list where it was', async () => {
@@ -4554,7 +4877,7 @@ test('a dead manual shift closes the sheet and keeps the list where it was', asy
 - [ ] **Step 6: Run the list suite to verify the new tests fail**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventsListPhone.test.js`
-Expected: the three sheet tests FAIL (no `sheet` test id: the list still mounts the desktop drawer, which is no longer stubbed and may throw for want of a ToastContext). Every list test that does not open a manual shift PASSES.
+Expected: `Tests: 3 failed, 14 passed, 17 total` (measured in a scratch copy, 2026-09-29). The three sheet tests FAIL: the list still mounts the desktop drawer, so no `sheet` test id renders. Every list test that does not open a manual shift PASSES.
 
 - [ ] **Step 7: Swap the drawer for the sheet**
 
@@ -4580,10 +4903,17 @@ Replace the second paragraph of the header comment (the one that begins "Manual 
 // closes the sheet and stays on the list (spec section 3).
 ```
 
+Add one constant after the `SKELETONS` line (`:25`):
+
+```js
+// The kinds of drawer that are phone sheets here. Module scope: one identity.
+const SHEETS = ['shift'];
+```
+
 Replace `const drawer = useDrawerParam();` with:
 
 ```js
-  const drawer = useDrawerParam({ push: true });
+  const drawer = useDrawerParam({ push: true, kinds: SHEETS });
   const { refreshBadges } = useOutletContext() || {};
 ```
 
@@ -4596,6 +4926,7 @@ Replace the interim drawer block (the comment that begins "Mounted only while op
           and chip where the chrome's fallback would reset them. */}
       {drawer.kind === 'shift' && /^\d+$/.test(String(drawer.id || '')) ? (
         <AssignmentSheet
+          key={drawer.id}
           shiftId={Number(drawer.id)}
           focusUserId={drawer.focus}
           onClose={drawer.close}
@@ -4605,35 +4936,11 @@ Replace the interim drawer block (the comment that begins "Mounted only while op
       ) : null}
 ```
 
-- [ ] **Step 8: Write the class-contract test**
+- [ ] **Step 8: Extend the class-contract test**
 
-jsdom applies no CSS, so a class a component uses and the stylesheet never defines is invisible to every other test. Create `client/src/utils/mobileClassContract.test.js`:
+Task 8b created `client/src/utils/mobileClassContract.test.js`. Append one test to it, so the interim never comes back by accident:
 
 ```js
-import '@testing-library/jest-dom';
-import fs from 'fs';
-import path from 'path';
-
-const read = (rel) => fs.readFileSync(path.resolve(__dirname, '..', rel), 'utf8');
-const css = read('index.css');
-const SOURCES = [
-  'components/mobile/AssignmentSheet.js',
-  'components/mobile/MobileHeader.js',
-  'pages/mobile/EventDetailPhone.js',
-];
-
-// Every m-* token that appears inside a string or template literal in the
-// source. Comments are stripped first so prose cannot add or hide a class.
-function classesIn(source) {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  return [...new Set(code.match(/\bm-[a-z][a-z0-9-]*/g) || [])];
-}
-
-test.each(SOURCES)('%s uses only classes the stylesheet defines', (rel) => {
-  const missing = classesIn(read(rel)).filter((name) => !new RegExp(`\\.${name}(?![a-z0-9-])`).test(css));
-  expect(missing).toEqual([]);
-});
-
 test('no file under pages/mobile or components/mobile imports the desktop ShiftDrawer', () => {
   for (const dir of ['pages/mobile', 'components/mobile']) {
     const folder = path.resolve(__dirname, '..', dir);
@@ -4647,7 +4954,7 @@ test('no file under pages/mobile or components/mobile imports the desktop ShiftD
 - [ ] **Step 9: Run the three suites and the build**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile src/pages/admin/EventDetailPage.fork.test.js src/pages/admin/EventsDashboard.fork.test.js src/utils/mobileClassContract.test.js && CI=true npx react-scripts build`
-Expected: all PASS; `EventsListPhone.test.js` reports 17 tests (14 before, one replaced by four); the build exits 0 with no warning.
+Expected: all PASS; `EventsListPhone.test.js` reports 17 tests (14 before, one replaced by four), `mobileClassContract.test.js` 4, and no "not wrapped in act(...)" warning anywhere; the build exits 0 with no warning.
 
 - [ ] **Step 10: Commit**
 
@@ -4658,8 +4965,9 @@ feat(phone): fork the event detail and open manual shifts in the sheet
 EventDetailPage forks at the top through useMobileView, exactly as
 EventsDashboard does, so one URL serves both components. The phone list
 drops the interim desktop drawer: a manual shift opens the assignment sheet
-with push history, so Android Back closes it and stays on the list. Adds a
-class-contract test, because jsdom cannot see a missing CSS rule.
+with push history, so Android Back closes it and stays on the list. No file
+under pages/mobile or components/mobile imports the desktop drawer now, and
+a test holds that.
 MSG
 ```
 
@@ -4693,10 +5001,11 @@ Insert after the `admin-events-needs` entry:
 With the lane's dev server up: `npm run mobile:check`
 Expected: `admin-event-detail` and `admin-event-sheet` report `pass` (no horizontal overflow, nothing painted past the right edge). Read the `taps<36` figure for both: it must be 0. The `tiny<12` figure will not be 0 (the benchmark's own 10px mono labels and 11px meta); record the number and do not chase it. The run may still exit 1 on the pre-existing `portal-home` race recorded in the ma-e1 plan; that is not this lane's.
 
-- [ ] **Step 3: Ad hoc browser checks (record each result in the Browser checks table at the end of this plan)**
+- [ ] **Step 3: Ad hoc browser checks (REPORT each result with its evidence; the orchestrator writes the Browser checks table on main)**
 
 - D1 header: on `/events/<id>` the header is 60px, the title is an `h1`, `elementFromPoint` at the venue link's centre returns the anchor, its hit area is at least 44px tall, and it carries `target="_blank"`.
 - D2 sections: Staffing is open on load, Contacts and Financials closed; each header row is at least 48px tall and `elementFromPoint` at its centre returns the button.
+- D2b primary actions (spec section 11): at 390px, `elementFromPoint` at the centre of EACH of these returns the control itself, and each is at least 44px tall: the "Assign staff" row, a staffing person row, "Text", the Edit details row; and in the sheet: Approve, Deny, "Remove from shift", Keep and the confirm button beside it, an "Approve as" role row, an "Assign as" role row, a picker row, and Retry in the failed-save box and in the offline banner.
 - D3 contacts: the phone number is a `tel:` link and the Text button an `sms:` link, both at least 44px tall.
 - D4 staffing agrees with the desktop: the fraction in the Staffing header equals the "N/M staffed" chip the desktop page shows for the same event (load the same URL at 1280px wide with the same token and read it).
 - D5 financials agree with the desktop: the phone's Total and Balance due equal the desktop payment panel's figures for the same event, to the cent.
@@ -4706,18 +5015,22 @@ Expected: `admin-event-detail` and `admin-event-sheet` report `pass` (no horizon
 - D9 the sheet scrolls, the page behind does not: scroll the sheet body by 400px; `main#main-content` `scrollTop` is unchanged.
 - D10 one write, fixture people only: create a fixture staffer and a fixture manual shift with one open Bartender slot; open the sheet from the list; assign the fixture staffer through "Assign as"; assert exactly ONE `POST /api/shifts/<id>/assign` in the network log with body `{ user_id, position: 'Bartender' }`, the roster shows the person with "just assigned", the list card's fraction moved to 1/1, and the tab badge count dropped by one. Then Remove through the confirm: exactly one `DELETE`. Delete the fixtures by id.
 - D11 double tap: repeat D10's assign with `page.route` delaying the POST by 2 seconds and two `click()` calls 50ms apart: ONE POST in the log.
-- D12 offline, in-document: load `/events/<id>` live, open and close the sheet once (so its two reads are cached), `context.setOffline(true)`, navigate to the list and back into the event: the detail renders with "offline copy · as of" and the dot, Edit details reads "needs connection"; open the sheet: the offline banner shows, Approve, Deny and Remove are disabled, the picker rows read "Offline". `context.setOffline(false)`, tap the banner's Retry: the banner clears.
+- D12 service worker and offline, in-document: first confirm the new worker took over (`navigator.serviceWorker.controller` is set, `caches.keys()` holds an `admin-api-admin-sw-2026-09-29-v9-u<id>` cache and NO name containing `-v8`: the activate sweep ran). Then load `/events/<id>` live, open and close the sheet once (so its two reads are cached), `context.setOffline(true)`, navigate to the list and back into the event: the detail renders with "offline copy · as of" and the dot, Edit details reads "needs connection"; open the sheet: the offline banner shows, Approve, Deny and Remove are disabled, the picker rows read "Offline". `context.setOffline(false)`, tap the banner's Retry: the banner clears.
 - D13 failed save: with the sheet open and live, `page.route` the assign POST to `abort()`; assign the fixture staffer: "No connection, didn't save." shows under that row with Retry, the sheet stayed open, nothing was written (`SELECT` the fixture shift's requests). Un-route, tap Retry: it lands.
 - D14 dead routes: `/events/2147483000` falls back to `/events`; `/events?drawer=shift&drawerId=2147483000` closes the sheet and stays on `/events`.
 - D15 Edit details: tapping it shows the desktop event page with the "Phone view" return pill; the pill returns to the phone detail.
-- D16 both skins: After Hours and House Lights screenshots of the detail (Staffing open, then Financials open) and of the sheet (one applicant focused, then the Remove confirm). In After Hours the Remove button, the confirm border and a failed-save message read RED, not violet: read `getComputedStyle(...).color` and assert `rgb(255, 77, 77)`.
+- D16 every state the benchmark names, both skins. After Hours and House Lights screenshots, from fixtures the check creates and deletes by id (prod has no upcoming multi-shift event, manual shift or mixed-role roster, and dev may not either). Detail: Staffing open; Contacts open with a day-of contact, and without one; Financials open with a balance, paid in full, and with a bank payment in flight; a two-shift event (heads); the Edit details row unlocked and reading "needs connection"; a cancelled event. Sheet: one open role; two open roles with the "Approve as" rows, and with the "Assign as" rows; a focused applicant; a focused rostered row; the Remove confirm and the Deny confirm; the failed save with Retry; the offline banner; the search field with no match; a manual shift (venue in the head); a past event and a cancelled event (read-only); a shift with no declared roles. In After Hours the Remove button, the confirm border and a failed-save message read RED, not violet: read `getComputedStyle(...).color` and assert `rgb(255, 77, 77)`. In House Lights a section's border is `--line-2` and it casts no shadow.
 - D17 desktop is untouched: at 1280px, `/events/<id>` renders the desktop page exactly as before and its Manage button still opens the desktop `ShiftDrawer` with replace semantics (`history.length` unchanged by open and close).
 
 - [ ] **Step 4: Benchmark comparison**
 
-Serve the benchmark (`cd docs/design-artifacts && python3 -m http.server 8765`), render Event detail and Assignment sheet at 460x960 in both skins, and lay each state beside the app's screenshot from D16. Then run the `ui-ux-review` agent with both sets and this instruction: adherence to the artifact is the primary benchmark; every difference is either one of the eleven decisions listed at the top of this plan or a finding.
+Serve the benchmark (`cd docs/design-artifacts && python3 -m http.server 8765`), render Event detail and Assignment sheet at 460x960 in both skins, and lay each state beside the app's screenshot from D16. Then the orchestrator runs the `ui-ux-review` agent with both sets and this instruction: adherence to the artifact is the primary benchmark; every difference is either one of the eighteen decisions listed at the top of this plan or a finding.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Fold what the gate found**
+
+This is the first time Tasks 5 to 9 are seen in a browser, and the last lane needed a fix round here. For each failed check and each ui-ux finding: fix it in the file that owns it (every such file is in the lane footprint), commit by explicit path with a message that names the check (`fix(phone detail): D6 ...`), re-run the suite that file belongs to and the check that failed, and report both results. A fix that would change one of the eighteen decisions, the contract of Task 1, or a file outside the footprint is not made in the lane: report it and stop.
+
+- [ ] **Step 6: Commit the manifest**
 
 ```bash
 git add scripts/mobile-capture.manifest.json && git commit -F - <<'MSG'
@@ -4730,10 +5043,11 @@ MSG
 ### Task 11: Docs and ledgers
 
 **Files:**
-- Modify: `README.md` (the `client/src/utils/` tree near `:575-579`; the `components/` `mobile/` line near `:613`; the `hooks/` line `:619`; the `pages/` `mobile/` line near `:625`; the `server/utils/` tree)
-- Modify: `ARCHITECTURE.md` (`:226` the `/active-staff` row; `:453-454` the two shifts rows; `:2041` the Admin PWA service worker paragraph)
-- Modify: `docs/walkthroughs-owed.md` (a new entry after the Phone Events list entry, `:1787`)
+- Modify: `README.md` (the `client/src/utils/` tree near `:575-579`; the `components/` `mobile/` line `:582`; the `hooks/` line `:619`; the `pages/` `mobile/` line near `:625`; the `server/utils/` tree; Key Features, "Phone Admin PWA", `:709`)
+- Modify: `ARCHITECTURE.md` (`:226` the `/active-staff` row; `:453-454` the two shifts rows; `:2041` the Admin PWA service worker paragraph; `:2045` the Phone Events list bullet)
+- Modify: `docs/walkthroughs-owed.md` (the Phone Events list entry, `:1787`, and a new entry after it)
 - Modify: `docs/fix-list-remaining-2026-07-02.md` (the "Mobile admin: every phone-first DATA screen" entry, `:2074`)
+- Modify: `scripts/sensitive-paths.txt` (two client entries)
 
 - [ ] **Step 1: README**
 
@@ -4750,6 +5064,8 @@ In the `components/` `mobile/` description add `AssignmentSheet the phone ShiftD
 │   │   ├── staffingMeta.js     # Events-worked count and home-to-venue distance for the staffing reads (plain meta, never ranking; pinned to GET /admin/users/:id/seniority by test)
 ```
 
+In Key Features, "Phone Admin PWA" (`:709`), add one bullet: the phone event detail at `/events/:id` (venue as a map link, contacts as tap-to-call and tap-to-text, staffing per shift, financials with a bank payment in flight) and the assignment sheet (approve, deny, remove and assign from the phone; Android Back closes the sheet; the phone never over-fills a role and never writes a role the screen did not show).
+
 - [ ] **Step 2: ARCHITECTURE**
 
 Append to the `/active-staff` row (`:226`): ` Opt-in \`?shift_id=<id>\` (phone assignment sheet) adds \`events_worked\` and \`home_distance_miles\` (home to THAT shift's venue, null when either side has no coordinates) to every row; raw coordinates never leave the server; 400 on a malformed id, 404 on an unknown shift. Without \`shift_id\` the row shape is frozen (pinned by \`shifts.staffingMeta.test.js\`).`
@@ -4761,11 +5077,17 @@ Replace the two shifts rows (`:453-454`) with:
 | GET | `/detail/:id` | Staffing | Single shift detail: `{ shift, requests }`. `shift` carries `finished` and `proposal_status`; each request carries `events_worked` and the derived `home_distance_miles`. Read by the desktop `ShiftDrawer` and the phone `AssignmentSheet`. |
 ```
 
-In the Admin PWA service worker paragraph (`:2041`), after "allowlisted phone-surface GET `/api/` reads cached per-user", add: ` (the allowlist is exact paths plus anchored numeric-id patterns: \`/api/proposals/:id\`, \`/api/shifts/by-proposal/:id\`, \`/api/shifts/detail/:id\`, \`/api/drink-plans/by-proposal/:id\`, \`/api/invoices/proposal/:id\`; pinned by \`client/src/utils/adminSwAllowlist.test.js\`)`. Add one sentence to the mobile-admin section naming `client/src/utils/staffingSheet.js` as the phone's role-resolution module and stating its law: the phone never over-fills, never defaults a role, and re-reads the shift before an approve or an assign.
+In the Admin PWA service worker paragraph (`:2041`), after "allowlisted phone-surface GET `/api/` reads cached per-user", add: ` (the allowlist is exact paths plus anchored numeric-id patterns: \`/api/proposals/:id\`, \`/api/shifts/by-proposal/:id\`, \`/api/shifts/detail/:id\`, \`/api/drink-plans/by-proposal/:id\`, \`/api/invoices/proposal/:id\`; pinned by \`client/src/utils/adminSwAllowlist.test.js\`)`. In the mobile-admin section:
+- Rewrite the end of the Phone Events list bullet (`:2045`): it still says a manual shift opens "the interim desktop `ShiftDrawer` ... (lane ma-e2 swaps in the phone sheet)". It now opens `client/src/components/mobile/AssignmentSheet.js`, with push history.
+- Add a Phone event detail bullet: `client/src/pages/mobile/EventDetailPhone.js` is mounted by a route-level fork inside `client/src/pages/admin/EventDetailPage.js` (same URL, `useMobileView()`, screen key `event-detail`); it makes four reads, each allowed to fail alone, and only a dead `GET /proposals/:id` dispatches `mobile-route-dead`; its view-model is the pure `client/src/utils/eventDetailView.js`, which follows the desktop payment panel figure for figure; it hands the chrome its rich header through the outlet context (`setHeaderDetail`, cleared by `AdminLayout` on every route change).
+- Add an Assignment sheet bullet naming `client/src/utils/staffingSheet.js` as the phone's role-resolution module and stating its law: the phone never over-fills, never defaults a role, and re-reads the shift before an approve or an assign. Name `server/utils/staffingMeta.js` as the source of `events_worked` and `home_distance_miles`, and say that both are plain meta and that nothing sorts by them.
+- Add a sentence on `useDrawerParam`: replace history by default; `{ push: true, kinds }` for phone sheets.
 
 - [ ] **Step 3: walkthroughs-owed**
 
-Add directly after the Phone Events list entry, filling `<date>` and `<sha>` at merge:
+In the Phone Events list entry (`:1787`), replace the clause "a manual shift opens the drawer (Back leaves the list until the ma-e2 sheet lands)" with "a manual shift opens the assignment sheet and Android Back closes it (the sheet landed with lane ma-e2; walk it with the entry below)".
+
+Add directly after that entry, leaving `<date>` and `<sha>` exactly as written (the orchestrator fills both on main after the merge, when the squash sha exists):
 
 ```text
 - [ ] **Phone event detail and assignment sheet (lane ma-e2, merged <date>, <sha>).** Pixel, installed PWA, prod data.
@@ -4783,17 +5105,35 @@ Add directly after the Phone Events list entry, filling `<date>` and `<sha>` at 
 
 - [ ] **Step 4: fix list**
 
-In the "Mobile admin: every phone-first DATA screen" entry (`:2074`), add a dated amendment as the entry's second paragraph: the event detail and the assignment sheet are built by lane `ma-e2-event-detail` of `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`; the sheet component and the push-history Back behaviour now exist; still declared and unbuilt: `ma-e3-edit-sheet`, `ma-f1-proposals-list`, `ma-f2-proposal-detail`, `ma-f3-search`. Then add four new items to the list, each one line with its source:
+In the "Mobile admin: every phone-first DATA screen" entry (`:2074`), add a dated amendment as the entry's second paragraph: the event detail and the assignment sheet are built by lane `ma-e2-event-detail` of `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`; the sheet component and the push-history Back behaviour now exist; still declared and unbuilt: `ma-e3-edit-sheet`, `ma-f1-proposals-list`, `ma-f2-proposal-detail`, `ma-f3-search`. Then add five new items to the list, each one line with its source:
   - Deny sends the staffer nothing (no text, no email); the phone confirm says so. If a denial should notify, that is a change to `server/routes/shifts.approval.js` (sensitive) and a copy change on the phone (ma-e2 plan, Decision 1).
   - `events_worked` now has three readers (`autoAssign.js`, the seniority route, `staffingMeta.js`) held together by one test; fold the two older ones onto `loadEventsWorked` (ma-e2 plan, Task 1).
   - The phone cannot remove a no-show from a finished event (past rosters are read-only there by design); the desktop drawer can (ma-e2 plan, Decision 5).
+  - The phone list reloads from the top after a change made in the sheet, which loses the scroll position spec section 9 promises. Reload the loaded window in place instead (`limit` = the number of events on screen, capped at the feed's 200). Only manual shifts reach the sheet from the list, and prod has none upcoming, so it waits (ma-e2 plan fleet, 2026-09-29).
   - The event note (spec section 4: "a plain textarea that behaves with Android dictation") is drawn nowhere in the 2026-09-15 benchmark and declared in no lane. It has its own endpoint (`PATCH /proposals/:id/notes`), so it needs no money hydration; decide at the ma-e3 design pass whether it rides the edit sheet or gets a row of its own (ma-e2 plan, Self-Review).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: sensitive paths**
+
+The phone's role resolution decides the `position` that is written to the payroll seam, so a change to it must draw the full fleet. Append to `scripts/sensitive-paths.txt`, in the client block beside `client/public/admin-sw.js` (`:382`), with a comment line above them in the file's own style:
+
+```text
+# Phone staffing (lane ma-e2): roleStep decides the position an approve or an
+# assign writes, and the sheet is the only phone surface that writes it.
+client/src/utils/staffingSheet.js
+client/src/components/mobile/AssignmentSheet.js
+```
+
+Run: `node --test scripts/sensitive-match.test.js`
+Expected: PASS, unchanged count.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add README.md ARCHITECTURE.md docs/walkthroughs-owed.md docs/fix-list-remaining-2026-07-02.md && git commit -F - <<'MSG'
+git add README.md ARCHITECTURE.md docs/walkthroughs-owed.md docs/fix-list-remaining-2026-07-02.md scripts/sensitive-paths.txt && git commit -F - <<'MSG'
 docs(mobile): event detail, assignment sheet, staffing meta reads, owed walk
+
+Also lists the phone role-resolution module and the assignment sheet as
+sensitive paths: they decide the position written to the payroll seam.
 MSG
 ```
 
@@ -4822,7 +5162,7 @@ The `for` loop runs the suites in sequence, never in parallel. Read every pass c
 cd client && CI=true npx react-scripts test --watchAll=false src/utils src/hooks src/components/mobile src/pages/mobile src/pages/admin/EventDetailPage.fork.test.js src/pages/admin/EventsDashboard.fork.test.js src/context && CI=true npx react-scripts build
 ```
 
-Expected: all PASS, the build exits 0 with no warning.
+Expected: all PASS, the build exits 0 with no warning. If `EventsListPhone.test.js` fails on "scroll offsets are saved only after the loaded list has been restored", re-run that file alone before reading it as a regression (see the header).
 
 - [ ] **Step 3: Static gates**
 
@@ -4830,7 +5170,7 @@ Expected: all PASS, the build exits 0 with no warning.
 npm run check:css-scope && npm run check:filesize && git diff --name-only main...HEAD
 ```
 
-Expected: no scope violation; no file newly RED; every path in the diff appears in the lane footprint at the top of this plan. A path outside the footprint stops the lane: either it does not belong in the change or the footprint in this plan is amended on main first, with the reason.
+Expected: no scope violation; no file newly RED; every path in the diff appears in the lane footprint at the top of this plan. A path outside the footprint stops the lane: report it. Either it does not belong in the change, or the orchestrator amends the footprint on main first, with the reason.
 
 - [ ] **Step 4: Desktop regression by eye**
 
@@ -4838,25 +5178,32 @@ Dev server, 1280px: `/events/<id>` renders the desktop page as before; Manage op
 
 - [ ] **Step 5: Review fleet, per the lane map**
 
-code-review, consistency-check, security-review, database-review and ui-ux-review as Opus agents over `git diff main...HEAD`, each told to read its definition under `.claude/agents/` first, plus `/second-opinion` on the same diff. Briefs carry: the eleven decisions at the top of this plan, the Review Focus list, the two colour laws, and for security-review the three questions from Checkpoint A plus "can any tap on the phone write a `position` the screen did not show, and can any path over-fill a role". A failed or incomplete agent is never a pass: re-dispatch once, then split the diff. Fix rounds as needed, then a re-confirm on the fixed files. Record the as-built deltas in this plan's "Lane review round" section, on main, before the merge.
+Run by the orchestrator: code-review, consistency-check, security-review, database-review, performance-review and ui-ux-review over `git diff main...HEAD`, each told to read its definition under `.claude/agents/` first, plus `/second-opinion` on the same diff. Briefs carry: the eighteen decisions at the top of this plan, the Review Focus list, the two colour laws, for security-review the questions from Checkpoint A plus "can any tap on the phone write a `position` the screen did not show, and can any path over-fill a role", and for performance-review the second round trip on the two shifts reads, the three queries behind `?shift_id=`, and the sheet's pre-flight read before every approve and assign. A failed or incomplete agent is never a pass: re-dispatch once, then split the diff. Fix rounds as needed, then a re-confirm on the fixed files. The orchestrator records the as-built deltas in this plan's "Lane review round" section, on main, before the merge.
 
 - [ ] **Step 6: Merge**
 
-From `os` on `main`, with a clean tree for the lane's paths: `scripts/merge-lane.sh ma-e2-event-detail`. Re-run Steps 1 and 2 on merged `main`. Then `npm run worktree:rm ma-e2-event-detail`, fill `<date>` and `<sha>` in the walkthroughs-owed entry, and add the board line through `scripts/board-write.sh`. The push is Dallas's call and is not part of this lane.
+From `os` on `main`, with a clean tree for the lane's paths: `scripts/merge-lane.sh ma-e2-event-detail`. Re-run Steps 1 and 2 on merged `main`. Then `npm run worktree:rm ma-e2-event-detail`, fill `<date>` and `<sha>` in the walkthroughs-owed entry (on main, as its own commit), and add the board line through `scripts/board-write.sh`. The push is Dallas's call and is not part of this lane.
 
 ---
 
 ## Self-Review (2026-09-29)
 
-1. **Spec coverage.** Section 3 fork: Task 9. Section 3 push-history sheets ("Back closes an open sheet, always"): Task 3, exercised in Tasks 8, 9 and the gate (D6, D7). Visual contract and the 2026-09-15 design-session decisions for Event detail, Staffing card and Assignment sheet: Tasks 5, 6, 8, judged in Task 10 Step 4. Section 4 Detail header (venue link opens externally, tap-to-call and tap-to-text): Tasks 7, 8, D1, D3, and the Pixel walk for the installed-app behaviour. Section 4 role selection ("never defaulted, never a dropdown, never inferred"): Task 4 `roleStep`, Task 6. Section 4 candidate list (alphabetical, same feed, waitlist derived by the client module): Tasks 1, 4, 6. Section 7 offline (staleness line, allowlist, writes never queue, a failed save keeps the sheet open): Tasks 2, 6, 8, D12, D13. Section 9 dead-route fallback: Task 8 (proposal), Tasks 6 and 9 (sheet), D14. Section 10 inline errors with retry, server message surfaced, `err.status` never `err.statusCode`: Tasks 6, 8. Section 11 per-screen gate: Task 10. Docs law: Task 11. Out of this lane and declared: the edit sheet and its structured edits (ma-e3), the activity feed and the desktop page actions (Desktop view, by the 2026-09-15 decision that supersedes section 4's four-block list). Out of this lane and declared NOWHERE: the event note textarea of section 4, which the benchmark never drew; Task 11 puts it on the fix list for the ma-e3 design pass instead of quietly assigning it.
-2. **Placeholder scan.** No TBD. Two `<date>` and `<sha>` markers in Task 11 Step 3 are filled at merge by Task 12 Step 6, which names them. Three tasks carry a stated fallback for a condition that can only be seen at build time (Task 3 Step 4, Task 6 Step 5, Task 8 Step 10); each says exactly what to do and requires a report.
-3. **Type consistency.** `buildShiftView` returns the `ShiftView` fields Task 6 and Task 7 read (`rows, openRoles, openLabel, mix, rolesLabel, pills, count, closedReason, rosterless, full, open, slots, filled`). `roleStep` returns `blocked | direct | pick` in Task 4 and is switched on by those three names in Task 6. `normalizeRequest` accepts both request shapes Task 1 produces. `useDrawerParam` returns `{ kind, id, focus, open, close }` in Task 3 and is destructured that way in Tasks 8 and 9; `open(kind, id, { focus })` has one signature. `AssignmentSheet`'s five props are the same in Task 6, in both stubs (Tasks 8 and 9) and at both mounts. `headerOf` returns the object `MobileHeader` renders as `detail`. The server field names (`events_worked`, `home_distance_miles`, `requested_positions`, `finished`, `proposal_status`) are spelled the same in Task 1's test, its SQL, and the client modules that read them. The screen key `event-detail` matches `screenKey.js`.
+1. **Spec coverage.** Section 3 fork: Task 9. Section 3 push-history sheets ("Back closes an open sheet, always"): Task 3, exercised in Tasks 8b, 9 and the gate (D6, D7). Visual contract, the 2026-09-15 design-session decisions and the 2026-09-29 plan decisions for Event detail, Staffing card and Assignment sheet: Tasks 5, 6, 8a, 8b, judged in Task 10 Steps 3 and 4. Section 4 Detail header (venue link opens externally, tap-to-call and tap-to-text): Tasks 7, 8a, 8b, D1, D3, and the Pixel walk for the installed-app behaviour. Section 4 role selection ("never defaulted, never a dropdown, never inferred"): Task 4 `roleStep`, Task 6. Section 4 candidate list (alphabetical, same feed, waitlist derived by the client module): Tasks 1, 4, 6. Section 7 offline (staleness line, allowlist, writes never queue, a failed save keeps the sheet open): Tasks 2, 6, 8b, D12, D13. Section 9 dead-route fallback: Task 8b (proposal), Tasks 6 and 9 (sheet), D14. Section 10 inline errors with retry, server message surfaced, `err.status` never `err.statusCode`: Tasks 6, 8b; the Sentry surface tag is inherited from `AdminLayout` (Proven context), and a refused write is a handled outcome shown to the user, not an exception, so nothing here captures one (the server reports its own 5xx). Section 11 per-screen gate, with `elementFromPoint` on the primary actions: Task 10 (D2b). Docs law: Task 11. Out of this lane and declared: the edit sheet and its structured edits (ma-e3), the activity feed and the desktop page actions (Desktop view, by the 2026-09-15 decision that supersedes section 4's four-block list). Out of this lane and declared NOWHERE: the event note textarea of section 4, which the benchmark never drew; Task 11 puts it on the fix list for the ma-e3 design pass instead of quietly assigning it.
+2. **Placeholder scan.** No TBD. Two `<date>` and `<sha>` markers in Task 11 Step 3 are left as written by the implementer and filled on main after the merge (Task 12 Step 6), because the squash sha does not exist before it.
+3. **Type consistency.** `buildShiftView` returns the `ShiftView` fields Task 6 and Task 7 read (`rows, openRoles, openLabel, mix, rolesLabel, pills, count, closedReason, rosterless, full, open, slots, filled`). `roleStep` returns `blocked | direct | pick` in Task 4 and is switched on by those three names in Task 6. `normalizeRequest` accepts both request shapes Task 1 produces. `useDrawerParam` returns `{ kind, id, focus, open, close }` in Task 3 and is destructured that way in Tasks 8b and 9; `open(kind, id, { focus })` has one signature; both callers pass `{ push: true, kinds: SHEETS }`. `AssignmentSheet`'s five props are the same in Task 6, in both stubs (Tasks 8b and 9) and at both mounts. `headerOf` returns the object `MobileHeader` renders as `detail`; `contactsOf` returns both phones formatted, which is what Task 8b's test reads. The server field names (`events_worked`, `home_distance_miles`, `requested_positions`, `finished`, `proposal_status`) are spelled the same in Task 1's test, its SQL, and the client modules that read them. The screen key `event-detail` matches `screenKey.js`.
 4. **Review Focus.** Each of the five lines names its pinning test; all five tests exist in the named tasks.
-5. **Known judgment calls, stated.** The pre-flight re-read narrows the over-fill race to milliseconds and does not close it (the server still accepts an over-fill; closing it is a change to a sensitive handler). `events_worked` gains a third reader instead of a refactor of the two existing ones, held by a test, with the refactor on the fix list. The sheet reloads the list from the top after a change, as the interim drawer did. `TODAY` and the year on the when line use the device day, like the list. The benchmark's 10px and 11px type is kept; the capture's tiny-text count is recorded, not chased.
+5. **Known judgment calls, stated.** The pre-flight re-read narrows the over-fill race to milliseconds and does not close it (the server still accepts an over-fill; closing it is a change to a sensitive handler). `events_worked` gains a third reader instead of a refactor of the two existing ones, held by a test, with the refactor on the fix list. The sheet reloads the list from the top after a change, as the interim drawer did; the in-place reload is on the fix list. `TODAY` and the year on the when line use the device day, like the list. The benchmark's 10px and 11px type is kept; the capture's tiny-text count is recorded, not chased. The "Approve as" label sits 2px lower than drawn, because one label class serves both role-row blocks.
+6. **Plan fleet, 2026-09-29 (fidelity, decomposition, feasibility; all three FAIL; 9 blockers of which 5 distinct, 34 warnings, 24 suggestions; folded).** Two of the three reviewers applied this plan's code to a scratch copy of the client and ran it. What they found, and what changed:
+   - **Would not have passed as written.** The day-of phone came back unformatted from Task 7 while Task 8's test read it formatted, and the fix sat in a file Task 8's implementer did not own (now formatted at the source, with its own test). Two header assertions read the hand-off before its effect had flushed (now inside `waitFor`). Two test files were missing from the lane footprint, which the lane's own gate would have caught after eleven tasks (added).
+   - **Wrong expectations.** Both components were over the plan's own 330-line limit as written, so both "split if it grows" fallbacks would have fired into files the plan gave no code for (the limit is 400, the fallbacks are gone). Task 3's "verify it fails" step named the wrong tests. Three tests ended while a write's continuation was still pending (16 act warnings; zero now).
+   - **Real defects in the code.** An approval with no role on file did not fill a slot, so the phone would have offered a filled slot again (none in prod, 83 of 83 carry a role; now counted). A failure box outlived the action it belonged to, so Retry could repeat a stale write (cleared now). A sheet entry with nothing behind it could never be closed; a desktop drawer link opened on the phone gained a history entry for a sheet that did not exist (the hook now checks its position and takes a list of sheet kinds). `shift_id` above int4 answered 500. A bad date or amount rendered a dash glyph through the shared formatters. A staffing reload could land on the wrong event.
+   - **Unrecorded departures from the benchmark.** Seven (contacts as tap targets, cents, the when line, the per-shift head, the cancelled event, the banner's Retry, roster order) are now Decisions 12 to 18 and in the spec. The light skin's section border, the 12px fraction, the 6px payment rows and the uppercase dates now match the benchmark. Rows inside a detail section no longer ship the sheet's row class.
+   - **Structure.** Task 8 is two tasks (the chrome change has its own commit and review). The class-contract test moved to the task that owns the files it reads. Checkpoint A's brief moved to the header and gained the at-rest payload question. Implementers report; the orchestrator writes the plan. performance-review joined the fleet. The browser gate gained a fix step, probes on every primary action, and every state the benchmark names. The docs task gained five missing updates and the two sensitive-path entries.
+   - **After the fold,** measured in a scratch copy of the client with every code block in this plan applied: 19 suites, 334 tests, all passing, no act warning; the CRA lint clean on the nine changed sources; `CI=true react-scripts build` exit 0. Task 1's server suite was checked statically (columns, constraints, aliases, the composed SQL) and not run, because it seeds the shared dev database; it runs for the first time in the lane.
 
 ## Browser checks (lane ma-e2)
 
-Filled by Task 10, on main, before the merge.
+Written by the orchestrator from Task 10's report, on main, before the merge.
 
 | check | result | evidence |
 |---|---|---|
@@ -4864,4 +5211,4 @@ Filled by Task 10, on main, before the merge.
 
 ## Lane review round, as-built deltas (ma-e2)
 
-Filled by Task 12 Step 5, on main, before the merge.
+Written by the orchestrator from the fleet's verdicts and the fix rounds (Task 12 Step 5), on main, before the merge.
