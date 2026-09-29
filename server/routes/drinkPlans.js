@@ -379,6 +379,36 @@ router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, asyncHandl
  *  a second round-trip. selections is kept (needed for detail); shopping_list
  *  itself has its own endpoint. */
 router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Phone projection (lane ma-e2, security checkpoint 2026-09-29). The phone
+  // event detail shows the day-of contact and nothing else from the plan, so
+  // this is all it reads and all the admin service worker stores. The full
+  // read below carries the plan's write-capable token, the internal notes and
+  // the venue access notes clients type gate codes into.
+  if (req.query.fields !== undefined) {
+    if (req.query.fields !== 'day_of_contact') {
+      throw new ValidationError({ fields: 'Unknown projection.' });
+    }
+    const rawId = String(req.params.proposalId);
+    if (!/^\d+$/.test(rawId) || Number(rawId) < 1 || Number(rawId) > 2147483647) {
+      throw new ValidationError({ proposalId: 'proposalId must be a positive integer.' });
+    }
+    // ORDER BY: proposal_id is not unique, and this read and the full one
+    // below must name the same plan when a proposal has two.
+    const projected = await pool.query(
+      `SELECT dp.selections->'logistics'->'dayOfContact' AS contact
+         FROM drink_plans dp
+        WHERE dp.proposal_id = $1
+        ORDER BY dp.id
+        LIMIT 1`,
+      [Number(rawId)]
+    );
+    if (!projected.rows[0]) throw new NotFoundError('No drink plan found for this proposal.');
+    const contact = projected.rows[0].contact;
+    const held = contact && typeof contact === 'object' ? contact : {};
+    const name = String(held.name || '').trim();
+    const phone = String(held.phone || '').trim();
+    return res.json({ day_of_contact: name ? { name, phone } : null });
+  }
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
@@ -402,7 +432,8 @@ router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler
      LEFT JOIN users u ON u.id = dp.created_by
      LEFT JOIN users cu ON cu.id = dp.consult_filled_by_user_id
      LEFT JOIN proposals p ON p.id = dp.proposal_id
-     WHERE dp.proposal_id = $1`,
+     WHERE dp.proposal_id = $1
+     ORDER BY dp.id`,
     [req.params.proposalId]
   );
   if (!result.rows[0]) throw new NotFoundError('No drink plan found for this proposal.');

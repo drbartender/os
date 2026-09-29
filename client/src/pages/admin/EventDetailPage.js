@@ -32,10 +32,12 @@ import { venueMapQuery } from '../../components/VenueAddressFields';
 import { STAFF_URL } from '../../utils/constants';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import OutOfAreaKnob from './OutOfAreaKnob';
+import { useMobileView } from '../../context/MobileViewContext';
+import EventDetailPhone from '../mobile/EventDetailPhone';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
-export default function EventDetailPage() {
+function EventDetailPageDesktop() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const { user: viewer } = useAuth();
@@ -654,4 +656,17 @@ export default function EventDetailPage() {
       />
     </div>
   );
+}
+
+// Phone fork (spec 2026-08-13-mobile-admin section 3): one URL, two
+// components. At phone width /events/:id renders the phone detail unless this
+// screen is pinned to Desktop view. The fork lives here, above the desktop
+// body's hooks, so hook order never changes between branches.
+export default function EventDetailPage() {
+  const { id } = useParams();
+  const { isPhone, desktopView } = useMobileView();
+  // Keyed by the event: going from one event to another is a NEW screen, so
+  // no state and no late answer of the previous event can show on the next.
+  if (isPhone && !desktopView('event-detail')) return <EventDetailPhone key={id} />;
+  return <EventDetailPageDesktop />;
 }

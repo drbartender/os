@@ -20999,6 +20999,8 @@ html[data-app="admin-os"] .m-stale {
   margin: 0 0 0.5rem;
 }
 html[data-app="admin-os"] .m-stale .m-stale-time { font-family: var(--font-numeric); }
+/* Refresh, on a stored copy only: pushed to the far end of the line. */
+html[data-app="admin-os"] .m-stale .m-fail-retry { margin-left: auto; }
 html[data-app="admin-os"] .m-main {
   flex: 1;
   overflow-y: auto;
@@ -21244,7 +21246,7 @@ html[data-app="admin-os"] .m-enroll-yes { background: var(--accent); border-colo
    treatment to classes. Lists are date-ordered cards, never tables. ---- */
 /* Type tokens the design system defines (tokens/typography.css) and index.css
    never did; the mobile block is their first consumer. */
-html[data-app="admin-os"] { --fs-body: 13px; --fs-meta: 11.5px; }
+html[data-app="admin-os"] { --fs-body: 13px; --fs-meta: 11.5px; --fs-h3: 13px; }
 html[data-app="admin-os"] .m-listbar {
   /* top matches the bar's own negative margin, not 0: the bar is pulled out of
      .m-main's 0.75rem padding, so sticking it at the scroller's content edge
@@ -21373,6 +21375,329 @@ html[data-app="admin-os"][data-skin="light"] .m-tag-bar { background: hsl(var(--
 html[data-app="admin-os"][data-skin="light"] .m-tag-supplies { background: hsl(var(--ok-h) var(--ok-s) 30% / 0.08); border-color: hsl(var(--ok-h) var(--ok-s) 30% / 0.4); color: var(--ms-emerald); }
 html[data-app="admin-os"][data-skin="light"] .m-card-more .m-showmore { color: var(--accent); }
 html[data-app="admin-os"][data-skin="light"] .m-empty.ok { color: var(--ms-emerald); }
+
+/* ---- Mobile admin: event detail and assignment sheet (spec 2026-08-13
+   section 4 Detail, benchmark
+   docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Event detail
+   and Assignment sheet). The sheet rules are folded from the design system's
+   components-mobile.css and the pills from components-admin.css; the
+   sections, people rows, action buttons and money rows promote the
+   benchmark's inline treatment to classes (the benchmark reused .m-more-list
+   and .m-more-row for its accordion; .m-section is that, promoted).
+   Two laws. A modifier is its own m-* class, never a bare word beside one.
+   And red is the literal #ff4d4d here: the After Hours palette sets
+   the danger hue to violet inline, so a computed danger colour reads purple. ---- */
+
+/* Rich detail header, inside .m-header */
+html[data-app="admin-os"] .m-header.m-header-detail { min-height: 60px; padding: 8px 8px 8px 2px; }
+html[data-app="admin-os"] .m-dhead { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+html[data-app="admin-os"] .m-dhead-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+html[data-app="admin-os"] .m-dhead-title {
+  flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 600; font-family: var(--font-display);
+  color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html[data-app="admin-os"] .m-dhead-kind { color: var(--ink-3); font-weight: 400; }
+html[data-app="admin-os"] .m-dhead-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .m-dhead-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
+/* The link is one line of 11.5px text; the padding and the matching negative
+   margin give it a 44px touch area without moving anything. The area sits
+   more above the text than below it: with 13px each way its last 3px hung
+   under the header's bottom edge, where the page takes the tap, and the
+   target measured 42. align-self keeps the area to the link's own width:
+   stretched across the header it would take taps meant for the title. */
+html[data-app="admin-os"] .m-dhead-venue {
+  display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; min-width: 0; max-width: 100%;
+  padding: 17px 0 9px; margin: -17px 0 -9px;
+  font-family: var(--font-numeric); font-size: 11.5px; font-weight: 600; line-height: 18px;
+  color: hsl(var(--accent-h) var(--accent-s) 62%); text-decoration: none;
+}
+html[data-app="admin-os"] .m-dhead-venue span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-app="admin-os"] .m-dhead-venue svg { flex: none; }
+
+/* When and setup lines */
+html[data-app="admin-os"] .m-detail-when { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
+html[data-app="admin-os"] .m-detail-whenline { display: flex; align-items: center; gap: 8px; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-detail-setup { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3); }
+
+/* Accordion sections */
+html[data-app="admin-os"] .m-section {
+  margin-bottom: 8px; background: var(--bg-2); border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+html[data-app="admin-os"] .m-section-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 16px;
+  background: none; border: none; color: var(--ink-1); font-size: 13px; font-family: var(--font-ui);
+  text-align: left; cursor: pointer;
+}
+html[data-app="admin-os"] .m-section-row:active { background: var(--row-hover); }
+html[data-app="admin-os"] .m-section-row:disabled { cursor: default; }
+html[data-app="admin-os"] .m-section-name { flex: 1; }
+html[data-app="admin-os"] .m-section-sum { flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); }
+html[data-app="admin-os"] .m-section-num { flex: none; font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-section-row .m-frac,
+html[data-app="admin-os"] .m-shift-head .m-frac { flex: none; font-size: 12px; }
+html[data-app="admin-os"] .m-section-caret { flex: none; display: flex; color: var(--ink-4); transition: transform 120ms ease; }
+html[data-app="admin-os"] .m-section-caret.m-section-caret-open { transform: rotate(90deg); }
+html[data-app="admin-os"] .m-section-label {
+  border-top: 1px solid var(--line-1); padding: 10px 16px 4px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+}
+html[data-app="admin-os"] .m-section-note {
+  padding: 4px 16px 12px; display: flex; align-items: center; gap: 8px;
+  font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5;
+}
+html[data-app="admin-os"] .m-section-note svg { flex: none; color: var(--ink-4); }
+
+/* Contacts: every number and address is a tap target */
+html[data-app="admin-os"] .m-contact { padding: 0 16px 8px; display: flex; flex-direction: column; }
+html[data-app="admin-os"] .m-contact-name { padding-top: 6px; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .m-contact-line { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+html[data-app="admin-os"] .m-contact-link {
+  flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center;
+  font-family: var(--font-numeric); font-size: 12.5px; color: hsl(var(--accent-h) var(--accent-s) 62%);
+  text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* A number shown as stored because no phone could dial it: text, not a link. */
+html[data-app="admin-os"] .m-contact-plain {
+  flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center;
+  font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html[data-app="admin-os"] .m-contact-act {
+  flex: none; min-width: 56px; min-height: 44px; padding: 0 12px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  font-family: var(--font-ui); font-size: 12px; font-weight: 600; color: var(--ink-2); text-decoration: none;
+}
+
+/* Staffing card: a head per shift when the event has more than one */
+html[data-app="admin-os"] .m-shift-head { border-top: 1px solid var(--line-1); display: flex; align-items: center; gap: 8px; padding: 9px 16px 5px; }
+html[data-app="admin-os"] .m-shift-label {
+  flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* People rows: the staffing card, the sheet roster and the picker share them */
+/* In px: the app's root is 14px and the design's is 16px, and every other
+   block here is in px. In rem these rows sat 2px left of the labels and
+   buttons of their own card. */
+html[data-app="admin-os"] .m-sheet-row,
+html[data-app="admin-os"] .m-section-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 16px;
+  background: none; border: none; border-top: 1px solid var(--line-1);
+  color: var(--ink-1); font-size: var(--fs-body); font-family: var(--font-ui); text-align: left; cursor: pointer;
+}
+/* The global focus ring is drawn 4px OUTSIDE the element, and these rows fill
+   containers that clip (the section, the sheet's scrolling body): collapsed
+   section heads showed no ring at all. Drawn inside, it is whole. */
+html[data-app="admin-os"] .m-section-row:focus-visible,
+html[data-app="admin-os"] .m-section-item:focus-visible,
+html[data-app="admin-os"] .m-sheet-row:focus-visible { outline-offset: -2px; }
+html[data-app="admin-os"] .m-sheet-row:active,
+html[data-app="admin-os"] .m-section-item:active { background: var(--row-hover); }
+html[data-app="admin-os"] .m-sheet-row:disabled,
+html[data-app="admin-os"] .m-section-item:disabled { cursor: default; }
+/* While a write is in flight the rows it has disabled look it. (An offline
+   picker row keeps its full ink, as drawn: its "Offline" says why.) */
+html[data-app="admin-os"] .m-sheet-busy .m-sheet-row:disabled { opacity: 0.45; }
+html[data-app="admin-os"] .m-sheet-row.m-person,
+html[data-app="admin-os"] .m-section-item.m-person { padding-top: 7px; padding-bottom: 7px; }
+html[data-app="admin-os"] .m-avatar {
+  width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); background: var(--bg-3); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+}
+html[data-app="admin-os"] .m-avatar.m-avatar-app { background: var(--accent-soft); color: var(--accent); }
+html[data-app="admin-os"] .m-person-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+/* Line heights are explicit: inherited from the app's body (1.45) every row
+   stood 4 to 11 percent taller than drawn. The meta line WRAPS, as drawn: it
+   carries the events worked and the distance, and an ellipsis ate them. */
+html[data-app="admin-os"] .m-person-name { line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* overflow-wrap: one token longer than the line (a person shown by email)
+   breaks instead of running under the chip. */
+html[data-app="admin-os"] .m-person-meta { font-family: var(--font-numeric); font-size: 11px; line-height: 14px; color: var(--ink-3); overflow-wrap: anywhere; }
+html[data-app="admin-os"] .m-person-check { flex: none; display: flex; color: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .m-person-go { flex: none; font-size: 12.5px; font-weight: 600; color: hsl(var(--accent-h) var(--accent-s) 62%); }
+html[data-app="admin-os"] .m-person-go.m-person-go-off { color: var(--ink-4); }
+html[data-app="admin-os"] .m-sheet-row.m-assign-row,
+html[data-app="admin-os"] .m-section-item.m-assign-row { color: hsl(var(--accent-h) var(--accent-s) 62%); font-weight: 600; }
+
+/* Financials */
+html[data-app="admin-os"] .m-money-row { padding: 7px 16px; display: flex; align-items: center; gap: 8px; }
+html[data-app="admin-os"] .m-money-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+html[data-app="admin-os"] .m-money-label { font-size: var(--fs-body); line-height: 16px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-money-sub { font-family: var(--font-numeric); font-size: 11px; line-height: 14px; color: var(--ink-3); }
+html[data-app="admin-os"] .m-money-amt { flex: none; font-family: var(--font-numeric); font-size: 12.5px; line-height: 17px; color: var(--ink-1); }
+html[data-app="admin-os"] .m-money-row.m-money-pay { padding: 6px 16px; }
+html[data-app="admin-os"] .m-money-row.m-money-total { border-top: 1px solid var(--line-2); padding: 9px 16px; }
+html[data-app="admin-os"] .m-money-total .m-money-label,
+html[data-app="admin-os"] .m-money-total .m-money-amt { font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .m-money-row.m-money-bal { border-top: 1px solid var(--line-2); padding: 8px 16px 10px; }
+html[data-app="admin-os"] .m-money-bal .m-money-label,
+html[data-app="admin-os"] .m-money-bal .m-money-amt { font-weight: 600; color: hsl(var(--warn-h) var(--warn-s) 58%); }
+/* A payment is already on its way: the balance is a fact, not a chase. */
+html[data-app="admin-os"] .m-money-bal.m-money-flight .m-money-label,
+html[data-app="admin-os"] .m-money-bal.m-money-flight .m-money-amt { color: var(--ink-2); }
+html[data-app="admin-os"] .m-money-row.m-money-paid { border-top: 1px solid var(--line-2); padding: 9px 16px 11px; }
+html[data-app="admin-os"] .m-money-paid .m-money-label,
+html[data-app="admin-os"] .m-money-paid .m-money-amt { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
+
+/* Edit details row */
+html[data-app="admin-os"] .m-edit-note {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4);
+}
+html[data-app="admin-os"] .m-edit-note.m-edit-note-locked { color: var(--ink-3); }
+
+/* The bottom sheet. Below the lock (10000) and the toasts (10500).
+   It covers the header and the tab bar because NEITHER IS POSITIONED, not
+   because of these numbers. The page root is a child of main, and the legacy
+   rule for main's children (position: relative; z-index: 1) makes that root a
+   stacking context, so 900 and 901 only order the scrim and the sheet against
+   each other. Give the header or the tab bar a z-index and the sheet has to
+   move to a portal on document.body. */
+html[data-app="admin-os"] .m-sheet-scrim {
+  position: fixed; inset: 0; z-index: 900; width: 100%; height: 100%; padding: 0; border: none;
+  background: rgba(0, 0, 0, 0.5); animation: m-sheet-fade 180ms ease;
+}
+html[data-app="admin-os"] .m-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 901; max-height: 80dvh;
+  display: flex; flex-direction: column; outline: none;
+  background: var(--bg-elev); border: 1px solid var(--line-2); border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: var(--shadow-pop);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  animation: m-sheet-up 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes m-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes m-sheet-fade { from { opacity: 0; } to { opacity: 1; } }
+html[data-app="admin-os"] .m-sheet-handle { flex: none; width: 36px; height: 4px; border-radius: 2px; background: var(--line-3); margin: 8px auto 4px; }
+html[data-app="admin-os"] .m-sheet-head { flex: none; padding: 2px 16px 10px; border-bottom: 1px solid var(--line-1); }
+html[data-app="admin-os"] .m-sheet-title { margin: 0; font-size: var(--fs-h3); font-weight: 600; font-family: var(--font-ui); color: var(--ink-1); }
+html[data-app="admin-os"] .m-sheet-kind { color: var(--ink-3); font-weight: 400; }
+html[data-app="admin-os"] .m-sheet-when { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-family: var(--font-numeric); font-size: var(--fs-meta); color: var(--ink-3); }
+html[data-app="admin-os"] .m-pills { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; }
+html[data-app="admin-os"] .m-pill { width: 14px; height: 6px; border-radius: 2px; background: var(--line-2); }
+html[data-app="admin-os"] .m-pill.m-pill-filled { background: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .m-pill.m-pill-pending { background: hsl(var(--warn-h) var(--warn-s) 55%); }
+html[data-app="admin-os"] .m-pill-count { margin-left: 4px; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-sheet-mix { margin-top: 4px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-sheet-venue { margin-top: 4px; font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); }
+html[data-app="admin-os"] .m-sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 6px; }
+html[data-app="admin-os"] .m-sheet-sec { padding: 12px 16px 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-sheet-sec.m-sheet-sec-line { border-top: 1px solid var(--line-1); }
+html[data-app="admin-os"] .m-sheet-item { border-top: 1px solid var(--line-1); }
+/* The PERSON row only: the role rows under it keep their line. Each of them
+   writes a role, and two 48px targets with nothing between them read as one. */
+html[data-app="admin-os"] .m-sheet-item > .m-sheet-row.m-person { border-top: none; }
+html[data-app="admin-os"] .m-sheet-note {
+  margin: 10px 16px 2px; padding: 10px 12px; display: flex; gap: 8px; align-items: flex-start;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+}
+html[data-app="admin-os"] .m-sheet-note .m-fail-retry { align-self: center; }
+html[data-app="admin-os"] .m-sheet-note-dot { width: 6px; height: 6px; flex: none; margin-top: 5px; border-radius: 50%; background: hsl(var(--warn-h) var(--warn-s) 52%); }
+html[data-app="admin-os"] .m-sheet-note-text { flex: 1; font-size: var(--fs-meta); color: var(--ink-2); line-height: 1.5; }
+html[data-app="admin-os"] .m-sheet-state { padding: 22px 16px; text-align: center; font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5; }
+
+/* Row actions, the confirm and the failed save */
+html[data-app="admin-os"] .m-acts { padding: 0 16px 10px; display: flex; gap: 8px; }
+html[data-app="admin-os"] .m-act {
+  flex: 1; min-height: 44px; padding: 0 12px; border-radius: var(--radius);
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+html[data-app="admin-os"] .m-act:disabled { opacity: 0.45; cursor: default; }
+html[data-app="admin-os"] .m-act.m-act-primary { border: none; background: var(--accent); color: #fff; }
+html[data-app="admin-os"] .m-act.m-act-quiet { border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-2); }
+html[data-app="admin-os"] .m-act.m-act-danger { border: 1px solid rgba(255, 77, 77, 0.6); background: transparent; color: #ff4d4d; }
+/* The tint is 0.08: at 0.14 the red label on it measured 4.27:1. */
+html[data-app="admin-os"] .m-act.m-act-confirm { border: 1px solid rgba(255, 77, 77, 0.6); background: rgba(255, 77, 77, 0.08); color: #ff4d4d; }
+html[data-app="admin-os"] .m-confirm {
+  margin: 0 16px 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid rgba(255, 77, 77, 0.6); border-radius: var(--radius);
+}
+html[data-app="admin-os"] .m-confirm-copy { font-size: var(--fs-meta); color: var(--ink-2); line-height: 1.5; }
+html[data-app="admin-os"] .m-confirm-btns { display: flex; gap: 8px; }
+html[data-app="admin-os"] .m-fail {
+  margin: 0 16px 10px; padding: 9px 12px; display: flex; align-items: center; gap: 8px;
+  border: 1px solid rgba(255, 77, 77, 0.6); border-radius: var(--radius);
+}
+html[data-app="admin-os"] .m-fail-msg { flex: 1; font-size: var(--fs-meta); color: #ff4d4d; line-height: 1.5; }
+/* Under a section head the box has no block above it to keep its distance. */
+html[data-app="admin-os"] .m-section > .m-fail { margin-top: 10px; }
+/* A note inside the contact block is already inside its padding. */
+html[data-app="admin-os"] .m-contact .m-section-note { padding-left: 0; padding-right: 0; }
+/* What the failed save was, above why it failed: a box that has left its row
+   still says whose it is. */
+html[data-app="admin-os"] .m-fail-who { display: block; font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .m-fail-retry {
+  flex: none; min-height: 44px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: var(--bg-2); color: var(--ink-1); font-family: var(--font-ui); font-size: 12px; font-weight: 600; cursor: pointer;
+}
+html[data-app="admin-os"] .m-fail-retry:disabled { opacity: 0.45; cursor: default; }
+/* Dismiss beside Retry: the safe one of the two is the quiet one. */
+html[data-app="admin-os"] .m-fail-retry.m-fail-quiet { border-color: transparent; background: transparent; color: var(--ink-2); }
+/* The row being written, until its write settles. */
+html[data-app="admin-os"] .m-saving { padding: 0 16px 10px; font-size: var(--fs-meta); line-height: 14px; color: var(--ink-3); }
+
+/* Role rows and the picker */
+html[data-app="admin-os"] .m-role-label { padding: 2px 16px 4px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-role-name { flex: 1; line-height: 16px; }
+html[data-app="admin-os"] .m-role-open { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .m-sheet-searchwrap { padding: 0 16px 8px; }
+html[data-app="admin-os"] .m-sheet-search {
+  width: 100%; box-sizing: border-box; min-height: 44px; padding: 0 12px;
+  border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg-3); color: var(--ink-1);
+  font-family: var(--font-ui); font-size: 12.5px; -webkit-appearance: none; appearance: none;
+}
+/* iOS Safari zooms the page when a field under 16px takes focus, and stays
+   zoomed. This matches WebKit on iOS only; every other phone keeps the size
+   as drawn. */
+@supports (-webkit-touch-callout: none) {
+  html[data-app="admin-os"] .m-sheet-search { font-size: 16px; }
+}
+/* type="search" draws its own clear button; the design has none here. */
+html[data-app="admin-os"] .m-sheet-search::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+html[data-app="admin-os"] .m-sheet-search:disabled { opacity: 0.5; }
+html[data-app="admin-os"] .m-sheet-nomatch { padding: 18px 16px 8px; text-align: center; font-size: var(--fs-meta); color: var(--ink-3); }
+
+/* House Lights: squared corners, the skin's own ink for links, red, green and amber */
+html[data-app="admin-os"][data-skin="light"] .m-section { border-color: var(--line-2); box-shadow: none; }
+/* Squared in House Lights: the sections, the sheet, the buttons and the search
+   field. The confirm box, the failed-save box, the note and the avatars keep
+   their radius, as drawn. */
+html[data-app="admin-os"][data-skin="light"] .m-section,
+html[data-app="admin-os"][data-skin="light"] .m-sheet,
+html[data-app="admin-os"][data-skin="light"] .m-act,
+html[data-app="admin-os"][data-skin="light"] .m-fail-retry,
+html[data-app="admin-os"][data-skin="light"] .m-contact-act,
+html[data-app="admin-os"][data-skin="light"] .m-sheet-search { border-radius: 0; }
+html[data-app="admin-os"][data-skin="light"] .m-dhead-venue,
+html[data-app="admin-os"][data-skin="light"] .m-contact-link,
+html[data-app="admin-os"][data-skin="light"] .m-person-go,
+html[data-app="admin-os"][data-skin="light"] .m-sheet-row.m-assign-row,
+html[data-app="admin-os"][data-skin="light"] .m-section-item.m-assign-row { color: var(--accent); }
+html[data-app="admin-os"][data-skin="light"] .m-person-go.m-person-go-off { color: var(--ink-4); }
+html[data-app="admin-os"][data-skin="light"] .m-avatar.m-avatar-app { color: var(--accent-ink); }
+html[data-app="admin-os"][data-skin="light"] .m-act.m-act-primary { color: var(--bg-0); }
+html[data-app="admin-os"][data-skin="light"] .m-act.m-act-danger,
+html[data-app="admin-os"][data-skin="light"] .m-act.m-act-confirm { border-color: var(--ms-bordeaux); background: transparent; color: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .m-confirm,
+html[data-app="admin-os"][data-skin="light"] .m-fail { border-color: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .m-fail-msg { color: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .m-person-check,
+html[data-app="admin-os"][data-skin="light"] .m-money-paid .m-money-label,
+html[data-app="admin-os"][data-skin="light"] .m-money-paid .m-money-amt { color: var(--ms-emerald); }
+html[data-app="admin-os"][data-skin="light"] .m-money-bal .m-money-label,
+html[data-app="admin-os"][data-skin="light"] .m-money-bal .m-money-amt { color: var(--ms-camel); }
+html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-money-label,
+html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-money-amt { color: var(--ink-2); }
+/* Motion is decoration here. The one media query in this block, and it is not
+   a width query: the phone layout is decided in JS (useMobileView). */
+@media (prefers-reduced-motion: reduce) {
+  html[data-app="admin-os"] .m-sheet,
+  html[data-app="admin-os"] .m-sheet-scrim { animation: none; }
+  html[data-app="admin-os"] .m-section-caret { transition: none; }
+}
+/* ---- end: event detail and assignment sheet ---- */
 
 /* ==========================================================================
    Staff hub chrome (spec 2026-08-19-admin-staff-hub-design.md §3).

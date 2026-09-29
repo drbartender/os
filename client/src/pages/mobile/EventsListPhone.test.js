@@ -1,14 +1,25 @@
 import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import EventsListPhone from './EventsListPhone';
 import api from '../../utils/api';
 
 jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
 jest.mock('../../context/ToastContext', () => ({ useToast: () => ({ success: jest.fn(), error: jest.fn(), info: jest.fn() }) }));
-// The interim drawer is the desktop one; stub it so this test stays about the list.
-jest.mock('../../components/adminos/drawers/ShiftDrawer', () => ({ __esModule: true, default: ({ open, shiftId }) => (open ? <div data-testid="shift-drawer">drawer {shiftId}</div> : null) }));
+// The sheet has its own suite; here it is a stub that exposes its props.
+jest.mock('../../components/mobile/AssignmentSheet', () => ({
+  __esModule: true,
+  default: ({ shiftId, assignable, onClose, onChanged, onDead }) => (
+    <div data-testid="sheet">
+      <span data-testid="sheet-shift">{String(shiftId)}</span>
+      <span data-testid="sheet-assignable">{String(assignable)}</span>
+      <button type="button" onClick={onClose}>stub close</button>
+      <button type="button" onClick={onChanged}>stub changed</button>
+      <button type="button" onClick={onDead}>stub dead</button>
+    </div>
+  ),
+}));
 
 const row = (over = {}) => ({
   id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding-reception',
@@ -22,7 +33,11 @@ const env = (rows, over = {}) => ({
   data: { scope: 'upcoming', offset: 0, limit: 60, total_events: rows.length, scope_events: rows.length, needs_staff_events: 1, has_more: false, next_offset: 60, rows, ...over },
 });
 
-function LocationProbe() { const l = useLocation(); return <div data-testid="loc">{l.pathname + l.search}</div>; }
+function LocationProbe() {
+  const l = useLocation();
+  const n = useNavigate();
+  return (<><div data-testid="loc">{l.pathname + l.search}</div><button type="button" onClick={() => n(-1)}>history back</button></>);
+}
 function mount(initial = '/events') {
   return render(
     <MemoryRouter initialEntries={[initial]}>
@@ -40,7 +55,7 @@ test('fetches scope=upcoming by default and renders one card per event with the 
   api.get.mockResolvedValue(env([row(), row({ id: 2, positions_needed: '["Banquet Server"]', approved_count: 1, pending_count: 0 })]));
   mount();
   expect(await screen.findByText('Henderson')).toBeInTheDocument();
-  expect(api.get).toHaveBeenCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } });
+  expect(api.get).toHaveBeenCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 }, headers: { 'X-Offline-Ok': '1' } });
   const card = screen.getByRole('button', { name: /Henderson/ });
   expect(within(card).getByText('3/4')).toHaveClass('m-frac');
   expect(within(card).getByText('2 requests')).toBeInTheDocument();
@@ -56,12 +71,12 @@ test('the Needs staff chip writes ?needs=1, refetches with needs_staff=1, hides 
   await screen.findByText('Henderson');
   expect(screen.getByRole('button', { name: /Needs staff/ })).toHaveTextContent('1');
   fireEvent.click(screen.getByRole('button', { name: /Needs staff/ }));
-  await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0, needs_staff: 1 } }));
+  await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0, needs_staff: 1 }, headers: { 'X-Offline-Ok': '1' } }));
   expect(screen.getByTestId('loc')).toHaveTextContent('/events?needs=1');
   await screen.findByText('Henderson');
   expect(screen.queryByText(/End of upcoming/)).toBeNull();
   fireEvent.click(screen.getByRole('radio', { name: 'Past' }));
-  await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'past', limit: 60, offset: 0 } }));
+  await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'past', limit: 60, offset: 0 }, headers: { 'X-Offline-Ok': '1' } }));
   expect(screen.getByTestId('loc')).toHaveTextContent('/events?scope=past');
   expect(screen.queryByRole('button', { name: /Needs staff/ })).toBeNull();
   await screen.findByText('Henderson');   // let the past page settle inside act
@@ -88,7 +103,7 @@ test('Show more appends the next page and the end divider counts events', async 
   expect(more).toHaveTextContent('1 of 2');
   fireEvent.click(more);
   expect(await screen.findByText('Okafor')).toBeInTheDocument();
-  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 1 } });
+  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 1 }, headers: { 'X-Offline-Ok': '1' } });
   expect(screen.queryByRole('button', { name: /Show more/ })).toBeNull();
   expect(screen.getByText('End of upcoming · 2 events')).toBeInTheDocument();
 });
@@ -134,7 +149,7 @@ test('empty states: Upcoming, Past, Needs staff with nothing open, Needs staff o
   expect(await screen.findByText('No past events')).toBeInTheDocument();
   api.get.mockResolvedValue({ data: { scope: 'upcoming', offset: 0, limit: 60, total_events: 0, scope_events: 3, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
   fireEvent.click(screen.getByRole('radio', { name: 'Upcoming' }));
-  await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } }));
+  await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 }, headers: { 'X-Offline-Ok': '1' } }));
   fireEvent.click(await screen.findByRole('button', { name: /Needs staff/ }));
   expect(await screen.findByText('Fully staffed')).toBeInTheDocument();
   api.get.mockResolvedValue({ data: { scope: 'upcoming', offset: 0, limit: 60, total_events: 0, scope_events: 0, needs_staff_events: 0, has_more: false, next_offset: 60, rows: [] } });
@@ -143,14 +158,102 @@ test('empty states: Upcoming, Past, Needs staff with nothing open, Needs staff o
   expect(await screen.findByText('Nothing on the calendar')).toBeInTheDocument();
 });
 
-test('a booked card navigates to the event detail; a manual card opens the shift drawer', async () => {
-  api.get.mockResolvedValue(env([row(), row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null, proposal_guest_count: null })]));
+test('a booked card navigates to the event detail', async () => {
+  api.get.mockResolvedValue(env([row()]));
   mount();
-  await screen.findByText('Henderson');
-  fireEvent.click(screen.getByRole('button', { name: /Night Market/ }));
-  expect(await screen.findByTestId('shift-drawer')).toHaveTextContent('drawer 7');
-  fireEvent.click(screen.getByRole('button', { name: /Henderson/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /Henderson/ }));
   expect(await screen.findByTestId('detail')).toBeInTheDocument();
+});
+
+test('a manual card opens the assignment sheet, and Back closes it without leaving the list', async () => {
+  api.get.mockResolvedValue(env([row(), row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null, proposal_guest_count: null })]));
+  mount('/events?scope=past');
+  fireEvent.click(await screen.findByRole('button', { name: /Night Market/ }));
+  expect(await screen.findByTestId('sheet-shift')).toHaveTextContent('7');
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events?scope=past&drawer=shift&drawerId=7');
+  fireEvent.click(screen.getByRole('button', { name: 'history back' }));
+  await waitFor(() => expect(screen.queryByTestId('sheet')).toBeNull());
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events?scope=past');
+  expect(screen.getByText('Night Market pop-up')).toBeInTheDocument();
+});
+
+test('the sheet is told whether its manual shift can take an assignment', async () => {
+  const manual = (over) => row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null, proposal_guest_count: null, ...over });
+  // Two of three filled, upcoming: it can.
+  api.get.mockResolvedValue(env([manual()]));
+  const { unmount } = mount('/events?drawer=shift&drawerId=7');
+  await screen.findByText('Night Market pop-up');
+  expect(screen.getByTestId('sheet-assignable')).toHaveTextContent('true');
+  unmount();
+  // Full, cancelled, or in the past scope: it cannot.
+  for (const [url, over] of [
+    ['/events?drawer=shift&drawerId=7', { approved_count: 3 }],
+    ['/events?drawer=shift&drawerId=7', { status: 'cancelled' }],
+    ['/events?scope=past&drawer=shift&drawerId=7', {}],
+  ]) {
+    api.get.mockResolvedValue(env([manual(over)]));
+    const view = mount(url);
+    await screen.findByText('Night Market pop-up');
+    expect(screen.getByTestId('sheet-assignable')).toHaveTextContent('false');
+    view.unmount();
+  }
+});
+
+test('a change made in the sheet reloads the list', async () => {
+  api.get.mockResolvedValue(env([row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null })]));
+  mount('/events?drawer=shift&drawerId=7');
+  await screen.findByText('Night Market pop-up');
+  const before = api.get.mock.calls.length;
+  fireEvent.click(screen.getByRole('button', { name: 'stub changed' }));
+  await waitFor(() => expect(api.get.mock.calls.length).toBe(before + 1));
+  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 }, headers: { 'X-Offline-Ok': '1' } });
+  // Let the reloaded list land inside the test.
+  expect(await screen.findByText('Night Market pop-up')).toBeInTheDocument();
+});
+
+test('closing the sheet from inside it returns to the list and reads nothing', async () => {
+  api.get.mockResolvedValue(env([row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null })]));
+  mount('/events?scope=past');
+  fireEvent.click(await screen.findByRole('button', { name: /Night Market/ }));
+  await screen.findByTestId('sheet');
+  const reads = api.get.mock.calls.length;
+  fireEvent.click(screen.getByRole('button', { name: 'stub close' }));
+  await waitFor(() => expect(screen.queryByTestId('sheet')).toBeNull());
+  expect(screen.getByTestId('loc').textContent).toBe('/events?scope=past');
+  expect(screen.getByText('Night Market pop-up')).toBeInTheDocument();
+  expect(api.get.mock.calls.length).toBe(reads);   // opening and closing is not a reason to re-read
+});
+
+test('a drawerId that is not a number mounts no sheet', async () => {
+  api.get.mockResolvedValue(env([row()]));
+  mount('/events?drawer=shift&drawerId=abc');
+  await screen.findByText('Henderson');
+  expect(screen.queryByTestId('sheet')).toBeNull();
+});
+
+test('a change made in the sheet refreshes the tab badge too', async () => {
+  api.get.mockResolvedValue(env([row({ id: 7, proposal_id: null, event_key: 's7', client_name: 'Night Market pop-up', event_type: null })]));
+  const ctx = { badges: {}, refreshBadges: jest.fn() };
+  function Shell() { return <Outlet context={ctx} />; }
+  render(
+    <MemoryRouter initialEntries={['/events?drawer=shift&drawerId=7']}>
+      <Routes><Route element={<Shell />}><Route path="/events" element={<EventsListPhone />} /></Route></Routes>
+    </MemoryRouter>
+  );
+  await screen.findByText('Night Market pop-up');
+  expect(ctx.refreshBadges).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'stub changed' }));
+  await waitFor(() => expect(ctx.refreshBadges).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText('Night Market pop-up')).toBeInTheDocument();
+});
+
+test('a dead manual shift closes the sheet and keeps the list where it was', async () => {
+  api.get.mockResolvedValue(env([row()]));
+  mount('/events?scope=past&drawer=shift&drawerId=999');
+  await screen.findByText('Henderson');
+  fireEvent.click(screen.getByRole('button', { name: 'stub dead' }));
+  await waitFor(() => expect(screen.queryByTestId('sheet')).toBeNull());
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events?scope=past');
 });
 
 test('a nameless manual card is titled by its venue, and by nothing else when there is none', async () => {
@@ -215,7 +318,7 @@ test('a failed Show more keeps the loaded list and offers an inline retry', asyn
   expect(screen.queryByText(/Couldn't load events/)).toBeNull();    // never the full-screen panel
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText('Okafor')).toBeInTheDocument();
-  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 1 } });
+  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 1 }, headers: { 'X-Offline-Ok': '1' } });
   expect(screen.queryByText(/Couldn't load more/)).toBeNull();
 });
 
@@ -245,7 +348,8 @@ test('scroll offsets are saved only after the loaded list has been restored', as
 
   resolve(env([row()]));
   await screen.findByText('Henderson');
-  expect(host.scrollTop).toBe(120);            // the loaded list was restored
+  // The restore runs in an effect, which can land a tick after the card paints.
+  await waitFor(() => expect(host.scrollTop).toBe(120));
 
   // Restored, so the user's own scrolling is saved again.
   host.scrollTop = 40;

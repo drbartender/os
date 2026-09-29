@@ -7,11 +7,14 @@
 //      - navigations: network-first, fall back to cached index.html
 //      - content-HASHED /static/ assets: cache-first (immutable by name);
 //        the dev server's stable bundle names are deliberately excluded
-//      - allowlisted GET */api/*: network-first; good responses are cached
-//        stamped with x-sw-cached-at; on transport failure (never on a
+//      - allowlisted GET */api/* THAT ASKS FOR IT (the X-Offline-Ok request
+//        header, sent by offlineGet; the identity read /api/auth/me aside):
+//        network-first; good responses are cached stamped with
+//        x-sw-cached-at; on transport failure or a stall (never on a
 //        server-answered non-2xx) the stamped copy is served so the UI shows
-//        staleness instead of a spinner. Non-GET is NEVER touched: writes
-//        fail loudly and are never queued (spec: no offline writes).
+//        staleness instead of a spinner. A read without the header is never
+//        stored and never answered from the store. Non-GET is NEVER touched:
+//        writes fail loudly and are never queued (spec: no offline writes).
 // Bump SW_VERSION on every meaningful change (staff-sw.js convention).
 //
 // ---- Rollback recipe (a registered SW outlives a git revert) --------------
@@ -27,7 +30,7 @@
 //       .map((n) => caches.delete(n)));
 //     await self.registration.unregister();
 //   })()));
-const SW_VERSION = 'admin-sw-2026-08-14-v8';
+const SW_VERSION = 'admin-sw-2026-09-29-v10';
 const SHELL_CACHE = `admin-shell-${SW_VERSION}`;
 const API_CACHE = `admin-api-${SW_VERSION}`;
 
@@ -191,10 +194,36 @@ const API_EXACT = new Set([
   // 401 rule below), so a revoked session renders no data.
   '/api/auth/me',
 ]);
-const isAllowlisted = (pathname) =>
+const isAllowlisted = (pathname, search = '') =>
   API_EXACT.has(pathname) ||
   /^\/api\/proposals\/\d+$/.test(pathname) ||
-  pathname.startsWith('/api/shifts/by-proposal/');
+  /^\/api\/shifts\/by-proposal\/\d+$/.test(pathname) ||
+  // Phone event detail and assignment sheet (lane ma-e2). Anchored on both
+  // ends and numeric-id only, so no token route and no sub-resource can ride
+  // in. The invoices read is cached on purpose: it carries the bank debit in
+  // flight, and an offline detail showing a plain balance while a debit is
+  // settling is how a client gets chased for money already on its way.
+  /^\/api\/shifts\/detail\/\d+$/.test(pathname) ||
+  /^\/api\/invoices\/proposal\/\d+$/.test(pathname) ||
+  // The drink plan is stored ONLY as its day-of-contact projection (a name
+  // and a phone). The full read carries the plan's write-capable token, the
+  // internal notes and the venue access notes clients type gate codes into;
+  // none of that belongs at rest on a phone that needs two fields.
+  (/^\/api\/drink-plans\/by-proposal\/\d+$/.test(pathname) && search === '?fields=day_of_contact');
+
+// Storing and stale-serving are OPT-IN, per request. This worker controls
+// every page on the admin origin, desktop included, and only the phone screens
+// render the staleness line. A desktop roster under an Approve button, or an
+// invoice list under Send and Void, must never be yesterday's copy dressed as
+// today's. So a read enters the cache, and is answered from it, only when the
+// caller sent this header (client/src/utils/offlineRead.js). Everything else
+// on an allowlisted path goes to the network untouched and is never stored.
+// The identity read is the one exception: AuthContext bounds a cache-served
+// identity by the token's own expiry, for every surface.
+const OFFLINE_HEADER = 'x-offline-ok';
+const IDENTITY_PATH = '/api/auth/me';
+const asksForOffline = (req, pathname) =>
+  pathname === IDENTITY_PATH || req.headers.get(OFFLINE_HEADER) === '1';
 
 // Race a live fetch against a timeout. Weak signal hangs rather than failing
 // (cross-origin API + CORS preflight); with a cached copy in hand we prefer
@@ -277,7 +306,7 @@ self.addEventListener('fetch', (event) => {
   // transport failure or timeout-with-cache. A server-answered non-2xx
   // (401/403 after expiry or revocation) is returned as-is, NEVER answered
   // from cache: a dead session renders no data.
-  if (url.pathname.startsWith('/api/') && isAllowlisted(url.pathname)) {
+  if (url.pathname.startsWith('/api/') && isAllowlisted(url.pathname, url.search) && asksForOffline(req, url.pathname)) {
     event.respondWith((async () => {
       // CacheStorage can be unavailable outright (storage denied, some
       // private modes). The read path must degrade to a plain fetch, never

@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import usePhoneHeader from '../hooks/usePhoneHeader';
 import * as Sentry from '@sentry/react';
 import api from '../utils/api';
 import Sidebar from './adminos/Sidebar';
@@ -133,10 +134,18 @@ function AdminLayoutInner() {
     };
   }, [fetchBadges]);
 
+  // A phone detail screen hands the chrome what its rich header shows (client,
+  // kind, guests, venue link). Held with the path it was set for and drawn
+  // only on that path: see usePhoneHeader.
+  const { headerDetail, setHeaderDetail } = usePhoneHeader(location.pathname);
+
   // One context object for BOTH shells: the phone branch already fed badges
   // through it, the desktop branch fed nothing, and the hub needs refreshBadges
   // on either one.
-  const outletCtx = useMemo(() => ({ badges, refreshBadges: fetchBadges }), [badges, fetchBadges]);
+  const outletCtx = useMemo(
+    () => ({ badges, refreshBadges: fetchBadges, setHeaderDetail }),
+    [badges, fetchBadges, setHeaderDetail]
+  );
 
   const onKey = useCallback((e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -213,8 +222,15 @@ function AdminLayoutInner() {
   // `mobile-route-dead` from their 404/403 read handlers. Persistent (every
   // dead route falls back, not just the first) and gated on the phone chrome
   // being live, so shared screen code dispatching at desktop width can never
-  // yank a desktop user off their page.
-  useEffect(() => {
+  // yank a desktop user off their page. A LAYOUT effect: a page that finds its
+  // route dead without reading anything (an id that is not a number) says so
+  // from its own effect on the very first commit, and a child's effects run
+  // before its parent's. Subscribed from a passive effect, the chrome missed
+  // that first event and a cold load of /events/abc stayed blank. React takes
+  // a layout effect down while a suspended boundary hides the chrome, so an
+  // event sent in that window is heard by nobody: a screen that dispatches it
+  // also renders its own way back (EventDetailPhone does).
+  useLayoutEffect(() => {
     if (!mobileChrome) return undefined;
     const onDead = () => navigate('/events', { replace: true });
     window.addEventListener('mobile-route-dead', onDead);
@@ -246,6 +262,8 @@ function AdminLayoutInner() {
             title={screenTitle(screenKey)}
             screenKey={screenKey}
             onBack={isDetail ? onBack : null}
+            backLabel={screenKey === 'proposal-detail' ? 'Back to Proposals' : 'Back to Events'}
+            detail={isDetail ? headerDetail : null}
           />
           <PasskeyEnrollNudge />
           <main className="m-main" id="main-content"><Outlet context={outletCtx} /></main>

@@ -16,6 +16,7 @@ const { refreshDisplayName } = require('../../utils/refreshDisplayName');
 const { validatePreferredNameChange } = require('../../utils/staffDisplayName.validate');
 const { writeActivityBestEffort, writeInterviewNoteBestEffort } = require('../../utils/activityLog');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
+const { loadShiftVenue, candidateMeta } = require('../../utils/staffingMeta');
 
 const router = express.Router();
 
@@ -468,6 +469,16 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
     throw new PermissionError('Access denied.');
   }
 
+  // Opt-in picker meta (phone assignment sheet, lane ma-e2). Absent, the
+  // response is byte-identical to what every desktop caller reads today.
+  const wantsMeta = req.query.shift_id !== undefined;
+  const metaShiftId = Number(req.query.shift_id);
+  // Digits only, and inside int4: a longer run of digits is a valid Number and
+  // an overflow in the query, which would answer 500 instead of 400.
+  if (wantsMeta && !(/^\d+$/.test(String(req.query.shift_id)) && metaShiftId > 0 && metaShiftId <= 2147483647)) {
+    throw new ValidationError({ shift_id: 'shift_id must be a positive integer.' });
+  }
+
   const page  = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
   const offset = (page - 1) * limit;
@@ -491,7 +502,8 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
     ? `'approved', 'reviewed', 'submitted', 'deactivated'`
     : `'approved', 'reviewed', 'submitted'`;
 
-  const [staffResult, countResult] = await Promise.all([
+  // The shift, when meta is asked for, is read in the same round as the list.
+  const [staffResult, countResult, venue] = await Promise.all([
     pool.query(`
       SELECT
         u.id, u.email, u.role, u.onboarding_status, u.created_at, u.cc_id, u.import_source,
@@ -517,8 +529,10 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       WHERE u.role IN ('staff', 'manager')
         AND u.onboarding_status IN (${statusList})
         AND (u.onboarding_status = 'deactivated' OR op.onboarding_completed = true)
-    `)
+    `),
+    wantsMeta ? loadShiftVenue(metaShiftId) : null,
   ]);
+  if (wantsMeta && !venue) throw new NotFoundError('Shift not found.');
 
   // Defense-in-depth: redact stub email for non-admin callers. Mirrors the
   // same pattern in /admin/cc-import/search/users (Batch 9). The `.local`
@@ -530,6 +544,15 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       if (typeof r.cc_id === 'string' && r.cc_id.startsWith('legacy_cc:')) {
         r.email = '(redacted)';
       }
+    }
+  }
+
+  if (wantsMeta) {
+    const meta = await candidateMeta(venue, rows.map((r) => r.id));
+    for (const r of rows) {
+      const m = meta.get(Number(r.id));
+      r.events_worked = m ? m.events_worked : 0;
+      r.home_distance_miles = m ? m.home_distance_miles : null;
     }
   }
 

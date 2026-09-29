@@ -98,6 +98,9 @@ async function cleanup() {
     [PERIOD_START]
   );
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN ${uids}`);
+  // A staffing removal writes an audit entry (since 2026-09-29). Its user
+  // columns are ON DELETE SET NULL, so it goes before the users do.
+  await pool.query(`DELETE FROM admin_audit_log WHERE actor_user_id IN ${uids} OR target_user_id IN ${uids}`);
   await pool.query(`DELETE FROM users WHERE ${EMAIL_LIKE}`);
 }
 

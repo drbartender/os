@@ -160,6 +160,12 @@ after(async () => {
   await pool.query(`DELETE FROM proposals WHERE id = $1`, [proposalId]);
   await pool.query(`DELETE FROM clients WHERE id = $1`, [clientId]);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN ($1, $2)`, [staffUserId, otherStaffUserId]);
+  // A staffing removal writes an audit entry (since 2026-09-29). Its user
+  // columns are ON DELETE SET NULL, so it goes before the users do.
+  await pool.query(
+    `DELETE FROM admin_audit_log WHERE actor_user_id IN ($1, $2, $3) OR target_user_id IN ($1, $2, $3)`,
+    [staffUserId, otherStaffUserId, adminUserId]
+  );
   await pool.query(`DELETE FROM users WHERE id IN ($1, $2, $3)`, [staffUserId, otherStaffUserId, adminUserId]);
   await new Promise((resolve) => server.close(resolve));
   await pool.end();

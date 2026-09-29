@@ -9,7 +9,7 @@ const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
 const { logAdminAction } = require('../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../utils/businessTime');
 // THE shift-visibility predicate. See server/utils/shiftEndInstant.js.
-const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
+const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInstant');
 // Out-of-Area Bonus: bands, distances, lock lifecycle, duty re-derivation.
 // The bands are server-only by design (spec §6 published-ambiguity rule), so
 // the payloads below carry derived cents and the client never computes one.
@@ -26,6 +26,8 @@ const {
 // barRequiredSql / planQueueSql left with the projection in shifts.queries.js:
 // the admin SELECT was their only consumer here.
 const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, adminShiftsSelectSql, adminScopedShiftsSql } = require('./shifts.queries');
+// Seniority and distance meta for the phone staffing surfaces (lane ma-e2).
+const { loadEventsWorked } = require('../utils/staffingMeta');
 // Request -> approval money seam extracted to keep this file under the 1000-line
 // hard cap. shifts.js still owns the route table + shared middleware; the bulky
 // handler bodies (and position resolution) live in shifts.approval.js.
@@ -43,6 +45,18 @@ function clampInt(raw, min, max, dflt) {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) return dflt;
   return Math.min(max, Math.max(min, n));
+}
+
+// Path ids arrive from URLs, and the phone deep-links both reads below. A
+// malformed id used to reach Postgres, raise, and answer a generic 500 with a
+// Sentry event; on the phone that is an error screen whose Retry can never
+// succeed. Digits only, and inside int4.
+function requireId(raw, name) {
+  const text = String(raw);
+  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 2147483647) {
+    throw new ValidationError({ [name]: `${name} must be a positive integer.` });
+  }
+  return Number(text);
 }
 
 // ─── Permission helpers ────────────────────────────────────────────
@@ -331,6 +345,7 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
  *  LIMIT 100 is defensive — a single event with >100 shifts is unheard of,
  *  but it bounds the worst case if a future bug ever creates a runaway loop. */
 router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async (req, res) => {
+  const proposalId = requireId(req.params.proposalId, 'proposalId');
   const result = await pool.query(`
     SELECT s.*,
       rc.request_count,
@@ -354,6 +369,10 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
                 'status', sr.status,
                 'position', sr.position,
                 'dropped_at', sr.dropped_at,
+                'requested_positions', sr.requested_positions,
+                -- Set on a cover claim. The phone reads a claim by the role
+                -- written on it, here as in GET /shifts/detail/:id.
+                'replaced_by_request_id', sr.replaced_by_request_id,
                 'staff_lat', cp.lat,
                 'staff_lng', cp.lng
               ) ORDER BY sr.created_at), '[]'::json)
@@ -361,8 +380,12 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
         WHERE sr.shift_id = s.id AND sr.status <> 'denied') AS requesters,
-      abr.approved_by_role
+      abr.approved_by_role,
+      -- Past or not, by the shift END INSTANT in the event zone, never by the
+      -- calendar day. The phone roster is read-only once this is true.
+      (${shiftFinishedSql('s', 'p')}) AS finished
     FROM shifts s
+    LEFT JOIN proposals p ON p.id = s.proposal_id
     LEFT JOIN LATERAL (
       SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
              COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
@@ -378,15 +401,22 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
     WHERE s.proposal_id = $1
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
     LIMIT 100
-  `, [req.params.proposalId]);
+  `, [proposalId]);
+  const worked = await loadEventsWorked(
+    result.rows.flatMap((s) => (Array.isArray(s.requesters) ? s.requesters : []).map((r) => r.user_id))
+  );
   res.json(result.rows.map((s) => ({
     ...withOutOfAreaContext(s, s.approved_count),
-    requesters: (Array.isArray(s.requesters) ? s.requesters : []).map((r) => withHomeDistance(r, s)),
+    requesters: (Array.isArray(s.requesters) ? s.requesters : []).map((r) => ({
+      ...withHomeDistance(r, s),
+      events_worked: worked.get(Number(r.user_id)) ?? 0,
+    })),
   })));
 }));
 
 /** GET /shifts/detail/:id — single shift details (admin/manager only) */
 router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
+  const shiftId = requireId(req.params.id, 'id');
   // Shift and its requests are independent lookups — Promise.all saves a round-trip.
   const [result, reqResult] = await Promise.all([
     pool.query(`
@@ -397,6 +427,8 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
         c.id AS client_id,
         p.total_price AS proposal_total,
         p.token AS proposal_token,
+        p.status AS proposal_status,
+        (${shiftFinishedSql('s', 'p')}) AS finished,
         rc.request_count,
         rc.approved_count
       FROM shifts s
@@ -408,7 +440,7 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
         FROM shift_requests sr WHERE sr.shift_id = s.id
       ) rc ON true
       WHERE s.id = $1
-    `, [req.params.id]),
+    `, [shiftId]),
     pool.query(`
       SELECT sr.*,
         COALESCE(cp.display_name, cp.preferred_name, u.email) AS staff_name,
@@ -423,14 +455,18 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
       WHERE sr.shift_id = $1
       ORDER BY sr.status ASC, sr.created_at ASC
-    `, [req.params.id]),
+    `, [shiftId]),
   ]);
   if (!result.rows[0]) throw new NotFoundError('Shift not found.');
 
   const shift = result.rows[0];
+  const worked = await loadEventsWorked(reqResult.rows.map((r) => r.user_id));
   res.json({
     shift: withOutOfAreaContext(shift, shift.approved_count),
-    requests: reqResult.rows.map((r) => withHomeDistance(r, shift)),
+    requests: reqResult.rows.map((r) => ({
+      ...withHomeDistance(r, shift),
+      events_worked: worked.get(Number(r.user_id)) ?? 0,
+    })),
   });
 }));
 
@@ -593,25 +629,68 @@ router.patch('/:id/out-of-area', auth, requireStaffing, asyncHandler(async (req,
 router.post('/:id/request', auth, requireOnboarded, asyncHandler(requestShiftHandler));
 
 /** DELETE /shifts/requests/:requestId — staff withdraws their own request
- *  (pending-only); admin/manager can delete any status. */
+ *  (pending-only); staffing (an admin, or a manager with can_staff) can delete
+ *  any status. A manager WITHOUT can_staff is a staffer here: their own
+ *  pending request and nothing else. */
 router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
-  const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+  // The same rule as requireStaffing. Until 2026-09-29 this was the role
+  // alone, so ANY manager could delete any request, an approved one included,
+  // and with it release a bonus lock and re-accrue payroll.
+  const canStaff = req.user.role === 'admin' || (req.user.role === 'manager' && !!req.user.can_staff);
   const pre = await pool.query(
-    `SELECT sr.user_id, sr.status, sr.shift_id, s.proposal_id
+    `SELECT sr.user_id, sr.status, sr.position, sr.shift_id, s.proposal_id
        FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id WHERE sr.id = $1`,
     [req.params.requestId]
   );
   const ctx = pre.rows[0];
   if (!ctx) throw new NotFoundError('Request not found.');
-  if (!isManager) {
+  if (!canStaff) {
     if (ctx.user_id !== req.user.id) throw new PermissionError('You can only withdraw your own shift requests.');
     if (ctx.status === 'approved') throw new ConflictError('This request is already approved. Use Drop, Request Cover, or Emergency Drop instead.', 'already_approved');
     if (ctx.status === 'denied') throw new ConflictError('This request was already denied.', 'already_denied');
   }
-  const result = isManager
+  // The owner's delete carries the pending check itself. The checks above read
+  // the row a moment earlier, and an approval that commits in between (another
+  // admin, the auto-assign scheduler) must not be deleted as if it were still a
+  // request: that skipped the Drop flow and took the person off a shift they
+  // had just been told they were on.
+  const result = canStaff
     ? await pool.query('DELETE FROM shift_requests WHERE id = $1 RETURNING id', [req.params.requestId])
-    : await pool.query('DELETE FROM shift_requests WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.requestId, req.user.id]);
-  if (!result.rows[0]) throw new NotFoundError('Request not found.');
+    : await pool.query(
+      "DELETE FROM shift_requests WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING id",
+      [req.params.requestId, req.user.id]
+    );
+  if (!result.rows[0]) {
+    if (!canStaff) throw new ConflictError('This request changed. Refresh and try again.', 'request_changed');
+    throw new NotFoundError('Request not found.');
+  }
+  // The request is hard-deleted and so are its queued messages, so this entry
+  // is the only record of who took whom off which shift. Every removal made
+  // on the STAFFING branch is recorded, a staffing manager's removal of their
+  // own request included: that branch can hard-delete an approved request,
+  // which a staffer must do through Drop. A withdrawal on the owner's branch
+  // is the person's own act and is not recorded.
+  // Written FIRST among the steps that follow the delete, so that no failure
+  // in a later step can lose it (a retry answers 404 and would never write
+  // it). It must never cost a payroll step either: logAdminAction swallows its
+  // own errors, and the catch here covers the one it could not (a rejection
+  // that carries no error object would throw inside its own catch).
+  // request_id is the id the DELETE returned, not the path text: Postgres
+  // reads 1_01 as 101, and Number('1_01') is NaN.
+  if (canStaff) {
+    await logAdminAction({
+      actorUserId: req.user.id,
+      targetUserId: ctx.user_id,
+      action: 'shift_request_removed',
+      metadata: {
+        request_id: result.rows[0].id,
+        shift_id: ctx.shift_id,
+        proposal_id: ctx.proposal_id,
+        status: ctx.status,
+        position: ctx.position,
+      },
+    }).catch(() => {});
+  }
   // Out-of-Area lock: this is the ShiftDrawer "Remove" button, the primary way
   // an admin takes someone off a shift. The request row is DELETED outright, so
   // without this the bonus would stay frozen to a person with no request at all
@@ -626,6 +705,22 @@ router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
   // recently-completed proposal and one cheap SELECT on anything else
   // (maybeReaccrueForDuty), so a pre-event Remove costs nothing.
   reaccrueDutyForProposal(ctx.proposal_id);
+  // The day-before reminder and the thank-you were queued when this person was
+  // approved, and nothing at send time checks that they are still on the shift
+  // (staffShiftHandlers.js loads the shift and the phone, no more). Left in
+  // the queue they text someone taken off the shift to come to work. AFTER the
+  // two payroll steps above, so a failure here can never skip them.
+  // DELETED, not suppressed as cancel-or-unassign does: insertShiftMessageIfMissing
+  // counts ANY row on the key as already there, so a suppressed row would block
+  // the reminder of the same person assigned again. Only rows never sent go.
+  await pool.query(
+    `DELETE FROM scheduled_messages
+      WHERE entity_type = 'shift' AND entity_id = $1
+        AND recipient_type = 'staff' AND recipient_id = $2
+        AND message_type IN ('shift_reminder', 'staff_thank_you')
+        AND status = 'pending'`,
+    [ctx.shift_id, ctx.user_id]
+  );
   if (ctx.proposal_id) {
     await suppressBeoNudgesForStaffers(ctx.proposal_id, [ctx.user_id], pool, 'staffer_unassigned: request deleted');
   }

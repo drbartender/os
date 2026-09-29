@@ -72,6 +72,12 @@
       "authAssert": ".m-listbar" },
     { "name": "admin-events-needs", "host": "localhost", "path": "/events?needs=1", "auth": "admin", "settleMs": 2600,
       "authAssert": ".m-listbar" },
+    { "name": "admin-event-detail", "host": "localhost", "path": "/events/:token", "auth": "admin", "settleMs": 2600,
+      "authAssert": ".m-section",
+      "tokenQuery": "SELECT s.proposal_id::text AS token FROM shifts s WHERE s.proposal_id IS NOT NULL AND s.status <> 'cancelled' ORDER BY s.event_date DESC LIMIT 1" },
+    { "name": "admin-event-sheet", "host": "localhost", "path": "/events?drawer=shift&drawerId=:token", "auth": "admin", "settleMs": 2600,
+      "authAssert": ".m-sheet",
+      "tokenQuery": "SELECT s.id::text AS token FROM shifts s WHERE s.status <> 'cancelled' ORDER BY s.event_date DESC LIMIT 1" },
     { "name": "admin-proposals", "host": "localhost", "path": "/proposals", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell", "reportOnly": true },
     { "name": "admin-messages", "host": "localhost", "path": "/messages", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell", "reportOnly": true },
 

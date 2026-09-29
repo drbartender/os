@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import api from '../../utils/api';
+import { useNavigate, useOutletContext } from 'react-router-dom';
+import { offlineGet } from '../../utils/offlineRead';
 import useUrlListState from '../../hooks/useUrlListState';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import { groupShiftRows, railParts } from '../../utils/eventCards';
 import { formatStaleTime } from '../../utils/staleTime';
 import StatusChip from '../../components/adminos/StatusChip';
 import Icon from '../../components/adminos/Icon';
-import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
+import AssignmentSheet from '../../components/mobile/AssignmentSheet';
 
 // Phone Events list (spec 2026-08-13-mobile-admin section 4 List; benchmark
 // docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Events tab).
@@ -15,13 +15,15 @@ import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 // the chrome's. Reads the scoped, event-paged admin feed (GET /shifts?scope=)
 // and groups the per-shift rows into one card per event.
 //
-// Manual shifts (no proposal, so no detail page) open the desktop ShiftDrawer
-// here as the no-dead-end interim; lane ma-e2 swaps in the phone sheet and
-// owns the push-history Back behavior. This drawer keeps replace semantics.
+// Manual shifts (no proposal, so no detail page) open the phone assignment
+// sheet. The sheet's URL state pushes one history entry, so Android Back
+// closes the sheet and stays on the list (spec section 3).
 const PAGE = 60;
 const LIST_DEFAULTS = { scope: 'upcoming', needs: '' };
 const SCROLL_KEY = (scope, needs) => `m-events-scroll:${scope}:${needs ? 1 : 0}`;
 const SKELETONS = [['62%', '44%'], ['70%', '38%'], ['55%', '46%'], ['66%', '40%']];
+// The kinds of drawer that are phone sheets here. Module scope: one identity.
+const SHEETS = ['shift'];
 
 function scrollHost() { return document.getElementById('main-content'); }
 
@@ -33,7 +35,8 @@ function canRestore(host, saved) {
 
 export default function EventsListPhone() {
   const navigate = useNavigate();
-  const drawer = useDrawerParam();
+  const drawer = useDrawerParam({ push: true, kinds: SHEETS });
+  const { refreshBadges } = useOutletContext() || {};
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
   const scope = listState.scope === 'past' ? 'past' : 'upcoming';
   const needs = scope === 'upcoming' && listState.needs === '1';
@@ -71,7 +74,7 @@ export default function EventsListPhone() {
     setMoreError(null);
     if (append) setLoadingMore(true); else { setLoading(true); setError(null); setRows([]); restoredRef.current = null; }
     try {
-      const res = await api.get('/shifts', { params: params(offset) });
+      const res = await offlineGet('/shifts', { params: params(offset) });
       if (seq !== reqSeq.current) return;                 // a newer request superseded this one
       const { rows: page = [], ...rest } = res.data || {};
       setRows(prev => (append ? prev.concat(page) : page));
@@ -132,6 +135,13 @@ export default function EventsListPhone() {
   }, [loading, loadedKey, scope, needs]);
 
   const cards = useMemo(() => groupShiftRows(rows), [rows]);
+  // What the list already knows about the sheet's shift: open, so the sheet
+  // reads the staff list at once. Unknown (the card is not loaded) is a no.
+  const sheetCard = drawer.kind === 'shift'
+    ? cards.find((c) => c.tapTarget.kind === 'shift' && String(c.tapTarget.id) === String(drawer.id))
+    : null;
+  // (A cancelled card counts no open slot: eventCards.js.)
+  const sheetAssignable = !!sheetCard && scope !== 'past' && sheetCard.open > 0;
   const cachedTime = formatStaleTime(staleAt);
   const liveTime = formatStaleTime(fetchedAt);
   const totalEvents = meta ? Number(meta.total_events || 0) : 0;
@@ -230,15 +240,19 @@ export default function EventsListPhone() {
         </>
       )}
 
-      {/* Mounted only while open: the closed desktop drawer is position: fixed at
-          translateX(100%), which parks a full drawer's width off the right edge
-          and trips the phone-viewport overflow probe on every Events page. */}
-      {drawer.kind === 'shift' && drawer.id ? (
-        <ShiftDrawer
-          open
+      {/* Mounted only while open. A dead shift (deleted, or staffing access
+          lost) closes the sheet rather than dispatching mobile-route-dead:
+          this list IS the fallback destination, and closing keeps its scope
+          and chip where the chrome's fallback would reset them. */}
+      {drawer.kind === 'shift' && /^\d+$/.test(String(drawer.id || '')) ? (
+        <AssignmentSheet
+          key={drawer.id}
           shiftId={Number(drawer.id)}
+          focusUserId={drawer.focus}
+          assignable={sheetAssignable}
           onClose={drawer.close}
-          onUpdate={() => load(0, false)}
+          onChanged={() => { load(0, false); if (refreshBadges) refreshBadges(); }}
+          onDead={drawer.close}
         />
       ) : null}
     </div>

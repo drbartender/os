@@ -383,6 +383,29 @@ client/public/admin-sw.js
 client/public/admin-manifest.json
 client/src/utils/installAdminPwaMeta.js
 
+# Phone staffing (lane ma-e2): `position` keys payroll's tip split. The role a
+# plain Approve writes is resolved by classifyRequest (staffingRoles.js) and
+# allowed by roleStep (staffingSheet.js); useSheetWrites.js is the only phone
+# code that writes it, and server/routes/shifts.js holds the routes it calls
+# and the guard on who may Remove. server/utils/staffingRoles.js is what the
+# assign and approve handlers resolve `position` with. EventDetailPhone.js and
+# EventsListPhone.js decide which shift's sheet a link may open. Remove awaits
+# adminAuditLog.js after a hard delete and depends on its never throwing.
+client/src/utils/staffingSheet.js
+client/src/utils/staffingRoles.js
+client/src/components/mobile/AssignmentSheet.js
+client/src/components/mobile/useSheetWrites.js
+client/src/pages/mobile/EventDetailPhone.js
+client/src/pages/mobile/EventsListPhone.js
+server/routes/shifts.js
+server/utils/staffingRoles.js
+server/utils/adminAuditLog.js
+# offlineGet is the gate on what the admin service worker may store on a
+# device and serve as a stale copy; staffingMeta reads home coordinates and
+# seniority and decides how precisely a distance leaves the server.
+client/src/utils/offlineRead.js
+server/utils/staffingMeta.js
+
 # The mailability predicate + suppression helpers (2026-08-14, push-gate
 # finding). marketingAudience.js is the SINGLE place the suppression
 # conditions live; the fix-list's own words: dropping the wrong arm of that
