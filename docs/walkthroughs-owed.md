@@ -1794,6 +1794,31 @@ attempt.
       card polish of 2026-09-24 (town instead of the street address, the kind on its own line,
       the red open-slot fraction and violet Supplies tag in After Hours: 9a73d5ba, a84555c3) is
       on main and rides the next push, so walk those two after it lands.
+      The manual shift now opens the phone SHEET (ma-e2), and Back closes it and stays on the list.
+
+- [ ] **Phone event detail and assignment sheet (lane ma-e2, merged 2026-09-29, 91dcfab8, NOT pushed).** Pixel, installed PWA, prod data.
+      Detail: the header's venue opens Google Maps OUTSIDE the installed app and Back returns to it;
+      the client's number dials and the Text button opens Messages; the day-of contact shows when the
+      drink plan has one; the Staffing fraction matches the list card; Financials matches the desktop
+      panel for the same event to the cent, and an event paid off-platform shows its "Off-platform"
+      row. Sheet: open it from a staffing row and from a manual card; Android Back closes it and stays
+      put, every time, including after a cold launch that restored an open sheet; airplane mode shows
+      the banner and disables every action; the search field shows ONE clear control or none, never
+      two. Edit details switches THIS screen to Desktop view and it STAYS that way for every event
+      until "Phone view" is tapped: decide whether that is what you want. Rotate the phone to
+      landscape on an event: it may cross into the desktop page. In PRODUCTION an approve or an
+      assign texts and emails the staffer: do not tap either on a real person for the walk unless
+      that is what you mean to do. Both skins, and in After Hours the Remove button reads red, not
+      violet.
+      New since the lane review: COLD OFFLINE RELOAD (the one check no dev build can run): open an
+      event, airplane mode, kill the app, reopen it: the event shows with "offline copy · as of" and
+      a Refresh button. While a save is in flight its row says "Saving" and the sheet will not close
+      from the scrim; it closes the moment the save lands. A failed save shows a box naming what it
+      was, with Retry and a quiet Dismiss, and no tap other than those two removes it. Remove's
+      confirm ends "They are not notified." and Remove also takes that person's queued reminder
+      and thank-you out of the queue. On an iPhone, tapping the search field must not zoom the
+      page. With the keyboard up, the sheet's search field stays in view.
+      Graduates by this tier's own rule: `git merge-base --is-ancestor 91dcfab8 origin/main` exits 0.
 
 
 ## Tier 4 — gated: do these BEFORE the thing they gate

@@ -852,6 +852,46 @@ into spec 4.5, so it is a cross-router defect, not a consult-lane one, and the l
 carried it far longer. Fix shape: put both `<Say>` children inside one Gather, or give the repeat
 its own Gather pointing at the same action.
 
+### A staffer taken off a shift can still be texted its reminder and its thank-you
+
+Nothing at SEND time checks that the person is still on the shift: `handleShiftReminder` and
+`handleStaffThankYou` (`server/utils/staffShiftHandlers.js`) load the shift and the phone and send.
+Lane ma-e2 (`91dcfab8`) closed the one path it owned: Remove (`DELETE /shifts/requests/:id`)
+now deletes that person's pending reminder and thank-you. Still open:
+
+- every OTHER way off a shift (a drop, an emergency drop, a cover swap, a deny after an approve).
+  None was audited;
+- a reminder already being sent (`processing`) at the instant of a Remove, or one stranded by a
+  dispatcher crash and reaped back to pending ten minutes later;
+- a Remove racing a second operator's re-assign of the same person, which deletes the NEW
+  assignment's reminder (the assign skips its insert because the old rows are still there).
+
+The reminder carries the proposal's public token in its shopping-list link, so a wrong send is a
+small disclosure as well. Prod, read-only, 2026-09-29: 12 reminders and 12 thank-yous are `sent` to
+staff who hold no approved request on that shift today (first 2026-05-14, last 2026-09-27). Not
+every one is a wrong send: a no-show removed AFTER the event was on the shift when the text went
+out, and a hard delete records no time. Zero are pending now. Fix shape: a roster check at send
+time, in the two handlers. Found by the ma-e2 browser gate; the database and security reviews
+named the remainders.
+
+### Unassign suppresses a staffer's reminders, and assigning them again never brings them back
+
+`POST /shifts/:id/cancel-or-unassign` marks the pending rows `suppressed`, and
+`insertShiftMessageIfMissing` counts ANY row on the key as already there, so the re-assign inserts
+nothing: the person is back on the shift with no reminder. Remove deletes the pending rows instead
+(lane ma-e2, `91dcfab8`), so a re-assign after a Remove queues fresh ones. Fix shape: delete on unassign too, or
+let the insert look past a suppressed row. Verified in code during the ma-e2 gate.
+
+### The desktop ShiftDrawer can notify a staffer twice, and any Deny can land on someone just approved
+
+The drawer's Retry after a lost answer re-posts the assign, so the staffer is texted and emailed
+again. Its Deny and Remove are not re-read either. And the server's deny is an unconditional UPDATE
+(`shifts.approval.js`, the denied branch): a request approved in between (another admin, the
+auto-assign scheduler) is denied AFTER its approval text went out, and nobody is told. The phone
+re-reads before every write, which narrows that window to one round trip and does not close it.
+Fix shape: a deny that refuses unless the request is still pending, and a re-read in the drawer.
+ma-e2 Task 6 review; second opinion (codex), verified against the code.
+
 ---
 
 ## 4. Staff-facing
@@ -886,6 +926,31 @@ money-adjacent, so this gets the full fleet.
 `eventDetailsPayload.js` sends `shopping_list_status` as `pending_review` / `approved` / null, so no
 staffer on any package has ever seen the card. Either the card was meant to key on `approved` or the
 payload was meant to map it; pick one. Surfaced by the hosted-no-shopping-list review, 2026-09-11.
+
+### Cover swaps have no working admin path
+
+Five findings, one cluster, all older than the lane that found them. (1) The swap email's "Approve
+swap" button links to `/admin/shifts/cover-swaps/:token`, and the client has no such route
+(`grep -rn cover-swaps client/src`: nothing). (2) The desktop `ShiftDrawer` approves a claim
+through `POST /shifts/:id/assign`, which never runs `approveAndCascade`, so the original stays
+approved with cover still requested. (3) So NO admin screen runs the cover cascade;
+`PUT /shifts/requests/:id` with `approved` does, and nothing calls it. (4) The re-request upsert
+(`shifts.approval.js`) does not clear `replaced_by_request_id`, so a former claimer's ordinary
+re-request still reads as a cover claim. (5) `server/utils/autoAssign.js` lets a ranked list left
+from an older request win on a cover claim: a Barback's claim could be auto-seated as Bartender,
+with no cascade. Prod has had ONE cover claim ever (request 529, shift 386, 2026-09-19, still
+pending). The phone reads a claim by the role written on it and labels it "Covering <name>"; a
+swap there is two steps (Remove the original, Approve the claimer). ma-e2 Task 4 review.
+
+### The server accepts an over-fill, and nothing locks the shift
+
+`POST /shifts/:id/assign` seats a person in a role that is already full. The phone re-reads the
+roster before it writes, which narrows the window to one round trip and does not close it: a
+second admin, a `can_staff` manager or the auto-assign scheduler (`autoAssign.js`) can fill the
+last slot in between. The server logs `staffing_overfill`, the roster reads 2/1, and the tip split
+counts both. The desktop drawer has no re-read at all. Fix shape: a conditional assign on the
+server (lock the shift row, re-check that the role has room), in `shifts.approval.js`, a sensitive
+file. ma-e2 second opinion (codex), verified.
 
 ---
 
@@ -963,6 +1028,10 @@ here by default.
 
 ## Money and payroll (internal correctness)
 
+- **20 completed events hold money that is on neither an invoice nor `external_paid`** (event dates
+  2026-04-25 to 2026-09-19). The phone event detail states the total on a "Paid to date" row, as
+  the desktop panel's figures imply. The data itself is unreconciled. ma-e2 Task 7 re-review,
+  read-only prod query.
 - **Invoice line items carry a discount with the wrong sign.** `generateLineItemsFromProposal`
   (`invoiceLineItems.js`, adjustments loop) pushes `toCents(adj.amount)` for every adjustment,
   while `pricingEngine` negates `type === 'discount'`. A $50 goodwill discount renders as a +$50
@@ -1390,6 +1459,26 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Staff, shifts, and the roster
 
+- **`DELETE /shifts/requests/:id` (Remove) runs its steps with no transaction**: delete the request,
+  write the audit entry, release the lock, re-accrue, delete the queued messages, suppress the BEO
+  nudges. A database error half way leaves the rest undone, and a retried call answers 404, so the
+  tail never re-runs. ma-e2 database review.
+- **The same route accepts a path id that is not all digits.** `2432_0` deleted request 24320
+  (Postgres 16 and later read an underscore in an integer). The two shifts reads answer 400
+  (`requireId`). The audit entry records the real id. ma-e2 closing gate.
+- **The owner's 409 `request_changed` says "Refresh and try again", and trying again cannot
+  work.** The likeliest change is an approval, and the second try answers `already_approved`.
+  Neither staff page re-reads on that code (`pages/staff/ShiftsPage.js`, `ShiftDetail.js`), so the
+  row still says pending. Say "Refresh to see where it stands" and re-read. ma-e2 consistency
+  review.
+- **`server/utils/adminAuditLog.js` reads `err.message` in its own catch.** A rejection that
+  carried no error object would throw there. Remove guards its call (lane ma-e2, `91dcfab8`); the other
+  callers do not. Make it `err && err.message`. ma-e2 security review.
+- **OWNER DECISION: any manager can read a staffer's street address.** `GET /api/admin/users/:id`
+  returns the address and the home coordinates to any manager, with or without `can_staff`. Older
+  than the lane that found it. ma-e2 Checkpoint A, security review.
+- **The phone's staff picker asks for `limit=100` and ignores `total`**: active staffer 101 and
+  later could never be assigned from the phone. Prod has 16. ma-e2 performance review.
 - **Staff opt-in for "the menu is ready to print" (Dallas, 2026-09-22).** The per-topic opt-in
   machinery already ships: `users.staff_notification_preferences` (8 categories × push/sms/email),
   `notificationChannelResolver.js`, `PATCH /staff-notifications`, and the matrix at
@@ -1626,6 +1715,74 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **Phone event detail and assignment sheet, what the review left (lane ma-e2, `91dcfab8`).** None of these
+  can send a wrong write: every write re-reads the shift first.
+  - A save can land with the roster left from before it and NO "Saved" note: Approve one person,
+    and while its re-read is out the SERVER refuses a second write; that refusal's read supersedes
+    the first and then fails. A person assigned here and removed by another operator is in
+    neither list until the sheet is reopened. Between a write settling and its re-read landing,
+    nothing on the row says the save landed. All three want ONE design (a "saved, not yet re-read"
+    state that names who was saved), not three patches (code review 2, gate).
+  - A failed save is never reconciled against a later roster read: a box can read "didn't save"
+    under a row that shows the person on the roster. Its label says what it was, its Retry then
+    sends nothing, and Dismiss clears it (code review 2).
+  - Refresh on the detail blanks the screen while it re-reads, throwing away a labelled copy
+    before a replacement exists, and unmounts an open sheet with it. Re-read in place, and keep
+    the sheet mounted across a fresh roster read (performance; code review 2).
+  - On the Events list, a sheet write or a refusal reloads page 1 from the top (code review 2).
+  - The sheet grows from 321px to 675px when the staff list lands, moving the search field 355px
+    under a finger: a minimum height while it loads. Six labels and the sheet head still inherit
+    line-height 1.45 (section label 29.5px for 28, sheet section label 32.5 for 31, sheet head 69.4
+    for 66, when line 18.1 for 17, setup line 14.5 for 13) (design review).
+  - The sheet's head says "Cancelled · roster is read-only" for EVERY archived proposal, where the
+    detail says "Archived" for one that was never cancelled; the sheet's read carries no
+    `archive_reason`. No prod row can reach it: of 268 archived proposals only the
+    `client_cancelled` ones have shifts (consistency, code review 1).
+  - A pending row that carries a role AND a ranked list that resolves elsewhere shows one of its
+    two statements, not the role Approve will offer (code review 1).
+  - Retry and Dismiss have no accessible name beyond the word, so two boxes read Retry, Dismiss,
+    Retry, Dismiss; an `aria-label` from the box's label fixes it. A candidate's failed save keeps
+    a live Retry while the staff list is a stored copy, which is harmless (code review 2).
+  - No email link for an internationalised address, a quoted local part or a trailing dot: shown
+    as text (code review 2).
+  - The list and the detail compute the sheet's `assignable` hint by two rules: a manual shift
+    with no declared roles, opened from the list, reads and stores the staff list and then draws
+    no Assign section. None upcoming in prod (consistency).
+  - The phone chrome's tab badges and the command palette search are never stored by the service
+    worker now that storing is opt-in, so on a cold offline launch the badges are empty.
+  - `client/src/components/mobile/MobileHeader.js` holds a plain-venue branch nothing reaches.
+- **Service-extension alert links land on the phone detail, which has no panel.** Two of the alerts
+  are urgent and come by SMS ("A PAID extension was never applied: settle or refund it",
+  `server/utils/serviceExtensionNotify.js`); they link to `/events/:id`. Service extension has
+  never been used in prod. Related: `server/routes/calendar.js` links `/events/shift/:id`, which
+  for a manual shift forwards to bare `/events`, though the list can now open that shift's sheet.
+  ma-e2 consistency review.
+- **OWNER DECISIONS on the phone event detail (lane ma-e2, `91dcfab8`), each one Dallas's to make.**
+  - Two day-of warnings are desktop only: the "Last-minute: verify staffing" badge
+    (`last_minute_hold`) and the "No tip jar (client paid to skip it)" badge. No phone file reads
+    either field, and the phone is the day-of device.
+  - The phone LIST counts heads and the phone DETAIL counts roles, so the two fractions can differ
+    for one event (an approved role the roster never declared; an over-filled role).
+  - "Edit details" is a STICKY switch: it pins the event detail to Desktop view, and every event
+    on that phone then opens in Desktop view until "Phone view" is tapped.
+  - A desktop window that crosses 700px wide drops an unsaved event edit: the route forks by
+    width, so a half-screen snap, docked devtools or a phone rotated to landscape unmounts the
+    desktop page with no prompt.
+  - "Back to Events" names the list, but Back returns wherever you came from.
+  - A cancelled event that holds excess money reads "Cancelled" on the phone's chip; the desktop
+    puts Overpaid on the chip first. The Overpaid ROW shows on both.
+  - A staffer under half a mile from the venue reads "0 mi" (whole miles, so a stolen phone's
+    cache cannot place a home to the block).
+  - A tap on the lower part of the client's name in the header opens Maps, where the name sits
+    inside the venue link's width; the alternative is a header 4px taller than the design.
+  - The event type is cut off in the detail header on 12 of 15 dev events that carry a client name
+    and a type. On the LIST the kind got its own line on 2026-09-24.
+  - Contrast, each one the benchmark's own value: House Lights balance-due amount 2.77:1; the small
+    grey labels 1.88 to 2.78:1; applicant initials 2.76:1 in After Hours.
+  - After Hours draws the warn signal amber on chips and cyan on the balance, pills and dots; the
+    leading section icons are bright where the benchmark's are grey.
+  - Words: "No connection, didn't save."; the button that writes reads "Approve" and not
+    "Approve as Bartender" (a failed save now names the role).
 - **Supplies chip on the events list is grey (Dallas: *"the grey is too incognito"*, maybe blue).**
   Desktop: `PrepCell` in `EventsDashboard.js` renders `Bar` and `Supplies` as `StatusChip
   kind="neutral" dot={false}` by design ("facts, not alarms"). A blue chip token already exists and
@@ -1774,6 +1931,47 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Platform, schema, and test gates
 
+- **`shifts.visibility.endInstant.test.js` cannot pass between 00:30 and 06:30 Chicago.** Its
+  "ended half an hour ago" fixture has no start time, and `shiftEndInstant.js` reads an end before
+  06:00 with no start as an overnight end (`WRAP_CUTOFF_HOUR = 6`), so the fixture is unfinished
+  and the suite fails its own premise, 6 of 6, on main as in any lane. Seen 2026-09-29 at 06:18
+  (fail) and 06:38 (pass). Give the fixture a start time.
+- **Six server suites set `NODE_ENV = 'test'` BEFORE their production guard tests it, so the guard
+  can never fire:** `shifts.removeReaccrue`, `shifts.bonus`, `shifts.approval`, `shiftReap`,
+  `autoAssign.bartenderScope`, `proposals/remoteStaffing`. Read the value first, as
+  `shifts.removeReminders.test.js` does. ma-e2 security review.
+- **The phone stores more than it shows.** The stored `GET /proposals/:id` carries the client's
+  signature image, the signer's IP and user agent, the Stripe customer and payment-method ids, the
+  cancellation note, `token` and `admin_notes`; every staff picker entry carries the whole active
+  staff directory with emails and phones, once per shift opened; both shifts reads carry requester
+  distances to a tenth of a mile beside the venue's coordinates. Nothing in the cache ages out. A
+  phone projection of each read (as the drink plan has) is the first at-rest item; it also trims
+  the 70 to 80 percent of `GET /proposals/:id` the phone never reads. ma-e2 security and
+  performance reviews.
+- **The API sends no `Access-Control-Max-Age`.** The admin origin calls the API cross-origin with an
+  Authorization header, so EVERY call pays a preflight round trip, again every 5 seconds per URL.
+  On an 800 ms link that doubles every wait in the phone app. `maxAge: 7200` in
+  `server/middleware/corsOptions.js`: one line that changes every API call, so its own change.
+  ma-e2 performance review.
+- **`client/src/utils/api.js` sets no request timeout.** A write on a stalled socket holds the
+  phone sheet (the scrim and Escape wait for a write in flight). Android Back closes it; on an iOS
+  standalone install nothing can. ma-e2 performance review.
+- **Client TEST files are linted by nothing** (the CRA build excludes them; lint-staged covers
+  `server/**`). ma-e2 left its own test files clean; `EventsListPhone.test.js` still carries
+  eighteen `testing-library/no-node-access` errors from ma-e1. A lint reading taken through a pipe
+  reports the pipe's exit code: capture it directly.
+- Path ids are validated by an inline check that exists three more times since ma-e2 (`shifts.js`,
+  `drinkPlans.js`, `admin/users.js`) beside eight older copies. `GET /proposals/:id` and the full
+  drink-plan read still answer 500 for an id above int4. Extract one helper.
+- `server/routes/shifts.js` is 817 lines and `server/routes/admin/users.js` 752, both inside the
+  soft cap's warn band.
+- `POST /drink-plans/for-proposal` takes `LIMIT 1` of an unordered read; the two GETs by proposal
+  were ordered in ma-e2. Prod has no proposal with two plans.
+- Prefetch the event detail route from the phone list (`webpackPrefetch`): the first tap after a
+  deploy downloads about 54 KB gz, most of it desktop code the phone never runs.
+- `client/src/hooks/useFormDraft.test.js` logs one act warning ("Gated").
+- Stored pricing breakdown labels carry em dashes written by `pricingEngine.js`. The phone and the
+  desktop both render them as stored.
 - **`idx_invoices_invoice_number` is NON-unique on dev.** `schema.sql` declares it `CREATE UNIQUE
   INDEX IF NOT EXISTS`, but dev carries a plain index of that name, and `IF NOT EXISTS` matches on
   the name alone, so the uniqueness never applied and boot stays green. Not in `CRITICAL_INDEXES`,
@@ -2088,7 +2286,16 @@ re-grep before surgery.
   `EventsDashboard` reads `useMobileView()` and renders `EventsListPhone`); the Proposals tab still
   routes to the ORDINARY DESKTOP ADMIN PAGE with no phone branch, the "CSS retrofit" shape the
   spec's decision log rejects, until `ma-f1` lands.
-  **Whether to build them at all is Dallas's call.**
+  **AMENDED 2026-09-29: the event DETAIL and the ASSIGNMENT SHEET are built, by lane
+  `ma-e2-event-detail` (`91dcfab8`) of
+  `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`.** `/events/:id` forks to the
+  phone detail at phone width, the sheet component exists (`AssignmentSheet.js`, its writes in
+  `useSheetWrites.js`), and phone sheets push history so Android Back closes them
+  (`useDrawerParam({ push: true })`). Still declared and unbuilt: `ma-e3-edit-sheet`,
+  `ma-f1-proposals-list`, `ma-f2-proposal-detail`, `ma-f3-search`. What the lane's review left is
+  filed where it belongs: section 3 and section 4 above the divider, and below it under Staff,
+  Admin UI (with the decisions waiting on Dallas) and Platform.
+  **Whether to build the rest at all is Dallas's call.**
 
   **The offline staleness line belongs to whichever lane builds those screens** — do not open a lane
   for it alone. **CLOSED FOR THE LIST 2026-09-18 (lane `ma-e1-events-list`): the call site now
@@ -2096,7 +2303,9 @@ re-grep before surgery.
   from `utils/staleTime.js` and renders the `.m-stale` element under the list: "as of <time>" on a
   live load, and "offline copy · as of <cached time>" with the dot when the service worker answered
   from cache. Both are asserted at the CALL SITE, in `EventsListPhone.test.js`, which is what this
-  entry demanded. **Still OPEN for every other phone screen**, and the original finding follows
+  entry demanded. **CLOSED FOR THE EVENT DETAIL AND THE SHEET 2026-09-29 (lane ma-e2): both render
+  the line or the banner from `res.staleAt`, asserted at the call site, and caching is now opt-in
+  per request (`offlineGet`).** **Still OPEN for every other phone screen**, and the original finding follows
   verbatim because it still describes them.
   The chain is built and green at both ends and disconnected in the middle:
   `admin-sw.js:86` stamps `x-sw-cached-at`, `api.js` surfaces it as `response.staleAt`, and
