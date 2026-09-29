@@ -90,6 +90,11 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (1 mandate, at exactly $50, archived) |
 | 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
 | 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25** |
+| 1 | An editor save after an on-site extension settles bills the added time a second time | yes, on any booking with a settled extension that gets edited (one exists: 842, completed) |
+| 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one** |
+| 1 | The on-site extension quotes the v4 formula whatever the client signed | yes on a hosted package; on the Core Reaction the package rate matches |
+| 1 | An extension invoice can be paid by bank debit, which cannot settle during the event | unknown, NOT TRACED |
+| 1 | An on-site extension of a class bills nothing for the class | no (0 upcoming class bookings) |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
@@ -596,6 +601,84 @@ Fix shape needs Dallas's call. Candidate: when the matched client has an open
 `draft` and alert admin, or email the existing link to the on-file address (never hand its token
 to the unauthenticated submitter). Separately, alert admin whenever the sweep archives a proposal
 with non-empty `adjustments`.
+
+### An editor save after an on-site extension settles bills the added time a second time
+
+Settling an extension, paid or overridden, writes `proposals.event_duration_hours` and the shift,
+and nothing else on the proposal (`settleExtension` in `serviceExtensionSettle.js` calls it "the
+ONE contract mutation"). `total_price` and `pricing_snapshot` stay at the old duration. The admin
+PATCH (`crud.js`) re-prices every save from the row's duration and writes `total_price` from the
+result, and it has no reference to extensions at all. So the next save of that booking bills the
+added time through the contract, on top of the extension invoice the client already paid: hours
+past the 4-hour base at the catalog rate, over-included bartenders, time-priced add-ons, and a
+longer Gratuity line.
+
+Prod shows the drift on the one extension that has run: proposal 842 (2026-09-26, paid), row at
+4.0 hours, snapshot `inputs.durationHours` at 3, status `completed`. Nothing has re-saved it.
+
+Not traced: whether the PATCH is refused on a `completed` proposal, and whether payroll would
+also count the hour twice. Fix shape: the re-price has to know the hours an extension already
+billed, either by pricing the contract at the contracted duration while the row carries the
+extended one, or by having settle move the snapshot too and netting the extension invoice. Same
+family as the off-ledger invoice root cause at the top of this section. Until then the manual
+guard is in `docs/ops-runbook.md` §8.1 (lane agreement-v4): leave the editor alone on such a
+booking. Found by the agreement-v4 runbook re-read, 2026-09-29.
+
+### An advance duration change bills nothing on a booking with an override
+
+The admin PATCH carries the stored `total_price_override` through a duration change and
+`calculateProposal` substitutes the override for the calculated total, so lengthening a booking
+that has one adds $0 for the added time at any hour. Package hours, over-included bartenders and
+time-priced add-ons are all swallowed; only the client Gratuity line moves, because it sits on
+top. A surcharge adjustment is swallowed too and still prints as a line. The editor gives no
+sign of any of it. The on-site extension is not affected: it prices from the catalog.
+
+Reachable on three confirmed bookings, all Check Cherry transfers whose override is the old
+contract total: 606 (10/17), 607 (10/22), 608 (2027-08-21). 607 moved from 5h to 6h would add
+$0 where the catalog adds $575. Not specific to the transfers: the Thumbtack auto-draft writes
+overrides as well, and 756 (event 10/24, `viewed`, unpaid) carries one now.
+
+The manual recipe is in `docs/ops-runbook.md` §8.1 (lane agreement-v4). Fix shape: when a save
+changes duration and an override is set, show the catalog difference beside the override field
+and move the override by it, the way `foldExtrasIntoProposal` already does for extras. Needs
+Dallas's call on automatic versus one click.
+
+### The on-site extension quotes every client the v4 formula, whatever they signed
+
+`computeExtensionDelta` reads no signature column. v3 Section 8.1 promised $100/hr for the lead
+bartender plus $40/hr for each additional bartender, added to the final invoice. The extension
+quotes the package's extra-hour rate (per guest on a hosted package), the sub-100-guest
+surcharge, time-priced add-ons and gratuity, on a separate invoice paid before service
+continues. The terms the client accepts on that invoice (`extensionTermsCopy.js`) read "under
+your existing agreement" and "same terms".
+
+All 17 upcoming bookings signed here are v3 on the Core Reaction, where the package rate is
+$100/hr either way. The two upcoming hosted bookings (606, 607) have no signature recorded here.
+
+Owner decision, two parts. Whether a v3 signer is held to the quote they accept on the spot or
+billed the v3 rate; there is no verified way to bill the v3 rate by hand yet (see the entry
+above on the editor save). And whether the extension terms should stop saying "same terms" once
+v4 is what clients sign. Raised by the agreement-v4 consistency check, 2026-09-29.
+
+### An extension invoice can be paid by bank debit, which cannot settle during the event
+
+An extension invoice is paid through `create-intent-for-invoice`, which offers
+`CHECKOUT_PAYMENT_METHOD_TYPES`, bank debit included. The extension settles, and the bartender
+is cleared, on payment success. A bank debit takes business days to succeed, so a client who
+picks it at the bar cannot be cleared that night; the expiry sweep then voids the invoice.
+
+NOT TRACED, and that is the work: what the sweep's `cancelOpenInvoiceIntents` does to a debit
+already `processing` (Stripe does not cancel those), and what the success webhook does days
+later with a payment for an expired request. If the money lands against a voided invoice the
+client paid for time they were refused. Likely fix: card and link only on an extension invoice,
+the way the payment-link rail already drops bank debit.
+
+### An on-site extension of a class bills nothing for the class
+
+All six class packages carry an extra-hour rate of $0 (prod, 2026-09-29) and `calculateStaffing`
+zeroes class staffing, so an added hour prices at add-ons and gratuity only, and a $0 extension
+settles on acceptance alone. The request route reports `isClass` and does not refuse it. The
+instructor is paid for the hour. Needs a rate from Dallas, or a refusal on class shifts.
 
 ## 2. Wrong on a surface a client is looking at
 
