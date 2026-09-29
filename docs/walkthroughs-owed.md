@@ -1784,14 +1784,16 @@ booked with a phone and the sweep has rung it**, or the walk proves nothing and 
 regression. The seven older consults predate the `booker_phone` column and can never produce an
 attempt.
 
-- [ ] **Phone Events list (lane ma-e1, merged 2026-09-18, d1dc829f, not yet pushed).** Pixel, installed PWA, prod data:
+- [ ] **Phone Events list (lane ma-e1, merged 2026-09-18, d1dc829f, LIVE: pushed 2026-09-24 in ed6a6a26..b39a0598).** Pixel, installed PWA, prod data:
       Upcoming opens on today, Past shows history newest first with cancelled cards muted, the
       Needs staff chip matches the tab badge's meaning (chip counts events, badge counts shifts),
       Show more pages without splitting a two-shift event, airplane mode shows the
       "offline copy · as of" line with the dot while a live load shows "as of" alone, a manual
       shift opens the drawer (Back leaves the list until the ma-e2 sheet lands). Both skins.
-      Graduates by this tier's own rule once it lands: `git merge-base --is-ancestor <merge sha>
-      origin/main` (exit 0 = live). Fill the date and the sha at merge; do not leave a marker to rot.
+      Verified live 2026-09-28: `git merge-base --is-ancestor d1dc829f origin/main` exits 0. The
+      card polish of 2026-09-24 (town instead of the street address, the kind on its own line,
+      the red open-slot fraction and violet Supplies tag in After Hours: 9a73d5ba, a84555c3) is
+      on main and rides the next push, so walk those two after it lands.
 
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
