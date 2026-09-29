@@ -1715,6 +1715,25 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **Phone Events list polish (`a84555c3`, `9a73d5ba`), reviewed 2026-09-29, verdict PASS.** The two
+  commits had no reviewer when they landed. What the review left, all Minor and display only:
+  - `eventCards.js` maps a state name to its code by exact match on a plain object: "illinois" and
+    "Il" render as stored, and a state of "constructor" renders the function's source. Every
+    writer normalises the state on the server, so reach is low. Look up case-folded through a Map.
+  - The state table is a fourth hand-kept copy of the service-area states and only Illinois is
+    pinned by a test; dev has 7 Wisconsin proposals. One table test over `VENUE_STATES`.
+  - Two pins are weaker than the code: the list's fall-back to the free-text location
+    (`card.place || card.venue`) can be deleted with both suites green, because the manual
+    fixtures carry a city the server never sends for a manual shift; and
+    `shifts.adminScoped.test.js` asserts the two venue keys are present, not what they hold.
+  - The After Hours Supplies tag takes its violet from the DANGER token. If that skin's danger hue
+    is ever corrected to red, Supplies turns red beside the red fraction. Use the violet token.
+  - The skeleton rail is 46px and the real rail 44px: a 2px sideways jump when the first page
+    lands. A nameless manual shift says its venue twice, as title and in the meta line.
+  - A screen reader now hears the guest count between the name and the kind ("Henderson 140
+    GUESTS Wedding Reception").
+  - At 320px wide the card's foot row exceeds its box when it holds a fraction, a requests chip
+    and both tags. Nothing leaves the card. Not traced.
 - **Phone event detail and assignment sheet, what the review left (lane ma-e2, `91dcfab8`).** None of these
   can send a wrong write: every write re-reads the shift first.
   - A save can land with the roster left from before it and NO "Saved" note: Approve one person,
