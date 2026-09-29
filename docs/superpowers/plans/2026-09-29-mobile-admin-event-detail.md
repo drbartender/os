@@ -42,6 +42,8 @@
 - Design system, compared 2026-09-29 (DesignSync `get_file`, project `72035042-c993-47e2-9dc8-c452b7bf5fa4`): the rules this lane folds from match the vendored copies rule for rule, in `components-mobile.css` the bottom-sheet family and the light-skin squaring (which gives `.m-more-list` `border-color: var(--line-2)` and `box-shadow: none`), in `components-admin.css` the staffing pills. That was a comparison of those rules, not a byte compare of the two files; the byte compare covered the shell benchmark.
 - Main carries two unpushed phone commits from another window, `9a73d5ba` and `a84555c3` (card place line, kind line, fraction and tag colours). They changed `eventCards.js`, `EventsListPhone.js` and `index.css`; the line numbers above were read AFTER them.
 
+**As built, 2026-09-29.** The lane review changed what this header describes in four places: the assignment sheet's failed-save rule (the Review Focus line and the Global Constraint on failed saves are superseded), Decision 4 (a stored staff list locks the picker only), the Remove confirm (it no longer matches the benchmark), and the server's Remove route. Ten visible departures were added as Decisions 23 to 32. All of it is in "Lane review round, as-built deltas (ma-e2)" at the end of this plan; where that section and this header disagree, that section is what was built.
+
 **Decisions this plan makes (each is recorded in the spec: section 3 "Plan decisions of 2026-09-29", section 4 and section 7). The visible ones (1, 2, 8 to 19) are the complete list of intended departures from the benchmark: `ui-ux-review` treats them as the contract, and any other difference is a finding.**
 1. **The Deny confirm tells the truth.** The benchmark copy reads "They are notified and the request is closed." The server notifies nobody on a deny. Phone copy: `Deny <name>'s application? The request closes. They are not notified.` Adding a notification is server work on a sensitive file and is not in this lane.
 2. **Assign always shows the role step.** In the benchmark a candidate row with one open role assigns on a single tap. An assignment texts and emails a real person and writes the payroll seam, and a stray tap while scrolling a list is the likeliest phone mistake there is. So a candidate tap always opens the "Assign as" rows, one row when one role is open. An applicant's Approve with exactly one open role that the applicant ranked stays direct (it is already the second tap: row, then Approve). A waitlisted applicant, whose ranked roles are all full, always gets the "Approve as" rows, even for one open role, because that role is one they did not ask for.
@@ -171,6 +173,15 @@ lanes:
       - ARCHITECTURE.md
       - docs/walkthroughs-owed.md
       - docs/fix-list-remaining-2026-07-02.md
+      # Amended 2026-09-29, before the merge, from the task and lane reviews. Why each
+      # exists is in "Lane review round, as-built deltas (ma-e2)" at the end.
+      - client/src/hooks/useSheetFocus.js
+      - client/src/components/mobile/useSheetWrites.js
+      - client/src/hooks/usePhoneHeader.js
+      - client/src/hooks/usePhoneHeader.test.js
+      - server/routes/shifts.removeReminders.test.js
+      - server/routes/shifts.removeReaccrue.test.js
+      - server/routes/shifts.withdraw.test.js
     depends_on: []  # ma-e1-events-list is merged (d1dc829f) and live
     review_fleet: [code-review, consistency-check, security-review, database-review, performance-review, ui-ux-review, second-opinion]
     # A sensitive path (client/public/admin-sw.js) is in the footprint, so this is
@@ -6813,12 +6824,149 @@ From `os` on `main`, with a clean tree for the lane's paths: `scripts/merge-lane
 
 ## Browser checks (lane ma-e2)
 
-Written by the orchestrator from Task 10's report, on main, before the merge.
+Written by the orchestrator from Task 10's report, on main, before the merge. Four runs by one runner, phone viewport 390x844 unless a row says otherwise, against the lane's own servers (client :3100, API :5100, notifications and schedulers off), on fixtures it created and deleted by id. After each run the orchestrator counted the dev database itself: zero fixture rows. No payment, refund or Stripe action was taken in any run. Evidence (scripts, raw results, screenshots) is in the session scratchpad under `gate/`; the full tables are in the lane's `task-10-report.md`.
+
+**Run 1, head `36f096c1`: 19 PASS, 3 FAIL.** Capture: `admin-event-detail` pass (taps under 36px: 0), `admin-event-sheet` pass (taps under 36px: 0).
 
 | check | result | evidence |
 |---|---|---|
-| D1 to D17 | | |
+| D1 header | FAIL, fixed | The venue link's touch area was 42px. Fixed in `3daef730` (padding 17px above, 9px below: 44px inside the 60px header). Re-run PASS. |
+| D1b header across events | PASS | Event A's title never appeared on event B (79 samples over 2.6 s plus a MutationObserver). |
+| D2 sections, D2b primary actions | PASS | Staffing open, Contacts and Financials closed; every header row 48px; every action at least 44px and hit at its centre. |
+| D3 contacts | PASS | `tel:`, `sms:` and `mailto:` targets, each 44px. |
+| D4 staffing agrees with desktop | PASS | 8 fixture events, the phone's fraction against the desktop chip. |
+| D5 financials agree with desktop | PASS | To the cent on 8 fixture events, paid and overpaid included. |
+| D6 sheet opens, Back closes | PASS | One history entry pushed; focus stays inside the sheet through 40 Tab and 10 Shift+Tab presses. |
+| D7 deep link | PASS | An entry is seeded behind the sheet; Back closes it and stays. |
+| D8 nothing overlays the sheet | PASS | The sheet covers the tab bar (it is bottom-anchored, so no scrim shows there). |
+| D9 the sheet scrolls, the page does not | PASS | |
+| D10 one write, fixture people | PASS | One header-less re-read, then exactly one `POST /shifts/:id/assign` with the role that was on screen. |
+| D11 double tap | PASS | Two clicks 50 ms apart, and two in one JS task: one POST, one row. |
+| D12 offline, D12b desktop never served a stored copy | PASS | Caches are v10; a desktop-only session stores `/api/auth/me` and nothing else. |
+| D12c the drink plan at rest | FAIL on the literal assertion | The drink-plan part holds (the projection only). `admin_notes` sits in the stored proposal read: accepted by ruling, on the fix list with the phone projections. |
+| D13 failed save | FAIL, fixed | A tap on another picker row cleared the box. Fixed in `3daef730`, and the rule was replaced in the last pass (below). |
+| D13b the lost answer | PASS | The write landed, the answer was lost, Retry sent no second POST. |
+| D14 dead routes | PASS, plus a finding, fixed | A cold load of a malformed id stayed blank. Fixed in `3daef730` (the chrome listens from a layout effect). |
+| D15 Edit details | PASS | Desktop view of this screen, with the Phone view pill. |
+| D16 every state, both skins | PASS | Red in After Hours is `rgb(255, 77, 77)`. |
+| D17 desktop untouched | PASS | No desktop read carried `X-Offline-Ok`. |
+
+**Run 2, head `3daef730`: 7 of 7 PASS.** D1 (44px, the whole rect wins), D13 in three parts (a box survives other rows; two failures at once; same-row intent), D13c (the re-read before Deny and Remove), D14 cold (three malformed ids land on `/events` and fetch nothing), D16 changed and new states in both skins, D12 offline sanity, D17b desktop regression (the desktop drawer's approve, deny and remove land).
+
+**Run 3, the fix round, head `83a33349`: 13 PASS, 0 FAIL, 1 not run as written.**
+
+| check | result | evidence |
+|---|---|---|
+| G1 a refused assign whose picker has closed | PASS | A named box at the top with Retry and Dismiss; no POST left the browser. |
+| G2 search cannot detach a failed save | PASS | Retry sent the FIRST person's user id. |
+| G3 an applicant who withdrew | PASS | Refused, no POST. |
+| G4 Saving | PASS | The row says Saving; every write control disabled; the scrim and Escape inert during the write. |
+| G5 the reload after a save | PASS | Saved-but-behind in the sheet and on the page; Retry keeps the roster on screen. |
+| G6 a sheet link for another event's shift | PASS | No sheet; the URL settles on the event; one Back leaves. |
+| G7 two taps on the scrim | PASS | In one task, and 50 ms apart: the sheet closes once and the event stays. |
+| G8 Remove and the queue | PASS | The confirm copy is exact; both pending messages deleted; a re-assign queues both again. |
+| G9 who may Remove | PASS | Manager without `can_staff` 403, with it 200. |
+| G10 Archived | PASS | `event_passed` reads Archived, `client_cancelled` reads Cancelled. |
+| G11 Refresh | NOT RUN as written | An offline RELOAD of a dev build stays blank (its unhashed bundle is never cached). The in-page equivalent passed every expectation. The cold offline reload is on the Pixel walk. |
+| G12 dead route | PASS | |
+| G13 desktop at 1280 | PASS | The drawer's approve and remove; the messages gone; `/staffing` lists staff. |
+| G14 both skins | PASS | |
+
+**Run 4, the last pass, head `c1192e6d`: 9 PASS, 1 FAIL.**
+
+| check | result | evidence |
+|---|---|---|
+| H1 a tap does not erase a failed save | PASS | Three sequences: a picker row, a picker row under a narrowed search, a roster row whose role rows were open. |
+| H2 a confirm backed out of keeps it | PASS | |
+| H3 a new write on the same row replaces it | PASS | Exactly one PUT (the one that failed) and one POST left the page. |
+| H4 Dismiss | PASS | Removes the box, sends nothing; no fill and a transparent border, in both skins. |
+| H5 a stored staff list locks the picker only | PASS | Its own note and Retry; the roster banner absent; Approve, Deny and Remove enabled. |
+| H6 busy ends when the write settles | PASS | With the display read held four seconds: no Saving line, no button disabled, the scrim closes the sheet. |
+| H7 after a refused assign the page behind is current | PASS | The detail and the list card, without a reload. |
+| H8 a person just assigned is not offered again | PASS | Absent from the picker while the roster could not be re-read; back in it after Remove. |
+| H9 the record of a removal | PASS | One audit row with the right actor, target and metadata; a staffer's own withdrawal writes none. |
+| H10 the email link | FAIL, fixed | The link is right. The address that gets no link was still drawn as an anchor in the link colour. Fixed in `46340e2b` (plain text). |
+
+**Run 5, the closing commit, head `46340e2b`: 3 of 3 PASS.**
+
+| check | result | evidence |
+|---|---|---|
+| K1 an address that gets no link | PASS | A span in the plain-text colour in both skins, no anchor. `tom&jerry@example.com` is still linked, encoded; an ordinary address is still linked. |
+| K2 the record of a removal | PASS | One audit row whose `request_id` is the number of the request deleted; an id spelled with an underscore is recorded as the real id. |
+| K3 sanity | PASS | Approve from a staffing row, close with the scrim, the fraction moves without a reload. Desktop at 1280 renders and the drawer opens. |
 
 ## Lane review round, as-built deltas (ma-e2)
 
-Written by the orchestrator from the fleet's verdicts and the fix rounds (Task 12 Step 5), on main, before the merge.
+Written by the orchestrator from the fleet's verdicts and the fix rounds (Task 12 Step 5), on main, before the merge. Where this section and the text above it disagree, this section is what was built.
+
+### The review, in order
+
+1. **Lane fleet at `3daef730`** (29 commits, 36 files, each file in exactly one package): code review 1 PASS, code review 2 FAIL (three Important, all in the assignment sheet's failed-save handling), security PASS for the lane with one Important that predates it, database PASS, performance PASS, consistency FAIL (one Important: the staff list's stored copy was unlabelled), design FAIL (one Important: the focus ring was clipped), second opinion one confirmed LOW.
+2. **Fix round, `3daef730..83a33349`** (six commits, 27 files). Re-reviewed by every seat, resumed with its context: eight PASS, code review 2 FAIL on one new Important (a tap on a row that held a failed save erased it).
+3. **Last pass, `83a33349..c1192e6d`** (four commits, 17 files). Re-reviewed by the three seats that own its files (code review 2, security, consistency: all PASS, the Important closed) and by the browser gate (9 PASS, 1 FAIL). After it, only a Critical or an Important re-opens the code; every Minor is on the fix list with its source.
+4. **Closing commit `46340e2b`** holds the gate's one failure (an address that gets no link was still drawn as one), the security seat's two fixes to the audit entry, and doc and comment text. Confirmed by the security seat (PASS) and by the gate (3 of 3).
+5. **Follow-up commit `75131a06`**, the lane head (41 commits after `648a4f32`, 42 files): the security seat's two notes on the closing commit, applied in its words. The audit call is guarded, so a logger fault can never cost a payroll step, with a test and a mutation that fails it; and the underscore test spells its id `0_<id>`. No seat re-read this commit: it is six lines of `shifts.js` and one test.
+
+Every client change in the two rounds was written as an anchored patch in a scratch copy of the client, run under the real test runner, mutation-tested (each guard deleted or reversed in turn, and a named test must fail), and copied to the lane byte for byte. Server changes were made in the lane and run against the dev database one suite at a time.
+
+### What was built that the tasks above do not describe
+
+**New files (the footprint is amended above):**
+- `client/src/hooks/useSheetFocus.js`: the keyboard half of a modal sheet (Task 6 fix round).
+- `client/src/components/mobile/useSheetWrites.js`: every write of the assignment sheet and the rules a write must pass. `AssignmentSheet.js` reads and draws.
+- `client/src/hooks/usePhoneHeader.js` and its test: the detail header held with the path it was set for. `AdminLayout.js` no longer resets the header in a layout effect (React runs a layout effect again when a suspended boundary hides and reveals the chrome, which wiped the header).
+- `server/routes/shifts.removeReminders.test.js`: Remove's authorization, its queue cleanup, its audit entry, and the owner's pending-only delete.
+- Touched for cleanup only: `server/routes/shifts.removeReaccrue.test.js`, `server/routes/shifts.withdraw.test.js` (each clears its audit entries before its users).
+
+**The assignment sheet's laws, as built.** These replace the Global Constraint "a failed save stays on screen, inline, under the row it came from, with Retry" and the Review Focus line "a failure box never outlives the action it belongs to", which is now the opposite of the code:
+- One failed save per row. Each box says what it was (`<name> · Approve as <role>`, `<name> · Assign as <role>`, `<name> · Deny`, `<name> · Remove`), why it failed, and carries Retry and Dismiss.
+- A failed save leaves the screen in three ways only: its own Retry (which repeats exactly that write, re-read included), a new WRITE on the same row, or Dismiss. Opening or closing a row, a confirm, Keep, the search field and anything done to another row never remove it.
+- A failure whose row is not on screen (the picker closed, the person left the roster) is shown at the top of the sheet. A person in the picker who holds one stays in the list whatever the search field says.
+- Before every write the sheet re-reads the shift from the network. Approve is sent only while the same request is still pending, and a plain Approve only while that request still resolves to the same single role. Assign is sent only while the person has no pending request and no place on the roster.
+- A pending row that carries both a role and a ranked list that resolves to another role always picks.
+- While a write is in flight the row says "Saving", every action is disabled, and the scrim and Escape do not close the sheet. That ends when the WRITE settles, not when the roster has been read again.
+- After a save, and after a refusal, the owner is told at once. The read after a save never takes a stored copy; when it fails, the sheet says the save landed and the roster may be out of date, until a fresh roster is on screen by any path. A person just assigned is not offered in the picker again.
+
+**Decision 4, completed.** A stored ROSTER makes the sheet read-only. A stored STAFF LIST locks the picker only and says so under the Assign heading; Approve, Deny and Remove stay live, because none of them reads the staff list.
+
+**The detail page.** The sheet opens only for a shift that is one of the event's own, once the roster has loaded, judged only on a roster read for the event on screen. A dead route renders its own way back as well as telling the chrome. The reload after a sheet write refuses a stored copy; its notice outlives an older answer that lands late; its Retry keeps the roster on screen. The page and the Events list tell the sheet when they already know the shift is open, so the staff list is read at mount.
+
+**The server, beyond Tasks 1 and 3b.** All in `DELETE /shifts/requests/:id` unless named:
+- Staffing on that route is an admin, or a manager WITH `can_staff`. It was the role alone since 2026-04-09, so any manager could delete any request. A manager without `can_staff` is a staffer there: their own pending request and nothing else.
+- Remove deletes that person's PENDING `shift_reminder` and `staff_thank_you` for that shift. Nothing at send time checks that a person is still on the shift, so a removed staffer was still texted to come to work. Deleted, not suppressed: `insertShiftMessageIfMissing` counts any row on the key as already there, so a suppressed row blocks the reminder of the same person assigned again.
+- The owner's delete carries `status = 'pending'` itself and answers 409 `request_changed` when it deletes nothing.
+- Every removal on the staffing branch writes one `admin_audit_log` entry, `shift_request_removed`, a staffing manager's removal of their own request included. It is written directly after the delete, so a failure in a later step cannot lose it; its request id is the one the DELETE returned; and the call is guarded, so a logger fault can never cost a payroll step. A withdrawal on the owner's branch writes none.
+- `GET /shifts/by-proposal/:id` requesters carry `replaced_by_request_id`. Both drink-plan reads by proposal take the lowest id. The picker's shift lookup joins its first round.
+
+**The sensitive list** gained `client/src/utils/staffingRoles.js`, `client/src/components/mobile/useSheetWrites.js`, `client/src/pages/mobile/EventDetailPhone.js`, `client/src/pages/mobile/EventsListPhone.js`, `server/routes/shifts.js`, `server/utils/staffingRoles.js` and `server/utils/adminAuditLog.js`.
+
+### Decisions added by the review (visible departures from the benchmark, continuing the list in the header)
+
+23. **The Remove confirm says the person is not notified.** "Remove <name> from this shift? Payroll re-accrues and any out-of-area lock is released. They are not notified." The benchmark's sentence stops before the last four words. It is a fact (the handler sends nothing and takes their queued reminder out), and beside the Deny confirm its absence read as the opposite. This supersedes the text on the "verbatim from the benchmark" list and in Tasks 4 and 6.
+24. **A failed save is named, and can be dismissed.** The benchmark draws a message and Retry. The box adds a first line saying what the save was, and a quiet Dismiss.
+25. **The row being written says "Saving".** The benchmark has no state between the tap and the result.
+26. **The staleness line offers Refresh on a stored copy.** The benchmark's line is text only.
+27. **A dead route has a screen of its own** ("This event isn't available", Back to Events), shown only when nobody heard `mobile-route-dead`.
+28. **An archived event that was never cancelled says Archived.** Cancelled is said for `client_cancelled`, `we_cancelled` and an archived row with no reason (2 in prod, both from July).
+29. **The overpaid row says "return it by hand" when Stripe cannot return it,** as the desktop panel does.
+30. **The search field is 16px on iOS only,** so the page does not zoom when it takes focus. Everywhere else it is 12.5px as drawn.
+31. **The focus ring on a full-width row is drawn inside it** (`outline-offset: -2px`): the rows sit in containers that clip.
+32. **The email link is made only for an address of plain shape,** and what is linked is percent-encoded. Anything else is shown as plain text, in the text colour.
+
+### Corrections to this plan
+
+- **Notifications are OFF on the dev box.** This plan says in several places that dev talks to live Twilio and Resend. It does not: `server/utils/notificationsEnabled.js` gates real sends on `NODE_ENV=production` or `SEND_NOTIFICATIONS=true`. Stripe IS live on the box, by design. The browser gate's fixture-only rule stands for the database's sake.
+- **"eslint exit 0" in the ledger before the fix round was read through a pipe** and was the pipe's exit code. Every lane source file did lint clean. Three lane test files carried errors; they are fixed, and `EventsListPhone.test.js` keeps its eighteen, which are identical on main.
+- **The 400-line limit** on the two components holds: `AssignmentSheet.js` 398, `EventDetailPhone.js` 378.
+
+### Added copy (complete, as rendered)
+
+From the first consistency review (sixteen that the header's lists lacked): "This person’s place on the shift changed. Check the roster and try again."; "Couldn't refresh staffing. The roster below may be out of date."; "Overpaid"; "refund it from desktop view"; "Off-platform" and "collected in CheckCherry"; "payment detail not loaded"; "Balance"; "Covering <name>" and "Covering a teammate"; "Any role"; "<N> events", "1 event", "<N> mi"; "Staff" and "Staff member"; "?" as the initials fallback; the fallbacks "Event", "Package", "Payment"; ranked roles "Bartender › Barback", the mix line "Bartender 1/2 · Barback 0/1", the shift label "Bartenders + Barbacks"; "setup from <HH:MM>"; and the screen-reader strings "Close", "Assign staff", "Text <name>", "Text the client", "Back to Proposals".
+
+From the fix round: "Saving"; "Refresh"; "Retrying"; "This event isn't available"; "It may have been removed, or your access may have changed."; "Back to Events" as a button on that screen; "Archived"; "return it by hand"; "Loading the staff list"; "Saved. The roster below could not be refreshed and may be out of date." with its Retry; "Dismiss"; the failed save's label in its four forms; the two read-only notes ("Past event · roster is read-only", "Cancelled · roster is read-only") as a failed save's message; "They are not notified." on the Remove confirm.
+
+From the last pass: "No connection. Assigning needs the server; the staff list below is the cached copy." with its Retry; "Saving · <label>" at the top of the sheet; and, from the server on the staff pages, "This request changed. Refresh and try again."
+
+### Parked, with its source, on `docs/fix-list-remaining-2026-07-02.md`
+
+Everything the three rounds found and did not fix is on the fix list under the ma-e2 entry, each line naming the review that found it. The ones a reader of this plan should know: the over-fill window and the deny window (both close on the server, in `shifts.approval.js`); the send-time roster check; the Remove handler's missing transaction; phone projections of the reads the phone stores; Refresh that re-reads without blanking; the service-extension alert links; `shifts.visibility.endInstant.test.js`, which cannot pass between 00:30 and 06:30 Chicago.

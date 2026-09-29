@@ -70,6 +70,19 @@ Per CLAUDE.md "Design artifacts are contracts":
   - Rows inside a detail section use `m-section-item`, rows inside the sheet `m-sheet-row` (same declarations): the component-vocabulary rule above, applied.
   - Distances are whole miles ("7 mi", where the benchmark draws "6.8 mi"). The picker returns a distance for every active staffer against any shift, and the phone stores what it reads; at a tenth of a mile, ten venues place a home within about two hundred feet. (Security checkpoint, lane ma-e2, 2026-09-29.)
   - A malformed id in the URL is a dead route (section 9's fallback), never an error screen whose Retry cannot succeed.
+  - **Added by the lane review of 2026-09-29 (as built; the plan's "Lane review round, as-built deltas" carries the reasons).**
+  - The Remove confirm ends "They are not notified." The handler sends nothing, and takes that person's queued reminder and thank-you out of the queue.
+  - A failed save says what it was ("<name> · Approve as <role>", "<name> · Assign as <role>", "<name> · Deny", "<name> · Remove") and carries Retry and a quiet Dismiss. It leaves the screen by its Retry, by a new write on the same row, or by Dismiss, and by nothing else. One whose row is not on screen is shown at the top of the sheet.
+  - The row being written says "Saving" until the write settles, and the scrim and Escape do not close the sheet meanwhile.
+  - A stored staff list locks the picker only, with its own note ("No connection. Assigning needs the server; the staff list below is the cached copy."); the roster's Approve, Deny and Remove stay live. This narrows the cache-served rule above, which stands for a stored roster.
+  - After a save whose re-read failed, the sheet says "Saved. The roster below could not be refreshed and may be out of date." and the detail says "Couldn't refresh staffing. The roster below may be out of date.", each with a Retry.
+  - The staleness line offers Refresh on a stored copy.
+  - A dead route that nobody heard renders "This event isn't available" with Back to Events (section 9's fallback, for the case where the chrome is hidden).
+  - An archived event that was never cancelled reads "Archived". "Cancelled" is said for `client_cancelled`, `we_cancelled` and an archived row with no reason.
+  - The overpaid row says "return it by hand" when Stripe cannot return the money, as the desktop panel does.
+  - The sheet's search field is 16px on iOS only, so the page does not zoom when it takes focus.
+  - The focus ring on a full-width row is drawn inside the row, because the rows sit in containers that clip.
+  - An email address is linked only when it is of plain shape; anything else is shown as plain text.
   - These are the complete list of intended departures. Any other difference between the app and the benchmark is a finding.
 
 ## 4. Events
@@ -86,6 +99,7 @@ Per CLAUDE.md "Design artifacts are contracts":
 Keeps the existing four-block structure, stacked: **header, staffing, pricing, activity**, rendered per the Visual contract's collapsible-section composition.
 
 - **Header:** client, date, time, venue, guests. Venue address opens Google Maps via the existing `AddressLink` markup; in standalone display mode the link must open externally (verify `target="_blank"` behavior inside the installed app). Client phone is tap-to-call / tap-to-text. Existing page actions (edit, send invite, re-enroll, cancel) become full-width tap targets.
+- **Remove, on the server (settled 2026-09-29, lane ma-e2):** `DELETE /shifts/requests/:id` treats as staffing an admin, or a manager WITH `can_staff` (it was the role alone); it deletes that person's pending `shift_reminder` and `staff_thank_you` for that shift, writes one `admin_audit_log` entry per staffing removal, and the owner's own withdrawal is pending-only in the statement itself.
 - **Staffing:** keeps `ShiftDrawer` semantics as a bottom sheet. Tap a shift; assign / approve / remove are rows you tap. (Narrowed 2026-09-29, section 3 plan decisions: the phone never over-fills a role, and a finished, cancelled or cache-served roster is read-only there. Both stay possible on the desktop.)
 - **Role selection (settled 2026-08-14, closes the position money seam):** `POST /shifts/:id/assign` 400s without a canonical `position`, and waitlist approval 400s whenever no ranked role is open, which is the definition of a waitlisted request. So the sheet's assign and approve actions carry a **role row step**: when more than one role is open (or none ranks), and always for an assign (amended 2026-09-29, section 3 plan decisions), the sheet shows one tap-row per role (Bartender / Barback / Server, from `positionsNeeded`), and the chosen role is sent explicitly. Never defaulted, never a dropdown, never inferred: `shift_requests.position` keys payroll tip splits.
 - **Candidate list:** plain **alphabetical** active-staff (same `GET /admin/active-staff` feed the desktop drawer uses). The word "ranked" is retired: no one-tap "Auto-assign top match", no seniority/distance/kit machinery in admin UI (settled 2026-08-14; that early-project data is de-emphasized). The Waitlist section wires to the real derivation: requests from `GET /shifts/detail/:id` classified exactly as `ShiftDrawer` does today via the CLIENT-side module it imports, `client/src/utils/staffingRoles.js` (`staffingClassification.js` is the server's CJS twin; do not import it in the client); 'approved' requires `dropped_at IS NULL`.
