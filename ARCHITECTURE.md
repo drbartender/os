@@ -1101,7 +1101,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `rate`, `extra_hour_rate`
 - `applies_to`: byob | hosted | all | class
 - `linked_package_id` FK → service_packages (nullable, ON DELETE SET NULL) — ties supply add-ons to a specific class package; NULL addons are universal (e.g., class equipment kits)
-- `requires_provisioning` (BOOLEAN, default false) — true for every consumable/gear add-on (mixers, glassware, kits, specialty spirits, etc.); false for staffing/fee add-ons. Drives the shift `supply_run_required` default: a non-hosted event carrying any provisioning add-on needs a supply run. Seeded in `schema.sql`.
+- `requires_provisioning` (BOOLEAN, default false) — true for every consumable/gear add-on (mixers, glassware, kits, specialty spirits, the BYOB bundles, the class supply packs, etc.); false for staffing/fee add-ons. Drives the shift `supply_run_required` default (a non-hosted event carrying any provisioning add-on needs a supply run) and the `equipment_supplies` / `hosted_supplies` duty triggers in `dutyLines.js`. Seeded in `schema.sql`; `server/db/provisioningSeed.test.js` fails any seeded add-on that is neither in the seed nor on its short non-provisioning list.
 
 **proposals** — Generated service proposals
 - `token` UUID (public access), `client_id` FK → clients

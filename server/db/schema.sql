@@ -4082,6 +4082,11 @@ ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS requires_provisioning BOOLEA
 -- (additional-bartender, barback, banquet-server) and pure-fee add-ons are
 -- false. Re-verify against the live catalog (SELECT slug,name,category FROM
 -- service_addons ORDER BY slug) before any future add-on lands.
+-- The three BYOB bundles and the class supply packs were missing until
+-- 2026-09-28: the quote wizard strips a bundle's included add-ons from the
+-- proposal, so a bundle-only event carried no flagged slug and got no supply
+-- run (and no equipment_supplies duty). provisioningSeed.test.js now fails any
+-- seeded add-on that is in neither this list nor its short non-provisioning list.
 UPDATE service_addons SET requires_provisioning = true WHERE slug IN (
   'ice-delivery-only','bottled-water-only','signature-mixers-only','full-mixers-only',
   'garnish-package-only','cups-disposables-only','soft-drink-addon','zero-proof-spirits',
@@ -4089,7 +4094,11 @@ UPDATE service_addons SET requires_provisioning = true WHERE slug IN (
   'house-made-ginger-beer','carbonated-cocktails','flavor-blaster-rental','handcrafted-syrups',
   'handcrafted-syrups-3pack','real-glassware','champagne-coupe-upgrade','smoked-cocktail-kit',
   'specialty-mezcal','specialty-bitter-aperitifs','specialty-vermouths','specialty-niche-liqueurs',
-  'specialty-cognac','class-tool-kit-rental','class-tool-kit-purchase'
+  'specialty-cognac','class-tool-kit-rental','class-tool-kit-purchase',
+  'the-foundation','the-formula','the-full-compound',
+  'mixology-101-supplies','spirits-tasting-standard','spirits-tasting-premium',
+  'margarita-workshop-supplies','tropical-tiki-supplies','brunch-cocktails-supplies',
+  'mocktail-workshop-supplies'
 );
 
 -- ===========================================================================
