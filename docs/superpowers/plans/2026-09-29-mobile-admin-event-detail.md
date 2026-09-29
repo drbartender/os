@@ -4,7 +4,7 @@
 
 **Goal:** On the phone, `/events/:id` stops rendering the desktop event page inside the phone chrome and renders the phone event detail from the 2026-09-15 benchmark (rich header with the venue map link, setup line, Contacts, Staffing, Financials, Edit details row), and every shift, booked or manual, is staffed from a phone bottom sheet (approve, deny, remove, assign) where Android Back closes the sheet and never leaves the page.
 
-**Architecture:** Three existing reads gain additive fields so the phone can show what the design draws without a new endpoint: `GET /shifts/by-proposal/:id` and `GET /shifts/detail/:id` carry `events_worked`, `finished` and (by-proposal) `requested_positions`; `GET /admin/active-staff` gains an opt-in `?shift_id=` that adds `events_worked` and `home_distance_miles` per row while the call without it stays byte-identical. One new server util owns the events-worked count and is pinned to the seniority route by test. On the client, two pure modules carry all the logic (`staffingSheet.js` decides roster rows, open roles and the role step; `eventDetailView.js` derives header, contacts and financial rows), `AssignmentSheet` and `EventDetailPhone` render them with new `.m-sheet` and `.m-section` CSS folded from the design system and the benchmark, `useDrawerParam` gains a push-history option, and `EventDetailPage` forks at the top through `useMobileView()` exactly as `EventsDashboard` does. Every write goes through the endpoints the desktop drawer already uses; the phone adds no write path.
+**Architecture:** Existing reads gain additive fields so the phone can show what the design draws without a new endpoint: `GET /shifts/by-proposal/:id` and `GET /shifts/detail/:id` carry `events_worked`, `finished` and (by-proposal) `requested_positions`; `GET /admin/active-staff` gains an opt-in `?shift_id=` that adds `events_worked` and a whole-mile `home_distance_miles` per row while the call without it stays byte-identical; `GET /drink-plans/by-proposal/:id` gains a `?fields=day_of_contact` projection. The admin service worker stores and stale-serves a read only for a request that asks (`offlineGet`), so the phone screens that render a staleness line get an offline copy and no desktop screen ever does. One new server util owns the events-worked count and is pinned to the seniority route by test. On the client, two pure modules carry all the logic (`staffingSheet.js` decides roster rows, open roles and the role step; `eventDetailView.js` derives header, contacts and financial rows), `AssignmentSheet` and `EventDetailPhone` render them with new `.m-sheet` and `.m-section` CSS folded from the design system and the benchmark, `useDrawerParam` gains a push-history option, and `EventDetailPage` forks at the top through `useMobileView()` exactly as `EventsDashboard` does. Every write goes through the endpoints the desktop drawer already uses; the phone adds no write path.
 
 **Tech Stack:** Express + pg (`pool.query`), Node 26 `node --test` with the repo's hand-rolled `node:http` harness, React 18 + react-router 6.30 (`useSearchParams`, `useOutletContext`), jest + RTL 13 (jest-dom imported per file), a `vm`-loaded service worker for the allowlist test, `playwright-core` with the bundled Chromium for the phone-viewport gate, `scripts/mobile-capture.js` (`npm run mobile:check`).
 
@@ -24,6 +24,7 @@
 - `server/routes/proposals/getOne.js:21-129` `GET /proposals/:id` (`requireAdminOrManager`) returns `p.*` plus `client_name, client_email, client_phone, package_name`, `setup_time_display` (24h `HH:MM`, server-derived), the refund-side derived fields, `addons`, `activity`, `messageLog`. It carries NO payments list and NO in-flight payments.
 - `server/routes/invoices.js:215-241` `GET /invoices/proposal/:proposalId` returns `{ invoices, pending_payments }`; invoice rows carry `label, amount_due, amount_paid, status, due_date, invoice_number` (cents) and no paid date; `pending_payments` rows carry `amount_cents, started_at, invoice_id, invoice_number` (the bank debit in flight, spec 2026-09-14). `invoices.js` is sensitive-listed and is NOT touched by this lane.
 - `server/routes/drinkPlans.js:381-411` `GET /drink-plans/by-proposal/:proposalId` 404s when the proposal has no drink plan. The day-of contact is `selections.logistics.dayOfContact = { name, phone }`; there is no note or relationship field anywhere in the planner (`client/src/pages/plan/v2/PlannerV2.js:49`).
+- **The admin service worker controls the desktop too** (established by the Task 2 review and Checkpoint A, 2026-09-29, and verified against the code). `registerAdminSw` (`client/src/utils/adminSw.js:7-14`, called from `AdminLayout.js:74`) registers it for any admin-host visitor; its API branch answers from the store on a transport failure or after a 4 second stall (`admin-sw.js:288-313` before this lane's edits); only `EventsListPhone.js` and `AuthContext.js` read `res.staleAt`. So every allowlisted read has been reaching desktop screens unlabelled since lane ma-b shipped (2026-08-14), `/api/proposals/:id` behind the desktop proposal page among them. Server CORS sets no `allowedHeaders` (`server/middleware/corsOptions.js`), so the `cors` package reflects the requested headers and a custom request header needs no server change.
 - `client/public/admin-sw.js` (392 lines, sensitive-listed): `SW_VERSION = 'admin-sw-2026-08-14-v8'` (`:30`); `API_EXACT` `:182-193` holds `/api/shifts`, `/api/proposals`, `/api/admin/badge-counts`, `/api/admin/search`, `/api/admin/active-staff`, `/api/auth/me`; `isAllowlisted` `:194-197` adds `/^\/api\/proposals\/\d+$/` and the `/api/shifts/by-proposal/` prefix. `/api/shifts/detail/:id`, `/api/drink-plans/by-proposal/:id` and `/api/invoices/proposal/:id` are NOT allowlisted. The Cache API keys on the full URL, so `?shift_id=` makes each shift's candidate list its own entry. The file's top level only declares constants and functions and registers listeners on `self`, so it loads in a `vm` context with a stub `self`.
 - `client/src/hooks/useDrawerParam.js` (49 lines): `{ kind, id, open, close }`, both writes `replace: true`, plus the named export `drawerHref`. No test file exists for it. Exactly three callers, `EventsDashboard.js`, `EventDetailPage.js` and `EventsListPhone.js`, all relying on replace semantics. The app's router is `<BrowserRouter>` (`App.js:689`), which keeps its position in `window.history.state.idx`.
 - `client/src/utils/staffingRoles.js` (112 lines) exports `ROLES, CANONICAL_LABELS, canonicalizeRole, isBartender, parsePositionsNeeded, rosterCounts, computeRemaining, classifyRequest, isEventFullyStaffed, ASSIGN_ROLE_PREFERENCE, defaultAssignRole`. `classifyRequest(requested, remaining)` treats an EMPTY ranked list as "any open role". `client/src/components/adminos/shifts.js` exports `neededCount` (`:96`, an empty roster counts as 1), `parsePositionsCount` (`:115`), `isCancelledEvent` (`:66`).
@@ -41,14 +42,14 @@
 - Design system, compared 2026-09-29 (DesignSync `get_file`, project `72035042-c993-47e2-9dc8-c452b7bf5fa4`): the rules this lane folds from match the vendored copies rule for rule, in `components-mobile.css` the bottom-sheet family and the light-skin squaring (which gives `.m-more-list` `border-color: var(--line-2)` and `box-shadow: none`), in `components-admin.css` the staffing pills. That was a comparison of those rules, not a byte compare of the two files; the byte compare covered the shell benchmark.
 - Main carries two unpushed phone commits from another window, `9a73d5ba` and `a84555c3` (card place line, kind line, fraction and tag colours). They changed `eventCards.js`, `EventsListPhone.js` and `index.css`; the line numbers above were read AFTER them.
 
-**Decisions this plan makes (each is recorded in the spec: section 3 "Plan decisions of 2026-09-29", section 4 and section 7). They are the complete list of intended departures from the benchmark: `ui-ux-review` treats them as the contract, and any other difference is a finding.**
+**Decisions this plan makes (each is recorded in the spec: section 3 "Plan decisions of 2026-09-29", section 4 and section 7). The visible ones (1, 2, 8 to 19) are the complete list of intended departures from the benchmark: `ui-ux-review` treats them as the contract, and any other difference is a finding.**
 1. **The Deny confirm tells the truth.** The benchmark copy reads "They are notified and the request is closed." The server notifies nobody on a deny. Phone copy: `Deny <name>'s application? The request closes. They are not notified.` Adding a notification is server work on a sensitive file and is not in this lane.
 2. **Assign always shows the role step.** In the benchmark a candidate row with one open role assigns on a single tap. An assignment texts and emails a real person and writes the payroll seam, and a stray tap while scrolling a list is the likeliest phone mistake there is. So a candidate tap always opens the "Assign as" rows, one row when one role is open. An applicant's Approve with exactly one open role that the applicant ranked stays direct (it is already the second tap: row, then Approve). A waitlisted applicant, whose ranked roles are all full, always gets the "Approve as" rows, even for one open role, because that role is one they did not ask for.
 3. **The phone never over-fills.** With no open role, Approve is disabled and the Assign section is absent. Over-filling is a deliberate desktop action. Because the server accepts an over-fill, the sheet re-reads the shift immediately before an approve or an assign and refuses when the chosen role is no longer open.
 4. **A cache-served roster is read-only.** Role resolution depends on a live roster, so when the sheet's read was served by the service worker every action is disabled and the offline banner shows, with a Retry.
 5. **Past and cancelled rosters are read-only on the phone** (the benchmark draws it). Removing a no-show after the event is a payroll correction and stays on the desktop. This needs the server to say whether a shift finished, by its end instant.
 6. **Seniority and distance ride additive fields** on the three existing reads. No new endpoint (spec section 2's endpoint rule); the spec names the extensions.
-7. **Three reads join the service worker allowlist:** `/api/shifts/detail/:id`, `/api/drink-plans/by-proposal/:id`, `/api/invoices/proposal/:id`. The invoices read is cached on purpose: it carries the bank debit in flight, and an offline detail that shows a plain balance while a debit is settling is the proposal 784 mistake waiting to happen again.
+7. **Two reads and one projection join the service worker allowlist** (amended by Checkpoint A, see Decisions 20 and 21): `/api/shifts/detail/:id`, `/api/invoices/proposal/:id`, and `/api/drink-plans/by-proposal/:id` only as `?fields=day_of_contact`. The invoices read is cached on purpose: it carries the bank debit in flight, and an offline detail that shows a plain balance while a debit is settling is the proposal 784 mistake waiting to happen again. The by-proposal entry, a prefix match since ma-b, is anchored.
 8. **Financials reads what the desktop panel reads.** Lines from `pricing_snapshot.breakdown`, total and paid from the proposal row, payments from the invoices read (label, state, amount, no paid date because none is stored on the invoice), the bank debit in flight as its own row and a "Processing" chip. The benchmark's "Updated total" label becomes "Total": nothing here is an update.
 9. **The day-of contact has no note.** The benchmark draws "Marcus Keller · the client"; the planner stores a name and a phone only.
 10. **Edit details opens the Desktop view of this screen** until lane ma-e3 lands, with the trailing label "desktop view"; on a cache-served read it reads "needs connection" and does nothing.
@@ -60,6 +61,12 @@
 16. **A cancelled event says so.** A "Cancelled" chip on the when line (in place of "Today") and on Financials, no fraction in the Staffing head, and no Edit details row: there is nothing to edit on a cancelled event from the phone. Where nothing is owed but the status is not a paid one, the Financials chip reads "No balance" rather than claim "Paid". The benchmark draws neither case.
 17. **The offline banner and a picker that failed to load each carry a Retry.** A cache-served roster is often a slow connection, not a lost one, and without a Retry the only way to try again is to close the sheet.
 18. **Rostered rows are alphabetical,** as the desktop card's are. The benchmark keeps fixture order.
+19. **Distances are whole miles** ("7 mi", where the benchmark draws "6.8 mi"). The picker returns a distance for every active staffer against any shift, and the phone stores what it reads: at a tenth of a mile, ten venues place a home within about two hundred feet. The server rounds the picker's distances to the mile; the phone rounds every distance it shows, so applicants and candidates read alike. (Checkpoint A, M2.)
+20. **Cached reads are opt-in, per request.** The service worker stores a response, and answers from the store, only for a request that carries `X-Offline-Ok: 1`, which `offlineGet` sends. A caller may send it only if it renders the staleness line and takes no action on a cache-served copy. `/api/auth/me` keeps today's behaviour, so the sensitive `AuthContext` is untouched. This changes shipped behaviour on purpose: desktop screens stop being served stored copies of `/api/proposals/:id` and the other allowlisted reads, and the desktop pages that still render inside the phone chrome (proposals, until ma-f1 and ma-f2) lose their unlabelled offline copy. The phone Events list keeps its offline mode by switching to `offlineGet` (Task 9). (Task 2 review; Checkpoint A, L5.)
+21. **The phone never reads the full drink plan.** It reads `?fields=day_of_contact`, a name and a phone, and that projection is the only form of the read the service worker stores. The full plan carries its write-capable token, the internal notes, and the venue access notes clients are asked to type gate codes into. (Checkpoint A, M1, the one finding that failed the checkpoint.)
+22. **A malformed id is a dead route, not an error.** `/events/abc` dispatches `mobile-route-dead` without fetching; the two shifts reads answer 400 instead of raising in Postgres. An error screen whose Retry can never succeed is a dead end.
+
+**Accepted for this lane, on the fix list (Checkpoint A, L2 to L4):** the reads the phone stores still carry public tokens the phone never uses, and those tokens cannot be reissued; nothing in the cache ages out; a permission downgrade purges only the URL that answers 403. The security review judged these more of a class the spec already accepted. What protects the stored bytes is the phone's own lock: if the phone is lost, erase it first and revoke second.
 
 ## Global Constraints
 
@@ -72,7 +79,9 @@
 - **One write at a time.** While a write is in flight every action button in the sheet is disabled, guarded by a ref so a double tap cannot fire two requests.
 - **Writes never queue** (spec section 7). A failed save stays on screen, inline, under the row it came from, with Retry. Copy for a transport failure, verbatim: `No connection, didn't save.` A server refusal shows the server's message.
 - **Legacy response shapes are frozen.** `GET /admin/active-staff` without `shift_id` returns the same 20 keys per row. The two shifts reads only gain fields.
-- **Raw home coordinates never leave the server.** No response in this lane carries `lat`, `lng`, `staff_lat` or `staff_lng` for a person.
+- **Raw home coordinates never leave the server.** No response in this lane carries `lat`, `lng`, `staff_lat` or `staff_lng` for a person. The picker's distances leave as whole miles.
+- **The phone never requests the full drink plan.** Only `?fields=day_of_contact`.
+- **Only `offlineGet` may be answered from the phone's cache, and only a screen that renders the staleness line may call it.** `offlineGet` is `api.get` plus the header `X-Offline-Ok: 1` (`client/src/utils/offlineRead.js`). Every read a write depends on (the sheet's re-read before an approve or an assign) and every desktop read uses plain `api.get`, which the service worker never stores and never answers.
 - **Staleness line, two states,** on the detail: live = `as of <fetch time>` with no dot; cache-served = `offline copy · as of <cached time>` with the amber dot. Only the time sits inside `.m-stale-time`.
 - **Sticky rows** inside the scroll host `main#main-content` use `top: -0.75rem` (the host's own padding), never `top: 0`.
 - **44px minimum tap targets** for every button and link this lane adds.
@@ -81,7 +90,7 @@
 - **Server tests:** `node --test <file>` one suite at a time from the repo root; `require('dotenv').config()` on the first line; `process.env.SEND_NOTIFICATIONS = 'false'` before any require; `NODE_ENV !== 'production'` guard; nonce'd fixtures deleted BY RECORDED ID in `after`. Read the pass count, not only the fail count.
 - **Client tests:** no `setupTests.js` exists, so `import '@testing-library/jest-dom'` in every test file; a `jest.mock` factory may close over `mock`-prefixed names only; CRA runs `resetMocks: true`, so set mock return values inside each test or a `beforeEach`; a ToastContext stub must be one stable object.
 - **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/`.
-- **File-size ratchet:** `shifts.js` (722) and `users.js` (729) are in the yellow zone; the new SQL lives in a new util so each grows by under 20 lines. New files stay under 400 lines (the two components land at about 365 and 385; CLAUDE.md calls 300 to 600 fine for a focused page or component).
+- **File-size ratchet:** `shifts.js` (722) and `users.js` (729) are in the yellow zone; the new SQL lives in a new util so each grows by under 20 lines. New files stay under 400 lines (the sheet lands at about 370, the page at about 280 with its presentational sections in their own file; CLAUDE.md calls 300 to 600 fine for a focused page or component).
 - **Explicit staging only;** commit messages carry NO backticks; stage and commit in one command chain; never `npm install` inside the lane (it replaces the shared `node_modules` symlink).
 - **Docs law:** README folder tree (new page, component, utils, server util), ARCHITECTURE route table (the three extended reads) and PWA section (allowlist), walkthroughs-owed (the Pixel walk), the fix-list entry.
 
@@ -90,12 +99,12 @@
 The five conditions the spec implies and that are most likely to bite Dallas on the phone, most likely first. Each has a named test in the task that owns the code.
 
 1. **A double tap on Approve or an "Assign as" row on a slow connection.** Expected: one request, one text to the staffer. Pinned in Task 6 (`a second tap while a write is in flight sends nothing`).
-2. **A person or a venue with no coordinates** (6 of 16 staff and 10 of 20 upcoming shifts in prod). Expected: the meta line shows what is known ("14 events") and never "null mi", "NaN mi" or "0.0 mi". Pinned in Task 4 (`staffMeta omits what is missing`) and Task 1 (`no coordinates on either side yields null`).
+2. **A person or a venue with no coordinates** (6 of 16 staff and 10 of 20 upcoming shifts in prod). Expected: the meta line shows what is known ("14 events") and never "null mi", "NaN mi" or a made-up "0 mi". Pinned in Task 4 (`staffMeta omits what is missing`) and Task 1 (`no coordinates on either side yields null`).
 3. **The roster moved while the sheet was open** (another admin, or a staffer's own request, filled the last slot). Expected: the phone refuses rather than over-filling, says so, and shows the new roster. Pinned in Task 6 (`a role that filled since the sheet opened is refused before the write`).
 4. **Android Back with a sheet that arrived by deep link or cold route restore,** so no history entry sits behind it. Expected: Back closes the sheet and stays on the page. Pinned in Task 3 (`a deep-linked sheet gets an entry seeded behind it`).
-5. **A bank debit in flight on the event** (rare, five ACH charges since June, and the one that double-charged proposal 784). Expected: the Financials chip reads "Processing" and the balance row says a payment is in flight, including offline. Pinned in Task 7 (`a payment in flight wins the chip`) and Task 2 (the invoices read is cached).
+5. **A bank debit in flight on the event** (rare, five ACH charges since June, and the one that double-charged proposal 784). Expected: the Financials chip reads "Processing" and the balance row says a payment is in flight, including offline. Pinned in Task 7 (`a payment in flight wins the chip`) and Task 3b (the invoices read is cached for a request that asks).
 
-Also pinned, lower on the list: a proposal with no pricing snapshot still renders a total (Task 7); a request with an empty or unparseable `requested_positions` renders "Any role" and classifies like the desktop (Task 4); a manager without `can_staff` gets the detail without staffing instead of being thrown back to the list (Task 8b); a drink-plan 404 is "no day-of contact", not an error (Task 8b); an approval with no role on file still fills its slot, so the phone never offers it again (Task 4); a failure box never outlives the action it belongs to (Task 6); a staffing reload that lands after the screen moved to another event is dropped (Task 8b).
+Also pinned, lower on the list: a proposal with no pricing snapshot still renders a total (Task 7); a request with an empty or unparseable `requested_positions` renders "Any role" and classifies like the desktop (Task 4); a manager without `can_staff` gets the detail without staffing instead of being thrown back to the list (Task 8b); a drink-plan 404 is "no day-of contact", not an error (Task 8b); an approval with no role on file still fills its slot, so the phone never offers it again (Task 4); a failure box never outlives the action it belongs to (Task 6); a staffing reload that lands after the screen moved to another event is dropped (Task 8b); a desktop read is never stored and never answered from the store (Task 3b, and D12b in the gate); the full drink plan is never requested by the phone and never stored (Tasks 3b, 7, 8b, and D12c).
 
 ## Lane map
 
@@ -113,8 +122,10 @@ lanes:
       inline Approve, Deny, Remove behind confirms, role rows, alphabetical
       active-staff picker with search, seniority and distance as plain meta,
       failure with Retry, offline and read-only states). Additive fields on
-      three existing reads, three service worker allowlist entries, the
-      push-history option on useDrawerParam. Replaces the ma-e1 interim drawer
+      three existing reads, a day-of-contact projection on the drink plan
+      read, cached reads made opt-in per request in the admin service worker
+      (which also takes them away from desktop screens), the push-history
+      option on useDrawerParam. Replaces the ma-e1 interim drawer
       for manual shifts. Visual fidelity to the benchmark is owned here: the
       lane folds the design system's sheet CSS and promotes the benchmark's
       inline treatment to m-* classes.
@@ -126,9 +137,13 @@ lanes:
       - server/utils/staffingMeta.js
       - server/routes/shifts.js
       - server/routes/admin/users.js
+      - server/routes/drinkPlans.js
       - server/routes/shifts.staffingMeta.test.js
+      - server/routes/drinkPlans.dayOfContact.test.js
       - client/public/admin-sw.js
       - client/src/utils/adminSwAllowlist.test.js
+      - client/src/utils/offlineRead.js
+      - client/src/utils/offlineRead.test.js
       - client/src/hooks/useDrawerParam.js
       - client/src/hooks/useDrawerParam.test.js
       - client/src/utils/staffingSheet.js
@@ -143,6 +158,7 @@ lanes:
       - client/src/components/mobile/MobileHeader.test.js
       - client/src/components/AdminLayout.js
       - client/src/pages/mobile/EventDetailPhone.js
+      - client/src/pages/mobile/EventDetailSections.js
       - client/src/pages/mobile/EventDetailPhone.test.js
       - client/src/pages/mobile/EventsListPhone.js
       - client/src/pages/mobile/EventsListPhone.test.js
@@ -163,23 +179,25 @@ lanes:
     # performance-review: by-proposal and detail gain a second round trip,
     # active-staff with shift_id gains three queries, and each shift_id is its
     # own cache entry. ui-ux-review judges against the benchmark, Event detail
-    # and Assignment sheet, with the eighteen decisions as the contract.
+    # and Assignment sheet, with the plan's decisions as the contract.
 
   # Declared in the 2026-09-15 plan, unchanged, each with its own plan when its turn comes:
   # ma-e3-edit-sheet (depends on this lane), ma-f1-proposals-list, ma-f2-proposal-detail
   # (depends on this lane for the section and sheet CSS), ma-f3-search.
 ```
 
-**Task order.** Tasks run in the order written, one implementer each. Tasks 1 and 2 are the server and service worker contract. Tasks 3 and 4 are pure and independent of each other; Task 7 is pure and imports `buildShiftView` from Task 4, so it cannot run before it. Task 5 (CSS) precedes the components that use it. Task 6 (sheet) precedes Task 8b (detail), which mounts it; Task 8a (header and layout) precedes 8b. Task 9 wires both in. Task 10 is the browser gate, Task 11 the docs, Task 12 the lane close.
+**Task order.** Tasks run in the order written, one implementer each: 1, 2, 3, 3b, 4, 5, 6, 7, 8a, 8b, 9, 10, 11, 12. Tasks 1 and 2 are the server and service worker contract; Task 3b is that contract as Checkpoint A amended it, and every later task consumes the AMENDED contract. Tasks 3 and 4 are pure and independent of each other; Task 7 is pure and imports `buildShiftView` from Task 4, so it cannot run before it. Task 5 (CSS) precedes the components that use it. Task 6 (sheet) precedes Task 8b (detail), which mounts it; Task 8a (header and layout) precedes 8b. Task 9 wires both in. Task 10 is the browser gate, Task 11 the docs, Task 12 the lane close.
 
 **Who writes what.** An implementer sees this header and their own task, commits only the paths their task names, and REPORTS anything the plan should record. The plan and the spec live on main and are edited there by the orchestrator, never from the lane (the pre-commit guard blocks a plan or spec commit off main). So the Browser checks table, the as-built deltas and any footprint amendment are written by the orchestrator from the implementers' reports.
 
-**Checkpoint A, after Tasks 1 and 2 and before Task 3 is dispatched: security-review and database-review on the contract.** Run by the orchestrator on the diff of Tasks 1 and 2 (the ma-d lane's checkpoint caught a real leak at exactly this point). Brief for security-review: who can read `events_worked` and `home_distance_miles` (it must be exactly the `requireStaffing` set); whether any path returns a raw coordinate; whether `shift_id` lets someone who could not already list shifts probe for their existence; whether the three new allowlist patterns can match a public token route or any path outside the three named reads; and what the newly cached PAYLOADS carry at rest (`GET /invoices/proposal/:id` returns each invoice's public `token`; `GET /proposals/:id`, cached since ma-b, already carries the proposal's), with a verdict on whether that footprint is acceptable under spec section 7's per-user namespace and purge rules. Brief for database-review: the `loadEventsWorked` plan on the dev database (`EXPLAIN ANALYZE` with 16 ids), the added `LEFT JOIN proposals` on by-proposal, and that `finished` is computed per row without a second scan. Findings fold into Tasks 1 and 2. A finding that changes the CONTRACT (a field name, a shape, a status code) is folded by the orchestrator into the text of Tasks 4, 6, 7 and 8b on main before any of them is dispatched.
+**Checkpoint A ran 2026-09-29: database-review PASS, security-review FAIL (narrowly, on one finding). Its outcome is Task 3b and Decisions 19 to 22; the record is in the Self-Review, item 7. The brief it ran on, kept for the record:** security-review and database-review on the contract, after Tasks 1 and 2. Run by the orchestrator on the diff of Tasks 1 and 2 (the ma-d lane's checkpoint caught a real leak at exactly this point). Brief for security-review: who can read `events_worked` and `home_distance_miles` (it must be exactly the `requireStaffing` set); whether any path returns a raw coordinate; whether `shift_id` lets someone who could not already list shifts probe for their existence; whether the three new allowlist patterns can match a public token route or any path outside the three named reads; and what the newly cached PAYLOADS carry at rest (`GET /invoices/proposal/:id` returns each invoice's public `token`; `GET /proposals/:id`, cached since ma-b, already carries the proposal's), with a verdict on whether that footprint is acceptable under spec section 7's per-user namespace and purge rules. Brief for database-review: the `loadEventsWorked` plan on the dev database (`EXPLAIN ANALYZE` with 16 ids), the added `LEFT JOIN proposals` on by-proposal, and that `finished` is computed per row without a second scan. Findings fold into Tasks 1 and 2. A finding that changes the CONTRACT (a field name, a shape, a status code) is folded by the orchestrator into the text of Tasks 4, 6, 7 and 8b on main before any of them is dispatched.
 
 **A known flaky test, not this lane's.** `EventsListPhone.test.js`, "scroll offsets are saved only after the loaded list has been restored", fails intermittently when many suites run together and passes alone, with and without this lane's changes (seen in the plan fleet's scratch runs, 2026-09-29). If it fails in a multi-suite run, re-run that file alone before treating it as a regression.
 
 ---
 ### Task 1: Staffing meta on the three reads (events worked, distance, finished, ranked roles)
+
+> **Built 2026-09-29 as `df5f8d28`, from the text below, review clean.** Checkpoint A then amended the contract: Task 3b makes the picker's distances whole miles, validates the path id on the two shifts reads, and strengthens this task's test. Where this section and Task 3b differ, Task 3b is what the lane holds.
 
 **Files:**
 - Create: `server/utils/staffingMeta.js`
@@ -709,6 +727,8 @@ MSG
 ---
 ### Task 2: Service worker allowlist for the detail and sheet reads
 
+> **Built 2026-09-29 as `c6400e3c`, from the text below.** Its review and Checkpoint A found that this design reached desktop screens and stored the whole drink plan. Task 3b replaces it: cached reads are opt-in per request, the drink plan is cached only as a projection, and the by-proposal entry is anchored. Where this section and Task 3b differ, Task 3b is what the lane holds.
+
 **Files:**
 - Modify: `client/public/admin-sw.js:30` (version) and `:194-197` (`isAllowlisted`)
 - Test: `client/src/utils/adminSwAllowlist.test.js`
@@ -852,6 +872,8 @@ Report to the orchestrator that the contract is ready: Checkpoint A (in the head
 ---
 
 ### Task 3: Push-history option on `useDrawerParam`
+
+> **Built 2026-09-29 as `1e9bb783`, from the text below, review clean.** Task 3b adds one guard (the seed runs only for a numeric sheet id) and three tests the review asked for. Where this section and Task 3b differ, Task 3b is what the lane holds.
 
 **Files:**
 - Modify: `client/src/hooks/useDrawerParam.js`
@@ -1202,6 +1224,1416 @@ MSG
 ```
 
 ---
+### Task 3b: Checkpoint A fold: the contract as amended
+
+Checkpoint A ran on Tasks 1 and 2 on 2026-09-29. The database review passed. The security review failed, narrowly, and the Task 2 review raised one plan-level finding. This task brings what Tasks 1, 2 and 3 built to the amended contract, BEFORE any client task consumes it. The reasons are in the header (Decisions 19 to 22); the code is below.
+
+What changes, in one paragraph: the service worker stores and stale-serves a read only when the request asks for it with `X-Offline-Ok: 1`, so desktop screens never see cached data; the drink plan is read and cached only as a two-field projection; the picker's distances are whole miles; the two shifts reads answer 400 for a malformed id; the by-proposal allowlist entry is anchored; the hook seeds a history entry only for a numeric sheet id; and Task 1's test gains the fixtures three reviewers asked for.
+
+**Files:**
+- Modify: `server/utils/staffingMeta.js` (replaced whole)
+- Modify: `server/routes/shifts.js` (one helper after `clampInt` `:42-46`; `GET /by-proposal/:proposalId`; `GET /detail/:id`)
+- Modify: `server/routes/drinkPlans.js` (`GET /by-proposal/:proposalId` `:381`)
+- Modify: `client/public/admin-sw.js` (`isAllowlisted` `:194-205`; the API branch condition `:296`)
+- Modify: `client/src/hooks/useDrawerParam.js` (replaced whole)
+- Create: `client/src/utils/offlineRead.js`
+- Test: `server/routes/shifts.staffingMeta.test.js` (replaced whole), `server/routes/drinkPlans.dayOfContact.test.js` (new), `client/src/utils/adminSwAllowlist.test.js` (replaced whole), `client/src/utils/offlineRead.test.js` (new), `client/src/hooks/useDrawerParam.test.js` (replaced whole)
+
+**Interfaces:**
+- Consumes: what Tasks 1, 2 and 3 committed (`df5f8d28`, `c6400e3c`, `1e9bb783`).
+- Produces, for Tasks 4, 6, 7, 8b and 9 (these REPLACE what the Task 1 and Task 2 sections say where they differ):
+  - `GET /admin/active-staff?limit=100&shift_id=<id>`: `home_distance_miles` is a WHOLE number of miles or `null`. The two shifts reads keep a tenth of a mile for requesters.
+  - `GET /shifts/detail/:id` and `GET /shifts/by-proposal/:proposalId` answer 400 when the path id is not a positive integer within int4.
+  - `GET /drink-plans/by-proposal/:proposalId?fields=day_of_contact` -> `{ day_of_contact: { name, phone } | null }`, 404 when the proposal has no drink plan, 400 for any other `fields` value or a malformed id. Without `fields` the response is unchanged.
+  - `client/src/utils/offlineRead.js` exports `offlineGet(url, config?) -> Promise<response>` (it is `api.get` plus the header `X-Offline-Ok: 1`) and `OFFLINE_OK_HEADER`. The response carries `res.staleAt` when the service worker served it.
+  - The service worker handles a GET only when the path is allowlisted AND the request carries `X-Offline-Ok: 1` (or the path is `/api/auth/me`). `/api/drink-plans/by-proposal/:id` is allowlisted only with the exact query `?fields=day_of_contact`.
+  - `useDrawerParam` seeds an entry behind a deep-linked sheet only when `drawerId` is all digits.
+
+- [ ] **Step 1: Replace and add the server tests**
+
+Replace the whole of `server/routes/shifts.staffingMeta.test.js` with:
+
+```js
+// Staffing meta on the three reads the phone staffing surfaces use (lane
+// ma-e2, spec 2026-08-13-mobile-admin sections 3 and 4).
+//
+// Three kinds of claim, kept apart on purpose:
+//   1. ADDITIVE. The two shifts reads gain events_worked, finished and (on
+//      by-proposal) requested_positions. Nothing they returned before moves.
+//   2. FROZEN. GET /admin/active-staff without shift_id returns exactly the
+//      20 keys it returned before this lane. The desktop drawer, the roster and
+//      the reviews page all read that shape.
+//   3. ONE DEFINITION. events_worked here equals GET /admin/users/:id/seniority
+//      for the same person, across every filter the definition has, so this
+//      third reader cannot drift from the two that feed auto-assign.
+// And two privacy laws: no response carries a person's raw home coordinates,
+// and the picker's distances are whole miles.
+
+require('dotenv').config();
+process.env.SEND_NOTIFICATIONS = 'false';
+
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const express = require('express');
+const jwt = require('jsonwebtoken');
+
+const { pool } = require('../db');
+const { AppError } = require('../utils/errors');
+const { chicagoTodayYmd } = require('../utils/businessTime');
+const { wholeMiles } = require('../utils/staffingMeta');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('shifts.staffingMeta.test.js refuses to run against production');
+}
+
+const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const EMAIL = (label) => `staffing-meta-${NONCE}-${label}@example.com`;
+// Sorts to the top of the alphabetical active-staff feed, so the fixtures are
+// inside the first 100 rows however many staff the dev database holds.
+const NAME = (label) => `AAA ${NONCE} ${label}`;
+
+// Chicago Loop venue, Rockford home: about 80 straight-line miles.
+const VENUE = { lat: 41.8781, lng: -87.6298 };
+const HOME = { lat: 42.2711, lng: -89.0940 };
+
+const LEGACY_STAFF_KEYS = ['cc_id', 'city', 'created_at', 'display_name', 'email', 'equipment_cooler',
+  'equipment_portable_bar', 'equipment_table_with_spandex', 'id', 'import_source', 'onboarding_completed',
+  'onboarding_status', 'phone', 'positions_interested', 'preferred_name', 'reliable_transportation', 'role',
+  'signed_at', 'state', 'travel_distance'];
+
+let server, baseUrl;
+const ids = { users: [], shifts: [], proposals: [], clients: [] };
+let adminToken, plainManagerToken;
+let near, far, bench, bare, twice;   // staff fixtures
+let futureShift, pastShift, todayShift, manualShift, proposalId;
+
+function get(path, token) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(baseUrl + path);
+    const req = http.request({
+      hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        let json = null;
+        try { json = data ? JSON.parse(data) : null; } catch { /* non-JSON */ }
+        resolve({ status: res.statusCode, body: json });
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function makeUser(label, { role = 'staff', canStaff = false, home = null, historical = 0, profile = true } = {}) {
+  const r = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, can_staff, token_version)
+     VALUES ($1, 'x', $2, 'approved', $3, 0) RETURNING id, token_version`,
+    [EMAIL(label), role, canStaff]
+  );
+  const user = r.rows[0];
+  ids.users.push(user.id);
+  await pool.query('INSERT INTO onboarding_progress (user_id, onboarding_completed) VALUES ($1, TRUE)', [user.id]);
+  if (profile) {
+    await pool.query(
+      `INSERT INTO contractor_profiles (user_id, preferred_name, display_name, lat, lng, historical_events_worked)
+       VALUES ($1, $2, $2, $3, $4, $5)`,
+      [user.id, NAME(label), home ? home.lat : null, home ? home.lng : null, historical]
+    );
+  }
+  return user;
+}
+const tokenFor = (u) => jwt.sign({ userId: u.id, tokenVersion: u.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+async function seedProposal(date) {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, guest_count, event_type, total_price, amount_paid)
+     VALUES ($1, 'deposit_paid', $2::date, 100, 'wedding-reception', 1000, 100) RETURNING id`,
+    [ids.clients[0], date]
+  );
+  ids.proposals.push(p.rows[0].id);
+  return p.rows[0].id;
+}
+async function seedShift({ date, proposal = null, venue = null, positions = '["Bartender","Bartender"]', start = '18:00', end = '23:00' }) {
+  const r = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, location, client_name, positions_needed, proposal_id, lat, lng)
+     VALUES ($1::date, $2, $3, 'open', '1 Test St', $4, $5, $6, $7, $8) RETURNING id`,
+    [date, start, end, `StaffingMeta ${NONCE}`, positions, proposal, venue ? venue.lat : null, venue ? venue.lng : null]
+  );
+  ids.shifts.push(r.rows[0].id);
+  return r.rows[0].id;
+}
+async function request(shiftId, userId, { status = 'pending', position = null, ranked = '[]', dropped = false } = {}) {
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions, dropped_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [shiftId, userId, status, position, ranked, dropped ? new Date() : null]
+  );
+}
+const ymdOffset = (days) => {
+  const d = new Date(`${chicagoTodayYmd()}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+before(async () => {
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+  app.use('/api/shifts', require('./shifts'));
+  app.use('/api/admin', require('./admin/users'));
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code, fieldErrors: err.fieldErrors });
+    return res.status(500).json({ error: 'Internal error' });
+  });
+  await new Promise((resolve) => {
+    server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); });
+  });
+
+  adminToken = tokenFor(await makeUser('admin', { role: 'admin' }));
+  plainManagerToken = tokenFor(await makeUser('manager', { role: 'manager', canStaff: false }));
+  near = await makeUser('near', { home: HOME, historical: 12 });   // 12 imported + 1 live = 13
+  far = await makeUser('far');                                     // no home coordinates, nothing worked
+  bench = await makeUser('bench', { home: HOME, historical: 3 });  // never requested: a picker candidate
+  bare = await makeUser('bare', { profile: false });               // no contractor profile at all
+  twice = await makeUser('twice');                                 // two shifts of ONE past event
+
+  const c = await pool.query(`INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555550000') RETURNING id`,
+    [`StaffingMeta ${NONCE}`, EMAIL('client')]);
+  ids.clients.push(c.rows[0].id);
+  proposalId = await seedProposal(ymdOffset(5));
+  const pastProposal = await seedProposal(ymdOffset(-20));
+
+  futureShift = await seedShift({ date: ymdOffset(5), proposal: proposalId, venue: VENUE });
+  pastShift = await seedShift({ date: ymdOffset(-10) });
+  todayShift = await seedShift({ date: ymdOffset(0), start: '23:00', end: '23:30' });
+  manualShift = await seedShift({ date: ymdOffset(7) });           // no proposal, no venue coordinates
+  const pastDropped = await seedShift({ date: ymdOffset(-11) });
+  const pastPending = await seedShift({ date: ymdOffset(-12) });
+  const pastDenied = await seedShift({ date: ymdOffset(-13) });
+  const pastA = await seedShift({ date: ymdOffset(-20), proposal: pastProposal, start: '16:00', end: '20:00' });
+  const pastB = await seedShift({ date: ymdOffset(-20), proposal: pastProposal, start: '20:00', end: '23:00' });
+
+  // near: exactly ONE row counts. Each of the others trips one filter.
+  await request(pastShift, near.id, { status: 'approved', position: 'Bartender' });                     // counts
+  await request(todayShift, near.id, { status: 'approved', position: 'Bartender' });                    // tonight: not yet
+  await request(pastDropped, near.id, { status: 'approved', position: 'Bartender', dropped: true });    // emergency drop
+  await request(pastPending, near.id, { status: 'pending', ranked: '["Bartender"]' });                  // never approved
+  await request(pastDenied, near.id, { status: 'denied' });                                             // denied
+  await request(futureShift, near.id, { status: 'pending', ranked: '["Bartender","Barback"]' });
+  await request(futureShift, far.id, { status: 'pending', ranked: '[]' });
+  await request(futureShift, bare.id, { status: 'pending', ranked: '["Bartender"]' });
+  await request(manualShift, near.id, { status: 'pending', ranked: '["Bartender"]' });
+  await request(pastA, twice.id, { status: 'approved', position: 'Bartender' });
+  await request(pastB, twice.id, { status: 'approved', position: 'Bartender' });
+  await request(futureShift, twice.id, { status: 'pending', ranked: '["Bartender"]' });
+});
+
+after(async () => {
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = ANY($1::int[])', [ids.shifts]);
+  await pool.query('DELETE FROM shifts WHERE id = ANY($1::int[])', [ids.shifts]);
+  await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [ids.proposals]);
+  await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [ids.clients]);
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])', [ids.users]);
+  await pool.query('DELETE FROM onboarding_progress WHERE user_id = ANY($1::int[])', [ids.users]);
+  await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [ids.users]);
+  await new Promise((resolve) => server.close(resolve));
+  await pool.end();
+});
+
+const noCoords = (row, where) => {
+  for (const k of ['lat', 'lng', 'staff_lat', 'staff_lng']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(row, k), false, `${where} must not carry ${k}`);
+  }
+};
+
+test('detail: requests carry events_worked and the derived distance, never raw coordinates', async () => {
+  const r = await get(`/api/shifts/detail/${futureShift}`, adminToken);
+  assert.equal(r.status, 200);
+  const a = r.body.requests.find((x) => x.user_id === near.id);
+  const b = r.body.requests.find((x) => x.user_id === far.id);
+  assert.equal(a.events_worked, 13, 'twelve imported plus one live event; tonight, a drop, a pending and a denied do not count');
+  assert.equal(b.events_worked, 0);
+  assert.ok(a.home_distance_miles > 60 && a.home_distance_miles < 100, `got ${a.home_distance_miles}`);
+  assert.equal(b.home_distance_miles, null, 'no home coordinates means no distance');
+  r.body.requests.forEach((x) => noCoords(x, 'a detail request'));
+  // What the desktop drawer reads must still be there.
+  for (const k of ['id', 'user_id', 'status', 'position', 'dropped_at', 'requested_positions', 'staff_name', 'staff_email', 'staff_city', 'staff_reliable_transportation']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(a, k), `detail request lost ${k}`);
+  }
+  for (const k of ['client_name', 'client_phone', 'client_email', 'proposal_total', 'request_count', 'approved_count', 'venue_distance_miles', 'positions_needed']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(r.body.shift, k), `detail shift lost ${k}`);
+  }
+});
+
+test('a requester with no contractor profile still gets a row: zero events, no distance, a name', async () => {
+  const r = await get(`/api/shifts/detail/${futureShift}`, adminToken);
+  const x = r.body.requests.find((q) => q.user_id === bare.id);
+  assert.ok(x, 'the profile-less requester is in the list');
+  assert.equal(x.events_worked, 0);
+  assert.equal(x.home_distance_miles, null);
+  assert.equal(x.staff_name, EMAIL('bare'), 'the name falls back to the email');
+  const p = await get(`/api/shifts/by-proposal/${proposalId}`, adminToken);
+  const y = p.body[0].requesters.find((q) => q.user_id === bare.id);
+  assert.equal(y.events_worked, 0);
+  assert.equal(y.home_distance_miles, null);
+});
+
+test('events worked counts SHIFTS: two shifts of one event count two', async () => {
+  const r = await get(`/api/shifts/detail/${futureShift}`, adminToken);
+  assert.equal(r.body.requests.find((q) => q.user_id === twice.id).events_worked, 2);
+  const s = await get(`/api/admin/users/${twice.id}/seniority`, adminToken);
+  assert.equal(s.body.events_worked, 2, 'the seniority route counts the same way');
+});
+
+test('detail: no coordinates on either side yields null, and events_worked still arrives', async () => {
+  const r = await get(`/api/shifts/detail/${manualShift}`, adminToken);
+  assert.equal(r.status, 200);
+  const a = r.body.requests.find((x) => x.user_id === near.id);
+  assert.equal(a.home_distance_miles, null, 'the venue has no coordinates');
+  assert.equal(a.events_worked, 13);
+});
+
+test('detail: finished follows the shift end instant, and the proposal status rides along', async () => {
+  const future = await get(`/api/shifts/detail/${futureShift}`, adminToken);
+  assert.equal(future.body.shift.finished, false);
+  assert.equal(future.body.shift.proposal_status, 'deposit_paid');
+  const past = await get(`/api/shifts/detail/${pastShift}`, adminToken);
+  assert.equal(past.body.shift.finished, true);
+  assert.equal(past.body.shift.proposal_status, null, 'a manual shift has no proposal');
+});
+
+test('by-proposal: requesters carry the ranked roles, events_worked and distance; shifts carry finished', async () => {
+  const r = await get(`/api/shifts/by-proposal/${proposalId}`, adminToken);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.length, 1);
+  const shift = r.body[0];
+  assert.equal(shift.finished, false);
+  const a = shift.requesters.find((x) => x.user_id === near.id);
+  const b = shift.requesters.find((x) => x.user_id === far.id);
+  const ranked = typeof a.requested_positions === 'string' ? JSON.parse(a.requested_positions) : a.requested_positions;
+  assert.deepEqual(ranked, ['Bartender', 'Barback']);
+  assert.equal(a.events_worked, 13);
+  assert.equal(b.events_worked, 0);
+  assert.ok(a.home_distance_miles > 60 && a.home_distance_miles < 100);
+  shift.requesters.forEach((x) => noCoords(x, 'a by-proposal requester'));
+  // What the desktop card reads must still be there.
+  for (const k of ['approved_staff', 'approved_by_role', 'request_count', 'approved_count', 'venue_distance_miles']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(shift, k), `by-proposal lost ${k}`);
+  }
+});
+
+test('a malformed path id answers 400 on both shifts reads, never 500', async () => {
+  for (const bad of ['abc', '0', '-4', '1.5', '99999999999']) {
+    assert.equal((await get(`/api/shifts/detail/${bad}`, adminToken)).status, 400, `detail/${bad}`);
+    assert.equal((await get(`/api/shifts/by-proposal/${bad}`, adminToken)).status, 400, `by-proposal/${bad}`);
+  }
+  assert.equal((await get('/api/shifts/detail/2147483000', adminToken)).status, 404, 'a well-formed id that matches nothing');
+  assert.deepEqual((await get('/api/shifts/by-proposal/2147483000', adminToken)).body, [], 'a proposal with no shifts');
+});
+
+test('active-staff without shift_id is frozen at its 20 legacy keys', async () => {
+  const r = await get('/api/admin/active-staff?limit=100', adminToken);
+  assert.equal(r.status, 200);
+  const row = r.body.staff.find((s) => s.id === bench.id);
+  assert.ok(row, 'the bench fixture is in the first page');
+  assert.deepEqual(Object.keys(row).sort(), LEGACY_STAFF_KEYS);
+});
+
+test('active-staff with shift_id adds events_worked and a WHOLE-mile distance to that venue, never coordinates', async () => {
+  const r = await get(`/api/admin/active-staff?limit=100&shift_id=${futureShift}`, adminToken);
+  assert.equal(r.status, 200);
+  const b = r.body.staff.find((s) => s.id === bench.id);
+  const f = r.body.staff.find((s) => s.id === far.id);
+  assert.equal(b.events_worked, 3);
+  assert.ok(b.home_distance_miles > 60 && b.home_distance_miles < 100, `got ${b.home_distance_miles}`);
+  assert.equal(f.events_worked, 0);
+  assert.equal(f.home_distance_miles, null);
+  assert.deepEqual(Object.keys(b).sort(), [...LEGACY_STAFF_KEYS, 'events_worked', 'home_distance_miles'].sort());
+  for (const s of r.body.staff) {
+    noCoords(s, 'an active-staff row');
+    assert.ok(s.home_distance_miles === null || Number.isInteger(s.home_distance_miles),
+      `picker distances are whole miles, got ${s.home_distance_miles}`);
+  }
+});
+
+test('wholeMiles rounds to the mile and keeps null as null', () => {
+  assert.equal(wholeMiles(6.8), 7);
+  assert.equal(wholeMiles(6.44), 6);
+  assert.equal(wholeMiles(0.3), 0);
+  assert.equal(wholeMiles(null), null);
+  assert.equal(wholeMiles(undefined), null);
+  assert.equal(wholeMiles(Number.NaN), null);
+});
+
+test('active-staff with a venue that has no coordinates returns null distances', async () => {
+  const r = await get(`/api/admin/active-staff?limit=100&shift_id=${manualShift}`, adminToken);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.staff.find((s) => s.id === bench.id).home_distance_miles, null);
+});
+
+test('active-staff refuses a malformed shift_id and 404s an unknown one', async () => {
+  // The last one passes a digits-only check and overflows int4 in the query.
+  for (const bad of ['abc', '0', '-4', '1.5', '', '99999999999']) {
+    const r = await get(`/api/admin/active-staff?limit=100&shift_id=${encodeURIComponent(bad)}`, adminToken);
+    assert.equal(r.status, 400, `shift_id=${JSON.stringify(bad)} should be a 400`);
+  }
+  const gone = await get('/api/admin/active-staff?limit=100&shift_id=2147483000', adminToken);
+  assert.equal(gone.status, 404);
+});
+
+test('a manager without can_staff reaches none of the three reads', async () => {
+  assert.equal((await get(`/api/shifts/detail/${futureShift}`, plainManagerToken)).status, 403);
+  assert.equal((await get(`/api/shifts/by-proposal/${proposalId}`, plainManagerToken)).status, 403);
+  assert.equal((await get(`/api/admin/active-staff?limit=100&shift_id=${futureShift}`, plainManagerToken)).status, 403);
+});
+
+test('events_worked is the same number the seniority route reports, filter by filter', async () => {
+  const d = await get(`/api/shifts/detail/${futureShift}`, adminToken);
+  for (const who of [near, far, bare, twice]) {
+    const s = await get(`/api/admin/users/${who.id}/seniority`, adminToken);
+    assert.equal(s.status, 200);
+    assert.equal(d.body.requests.find((x) => x.user_id === who.id).events_worked, s.body.events_worked);
+  }
+});
+```
+
+Create `server/routes/drinkPlans.dayOfContact.test.js`:
+
+```js
+// GET /api/drink-plans/by-proposal/:proposalId?fields=day_of_contact
+//
+// The phone event detail shows the day-of contact and nothing else from the
+// drink plan. This projection exists so that is ALL the phone reads, and all
+// the admin service worker stores: the full read carries the plan's
+// write-capable token, the internal notes and the venue access notes clients
+// type gate codes into (lane ma-e2, security checkpoint, 2026-09-29).
+
+require('dotenv').config();
+process.env.SEND_NOTIFICATIONS = 'false';
+
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const express = require('express');
+const jwt = require('jsonwebtoken');
+
+const { pool } = require('../db');
+const { AppError } = require('../utils/errors');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('drinkPlans.dayOfContact.test.js refuses to run against production');
+}
+
+const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const EMAIL = (label) => `day-of-${NONCE}-${label}@example.com`;
+const ids = { users: [], proposals: [], clients: [], plans: [] };
+let server, baseUrl, adminToken, staffToken;
+let withContact, withoutContact, blankName, noPlan;
+
+function get(path, token) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(baseUrl + path);
+    const req = http.request({
+      hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        let json = null;
+        try { json = data ? JSON.parse(data) : null; } catch { /* non-JSON */ }
+        resolve({ status: res.statusCode, body: json });
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+async function makeUser(label, role) {
+  const r = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, 'x', $2, 'approved', 0) RETURNING id, token_version`,
+    [EMAIL(label), role]
+  );
+  ids.users.push(r.rows[0].id);
+  return jwt.sign({ userId: r.rows[0].id, tokenVersion: r.rows[0].token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
+}
+async function seedProposal() {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, guest_count, event_type, total_price, amount_paid)
+     VALUES ($1, 'deposit_paid', CURRENT_DATE + 30, 100, 'wedding-reception', 1000, 100) RETURNING id`,
+    [ids.clients[0]]
+  );
+  ids.proposals.push(p.rows[0].id);
+  return p.rows[0].id;
+}
+async function seedPlan(proposalId, selections) {
+  const r = await pool.query(
+    `INSERT INTO drink_plans (proposal_id, status, selections, admin_notes, client_email)
+     VALUES ($1, 'draft', $2::jsonb, 'internal: client is slow to pay', $3) RETURNING id`,
+    [proposalId, JSON.stringify(selections), EMAIL('client')]
+  );
+  ids.plans.push(r.rows[0].id);
+}
+
+before(async () => {
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+  app.use('/api/drink-plans', require('./drinkPlans'));
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code, fieldErrors: err.fieldErrors });
+    return res.status(500).json({ error: 'Internal error' });
+  });
+  await new Promise((resolve) => {
+    server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); });
+  });
+
+  adminToken = await makeUser('admin', 'admin');
+  staffToken = await makeUser('staff', 'staff');
+  const c = await pool.query(`INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555550000') RETURNING id`,
+    [`DayOf ${NONCE}`, EMAIL('client')]);
+  ids.clients.push(c.rows[0].id);
+
+  withContact = await seedProposal();
+  withoutContact = await seedProposal();
+  blankName = await seedProposal();
+  noPlan = await seedProposal();
+  await seedPlan(withContact, {
+    logistics: {
+      dayOfContact: { name: ' Marcus Keller ', phone: '(312) 555-0142' },
+      accessNotes: 'gate code 4471, loading dock on the alley',
+      parking: 'street',
+    },
+    menuStyle: 'house',
+  });
+  await seedPlan(withoutContact, { logistics: { accessNotes: 'side door' } });
+  await seedPlan(blankName, { logistics: { dayOfContact: { name: '   ', phone: '3125550142' } } });
+});
+
+after(async () => {
+  await pool.query('DELETE FROM drink_plans WHERE id = ANY($1::int[])', [ids.plans]);
+  await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [ids.proposals]);
+  await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [ids.clients]);
+  await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [ids.users]);
+  await new Promise((resolve) => server.close(resolve));
+  await pool.end();
+});
+
+test('the projection returns the name and the phone, and NOTHING else', async () => {
+  const r = await get(`/api/drink-plans/by-proposal/${withContact}?fields=day_of_contact`, adminToken);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, { day_of_contact: { name: 'Marcus Keller', phone: '(312) 555-0142' } });
+  const wire = JSON.stringify(r.body);
+  for (const secret of ['4471', 'loading dock', 'slow to pay', 'token', 'selections', EMAIL('client')]) {
+    assert.equal(wire.includes(secret), false, `the projection leaked ${secret}`);
+  }
+});
+
+test('a plan with no day-of contact, or a blank name, answers null', async () => {
+  const a = await get(`/api/drink-plans/by-proposal/${withoutContact}?fields=day_of_contact`, adminToken);
+  assert.equal(a.status, 200);
+  assert.deepEqual(a.body, { day_of_contact: null });
+  const b = await get(`/api/drink-plans/by-proposal/${blankName}?fields=day_of_contact`, adminToken);
+  assert.deepEqual(b.body, { day_of_contact: null });
+});
+
+test('no drink plan is a 404, as on the full read', async () => {
+  const r = await get(`/api/drink-plans/by-proposal/${noPlan}?fields=day_of_contact`, adminToken);
+  assert.equal(r.status, 404);
+  assert.equal((await get(`/api/drink-plans/by-proposal/${noPlan}`, adminToken)).status, 404);
+});
+
+test('an unknown projection and a malformed id are 400, never 500', async () => {
+  assert.equal((await get(`/api/drink-plans/by-proposal/${withContact}?fields=all`, adminToken)).status, 400);
+  assert.equal((await get(`/api/drink-plans/by-proposal/${withContact}?fields=`, adminToken)).status, 400);
+  assert.equal((await get(`/api/drink-plans/by-proposal/${withContact}?fields=day_of_contact&fields=token`, adminToken)).status, 400);
+  for (const bad of ['abc', '0', '1.5', '99999999999']) {
+    assert.equal((await get(`/api/drink-plans/by-proposal/${bad}?fields=day_of_contact`, adminToken)).status, 400, bad);
+  }
+});
+
+test('the full read is unchanged: the desktop still gets the whole plan', async () => {
+  const r = await get(`/api/drink-plans/by-proposal/${withContact}`, adminToken);
+  assert.equal(r.status, 200);
+  for (const k of ['id', 'token', 'proposal_id', 'selections', 'status', 'admin_notes', 'has_shopping_list', 'extras_unpaid_cents']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(r.body, k), `the full read lost ${k}`);
+  }
+  assert.equal(r.body.selections.logistics.accessNotes, 'gate code 4471, loading dock on the alley');
+  assert.equal(Object.prototype.hasOwnProperty.call(r.body, 'day_of_contact'), false);
+});
+
+test('staff cannot read either form', async () => {
+  assert.equal((await get(`/api/drink-plans/by-proposal/${withContact}?fields=day_of_contact`, staffToken)).status, 403);
+  assert.equal((await get(`/api/drink-plans/by-proposal/${withContact}`, staffToken)).status, 403);
+  assert.equal((await get(`/api/drink-plans/by-proposal/${withContact}?fields=day_of_contact`)).status, 401);
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run, one at a time:
+
+```bash
+node --test server/routes/shifts.staffingMeta.test.js
+node --test server/routes/drinkPlans.dayOfContact.test.js
+```
+
+Expected (reasoned from the code, NOT measured: these suites seed the shared dev database, so the plan fleet could not run them): the first reports 14 tests with 3 failing, "a malformed path id answers 400" (today it is a 500), "active-staff with shift_id adds events_worked and a WHOLE-mile distance" (today the distance has a decimal) and "wholeMiles rounds to the mile" (`wholeMiles` is not exported yet, so the require yields `undefined`); the other 11 pass, including the three new fixture tests, which describe behaviour Task 1 already has. The second reports 6 tests with 3 failing: the projection test, the null test and the 400 test. If your numbers differ, read why before changing any code, and report it.
+
+- [ ] **Step 3: Whole miles for the picker**
+
+Replace the whole of `server/utils/staffingMeta.js` with:
+
+```js
+'use strict';
+
+// Seniority and proximity facts for the staffing surfaces (spec
+// 2026-08-13-mobile-admin section 3, design-session decisions of 2026-09-15):
+// how many events a person has worked and how far their home is from a venue,
+// shown as plain meta beside an applicant or a picker candidate. Information
+// only. Nothing here ranks, sorts or scores; autoAssign.js owns ranking and is
+// not a caller.
+//
+// events_worked has ONE definition and this is its third reader. The other two
+// are server/utils/autoAssign.js (step 3) and GET /admin/users/:id/seniority.
+// All three count approved, not-dropped requests on shifts dated before the
+// CHICAGO business day (never CURRENT_DATE, which is a GMT day and counts
+// tonight's shift as worked from 19:00 Chicago), plus the pre-migration
+// contractor_profiles.historical_events_worked. It counts SHIFTS: a staffer
+// approved on two shifts of one event counts two, in all three readers.
+// server/routes/shifts.staffingMeta.test.js pins this reader to the seniority
+// route so the three cannot drift silently.
+const { pool } = require('../db');
+const { chicagoTodayYmd } = require('./businessTime');
+const { milesBetween } = require('./serviceArea');
+
+function cleanIds(userIds) {
+  return [...new Set((userIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+}
+
+// WHOLE miles, on purpose. The picker returns a distance for EVERY active
+// staffer against ANY shift, and the phone stores what it reads. At a tenth of
+// a mile, ten venues place a home within about two hundred feet; at a whole
+// mile the same ten give about four tenths of a mile. Dallas staffs on
+// proximity, not on a tenth of a mile. The two legacy reads keep roundMiles
+// (a tenth) for requesters, as the desktop has always shown them.
+function wholeMiles(miles) {
+  if (miles === null || miles === undefined) return null;
+  const n = Number(miles);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+/** Map of user id -> events worked. A user with no profile and no shifts maps to 0. */
+async function loadEventsWorked(userIds, db = pool) {
+  const ids = cleanIds(userIds);
+  if (ids.length === 0) return new Map();
+  const { rows } = await db.query(
+    `SELECT u.id AS user_id,
+            COALESCE(cp.historical_events_worked, 0) + COALESCE(w.live, 0) AS events_worked
+       FROM users u
+       LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+       LEFT JOIN (
+         SELECT sr.user_id, COUNT(*)::int AS live
+           FROM shift_requests sr
+           JOIN shifts s ON s.id = sr.shift_id
+          WHERE sr.user_id = ANY($1::int[])
+            AND sr.status = 'approved'
+            AND sr.dropped_at IS NULL
+            AND s.event_date < $2::date
+          GROUP BY sr.user_id
+       ) w ON w.user_id = u.id
+      WHERE u.id = ANY($1::int[])`,
+    [ids, chicagoTodayYmd()]
+  );
+  return new Map(rows.map((r) => [Number(r.user_id), Number(r.events_worked)]));
+}
+
+/**
+ * Picker meta for one shift: for each user id, the events-worked count and the
+ * distance, in whole miles, from that person's home to THIS shift's venue. The
+ * raw home coordinates are read here and never returned. Null when the shift
+ * does not exist, so the route can answer 404.
+ */
+async function candidateMeta(shiftId, userIds, db = pool) {
+  const shiftRes = await db.query('SELECT id, lat, lng FROM shifts WHERE id = $1', [shiftId]);
+  const shift = shiftRes.rows[0];
+  if (!shift) return null;
+  const ids = cleanIds(userIds);
+  const out = new Map();
+  if (ids.length === 0) return out;
+  const [worked, homes] = await Promise.all([
+    loadEventsWorked(ids, db),
+    db.query('SELECT user_id, lat, lng FROM contractor_profiles WHERE user_id = ANY($1::int[])', [ids]),
+  ]);
+  const homeBy = new Map(homes.rows.map((h) => [Number(h.user_id), h]));
+  for (const id of ids) {
+    const home = homeBy.get(id);
+    out.set(id, {
+      events_worked: worked.get(id) ?? 0,
+      home_distance_miles: home ? wholeMiles(milesBetween(home.lat, home.lng, shift.lat, shift.lng)) : null,
+    });
+  }
+  return out;
+}
+
+module.exports = { loadEventsWorked, candidateMeta, wholeMiles };
+```
+
+- [ ] **Step 4: Validate the path id on the two shifts reads**
+
+In `server/routes/shifts.js`, directly after the `clampInt` function (`:42-46`), add:
+
+```js
+// Path ids arrive from URLs, and the phone deep-links both reads below. A
+// malformed id used to reach Postgres, raise, and answer a generic 500 with a
+// Sentry event; on the phone that is an error screen whose Retry can never
+// succeed. Digits only, and inside int4.
+function requireId(raw, name) {
+  const text = String(raw);
+  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 2147483647) {
+    throw new ValidationError({ [name]: `${name} must be a positive integer.` });
+  }
+  return Number(text);
+}
+```
+
+In `GET /by-proposal/:proposalId`, make the handler's first line:
+
+```js
+  const proposalId = requireId(req.params.proposalId, 'proposalId');
+```
+
+and change that handler's query parameters from `[req.params.proposalId]` to `[proposalId]`.
+
+In `GET /detail/:id`, make the handler's first line:
+
+```js
+  const shiftId = requireId(req.params.id, 'id');
+```
+
+and change BOTH query parameter arrays inside that handler from `[req.params.id]` to `[shiftId]`. Other handlers in the file also read `req.params.id`; leave every one of them alone.
+
+- [ ] **Step 5: The day-of-contact projection**
+
+In `server/routes/drinkPlans.js`, in `GET /by-proposal/:proposalId` (`:381`), add this as the first thing inside the handler, before the existing query:
+
+```js
+  // Phone projection (lane ma-e2, security checkpoint 2026-09-29). The phone
+  // event detail shows the day-of contact and nothing else from the plan, so
+  // this is all it reads and all the admin service worker stores. The full
+  // read below carries the plan's write-capable token, the internal notes and
+  // the venue access notes clients type gate codes into.
+  if (req.query.fields !== undefined) {
+    if (req.query.fields !== 'day_of_contact') {
+      throw new ValidationError({ fields: 'Unknown projection.' });
+    }
+    const rawId = String(req.params.proposalId);
+    if (!/^\d+$/.test(rawId) || Number(rawId) < 1 || Number(rawId) > 2147483647) {
+      throw new ValidationError({ proposalId: 'proposalId must be a positive integer.' });
+    }
+    const projected = await pool.query(
+      `SELECT dp.selections->'logistics'->'dayOfContact' AS contact
+         FROM drink_plans dp
+        WHERE dp.proposal_id = $1`,
+      [Number(rawId)]
+    );
+    if (!projected.rows[0]) throw new NotFoundError('No drink plan found for this proposal.');
+    const contact = projected.rows[0].contact;
+    const held = contact && typeof contact === 'object' ? contact : {};
+    const name = String(held.name || '').trim();
+    const phone = String(held.phone || '').trim();
+    return res.json({ day_of_contact: name ? { name, phone } : null });
+  }
+```
+
+`ValidationError` and `NotFoundError` are already imported (`:9`). Change nothing else in the file.
+
+- [ ] **Step 6: Run the server tests green, then the neighbours**
+
+```bash
+TZ=UTC node --test server/routes/shifts.staffingMeta.test.js
+TZ=America/Chicago node --test server/routes/shifts.staffingMeta.test.js
+node --test server/routes/drinkPlans.dayOfContact.test.js
+node --test server/routes/shifts.bonus.test.js
+node --test server/routes/admin/users.activeStaff.test.js
+node --test server/routes/drinkPlans.beo.test.js
+node --test server/routes/drinkPlans.shoppingListStrip.test.js
+```
+
+Expected: `# pass 14` both times, `# pass 6`, then each neighbour at the pass count it has BEFORE your change (measure that first: run the four neighbours once before Step 3 and write the counts down).
+
+- [ ] **Step 7: Commit the server half**
+
+```bash
+git add server/utils/staffingMeta.js server/routes/shifts.js server/routes/drinkPlans.js server/routes/shifts.staffingMeta.test.js server/routes/drinkPlans.dayOfContact.test.js && git commit -F - <<'MSG'
+fix(staffing): checkpoint fold, the server half
+
+The picker's distances are whole miles: they are stored on the phone for
+every active staffer, and a tenth of a mile to ten venues places a home to
+the block. The drink plan gains a day-of-contact projection, so the phone
+reads a name and a number and never the plan's token, internal notes or
+venue access notes. The two shifts reads answer 400 for a malformed id.
+The staffing test gains the fixtures that pin every filter of the
+events-worked definition.
+MSG
+```
+
+- [ ] **Step 8: Replace and add the client tests**
+
+Replace the whole of `client/src/utils/adminSwAllowlist.test.js` with:
+
+```js
+import '@testing-library/jest-dom';
+import fs from 'fs';
+import path from 'path';
+import vm from 'vm';
+
+// admin-sw.js is a plain static script, not a module, so it cannot be
+// imported. Its top level only declares constants and functions and registers
+// listeners on `self`, so it loads in a vm context with a stub `self`, and a
+// top-level const is then readable by evaluating its name in that context.
+// This test runs the REAL file: it holds no copy of any pattern.
+function loadServiceWorker() {
+  const src = fs.readFileSync(path.resolve(__dirname, '../../public/admin-sw.js'), 'utf8');
+  const listeners = {};
+  const self = { addEventListener: (type, fn) => { listeners[type] = fn; }, location: { origin: 'https://admin.example.test' } };
+  const context = vm.createContext({ self, caches: {}, fetch: () => Promise.reject(new Error('no network in test')), URL, Response: function Response() {}, Headers: function Headers() {}, console, setTimeout, clearTimeout });
+  vm.runInContext(src, context);
+  return {
+    isAllowlisted: vm.runInContext('isAllowlisted', context),
+    asksForOffline: vm.runInContext('asksForOffline', context),
+    version: vm.runInContext('SW_VERSION', context),
+    onFetch: listeners.fetch,
+  };
+}
+const request = (headers = {}) => ({ headers: { get: (name) => (name.toLowerCase() in headers ? headers[name.toLowerCase()] : null) } });
+
+describe('admin service worker read allowlist', () => {
+  const { isAllowlisted, version } = loadServiceWorker();
+
+  test.each([
+    '/api/shifts',
+    '/api/proposals',
+    '/api/proposals/13',
+    '/api/shifts/by-proposal/13',
+    '/api/admin/badge-counts',
+    '/api/admin/search',
+    '/api/admin/active-staff',
+    '/api/auth/me',
+  ])('still caches %s', (p) => {
+    expect(isAllowlisted(p)).toBe(true);
+  });
+
+  test.each([
+    '/api/shifts/detail/17',
+    '/api/invoices/proposal/13',
+  ])('caches the event detail and sheet read %s', (p) => {
+    expect(isAllowlisted(p)).toBe(true);
+  });
+
+  test('caches the drink plan only as its day-of-contact projection', () => {
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13', '?fields=day_of_contact')).toBe(true);
+    // The full read carries the plan token, internal notes and venue access notes.
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13')).toBe(false);
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13', '')).toBe(false);
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13', '?fields=all')).toBe(false);
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13', '?fields=day_of_contact&x=1')).toBe(false);
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13', '?x=1&fields=day_of_contact')).toBe(false);
+    expect(isAllowlisted('/api/drink-plans/by-proposal/13/consult', '?fields=day_of_contact')).toBe(false);
+    expect(isAllowlisted('/api/drink-plans/13', '?fields=day_of_contact')).toBe(false);
+  });
+
+  test.each([
+    '/api/shifts/detail/17/extra',
+    '/api/shifts/detail/abc',
+    '/api/shifts/detail/',
+    '/api/shifts/detail/17/',
+    '/api/shifts/17/requests',
+    '/api/shifts/requests/9',
+    '/api/shifts/by-proposal/13/extra',
+    '/api/shifts/by-proposal/13%20',
+    '/api/shifts/by-proposal/event-details',
+    '/api/shifts/by-proposal/',
+    '/api/drink-plans/13',
+    '/api/drink-plans/by-proposal/13/consult',
+    '/api/drink-plans/t/0b8f6d2e-1111-4222-8333-444455556666',
+    '/api/invoices/13',
+    '/api/invoices/proposal/13/extra',
+    '/api/invoices/t/0b8f6d2e-1111-4222-8333-444455556666',
+    '/api/invoices/client/0b8f6d2e-1111-4222-8333-444455556666',
+    '/api/proposals/13/cancel-line/targets',
+    '/api/proposals/t/0b8f6d2e-1111-4222-8333-444455556666',
+    '/api/proposals/financials',
+    '/api/stripe/refunds/13',
+    '/api/admin/users/12',
+    '/api/admin/users/12/seniority',
+    '/api/admin/active-staff/extra',
+  ])('never caches %s', (p) => {
+    expect(isAllowlisted(p)).toBe(false);
+    expect(isAllowlisted(p, '?fields=day_of_contact')).toBe(false);
+  });
+
+  test('the version was bumped so installed phones pick the new allowlist up', () => {
+    expect(version).not.toBe('admin-sw-2026-08-14-v8');
+    expect(version).toMatch(/^admin-sw-\d{4}-\d{2}-\d{2}-v9$/);
+  });
+});
+
+describe('storing and stale-serving are opt-in', () => {
+  const { asksForOffline, onFetch } = loadServiceWorker();
+
+  test('a request asks with the header, and only with the value 1', () => {
+    expect(asksForOffline(request({ 'x-offline-ok': '1' }), '/api/shifts/detail/17')).toBe(true);
+    expect(asksForOffline(request(), '/api/shifts/detail/17')).toBe(false);
+    expect(asksForOffline(request({ 'x-offline-ok': '0' }), '/api/shifts/detail/17')).toBe(false);
+    expect(asksForOffline(request({ 'x-offline-ok': 'true' }), '/api/shifts/detail/17')).toBe(false);
+    expect(asksForOffline(request({ 'x-offline-ok': '' }), '/api/invoices/proposal/13')).toBe(false);
+  });
+
+  test('the identity read is served to every surface, header or not', () => {
+    expect(asksForOffline(request(), '/api/auth/me')).toBe(true);
+    expect(asksForOffline(request(), '/api/auth/me/extra')).toBe(false);
+  });
+
+  // The fetch handler itself, with a fake event: respondWith is the ONLY way
+  // the worker can store or answer a request, so "never called" is the proof.
+  const fire = (url, { method = 'GET', headers = {}, mode = 'cors' } = {}) => {
+    const event = {
+      request: { url, method, mode, headers: request(headers).headers, clone() { return this; } },
+      respondWith: jest.fn((p) => { Promise.resolve(p).catch(() => {}); }),
+      waitUntil: jest.fn(),
+    };
+    onFetch(event);
+    return event;
+  };
+
+  test.each([
+    'https://api.example.test/api/shifts/detail/17',
+    'https://api.example.test/api/invoices/proposal/13',
+    'https://api.example.test/api/proposals/13',
+    'https://api.example.test/api/shifts/by-proposal/13',
+    'https://api.example.test/api/admin/active-staff?limit=100',
+    'https://api.example.test/api/drink-plans/by-proposal/13?fields=day_of_contact',
+  ])('a desktop read of %s, which sends no header, is left to the network', (url) => {
+    expect(fire(url).respondWith).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    'https://api.example.test/api/shifts/detail/17',
+    'https://api.example.test/api/invoices/proposal/13',
+    'https://api.example.test/api/drink-plans/by-proposal/13?fields=day_of_contact',
+    'https://api.example.test/api/admin/active-staff?limit=100&shift_id=17',
+  ])('a phone read of %s, which sends the header, is handled', (url) => {
+    expect(fire(url, { headers: { 'x-offline-ok': '1' } }).respondWith).toHaveBeenCalledTimes(1);
+  });
+
+  test('the header cannot widen the allowlist', () => {
+    for (const url of [
+      'https://api.example.test/api/drink-plans/by-proposal/13',
+      'https://api.example.test/api/invoices/t/0b8f6d2e-1111-4222-8333-444455556666',
+      'https://api.example.test/api/admin/users/12',
+      'https://api.example.test/api/payroll/periods',
+    ]) expect(fire(url, { headers: { 'x-offline-ok': '1' } }).respondWith).not.toHaveBeenCalled();
+  });
+
+  test('a write is never intercepted, header or not', () => {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      expect(fire('https://api.example.test/api/invoices/proposal/13', { method, headers: { 'x-offline-ok': '1' } }).respondWith).not.toHaveBeenCalled();
+      expect(fire('https://api.example.test/api/shifts/17/assign', { method, headers: { 'x-offline-ok': '1' } }).respondWith).not.toHaveBeenCalled();
+    }
+  });
+});
+```
+
+Create `client/src/utils/offlineRead.test.js`:
+
+```js
+import '@testing-library/jest-dom';
+import { offlineGet, OFFLINE_OK_HEADER } from './offlineRead';
+import api from './api';
+
+jest.mock('./api', () => ({ __esModule: true, default: { get: jest.fn() } }));
+
+beforeEach(() => { api.get.mockResolvedValue({ data: { ok: true }, staleAt: '2026-09-29T17:00:00.000Z' }); });
+
+test('adds the opt-in header and passes the response through untouched', async () => {
+  const res = await offlineGet('/shifts/detail/17');
+  expect(api.get).toHaveBeenCalledWith('/shifts/detail/17', { headers: { 'X-Offline-Ok': '1' } });
+  expect(res).toEqual({ data: { ok: true }, staleAt: '2026-09-29T17:00:00.000Z' });
+  expect(OFFLINE_OK_HEADER).toBe('X-Offline-Ok');
+});
+
+test('keeps the params and any other header the caller passed', async () => {
+  await offlineGet('/shifts', { params: { scope: 'past' }, headers: { 'X-Other': 'a' } });
+  expect(api.get).toHaveBeenCalledWith('/shifts', {
+    params: { scope: 'past' },
+    headers: { 'X-Other': 'a', 'X-Offline-Ok': '1' },
+  });
+});
+
+test('never mutates the config it was given', async () => {
+  const config = { params: { scope: 'past' } };
+  await offlineGet('/shifts', config);
+  expect(config).toEqual({ params: { scope: 'past' } });
+});
+
+test('a rejection passes through', async () => {
+  api.get.mockRejectedValue({ status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' });
+  await expect(offlineGet('/shifts')).rejects.toEqual({ status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' });
+});
+```
+
+Replace the whole of `client/src/hooks/useDrawerParam.test.js` with:
+
+```js
+import React from 'react';
+import '@testing-library/jest-dom';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { BrowserRouter, MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import useDrawerParam from './useDrawerParam';
+
+// Back is navigate(-1): the same history pop Android's hardware Back fires.
+function Probe({ push }) {
+  const drawer = useDrawerParam(push ? { push: true, kinds: ['shift'] } : undefined);
+  const location = useLocation();
+  const navigate = useNavigate();
+  return (
+    <div>
+      <div data-testid="loc">{location.pathname + location.search}</div>
+      <div data-testid="kind">{drawer.kind || 'none'}</div>
+      <div data-testid="id">{drawer.id || 'none'}</div>
+      <div data-testid="focus">{drawer.focus || 'none'}</div>
+      <button type="button" onClick={() => drawer.open('shift', 17)}>open</button>
+      <button type="button" onClick={() => drawer.open('shift', 17, { focus: 42 })}>open-focused</button>
+      <button type="button" onClick={() => drawer.open('invoices', 13)}>open-invoices</button>
+      <button type="button" onClick={() => drawer.close()}>close</button>
+      <button type="button" onClick={() => navigate(-1)}>back</button>
+    </div>
+  );
+}
+function Before() { return <div data-testid="loc">/before</div>; }
+
+function mount({ push, entries = ['/before', '/events?scope=past'], index = entries.length - 1 }) {
+  return render(
+    <MemoryRouter initialEntries={entries} initialIndex={index}>
+      <Routes>
+        <Route path="/before" element={<Before />} />
+        <Route path="/events" element={<Probe push={push} />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+const loc = () => screen.getByTestId('loc').textContent;
+const tap = (name) => fireEvent.click(screen.getByRole('button', { name }));
+
+test('the default keeps replace semantics: Back after open leaves the page', async () => {
+  mount({ push: false });
+  tap('open');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past&drawer=shift&drawerId=17'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('push mode: Back closes the sheet and stays on the page', async () => {
+  mount({ push: true });
+  tap('open');
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+  expect(screen.getByTestId('id')).toHaveTextContent('17');
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  expect(screen.getByTestId('kind')).toHaveTextContent('none');
+});
+
+test('push mode: close() pops the entry it pushed, so no entry piles up', async () => {
+  mount({ push: true });
+  tap('open');
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+  tap('close');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('push mode: opening, closing and opening again still leaves one entry behind the sheet', async () => {
+  mount({ push: true });
+  tap('open');
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+  tap('close');
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('none'));
+  tap('open');
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('a deep-linked sheet gets an entry seeded behind it', async () => {
+  mount({ push: true, entries: ['/before', '/events?scope=past&drawer=shift&drawerId=17'] });
+  expect(screen.getByTestId('kind')).toHaveTextContent('shift');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past&drawer=shift&drawerId=17'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  expect(screen.getByTestId('kind')).toHaveTextContent('none');
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('a deep-linked sheet closed with close() lands on the bare page, one Back from where it came', async () => {
+  mount({ push: true, entries: ['/before', '/events?drawer=shift&drawerId=17'] });
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+  tap('close');
+  await waitFor(() => expect(loc()).toBe('/events'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('the default never seeds: a deep-linked desktop drawer keeps its single entry', async () => {
+  mount({ push: false, entries: ['/before', '/events?drawer=shift&drawerId=17'] });
+  expect(screen.getByTestId('kind')).toHaveTextContent('shift');
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('focus rides the URL and clears with the sheet', async () => {
+  mount({ push: true });
+  tap('open-focused');
+  await waitFor(() => expect(screen.getByTestId('focus')).toHaveTextContent('42'));
+  expect(loc()).toBe('/events?scope=past&drawer=shift&drawerId=17&drawerFocus=42');
+  tap('close');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  expect(screen.getByTestId('focus')).toHaveTextContent('none');
+});
+
+test('opening without a focus drops a focus left over from an earlier open', async () => {
+  mount({ push: false, entries: ['/events?drawer=shift&drawerId=9&drawerFocus=42'] });
+  tap('open');
+  await waitFor(() => expect(loc()).toBe('/events?drawer=shift&drawerId=17'));
+});
+
+test('a kind that is not a sheet keeps replace semantics and is never seeded, even in push mode', async () => {
+  mount({ push: true });
+  tap('open-invoices');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past&drawer=invoices&drawerId=13'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('a deep link to a kind that is not a sheet gains no history entry', async () => {
+  mount({ push: true, entries: ['/before', '/events?drawer=invoices&drawerId=13'] });
+  expect(screen.getByTestId('kind')).toHaveTextContent('invoices');
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('a malformed sheet id seeds nothing: no entry for a sheet that will never mount', async () => {
+  mount({ push: true, entries: ['/before', '/events?drawer=shift&drawerId=abc'] });
+  expect(screen.getByTestId('id')).toHaveTextContent('abc');
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('under StrictMode the seed still runs once', async () => {
+  render(
+    <React.StrictMode>
+      <MemoryRouter initialEntries={['/before', '/events?scope=past&drawer=shift&drawerId=17']} initialIndex={1}>
+        <Routes>
+          <Route path="/before" element={<Before />} />
+          <Route path="/events" element={<Probe push />} />
+        </Routes>
+      </MemoryRouter>
+    </React.StrictMode>
+  );
+  await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+test('the default close replaces, and keeps every other query param', async () => {
+  mount({ push: false, entries: ['/before', '/events?scope=past&drawer=shift&drawerId=17'] });
+  tap('close');
+  await waitFor(() => expect(loc()).toBe('/events?scope=past'));
+  tap('back');
+  await waitFor(() => expect(loc()).toBe('/before'));
+});
+
+describe('against the real browser history', () => {
+  afterEach(() => { window.history.replaceState(null, '', '/'); });
+
+  test('an entry that claims it was pushed but has nothing behind it still closes', async () => {
+    // What a duplicated tab or a trimmed history leaves: the flag, at index 0.
+    window.history.replaceState({ usr: { mSheet: true }, key: 'orphan', idx: 0 }, '', '/events?scope=past&drawer=shift&drawerId=17');
+    render(
+      <BrowserRouter>
+        <Routes><Route path="/events" element={<Probe push />} /></Routes>
+      </BrowserRouter>
+    );
+    expect(screen.getByTestId('kind')).toHaveTextContent('shift');
+    tap('close');
+    await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('none'));
+    expect(window.location.pathname + window.location.search).toBe('/events?scope=past');
+  });
+
+  test('open pushes exactly one entry and close pops it', async () => {
+    window.history.replaceState(null, '', '/events?scope=past');
+    render(
+      <BrowserRouter>
+        <Routes><Route path="/events" element={<Probe push />} /></Routes>
+      </BrowserRouter>
+    );
+    const before = window.history.length;
+    const at = window.history.state.idx;
+    tap('open');
+    await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('shift'));
+    expect(window.history.length).toBe(before + 1);
+    expect(window.history.state.idx).toBe(at + 1);
+    tap('close');
+    await waitFor(() => expect(screen.getByTestId('kind')).toHaveTextContent('none'));
+    expect(window.location.pathname + window.location.search).toBe('/events?scope=past');
+    // Popped, not replaced: a replace would leave the position where open put it.
+    expect(window.history.state.idx).toBe(at);
+  });
+});
+```
+
+- [ ] **Step 9: Run them to verify they fail**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/adminSwAllowlist.test.js src/utils/offlineRead.test.js src/hooks/useDrawerParam.test.js`
+Expected (measured against the lane as Tasks 2 and 3 left it, in a scratch copy, 2026-09-29): `adminSwAllowlist.test.js` fails to run, `ReferenceError: asksForOffline is not defined`; `offlineRead.test.js` fails to run, `Cannot find module './offlineRead'`; `useDrawerParam.test.js` reports 16 tests, 1 failed: "a malformed sheet id seeds nothing". The other fifteen pass and must keep passing.
+
+- [ ] **Step 10: The opt-in read helper**
+
+Create `client/src/utils/offlineRead.js`:
+
+```js
+import api from './api';
+
+// A read that may be answered from the phone's cache (spec
+// 2026-08-13-mobile-admin section 7).
+//
+// The admin service worker stores a response, and serves the stored copy when
+// the network fails or stalls, ONLY for a request that carries this header.
+// The header is a promise the caller makes: "I render the staleness line, and
+// I do not act on a cache-served copy." A screen that cannot keep that promise
+// must use api.get and get the network or an error, never old data dressed as
+// new. That is every desktop screen, and every write-adjacent re-read.
+//
+// The response carries res.staleAt when the service worker served it.
+export const OFFLINE_OK_HEADER = 'X-Offline-Ok';
+
+export function offlineGet(url, config = {}) {
+  return api.get(url, {
+    ...config,
+    headers: { ...(config.headers || {}), [OFFLINE_OK_HEADER]: '1' },
+  });
+}
+```
+
+- [ ] **Step 11: The service worker: opt-in, anchored, projection only**
+
+In `client/public/admin-sw.js`, replace the whole `isAllowlisted` definition (it begins `const isAllowlisted = (pathname) =>` at `:194` and ends with the line `/^\/api\/invoices\/proposal\/\d+$/.test(pathname);` at `:205`) with:
+
+```js
+const isAllowlisted = (pathname, search = '') =>
+  API_EXACT.has(pathname) ||
+  /^\/api\/proposals\/\d+$/.test(pathname) ||
+  /^\/api\/shifts\/by-proposal\/\d+$/.test(pathname) ||
+  // Phone event detail and assignment sheet (lane ma-e2). Anchored on both
+  // ends and numeric-id only, so no token route and no sub-resource can ride
+  // in. The invoices read is cached on purpose: it carries the bank debit in
+  // flight, and an offline detail showing a plain balance while a debit is
+  // settling is how a client gets chased for money already on its way.
+  /^\/api\/shifts\/detail\/\d+$/.test(pathname) ||
+  /^\/api\/invoices\/proposal\/\d+$/.test(pathname) ||
+  // The drink plan is stored ONLY as its day-of-contact projection (a name
+  // and a phone). The full read carries the plan's write-capable token, the
+  // internal notes and the venue access notes clients type gate codes into;
+  // none of that belongs at rest on a phone that needs two fields.
+  (/^\/api\/drink-plans\/by-proposal\/\d+$/.test(pathname) && search === '?fields=day_of_contact');
+
+// Storing and stale-serving are OPT-IN, per request. This worker controls
+// every page on the admin origin, desktop included, and only the phone screens
+// render the staleness line. A desktop roster under an Approve button, or an
+// invoice list under Send and Void, must never be yesterday's copy dressed as
+// today's. So a read enters the cache, and is answered from it, only when the
+// caller sent this header (client/src/utils/offlineRead.js). Everything else
+// on an allowlisted path goes to the network untouched and is never stored.
+// The identity read is the one exception: AuthContext bounds a cache-served
+// identity by the token's own expiry, for every surface.
+const OFFLINE_HEADER = 'x-offline-ok';
+const IDENTITY_PATH = '/api/auth/me';
+const asksForOffline = (req, pathname) =>
+  pathname === IDENTITY_PATH || req.headers.get(OFFLINE_HEADER) === '1';
+```
+
+and replace the API branch's condition (`:296`), which reads `if (url.pathname.startsWith('/api/') && isAllowlisted(url.pathname)) {`, with:
+
+```js
+  if (url.pathname.startsWith('/api/') && isAllowlisted(url.pathname, url.search) && asksForOffline(req, url.pathname)) {
+```
+
+Leave `SW_VERSION` at `admin-sw-2026-09-29-v9`: v9 has not shipped, so there is nothing to bump past. Change nothing else in the file.
+
+- [ ] **Step 12: The hook seeds only for a numeric sheet id**
+
+Replace the whole of `client/src/hooks/useDrawerParam.js` with:
+
+```js
+import { useCallback, useEffect, useRef } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+
+// location.state flag on a history entry this hook pushed. close() reads it to
+// know whether going back one entry is safe.
+const SHEET_STATE = 'mSheet';
+const KEYS = ['drawer', 'drawerId', 'drawerFocus'];
+
+function withoutDrawer(params) {
+  const next = new URLSearchParams(params);
+  KEYS.forEach((k) => next.delete(k));
+  return next;
+}
+
+// Is there an entry behind this one? BrowserRouter keeps its position in
+// window.history.state.idx. Where that is unknown (MemoryRouter in tests) the
+// answer is yes, because the flag on the entry is then the only evidence.
+function canGoBack() {
+  const state = typeof window !== 'undefined' && window.history ? window.history.state : null;
+  if (!state || typeof state.idx !== 'number') return true;
+  return state.idx > 0;
+}
+
+/**
+ * URL-synced drawer state. Reads/writes `?drawer=<kind>&drawerId=<id>` and the
+ * optional `&drawerFocus=<id>`. Layered on top of whatever other query params
+ * the page uses, never touching them.
+ *
+ * Usage:
+ *   const drawer = useDrawerParam();
+ *   drawer.kind  === 'event' when a drawer is open
+ *   drawer.id    === '<id>' when a drawer is open
+ *   drawer.open('event', e.id)
+ *   drawer.close()
+ *
+ * Two history behaviours:
+ *
+ * DEFAULT (every desktop caller): open and close REPLACE the current entry. A
+ * drawer is page state, not a navigation. Pushing made every open and every
+ * close stack a history entry, so the Back button walked through drawer-toggle
+ * states (re-opening drawers in a loop) instead of returning to the previous
+ * page. Keep both `replace: true`.
+ *
+ * `{ push: true, kinds: ['shift'] }` (phone bottom sheets, spec
+ * 2026-08-13-mobile-admin section 3): for the listed kinds, open PUSHES one
+ * entry, so Android's hardware Back closes the sheet and stays on the page.
+ * close() pops that same entry, so opening and closing a sheet any number of
+ * times leaves history exactly as it found it. A sheet that arrives by deep
+ * link or cold route restore has no entry behind it, so one is seeded: the
+ * current entry is replaced by the bare page and the sheet is pushed on top.
+ * A kind that is not listed keeps the default, so a desktop drawer link opened
+ * on the phone never gains an entry for a sheet that does not exist. Omitting
+ * `kinds` pushes for every kind.
+ */
+export default function useDrawerParam({ push = false, kinds = null } = {}) {
+  const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const kind = params.get('drawer');
+  const id = params.get('drawerId');
+  const focus = params.get('drawerFocus');
+  const pushed = !!(location.state && location.state[SHEET_STATE]);
+  // A string, so an inline array from the caller cannot churn the callbacks.
+  const kindList = Array.isArray(kinds) ? kinds.join(',') : null;
+  const pushes = useCallback(
+    (k) => push && (kindList === null || kindList.split(',').includes(k)),
+    [push, kindList]
+  );
+
+  const open = useCallback((newKind, newId, { focus: newFocus } = {}) => {
+    const next = new URLSearchParams(params);
+    next.set('drawer', newKind);
+    next.set('drawerId', String(newId));
+    if (newFocus === undefined || newFocus === null) next.delete('drawerFocus');
+    else next.set('drawerFocus', String(newFocus));
+    if (pushes(newKind)) setParams(next, { state: { [SHEET_STATE]: true } });
+    else setParams(next, { replace: true });
+  }, [params, setParams, pushes]);
+
+  const close = useCallback(() => {
+    // Pop only an entry this hook pushed AND that has something behind it. An
+    // entry that carries the flag with nothing behind it (a duplicated tab, a
+    // history the browser trimmed) would otherwise never close.
+    if (pushed && pushes(kind) && canGoBack()) { navigate(-1); return; }
+    setParams(withoutDrawer(params), { replace: true });
+  }, [params, setParams, pushes, pushed, kind, navigate]);
+
+  // Seed an entry behind a sheet that has none. The ref latch is what makes
+  // this safe under StrictMode, which runs an effect twice with the same
+  // closure: the second run sees the same location.key and stops.
+  const seededFor = useRef(null);
+  useEffect(() => {
+    // Digits only: every sheet is addressed by a numeric id, and the owners
+    // mount a sheet only for one. A malformed id gets no entry seeded for a
+    // sheet that will never show.
+    if (!kind || !id || !/^\d+$/.test(id) || pushed || !pushes(kind)) return;
+    if (seededFor.current === location.key) return;
+    seededFor.current = location.key;
+    const bare = withoutDrawer(params).toString();
+    navigate({ pathname: location.pathname, search: bare ? `?${bare}` : '' }, { replace: true });
+    navigate({ pathname: location.pathname, search: location.search }, { state: { [SHEET_STATE]: true } });
+    // params is derived from location.search, which is already a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushes, kind, id, pushed, location.key, location.pathname, location.search, navigate]);
+
+  return { kind, id, focus, open, close };
+}
+
+// Builds a same-page href that opens a drawer, preserving all other query
+// params. For real links (cmd-click new tab) instead of onClick drawer.open.
+export function drawerHref(searchParams, kind, id) {
+  const next = new URLSearchParams(searchParams);
+  next.set('drawer', kind);
+  next.set('drawerId', String(id));
+  return `?${next.toString()}`;
+}
+```
+
+- [ ] **Step 13: Run the client tests green, then the neighbours, then the build**
+
+```bash
+cd client && CI=true npx react-scripts test --watchAll=false src/utils/adminSwAllowlist.test.js src/utils/offlineRead.test.js src/hooks/useDrawerParam.test.js src/utils/adminSw.purge.test.js src/pages/mobile/EventsListPhone.test.js src/pages/admin/EventsDashboard.fork.test.js src/context && CI=true npx react-scripts build
+```
+
+Expected: `adminSwAllowlist.test.js` 50 tests, `offlineRead.test.js` 4, `useDrawerParam.test.js` 16, all passing; the neighbours unchanged; no "not wrapped in act(...)" warning; the build exits 0.
+
+One thing this step does NOT fix, on purpose: the phone Events list (lane ma-e1) still reads with `api.get`, so between this task and Task 9 it has no offline mode in the lane. Task 9 switches it to `offlineGet`. Its unit tests mock the api client and do not notice.
+
+- [ ] **Step 14: Commit the client half**
+
+```bash
+git add client/public/admin-sw.js client/src/utils/offlineRead.js client/src/utils/offlineRead.test.js client/src/utils/adminSwAllowlist.test.js client/src/hooks/useDrawerParam.js client/src/hooks/useDrawerParam.test.js && git commit -F - <<'MSG'
+fix(admin-sw): checkpoint fold, cached reads are opt-in per request
+
+The worker controls every page on the admin origin, desktop included, and
+only the phone screens render the staleness line. It now stores a read, and
+answers from the store, only for a request that carries X-Offline-Ok, so a
+desktop roster or invoice list is never an old copy shown as new. The
+identity read keeps its behaviour. The drink plan is cached only as its
+day-of-contact projection, and the by-proposal entry is anchored. The
+history hook seeds an entry only for a numeric sheet id.
+MSG
+```
+
+---
+
 ### Task 4: Pure staffing logic: roster rows, open roles, the role step
 
 **Files:**
@@ -1209,10 +2641,10 @@ MSG
 - Test: `client/src/utils/staffingSheet.test.js`
 
 **Interfaces:**
-- Consumes: from `client/src/utils/staffingRoles.js`: `parsePositionsNeeded(raw) -> string[]`, `rosterCounts(roles) -> { [role]: n }`, `computeRemaining(roster, approvedByRole) -> { [role]: n }`, `classifyRequest(rankedRoles, remaining) -> { state: 'actionable' | 'waitlisted', resolvableRole }`, `canonicalizeRole(v) -> string | null`. From `client/src/components/adminos/shifts.js`: `neededCount(roster) -> number`, `isCancelledEvent(e) -> boolean`. The request shapes produced by Task 1.
+- Consumes (the server contract is Task 1 as amended by Task 3b): from `client/src/utils/staffingRoles.js`: `parsePositionsNeeded(raw) -> string[]`, `rosterCounts(roles) -> { [role]: n }`, `computeRemaining(roster, approvedByRole) -> { [role]: n }`, `classifyRequest(rankedRoles, remaining) -> { state: 'actionable' | 'waitlisted', resolvableRole }`, `canonicalizeRole(v) -> string | null`. From `client/src/components/adminos/shifts.js`: `neededCount(roster) -> number`, `isCancelledEvent(e) -> boolean`. The request shapes produced by Task 1.
 - Produces, for Tasks 6 and 8:
   - `initialsOf(name) -> string`
-  - `staffMeta({ eventsWorked, miles }) -> string` ("14 events · 6.8 mi", either part omitted when unknown, `''` when both are)
+  - `staffMeta({ eventsWorked, miles }) -> string` ("14 events · 7 mi": WHOLE miles always, either part omitted when unknown, `''` when both are)
   - `normalizeRequest(raw) -> { requestId, userId, name, status, position, dropped, rankedRoles, miles, eventsWorked }` (accepts a `detail` request row or a `by-proposal` requester)
   - `buildShiftView(shift, rawRequests, { justAssigned = [] } = {}) -> ShiftView` where `ShiftView = { shiftId, rosterless, closedReason: 'cancelled' | 'past' | null, slots, filled, open, full, count, openRoles: [{ role, open }], openLabel, mix, rolesLabel, pills: ('filled' | 'pending' | 'open')[], rows: Row[] }` and `Row = { key, kind: 'rostered' | 'applicant' | 'waitlisted', requestId, userId, name, initials, position, rankedRoles, resolvableRole, meta }`
   - `roleStep(view, row) -> { kind: 'blocked' } | { kind: 'direct', role } | { kind: 'pick', roles: [{ role, open }] }`; `row.kind` may also be `'candidate'`
@@ -1243,11 +2675,11 @@ const approved = (id, role = 'Bartender', over = {}) => req(id, { status: 'appro
 
 describe('staffMeta', () => {
   test('both facts', () => {
-    expect(staffMeta({ eventsWorked: 14, miles: 6.8 })).toBe('14 events · 6.8 mi');
+    expect(staffMeta({ eventsWorked: 14, miles: 6.8 })).toBe('14 events · 7 mi');
   });
   test('staffMeta omits what is missing', () => {
     expect(staffMeta({ eventsWorked: 14, miles: null })).toBe('14 events');
-    expect(staffMeta({ eventsWorked: null, miles: 2 })).toBe('2.0 mi');
+    expect(staffMeta({ eventsWorked: null, miles: 2 })).toBe('2 mi');
     expect(staffMeta({ eventsWorked: 14, miles: undefined })).toBe('14 events');
     expect(staffMeta({ eventsWorked: 14, miles: '' })).toBe('14 events');
     expect(staffMeta({ eventsWorked: 14, miles: 'far' })).toBe('14 events');
@@ -1258,7 +2690,10 @@ describe('staffMeta', () => {
   test('zero is a fact, one is singular, zero miles is a distance', () => {
     expect(staffMeta({ eventsWorked: 0, miles: null })).toBe('0 events');
     expect(staffMeta({ eventsWorked: 1, miles: null })).toBe('1 event');
-    expect(staffMeta({ eventsWorked: 3, miles: 0 })).toBe('3 events · 0.0 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 0 })).toBe('3 events · 0 mi');
+    // Whole miles, always: a tenth of a mile to ten venues places a home to the block.
+    expect(staffMeta({ eventsWorked: 3, miles: 6.44 })).toBe('3 events · 6 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 0.3 })).toBe('3 events · 0 mi');
   });
 });
 
@@ -1290,7 +2725,7 @@ describe('buildShiftView', () => {
     expect(v.pills).toEqual(['filled', 'filled', 'pending']);
     expect(v.rows.map((r) => [r.name, r.kind])).toEqual([['Lena Park', 'rostered'], ['Sam Ortiz', 'rostered'], ['Person 3', 'applicant']]);
     expect(v.rows[0].meta).toBe('Bartender');
-    expect(v.rows[2].meta).toBe('Bartender · 14 events · 6.8 mi');
+    expect(v.rows[2].meta).toBe('Bartender · 14 events · 7 mi');
     expect(v.rows[2].resolvableRole).toBe('Bartender');
   });
 
@@ -1340,7 +2775,7 @@ describe('buildShiftView', () => {
     expect(v.mix).toBe('Bartender 1/1 · Barback 0/1');
     expect(v.rolesLabel).toBe('Bartenders + Barbacks');
     expect(v.rows.map((r) => [r.requestId, r.kind])).toEqual([[1, 'rostered'], [3, 'applicant'], [2, 'waitlisted']]);
-    expect(v.rows[1].meta).toBe('Barback › Bartender · 14 events · 6.8 mi');
+    expect(v.rows[1].meta).toBe('Barback › Bartender · 14 events · 7 mi');
     expect(v.pills).toEqual(['filled', 'pending']);
   });
 
@@ -1349,7 +2784,7 @@ describe('buildShiftView', () => {
     v.rows.forEach((r) => {
       expect(r.kind).toBe('applicant');
       expect(r.resolvableRole).toBe('Bartender');
-      expect(r.meta).toBe('Any role · 14 events · 6.8 mi');
+      expect(r.meta).toBe('Any role · 14 events · 7 mi');
     });
   });
 
@@ -1444,7 +2879,7 @@ describe('candidatesOf', () => {
     const c = candidatesOf(staff, view, '');
     expect(c.map((x) => x.name)).toEqual(['Ana Flores', 'Tess Marsh', 'zed@example.com']);
     expect(c[0]).toMatchObject({ key: 'c5', kind: 'candidate', userId: 5, initials: 'AF', meta: '33 events' });
-    expect(c[1].meta).toBe('9 events · 8.1 mi');
+    expect(c[1].meta).toBe('9 events · 8 mi');
     expect(c[2].meta).toBe('');
   });
 
@@ -1521,17 +2956,23 @@ export function initialsOf(name) {
 
 const known = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
 
-// "14 events · 6.8 mi". Seniority and distance are facts Dallas decides on,
+// "14 events · 7 mi". Seniority and distance are facts Dallas decides on,
 // shown as plain meta and never used to order anything. Either may be unknown
 // (a person or a venue with no coordinates): an unknown fact is omitted, never
 // rendered as a zero.
+//
+// WHOLE miles, always. The picker's distances arrive whole from the server
+// (server/utils/staffingMeta.js), because these reads are stored on the phone
+// and a tenth of a mile to ten venues places a home to the block. An
+// applicant's distance arrives to the tenth, as the desktop shows it; the
+// phone rounds it so every row reads alike.
 export function staffMeta({ eventsWorked, miles } = {}) {
   const parts = [];
   if (known(eventsWorked)) {
     const n = Number(eventsWorked);
     parts.push(`${n} ${n === 1 ? 'event' : 'events'}`);
   }
-  if (known(miles)) parts.push(`${Number(miles).toFixed(1)} mi`);
+  if (known(miles)) parts.push(`${Math.round(Number(miles))} mi`);
   return parts.join(' · ');
 }
 
@@ -2141,7 +3582,7 @@ MSG
 - Test: `client/src/components/mobile/AssignmentSheet.test.js`
 
 **Interfaces:**
-- Consumes: Task 1's reads (`GET /shifts/detail/:id` -> `{ shift, requests }`; `GET /admin/active-staff` with `params: { limit: 100, shift_id }` -> `{ staff }`); Task 4's `buildShiftView`, `candidatesOf`, `roleStep`, `confirmCopy`, `READ_ONLY_NOTE`; Task 5's classes; `groupShiftRows` and `railParts` from `client/src/utils/eventCards.js`; `api` (`res.staleAt` on a cache-served read; rejections shaped `{ message, code, status }`).
+- Consumes: Task 1's reads as amended by Task 3b (`GET /shifts/detail/:id` -> `{ shift, requests }`; `GET /admin/active-staff` with `params: { limit: 100, shift_id }` -> `{ staff }`, distances in whole miles); Task 3b's `offlineGet(url, config?)` from `client/src/utils/offlineRead.js`; Task 4's `buildShiftView`, `candidatesOf`, `roleStep`, `confirmCopy`, `READ_ONLY_NOTE`; Task 5's classes; `groupShiftRows` and `railParts` from `client/src/utils/eventCards.js`; `api` (`res.staleAt` on a cache-served read; rejections shaped `{ message, code, status }`).
 - Produces, for Tasks 8b and 9: the default export `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`. Both owners mount it with `key={drawer.id}`, so its state never carries from one shift to the next.
   - `shiftId: number` (required). `focusUserId: string | number | null` expands that person's row once the roster loads.
   - `onClose()` is called by the scrim, by Escape, and on a dead read when no `onDead` is given. The component never touches the URL; its owner does.
@@ -2151,7 +3592,8 @@ MSG
 
 **Behaviour, stated once:**
 - Approve and Assign both `POST /shifts/:id/assign { user_id, position }`. Deny is `PUT /shifts/requests/:requestId { status: 'denied' }`. Remove is `DELETE /shifts/requests/:requestId`. Same endpoints, same bodies as the desktop drawer.
-- Before an approve or an assign is sent, the sheet re-reads the shift. A cache-served re-read is a lost connection; a roster in which the chosen role is no longer open is a refusal ("The roster changed. Check the open roles and try again."). Only then does the POST go out.
+- The roster and the picker are read with `offlineGet`: they may be answered from the phone's cache, and when they are (`res.staleAt`) the sheet is read-only.
+- Before an approve or an assign is sent, the sheet re-reads the shift with a plain `api.get`, which the service worker never answers from its store: it is the network or an error. A roster in which the chosen role is no longer open is a refusal ("The roster changed. Check the open roles and try again."). Only then does the POST go out. (The code also treats a `staleAt` on that re-read as a lost connection; with opt-in caching that cannot happen, and the check stays as a second lock.)
 - One write at a time, held by a ref. After a success the sheet re-reads the roster and the picker and calls `onChanged`. After a server refusal it re-reads the roster so the screen shows the truth. After a transport failure it re-reads nothing.
 - A failure renders under the row it came from, with Retry, which repeats the same write. If that row is gone after the re-read, the failure renders at the top of the body. Opening any other action (Approve, Deny, Remove) drops the failure box first, so Retry can never repeat a write the screen has moved on from.
 - A cache-served roster, a finished shift and a cancelled shift are read-only. A shift with no declared roles allows Deny and Remove and blocks Approve and Assign.
@@ -2185,12 +3627,18 @@ const reqRow = (id, over = {}) => ({
 });
 const onShift = (id, role = 'Bartender', over = {}) => reqRow(id, { status: 'approved', position: role, ...over });
 const STAFF = [
-  { id: 9, display_name: 'Tess Marsh', events_worked: 9, home_distance_miles: 8.1 },
+  { id: 9, display_name: 'Tess Marsh', events_worked: 9, home_distance_miles: 8 },
   { id: 5, display_name: 'Ana Flores', events_worked: 33, home_distance_miles: null },
   { id: 101, display_name: 'Person 1', events_worked: 1, home_distance_miles: 1 },
 ];
 const TWO_ROLES = '["Bartender","Barback"]';
 const NETWORK = { status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' };
+const OFFLINE_OK = { headers: { 'X-Offline-Ok': '1' } };
+// The reads that may come from the phone's cache carry the header; the re-read
+// before a write never does.
+const detailReads = () => api.get.mock.calls.filter((c) => c[0] === '/shifts/detail/17');
+const offlineReads = () => detailReads().filter((c) => c[1] && c[1].headers && c[1].headers['X-Offline-Ok'] === '1');
+const liveReads = () => detailReads().filter((c) => !c[1]);
 
 // detail may be one payload, or a list served in order (the last one repeats).
 function serve({ detail, staff = STAFF, staffFails = false } = {}) {
@@ -2227,8 +3675,8 @@ test('reads the shift and the picker for THIS shift, and renders the head and th
   serve({ detail: payload([onShift(1, 'Bartender', { staff_name: 'Lena Park' }), onShift(2, 'Bartender', { staff_name: 'Sam Ortiz' }), reqRow(3)]) });
   mount();
   const dialog = await screen.findByRole('dialog');
-  expect(api.get).toHaveBeenCalledWith('/shifts/detail/17');
-  expect(api.get).toHaveBeenCalledWith('/admin/active-staff', { params: { limit: 100, shift_id: 17 } });
+  expect(api.get).toHaveBeenCalledWith('/shifts/detail/17', OFFLINE_OK);
+  expect(api.get).toHaveBeenCalledWith('/admin/active-staff', { params: { limit: 100, shift_id: 17 }, ...OFFLINE_OK });
   await within(dialog).findByText('Lena Park');
   const rail = railParts('2999-08-15');
   expect(within(dialog).getByRole('heading')).toHaveTextContent('Henderson · Wedding Reception');
@@ -2237,7 +3685,7 @@ test('reads the shift and the picker for THIS shift, and renders the head and th
   expect(within(dialog).getByText('Bartender 2/3')).toHaveClass('m-sheet-mix');
   expect(within(dialog).getByText('On this shift')).toBeInTheDocument();
   expect(within(row('Person 3')).getByText('Pending')).toBeInTheDocument();
-  expect(within(row('Person 3')).getByText('Bartender · 14 events · 6.8 mi')).toHaveClass('m-person-meta');
+  expect(within(row('Person 3')).getByText('Bartender · 14 events · 7 mi')).toHaveClass('m-person-meta');
   expect(within(dialog).getByText('Assign · Bartender × 1')).toBeInTheDocument();
   // A booked event does not repeat its venue in the sheet head.
   expect(within(dialog).queryByText('Grove on the River')).toBeNull();
@@ -2259,8 +3707,14 @@ test('Approve with one open role sends that role, after re-reading the shift', a
   await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
   expect(api.post).toHaveBeenCalledWith('/shifts/17/assign', { user_id: 103, position: 'Bartender' });
   // open read, pre-flight read, post-write read
-  await waitFor(() => expect(api.get.mock.calls.filter((c) => c[0] === '/shifts/detail/17').length).toBe(3));
+  await waitFor(() => expect(detailReads().length).toBe(3));
   await waitFor(() => expect(h.onChanged).toHaveBeenCalledTimes(1));
+  // The re-read before the write is the network or an error, never a stored
+  // copy: it is the one read that does not ask for the offline fallback.
+  expect(liveReads()).toHaveLength(1);
+  expect(offlineReads()).toHaveLength(2);
+  expect(api.get.mock.invocationCallOrder[api.get.mock.calls.indexOf(liveReads()[0])])
+    .toBeLessThan(api.post.mock.invocationCallOrder[0]);
 });
 
 test('with two open roles Approve sends nothing until a role row is tapped', async () => {
@@ -2334,7 +3788,7 @@ test('a failed Deny or Remove stays inline with Retry, and Retry repeats that sa
   tap(screen.getByRole('button', { name: 'Remove' }));
   expect(await screen.findByText('Request not found.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  await waitFor(() => expect(api.get.mock.calls.filter((c) => c[0] === '/shifts/detail/17').length).toBeGreaterThanOrEqual(3));
+  await waitFor(() => expect(detailReads().length).toBeGreaterThanOrEqual(3));
 });
 
 test('a failure box goes away when a different action is opened, so Retry can never repeat a stale write', async () => {
@@ -2373,7 +3827,7 @@ test('the picker is alphabetical, skips people already on the shift, and a tap o
   expect(names).toEqual(['Ana Flores', 'Tess Marsh']);
   expect(within(dialog).getAllByText('Person 1').length).toBe(1);   // on the roster, not in the picker
   expect(within(row('Ana Flores')).getByText('33 events')).toBeInTheDocument();
-  expect(within(row('Tess Marsh')).getByText('9 events · 8.1 mi')).toBeInTheDocument();
+  expect(within(row('Tess Marsh')).getByText('9 events · 8 mi')).toBeInTheDocument();
   tap(row('Tess Marsh'));
   expect(await screen.findByText('Assign as')).toBeInTheDocument();
   expect(api.post).not.toHaveBeenCalled();
@@ -2579,6 +4033,7 @@ Create `client/src/components/mobile/AssignmentSheet.js`:
 ```js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../utils/api';
+import { offlineGet } from '../../utils/offlineRead';
 import Icon from '../adminos/Icon';
 import StatusChip from '../adminos/StatusChip';
 import { groupShiftRows, railParts } from '../../utils/eventCards';
@@ -2597,6 +4052,11 @@ import {
 // before the tap (utils/staffingSheet.js roleStep), and the shift is re-read
 // immediately before the write, because the server ACCEPTS an over-fill and
 // the phone must not cause one from a roster that went stale while it was open.
+//
+// Reads. The roster and the picker are read with offlineGet: they may be
+// answered from the phone's cache, and when they are (res.staleAt) every
+// action is disabled. The re-read before a write is a plain api.get: it must
+// be the network or an error, never a stored copy.
 //
 // Mounted only while open. The owner holds the URL state (useDrawerParam with
 // push: true); this component never navigates.
@@ -2635,7 +4095,7 @@ export default function AssignmentSheet({ shiftId, focusUserId = null, onClose, 
     const mine = ++seq.current;
     if (!quiet) { setLoading(true); setLoadError(null); }
     try {
-      const res = await api.get(`/shifts/detail/${shiftId}`);
+      const res = await offlineGet(`/shifts/detail/${shiftId}`);
       if (mine !== seq.current) return;
       setData(res.data || null);
       setStaleAt(res.staleAt || null);
@@ -2657,7 +4117,7 @@ export default function AssignmentSheet({ shiftId, focusUserId = null, onClose, 
   const loadStaff = useCallback(async () => {
     setStaffError(false);
     try {
-      const res = await api.get('/admin/active-staff', { params: { limit: 100, shift_id: shiftId } });
+      const res = await offlineGet('/admin/active-staff', { params: { limit: 100, shift_id: shiftId } });
       setStaff((res.data && res.data.staff) || []);
     } catch {
       setStaffError(true);
@@ -2951,7 +4411,7 @@ Expected: PASS, 28 tests, and no "not wrapped in act(...)" warning in the output
 - [ ] **Step 5: Check the file size and build**
 
 Run: `wc -l client/src/components/mobile/AssignmentSheet.js && cd client && CI=true npx react-scripts build`
-Expected: about 365 lines, under the 400 in Global Constraints; the build exits 0 with no warning.
+Expected: about 370 lines, under the 400 in Global Constraints; the build exits 0 (its one warning, a missing source map inside the `html2pdf.js` package, predates this lane and is not an ESLint warning).
 
 - [ ] **Step 6: Commit**
 
@@ -2977,12 +4437,12 @@ MSG
 - Test: `client/src/utils/eventDetailView.test.js`
 
 **Interfaces:**
-- Consumes: `buildShiftView` from Task 4; `railParts` from `client/src/utils/eventCards.js`; `fmtTimeRange24, fmtTime24, fmt$2dp, fmt$fromCents, fmtDate, dayDiff` from `client/src/components/adminos/format.js`; `getEventTypeLabel` from `client/src/utils/eventTypes.js`; `venueMapQuery` from `client/src/components/VenueAddressFields.js`; `resolveGratuityDisplayLabel` from `client/src/utils/gratuityLabels.js`; `formatPhone` from `client/src/utils/formatPhone.js`. Response shapes: `GET /proposals/:id`, `GET /shifts/by-proposal/:id` (Task 1), `GET /drink-plans/by-proposal/:id`, `GET /invoices/proposal/:id`.
+- Consumes: `buildShiftView` from Task 4; `railParts` from `client/src/utils/eventCards.js`; `fmtTimeRange24, fmtTime24, fmt$2dp, fmt$fromCents, fmtDate, dayDiff` from `client/src/components/adminos/format.js`; `getEventTypeLabel` from `client/src/utils/eventTypes.js`; `venueMapQuery` from `client/src/components/VenueAddressFields.js`; `resolveGratuityDisplayLabel` from `client/src/utils/gratuityLabels.js`; `formatPhone` from `client/src/utils/formatPhone.js`. Response shapes: `GET /proposals/:id`, `GET /shifts/by-proposal/:id` (Task 1), `GET /drink-plans/by-proposal/:id?fields=day_of_contact` (Task 3b: `{ day_of_contact: { name, phone } | null }`), `GET /invoices/proposal/:id`.
 - Produces, for Task 8b:
   - `headerOf(proposal) -> { title, kind, guests, venue, mapHref }` (the object `MobileHeader` renders; `mapHref` is `null` when there is no location)
   - `whenOf(proposal, { todayYmd } = {}) -> { text, isToday }`
   - `setupOf(proposal) -> string | null` ("from 17:15 · 45 min before")
-  - `contactsOf(proposal, plan) -> { summary, client: { phone, telHref, smsHref, email, mailHref }, dayOf: { name, phone, telHref, smsHref } | null }`. Both `phone` values are FORMATTED for display ("(312) 555-0142") whatever shape was stored; the hrefs carry the dialable digits.
+  - `contactsOf(proposal, dayOf) -> { summary, client: { phone, telHref, smsHref, email, mailHref }, dayOf: { name, phone, telHref, smsHref } | null }`. `dayOf` is the body of the day-of-contact projection; the full drink plan shape is NOT read (a test pins that). Both `phone` values are FORMATTED for display ("(312) 555-0142") whatever shape was stored; the hrefs carry the dialable digits.
   - `staffingOf(shifts, proposal) -> { count, state: 'open' | 'full' | 'closed', groups: [{ shiftId, showHead, label, view }] }` where `view` is Task 4's `ShiftView`
   - `financialsOf(proposal, invoicesPayload) -> { lines: [{ label, amount }], total, payments: [{ key, label, sub, amount }] | null, pending: [{ key, label, sub, amount }], balance: { amount, sub, inFlight } | null, paidInFull, paidToDate, chip: { kind, label } }`
   - `earliestStale(...stamps) -> string | null`
@@ -3080,6 +4540,8 @@ describe('setupOf', () => {
 });
 
 describe('contactsOf', () => {
+  const dayOf = (name, phone) => ({ day_of_contact: { name, phone } });
+
   test('client phone and email become tap targets', () => {
     const c = contactsOf(proposal(), null);
     expect(c.client).toEqual({
@@ -3089,31 +4551,28 @@ describe('contactsOf', () => {
     expect(c.dayOf).toBeNull();
     expect(c.summary).toBe('day-of pending');
   });
-  test('the day-of contact comes from the drink plan logistics, name and phone only', () => {
-    const plan = { selections: { logistics: { dayOfContact: { name: ' Marcus Keller ', phone: '(312) 555-0142' } } } };
-    const c = contactsOf(proposal(), plan);
+  test('the day-of contact comes from the projection, name and phone only', () => {
+    const c = contactsOf(proposal(), dayOf(' Marcus Keller ', '(312) 555-0142'));
     expect(c.dayOf).toEqual({ name: 'Marcus Keller', phone: '(312) 555-0142', telHref: 'tel:3125550142', smsHref: 'sms:3125550142' });
     expect(c.summary).toBe('day-of set');
   });
   test('a day-of phone stored as bare digits is shown formatted, like the client number', () => {
-    const c = contactsOf(proposal(), { selections: { logistics: { dayOfContact: { name: 'Marcus Keller', phone: '3125550142' } } } });
+    const c = contactsOf(proposal(), dayOf('Marcus Keller', '3125550142'));
     expect(c.dayOf).toEqual({ name: 'Marcus Keller', phone: '(312) 555-0142', telHref: 'tel:3125550142', smsHref: 'sms:3125550142' });
   });
-
   test('a day-of contact with a name and no phone has no links', () => {
-    const c = contactsOf(proposal(), { selections: { logistics: { dayOfContact: { name: 'Priya Shah', phone: '' } } } });
+    const c = contactsOf(proposal(), dayOf('Priya Shah', ''));
     expect(c.dayOf).toEqual({ name: 'Priya Shah', phone: '', telHref: null, smsHref: null });
   });
   test('an empty name means no day-of contact, whatever else is there', () => {
-    for (const plan of [
-      { selections: { logistics: { dayOfContact: { name: '  ', phone: '3125550142' } } } },
-      { selections: { logistics: {} } }, { selections: {} }, { selections: null }, {}, null, undefined,
-      { selections: '{"logistics":{"dayOfContact":{"name":"","phone":""}}}' },
-    ]) expect(contactsOf(proposal(), plan).dayOf).toBeNull();
+    for (const body of [
+      dayOf('  ', '3125550142'), dayOf(null, '3125550142'), { day_of_contact: null }, { day_of_contact: 'Marcus' },
+      {}, null, undefined, 'a string',
+    ]) expect(contactsOf(proposal(), body).dayOf).toBeNull();
   });
-  test('selections that arrive as a JSON string are read', () => {
-    const c = contactsOf(proposal(), { selections: '{"logistics":{"dayOfContact":{"name":"Amara Okafor","phone":"3125550129"}}}' });
-    expect(c.dayOf.name).toBe('Amara Okafor');
+  test('the full drink plan shape is NOT read: the phone takes the projection or nothing', () => {
+    const fullPlan = { token: 'secret', admin_notes: 'x', selections: { logistics: { dayOfContact: { name: 'Marcus Keller', phone: '3125550142' }, accessNotes: 'gate 4471' } } };
+    expect(contactsOf(proposal(), fullPlan).dayOf).toBeNull();
   });
   test('an international number keeps its plus; a client with nothing on file has no links', () => {
     expect(contactsOf(proposal({ client_phone: '+44 20 7946 0958' }), null).client.telHref).toBe('tel:+442079460958');
@@ -3394,10 +4853,13 @@ function phoneLinks(raw) {
   return { telHref: hasDigits ? `tel:${dialable}` : null, smsHref: hasDigits ? `sms:${dialable}` : null };
 }
 
-export function contactsOf(proposal, plan) {
+// `dayOf` is the body of GET /drink-plans/by-proposal/:id?fields=day_of_contact,
+// `{ day_of_contact: { name, phone } | null }`. The phone never reads the full
+// drink plan: that payload carries the plan's token, the internal notes and
+// the venue access notes, and none of it may sit in the phone's cache.
+export function contactsOf(proposal, dayOf) {
   const p = proposal || {};
-  const selections = readJson(plan && plan.selections);
-  const raw = selections && selections.logistics && selections.logistics.dayOfContact;
+  const raw = dayOf && typeof dayOf === 'object' ? dayOf.day_of_contact : null;
   const name = text(raw && raw.name);
   const dayOfPhone = text(raw && raw.phone);
   const email = text(p.client_email);
@@ -3540,7 +5002,8 @@ cd client && CI=true npx react-scripts build && cd .. && git add client/src/util
 feat(phone detail): pure view-model for the event detail
 
 Header with an address-only map query, the when and setup lines, contacts as
-tap targets with the drink-plan day-of contact, staffing groups per shift,
+tap targets with the day-of contact read from its projection (never the full
+drink plan), staffing groups per shift,
 and financials that follow the desktop payment panel figure for figure, with
 the bank debit in flight as its own row and chip. Nothing here computes a
 price.
@@ -3785,15 +5248,19 @@ Expected: the layout at about 315 lines; the build exits 0 with no warning.
 ### Task 8b: `EventDetailPhone`, the phone event detail
 
 **Files:**
+- Create: `client/src/pages/mobile/EventDetailSections.js`
 - Create: `client/src/pages/mobile/EventDetailPhone.js`
 - Test: `client/src/pages/mobile/EventDetailPhone.test.js`, `client/src/utils/mobileClassContract.test.js` (new)
 
 **Interfaces:**
-- Consumes: Task 3's `useDrawerParam({ push: true, kinds }) -> { kind, id, focus, open, close }`; Task 6's `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`; Task 7's `headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale`; Task 8a's outlet context `{ badges, refreshBadges, setHeaderDetail }`; Task 5's classes; `formatStaleTime` from `client/src/utils/staleTime.js`; `useMobileView()` -> `{ setDesktopView(screenKey, on) }`; the four reads.
+- Consumes: Task 3's `useDrawerParam({ push: true, kinds }) -> { kind, id, focus, open, close }`; Task 3b's `offlineGet(url, config?)` and the day-of-contact projection; Task 6's `AssignmentSheet({ shiftId, focusUserId, onClose, onChanged, onDead })`; Task 7's `headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale`; Task 8a's outlet context `{ badges, refreshBadges, setHeaderDetail }`; Task 5's classes; `formatStaleTime` from `client/src/utils/staleTime.js`; `useMobileView()` -> `{ setDesktopView(screenKey, on) }`.
 - Produces:
+  - `client/src/pages/mobile/EventDetailSections.js`: named exports `Caret({ open })`, `ContactsSection({ open, onToggle, contacts, planState, clientName })`, `MoneySection({ open, onToggle, fin, moneyState })`. Presentational: no state, no read.
   - The default export `EventDetailPhone()` (no props; reads `:id` from the route). Task 9 mounts it.
-  - Window event `mobile-route-dead`, dispatched when `GET /proposals/:id` answers 404 or 403. No other read dispatches it.
+  - Window event `mobile-route-dead`, dispatched when `GET /proposals/:id` answers 404 or 403, or when `:id` is not a number (then nothing is fetched). No other read dispatches it.
   - `client/src/utils/mobileClassContract.test.js`, which Task 9 extends.
+
+**The four reads, all through `offlineGet`:** `/proposals/<id>`, `/shifts/by-proposal/<id>`, `/invoices/proposal/<id>`, and `/drink-plans/by-proposal/<id>` with `params: { fields: 'day_of_contact' }`. The page never requests the full drink plan.
 
 - [ ] **Step 1: Write the failing page test**
 
@@ -3842,7 +5309,9 @@ const shift = (id, over = {}) => ({
   id, status: 'open', finished: false, event_date: '2999-08-15', start_time: '18:00',
   positions_needed: '["Bartender","Bartender"]', requesters: [person(1), person(2, { status: 'pending', position: null })], ...over,
 });
-const PLAN = { selections: { logistics: { dayOfContact: { name: 'Marcus Keller', phone: '3125550142' } } } };
+// The day-of-contact projection, never the full drink plan.
+const PLAN = { day_of_contact: { name: 'Marcus Keller', phone: '3125550142' } };
+const OFFLINE_OK = { headers: { 'X-Offline-Ok': '1' } };
 const INVOICES = { invoices: [{ id: 1, invoice_number: 'INV-01', label: 'Deposit', amount_due: 10000, amount_paid: 10000, status: 'paid' }], pending_payments: [] };
 const NETWORK = { status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' };
 
@@ -3895,9 +5364,13 @@ test('makes its four reads and hands the chrome the rich header', async () => {
   serve();
   const { ctx } = mount();
   await screen.findByText('Person 1');
-  for (const url of ['/proposals/13', '/shifts/by-proposal/13', '/drink-plans/by-proposal/13', '/invoices/proposal/13']) {
-    expect(api.get).toHaveBeenCalledWith(url);
+  // Every read asks for the offline fallback: this screen renders the staleness line.
+  for (const url of ['/proposals/13', '/shifts/by-proposal/13', '/invoices/proposal/13']) {
+    expect(api.get).toHaveBeenCalledWith(url, OFFLINE_OK);
   }
+  // The drink plan is read as its projection, and only as that.
+  expect(api.get).toHaveBeenCalledWith('/drink-plans/by-proposal/13', { params: { fields: 'day_of_contact' }, ...OFFLINE_OK });
+  expect(api.get.mock.calls.filter((c) => c[0] === '/drink-plans/by-proposal/13' && !(c[1] && c[1].params))).toHaveLength(0);
   // The header is handed over in an effect, one tick after the rows paint.
   await waitFor(() => expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({
     title: 'Alexis Henderson', kind: 'Wedding Reception', guests: 140,
@@ -4091,6 +5564,26 @@ test('a dead sheet closes itself and stays on the event', async () => {
   expect(screen.queryByTestId('sheet')).toBeNull();
 });
 
+test('an id that is not a number is a dead route: nothing is fetched and no error screen shows', async () => {
+  const heard = jest.fn();
+  window.addEventListener('mobile-route-dead', heard);
+  serve();
+  render(
+    <MemoryRouter initialEntries={['/events/abc']}>
+      <Routes>
+        <Route element={<Shell ctx={{ badges: {}, refreshBadges: jest.fn(), setHeaderDetail: jest.fn() }} />}>
+          <Route path="/events/:id" element={<EventDetailPhone />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>
+  );
+  await waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+  expect(api.get).not.toHaveBeenCalled();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText('Loading the event')).toBeNull();
+  window.removeEventListener('mobile-route-dead', heard);
+});
+
 test('a drawerId that is not a number mounts no sheet', async () => {
   serve();
   mount({ initial: '/events/13?drawer=shift&drawerId=abc' });
@@ -4234,46 +5727,21 @@ test('a shift with no declared roles shows the note on the card instead of an As
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventDetailPhone.test.js`
 Expected: FAIL, `Cannot find module './EventDetailPhone'`.
 
-- [ ] **Step 3: Write the page**
+- [ ] **Step 3: Write the presentational sections**
 
-Create `client/src/pages/mobile/EventDetailPhone.js`:
+Create `client/src/pages/mobile/EventDetailSections.js`:
 
 ```js
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useOutletContext, useParams } from 'react-router-dom';
-import api from '../../utils/api';
-import useDrawerParam from '../../hooks/useDrawerParam';
-import { useMobileView } from '../../context/MobileViewContext';
+import React from 'react';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import AssignmentSheet from '../../components/mobile/AssignmentSheet';
-import { formatStaleTime } from '../../utils/staleTime';
-import {
-  headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale,
-} from '../../utils/eventDetailView';
 
-// Phone event detail (spec 2026-08-13-mobile-admin section 4 Detail; benchmark
-// docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Event detail).
-// Renders INSIDE AdminLayout's scrolling .m-main. The rich header is the
-// chrome's: this screen hands it the data through the outlet context.
-//
-// Four reads, each allowed to fail on its own. Only the proposal is the
-// route: when IT is gone or denied the screen dispatches mobile-route-dead and
-// the chrome falls back to /events. A missing drink plan, a roster this user
-// may not see, or an invoices read that did not land each degrade one section.
-//
-// Not on the phone in phase 1 (reachable through the Desktop-view escape):
-// the activity feed, invite to portal, re-enroll nudges, cancel event, cancel
-// line, the Out-of-Area Bonus knob. The Edit details row opens that Desktop
-// view until the edit sheet (lane ma-e3) lands.
-const LOAD_FAILED = 'Network error. Check your connection.';
-const ROSTERLESS = 'No roles are declared on this shift. Staff it from desktop view.';
-// The kinds of drawer that are phone sheets here. Module scope: one identity.
-const SHEETS = ['shift'];
-const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
-const FRAC = { open: 'm-frac', full: 'm-frac full', closed: 'm-frac past' };
+// The presentational sections of the phone event detail (spec
+// 2026-08-13-mobile-admin section 4 Detail; benchmark 2026-09-15, Event
+// detail). They render what client/src/utils/eventDetailView.js derived and
+// hold no state and make no read: EventDetailPhone owns both.
 
-function Caret({ open }) {
+export function Caret({ open }) {
   return (
     <span className={`m-section-caret${open ? ' m-section-caret-open' : ''}`} aria-hidden="true">
       <Icon name="right" size={16} />
@@ -4292,6 +5760,179 @@ function PhoneLine({ label, links, who }) {
     </div>
   );
 }
+
+export function ContactsSection({ open, onToggle, contacts, planState, clientName }) {
+  return (
+    <section className="m-section">
+      <button type="button" className="m-section-row" aria-expanded={open} onClick={onToggle}>
+        <Icon name="users" size={20} />
+        <span className="m-section-name">Contacts</span>
+        {(planState === 'ready' || planState === 'none') && <span className="m-section-sum">{contacts.summary}</span>}
+        <Caret open={open} />
+      </button>
+      {open && (
+        <>
+          <div className="m-section-label">Client</div>
+          <div className="m-contact">
+            <PhoneLine label={contacts.client.phone} links={contacts.client} who={clientName || 'the client'} />
+            {contacts.client.email && (
+              <div className="m-contact-line">
+                <a className="m-contact-link" href={contacts.client.mailHref}>{contacts.client.email}</a>
+              </div>
+            )}
+            {!contacts.client.phone && !contacts.client.email && (
+              <div className="m-section-note">No phone or email on file.</div>
+            )}
+          </div>
+          <div className="m-section-label">Day-of contact</div>
+          {contacts.dayOf && (
+            <div className="m-contact">
+              <div className="m-contact-name">{contacts.dayOf.name}</div>
+              <PhoneLine label={contacts.dayOf.phone} links={contacts.dayOf} who={contacts.dayOf.name} />
+            </div>
+          )}
+          {!contacts.dayOf && planState === 'failed' && (
+            <div className="m-section-note">The day-of contact needs a connection.</div>
+          )}
+          {!contacts.dayOf && planState === 'loading' && (
+            <div className="m-section-note">Loading the day-of contact</div>
+          )}
+          {!contacts.dayOf && (planState === 'ready' || planState === 'none') && (
+            <div className="m-section-note">
+              <Icon name="clock" size={16} />
+              <span>Not received yet. Collected with the drink plan; often the client themselves.</span>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+export function MoneySection({ open, onToggle, fin, moneyState }) {
+  return (
+    <section className="m-section">
+      <button type="button" className="m-section-row" aria-expanded={open} onClick={onToggle}>
+        <Icon name="dollar" size={20} />
+        <span className="m-section-name">Financials</span>
+        <span className="m-section-num">{fin.total}</span>
+        <StatusChip kind={fin.chip.kind}>{fin.chip.label}</StatusChip>
+        <Caret open={open} />
+      </button>
+      {open && (
+        <>
+          <div className="m-section-label">Package &amp; extras</div>
+          {fin.lines.map((line, i) => (
+            <div className="m-money-row" key={`${line.label}-${i}`}>
+              <span className="m-money-main"><span className="m-money-label">{line.label}</span></span>
+              <span className="m-money-amt">{line.amount}</span>
+            </div>
+          ))}
+          <div className="m-money-row m-money-total">
+            <span className="m-money-main"><span className="m-money-label">Total</span></span>
+            <span className="m-money-amt">{fin.total}</span>
+          </div>
+          <div className="m-section-label">Payments</div>
+          {fin.payments === null && (
+            <>
+              <div className="m-section-note">
+                {moneyState === 'loading' ? 'Loading the payment detail' : 'Payment detail needs a connection.'}
+              </div>
+              <div className="m-money-row">
+                <span className="m-money-main"><span className="m-money-label">Paid to date</span></span>
+                <span className="m-money-amt">{fin.paidToDate}</span>
+              </div>
+            </>
+          )}
+          {fin.payments !== null && fin.payments.length === 0 && fin.pending.length === 0 && (
+            <div className="m-section-note">No payments yet.</div>
+          )}
+          {(fin.payments || []).map((pay) => (
+            <div className="m-money-row m-money-pay" key={pay.key}>
+              <span className="m-money-main">
+                <span className="m-money-label">{pay.label}</span>
+                <span className="m-money-sub">{pay.sub}</span>
+              </span>
+              <span className="m-money-amt">{pay.amount}</span>
+            </div>
+          ))}
+          {fin.pending.map((pay) => (
+            <div className="m-money-row m-money-pay" key={pay.key}>
+              <span className="m-money-main">
+                <span className="m-money-label">{pay.label}</span>
+                {pay.sub ? <span className="m-money-sub">{pay.sub}</span> : null}
+              </span>
+              <span className="m-money-amt">{pay.amount}</span>
+            </div>
+          ))}
+          {fin.balance && (
+            <div className={`m-money-row m-money-bal${fin.balance.inFlight ? ' m-money-flight' : ''}`}>
+              <span className="m-money-main">
+                <span className="m-money-label">Balance due</span>
+                <span className="m-money-sub">{fin.balance.sub}</span>
+              </span>
+              <span className="m-money-amt">{fin.balance.amount}</span>
+            </div>
+          )}
+          {fin.paidInFull && (
+            <div className="m-money-row m-money-paid">
+              <span className="m-money-main"><span className="m-money-label">Paid in full</span></span>
+              <span className="m-money-amt">{fin.total}</span>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+```
+
+- [ ] **Step 4: Write the page**
+
+Create `client/src/pages/mobile/EventDetailPhone.js`:
+
+```js
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useOutletContext, useParams } from 'react-router-dom';
+import { offlineGet } from '../../utils/offlineRead';
+import useDrawerParam from '../../hooks/useDrawerParam';
+import { useMobileView } from '../../context/MobileViewContext';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import AssignmentSheet from '../../components/mobile/AssignmentSheet';
+import { formatStaleTime } from '../../utils/staleTime';
+import {
+  headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale,
+} from '../../utils/eventDetailView';
+import { Caret, ContactsSection, MoneySection } from './EventDetailSections';
+
+// Phone event detail (spec 2026-08-13-mobile-admin section 4 Detail; benchmark
+// docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Event detail).
+// Renders INSIDE AdminLayout's scrolling .m-main. The rich header is the
+// chrome's: this screen hands it the data through the outlet context.
+//
+// Four reads, each allowed to fail on its own, each made with offlineGet (they
+// may be answered from the phone's cache, and the staleness line says so).
+// Only the proposal is the route: when IT is gone or denied, or the :id in the
+// URL is not a number, the screen dispatches mobile-route-dead and the chrome
+// falls back to /events. A missing drink plan, a roster this user may not see,
+// or an invoices read that did not land each degrade one section.
+//
+// The drink plan is read ONLY as its day-of-contact projection. The full plan
+// carries its token, the internal notes and the venue access notes, and the
+// phone needs a name and a number.
+//
+// Not on the phone in phase 1 (reachable through the Desktop-view escape):
+// the activity feed, invite to portal, re-enroll nudges, cancel event, cancel
+// line, the Out-of-Area Bonus knob. The Edit details row opens that Desktop
+// view until the edit sheet (lane ma-e3) lands.
+const LOAD_FAILED = 'Network error. Check your connection.';
+const ROSTERLESS = 'No roles are declared on this shift. Staff it from desktop view.';
+// The kinds of drawer that are phone sheets here. Module scope: one identity.
+const SHEETS = ['shift'];
+const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
+const DAY_OF = { params: { fields: 'day_of_contact' } };
+const FRAC = { open: 'm-frac', full: 'm-frac full', closed: 'm-frac past' };
 
 export default function EventDetailPhone() {
   const { id } = useParams();
@@ -4315,6 +5956,14 @@ export default function EventDetailPhone() {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    // A malformed id can never load: say so at once, instead of an error
+    // screen whose Retry cannot succeed.
+    if (!/^\d+$/.test(String(id))) {
+      setLoading(false);
+      setProposal(null);
+      window.dispatchEvent(new CustomEvent('mobile-route-dead'));
+      return undefined;
+    }
     let gone = false;
     const stamp = (name, res) => setStale((prev) => ({ ...prev, [name]: res.staleAt || null }));
     // Clear first: a different event id must never render over the last one.
@@ -4323,7 +5972,7 @@ export default function EventDetailPhone() {
     setPlan({ state: 'loading', row: null });
     setMoney({ state: 'loading', payload: null });
 
-    api.get(`/proposals/${id}`)
+    offlineGet(`/proposals/${id}`)
       .then((res) => {
         if (gone) return;
         setProposal(res.data);
@@ -4337,16 +5986,16 @@ export default function EventDetailPhone() {
       })
       .finally(() => { if (!gone) setLoading(false); });
 
-    api.get(`/shifts/by-proposal/${id}`)
+    offlineGet(`/shifts/by-proposal/${id}`)
       .then((res) => { if (gone) return; setShifts({ state: 'ready', rows: Array.isArray(res.data) ? res.data : [] }); stamp('shifts', res); })
       .catch((err) => { if (!gone) setShifts({ state: err && err.status === 403 ? 'denied' : 'failed', rows: [] }); });
 
-    api.get(`/drink-plans/by-proposal/${id}`)
+    offlineGet(`/drink-plans/by-proposal/${id}`, DAY_OF)
       .then((res) => { if (gone) return; setPlan({ state: 'ready', row: res.data }); stamp('plan', res); })
       // 404 is the normal answer for an event whose client has not started a plan.
       .catch((err) => { if (!gone) setPlan({ state: err && err.status === 404 ? 'none' : 'failed', row: null }); });
 
-    api.get(`/invoices/proposal/${id}`)
+    offlineGet(`/invoices/proposal/${id}`)
       .then((res) => { if (gone) return; setMoney({ state: 'ready', payload: res.data }); stamp('money', res); })
       .catch(() => { if (!gone) setMoney({ state: 'failed', payload: null }); });
 
@@ -4355,7 +6004,7 @@ export default function EventDetailPhone() {
 
   // The sheet's onChanged, and the staffing section's own Retry.
   const reloadShifts = useCallback(() => {
-    api.get(`/shifts/by-proposal/${id}`)
+    offlineGet(`/shifts/by-proposal/${id}`)
       .then((res) => {
         if (showing.current !== id) return;   // the screen moved to another event
         setShifts({ state: 'ready', rows: Array.isArray(res.data) ? res.data : [] });
@@ -4414,49 +6063,13 @@ export default function EventDetailPhone() {
         {setup && <div className="m-detail-setup">{`setup ${setup}`}</div>}
       </div>
 
-      <section className="m-section">
-        <button type="button" className="m-section-row" aria-expanded={panes.contact} onClick={() => toggle('contact')}>
-          <Icon name="users" size={20} />
-          <span className="m-section-name">Contacts</span>
-          {(plan.state === 'ready' || plan.state === 'none') && <span className="m-section-sum">{contacts.summary}</span>}
-          <Caret open={panes.contact} />
-        </button>
-        {panes.contact && (
-          <>
-            <div className="m-section-label">Client</div>
-            <div className="m-contact">
-              <PhoneLine label={contacts.client.phone} links={contacts.client} who={proposal.client_name || 'the client'} />
-              {contacts.client.email && (
-                <div className="m-contact-line">
-                  <a className="m-contact-link" href={contacts.client.mailHref}>{contacts.client.email}</a>
-                </div>
-              )}
-              {!contacts.client.phone && !contacts.client.email && (
-                <div className="m-section-note">No phone or email on file.</div>
-              )}
-            </div>
-            <div className="m-section-label">Day-of contact</div>
-            {contacts.dayOf && (
-              <div className="m-contact">
-                <div className="m-contact-name">{contacts.dayOf.name}</div>
-                <PhoneLine label={contacts.dayOf.phone} links={contacts.dayOf} who={contacts.dayOf.name} />
-              </div>
-            )}
-            {!contacts.dayOf && plan.state === 'failed' && (
-              <div className="m-section-note">The day-of contact needs a connection.</div>
-            )}
-            {!contacts.dayOf && plan.state === 'loading' && (
-              <div className="m-section-note">Loading the day-of contact</div>
-            )}
-            {!contacts.dayOf && (plan.state === 'ready' || plan.state === 'none') && (
-              <div className="m-section-note">
-                <Icon name="clock" size={16} />
-                <span>Not received yet. Collected with the drink plan; often the client themselves.</span>
-              </div>
-            )}
-          </>
-        )}
-      </section>
+      <ContactsSection
+        open={panes.contact}
+        onToggle={() => toggle('contact')}
+        contacts={contacts}
+        planState={plan.state}
+        clientName={proposal.client_name}
+      />
 
       <section className="m-section">
         <button type="button" className="m-section-row" aria-expanded={panes.staffing} onClick={() => toggle('staffing')}>
@@ -4516,78 +6129,12 @@ export default function EventDetailPhone() {
         )}
       </section>
 
-      <section className="m-section">
-        <button type="button" className="m-section-row" aria-expanded={panes.pay} onClick={() => toggle('pay')}>
-          <Icon name="dollar" size={20} />
-          <span className="m-section-name">Financials</span>
-          <span className="m-section-num">{fin.total}</span>
-          <StatusChip kind={fin.chip.kind}>{fin.chip.label}</StatusChip>
-          <Caret open={panes.pay} />
-        </button>
-        {panes.pay && (
-          <>
-            <div className="m-section-label">Package &amp; extras</div>
-            {fin.lines.map((line, i) => (
-              <div className="m-money-row" key={`${line.label}-${i}`}>
-                <span className="m-money-main"><span className="m-money-label">{line.label}</span></span>
-                <span className="m-money-amt">{line.amount}</span>
-              </div>
-            ))}
-            <div className="m-money-row m-money-total">
-              <span className="m-money-main"><span className="m-money-label">Total</span></span>
-              <span className="m-money-amt">{fin.total}</span>
-            </div>
-            <div className="m-section-label">Payments</div>
-            {fin.payments === null && (
-              <>
-                <div className="m-section-note">
-                  {money.state === 'loading' ? 'Loading the payment detail' : 'Payment detail needs a connection.'}
-                </div>
-                <div className="m-money-row">
-                  <span className="m-money-main"><span className="m-money-label">Paid to date</span></span>
-                  <span className="m-money-amt">{fin.paidToDate}</span>
-                </div>
-              </>
-            )}
-            {fin.payments !== null && fin.payments.length === 0 && fin.pending.length === 0 && (
-              <div className="m-section-note">No payments yet.</div>
-            )}
-            {(fin.payments || []).map((pay) => (
-              <div className="m-money-row m-money-pay" key={pay.key}>
-                <span className="m-money-main">
-                  <span className="m-money-label">{pay.label}</span>
-                  <span className="m-money-sub">{pay.sub}</span>
-                </span>
-                <span className="m-money-amt">{pay.amount}</span>
-              </div>
-            ))}
-            {fin.pending.map((pay) => (
-              <div className="m-money-row m-money-pay" key={pay.key}>
-                <span className="m-money-main">
-                  <span className="m-money-label">{pay.label}</span>
-                  {pay.sub ? <span className="m-money-sub">{pay.sub}</span> : null}
-                </span>
-                <span className="m-money-amt">{pay.amount}</span>
-              </div>
-            ))}
-            {fin.balance && (
-              <div className={`m-money-row m-money-bal${fin.balance.inFlight ? ' m-money-flight' : ''}`}>
-                <span className="m-money-main">
-                  <span className="m-money-label">Balance due</span>
-                  <span className="m-money-sub">{fin.balance.sub}</span>
-                </span>
-                <span className="m-money-amt">{fin.balance.amount}</span>
-              </div>
-            )}
-            {fin.paidInFull && (
-              <div className="m-money-row m-money-paid">
-                <span className="m-money-main"><span className="m-money-label">Paid in full</span></span>
-                <span className="m-money-amt">{fin.total}</span>
-              </div>
-            )}
-          </>
-        )}
-      </section>
+      <MoneySection
+        open={panes.pay}
+        onToggle={() => toggle('pay')}
+        fin={fin}
+        moneyState={money.state}
+      />
 
       {!cancelled && (
         <section className="m-section">
@@ -4624,14 +6171,14 @@ export default function EventDetailPhone() {
 }
 ```
 
-- [ ] **Step 4: Run the page test to verify it passes**
+- [ ] **Step 5: Run the page test to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventDetailPhone.test.js`
-Expected: PASS, 29 tests, and no "not wrapped in act(...)" warning. The header assertions sit inside `waitFor` on purpose: the page hands its header to the chrome in an effect, one tick after the rows paint.
+Expected: PASS, 30 tests, and no "not wrapped in act(...)" warning. The header assertions sit inside `waitFor` on purpose: the page hands its header to the chrome in an effect, one tick after the rows paint.
 
-- [ ] **Step 5: Write the class-contract test**
+- [ ] **Step 6: Write the class-contract test**
 
-jsdom applies no CSS, so a class a component uses and the stylesheet never defines is invisible to every other test. This one reads the three sources that render this lane's classes.
+jsdom applies no CSS, so a class a component uses and the stylesheet never defines is invisible to every other test. This one reads the four sources that render this lane's classes.
 
 Create `client/src/utils/mobileClassContract.test.js`:
 
@@ -4646,6 +6193,7 @@ const SOURCES = [
   'components/mobile/AssignmentSheet.js',
   'components/mobile/MobileHeader.js',
   'pages/mobile/EventDetailPhone.js',
+  'pages/mobile/EventDetailSections.js',
 ];
 
 // Every m-* token that appears inside a string or template literal in the
@@ -4662,26 +6210,28 @@ test.each(SOURCES)('%s uses only classes the stylesheet defines', (rel) => {
 ```
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/mobileClassContract.test.js`
-Expected: PASS, 3 tests. A failure names the class: either it is a typo in the component, or Task 5's block is missing a rule, in which case add the rule to the block in `index.css`, add the name to the vocabulary in `mobileDetailCss.test.js`, and say so in the task report.
+Expected: PASS, 4 tests. A failure names the class: either it is a typo in the component, or Task 5's block is missing a rule, in which case add the rule to the block in `index.css`, add the name to the vocabulary in `mobileDetailCss.test.js`, and say so in the task report.
 
-- [ ] **Step 6: Check the size and build**
+- [ ] **Step 7: Check the sizes and build**
 
-Run: `wc -l client/src/pages/mobile/EventDetailPhone.js && cd client && CI=true npx react-scripts build`
-Expected: about 385 lines, under the 400 in Global Constraints; the build exits 0 with no warning.
+Run: `wc -l client/src/pages/mobile/EventDetailPhone.js client/src/pages/mobile/EventDetailSections.js && cd client && CI=true npx react-scripts build`
+Expected: about 280 and 155 lines; the build exits 0 (its one warning, a missing source map inside the `html2pdf.js` package, predates this lane).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add client/src/pages/mobile/EventDetailPhone.js client/src/pages/mobile/EventDetailPhone.test.js client/src/utils/mobileClassContract.test.js && git commit -F - <<'MSG'
+git add client/src/pages/mobile/EventDetailPhone.js client/src/pages/mobile/EventDetailSections.js client/src/pages/mobile/EventDetailPhone.test.js client/src/utils/mobileClassContract.test.js && git commit -F - <<'MSG'
 feat(phone detail): the event detail screen
 
-The when and setup lines, Contacts as tap targets with the drink-plan day-of
-contact, Staffing grouped per shift, Financials with the bank debit in
-flight, and an Edit details row that opens the Desktop view until the edit
-sheet lands. Four reads, each allowed to fail alone; only a dead proposal
-read dispatches mobile-route-dead. A staffing reload that lands after the
-screen moved to another event is dropped. Adds a class-contract test,
-because jsdom cannot see a missing CSS rule.
+The when and setup lines, Contacts as tap targets with the day-of contact,
+Staffing grouped per shift, Financials with the bank debit in flight, and an
+Edit details row that opens the Desktop view until the edit sheet lands.
+Four reads, each allowed to fail alone, each asking for the offline
+fallback; the drink plan is read only as its day-of-contact projection.
+Only a dead proposal read, or an id that is not a number, dispatches
+mobile-route-dead. A staffing reload that lands after the screen moved to
+another event is dropped. Adds a class-contract test, because jsdom cannot
+see a missing CSS rule.
 MSG
 ```
 
@@ -4691,14 +6241,14 @@ MSG
 
 **Files:**
 - Modify: `client/src/pages/admin/EventDetailPage.js` (imports `:1-34`; the default export `:38`; end of file)
-- Modify: `client/src/pages/mobile/EventsListPhone.js` (header comment `:12-20`; imports `:2-10`; the constants `:22-25`; `useDrawerParam()` `:36`; the interim drawer mount `:233-243`)
-- Modify: `client/src/pages/mobile/EventsListPhone.test.js` (the `ShiftDrawer` mock `:10-11`; the manual-card test `:146-154`)
+- Modify: `client/src/pages/mobile/EventsListPhone.js` (header comment `:12-20`; imports `:2-10`; the constants `:22-25`; `useDrawerParam()` `:36`; the feed read `:73`; the interim drawer mount `:233-243`)
+- Modify: `client/src/pages/mobile/EventsListPhone.test.js` (the `ShiftDrawer` mock `:10-11`; six `/shifts` call assertions; the manual-card test `:146-154`)
 - Modify: `client/src/utils/mobileClassContract.test.js` (one more test)
 - Test: `client/src/pages/admin/EventDetailPage.fork.test.js` (new)
 
 **Interfaces:**
-- Consumes: Task 8b's `EventDetailPhone` and its `mobileClassContract.test.js`; Task 6's `AssignmentSheet`; Task 3's `useDrawerParam({ push: true, kinds })`; `useMobileView()` -> `{ isPhone, desktopView(screenKey) }`.
-- Produces: `/events/:id` renders `EventDetailPhone` at phone width unless the `event-detail` screen is pinned to Desktop view; a manual shift on the phone list opens `AssignmentSheet`; the desktop `ShiftDrawer` is no longer imported by any file under `client/src/pages/mobile/`.
+- Consumes: Task 8b's `EventDetailPhone` and its `mobileClassContract.test.js`; Task 6's `AssignmentSheet`; Task 3's `useDrawerParam({ push: true, kinds })`; Task 3b's `offlineGet`; `useMobileView()` -> `{ isPhone, desktopView(screenKey) }`.
+- Produces: `/events/:id` renders `EventDetailPhone` at phone width unless the `event-detail` screen is pinned to Desktop view; a manual shift on the phone list opens `AssignmentSheet`; the desktop `ShiftDrawer` is no longer imported by any file under `client/src/pages/mobile/`; the phone list reads its feed with `offlineGet`, which is what keeps its offline mode now that the service worker serves a stored copy only to a request that asks.
 
 - [ ] **Step 1: Write the failing fork test**
 
@@ -4830,7 +6380,23 @@ function LocationProbe() {
 }
 ```
 
-and add `useNavigate` to the `react-router-dom` import. Replace the test `a booked card navigates to the event detail; a manual card opens the shift drawer` with these four:
+and add `useNavigate` to the `react-router-dom` import.
+
+The list will read its feed with `offlineGet` (Step 7), which adds a header to every call. Six existing assertions name the call's second argument as `{ params: { ... } }`: in each `toHaveBeenCalledWith('/shifts', { params: { ... } })` and `toHaveBeenLastCalledWith('/shifts', { params: { ... } })`, add `headers: { 'X-Offline-Ok': '1' }` after `params`, so that for example
+
+```js
+  expect(api.get).toHaveBeenCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } });
+```
+
+becomes
+
+```js
+  expect(api.get).toHaveBeenCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 }, headers: { 'X-Offline-Ok': '1' } });
+```
+
+Check: `grep -c "X-Offline-Ok" client/src/pages/mobile/EventsListPhone.test.js` prints 7 once the four new tests below are in (six rewritten, one new).
+
+Replace the test `a booked card navigates to the event detail; a manual card opens the shift drawer` with these four:
 
 ```js
 test('a booked card navigates to the event detail', async () => {
@@ -4859,7 +6425,7 @@ test('a change made in the sheet reloads the list', async () => {
   const before = api.get.mock.calls.length;
   fireEvent.click(screen.getByRole('button', { name: 'stub changed' }));
   await waitFor(() => expect(api.get.mock.calls.length).toBe(before + 1));
-  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 } });
+  expect(api.get).toHaveBeenLastCalledWith('/shifts', { params: { scope: 'upcoming', limit: 60, offset: 0 }, headers: { 'X-Offline-Ok': '1' } });
   // Let the reloaded list land inside the test.
   expect(await screen.findByText('Night Market pop-up')).toBeInTheDocument();
 });
@@ -4877,7 +6443,7 @@ test('a dead manual shift closes the sheet and keeps the list where it was', asy
 - [ ] **Step 6: Run the list suite to verify the new tests fail**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/EventsListPhone.test.js`
-Expected: `Tests: 3 failed, 14 passed, 17 total` (measured in a scratch copy, 2026-09-29). The three sheet tests FAIL: the list still mounts the desktop drawer, so no `sheet` test id renders. Every list test that does not open a manual shift PASSES.
+Expected: the three sheet tests FAIL (the list still mounts the desktop drawer, so no `sheet` test id renders), and so do the tests whose `/shifts` assertion you just rewrote (the list does not send the header yet). The tests that assert neither PASS.
 
 - [ ] **Step 7: Swap the drawer for the sheet**
 
@@ -4888,6 +6454,20 @@ Replace the import of `ShiftDrawer` (`:10`) with:
 ```js
 import AssignmentSheet from '../../components/mobile/AssignmentSheet';
 ```
+
+Replace the import of the api client (`import api from '../../utils/api';`, `:3`) with:
+
+```js
+import { offlineGet } from '../../utils/offlineRead';
+```
+
+and the feed read inside `load` (`const res = await api.get('/shifts', { params: params(offset) });`) with:
+
+```js
+      const res = await offlineGet('/shifts', { params: params(offset) });
+```
+
+The list renders the staleness line and takes no action on a cache-served copy, so it may ask for the offline fallback. After this edit the file has no other use of `api`.
 
 Add `useOutletContext` to the `react-router-dom` import:
 
@@ -4954,7 +6534,7 @@ test('no file under pages/mobile or components/mobile imports the desktop ShiftD
 - [ ] **Step 9: Run the three suites and the build**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile src/pages/admin/EventDetailPage.fork.test.js src/pages/admin/EventsDashboard.fork.test.js src/utils/mobileClassContract.test.js && CI=true npx react-scripts build`
-Expected: all PASS; `EventsListPhone.test.js` reports 17 tests (14 before, one replaced by four), `mobileClassContract.test.js` 4, and no "not wrapped in act(...)" warning anywhere; the build exits 0 with no warning.
+Expected: all PASS; `EventsListPhone.test.js` reports 17 tests (14 before, one replaced by four), `mobileClassContract.test.js` 5, and no "not wrapped in act(...)" warning anywhere; the build exits 0 with no warning.
 
 - [ ] **Step 10: Commit**
 
@@ -4965,9 +6545,10 @@ feat(phone): fork the event detail and open manual shifts in the sheet
 EventDetailPage forks at the top through useMobileView, exactly as
 EventsDashboard does, so one URL serves both components. The phone list
 drops the interim desktop drawer: a manual shift opens the assignment sheet
-with push history, so Android Back closes it and stays on the list. No file
-under pages/mobile or components/mobile imports the desktop drawer now, and
-a test holds that.
+with push history, so Android Back closes it and stays on the list. The
+list reads its feed with offlineGet, which keeps its offline mode now that
+cached reads are opt-in. No file under pages/mobile or components/mobile
+imports the desktop drawer now, and a test holds that.
 MSG
 ```
 
@@ -5016,19 +6597,21 @@ Expected: `admin-event-detail` and `admin-event-sheet` report `pass` (no horizon
 - D10 one write, fixture people only: create a fixture staffer and a fixture manual shift with one open Bartender slot; open the sheet from the list; assign the fixture staffer through "Assign as"; assert exactly ONE `POST /api/shifts/<id>/assign` in the network log with body `{ user_id, position: 'Bartender' }`, the roster shows the person with "just assigned", the list card's fraction moved to 1/1, and the tab badge count dropped by one. Then Remove through the confirm: exactly one `DELETE`. Delete the fixtures by id.
 - D11 double tap: repeat D10's assign with `page.route` delaying the POST by 2 seconds and two `click()` calls 50ms apart: ONE POST in the log.
 - D12 service worker and offline, in-document: first confirm the new worker took over (`navigator.serviceWorker.controller` is set, `caches.keys()` holds an `admin-api-admin-sw-2026-09-29-v9-u<id>` cache and NO name containing `-v8`: the activate sweep ran). Then load `/events/<id>` live, open and close the sheet once (so its two reads are cached), `context.setOffline(true)`, navigate to the list and back into the event: the detail renders with "offline copy · as of" and the dot, Edit details reads "needs connection"; open the sheet: the offline banner shows, Approve, Deny and Remove are disabled, the picker rows read "Offline". `context.setOffline(false)`, tap the banner's Retry: the banner clears.
+- D12b desktop is never served a stored copy: at 1280px wide, load `/events/<id>` and open its desktop drawer live, then `context.setOffline(true)` and reload the data (navigate to `/events` and back): the desktop page shows its own load error, NOT yesterday's roster or invoices. `caches.keys()` then `cache.keys()` on the api cache holds no entry whose request lacked the `X-Offline-Ok` header path: concretely, after a desktop-only session in a fresh browser profile the api cache is empty or absent. Repeat the stall case: `page.route` the detail read to delay 6 seconds with a cached phone copy present; the desktop drawer waits for the network and never shows the cached roster.
+- D12c the drink plan at rest: after the phone detail has been opened, read every entry of the api cache and assert that no stored response body contains `"token"` under a drink-plan URL, `admin_notes`, or `accessNotes`; the only drink-plan entry is `...?fields=day_of_contact` and its body has the single key `day_of_contact`.
 - D13 failed save: with the sheet open and live, `page.route` the assign POST to `abort()`; assign the fixture staffer: "No connection, didn't save." shows under that row with Retry, the sheet stayed open, nothing was written (`SELECT` the fixture shift's requests). Un-route, tap Retry: it lands.
 - D14 dead routes: `/events/2147483000` falls back to `/events`; `/events?drawer=shift&drawerId=2147483000` closes the sheet and stays on `/events`.
 - D15 Edit details: tapping it shows the desktop event page with the "Phone view" return pill; the pill returns to the phone detail.
-- D16 every state the benchmark names, both skins. After Hours and House Lights screenshots, from fixtures the check creates and deletes by id (prod has no upcoming multi-shift event, manual shift or mixed-role roster, and dev may not either). Detail: Staffing open; Contacts open with a day-of contact, and without one; Financials open with a balance, paid in full, and with a bank payment in flight; a two-shift event (heads); the Edit details row unlocked and reading "needs connection"; a cancelled event. Sheet: one open role; two open roles with the "Approve as" rows, and with the "Assign as" rows; a focused applicant; a focused rostered row; the Remove confirm and the Deny confirm; the failed save with Retry; the offline banner; the search field with no match; a manual shift (venue in the head); a past event and a cancelled event (read-only); a shift with no declared roles. In After Hours the Remove button, the confirm border and a failed-save message read RED, not violet: read `getComputedStyle(...).color` and assert `rgb(255, 77, 77)`. In House Lights a section's border is `--line-2` and it casts no shadow.
+- D16 every state the benchmark names, both skins. After Hours and House Lights screenshots, from fixtures the check creates and deletes by id (prod has no upcoming multi-shift event, manual shift or mixed-role roster, and dev may not either). Detail: Staffing open; Contacts open with a day-of contact, and without one; Financials open with a balance, paid in full, and with a bank payment in flight; a two-shift event (heads); the Edit details row unlocked and reading "needs connection"; a cancelled event. Sheet: one open role; two open roles with the "Approve as" rows, and with the "Assign as" rows; a focused applicant; a focused rostered row; the Remove confirm and the Deny confirm; the failed save with Retry; the offline banner; the search field with no match; a manual shift (venue in the head); a past event and a cancelled event (read-only); a shift with no declared roles. In After Hours the Remove button, the confirm border and a failed-save message read RED, not violet: read `getComputedStyle(...).color` and assert `rgb(255, 77, 77)`. In House Lights a section's border is `--line-2` and it casts no shadow. Every distance on the phone is a whole number of miles.
 - D17 desktop is untouched: at 1280px, `/events/<id>` renders the desktop page exactly as before and its Manage button still opens the desktop `ShiftDrawer` with replace semantics (`history.length` unchanged by open and close).
 
 - [ ] **Step 4: Benchmark comparison**
 
-Serve the benchmark (`cd docs/design-artifacts && python3 -m http.server 8765`), render Event detail and Assignment sheet at 460x960 in both skins, and lay each state beside the app's screenshot from D16. Then the orchestrator runs the `ui-ux-review` agent with both sets and this instruction: adherence to the artifact is the primary benchmark; every difference is either one of the eighteen decisions listed at the top of this plan or a finding.
+Serve the benchmark (`cd docs/design-artifacts && python3 -m http.server 8765`), render Event detail and Assignment sheet at 460x960 in both skins, and lay each state beside the app's screenshot from D16. Then the orchestrator runs the `ui-ux-review` agent with both sets and this instruction: adherence to the artifact is the primary benchmark; every difference is either one of the twenty-two decisions listed at the top of this plan or a finding.
 
 - [ ] **Step 5: Fold what the gate found**
 
-This is the first time Tasks 5 to 9 are seen in a browser, and the last lane needed a fix round here. For each failed check and each ui-ux finding: fix it in the file that owns it (every such file is in the lane footprint), commit by explicit path with a message that names the check (`fix(phone detail): D6 ...`), re-run the suite that file belongs to and the check that failed, and report both results. A fix that would change one of the eighteen decisions, the contract of Task 1, or a file outside the footprint is not made in the lane: report it and stop.
+This is the first time Tasks 5 to 9 are seen in a browser, and the last lane needed a fix round here. For each failed check and each ui-ux finding: fix it in the file that owns it (every such file is in the lane footprint), commit by explicit path with a message that names the check (`fix(phone detail): D6 ...`), re-run the suite that file belongs to and the check that failed, and report both results. A fix that would change one of the twenty-two decisions, the contract of Tasks 1 and 3b, or a file outside the footprint is not made in the lane: report it and stop.
 
 - [ ] **Step 6: Commit the manifest**
 
@@ -5054,11 +6637,12 @@ MSG
 In the `client/src/utils/` tree add, beside `eventCards.js`:
 
 ```text
+│   │   │   ├── offlineRead.js       # offlineGet: api.get plus the X-Offline-Ok header. The admin service worker stores and stale-serves a read ONLY for a request that carries it; a caller sends it only if it renders the staleness line and takes no action on a cache-served copy
 │   │   │   ├── staffingSheet.js     # Pure staffing logic for the phone staffing card and assignment sheet: roster rows, per-role open counts, roleStep (the role an approve or assign may send; never defaults, never infers), picker candidates
 │   │   │   ├── eventDetailView.js   # Pure view-model for the phone event detail: header, when and setup lines, contacts as tap targets, staffing groups, financials (follows the desktop payment panel figure for figure)
 ```
 
-In the `components/` `mobile/` description add `AssignmentSheet the phone ShiftDrawer for one shift (bottom sheet: roster with Approve, Deny, Remove behind confirms, role rows, alphabetical picker with search)` and change the `MobileHeader` clause to mention the rich detail variant. In the `hooks/` line change `useDrawerParam + drawerHref` to `useDrawerParam + drawerHref (replace history by default; { push: true } for phone sheets, so Android Back closes the sheet)`. In the `pages/` `mobile/` line add `EventDetailPhone (the phone event detail at /events/:id: Contacts, Staffing, Financials, Edit details row)`. In the `server/utils/` tree add:
+In the `components/` `mobile/` description add `AssignmentSheet the phone ShiftDrawer for one shift (bottom sheet: roster with Approve, Deny, Remove behind confirms, role rows, alphabetical picker with search)` and change the `MobileHeader` clause to mention the rich detail variant. In the `hooks/` line change `useDrawerParam + drawerHref` to `useDrawerParam + drawerHref (replace history by default; { push: true } for phone sheets, so Android Back closes the sheet)`. In the `pages/` `mobile/` line add `EventDetailPhone (the phone event detail at /events/:id: Contacts, Staffing, Financials, Edit details row) with EventDetailSections (its presentational Contacts and Financials sections)`. In the `server/utils/` tree add:
 
 ```text
 │   │   ├── staffingMeta.js     # Events-worked count and home-to-venue distance for the staffing reads (plain meta, never ranking; pinned to GET /admin/users/:id/seniority by test)
@@ -5068,16 +6652,22 @@ In Key Features, "Phone Admin PWA" (`:709`), add one bullet: the phone event det
 
 - [ ] **Step 2: ARCHITECTURE**
 
-Append to the `/active-staff` row (`:226`): ` Opt-in \`?shift_id=<id>\` (phone assignment sheet) adds \`events_worked\` and \`home_distance_miles\` (home to THAT shift's venue, null when either side has no coordinates) to every row; raw coordinates never leave the server; 400 on a malformed id, 404 on an unknown shift. Without \`shift_id\` the row shape is frozen (pinned by \`shifts.staffingMeta.test.js\`).`
+Append to the `/active-staff` row (`:226`): ` Opt-in \`?shift_id=<id>\` (phone assignment sheet) adds \`events_worked\` and \`home_distance_miles\` (home to THAT shift's venue, in WHOLE miles, null when either side has no coordinates) to every row; raw coordinates never leave the server; 400 on a malformed id, 404 on an unknown shift. Without \`shift_id\` the row shape is frozen (pinned by \`shifts.staffingMeta.test.js\`).`
+
+In the Drink Plans route table, replace the `/by-proposal/:proposalId` row (`:239`) with:
+
+```text
+| GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal. `?fields=day_of_contact` answers only `{ day_of_contact: { name, phone } | null }`: the phone event detail reads that and nothing else, and it is the only form of this read the admin service worker stores (the full plan carries its write-capable token, internal notes and venue access notes). Any other `fields` value is a 400. |
+```
 
 Replace the two shifts rows (`:453-454`) with:
 
 ```text
-| GET | `/by-proposal/:proposalId` | Staffing | All shifts for a proposal (array, supports multi-shift events). Each shift carries `approved_staff`, `requesters` (every live request with `request_id`, `status`, `position`, `requested_positions`, `events_worked` and the derived `home_distance_miles`), `approved_by_role`, the out-of-area context, and `finished` (past its END INSTANT in the event zone, `shiftFinishedSql`). |
-| GET | `/detail/:id` | Staffing | Single shift detail: `{ shift, requests }`. `shift` carries `finished` and `proposal_status`; each request carries `events_worked` and the derived `home_distance_miles`. Read by the desktop `ShiftDrawer` and the phone `AssignmentSheet`. |
+| GET | `/by-proposal/:proposalId` | Staffing | All shifts for a proposal (array, supports multi-shift events). 400 for an id that is not a positive integer. Each shift carries `approved_staff`, `requesters` (every live request with `request_id`, `status`, `position`, `requested_positions`, `events_worked` and the derived `home_distance_miles`), `approved_by_role`, the out-of-area context, and `finished` (past its END INSTANT in the event zone, `shiftFinishedSql`). |
+| GET | `/detail/:id` | Staffing | Single shift detail: `{ shift, requests }`. 400 for an id that is not a positive integer. `shift` carries `finished` and `proposal_status`; each request carries `events_worked` and the derived `home_distance_miles`. Read by the desktop `ShiftDrawer` and the phone `AssignmentSheet`. |
 ```
 
-In the Admin PWA service worker paragraph (`:2041`), after "allowlisted phone-surface GET `/api/` reads cached per-user", add: ` (the allowlist is exact paths plus anchored numeric-id patterns: \`/api/proposals/:id\`, \`/api/shifts/by-proposal/:id\`, \`/api/shifts/detail/:id\`, \`/api/drink-plans/by-proposal/:id\`, \`/api/invoices/proposal/:id\`; pinned by \`client/src/utils/adminSwAllowlist.test.js\`)`. In the mobile-admin section:
+In the Admin PWA service worker paragraph (`:2041`), rewrite the clause about allowlisted reads so it says all of this: the allowlist is exact paths plus anchored numeric-id patterns (`/api/proposals/:id`, `/api/shifts/by-proposal/:id`, `/api/shifts/detail/:id`, `/api/invoices/proposal/:id`), and `/api/drink-plans/by-proposal/:id` ONLY with the exact query `?fields=day_of_contact`; storing and stale-serving are OPT-IN per request: the worker handles a read only when the request carries `X-Offline-Ok: 1` (sent by `client/src/utils/offlineRead.js` `offlineGet`), or is the identity read `/api/auth/me`; every other request on an allowlisted path goes to the network untouched and is never stored, so desktop screens are never shown a stored copy; pinned by `client/src/utils/adminSwAllowlist.test.js`, which runs the real worker file. Make the same correction in README Key Features, "Offline is a read-only courtesy" (`:711`). In the mobile-admin section:
 - Rewrite the end of the Phone Events list bullet (`:2045`): it still says a manual shift opens "the interim desktop `ShiftDrawer` ... (lane ma-e2 swaps in the phone sheet)". It now opens `client/src/components/mobile/AssignmentSheet.js`, with push history.
 - Add a Phone event detail bullet: `client/src/pages/mobile/EventDetailPhone.js` is mounted by a route-level fork inside `client/src/pages/admin/EventDetailPage.js` (same URL, `useMobileView()`, screen key `event-detail`); it makes four reads, each allowed to fail alone, and only a dead `GET /proposals/:id` dispatches `mobile-route-dead`; its view-model is the pure `client/src/utils/eventDetailView.js`, which follows the desktop payment panel figure for figure; it hands the chrome its rich header through the outlet context (`setHeaderDetail`, cleared by `AdminLayout` on every route change).
 - Add an Assignment sheet bullet naming `client/src/utils/staffingSheet.js` as the phone's role-resolution module and stating its law: the phone never over-fills, never defaults a role, and re-reads the shift before an approve or an assign. Name `server/utils/staffingMeta.js` as the source of `events_worked` and `home_distance_miles`, and say that both are plain meta and that nothing sorts by them.
@@ -5105,10 +6695,14 @@ Add directly after that entry, leaving `<date>` and `<sha>` exactly as written (
 
 - [ ] **Step 4: fix list**
 
-In the "Mobile admin: every phone-first DATA screen" entry (`:2074`), add a dated amendment as the entry's second paragraph: the event detail and the assignment sheet are built by lane `ma-e2-event-detail` of `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`; the sheet component and the push-history Back behaviour now exist; still declared and unbuilt: `ma-e3-edit-sheet`, `ma-f1-proposals-list`, `ma-f2-proposal-detail`, `ma-f3-search`. Then add five new items to the list, each one line with its source:
+In the "Mobile admin: every phone-first DATA screen" entry (`:2074`), add a dated amendment as the entry's second paragraph: the event detail and the assignment sheet are built by lane `ma-e2-event-detail` of `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`; the sheet component and the push-history Back behaviour now exist; still declared and unbuilt: `ma-e3-edit-sheet`, `ma-f1-proposals-list`, `ma-f2-proposal-detail`, `ma-f3-search`. Then add nine new items to the list, each one line with its source:
   - Deny sends the staffer nothing (no text, no email); the phone confirm says so. If a denial should notify, that is a change to `server/routes/shifts.approval.js` (sensitive) and a copy change on the phone (ma-e2 plan, Decision 1).
   - `events_worked` now has three readers (`autoAssign.js`, the seniority route, `staffingMeta.js`) held together by one test; fold the two older ones onto `loadEventsWorked` (ma-e2 plan, Task 1).
   - The phone cannot remove a no-show from a finished event (past rosters are read-only there by design); the desktop drawer can (ma-e2 plan, Decision 5).
+  - Reads the phone stores still carry public tokens the phone never uses: `token` on `GET /proposals/:id` and on each invoice of `GET /invoices/proposal/:id`, `proposal_token` on `GET /shifts/detail/:id` and on the events feed. No rotation path exists for proposal, invoice or drink-plan tokens, so a token on a lost phone stays valid. Fix: phone projections without tokens (the two files are sensitive), and a way to reissue a token (ma-e2 Checkpoint A, L2).
+  - Nothing in the phone's cache ages out: entries live until logout, a user change or the next service worker version (ma-e2 Checkpoint A, L3).
+  - Removing `can_staff` from a manager evicts only the exact URL that answers 403; other cached rosters are still served to that phone on a transport failure (ma-e2 Checkpoint A, L4).
+  - OWNER DECISION, pre-existing, outside this lane: `GET /api/admin/users/:id` returns a staffer's `street_address`, `zip_code`, `lat` and `lng` to ANY manager. The staffing reads strip coordinates on the ground that nobody sees a staffer's home address; that is true of those reads and not of the codebase (ma-e2 Checkpoint A, L7).
   - The phone list reloads from the top after a change made in the sheet, which loses the scroll position spec section 9 promises. Reload the loaded window in place instead (`limit` = the number of events on screen, capped at the feed's 200). Only manual shifts reach the sheet from the list, and prod has none upcoming, so it waits (ma-e2 plan fleet, 2026-09-29).
   - The event note (spec section 4: "a plain textarea that behaves with Android dictation") is drawn nowhere in the 2026-09-15 benchmark and declared in no lane. It has its own endpoint (`PATCH /proposals/:id/notes`), so it needs no money hydration; decide at the ma-e3 design pass whether it rides the edit sheet or gets a row of its own (ma-e2 plan, Self-Review).
 
@@ -5121,6 +6715,11 @@ The phone's role resolution decides the `position` that is written to the payrol
 # assign writes, and the sheet is the only phone surface that writes it.
 client/src/utils/staffingSheet.js
 client/src/components/mobile/AssignmentSheet.js
+# offlineGet is the gate on what the admin service worker may store on a
+# device and serve as a stale copy; staffingMeta reads home coordinates and
+# seniority and decides how precisely a distance leaves the server.
+client/src/utils/offlineRead.js
+server/utils/staffingMeta.js
 ```
 
 Run: `node --test scripts/sensitive-match.test.js`
@@ -5147,6 +6746,9 @@ MSG
 TZ=UTC node --test server/routes/shifts.staffingMeta.test.js
 TZ=America/Chicago node --test server/routes/shifts.staffingMeta.test.js
 for f in server/routes/shifts.*.test.js; do echo "== $f"; node --test "$f" || break; done
+node --test server/routes/drinkPlans.dayOfContact.test.js
+node --test server/routes/drinkPlans.beo.test.js
+node --test server/routes/drinkPlans.shoppingListStrip.test.js
 node --test server/routes/admin/users.activeStaff.test.js
 node --test server/routes/admin/users.seniority.test.js
 node --test server/utils/autoAssign.seniority.test.js
@@ -5178,7 +6780,7 @@ Dev server, 1280px: `/events/<id>` renders the desktop page as before; Manage op
 
 - [ ] **Step 5: Review fleet, per the lane map**
 
-Run by the orchestrator: code-review, consistency-check, security-review, database-review, performance-review and ui-ux-review over `git diff main...HEAD`, each told to read its definition under `.claude/agents/` first, plus `/second-opinion` on the same diff. Briefs carry: the eighteen decisions at the top of this plan, the Review Focus list, the two colour laws, for security-review the questions from Checkpoint A plus "can any tap on the phone write a `position` the screen did not show, and can any path over-fill a role", and for performance-review the second round trip on the two shifts reads, the three queries behind `?shift_id=`, and the sheet's pre-flight read before every approve and assign. A failed or incomplete agent is never a pass: re-dispatch once, then split the diff. Fix rounds as needed, then a re-confirm on the fixed files. The orchestrator records the as-built deltas in this plan's "Lane review round" section, on main, before the merge.
+Run by the orchestrator: code-review, consistency-check, security-review, database-review, performance-review and ui-ux-review over `git diff main...HEAD`, each told to read its definition under `.claude/agents/` first, plus `/second-opinion` on the same diff. Briefs carry: the twenty-two decisions at the top of this plan, the Review Focus list, the two colour laws, for security-review the questions from Checkpoint A plus "can any tap on the phone write a `position` the screen did not show, and can any path over-fill a role", and for performance-review the second round trip on the two shifts reads, the three queries behind `?shift_id=`, and the sheet's pre-flight read before every approve and assign. A failed or incomplete agent is never a pass: re-dispatch once, then split the diff. Fix rounds as needed, then a re-confirm on the fixed files. The orchestrator records the as-built deltas in this plan's "Lane review round" section, on main, before the merge.
 
 - [ ] **Step 6: Merge**
 
@@ -5200,6 +6802,14 @@ From `os` on `main`, with a clean tree for the lane's paths: `scripts/merge-lane
    - **Unrecorded departures from the benchmark.** Seven (contacts as tap targets, cents, the when line, the per-shift head, the cancelled event, the banner's Retry, roster order) are now Decisions 12 to 18 and in the spec. The light skin's section border, the 12px fraction, the 6px payment rows and the uppercase dates now match the benchmark. Rows inside a detail section no longer ship the sheet's row class.
    - **Structure.** Task 8 is two tasks (the chrome change has its own commit and review). The class-contract test moved to the task that owns the files it reads. Checkpoint A's brief moved to the header and gained the at-rest payload question. Implementers report; the orchestrator writes the plan. performance-review joined the fleet. The browser gate gained a fix step, probes on every primary action, and every state the benchmark names. The docs task gained five missing updates and the two sensitive-path entries.
    - **After the fold,** measured in a scratch copy of the client with every code block in this plan applied: 19 suites, 334 tests, all passing, no act warning; the CRA lint clean on the nine changed sources; `CI=true react-scripts build` exit 0. Task 1's server suite was checked statically (columns, constraints, aliases, the composed SQL) and not run, because it seeds the shared dev database; it runs for the first time in the lane.
+
+7. **Checkpoint A, 2026-09-29, run on the built Tasks 1 and 2 (`648a4f32..c6400e3c`), with the three task reviews.** Tasks 1 and 3 passed review clean; Task 2 was approved with one plan-level Important finding.
+   - **database-review: PASS**, on the dev branch, read-only. An index leading with `user_id` already exists on `shift_requests`; `loadEventsWorked` runs in 0.2 ms warm; the by-proposal join folds to one primary-key lookup; `finished` is computed per row; the three definitions of events worked disagree for none of the 103 dev users; every new field arrives as a number or a boolean, never a string or NULL.
+   - **security-review: FAIL, narrowly.** Who can read the new fields, raw coordinates, `shift_id` as a probe, the allowlist patterns (47 adversarial URLs) and writes all held. What failed: the WHOLE drink plan was being stored on the phone to show two fields, and that payload carries the plan's write-capable token, the internal notes, and the venue access notes whose own placeholder asks clients for gate codes. Now a projection (Decision 21).
+   - **The Task 2 review's finding,** confirmed by the security review: the service worker controls every page on the admin origin, so the three reads this lane allowlisted would have reached the desktop payment panel and the desktop staffing drawer as unlabelled stored copies, under their action buttons. It has been true of `/api/proposals/:id` since ma-b. Now opt-in per request (Decision 20).
+   - **Also folded:** whole-mile distances (Decision 19); the anchored by-proposal entry; 400 for a malformed id on the two shifts reads and a dead route on the phone (Decision 22); the hook's seed limited to a numeric sheet id; StrictMode, pop-versus-replace and default-close tests for the hook; fixtures that trip each filter of the events-worked definition (a drop, a pending, a denied, tonight), a requester with no contractor profile, and one staffer on two shifts of one event.
+   - **Accepted, on the fix list:** tokens at rest that the phone never uses and that cannot be reissued; no ageing of cache entries; a permission downgrade that purges one URL. **Surfaced to Dallas as an owner decision, pre-existing and outside the lane:** `GET /api/admin/users/:id` returns a staffer's street address and coordinates to any manager.
+   - **Verification after this fold,** in a scratch copy of the client with every code block applied from this plan's text: the lane's twelve test files, 327 tests, all passing, no act warning; lint clean; `CI=true react-scripts build` exit 0. The server files were syntax-checked and the edits applied to copies of the real files; the two server suites run for the first time in Task 3b.
 
 ## Browser checks (lane ma-e2)
 
