@@ -1980,8 +1980,8 @@ the accented spelling) or the two spellings stop matching each other.
     (`staffingSheet.js`), so an extra bartender never reads full while a barback slot is open.
     The list feed already carries `approved_by_role`; client only (`eventCards.js` `finishCard`,
     which today sums heads via `approvedCount` capped at slots).
-  - "Edit details" is a STICKY switch: it pins the event detail to Desktop view, and every event
-    on that phone then opens in Desktop view until "Phone view" is tapped.
+  - DECIDED 2026-09-30 (Dallas): leave it. "Edit details" stays a STICKY switch (every event opens
+    in Desktop view until "Phone view" is tapped); the ma-e3 phone edit sheet replaces it soon.
   - A desktop window that crosses 700px wide drops an unsaved event edit: the route forks by
     width, so a half-screen snap, docked devtools or a phone rotated to landscape unmounts the
     desktop page with no prompt.
