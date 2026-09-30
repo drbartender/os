@@ -200,8 +200,10 @@ a `gratuity_floor_rate` mandate and an `overridden` extension. Fixture Z: no ext
   with a counting fake client).
 
 Client (jest): `recoverAddonQuantities` with the subtracted hours inverts 12 to 3; the editor
-preview body carries `proposal_id` when editing and not when creating; the hint renders only
-when `settled_extension_hours > 0`.
+preview body carries `proposal_id` when editing; the hint renders only when
+`settled_extension_hours > 0`. (The create form, `ProposalCreate.js`, has its own preview call
+that never carried an id and was not touched, so "not when creating" holds by construction and
+is not pinned.)
 
 ## Docs
 
@@ -236,3 +238,8 @@ before merge, second opinion at push.
 - The guard refuses a duration edit while a request is pending; the request is settled by
   override or cancelled first. The sweep can expire it underneath, after which the edit goes
   through and the expired row is excluded, correctly.
+- `settled_extension_hours` is row minus contract hours, so after a hand-reverted row it is
+  negative; the client subtraction stays consistent with the server. The editor's hint takes
+  `contract_floor_hours` from the same read so it shows the clamped figure; on a twice-extended
+  booking reverted by hand and then edited, the hint and the server can still differ by the
+  second extension's hours while the preview and the save price the same number. Accepted.
