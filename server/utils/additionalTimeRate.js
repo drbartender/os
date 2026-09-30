@@ -20,10 +20,12 @@
  * catalog's own difference between the two durations. For every package shape
  * in the catalog today the catalog difference never exceeds extraHourCharge
  * (additionalTimeRate.test.js sweeps it), so hourly x added hours IS the
- * package line. A package with a 3-hour rate (base_rate_3hr set on a hosted
- * package) would break that: the 3h to 4h step would bill the rate jump, not
- * this figure. None exists; if one is added, this module must learn about it
- * before the line goes back on the page.
+ * package line. A package with a 3-hour rate (base_rate_3hr set, hosted or
+ * flat) would break that: the step out of the 3-hour rate would bill the rate
+ * jump, not this figure. None exists, and the app has no write path for
+ * package rates (routes/packages.js touches slots and is_active only), so a
+ * rate change is a deliberate SQL edit: if one adds a 3-hour rate, this module
+ * must learn about it before the line goes back on the page.
  *
  * Returns null when there is nothing to show: no package, a class (its
  * extra-hour rate is $0), a rate that prices to $0, or a per-guest package

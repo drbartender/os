@@ -103,8 +103,11 @@ test('the figure shown is the figure the on-site extension bills for one hour', 
 // actually bills. This one reproduces the extension's package-line arithmetic
 // from serviceExtensionPricing.js (the LARGER of the catalog's own difference
 // between the two durations and extraHourCharge for the added hours) with
-// calculateProposal legs, and sweeps every package shape in the prod catalog.
-// If a package ever gets a 3-hour rate, this is the test that goes red.
+// calculateProposal legs, and sweeps every package shape in the prod catalog
+// as read 2026-09-29. The shapes are fixtures, not the live catalog, so a SQL
+// change to a rate in prod does not turn this red; the module's docblock
+// precondition (no package carries a 3-hour rate) is the real guard. Give a
+// fixture here a 3-hour rate and this is the test that goes red.
 const { calculateProposal } = require('./pricingEngine');
 
 const base = { guests_per_bartender: 100, bartenders_included: 1, extra_bartender_hourly: 40, first_bar_fee: 50, additional_bar_fee: 100 };
