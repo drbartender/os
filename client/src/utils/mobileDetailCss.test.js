@@ -89,6 +89,12 @@ test('the venue link is 44px tall and hangs no more than 9px below its text', ()
   expect(rule).toMatch(new RegExp(`margin: -${pad[1]}px 0 -${pad[2]}px;`));
 });
 
+test('the header venue wraps and is never clipped to one line', () => {
+  const rules = block.match(/\.m-dhead-venue[^{]*\{[^}]*\}/g) || [];
+  expect(rules.length).toBeGreaterThan(1);
+  rules.forEach((rule) => expect(rule).not.toMatch(/nowrap|ellipsis|overflow: hidden/));
+});
+
 test('full-width rows draw their focus ring inside themselves', () => {
   expect(block).toMatch(/\.m-section-row:focus-visible,[^{]*\.m-section-item:focus-visible,[^{]*\.m-sheet-row:focus-visible \{ outline-offset: -2px; \}/);
 });

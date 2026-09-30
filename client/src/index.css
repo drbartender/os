@@ -21399,20 +21399,23 @@ html[data-app="admin-os"] .m-dhead-title {
 html[data-app="admin-os"] .m-dhead-kind { color: var(--ink-3); font-weight: 400; }
 html[data-app="admin-os"] .m-dhead-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-dhead-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
-/* The link is one line of 11.5px text; the padding and the matching negative
-   margin give it a 44px touch area without moving anything. The area sits
-   more above the text than below it: with 13px each way its last 3px hung
-   under the header's bottom edge, where the page takes the tap, and the
-   target measured 42. align-self keeps the area to the link's own width:
-   stretched across the header it would take taps meant for the title. */
+/* The link is 11.5px text on 18px lines, and it WRAPS: held to one line,
+   nearly every address lost its town (Dallas, Pixel walk 2026-09-30). The
+   header sits above the scroller, not over it, so a taller header only
+   moves the page down. The padding and the matching negative margin give a
+   one-line link a 44px touch area without moving anything; more lines only
+   make it taller. The area sits more above the text than below it: with
+   13px each way its last 3px hung under the header's bottom edge, where the
+   page takes the tap, and the target measured 42. align-self keeps the area
+   to the link's own width: stretched across the header it would take taps
+   meant for the title. The icon is inline, so it trails the last line. */
 html[data-app="admin-os"] .m-dhead-venue {
-  display: inline-flex; align-self: flex-start; align-items: center; gap: 5px; min-width: 0; max-width: 100%;
+  display: block; align-self: flex-start; min-width: 0; max-width: 100%;
   padding: 17px 0 9px; margin: -17px 0 -9px;
   font-family: var(--font-numeric); font-size: 11.5px; font-weight: 600; line-height: 18px;
-  color: hsl(var(--accent-h) var(--accent-s) 62%); text-decoration: none;
+  color: hsl(var(--accent-h) var(--accent-s) 62%); text-decoration: none; overflow-wrap: anywhere;
 }
-html[data-app="admin-os"] .m-dhead-venue span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-html[data-app="admin-os"] .m-dhead-venue svg { flex: none; }
+html[data-app="admin-os"] .m-dhead-venue svg { display: inline-block; margin-left: 5px; vertical-align: -1px; }
 
 /* When and setup lines */
 html[data-app="admin-os"] .m-detail-when { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
