@@ -1982,9 +1982,13 @@ the accented spelling) or the two spellings stop matching each other.
     which today sums heads via `approvedCount` capped at slots).
   - DECIDED 2026-09-30 (Dallas): leave it. "Edit details" stays a STICKY switch (every event opens
     in Desktop view until "Phone view" is tapped); the ma-e3 phone edit sheet replaces it soon.
-  - A desktop window that crosses 700px wide drops an unsaved event edit: the route forks by
-    width, so a half-screen snap, docked devtools or a phone rotated to landscape unmounts the
-    desktop page with no prompt.
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: phone vs desktop is decided when a page OPENS, not on
+    every resize. Wider than first filed: `AdminLayout.js` renders the Outlet at two different tree
+    positions (phone chrome line ~269, desktop ~288), so crossing 700px remounts WHATEVER admin
+    page is open (any unsaved form, a message draft, an open dialog), live since the shell shipped
+    2026-08-14. Latch `isPhone` in `MobileViewContext.js` and re-read it on a route change; the
+    lock model (`mobileLock.js`) keeps its own raw query. Unreachable on the installed app
+    (portrait-locked); reachable on a desktop window under 700px and a phone browser tab rotated.
   - "Back to Events" names the list, but Back returns wherever you came from.
   - A cancelled event that holds excess money reads "Cancelled" on the phone's chip; the desktop
     puts Overpaid on the chip first. The Overpaid ROW shows on both.
