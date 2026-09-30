@@ -2005,8 +2005,12 @@ the accented spelling) or the two spellings stop matching each other.
     type opens Maps. Harmless; leave it.
   - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
     line under the client (`aa03a2e6`, pushed 2026-09-30, `MobileHeader.js` `m-dhead-kind`).
-  - Contrast, each one the benchmark's own value: House Lights balance-due amount 2.77:1; the small
-    grey labels 1.88 to 2.78:1; applicant initials 2.76:1 in After Hours.
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED, contrast (measured on `--bg-2`): the House Lights
+    balance-due amount on the detail (`.m-money-bal`, warn at 58% lightness, 2.2:1) darkens to
+    about 5:1, same hue; After Hours is 6.6:1 and stays. The phone's small `--ink-4` labels
+    (rail month, "GUESTS", section summaries and labels; 1.9:1 House Lights, 2.6:1 After Hours)
+    move up to `--ink-3` (3.9:1 and 4.6:1). Applicant initials (2.8:1 After Hours) stay: the
+    name sits beside them.
   - After Hours draws the warn signal amber on chips and cyan on the balance, pills and dots; the
     leading section icons are bright where the benchmark's are grey.
   - Words: "No connection, didn't save."; the button that writes reads "Approve" and not
