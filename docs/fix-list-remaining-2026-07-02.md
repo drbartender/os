@@ -948,6 +948,10 @@ now deletes that person's pending reminder and thank-you. Still open:
   dispatcher crash and reaped back to pending ten minutes later;
 - a Remove racing a second operator's re-assign of the same person, which deletes the NEW
   assignment's reminder (the assign skips its insert because the old rows are still there).
+- a reminder the email quota put off. Remove deletes `status = 'pending'` only, and a staff email
+  deferred by the Resend quota sits in `deferred` until the dispatcher flips it back to pending
+  (`emailQuotaDefer.js`, `scheduledMessageDispatcher.js`). Every other cancel path deletes
+  `IN ('pending', 'deferred')`. Push-time sweep, 2026-09-29.
 
 The reminder carries the proposal's public token in its shopping-list link, so a wrong send is a
 small disclosure as well. Prod, read-only, 2026-09-29: 12 reminders and 12 thank-yous are `sent` to
@@ -1111,6 +1115,22 @@ here by default.
 
 ## Money and payroll (internal correctness)
 
+- **OWNER DECISION: a class supply pack pays the $50 hosted duty, not the $20 one.** Class packages
+  are `per_guest`, so `isHostedPackage` puts them on the hosted branch of `dutyLines.js`, where any
+  flagged add-on money pays `hosted_supplies` at $50. Since the supplies fix (`609158f1`) flagged
+  the seven class supply packs, a class of 10 with its supply pack and one instructor accrues $50
+  where it accrued nothing. That matches the written rules (the Field Guide's hosted $50, and the
+  2026-06-30 staffing spec names the class supply rows), but the approval recorded on the commit
+  names only the $20 equipment duty on a bundle event. Prod, read-only, 2026-09-29: no proposal
+  carries a class add-on, so nothing is accruing on it. Confirm it before the first class books
+  one. Push-time consistency review, 2026-09-29.
+- **A reopened pay period can be blocked by a duty that will never pay.** Process runs
+  `listUnattributedDuties` on a reopened period as on an open one (`routes/admin/payroll.js`), and
+  accrual writes nothing into a period that is not `open` (`payrollAccrual.js`). A bundle event in
+  a period processed before 2026-09-28 and reopened later now asks for an `equipment_supplies`
+  attribution, Process answers 409 until it has one, and the attributed worker is then paid
+  nothing. The design is older; the supplies fix made it reachable. Push-time consistency review,
+  2026-09-29.
 - **20 completed events hold money that is on neither an invoice nor `external_paid`** (event dates
   2026-04-25 to 2026-09-19). The phone event detail states the total on a "Paid to date" row, as
   the desktop panel's figures imply. The data itself is unreconciled. ma-e2 Task 7 re-review,
@@ -1528,7 +1548,8 @@ the accented spelling) or the two spellings stop matching each other.
   misbehaves quietly. Checklist, verified: `schema.sql` seed INSERT (`ON CONFLICT (slug) DO
   NOTHING`) with `category` from the six in `client/src/data/addonCategories.js` (the quote wizard
   filters by that map with no catch-all, so a null category is invisible) and the slug in the
-  `requires_provisioning` allowlist (drives `supply_run_required`); `ADDON_ICONS`;
+  `requires_provisioning` allowlist (drives `supply_run_required` AND the supplies duty pay;
+  `server/db/provisioningSeed.test.js` lists the two sides to pick from); `ADDON_ICONS`;
   `ADDON_TAGLINES` in `quoteWizard/helpers.js`; `DRINK_UPGRADES` in
   `client/src/pages/plan/data/drinkUpgrades.js` if it is per-drink (mirrors ginger beer); a `case`
   in `shoppingListAddonCoverage.js` `computeStripSet` so the BYOB list stops telling the client to
@@ -1542,6 +1563,16 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Staff, shifts, and the roster
 
+- **No server route refuses a write on a shift that has finished.** Approve, Deny, Remove and
+  Assign on a past shift are all accepted (`shifts.approval.js`, `shifts.js`), and an Assign texts
+  and emails the person. The phone sheet blocks it from the `finished` key the shifts reads send
+  since lane ma-e2 (`91dcfab8`); the desktop drawer does not, and a phone talking to an older server
+  (a deploy window, a rollback) gets no key and blocks nothing. Refuse on the server. Push-time
+  sweep, 2026-09-29.
+- **No test covers the supply-run default, or an override surviving a sync.** The three
+  `eventCreation` suites never mention supply, though the 2026-06-30 spec promised those tests.
+  `syncShiftsFromProposal` keeps an overridden value by a `CASE` in its UPDATE, read and not run.
+  Push-time consistency review, 2026-09-29.
 - **`DELETE /shifts/requests/:id` (Remove) runs its steps with no transaction**: delete the request,
   write the audit entry, release the lock, re-accrue, delete the queued messages, suppress the BEO
   nudges. A database error half way leaves the rest undone, and a retried call answers 404, so the
@@ -1817,6 +1848,16 @@ the accented spelling) or the two spellings stop matching each other.
     GUESTS Wedding Reception").
   - At 320px wide the card's foot row exceeds its box when it holds a fraction, a requests chip
     and both tags. Nothing leaves the card. Not traced.
+- **The phone Payments list counts on-site extension money as contract money.**
+  `eventDetailView.js` lists every non-void invoice that took money and compares their sum with
+  `amount_paid`, which extension money never enters. On an event that also holds money on no
+  invoice row, a paid Service Extension invoice hides the "Paid to date" line and the unlisted
+  money with it. The balance and the overpaid figure are not affected: both were run. Prod has one
+  settled extension (842, completed). Leave the off-ledger labels out of the sum, by a client
+  mirror of `OFF_LEDGER_INVOICE_LABELS`. Push-time sweep, 2026-09-29.
+- Two comments in `client/src/utils/eventCards.js` say the event detail header reuses the list
+  card and its `venue`; as built the header is `headerOf(proposal)` in `eventDetailView.js`.
+  `ARCHITECTURE.md` names that module's exports without `placeOf`. Push-time sweep, 2026-09-29.
 - **Phone event detail and assignment sheet, what the review left (lane ma-e2, `91dcfab8`).** None of these
   can send a wrong write: every write re-reads the shift first.
   - A save can land with the roster left from before it and NO "Saved" note: Approve one person,
@@ -1889,8 +1930,9 @@ the accented spelling) or the two spellings stop matching each other.
   Desktop: `PrepCell` in `EventsDashboard.js` renders `Bar` and `Supplies` as `StatusChip
   kind="neutral" dot={false}` by design ("facts, not alarms"). A blue chip token already exists and
   `StatusChip` accepts it: `kind="info"` (`.chip.info`, fixed hue 208, both skins). One-word change
-  for Supplies. Phone (`EventsListPhone.js`): Supplies is already GREEN (`.m-tag-supplies`, `--ok`)
-  and Bar is already BLUE (`.m-tag-bar`, `--info`), so making phone Supplies blue collides with Bar;
+  for Supplies. Phone (`EventsListPhone.js`): Supplies is GREEN in House Lights and VIOLET in After
+  Hours since `a84555c3` (`.m-tag-supplies`), and Bar is BLUE (`.m-tag-bar`, `--info`), so making
+  phone Supplies blue collides with Bar;
   leave the phone row alone unless Dallas says otherwise.
 - **Show when an event was booked (Dallas: *"I want to know when an event was booked."*).** No
   surface shows it. The right column is `proposals.accepted_at` (stamped `COALESCE(accepted_at,
@@ -2033,6 +2075,36 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Platform, schema, and test gates
 
+- **The admin service worker stores whatever a 200 carries.** For an opted-in URL it checks the URL
+  and the `X-Offline-Ok` header, never the body (`client/public/admin-sw.js`). While a new client
+  talks to an OLDER server (each deploy window, or any server rollback, which has no time bound),
+  `GET /drink-plans/by-proposal/:id?fields=day_of_contact` answers the FULL plan, and the phone
+  stores it: the plan's token, the client's email, the selections, the admin notes. It is never
+  rendered. It goes on a live re-read of that same event, a 401 or 403 on that URL, logout, another
+  user on the device, or the next `SW_VERSION` bump; not with time. Proven in a harness around the
+  real worker file. Fix: store that URL only when the body's keys are exactly `day_of_contact`,
+  else delete the entry, and bump `SW_VERSION`. Sensitive path, so its own reviewed change.
+  Push-time sweep, 2026-09-29.
+- **`server/db/provisioningSeed.test.js` is on no gate, and its parser has holes.** It is absent
+  from `scripts/money-smoke-list.txt` and nothing else runs it, so an unclassified add-on ships
+  with the gate green. Run on scratch copies, it also stays green when a new add-on is seeded on
+  the `VALUES` line, with an underscore in its slug, in lower-case SQL, or with `ON CONFLICT (slug)
+  DO UPDATE`; it counts a slug inside a SQL comment as flagged; and it cannot see a second statement
+  that writes the flag, one writing FALSE included, nor the seed moved above its column. Fix:
+  split with `splitStatements` from `server/db/index.js`, strip comments, assert every add-on
+  INSERT yields a slug, assert the flag is named by the ADD COLUMN and one seed only, in that
+  order; then add the suite to the smoke list (gate machinery, so a reviewed change). Push-time
+  database, code and consistency reviews, 2026-09-29.
+- **The provisioning seed converges one way, and sees only what `schema.sql` seeds.** Every boot
+  sets the 37 listed slugs true (and rewrites all 37 rows, bumping `updated_at`), so turning one
+  off takes its removal from the list PLUS a hand UPDATE in each database. An add-on that exists
+  only in a database is invisible to the test: dev holds `class-bar-rental` (gear, active,
+  unflagged, in no INSERT). Prod does not: read-only, 2026-09-29, 41 add-ons, 37 flagged, and the
+  four unflagged are the staffing and fee rows. Push-time database review.
+- **Two files that decide money or stored data are not sensitive-listed:**
+  `server/utils/serviceExtensionPricing.js` (what an extension bills) and
+  `server/routes/drinkPlans.js` (its projection bounds what the phone stores).
+  `scripts/sensitive-match.js` matches neither. Push-time sweep, 2026-09-29.
 - **`shifts.visibility.endInstant.test.js` cannot pass between 00:30 and 06:30 Chicago.** Its
   "ended half an hour ago" fixture has no start time, and `shiftEndInstant.js` reads an end before
   06:00 with no start as an overnight end (`WRAP_CUTOFF_HOUR = 6`), so the fixture is unfinished
