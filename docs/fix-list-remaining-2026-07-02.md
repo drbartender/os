@@ -1854,6 +1854,26 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **Phone Events list: show an unpaid balance on the card (Dallas, Pixel walk 2026-09-30: *"Event
+  list needs some kind of indicator that they have an unpaid balance"*).** The scoped feed already
+  carries `proposal_total`, `proposal_amount_paid` and `proposal_status`, and the desktop list's
+  `eventPaymentState` (`client/src/components/adminos/eventPlan.js`) already answers paid, owed
+  with the amount, or cancelled, testing cancelled before the money. Reuse it on the card so the
+  two lists cannot disagree. Prod, read-only, 2026-09-30: 13 of the 21 upcoming events owe a
+  balance and none is past its due date, so a red mark on every owing card would cover most of
+  the list. Recommended shape: the owed amount on every owing card in a quiet tone, turning red
+  once the balance due date has passed. The red needs `balance_due_date` added to the feed; the
+  rest is client-only. Like the desktop, it would count a bank debit still in flight as owed.
+- **The phone's Text button should open Google Voice, not Messages (Dallas, Pixel walk 2026-09-30:
+  *"I don't want to text from my personal number"*).** `contactsOf` in
+  `client/src/utils/eventDetailView.js` builds a plain `sms:` link, which Android hands to the
+  default texting app. Likely fix: an Android intent link aimed at the Voice app
+  (`com.google.android.apps.googlevoice`, scheme `smsto`) with a web fallback. Not yet tried on a
+  device, so the first step is a test on the Pixel. The Call link has the same exposure: `tel:`
+  rings from the personal line unless the Voice app is set to place calls. Worth weighing before
+  building: a text from Voice stays off the client's record, while the client's thread in OS
+  Messages sends from the business number their automated texts already come from and lands
+  replies in the inbox. The phone app has no Messages screen yet.
 - **Phone Events list polish (`a84555c3`, `9a73d5ba`), reviewed 2026-09-29, verdict PASS.** The two
   commits had no reviewer when they landed. What the review left, all Minor and display only:
   - `eventCards.js` maps a state name to its code by exact match on a plain object: "illinois" and

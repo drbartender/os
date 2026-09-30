@@ -1635,48 +1635,18 @@ which is the largest client-facing change in the drop and is listed first becaus
       deliberately; decide whether that timing is acceptable (Unfinalize within minutes suppresses
       the pending rows). Defects go to the fix list §"Derived BEO finalize follow-ups".
 
-- [ ] **Phone Events list (lane ma-e1, merged 2026-09-18, d1dc829f, LIVE: pushed 2026-09-24 in ed6a6a26..b39a0598).** Pixel, installed PWA, prod data:
-      Upcoming opens on today, Past shows history newest first with cancelled cards muted, the
-      Needs staff chip matches the tab badge's meaning (chip counts events, badge counts shifts),
-      Show more pages without splitting a two-shift event, airplane mode shows the
-      "offline copy · as of" line with the dot while a live load shows "as of" alone, a manual
-      shift opens the drawer (Back leaves the list until the ma-e2 sheet lands). Both skins.
-      Verified live 2026-09-28: `git merge-base --is-ancestor d1dc829f origin/main` exits 0. The
-      card polish of 2026-09-24 (town instead of the street address, the kind on its own line,
-      the red open-slot fraction and violet Supplies tag in After Hours: 9a73d5ba, a84555c3) is
-      live as well: verified 2026-09-29, `git merge-base --is-ancestor a84555c3 origin/main`
-      exits 0. Walk those two with the rest.
-      The manual shift now opens the phone SHEET (ma-e2), and Back closes it and stays on the list.
-
-- [ ] **Phone event detail and assignment sheet (lane ma-e2, merged 2026-09-29, 91dcfab8).** Pixel, installed PWA, prod data.
-      Detail: the header's venue opens Google Maps OUTSIDE the installed app and Back returns to it;
-      the client's number dials and the Text button opens Messages; the day-of contact shows when the
-      drink plan has one; the Staffing fraction matches the list card; Financials matches the desktop
-      panel for the same event to the cent, and an event paid off-platform shows its "Off-platform"
-      row. Sheet: open it from a staffing row and from a manual card; Android Back closes it and stays
-      put, every time, including after a cold launch that restored an open sheet; airplane mode shows
-      the banner and disables every action; the search field shows ONE clear control or none, never
-      two. Edit details switches THIS screen to Desktop view and it STAYS that way for every event
-      until "Phone view" is tapped: decide whether that is what you want. Rotate the phone to
-      landscape on an event: it may cross into the desktop page. In PRODUCTION an approve or an
-      assign texts and emails the staffer: do not tap either on a real person for the walk unless
-      that is what you mean to do. Both skins, and in After Hours the Remove button reads red, not
-      violet.
-      New since the lane review: COLD OFFLINE RELOAD (the one check no dev build can run): open an
-      event, airplane mode, kill the app, reopen it: the event shows with "offline copy · as of" and
-      a Refresh button. While a save is in flight its row says "Saving" and the sheet will not close
-      from the scrim; it closes the moment the save lands. A failed save shows a box naming what it
-      was, with Retry and a quiet Dismiss, and no tap other than those two removes it. Remove's
-      confirm ends "They are not notified." and Remove also takes that person's queued reminder
-      and thank-you out of the queue. On an iPhone, tapping the search field must not zoom the
-      page. With the keyboard up, the sheet's search field stays in view.
-      Moved here from Tier 6 by that tier's own rule. Verified 2026-09-29:
-      `git merge-base --is-ancestor 91dcfab8 origin/main` exits 0, and the production server
-      answered for the new code at 20:43 Chicago that day (the push landed at 20:39 Chicago).
-      ONE THING FIRST, only if an event was opened on the phone between those two times: log out
-      and back in on that phone once. For those minutes the new app was talking to the older
-      server, which answers the day-of contact read with the WHOLE drink plan, and the phone keeps
-      what it was sent (fix list, Platform). Nothing was shown and nothing was written.
+- [ ] **Phone walk residue: what the Pixel walk of 2026-09-30 could not reach.** Dallas walked the
+      phone Events list (lane ma-e1, `d1dc829f`) and the event detail and assignment sheet (lane
+      ma-e2, `91dcfab8`) on production on 2026-09-30. His notes went to the fix list (a balance on the
+      list card, and Text through Google Voice). Rotation does nothing, which is correct: the
+      installed app is locked to portrait by `client/public/admin-manifest.json`. His self-assign
+      and Remove on a fresh booking left an audit entry naming him, reopened the shift, and emptied
+      its queue. Still unwalked:
+      - On an iPhone, tapping the sheet's search field must not zoom the page. Needs an iPhone.
+      - With the keyboard up, the sheet's search field stays in view. It was left out of the walk list.
+      - A failed save shows a box naming what it was, with Retry and a quiet Dismiss, and no other
+        tap removes it. Needs the connection to drop in the middle of a save.
+      - Show more keeps a two-shift event together. Production has no two-shift event.
 
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
