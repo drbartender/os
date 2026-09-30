@@ -1,6 +1,6 @@
 # Consult Call Bridge Hardening (fix list section 0)
 
-Design, 2026-09-30. Brainstormed section by section with Dallas; all four sections were approved in chat. This document is the contract for the plan and the build. It closes section 0 of `docs/fix-list-remaining-2026-07-02.md` ("The consult call bridge is LIVE, and these are reachable right now") plus the section 3 entry "Pressing 1 during the automatic repeat does nothing, on BOTH bridges".
+Design, 2026-09-30, **rev 2**. Brainstormed section by section with Dallas; all four sections were approved in chat. Rev 2 folds in the six-lens design fleet (spec grounding / gaps / risk, plan fidelity / decomposition / feasibility), every finding verified against the code before it was accepted, and Dallas approved the fold-in as a batch. Rev 2 changes, in one place: the kill switch parks rings 1 and 2 (6.1), a same-uid reschedule to a new time is not a replay and a root uid resolves through the prior list (5.2), the one-stop email is bounded per booker per day and its banner covers other slots (4.1), `/dialend` answers Twilio first (4.2), the Zul leg's `call_audit` row carries no number (6.3), Needs attention gets the unconfirmed label and every "never reaped" statement is corrected (4.3), two lanes (7a). This document is the contract for the plan and the build. It closes section 0 of `docs/fix-list-remaining-2026-07-02.md` ("The consult call bridge is LIVE, and these are reachable right now") plus the section 3 entry "Pressing 1 during the automatic repeat does nothing, on BOTH bridges".
 
 Parent design: `docs/superpowers/specs/2026-08-25-consult-call-bridge-design.md` (rev 2). Every locked decision there still holds unless this document names it.
 
@@ -25,13 +25,17 @@ No consult bridge failure is silent, and no repeated Cal.com delivery can duplic
 
 ### 4.1 A single stopped sibling emails
 
-`consultCallTail` (`server/utils/consultCallChain.js`), the unresolved-reschedule branch: the email gate `marked.rowCount > 1` becomes `marked.rowCount > 0`. Still ONE email per tail call (never one per row: the booking page is public and these rows sit outside the daily cap, so a per-row loop would be a Resend-quota amplifier). The attempt passed to `sendChainEmail` is still `marked.rows[0]`, a stopped sibling, so the email names the slot that will NOT ring.
+`consultCallTail` (`server/utils/consultCallChain.js`), the unresolved-reschedule branch: the email gate `marked.rowCount > 1` becomes "at least one row stopped, and no earlier stop for this booker email in the last 24 hours". Still ONE email per tail call (never one per row). The attempt passed to `sendChainEmail` is still `marked.rows[0]`, a stopped sibling, so the email names a slot that will NOT ring.
+
+**The 24-hour bound per booker email (review 2026-09-30).** The Cal.com webhook limiter allows 600 deliveries a minute, and every unresolved reschedule that stops a row would otherwise cost one email against the shared 100/day Resend allowance that proposals and invoices also use. The parent spec bounded the undialable email for the same reason. The bound rides the sibling INSERT itself as a data-modifying CTE: the outer SELECT returns the inserted ids plus `stopped_today`, whether any `rescheduled_unresolved` row for the same `booker_email` already existed in the last 24 hours (the CTE's own inserts are invisible to it, same snapshot). Two concurrent deliveries can both see none and send two emails; duplicate mail is the right way for this feature to be wrong. One email per victim per day is enough to send Dallas to that booker's slots.
 
 The comment above the gate is rewritten to say why one row now emails: the one-row case is exactly "the victim had one real consult", and the email cannot tell that apart from the booker moving their own slot, so it goes to a human either way.
 
 The `unresolved reschedule` banner (`CONSULT_CALL_BANNERS`, `server/utils/emailTemplates.js`) is reworded to fit one row or many:
 
-> Someone rescheduled using this booker's email and we could not tell which booking moved, so the call for this slot was stopped and will not ring. If this is the slot they moved away from, there is nothing to do. If not, call them at the slot.
+> Someone rescheduled using this booker's email and we could not tell which booking moved, so the call for this slot, and for any other upcoming slot under this email, was stopped and will not ring. If this is the slot they moved away from, there is nothing to do. If not, call them at the slot.
+
+`ARCHITECTURE.md`'s consult Alerts line (it says a single stopped sibling "stays a log line") is corrected with it.
 
 The template's comment that says the banner is "only sent when more than one row was stopped" is corrected.
 
@@ -47,7 +51,7 @@ New export in `consultCallChain.js`: `notifyClientNoAnswer({ attemptId })`. It s
 | `send_failed` | `client no answer, text failed` |
 | `no_attempt` | `client no answer, text failed` |
 
-It never throws. `/dialend` calls it in place of `sendMissedText`, still only for the latch winner (text-exactly-once law unchanged). The route's test seam swaps accordingly.
+It never throws. `/dialend` calls it in place of `sendMissedText`, still only for the latch winner (text-exactly-once law unchanged), and now AFTER it has answered Twilio with the spoken readback (review 2026-09-30): the failure case is exactly when Twilio's SMS API is slow, a text plus a fallback email can outlast Twilio's 15-second webhook timeout, and a late answer would lose the "Their number is..." readback for whoever is on the line. The route's test seam swaps accordingly.
 
 Two new banners:
 
@@ -78,7 +82,13 @@ Status `failed` puts it in Needs attention (`server/routes/admin/leadCalls.js` a
 
 **Kill switch off: this arm does not run at all.** No write, no email, matching the reaper's existing rule that the switch silences the alert. A row left `connected` then is picked up on the first tick after the switch comes back on.
 
-`client/src/utils/consultCallLabel.js` gains a detail branch so the proposal and client detail pages read `pressed 1, bridge unconfirmed` for this row rather than the generic failed label.
+`client/src/utils/consultCallLabel.js` gains a detail branch so the proposal and client detail pages read `pressed 1, bridge unconfirmed` for this row rather than the generic failed label, and the Needs attention headline (`client/src/pages/admin/overview/queueItems.js`, which reads every consult `failed` as "call failed") gains the same branch, since that feed is where the row actually surfaces.
+
+The detail overwrites whatever `detail` held, deliberately: both labels key on `bridge_unconfirmed`, and a Twilio code from an earlier failed ring on the same chain describes a leg that is no longer the story.
+
+**Late evidence is not handled, on purpose.** A client-leg report arriving after the flip (40 minutes past the press) still writes `bridge_duration_sec` through `/status`, and a late `/dialend` is dropped by its `status = 'connected'` guard. The row stays `failed / bridge_unconfirmed`; the email has already gone. A Twilio report that late is not a realistic case, and un-flipping logic in a billed route would cost more than it protects.
+
+Every statement that `connected` is "never reaped" becomes false and is corrected in the same change: `voiceConsultCall.js` (the press-1 target-validation comment and the `/dialend` JSDoc), the `CONSULT_CALLER_ID` block in `server/index.js`, the `CONSULT_CALLER_ID` env row in `.claude/CLAUDE.md`, and the `/digit` row in `ARCHITECTURE.md`.
 
 ### 4.4 The reaper moves under the consult sweep's switch
 
@@ -88,11 +98,13 @@ The reaper (both arms) moves into its own module, `server/utils/consultCallReape
 
 **With the switch off, the sweep still runs the stale arm** before returning its skipped shape. That arm's disabled branch parks a stranded chain `skipped_disabled` and emails nobody. If the sweep skipped it, those rows would sit until the switch came back on and then be reaped as failures, one email per consult, for a stop Dallas ordered. The bridge arm is a no-op while off (4.3). Nothing is dialed, opened or filed.
 
-`vaCallingScheduler.js` stops touching consult rows. The env notes that describe the old wiring are corrected: `RUN_VA_CALLING_SCHEDULER` and `RUN_CONSULT_CALL_SWEEP_SCHEDULER` in `.claude/CLAUDE.md` and the README env table.
+A stale-arm failure while the switch is off still fails the tick (normalized to an Error), matching the sweep's rule that faults rethrow rather than report green.
+
+`vaCallingScheduler.js` stops touching consult rows. The env notes that describe the old wiring are corrected in `.claude/CLAUDE.md`, the README env table and `.env.example`: `RUN_VA_CALLING_SCHEDULER` no longer covers the consult reaper; `RUN_CONSULT_CALL_SWEEP_SCHEDULER` now owns it, and setting it `false` leaves no consult reaper at all (acceptable only while the feature is off, and said so); `CONSULT_CALL_ENABLED` no longer silences the sweep entirely, because the stale arm still parks rows while it is off.
 
 ### 4.5 Room in the chain file
 
-`consultCallChain.js` is 995 lines and the hard cap blocks any commit that grows a file past 1000. `fileDialCapTrip` (about 28 lines) is dead: never called and never exported; `caps.fileCapTrip` replaced it. It is deleted first, which pays for 4.2, 4.1's comment and 6.3.
+`consultCallChain.js` is 995 lines and the hard cap blocks any commit that grows a file past 1000. `fileDialCapTrip` (28 lines plus its spacing) is dead: never called and never exported; `caps.fileCapTrip` replaced it. So is the two-line comment near the top about the `|| 10` fallback, which describes code that moved to `consultCallCaps.js`. Both are deleted first, which pays for 4.1 (including its 24-hour bound), 4.2, 6.1, 6.3 and 6.4. The budget was MEASURED during review by applying the exact planned edits to a copy of the file, not estimated; the plan re-measures before each commit that touches the file.
 
 ## 5. The duplicate consult
 
@@ -114,18 +126,23 @@ Schema (idempotent, `server/db/schema.sql`, beside the other `consults` columns)
 ALTER TABLE consults ADD COLUMN IF NOT EXISTS calcom_prior_event_ids TEXT[] NOT NULL DEFAULT '{}';
 ```
 
-`handleRescheduled`'s in-place UPDATE appends the outgoing uid in the same statement (SET expressions read the pre-update row):
+`handleRescheduled`'s in-place UPDATE appends the outgoing uid in the same statement (SET expressions read the pre-update row), except when the uid is not actually changing, so a consult never lists its own current uid as a prior one:
 
 ```sql
-calcom_prior_event_ids = array_append(calcom_prior_event_ids, calcom_event_id)
+calcom_prior_event_ids = CASE WHEN calcom_event_id = $1 THEN calcom_prior_event_ids
+                              ELSE array_append(calcom_prior_event_ids, calcom_event_id) END
 ```
 
-One "known uid" predicate, `calcom_event_id = $1 OR $1 = ANY(calcom_prior_event_ids)`, defined once and used in four places:
+The same UPDATE also resolves its old uid against the prior lists, not just the current column: `WHERE calcom_event_id = ANY($5) OR calcom_prior_event_ids && $5`, preferring a current-column match. If Cal.com ever names the ROOT booking on a second reschedule instead of the immediately previous one, today's lookup misses, and the fallthrough files a duplicate and stops the real consult. This is safe only because step 3 below rejects a known NEW uid first.
+
+A "known uid" check, `calcom_event_id = $1 OR $1 = ANY(calcom_prior_event_ids)`, is used as-is in the first two places below. The last two need something narrower, for the reasons given:
 
 1. **Strand-heal:** reprocess only when the uid is NOT known. The crash case it exists for (dedupe row committed, consult never written) still heals.
 2. **`handleCreated` fast path:** a known uid commits and answers `Already filed`. The INSERT's ON CONFLICT stays the correctness boundary for two concurrent first deliveries.
-3. **`handleRescheduled`, first step after the malformed-payload check:** if the NEW uid is already known, the delivery is a replay: answer `200 Already rescheduled`, run no UPDATE, no tail, no Sentry warning.
-4. **`handleCancelled`:** a uid found in some consult's prior list (and not current) names a booking that already moved; answer `200 Booking already moved` and write nothing. A current or never-seen uid keeps today's upsert unchanged.
+3. **`handleRescheduled`, first step after the malformed-payload check:** the delivery is a replay when its NEW uid is in some consult's prior list, OR is a consult's CURRENT uid at the SAME slot (the slot compared in SQL, ruling R12). Answer `200 Already rescheduled`, run no UPDATE and no tail. A current uid with a DIFFERENT start time is not a replay: no real reschedule payload has ever been observed, so "Cal.com always mints a new uid" is unverified, and a same-uid time move must still go through the existing in-place path (review 2026-09-30).
+4. **`handleCancelled`:** a uid found in some consult's prior list AND not any consult's current uid names a booking that already moved; answer `200 Booking already moved` and write nothing. This needs current and prior told apart, which the OR check cannot do. A current or never-seen uid keeps today's upsert unchanged.
+
+Each of steps 3 and 4 writes one `console.log` line naming the uid, so a swallowed replay leaves a trace next to the booking it protected.
 
 `handleNoShow` is unchanged: it only UPDATEs by the current uid.
 
@@ -138,9 +155,9 @@ No index: `consults` holds tens of rows, and a sequential scan is the right plan
 `/answer` and `/digit` in `voiceConsultCall.js` check `isEnabled()` (exported by `consultCallChain.js`). Off:
 
 - `/answer` speaks "The consult call bridge is turned off. Goodbye." and hangs up instead of reading the briefing.
-- `/digit` with 1 speaks the same line, claims nothing and dials nothing. The check runs first, before the target validation, the still-scheduled guard and the claim.
+- `/digit` with 1 speaks the same line, claims nothing and dials nothing. The check runs first, before the target validation, the still-scheduled guard and the claim, and the route's "order matters" comment names it.
 
-The agent leg's own status callback then files the chain `skipped_disabled` through the existing `onLegTerminal` / `advanceChain` paths. No new state.
+**Rings 1 and 2 must park too (review blocker, 2026-09-30).** `onLegTerminal` checks the switch only on the ring-3 hop and the Zul leg. On ring 1 or 2 it re-arms the row to `pending`, and with the switch off the sweep never advances it: the row sits until the stale arm parks it 30 minutes after the slot, and if the switch comes back on first it either rings Dallas again or emails "too late" for a stop he ordered. Fix: the existing ring-3 switch check moves above the ring-1/2 re-arm, so ANY admin ring's terminal callback parks the chain `skipped_disabled` while off. The Zul leg keeps its own check. No new state.
 
 ### 6.2 Pressing 1 works during the repeat, on both bridges
 
@@ -161,42 +178,60 @@ A digit during either reading is collected. The 10-second wait now follows the s
 
 `placeLeg`'s create-failure write stores `err.code` when present, `'sid_unpersistable'` for that one internal throw, and the fixed word `'create_failed'` otherwise. It never stores `err.message`, which for a Twilio or network error can carry the dialed `To` number. (Sentry still receives the error object; the invariant is that `VA_CELL` never reaches a DB record.)
 
+**The success path leaked too (review 2026-09-30).** `caps.recordLegAudit` (`server/utils/consultCallCaps.js`) writes the dialed number into `call_audit.target_e164` for every placed leg, so every Zul leg stored her full number. The consult caps count by `status`, never by number, so the Zul leg now records `target_e164` NULL (the column is nullable). The admin leg keeps its US number. Prod holds two such rows (2026-09-08 and 2026-09-18); `call_audit` is pruned at 30 days, so both age out by 2026-10-18 and no data fix is run.
+
 ### 6.4 Both dial targets are format-checked
 
 `placeLeg` tests the target VERBATIM against the strict E.164 pattern already in the file before calling Twilio (no trimming, so the dial-target law "dialed verbatim" still holds for anything that passes). A malformed `ADMIN_PHONE` or `VA_CELL` is never handed to Twilio: the leg is recorded `create_failed` with detail `invalid_dial_target` (ring-guarded on the admin leg, as the existing failure write is) and `placeLeg` returns false, so the caller runs the existing failed-leg path and the chain ends in the same email it would today.
 
 Deliberately NOT treated as unset. Unset with no Zul files `skipped_unconfigured` with no email, so treating a typo as unset would make it quieter than it is now.
 
-`server/index.js` gains a boot warning for each of `ADMIN_PHONE` and `VA_CELL` when SET but not strict E.164 (unset is a legitimate configuration and stays silent), in the same shape as the `CONSULT_CALLER_ID` block: `console.warn` plus a Sentry warning tagged `subsystem: 'consult-call'`.
+`server/index.js` gains a boot warning for each of `ADMIN_PHONE` and `VA_CELL` when SET but not strict E.164 (unset is a legitimate configuration and stays silent), in the same shape as the `CONSULT_CALLER_ID` block: `console.warn` plus a Sentry warning. The message never echoes the value (a mistyped `VA_CELL` is still Zul's number, and Sentry is a third-party record), and it is worded as the SHARED setting it is: `ADMIN_PHONE` also drives the lead bridge and several admin texts, so the tag is `subsystem: 'phone-config'` and the text says the consult bridge will not dial it, not that only the consult bridge is affected. It has no automated test (neither does its sibling); the plan carries a manual boot check.
+
+**Deploy compatibility (review 2026-09-30).** A check that is stricter than today's truthiness test could stop every ring after deploy if a live value carries a stray space. Prod `call_audit`, read-only, shows all 9 consult legs ever placed (7 admin, 2 Zul, 2026-09-08 through 2026-09-18) went to strict E.164 numbers, so the current Render values pass unless they were edited after 2026-09-18. The boot warning reports it on the deploy that matters either way.
 
 ## 7. Documentation and ledger
 
 At merge:
 
-- Ledger (`docs/fix-list-remaining-2026-07-02.md`): delete the section 0 entries and their one-screen rows, and the section 3 "Pressing 1 during the automatic repeat" entry and its row. Add one Settled line: the sibling stop keeps `skipped_cancelled` / `rescheduled_unresolved`; a status of its own was decided against 2026-09-30 because the one-row email closed the silence and a rename changes no behavior.
+- Ledger (`docs/fix-list-remaining-2026-07-02.md`): delete the section 0 entries and their one-screen rows, and the section 3 "Pressing 1 during the automatic repeat" entry (it has no one-screen row). Add one Settled line: the sibling stop keeps `skipped_cancelled` / `rescheduled_unresolved`; a status of its own was decided against 2026-09-30 because the one-row email closed the silence and a rename changes no behavior.
 - Code comments that say the write side still owes a status, or that the chain emails only for more than one row: `server/routes/admin/leadCalls.js` (the `skipped_cancelled` note), `client/src/utils/consultCallLabel.js` (the `rescheduled_unresolved` note), `server/utils/emailTemplates.js` (the banner note), `consultCallChain.js` (the gate comment).
-- `.claude/CLAUDE.md` and `README.md`: the two scheduler env rows (4.4).
-- `ARCHITECTURE.md`: the new `consults` column.
-- `docs/walkthroughs-owed.md`: after deploy, one real billed walk on a synthetic consult in the 2026-08-26 shape. Press 1 during the SECOND reading and confirm the bridge; then flip `CONSULT_CALL_ENABLED=false`, let a ring answer, and confirm the off message and that no client leg is placed. Flip it back and confirm a chain opens (a kill-switch state is confirmed only by observing behavior).
+- Every "`connected` is never reaped" statement (4.3's list).
+- `.claude/CLAUDE.md`, `README.md` and `.env.example`: the `RUN_VA_CALLING_SCHEDULER`, `RUN_CONSULT_CALL_SWEEP_SCHEDULER`, `CONSULT_CALL_ENABLED` and `CONSULT_CALLER_ID` rows (4.3, 4.4).
+- `ARCHITECTURE.md`: the new `consults` column and the webhook's prior-uid behavior; both `/answer` rows (the repeat now sits inside the Gather); the consult `/digit` row (switch first; `connected` is reaped); the sweep bullet (five steps, "after every step"); the reaper bullet; the consult Writers line; the consult Alerts line (4.1's bound and the four new email reasons).
+- `README.md` folder tree: the new `consultCallReaper.js` row, and the `consultCallSweep.js` / `vaCallingScheduler.js` rows.
+- `docs/walkthroughs-owed.md`: after deploy, one real billed walk on a synthetic consult in the 2026-08-26 shape: press 1 during the SECOND reading and confirm the bridge connects. The kill-switch half is NOT walkable (review 2026-09-30): with the switch off the sweep places no ring, and a Render env change restarts the service, which outlives a 20-second ring placed before the flip. The off message and the ring-1/2 parking are proven by the route and chain tests instead.
+
+## 7a. Lanes
+
+Two lanes, both unblocked and buildable in parallel in separate worktrees (review 2026-09-30):
+
+- **`calcom-prior-uids`**: section 5 alone (`schema.sql`, `calcom.js`, its suite, its `ARCHITECTURE.md` lines). A public-webhook change resting on an unverified Cal.com payload assumption gets its own squash commit, so it can be reverted without pulling out the rest.
+- **`consult-bridge-hardening`**: sections 4 and 6.
+
+Both touch `ARCHITECTURE.md` in different sections; the second to merge resolves that conflict, if git raises one.
 
 ## 8. Testing
 
 Every behavior below gets a test that fails on today's code and passes after. Server suites share the dev database, so they run one at a time from the repo root.
 
-- `calcom.test.js`: a redelivered CREATE after a reschedule makes no duplicate, with identical bytes (heal path) and with different bytes (fresh path); a superseded RESCHEDULED replayed after a second reschedule makes no duplicate and stops nothing; a CANCELLED naming a moved-from uid writes nothing; the crash heal still reprocesses a never-seen uid; the reschedule UPDATE records the prior uid.
-- `consultCallChain.test.js`: one stopped sibling sends exactly one email; `notifyClientNoAnswer` sends the text and no email on `'sent'`, and the right reason on each non-sent result; a thrown error with no code and a `+63` number in its message never reaches `detail`; a malformed target is never passed to `placeBridgedCall` and records `invalid_dial_target`.
-- `voiceConsultCall.test.js`: switch off at `/answer` (off message, no briefing) and at press-1 (no claim, no `<Dial>`); both readings sit inside the `<Gather>`; `/dialend` calls `notifyClientNoAnswer` only for the latch winner.
+- `calcom.test.js`: a redelivered CREATE after a reschedule makes no duplicate, with identical bytes (heal path) and with different bytes (fresh path); a superseded RESCHEDULED replayed after a second reschedule makes no duplicate and stops nothing; a replay of the LATEST reschedule is a no-op; a same-uid reschedule to a NEW time still moves in place and never lists its own uid as prior; a reschedule naming the ROOT uid after a first move resolves in place; a CANCELLED naming a moved-from uid writes nothing; the crash heal still reprocesses a never-seen uid; the reschedule UPDATE records the prior uid.
+- `consultCallChain.test.js`: one stopped sibling sends exactly one email, and a second stop for the same booker email inside 24 hours sends none; `notifyClientNoAnswer` sends the text and no email on `'sent'`, and the right reason on each non-sent result; with the switch off, a ring-1 terminal callback parks the chain `skipped_disabled` instead of re-arming it; a thrown error with no code and a `+63` number in its message never reaches `detail`; a placed Zul leg's `call_audit` row carries no number; a malformed target is never passed to `placeBridgedCall` and records `invalid_dial_target`.
+- `voiceConsultCall.test.js`: switch off at `/answer` (off message, no briefing) and at press-1 (no claim, no `<Dial>`); both readings sit inside the `<Gather>`; `/dialend` calls `notifyClientNoAnswer` only for the latch winner, and answers Twilio even when that call never settles.
 - `voiceLeadCall.test.js`: both readings inside the `<Gather>`.
 - `consultCallSweep.test.js`: both reaper arms run from the tick, a reap failure costs neither the ring step nor the other arm, and with the switch off only the stale arm runs.
-- `consultCallReaper.test.js` (new, taking over the consult reaper tests from `vaCallingScheduler.test.js`): the unconfirmed arm flips and emails once; it never flips a row with a duration, a no-answer latch, time still inside the limit, or with the switch off.
+- `consultCallReaper.test.js` (new, taking over the consult reaper tests from `vaCallingScheduler.test.js`): the unconfirmed arm flips and emails once; it never flips a row with a duration, a no-answer latch, time still inside the limit, or with the switch off; a row parked while off stays parked when the switch returns.
 - `vaCallingScheduler.test.js`: the VA prune no longer reaps consult rows.
 - `emailTemplates.consultCall.test.js`: the three new banners and the reworded one render.
-- `consultCallLabel.test.js`: `bridge_unconfirmed` reads `pressed 1, bridge unconfirmed`.
+- `consultCallLabel.test.js` and `queueItems.test.js`: `bridge_unconfirmed` reads `pressed 1, bridge unconfirmed` on the detail line and in the Needs attention headline.
+- `server/index.js` boot warning: a manual check (boot once with a malformed `ADMIN_PHONE`, once with it unset).
 - `calcom.test.js` also owns the schema check, because `schema.vaCalling.test.js` applies only the slice from the VA-calling banner to EOF, which does not reach the `consults` statements: the suite applies the ALTER it reads out of `schema.sql` (idempotent, additive) and asserts the column exists, is NOT NULL, and defaults to an empty array.
 
 ## 9. Review
 
-`calcom.js` is webhook code and the consult modules are sensitive-listed, so the lane gets the full fleet before merge. The push-time sensitive re-review and `/second-opinion` run at push as usual.
+`calcom.js` is webhook code and the consult modules are sensitive-listed, so EACH lane gets the full fleet before merge. The new `server/utils/consultCallReaper.js` matches no existing glob (the consult modules are listed by exact path; only `*Scheduler.js` covered the reaper's old home), so it is added to `scripts/sensitive-paths.txt` in the same change. The push-time sensitive re-review and `/second-opinion` run at push as usual.
+
+Declined at review, with reasons: exporting `timeLimitSec` from the chain file (the house pattern is a local copy per file, and the chain file has no room); keeping an earlier Twilio code instead of `bridge_unconfirmed` in `detail` (both labels key on that value); a review agent at every in-lane checkpoint (the full fleet per lane before merge is the gate); un-flipping a row on a very late client-leg report (4.3).
 
 ## 10. Out of scope
 
