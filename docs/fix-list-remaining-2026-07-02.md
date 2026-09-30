@@ -1850,16 +1850,18 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
-- **Phone Events list: show an unpaid balance on the card (Dallas, Pixel walk 2026-09-30: *"Event
-  list needs some kind of indicator that they have an unpaid balance"*).** The scoped feed already
-  carries `proposal_total`, `proposal_amount_paid` and `proposal_status`, and the desktop list's
-  `eventPaymentState` (`client/src/components/adminos/eventPlan.js`) already answers paid, owed
-  with the amount, or cancelled, testing cancelled before the money. Reuse it on the card so the
-  two lists cannot disagree. Prod, read-only, 2026-09-30: 13 of the 21 upcoming events owe a
-  balance and none is past its due date, so a red mark on every owing card would cover most of
-  the list. Recommended shape: the owed amount on every owing card in a quiet tone, turning red
-  once the balance due date has passed. The red needs `balance_due_date` added to the feed; the
-  rest is client-only. Like the desktop, it would count a bank debit still in flight as owed.
+- **What the red DUE on both Events lists does not account for.** The phone card, shipped in
+  `a3b0b98f`, and the desktop Status cell print one figure, `total_price - amount_paid` via
+  `eventPaymentState` (`client/src/components/adminos/eventPlan.js`), so they agree, and in these
+  cases both are wrong. A bank debit in flight reads DUE for the days it takes to settle, since
+  `amount_paid` moves only on success; project the in-flight state from `paymentInFlight.js` onto
+  the feed and give the helper its own kind. An unpaid on-site extension invoice never shows,
+  since extension money stays off both columns. A paid invoice whose label is off the ledger
+  (a syrup-only Drink Plan Extras) folds into `amount_paid` but not `total_price`, so a deposit-
+  paid client who pays one first reads short by that amount. A balance under 50 cents would
+  print "$0". Prod, read-only, 2026-09-30: none of these holds on a live booking today.
+  Proposal 600 is the LEGAL HOLD and reads "$3,273 DUE" on the phone's Past tab and the desktop
+  alike: do not chase it. Found by the reviewer of `a3b0b98f`.
 - **ON HOLD (Dallas, 2026-09-30): the phone's Text button change waits for the phone Messages
   screen.** From the Pixel walk: *"I don't want to text from my personal
   number."* Today `contactsOf` in `client/src/utils/eventDetailView.js` builds a plain `sms:` link,

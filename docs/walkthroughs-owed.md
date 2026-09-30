@@ -1652,6 +1652,10 @@ which is the largest client-facing change in the drop and is listed first becaus
         its name on one line, then the street and the town, which drop to a second line only when
         they do not fit, with no comma left at the end of the street line. Nothing is cut off, and
         the map icon trails the last line. Try a long venue name and a street-only address.
+      - Once `git merge-base --is-ancestor a3b0b98f origin/main` exits 0: the Events list. A card that
+        owes money shows the amount in red with DUE beside the staffing count, on Upcoming and
+        on Past; a paid card shows none; the figure matches the desktop Events list's Status
+        column for the same event.
 
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
