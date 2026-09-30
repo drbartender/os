@@ -7,7 +7,8 @@ const { consultCallAdmin } = require('./emailTemplates');
 // It fires only on faults: a failed chain, a tripped cap, a slot the bridge
 // reached too late, a missed window, an undialable number, a fully missed
 // consult whose text could not go out (no destination, or the send itself
-// failed), and an unresolved reschedule that stopped more than one of a
+// failed), a client-no-answer text that could not go out, a press-1 Twilio
+// never reported, and an unresolved reschedule that stopped any of a
 // booker's upcoming consults. Never on a plain 'missed' (the text covers that)
 // or on a cancelled/disabled skip. Pure render assertions; the
 // notifyAdminCategory fan-out is exercised by the chain suite.
@@ -32,6 +33,11 @@ const REASONS = [
   'missed, no text destination',
   'missed, text failed',
   'unresolved reschedule',
+  'client no answer, no text destination',
+  'client no answer, text failed',
+  'bridge unconfirmed',
+  'daily dial cap tripped',
+  'daily international-leg cap tripped',
 ];
 
 for (const reason of REASONS) {
@@ -55,7 +61,12 @@ test('the banner tells the reader what to do, per reason', () => {
     'missed, text failed': 'Everyone missed this consult and the text alert could not be sent, most likely a Twilio failure rather than a setting. Call them now.',
     'daily cap tripped': 'The daily cap on consult calls was already reached, so the bridge will not ring for this booking. Call them by hand at the slot.',
     'too late': 'Too much time had passed since the slot for the bridge to ring, so nobody was called. Call them now.',
-    'unresolved reschedule': 'A reschedule named a booking we could not match, so this consult and every other upcoming consult for this booker were stopped and will not ring. Call them to confirm which slot is real.',
+    'unresolved reschedule': "Someone rescheduled using this booker's email and we could not tell which booking moved, so the call for this slot, and for any other upcoming slot under this email, was stopped and will not ring. If this is the slot they moved away from, there is nothing to do. If not, call them at the slot.",
+    'client no answer, no text destination': 'The client did not pick up when the bridge called them, and no text destination is configured, so this email is the only alert. Call them back.',
+    'client no answer, text failed': 'The client did not pick up when the bridge called them, and the text alert could not be sent, most likely a Twilio failure rather than a setting. Call them back.',
+    'bridge unconfirmed': 'Someone pressed 1 on this consult, but Twilio never reported the call to the client, so it most likely never connected. Call them to check.',
+    'daily dial cap tripped': 'The daily cap on rings to Dallas was already reached, so the bridge will not ring for this booking. Call them by hand at the slot.',
+    'daily international-leg cap tripped': "The daily cap on calls to Zul's line was already reached, so the bridge will not ring for this booking. Call them by hand at the slot.",
     // 'call failed' is the ONE reason the generic line is right for: the chain
     // died placing calls, which really is a system fault to go look at.
     'call failed': 'The consult call bridge could not complete calls for this consult. Check the system if this repeats.',
@@ -80,13 +91,16 @@ test('a reason that means nobody gets called never falls back to "check the syst
   const NOBODY_CALLED = [
     'daily cap tripped', 'too late', 'undialable number',
     'missed window', 'missed, no text destination', 'missed, text failed',
-    'unresolved reschedule',
+    'unresolved reschedule', 'client no answer, no text destination', 'client no answer, text failed',
+    'bridge unconfirmed', 'daily dial cap tripped', 'daily international-leg cap tripped',
   ];
   for (const reason of NOBODY_CALLED) {
     const tpl = consultCallAdmin({ ...BASE, reason });
     assert.ok(!tpl.html.includes(GENERIC), `html: ${reason} must carry its own banner`);
     assert.ok(!tpl.text.includes(GENERIC), `text: ${reason} must carry its own banner`);
-    assert.ok(/Call them/.test(tpl.text), `text: ${reason} must tell the reader to call them`);
+    // Case-insensitive: the instruction may open a sentence or sit inside one
+    // (the unresolved-reschedule banner says "If not, call them at the slot.").
+    assert.ok(/call them/i.test(tpl.text), `text: ${reason} must tell the reader to call them`);
   }
 });
 

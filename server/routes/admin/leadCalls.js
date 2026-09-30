@@ -30,11 +30,13 @@
 // was written and it was invisible from then on.
 //
 // The head count, stated correctly because rev 2 stated it wrong and a comment
-// a reader can falsify discredits the rule it defends. TWO statuses can only
-// be written after the slot: failed/too_late, which needs NOW() past
-// scheduled_at + 600s to exist at all, and skipped_missed_window, whose sweep
-// runs from 3 to 30 minutes behind the slot. ONE more is path-dependent, the
-// VA-leg failure reached through the ring-3 hop at slot+180s. Rev 2 also said
+// a reader can falsify discredits the rule it defends. FOUR can only be
+// written after the slot: failed/too_late, which needs NOW() past
+// scheduled_at + 600s to exist at all; skipped_missed_window, whose sweep runs
+// from 3 to 30 minutes behind the slot; failed/stale_reaped, the reaper's stale
+// arm at 30 minutes past it; and failed/bridge_unconfirmed, the reaper's bridge
+// arm, the call limit plus ten minutes after a press-1. ONE more is
+// path-dependent, the VA-leg failure reached through the ring-3 hop at slot+180s. Rev 2 also said
 // skipped_cap with va_leg_cap_tripped is written on the Zul hop after the
 // slot; that is FALSE and should not be repeated. Its one writer is
 // advanceChain's ADMIN_PHONE-unset branch, where Zul takes the call directly,
@@ -74,11 +76,11 @@
 // and the ordinary case marks exactly one, the phantom left behind by the
 // booking that moved. Surfacing the status would therefore fire a false
 // attention item on every routine reschedule. The split we chose instead:
-// consultCallChain.js emails once when it stops MORE than one row, which is
-// the case where a separate legitimate booking was caught, and the client
-// labels the details apart on the detail pages (consultCallLabel.js) so no
-// browsing surface calls a live booking cancelled. Corrected 2026-08-26; the
-// write side owes this case a status of its own, tracked in the backlog.
+// consultCallChain.js emails whenever it stops a row, at most once per booker
+// email per day (spec 2026-09-30 section 4.1), and the client labels the
+// details apart on the detail pages (consultCallLabel.js) so no browsing
+// surface calls a live booking cancelled. A status of its own for this case was
+// decided against on 2026-09-30: the email closed the silence.
 //
 // The limits are PER HALF (ruling S-R1). A single shared LIMIT was a denial
 // of visibility on the revenue-critical half: skipped_cap rows do not count

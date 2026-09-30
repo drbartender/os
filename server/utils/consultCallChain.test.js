@@ -136,8 +136,9 @@ after(async () => {
     if (savedEnv[k] === undefined) delete process.env[k];
     else process.env[k] = savedEnv[k];
   }
-  // Attempt rows cascade with the consults.
+  // Attempt rows cascade with the consults; the billed-leg ledger does not.
   await pool.query('DELETE FROM consults WHERE calcom_event_id LIKE $1', [`${RUN}-%`]);
+  await clearLedger();
   await pool.end();
 });
 
@@ -326,7 +327,11 @@ test('tail: an unresolved reschedule marks only future scheduled siblings on the
   assert.deepEqual(await attemptsFor(pastSibling), [], 'a past slot is left alone');
   assert.deepEqual(await attemptsFor(cancelledSibling), [], 'a non-scheduled consult is left alone');
   assert.deepEqual(await attemptsFor(otherEmail), [], 'a different booker email is left alone');
-  assert.equal(emails.length, 0, 'sibling marking is silent');
+  // One stopped row emails too (spec 2026-09-30 section 4.1): it is equally the
+  // booker moving their own slot and a stranger stopping a client's only real
+  // consult, and nothing here can tell those apart.
+  assert.equal(emails.length, 1, 'a single stopped sibling emails once');
+  assert.ok(emails[0].subject.includes('unresolved reschedule'), emails[0].subject);
 });
 
 test('tail: the sibling marking runs even when the NEW booking number is undialable (R3)', async () => {
@@ -347,12 +352,8 @@ test('tail: the sibling marking runs even when the NEW booking number is undiala
   assert.equal(filed[0].status, 'skipped_invalid_phone');
 });
 
-test('tail: stopping MORE than one sibling emails once, because that is the ambiguous case', async () => {
-  // The only path in this feature that turns a consult that would have rung
-  // into one that silently will not. One sibling is the ordinary case (the
-  // booker moved their single upcoming slot) and stays a log line, asserted by
-  // the R2 test above. Two means at least one separate, legitimate booking was
-  // stopped as well, and nothing else in the system watches that.
+test('tail: stopping several siblings still sends ONE email, never one per row', async () => {
+  // However many siblings are stopped, the email count stays at one.
   const shared = `${RUN}-sibmulti@example.test`;
   const target = await makeConsult('sibmulti-new', { email: shared });
   const first = await makeConsult('sibmulti-a', { email: shared, offsetSec: 10800 });
@@ -377,7 +378,51 @@ test('tail: stopping MORE than one sibling emails once, because that is the ambi
   // quota amplifier reachable from the open internet.
   assert.equal(emails.length, 1, 'one email however many siblings were stopped');
   assert.ok(emails[0].subject.includes('unresolved reschedule'), emails[0].subject);
-  assert.ok(/Call them/.test(emails[0].emailText), emails[0].emailText);
+  assert.ok(/call them/i.test(emails[0].emailText), emails[0].emailText);
+});
+
+test('tail: a second stop for the same booker email the same Chicago day sends no second email, the next day does (Review Focus 4)', async () => {
+  // The booking page is PUBLIC and these rows sit outside the daily cap, so an
+  // unbounded send would spend the shared Resend allowance from the open
+  // internet. One email per booker email per Chicago day is enough to send
+  // Dallas to that booker's slots.
+  const shared = `${RUN}-sibday@example.test`;
+  const first = await makeConsult('sibday-new1', { email: shared });
+  await makeConsult('sibday-a', { email: shared, offsetSec: 10800 });
+  await chain.consultCallTail({
+    consultId: first, scheduledAt: await slotOf(first), bookerPhone: VALID_PHONE,
+    triggerEvent: 'BOOKING_RESCHEDULED', unresolvedOldUid: 'cal-uid-unresolved', bookerEmail: shared,
+  });
+  assert.equal(emails.length, 1);
+
+  const second = await makeConsult('sibday-new2', { email: shared, offsetSec: 18000 });
+  const laterSibling = await makeConsult('sibday-b', { email: shared, offsetSec: 21600 });
+  await chain.consultCallTail({
+    consultId: second, scheduledAt: await slotOf(second), bookerPhone: VALID_PHONE,
+    triggerEvent: 'BOOKING_RESCHEDULED', unresolvedOldUid: 'cal-uid-unresolved', bookerEmail: shared,
+  });
+  const marked = await attemptsFor(laterSibling);
+  assert.equal(marked.length, 1, 'the second stop still happens');
+  assert.equal(marked[0].detail, 'rescheduled_unresolved');
+  assert.equal(emails.length, 1, 'but it is not emailed again the same day');
+
+  // Move today's stops to just before Chicago midnight: a calendar day, not a
+  // rolling window, so the bound must lift for the next stop.
+  await pool.query(
+    `UPDATE consult_call_attempts
+        SET created_at = (date_trunc('day', NOW() AT TIME ZONE 'America/Chicago') AT TIME ZONE 'America/Chicago')
+                         - INTERVAL '1 minute'
+      WHERE detail = 'rescheduled_unresolved'
+        AND consult_id IN (SELECT id FROM consults WHERE booker_email = $1)`,
+    [shared]
+  );
+  const third = await makeConsult('sibday-new3', { email: shared, offsetSec: 25200 });
+  await makeConsult('sibday-c', { email: shared, offsetSec: 28800 });
+  await chain.consultCallTail({
+    consultId: third, scheduledAt: await slotOf(third), bookerPhone: VALID_PHONE,
+    triggerEvent: 'BOOKING_RESCHEDULED', unresolvedOldUid: 'cal-uid-unresolved', bookerEmail: shared,
+  });
+  assert.equal(emails.length, 2, 'a stop on a new Chicago day emails again');
 });
 
 test('tail: never rejects, even on a dead pool', async () => {
@@ -873,6 +918,75 @@ test('advanceChain: a ring 1 create throw records create_failed and re-arms with
   assert.equal(emails.length, 0, 'a ring that can fall through to another ring is not a chain failure');
 });
 
+// ─── placeLeg guards (spec 2026-09-30 sections 6.3 and 6.4) ──────
+
+test('placeLeg: an error with no code never writes its message, so VA_CELL stays out of the database', async () => {
+  const { attemptId } = await makeChainRow('scrub-va');
+  chain.__setDeps({
+    placeBridgedCall: async () => { throw new Error(`Call to ${VA_CELL} could not be created`); },
+  });
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args.map(String).join(' ')); };
+  try {
+    await withEnv({ ADMIN_PHONE: null }, () => chain.advanceChain({ attemptId }));
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(logged.some((l) => l.includes('va-leg-create')), 'the failure is still logged');
+  assert.ok(!logged.some((l) => l.includes(VA_CELL)), "Zul's number never reaches the log (or Sentry)");
+  const row = await rowOf(attemptId);
+  assert.equal(row.va_call_status, 'create_failed');
+  assert.equal(row.detail, 'create_failed', 'a fixed word, never err.message');
+  assert.ok(!String(row.detail).includes('+63'), 'the dialed number never reaches detail');
+});
+
+test('recordLegAudit: a placed Zul leg lands on the ledger with no number', async () => {
+  const sid = `${RUN}-va-audit`;
+  chain.__setDeps({ placeBridgedCall: async (opts) => { placed.push(opts); return { sid }; } });
+  const { attemptId } = await makeChainRow('va-audit');
+  await withEnv({ ADMIN_PHONE: null }, () => chain.advanceChain({ attemptId }));
+  const { rows } = await pool.query('SELECT status, target_e164 FROM call_audit WHERE call_sid = $1', [sid]);
+  await pool.query('DELETE FROM call_audit WHERE call_sid = $1', [sid]);
+  assert.equal(rows.length, 1, 'the leg is still on the ledger the cap counts');
+  assert.equal(rows[0].status, chain.AUDIT_VA_LEG);
+  assert.equal(rows[0].target_e164, null, "Zul's number is never stored");
+});
+
+test('placeLeg: a malformed ADMIN_PHONE is never dialed; three undialed rings, then the hop to Zul', async () => {
+  const { attemptId } = await makeChainRow('bad-admin-target');
+  await withEnv({ ADMIN_PHONE: '312-555-0142' }, async () => {
+    await chain.advanceChain({ attemptId });
+    let row = await rowOf(attemptId);
+    assert.equal(placed.length, 0, 'Twilio never sees the malformed number');
+    assert.equal(row.admin_call_status, 'create_failed');
+    assert.equal(row.detail, 'invalid_dial_target');
+    assert.equal(row.status, 'pending', 'the existing failed-leg path re-arms the next ring');
+    assert.equal(row.admin_ring, 1);
+    assert.equal(await ringOffsetExact(attemptId, 60), true);
+
+    await chain.advanceChain({ attemptId });
+    await chain.advanceChain({ attemptId });
+    row = await rowOf(attemptId);
+    assert.equal(row.admin_ring, 3);
+    assert.equal(row.status, 'calling_va', 'after ring 3 the chain hops to Zul');
+  });
+  assert.equal(placed.length, 1, 'the only call placed is the Zul leg');
+  assert.equal(placed[0].to, VA_CELL);
+});
+
+test('placeLeg: a malformed VA_CELL is never dialed and the chain ends in the call-failed email', async () => {
+  const { attemptId } = await makeChainRow('bad-va-target');
+  await withEnv({ ADMIN_PHONE: null, VA_CELL: '0917 123 4567' }, () => chain.advanceChain({ attemptId }));
+  assert.equal(placed.length, 0);
+  const row = await rowOf(attemptId);
+  assert.equal(row.status, 'failed');
+  assert.equal(row.va_call_status, 'create_failed');
+  assert.equal(row.detail, 'invalid_dial_target');
+  assert.equal(emails.length, 1);
+  assert.ok(emails[0].subject.includes('call failed'), emails[0].subject);
+});
+
 // ─── onLegTerminal: the admin ladder ─────────────────────────────
 
 test('onLegTerminal: ring 1 re-arms at slot + 60s, ring 2 at slot + 180s, ring 3 hands off', async () => {
@@ -904,6 +1018,21 @@ test('onLegTerminal: ring 1 re-arms at slot + 60s, ring 2 at slot + 180s, ring 3
   assert.equal(row.admin_ring, 3);
   assert.equal(texts.length, 0);
   assert.equal(emails.length, 0);
+});
+
+test('onLegTerminal: with the switch off, a ring 1 terminal parks the chain instead of re-arming it (Review Focus 3)', async () => {
+  // Re-armed, the row would sit pending (the sweep does not advance while off)
+  // and then ring Dallas again, or email "too late", when the switch came back.
+  const { attemptId } = await makeChainRow('off-ring1');
+  await chain.advanceChain({ attemptId });
+  assert.equal(placed.length, 1);
+  await withEnv({ CONSULT_CALL_ENABLED: 'false' },
+    () => chain.onLegTerminal({ attemptId, leg: 'admin', ring: 1, callStatus: 'completed' }));
+  const row = await rowOf(attemptId);
+  assert.equal(row.status, 'skipped_disabled');
+  assert.equal(row.next_ring_at, null, 'it will never ring again');
+  assert.equal(emails.length, 0);
+  assert.equal(texts.length, 0);
 });
 
 test('onLegTerminal: a replayed ring 1 callback during a live ring 2 writes NOTHING (R5)', async () => {
@@ -1272,6 +1401,42 @@ test('sendMissedText: never throws, and each failure reports its OWN reason', as
   }
 });
 
+// ─── notifyClientNoAnswer (spec 2026-09-30 section 4.2) ──────────
+
+test('notifyClientNoAnswer: a sent text sends no email', async () => {
+  const { attemptId } = await makeChainRow('cna-sent', { attemptStatus: 'connected', nextRingOffsetSec: null });
+  await chain.notifyClientNoAnswer({ attemptId });
+  assert.equal(texts.length, 1);
+  assert.match(texts[0].body, /^Consult client did not answer:/);
+  assert.equal(emails.length, 0);
+});
+
+test('notifyClientNoAnswer: a text that cannot go out becomes the one email, naming why', async () => {
+  const { attemptId } = await makeChainRow('cna-fail', { attemptStatus: 'connected', nextRingOffsetSec: null });
+
+  await withEnv({ VM_TEXT_DESTINATION: null, ADMIN_PHONE: null },
+    () => chain.notifyClientNoAnswer({ attemptId }));
+  assert.equal(texts.length, 0);
+  assert.equal(emails.length, 1);
+  assert.ok(emails[0].subject.includes('client no answer, no text destination'), emails[0].subject);
+
+  chain.__setDeps({ sendSMS: async () => { throw new Error('twilio down'); } });
+  await chain.notifyClientNoAnswer({ attemptId });
+  assert.equal(emails.length, 2);
+  assert.ok(emails[1].subject.includes('client no answer, text failed'), emails[1].subject);
+});
+
+test('notifyClientNoAnswer: never rejects, even when the fallback email fails too', async () => {
+  const { attemptId } = await makeChainRow('cna-boom', { attemptStatus: 'connected', nextRingOffsetSec: null });
+  chain.__setDeps({
+    sendSMS: async () => { throw new Error('twilio down'); },
+    notifyAdminCategory: async () => { throw new Error('resend down'); },
+  });
+  await assert.doesNotReject(chain.notifyClientNoAnswer({ attemptId }));
+  await assert.doesNotReject(chain.notifyClientNoAnswer(null));
+  await assert.doesNotReject(chain.notifyClientNoAnswer());
+});
+
 // ─── the DIAL caps: what bounds the billed legs ───────────────────
 //
 // Two ceilings, counted from call_audit rather than from the attempt rows.
@@ -1302,7 +1467,14 @@ async function spendLedger(status, n) {
   }
 }
 async function clearLedger() {
-  await pool.query(`DELETE FROM call_audit WHERE call_sid LIKE $1 OR target_e164 = $2 OR target_e164 = $3`,
+  // CA_stub_ is the sid every test stub of placeBridgedCall returns (this suite
+  // and consultCallSweep.test.js); a real Twilio sid never looks like it. It is
+  // how a Zul-leg row is found now that the leg records no number (spec
+  // 2026-09-30 section 6.3), so those rows cannot pile up across runs and trip
+  // the rolling-24h international-leg ceiling.
+  await pool.query(
+    `DELETE FROM call_audit
+      WHERE call_sid LIKE $1 OR call_sid LIKE 'CA\\_stub\\_%' OR target_e164 = $2 OR target_e164 = $3`,
     [`${RUN}-%`, ADMIN_PHONE, VA_CELL]);
 }
 /** A cap whose ceiling is already spent for `status`, derived from the live count. */

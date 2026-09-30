@@ -31,7 +31,7 @@ const SPOKEN_SLOT = '10 AM';
 
 const CONSULT_CALLER_ID = '+12242221922';
 const VOICE_CALLER_ID = '+12242220082';
-const ENV_KEYS = ['CONSULT_CALLER_ID', 'VOICE_CALLER_ID', 'VA_CALL_TIME_LIMIT_SEC'];
+const ENV_KEYS = ['CONSULT_CALLER_ID', 'VOICE_CALLER_ID', 'VA_CALL_TIME_LIMIT_SEC', 'CONSULT_CALL_ENABLED'];
 const savedEnv = {};
 
 let server; let baseUrl;
@@ -132,6 +132,7 @@ before(async () => {
   process.env.CONSULT_CALLER_ID = CONSULT_CALLER_ID;
   process.env.VOICE_CALLER_ID = VOICE_CALLER_ID;
   delete process.env.VA_CALL_TIME_LIMIT_SEC;
+  delete process.env.CONSULT_CALL_ENABLED;
 
   // Belt for the one test that calls the real chain module: even a regression
   // that got past its own guard can never reach Twilio, email or SMS.
@@ -159,9 +160,9 @@ beforeEach(() => {
     pool,
     onLegTerminal: async (args) => { legTerminalCalls.push(args); },
     guardStillScheduled: async (attemptId) => { guardCalls.push(attemptId); return guardResult; },
-    // 'sent', not true: sendMissedText returns a discriminated string now, and a
-    // boolean stub could not express a failure to a future consumer in this route.
-    sendMissedText: async (args) => { textCalls.push(args); return 'sent'; },
+    // The route hands the whole text-or-email decision to the chain (spec
+    // 2026-09-30 section 4.2), so the stub records the call and nothing more.
+    notifyClientNoAnswer: async (args) => { textCalls.push(args); },
   });
 });
 
@@ -200,16 +201,33 @@ test('every route 403s on a bad signature, in production AND with NODE_ENV unset
 
 // ─── /answer ─────────────────────────────────────────────────────
 
-test('/answer speaks the booker and the slot inside a Gather, then repeats once and hangs up', async () => {
+test('/answer puts BOTH readings inside the Gather, so a 1 during the repeat is collected (spec 2026-09-30 6.2)', async () => {
   const { attemptId } = await makeChain('answer');
   const res = await post(`/api/voice/consult/answer?attempt=${attemptId}&leg=admin&ring=1&play=1`);
   assert.equal(res.status, 200);
   assert.match(res.body, /<Gather numDigits="1" timeout="10" method="POST"/);
   assert.ok(res.body.includes(`digit?attempt=${attemptId}&amp;leg=admin&amp;ring=1&amp;play=1`), res.body);
-  const says = res.body.match(new RegExp(`Potion planning call with Sarah M, booked for ${SPOKEN_SLOT}\\.`, 'g')) || [];
-  assert.equal(says.length, 2, 'spoken inside the Gather and once again after it');
+  const gather = (res.body.match(/<Gather[^>]*>([\s\S]*?)<\/Gather>/) || [])[1] || '';
+  const says = gather.match(new RegExp(`Potion planning call with Sarah M, booked for ${SPOKEN_SLOT}\\.`, 'g')) || [];
+  assert.equal(says.length, 2, 'the reading and its one repeat both sit inside the Gather');
+  assert.match(gather, /<\/Say><Pause length="1"\/><Say>/, 'a short pause between the two readings');
   assert.match(res.body, /Press 1 to call them now\. Press 9 to hear this again\./);
-  assert.match(res.body, /<Hangup\/>/);
+  assert.ok(res.body.endsWith('</Gather><Hangup/></Response>'), 'nothing but the hangup after the Gather');
+});
+
+test('/answer with the kill switch off says so and reads no briefing (spec 2026-09-30 6.1)', async () => {
+  const { attemptId } = await makeChain('answer-off');
+  process.env.CONSULT_CALL_ENABLED = 'false';
+  let res;
+  try {
+    res = await post(`/api/voice/consult/answer?attempt=${attemptId}&leg=admin&ring=1&play=1`);
+  } finally {
+    delete process.env.CONSULT_CALL_ENABLED;
+  }
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes('<Say>The consult call bridge is turned off. Goodbye.</Say><Hangup/>'), res.body);
+  assert.doesNotMatch(res.body, /<Gather/);
+  assert.doesNotMatch(res.body, /Potion planning call/);
 });
 
 test('/answer opens with Second try. on ring 2 and Last try. on ring 3', async () => {
@@ -319,6 +337,24 @@ test('/digit press 1 on the admin leg claims the bridge and dials the booker fro
   assert.ok(row.bridge_started_at);
 });
 
+test('/digit press 1 with the kill switch off claims and dials nothing, before any other check (spec 2026-09-30 6.1)', async () => {
+  const { attemptId } = await makeChain('digit-off');
+  process.env.CONSULT_CALL_ENABLED = 'false';
+  let res;
+  try {
+    res = await post(`/api/voice/consult/digit?attempt=${attemptId}&leg=admin&ring=1`, { Digits: '1' });
+  } finally {
+    delete process.env.CONSULT_CALL_ENABLED;
+  }
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes('The consult call bridge is turned off. Goodbye.'), res.body);
+  assert.doesNotMatch(res.body, /<Dial/);
+  assert.equal(guardCalls.length, 0, 'the switch is checked before the still-scheduled guard');
+  const row = await rowOf(attemptId);
+  assert.equal(row.status, 'calling_admin', 'nothing was claimed');
+  assert.equal(row.answered_by, null);
+});
+
 test('/digit press 1 on the Zul leg dials from the 0082, never the 1922', async () => {
   const { attemptId } = await makeChain('press1-va');
   await pool.query(`UPDATE consult_call_attempts SET status = 'calling_va' WHERE id = $1`, [attemptId]);
@@ -358,7 +394,7 @@ test('/digit press 1 with an undialable booker phone apologizes without claiming
   assert.match(res.body, /expired/);
   assert.deepEqual(guardCalls, [], 'the dial target is validated FIRST, before any other work');
   const row = await rowOf(attemptId);
-  assert.equal(row.status, 'calling_admin', 'a claimed-but-unbridged connected row would never be reaped');
+  assert.equal(row.status, 'calling_admin', 'nothing was claimed: an unbridged connected row is reported only 40 minutes later');
   assert.equal(row.answered_by, null);
 });
 
@@ -471,7 +507,7 @@ test('/dialend takes the cheap branch on an unrecognized DialCallStatus (allowli
   const real = await makeChain('dialend-canceled', { status: 'connected' });
   const res = await post(`/api/voice/consult/dialend?attempt=${real.attemptId}&leg=admin`, { DialCallStatus: 'canceled' });
   assert.ok(res.body.includes('They did not answer.'), res.body);
-  assert.deepEqual(textCalls, [{ attemptId: real.attemptId, kind: 'client_no_answer' }]);
+  assert.deepEqual(textCalls, [{ attemptId: real.attemptId }]);
 });
 
 test('/dialend on a no-answer latches once and texts once even when Twilio delivers it twice', async () => {
@@ -479,7 +515,7 @@ test('/dialend on a no-answer latches once and texts once even when Twilio deliv
   const first = await post(`/api/voice/consult/dialend?attempt=${attemptId}&leg=admin`, { DialCallStatus: 'no-answer' });
   assert.ok(first.body.includes(`They did not answer. Their number is ${SPOKEN_PHONE}. Goodbye.`), first.body);
   assert.match(first.body, /<Hangup\/><\/Response>$/);
-  assert.deepEqual(textCalls, [{ attemptId, kind: 'client_no_answer' }]);
+  assert.deepEqual(textCalls, [{ attemptId }]);
   const stamped = await rowOf(attemptId);
   assert.ok(stamped.client_no_answer_at, 'the latch is its own column (R14)');
   assert.equal(stamped.status, 'connected', 'connected is terminal: the bridge happened');
@@ -497,10 +533,22 @@ test('/dialend latches on the column, not detail, so an earlier Twilio error cod
   // Exactly what placeLeg's catch writes when an earlier ring failed to place.
   await pool.query(`UPDATE consult_call_attempts SET detail = '21211' WHERE id = $1`, [attemptId]);
   await post(`/api/voice/consult/dialend?attempt=${attemptId}&leg=admin`, { DialCallStatus: 'no-answer' });
-  assert.deepEqual(textCalls, [{ attemptId, kind: 'client_no_answer' }]);
+  assert.deepEqual(textCalls, [{ attemptId }]);
   const row = await rowOf(attemptId);
   assert.ok(row.client_no_answer_at);
   assert.equal(row.detail, '21211', 'detail stays the diagnostic an operator can look up');
+});
+
+test('/dialend answers Twilio before the text or its fallback email settles (Review Focus 5)', async () => {
+  const { attemptId } = await makeChain('dialend-slow', { status: 'connected' });
+  // A notification that never settles: the response must not wait on it.
+  router.__setConsultVoiceDeps({
+    notifyClientNoAnswer: (args) => { textCalls.push(args); return new Promise(() => {}); },
+  });
+  const res = await post(`/api/voice/consult/dialend?attempt=${attemptId}&leg=admin`, { DialCallStatus: 'no-answer' });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes(`They did not answer. Their number is ${SPOKEN_PHONE}. Goodbye.`), res.body);
+  assert.deepEqual(textCalls, [{ attemptId }], 'the notification was still started, for the latch winner');
 });
 
 test('/dialend on a row that is not connected texts nothing, and an unusable number drops the number only', async () => {
@@ -602,7 +650,7 @@ test('every route answers 200 when a dependency rejects (Twilio retries 5xx, and
     pool: { query: boom },
     onLegTerminal: boom,
     guardStillScheduled: boom,
-    sendMissedText: boom,
+    notifyClientNoAnswer: boom,
   });
 
   const answer = await post(`/api/voice/consult/answer?attempt=${attemptId}&leg=admin&ring=1`);
@@ -637,7 +685,7 @@ test('a non-Error rejection still answers TwiML: an unguarded err.message would 
   for (const value of [null, undefined, 'boom', { code: 42 }]) {
     const reject = async () => { throw value; };
     router.__setConsultVoiceDeps({
-      pool: { query: reject }, onLegTerminal: reject, guardStillScheduled: reject, sendMissedText: reject,
+      pool: { query: reject }, onLegTerminal: reject, guardStillScheduled: reject, notifyClientNoAnswer: reject,
     });
     const label = String(value);
     for (const [path, form] of [

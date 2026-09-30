@@ -2,7 +2,7 @@
 //
 // Consult call bridge: the 60 second clock (spec 2026-08-25 section 4.3).
 // consultCallChain.js knows HOW to open, skip and ring a chain; this module is
-// the only thing that decides WHEN. One tick, three steps, in this order:
+// the only thing that decides WHEN. One tick, five steps, in this order:
 //
 //   1. Open. Consults still 'scheduled' whose slot is inside
 //      (NOW - OPEN_BEHIND_MINUTES, NOW + OPEN_AHEAD_MINUTES] with no chain at
@@ -18,6 +18,8 @@
 //      (ruling R7), never a collapsed digest.
 //   3. Fire. Pending chains whose next_ring_at is due, oldest ring first,
 //      handed to advanceChain, which owns every guard and every claim.
+//   4. Reap stale, and 5. reap unconfirmed bridges: consultCallReaper.js's two
+//      arms (spec 2026-09-30). With the kill switch off, only step 4 runs.
 //
 // THE TWO WINDOWS ARE CONTIGUOUS AND DISJOINT: step 1's open bound is step 2's
 // closed bound, so a slot belongs to exactly one of them and nothing can fall
@@ -37,11 +39,12 @@
 // EVERY QUERY HERE IS GLOBAL over the table, which is what makes the per-row
 // try/catch load-bearing: one malformed consult must not stop the tick and
 // strand every consult behind it in the ordering. The last error is rethrown
-// after all three steps have run, so wrapScheduler records a failed run rather
+// after every step has run, so wrapScheduler records a failed run rather
 // than a silent green (schedulerHealth contract: schedulers rethrow).
 
 const { pool } = require('../db');
 const chain = require('./consultCallChain');
+const reaper = require('./consultCallReaper');
 const { toUsE164 } = require('./usPhone');
 
 // Per-tick bounds. Step 1 and 2 are cheap index scans over a narrow window;
@@ -105,7 +108,7 @@ function windowConstantsFault(source) {
 // the WINDOW CONSTANTS are read from the static import instead, because they are
 // feature choreography, not an injection point, and a partially stubbed chain
 // would otherwise silently bind NULL bounds and empty every query.
-let deps = { pool, chain };
+let deps = { pool, chain, reaper };
 
 function __setDeps(overrides) {
   deps = { ...deps, ...overrides };
@@ -247,23 +250,54 @@ async function processDueRings(counts, fault) {
 }
 
 /**
+ * Step 4, the reaper's stale arm (spec 2026-09-30 section 4.4). After the fire
+ * step, so a row that step can still judge gets its specific verdict first. The
+ * two arms are separate steps so either failing cannot cost the other its pass.
+ */
+async function reapStaleChains(counts) {
+  counts.reaped += await deps.reaper.reapStaleConsultCallAttempts();
+}
+
+/** Step 5, the reaper's bridge arm (spec 2026-09-30 section 4.3). */
+async function reapSilentBridges(counts) {
+  counts.unconfirmedBridges += await deps.reaper.reapUnconfirmedBridges();
+}
+
+/**
  * One tick.
  *
  * @returns {Promise<{skipped: true}|{opened: number, capTripped: number,
- *   skippedInvalid: number, missedWindow: number, ringsProcessed: number}>}
+ *   skippedInvalid: number, missedWindow: number, ringsProcessed: number,
+ *   reaped: number, unconfirmedBridges: number}>}
  *   opened counts chains actually opened; capTripped counts cap-trip OUTCOMES,
  *   which is not the same as marker rows written; skippedInvalid and
  *   missedWindow count skip rows this tick filed, not rows that already stood;
- *   ringsProcessed counts due rings handed to advanceChain, NOT calls placed.
+ *   ringsProcessed counts due rings handed to advanceChain, NOT calls placed;
+ *   reaped counts rows the stale reaper transitioned this tick;
+ *   unconfirmedBridges counts press-1 rows the bridge arm flipped this tick.
  */
 async function runConsultCallSweep() {
-  // The switch silences the whole clock: no chain opens, no skip row is filed,
-  // and nothing already pending is advanced. Checked once, at the top, so a
-  // flip mid-tick cannot leave a half-run tick.
-  if (!deps.chain.isEnabled()) return { skipped: true };
+  // The switch silences the clock: no chain opens, no skip row is filed, and
+  // nothing already pending is advanced; only the stale reap below still runs.
+  // Checked once, at the top, so a flip mid-tick cannot leave a half-run tick.
+  if (!deps.chain.isEnabled()) {
+    // The stale reap still runs with the switch off (spec 2026-09-30 section
+    // 4.4). Its disabled branch parks a stranded chain skipped_disabled and
+    // emails nobody; skipped here, those rows would sit until the switch came
+    // back and then be reaped as failures, one email per consult, for a stop
+    // Dallas ordered. Nothing is dialed, opened or filed. A failure still fails
+    // the tick, like every other step.
+    try {
+      await deps.reaper.reapStaleConsultCallAttempts();
+    } catch (err) {
+      throw toError(err);
+    }
+    return { skipped: true };
+  }
 
   const counts = {
     opened: 0, capTripped: 0, skippedInvalid: 0, missedWindow: 0, ringsProcessed: 0,
+    reaped: 0, unconfirmedBridges: 0,
   };
   const fault = { failed: false, error: null };
 
@@ -273,6 +307,7 @@ async function runConsultCallSweep() {
   // down too. The per-row handlers inside each step never reach this catch.
   for (const [name, step] of [
     ['open', openDueChains], ['missed-window', fileMissedWindows], ['fire', processDueRings],
+    ['reap-stale', reapStaleChains], ['reap-bridge', reapSilentBridges],
   ]) {
     try {
       await step(counts, fault);
@@ -284,15 +319,17 @@ async function runConsultCallSweep() {
   }
 
   if (counts.opened || counts.capTripped || counts.skippedInvalid
-      || counts.missedWindow || counts.ringsProcessed) {
+      || counts.missedWindow || counts.ringsProcessed
+      || counts.reaped || counts.unconfirmedBridges) {
     console.log(
       `[consultCallSweep] opened=${counts.opened} capTripped=${counts.capTripped} `
       + `skippedInvalid=${counts.skippedInvalid} missedWindow=${counts.missedWindow} `
-      + `ringsProcessed=${counts.ringsProcessed}`
+      + `ringsProcessed=${counts.ringsProcessed} reaped=${counts.reaped} `
+      + `unconfirmedBridges=${counts.unconfirmedBridges}`
     );
   }
 
-  // Raised AFTER all three steps ran: the tick does as much work as it can,
+  // Raised AFTER every step ran: the tick does as much work as it can,
   // then reports the failure so wrapScheduler records it. A swallowed error
   // here would be a green heartbeat over a consult nobody called.
   if (fault.failed) throw toError(fault.error);

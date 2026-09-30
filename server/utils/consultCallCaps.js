@@ -80,7 +80,9 @@ async function recordLegAudit(pool, { leg, to, callSid }, onError) {
     await pool.query(
       `INSERT INTO call_audit (triggered_by, target_e164, call_sid, status)
        VALUES (NULL, $1, $2, $3)`,
-      [to || null, callSid || null, leg === 'admin' ? AUDIT_ADMIN_LEG : AUDIT_VA_LEG]
+      // The Zul leg records NO number: the caps count by status, and VA_CELL
+      // must never reach a DB record (spec 2026-09-30 section 6.3).
+      [leg === 'admin' ? (to || null) : null, callSid || null, leg === 'admin' ? AUDIT_ADMIN_LEG : AUDIT_VA_LEG]
     );
   } catch (err) {
     if (typeof onError === 'function') onError(err);

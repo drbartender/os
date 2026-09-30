@@ -19,10 +19,12 @@
 // exactly like a condition that never occurs.
 //
 // detail is DIAGNOSTIC FREE TEXT, never an enum: a failed calls.create writes a
-// raw Twilio error code into it. Only the cap and cancelled branches read it,
-// and only by equality against the values their writers actually produce. Both
-// therefore need a fallback, and what a fallback is allowed to SAY differs
-// between them: see the note above consultCancelledLabel.
+// raw Twilio error code into it. Only the cap, cancelled and unconfirmed-bridge
+// branches read it, and only by equality against the values their writers
+// actually produce. The cap and cancelled branches therefore need a fallback,
+// and what a fallback is allowed to SAY differs between them: see the note
+// above consultCancelledLabel. The bridge branch needs none: any other failed
+// row keeps the plain 'failed' label.
 
 // The closed set the DB CHECK allows, minus the three statuses that need more
 // than a lookup: 'connected' carries a name and a duration, 'skipped_cap'
@@ -39,6 +41,12 @@ const CONSULT_CALL_LABELS = {
   calling_admin: 'in progress',
   calling_va: 'in progress',
 };
+
+// The one phrase for a press-1 the reaper flipped because Twilio never reported
+// the client leg (spec 2026-09-30 section 4.3). SHARED, like consultCapLabel:
+// the needs-attention feed (queueItems.js) imports it, so the detail line and
+// the feed headline can never say different things about the same row.
+export const BRIDGE_UNCONFIRMED_LABEL = 'pressed 1, bridge unconfirmed';
 
 // skipped_cap is THREE operator events wearing one status:
 //   cap_tripped        openChain's chain-open daily cap, and the DOMINANT one.
@@ -78,14 +86,13 @@ export function consultCapLabel(detail) {
 //                           c.scheduled_at > NOW(), so the row it marks is a
 //                           LIVE, FUTURE consult. That INSERT is the only path
 //                           in the feature that turns a consult which would
-//                           have rung into one that silently will not: the
-//                           client is still expecting a call and nothing will
-//                           ring. It is also the quietest, because the chain
-//                           emails only when it stops MORE than one row, so a
-//                           single stopped booking has no email, no text and no
-//                           needs-attention item. This line is its only surface,
-//                           which is why it is the one that carries an
-//                           instruction rather than just a fact.
+//                           have rung into one that will not: the client is
+//                           still expecting a call and nothing will ring. The
+//                           chain emails when it stops a row (spec 2026-09-30,
+//                           once per booker per day), but the row has no
+//                           needs-attention item, so this line is its only
+//                           browsing surface, which is why it is the one that
+//                           carries an instruction rather than just a fact.
 //   rescheduled             guardStillScheduled saw scheduled_at move. The
 //                           consult is live at a NEW slot, which opens its own
 //                           chain and rings on its own. Nothing to do.
@@ -167,6 +174,10 @@ export function consultCallOutcomeLabel(cc) {
 
   if (cc.status === 'skipped_cap') return consultCapLabel(cc.detail);
   if (cc.status === 'skipped_cancelled') return consultCancelledLabel(cc.detail);
+  // A press-1 the reaper flipped because Twilio never reported the client leg
+  // (spec 2026-09-30 section 4.3). Its own words, not the generic 'failed':
+  // somebody DID answer and press 1, and the line should say so.
+  if (cc.status === 'failed' && cc.detail === 'bridge_unconfirmed') return BRIDGE_UNCONFIRMED_LABEL;
 
   // typeof rather than truthiness: CONSULT_CALL_LABELS is an object literal, so
   // an inherited key would otherwise hand a function back to JSX. An unknown

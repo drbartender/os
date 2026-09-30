@@ -127,8 +127,8 @@ if (!process.env.CAL_WEBHOOK_SECRET) {
 // 1922, the company line the client sees when Dallas pressed 1, so a callback
 // rings through to him. FORMAT-checked rather than presence-checked on purpose:
 // a Render typo would make every press-1 <Dial> fail AT TWILIO while the row
-// already reads 'connected', which is terminal and is never reaped, so the
-// failure would be invisible. Unset or malformed falls back to VOICE_CALLER_ID
+// already reads 'connected', and the only alert would be the reaper's
+// bridge-unconfirmed email long after the call. Unset or malformed falls back to VOICE_CALLER_ID
 // (the 0082, Zul's line), which still connects the call.
 {
   const cid = String(process.env.CONSULT_CALLER_ID || '').trim();
@@ -139,6 +139,26 @@ if (!process.env.CAL_WEBHOOK_SECRET) {
       const Sentry = require('@sentry/node');
       if (process.env.SENTRY_DSN_SERVER) {
         Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'consult-call' } });
+      }
+    } catch (_) { /* sentry optional in dev */ }
+  }
+}
+
+// The two consult bridge dial targets (spec 2026-09-30 section 6.4). placeLeg
+// refuses a value that is not strict E.164 and records that leg as failed, so a
+// Render typo costs rings instead of dialing junk; this makes it visible at
+// boot. Tested verbatim, like placeLeg. UNSET stays silent: leaving either one
+// unset is a real configuration. The value itself is NEVER logged: a mistyped
+// VA_CELL is still Zul's number. ADMIN_PHONE is shared with other features.
+for (const key of ['ADMIN_PHONE', 'VA_CELL']) {
+  const value = process.env[key];
+  if (value && !/^\+[1-9]\d{6,14}$/.test(value)) {
+    const msg = `[phone config] ${key} is set but not strict E.164; the consult call bridge will not dial it, and other features that use it may fail too`;
+    console.warn(msg);
+    try {
+      const Sentry = require('@sentry/node');
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'phone-config' } });
       }
     } catch (_) { /* sentry optional in dev */ }
   }
@@ -755,6 +775,9 @@ async function start() {
       // upcoming Cal.com consult, files missed windows, and places the ring that is
       // due. Billed voice, claim-guarded per row; the in-flight guard keeps a slow
       // tick from overlapping the next one (service_extension_sweep precedent).
+      // It also runs the consult call reaper (consultCallReaper.js) every tick,
+      // so with this flag off, or the sweep left unwired by windowConstantsFault
+      // below, nothing rescues a chain stranded mid-ring.
       if (enabled('RUN_CONSULT_CALL_SWEEP_SCHEDULER')) {
         const {
           runConsultCallSweep, windowConstantsFault,

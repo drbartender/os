@@ -550,16 +550,27 @@ const CONSULT_CALL_BANNERS = new Map([
   // is the other likely one, and telling the reader to go check an environment
   // variable during a Twilio outage sends them somewhere they cannot fix it.
   ['missed, text failed', 'Everyone missed this consult and the text alert could not be sent, most likely a Twilio failure rather than a setting. Call them now.'],
+  // The client leg's own pair (spec 2026-09-30 section 4.2): Dallas or Zul DID
+  // answer and press 1, and it was the client who did not pick up.
+  ['client no answer, no text destination', 'The client did not pick up when the bridge called them, and no text destination is configured, so this email is the only alert. Call them back.'],
+  ['client no answer, text failed', 'The client did not pick up when the bridge called them, and the text alert could not be sent, most likely a Twilio failure rather than a setting. Call them back.'],
+  // spec 2026-09-30 section 4.3: somebody pressed 1 and Twilio never reported
+  // the client leg, so the client most likely never rang.
+  ['bridge unconfirmed', 'Someone pressed 1 on this consult, but Twilio never reported the call to the client, so it most likely never connected. Call them to check.'],
   // A tripped cap and a too-late chain are NOT system faults to go look at:
   // in both, nobody was rung and nobody will be, so they owe the reader the
-  // same call-them-by-hand instruction the four above carry.
+  // same call-them-by-hand instruction every entry above carries. That holds
+  // for all three caps (consultCallCaps.fileCapTrip sends the dial and
+  // international-leg ones); both used to fall through to the generic line.
   ['daily cap tripped', 'The daily cap on consult calls was already reached, so the bridge will not ring for this booking. Call them by hand at the slot.'],
+  ['daily dial cap tripped', 'The daily cap on rings to Dallas was already reached, so the bridge will not ring for this booking. Call them by hand at the slot.'],
+  ['daily international-leg cap tripped', "The daily cap on calls to Zul's line was already reached, so the bridge will not ring for this booking. Call them by hand at the slot."],
   ['too late', 'Too much time had passed since the slot for the bridge to ring, so nobody was called. Call them now.'],
   // The one path in the whole feature that turns a consult that WOULD have rung
-  // into one that silently will not. Only sent when more than one row was
-  // stopped, which is the case where at least one of them was a separate,
-  // legitimate booking rather than the slot the booker just moved.
-  ['unresolved reschedule', 'A reschedule named a booking we could not match, so this consult and every other upcoming consult for this booker were stopped and will not ring. Call them to confirm which slot is real.'],
+  // into one that will not. Sent when at least one row was stopped, at most once
+  // per booker email per Chicago day (spec 2026-09-30 section 4.1): the chain
+  // cannot tell the booker moving their own slot from someone else's booking.
+  ['unresolved reschedule', "Someone rescheduled using this booker's email and we could not tell which booking moved, so the call for this slot, and for any other upcoming slot under this email, was stopped and will not ring. If this is the slot they moved away from, there is nothing to do. If not, call them at the slot."],
 ]);
 const CONSULT_CALL_BANNER_DEFAULT = 'The consult call bridge could not complete calls for this consult. Check the system if this repeats.';
 
@@ -569,8 +580,10 @@ const CONSULT_CALL_BANNER_DEFAULT = 'The consult call bridge could not complete 
  * @param {Date|string} args.scheduledAt consults.scheduled_at
  * @param {string} args.reason one of: 'daily cap tripped', 'too late',
  *   'missed window', 'undialable number', 'missed, no text destination',
- *   'missed, text failed', 'unresolved reschedule', each a CONSULT_CALL_BANNERS
- *   key above, or 'call failed', which is deliberately NOT a key and takes
+ *   'missed, text failed', 'client no answer, no text destination',
+ *   'client no answer, text failed', 'bridge unconfirmed', 'unresolved reschedule',
+ *   'daily dial cap tripped', 'daily international-leg cap tripped', each a
+ *   CONSULT_CALL_BANNERS key above, or 'call failed', which is deliberately NOT a key and takes
  *   CONSULT_CALL_BANNER_DEFAULT because it is the one reason the generic
  *   go-look-at-the-system line is right for
  * @param {string} args.phoneDisplay formatted E.164 when the number is valid,

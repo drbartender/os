@@ -85,10 +85,11 @@ test('the three in-flight statuses all read as in progress', () => {
   expect(consultCallOutcomeLabel(row({ status: 'calling_va' }))).toBe('in progress');
 });
 
-// detail is diagnostic free text on every status, not just the two that read
+// detail is diagnostic free text on every status, not just the three that read
 // it: a failed calls.create writes a raw Twilio error code there. It must not
-// leak into, or alter, any label outside the cap and cancelled branches.
-test('detail never changes a label outside the cap and cancelled branches', () => {
+// leak into, or alter, any label outside the cap, cancelled and
+// unconfirmed-bridge branches.
+test('detail never changes a label outside the cap, cancelled and unconfirmed-bridge branches', () => {
   expect(consultCallOutcomeLabel(row({ status: 'failed', detail: '13224' }))).toBe('failed');
   expect(consultCallOutcomeLabel(row({ status: 'failed', detail: 'too_late' }))).toBe('failed');
   expect(consultCallOutcomeLabel(row({ status: 'missed', detail: 'dial_cap_tripped' }))).toBe('missed');
@@ -98,6 +99,14 @@ test('detail never changes a label outside the cap and cancelled branches', () =
     .toBe('daily cap tripped');
   expect(consultCallOutcomeLabel(row({ status: 'skipped_cancelled', detail: 'cap_tripped' })))
     .toBe('not called, reason unknown');
+});
+
+// spec 2026-09-30 section 4.3: somebody DID answer and press 1, and Twilio never
+// reported the client leg. Its own words, not the generic failed label.
+test('a press-1 the reaper flipped reads as an unconfirmed bridge', () => {
+  expect(consultCallOutcomeLabel(row({ status: 'failed', detail: 'bridge_unconfirmed' })))
+    .toBe('pressed 1, bridge unconfirmed');
+  expect(consultCallOutcomeLabel(row({ status: 'missed', detail: 'bridge_unconfirmed' }))).toBe('missed');
 });
 
 // ---------------------------------------------------- skipped_cap, all THREE

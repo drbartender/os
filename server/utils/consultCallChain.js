@@ -19,7 +19,7 @@
  *   - onLegTerminal({ attemptId, leg, ring, callStatus }): one leg reached a
  *     terminal Twilio status; ring-guarded (R5) and the owner of every
  *     non-initial transition.
- *   - placeLeg / sendMissedText / guardStillScheduled / claim.
+ *   - placeLeg / sendMissedText / notifyClientNoAnswer / guardStillScheduled / claim.
  *
  * SCHEDULED_AT NEVER ROUND-TRIPS THROUGH JAVASCRIPT (ruling R12). node-pg hands
  * a TIMESTAMPTZ back as a millisecond-precision JS Date, so a microsecond slot
@@ -72,9 +72,6 @@ const TOO_LATE_VA_SEC = 720;
 
 // A chain stuck mid-ring this long is abandoned rather than resumed.
 const STALE_MINUTES = 30;
-
-// The || 10 fallback is load-bearing: an unset env var must not become
-// `count < NaN` (always false), which would cap-trip every consult.
 
 // Default ON, like LEAD_CALL_ENABLED. Only the literal 'false' kills it.
 function isEnabled() { return process.env.CONSULT_CALL_ENABLED !== 'false'; }
@@ -236,36 +233,6 @@ async function fileMissedWindow({ consultId }) {
 
 
 /**
- * File a terminal spend-cap refusal and tell a human, at most once per window.
- *
- * TERMINAL on purpose: a bare return leaves the row pending with its due time
- * and the sweep retries it every 60 seconds forever.
- *
- * THE EMAIL GATE FAILS TOWARD TELLING DALLAS. The first version asked whether
- * this row was the ONLY trip in the window (`COUNT(*) = 1`), which loses the
- * alert entirely in the case that matters most: two trips landing close enough
- * that both COUNTs see 2, so neither emails, and a sustained attack keeps the
- * count above 1 forever so no later trip ever emails either. Zero alerts during
- * the abuse the cap exists to report. Counting OTHER trips instead (`id <> this
- * one`) means a race can send a second email rather than none. For a feature
- * whose declared failure mode is silence, duplicate mail is the correct way to
- * be wrong.
- */
-async function fileDialCapTrip(attemptId, detail) {
-  if (!(await claim(attemptId, 'pending', 'skipped_cap', { detail, clearNextRing: true }))) return;
-  const others = await _deps.pool.query(
-    `SELECT COUNT(*)::int AS n FROM consult_call_attempts
-      WHERE detail = $2 AND id <> $1 AND updated_at > NOW() - INTERVAL '24 hours'`,
-    [attemptId, detail]
-  );
-  if (Number(others.rows[0].n) === 0) {
-    console.warn(`[consultCall] ${detail} at attempt ${attemptId}; further refusals this window are silent`);
-    await sendChainEmail({ attemptId, reason: detail === 'va_leg_cap_tripped' ? 'daily international-leg cap tripped' : 'daily dial cap tripped' });
-  }
-}
-
-
-/**
  * Open the ring chain for one consult, or record why it could not open.
  *
  * The cap and the open are ONE statement. Under READ COMMITTED a truly
@@ -386,34 +353,35 @@ async function consultCallTail(opts) {
     // One statement, so no slot is ever read into JS on the way.
     if (unresolvedOldUid && typeof bookerEmail === 'string' && bookerEmail.trim()) {
       const marked = await _deps.pool.query(
-        `INSERT INTO consult_call_attempts (consult_id, scheduled_at, status, detail)
-         SELECT c.id, c.scheduled_at, 'skipped_cancelled', 'rescheduled_unresolved'
-           FROM consults c
-          WHERE c.booker_email = $1
-            AND c.status = 'scheduled'
-            AND c.scheduled_at > NOW()
-            AND c.id <> $2
-         ON CONFLICT (consult_id, scheduled_at) DO NOTHING
-         RETURNING id`,
+        `WITH m AS (
+           INSERT INTO consult_call_attempts (consult_id, scheduled_at, status, detail)
+           SELECT c.id, c.scheduled_at, 'skipped_cancelled', 'rescheduled_unresolved'
+             FROM consults c
+            WHERE c.booker_email = $1
+              AND c.status = 'scheduled'
+              AND c.scheduled_at > NOW()
+              AND c.id <> $2
+           ON CONFLICT (consult_id, scheduled_at) DO NOTHING
+           RETURNING id)
+         SELECT m.id, EXISTS (SELECT 1 FROM consult_call_attempts a JOIN consults c ON c.id = a.consult_id
+                               WHERE a.status = 'skipped_cancelled' AND a.detail = 'rescheduled_unresolved'
+                                 AND c.booker_email = $1 AND a.created_at >= date_trunc('day',
+                                   NOW() AT TIME ZONE 'America/Chicago') AT TIME ZONE 'America/Chicago') AS stopped_today
+           FROM m`,
         [bookerEmail, consultId]
       );
       if (marked.rowCount > 0) {
         console.log(`[consultCall] unresolved reschedule stopped ${marked.rowCount} sibling chain(s)`);
       }
-      // This is the ONLY path in the feature that turns a consult that would
-      // have rung into one that silently will not, so more than one row gets a
-      // human. One row is the ordinary case, the booker moving their single
-      // upcoming slot, and stays a log line. Two or more means at least one
-      // separate, legitimate booking was stopped too, and nothing else watches
-      // that. Behavior is unchanged (spec 4.2 marks them all either way): only
-      // the visibility is raised.
-      //
-      // ONE email, not one per row, and the bound matters: the Cal.com booking
-      // page is PUBLIC and these rows are inserted outside the daily cap, so a
-      // per-row loop would be a Resend-quota amplifier reachable from the open
-      // internet. The banner names the booker's whole set rather than a count,
-      // and the log line above carries the count.
-      if (marked.rowCount > 1) {
+      // The ONLY path in the feature that turns a consult that would have rung
+      // into one that will not, so a stop gets a human (spec 2026-09-30 4.1):
+      // one row is as likely a stranger stopping a client's only real consult
+      // as the booker moving their own slot. ONE email per booker email per
+      // Chicago day, never one per row: the booking page is PUBLIC and these
+      // rows sit outside the daily cap. A calendar day, not a rolling 24h: each
+      // stop would re-open a rolling window, so a daily dummy booking could
+      // silence a victim forever. stopped_today sees only EARLIER stops.
+      if (marked.rowCount > 0 && !marked.rows[0].stopped_today) {
         await sendChainEmail({
           attemptId: Number(marked.rows[0].id),
           reason: 'unresolved reschedule',
@@ -591,7 +559,7 @@ async function writeLegStatus(attemptId, leg, callStatus, ring) {
  * @param {number|string} args.attemptId
  * @param {'admin'|'va'} args.leg
  * @param {number} args.ring admin ring 1-3, or 0 on the Zul leg
- * @param {string} args.to ADMIN_PHONE or VA_CELL, dialed VERBATIM (dial-target law)
+ * @param {string} args.to ADMIN_PHONE or VA_CELL, format-checked then dialed VERBATIM
  * @returns {Promise<boolean>}
  */
 async function placeLeg({ attemptId, leg, ring, to }) {
@@ -602,6 +570,17 @@ async function placeLeg({ attemptId, leg, ring, to }) {
   // guard string serves them both.
   const ringGuard = isAdmin ? ' AND admin_ring = $3::smallint' : '';
   const ringParam = isAdmin ? [ring] : [];
+  // Dial-target check (spec 2026-09-30 section 6.4), VERBATIM so what passes is
+  // exactly what Twilio dials. Malformed = a failed leg, never "unset" (a quiet skip).
+  if (!STRICT_E164.test(String(to || ''))) {
+    await _deps.pool.query(
+      `UPDATE consult_call_attempts SET ${statusCol} = 'create_failed', detail = $2, updated_at = NOW()
+        WHERE id = $1${ringGuard}`,
+      [attemptId, 'invalid_dial_target', ...ringParam]
+    ).catch(() => {});
+    console.error(`[consultCall] ${leg} dial target is not strict E.164; leg not placed for attempt ${attemptId}`);
+    return false;
+  }
   try {
     const call = await _deps.placeBridgedCall({
       to,
@@ -639,9 +618,13 @@ async function placeLeg({ attemptId, leg, ring, to }) {
       `UPDATE consult_call_attempts
           SET ${statusCol} = 'create_failed', detail = $2, updated_at = NOW()
         WHERE id = $1${ringGuard}`,
-      [attemptId, String((err && (err.code || err.message)) || 'create_failed').slice(0, 200), ...ringParam]
+      // err.code or a fixed word, NEVER err.message (it can carry VA_CELL).
+      [attemptId, String((err && err.code) || (err && err.message === 'sid_unpersistable' ? 'sid_unpersistable' : 'create_failed')).slice(0, 200), ...ringParam]
     ).catch(() => {});
-    captureError(err, `${leg}-leg-create`);
+    // Log and Sentry get a copy with the dialed number cut to its last four, with or without its +.
+    const masked = `...${last4(to)}`;
+    const safe = new Error(String((err && err.message) || err).split(to).join(masked).split(to.slice(1)).join(masked));
+    captureError(Object.assign(safe, { code: err && err.code }), `${leg}-leg-create`);
     return false;
   }
 }
@@ -736,6 +719,23 @@ async function finishMissed(attemptId, fromStatus, ring) {
     attemptId,
     reason: MISSED_TEXT_EMAIL_REASON.get(outcome) || 'missed, text failed',
   });
+}
+
+// The client-no-answer twin of MISSED_TEXT_EMAIL_REASON, with its own banners:
+// the client not picking up and nobody on our side answering need different next steps.
+const CLIENT_NO_ANSWER_EMAIL_REASON = new Map([
+  ['no_destination', 'client no answer, no text destination'],
+  ['send_failed', 'client no answer, text failed'],
+  ['no_attempt', 'client no answer, text failed'],
+]);
+
+/** The client did not pick up: text Dallas their number; a text that could not go
+ * out becomes the one email (spec 2026-09-30 4.2). Latch winner only; never throws. */
+async function notifyClientNoAnswer(opts) {
+  const { attemptId } = opts || {};
+  const outcome = await sendMissedText({ attemptId, kind: 'client_no_answer' });
+  if (outcome === 'sent') return;
+  await sendChainEmail({ attemptId, reason: CLIENT_NO_ANSWER_EMAIL_REASON.get(outcome) || 'client no answer, text failed' });
 }
 
 /**
@@ -883,6 +883,12 @@ async function onLegTerminal(opts) {
     }
     await writeLegStatus(attemptId, leg, callStatus, fromRing);
 
+    // Switch off: park the chain on ANY admin ring (spec 2026-09-30 6.1), before
+    // the re-arm, which the sweep would never advance while off.
+    if (!isEnabled()) {
+      await claim(attemptId, 'calling_admin', 'skipped_disabled', { ring: fromRing, clearNextRing: true });
+      return;
+    }
     if (fromRing < MAX_ADMIN_RINGS) {
       // Re-arm for the next ring. A late callback simply writes a next_ring_at
       // already in the past, and the sweep fires it on its very next tick.
@@ -894,10 +900,6 @@ async function onLegTerminal(opts) {
 
     // Ring 3, the hop to Zul. Every re-check below lives here as well as in the
     // sweep's fire step, because this hop bills an international leg.
-    if (!isEnabled()) {
-      await claim(attemptId, 'calling_admin', 'skipped_disabled', { ring: fromRing, clearNextRing: true });
-      return;
-    }
     const guard = await guardStillScheduled(attemptId);
     if (!guard.ok) {
       await claim(attemptId, 'calling_admin', 'skipped_cancelled', {
@@ -975,6 +977,7 @@ module.exports = {
   onLegTerminal,
   guardStillScheduled,
   sendMissedText,
+  notifyClientNoAnswer,
   dailyCap: caps.dailyCap,
   dialCap: () => caps.dialCap(MAX_ADMIN_RINGS),
   vaLegCap: caps.vaLegCap,

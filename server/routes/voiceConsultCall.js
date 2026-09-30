@@ -31,7 +31,7 @@ const { xmlEscape } = require('../utils/xmlEscape');
 const { isValidTwilioRequest } = require('../utils/twilioSignature');
 const { pool } = require('../db');
 const {
-  onLegTerminal, guardStillScheduled, sendMissedText, MAX_ADMIN_RINGS,
+  onLegTerminal, guardStillScheduled, notifyClientNoAnswer, isEnabled, MAX_ADMIN_RINGS,
 } = require('../utils/consultCallChain');
 const { buildConsultBriefing, formatUsPhoneForText } = require('../utils/consultCallBriefing');
 const { toUsE164 } = require('../utils/usPhone');
@@ -76,9 +76,9 @@ function timeLimitSec() {
  *
  * The strict format check, not just a presence check, is the point. A Render
  * typo in CONSULT_CALLER_ID would otherwise make every press-1 Dial fail AT
- * TWILIO while the row already reads 'connected', which is terminal and never
- * reaped, so the failure would be invisible. server/index.js warns about the
- * same value at boot.
+ * TWILIO while the row already reads 'connected', and the only alert would be
+ * the reaper's bridge-unconfirmed email long after the call. server/index.js
+ * warns about the same value at boot.
  */
 function callerIdFor(leg) {
   const voice = String(process.env.VOICE_CALLER_ID || '').trim();
@@ -88,7 +88,7 @@ function callerIdFor(leg) {
 }
 
 // Dependency-injection seam for tests (mirrors voiceLeadCall's __setLeadVoiceDeps).
-let _deps = { isValidTwilioRequest, pool, onLegTerminal, guardStillScheduled, sendMissedText };
+let _deps = { isValidTwilioRequest, pool, onLegTerminal, guardStillScheduled, notifyClientNoAnswer };
 function __setConsultVoiceDeps(d) { _deps = { ..._deps, ...d }; }
 router.__setConsultVoiceDeps = __setConsultVoiceDeps;
 
@@ -111,6 +111,15 @@ function sendTwiml(res, body) {
 /** Polite dead-end: never a 500, never an empty ring. */
 function apologyTwiml(res) {
   sendTwiml(res, '<Response><Say>Sorry, this consult call has expired. Goodbye.</Say><Hangup/></Response>');
+}
+
+/**
+ * The kill switch is off (spec 2026-09-30 section 6.1): say so and dial
+ * nothing. The leg's own status callback then parks the chain skipped_disabled
+ * through onLegTerminal, on any ring.
+ */
+function switchedOffTwiml(res) {
+  sendTwiml(res, '<Response><Say>The consult call bridge is turned off. Goodbye.</Say><Hangup/></Response>');
 }
 
 /**
@@ -183,7 +192,7 @@ function legMatches(row, leg, ring) {
 
 /**
  * POST /answer?attempt&leg&ring&play — the agent leg's TwiML. Gather wraps the
- * spoken briefing; a second <Say> is the one automatic repeat; then hang up
+ * spoken briefing AND its one automatic repeat; then hang up
  * (voicemail can never press 1, so the status callback advances the chain).
  */
 router.post('/answer', async (req, res) => {
@@ -193,6 +202,7 @@ router.post('/answer', async (req, res) => {
     const leg = parseLeg(req.query.leg);
     const ring = parseRing(req.query.ring);
     if (!attemptId || !leg || ring === null) return apologyTwiml(res);
+    if (!isEnabled()) return switchedOffTwiml(res);
 
     const row = await loadAttempt(attemptId);
     if (!legMatches(row, leg, ring)) return apologyTwiml(res);
@@ -214,12 +224,16 @@ router.post('/answer', async (req, res) => {
     // fixed enum. The booker's name is free text and lives in element text only.
     const ringOut = leg === 'admin' ? Number(row.admin_ring) : ring;
     const action = xmlEscape(`/api/voice/consult/digit?attempt=${attemptId}&leg=${leg}&ring=${ringOut}&play=${play}`);
+    // BOTH readings sit inside the Gather (spec 2026-09-30 section 6.2). The
+    // repeat used to follow it, with no collector behind it, so a 1 pressed
+    // during the second reading was lost.
     sendTwiml(res,
       `<Response>`
         + `<Gather numDigits="1" timeout="10" method="POST" action="${action}">`
           + `<Say>${briefing}</Say>`
+          + `<Pause length="1"/>`
+          + `<Say>${briefing}</Say>`
         + `</Gather>`
-        + `<Say>${briefing}</Say>`
         + `<Hangup/>`
       + `</Response>`
     );
@@ -257,16 +271,18 @@ router.post('/digit', async (req, res) => {
     }
 
     // Press 1, the moment a billed call to the CLIENT is placed. Order matters
-    // and is deliberate: validate the dial target, then re-check the consult,
-    // and only then claim.
+    // and is deliberate: the kill switch first (spec 2026-09-30 section 6.1,
+    // flipping it off mid-ring must not still buy one billed client leg), then
+    // validate the dial target, then re-check the consult, and only then claim.
+    if (!isEnabled()) return switchedOffTwiml(res);
     const row = await loadAttempt(attemptId);
     if (!legMatches(row, leg, ring)) return apologyTwiml(res);
 
     // Dial-target law, second checkpoint (the first is at chain-open). A
     // post-claim validation failure would strand the row as 'connected' with no
-    // bridge, and 'connected' is deliberately never reaped, so the chain would
-    // be invisible forever. Validate-first just apologizes, the leg ends, and
-    // the status callback advances the chain as usual.
+    // bridge, which the reaper only reports once the call limit has long passed
+    // (spec 2026-09-30 section 4.3). Validate-first just apologizes, the leg
+    // ends, and the status callback advances the chain as usual.
     const target = row.booker_phone ? toUsE164(row.booker_phone) : null;
     if (!target) return apologyTwiml(res);
 
@@ -314,13 +330,14 @@ router.post('/digit', async (req, res) => {
  * POST /dialend?attempt&leg — the <Dial> action: how the bridged call to the
  * booker ended. One of MISSED_DIAL_STATUSES means the client did not pick up,
  * which is the one thing the agent on the line cannot tell from a Twilio
- * status: latch it, text Dallas once, and read the number back so he can try
- * again. Everything else, 'completed' included, hangs up silently.
+ * status: latch it, read the number back so he can try again, then text
+ * Dallas once. Everything else, 'completed' included, hangs up silently.
  *
  * The latch is its own column, NOT a string in `detail` (ruling R14):
  * placeLeg's catch writes a Twilio error code into `detail` earlier in the same
  * chain, and a detail-based latch would then match zero rows and silently drop
- * the text. The row stays 'connected', which is terminal and never reaped.
+ * the text. The row stays 'connected': the latch is the report the reaper's
+ * bridge arm looks for, so a row carrying it is never flipped.
  */
 router.post('/dialend', async (req, res) => {
   try {
@@ -339,21 +356,27 @@ router.post('/dialend', async (req, res) => {
         WHERE id = $1 AND status = 'connected' AND client_no_answer_at IS NULL`,
       [attemptId]
     );
-    // Text-exactly-once law: only the latch winner notifies. Twilio delivers
-    // this callback at-least-once.
-    if (latched.rowCount === 1) {
-      await _deps.sendMissedText({ attemptId, kind: 'client_no_answer' });
-    }
-
     // Re-derived through toUsE164 rather than read raw: the spoken number is
     // the one we would actually dial. A number edited out mid-chain says what
-    // is known instead of reading back something nobody can call.
-    const row = await loadAttempt(attemptId);
-    const target = row && row.booker_phone ? toUsE164(row.booker_phone) : null;
-    const line = target
-      ? `They did not answer. Their number is ${formatUsPhoneForText(target)}. Goodbye.`
-      : 'They did not answer. Goodbye.';
+    // is known instead of reading back something nobody can call. A failed
+    // lookup still speaks, rather than dropping into the bare-hangup catch.
+    let line = 'They did not answer. Goodbye.';
+    try {
+      const row = await loadAttempt(attemptId);
+      const target = row && row.booker_phone ? toUsE164(row.booker_phone) : null;
+      if (target) line = `They did not answer. Their number is ${formatUsPhoneForText(target)}. Goodbye.`;
+    } catch (err) {
+      console.error('[voiceConsultCall] /dialend readback lookup failed:', errText(err));
+    }
     sendTwiml(res, `<Response><Say>${xmlEscape(line)}</Say><Hangup/></Response>`);
+
+    // Text-exactly-once law: only the latch winner notifies (Twilio delivers
+    // this callback at-least-once). AFTER the TwiML (spec 2026-09-30 section
+    // 4.2): the text, and the email a failed text becomes, can outlast Twilio's
+    // 15-second webhook timeout, and the readback above must not wait on them.
+    if (latched.rowCount === 1) {
+      await _deps.notifyClientNoAnswer({ attemptId });
+    }
   } catch (err) {
     console.error('[voiceConsultCall] /dialend failed:', errText(err));
     if (!res.headersSent) sendTwiml(res, '<Response><Hangup/></Response>');

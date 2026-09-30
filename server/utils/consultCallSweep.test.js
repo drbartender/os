@@ -31,6 +31,15 @@ const sweep = require('./consultCallSweep');
 const RUN = `ccs-test-${Date.now()}`;
 const VALID_PHONE = '+12563281203';
 
+// The reaper is table-wide like every sweep query and has its own suite
+// (consultCallReaper.test.js). A no-op by default here, so a stranded row some
+// other suite left behind can never move this suite's counters; the wiring
+// tests below install recording stubs.
+const NOOP_REAPER = {
+  reapStaleConsultCallAttempts: async () => 0,
+  reapUnconfirmedBridges: async () => 0,
+};
+
 let emails = [];
 let texts = [];
 let placed = [];
@@ -124,7 +133,7 @@ beforeEach(() => {
     notifyAdminCategory: async (opts) => { emails.push(opts); return { emailed: 1 }; },
     sendSMS: async (opts) => { texts.push(opts); return { ok: true }; },
   });
-  sweep.__setDeps({ pool, chain });
+  sweep.__setDeps({ pool, chain, reaper: NOOP_REAPER });
 });
 
 // Per test, not just at the end: the sweep's queries are global, so a fixture
@@ -141,6 +150,9 @@ after(async () => {
     else process.env[k] = savedEnv[k];
   }
   await pool.query('DELETE FROM consults WHERE calcom_event_id LIKE $1', [`${RUN}-%`]);
+  // The billed-leg ledger rows this suite's stubbed legs wrote. The Zul leg
+  // records no number, so its rows are found by the stub sid alone.
+  await pool.query(`DELETE FROM call_audit WHERE call_sid LIKE 'CA\\_stub\\_%'`);
   await pool.end();
 });
 
@@ -162,6 +174,7 @@ test('one tick: the window boundaries decide exactly which consults open, which 
   // (see the global-query note in the header), so the counters are exact.
   assert.deepEqual(r, {
     opened: 3, capTripped: 0, skippedInvalid: 0, missedWindow: 2, ringsProcessed: 1,
+    reaped: 0, unconfirmedBridges: 0,
   });
 
   // Opened, ring still ahead: +2m and +4m59s are inside (NOW - 3m, NOW + 5m].
@@ -236,7 +249,8 @@ test('fire step: a ring still ahead waits while one already due fires immediatel
 
 // ─── the kill switch ─────────────────────────────────────────────
 
-test('kill switch: the tick returns the skipped shape and touches nothing, not even a ring already due', async () => {
+test('kill switch: the tick opens, files and rings nothing, not even a ring already due', async () => {
+  // The reaper is stubbed here; what the tick DOES run while off is pinned by the next test.
   const upcoming = await makeConsult('k-upcoming', { offsetSec: 120 });
   const missed = await makeConsult('k-missed', { offsetSec: -240 });
   const openAlready = await makeConsult('k-open', { offsetSec: -120 });
@@ -262,6 +276,50 @@ test('kill switch: the tick returns the skipped shape and touches nothing, not e
   assert.equal(placed.length, 0);
   assert.equal(emails.length, 0);
   assert.equal(texts.length, 0);
+});
+
+test('kill switch off: the stale reap still runs, because it parks and never alerts', async () => {
+  const seen = [];
+  sweep.__setDeps({ reaper: {
+    reapStaleConsultCallAttempts: async () => { seen.push('stale'); return 0; },
+    reapUnconfirmedBridges: async () => { seen.push('bridge'); return 0; },
+  } });
+  process.env.CONSULT_CALL_ENABLED = 'false';
+  let r;
+  try {
+    r = await sweep.runConsultCallSweep();
+  } finally {
+    delete process.env.CONSULT_CALL_ENABLED;
+  }
+  assert.deepEqual(r, { skipped: true });
+  assert.deepEqual(seen, ['stale']);
+});
+
+test('the stale reap rides every tick and a throw costs the ring step nothing', async () => {
+  const due = await makeConsult('r-due', { offsetSec: -120 });
+  assert.equal(await chain.openChain({ consultId: due }), 'opened');
+  const seen = [];
+  sweep.__setDeps({ reaper: {
+    reapStaleConsultCallAttempts: async () => { throw new Error('reap_down'); },
+    reapUnconfirmedBridges: async () => { seen.push('bridge'); return 0; },
+  } });
+  await assert.rejects(sweep.runConsultCallSweep(), /reap_down/);
+  assert.deepEqual(seen, ['bridge'], 'the bridge arm still ran');
+  const rows = await attemptsFor(due);
+  assert.equal(rows[0].status, 'calling_admin', 'the ring a booker is waiting for still went out');
+  assert.equal(placed.length, 1);
+});
+
+test('the reaper rides every tick: both arms run and their counts come back', async () => {
+  const seen = [];
+  sweep.__setDeps({ reaper: {
+    reapStaleConsultCallAttempts: async () => { seen.push('stale'); return 2; },
+    reapUnconfirmedBridges: async () => { seen.push('bridge'); return 1; },
+  } });
+  const r = await sweep.runConsultCallSweep();
+  assert.deepEqual(seen, ['stale', 'bridge']);
+  assert.equal(r.reaped, 2);
+  assert.equal(r.unconfirmedBridges, 1);
 });
 
 // ─── undialable numbers ──────────────────────────────────────────

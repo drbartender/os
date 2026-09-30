@@ -173,6 +173,8 @@ server/utils/pendingCall.js
 server/routes/voiceConsultCall.js
 server/utils/consultCallChain.js
 server/utils/consultCallSweep.js
+server/utils/consultCallReaper.js
+server/utils/consultCallCaps.js
 server/utils/consultCallBriefing.js
 server/utils/calcomWebhookHelpers.js
 

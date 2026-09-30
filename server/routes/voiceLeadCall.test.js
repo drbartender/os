@@ -104,15 +104,17 @@ test('signature failure 403s in production AND with NODE_ENV unset (fail closed 
 
 // ─── /answer ─────────────────────────────────────────────────────
 
-test('/answer plays the Gather-wrapped briefing with one automatic repeat', async () => {
+test('/answer puts BOTH readings inside the Gather, so a 1 during the repeat is collected (spec 2026-09-30 6.2)', async () => {
   const attemptId = await makeAttempt(await makeLead('answer'));
   const res = await post(`/api/voice/lead/answer?attempt=${attemptId}&leg=admin`);
   assert.equal(res.status, 200);
   assert.match(res.body, /<Gather numDigits="1" timeout="10"/);
   assert.ok(res.body.includes(`digit?attempt=${attemptId}&amp;leg=admin&amp;play=1`), res.body);
-  const says = res.body.match(/New Thumbtack lead: Sarah M/g) || [];
-  assert.equal(says.length, 2, 'briefing spoken inside Gather and once again after');
-  assert.match(res.body, /<Hangup\/>/);
+  const gather = (res.body.match(/<Gather[^>]*>([\s\S]*?)<\/Gather>/) || [])[1] || '';
+  const says = gather.match(/New Thumbtack lead: Sarah M/g) || [];
+  assert.equal(says.length, 2, 'the reading and its one repeat both sit inside the Gather');
+  assert.match(gather, /<\/Say><Pause length="1"\/><Say>/);
+  assert.ok(res.body.endsWith('</Gather><Hangup/></Response>'), 'nothing but the hangup after the Gather');
 });
 
 test('/answer apologizes (never 500s) on a missing, terminal, or malformed attempt', async () => {

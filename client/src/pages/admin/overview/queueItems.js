@@ -1,7 +1,7 @@
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { fmt$, fmtDate, dayDiff } from '../../../components/adminos/format';
 import { rowRoleFill } from '../../../components/adminos/shifts';
-import { consultCapLabel } from '../../../utils/consultCallLabel';
+import { consultCapLabel, BRIDGE_UNCONFIRMED_LABEL } from '../../../utils/consultCallLabel';
 
 // Pure item builders + tab assembly for the Needs-attention tabbed card
 // (spec 2026-07-14 §2-§3). Every builder returns rows in the queue-item
@@ -219,11 +219,15 @@ const CONSULT_CALL_LABELS = {
 // here and in utils/consultCallLabel.js, and two copies that can be edited
 // apart are a drift waiting to happen. Its reasoning, including why cap_tripped
 // gets an explicit case and why detail is matched by equality rather than by
-// map lookup, lives with the function. Only the CAP strings are shared: the
-// status vocabulary below stays this surface's own, because a fault feed and a
-// detail line say different things about the same row.
+// map lookup, lives with the function. Only the CAP strings and the
+// bridge-unconfirmed phrase are shared: the status vocabulary below stays this
+// surface's own, because a fault feed and a detail line say different things
+// about the same row.
 function consultCallLabel(status, detail) {
   if (status === 'skipped_cap') return consultCapLabel(detail);
+  // spec 2026-09-30 section 4.3: the reaper flipped a press-1 that never reached
+  // the client. The label is imported, so the two surfaces never disagree.
+  if (status === 'failed' && detail === 'bridge_unconfirmed') return BRIDGE_UNCONFIRMED_LABEL;
   return CONSULT_CALL_LABELS[status] || 'call failed';
 }
 

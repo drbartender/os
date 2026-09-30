@@ -95,7 +95,7 @@ async function loadAttempt(attemptId) {
 
 /**
  * POST /answer?attempt&leg&play — the agent leg's TwiML. Gather wraps the
- * spoken briefing; a second <Say> is the one automatic repeat; then hang up
+ * spoken briefing AND its one automatic repeat; then hang up
  * (voicemail can never press 1, so the status callback advances the chain).
  */
 router.post('/answer', async (req, res) => {
@@ -113,12 +113,15 @@ router.post('/answer', async (req, res) => {
     const play = parseInt(req.query.play, 10) || 1;
     const briefing = xmlEscape(buildLeadBriefing(row));
     const action = xmlEscape(`/api/voice/lead/digit?attempt=${attemptId}&leg=${leg}&play=${play}`);
+    // BOTH readings sit inside the Gather (spec 2026-09-30 section 6.2): a
+    // repeat after it had no collector, so a 1 during it was lost.
     sendTwiml(res,
       `<Response>` +
         `<Gather numDigits="1" timeout="10" method="POST" action="${action}">` +
           `<Say>${briefing}</Say>` +
+          `<Pause length="1"/>` +
+          `<Say>${briefing}</Say>` +
         `</Gather>` +
-        `<Say>${briefing}</Say>` +
         `<Hangup/>` +
       `</Response>`
     );

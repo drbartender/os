@@ -315,6 +315,13 @@ describe('buildLeadCallItems: lead half unchanged, consult half labelled', () =>
       .toBe('Consult call with Ana missed window');
   });
 
+  test('an unconfirmed bridge says so in the headline (spec 2026-09-30 4.3)', () => {
+    expect(titleOf(consult({ status: 'failed', detail: 'bridge_unconfirmed' })))
+      .toBe('Consult call with Ana pressed 1, bridge unconfirmed');
+    expect(titleOf(lead({ status: 'failed', detail: 'bridge_unconfirmed' })))
+      .toBe('Ana call failed');
+  });
+
   // The amendment that matters: skipped_cap is THREE operator events, not two.
   // cap_tripped is openChain's chain-open daily cap and the DOMINANT one, what a
   // stranger hammering the PUBLIC booking page trips first; dial_cap_tripped is
