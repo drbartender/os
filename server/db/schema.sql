@@ -3150,6 +3150,14 @@ CREATE INDEX IF NOT EXISTS idx_consults_scheduled_at ON consults(scheduled_at) W
 -- re-enters calling_admin up to three times, so status alone cannot guard).
 ALTER TABLE consults ADD COLUMN IF NOT EXISTS booker_phone TEXT;
 
+-- Every Cal.com uid a consult carried before a reschedule (spec 2026-09-30,
+-- section 5). handleRescheduled renames calcom_event_id and appends the outgoing
+-- uid here in the same statement. calcom.js treats a uid found in EITHER column
+-- as already seen, so a redelivered or superseded event can never file a
+-- duplicate consult or stop the real one. NOT NULL DEFAULT '{}' backfills every
+-- existing row to an empty list.
+ALTER TABLE consults ADD COLUMN IF NOT EXISTS calcom_prior_event_ids TEXT[] NOT NULL DEFAULT '{}';
+
 CREATE TABLE IF NOT EXISTS consult_call_attempts (
   id               BIGSERIAL PRIMARY KEY,
   consult_id       INTEGER NOT NULL REFERENCES consults(id) ON DELETE CASCADE,

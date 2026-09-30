@@ -104,8 +104,19 @@ async function postEvent(triggerEvent, payload, { secret = TEST_SECRET } = {}) {
 
 const ORIGINAL_SECRET = process.env.CAL_WEBHOOK_SECRET;
 const TEST_SECRET = 'test-cal-secret';
+// consults.calcom_prior_event_ids arrives through schema.sql, which the server
+// applies at boot. The suite applies the same statement itself (idempotent and
+// additive), so it never depends on the dev server having restarted onto this
+// code. Read out of schema.sql rather than restated, so the two cannot drift.
+const SCHEMA_SQL = require('node:fs').readFileSync(
+  require('node:path').join(__dirname, '../db/schema.sql'), 'utf8'
+);
+const PRIOR_UIDS_DDL = SCHEMA_SQL.match(
+  /ALTER TABLE consults ADD COLUMN IF NOT EXISTS calcom_prior_event_ids[^;]*;/
+);
 
 before(async () => {
+  if (PRIOR_UIDS_DDL) await pool.query(PRIOR_UIDS_DDL[0]);
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
 });
 
@@ -1053,4 +1064,215 @@ test('C6: a reschedule that omits the email hands the tail the STORED booker_ema
   assert.equal(row.rows[0].booker_email, `${RUN}-resc@calcom-test.example`, 'the stored address survives an email-less reschedule');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].opts.bookerEmail, `${RUN}-resc@calcom-test.example`, 'the tail gets the STORED email, not the payload null');
+});
+
+// ─── spec 2026-09-30 section 5: a consult remembers its prior uids ───
+// handleRescheduled renames calcom_event_id, so without a memory of the old uid
+// every later event naming it looked like a booking never seen: a redelivered
+// CREATE filed a duplicate at the abandoned slot, and a superseded RESCHEDULE
+// also stopped the real consult through the unresolved-reschedule tail.
+const P = `test-prior-${Date.now()}`;
+
+test('prior uids: schema.sql declares the column, and it is NOT NULL with an empty default', async () => {
+  assert.ok(PRIOR_UIDS_DDL, 'the ALTER is in schema.sql');
+  const { rows } = await pool.query(
+    `SELECT data_type, is_nullable, column_default FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'consults'
+        AND column_name = 'calcom_prior_event_ids'`
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].data_type, 'ARRAY');
+  assert.equal(rows[0].is_nullable, 'NO');
+  assert.match(rows[0].column_default, /'\{\}'/);
+});
+
+test('prior uids: an in-place reschedule records the outgoing uid', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  await postCreated({
+    uid: `${P}-a1`, startTime: '2027-07-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest PriorA', email: `${P}-a@calcom-test.example` }],
+  });
+  const res = await postRescheduled({
+    uid: `${P}-a2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-a1`,
+  });
+  assert.match(res.text, /rescheduled in place/i);
+  const { rows } = await pool.query(
+    'SELECT calcom_prior_event_ids FROM consults WHERE calcom_event_id = $1', [`${P}-a2`]
+  );
+  assert.deepEqual(rows[0].calcom_prior_event_ids, [`${P}-a1`]);
+});
+
+test('prior uids: an identical redelivery of the original CREATE after a reschedule files no duplicate', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+  const createBody = Buffer.from(JSON.stringify({
+    triggerEvent: 'BOOKING_CREATED',
+    payload: {
+      uid: `${P}-b1`, startTime: '2027-07-01T15:00:00Z',
+      attendees: [{ name: 'CalcomTest PriorB', email: `${P}-b@calcom-test.example` }],
+    },
+  }));
+  assert.equal((await signedRequest(createBody, TEST_SECRET)).status, 200);
+  await postRescheduled({ uid: `${P}-b2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-b1` });
+  calls.length = 0;
+
+  const again = await signedRequest(createBody, TEST_SECRET);
+  assert.equal(again.status, 200);
+  assert.match(again.text, /already processed/i, 'a booking that moved is not stranded, so the dedupe row stands');
+  const n = await pool.query(
+    'SELECT COUNT(*)::int n FROM consults WHERE calcom_event_id IN ($1, $2)', [`${P}-b1`, `${P}-b2`]
+  );
+  assert.equal(n.rows[0].n, 1, 'one consult, at the new slot');
+  assert.equal(calls.length, 0, 'no tail ran');
+});
+
+test('prior uids: a CREATE for a moved booking with DIFFERENT bytes is already filed, not a new consult', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+  const attendees = [{ name: 'CalcomTest PriorE', email: `${P}-e@calcom-test.example` }];
+  await postCreated({ uid: `${P}-e1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  await postRescheduled({ uid: `${P}-e2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-e1` });
+  calls.length = 0;
+
+  // A different body hash, so the dedupe never matches and the handler runs.
+  const res = await postCreated({
+    uid: `${P}-e1`, startTime: '2027-07-01T15:00:00Z', attendees, location: 'redelivered with a new field',
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /already filed/i);
+  const n = await pool.query(
+    'SELECT COUNT(*)::int n FROM consults WHERE calcom_event_id IN ($1, $2)', [`${P}-e1`, `${P}-e2`]
+  );
+  assert.equal(n.rows[0].n, 1);
+  assert.equal(calls.length, 0);
+});
+
+test('prior uids: after two reschedules, every earlier event is a replay that files nothing and stops nothing', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+  const email = `${P}-c@calcom-test.example`;
+  const attendees = [{ name: 'CalcomTest PriorC', email }];
+  await postCreated({ uid: `${P}-c1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  const firstMove = Buffer.from(JSON.stringify({
+    triggerEvent: 'BOOKING_RESCHEDULED',
+    payload: { uid: `${P}-c2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-c1`, attendees },
+  }));
+  assert.match((await signedRequest(firstMove, TEST_SECRET)).text, /rescheduled in place/i);
+  await postRescheduled({ uid: `${P}-c3`, startTime: '2027-07-15T15:00:00Z', rescheduleUid: `${P}-c2`, attendees });
+  calls.length = 0;
+
+  // The superseded move, byte-identical: the strand-heal path.
+  const replay = await signedRequest(firstMove, TEST_SECRET);
+  assert.equal(replay.status, 200);
+  assert.match(replay.text, /already processed/i, 'the strand-heal gate itself refuses it, not just the handler');
+  // The superseded move with different bytes: the handler path.
+  const replay2 = await postRescheduled({
+    uid: `${P}-c2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-c1`, attendees, note: 'x',
+  });
+  assert.match(replay2.text, /already rescheduled/i);
+  // The LATEST move redelivered (current uid, same slot): a no-op too.
+  const replay3 = await postRescheduled({
+    uid: `${P}-c3`, startTime: '2027-07-15T15:00:00Z', rescheduleUid: `${P}-c2`, attendees, note: 'y',
+  });
+  assert.match(replay3.text, /already rescheduled/i);
+
+  const rows = await pool.query(
+    'SELECT calcom_event_id, calcom_prior_event_ids, scheduled_at FROM consults WHERE booker_email = $1', [email]
+  );
+  assert.equal(rows.rowCount, 1, 'no duplicate at any superseded slot');
+  assert.equal(rows.rows[0].calcom_event_id, `${P}-c3`);
+  assert.deepEqual(rows.rows[0].calcom_prior_event_ids, [`${P}-c1`, `${P}-c2`], 'both prior uids, in order');
+  assert.equal(new Date(rows.rows[0].scheduled_at).toISOString(), '2027-07-15T15:00:00.000Z', 'still at the latest slot');
+  assert.equal(calls.length, 0, 'no tail, so nothing was stopped as an unresolved reschedule');
+});
+
+test('prior uids: a same-uid reschedule to a NEW time still moves in place (Review Focus 1)', async () => {
+  // No real reschedule payload has ever been observed, so "Cal.com always mints
+  // a new uid" is unverified. A same-uid time move must not be taken for a replay.
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const attendees = [{ name: 'CalcomTest PriorS', email: `${P}-s@calcom-test.example` }];
+  await postCreated({ uid: `${P}-s1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  const res = await postRescheduled({
+    uid: `${P}-s1`, startTime: '2027-07-09T15:00:00Z', rescheduleUid: `${P}-s1`, attendees,
+  });
+  assert.match(res.text, /rescheduled in place/i);
+  const { rows } = await pool.query(
+    'SELECT scheduled_at, calcom_prior_event_ids FROM consults WHERE calcom_event_id = $1', [`${P}-s1`]
+  );
+  assert.equal(new Date(rows[0].scheduled_at).toISOString(), '2027-07-09T15:00:00.000Z', 'the slot moved');
+  assert.deepEqual(rows[0].calcom_prior_event_ids, [], 'a consult never lists its own current uid as prior');
+});
+
+test('prior uids: a reschedule naming the ROOT uid after a first move resolves in place (Review Focus 2)', async () => {
+  await cleanupTestRows();
+  const router = await buildApp(TEST_SECRET);
+  const { calls, spy } = makeTailSpy();
+  router.__setCalcomDeps({ consultCallTail: spy });
+  const email = `${P}-r@calcom-test.example`;
+  const attendees = [{ name: 'CalcomTest PriorR', email }];
+  await postCreated({ uid: `${P}-r1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  await postRescheduled({ uid: `${P}-r2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-r1`, attendees });
+  calls.length = 0;
+
+  const res = await postRescheduled({
+    uid: `${P}-r3`, startTime: '2027-07-15T15:00:00Z', rescheduleUid: `${P}-r1`, attendees,
+  });
+  assert.match(res.text, /rescheduled in place/i, 'the root uid resolved through the prior list');
+  const rows = await pool.query(
+    'SELECT calcom_event_id, calcom_prior_event_ids FROM consults WHERE booker_email = $1', [email]
+  );
+  assert.equal(rows.rowCount, 1, 'no duplicate filed');
+  assert.equal(rows.rows[0].calcom_event_id, `${P}-r3`);
+  assert.deepEqual(rows.rows[0].calcom_prior_event_ids, [`${P}-r1`, `${P}-r2`]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.unresolvedOldUid, undefined, 'an in-place move never takes the unresolved path');
+});
+
+test('prior uids: a CANCEL naming a moved-from uid writes nothing and leaves the live consult alone', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const attendees = [{ name: 'CalcomTest PriorD', email: `${P}-d@calcom-test.example` }];
+  await postCreated({ uid: `${P}-d1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  await postRescheduled({ uid: `${P}-d2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-d1`, attendees });
+
+  const res = await postCancelled({ uid: `${P}-d1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /already moved/i);
+  const rows = await pool.query(
+    'SELECT calcom_event_id, status FROM consults WHERE calcom_event_id IN ($1, $2)', [`${P}-d1`, `${P}-d2`]
+  );
+  assert.equal(rows.rowCount, 1, 'no junk cancelled row at the old uid');
+  assert.equal(rows.rows[0].calcom_event_id, `${P}-d2`);
+  assert.equal(rows.rows[0].status, 'scheduled', 'the live consult is untouched');
+});
+
+test('prior uids: an unresolved reschedule records the old uid it replaces, so the late original CREATE is already filed', async () => {
+  // Review 2026-09-30 (database lens). The fallthrough files a fresh consult for
+  // a reschedule whose old booking we never saw; without remembering that old
+  // uid, its late or retried CREATE filed a second consult at the abandoned slot.
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const email = `${P}-f@calcom-test.example`;
+  const attendees = [{ name: 'CalcomTest PriorF', email }];
+  const res = await postRescheduled({
+    uid: `${P}-f2`, startTime: '2027-07-08T15:00:00Z', rescheduleUid: `${P}-f1`, attendees,
+  });
+  assert.equal(res.status, 200);
+  const filed = await pool.query(
+    'SELECT calcom_prior_event_ids FROM consults WHERE calcom_event_id = $1', [`${P}-f2`]
+  );
+  assert.deepEqual(filed.rows[0].calcom_prior_event_ids, [`${P}-f1`]);
+
+  const late = await postCreated({ uid: `${P}-f1`, startTime: '2027-07-01T15:00:00Z', attendees });
+  assert.match(late.text, /already filed/i);
+  const rows = await pool.query('SELECT calcom_event_id FROM consults WHERE booker_email = $1', [email]);
+  assert.equal(rows.rowCount, 1, 'no duplicate at the abandoned slot');
 });

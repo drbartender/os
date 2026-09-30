@@ -7,7 +7,6 @@ const {
   computeBodyHash,
   parseCalcomBody,
   extractBookingFields,
-  extractRescheduleOldUid,
   extractRescheduleOldUids,
   normalizeBooker,
 } = require('../utils/calcomWebhookHelpers');
@@ -30,6 +29,13 @@ const router = express.Router();
 // to be reinstallable rather than a one-time module-level swap.
 let _deps = { consultCallTail };
 router.__setCalcomDeps = (d) => { _deps = { ..._deps, ...d }; };
+
+// A consult remembers every Cal.com uid it has carried: handleRescheduled
+// renames calcom_event_id and appends the outgoing uid to
+// calcom_prior_event_ids. A uid matching EITHER has been seen, so a CREATE
+// naming it is a replay, never a new booking (spec 2026-09-30 section 5). A
+// FIXED fragment: only $1 is ever bound into it.
+const KNOWN_UID_WHERE = 'calcom_event_id = $1 OR $1 = ANY(calcom_prior_event_ids)';
 
 router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   // Pre-check 1: secret configured. Fails closed.
@@ -105,8 +111,11 @@ router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
       && Boolean(body.payload && body.payload.startTime);
     let stranded = false;
     if (healable && replayUid) {
+      // A uid a consult has EVER carried is not stranded. After a reschedule the
+      // old uid is absent from calcom_event_id because the booking moved, and
+      // reprocessing it filed a duplicate at the abandoned slot.
       const consult = await pool.query(
-        'SELECT 1 FROM consults WHERE calcom_event_id = $1 LIMIT 1',
+        `SELECT 1 FROM consults WHERE ${KNOWN_UID_WHERE} LIMIT 1`,
         [replayUid]
       );
       stranded = consult.rowCount === 0;
@@ -135,7 +144,8 @@ router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   // consult create / cancel / reschedule / no-show. So on ANY handler failure
   // we delete the dedupe row, letting the retry re-run the handler. All four
   // handlers are idempotent (consult fast-path + ON CONFLICT, fixed-status
-  // UPDATEs guarded on status <> 'completed', reschedule's create fallthrough),
+  // UPDATEs guarded on status <> 'completed', reschedule's replay check and
+  // create fallthrough),
   // so a heal re-run never double-applies. The row therefore persists only on
   // success — exactly when a later true replay should be skipped. (await so a
   // rejection is caught here, not after the function returns.)
@@ -198,10 +208,13 @@ async function handleCreated(payload, res, opts) {
   try {
     await client.query('BEGIN');
 
-    // Fast-path: skip if already filed. Perf optimization; the consults
-    // ON CONFLICT below is the real correctness boundary.
+    // Fast-path: skip if already filed. For the CURRENT uid the consults
+    // ON CONFLICT below is the real correctness boundary. For a PRIOR uid (the
+    // booking has since moved) this check is the ONLY one: the ON CONFLICT keys
+    // on the current uid alone, and re-filing would put a duplicate consult at
+    // the abandoned slot for the sweep to ring.
     const existing = await client.query(
-      'SELECT id FROM consults WHERE calcom_event_id = $1',
+      `SELECT id FROM consults WHERE ${KNOWN_UID_WHERE} LIMIT 1`,
       [uid]
     );
     if (existing.rows[0]) {
@@ -328,11 +341,12 @@ async function handleCreated(payload, res, opts) {
     const consultResult = await client.query(
       `INSERT INTO consults
          (client_id, proposal_id, scheduled_at, calcom_event_id, status,
-          booker_name, booker_email, booker_phone)
-       VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $7)
+          booker_name, booker_email, booker_phone, calcom_prior_event_ids)
+       VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $7, $8::text[])
        ON CONFLICT (calcom_event_id) DO NOTHING
        RETURNING id, scheduled_at, booker_phone`,
-      [clientId, proposalId, startTime, uid, bookerNameRaw, bookerEmailRaw, phone]
+      [clientId, proposalId, startTime, uid, bookerNameRaw, bookerEmailRaw, phone,
+        (opts && Array.isArray(opts.priorUids)) ? opts.priorUids : []]
     );
 
     if (consultResult.rowCount === 0 && createdClientInThisTx) {
@@ -396,6 +410,21 @@ async function handleCancelled(payload, res) {
     return res.status(200).send('Missing uid, ignored');
   }
 
+  // A uid that a consult carried before a reschedule names a booking that has
+  // already moved. The upsert below keys on the CURRENT uid only, so without
+  // this it files a junk cancelled consult; it must not touch the live consult
+  // either. Current and prior must be told apart here, which KNOWN_UID_WHERE
+  // cannot do. A current or never-seen uid keeps the upsert unchanged.
+  const known = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM consults WHERE calcom_event_id = $1) AS is_current,
+            EXISTS (SELECT 1 FROM consults WHERE $1 = ANY(calcom_prior_event_ids)) AS is_prior`,
+    [uid]
+  );
+  if (!known.rows[0].is_current && known.rows[0].is_prior) {
+    console.log(`[calcom] cancel for a moved-from booking ignored: ${uid}`);
+    return res.status(200).send('Booking already moved');
+  }
+
   const startTime = payload?.startTime || new Date().toISOString();
   const { bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
@@ -422,6 +451,24 @@ async function handleRescheduled(payload, res) {
     return res.status(200).send('Malformed payload, ignored');
   }
 
+  // A replay (spec 2026-09-30 section 5.2): the NEW uid is some consult's
+  // PRIOR uid (an older reschedule arriving after a later one renamed it away),
+  // or its CURRENT uid at the SAME slot (the latest reschedule redelivered). The
+  // slot is compared in SQL (R12). A current uid at a DIFFERENT time is not a
+  // replay: no real reschedule payload has ever been observed, so a same-uid
+  // time move must still reach the in-place UPDATE below.
+  const seen = await pool.query(
+    `SELECT 1 FROM consults
+      WHERE $1 = ANY(calcom_prior_event_ids)
+         OR (calcom_event_id = $1 AND scheduled_at = $2::timestamptz)
+      LIMIT 1`,
+    [newUid, newStartTime]
+  );
+  if (seen.rowCount > 0) {
+    console.log(`[calcom] reschedule replay ignored: ${newUid}`);
+    return res.status(200).send('Already rescheduled');
+  }
+
   // ALL candidate keys, resolved by the database rather than picked here. See
   // extractRescheduleOldUids for why: Cal.com's rescheduleId is a numeric
   // booking id, not the uid string this column stores, and no real reschedule
@@ -440,17 +487,25 @@ async function handleRescheduled(payload, res) {
     // field off the returned row. Passing the payload's null number would file
     // a bogus undialable row that blocks the sweep from ever ringing this
     // consult; passing its null email would make the tail's sibling lookup
-    // match nothing. calcom_event_id is UNIQUE, so this matches at most one row.
+    // match nothing. The subquery's LIMIT 1 bounds this to one row: a prior
+    // list carries no uniqueness, so calcom_event_id's UNIQUE alone no longer does.
+    // The old uid is also resolved against the PRIOR lists, preferring a
+    // current match: if Cal.com names the ROOT booking on a second reschedule,
+    // the current column alone misses and the fallthrough would file a
+    // duplicate. Safe only because the replay check above ran first.
     const result = await pool.query(
       `UPDATE consults
        SET calcom_event_id = $1, scheduled_at = $2, status = 'scheduled',
+           calcom_prior_event_ids = CASE WHEN calcom_event_id = $1 THEN calcom_prior_event_ids
+                                         ELSE array_append(calcom_prior_event_ids, calcom_event_id) END,
            booker_name = COALESCE($3, booker_name),
            booker_email = COALESCE($4, booker_email),
            booker_phone = COALESCE($6, booker_phone)
        WHERE id = (
          SELECT id FROM consults
-          WHERE calcom_event_id = ANY($5::text[])
-          ORDER BY array_position($5::text[], calcom_event_id)
+          WHERE calcom_event_id = ANY($5::text[]) OR calcom_prior_event_ids && $5::text[]
+          ORDER BY (calcom_event_id = ANY($5::text[])) DESC NULLS LAST,
+                   array_position($5::text[], calcom_event_id), id
           LIMIT 1
        )
        RETURNING id, scheduled_at, booker_phone, booker_email`,
@@ -487,7 +542,14 @@ async function handleRescheduled(payload, res) {
       payloadShape: Object.keys(payload || {}),
     },
   });
-  return handleCreated(payload, res, { unresolvedOldUid: true });
+  // The consult filed below replaces the old booking(s) we never saw, so it
+  // remembers their uids: a late or retried CREATE for one of them is then
+  // "Already filed" instead of a duplicate at the abandoned slot (review
+  // 2026-09-30). Safe: this path runs only when none of them resolved.
+  return handleCreated(payload, res, {
+    unresolvedOldUid: true,
+    priorUids: oldUids.filter((u) => u !== newUid),
+  });
 }
 async function handleNoShow(payload, res) {
   const uid = payload?.uid;
