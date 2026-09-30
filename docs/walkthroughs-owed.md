@@ -1635,32 +1635,16 @@ which is the largest client-facing change in the drop and is listed first becaus
       deliberately; decide whether that timing is acceptable (Unfinalize within minutes suppresses
       the pending rows). Defects go to the fix list §"Derived BEO finalize follow-ups".
 
-- [ ] **Phone walk residue: what the Pixel walk of 2026-09-30 could not reach.** Dallas walked the
-      phone Events list (lane ma-e1, `d1dc829f`) and the event detail and assignment sheet (lane
-      ma-e2, `91dcfab8`) on production on 2026-09-30. His notes went to the fix list (a balance on the
-      list card, and Text through Google Voice). Rotation does nothing, which is correct: the
-      installed app is locked to portrait by `client/public/admin-manifest.json`. His self-assign
-      and Remove on a fresh booking left an audit entry naming him, reopened the shift, and emptied
-      its queue. Still unwalked:
-      - On an iPhone, tapping the sheet's search field must not zoom the page. Needs an iPhone.
-      - With the keyboard up, the sheet's search field stays in view. It was left out of the walk list.
-      - A failed save shows a box naming what it was, with Retry and a quiet Dismiss, and no other
-        tap removes it. Needs the connection to drop in the middle of a save.
-      - Show more keeps a two-shift event together. Production has no two-shift event.
-      - Live since the 2026-09-30 pushes (`aa03a2e6` is on origin/main): the event detail header.
-        The event type sits on its own line under the client. The venue reads like an envelope:
-        its name on one line, then the street and the town, which drop to a second line only when
-        they do not fit, with no comma left at the end of the street line. Nothing is cut off, and
-        the map icon trails the last line. Try a long venue name and a street-only address.
-      - Live since the 2026-09-30 pushes (`a3b0b98f` is on origin/main): the Events list. A card that
-        owes money shows the amount in a soft red on the card's right edge, centred between the
-        guest count and the tags, with no label (53524fdc); on Upcoming and on Past; a paid
-        card shows none; the figure matches the desktop Events list's Status column for the same
-        event.
-      - Live since the 2026-09-30 pushes (`5b8b7d4b` is on origin/main): online, neither the Events
-        list nor an event shows an "as of" line; in airplane mode both show "offline copy · as
-        of" with the dot, and the event adds Refresh.
-
+- [x] **Phone walk residue — WALKED 2026-09-30 (Dallas).** The Pixel walk of the phone Events list
+      (lane ma-e1, `d1dc829f`) and the event detail and assignment sheet (lane ma-e2, `91dcfab8`),
+      then the legs the 2026-09-30 pushes armed: the envelope header with the type on its own line
+      (`aa03a2e6`), the list balance (`a3b0b98f`, `53524fdc`), the offline-only "as of" line
+      (`5b8b7d4b`), the sheet search with the keyboard up, and a failed save. His notes went to the
+      fix list. Rotation does nothing, correctly: `client/public/admin-manifest.json` locks portrait.
+      Two legs have no way to be walked yet and stay open here:
+      - [ ] On an iPhone, tapping the sheet's search field must not zoom the page. Needs an iPhone.
+      - [ ] Show more keeps a two-shift event together. Production has no two-shift event; walk it on
+            the first one.
 
 - [ ] **Agreement v4 on the proposal page (lane agreement-v4, `0122fa2e`).** Live: `git merge-base
       --is-ancestor 0122fa2e origin/main` exits 0 (pushed 2026-09-30). Open an UNSIGNED hosted
