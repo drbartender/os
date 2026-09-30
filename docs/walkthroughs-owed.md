@@ -1658,6 +1658,23 @@ which is the largest client-facing change in the drop and is listed first becaus
         column for the same event.
 
 
+- [ ] **Agreement v4 on the proposal page (lane agreement-v4, `0122fa2e`).** Live: `git merge-base
+      --is-ancestor 0122fa2e origin/main` exits 0 (pushed 2026-09-30). Open an UNSIGNED hosted
+      proposal as the client sees it: the agreement's Section 8.1 is the v4 text, and under the
+      Total a line reads "Added time on the day: $X per hour for the package" with the per-guest
+      figure. Then a flat (BYOB) one: "$100 per hour for the package" on the Core Reaction. Then a
+      proposal signed under v3: the v3 text and no added-time line. After the first real v4
+      signature, the admin proposal page's "Agreement version" reads v4. Opening the page as the
+      client records a view, so use one you would open anyway.
+
+- [ ] **Contract hours after an on-site extension (lane ext-contract-hours, `0440c773`).** Live:
+      `git merge-base --is-ancestor 0440c773 origin/main` exits 0 (pushed 2026-09-30). Open
+      proposal 842 in the editor and read, without saving: the duration shows 4h with the hint
+      "Includes 1h of on-site extension, billed on its own invoice. The contract prices 3h.", and
+      the preview total is $375. The part that matters waits for the next real extension: once it
+      settles, save an unrelated field in the editor and confirm the total does not move and no
+      additional invoice appears. Reload any editor tab opened before the deploy first.
+
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
 The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
