@@ -2000,6 +2000,22 @@ the accented spelling) or the two spellings stop matching each other.
   never been used in prod. Related: `server/routes/calendar.js` links `/events/shift/:id`, which
   for a manual shift forwards to bare `/events`, though the list can now open that shift's sheet.
   ma-e2 consistency review.
+- **`PUT /shifts/:id` stores `positions_needed` verbatim, with no validation.**
+  `server/routes/shifts.handlers.js:99`. A legacy object-shape entry with an absurd `count`
+  (`[{"position":"bartender","count":1e30}]`) sends both `parsePositionsNeeded` twins (server and
+  client) into a loop that many iterations long on any read, freezing the server request or the
+  admin tab. `openSlotsSql` caps each element at 1000 so the badge can never 500 on it, but the
+  write path is the real fix: validate the roster as a JSON array of canonical role strings (the
+  shape every creator writes, `eventCreation.js`), or cap counts. No row has ever held one; found by
+  the database review of lane staffing-rule-by-role, 2026-09-30. Related, pre-existing: a numeric
+  literal like `[1e999999]` passes `IS JSON ARRAY` and then raises on `::jsonb`.
+- **At scale, fence the unstaffed candidates before `openSlotsSql` runs.** In the badge's
+  `unstaffed_events` and `GET /shifts/unstaffed-upcoming` the planner runs the fragment on every
+  `status = 'open'` shift before the not-finished filter (it needs the proposals join). Manual and
+  never-completed shifts stay `open` forever, so that set only grows. Measured on dev: badge 1.6 ms
+  today, about 11 ms at 10x. Recipe when it matters: select the not-finished open rows in a
+  subquery with `OFFSET 0`, then apply `openSlotsSql` (1.53 to 0.72 ms at 1x, 57.8 to 17.6 at 50x,
+  identical results). Performance review of lane staffing-rule-by-role, 2026-09-30.
 - **QUEUED LANE (Dallas, 2026-09-30): one staffing rule everywhere, by ROLE.** Lane
   `phone-owner-decisions` put the phone Events LIST on the detail's rule (`roleFill` /
   `rowRoleFill`, `client/src/components/adminos/shifts.js`), but these still count HEADS
