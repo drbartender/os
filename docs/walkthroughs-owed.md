@@ -1647,8 +1647,11 @@ which is the largest client-facing change in the drop and is listed first becaus
       - A failed save shows a box naming what it was, with Retry and a quiet Dismiss, and no other
         tap removes it. Needs the connection to drop in the middle of a save.
       - Show more keeps a two-shift event together. Production has no two-shift event.
-      - Once `git merge-base --is-ancestor 7da6c868 origin/main` exits 0: open an event with a long
-        address. The venue line in the header wraps, nothing is cut off, and the map icon trails it.
+      - Once `git merge-base --is-ancestor aa03a2e6 origin/main` exits 0: the event detail header.
+        The event type sits on its own line under the client. The venue reads like an envelope:
+        its name on one line, then the street and the town, which drop to a second line only when
+        they do not fit, with no comma left at the end of the street line. Nothing is cut off, and
+        the map icon trails the last line. Try a long venue name and a street-only address.
 
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
