@@ -94,7 +94,8 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one** |
 | 1 | The on-site extension quotes the v4 formula whatever the client signed | yes on a hosted package; on the Core Reaction the package rate matches |
 | 1 | An extension invoice can be paid by bank debit, which cannot settle during the event | unknown, NOT TRACED |
-| 1 | An on-site extension of a class bills nothing for the class | no (0 upcoming class bookings) |
+| 1 | An on-site extension of a class bills nothing for the class | no (0 upcoming class bookings); PRICING.md documents it, so this is a choice to confirm |
+| 1 | The added-time rate a client signs to is not locked: a catalog rate change moves it for signed clients | no, until an extra-hour rate is changed |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
@@ -678,7 +679,31 @@ the way the payment-link rail already drops bank debit.
 All six class packages carry an extra-hour rate of $0 (prod, 2026-09-29) and `calculateStaffing`
 zeroes class staffing, so an added hour prices at add-ons and gratuity only, and a $0 extension
 settles on acceptance alone. The request route reports `isClass` and does not refuse it. The
-instructor is paid for the hour. Needs a rate from Dallas, or a refusal on class shifts.
+instructor is paid for the hour. `PRICING.md` already states it ("a package whose extra-hour rate
+is $0 (every class today) extends for free"), so this is documented behavior, not a defect. Filed
+so the free hour is a choice: a rate from Dallas, a refusal on class shifts, or leave it and
+delete this entry.
+
+### The added-time rate a client signs to is not locked at signing
+
+Agreement v4 Section 8.1(b) bills hosted on-site time at "the package's per-guest extra-hour
+rate, as stated in the Event-Specific Agreement", and the proposal page now prints that rate
+under the Total (lane agreement-v4, 2026-09-29). Both the line (`additionalTimeRate.js` through
+the public payload) and the extension invoice (`computeExtensionDelta`) read the LIVE
+`service_packages` row. Nothing freezes the rate on the proposal. Change a package's extra-hour
+rate and every already-signed client of that package is shown, and billed, the new one. The
+Core Reaction's $100 and the $40 extra-bartender rate are also written into the agreement text
+itself, so those two need a new agreement version in the same change.
+
+Not reachable until a rate changes; catalog pricing columns are SQL-only (`routes/packages.js`
+does not write them) and the pending 2026 lineup script does not touch them. Decided 2026-09-29
+to ship the line unlocked rather than widen the lane into two money paths.
+
+Fix shape, its own lane: write the rate into `pricing_snapshot` at price time (the engine already
+carries `billed_guests`), render the line from the snapshot, and have `computeExtensionDelta`
+bill the snapshot's rate when present. A snapshot is regenerated on every admin re-price, so
+"locked" would mean "as of the last re-price", the same as the base price today. Existing open
+proposals would need a backfill or a live fallback. Do this BEFORE any extra-hour rate change.
 
 ## 2. Wrong on a surface a client is looking at
 
