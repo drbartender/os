@@ -1989,7 +1989,9 @@ the accented spelling) or the two spellings stop matching each other.
     2026-08-14. Latch `isPhone` in `MobileViewContext.js` and re-read it on a route change; the
     lock model (`mobileLock.js`) keeps its own raw query. Unreachable on the installed app
     (portrait-locked); reachable on a desktop window under 700px and a phone browser tab rotated.
-  - "Back to Events" names the list, but Back returns wherever you came from.
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Back button's name becomes plain "Back".
+    It returns wherever you came from; the name is `aria-label` only (`AdminLayout.js` passes
+    "Back to Events" / "Back to Proposals" to `MobileHeader.js`), so this is screen-reader text.
   - A cancelled event that holds excess money reads "Cancelled" on the phone's chip; the desktop
     puts Overpaid on the chip first. The Overpaid ROW shows on both.
   - A staffer under half a mile from the venue reads "0 mi" (whole miles, so a stolen phone's
