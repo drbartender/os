@@ -21305,7 +21305,7 @@ html[data-app="admin-os"] .m-card-kind { display: block; font-size: var(--fs-met
 html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
 html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
-html[data-app="admin-os"] .m-card-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+html[data-app="admin-os"] .m-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 3px; }
 /* Open slots read RED, the same literal the desktop staffing column uses
    (.staffing-ratio.staffing-short): the After Hours palette sets --danger-h to
    262 inline (UserPrefsContext.js, not this file's 352), so a computed danger
@@ -21313,6 +21313,12 @@ html[data-app="admin-os"] .m-card-foot { display: flex; align-items: center; gap
 html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; }
 html[data-app="admin-os"] .m-frac.full { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-frac.past { font-weight: 400; color: var(--ink-3); }
+/* An unpaid balance reads in the same red as open slots, and says DUE so the
+   two red figures on one row are never read as one another (Dallas,
+   2026-09-30). The foot row wraps, so a card carrying a fraction, a request
+   chip, a balance and both tags never runs past its edge. */
+html[data-app="admin-os"] .m-card-bal { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; white-space: nowrap; }
+html[data-app="admin-os"] .m-card-bal small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; font-weight: 600; }
 html[data-app="admin-os"] .m-shiftnote { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 html[data-app="admin-os"] .m-tags { margin-left: auto; display: inline-flex; gap: 4px; }
 html[data-app="admin-os"] .m-tag {
@@ -21369,6 +21375,7 @@ html[data-app="admin-os"][data-skin="light"] .m-chip-toggle { border-radius: 0; 
 html[data-app="admin-os"][data-skin="light"] .m-retry-btn { border-radius: 0; color: var(--bg-0); }
 html[data-app="admin-os"][data-skin="light"] .m-chip-toggle.on { color: var(--accent-ink); }
 html[data-app="admin-os"][data-skin="light"] .m-frac { color: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .m-card-bal { color: var(--ms-bordeaux); }
 html[data-app="admin-os"][data-skin="light"] .m-frac.full { color: var(--ms-emerald); }
 html[data-app="admin-os"][data-skin="light"] .m-frac.past { color: var(--ink-3); }
 html[data-app="admin-os"][data-skin="light"] .m-tag-bar { background: hsl(var(--info-h) var(--info-s) 36% / 0.08); border-color: hsl(var(--info-h) var(--info-s) 36% / 0.4); color: var(--ms-navy); }

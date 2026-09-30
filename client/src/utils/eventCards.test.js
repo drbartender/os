@@ -60,6 +60,33 @@ test('rows without event_key still group by proposal_id, or by shift id when man
   expect(cards.map(c => c.key)).toEqual(['p10', 's3']);
 });
 
+test('balance: the open amount in whole dollars, as the desktop Status cell says it', () => {
+  const [c] = groupShiftRows([row({ proposal_total: '937.50', proposal_amount_paid: '100.00' })]);
+  expect(c.balance).toBe('$838');
+  const [d] = groupShiftRows([row({ proposal_total: '420', proposal_amount_paid: null, amount_paid: '350' })]);
+  expect(d.balance).toBe('$70');
+});
+
+test('balance: none when paid in full, overpaid, cancelled, manual, or with no total', () => {
+  const bal = (over) => groupShiftRows([row(over)])[0].balance;
+  expect(bal({ proposal_total: '500', proposal_amount_paid: '500' })).toBeNull();
+  expect(bal({ proposal_total: '500', proposal_amount_paid: '600' })).toBeNull();
+  expect(bal({ proposal_total: '500', proposal_amount_paid: '100', proposal_status: 'archived' })).toBeNull();
+  expect(bal({ proposal_total: '500', proposal_amount_paid: '100', status: 'cancelled' })).toBeNull();
+  expect(bal({ proposal_total: '0', proposal_amount_paid: '0' })).toBeNull();
+  expect(bal({ proposal_total: null })).toBeNull();
+  expect(bal({ id: 3, proposal_id: null, event_key: null, proposal_total: '500', proposal_amount_paid: '0' })).toBeNull();
+});
+
+test('balance: one cancelled shift of a two-shift event does not hide it', () => {
+  const [c] = groupShiftRows([
+    row({ status: 'cancelled', proposal_total: '800', proposal_amount_paid: '100' }),
+    row({ id: 2, proposal_total: '800', proposal_amount_paid: '100' }),
+  ]);
+  expect(c.cancelled).toBe(false);
+  expect(c.balance).toBe('$700');
+});
+
 test('cancelled: every shift cancelled or the proposal archived, and open/pending zero out', () => {
   const [c] = groupShiftRows([row({ status: 'cancelled', approved_count: 1 })]);
   expect(c).toMatchObject({ cancelled: true, open: 0, pending: 0, filled: 1 });

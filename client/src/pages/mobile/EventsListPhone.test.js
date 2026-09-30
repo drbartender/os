@@ -282,6 +282,23 @@ test('the kind sits on its own line and the meta line names the town, never the 
   expect(screen.queryByText(/Grove on the River/)).toBeNull();
 });
 
+test('an unpaid balance shows in red with DUE; a paid card shows none, on either tab', async () => {
+  api.get.mockResolvedValue(env([
+    row({ proposal_total: '1350', proposal_amount_paid: '100' }),
+    row({ id: 2, proposal_id: 11, event_key: 'p11', client_name: 'Okafor', proposal_total: '900', proposal_amount_paid: '900' }),
+  ]));
+  mount();
+  const owing = await screen.findByRole('button', { name: /Henderson/ });
+  expect(within(owing).getByText('$1,250')).toHaveClass('m-card-bal');
+  expect(within(owing).getByText('DUE')).toBeInTheDocument();
+  const paid = screen.getByRole('button', { name: /Okafor/ });
+  expect(within(paid).queryByText('DUE')).toBeNull();
+  api.get.mockResolvedValue(env([row({ event_date: '2020-08-15', proposal_total: '420', proposal_amount_paid: '350' })], { scope: 'past' }));
+  fireEvent.click(screen.getByRole('radio', { name: 'Past' }));
+  const past = await screen.findByRole('button', { name: /Henderson/ });
+  expect(within(past).getByText('$70')).toHaveClass('m-card-bal');
+});
+
 test('a failed load shows an inline retry, never a silent empty list', async () => {
   api.get.mockRejectedValueOnce({ status: 0, message: 'Network error. Check your connection.' }).mockResolvedValueOnce(env([row()]));
   mount();

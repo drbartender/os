@@ -291,6 +291,7 @@ function EventCard({ card, past, onTap }) {
               <span className={fracClass}>{card.filled}/{card.slots}</span>
               {card.shiftCount > 1 && <span className="m-shiftnote">{card.shiftCount} shifts</span>}
               {card.pending > 0 && !past && <StatusChip kind="warn">{card.pending} {card.pending === 1 ? 'request' : 'requests'}</StatusChip>}
+              {card.balance && <span className="m-card-bal">{card.balance} <small>DUE</small></span>}
             </>
           )}
           <span className="m-tags">

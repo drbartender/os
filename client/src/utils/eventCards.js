@@ -5,6 +5,7 @@
 import { parsePositionsCount, approvedCount, isCancelledEvent } from '../components/adminos/shifts';
 import { fmtTimeRange24, dayDiff } from '../components/adminos/format';
 import { getEventTypeLabel } from './eventTypes';
+import { eventPaymentState } from '../components/adminos/eventPlan';
 
 export function eventKeyOf(row) {
   if (row.event_key) return row.event_key;
@@ -56,6 +57,16 @@ function finishCard(card, todayYmd) {
   if (hasType) kind = getEventTypeLabel(first);
   else if (card.manual) kind = clientName === 'Manual shift' ? '' : 'Manual shift';
   else kind = 'event';
+  // What the client still owes, exactly as the desktop Events list's Status
+  // cell says it (eventPaymentState, whole dollars), so the two lists cannot
+  // disagree: the amount while a balance is open, null when paid in full,
+  // cancelled, a manual shift, or a booking with no total. Read off a live
+  // shift, so one cancelled shift of a two-shift event hides nothing. A bank
+  // debit still in flight counts as owed, as it does on the desktop. Past
+  // cards show it too: an unpaid past event is the one to chase. Dallas,
+  // 2026-09-30: "show the balance in red if it's unpaid".
+  const live = card.shifts.find((s) => !isCancelledEvent(s)) || first;
+  const pay = eventPaymentState(live);
   return {
     ...card,
     id: card.manual ? first.id : card.proposalId,
@@ -76,6 +87,7 @@ function finishCard(card, todayYmd) {
     cancelled,
     barRental: card.shifts.some(s => !!s.bar_required),
     supplies: card.shifts.some(s => !!s.supply_run_required),
+    balance: pay && pay.kind === 'owed' ? pay.label : null,
     tapTarget: card.manual ? { kind: 'shift', id: first.id } : { kind: 'event', id: card.proposalId },
   };
 }
