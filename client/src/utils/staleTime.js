@@ -13,10 +13,10 @@ export function formatStaleAt(iso, now = new Date()) {
   return t ? `as of ${t}` : null;
 }
 
-// The time alone, for the benchmark's two-state line where the label
-// ("as of" live, "offline copy · as of" cache-served) is rendered by the screen
-// and only the time sits in .m-stale-time. Today shows the time alone; anything
-// older carries the day.
+// The time alone, for the offline line the phone screens draw over a
+// cache-served copy ("offline copy · as of"; a live screen shows no line,
+// Dallas 2026-09-30). The screen renders the label and only the time sits in
+// .m-stale-time. Today shows the time alone; anything older carries the day.
 export function formatStaleTime(iso, now = new Date()) {
   if (!iso) return null;
   const d = new Date(iso);

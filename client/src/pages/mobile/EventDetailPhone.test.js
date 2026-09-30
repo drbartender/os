@@ -895,6 +895,9 @@ test('an offline copy offers Refresh, which reads the event again; a live one of
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   expect(reads).toBe(2);
   await waitFor(() => expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({ guests: 150 })));
+  // Again once the live read has landed: the gap before it proves nothing.
+  expect(screen.queryByText(/as of/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
 });
 
 test('an older reload that succeeded is kept when a newer one fails', async () => {
