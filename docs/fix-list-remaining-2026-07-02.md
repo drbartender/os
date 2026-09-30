@@ -67,12 +67,6 @@ Ordered by how close each one is to actually costing money or a client.
 
 | # | what breaks | reachable today? |
 |---|---|---|
-| 0 | A real client's consult is silently cancelled by someone else's booking | **yes, and the bridge is armed** |
-| 0 | The strand-heal duplicates a consult and silences the real one | **yes, on a Cal.com redelivery after any reschedule** |
-| 0 | The kill switch does not gate press-1, so flipping it off mid-ring still bills one client leg | yes |
-| 0 | A client-no-answer text that fails to send tells nobody at all | yes, if `VM_TEXT_DESTINATION` is unset |
-| 0 | A settled-looking `connected` row is never reaped, so a failed `<Dial>` alerts nobody | yes |
-| 0 | Sweep on with the VA scheduler off strands `calling_*` rows holding a cap slot for 24h | yes, if the two flags disagree |
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
@@ -117,95 +111,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Thumbtack first-reply verify is FIXED and live, owes its next-real-lead proof | no, and the fix cannot regress it |
-
----
-
-## 0. The consult call bridge is LIVE, and these are reachable right now
-
-**Corrected 2026-08-26. This section previously said the bridge shipped dark and that everything
-here was unreachable. Both claims were wrong, and the wrong version understated live risk.**
-
-The bridge merged to main as `fafa0d6f` and shipped to prod on 2026-08-25. It is **ARMED, not
-dark.** `CONSULT_CALL_ENABLED` was flipped to true to run the launch gate, as the gate instructs,
-and nothing since has flipped it back. Both launch runs are confirmed in Twilio's call log, not
-inferred: 8/25 rang three agent legs, failed over to Zul, press 1, an 82s bridge from the 0082;
-8/26 rang once, press 1, a 93s bridge from the 1922, read off the far handset by the person it
-called. Both branches of `callerIdFor` are proven in production.
-
-**So every item below is reachable on a real client's consult today.** They were written as
-launch-gate items when the feature was believed dark. None of them is fixed. Nothing here blocked
-the deploy and nothing here has been closed since.
-
-A note worth keeping, because it is why this section was wrong for a day: a kill-switch state
-cannot be confirmed by asking, only by observing behaviour. `scheduler_health` reads `ok` whether
-the switch is on or off, so there is no remote signal that distinguishes off from idle. The only
-proof is a chain opening.
-
-### A real client's consult can be silently cancelled by someone else's booking
-
-`consultCallChain.js:344-378` marks every OTHER upcoming `scheduled` consult sharing a
-`booker_email` as `skipped_cancelled`, and only emails when more than one row was marked. The
-single-row case is exactly "the victim had one real consult", and it is a log line only. Reachable
-benignly (a reschedule payload with no resolvable old uid, which `calcom.js:464-472` exists
-because it happens) and abusively (book on the public page using a known client's email, then
-reschedule). The client waits for a call that never comes and nothing tells anyone. In a feature
-whose declared failure mode is silence, the one-row case is the one that must email.
-
-### The strand-heal can duplicate a consult and silence the real one
-
-`calcom.js:86-125` deletes the webhook dedupe row and fully reprocesses whenever a redelivered
-event's `payload.uid` is absent from `consults`. But `handleRescheduled` RENAMES
-`calcom_event_id` old to new, so after a reschedule the old uid is legitimately gone. A Cal.com
-redelivery of an already-acked event (a manual resend, or at-least-once duplication) then creates
-a DUPLICATE `consults` row at the abandoned slot, which the sweep will ring, while the tail marks
-the client's genuine consult `skipped_cancelled`. Pre-existing mechanism, newly consequential
-because it now opens call chains. Fix shape: gate the heal on no `consults` row sharing that
-booker and slot, or record the resolved `consult_id` on the `webhook_events` row so "moved" is
-distinguishable from "never written".
-
-### Smaller, same feature, and all of it live too
-
-Cross-reference, because it is not consult-only: **pressing 1 during the automatic repeat does
-nothing on either bridge.** Written up in section 3, since the lead router has carried it longer.
-
-
-- The kill switch does not gate press-1 (`voiceConsultCall.js:237-306`): flipping it off mid-ring
-  still permits one billed client leg.
-- **`skipped_cancelled` is one status wearing two opposite meanings, and the dangerous one is the
-  quiet one.** `guardStillScheduled` files it when the consult genuinely went away (`cancelled`,
-  `completed`, `no_show`), which needs no attention and is correctly excluded from the
-  needs-attention feed. But `consultCallChain.js:388-398` files the SAME status, detail
-  `rescheduled_unresolved`, on consults selected explicitly by `c.status = 'scheduled' AND
-  c.scheduled_at > NOW()`: live, future bookings that the feature deliberately stopped from
-  ringing. Its own comment calls that path the only one in the feature that turns a consult that
-  would have rung into one that silently will not. Those two facts are opposites sharing a status.
-
-  The read side was taught to tell them apart 2026-08-26, so the browsing surfaces no longer say
-  "cancelled" about a live booking. The FEED exclusion is deliberately left alone: SQL cannot tell
-  the phantom old consult from a legitimate sibling row, so including the status would fire a
-  false attention item on every ordinary unresolved reschedule. The one email, gated on more than
-  one row marked, is the right mechanism. What remains owed is on the write side: give the
-  deliberate stop its own status instead of borrowing the one that means the opposite. Until then
-  the email is the only active alert, and an email that does not arrive leaves only the browsing
-  surface.
-
-- **A client-no-answer text that fails to send tells nobody.** `voiceConsultCall.js:344-346`
-  fires `sendMissedText({ kind: 'client_no_answer' })` and DISCARDS the return value. Its sibling
-  path does the opposite: `finishMissed` (`consultCallChain.js:733-737`) captures the same return
-  and turns a text that did not send into the one admin email, precisely so a missed consult is
-  never invisible. So with `VM_TEXT_DESTINATION` unset or Twilio refusing, Dallas pressed 1, the
-  client never picked up, and nothing anywhere says so. Found 2026-08-26 while verifying settings
-  copy, not by a review pass. Fix is three lines, mirroring `MISSED_TEXT_EMAIL_REASON`.
-- Neither dial target is format-validated (`consultCallChain.js:724-725`, `:833`) though
-  `sendMissedText` validates its own destination and `index.js` format-checks the caller ID.
-- `VA_CELL` can reach the database: `consultCallChain.js:590-595` writes `err.message` into
-  `detail` when a throw carries no `.code`, and Twilio-adjacent messages embed the `To` number.
-  CLAUDE.md says that number lives in env only, never on a DB record.
-- `connected` is terminal and never reaped (`vaCallingScheduler.js:128`), so a `<Dial>` that fails
-  at Twilio for want of a caller ID leaves the row settled-looking forever with no alert.
-- The reaper rides `RUN_VA_CALLING_SCHEDULER` (hourly) while the sweep rides
-  `RUN_CONSULT_CALL_SWEEP_SCHEDULER`. Sweep on with VA off strands `calling_*` rows that hold a
-  cap slot for 24h with no email.
 
 ---
 
@@ -978,22 +883,6 @@ A VA leg Twilio PLACED that reports terminal `CallStatus='failed'` (a known PH-r
 classifies as a quiet 'missed' — no alert, not in the attention feed. So a lead goes uncalled and
 nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 `va/admin_call_status='failed'` in the feed WHERE.
-
-### Pressing 1 during the automatic repeat does nothing, on BOTH bridges
-
-`voiceConsultCall.js:219-222` and `voiceLeadCall.js:118-121` build the same TwiML: a `<Gather>`
-wraps the FIRST reading of the briefing, then a SECOND `<Say>` repeats it OUTSIDE the `</Gather>`,
-then `<Hangup/>`. Digits are only collected inside the Gather, so the repeat is audio with no
-collector behind it. Somebody still processing the first reading hears it again, presses 1, and
-gets silence and then a hangup. The repeat exists to give a second chance and is the one part of
-the flow that cannot take one.
-
-Never seen in the wild because both consult launch runs pressed 1 during the FIRST reading. That
-is also why the launch gate did not catch it: the gate's own note said to try pressing during the
-second reading, and that half was never run. Inherited from the shipped lead router and written
-into spec 4.5, so it is a cross-router defect, not a consult-lane one, and the lead bridge has
-carried it far longer. Fix shape: put both `<Say>` children inside one Gather, or give the repeat
-its own Gather pointing at the same action.
 
 ### A staffer taken off a shift can still be texted its reminder and its thank-you
 
@@ -1851,6 +1740,40 @@ the accented spelling) or the two spellings stop matching each other.
 ---
 
 ## Voice
+
+- **The lead call bridge still stores a Twilio error MESSAGE in `lead_call_attempts.detail`**
+  (`server/utils/leadCallTrigger.js`, its leg-create failure write: `err.code || err.message`). A
+  Twilio or network message can carry the dialed number, so a failed Zul leg can put `VA_CELL` on a
+  DB record, which the rules forbid. The consult bridge closed the same leak on 2026-09-30 (store
+  `err.code` or a fixed word, and hand the log and Sentry a copy with the number cut to its last
+  four); copy that. Found by the consult-bridge-hardening database review.
+- **Consult bridge and Cal.com webhook residuals, from the 2026-09-30 per-lane reviews.** None is
+  reachable on today's traffic (prod has never processed a Cal.com reschedule); each is cheap.
+  - An unresolved reschedule does not stop a sibling whose chain is ALREADY open at that slot
+    (`consultCallChain.js`, the sibling INSERT's `ON CONFLICT DO NOTHING`): inside the 5-minute open
+    window the stale chain still rings.
+  - The in-place reschedule UPDATE (`calcom.js`) sets `status = 'scheduled'` with no
+    `status <> 'completed'` guard, unlike cancel and no-show; resolving a root uid through the prior
+    list makes it reachable from one more shape.
+  - A BOOKING_CANCELLED and a BOOKING_RESCHEDULED for the same booking arriving concurrently can
+    file a junk `cancelled` row at the old uid (the cancel guard is check-then-act). Close with
+    `SELECT ... FOR UPDATE` in a transaction if it is ever seen.
+  - `extractRescheduleOldUids` still accepts `payload.metadata.rescheduleUid`. If Cal.com forwards
+    booking-URL metadata, a booker holding someone's (current or prior) uid could name it. Drop that
+    candidate until a real payload shows Cal.com using it. Its helper comment also says other callers
+    rely on `extractRescheduleOldUid`; only its own tests do now.
+  - A same-uid reschedule with no old-uid key in the payload falls through to `Already filed` and
+    the slot never moves; and a CREATE for the new uid arriving before its RESCHEDULED is absorbed
+    as a replay with one log line. Both hinge on unobserved Cal.com behavior: add a Sentry warning
+    when the same-slot replay branch fires while an old-uid candidate resolves to a different
+    scheduled consult.
+  - `/dialend` records nothing on a `completed` dial. Writing `DialCallDuration` there too would
+    give the unconfirmed-bridge reaper a second source and turn a lost status callback from a false
+    "bridge unconfirmed" email into nothing.
+  - A malformed `ADMIN_PHONE` walks three undialed rings, then hops to Zul, whose briefing says
+    Dallas missed a call his phone never rang; no per-chain email says why. The boot warning is the
+    only signal.
+  - `handleNoShow` labels a uid that exists only as a PRIOR uid `unknown_uid` in Sentry.
 
 - **`GET /api/voice/vm/:token` has a per-IP limiter but no global or per-token ceiling, and buffers
   the whole recording per request.** `express-rate-limit` counts requests per window, not requests in
@@ -2813,6 +2736,9 @@ re-grep before surgery.
 
 One line each. These exist to stop a lane being opened, not to record history.
 
+- **The consult sibling stop keeps `skipped_cancelled` / `rescheduled_unresolved` (2026-09-30).** A
+  status of its own was decided against: the one-row email closed the silence, and a rename changes
+  no behavior.
 - **There is no manual event creation, by design** (Dallas, 2026-08-25). *"Real bookings I don't
   want to build a proposal for."* An event now exists only via a proposal that gets paid. `POST
   /shifts`, the Events-dashboard create form, and the legacy staffing form were all removed

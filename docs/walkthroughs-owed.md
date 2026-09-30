@@ -1818,7 +1818,39 @@ What each surface should show once shipped:
 
 
 
+### Consult call bridge hardening (fix list section 0). Merged 2026-09-30 as `9bca97e0` and `580a194b`.
+
+Lanes `calcom-prior-uids` and `consult-bridge-hardening`, NOT pushed at merge. Graduates to Tier 3b
+by this tier's own rule once `git merge-base --is-ancestor 580a194b origin/main` passes.
+
+One real billed walk, on a synthetic consult in the 2026-08-26 shape (a consult row with no Cal.com
+booking, `booker_phone` a phone you hold, slot a few minutes out):
+- Let ring 1 answer, and press 1 during the SECOND reading of the briefing, not the first. The
+  bridge must connect. Before this merge that press did nothing on both bridges. The lead bridge
+  got the same fix; any real Thumbtack lead call is its walk.
+
+NOT walkable, and proven by the route and chain tests instead: the kill switch half. With
+`CONSULT_CALL_ENABLED=false` the sweep places no ring at all, and a Render env change restarts the
+service, which outlives a 20-second ring placed before the flip. So nobody can hear the off message
+on a real call; do not spend a billed call trying.
+
+What else changed, none of it needing a walk: every consult fault now reaches Dallas once (a single
+stopped consult, a failed client-no-answer text, a press-1 Twilio never reported, the reaper riding
+the consult sweep); a redelivered or superseded Cal.com event can no longer file a duplicate
+consult; malformed `ADMIN_PHONE` / `VA_CELL` are never dialed and warn at boot; Zul's number stays
+out of `call_audit`, the attempt rows, the log and Sentry.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
+
+- [ ] **Before the push that carries `580a194b` (consult bridge hardening): two read-only checks.**
+      (1) Prod probe, the unconfirmed-bridge reaper's first tick flips and emails every historical
+      match: `SELECT id FROM consult_call_attempts WHERE status = 'connected' AND bridge_duration_sec
+      IS NULL AND client_no_answer_at IS NULL`. On 2026-09-30 it returned nothing (both `connected`
+      rows carry a duration); re-run it if any chain rang since. (2) `placeLeg` now refuses a dial
+      target that is not strict E.164, so a stray space in Render's `ADMIN_PHONE` or `VA_CELL` would
+      stop every ring. All 9 consult legs placed through 2026-09-18 went to strict numbers; confirm
+      neither value was edited since, then after the deploy the boot log must NOT show a
+      `[phone config]` warning.
 
 - [x] **DONE 2026-08-25, confirmed by Dallas. Consult call bridge: two Render vars, set BEFORE the push that carried `fafa0d6f`.**
       `CONSULT_CALL_ENABLED=false` is set, so the feature is live in prod and DARK. Kept as the
