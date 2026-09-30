@@ -291,9 +291,10 @@ test('PATCH duration 6 on A stores 6 on the row and the shift, prices 5, and add
 });
 
 test('the curfew gate reads the WORKED hours: an 8:30 PM start extended to 5h clears 2:00 AM, an edit to 6h does not', async () => {
-  // Contract hours (4) or even the row (5) would end at 12:30 or 1:30 AM and
-  // pass. Only a gate fed the body's 6h reaches 2:30 AM and refuses. This pins
-  // that workedHours, not contractHours, feeds curfewGateForSave.
+  // On a 6h edit the contract hours are 5 (6 minus the settled hour), which
+  // ends at 1:30 AM and passes. Only a gate fed the body's 6h reaches 2:30 AM
+  // and refuses. This pins that workedHours, not contractHours, feeds
+  // curfewGateForSave.
   const A = await seed({ name: 'A', pkg: corePkg, contractHours: 4, workedHours: 5, startTime: '8:30 PM' });
   const before = await row(A.id);
   const refused = await request('PATCH', `/api/proposals/${A.id}`, editorBody(before, { event_duration_hours: 6 }));
@@ -388,6 +389,9 @@ test('GET /proposals/:id always carries settled_extension_hours: 1 on A, 0 on Z'
   assert.equal(a.status, 200);
   assert.equal(a.body.settled_extension_hours, 1);
   assert.equal(z.body.settled_extension_hours, 0);
+  // The clamp's floor for the editor's hint: what the first extension found.
+  assert.equal(a.body.contract_floor_hours, 4);
+  assert.equal(z.body.contract_floor_hours, null);
 });
 
 test('priceProposedState with no settled rows never touches service_extensions (the public routes pay nothing)', async () => {

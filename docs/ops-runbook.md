@@ -175,6 +175,10 @@ orchestration in the route anymore; never describe or rebuild one.
   should be shorter than that is priced with a discount adjustment on a
   catalog-priced booking, or by lowering Override total when one is set (an
   adjustment is swallowed there), never with a duration edit.
+- **Gratuity (spec §14 default, approved 2026-08-03): the bartender keeps the
+  gratuity share.** The refund returns the client's money; it does not claw
+  back the staff pool share. This stands unless Dallas later flips the default
+  to pull-from-pool-on-refund.
 
 ### Stranded paid extensions (settle through the request, never the duration)
 
@@ -192,7 +196,3 @@ orchestration in the route anymore; never describe or rebuild one.
   INTERVAL '1 hour' WHERE id = <id> AND status = 'expired'`.
 - Never edit the event duration to "settle" any of these: a hand-moved hour
   is contract time and bills the client again on the next save.
-- **Gratuity (spec §14 default, approved 2026-08-03): the bartender keeps the
-  gratuity share.** The refund returns the client's money; it does not claw
-  back the staff pool share. This stands unless Dallas later flips the default
-  to pull-from-pool-on-refund.
