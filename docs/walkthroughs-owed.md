@@ -1803,11 +1803,11 @@ to rot. Do that again for the next thing that sits here.
       backfill cannot prove, and it is the half that was actually broken.
 
 
-### Consult call bridge, the READ side. Built 2026-08-26, tip `63d5def9`, NOT merged.
+### Consult call bridge, the READ side. Merged 2026-09-30 as `5157d29c`.
 
-Lane `consult-call-surfacing`, 16 commits. Belongs in this tier and not in Tier 3b because it
-genuinely has not shipped: Dallas has given no merge cue. Graduates by this tier's own rule, an
-ancestor check on the merge sha, once it lands.
+Lane `consult-call-surfacing`, built 2026-08-26, rebased onto `3585e612` and merged on Dallas's
+go 2026-09-30. Graduates to Tier 3b by this tier's own rule once
+`git merge-base --is-ancestor 5157d29c origin/main` passes.
 
 What to walk when it does, three surfaces:
 - **Needs attention** on the admin overview. Consult call faults now appear beside the Thumbtack
@@ -1815,18 +1815,22 @@ What to walk when it does, three surfaces:
   deliberate correction: a failed consult is a promised call not delivered, so the slot passing
   CREATES the obligation rather than ending it.
 - **Proposal detail** and **client detail**. The newest chain per proposal, and one line per
-  consult for a client. Check the wording on a cap trip and on a stopped reschedule.
+  consult for a client. Check the line reads cleanly in both skins (it spans both grid columns
+  on client detail by design).
 - **Notification settings**, the "Call bridge failures" category. One line, 199 characters, and it
   now says explicitly that not every fault emails so the feed is worth checking too.
 
-**IT WILL LOOK BROKEN, AND THAT IS DATA, NOT A DEFECT.** Verified against prod on 2026-08-26:
-8 consults, NONE future-dated, only one carrying a `booker_phone`, and exactly one
-`consult_call_attempts` row, whose consult has neither a `proposal_id` nor a `client_id`. Both
-lookups INNER JOIN the attempts table, which is correct for a feature about call OUTCOMES. So on
-merge day all three surfaces render nothing at all. **Do not walk this until a real consult has
-booked with a phone and the sweep has rung it**, or the walk proves nothing and reads as a
-regression. The seven older consults predate the `booker_phone` column and can never produce an
-attempt.
+**Walkable now: real rows exist.** Read from prod 2026-09-30: four `consult_call_attempts` rows.
+What each surface should show once shipped:
+- Client 1887: "Sep 8, 1:30 PM · missed".
+- Client 1913: "Sep 15, 4:00 PM · connected (Dallas, 6:18)".
+- Client 1910 AND proposal 842: "Sep 18, 11:00 AM · missed".
+- Attempt 1 (the 2026-08-25 launch-test chain) has neither a `proposal_id` nor a `client_id`, so
+  it renders nowhere. Correct, not a miss.
+- **Needs attention shows NO consult item.** None of the four rows is a fault status (two
+  `missed`, two `connected`), and missed consults alert by text instead. An empty feed here is the
+  healthy state, not a regression. The fault labels and the cap / stopped-reschedule wording are
+  pinned by tests; they cannot be walked until a real fault happens.
 
 
 
