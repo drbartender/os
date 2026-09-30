@@ -7,6 +7,9 @@ const { formatPhoneDisplay } = require('./globalSearch');
 const { formatEventDateLong } = require('./preEventHandlers');
 const lifecycleEmail = require('./lifecycleEmailTemplates');
 const smsTemplates = require('./smsTemplates');
+const { parsePositionsNeeded } = require('./positionsNeeded');
+const { canonicalizeRole } = require('./staffingRoles');
+const { roleFill } = require('./staffingClassification');
 
 // ─── Pure renderer ───────────────────────────────────────────────
 
@@ -207,8 +210,13 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
  * and, if this caller wins the atomic flip, fire the client confirmation
  * (Touch 2.2: email + SMS naming the bartender(s) + phone).
  *
- * "Fully staffed" = approved shift_requests count >= positions_needed length,
- * the SAME definition autoAssign uses for slotsRemaining. The UPDATE returns
+ * "Fully staffed" = no open slot by the staffing rule BY ROLE (roleFill,
+ * staffingClassification.js; the rule the Needs staff flag, the badge and every
+ * admin list use): three bartenders on a two-bartender, one-barback roster
+ * leave the barback slot open, so the client is NOT told they are staffed (lane
+ * staffing-rule-by-role, 2026-09-30; it was approved count >= roster length).
+ * A roster that declares no roles is one slot, so nobody approved never
+ * confirms. (autoAssign counts Bartender slots only, by role.) The UPDATE returns
  * `id` only if the row was actually held (last_minute_hold true→false); a
  * returned row means THIS caller is the unique flip owner and is responsible
  * for the notify. Concurrent fills lose the WHERE clause race and skip silently.
@@ -222,9 +230,8 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
  * Do not add an upstream `WHERE last_minute_hold` filter at any call site
  * (that would regress the auto-assign clear-hold bugfix).
  *
- * `positions_needed` is `TEXT DEFAULT '[]'` (JSON-encoded string per
- * schema.sql:280), so the length check uses `JSON.parse` with a fallback,
- * NOT `Array.isArray` (which is always false on strings).
+ * `positions_needed` is `TEXT DEFAULT '[]'` (JSON-encoded, both historical
+ * shapes), so it is read through parsePositionsNeeded, never a bare JSON.parse.
  */
 async function confirmStaffingIfFullyStaffed(shiftId) {
   try {
@@ -234,19 +241,18 @@ async function confirmStaffingIfFullyStaffed(shiftId) {
     );
     const row = s.rows[0];
     if (!row || !row.proposal_id) return;
-    let needed = 0;
-    try {
-      const parsed = JSON.parse(row.positions_needed || '[]');
-      needed = Array.isArray(parsed) ? parsed.length : 0;
-    } catch (_) {
-      needed = 0;
-    }
-    if (needed === 0) return;
     const a = await pool.query(
-      "SELECT COUNT(*)::int AS n FROM shift_requests WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL",
+      "SELECT position FROM shift_requests WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL",
       [shiftId]
     );
-    if (a.rows[0].n < needed) return;
+    const named = {};
+    let roleless = 0;
+    for (const r of a.rows) {
+      const role = canonicalizeRole(r.position);
+      if (role) named[role] = (named[role] || 0) + 1;
+      else roleless += 1;
+    }
+    if (roleFill(parsePositionsNeeded(row.positions_needed), named, roleless).open > 0) return;
     const flip = await pool.query(
       'UPDATE proposals SET last_minute_hold = false WHERE id = $1 AND last_minute_hold = true RETURNING id',
       [row.proposal_id]

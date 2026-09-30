@@ -15,6 +15,7 @@
  */
 
 const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInstant');
+const { openSlotsSql } = require('../utils/positionsNeeded');
 
 // Staff-side GET /api/shifts list. Projects BEO (drink plan + own ack) and
 // cover (any active cover-requesting shift_request on this shift + the
@@ -287,7 +288,7 @@ function adminShiftsSelectSql(extraColumns = '') {
         -- stops being true, move the flatten to the client and use the parser.
         -- The ORDER BY carries a psr.id tiebreak because dev rows share a
         -- created_at and the list would otherwise be nondeterministic there.
-        -- IS JSON ARRAY is a CRASH GUARD, same as on the unstaffed-upcoming cast:
+        -- IS JSON ARRAY is a CRASH GUARD, the same one openSlotsSql carries:
         -- one legacy row holding a non-array would raise and 500 this whole feed.
         -- Aliases psr/pu/pcp: the outer query owns u and approved_staff owns a*.
         (SELECT COALESCE(json_agg(json_build_object(
@@ -334,10 +335,12 @@ ${planQueueSql.select}
 // events, $2 limit in events, $3 needs_staff boolean.
 //
 // `needs_staff` is the unstaffed_events badge predicate from
-// routes/admin/settings.js, restated over this projection's rc.approved_count
-// (the same approved-and-not-dropped count). Change one, change both, in the
-// same commit; shifts.adminScoped.test.js pins the two to the same rows. The
-// chip keeps whole events: a flagged shift pulls its siblings along.
+// routes/admin/settings.js: both are "not finished, open, and openSlotsSql > 0",
+// the staffing rule BY ROLE (server/utils/positionsNeeded.js), so an extra
+// bartender never hides an open barback slot and the chip agrees with the card
+// (lane staffing-rule-by-role, 2026-09-30). shifts.adminScoped.test.js pins the
+// two to the same rows. The chip keeps whole events: a flagged shift pulls its
+// siblings along.
 //
 // It carries its OWN end-instant term rather than leaning on the scope's WHERE,
 // so the flag means "staffing is still possible" in every scope it is read in.
@@ -350,16 +353,14 @@ ${planQueueSql.select}
 // (the end instant, never a calendar day) and live. Past = finished, or
 // cancelled, or archived, whatever the date, which is where the muted
 // Cancelled card lives.
-// COALESCEd to a real boolean, never NULL. positions_needed is nullable, and
-// NULL IS JSON ARRAY evaluates to NULL rather than false, so an open unfinished
-// shift with no positions row would otherwise ship needs_staff: null and every
-// client truthiness check would quietly disagree with the badge. Same guard
-// covers a NULL s.status.
+// COALESCEd to a real boolean, never NULL: a NULL s.status would otherwise ship
+// needs_staff: null and every client truthiness check would quietly disagree
+// with the badge. openSlotsSql owns the roster parsing, including the
+// IS JSON ARRAY crash guard; a NULL, malformed or empty roster is one slot, the
+// client's neededCount law.
 const NEEDS_STAFF_SQL = `COALESCE((${shiftNotFinishedSql('s', 'p')}
       AND s.status = 'open'
-      AND s.positions_needed IS JSON ARRAY
-      AND jsonb_array_length(s.positions_needed::jsonb) > 0
-      AND rc.approved_count < jsonb_array_length(s.positions_needed::jsonb)), false)`;
+      AND ${openSlotsSql('s')} > 0), false)`;
 
 function adminScopedShiftsSql(scope) {
   const upcoming = scope === 'upcoming';

@@ -10,6 +10,7 @@ const { logAdminAction } = require('../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../utils/businessTime');
 // THE shift-visibility predicate. See server/utils/shiftEndInstant.js.
 const { shiftNotFinishedSql, shiftFinishedSql } = require('../utils/shiftEndInstant');
+const { openSlotsSql } = require('../utils/positionsNeeded');
 // Out-of-Area Bonus: bands, distances, lock lifecycle, duty re-derivation.
 // The bands are server-only by design (spec §6 published-ambiguity rule), so
 // the payloads below carry derived cents and the client never computes one.
@@ -181,9 +182,8 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
 /** GET /shifts/unstaffed-upcoming — admin-facing list of upcoming shifts that
  *  still need staffing. Smaller than the full /shifts dump and pre-filtered
  *  server-side so the AssignToEventModal can render without fetching ~500 rows.
- *  Uses the same `positions_needed::jsonb` pattern as admin.js badge-counts;
- *  the schema migration normalized every row to a valid JSON array, so the
- *  cast is safe in practice.
+ *  The roster is read by openSlotsSql, the same fragment badge-counts uses; it
+ *  casts positions_needed to jsonb only behind IS JSON ARRAY.
  *
  *  approved_by_role mirrors the aggregate on the admin GET / feed above. The
  *  modal needs per-role fill, not just a flat count, to preselect the position
@@ -191,9 +191,12 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
  *
  *  It sums to approved_count for every row every write path can produce, but
  *  not by construction: approved_count does not filter `position IS NOT NULL`.
- *  An approved-and-active row with a NULL position would be counted there and
- *  dropped here. No such row exists (every approve path stamps a canonical
- *  role) and no CHECK enforces it, so treat a mismatch as a data alarm.
+ *  An approved-and-active row with a NULL position is counted there and
+ *  dropped here, and the staffing rule reads the difference as ROLELESS
+ *  approvals that take the first role with room (rowRoleFill on the client,
+ *  openSlotsSql in this WHERE). No such row exists today: every approve path
+ *  stamps a canonical role, and the shift_requests_position_canonical CHECK
+ *  allows only canonical labels or NULL.
  *
  *  `AND position IS NOT NULL` is a CRASH GUARD, not tidying: jsonb_object_agg
  *  throws on a NULL key, and the surrounding COALESCE cannot catch it because
@@ -206,9 +209,14 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
  *  day) a short-staffed shift starting at 20:00 was invisible to whoever was
  *  covering a no-show at 19:01.
  *
+ *  "Still needs staffing" is openSlotsSql > 0 (server/utils/positionsNeeded.js),
+ *  the staffing rule BY ROLE: an extra bartender never hides an open barback
+ *  slot, and a NULL, malformed or empty roster is one slot (the client's
+ *  neededCount law; the fragment carries the IS JSON ARRAY crash guard).
+ *
  *  THE BADGE COUNTS THIS LIST. `unstaffed_events` in
  *  routes/admin/settings.js badge-counts is the COUNT for exactly these rows
- *  and uses the SAME imported fragment. A count and the list it counts sharing
+ *  and uses the SAME imported fragments. A count and the list it counts sharing
  *  one predicate is not tidiness — the two drifting apart, with comments in
  *  both claiming they mirrored each other, is what broke the round this
  *  replaces. Change one, change both, in the same commit. */
@@ -237,9 +245,7 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
     ) abr ON true
     WHERE s.status = 'open'
       AND ${shiftNotFinishedSql('s', 'p')}
-      AND s.positions_needed IS JSON ARRAY
-      AND rc.approved_count
-          < jsonb_array_length(CASE WHEN s.positions_needed IS JSON ARRAY THEN s.positions_needed::jsonb ELSE '[]'::jsonb END)
+      AND ${openSlotsSql('s')} > 0
     ORDER BY s.event_date ASC, s.start_time ASC
     LIMIT 200
   `);

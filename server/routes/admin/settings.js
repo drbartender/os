@@ -8,6 +8,7 @@ const { ValidationError } = require('../../utils/errors');
 const { getStripPayload } = require('../../utils/presenceStore');
 // THE shift-visibility predicate, shared with GET /api/shifts/unstaffed-upcoming.
 const { shiftNotFinishedSql } = require('../../utils/shiftEndInstant');
+const { openSlotsSql } = require('../../utils/positionsNeeded');
 
 const router = express.Router();
 
@@ -143,16 +144,11 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
       (SELECT COUNT(*) FROM shifts s
          LEFT JOIN proposals p ON p.id = s.proposal_id
        WHERE ${shiftNotFinishedSql('s', 'p')} AND s.status = 'open'
-         -- IS JSON ARRAY, byte-for-byte the guard GET /shifts/unstaffed-upcoming
-         -- uses, NOT jsonb_typeof(...::jsonb). positions_needed is TEXT, so the
-         -- CAST raises 22P02 on malformed content BEFORE jsonb_typeof can
-         -- classify it: one bad row 500s this badge while the list it counts
-         -- shrugs and carries on. Same divergence the comment above forbids,
-         -- one layer down from the date predicate.
-         AND s.positions_needed IS JSON ARRAY
-         AND jsonb_array_length(s.positions_needed::jsonb) > 0
-         AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
-             < jsonb_array_length(s.positions_needed::jsonb)
+         -- openSlotsSql, the SAME fragment GET /shifts/unstaffed-upcoming and the
+         -- phone feed's needs_staff use: the staffing rule BY ROLE, with the
+         -- IS JSON ARRAY crash guard inside it (positions_needed is TEXT; a bare
+         -- cast raises 22P02 on one malformed row and 500s this badge).
+         AND ${openSlotsSql('s')} > 0
       )::int AS unstaffed_events,
       (SELECT COUNT(*) FROM applications a
          JOIN users u ON u.id = a.user_id

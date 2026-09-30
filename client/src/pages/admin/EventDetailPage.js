@@ -21,8 +21,8 @@ import StatusChip from '../../components/adminos/StatusChip';
 import ServiceExtensionPanel from '../../components/adminos/ServiceExtensionPanel';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import { fmtDate, fmtDateFull, fmtTime24, fmtTimeRange24, relDayTs } from '../../components/adminos/format';
-import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
-import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
+import { parsePositionsCount, approvedCount, remainingByRole, rowRoleFill } from '../../components/adminos/shifts';
+import { parsePositionsNeeded, rosterCounts } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import CancelEventDialog from './CancelEventDialog';
@@ -385,14 +385,14 @@ function EventDetailPageDesktop() {
                       const have = need - Math.max(0, remaining[role] || 0);
                       return `${role} ${have}/${need}`;
                     });
-                    const fullyStaffed = roster.length > 0 && isEventFullyStaffed(remaining);
                     const openSlots = Object.values(remaining).reduce((sum, n) => sum + Math.max(0, n), 0);
-                    // Per-role-capped coverage: a mixed-roster over-fill (a full role
-                    // masking an empty one) must never read "fully staffed". needed
-                    // minus open slots is the true filled-role count. Legacy rows with
-                    // no roster fall back to the flat approved/needed counts.
-                    const displayFilled = roster.length > 0 ? needed - openSlots : filled;
-                    const chipOk = roster.length > 0 ? fullyStaffed : filled >= needed;
+                    // Per-role-capped coverage by the staffing rule (rowRoleFill): a
+                    // mixed-roster over-fill (a full role masking an empty one) must
+                    // never read "fully staffed", and a roster with no roles is one
+                    // slot, so two approvals read 1/1, as the drawer and every list do.
+                    const fill = rowRoleFill(s);
+                    const displayFilled = fill.filled;
+                    const chipOk = fill.open === 0;
                     // Pending requests beyond the open slots are effectively a waitlist;
                     // unknown on a roster-less legacy row, so do not over-report it.
                     const waitlistCount = roster.length > 0

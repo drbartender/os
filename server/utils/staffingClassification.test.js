@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { computeRemaining, classifyRequest, isEventFullyStaffed } = require('./staffingClassification');
+const { computeRemaining, classifyRequest, isEventFullyStaffed, roleFill } = require('./staffingClassification');
 
 test('computeRemaining = needed - approved per role', () => {
   assert.deepEqual(
@@ -53,4 +53,38 @@ test('empty remaining map is vacuously fully staffed', () => {
   assert.equal(isEventFullyStaffed({}), true);
   assert.equal(isEventFullyStaffed({ Bartender: 1 }), false);
   assert.equal(isEventFullyStaffed({ Bartender: 0 }), true);
+});
+
+// roleFill: the staffing rule by role (lane staffing-rule-by-role, 2026-09-30).
+const MIXED = ['Bartender', 'Bartender', 'Barback'];
+const pick = ({ slots, open, filled }) => ({ slots, open, filled });
+
+test('roleFill: an over-filled role never fills another role\'s open slot', () => {
+  assert.deepEqual(pick(roleFill(MIXED, { Bartender: 3 })), { slots: 3, open: 1, filled: 2 });
+});
+
+test('roleFill: an approval in a role the roster never declared fills nothing', () => {
+  assert.deepEqual(pick(roleFill(['Bartender'], { Barback: 1 })), { slots: 1, open: 1, filled: 0 });
+});
+
+test('roleFill: a roleless approval takes the first role with room', () => {
+  const f = roleFill(MIXED, { Bartender: 2 }, 1);
+  assert.deepEqual(pick(f), { slots: 3, open: 0, filled: 3 });
+  assert.deepEqual(f.approvedByRole, { Bartender: 2, Barback: 1 });
+});
+
+test('roleFill: a roleless approval with no room anywhere lands on the first role and fills nothing more', () => {
+  const f = roleFill(['Bartender'], { Bartender: 1 }, 1);
+  assert.deepEqual(pick(f), { slots: 1, open: 0, filled: 1 });
+  assert.deepEqual(f.approvedByRole, { Bartender: 2 });
+});
+
+test('roleFill: an empty roster is one slot any approval fills', () => {
+  assert.deepEqual(pick(roleFill([], {}, 0)), { slots: 1, open: 1, filled: 0 });
+  assert.deepEqual(pick(roleFill([], { Barback: 1 }, 0)), { slots: 1, open: 0, filled: 1 });
+  assert.deepEqual(pick(roleFill([], {}, 1)), { slots: 1, open: 0, filled: 1 });
+});
+
+test('roleFill: exactly filled mixed roster is full', () => {
+  assert.deepEqual(pick(roleFill(MIXED, { Bartender: 2, Barback: 1 })), { slots: 3, open: 0, filled: 3 });
 });

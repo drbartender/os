@@ -6,7 +6,7 @@ import Icon from '../../../components/adminos/Icon';
 import MetricsFilterBar from '../../../components/adminos/MetricsFilterBar';
 import useMetricsFilter from '../../../hooks/useMetricsFilter';
 import useUrlListState from '../../../hooks/useUrlListState';
-import { parsePositionsCount, approvedCount, selectUpcoming } from '../../../components/adminos/shifts';
+import { rowRoleFill, selectUpcoming } from '../../../components/adminos/shifts';
 import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import PayrollStatus from './PayrollStatus';
@@ -271,7 +271,7 @@ export default function OverviewPage() {
   // history.
   const upcoming = useMemo(() => selectUpcoming(shifts), [shifts]);
   const unstaffed = useMemo(() =>
-    upcoming.filter(e => approvedCount(e) < parsePositionsCount(e)), [upcoming]);
+    upcoming.filter(e => rowRoleFill(e).open > 0), [upcoming]);
   const newApplications = useMemo(() =>
     Array.isArray(applications) ? applications.filter(a => a.onboarding_status === 'applied').length : 0, [applications]);
 

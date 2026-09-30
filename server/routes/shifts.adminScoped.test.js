@@ -79,7 +79,7 @@ const tokenFor = (u) => jwt.sign({ userId: u.id, tokenVersion: u.token_version }
 // column list the legacy admin array returns. Pinning it is what makes the
 // "verbatim" move a verified claim instead of a trusted one.
 const LEGACY_KEYS = ["approved_by_role","approved_count","approved_staff","auto_assign_days_before","auto_assigned_at","bar_required","client_email","client_name","client_phone","consult_at","created_at","created_by","created_by_email","end_time","equipment_required","event_date","event_duration_hours","event_type","event_type_custom","guest_count","id","lat","lng","location","menu_done","notes","out_of_area_attached_at","out_of_area_attached_by","out_of_area_bonus_cents","out_of_area_locked_at","out_of_area_locked_user_id","package_bar_type","package_category","package_name","pending_count","pending_staff","plan_input_landed","positions_needed","proposal_amount_paid","proposal_guest_count","proposal_id","proposal_status","proposal_token","proposal_total","request_count","setup_minutes_before","shopping_list_status","start_time","status","supply_run_overridden","supply_run_required","updated_at"];
-let adminToken, staffToken, staffId, clientId, propA, propB, propC, propD;
+let adminToken, staffToken, staffId, clientId, propA, propB, propC, propD, propE, propF;
 const S = {}; // fixture key -> shift id
 
 // proposals.token is UUID NOT NULL DEFAULT gen_random_uuid(): leave it to the default.
@@ -100,8 +100,8 @@ async function seedShift(key, { date, start = '18:00', end = '23:00', positions 
   S[key] = r.rows[0].id;
   return S[key];
 }
-async function approve(shiftId, userId) {
-  await pool.query(`INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'approved', 'Bartender')`, [shiftId, userId]);
+async function approve(shiftId, userId, position = 'Bartender') {
+  await pool.query(`INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'approved', $3)`, [shiftId, userId, position]);
 }
 const ymdOffset = (days) => {
   const d = new Date(); d.setUTCHours(12, 0, 0, 0); d.setUTCDate(d.getUTCDate() + days);
@@ -125,6 +125,7 @@ before(async () => {
 
   adminToken = tokenFor(await makeUser('admin', 'admin'));
   const staff = await makeUser('staff'); staffId = staff.id; staffToken = tokenFor(staff);
+  const staff2 = await makeUser('staff2'); const staff3 = await makeUser('staff3');
   const c = await pool.query(`INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555550000') RETURNING id`,
     [CLIENT_TAG, `${EMAIL_PREFIX}client@example.com`]);
   clientId = c.rows[0].id;
@@ -132,6 +133,8 @@ before(async () => {
   propB = await seedProposal('B', { date: ymdOffset(9) });   // one shift, fully staffed
   propC = await seedProposal('C', { date: ymdOffset(6) });   // MIXED: one staffed, one open
   propD = await seedProposal('D', { date: ymdOffset(11) });  // MULTI-DATE: two shifts, two dates
+  propE = await seedProposal('E', { date: ymdOffset(7) });   // MIXED ROSTER, over-filled: three bartenders, barback open
+  propF = await seedProposal('F', { date: ymdOffset(8) });   // MIXED ROSTER, exactly filled
   await seedShift('a1', { date: ymdOffset(2), positions: '["Bartender","Bartender","Bartender"]', proposalId: propA });
   await seedShift('a2', { date: ymdOffset(2), start: '17:00', end: '22:00', positions: '["Banquet Server"]', proposalId: propA });
   await seedShift('manual', { date: ymdOffset(4) });         // proposal_id NULL
@@ -147,12 +150,20 @@ before(async () => {
   // split it across two pages. Both unstaffed, so it also rides the chip.
   await seedShift('d1', { date: ymdOffset(11), proposalId: propD });
   await seedShift('d2', { date: ymdOffset(12), proposalId: propD });
+  // The staffing rule BY ROLE (lane staffing-rule-by-role, 2026-09-30): three
+  // approved bartenders on a two-bartender, one-barback roster leave the
+  // barback slot open, so e1 needs staff; f1, filled role for role, does not.
+  const MIXED = '["Bartender","Bartender","Barback"]';
+  await seedShift('e1', { date: ymdOffset(7), positions: MIXED, proposalId: propE });
+  await approve(S.e1, staffId); await approve(S.e1, staff2.id); await approve(S.e1, staff3.id);
+  await seedShift('f1', { date: ymdOffset(8), positions: MIXED, proposalId: propF });
+  await approve(S.f1, staffId); await approve(S.f1, staff2.id); await approve(S.f1, staff3.id, 'Barback');
 });
 
 after(async () => {
   await pool.query(`DELETE FROM shift_requests WHERE shift_id = ANY($1::int[])`, [Object.values(S)]);
   await pool.query(`DELETE FROM shifts WHERE id = ANY($1::int[])`, [Object.values(S)]);
-  await pool.query(`DELETE FROM proposals WHERE id = ANY($1::int[])`, [[propA, propB, propC, propD]]);
+  await pool.query(`DELETE FROM proposals WHERE id = ANY($1::int[])`, [[propA, propB, propC, propD, propE, propF]]);
   await pool.query(`DELETE FROM clients WHERE id = $1`, [clientId]);
   await pool.query(`DELETE FROM users WHERE email LIKE $1`, [`${EMAIL_PREFIX}%`]);
   await pool.end();
@@ -164,17 +175,17 @@ const mine = (rows) => rows.filter(r => ALL().includes(r.id));
 const ids = (rows) => mine(rows).map(r => r.id).sort((a, b) => a - b);
 const sorted = (xs) => [...xs].sort((a, b) => a - b);
 
-// The badge predicate, restated over the fixtures only. This is the truth the
-// chip must match (routes/admin/settings.js unstaffed_events).
+// The badge predicate, over the fixtures only: the same imported fragments
+// routes/admin/settings.js unstaffed_events is built from. This is the truth
+// the chip must match; the premise assertion below states the rule's answer
+// for each fixture independently of the SQL.
 async function badgeShiftIds() {
   const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
+  const { openSlotsSql } = require('../utils/positionsNeeded');
   const r = await pool.query(`
     SELECT s.id FROM shifts s LEFT JOIN proposals p ON p.id = s.proposal_id
      WHERE ${shiftNotFinishedSql('s', 'p')} AND s.status = 'open'
-       AND s.positions_needed IS JSON ARRAY
-       AND jsonb_array_length(s.positions_needed::jsonb) > 0
-       AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
-           < jsonb_array_length(s.positions_needed::jsonb)
+       AND ${openSlotsSql('s')} > 0
        AND s.id = ANY($1::int[])`, [ALL()]);
   return sorted(r.rows.map(x => x.id));
 }
@@ -240,7 +251,7 @@ test('a MULTI-DATE event still occupies exactly one page: ranking is by the even
 
 test('one bucket per shift: upcoming = live and unfinished; past = finished OR cancelled OR archived, newest first', async () => {
   const up = (await get('/api/shifts?scope=upcoming&limit=200', adminToken)).body;
-  assert.deepEqual(ids(up.rows), sorted([S.a1, S.a2, S.manual, S.b1, S.c1, S.c2, S.d1, S.d2]));
+  assert.deepEqual(ids(up.rows), sorted([S.a1, S.a2, S.manual, S.b1, S.c1, S.c2, S.d1, S.d2, S.e1, S.f1]));
   const past = (await get('/api/shifts?scope=past&limit=200', adminToken)).body;
   assert.deepEqual(ids(past.rows), sorted([S.past, S.cancelled]), 'a future-dated cancelled shift lives on Past');
   assert.equal(past.needs_staff_events, 0);
@@ -255,7 +266,8 @@ test('one bucket per shift: upcoming = live and unfinished; past = finished OR c
 
 test('needs_staff: the per-shift flag is the badge predicate; the chip keeps whole events', async () => {
   const badge = await badgeShiftIds();
-  assert.deepEqual(badge, sorted([S.a1, S.a2, S.manual, S.c2, S.d1, S.d2]), 'fixture premise: c1 is staffed, c2 is open');
+  assert.deepEqual(badge, sorted([S.a1, S.a2, S.manual, S.c2, S.d1, S.d2, S.e1]),
+    'fixture premise: c1 is staffed, c2 is open; e1 (barback open behind three bartenders) needs staff, f1 does not');
   const all = (await get('/api/shifts?scope=upcoming&limit=200', adminToken)).body;
   // Always a real boolean, never NULL: positions_needed is nullable and
   // NULL IS JSON ARRAY is NULL, so the predicate is COALESCEd at the source.
@@ -265,7 +277,7 @@ test('needs_staff: the per-shift flag is the badge predicate; the chip keeps who
   assert.deepEqual(sorted(mine(all.rows).filter(x => x.needs_staff).map(x => x.id)), badge);
   // Chip rows: every shift of any event that has a flagged shift. Proposal C stays whole.
   const chip = (await get('/api/shifts?scope=upcoming&needs_staff=1&limit=200', adminToken)).body;
-  assert.deepEqual(ids(chip.rows), sorted([S.a1, S.a2, S.manual, S.c1, S.c2, S.d1, S.d2]));
+  assert.deepEqual(ids(chip.rows), sorted([S.a1, S.a2, S.manual, S.c1, S.c2, S.d1, S.d2, S.e1]));
   assert.equal(mine(chip.rows).find(x => x.id === S.c1).needs_staff, false, 'the staffed shift rides along with its event, unflagged');
   // Event sets agree between chip and badge.
   const keyOf = (id) => all.rows.find(x => x.id === id).event_key;
@@ -280,6 +292,15 @@ test('needs_staff: the per-shift flag is the badge predicate; the chip keeps who
   // the number of distinct events actually on the page. A multi-date event
   // ranked by its row date would break this by inflating total_events.
   assert.ok(all.total_events >= new Set(mine(all.rows).map(r => r.event_key)).size);
+});
+
+test('GET /unstaffed-upcoming lists by the same rule: the over-filled mixed roster is there, the filled one is not', async () => {
+  const r = await get('/api/shifts/unstaffed-upcoming', adminToken);
+  assert.equal(r.status, 200);
+  const listed = new Set(r.body.map(x => x.id));
+  assert.ok(listed.has(S.e1), 'barback open behind three bartenders: listed');
+  assert.ok(!listed.has(S.f1), 'filled role for role: not listed');
+  assert.deepEqual(sorted(mine(r.body).map(x => x.id)), await badgeShiftIds(), 'the list is exactly what the badge counts');
 });
 
 test('an empty page keeps the totals', async () => {

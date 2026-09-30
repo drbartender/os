@@ -42,6 +42,22 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+// By role (lane staffing-rule-by-role, 2026-09-30): the row's count follows the
+// rule that put it on the list.
+describe('AssignToEventModal staffing count', () => {
+  test('three bartenders on a two-bartender, one-barback roster read 2/3, preselecting Barback', async () => {
+    mockFeed({
+      positions_needed: '["Bartender","Bartender","Barback"]',
+      approved_count: 3,
+      approved_by_role: { Bartender: 3 },
+    });
+    renderModal();
+    expect(await screen.findByText('2/3 staffed')).toBeInTheDocument();
+    expect(screen.queryByText('3/3 staffed')).toBeNull();
+    expect(screen.getByText('Assign as Barback')).toBeInTheDocument();
+  });
+});
+
 describe('AssignToEventModal position default', () => {
   test('open bartender slot preselects Bartender', async () => {
     mockFeed({ positions_needed: '["Bartender","Barback"]' });

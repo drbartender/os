@@ -107,12 +107,17 @@ function get(path, token) {
   });
 }
 
-test('GET /unstaffed-upcoming with a malformed positions_needed row -> 200 (not 22P02 500); good shift still listed, bad one skipped', async () => {
+// Since lane staffing-rule-by-role (2026-09-30) a malformed roster is read as an
+// empty one, which is ONE slot (the client's neededCount law, and what the phone
+// card and the desktop Unstaffed tab already showed), so with nobody approved it
+// is listed rather than skipped. The crash guard is the point of this test and
+// still holds: openSlotsSql never casts a non-array.
+test('GET /unstaffed-upcoming with a malformed positions_needed row -> 200 (not 22P02 500); the bad row reads as one open slot', async () => {
   const r = await get('/api/shifts/unstaffed-upcoming', adminToken);
   assert.equal(r.status, 200, `expected 200, got ${r.status} ${JSON.stringify(r.body)}`);
   assert.ok(Array.isArray(r.body), 'returns the shift array');
   assert.ok(r.body.some((s) => s.id === goodShiftId), 'the valid open shift is listed');
-  assert.ok(!r.body.some((s) => s.id === badShiftId), 'the malformed shift is safely skipped');
+  assert.ok(r.body.some((s) => s.id === badShiftId), 'the malformed shift is listed as one open slot, never a 500');
 });
 
 test('GET /unstaffed-upcoming carries approved_by_role, excluding dropped and pending requests', async () => {

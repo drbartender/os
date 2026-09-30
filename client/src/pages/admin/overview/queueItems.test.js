@@ -75,6 +75,18 @@ describe('buildStaffingItems', () => {
     positions_needed: '["Bartender","Bartender"]', approved_count: 0, ...over,
   });
 
+  // By role (lane staffing-rule-by-role, 2026-09-30): the open role's own noun.
+  test('the title names the open role, and says staff when several are open', () => {
+    expect(buildStaffingItems([shift(3)], 0)[0].title).toBe('Eve needs 2 bartenders');
+    expect(buildStaffingItems([shift(3, { approved_count: 1 })], 0)[0].title).toBe('Eve needs 1 bartender');
+    const barback = shift(3, { positions_needed: '["Bartender","Bartender","Barback"]', approved_count: 3, approved_by_role: { Bartender: 3 } });
+    expect(buildStaffingItems([barback], 0)[0]).toMatchObject({ title: 'Eve needs 1 barback', meta: '1 open' });
+    const both = shift(3, { positions_needed: '["Bartender","Barback"]', approved_count: 0 });
+    expect(buildStaffingItems([both], 0)[0].title).toBe('Eve needs 2 staff');
+    const noRoles = shift(3, { positions_needed: '[]', approved_count: 0 });
+    expect(buildStaffingItems([noRoles], 0)[0].title).toBe('Eve needs 1 person');
+  });
+
   test('event under 7 days out is danger; 7+ is warn', () => {
     expect(buildStaffingItems([shift(3)], 0)[0].priority).toBe('danger');
     expect(buildStaffingItems([shift(10)], 0)[0].priority).toBe('warn');

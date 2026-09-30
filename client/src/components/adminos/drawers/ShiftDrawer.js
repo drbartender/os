@@ -5,7 +5,6 @@ import { getEventTypeLabel } from '../../../utils/eventTypes';
 import {
   parsePositionsNeeded,
   rosterCounts,
-  computeRemaining,
   classifyRequest,
   isEventFullyStaffed,
   canonicalizeRole,
@@ -20,7 +19,7 @@ import { fmtDateFull } from '../format';
 import {
   SHIFT_EQUIPMENT_OPTIONS,
   parseEquipmentArray,
-  neededCount,
+  roleFill,
 } from '../shifts';
 import EntityLink from '../../EntityLink';
 import OutOfAreaKnob from '../../../pages/admin/OutOfAreaKnob';
@@ -167,21 +166,23 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
     [requests]
   );
 
-  // Approved-active counts per role, keyed by the canonical position written at
-  // approval. This is the money-side truth the classifier runs against.
-  const approvedByRole = useMemo(() => {
-    const counts = {};
+  // The staffing rule by role (roleFill, the rule every surface shares): approved
+  // counts per role keyed by the canonical position written at approval, the
+  // money-side truth the classifier runs against, plus any approval with no
+  // role on file, which takes the first role with room. Before, a roleless
+  // approval filled nothing here, so this drawer could offer a slot the phone
+  // sheet, the badge and the event page all read as filled.
+  const fill = useMemo(() => {
+    const named = {};
+    let roleless = 0;
     for (const r of approvedReqs) {
       const role = canonicalizeRole(r.position);
-      if (role) counts[role] = (counts[role] || 0) + 1;
+      if (role) named[role] = (named[role] || 0) + 1;
+      else roleless += 1;
     }
-    return counts;
-  }, [approvedReqs]);
-
-  const remaining = useMemo(
-    () => computeRemaining(roster, approvedByRole),
-    [roster, approvedByRole]
-  );
+    return roleFill(roster, named, roleless);
+  }, [roster, approvedReqs]);
+  const remaining = fill.remaining;
 
   const fullyStaffed = useMemo(
     () => roster.length > 0 && isEventFullyStaffed(remaining),
@@ -211,13 +212,13 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   const actionable = classifiedPending.filter(c => c.state === 'actionable');
   const waitlisted = classifiedPending.filter(c => c.state === 'waitlisted');
 
-  // The SAME rule the Event Detail card and the Overview queues use
-  // (shifts.js neededCount), against the roster this drawer already parsed. A
-  // bare roster.length here is what made one shift read "2/1 staffed" on the
-  // card and "2/0" in the drawer one click away: an empty positions_needed is a
-  // data gap, not a shift that needs nobody.
-  const totalNeeded = neededCount(roster);
-  const totalApproved = approvedReqs.length;
+  // The SAME rule every surface uses (roleFill: slots filled role for role, an
+  // empty roster is one slot), so this chip reads what the Events list, the
+  // badge and the phone read: three bartenders on a two-bartender, one-barback
+  // roster are 2/3, not 3/3. A bare roster.length here is what once made one
+  // shift read "2/1 staffed" on the card and "2/0" in the drawer.
+  const totalNeeded = fill.slots;
+  const totalApproved = fill.filled;
 
   // ----- Money seam: approve -----
   // Resolves the canonical position for an APPROVAL. Returns { position } when
@@ -393,7 +394,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   // Roster summary line: "Bartender 2/2 · Banquet Server 0/1".
   const roleSummary = Object.keys(neededByRole).map(role => {
     const need = neededByRole[role];
-    const have = approvedByRole[role] || 0;
+    const have = fill.approvedByRole[role] || 0;
     return `${role} ${Math.min(have, need)}/${need}`;
   });
 

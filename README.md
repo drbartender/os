@@ -429,7 +429,7 @@ dr-bartender/
 │   │   ├── invoiceLinking.js   # Payment->invoice linking (linkPaymentToInvoice: status guard, cap, Sentry breadcrumbs) + notifyLinkOverflow: the post-commit invoice-link overflow email to the payment_failure lane (own catch, never throws; post-commit because notifyAdminCategory takes its own pooled connection)
 │   │   ├── invoiceExtras.js    # "Drink Plan Extras" invoice create/find/refresh/void-reconcile
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
-│   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
+│   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger (fires only when every role is filled, roleFill)
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
 │   │   ├── staffHiringEmailTemplates.js # Staff/hiring/application email templates split out of emailTemplates.js (re-exported by it for backwards compat)
 │   │   ├── messageLog.js      # Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET /proposals/:id

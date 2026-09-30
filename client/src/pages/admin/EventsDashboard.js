@@ -17,7 +17,7 @@ import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
-import { parsePositionsCount, approvedCount, isCancelledEvent } from '../../components/adminos/shifts';
+import { rowRoleFill, isCancelledEvent } from '../../components/adminos/shifts';
 import { eventPlanState, eventPaymentState } from '../../components/adminos/eventPlan';
 import { useMobileView } from '../../context/MobileViewContext';
 import EventsListPhone from '../mobile/EventsListPhone';
@@ -135,7 +135,9 @@ function EventsDashboardDesktop() {
         if (tab === 'past' && day != null && day >= 0) return false;
         if (tab === 'unstaffed') {
           if (day != null && day < 0) return false;
-          if (approvedCount(e) >= parsePositionsCount(e)) return false;
+          // By role (rowRoleFill), the rule the badge and every list share: an
+          // extra bartender never hides an open barback slot.
+          if (rowRoleFill(e).open === 0) return false;
         }
         // "Contract pending" — proposal still out for signature (sent/viewed/modified).
         // Manual events (no proposal) and paid/confirmed events (already signed) are excluded.
@@ -164,7 +166,7 @@ function EventsDashboardDesktop() {
       const day = dayDiff(dayKey);
       if (day < 0) continue;
       upcoming++;
-      if (approvedCount(e) < parsePositionsCount(e)) unstaffed++;
+      if (rowRoleFill(e).open > 0) unstaffed++;
     }
     return { upcomingCount: upcoming, unstaffedCount: unstaffed };
   }, [events]);

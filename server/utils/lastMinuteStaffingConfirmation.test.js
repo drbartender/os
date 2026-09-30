@@ -124,11 +124,12 @@ beforeEach(async () => {
   proposalId = p.rows[0].id;
   const s = await pool.query(
     `INSERT INTO shifts (proposal_id, event_date, start_time, end_time, location, positions_needed, status)
-     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', '22:00', 'Test Venue', '["lead"]', 'open')
+     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', '22:00', 'Test Venue', '["Bartender"]', 'open')
      RETURNING id`,
     [proposalId]
   );
   shiftId = s.rows[0].id;
+  // No position on file: a roleless approval, which takes the Bartender slot.
   await pool.query(
     `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')`,
     [shiftId, userId]
@@ -331,13 +332,81 @@ test('confirmStaffingIfFullyStaffed > non-held + fully-staffed → no notify (re
 
 test('confirmStaffingIfFullyStaffed > held but understaffed → no flip, no notify', async () => {
   // Make the shift need 2 positions; only 1 approved → not fully staffed.
-  await pool.query(`UPDATE shifts SET positions_needed = '["lead","support"]' WHERE id = $1`, [shiftId]);
+  await pool.query(`UPDATE shifts SET positions_needed = '["Bartender","Bartender"]' WHERE id = $1`, [shiftId]);
   const sms = stubSms();
   try {
     await confirmStaffingIfFullyStaffed(shiftId);
     assert.strictEqual(sms.calls.length, 0);
     const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
     assert.strictEqual(rows[0].last_minute_hold, true, 'hold should still be true');
+  } finally { sms.restore(); }
+});
+
+// By role (lane staffing-rule-by-role, 2026-09-30): an extra bartender does not
+// fill the barback slot, so the client is not told the event is staffed until
+// the barback is approved, and then exactly once.
+test('confirmStaffingIfFullyStaffed > a mixed roster over-filled with bartenders does not confirm until the barback is approved', async () => {
+  await pool.query(`UPDATE shifts SET positions_needed = '["Bartender","Bartender","Barback"]' WHERE id = $1`, [shiftId]);
+  const extra = [];
+  for (const n of [2, 3, 4]) {
+    const u = await pool.query(
+      `INSERT INTO users (email, password_hash, onboarding_status) VALUES ($1, 'x', 'approved') RETURNING id`,
+      [`lmsc-bartender${n}-${Date.now()}@example.com`]
+    );
+    extra.push(u.rows[0].id);
+  }
+  const sms = stubSms();
+  try {
+    // Three NAMED bartenders. The fixture's approval has no role on file, and a
+    // roleless approval takes the first role with room (the barback), so name it.
+    await pool.query(`UPDATE shift_requests SET position = 'Bartender' WHERE shift_id = $1 AND user_id = $2`, [shiftId, userId]);
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'approved', 'Bartender'), ($1, $3, 'approved', 'Bartender')`,
+      [shiftId, extra[0], extra[1]]
+    );
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 0, 'barback still open: no confirmation');
+    let { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, true, 'hold stays while a role is open');
+
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'approved', 'Barback')`,
+      [shiftId, extra[2]]
+    );
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 1, 'every role filled: confirmed once');
+    ({ rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]));
+    assert.strictEqual(rows[0].last_minute_hold, false);
+  } finally {
+    sms.restore();
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = ANY($2::int[])', [shiftId, extra]);
+    await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [extra]);
+  }
+});
+
+// The amended behaviour, pinned so the choice is visible: a roster with no roles
+// is one slot, so one approval fills it and the client is confirmed. The old code
+// returned early on an empty roster (it would otherwise have confirmed 0 of 0).
+test('confirmStaffingIfFullyStaffed > a roster with no roles and one approval confirms once', async () => {
+  await pool.query(`UPDATE shifts SET positions_needed = '[]' WHERE id = $1`, [shiftId]);
+  const sms = stubSms();
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 1);
+    const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, false);
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > a roster with no roles and nobody approved never confirms', async () => {
+  await pool.query(`UPDATE shifts SET positions_needed = '[]' WHERE id = $1`, [shiftId]);
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+  const sms = stubSms();
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 0);
+    const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, true);
   } finally { sms.restore(); }
 });
 

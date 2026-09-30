@@ -1,6 +1,6 @@
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { fmt$, fmtDate, dayDiff } from '../../../components/adminos/format';
-import { parsePositionsCount, approvedCount } from '../../../components/adminos/shifts';
+import { rowRoleFill } from '../../../components/adminos/shifts';
 import { consultCapLabel } from '../../../utils/consultCallLabel';
 
 // Pure item builders + tab assembly for the Needs-attention tabbed card
@@ -49,14 +49,27 @@ const worstPriority = (items) =>
 // OverviewPage's derived list, which still runs to the end of the calendar —
 // the horizon is a display cut here, not a change to that list, so the page
 // header's "N need staff" count still reports the true total.
+// Who an unstaffed event still needs, by role (rowRoleFill): the open role's
+// own noun when only one role is open ("1 barback", "2 bartenders"), "staff"
+// when several are, "person" when the roster declares no roles at all. It said
+// "bartender" for every open slot.
+function neededNoun(e) {
+  const { open, remaining } = rowRoleFill(e);
+  const roles = Object.keys(remaining).filter((role) => remaining[role] > 0);
+  if (roles.length === 0) return { open, noun: open === 1 ? 'person' : 'people' };
+  if (roles.length > 1) return { open, noun: 'staff' };
+  const noun = roles[0].toLowerCase();
+  return { open, noun: open === 1 ? noun : `${noun}s` };
+}
+
 export function buildStaffingItems(unstaffed, newApplications, uncertified = [], nameNotices = [], onAck) {
   const items = (unstaffed || []).map(e => ({ e, days: dayDiff(e.event_date.slice(0, 10)) }))
     .filter(({ days }) => days <= STAFFING_HORIZON_DAYS)
     .map(({ e, days }) => {
-      const open = parsePositionsCount(e) - approvedCount(e);
+      const { open, noun } = neededNoun(e);
       return {
         id: 'unstaffed-' + e.id, type: 'unstaffed', priority: days < 7 ? 'danger' : 'warn',
-        title: `${e.client_name || 'Event'} needs ${open} ${open === 1 ? 'bartender' : 'bartenders'}`,
+        title: `${e.client_name || 'Event'} needs ${open} ${noun}`,
         sub: `${getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })} · ${fmtDate(e.event_date.slice(0, 10))} · ${days}d out`,
         meta: `${open} open`, target: e.proposal_id ? 'event' : 'shift', ref: e.proposal_id || e.id,
       };

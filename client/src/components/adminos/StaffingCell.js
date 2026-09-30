@@ -1,7 +1,7 @@
 import React from 'react';
 import StatusChip from './StatusChip';
 import StaffHoverCard from './StaffHoverCard';
-import { approvedCount } from './shifts';
+import { approvedCount, rowRoleFill } from './shifts';
 import { parsePositionsNeeded } from '../../utils/staffingRoles';
 import { dayDiff } from './format';
 
@@ -24,11 +24,20 @@ import { dayDiff } from './format';
 // who applied, and the chip only renders when a slot is open. So a full roster
 // still shows no applicants, by never constructing the anchor that would carry
 // them. The confirmed card never carries applicants either way.
+//
+// Counted BY ROLE (rowRoleFill), the rule the badge, the Unstaffed tab and the
+// event page share: `confirmed` is the slots filled role for role, so three
+// bartenders on a two-bartender, one-barback roster read 2/3 with 1 open, and
+// an over-filled role reads full rather than 2/1. The confirmed hover card still
+// lists every approved person. A roster that declares no roles keeps its own
+// "No roster" line below (needed 0, the flat approved count, nothing open).
 export function deriveStaffing(e) {
-  const needed = parsePositionsNeeded(e?.positions_needed).length;
-  const confirmed = approvedCount(e);
+  const hasRoster = parsePositionsNeeded(e?.positions_needed).length > 0;
+  const fill = rowRoleFill(e);
+  const needed = hasRoster ? fill.slots : 0;
+  const confirmed = hasRoster ? fill.filled : approvedCount(e);
   const pending = Math.max(0, Number(e?.pending_count || 0));
-  const open = Math.max(0, needed - confirmed);
+  const open = hasRoster ? fill.open : 0;
 
   // A finished or cancelled event is history, not a task, so it never shows
   // red and never advertises requests to action.

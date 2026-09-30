@@ -5,7 +5,7 @@ import EntityLink from '../../../../components/EntityLink';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDate, fmtTime24, relDay } from '../../../../components/adminos/format';
-import { remainingByRole } from '../../../../components/adminos/shifts';
+import { remainingByRole, rowRoleFill } from '../../../../components/adminos/shifts';
 import { parsePositionsNeeded, defaultAssignRole, CANONICAL_LABELS } from '../../../../utils/staffingRoles';
 
 // The role a row preselects: the first open slot walking Bartender, Banquet
@@ -129,9 +129,10 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
             <div className="vstack" style={{ gap: 8 }}>
               {filtered.map(s => {
                 const roster = parsePositionsNeeded(s.positions_needed);
-                const needed = roster.length || Number(s.bartenders_needed || 1);
-                const filled = Number(s.approved_count || 0);
-                const open = Math.max(0, needed - filled);
+                // By role (rowRoleFill), the rule that put this row on the list:
+                // three bartenders on a two-bartender, one-barback roster read
+                // 2/3 with the barback open, never "3/3 staffed" in green.
+                const { slots: needed, filled, open } = rowRoleFill(s);
                 const isAssigned = assigned[s.id];
                 // Same fallback as ShiftDrawer: a roster that canonicalizes to
                 // nothing (POST /shifts stores positions_needed verbatim, so a

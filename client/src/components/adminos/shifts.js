@@ -87,14 +87,14 @@ export function selectUpcoming(rows) {
 //
 // An empty roster is a DATA GAP -- nobody declared the roles -- not a shift that
 // needs nobody, so it counts as 1. That guess is load-bearing rather than
-// cosmetic: parsePositionsCount feeds the Events dashboard's unstaffed filter,
-// its unstaffed counter, the Overview queue's `open` count and the Overview
-// unstaffed filter. Reading an empty roster literally as 0 would make every such
-// shift "fully staffed" and drop it out of all four surfaces silently.
+// cosmetic: roleFill (below) is built on it, and roleFill feeds every staffing
+// count, from the Events dashboard's Unstaffed tab to the badge's SQL twin
+// (openSlotsSql). Reading an empty roster literally as 0 would make every such
+// shift "fully staffed" and drop it out of every surface silently.
 //
-// Exported because ShiftDrawer needs the SAME rule against the roster it has
-// already parsed for its per-role math. Two hand-written copies of this is how
-// the card came to say "2/1 staffed" while the drawer said "2/0" for one shift.
+// Exported for its tests; parsePositionsCount is built on it. Two hand-written
+// copies of this is how the card came to say "2/1 staffed" while the drawer
+// said "2/0" for one shift.
 export function neededCount(rosterArray) {
   return (Array.isArray(rosterArray) ? rosterArray.length : 0) || 1;
 }
@@ -130,9 +130,11 @@ export function approvedCount(s) {
 // nothing. An approval with no role on file takes the first role with room, in
 // roster order (the safe direction: fewer open slots, never an over-fill
 // offered). A roster that declares no roles is one slot any approval fills
-// (neededCount). ONE rule for the phone Events list (from the feed's
-// aggregates) and the phone staffing card (from the request rows), so the two
-// fractions cannot differ (Dallas, 2026-09-30).
+// (neededCount). ONE rule for every staffing count: the phone list and card,
+// the desktop Unstaffed tab, staffing column and overview queue (Dallas,
+// 2026-09-30). Its CJS twin is roleFill in server/utils/staffingClassification.js
+// and its SQL statement is openSlotsSql (server/utils/positionsNeeded.js), which
+// the Needs staff flag and the badge read; keep all three in step.
 export function roleFill(roster, approvedByRole = {}, roleless = 0) {
   const needed = rosterCounts(roster);
   const roleOrder = Object.keys(needed);
@@ -155,7 +157,7 @@ export function roleFill(roster, approvedByRole = {}, roleless = 0) {
 // `approved_count` counts all of them, so the difference is the approvals with
 // no role on file. A key this app cannot read as a role counts as roleless too,
 // the way normalizeRequest reads a stray role on the phone card. A legacy row
-// with no aggregate at all is all roleless, which lands on the first role.
+// with no aggregate at all is all roleless, each taking the first role with room.
 export function rowRoleFill(s) {
   const roster = parsePositionsNeeded(s?.positions_needed);
   const byRole = {};
@@ -190,22 +192,14 @@ export function parseApprovedByRole(raw) {
   return out;
 }
 
-// Returns the per-role remaining (needed - approved-active) map for a shift,
-// e.g. { Bartender: 0, 'Banquet Server': 1 }. Prefers the `approved_by_role`
-// aggregate from the feed; for a legacy row that only carries the flat
-// `approved_count`, it attributes that count to the first role in the roster
-// (historically always Bartender), so single-role events stay accurate.
+// Returns the per-role remaining (needed - approved-active) map for a feed row,
+// e.g. { Bartender: 0, 'Banquet Server': 1 }, by the staffing rule (rowRoleFill):
+// an approval with no role on file, and the whole flat count of a legacy row
+// with no `approved_by_role`, takes the first role WITH ROOM (it used to go to
+// the first roster role whether or not it had room, so the event page could
+// read a barback slot open that every other surface read filled).
 export function remainingByRole(s) {
-  const roster = parsePositionsNeeded(s?.positions_needed);
-  let approvedByRole = parseApprovedByRole(s?.approved_by_role);
-  if (Object.keys(approvedByRole).length === 0) {
-    const flat = approvedCount(s);
-    if (flat > 0) {
-      const firstRole = roster[0] || 'Bartender';
-      approvedByRole = { [firstRole]: flat };
-    }
-  }
-  return computeRemaining(roster, approvedByRole);
+  return rowRoleFill(s).remaining;
 }
 
 // Shared event-status chip — used on Dashboard, EventsDashboard, drawers, and

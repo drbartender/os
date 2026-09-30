@@ -98,10 +98,9 @@ export function buildShiftView(shift, rawRequests, { justAssigned = [] } = {}) {
   // An approval with no role on file (none in prod as of 2026-09-29, but the
   // column is nullable) still occupies a slot. Left uncounted, the phone would
   // show a filled slot as open and offer it again, which is an over-fill.
-  // roleFill gives it the first role with room, in roster order. (The desktop's
-  // remainingByRole gives a legacy row to the first roster role whether or not
-  // it has room; this errs toward fewer open slots, the safe direction.) The
-  // phone Events list counts with the same roleFill, so the two agree.
+  // roleFill gives it the first role with room, in roster order, the rule every
+  // staffing surface shares (the phone list, the desktop drawer, event page and
+  // lists, and the badge's SQL twin), so they all agree.
   const named = {};
   let roleless = 0;
   for (const r of approved) {

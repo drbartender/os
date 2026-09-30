@@ -62,6 +62,30 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+// By role (lane staffing-rule-by-role, 2026-09-30): the drawer's count is the
+// rule every surface shares.
+describe('ShiftDrawer staffing count by role', () => {
+  test('three bartenders on a two-bartender, one-barback roster read 2/3 staffed', async () => {
+    mockShift('["Bartender","Bartender","Barback"]', [
+      { id: 10, user_id: 5, status: 'approved', position: 'Bartender', dropped_at: null, staff_name: 'A One' },
+      { id: 11, user_id: 6, status: 'approved', position: 'Bartender', dropped_at: null, staff_name: 'B Two' },
+      { id: 12, user_id: 7, status: 'approved', position: 'Bartender', dropped_at: null, staff_name: 'C Three' },
+    ]);
+    render(<ShiftDrawer shiftId={1} open onClose={() => {}} />);
+    expect(await screen.findByText('2/3 staffed')).toBeInTheDocument();
+  });
+
+  test('an approval with no role on file takes the open role, so the picker does not offer it', async () => {
+    mockShift('["Bartender","Barback"]', [
+      { id: 10, user_id: 5, status: 'approved', position: 'Bartender', dropped_at: null, staff_name: 'A One' },
+      { id: 11, user_id: 6, status: 'approved', position: null, dropped_at: null, staff_name: 'B Two' },
+    ]);
+    render(<ShiftDrawer shiftId={1} open onClose={() => {}} />);
+    expect(await screen.findByText('2/2 staffed')).toBeInTheDocument();
+    expect(screen.getByText('Every role is fully staffed. Assigning will over-fill a role.')).toBeInTheDocument();
+  });
+});
+
 describe('ShiftDrawer manual-assign position default', () => {
   test('open bartender slot preselects Bartender', async () => {
     mockShift('["Bartender","Barback"]', []);

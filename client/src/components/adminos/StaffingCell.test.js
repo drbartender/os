@@ -18,6 +18,34 @@ const ev = ({ needed = 1, confirmed = 0, pending = 0, days = 30, status = 'open'
   status,
 });
 
+// By role (lane staffing-rule-by-role, 2026-09-30): the column counts slots
+// filled role for role, the rule the badge and the Unstaffed tab share.
+describe('deriveStaffing by role', () => {
+  const mixed = (over) => ({
+    positions_needed: '["Bartender","Bartender","Barback"]', pending_count: 0, event_date: ymd(10), status: 'open', ...over,
+  });
+
+  test('three bartenders on a two-bartender, one-barback roster read 2/3 with 1 open', () => {
+    const s = deriveStaffing(mixed({ approved_count: 3, approved_by_role: { Bartender: 3 } }));
+    expect(s).toMatchObject({ needed: 3, confirmed: 2, open: 1 });
+  });
+
+  test('filled role for role reads 3/3 with nothing open', () => {
+    const s = deriveStaffing(mixed({ approved_count: 3, approved_by_role: { Bartender: 2, Barback: 1 } }));
+    expect(s).toMatchObject({ needed: 3, confirmed: 3, open: 0 });
+  });
+
+  test('an over-filled single role reads full, not 2/1', () => {
+    const s = deriveStaffing(ev({ needed: 1, confirmed: 2 }));
+    expect(s).toMatchObject({ needed: 1, confirmed: 1, open: 0 });
+  });
+
+  test('a roster with no roles keeps No roster: needed 0, the flat count, nothing open', () => {
+    const s = deriveStaffing({ positions_needed: '[]', approved_count: 1, pending_count: 0, event_date: ymd(10), status: 'open' });
+    expect(s).toMatchObject({ needed: 0, confirmed: 1, open: 0 });
+  });
+});
+
 describe('deriveStaffing', () => {
   test('pending never reduces the shortfall (the regression this exists to prevent)', () => {
     // Live production shape: unstaffed, three weeks out, two applicants. The
