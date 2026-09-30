@@ -29,11 +29,71 @@ enforce the term.
   manually.
 - **§2.5 Returned payment / chargeback — $35 fee.** Returned checks or reversed
   payments incur a **$35** fee. Not coded; bill manually.
-- **§8.1 Lead-bartender overtime — $100/hr.** Additional Time bills at **$100/hr
-  for the lead** plus $40/hr per additional bartender, pro-rated in 30-min
-  increments. The app's `extra_bartender_hourly` default ($40) covers the
-  additional-bartender rate only; the $100/hr lead overtime is not automated —
-  add it to the final invoice manually.
+- **§8.1 Additional Time (agreement v4).** Which terms a client agreed to is
+  the version recorded on their signature, shown on the admin proposal page as
+  "Agreement version". Go by that, never by the signing date: a client signs
+  whichever version their browser loaded, so v3 signatures keep arriving after
+  v4 ships. No Signature card at all means no signature was recorded here
+  (the Check Cherry transfers, for one). A version of
+  event-services-agreement-v2 means they signed the abridged pre-June text,
+  which states no added-time rate. In both cases neither text below is
+  theirs; go by the contract they signed.
+  - **On-site time is automated.** The bartender requests it, the client gets
+    a separate 'Service Extension' invoice that states the amount, and the
+    bartender is cleared to continue only once it is accepted and paid. Two
+    exits: a $0 extension settles on acceptance alone, and an admin override
+    on the request grants the time unpaid and voids the invoice. A price
+    override on the booking changes nothing here: the extension is always
+    priced from the catalog. Every 30-min increment past the booked end
+    bills, even inside a package's 4-hour base:
+    - The package: $100/hr on the Core Reaction. On a hosted package, the
+      per-guest extra-hour rate times the billed guest count (25 minimum). On
+      a class, $0, because a class's extra-hour rate is $0.
+    - $40/hr per over-included bartender, plus the sub-100-guest gratuity
+      surcharge on each: $50/hr under 50 guests, $25/hr at 50 to 74, $15/hr
+      at 75 to 99, none at 100 or more. A class charges neither.
+    - Time-priced add-ons past their included hours, and the client's
+      gratuity for the added time.
+    The proposal page shows the client the package rate under the Total
+    ("Added time on the day"), except on a proposal signed under v3. It
+    follows the catalog: change a rate and signed clients see the new one.
+  - **The automation does not read the signed version.** Every client is
+    quoted the formula above. v3 signers agreed to $100/hr for the lead
+    bartender plus $40/hr for each additional bartender, added to the final
+    invoice. The automated quote can differ from that. On a hosted package
+    the package charge is the per-guest rate, not $100/hr. On any package it
+    also carries the surcharge, time-priced add-ons and gratuity, which v3
+    8.1 does not list. OPEN, owner decision: whether a v3 signer is held to
+    the automated quote or billed the v3 rate. There is no verified recipe
+    for billing the v3 rate by hand yet: the admin override on the request
+    grants the time, and the warning below then applies to the booking.
+  - **After an extension settles, leave the booking's editor alone.**
+    Settling, paid or overridden, moves the booking's duration and leaves its
+    price where it was. The next save of that booking in the admin editor
+    re-prices it at the longer duration, which bills the added time through
+    the contract on top of the extension invoice. If an edit cannot wait,
+    note the total before, save, and compare: the part of the increase that
+    is not your own edit is the added time billed a second time. The code fix
+    is on the fix list.
+  - **Time arranged in advance** (an admin duration change) is the ordinary
+    re-price. What it adds for the added time varies, so read it off the
+    save: note the total and the package line before, save, and compare.
+    - No override: over-included bartenders, time-priced add-ons and gratuity
+      re-price on their own. The package line re-prices only where the
+      catalog charges for the hour. It does not inside the 4-hour base (a 3h
+      Core Reaction moved to 4h adds $0). It may not on a small hosted
+      booking still held at the $550 minimum (The Primary Culture at 25
+      guests adds $0 from 4h to 5h, and $75 from 4h to 6h). It never does on
+      a class. Add only the package amount the save left out, as a surcharge
+      adjustment. Anything else bills twice.
+    - "Override total" set: the override replaces the whole calculated total,
+      so the save adds nothing for the added time at any hour. A 4h Core
+      Reaction sold at $400 and moved to 6h keeps a $400 service total. A
+      surcharge adjustment changes nothing here and still prints as a line,
+      so do not add one. Raise the override by the service charge for the
+      added time: package hours, over-included bartenders with their
+      surcharge, time-priced add-ons. Leave the client's Gratuity line out:
+      it sits on top of the override and rescales with the hours on its own.
 
 ### Payment methods (§2.3)
 

@@ -337,6 +337,7 @@ dr-bartender/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── adminNotifications.js # notifyAdminCategory(...) — multi-admin notification fan-out by category (joins users.notification_preferences + contractor_profiles for SMS)
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
+│   │   ├── additionalTimeRate.js # What one added hour costs on a booking's package line, for the client proposal page (agreement v4 Section 8.1); pure, reads the live catalog row through pricingEngine.extraHourCharge so it always equals what the on-site extension bills; null for a class or no package
 │   │   ├── agreementVersions.js # Allowlist + current/legacy version constants for the proposal Service Agreement
 │   │   ├── paystubData.js      # Assembles paystub render data (payout + events + YTD) per (contractor, period)
 │   │   ├── paystubPdf.js       # PDFKit renderer for staff paystubs (mirrors agreementPdf.js)

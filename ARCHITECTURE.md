@@ -1132,9 +1132,32 @@ against the allowlist in `server/utils/agreementVersions.js` and records it as
 `proposals.client_signature_document_version`. Missing version → recorded as the
 legacy `event-services-agreement-v2` (the pre-feature abridged block, kept in the
 allowlist permanently); unknown version → rejected. No backfill of existing rows.
+Every shipped version's text stays in the module (`AGREEMENT_VERSIONS`, a new
+version never edits an old one), and the proposal page renders
+`agreementForVersion(client_signature_document_version)`: a signed proposal shows
+the text its client signed, an unsigned one shows the current version (legacy v2
+text lives only in git history, so v2 rows fall back to current).
+`server/utils/agreementVersions.test.js` pins the client/server lockstep.
 Because client and server deploy independently (Vercel vs Render), the server
-must ship before the client so it knows a new version before the client sends it;
-a rollback reverts the client before the server, for the same reason.
+must ship before the client so it knows a new version before the client sends it:
+a version lands in the allowlist one push ahead of the client bump that makes it
+current. A rollback reverts the client before the server, for the same reason.
+Versions: v3 (2026-06-04) the full master agreement; v4 (2026-09-27) amends
+Section 8.1 only (on-site Additional Time bills every increment even inside a
+package's base hours, hosted packages bill their per-guest extra-hour rate, and
+on-site time is its own invoice accepted and paid before the added service
+begins; time arranged in advance is priced in its addendum). Both texts are
+pinned by sha256 in `agreementVersions.test.js`, so a shipped version cannot be
+edited in place.
+v4's hosted rate is "as stated in the Event-Specific Agreement", so the public
+proposal payload carries `additional_time` (`{ hourly, per_guest_rate,
+billed_guests }`, or null for a class or a proposal with no package), computed
+by `server/utils/additionalTimeRate.js` from the live catalog row through
+`pricingEngine.extraHourCharge`, the function the on-site extension bills with.
+`ProposalPricingBreakdown` prints it under the Total, except under an agreement
+version that states its own rate (`additionalTimeOnProposal` on each entry of
+`AGREEMENT_VERSIONS`; false for v3). The rate follows the catalog and is not
+locked at signing.
 
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
 - Stripe: `stripe_customer_id`, `stripe_payment_method_id` (for autopay off-session charges)

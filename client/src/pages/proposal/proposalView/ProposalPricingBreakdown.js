@@ -5,7 +5,25 @@ import { fmt } from './helpers';
 import styles from './styles';
 import AgreementText from './AgreementText';
 import PaymentTermsBox from './PaymentTermsBox';
-import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
+import { agreementForVersion } from '../../../data/eventServicesAgreement';
+
+// Whole dollars print bare ($575), anything else to the cent ($5.75).
+const rate = (n) => (Number.isInteger(Number(n)) ? `$${Number(n).toLocaleString('en-US')}` : fmt(n));
+
+// The figure is the PACKAGE line of an on-site extension. The bar's quote also
+// carries gratuity, over-included bartenders and timed add-ons for the added
+// time (Section 8.1), and on a no-tip-jar booking gratuity alone is $50 per
+// staffer per hour, so the line says what rides on top rather than reading as
+// the whole price.
+function addedTimeLine(t, guestCount) {
+  let basis = '';
+  if (t.per_guest_rate !== null && t.per_guest_rate !== undefined) {
+    const atMinimum = Number(t.billed_guests) > Number(guestCount);
+    basis = ` (${rate(t.per_guest_rate)} per guest, ${t.billed_guests} ${atMinimum ? 'guest minimum' : 'guests'})`;
+  }
+  return `Added time on the day: ${rate(t.hourly)} per hour for the package${basis}, `
+    + 'plus gratuity and any extra bartenders or timed add-ons, billed in 30 minute steps.';
+}
 
 export default function ProposalPricingBreakdown({
   proposal,
@@ -25,6 +43,14 @@ export default function ProposalPricingBreakdown({
   entryRef,
 }) {
   const [termsExpanded, setTermsExpanded] = useState(false);
+  // A signed proposal shows the agreement version its client signed; an
+  // unsigned one shows the version they would sign now.
+  const agreement = agreementForVersion(proposal.client_signature_document_version);
+  // The added-time rate Section 8.1 points the client at. Server-computed by
+  // the function the on-site extension bills with; null when there is nothing
+  // to state (a class, no package). Hidden under an agreement version that
+  // states its own rate.
+  const addedTime = agreement.additionalTimeOnProposal ? proposal.additional_time : null;
   return (
     <>
       {/* Package */}
@@ -103,6 +129,11 @@ export default function ProposalPricingBreakdown({
             Hosted minimum $550 applied.
           </p>
         )}
+        {addedTime && (
+          <p style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            {addedTimeLine(addedTime, proposal.guest_count)}
+          </p>
+        )}
         {/* The ONE way into the options ladder. Deliberately here rather than at
             the bottom of the page: the old entry button sat below everything, so
             browsing scrolled the signature out of view with nothing pulling the
@@ -126,7 +157,7 @@ export default function ProposalPricingBreakdown({
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>Service Agreement</h2>
         <div className={`proposal-terms-scroll ${termsExpanded ? 'is-expanded' : 'is-collapsed'}`}>
-          <AgreementText markdown={EVENT_SERVICES_AGREEMENT.markdown} />
+          <AgreementText markdown={agreement.markdown} />
         </div>
         <button
           type="button"

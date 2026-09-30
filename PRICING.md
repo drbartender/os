@@ -22,28 +22,28 @@ Per-guest, includes bartender(s) at a 1:100 guest ratio (see [Bartender Ratio](#
 
 | Package | Standard rate (≥50 guests) | Small-event rate (<50 guests) | Extra hour | Minimum total |
 |---|---|---|---|---|
-| **The Base Compound** | $18/guest | $23/guest | +$5/guest/hr | $500 |
-| **The Midrange Reaction** | $22/guest | $27/guest | +$6/guest/hr | $600 |
-| **The Enhanced Solution** | $28/guest | $33/guest | +$8/guest/hr | $700 |
-| **Formula No. 5** | $33/guest | $39/guest | +$9/guest/hr | $850 |
-| **The Grand Experiment** | $40/guest | $46/guest | +$11.25/guest/hr | $1,000 |
+| **The Base Compound** | $18/guest | $23/guest | +$5/guest/hr | $550 |
+| **The Midrange Reaction** | $22/guest | $27/guest | +$6/guest/hr | $550 |
+| **The Enhanced Solution** | $28/guest | $33/guest | +$8/guest/hr | $550 |
+| **Formula No. 5** | $33/guest | $39/guest | +$9/guest/hr | $550 |
+| **The Grand Experiment** | $40/guest | $46/guest | +$11.25/guest/hr | $550 |
 
-All rates cover the first 4 hours; the "extra hour" rate applies per guest, per hour beyond that. The **minimum total** is a floor — if guests × rate comes in under it, the client is charged the minimum instead.
+All rates cover the first 4 hours; the "extra hour" rate applies per guest, per hour beyond that. The **minimum total** is a floor of $550 on every hosted package (prod, 2026-09-29), with a 25 guest billing minimum: if billed guests x rate comes in under it, the client is charged the minimum instead.
 
 ### Hosted Beer & Wine
 
 | Package | Standard rate (≥50 guests) | Small-event rate (<50 guests) | Extra hour | Minimum total |
 |---|---|---|---|---|
-| **The Primary Culture** | $12/guest | $17/guest | +$4/guest/hr | $400 |
-| **The Refined Reaction** | $14/guest | $19/guest | +$5/guest/hr | $400 |
-| **The Carbon Suspension** | $15/guest | $20/guest | +$5.75/guest/hr | $425 |
-| **The Cultivated Complex** | $17/guest | $22/guest | +$6.25/guest/hr | $450 |
+| **The Primary Culture** | $12/guest | $17/guest | +$4/guest/hr | $550 |
+| **The Refined Reaction** | $14/guest | $19/guest | +$5/guest/hr | $550 |
+| **The Carbon Suspension** | $15/guest | $20/guest | +$5.75/guest/hr | $550 |
+| **The Cultivated Complex** | $17/guest | $22/guest | +$6.25/guest/hr | $550 |
 
 ### Hosted Mocktail
 
 | Package | Standard rate (≥50 guests) | Small-event rate (<50 guests) | Extra hour | Minimum total |
 |---|---|---|---|---|
-| **The Clear Reaction** | $14/guest | $18/guest | +$4/guest/hr | $400 |
+| **The Clear Reaction** | $14/guest | $18/guest | +$4/guest/hr | $550 |
 
 Mocktail bar for corporate events, baby showers, religious/cultural events, or sober-curious crowds. 3-4 signature mocktail recipes, mixers/garnishes/syrups included.
 
@@ -210,6 +210,10 @@ If a client's final drink selections (chosen after booking, via the drink-plan t
 ### On-Site Service Extension
 
 When the bartender requests more time at the event, the client pays a separate "Service Extension" invoice for it. **Every hour past what was booked bills at the package's extra-hour rate**, in half-hour steps, even an hour that falls inside the package's 4-hour base (decided 2026-09-26). The Core Reaction is $100/hr, so a 3-hour booking extended to 4 hours pays $100 even though the $350 base already covers 4 hours. Hosted packages bill their per-guest extra-hour rate on the billed-guest count; a package whose extra-hour rate is $0 (every class today) extends for free. Over-ratio staffing, hourly add-ons, and the client's gratuity rate for the added time ride on top. The booking's own discounts do not reduce the extra time, even on a fully comped booking. Max 3 hours per request, never past the 2:00 AM curfew.
+
+**The client sees this rate before they sign.** The proposal page prints one line under the Total, for example "Added time on the day: $575 per hour for the package ($5.75 per guest, 100 guests), plus gratuity and any extra bartenders or timed add-ons, billed in 30 minute steps." Section 8.1 of the agreement (v4) points at it. Classes show no line. The figure is the package line; it equals what the extension bills for that line because no package carries a 3-hour rate (see `additionalTimeRate.js`).
+
+**Changing an extra-hour rate changes it for clients who already signed.** The line and the extension both read the live catalog row, so they always agree with each other, and neither is locked at signing. Before changing any package's extra-hour rate (or the Core Reaction's $100, or the $40 extra-bartender rate, both of which are also written into the agreement text), decide what already-signed clients are owed. Locking the rate at signing is on the fix list.
 
 ### Price Adjustments / Custom Total
 

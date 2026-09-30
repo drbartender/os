@@ -644,6 +644,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
 module.exports = {
   calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing,
   calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage, extraHourCharge,
+  hostedRateTier,
   computeCocktailGap, packageSuppressedAddons, isCocktailFullyCovered,
   getStaffNoun, computeGratuityBasis, gratuityBasisFromSnapshot, gratuityLineAmount,
   deriveGratuityRate, recomputeSnapshotGratuity,

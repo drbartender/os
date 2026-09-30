@@ -128,3 +128,11 @@ server/routes/admin/contractorTipPage.test.js
 # reconciliation the payout tracking depends on.
 server/utils/stripePayoutSync.unconfigured.test.js
 server/utils/stripePayoutSync.test.js
+
+# Agreement lockstep + the public proposal payload (agreement v4 lane, 2026-09-29).
+# Not money math, but both are what a client signs against: the first pins the
+# client agreement module to the server allowlist (a client-only bump would 400
+# every signature), the second runs the signing page's SELECT against the
+# prod-shaped schema (a missing column would 500 the page). Both under 3s.
+server/utils/agreementVersions.test.js
+server/routes/proposals/publicToken.additionalTime.test.js

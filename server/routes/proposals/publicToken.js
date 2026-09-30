@@ -12,6 +12,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { isVenueComplete, composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
 const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../utils/agreementVersions');
+const { additionalTimeRate } = require('../../utils/additionalTimeRate');
 const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
@@ -115,6 +116,12 @@ async function buildPublicProposalPayload(token, db = pool) {
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
+      -- additional_time inputs (agreement v4 Section 8.1). Read here, turned
+      -- into one public figure below, and stripped before return.
+      sp.pricing_type AS pkg_pricing_type, sp.bar_type AS pkg_bar_type,
+      sp.extra_hour_rate AS pkg_extra_hour_rate,
+      sp.extra_hour_rate_small AS pkg_extra_hour_rate_small,
+      sp.min_guests AS pkg_min_guests, sp.min_billed_guests AS pkg_min_billed_guests,
       c.name AS client_name, c.email AS client_email,
       c.phone AS client_phone_raw, c.source AS client_source,
       oi.open_invoice_token,
@@ -251,10 +258,35 @@ async function buildPublicProposalPayload(token, db = pool) {
   delete publicProposal.group_id;
   delete publicProposal.group_chosen_proposal_id;
   delete publicProposal.comparable_pkg_count;
+  for (const key of Object.keys(publicProposal)) {
+    if (key.startsWith('pkg_')) delete publicProposal[key];
+  }
+
+  // What one added hour costs on this booking's package line. Section 8.1 of
+  // the agreement points the client at this number, so it is computed by the
+  // function the on-site extension bills with, from the live catalog row.
+  // Guarded: this is the signing page's critical path and the switch
+  // endpoint's post-commit response. A display figure failing must hide the
+  // line, never 500 the page.
+  let additionalTime = null;
+  try {
+    additionalTime = additionalTimeRate({
+      pricing_type: proposal.pkg_pricing_type,
+      bar_type: proposal.pkg_bar_type,
+      extra_hour_rate: proposal.pkg_extra_hour_rate,
+      extra_hour_rate_small: proposal.pkg_extra_hour_rate_small,
+      min_guests: proposal.pkg_min_guests,
+      min_billed_guests: proposal.pkg_min_billed_guests,
+    }, proposal.guest_count);
+  } catch (err) {
+    console.error('[proposals/public] additional_time failed (line hidden):', err.message);
+    if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(err);
+  }
 
   return {
     options_available: optionsAvailable,
     ...publicProposal,
+    additional_time: additionalTime,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
     pending_payment: toPublicPending(inFlight),

@@ -2,7 +2,7 @@ import '@testing-library/jest-dom';
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import AgreementText from './AgreementText';
-import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
+import { EVENT_SERVICES_AGREEMENT, AGREEMENT_VERSIONS } from '../../../data/eventServicesAgreement';
 
 describe('AgreementText — in-subset rendering', () => {
   test('renders a ## heading as a heading element', () => {
@@ -79,9 +79,23 @@ describe('AgreementText — real document', () => {
     const text = container.textContent;
     expect(text).toContain('$35 fee');
     expect(text).toContain('less a 5% processing fee');
-    expect(text).toContain('$100 per hour for the lead bartender plus $40 per hour');
+    // Section 8.1 as amended in v4 (2026-09-27): BYOB lead-bartender rate,
+    // hosted per-guest rate, over-included bartenders.
+    expect(text).toContain('$100 per hour for the lead bartender');
+    expect(text).toContain('the package’s per-guest extra-hour rate');
+    expect(text).toContain('$40 per hour for each bartender on-site beyond those included in the package');
     expect(text).toContain('$50 per bartender per hour');
     expect(text).toContain('$1,000,000 per occurrence and $2,000,000 aggregate');
     expect(text).toContain('below 85% of the signed proposal');
+  });
+
+  test('v3 stays frozen for the clients who signed it', () => {
+    const { container } = render(
+      <AgreementText markdown={AGREEMENT_VERSIONS['event-services-agreement-v3'].markdown} />
+    );
+    const text = container.textContent;
+    expect(container.querySelectorAll('h3')).toHaveLength(23);
+    expect(text).toContain('$100 per hour for the lead bartender plus $40 per hour');
+    expect(text).toContain('Charges for Additional Time are added to the final invoice');
   });
 });

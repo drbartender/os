@@ -1,21 +1,31 @@
 // Master Event Services Agreement — the client-facing legal document presented
-// at sign-and-pay. Data only, no logic. Editing the agreement = edit the prose
-// below and bump `version`; swapping = replace the `markdown` block and bump
-// `version`. The bundled JS module (not a fetched .md) guarantees the text is
-// always present at signing with no separate request that could 404 mid-payment.
+// at sign-and-pay. Data only, no logic. Editing the agreement = add a NEW
+// version below (never edit a shipped one), point EVENT_SERVICES_AGREEMENT at
+// it, and bump the server allowlist. The bundled JS module (not a fetched .md)
+// guarantees the text is always present at signing with no separate request
+// that could 404 mid-payment.
 //
-// `version` MUST stay in lockstep with the server allowlist:
-//   server/utils/agreementVersions.js -> CURRENT_AGREEMENT_VERSION.
-// The sign POST sends this `version`; the server validates it against that
-// allowlist and records it as client_signature_document_version. Bump both.
+// EVENT_SERVICES_AGREEMENT.version MUST stay in lockstep with the server:
+//   server/utils/agreementVersions.js -> CURRENT_AGREEMENT_VERSION, and every
+//   key of AGREEMENT_VERSIONS must be in its KNOWN_AGREEMENT_VERSIONS.
+// DEPLOY ORDER: add the new version to the server allowlist and get it LIVE on
+// Render in an earlier push than this file's bump. Vercel usually finishes
+// first, and a client sending a version the server does not know gets every
+// signature rejected ("Please refresh the page and try again").
+// The sign POST sends that version; the server validates it against the
+// allowlist and records it as client_signature_document_version.
+//
+// Every shipped version's text stays here so a signed proposal renders the text
+// its client actually signed (agreementForVersion). Legacy v2 (the abridged
+// pre-agreement block) lives only in git history; see agreementVersions.js.
 //
 // Rendered by client/src/pages/proposal/proposalView/AgreementText.js — keep the
 // markdown within that renderer's subset (## headings, **bold**, - bullets,
-// blank-line-separated paragraphs). Verbatim source: Dr_Bartender_Agreement_REDRAFT.docx.
-export const EVENT_SERVICES_AGREEMENT = {
-  version: 'event-services-agreement-v3',
-  revisedDate: '2026-06-04',
-  markdown: `## 1. Scope of Services
+// blank-line-separated paragraphs).
+
+// v3 (2026-06-04): verbatim from Dr_Bartender_Agreement_REDRAFT.docx. FROZEN:
+// proposals signed under v3 render exactly this text. Never edit it.
+const V3_MARKDOWN = `## 1. Scope of Services
 
 **1.1 Services.** Dr. Bartender will provide professional mobile bartending services (the “Services”) for the event described in the Event-Specific Agreement (the “Event”). The Services include, as specified in the Event-Specific Agreement: (a) the agreed number of certified bartenders and support staff; (b) setup, service, and breakdown within the contracted service window; (c) mixers, ice, garnishes, glassware or disposable cups, bar tools, and bar setup as detailed in the Event-Specific Agreement; (d) verification of legal drinking age and refusal of service consistent with applicable law; and (e) removal of Dr. Bartender’s equipment and trash from the bar area.
 
@@ -212,5 +222,57 @@ This Agreement and any Event-Specific Agreement may be signed in counterparts, e
 
 ## 23. Headings
 
-Section headings are for convenience only and do not affect the interpretation of this Agreement.`,
+Section headings are for convenience only and do not affect the interpretation of this Agreement.`;
+
+// v4 (2026-09-27) amends Section 8.1 ONLY: on-site Additional Time bills every
+// increment, even inside a package's base hours (serviceExtensionPricing.js);
+// hosted packages bill their per-guest extra-hour rate instead of the
+// lead-bartender rate; on-site time is its own invoice, accepted and paid
+// before the added service begins; addendum time is priced in the addendum.
+// The hosted rate is "as stated in the Event-Specific Agreement": the proposal
+// page prints it under the Total (ProposalPricingBreakdown, from the payload's
+// additional_time), so the clause never points at a number the client cannot
+// see. Built from v3 by swapping that one paragraph so the two versions
+// provably differ nowhere else (server/utils/agreementVersions.test.js, which
+// also pins both texts by sha256).
+export const V3_SECTION_8_1 = `**8.1 Overtime / Additional Time.** “Additional Time” is service rendered beyond the contracted end of the service window. Additional Time is billed at Dr. Bartender’s standard rate of $100 per hour for the lead bartender plus $40 per hour for each additional bartender on-site, pro-rated in 30-minute increments. The Parties may arrange Additional Time in advance by written addendum, or the Client may request it on-site during the Event; on-site requests are at the sole discretion of the staff working the Event and may be declined based on staff availability, fatigue, or any legal cutoff for alcohol service in the Event jurisdiction. Charges for Additional Time are added to the final invoice and payable on the terms stated in Section 2.`;
+
+export const V4_SECTION_8_1 = `**8.1 Overtime / Additional Time.** “Additional Time” is service rendered beyond the contracted end of the service window. The Parties may arrange Additional Time in advance by written addendum, or the Client may request it on-site during the Event. Additional Time arranged by addendum is priced in that addendum, added to the Event balance, and payable on the terms stated in Section 2. On-site requests are at the sole discretion of the staff working the Event and may be declined based on staff availability, fatigue, or any legal cutoff for alcohol service in the Event jurisdiction. On-site Additional Time is billed for every thirty (30) minute increment past the contracted end, including time that falls within the hours a package’s base price already covers, as follows: (a) for service-only packages, where the Client supplies the alcohol, $100 per hour for the lead bartender; and (b) for hosted packages, where Dr. Bartender supplies the beverages, the package’s per-guest extra-hour rate, as stated in the Event-Specific Agreement, applied to the guest count billed in the Event-Specific Agreement. In either case the charge also includes $40 per hour for each bartender on-site beyond those included in the package, any add-ons in the Event-Specific Agreement that are priced by time (at the rates, and beyond the hours, their pricing states), and the gratuity that applies to the added time under Section 8.3 or the Event-Specific Agreement. On-site Additional Time is billed on a separate invoice that states its amount when the request is made, and the added service is provided only after that invoice is accepted and any amount due on it is paid, which the Client’s designated point of contact under Section 5.7 may do on the Client’s behalf.`;
+
+// Function replacer: a string replacement would expand $&, $', $` and $$ in
+// amendment text.
+const V4_MARKDOWN = V3_MARKDOWN.replace(V3_SECTION_8_1, () => V4_SECTION_8_1);
+
+export const AGREEMENT_VERSIONS = {
+  'event-services-agreement-v3': {
+    version: 'event-services-agreement-v3',
+    revisedDate: '2026-06-04',
+    markdown: V3_MARKDOWN,
+    // v3 Section 8.1 states its own Additional Time rate, so the proposal page
+    // must not print a different one beside it.
+    additionalTimeOnProposal: false,
+  },
+  'event-services-agreement-v4': {
+    version: 'event-services-agreement-v4',
+    revisedDate: '2026-09-27',
+    markdown: V4_MARKDOWN,
+    // v4 Section 8.1 points at the rate "as stated in the Event-Specific
+    // Agreement". Decide this for every new version.
+    additionalTimeOnProposal: true,
+  },
 };
+
+// The version a client signs today.
+export const EVENT_SERVICES_AGREEMENT = AGREEMENT_VERSIONS['event-services-agreement-v4'];
+
+// The text a proposal displays: the version it was SIGNED under when we hold
+// that text, otherwise the current one (unsigned proposals, and legacy v2 rows
+// whose abridged text lives only in git history).
+export function agreementForVersion(version) {
+  // hasOwnProperty.call, not Object.hasOwn: the bundle is not polyfilled and
+  // Object.hasOwn is missing on Safari before 15.4, where it would crash the
+  // page that holds the sign button.
+  return Object.prototype.hasOwnProperty.call(AGREEMENT_VERSIONS, version || '')
+    ? AGREEMENT_VERSIONS[version]
+    : EVENT_SERVICES_AGREEMENT;
+}
