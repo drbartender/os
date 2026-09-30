@@ -1656,6 +1656,9 @@ which is the largest client-facing change in the drop and is listed first becaus
         owes money shows the amount in red with DUE beside the staffing count, on Upcoming and
         on Past; a paid card shows none; the figure matches the desktop Events list's Status
         column for the same event.
+      - Once `git merge-base --is-ancestor 5b8b7d4b origin/main` exits 0: online, neither the Events
+        list nor an event shows an "as of" line; in airplane mode both show "offline copy · as
+        of" with the dot, and the event adds Refresh.
 
 
 - [ ] **Agreement v4 on the proposal page (lane agreement-v4, `0122fa2e`).** Live: `git merge-base
