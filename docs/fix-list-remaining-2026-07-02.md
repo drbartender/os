@@ -91,6 +91,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
 | 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25** |
 | 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one** |
+| 1 | An editor tab left open across an on-site settle writes the old hours back | rarely: a tab open across the settle; one extension ever (842) |
 | 1 | The on-site extension quotes the v4 formula whatever the client signed | yes on a hosted package; on the Core Reaction the package rate matches |
 | 1 | An extension invoice can be paid by bank debit, which cannot settle during the event | unknown, NOT TRACED |
 | 1 | An on-site extension of a class bills nothing for the class | no (0 upcoming class bookings); PRICING.md documents it, so this is a choice to confirm |
@@ -622,6 +623,21 @@ changes duration and an override is set, show the catalog difference beside the 
 and move the override by it, the way `foldExtrasIntoProposal` already does for extras. Needs
 Dallas's call on automatic versus one click.
 
+### An editor tab left open across an on-site settle writes the old hours back
+
+After a paid extension settles (the row moves 4h to 5h), a proposal editor loaded before it can
+save any field and send back the 4h it loaded. The PATCH has no stale-write check
+(`server/routes/proposals/crud.js`, `patchContractHours.js`), and the pending-request guard no
+longer applies once the request is paid, so the row and the single shift go back to 4h with a
+200. The contract price holds: `contractDuration.js` clamps to the first settled extension's
+contracted hours and pages Sentry, so nothing is re-billed. What breaks: the worked hours, the
+shift end and the curfew read 4h; payroll seeds wages from 4h only when no wage line existed at
+settle; and a second extension the same night prices from 4h and bills the paid hour again.
+Older than the ext-contract-hours lane, which made it safer. Fix: the editor sends the duration
+it loaded and the PATCH answers 409 when the stored duration no longer matches (the cancel-line
+fingerprint pattern), which still lets the runbook's deliberate hand revert through. Found by the
+2026-09-30 push-time review (second opinion, database and code seats).
+
 ### The on-site extension quotes every client the v4 formula, whatever they signed
 
 `computeExtensionDelta` reads no signature column. v3 Section 8.1 promised $100/hr for the lead
@@ -661,6 +677,12 @@ instructor is paid for the hour. `PRICING.md` already states it ("a package whos
 is $0 (every class today) extends for free"), so this is documented behavior, not a defect. Filed
 so the free hour is a choice: a rate from Dallas, a refusal on class shifts, or leave it and
 delete this entry.
+
+The v4 page adds two things to decide with it (push-time review 2026-09-30). `additionalTimeRate.js`
+returns no line for a class before it looks at the rate, while the bill has no class exemption,
+so the day a class gets a rate the extension bills it and the signing page prints nothing: delete
+that early return and the page follows the bill. And v4 Section 8.1(b) applies to a class and
+points at a rate "as stated in the Event-Specific Agreement" that a class page never states.
 
 ### The added-time rate a client signs to is not locked at signing
 
@@ -1850,6 +1872,11 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **The phone header can drop a real venue name.** `envelopeOf` in
+  `client/src/utils/eventDetailView.js` treats a name as the street typed again when the house
+  number and the first letter of the next word match, so "123 Sunset Grill" at "123 Spring St"
+  shows only the address. Compare the whole next word, allowing the usual abbreviations (S and
+  South, St and Street). Push-time consistency review, 2026-09-30.
 - **What the red DUE on both Events lists does not account for.** The phone card, built in
   `a3b0b98f`, and the desktop Status cell print one figure, `total_price - amount_paid` via
   `eventPaymentState` (`client/src/components/adminos/eventPlan.js`), so they agree, and in these
@@ -2119,6 +2146,23 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Platform, schema, and test gates
 
+- **The admin PATCH takes `event_duration_hours` with no type or range check.** A crafted -3 from an
+  admin or manager reaches the engine and the NUMERIC(4,1) column; the editor's stepper clamps
+  1 to 12, so only a hand-made request can. Validate above 0 with an upper bound in
+  `resolvePatchHours` (`server/routes/proposals/patchContractHours.js`). Older than the batch.
+  Push-time security review, 2026-09-30.
+- **A clamped or corrupt contract-hours proposal pages Sentry on every re-price**, including from
+  the public drink-plan routes (`contractDuration.js` report, called by `lab.js` and `submit.js`).
+  Admin-made state, so a token holder cannot cause it, but a hand-reverted booking pages once per
+  save for its life. Fingerprint by proposal id. Push-time security and database reviews.
+- **The settled-extension rows are read two or three times in one transaction** (a drink-plan
+  submit, a lab save, a cancel-line: the site reads them, then the fold reads them again), and the
+  `/calculate` preview reads them before, not beside, the package read. About 1 to 2 ms each. Pass
+  the contract hours into `foldExtrasIntoProposal`; `Promise.all` the two reads in `metadata.js`.
+  Push-time performance review, 2026-09-30.
+- **A proposal signed under v2 renders the CURRENT agreement text**, v4 from 2026-09-30 (it was v3
+  before), because the abridged v2 text lives only in git history (`agreementForVersion`). The
+  recorded version stays v2. Prod: 6 such proposals, none live. Push-time security review.
 - **The admin service worker stores whatever a 200 carries.** For an opted-in URL it checks the URL
   and the `X-Offline-Ok` header, never the body (`client/public/admin-sw.js`). While a new client
   talks to an OLDER server (each deploy window, or any server rollback, which has no time bound),
