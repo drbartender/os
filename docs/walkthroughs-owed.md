@@ -1647,6 +1647,8 @@ which is the largest client-facing change in the drop and is listed first becaus
       - A failed save shows a box naming what it was, with Retry and a quiet Dismiss, and no other
         tap removes it. Needs the connection to drop in the middle of a save.
       - Show more keeps a two-shift event together. Production has no two-shift event.
+      - Once `git merge-base --is-ancestor 7da6c868 origin/main` exits 0: open an event with a long
+        address. The venue line in the header wraps, nothing is cut off, and the map icon trails it.
 
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
