@@ -2548,6 +2548,12 @@ re-grep before surgery.
   `ma-f1-proposals-list`, `ma-f2-proposal-detail`, `ma-f3-search`. What the lane's review left is
   filed where it belongs: section 3 and section 4 above the divider, and below it under Staff,
   Admin UI (with the decisions waiting on Dallas) and Platform.
+  **Before planning ma-e3:** the edit sheet itself is drawn in the benchmark (New total, "Confirm
+  new total", "balance due becomes"), but the event note (spec section 4, "a plain textarea that
+  behaves with Android dictation") is drawn nowhere and sits in no lane. It has its own endpoint
+  (`PATCH /proposals/:id/notes`, no money), so decide at the ma-e3 design pass whether it rides
+  the edit sheet or gets its own row. Recorded in the ma-e2 plan's Self-Review; it never reached
+  this list until 2026-09-30.
   **Whether to build the rest at all is Dallas's call.**
 
   **The offline staleness line belongs to whichever lane builds those screens** — do not open a lane
