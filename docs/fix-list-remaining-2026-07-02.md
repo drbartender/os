@@ -90,11 +90,11 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (1 mandate, at exactly $50, archived) |
 | 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
 | 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25** |
-| 1 | An editor save after an on-site extension settles bills the added time a second time | yes, on any booking with a settled extension that gets edited (one exists: 842, completed) |
 | 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one** |
 | 1 | The on-site extension quotes the v4 formula whatever the client signed | yes on a hosted package; on the Core Reaction the package rate matches |
 | 1 | An extension invoice can be paid by bank debit, which cannot settle during the event | unknown, NOT TRACED |
 | 1 | An on-site extension of a class bills nothing for the class | no (0 upcoming class bookings); PRICING.md documents it, so this is a choice to confirm |
+| 1 | A paid extension the webhook failed to settle is recovered by the admin override, which mislabels it | no, until a settle fails (never has) |
 | 1 | The added-time rate a client signs to is not locked: a catalog rate change moves it for signed clients | no, until an extra-hour rate is changed |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
@@ -603,28 +603,6 @@ Fix shape needs Dallas's call. Candidate: when the matched client has an open
 to the unauthenticated submitter). Separately, alert admin whenever the sweep archives a proposal
 with non-empty `adjustments`.
 
-### An editor save after an on-site extension settles bills the added time a second time
-
-Settling an extension, paid or overridden, writes `proposals.event_duration_hours` and the shift,
-and nothing else on the proposal (`settleExtension` in `serviceExtensionSettle.js` calls it "the
-ONE contract mutation"). `total_price` and `pricing_snapshot` stay at the old duration. The admin
-PATCH (`crud.js`) re-prices every save from the row's duration and writes `total_price` from the
-result, and it has no reference to extensions at all. So the next save of that booking bills the
-added time through the contract, on top of the extension invoice the client already paid: hours
-past the 4-hour base at the catalog rate, over-included bartenders, time-priced add-ons, and a
-longer Gratuity line.
-
-Prod shows the drift on the one extension that has run: proposal 842 (2026-09-26, paid), row at
-4.0 hours, snapshot `inputs.durationHours` at 3, status `completed`. Nothing has re-saved it.
-
-Not traced: whether the PATCH is refused on a `completed` proposal, and whether payroll would
-also count the hour twice. Fix shape: the re-price has to know the hours an extension already
-billed, either by pricing the contract at the contracted duration while the row carries the
-extended one, or by having settle move the snapshot too and netting the extension invoice. Same
-family as the off-ledger invoice root cause at the top of this section. Until then the manual
-guard is in `docs/ops-runbook.md` §8.1 (lane agreement-v4): leave the editor alone on such a
-booking. Found by the agreement-v4 runbook re-read, 2026-09-29.
-
 ### An advance duration change bills nothing on a booking with an override
 
 The admin PATCH carries the stored `total_price_override` through a duration change and
@@ -704,6 +682,24 @@ carries `billed_guests`), render the line from the snapshot, and have `computeEx
 bill the snapshot's rate when present. A snapshot is regenerated on every admin re-price, so
 "locked" would mean "as of the last re-price", the same as the base price today. Existing open
 proposals would need a backfill or a live fallback. Do this BEFORE any extra-hour rate change.
+
+### A paid extension the webhook failed to settle is recovered by the admin override, which mislabels it
+
+Decided 2026-09-30 with the contract-hours lane (`0440c773`): recovery for a stranded paid
+extension goes THROUGH the request, never through a duration edit, because a hand-moved hour is
+contract time and bills the client again on the next save. The only through-the-request tool
+today is `POST /service-extensions/:id/override`. On a paid invoice its void is a no-op and the
+money is right, but the row reads `overridden` and the activity log records an amount waived on
+an extension the client paid. The runbook ("Service Extension refunds > Stranded paid
+extensions") and both alert strings point at it.
+
+Not reachable until a settle fails, which has never happened (one extension has ever run).
+Build when it does: an admin "settle as paid" action that runs what the webhook would have
+(`settleExtension({ outcome: 'paid' })`, `applyExtensionHours`, the staff greenlight,
+`finalizeExtension`), guarded on the invoice being `paid`. That means extracting the webhook's
+post-settle tail (`paymentIntentSucceeded.js`, about lines 740 to 770) into a shared function,
+which is why it was not done in the same lane. The expired-with-paid case additionally needs a
+guarded re-open to `pending` (today: the SQL in the runbook).
 
 ## 2. Wrong on a surface a client is looking at
 
