@@ -31,7 +31,7 @@ For one shift: roster = `parsePositionsNeeded(positions_needed)` (both historica
 - Empty roster: one slot, `open = max(0, 1 - all approvals)`.
 - Needs staff = open > 0 (plus the existing not-finished and `status = 'open'` terms).
 
-Behaviour change on fixtures only: an empty, NULL or malformed roster with nobody approved now needs staff on the server, as it already did on the desktop Unstaffed tab and the phone card (`neededCount`'s own comment: reading an empty roster as 0 "would make every such shift fully staffed and drop it out of all four surfaces silently"). `confirmStaffingIfFullyStaffed` keeps its early return for an empty roster: it never confirms a shift that declares no roles.
+Behaviour change on fixtures only: an empty, NULL or malformed roster with nobody approved now needs staff on the server, as it already did on the desktop Unstaffed tab and the phone card (`neededCount`'s own comment: reading an empty roster as 0 "would make every such shift fully staffed and drop it out of all four surfaces silently"). `confirmStaffingIfFullyStaffed` follows the rule with no special case (amended, see As built): a roster with no roles confirms once one person is approved, and never with nobody approved.
 
 ## Tasks
 
@@ -46,7 +46,7 @@ Behaviour change on fixtures only: an empty, NULL or malformed roster with nobod
 - Tests: `server/routes/shifts.adminScoped.test.js` (pins the feed and the badge to the same rows) gains the mixed over-fill: flagged `needs_staff`, counted in `needs_staff_events`, in the badge and in `/unstaffed-upcoming`; and an exactly-filled mixed roster is none of those. `shifts.unstaffedJsonbGuard.test.js` and `settings.badgeCounts.test.js` stay green (malformed text still never 500s).
 
 ### Task 3: `confirmStaffingIfFullyStaffed` by role
-- Read the roster through `parsePositionsNeeded`; return early on an empty roster (unchanged); read the approved rows' `position`s and confirm only when `roleFill(...).open === 0`. The atomic hold flip and the notify stay exactly as they are. Update the header comment ("the SAME definition autoAssign uses" is no longer the claim; autoAssign counts Bartender slots only).
+- Read the roster through `parsePositionsNeeded`; read the approved rows' `position`s and confirm only when `roleFill(...).open === 0` (no empty-roster early return, see As built). The atomic hold flip and the notify stay exactly as they are. Update the header comment ("the SAME definition autoAssign uses" is no longer the claim; autoAssign counts Bartender slots only).
 - Tests: `server/utils/lastMinuteStaffingConfirmation.test.js`: a mixed over-fill neither clears the hold nor notifies; approving the barback then does, once.
 
 ### Task 4: the desktop reads `rowRoleFill`
@@ -73,3 +73,4 @@ Behaviour change on fixtures only: an empty, NULL or malformed roster with nobod
 - **Task 3, amended:** `confirmStaffingIfFullyStaffed` does NOT keep an empty-roster early return. That return existed only because a head count would confirm zero-of-zero with nobody approved; `roleFill` needs one approval for a roster with no roles, so nobody approved still never confirms (pinned by test). Its fixture moved from `["lead"]` (an unknown role, which reads as no roles) to `["Bartender"]`.
 - **Task 4, widened by one line:** the overview queue's title names the open role ("needs 1 barback", "needs 2 staff" when several are open); it said "bartender" for every open slot. `StaffingCell` reads `filled/slots` by role, so an over-filled single role reads full (1/1), not 2/1; its confirmed hover card still lists everyone.
 - Suites: 22 server suites one at a time from the lane root, pass counts read; client 135 suites, 1572 tests.
+- **Review round (lane head `90349f17`, then the re-check fix):** the desktop ShiftDrawer, the event page (including its roster-less branch) and the Assign-to-event modal read the same rule (`roleFill` / `rowRoleFill`; `remainingByRole` now delegates to `rowRoleFill`), so a NULL-position approval takes the first role with room everywhere. `openSlotsSql` reads count strings `+1`, `.5`, `5.` as Number() does, pads and trims ASCII whitespace only (Postgres `\s` also matches Unicode spaces that `::numeric` rejects, which would have raised), and caps each element at 1000. Queue noun "person" for a roster with no roles. Follow-ups filed on the fix list: validate `positions_needed` at `PUT /shifts/:id`, and fence the unstaffed candidates before the fragment at scale.
