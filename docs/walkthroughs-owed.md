@@ -1647,17 +1647,17 @@ which is the largest client-facing change in the drop and is listed first becaus
       - A failed save shows a box naming what it was, with Retry and a quiet Dismiss, and no other
         tap removes it. Needs the connection to drop in the middle of a save.
       - Show more keeps a two-shift event together. Production has no two-shift event.
-      - Once `git merge-base --is-ancestor aa03a2e6 origin/main` exits 0: the event detail header.
+      - Live since the 2026-09-30 pushes (`aa03a2e6` is on origin/main): the event detail header.
         The event type sits on its own line under the client. The venue reads like an envelope:
         its name on one line, then the street and the town, which drop to a second line only when
         they do not fit, with no comma left at the end of the street line. Nothing is cut off, and
         the map icon trails the last line. Try a long venue name and a street-only address.
-      - Once `git merge-base --is-ancestor a3b0b98f origin/main` exits 0: the Events list. A card that
+      - Live since the 2026-09-30 pushes (`a3b0b98f` is on origin/main): the Events list. A card that
         owes money shows the amount in a soft red on the card's right edge, centred between the
         guest count and the tags, with no label (53524fdc); on Upcoming and on Past; a paid
         card shows none; the figure matches the desktop Events list's Status column for the same
         event.
-      - Once `git merge-base --is-ancestor 5b8b7d4b origin/main` exits 0: online, neither the Events
+      - Live since the 2026-09-30 pushes (`5b8b7d4b` is on origin/main): online, neither the Events
         list nor an event shows an "as of" line; in airplane mode both show "offline copy · as
         of" with the dot, and the event adds Refresh.
 

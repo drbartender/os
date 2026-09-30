@@ -1989,8 +1989,8 @@ the accented spelling) or the two spellings stop matching each other.
     cache cannot place a home to the block).
   - A tap on the lower part of the client's name in the header opens Maps, where the name sits
     inside the venue link's width; the alternative is a header 4px taller than the design.
-  - The event type is cut off in the detail header on 12 of 15 dev events that carry a client name
-    and a type. On the LIST the kind got its own line on 2026-09-24.
+  - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
+    line under the client (`aa03a2e6`, pushed 2026-09-30, `MobileHeader.js` `m-dhead-kind`).
   - Contrast, each one the benchmark's own value: House Lights balance-due amount 2.77:1; the small
     grey labels 1.88 to 2.78:1; applicant initials 2.76:1 in After Hours.
   - After Hours draws the warn signal amber on chips and cyan on the balance, pills and dots; the
