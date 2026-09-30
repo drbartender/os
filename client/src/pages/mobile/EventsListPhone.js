@@ -282,7 +282,16 @@ function EventCard({ card, past, onTap }) {
             was ellipsised on nearly every card. The meta line names the town
             (card.place); the full address is the detail page's job. A manual
             shift has no structured venue and keeps its free-text location. */}
-        {card.kind ? <span className="m-card-kind">{card.kind}</span> : null}
+        {/* An unpaid balance sits at the right of this line, so the card's right
+            edge reads guests, balance, then the tags (Dallas, 2026-09-30). The
+            figure alone is visible; a screen reader also hears "balance due". */}
+        {card.kind || card.balance ? (
+          <span className="m-card-sub">
+            {card.kind ? <span className="m-card-kind">{card.kind}</span> : null}
+            {card.balance && <span className="m-card-bal">{card.balance}</span>}
+            {card.balance && <span className="sr-only"> balance due</span>}
+          </span>
+        ) : null}
         <span className="m-card-meta">{[card.timeRange, card.place || card.venue].filter(Boolean).join(' · ')}</span>
         <span className="m-card-foot">
           {card.cancelled ? (
@@ -292,7 +301,6 @@ function EventCard({ card, past, onTap }) {
               <span className={fracClass}>{card.filled}/{card.slots}</span>
               {card.shiftCount > 1 && <span className="m-shiftnote">{card.shiftCount} shifts</span>}
               {card.pending > 0 && !past && <StatusChip kind="warn">{card.pending} {card.pending === 1 ? 'request' : 'requests'}</StatusChip>}
-              {card.balance && <span className="m-card-bal">{card.balance} <small>DUE</small></span>}
             </>
           )}
           <span className="m-tags">

@@ -21301,7 +21301,8 @@ html[data-app="admin-os"] .m-card-title {
 /* The kind is its own line under the name (Dallas, 2026-09-24), ellipsised
    only as a backstop for a very long custom type. The rail gap above is 8px
    and the rail 44px wide for the same reason: the body was cramped. */
-html[data-app="admin-os"] .m-card-kind { display: block; font-size: var(--fs-meta); color: var(--ink-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-app="admin-os"] .m-card-sub { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+html[data-app="admin-os"] .m-card-kind { display: block; flex: 1 1 auto; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
 html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
@@ -21313,12 +21314,11 @@ html[data-app="admin-os"] .m-card-foot { display: flex; flex-wrap: wrap; align-i
 html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; }
 html[data-app="admin-os"] .m-frac.full { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-frac.past { font-weight: 400; color: var(--ink-3); }
-/* An unpaid balance reads in the same red as open slots, and says DUE so the
-   two red figures on one row are never read as one another (Dallas,
-   2026-09-30). The foot row wraps, so a card carrying a fraction, a request
-   chip, a balance and both tags never runs past its edge. */
-html[data-app="admin-os"] .m-card-bal { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; white-space: nowrap; }
-html[data-app="admin-os"] .m-card-bal small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; font-weight: 600; }
+/* An unpaid balance reads in the same red as open slots, at the right end of
+   the kind line, between the guest count above and the tags below, with no
+   label (Dallas, 2026-09-30). The foot row wraps, so a card carrying a
+   fraction, a request chip and both tags never runs past its edge. */
+html[data-app="admin-os"] .m-card-bal { flex: none; margin-left: auto; font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; white-space: nowrap; }
 html[data-app="admin-os"] .m-shiftnote { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 html[data-app="admin-os"] .m-tags { margin-left: auto; display: inline-flex; gap: 4px; }
 html[data-app="admin-os"] .m-tag {
