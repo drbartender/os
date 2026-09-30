@@ -84,7 +84,9 @@ Status `failed` puts it in Needs attention (`server/routes/admin/leadCalls.js` a
 
 Today `reapStaleConsultCallAttempts` lives in `server/utils/vaCallingScheduler.js` and rides the hourly VA prune under `RUN_VA_CALLING_SCHEDULER`, while the sweep that opens and rings chains rides `RUN_CONSULT_CALL_SWEEP_SCHEDULER`. Sweep on with VA off strands `calling_*` rows holding a cap slot for 24 hours with no email.
 
-The reaper (both arms) moves into the consult sweep and runs on every 60-second tick, in its own guard so a reap failure is recorded as a sweep fault and never masks the open, missed-window or ring steps (and vice versa). The UPDATEs are cheap on a table this size. Detection latency drops from up to an hour to about a minute; the 30-minute stale window itself does not change.
+The reaper (both arms) moves into its own module, `server/utils/consultCallReaper.js`, which the consult sweep runs on every 60-second tick, each arm in its own guard so a reap failure is recorded as a sweep fault and never masks the open, missed-window or ring steps, or the other arm. The UPDATEs are cheap on a table this size. Detection latency drops from up to an hour to about a minute; the 30-minute stale window itself does not change.
+
+**With the switch off, the sweep still runs the stale arm** before returning its skipped shape. That arm's disabled branch parks a stranded chain `skipped_disabled` and emails nobody. If the sweep skipped it, those rows would sit until the switch came back on and then be reaped as failures, one email per consult, for a stop Dallas ordered. The bridge arm is a no-op while off (4.3). Nothing is dialed, opened or filed.
 
 `vaCallingScheduler.js` stops touching consult rows. The env notes that describe the old wiring are corrected: `RUN_VA_CALLING_SCHEDULER` and `RUN_CONSULT_CALL_SWEEP_SCHEDULER` in `.claude/CLAUDE.md` and the README env table.
 
@@ -185,11 +187,12 @@ Every behavior below gets a test that fails on today's code and passes after. Se
 - `consultCallChain.test.js`: one stopped sibling sends exactly one email; `notifyClientNoAnswer` sends the text and no email on `'sent'`, and the right reason on each non-sent result; a thrown error with no code and a `+63` number in its message never reaches `detail`; a malformed target is never passed to `placeBridgedCall` and records `invalid_dial_target`.
 - `voiceConsultCall.test.js`: switch off at `/answer` (off message, no briefing) and at press-1 (no claim, no `<Dial>`); both readings sit inside the `<Gather>`; `/dialend` calls `notifyClientNoAnswer` only for the latch winner.
 - `voiceLeadCall.test.js`: both readings inside the `<Gather>`.
-- `consultCallSweep.test.js`: the reaper runs from the sweep tick and a reap failure does not stop the ring step; the unconfirmed arm flips and emails once; it never flips a row with a duration, a no-answer latch, time still inside the limit, or with the switch off.
+- `consultCallSweep.test.js`: both reaper arms run from the tick, a reap failure costs neither the ring step nor the other arm, and with the switch off only the stale arm runs.
+- `consultCallReaper.test.js` (new, taking over the consult reaper tests from `vaCallingScheduler.test.js`): the unconfirmed arm flips and emails once; it never flips a row with a duration, a no-answer latch, time still inside the limit, or with the switch off.
 - `vaCallingScheduler.test.js`: the VA prune no longer reaps consult rows.
 - `emailTemplates.consultCall.test.js`: the three new banners and the reworded one render.
 - `consultCallLabel.test.js`: `bridge_unconfirmed` reads `pressed 1, bridge unconfirmed`.
-- `server/db/schema.vaCalling.test.js` (the suite that already asserts this feature's columns through `information_schema.columns`): the column exists, is NOT NULL, and defaults to an empty array.
+- `calcom.test.js` also owns the schema check, because `schema.vaCalling.test.js` applies only the slice from the VA-calling banner to EOF, which does not reach the `consults` statements: the suite applies the ALTER it reads out of `schema.sql` (idempotent, additive) and asserts the column exists, is NOT NULL, and defaults to an empty array.
 
 ## 9. Review
 
