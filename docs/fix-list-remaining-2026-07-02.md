@@ -1972,9 +1972,10 @@ the accented spelling) or the two spellings stop matching each other.
   for a manual shift forwards to bare `/events`, though the list can now open that shift's sheet.
   ma-e2 consistency review.
 - **OWNER DECISIONS on the phone event detail (lane ma-e2, `91dcfab8`), each one Dallas's to make.**
-  - Two day-of warnings are desktop only: the "Last-minute: verify staffing" badge
-    (`last_minute_hold`) and the "No tip jar (client paid to skip it)" badge. No phone file reads
-    either field, and the phone is the day-of device.
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the "No tip jar (client paid to skip it)" warning
+    goes on the phone detail as an amber chip on the date line, on any event not cancelled
+    (`tip_jar === false`, already in the `/proposals/:id` read). The "Last-minute: verify
+    staffing" badge (`last_minute_hold`) stays desktop only: skip it on the phone.
   - The phone LIST counts heads and the phone DETAIL counts roles, so the two fractions can differ
     for one event (an approved role the roster never declared; an over-filled role).
   - "Edit details" is a STICKY switch: it pins the event detail to Desktop view, and every event
