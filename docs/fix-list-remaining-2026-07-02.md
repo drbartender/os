@@ -2184,15 +2184,6 @@ the accented spelling) or the two spellings stop matching each other.
   unscoped claim there would have matched prod-derived rows). Now that the fixtures are pinned to
   1999 it is safe to list, and until it is listed the regression it was written for is ungated.
 
-- **No push gate runs `server/utils/agreementVersions.test.js`.** It pins the client agreement
-  module to the server allowlist (lockstep, v4-differs-only-in-8.1, sha256 of every shipped
-  text). The push gate runs the client build plus the money smoke list, Vercel runs no Jest, and
-  there is no CI, so a future client-only agreement bump that skips the server allowlist would
-  reach prod and 400 every signature ("Please refresh the page and try again"). Fix: have
-  `scripts/push-gate.js` (sensitive-listed) run that one ~90ms suite whenever
-  `client/src/data/eventServicesAgreement.js` or `server/utils/agreementVersions.js` changes.
-  Raised by the agreement-v4 code review, 2026-09-27.
-
 - **`server/middleware/corsOptions.js` is missing from README's middleware folder tree.** Added
   2026-08-25 when CORS policy was extracted out of `server/index.js`; the README tree otherwise
   enumerates every non-test file in that directory. `scripts/check-docs-drift.sh` does not watch
