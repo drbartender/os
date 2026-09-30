@@ -9,7 +9,7 @@
 // ProposalDetailPaymentPanel, so the phone and the desktop show the same
 // figures for one event. What this module cannot know it does not claim: with
 // the payment detail unread, a balance is a figure, never a verdict.
-import { railParts } from './eventCards';
+import { railParts, placeOf } from './eventCards';
 import { getEventTypeLabel } from './eventTypes';
 import { resolveGratuityDisplayLabel } from './gratuityLabels';
 import { formatPhone } from './formatPhone';
@@ -69,6 +69,33 @@ function monthDay(date) {
 const dayOfYmd = (ymd) => (/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || '')) ? monthDay(new Date(`${ymd}T12:00:00`)) : '');
 const dayOfInstant = (iso) => (iso ? monthDay(new Date(iso)) : '');
 
+// The venue as an envelope (Dallas, Pixel walk 2026-09-30): the venue's name on
+// its own line, then the street and the town, which the header breaks before
+// the town when the pair does not fit on one line. Built from the structured
+// venue columns; a row without them (a legacy free-text location) returns null
+// and the header shows event_location as written. A name that is the street
+// typed again ("1000 South Clark Street" at "1000 South Clark St") is
+// dropped: the same text, or the same house number AND the same first letter
+// on the word after it, so "2 Sisters Cafe" at "2 Main St" keeps its name.
+const houseKey = (s) => {
+  const m = /^(\d[\w-]*)\s+(\S)/.exec(s);
+  return m ? `${m[1]} ${m[2]}`.toLowerCase() : '';
+};
+export function envelopeOf(proposal) {
+  const p = proposal || {};
+  const street = text(p.venue_street);
+  const town = placeOf(p);
+  const zip = text(p.venue_zip);
+  const locality = town ? [town, zip].filter(Boolean).join(' ') : '';
+  let name = text(p.venue_name);
+  if (!street && !locality) return null;
+  if (name && street && (name.toLowerCase() === street.toLowerCase()
+    || (houseKey(name) && houseKey(name) === houseKey(street)))) {
+    name = '';
+  }
+  return { name, street, locality };
+}
+
 export function headerOf(proposal) {
   const p = proposal || {};
   const venue = text(p.event_location);
@@ -79,6 +106,7 @@ export function headerOf(proposal) {
     kind: getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom }),
     guests: p.guest_count === null || p.guest_count === undefined ? null : Number(p.guest_count),
     venue,
+    place: venue ? envelopeOf(p) : null,
     mapHref: query ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}` : null,
   };
 }

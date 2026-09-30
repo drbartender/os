@@ -10,7 +10,9 @@ jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockM
 
 const DETAIL = {
   title: 'Alexis Henderson', kind: 'Wedding Reception', guests: 140,
-  venue: 'Grove on the River, 12 River Rd, Rockford', mapHref: 'https://www.google.com/maps/search/?api=1&query=12%20River%20Rd',
+  venue: 'Grove on the River, 12 River Rd, Rockford, Illinois 61101',
+  place: { name: 'Grove on the River', street: '12 River Rd', locality: 'Rockford, IL 61101' },
+  mapHref: 'https://www.google.com/maps/search/?api=1&query=12%20River%20Rd',
 };
 
 test('a list screen keeps the plain title, the brand mark and search', () => {
@@ -35,7 +37,8 @@ test('a detail screen with no data yet shows the plain title and the back arrow'
 test('the rich header carries client, kind, guests and the venue as an external map link', () => {
   render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={DETAIL} />);
   expect(screen.getByRole('banner')).toHaveClass('m-header', 'm-header-detail');
-  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Alexis Henderson · Wedding Reception');
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Alexis Henderson$/);
+  expect(screen.getByText('Wedding Reception')).toHaveClass('m-dhead-kind');
   expect(screen.getByText('140')).toHaveClass('m-dhead-guests');
   const link = screen.getByRole('link', { name: /Grove on the River/ });
   expect(link).toHaveAttribute('href', DETAIL.mapHref);
@@ -53,7 +56,35 @@ test('no venue, no link; a venue with no map query is plain text; no guests, no 
   expect(screen.getByText(/Grove on the River/)).toBeInTheDocument();
 });
 
-test('no kind, no separator; zero guests is a count, not a gap', () => {
+test('the venue is an envelope: the name, then the street and the town, the map icon on the last', () => {
+  render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={DETAIL} />);
+  const link = screen.getByRole('link', { name: 'Grove on the River 12 River Rd Rockford, IL 61101' });
+  expect(screen.getByText('Grove on the River')).toHaveClass('m-dhead-vname');
+  expect(screen.getByText('12 River Rd')).toHaveClass('m-dhead-street');
+  const town = screen.getByText('Rockford, IL 61101');
+  expect(town).toHaveClass('m-dhead-town', 'm-dhead-town-after');
+  expect(town.parentElement).toHaveClass('m-dhead-addr');
+  expect(link.querySelectorAll('svg')).toHaveLength(1);
+  expect(town.lastChild.nodeName.toLowerCase()).toBe('svg');
+});
+
+test('no street: the town takes no comma and carries the icon; no town: the street does', () => {
+  const { rerender } = render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={{ ...DETAIL, place: { name: 'Camp Wokanda', street: '', locality: 'Peoria, IL' } }} />);
+  expect(screen.getByText('Peoria, IL')).not.toHaveClass('m-dhead-town-after');
+  expect(screen.getByText('Peoria, IL').lastChild.nodeName.toLowerCase()).toBe('svg');
+  rerender(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={{ ...DETAIL, place: { name: '', street: '12 River Rd', locality: '' } }} />);
+  expect(screen.queryByText('Grove on the River')).toBeNull();
+  expect(screen.getByText('12 River Rd').lastChild.nodeName.toLowerCase()).toBe('svg');
+  expect(screen.getByRole('link').querySelectorAll('svg')).toHaveLength(1);
+});
+
+test('a legacy location with no envelope is shown as written', () => {
+  render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={{ ...DETAIL, venue: 'The Whistler', place: null }} />);
+  expect(screen.getByRole('link', { name: 'The Whistler' })).toBeInTheDocument();
+  expect(screen.getByText('The Whistler').lastChild.nodeName.toLowerCase()).toBe('svg');
+});
+
+test('no kind, no kind line; zero guests is a count, not a gap', () => {
   render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={{ ...DETAIL, kind: '', guests: 0 }} />);
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Alexis Henderson$/);
   expect(screen.getByText('0')).toHaveClass('m-dhead-guests');

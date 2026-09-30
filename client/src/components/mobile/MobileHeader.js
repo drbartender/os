@@ -20,6 +20,36 @@ import { useMobileView } from '../../context/MobileViewContext';
 // the chrome bring their own. The rich title IS an h1: the phone detail screen
 // renders no other h1, and a page with none is a page a screen reader cannot
 // name. Its wrappers are divs, because a span may not hold a heading.
+//
+// The kind has its own line under the client, and the venue reads like an
+// envelope: the venue's name, then the street and the town, broken before the
+// town only when the two do not fit on one line (Dallas, Pixel walk
+// 2026-09-30). The comma between street and town is drawn by the stylesheet
+// so that it disappears when the town moves down. The map icon trails the
+// last piece. The spaces between pieces are for the link's accessible name;
+// the layout ignores them.
+function VenueLines({ detail }) {
+  const icon = detail.mapHref ? <Icon name="external" size={12} /> : null;
+  const place = detail.place;
+  if (!place) return <span>{detail.venue}{icon}</span>;
+  const last = place.locality ? 'town' : place.street ? 'street' : 'name';
+  return (
+    <>
+      {place.name ? <span className="m-dhead-vname">{place.name}{last === 'name' ? icon : null}</span> : null}
+      {place.name && (place.street || place.locality) ? ' ' : null}
+      {place.street || place.locality ? (
+        <span className="m-dhead-addr">
+          {place.street ? <span className="m-dhead-street">{place.street}{last === 'street' ? icon : null}</span> : null}
+          {place.street && place.locality ? ' ' : null}
+          {place.locality ? (
+            <span className={`m-dhead-town${place.street ? ' m-dhead-town-after' : ''}`}>{place.locality}{icon}</span>
+          ) : null}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 export default function MobileHeader({ title, screenKey, onBack = null, backLabel = 'Back', detail = null }) {
   const { openPalette } = usePalette();
   const { setDesktopView } = useMobileView();
@@ -35,22 +65,19 @@ export default function MobileHeader({ title, screenKey, onBack = null, backLabe
       {detail ? (
         <div className="m-dhead">
           <div className="m-dhead-line">
-            <h1 className="m-dhead-title">
-              {detail.title}
-              {detail.kind ? <span className="m-dhead-kind">{` · ${detail.kind}`}</span> : null}
-            </h1>
+            <h1 className="m-dhead-title">{detail.title}</h1>
             {detail.guests !== null && detail.guests !== undefined && (
               <span className="m-dhead-guests">{detail.guests} <small>GUESTS</small></span>
             )}
           </div>
+          {detail.kind ? <div className="m-dhead-kind">{detail.kind}</div> : null}
           {detail.venue && detail.mapHref && (
             <a className="m-dhead-venue" href={detail.mapHref} target="_blank" rel="noopener noreferrer">
-              <span>{detail.venue}</span>
-              <Icon name="external" size={12} />
+              <VenueLines detail={detail} />
             </a>
           )}
           {detail.venue && !detail.mapHref && (
-            <span className="m-dhead-venue"><span>{detail.venue}</span></span>
+            <span className="m-dhead-venue"><VenueLines detail={detail} /></span>
           )}
         </div>
       ) : (

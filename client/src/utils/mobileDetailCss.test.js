@@ -9,6 +9,7 @@ const block = css.slice(css.indexOf(START), css.indexOf(END));
 
 const VOCABULARY = [
   'm-header-detail', 'm-dhead', 'm-dhead-line', 'm-dhead-title', 'm-dhead-kind', 'm-dhead-guests', 'm-dhead-venue',
+  'm-dhead-vname', 'm-dhead-addr', 'm-dhead-street', 'm-dhead-town', 'm-dhead-town-after',
   'm-detail-when', 'm-detail-whenline', 'm-detail-setup',
   'm-section', 'm-section-row', 'm-section-name', 'm-section-sum', 'm-section-num', 'm-section-caret',
   'm-section-caret-open', 'm-section-label', 'm-section-note', 'm-section-item',
@@ -93,6 +94,13 @@ test('the header venue wraps and is never clipped to one line', () => {
   const rules = block.match(/\.m-dhead-venue[^{]*\{[^}]*\}/g) || [];
   expect(rules.length).toBeGreaterThan(1);
   rules.forEach((rule) => expect(rule).not.toMatch(/nowrap|ellipsis|overflow: hidden/));
+});
+
+test('the town\'s comma sits exactly one gap before it, in both skins, and is clipped when the town wraps', () => {
+  expect(block).toMatch(/\.m-dhead-addr \{[^}]*--addr-gap: 2ch;[^}]*flex-wrap: wrap;[^}]*column-gap: var\(--addr-gap\);[^}]*overflow: hidden;/);
+  expect(block).toMatch(/\[data-skin="light"\] \.m-dhead-addr \{ --addr-gap: [\d.]+em; \}/);
+  expect(block).toMatch(/\.m-dhead-town-after::before \{ content: ','; position: absolute; left: calc\(-1 \* var\(--addr-gap\)\); \}/);
+  expect(block).toMatch(/\.m-dhead-town-after \{ position: relative; \}/);
 });
 
 test('full-width rows draw their focus ring inside themselves', () => {

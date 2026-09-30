@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 import {
-  headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale, closedWord,
+  headerOf, envelopeOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale, closedWord,
 } from './eventDetailView';
 import { railParts } from './eventCards';
 import { ctDay } from '../components/adminos/format';
@@ -10,7 +10,7 @@ const proposal = (over = {}) => ({
   client_email: 'alexis.hend@gmail.com', event_type: 'wedding-reception', event_type_custom: null,
   event_date: '2999-08-15T00:00:00.000Z', event_start_time: '18:00', event_duration_hours: '5',
   event_location: 'Grove on the River, 12 River Rd, Rockford, Illinois 61101',
-  venue_street: '12 River Rd', venue_city: 'Rockford', venue_state: 'Illinois', venue_zip: '61101',
+  venue_name: 'Grove on the River', venue_street: '12 River Rd', venue_city: 'Rockford', venue_state: 'Illinois', venue_zip: '61101',
   guest_count: 140, setup_time_display: '17:15', setup_minutes_before: null,
   total_price: '3650.00', amount_paid: '1900.00', balance_due_date: '2999-08-08',
   package_name: 'Signature bar',
@@ -38,16 +38,56 @@ describe('headerOf', () => {
       kind: 'Wedding Reception',
       guests: 140,
       venue: 'Grove on the River, 12 River Rd, Rockford, Illinois 61101',
+      place: { name: 'Grove on the River', street: '12 River Rd', locality: 'Rockford, IL 61101' },
       mapHref: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('12 River Rd, Rockford, Illinois 61101')}`,
     });
   });
-  test('a legacy free-text location is its own map query', () => {
-    const h = headerOf(proposal({ venue_street: null, venue_city: null, venue_state: null, venue_zip: null, event_location: 'The Whistler' }));
+  test('a legacy free-text location is its own map query, and has no envelope', () => {
+    const h = headerOf(proposal({ venue_name: null, venue_street: null, venue_city: null, venue_state: null, venue_zip: null, event_location: 'The Whistler' }));
     expect(h.mapHref).toBe(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('The Whistler')}`);
+    expect(h.place).toBeNull();
+  });
+  test('no location at all, no envelope, even with the structured columns filled', () => {
+    expect(headerOf(proposal({ event_location: '' })).place).toBeNull();
   });
   test('no location, no link; no name, a plain title; no guests, null', () => {
     const h = headerOf(proposal({ event_location: '  ', venue_street: null, client_name: null, guest_count: null }));
     expect(h).toMatchObject({ title: 'Event', venue: '', mapHref: null, guests: null });
+  });
+});
+
+describe('envelopeOf', () => {
+  const v = (over) => envelopeOf(proposal(over));
+  test('name, street, and the town with its state code and zip', () => {
+    expect(v({})).toEqual({ name: 'Grove on the River', street: '12 River Rd', locality: 'Rockford, IL 61101' });
+  });
+  test('no name: the street and town alone', () => {
+    expect(v({ venue_name: null })).toEqual({ name: '', street: '12 River Rd', locality: 'Rockford, IL 61101' });
+    expect(v({ venue_name: '  ' }).name).toBe('');
+  });
+  test('no street: the name and the town', () => {
+    expect(v({ venue_street: '', venue_zip: '' })).toEqual({ name: 'Grove on the River', street: '', locality: 'Rockford, IL' });
+  });
+  test('no town: the street stands alone, and a zip without a town is not a line', () => {
+    expect(v({ venue_city: null })).toEqual({ name: 'Grove on the River', street: '12 River Rd', locality: '' });
+  });
+  test('neither street nor town is no envelope', () => {
+    expect(v({ venue_street: null, venue_city: '' })).toBeNull();
+  });
+  test('a legacy state code passes through; an unknown state is shown as stored', () => {
+    expect(v({ venue_state: 'IL' }).locality).toBe('Rockford, IL 61101');
+    expect(v({ venue_state: 'Ohio' }).locality).toBe('Rockford, Ohio 61101');
+  });
+  test('a name that is the street typed again is dropped', () => {
+    expect(v({ venue_name: '1000 South Clark Street', venue_street: '1000 South Clark St' }).name).toBe('');
+    expect(v({ venue_name: '12 river rd', venue_street: '12 River Rd' }).name).toBe('');
+    expect(v({ venue_name: '17N550 Widmayer', venue_street: '17n550 Widmayer Rd' }).name).toBe('');
+  });
+  test('a name that only starts with a number, at another number, is kept', () => {
+    expect(v({ venue_name: '1000 Liberty Hall', venue_street: '42 Main St' }).name).toBe('1000 Liberty Hall');
+    expect(v({ venue_name: '2 Sisters Cafe', venue_street: '2 Main St' }).name).toBe('2 Sisters Cafe');
+    expect(v({ venue_name: '1000 S Clark Street', venue_street: '1000 South Clark St' }).name).toBe('');
+    expect(v({ venue_name: 'Home', venue_street: '12 River Rd' }).name).toBe('Home');
   });
 });
 
