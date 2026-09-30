@@ -7,6 +7,7 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
 import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { formatPhone } from '../../utils/formatPhone';
+import { consultCallOutcomeLabel, consultCallSlotLabel } from '../../utils/consultCallLabel';
 import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown, { matchCancelTargets } from '../../components/PricingBreakdown';
@@ -556,6 +557,9 @@ export default function ProposalDetail() {
                     <dt>Source</dt><dd className="muted">{proposal.client_source || '—'}</dd>
                     {proposal.lead_call && (
                       <><dt>Lead call</dt><dd className="muted">{leadCallOutcomeLabel(proposal.lead_call)}</dd></>
+                    )}
+                    {proposal.consult_call && (
+                      <><dt>Consult call</dt><dd className="muted">{consultCallSlotLabel(proposal.consult_call)} · {consultCallOutcomeLabel(proposal.consult_call)}</dd></>
                     )}
                     {proposal.first_reply && (
                       <><dt>First reply</dt><dd className="muted">{firstReplyLabel(proposal.first_reply)}</dd></>

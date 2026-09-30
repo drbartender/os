@@ -14,6 +14,7 @@ import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
 import ClientConversation from '../../components/ClientConversation';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
+import { consultCallOutcomeLabel, consultCallSlotLabel } from '../../utils/consultCallLabel';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -366,6 +367,26 @@ export default function ClientDetail() {
                 <dd className="num" style={{ color: totalBooked - ltv > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
                   {fmt$2dp(totalBooked - ltv)}
                 </dd>
+                {/* Consult call bridge outcomes (spec 2026-08-25 section 5.3),
+                    newest slot first, capped at ten by the lookup. Keyed on
+                    consult_id, never on the slot: two consults for one client
+                    can share a scheduled_at, so a slot is not an identity.
+                    ONE term with several descriptions, and each description
+                    spans both grid columns. Two reasons, both measured rather
+                    than guessed. The value column of this card is about 80px in
+                    BOTH skins (dark 140+14+80 in a 234px dl, House Lights
+                    160+21+83 in a 264px one), so a slot and an outcome sharing
+                    that column ladder to four lines. And a slot rendered inside
+                    the dt inherits House Lights' term typography, which is 10px
+                    uppercase with 0.14em tracking, so a timestamp comes out
+                    dressed as a field name. Spanning keeps the label a label,
+                    the data data, and every row on one or two lines. */}
+                {(client.consult_calls || []).length > 0 && <dt>Consult calls</dt>}
+                {(client.consult_calls || []).map(cc => (
+                  <dd key={cc.consult_id} className="muted" style={{ gridColumn: '1 / -1' }}>
+                    {consultCallSlotLabel(cc)} · {consultCallOutcomeLabel(cc)}
+                  </dd>
+                ))}
               </dl>
             </div>
           </div>

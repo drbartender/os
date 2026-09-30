@@ -1,6 +1,7 @@
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { fmt$, fmtDate, dayDiff } from '../../../components/adminos/format';
 import { parsePositionsCount, approvedCount } from '../../../components/adminos/shifts';
+import { consultCapLabel } from '../../../utils/consultCallLabel';
 
 // Pure item builders + tab assembly for the Needs-attention tabbed card
 // (spec 2026-07-14 §2-§3). Every builder returns rows in the queue-item
@@ -170,20 +171,60 @@ export function buildSalesItems(proposals, nowMs) {
 // aging sent-proposal items (OverviewPage prepends; array order is display
 // order). Targets: proposal when the auto-draft exists, else the client
 // record, else a plain-text row.
+//
+// WIDENED 2026-08-25 (spec 2026-08-25 section 5.3): the same endpoint now
+// returns consult-call faults too, tagged `kind`. A consult row is the SAME
+// queue item in every field but two, its key prefix and its title, so
+// NeedsYouStrip needs no edit (it still keys its icon off type 'lead-call').
+// The prefix is not cosmetic: lead_call_attempts and consult_call_attempts are
+// both BIGSERIAL, so a lead and a consult routinely share an id and a single
+// prefix would hand React duplicate keys. Anything without kind === 'consult'
+// renders as a lead, so a response shaped before the widening is unaffected.
 const LEAD_CALL_LABELS = {
   failed: 'call failed',
   skipped_unconfigured: 'call misconfigured',
   skipped_invalid_phone: 'call misconfigured',
 };
 
+// The consult half speaks its own vocabulary: a bad number is the booker's
+// typo rather than our missing config, and a missed window is a slot that came
+// and went. Statuses are DB CHECK-constrained, so this map is a closed set.
+const CONSULT_CALL_LABELS = {
+  failed: 'call failed',
+  skipped_unconfigured: 'call misconfigured',
+  skipped_invalid_phone: 'bad number',
+  skipped_missed_window: 'missed window',
+};
+
+// skipped_cap is THREE events wearing one status, and they mean different
+// things to whoever reads this feed: the chain-open daily cap a stranger on the
+// PUBLIC booking page trips first, the ceiling on rings to Dallas, and the
+// ceiling on international legs to Zul. Rendering them as one label throws away
+// the distinction the operator most needs.
+//
+// consultCapLabel is IMPORTED rather than repeated. It used to exist verbatim
+// here and in utils/consultCallLabel.js, and two copies that can be edited
+// apart are a drift waiting to happen. Its reasoning, including why cap_tripped
+// gets an explicit case and why detail is matched by equality rather than by
+// map lookup, lives with the function. Only the CAP strings are shared: the
+// status vocabulary below stays this surface's own, because a fault feed and a
+// detail line say different things about the same row.
+function consultCallLabel(status, detail) {
+  if (status === 'skipped_cap') return consultCapLabel(detail);
+  return CONSULT_CALL_LABELS[status] || 'call failed';
+}
+
 export function buildLeadCallItems(rows, nowMs) {
   return (rows || []).map(r => {
     const ageMs = Math.max(0, nowMs - Date.parse(r.created_at));
     const hours = Math.floor(ageMs / 3600e3);
     const sub = hours < 1 ? 'just now' : hours < 24 ? `${hours}h ago` : `${Math.floor(ageMs / 86400e3)}d ago`;
+    const isConsult = r.kind === 'consult';
     return {
-      id: 'leadcall-' + r.id, type: 'lead-call', priority: 'warn',
-      title: `${r.customer_name || 'Thumbtack lead'} ${LEAD_CALL_LABELS[r.status] || 'call failed'}`,
+      id: (isConsult ? 'consultcall-' : 'leadcall-') + r.id, type: 'lead-call', priority: 'warn',
+      title: isConsult
+        ? `Consult call with ${r.customer_name || 'Cal.com booker'} ${consultCallLabel(r.status, r.detail)}`
+        : `${r.customer_name || 'Thumbtack lead'} ${LEAD_CALL_LABELS[r.status] || 'call failed'}`,
       sub,
       meta: '',
       target: r.proposal_id ? 'proposal' : (r.client_id ? 'client' : null),

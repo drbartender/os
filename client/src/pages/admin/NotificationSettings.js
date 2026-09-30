@@ -53,8 +53,8 @@ const CATEGORY_LABELS = {
     help: 'A payout to the bank account fails.',
   },
   lead_call: {
-    label: 'Lead call failures',
-    help: 'The lead call bridge could not place calls (Twilio failure, bad config, or the daily cap tripped). Missed calls do not alert.',
+    label: 'Call bridge failures',
+    help: 'Faults from either call bridge, Thumbtack leads or booked consults. Not every fault emails, so check Needs attention too. Missed consults alert by text instead, and only land here if that text fails.',
   },
 };
 

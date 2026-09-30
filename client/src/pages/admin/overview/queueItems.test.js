@@ -1,5 +1,5 @@
 import {
-  buildStaffingItems, buildClientItems, buildSalesItems,
+  buildStaffingItems, buildClientItems, buildSalesItems, buildLeadCallItems,
   computeTabs, defaultTabKey, queueItemHref,
 } from './queueItems';
 import { buildPrepItems } from './PrepQueue';
@@ -228,6 +228,133 @@ describe('buildStaffingItems', () => {
     const items = buildStaffingItems([], 0, [risk(55, 'Loryn'), risk(241, 'Debbie')])
       .filter(i => i.type === 'documents');
     expect(items.map(i => i.ref)).toEqual([55, 241]);
+  });
+});
+
+// The lead-call feed WIDENED 2026-08-25 into a UNION over consult call attempts
+// (spec 2026-08-25 section 5.3). Consult rows arrive tagged kind: 'consult' and
+// get their own vocabulary; every lead row must still render exactly as it did
+// before. Both attempt tables are BIGSERIAL, so a lead and a consult can share
+// an id and the two halves must never collide on a React key.
+describe('buildLeadCallItems: lead half unchanged, consult half labelled', () => {
+  const lead = (over = {}) => ({
+    id: 7, kind: 'lead', status: 'failed', detail: '21211',
+    created_at: hrs(3), customer_name: 'Ana', proposal_id: 88, client_id: 41, ...over,
+  });
+  const consult = (over = {}) => ({
+    id: 7, kind: 'consult', status: 'failed', detail: null,
+    created_at: hrs(3), customer_name: 'Ana', proposal_id: 88, client_id: 41, ...over,
+  });
+  const titleOf = (row) => buildLeadCallItems([row], now)[0].title;
+
+  // Byte-identity pin for the half that was already live. Whole-object equality,
+  // so an added or renamed field fails here rather than in NeedsYouStrip.
+  test('a lead row renders every field exactly as it did before the widening', () => {
+    expect(buildLeadCallItems([lead()], now)[0]).toEqual({
+      id: 'leadcall-7', type: 'lead-call', priority: 'warn',
+      title: 'Ana call failed', sub: '3h ago', meta: '',
+      target: 'proposal', ref: 88,
+    });
+  });
+
+  test('a row with no kind at all is still a lead row', () => {
+    const [item] = buildLeadCallItems([{ ...lead(), kind: undefined }], now);
+    expect(item.id).toBe('leadcall-7');
+    expect(item.title).toBe('Ana call failed');
+  });
+
+  test('the lead label map is untouched, fallbacks included', () => {
+    expect(titleOf(lead({ status: 'failed' }))).toBe('Ana call failed');
+    expect(titleOf(lead({ status: 'skipped_unconfigured' }))).toBe('Ana call misconfigured');
+    expect(titleOf(lead({ status: 'skipped_invalid_phone' }))).toBe('Ana call misconfigured');
+    expect(titleOf(lead({ customer_name: null }))).toBe('Thumbtack lead call failed');
+  });
+
+  test('a lead row never borrows a consult label, even carrying a cap detail', () => {
+    expect(titleOf(lead({ status: 'failed', detail: 'dial_cap_tripped' }))).toBe('Ana call failed');
+    expect(titleOf(lead({ status: 'failed', detail: 'va_leg_cap_tripped' }))).toBe('Ana call failed');
+  });
+
+  test('lead targeting still degrades proposal, then client, then plain text', () => {
+    expect(buildLeadCallItems([lead({ proposal_id: null })], now)[0])
+      .toMatchObject({ target: 'client', ref: 41 });
+    expect(buildLeadCallItems([lead({ proposal_id: null, client_id: null })], now)[0])
+      .toMatchObject({ target: null, ref: null });
+  });
+
+  // The consult half. Shape is deliberately identical to a lead item so
+  // NeedsYouStrip needs no edit: only the id prefix and the title change.
+  test('a consult row keeps the lead item shape and only re-keys and re-titles', () => {
+    expect(buildLeadCallItems([consult()], now)[0]).toEqual({
+      id: 'consultcall-7', type: 'lead-call', priority: 'warn',
+      title: 'Consult call with Ana call failed', sub: '3h ago', meta: '',
+      target: 'proposal', ref: 88,
+    });
+  });
+
+  test('each consult fault gets its own words', () => {
+    expect(titleOf(consult({ status: 'failed' })))
+      .toBe('Consult call with Ana call failed');
+    expect(titleOf(consult({ status: 'skipped_unconfigured' })))
+      .toBe('Consult call with Ana call misconfigured');
+    expect(titleOf(consult({ status: 'skipped_invalid_phone' })))
+      .toBe('Consult call with Ana bad number');
+    expect(titleOf(consult({ status: 'skipped_missed_window' })))
+      .toBe('Consult call with Ana missed window');
+  });
+
+  // The amendment that matters: skipped_cap is THREE operator events, not two.
+  // cap_tripped is openChain's chain-open daily cap and the DOMINANT one, what a
+  // stranger hammering the PUBLIC booking page trips first; dial_cap_tripped is
+  // the ceiling on rings to Dallas; va_leg_cap_tripped is Manila spend hitting
+  // its ceiling. Collapsing them throws away the distinction.
+  test('the three cap trips each read as themselves', () => {
+    const chain = titleOf(consult({ status: 'skipped_cap', detail: 'cap_tripped' }));
+    const dial = titleOf(consult({ status: 'skipped_cap', detail: 'dial_cap_tripped' }));
+    const vaLeg = titleOf(consult({ status: 'skipped_cap', detail: 'va_leg_cap_tripped' }));
+    expect(chain).toBe('Consult call with Ana daily cap tripped');
+    expect(dial).toBe('Consult call with Ana dial cap tripped');
+    expect(vaLeg).toBe('Consult call with Ana international leg cap tripped');
+    expect(new Set([chain, dial, vaLeg]).size).toBe(3);
+  });
+
+
+  // detail is a diagnostic free-text column: a failed calls.create writes a raw
+  // Twilio error code into it, so it is never an enum and must fall through.
+  // The three KNOWN details are handled above by their own cases, cap_tripped
+  // included, so nothing real reaches this fallback: it exists for the codes.
+  test('an unrecognised detail on a cap row falls through to the generic label', () => {
+    expect(titleOf(consult({ status: 'skipped_cap', detail: '21211' })))
+      .toBe('Consult call with Ana daily cap tripped');
+    expect(titleOf(consult({ status: 'skipped_cap', detail: null })))
+      .toBe('Consult call with Ana daily cap tripped');
+    expect(titleOf(consult({ status: 'skipped_cap', detail: 'constructor' })))
+      .toBe('Consult call with Ana daily cap tripped');
+  });
+
+  test('a consult status nobody labelled still renders a sensible fault line', () => {
+    expect(titleOf(consult({ status: 'skipped_something_new' })))
+      .toBe('Consult call with Ana call failed');
+  });
+
+  test('a nameless booker falls back to Cal.com booker, never "null"', () => {
+    expect(titleOf(consult({ customer_name: null })))
+      .toBe('Consult call with Cal.com booker call failed');
+  });
+
+  test('consult targeting degrades proposal, then client, then plain text', () => {
+    expect(buildLeadCallItems([consult({ proposal_id: null })], now)[0])
+      .toMatchObject({ target: 'client', ref: 41 });
+    expect(buildLeadCallItems([consult({ proposal_id: null, client_id: null })], now)[0])
+      .toMatchObject({ target: null, ref: null });
+  });
+
+  // Both attempt tables are BIGSERIAL: id 7 exists in each. Same key twice is a
+  // React duplicate-key bug in the Sales tab.
+  test('a lead and a consult sharing an id produce distinct keys', () => {
+    const items = buildLeadCallItems([lead({ id: 7 }), consult({ id: 7 })], now);
+    expect(items.map(i => i.id)).toEqual(['leadcall-7', 'consultcall-7']);
+    expect(new Set(items.map(i => i.id)).size).toBe(2);
   });
 });
 

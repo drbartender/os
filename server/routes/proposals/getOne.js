@@ -15,6 +15,7 @@ const {
   nettedOverpaymentCents, offContractPaidCents, loadPaymentsWithRemaining,
   contractInvoiceSlackCents,
 } = require('../../utils/refundHelpers');
+const { latestConsultCallForProposal } = require('../../utils/consultCallLookups');
 
 const router = express.Router();
 
@@ -47,7 +48,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable, invoiceSlack, settledExt] = await Promise.all([
+  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable, invoiceSlack, settledExt, consultCall] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -88,6 +89,12 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     loadPaymentsWithRemaining(req.params.id),
     contractInvoiceSlackCents(req.params.id),
     loadSettledExtensions(pool, req.params.id),
+    // Consult call bridge outcome (spec 2026-08-25 section 5.3): the newest ring
+    // chain across this proposal's consults. NULL for a proposal that never had
+    // a consult, which is the common case, so the detail view renders nothing.
+    // What keeps it cheap on that common case is idx_consults_proposal_id, not
+    // the shape of the join: see the header of consultCallLookups.js.
+    latestConsultCallForProposal(req.params.id),
   ]);
 
   const fr = firstReply.rows[0];
@@ -134,6 +141,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     activity: activity.rows,
     messageLog,
     lead_call: leadCall.rows[0] || null,
+    consult_call: consultCall || null,
     first_reply: (!fr || fr.first_reply_status === 'not_needed') ? null : {
       status: fr.first_reply_status,
       template: fr.first_reply_template,
