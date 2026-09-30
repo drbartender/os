@@ -90,9 +90,10 @@ test('no kind, no kind line; zero guests is a count, not a gap', () => {
   expect(screen.getByText('0')).toHaveClass('m-dhead-guests');
 });
 
-test('the back arrow can name where it goes', () => {
-  render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} backLabel="Back to Events" detail={DETAIL} />);
-  expect(screen.getByRole('button', { name: 'Back to Events' })).toBeInTheDocument();
+test('the back arrow is named plain Back, since it returns wherever you came from', () => {
+  render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={DETAIL} />);
+  expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Back to/ })).toBeNull();
 });
 
 test('the Desktop-view escape still switches this screen', () => {

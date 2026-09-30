@@ -2,7 +2,7 @@
 // for the phone Events list (spec 2026-08-13-mobile-admin section 4, benchmark
 // 2026-09-15). Pure: no React, no fetch, no clock unless the caller passes
 // one. Lane ma-e2 reuses the Card shape for the detail header.
-import { parsePositionsCount, approvedCount, isCancelledEvent } from '../components/adminos/shifts';
+import { rowRoleFill, isCancelledEvent } from '../components/adminos/shifts';
 import { fmtTimeRange24, dayDiff } from '../components/adminos/format';
 import { getEventTypeLabel } from './eventTypes';
 import { eventPaymentState } from '../components/adminos/eventPlan';
@@ -42,10 +42,16 @@ export function placeOf(row) {
 
 function finishCard(card, todayYmd) {
   const first = card.shifts[0];
-  const slots = card.shifts.reduce((a, s) => a + parsePositionsCount(s), 0);
-  const filled = Math.min(slots, card.shifts.reduce((a, s) => a + approvedCount(s), 0));
-  const pending = card.shifts.reduce((a, s) => a + Number(s.pending_count || 0), 0);
   const cancelled = card.shifts.every(isCancelledEvent);
+  // Counted by role, the event detail's rule (roleFill), so the list and the
+  // detail cannot show different fractions for one event. A cancelled shift's
+  // slots leave the sum as they do on the detail; a card whose every shift is
+  // cancelled keeps them all, as it always has.
+  const counted = cancelled ? card.shifts : card.shifts.filter((s) => !isCancelledEvent(s));
+  const fills = counted.map(rowRoleFill);
+  const slots = fills.reduce((a, f) => a + f.slots, 0);
+  const filled = fills.reduce((a, f) => a + f.filled, 0);
+  const pending = card.shifts.reduce((a, s) => a + Number(s.pending_count || 0), 0);
   const ymd = first.event_date ? String(first.event_date).slice(0, 10) : null;
   const hasType = !!(first.event_type || first.event_type_custom);
   // A nameless manual shift used to take 'Manual shift' for BOTH halves of the

@@ -50,13 +50,15 @@ function VenueLines({ detail }) {
   );
 }
 
-export default function MobileHeader({ title, screenKey, onBack = null, backLabel = 'Back', detail = null }) {
+export default function MobileHeader({ title, screenKey, onBack = null, detail = null }) {
   const { openPalette } = usePalette();
   const { setDesktopView } = useMobileView();
   return (
     <header className={`m-header${detail ? ' m-header-detail' : ''}`}>
+      {/* Plain "Back": it returns wherever you came from (history), so naming a
+          list would be wrong half the time (Dallas, 2026-09-30). */}
       {onBack ? (
-        <button type="button" className="m-iconbtn" onClick={onBack} aria-label={backLabel}>
+        <button type="button" className="m-iconbtn" onClick={onBack} aria-label="Back">
           <Icon name="left" size={20} />
         </button>
       ) : (

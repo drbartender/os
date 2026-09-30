@@ -262,7 +262,6 @@ function AdminLayoutInner() {
             title={screenTitle(screenKey)}
             screenKey={screenKey}
             onBack={isDetail ? onBack : null}
-            backLabel={screenKey === 'proposal-detail' ? 'Back to Proposals' : 'Back to Events'}
             detail={isDetail ? headerDetail : null}
           />
           <PasskeyEnrollNudge />

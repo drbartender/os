@@ -654,6 +654,26 @@ test('an event today says Today; a cancelled one today does not', async () => {
   expect(screen.queryByText('Today')).toBeNull();
 });
 
+// The desktop's no-tip-jar badge, on the day-of device (Dallas, 2026-09-30).
+// The last-minute staffing badge stays desktop only.
+test('a client who paid to skip the tip jar shows No tip jar, unless the event is cancelled', async () => {
+  serve({ '/proposals/13': { data: { ...PROPOSAL, tip_jar: false, last_minute_hold: true } } });
+  const first = mount();
+  await screen.findByText('Person 1');
+  expect(screen.getByText('No tip jar')).toBeInTheDocument();
+  expect(screen.queryByText(/verify staffing/i)).toBeNull();
+  first.unmount();
+  serve({ '/proposals/13': { data: { ...PROPOSAL, tip_jar: false, status: 'archived' } } });
+  const second = mount();
+  await screen.findByText('Person 1');
+  expect(screen.queryByText('No tip jar')).toBeNull();
+  second.unmount();
+  serve({ '/proposals/13': { data: { ...PROPOSAL, tip_jar: true } } });
+  mount();
+  await screen.findByText('Person 1');
+  expect(screen.queryByText('No tip jar')).toBeNull();
+});
+
 test('changing the event id reloads and never shows the previous event', async () => {
   serve({ '/proposals/14': { data: { ...PROPOSAL, id: 14, client_name: 'June Marrow' } }, '/shifts/by-proposal/14': { data: [] },
     '/drink-plans/by-proposal/14': { reject: { status: 404, message: 'none' } }, '/invoices/proposal/14': { data: { invoices: [], pending_payments: [] } } });

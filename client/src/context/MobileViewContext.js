@@ -1,6 +1,7 @@
 import React, {
   createContext, useCallback, useContext, useMemo, useState,
 } from 'react';
+import { useLocation } from 'react-router-dom';
 import useIsPhone from '../hooks/useIsPhone';
 import { readOverrides, persistOverrides } from '../utils/desktopViewStore';
 
@@ -13,7 +14,19 @@ const MobileViewContext = createContext({
 });
 
 export function MobileViewProvider({ children }) {
-  const isPhone = useIsPhone();
+  // Phone or desktop is decided when a page OPENS, not on every resize. The
+  // phone chrome and the desktop shell render the page at different places in
+  // the tree, so flipping mid-page remounts it and throws away whatever was
+  // open: an unsaved edit, a message draft, a dialog. A window dragged across
+  // 700px, docked devtools, or a phone browser tab rotated now keeps its page;
+  // the new width takes effect on the next route (Dallas, 2026-09-30). Keyed
+  // on the pathname only, so a sheet's ?drawer= param never re-forks. The lock
+  // model (utils/mobileLock.js) keeps reading the live query on its own.
+  const liveIsPhone = useIsPhone();
+  const { pathname } = useLocation();
+  const [latch, setLatch] = useState(() => ({ pathname, isPhone: liveIsPhone }));
+  if (latch.pathname !== pathname) setLatch({ pathname, isPhone: liveIsPhone });
+  const isPhone = latch.pathname === pathname ? latch.isPhone : liveIsPhone;
   const [overrides, setOverrides] = useState(readOverrides);
   const desktopView = useCallback(
     (screenKey) => !!overrides[screenKey],

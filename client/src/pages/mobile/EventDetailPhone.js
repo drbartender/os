@@ -256,6 +256,9 @@ export default function EventDetailPhone() {
           {when.text}
           {cancelled && <StatusChip kind="neutral">{closedWord(proposal)}</StatusChip>}
           {!cancelled && when.isToday && <StatusChip kind="accent">Today</StatusChip>}
+          {/* The client paid to skip the tip jar, so staff must not set one out.
+              The desktop's badge, on the day-of device (Dallas, 2026-09-30). */}
+          {!cancelled && proposal.tip_jar === false && <StatusChip kind="warn">No tip jar</StatusChip>}
         </div>
         {setup && <div className="m-detail-setup">{`setup ${setup}`}</div>}
       </div>

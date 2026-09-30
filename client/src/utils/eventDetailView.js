@@ -311,8 +311,13 @@ export function financialsOf(proposal, invoicesPayload) {
   const due = dayOfYmd(ymdOf(p.balance_due_date));
   const dueText = due ? `due ${due}` : 'due date not set';
 
+  // A cancelled event holding money owed back says Overpaid, as the desktop
+  // Payment card does: that is the thing to act on, and the header's date line
+  // already says Cancelled (Dallas, 2026-09-30). On a live event a bank debit
+  // in flight still outranks it; the Overpaid row shows either way.
   let chip;
-  if (archived) chip = { kind: 'neutral', label: closedWord(p) };
+  if (archived && overpaid) chip = { kind: 'warn', label: 'Overpaid' };
+  else if (archived) chip = { kind: 'neutral', label: closedWord(p) };
   else if (inFlight) chip = { kind: 'info', label: 'Processing' };
   else if (overpaid) chip = { kind: 'warn', label: 'Overpaid' };
   else if (paidInFull) chip = { kind: 'ok', label: 'Paid' };

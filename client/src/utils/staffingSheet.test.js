@@ -18,6 +18,15 @@ describe('staffMeta', () => {
   test('both facts', () => {
     expect(staffMeta({ eventsWorked: 14, miles: 6.8 })).toBe('14 events · 7 mi');
   });
+
+  test('under half a mile reads <1 mi, never 0 mi, and whole miles stay whole', () => {
+    expect(staffMeta({ eventsWorked: 3, miles: 0 })).toBe('3 events · <1 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 0.4 })).toBe('3 events · <1 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: '0' })).toBe('3 events · <1 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 0.5 })).toBe('3 events · 1 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 1 })).toBe('3 events · 1 mi');
+  });
+
   test('staffMeta omits what is missing', () => {
     expect(staffMeta({ eventsWorked: 14, miles: null })).toBe('14 events');
     expect(staffMeta({ eventsWorked: null, miles: 2 })).toBe('2 mi');
@@ -35,10 +44,10 @@ describe('staffMeta', () => {
   test('zero is a fact, one is singular, zero miles is a distance', () => {
     expect(staffMeta({ eventsWorked: 0, miles: null })).toBe('0 events');
     expect(staffMeta({ eventsWorked: 1, miles: null })).toBe('1 event');
-    expect(staffMeta({ eventsWorked: 3, miles: 0 })).toBe('3 events · 0 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 0 })).toBe('3 events · <1 mi');
     // Whole miles, always: a tenth of a mile to ten venues places a home to the block.
     expect(staffMeta({ eventsWorked: 3, miles: 6.44 })).toBe('3 events · 6 mi');
-    expect(staffMeta({ eventsWorked: 3, miles: 0.3 })).toBe('3 events · 0 mi');
+    expect(staffMeta({ eventsWorked: 3, miles: 0.3 })).toBe('3 events · <1 mi');
   });
 });
 

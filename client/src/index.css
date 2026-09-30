@@ -21160,7 +21160,7 @@ html[data-app="admin-os"] .m-seg-note {
   margin-top: 6px;
   font-size: 10.5px;
   letter-spacing: 0.04em;
-  color: var(--ink-4);
+  color: var(--ink-3);
   font-family: var(--font-mono);
 }
 /* House Lights: squared, editorial (ported from the design system's mobile
@@ -21289,7 +21289,7 @@ html[data-app="admin-os"] .m-rail {
 }
 html[data-app="admin-os"] .m-rail-dow { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-3); }
 html[data-app="admin-os"] .m-rail-day { font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--ink-1); }
-html[data-app="admin-os"] .m-rail-mon { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-4); }
+html[data-app="admin-os"] .m-rail-mon { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-3); }
 html[data-app="admin-os"] .m-rail.today .m-rail-day,
 html[data-app="admin-os"] .m-rail.today .m-rail-mon { color: var(--accent); }
 html[data-app="admin-os"] .m-card-body { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
@@ -21303,7 +21303,7 @@ html[data-app="admin-os"] .m-card-title {
    and the rail 44px wide for the same reason: the body was cramped. */
 html[data-app="admin-os"] .m-card-kind { display: block; font-size: var(--fs-meta); color: var(--ink-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
-html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
+html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 3px; }
 /* Open slots read RED, the same literal the desktop staffing column uses
@@ -21362,7 +21362,7 @@ html[data-app="admin-os"] .m-retry-btn {
 html[data-app="admin-os"] .m-end { display: flex; align-items: center; gap: 10px; padding: 12px 8px 6px; }
 html[data-app="admin-os"] .m-end::before, html[data-app="admin-os"] .m-end::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
 html[data-app="admin-os"] .m-end span { flex: none; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
-html[data-app="admin-os"] .m-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 70px 24px 40px; text-align: center; color: var(--ink-4); }
+html[data-app="admin-os"] .m-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 70px 24px 40px; text-align: center; color: var(--ink-3); }
 html[data-app="admin-os"] .m-empty.ok { color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-empty-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink-2); }
 html[data-app="admin-os"] .m-empty-body { font-size: var(--fs-meta); color: var(--ink-3); max-width: 230px; line-height: 1.55; }
@@ -21409,7 +21409,7 @@ html[data-app="admin-os"] .m-dhead-title {
 }
 html[data-app="admin-os"] .m-dhead-kind { font-family: var(--font-display); font-size: 12.5px; line-height: 16px; color: var(--ink-3); font-weight: 400; }
 html[data-app="admin-os"] .m-dhead-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
-html[data-app="admin-os"] .m-dhead-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
+html[data-app="admin-os"] .m-dhead-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-3); }
 /* The link is 11.5px text on 18px lines, and it WRAPS: held to one line,
    nearly every address lost its town (Dallas, Pixel walk 2026-09-30). The
    header sits above the scroller, not over it, so a taller header only
@@ -21445,7 +21445,7 @@ html[data-app="admin-os"] .m-dhead-town-after::before { content: ','; position: 
 
 /* When and setup lines */
 html[data-app="admin-os"] .m-detail-when { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
-html[data-app="admin-os"] .m-detail-whenline { display: flex; align-items: center; gap: 8px; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-detail-whenline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
 html[data-app="admin-os"] .m-detail-setup { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3); }
 
 /* Accordion sections */
@@ -21461,7 +21461,7 @@ html[data-app="admin-os"] .m-section-row {
 html[data-app="admin-os"] .m-section-row:active { background: var(--row-hover); }
 html[data-app="admin-os"] .m-section-row:disabled { cursor: default; }
 html[data-app="admin-os"] .m-section-name { flex: 1; }
-html[data-app="admin-os"] .m-section-sum { flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); }
+html[data-app="admin-os"] .m-section-sum { flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
 html[data-app="admin-os"] .m-section-num { flex: none; font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2); }
 html[data-app="admin-os"] .m-section-row .m-frac,
 html[data-app="admin-os"] .m-shift-head .m-frac { flex: none; font-size: 12px; }
@@ -21574,7 +21574,7 @@ html[data-app="admin-os"] .m-money-paid .m-money-amt { font-weight: 600; color: 
 /* Edit details row */
 html[data-app="admin-os"] .m-edit-note {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
 }
 html[data-app="admin-os"] .m-edit-note.m-edit-note-locked { color: var(--ink-3); }
 
@@ -21715,8 +21715,11 @@ html[data-app="admin-os"][data-skin="light"] .m-fail-msg { color: var(--ms-borde
 html[data-app="admin-os"][data-skin="light"] .m-person-check,
 html[data-app="admin-os"][data-skin="light"] .m-money-paid .m-money-label,
 html[data-app="admin-os"][data-skin="light"] .m-money-paid .m-money-amt { color: var(--ms-emerald); }
+/* The House Lights camel, darkened: --ms-camel (44%) read 2.77:1 on the
+   section's paper, the faintest figure on the screen, and it is money (Dallas,
+   2026-09-30). Same hue and saturation at 30% is 5.3:1. */
 html[data-app="admin-os"][data-skin="light"] .m-money-bal .m-money-label,
-html[data-app="admin-os"][data-skin="light"] .m-money-bal .m-money-amt { color: var(--ms-camel); }
+html[data-app="admin-os"][data-skin="light"] .m-money-bal .m-money-amt { color: hsl(38 63% 30%); }
 html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-money-label,
 html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-money-amt { color: var(--ink-2); }
 /* Motion is decoration here. The one media query in this block, and it is not

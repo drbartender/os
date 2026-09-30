@@ -540,7 +540,7 @@ dr-bartender/
 │   │   │   ├── AuthContext.js       # Staff/admin auth state (login, logout, user)
 │   │   │   ├── ClientAuthContext.js # Client auth state
 │   │   │   ├── PaletteContext.js    # openPalette() for any admin surface; provided by AdminLayout
-│   │   │   ├── MobileViewContext.js # isPhone (the ONE 700px fork) + per-screen Desktop-view overrides; provided by AdminLayout (mobile-admin spec section 3)
+│   │   │   ├── MobileViewContext.js # isPhone (the ONE 700px fork, latched per route so a resize never remounts the open page) + per-screen Desktop-view overrides; provided by AdminLayout (mobile-admin spec section 3)
 │   │   │   ├── ToastContext.js      # ToastProvider + useToast() hook
 │   │   │   └── UserPrefsContext.js  # Per-user admin OS prefs (skin/density/sidebar) — strips on logout
 │   │   ├── constants/

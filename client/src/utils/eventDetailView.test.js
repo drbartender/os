@@ -472,9 +472,13 @@ describe('financialsOf', () => {
     expect(financialsOf(proposal({ status: 'archived' }), null).chip).toEqual({ kind: 'neutral', label: 'Cancelled' });
   });
 
-  test('an archived event reads Cancelled whatever the money says, and claims no balance due', () => {
+  test('an archived event reads Cancelled unless it holds money owed back, and claims no balance due', () => {
     const f = financialsOf(proposal({ status: 'archived', overpayment_cents: 5000, max_overpayment_refundable_cents: 5000 }), invoices([inv(1)]));
-    expect(f.chip).toEqual({ kind: 'neutral', label: 'Cancelled' });
+    // Overpaid comes first, as on the desktop Payment card (Dallas, 2026-09-30):
+    // the header's date line already says Cancelled.
+    expect(f.chip).toEqual({ kind: 'warn', label: 'Overpaid' });
+    expect(financialsOf(proposal({ status: 'archived', overpayment_cents: 0 }), invoices([inv(1)])).chip)
+      .toEqual({ kind: 'neutral', label: 'Cancelled' });
     // Archived for a reason that is not a cancellation is not called one.
     for (const reason of ['client_cancelled', 'we_cancelled', null, undefined, '']) {
       expect(closedWord({ status: 'archived', archive_reason: reason })).toBe('Cancelled');

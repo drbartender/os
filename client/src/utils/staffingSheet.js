@@ -10,9 +10,9 @@
 // defaults and never infers. defaultAssignRole (the desktop picker's
 // preselect) is deliberately NOT imported here.
 import {
-  parsePositionsNeeded, rosterCounts, computeRemaining, classifyRequest, canonicalizeRole,
+  parsePositionsNeeded, rosterCounts, classifyRequest, canonicalizeRole,
 } from './staffingRoles';
-import { neededCount, isCancelledEvent } from '../components/adminos/shifts';
+import { roleFill, isCancelledEvent } from '../components/adminos/shifts';
 
 export const READ_ONLY_NOTE = {
   cancelled: 'Cancelled · roster is read-only',
@@ -47,7 +47,12 @@ export function staffMeta({ eventsWorked, miles } = {}) {
     const n = Number(eventsWorked);
     parts.push(`${n} ${n === 1 ? 'event' : 'events'}`);
   }
-  if (known(miles)) parts.push(`${Math.round(Number(miles))} mi`);
+  if (known(miles)) {
+    // Under half a mile rounds to 0, which reads like a missing number (Dallas,
+    // 2026-09-30). "<1 mi" says no more than "0 mi" did.
+    const whole = Math.round(Number(miles));
+    parts.push(whole < 1 ? '<1 mi' : `${whole} mi`);
+  }
   return parts.join(' · ');
 }
 
@@ -90,29 +95,23 @@ export function buildShiftView(shift, rawRequests, { justAssigned = [] } = {}) {
   const approved = requests.filter((r) => r.status === 'approved' && !r.dropped);
   const pending = requests.filter((r) => r.status === 'pending');
 
-  const approvedByRole = {};
-  for (const r of approved) if (r.position) approvedByRole[r.position] = (approvedByRole[r.position] || 0) + 1;
   // An approval with no role on file (none in prod as of 2026-09-29, but the
   // column is nullable) still occupies a slot. Left uncounted, the phone would
-  // show a filled slot as open and offer it again, which is an over-fill. It
-  // takes the first role with room, in roster order. (The desktop's
+  // show a filled slot as open and offer it again, which is an over-fill.
+  // roleFill gives it the first role with room, in roster order. (The desktop's
   // remainingByRole gives a legacy row to the first roster role whether or not
-  // it has room; this errs toward fewer open slots, the safe direction.)
+  // it has room; this errs toward fewer open slots, the safe direction.) The
+  // phone Events list counts with the same roleFill, so the two agree.
+  const named = {};
+  let roleless = 0;
   for (const r of approved) {
-    if (r.position) continue;
-    const room = roleOrder.find((role) => needed[role] - (approvedByRole[role] || 0) > 0) || roleOrder[0];
-    if (room) approvedByRole[room] = (approvedByRole[room] || 0) + 1;
+    if (r.position) named[r.position] = (named[r.position] || 0) + 1;
+    else roleless += 1;
   }
-  const remaining = computeRemaining(roster, approvedByRole);
+  const { slots, open, filled, remaining, approvedByRole } = roleFill(roster, named, roleless);
   const openRoles = roleOrder
     .map((role) => ({ role, open: Math.max(0, remaining[role] || 0) }))
     .filter((r) => r.open > 0);
-
-  const slots = neededCount(roster);
-  const open = rosterless
-    ? Math.max(0, slots - approved.length)
-    : openRoles.reduce((sum, r) => sum + r.open, 0);
-  const filled = Math.max(0, slots - open);
 
   const cancelled = isCancelledEvent({ status: s.status, proposal_status: s.proposal_status });
   const closedReason = cancelled ? 'cancelled' : (s.finished ? 'past' : null);

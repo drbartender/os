@@ -1,4 +1,5 @@
 import { groupShiftRows, railParts, placeOf } from './eventCards';
+import { buildShiftView } from './staffingSheet';
 
 const row = (over = {}) => ({
   id: 1, proposal_id: 10, event_key: 'p10', client_name: 'Henderson', event_type: 'wedding-reception', event_type_custom: null,
@@ -110,4 +111,56 @@ test('filled never exceeds slots and feed order is preserved', () => {
   const cards = groupShiftRows([row({ id: 9, proposal_id: 99, event_key: 'p99', approved_count: 5 }), row()]);
   expect(cards.map(c => c.key)).toEqual(['p99', 'p10']);
   expect(cards[0].filled).toBe(3);
+});
+
+// The list counts BY ROLE, the event detail's rule, so the two fractions agree
+// (Dallas, 2026-09-30): an extra bartender never fills an open barback slot.
+describe('staffing is counted by role', () => {
+  const mixed = '["Bartender","Bartender","Barback"]';
+
+  test('an over-filled role does not fill another role\'s open slot', () => {
+    const [c] = groupShiftRows([row({ positions_needed: mixed, approved_count: 3, approved_by_role: { Bartender: 3 } })]);
+    expect(c).toMatchObject({ slots: 3, filled: 2, open: 1, full: false });
+  });
+
+  test('an approval in a role the roster never declared fills nothing', () => {
+    const [c] = groupShiftRows([row({ positions_needed: '["Bartender"]', approved_count: 1, approved_by_role: { Barback: 1 } })]);
+    expect(c).toMatchObject({ slots: 1, filled: 0, open: 1 });
+  });
+
+  test('an approval with no role on file takes the first role with room', () => {
+    // approved_by_role counts only rows with a role; the one missing is roleless.
+    const [c] = groupShiftRows([row({ positions_needed: mixed, approved_count: 3, approved_by_role: { Bartender: 2 } })]);
+    expect(c).toMatchObject({ slots: 3, filled: 3, open: 0, full: true });
+    // A role text this app cannot read counts as roleless too.
+    const [d] = groupShiftRows([row({ positions_needed: mixed, approved_count: 3, approved_by_role: '{"Bartender":2,"mixologist":1}' })]);
+    expect(d).toMatchObject({ filled: 3, open: 0 });
+  });
+
+  test('a row with no aggregate lands every approval on the roster in order', () => {
+    const [c] = groupShiftRows([row({ positions_needed: mixed, approved_count: 2 })]);
+    expect(c).toMatchObject({ slots: 3, filled: 2, open: 1 });
+  });
+
+  test('a cancelled shift leaves the sum of a live event, as on the detail', () => {
+    const [c] = groupShiftRows([
+      row({ id: 1, positions_needed: '["Bartender","Bartender"]', approved_count: 2, approved_by_role: { Bartender: 2 } }),
+      row({ id: 2, status: 'cancelled', positions_needed: '["Barback"]', approved_count: 0, start_time: '12:00' }),
+    ]);
+    expect(c).toMatchObject({ cancelled: false, slots: 2, filled: 2, open: 0, full: true });
+  });
+
+  test('the list and the phone staffing card give one event the same fraction', () => {
+    const shift = { id: 1, positions_needed: mixed, status: 'open' };
+    const requests = [
+      { request_id: 1, user_id: 1, name: 'A', status: 'approved', position: 'Bartender' },
+      { request_id: 2, user_id: 2, name: 'B', status: 'approved', position: 'Bartender' },
+      { request_id: 3, user_id: 3, name: 'C', status: 'approved', position: 'Bartender' },
+      { request_id: 4, user_id: 4, name: 'D', status: 'approved', position: null },
+    ];
+    const view = buildShiftView(shift, requests);
+    const [card] = groupShiftRows([row({ positions_needed: mixed, approved_count: 4, approved_by_role: { Bartender: 3 } })]);
+    expect(`${card.filled}/${card.slots}`).toBe(view.count);
+    expect(view.count).toBe('3/3');
+  });
 });

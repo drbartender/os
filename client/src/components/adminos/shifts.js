@@ -11,6 +11,8 @@ import { dayDiff } from './format';
 import {
   parsePositionsNeeded,
   computeRemaining,
+  rosterCounts,
+  canonicalizeRole,
 } from '../../utils/staffingRoles';
 
 // Canonical equipment tokens a shift can require, paired with human labels.
@@ -120,6 +122,51 @@ export function parsePositionsCount(s) {
 // Returns the count of approved bartenders for a shift.
 export function approvedCount(s) {
   return Number(s?.approved_count || s?.assignments_count || 0);
+}
+
+// How many of a shift's slots are filled, counted BY ROLE: a slot is filled
+// only by someone approved for that role, so an extra bartender never fills an
+// open barback slot, and an approval in a role the roster never declared fills
+// nothing. An approval with no role on file takes the first role with room, in
+// roster order (the safe direction: fewer open slots, never an over-fill
+// offered). A roster that declares no roles is one slot any approval fills
+// (neededCount). ONE rule for the phone Events list (from the feed's
+// aggregates) and the phone staffing card (from the request rows), so the two
+// fractions cannot differ (Dallas, 2026-09-30).
+export function roleFill(roster, approvedByRole = {}, roleless = 0) {
+  const needed = rosterCounts(roster);
+  const roleOrder = Object.keys(needed);
+  const byRole = { ...approvedByRole };
+  for (let i = 0; i < roleless; i++) {
+    const room = roleOrder.find((role) => needed[role] - (byRole[role] || 0) > 0) || roleOrder[0];
+    if (room) byRole[room] = (byRole[room] || 0) + 1;
+  }
+  const remaining = computeRemaining(roster, byRole);
+  const slots = neededCount(roster);
+  const approvedTotal = Object.values(approvedByRole).reduce((a, n) => a + n, 0) + roleless;
+  const open = roleOrder.length === 0
+    ? Math.max(0, slots - approvedTotal)
+    : roleOrder.reduce((sum, role) => sum + Math.max(0, remaining[role] || 0), 0);
+  return { slots, open, filled: Math.max(0, slots - open), remaining, approvedByRole: byRole };
+}
+
+// roleFill over a feed row, which carries aggregates rather than requests:
+// `approved_by_role` counts approved, undropped requests WITH a role, and
+// `approved_count` counts all of them, so the difference is the approvals with
+// no role on file. A key this app cannot read as a role counts as roleless too,
+// the way normalizeRequest reads a stray role on the phone card. A legacy row
+// with no aggregate at all is all roleless, which lands on the first role.
+export function rowRoleFill(s) {
+  const roster = parsePositionsNeeded(s?.positions_needed);
+  const byRole = {};
+  let named = 0;
+  for (const [key, count] of Object.entries(parseApprovedByRole(s?.approved_by_role))) {
+    const role = canonicalizeRole(key);
+    if (!role || count <= 0) continue;
+    byRole[role] = (byRole[role] || 0) + count;
+    named += count;
+  }
+  return roleFill(roster, byRole, Math.max(0, approvedCount(s) - named));
 }
 
 // Parses the `approved_by_role` aggregate ({ [role]: count }) that the staff/
