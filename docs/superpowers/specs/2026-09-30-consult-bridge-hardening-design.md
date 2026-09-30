@@ -25,9 +25,9 @@ No consult bridge failure is silent, and no repeated Cal.com delivery can duplic
 
 ### 4.1 A single stopped sibling emails
 
-`consultCallTail` (`server/utils/consultCallChain.js`), the unresolved-reschedule branch: the email gate `marked.rowCount > 1` becomes "at least one row stopped, and no earlier stop for this booker email in the last 24 hours". Still ONE email per tail call (never one per row). The attempt passed to `sendChainEmail` is still `marked.rows[0]`, a stopped sibling, so the email names a slot that will NOT ring.
+`consultCallTail` (`server/utils/consultCallChain.js`), the unresolved-reschedule branch: the email gate `marked.rowCount > 1` becomes "at least one row stopped, and no earlier stop for this booker email today (Chicago calendar day)". Still ONE email per tail call (never one per row). The attempt passed to `sendChainEmail` is still `marked.rows[0]`, a stopped sibling, so the email names a slot that will NOT ring.
 
-**The 24-hour bound per booker email (review 2026-09-30).** The Cal.com webhook limiter allows 600 deliveries a minute, and every unresolved reschedule that stops a row would otherwise cost one email against the shared 100/day Resend allowance that proposals and invoices also use. The parent spec bounded the undialable email for the same reason. The bound rides the sibling INSERT itself as a data-modifying CTE: the outer SELECT returns the inserted ids plus `stopped_today`, whether any `rescheduled_unresolved` row for the same `booker_email` already existed in the last 24 hours (the CTE's own inserts are invisible to it, same snapshot). Two concurrent deliveries can both see none and send two emails; duplicate mail is the right way for this feature to be wrong. One email per victim per day is enough to send Dallas to that booker's slots.
+**The per-day bound per booker email (review 2026-09-30).** The Cal.com webhook limiter allows 600 deliveries a minute, and every unresolved reschedule that stops a row would otherwise cost one email against the shared 100/day Resend allowance that proposals and invoices also use. The parent spec bounded the undialable email for the same reason. The bound rides the sibling INSERT itself as a data-modifying CTE: the outer SELECT returns the inserted ids plus `stopped_today`, whether any `skipped_cancelled / rescheduled_unresolved` row for the same `booker_email` already exists since Chicago midnight (the CTE's own inserts are invisible to it, same snapshot). A calendar day, not the rolling 24 hours first specified: the per-lane database review showed that each new stop would re-open a rolling window, so one dummy booking a day could keep a victim's later stops silent forever. The status filter lets the lookup use the existing `(status, created_at)` index. Known residual (per-lane security review): a reschedule back onto the same slot runs the R16 clear, which deletes the stop row the bound counts, so a determined booker can buy an extra email; worth nothing beyond using a fresh email. Two concurrent deliveries can both see none and send two emails; duplicate mail is the right way for this feature to be wrong. One email per victim per day is enough to send Dallas to that booker's slots.
 
 The comment above the gate is rewritten to say why one row now emails: the one-row case is exactly "the victim had one real consult", and the email cannot tell that apart from the booker moving their own slot, so it goes to a human either way.
 
@@ -146,6 +146,8 @@ Each of steps 3 and 4 writes one `console.log` line naming the uid, so a swallow
 
 `handleNoShow` is unchanged: it only UPDATEs by the current uid.
 
+**The unresolved fallthrough records what it replaces (per-lane database review, 2026-09-30).** When a reschedule's old uid resolves nowhere, the fresh consult `handleCreated` files stores the unmatched old-uid candidates (minus the new uid) as its prior list, so the late or retried CREATE of the booking it replaced is `Already filed` instead of a duplicate at the abandoned slot. The candidates can include Cal.com's numeric booking id; harmless, since only uid strings are compared against the list.
+
 No index: `consults` holds tens of rows, and a sequential scan is the right plan at this size. `ARCHITECTURE.md`'s schema section gains the column.
 
 ## 6. The smaller guards
@@ -176,7 +178,7 @@ A digit during either reading is collected. The 10-second wait now follows the s
 
 ### 6.3 Zul's number never lands in the database
 
-`placeLeg`'s create-failure write stores `err.code` when present, `'sid_unpersistable'` for that one internal throw, and the fixed word `'create_failed'` otherwise. It never stores `err.message`, which for a Twilio or network error can carry the dialed `To` number. (Sentry still receives the error object; the invariant is that `VA_CELL` never reaches a DB record.)
+`placeLeg`'s create-failure write stores `err.code` when present, `'sid_unpersistable'` for that one internal throw, and the fixed word `'create_failed'` otherwise. It never stores `err.message`, which for a Twilio or network error can carry the dialed `To` number. The log line and the Sentry event receive a copy of the error whose message has the dialed number cut to its last four digits (per-lane security review, 2026-09-30): `VA_CELL` never reaches a DB record, a log line, or a third-party record.
 
 **The success path leaked too (review 2026-09-30).** `caps.recordLegAudit` (`server/utils/consultCallCaps.js`) writes the dialed number into `call_audit.target_e164` for every placed leg, so every Zul leg stored her full number. The consult caps count by `status`, never by number, so the Zul leg now records `target_e164` NULL (the column is nullable). The admin leg keeps its US number. Prod holds two such rows (2026-09-08 and 2026-09-18); `call_audit` is pruned at 30 days, so both age out by 2026-10-18 and no data fix is run.
 
@@ -216,7 +218,7 @@ Both touch `ARCHITECTURE.md` in different sections; the second to merge resolves
 Every behavior below gets a test that fails on today's code and passes after. Server suites share the dev database, so they run one at a time from the repo root.
 
 - `calcom.test.js`: a redelivered CREATE after a reschedule makes no duplicate, with identical bytes (heal path) and with different bytes (fresh path); a superseded RESCHEDULED replayed after a second reschedule makes no duplicate and stops nothing; a replay of the LATEST reschedule is a no-op; a same-uid reschedule to a NEW time still moves in place and never lists its own uid as prior; a reschedule naming the ROOT uid after a first move resolves in place; a CANCELLED naming a moved-from uid writes nothing; the crash heal still reprocesses a never-seen uid; the reschedule UPDATE records the prior uid.
-- `consultCallChain.test.js`: one stopped sibling sends exactly one email, and a second stop for the same booker email inside 24 hours sends none; `notifyClientNoAnswer` sends the text and no email on `'sent'`, and the right reason on each non-sent result; with the switch off, a ring-1 terminal callback parks the chain `skipped_disabled` instead of re-arming it; a thrown error with no code and a `+63` number in its message never reaches `detail`; a placed Zul leg's `call_audit` row carries no number; a malformed target is never passed to `placeBridgedCall` and records `invalid_dial_target`.
+- `consultCallChain.test.js`: one stopped sibling sends exactly one email, a second stop for the same booker email the same Chicago day sends none, and a stop the next day does; `notifyClientNoAnswer` sends the text and no email on `'sent'`, and the right reason on each non-sent result; with the switch off, a ring-1 terminal callback parks the chain `skipped_disabled` instead of re-arming it; a thrown error with no code and a `+63` number in its message never reaches `detail` or the log line; a placed Zul leg's `call_audit` row carries no number; a malformed target is never passed to `placeBridgedCall` and records `invalid_dial_target`.
 - `voiceConsultCall.test.js`: switch off at `/answer` (off message, no briefing) and at press-1 (no claim, no `<Dial>`); both readings sit inside the `<Gather>`; `/dialend` calls `notifyClientNoAnswer` only for the latch winner, and answers Twilio even when that call never settles.
 - `voiceLeadCall.test.js`: both readings inside the `<Gather>`.
 - `consultCallSweep.test.js`: both reaper arms run from the tick, a reap failure costs neither the ring step nor the other arm, and with the switch off only the stale arm runs.
@@ -231,12 +233,13 @@ Every behavior below gets a test that fails on today's code and passes after. Se
 
 `calcom.js` is webhook code and the consult modules are sensitive-listed, so EACH lane gets the full fleet before merge. The new `server/utils/consultCallReaper.js` matches no existing glob (the consult modules are listed by exact path; only `*Scheduler.js` covered the reaper's old home), so it is added to `scripts/sensitive-paths.txt` in the same change. The push-time sensitive re-review and `/second-opinion` run at push as usual.
 
+Also folded in at per-lane review: the dial-cap and international-leg-cap emails (`daily dial cap tripped`, `daily international-leg cap tripped`, sent by `consultCallCaps.fileCapTrip`) get their own call-them-by-hand banners instead of the generic "check the system" line; `consultCallCaps.js` joins the sensitive-path list; the unconfirmed-bridge label is one shared constant, exported like `consultCapLabel`.
+
 Declined at review, with reasons: exporting `timeLimitSec` from the chain file (the house pattern is a local copy per file, and the chain file has no room); keeping an earlier Twilio code instead of `bridge_unconfirmed` in `detail` (both labels key on that value); a review agent at every in-lane checkpoint (the full fleet per lane before merge is the gate); un-flipping a row on a very late client-leg report (4.3).
 
 ## 10. Out of scope
 
 - The lead bridge's own chain, beyond the one TwiML change in 6.2.
-- Sentry receiving Twilio error messages (6.3 keeps the DB clean only).
 - `skipped_unconfigured` emailing. Both targets unset is a deliberate configuration, and the feed already lists it.
 - A runtime format check on `VOICE_CALLER_ID` at press-1. The unconfirmed-bridge check in 4.3 reports the fallout of a bad caller ID whatever its cause.
 - Cal.com V2 (self-host, branding, embed).
