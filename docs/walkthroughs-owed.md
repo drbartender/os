@@ -1653,9 +1653,10 @@ which is the largest client-facing change in the drop and is listed first becaus
         they do not fit, with no comma left at the end of the street line. Nothing is cut off, and
         the map icon trails the last line. Try a long venue name and a street-only address.
       - Once `git merge-base --is-ancestor a3b0b98f origin/main` exits 0: the Events list. A card that
-        owes money shows the amount in red with DUE beside the staffing count, on Upcoming and
-        on Past; a paid card shows none; the figure matches the desktop Events list's Status
-        column for the same event.
+        owes money shows the amount in red at the right of the event type line, under the guest
+        count and above the tags, with no label (moved in 1ad3b0a8); on Upcoming and on Past; a paid
+        card shows none; the figure matches the desktop Events list's Status column for the same
+        event.
       - Once `git merge-base --is-ancestor 5b8b7d4b origin/main` exits 0: online, neither the Events
         list nor an event shows an "as of" line; in airplane mode both show "offline copy · as
         of" with the dot, and the event adds Refresh.
