@@ -1992,8 +1992,9 @@ the accented spelling) or the two spellings stop matching each other.
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Back button's name becomes plain "Back".
     It returns wherever you came from; the name is `aria-label` only (`AdminLayout.js` passes
     "Back to Events" / "Back to Proposals" to `MobileHeader.js`), so this is screen-reader text.
-  - A cancelled event that holds excess money reads "Cancelled" on the phone's chip; the desktop
-    puts Overpaid on the chip first. The Overpaid ROW shows on both.
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Financials chip puts Overpaid FIRST, as the
+    desktop Payment card does (`ProposalDetailPaymentPanel.js`); the header's date line keeps its
+    own "Cancelled" chip. Reorder the ladder in `eventDetailView.js` (overpaid before archived).
   - A staffer under half a mile from the venue reads "0 mi" (whole miles, so a stolen phone's
     cache cannot place a home to the block).
   - A tap on the lower part of the client's name in the header opens Maps, where the name sits
