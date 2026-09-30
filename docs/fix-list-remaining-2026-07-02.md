@@ -107,6 +107,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
 | 2 | "Copy compare link" hands the client the sign page, not the comparison | **yes: group 20, made 9/22, one sent + one draft** |
 | 2 | The shopping list asks for four or more containers of margarita salt | yes, on any salt-rimmed menu |
+| 2 | A Lab syrup strips unrelated items off the shopping list (ginger takes the ginger beer) | no (0 plans have picked a Lab syrup) |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
 | 3 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
 | 3 | CSV lead import loses rows and reports success | yes |
@@ -855,6 +856,21 @@ fallback rows (no par id) keep the old rule. Salt then lands at 1 up to 100 gues
 which matches "generally one". Run `potionCatalog.test.js` and the shoppingList suites; this
 changes every recipe-derived quantity, so eyeball one real BYOB list before and after.
 
+### A Lab syrup strips unrelated items off the shopping list
+
+`refreshListAfterLabChange` (`server/routes/drinkPlans/labListRefresh.js`, the lab-syrup strip)
+drops every line whose normalized name CONTAINS a picked Lab syrup's name. It is a substring test,
+not an item match: a Lab ginger syrup strips Ginger Beer, the mule's mixer, along with any ginger
+syrup line; pineapple strips Pineapple Juice; mint strips Fresh Mint; espresso strips Cold Brew
+Espresso. The client is then never told to buy a mixer their menu needs. No prod plan has picked a
+Lab syrup yet (0 rows with `labSyrupSelections`, checked 2026-09-30), so nothing is wrong today;
+the first Lab ginger pick on a mule menu is.
+
+Fix: strip only the syrup's own line. Compare against the exact `"<Name> Syrup"` label that
+`addSelfProvidedSyrups` writes, plus the catalog syrup row a recipe resolved to (resolve through
+the alias index, never `normalizeName(label).includes`). Found by the review of the shopping-list
+duplicate-line fix, 2026-09-30.
+
 ### Signed documents do not say who is covered
 
 Three copy changes, each to a document a real person signs or receives. **Blocked on Dallas
@@ -1601,6 +1617,13 @@ the accented spelling) or the two spellings stop matching each other.
   bundle should cover it; `par_items` rows (lemon / lime / orange garnish rows exist) if the prep
   list should scale citrus. `OFF_LEDGER_INVOICE_LABELS` is not involved (add-on money folds through
   the normal `addon` line path).
+
+- **A regenerate can re-append an admin-held line as a second copy.** `applyAdminSetHolds`
+  (`server/utils/shoppingListGen.js`) matches a held line to the fresh list on item AND size. An
+  admin who changed a row's quantity (which marks it `admin_set`) and then its size ("Soda Water,
+  8 pack" to "12 pack") gets no match on the next regenerate, so the held line is appended beside
+  the fresh one. Decide whether a size edit is part of the hold (match on item, carry the held
+  size) before changing it; an admin can legitimately want two sizes of one item. Found 2026-09-30.
 
 ---
 
