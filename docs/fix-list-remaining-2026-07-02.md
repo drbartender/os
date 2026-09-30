@@ -2016,7 +2016,7 @@ the accented spelling) or the two spellings stop matching each other.
   today, about 11 ms at 10x. Recipe when it matters: select the not-finished open rows in a
   subquery with `OFFSET 0`, then apply `openSlotsSql` (1.53 to 0.72 ms at 1x, 57.8 to 17.6 at 50x,
   identical results). Performance review of lane staffing-rule-by-role, 2026-09-30.
-- **QUEUED LANE (Dallas, 2026-09-30): one staffing rule everywhere, by ROLE.** Lane
+- ~~**QUEUED LANE (Dallas, 2026-09-30): one staffing rule everywhere, by ROLE.**~~ SHIPPED in `36a67b4f` (lane staffing-rule-by-role, merged 2026-09-30, not pushed; plan `docs/superpowers/plans/2026-09-30-staffing-rule-by-role.md` carries the as-built record). Beyond the list below it also moved the last-minute staffed confirmation (it emails and texts the client), the desktop ShiftDrawer, the event page and the Assign-to-event modal onto the rule. Original entry: Lane
   `phone-owner-decisions` put the phone Events LIST on the detail's rule (`roleFill` /
   `rowRoleFill`, `client/src/components/adminos/shifts.js`), but these still count HEADS
   (`approved_count` against the roster length), so a mixed-role over-fill (roster Bartender x2 +
