@@ -1943,6 +1943,11 @@ the accented spelling) or the two spellings stop matching each other.
     GUESTS Wedding Reception").
   - At 320px wide the card's foot row exceeds its box when it holds a fraction, a requests chip
     and both tags. Nothing leaves the card. Not traced.
+- **At 320px the phone Financials row's dollar icon collapses to 0px.** The row holds the icon, the
+  amount, the status chip and the caret; at 320 wide the amount plus a "Balance due" or "Overpaid"
+  chip outgrow it and the SVG is the only shrinkable item (widths 0/61/54/102/16 at 320, 20/96/54/102/16
+  at 390; fine at 360). `flex: none` on the row icon, and let the label ellipsize. Pre-existing; found
+  by the ui-ux review of lane phone-owner-decisions, 2026-09-30.
 - **The phone Payments list counts on-site extension money as contract money.**
   `eventDetailView.js` lists every non-void invoice that took money and compares their sum with
   `amount_paid`, which extension money never enters. On an event that also holds money on no
@@ -2011,17 +2016,17 @@ the accented spelling) or the two spellings stop matching each other.
   Database review seat. Reach today: none (0 mixed-role rosters in prod on 2026-09-29, and the phone
   refuses to over-fill). Found by the consistency and code reviews of that lane.
 - **OWNER DECISIONS on the phone event detail (lane ma-e2, `91dcfab8`), each one Dallas's to make.**
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the "No tip jar (client paid to skip it)" warning
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): the "No tip jar (client paid to skip it)" warning
     goes on the phone detail as an amber chip on the date line, on any event not cancelled
     (`tip_jar === false`, already in the `/proposals/:id` read). The "Last-minute: verify
     staffing" badge (`last_minute_hold`) stays desktop only: skip it on the phone.
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone LIST counts by ROLE, the detail's rule
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): the phone LIST counts by ROLE, the detail's rule
     (`staffingSheet.js`), so an extra bartender never reads full while a barback slot is open.
     The list feed already carries `approved_by_role`; client only (`eventCards.js` `finishCard`,
     which today sums heads via `approvedCount` capped at slots).
   - DECIDED 2026-09-30 (Dallas): leave it. "Edit details" stays a STICKY switch (every event opens
     in Desktop view until "Phone view" is tapped); the ma-e3 phone edit sheet replaces it soon.
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: phone vs desktop is decided when a page OPENS, not on
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): phone vs desktop is decided when a page OPENS, not on
     every resize. Wider than first filed: `AdminLayout.js` renders the Outlet at two different tree
     positions (phone chrome line ~269, desktop ~288), so crossing 700px remounts WHATEVER admin
     page is open (any unsaved form, a message draft, an open dialog), live since the shell shipped
@@ -2030,14 +2035,14 @@ the accented spelling) or the two spellings stop matching each other.
     (portrait-locked); reachable on a desktop window under 700px and a phone browser tab rotated.
     As built, a tap to the SAME path does not re-latch (a phone browser tab opened landscape on
     /events, rotated, then Events tapped again stays desktop until another route). Accepted.
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Back button's name becomes plain "Back".
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): the phone Back button's name becomes plain "Back".
     It returns wherever you came from; the name is `aria-label` only (`AdminLayout.js` passes
     "Back to Events" / "Back to Proposals" to `MobileHeader.js`), so this is screen-reader text.
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: a CANCELLED event holding an overpayment shows
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): a CANCELLED event holding an overpayment shows
     Overpaid on the phone Financials chip, as the desktop Payment card does
     (`ProposalDetailPaymentPanel.js`); the header's date line keeps its own "Cancelled" chip. On a
     live event a bank debit in flight (Processing) still outranks Overpaid, the ma-e2 law.
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: a staffer under half a mile from the venue reads
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): a staffer under half a mile from the venue reads
     "<1 mi", not "0 mi" (`staffMeta` in `staffingSheet.js`). Display only; the whole-mile rule
     stays (a stolen phone's cache cannot place a home to the block).
   - ~~A tap on the lower part of the client's name in the header opens Maps.~~ CLOSED 2026-09-30 by
@@ -2047,7 +2052,7 @@ the accented spelling) or the two spellings stop matching each other.
     type opens Maps. Harmless; leave it.
   - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
     line under the client (`aa03a2e6`, pushed 2026-09-30, `MobileHeader.js` `m-dhead-kind`).
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED, contrast (measured on `--bg-2`): the House Lights
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed), contrast (measured on `--bg-2`): the House Lights
     balance-due label and amount on the detail (`.m-money-bal`, `--ms-camel`, 2.77:1) darken to
     about 5:1, same hue (`hsl(38 63% 30%)`, 5.3:1); After Hours (warn at 58%, 6.6:1) stays. The phone's small `--ink-4` labels
     (rail month, "GUESTS", section summaries and labels; 1.9:1 House Lights, 2.6:1 After Hours)
