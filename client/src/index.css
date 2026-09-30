@@ -21292,7 +21292,7 @@ html[data-app="admin-os"] .m-rail-day { font-family: var(--font-numeric); font-s
 html[data-app="admin-os"] .m-rail-mon { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-4); }
 html[data-app="admin-os"] .m-rail.today .m-rail-day,
 html[data-app="admin-os"] .m-rail.today .m-rail-mon { color: var(--accent); }
-html[data-app="admin-os"] .m-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+html[data-app="admin-os"] .m-card-body { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
 html[data-app="admin-os"] .m-card-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 html[data-app="admin-os"] .m-card-title {
   flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);
@@ -21301,8 +21301,7 @@ html[data-app="admin-os"] .m-card-title {
 /* The kind is its own line under the name (Dallas, 2026-09-24), ellipsised
    only as a backstop for a very long custom type. The rail gap above is 8px
    and the rail 44px wide for the same reason: the body was cramped. */
-html[data-app="admin-os"] .m-card-sub { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-html[data-app="admin-os"] .m-card-kind { display: block; flex: 1 1 auto; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-app="admin-os"] .m-card-kind { display: block; font-size: var(--fs-meta); color: var(--ink-3); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html[data-app="admin-os"] .m-card-guests { flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-card-guests small { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4); }
 html[data-app="admin-os"] .m-card-meta { font-size: var(--fs-meta); font-family: var(--font-numeric); color: var(--ink-3); }
@@ -21314,11 +21313,16 @@ html[data-app="admin-os"] .m-card-foot { display: flex; flex-wrap: wrap; align-i
 html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; }
 html[data-app="admin-os"] .m-frac.full { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-frac.past { font-weight: 400; color: var(--ink-3); }
-/* An unpaid balance reads in the same red as open slots, at the right end of
-   the kind line, between the guest count above and the tags below, with no
-   label (Dallas, 2026-09-30). The foot row wraps, so a card carrying a
-   fraction, a request chip and both tags never runs past its edge. */
-html[data-app="admin-os"] .m-card-bal { flex: none; margin-left: auto; font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; white-space: nowrap; }
+/* An unpaid balance sits on the card's right edge, centred on the body, so it
+   falls midway between the guest count above and the tags below; no label, one
+   step smaller than the fraction and a softer red, so it informs without
+   taking over the card (Dallas, 2026-09-30). It is out of flow, so the two
+   lines it sits beside keep 64px clear of it (m-card-owes). The foot row
+   wraps, so a card carrying a fraction, a request chip and both tags never
+   runs past its edge. */
+html[data-app="admin-os"] .m-card-bal { position: absolute; right: 0; top: 50%; transform: translateY(-50%); font-family: var(--font-numeric); font-size: 11.5px; font-weight: 600; color: hsl(2 58% 66%); white-space: nowrap; }
+html[data-app="admin-os"] .m-card-owes .m-card-kind,
+html[data-app="admin-os"] .m-card-owes .m-card-meta { padding-right: 64px; }
 html[data-app="admin-os"] .m-shiftnote { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 html[data-app="admin-os"] .m-tags { margin-left: auto; display: inline-flex; gap: 4px; }
 html[data-app="admin-os"] .m-tag {
@@ -21375,7 +21379,7 @@ html[data-app="admin-os"][data-skin="light"] .m-chip-toggle { border-radius: 0; 
 html[data-app="admin-os"][data-skin="light"] .m-retry-btn { border-radius: 0; color: var(--bg-0); }
 html[data-app="admin-os"][data-skin="light"] .m-chip-toggle.on { color: var(--accent-ink); }
 html[data-app="admin-os"][data-skin="light"] .m-frac { color: var(--ms-bordeaux); }
-html[data-app="admin-os"][data-skin="light"] .m-card-bal { color: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .m-card-bal { color: hsl(8 42% 46%); }
 html[data-app="admin-os"][data-skin="light"] .m-frac.full { color: var(--ms-emerald); }
 html[data-app="admin-os"][data-skin="light"] .m-frac.past { color: var(--ink-3); }
 html[data-app="admin-os"][data-skin="light"] .m-tag-bar { background: hsl(var(--info-h) var(--info-s) 36% / 0.08); border-color: hsl(var(--info-h) var(--info-s) 36% / 0.4); color: var(--ms-navy); }

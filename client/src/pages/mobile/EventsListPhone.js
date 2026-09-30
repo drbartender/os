@@ -273,7 +273,7 @@ function EventCard({ card, past, onTap }) {
         <span className="m-rail-day">{rail.day}</span>
         <span className="m-rail-mon">{card.isToday && !past ? 'TODAY' : rail.mon}</span>
       </span>
-      <span className="m-card-body">
+      <span className={`m-card-body${card.balance ? ' m-card-owes' : ''}`}>
         <span className="m-card-head">
           <span className="m-card-title">{card.clientName}</span>
           {card.guests != null && <span className="m-card-guests">{card.guests} <small>GUESTS</small></span>}
@@ -282,16 +282,12 @@ function EventCard({ card, past, onTap }) {
             was ellipsised on nearly every card. The meta line names the town
             (card.place); the full address is the detail page's job. A manual
             shift has no structured venue and keeps its free-text location. */}
-        {/* An unpaid balance sits at the right of this line, so the card's right
-            edge reads guests, balance, then the tags (Dallas, 2026-09-30). The
-            figure alone is visible; a screen reader also hears "balance due". */}
-        {card.kind || card.balance ? (
-          <span className="m-card-sub">
-            {card.kind ? <span className="m-card-kind">{card.kind}</span> : null}
-            {card.balance && <span className="m-card-bal">{card.balance}</span>}
-            {card.balance && <span className="sr-only"> balance due</span>}
-          </span>
-        ) : null}
+        {card.kind ? <span className="m-card-kind">{card.kind}</span> : null}
+        {/* An unpaid balance sits on the card's right edge, centred between the
+            guest count above and the tags below (Dallas, 2026-09-30). The figure
+            alone is visible; a screen reader also hears "balance due". */}
+        {card.balance && <span className="m-card-bal">{card.balance}</span>}
+        {card.balance && <span className="sr-only"> balance due</span>}
         <span className="m-card-meta">{[card.timeRange, card.place || card.venue].filter(Boolean).join(' · ')}</span>
         <span className="m-card-foot">
           {card.cancelled ? (

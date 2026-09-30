@@ -280,7 +280,7 @@ test('the kind sits on its own line and the meta line names the town, never the 
   expect(screen.queryByText(/Grove on the River/)).toBeNull();
 });
 
-test('an unpaid balance sits on the kind line with no visible label, and a paid card shows none, on either tab', async () => {
+test('an unpaid balance sits on the card body with no visible label, the lines beside it keep clear, and a paid card shows none, on either tab', async () => {
   api.get.mockResolvedValue(env([
     row({ proposal_total: '1350', proposal_amount_paid: '100' }),
     row({ id: 2, proposal_id: 11, event_key: 'p11', client_name: 'Okafor', proposal_total: '900', proposal_amount_paid: '900' }),
@@ -290,12 +290,14 @@ test('an unpaid balance sits on the kind line with no visible label, and a paid 
   const bal = within(owing).getByText('$1,250');
   expect(bal).toHaveClass('m-card-bal');
   // eslint-disable-next-line testing-library/no-node-access
-  expect(bal.closest('.m-card-sub')).toHaveTextContent('Wedding Reception');
+  expect(bal.parentElement).toHaveClass('m-card-body', 'm-card-owes');
   expect(within(owing).queryByText(/DUE/)).toBeNull();
   expect(within(owing).getByText('balance due')).toHaveClass('sr-only');
   const paid = screen.getByRole('button', { name: /Okafor/ });
   expect(within(paid).queryByText('balance due')).toBeNull();
   expect(within(paid).getByText('Wedding Reception')).toHaveClass('m-card-kind');
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(within(paid).getByText('Wedding Reception').parentElement).not.toHaveClass('m-card-owes');
   api.get.mockResolvedValue(env([row({ event_date: '2020-08-15', proposal_total: '420', proposal_amount_paid: '350' })], { scope: 'past' }));
   fireEvent.click(screen.getByRole('radio', { name: 'Past' }));
   const past = await screen.findByRole('button', { name: /Henderson/ });
