@@ -1850,7 +1850,7 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
-- **What the red DUE on both Events lists does not account for.** The phone card, shipped in
+- **What the red DUE on both Events lists does not account for.** The phone card, built in
   `a3b0b98f`, and the desktop Status cell print one figure, `total_price - amount_paid` via
   `eventPaymentState` (`client/src/components/adminos/eventPlan.js`), so they agree, and in these
   cases both are wrong. A bank debit in flight reads DUE for the days it takes to settle, since
