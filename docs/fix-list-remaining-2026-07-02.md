@@ -1971,6 +1971,21 @@ the accented spelling) or the two spellings stop matching each other.
   never been used in prod. Related: `server/routes/calendar.js` links `/events/shift/:id`, which
   for a manual shift forwards to bare `/events`, though the list can now open that shift's sheet.
   ma-e2 consistency review.
+- **QUEUED LANE (Dallas, 2026-09-30): one staffing rule everywhere, by ROLE.** Lane
+  `phone-owner-decisions` put the phone Events LIST on the detail's rule (`roleFill` /
+  `rowRoleFill`, `client/src/components/adminos/shifts.js`), but these still count HEADS
+  (`approved_count` against the roster length), so a mixed-role over-fill (roster Bartender x2 +
+  Barback, three Bartenders approved) reads 2/3 short on the phone card while: the phone list's
+  Needs staff filter, its count and its "Fully staffed" empty state drop the event
+  (`NEEDS_STAFF_SQL`, `server/routes/shifts.queries.js`); the tab badge misses it
+  (`unstaffed_events`, `server/routes/admin/settings.js`, also `/unstaffed-upcoming`); and the
+  desktop Events list says 3/3 (`EventsDashboard.js` Unstaffed tab and count, `StaffingCell.js`,
+  `OverviewPage.js`, `queueItems.js`). The desktop EventDetailPage and ShiftDrawer already count by
+  role. Build: a role-aware SQL predicate (both roster shapes, roleless approvals take a slot with
+  room, open = max(0, sum of positive per-role remaining minus roleless)) shared by the feed and the
+  badge and pinned together by `shifts.adminScoped.test.js`, plus the desktop list on `rowRoleFill`.
+  Database review seat. Reach today: none (0 mixed-role rosters in prod on 2026-09-29, and the phone
+  refuses to over-fill). Found by the consistency and code reviews of that lane.
 - **OWNER DECISIONS on the phone event detail (lane ma-e2, `91dcfab8`), each one Dallas's to make.**
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: the "No tip jar (client paid to skip it)" warning
     goes on the phone detail as an amber chip on the date line, on any event not cancelled
@@ -1989,6 +2004,8 @@ the accented spelling) or the two spellings stop matching each other.
     2026-08-14. Latch `isPhone` in `MobileViewContext.js` and re-read it on a route change; the
     lock model (`mobileLock.js`) keeps its own raw query. Unreachable on the installed app
     (portrait-locked); reachable on a desktop window under 700px and a phone browser tab rotated.
+    As built, a tap to the SAME path does not re-latch (a phone browser tab opened landscape on
+    /events, rotated, then Events tapped again stays desktop until another route). Accepted.
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Back button's name becomes plain "Back".
     It returns wherever you came from; the name is `aria-label` only (`AdminLayout.js` passes
     "Back to Events" / "Back to Proposals" to `MobileHeader.js`), so this is screen-reader text.
