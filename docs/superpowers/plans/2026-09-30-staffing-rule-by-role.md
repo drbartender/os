@@ -65,3 +65,11 @@ Behaviour change on fixtures only: an empty, NULL or malformed roster with nobod
 - **Depends on:** `phone-owner-decisions` (merged).
 - **Method:** one pass by Claude (small, coherent, shared rule); server suites run one at a time from the repo root against the dev DB, reading the pass count.
 - **Review fleet (lane, before merge):** `server/routes/shifts.js` is sensitive-listed, so the full seats that apply: code-review, database-review (the fragment's correctness and its per-row cost on the feed's base CTE and the badge), consistency-check (every staffing count now agrees; the client and server `roleFill` twins match), performance-review. At push: the sensitive-path re-review plus `/second-opinion`.
+
+## As built (2026-09-30, lane head `ca10c051`)
+
+- **Task 1:** as planned. The fixture test found one JS parser quirk the SQL does not mirror (a nested one-element array, `String(["Bartender"])`); documented in `openSlotsSql`'s comment, never held by a row. The `shift_requests_position_canonical` CHECK makes unknown role text on a request impossible, so NULL is the only roleless case.
+- **Task 2:** as planned. `shifts.unstaffedJsonbGuard.test.js` now asserts a malformed roster is LISTED as one open slot (it asserted "skipped"); the crash guard it exists for still holds.
+- **Task 3, amended:** `confirmStaffingIfFullyStaffed` does NOT keep an empty-roster early return. That return existed only because a head count would confirm zero-of-zero with nobody approved; `roleFill` needs one approval for a roster with no roles, so nobody approved still never confirms (pinned by test). Its fixture moved from `["lead"]` (an unknown role, which reads as no roles) to `["Bartender"]`.
+- **Task 4, widened by one line:** the overview queue's title names the open role ("needs 1 barback", "needs 2 staff" when several are open); it said "bartender" for every open slot. `StaffingCell` reads `filled/slots` by role, so an over-filled single role reads full (1/1), not 2/1; its confirmed hover card still lists everyone.
+- Suites: 22 server suites one at a time from the lane root, pass counts read; client 135 suites, 1572 tests.
