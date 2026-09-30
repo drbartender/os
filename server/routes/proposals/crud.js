@@ -23,6 +23,7 @@ const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
+const { resolvePatchHours } = require('./patchContractHours');
 const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
@@ -415,7 +416,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const syrups = syrup_selections ?? (oldSnapshot.syrups?.selections || []);
 
     const gc = guest_count ?? old.guest_count;
-    const dh = event_duration_hours ?? Number(old.event_duration_hours);
+    // workedHours is stored; contractHours is priced (patchContractHours.js).
+    const { workedHours, contractHours } = await resolvePatchHours(dbClient, {
+      proposalId: req.params.id, old, bodyDuration: event_duration_hours,
+    });
     const nb = num_bars ?? old.num_bars;
     const adj = adjustments ?? (old.adjustments || []);
     const tpo = total_price_override !== undefined ? total_price_override : old.total_price_override;
@@ -444,7 +448,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         eventDate: event_date ?? old.event_date,
         startTime: event_start_time ?? old.event_start_time,
         timezone: old.event_timezone,
-        durationHours: dh,
+        durationHours: workedHours,
       },
       previous: {
         eventDate: old.event_date,
@@ -527,12 +531,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const isPaidForGratuity = Number(old.amount_paid || 0) > 0;
     const { gratuityRate: resolvedGratuityRate, floorRate: resolvedFloorRate, tipJar: persistTipJar } =
       resolveGratuityForPatch({
-        body: req.body, old, pkg, guestCount: gc, durationHours: dh,
+        body: req.body, old, pkg, guestCount: gc, durationHours: contractHours,
         numBartenders: num_bartenders, addons,
       });
 
     const snapshot = calculateProposal({
-      pkg, guestCount: gc, durationHours: dh, numBars: nb,
+      pkg, guestCount: gc, durationHours: contractHours, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
       adjustments: adj, totalPriceOverride: tpo,
       gratuityRate: resolvedGratuityRate, tipJar: persistTipJar,
@@ -572,7 +576,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       WHERE id = $11
       RETURNING *
     `, [
-      event_date, event_start_time, dh, event_location, gc,
+      event_date, event_start_time, workedHours, event_location, gc,
       pkgId, nb, snapshot.staffing.actual,
       JSON.stringify(snapshot), snapshot.total, req.params.id,
       event_type || null, event_type_category || null, event_type_custom || null,

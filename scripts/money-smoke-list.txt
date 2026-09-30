@@ -136,3 +136,8 @@ server/utils/stripePayoutSync.test.js
 # prod-shaped schema (a missing column would 500 the page). Both under 3s.
 server/utils/agreementVersions.test.js
 server/routes/proposals/publicToken.additionalTime.test.js
+
+# Contract hours after an on-site extension (spec 2026-09-30). Twelve cases
+# over the proposal PATCH, the extras fold, cancel-line, the roster, the
+# preview and the read, on the prod-shaped schema. About 15s.
+server/utils/contractDuration.extension.test.js

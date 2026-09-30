@@ -85,7 +85,7 @@ async function sweepExpiredExtensions() {
         await notify.alertAdminsProblem({
           proposalId: pre.rows[0].proposal_id,
           kind: 'paid_extension_stranded',
-          detail: `Extension ${id} is still pending but its invoice is PAID. The client paid and the event was NOT extended. Settle it by hand (bump the duration and the shift end time, and check payroll hours) or refund the payment. The bartender has NOT been told anything.`,
+          detail: `Extension ${id} is still pending but its invoice is PAID. The client paid and the event was NOT extended. Settle it THROUGH THE REQUEST: override it from the event page (that moves the duration, runs payroll and clears the bartender; the invoice is already paid, so nothing is voided). Or refund the payment. Never edit the event duration by hand: a hand-moved hour is contract time and bills the client again on the next save. The bartender has NOT been told anything.`,
         });
         await pool.query(
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
@@ -117,7 +117,7 @@ async function sweepExpiredExtensions() {
           await notify.alertAdminsProblem({
             proposalId: closed.proposalId,
             kind: 'paid_extension_stranded',
-            detail: `Extension ${id} was EXPIRED by the sweep but its invoice turned out PAID (the payment landed mid-sweep). The client paid and the event was NOT extended, and no automatic path will revisit this row. Settle by hand or refund.`,
+            detail: `Extension ${id} was EXPIRED by the sweep but its invoice turned out PAID (the payment landed mid-sweep). The client paid and the event was NOT extended, and no automatic path will revisit this row. Refund the payment, or, if the time was served, re-open the request to pending and override it (ops runbook, Service Extension refunds, Stranded paid extensions). Never edit the event duration by hand.`,
           });
         }
       }

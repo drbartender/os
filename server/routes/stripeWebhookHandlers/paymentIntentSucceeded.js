@@ -799,7 +799,7 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             await notify.alertAdminsProblem({
               proposalId,
               kind: 'settle_failed',
-              detail: `A paid extension could not be settled automatically (${extErr.message}). Extend the event by hand and check the bartender was told.`,
+              detail: `A paid extension could not be settled automatically (${extErr.message}). Settle it through the request: override it from the event page (the invoice is already paid). Never edit the event duration by hand. Check the bartender was told.`,
             }).catch(() => {});
           }
         }

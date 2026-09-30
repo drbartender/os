@@ -84,6 +84,18 @@ export function initialFormFromProposal(p) {
 // /proposals/addons response. Returns an addon_quantities map keyed by addon id
 // (number) → recovered count, clamped to 1–10. Addons whose count can't be
 // recovered (missing/zero divisors) are omitted (stepper defaults 1).
+// The hours a loaded proposal's add-on quantities were PRICED at. After a
+// settled on-site extension the row's event_duration_hours is longer than
+// that by settled_extension_hours (GET /proposals/:id always sends it; an
+// older payload that lacks it reads as 0, never NaN). Inverting a stored
+// quantity at the worked hours loses a seat: 3 bartenders on a 4h booking
+// extended to 5h read back as 2. Server twin: server/utils/contractDuration.js.
+export function pricedDurationHours(p) {
+  const worked = Number(p?.event_duration_hours) || 0;
+  const settled = Number(p?.settled_extension_hours) || 0;
+  return Math.max(0, worked - settled);
+}
+
 export function recoverAddonQuantities(proposalAddons, catalog, { durationHours }) {
   const out = {};
   const byId = new Map((catalog || []).map(a => [a.id, a]));

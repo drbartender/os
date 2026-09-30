@@ -15,11 +15,12 @@ const { ValidationError, ConflictError, NotFoundError } = require('./errors');
 const { calculateStaffing } = require('./pricingEngine');
 const { readSnapshot } = require('./pricingSnapshot');
 const { storedToInputCount, countLabelFor, effectiveHoursFor, storedIsInputCount } = require('./addonQuantity');
+const { contractDurationHours } = require('./contractDuration');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('./proposalExtrasFold');
 const { sumOffContractPaidCents, extrasLinesAreFolded } = require('./invoiceExtras');
 const { nettedOverpaymentCents } = require('./refundHelpers');
 const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems } = require('./invoiceHelpers');
-const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons } = require('./eventCreation');
+const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons, pricedHoursFor } = require('./eventCreation');
 const { rosterCounts } = require('./positionsNeeded');
 const { toCents } = require('./invoiceShared');
 
@@ -104,6 +105,9 @@ async function computeCancelTargets(dbClient, proposalId) {
     ? (await dbClient.query('SELECT * FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0]
     : null;
   const snap = readSnapshot(proposal.pricing_snapshot, { context: 'lineItemCancel.targets' });
+  // The CONTRACT's hours: a settled on-site extension moved the row and left
+  // the stored quantities and the price behind (contractDuration.js).
+  const contractHours = await contractDurationHours(dbClient, proposalId, proposal.event_duration_hours);
 
   const addonRows = (await dbClient.query(
     `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity, pa.line_total,
@@ -162,8 +166,7 @@ async function computeCancelTargets(dbClient, proposalId) {
       });
       continue;
     }
-    const durationHours = Number(proposal.event_duration_hours);
-    const count = unitCountOf(row, row.quantity, durationHours);
+    const count = unitCountOf(row, row.quantity, contractHours);
     // `billed_unit`, NOT `quantity_unit`: countLabelFor describes the unit of the
     // STORED figure, so beside a `quantity` of 3 servers a field named
     // quantity_unit: 'hour' would assert the 3 is three HOURS. It says how the
@@ -207,7 +210,7 @@ async function computeCancelTargets(dbClient, proposalId) {
     const rb = removableBartenders({
       pkg,
       guestCount: proposal.guest_count,
-      durationHours: Number(proposal.event_duration_hours),
+      durationHours: contractHours,
       actual: proposal.num_bartenders,
     });
     if (rb.removable > 0) {
@@ -225,7 +228,7 @@ async function computeCancelTargets(dbClient, proposalId) {
         (b) => typeof b?.label === 'string' && b.label.startsWith('Additional Bartender')
       );
       const extra = Number(snap?.staffing?.extra || 0);
-      const hours = Number(proposal.event_duration_hours) || 0;
+      const hours = contractHours || 0;
       targets.push({
         target: 'extra-bartender',
         label: staffingRow?.label ?? `Additional Bartender${extra !== 1 ? 's' : ''} (${extra})`,
@@ -433,6 +436,10 @@ async function applyLineItemCancel(client, {
   if (CANCEL_BLOCKED_STATUSES.includes(proposal.status)) {
     throw new ConflictError('Line items cannot be removed from an archived or completed proposal.', 'NOT_CANCELLABLE');
   }
+  // The CONTRACT's hours (contractDuration.js), read under the lock. Every
+  // inversion and the partial-removal write below use it, so the row we
+  // store is the shape the next read expects.
+  const contractHours = await contractDurationHours(client, proposalId, proposal.event_duration_hours);
   const fingerprint = {
     updated_at: proposal.updated_at instanceof Date ? proposal.updated_at.toISOString() : String(proposal.updated_at),
     amount_paid: Number(proposal.amount_paid) || 0,
@@ -487,7 +494,7 @@ async function applyLineItemCancel(client, {
     // totalCount is already a whole unit count: storedToInputCount rounds with a
     // floor of 1, so nothing here needs its own Math.round (two roundings on the
     // same figure is how the two definitions drifted apart the first time).
-    const durationHours = Number(proposal.event_duration_hours);
+    const durationHours = contractHours;
     const storedQty = Number(row.quantity) || 0;
     const totalCount = unitCountOf(row, storedQty, durationHours);
     let removeN = totalCount;
@@ -553,7 +560,7 @@ async function applyLineItemCancel(client, {
     const rb = removableBartenders({
       pkg,
       guestCount: proposal.guest_count,
-      durationHours: Number(proposal.event_duration_hours),
+      durationHours: contractHours,
       actual: proposal.num_bartenders,
     });
     if (rb.removable <= 0) {
@@ -648,7 +655,7 @@ async function applyLineItemCancel(client, {
   let staffingWarning = null;
   if (t.kind === 'extra-bartender') {
     const staffingAddons = await loadStaffingAddons(proposal, client);
-    const desired = rosterCounts(deriveStaffingRoster(proposal, staffingAddons));
+    const desired = rosterCounts(deriveStaffingRoster(proposal, staffingAddons, await pricedHoursFor(proposal, client)));
     const desiredBartenders = desired.Bartender || 0;
     const approvedRes = await client.query(
       `SELECT COUNT(*)::int AS n

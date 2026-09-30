@@ -215,6 +215,8 @@ When the bartender requests more time at the event, the client pays a separate "
 
 **Changing an extra-hour rate changes it for clients who already signed.** The line and the extension both read the live catalog row, so they always agree with each other, and neither is locked at signing. Before changing any package's extra-hour rate (or the Core Reaction's $100, or the $40 extra-bartender rate, both of which are also written into the agreement text), decide what already-signed clients are owed. Locking the rate at signing is on the fix list.
 
+**An extension never moves the contract's price.** Settling moves the hours the bar works, on the proposal and the shift, and nothing else. The contract keeps pricing the hours it was sold for: an admin edit after the event, a drink-plan submit or a cancelled line all re-price at those contract hours, and stored add-on quantities are read back at them, so the extension's hour is billed once, on its own invoice. Lengthening a booking in the editor after an extension still adds contract time (it is an advance change, priced at catalog); editing the duration while an extension request is pending is refused until the request settles or is cancelled. Rule and edge cases: `server/utils/contractDuration.js`, spec 2026-09-30.
+
 ### Price Adjustments / Custom Total
 
 Admin-only tools, not standing line items: a proposal can carry arbitrary discount/surcharge adjustments, or have its entire total manually overridden for one-off custom pricing. Client-elected gratuity is layered on top of either and is never affected by them.

@@ -45,6 +45,7 @@
 const { calculateProposal } = require('./pricingEngine');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { storedToInputCount } = require('./addonQuantity');
+const { contractDurationHours, contractHoursFromAggregate, SETTLED_EXTENSION_COLUMNS } = require('./contractDuration');
 
 // SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
 // per-proposal stored quantity AND the event duration needed to convert it.
@@ -56,9 +57,13 @@ const { storedToInputCount } = require('./addonQuantity');
 // hours a second time (cross-LLM push review, 2026-07-26). service_addons has
 // no `quantity` and proposals has no `minimum_hours`, so both aliases are
 // unambiguous.
+// pa_duration_hours is the ROW's (worked) hours; the stored quantity was
+// computed at the CONTRACT's hours, which a settled on-site extension moves
+// apart (contractDuration.js). The two aggregate columns let
+// withRepriceQuantities derive the contract's hours with the one shared rule.
 const REPRICE_ADDON_SQL = `
   SELECT sa.*, pa.quantity AS pa_quantity, pa.line_total AS pa_line_total, pa.rate AS pa_rate,
-         p.event_duration_hours AS pa_duration_hours
+         p.event_duration_hours AS pa_duration_hours,${SETTLED_EXTENSION_COLUMNS}
     FROM proposal_addons pa
     JOIN service_addons sa ON sa.id = pa.addon_id
     JOIN proposals p ON p.id = pa.proposal_id
@@ -81,8 +86,15 @@ const REPRICE_ADDON_SQL = `
  */
 function withRepriceQuantities(rows) {
   return (rows || []).map((r) => {
-    const { pa_quantity, pa_duration_hours, pa_line_total, pa_rate, ...addon } = r;
-    const count = storedToInputCount(addon, pa_quantity, pa_duration_hours, {
+    const {
+      pa_quantity, pa_duration_hours, pa_settled_added_hours, pa_min_contracted_hours,
+      pa_line_total, pa_rate, ...addon
+    } = r;
+    // Invert at the hours the quantity was priced at, never the worked hours.
+    const contractHours = contractHoursFromAggregate(
+      pa_duration_hours, pa_settled_added_hours ?? 0, pa_min_contracted_hours ?? null
+    ).hours;
+    const count = storedToInputCount(addon, pa_quantity, contractHours, {
       lineTotal: pa_line_total, rate: pa_rate,
     });
     return count === null ? addon : { ...addon, quantity: count };
@@ -133,11 +145,16 @@ async function foldExtrasIntoProposal({
     && proposal.total_price_override !== undefined;
   let effectiveOverride = null;
 
+  // The CONTRACT's hours, not the row's: a settled on-site extension moved
+  // the row and left the contract (contractDuration.js). Loaded on the held
+  // client, inside the caller's transaction.
+  const contractHours = await contractDurationHours(client, proposal.id, proposal.event_duration_hours);
+
   if (hasOverride) {
     const catalogArgs = {
       pkg,
       guestCount: proposal.guest_count,
-      durationHours: Number(proposal.event_duration_hours),
+      durationHours: contractHours,
       totalPriceOverride: null, // price the delta at CATALOG
       gratuityRate: proposal.gratuity_rate,
       tipJar: proposal.tip_jar,
@@ -176,7 +193,7 @@ async function foldExtrasIntoProposal({
   const snapshot = calculateProposal({
     pkg,
     guestCount: proposal.guest_count,
-    durationHours: Number(proposal.event_duration_hours),
+    durationHours: contractHours,
     numBars: numBarsAfter,
     numBartenders: bartendersAfter,
     addons: addonsAfter,

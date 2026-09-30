@@ -1,5 +1,6 @@
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
+const { loadSettledExtensions, contractHoursFrom } = require('./contractDuration');
 const { validateProposalRules, stripIncludedAddons } = require('./proposalRules');
 const { ValidationError } = require('./errors');
 const { safeAddonQty } = require('./proposalMoneyShared');
@@ -62,7 +63,12 @@ async function currentAddonIds(proposalId, db) {
 // issuing 2N round trips on a public endpoint. Behaviour is otherwise identical
 // by construction: the same rows reach the same rule gate and the same engine,
 // which is what lets the preview and the eventual commit agree on a number.
-async function priceProposedState(proposal, proposed, db = pool, catalog = null) {
+// `settledRows`: the proposal's settled on-site extensions (contractDuration.js),
+// passed ONLY by the change-request wrappers below. The public options and
+// switch routes call this with nothing and price the row's hours as before: no
+// extension can exist before a booking, and those pages must not pay for the
+// query.
+async function priceProposedState(proposal, proposed, db = pool, catalog = null, settledRows = null) {
   const packageId = proposed.package_id ?? proposal.package_id;
   const pkg = catalog
     ? catalog.packages.find(p => p.id === Number(packageId))
@@ -89,7 +95,9 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null)
   return calculateProposal({
     pkg,
     guestCount,
-    durationHours: Number(proposed.event_duration_hours ?? proposal.event_duration_hours),
+    durationHours: contractHoursFrom(
+      Number(proposed.event_duration_hours ?? proposal.event_duration_hours), settledRows || []
+    ).hours,
     numBars: Number(proposed.num_bars ?? proposal.num_bars ?? 1),
     numBartenders: proposed.num_bartenders ?? null,
     addons,
@@ -107,7 +115,8 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null)
 
 // Build the { current, estimated, delta, staffing } preview (DOLLARS).
 async function buildPreview(proposal, proposed, db = pool) {
-  const snapshot = await priceProposedState(proposal, proposed, db);
+  const settled = await loadSettledExtensions(db, proposal.id);
+  const snapshot = await priceProposedState(proposal, proposed, db, null, settled);
   // Baseline on total_price, NOT total_price_override: the override is a
   // SERVICE-level number and the engine layers gratuity on top of it, so
   // baselining on the override compares a gratuity-exclusive current against a

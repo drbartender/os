@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
-import { initialFormFromProposal, recoverAddonQuantities } from './proposalEditor/formState';
+import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours } from './proposalEditor/formState';
 import { buildProposalPatchBody } from './proposalEditor/patchBody';
 
 // Same overlay the other admin dialogs use (CancelLineDialog).
@@ -110,7 +110,7 @@ export default function RemoteStaffingFeePrompt({ proposalId, onProceed }) {
 
       const form = initialFormFromProposal(proposal);
       form.addon_quantities = recoverAddonQuantities(proposal.addons, catalog, {
-        durationHours: proposal.event_duration_hours,
+        durationHours: pricedDurationHours(proposal),
       });
       form.adjustments = [
         ...(form.adjustments || []),

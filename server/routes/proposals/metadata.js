@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal, computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
+const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
@@ -33,10 +34,21 @@ router.get('/addons', auth, requireAdminOrManager, asyncHandler(async (req, res)
  *  (bundle-covered add-ons dropped) and carry a bounded quantity, so the
  *  preview total matches what the proposal would actually be saved at. */
 router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_rate, gratuity_mandate_total } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_rate, gratuity_mandate_total, proposal_id } = req.body;
   if (!package_id) {
     throw new ValidationError({ package_id: 'Package is required' });
   }
+  // Editing an existing booking: price the CONTRACT's hours, which a settled
+  // on-site extension can make shorter than the form's worked hours
+  // (contractDuration.js), so the preview equals what the PATCH will save.
+  // A garbage proposal_id is ignored, never a 500. Admin-only route.
+  // Integer within int4 (a larger one is a pg cast error, a boolean coerces to
+  // 1); a preview never pages Sentry, the PATCH does that when it saves.
+  const pid = (typeof proposal_id === 'number' || /^\d+$/.test(String(proposal_id ?? '')))
+    ? Number(proposal_id) : NaN;
+  const pricedHours = Number.isInteger(pid) && pid > 0 && pid <= 2147483647
+    ? contractHoursFrom(duration_hours || 4, await loadSettledExtensions(pool, pid)).hours
+    : (duration_hours || 4);
 
   const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
   if (!pkgResult.rows[0]) {
@@ -84,7 +96,7 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
       const { staffCount, hours } = computeGratuityBasis({
         pkg: pkgResult.rows[0],
         guestCount: guest_count || 50,
-        durationHours: duration_hours || 4,
+        durationHours: pricedHours,
         numBartenders: num_bartenders,
         addons,
       });
@@ -106,7 +118,7 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
   const snapshot = calculateProposal({
     pkg: pkgResult.rows[0],
     guestCount: guest_count || 50,
-    durationHours: duration_hours || 4,
+    durationHours: pricedHours,
     numBars: num_bars ?? 1,
     numBartenders: num_bartenders,
     addons,

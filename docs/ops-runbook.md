@@ -64,17 +64,23 @@ enforce the term.
     the package charge is the per-guest rate, not $100/hr. On any package it
     also carries the surcharge, time-priced add-ons and gratuity, which v3
     8.1 does not list. OPEN, owner decision: whether a v3 signer is held to
-    the automated quote or billed the v3 rate. There is no verified recipe
-    for billing the v3 rate by hand yet: the admin override on the request
-    grants the time, and the warning below then applies to the booking.
-  - **After an extension settles, leave the booking's editor alone.**
-    Settling, paid or overridden, moves the booking's duration and leaves its
-    price where it was. The next save of that booking in the admin editor
-    re-prices it at the longer duration, which bills the added time through
-    the contract on top of the extension invoice. If an edit cannot wait,
-    note the total before, save, and compare: the part of the increase that
-    is not your own edit is the added time billed a second time. The code fix
-    is on the fix list.
+    the automated quote or billed the v3 rate. To bill the v3 rate by hand:
+    override the request (that grants the time), then add the v3 charge as
+    a surcharge adjustment on a catalog-priced booking, or raise Override
+    total by it when one is set (an adjustment is swallowed there, see
+    below); the contract keeps pricing its own hours, so that is the only
+    new money.
+  - **After an extension settles, the editor is safe.** Settling moves the
+    booking's hours (the ones the bar worked) and leaves its price alone, and
+    every re-price keeps pricing the hours the contract was sold for. The
+    editor shows the worked hours with a note under the field naming the
+    split. Lengthening the booking there adds contract time at catalog.
+  - **Never move the duration by hand to settle an extension.** A hand-moved
+    hour is contract time and bills the client again on the next save.
+    Recovery for a paid request the system failed to settle is under
+    "Service Extension refunds" below (override the request; never the
+    duration). Editing the duration while a request is pending is refused
+    for the same reason.
   - **Time arranged in advance** (an admin duration change) is the ordinary
     re-price. What it adds for the added time varies, so read it off the
     save: note the total and the package line before, save, and compare.
@@ -163,7 +169,29 @@ orchestration in the route anymore; never describe or rebuild one.
   proposal activity log.
 - **The event duration is never auto-reverted.** Whether the extended time was
   actually served is a fact only a human knows. If the extension should also
-  be undone operationally, adjust the event duration by hand.
+  be undone operationally, adjust the event duration by hand; the contract's
+  price does not move with it (the rule holds the contract at the hours the
+  extension started from, and Sentry notes the clamp). A contract that really
+  should be shorter than that is priced with a discount adjustment on a
+  catalog-priced booking, or by lowering Override total when one is set (an
+  adjustment is swallowed there), never with a duration edit.
+
+### Stranded paid extensions (settle through the request, never the duration)
+
+- **Pending but paid** (the sweep's "still pending but its invoice is PAID"
+  alert) or **settle failed** (the webhook's alert): override the request from
+  the event page. That moves the duration, runs payroll and clears the
+  bartender; the invoice is already paid, so the override's void is a no-op.
+  The row will read "overridden" and the log will say an amount was waived on
+  an extension the client paid; accepted (Dallas, 2026-09-30) until an admin
+  "settle as paid" action exists (fix list).
+- **Expired with a paid invoice** (the payment landed mid-sweep): nothing is
+  pending to override. Refund the client from Stripe, or, if the time was
+  served, re-open the row and override it:
+  `UPDATE service_extensions SET status = 'pending', expires_at = NOW() +
+  INTERVAL '1 hour' WHERE id = <id> AND status = 'expired'`.
+- Never edit the event duration to "settle" any of these: a hand-moved hour
+  is contract time and bills the client again on the next save.
 - **Gratuity (spec §14 default, approved 2026-08-03): the bartender keeps the
   gratuity share.** The refund returns the client's money; it does not claw
   back the staff pool share. This stands unless Dallas later flips the default

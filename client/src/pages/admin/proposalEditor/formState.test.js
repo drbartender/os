@@ -1,4 +1,4 @@
-import { recoverAddonQuantities } from './formState';
+import { recoverAddonQuantities, pricedDurationHours } from './formState';
 
 // recoverAddonQuantities inverts pricingEngine's count→quantity transforms to
 // recover the raw 1–10 stepper count for a loaded proposal's add-ons. These
@@ -218,5 +218,31 @@ describe('recoverAddonQuantities — defensive / edge cases', () => {
     expect(recoverAddonQuantities([], catalog, { durationHours: 4, guestCount: 100 })).toEqual({});
     expect(recoverAddonQuantities(null, catalog, { durationHours: 4, guestCount: 100 })).toEqual({});
     expect(recoverAddonQuantities(null, null, { durationHours: 4, guestCount: 100 })).toEqual({});
+  });
+});
+
+// --- priced hours after an on-site extension --------------------------------
+// A settled extension moves proposals.event_duration_hours (worked hours) and
+// leaves the stored add-on quantities at the hours they were priced at. The
+// admin GET sends settled_extension_hours; the inversion must run at the
+// difference or a seat disappears (12 / 5 rounds to 2, not 3).
+
+describe('pricedDurationHours', () => {
+  it('subtracts the settled extension hours the server reports', () => {
+    expect(pricedDurationHours({ event_duration_hours: '5.0', settled_extension_hours: 1 })).toBe(4);
+    expect(pricedDurationHours({ event_duration_hours: 5.5, settled_extension_hours: '1.5' })).toBe(4);
+  });
+  it('is the worked hours when nothing settled, and never NaN on an old payload that lacks the field', () => {
+    expect(pricedDurationHours({ event_duration_hours: '4.0', settled_extension_hours: 0 })).toBe(4);
+    expect(pricedDurationHours({ event_duration_hours: '4.0' })).toBe(4);
+    expect(pricedDurationHours({ event_duration_hours: '4.0', settled_extension_hours: undefined })).toBe(4);
+    expect(pricedDurationHours(null)).toBe(0);
+  });
+  it('recovers three additional bartenders on a 4h booking extended to 5h, where the worked hours would recover two', () => {
+    const rows = [{ addon_id: 100, rate: '40.00', quantity: '12', line_total: '480.00' }];
+    const extended = { event_duration_hours: '5.0', settled_extension_hours: 1 };
+    expect(recoverAddonQuantities(rows, catalog, { durationHours: pricedDurationHours(extended) })).toEqual({ 100: 3 });
+    // The bug this guards: inverting at the worked hours.
+    expect(recoverAddonQuantities(rows, catalog, { durationHours: extended.event_duration_hours })).toEqual({ 100: 2 });
   });
 });

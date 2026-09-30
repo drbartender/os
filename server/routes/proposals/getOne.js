@@ -10,6 +10,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError } = require('../../utils/errors');
 const { setupTimeDisplay } = require('../../utils/setupTime');
 const { getMessageLogForProposal } = require('../../utils/messageLog');
+const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
 const {
   nettedOverpaymentCents, offContractPaidCents, loadPaymentsWithRemaining,
   contractInvoiceSlackCents,
@@ -46,7 +47,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable, invoiceSlack] = await Promise.all([
+  const [addons, activity, messageLog, leadCall, firstReply, offContract, refundable, invoiceSlack, settledExt] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -86,6 +87,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     offContractPaidCents(req.params.id),
     loadPaymentsWithRemaining(req.params.id),
     contractInvoiceSlackCents(req.params.id),
+    loadSettledExtensions(pool, req.params.id),
   ]);
 
   const fr = firstReply.rows[0];
@@ -98,6 +100,18 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   res.json({
     ...row,
     setup_time_display: setupTimeDisplay(row),
+    // Hours a settled on-site extension added to the row, ALWAYS a number (0
+    // when none). The editor subtracts it to invert stored add-on quantities
+    // at the contract's hours (contractDuration.js); a missing field would
+    // read as NaN and reset every stepper. It is row minus contract hours, so
+    // after a hand-reverted row it can be NEGATIVE (the clamp held the
+    // contract above the row); the subtraction stays consistent either way.
+    // contract_floor_hours is the clamp's floor (null when no extension), so
+    // the editor's hint can show what the server will price.
+    settled_extension_hours: contractHoursFrom(row.event_duration_hours, settledExt).settled,
+    contract_floor_hours: settledExt.length
+      ? Math.min(...settledExt.map((e) => Number(e.contracted_duration_hours)).filter(Number.isFinite))
+      : null,
     // Netted overpayment, the same figure and the same key the cancel-line
     // preview returns. off_contract_paid_cents is the netting term, so the
     // editor can net a HYPOTHETICAL new total without a second round trip.

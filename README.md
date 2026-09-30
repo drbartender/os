@@ -260,6 +260,7 @@ dr-bartender/
 │   │   │   ├── metricsSplit.js # GET /metrics-split — funnel sent/accepted math split by source or event_type (native-only sibling of dashboard-stats)
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
 │   │   │   ├── crud.js         # admin CRUD (list / create / update / archive)
+│   │   │   ├── patchContractHours.js # The PATCH's two durations: workedHours (stored; curfew, shifts, end time) and contractHours (priced; contractDuration.js), plus the guard that refuses a duration CHANGE while an extension request is pending (settle would overwrite it). Sibling of crud.js because crud.js sits at its line cap
 │   │   │   ├── getOne.js       # GET /:id single-proposal read (carved out of crud.js; greedy `/:id`, mounted last)
 │   │   │   ├── menuPrint.js    # Bar-menu print file admin CRUD (upload/replace, no-menu flag, remove) — R2 menu-print/<proposalId>/
 │   │   │   ├── notifyPreflight.js # POST /:id/notify-preflight — read-only: which client notices a pending edit would trigger + the drafted message
@@ -358,6 +359,8 @@ dr-bartender/
 │   │   ├── ccWrapUpEmailTemplate.js # wrap-up email subject + html + text renderer (v1 importer deleted; template retained for the drain-only handler below)
 │   │   ├── ccWrapUpHandler.js  # post_event_wrap_up_email dispatcher handler, registered at boot in server/index.js (enqueue endpoint deleted with v1; retained to drain scheduled rows)
 │   │   ├── labFollowupHandler.js # lab_followup dispatcher handler (planner v2): +36h post-submit Enhancement Lab nudge; every cancel condition checked at fire time (additions made, window closed, event <72h, marketing opt-out); registered at boot in server/index.js
+│   │   ├── contractDuration.js # THE rule for the hours a contract is PRICED at after an on-site extension: row hours minus the hours settled extensions added, never below what the first extension found contracted (clamp + Sentry); loadSettledExtensions on the caller's client; SETTLED_EXTENSION_COLUMNS for the one SQL inversion. Every contract re-price and every stored-quantity inversion reads it; payroll, shifts and the curfew keep the row's worked hours
+│   │   ├── serviceExtensionOutcomes.js # SETTLE_OUTCOMES (paid, overridden) and CLOSE_OUTCOMES, shared by settle and contractDuration so a new settle outcome cannot be missed by the pricing readers
 │   │   ├── proposalExtrasFold.js # Contract-safe extras fold (extracted verbatim from the submit financial path): override moves by catalog delta, snapshot reprice, total/override write, paid-in-full re-eval; shared by drink-plan submit + the Enhancement Lab
 │   │   ├── dutyLines.js        # Contractor duty pay (spec 2026-08-06): kind labels, pure triggers (funded gate + bar/parking/equipment/hosted/menu/out-of-area), derive-never-increment reconcile, attribution helpers, review bounty/contest materializers + catch-up pass
 │   │   ├── serviceArea.js      # Out-of-Area service-area geometry (spec 2026-08-06 §6): HOME_BASE (Pilsen), the suggestion bands (SERVER-ONLY per the published-ambiguity rule), distance helpers, the bonus lock stamp/release pair shared by every approval + roster-removal path, its own 1 req/sec Nominatim queue, and the post-commit duty re-accrue hook

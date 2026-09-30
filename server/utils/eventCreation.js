@@ -7,6 +7,7 @@ const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
 const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
 const { canonicalizeRole } = require('./staffingRoles');
 const { readSnapshot } = require('./pricingSnapshot');
+const { contractDurationHours } = require('./contractDuration');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -61,8 +62,16 @@ function addonHeadcount(addons, slug, durationHours) {
 // Ordered roster of canonical role labels the client paid for: bartenders
 // (num_bartenders + additional-bartender add-on, the two additive channels),
 // then banquet servers, then barbacks. Pure; never throws.
-function deriveStaffingRoster(proposal, addons) {
-  const dur = Number(proposal && proposal.event_duration_hours) || 0;
+//
+// `pricedHours` is the duration the add-on quantities were PRICED at, which is
+// the divisor that recovers a headcount from a stored hours x count figure.
+// After a settled on-site extension the row's event_duration_hours is longer
+// than that (contractDuration.js), so callers pass pricedHoursFor(); the row
+// is only the fallback for a caller that passes nothing.
+function deriveStaffingRoster(proposal, addons, pricedHours = null) {
+  const dur = Number(pricedHours) > 0
+    ? Number(pricedHours)
+    : (Number(proposal && proposal.event_duration_hours) || 0);
   const bartenders = (Number(proposal && proposal.num_bartenders) || 1)
     + addonHeadcount(addons, 'additional-bartender', dur);
   const servers = addonHeadcount(addons, 'banquet-server', dur);
@@ -86,6 +95,19 @@ const STAFFING_NAME_TO_SLUG = {
 // first (it carries slug + the hours-quantity); fall back to the proposal_addons
 // join when the snapshot has no addons[] (older / imported proposals). Never
 // throws on a malformed snapshot.
+// The hours the proposal's add-on quantities were priced at: the snapshot's
+// own inputs when it has them (the quantities and the hours come from the same
+// engine run, so they cannot disagree), else the contract's hours derived from
+// the row and its settled extensions.
+async function pricedHoursFor(proposal, db) {
+  try {
+    const snap = readSnapshot(proposal.pricing_snapshot, { context: 'eventCreation' });
+    const fromSnap = Number(snap && snap.inputs && snap.inputs.durationHours);
+    if (Number.isFinite(fromSnap) && fromSnap > 0) return fromSnap;
+  } catch { /* fall through */ }
+  return contractDurationHours(db, proposal.id, proposal.event_duration_hours);
+}
+
 async function loadStaffingAddons(proposal, db) {
   try {
     const snap = readSnapshot(proposal.pricing_snapshot, { context: 'eventCreation' });
@@ -302,7 +324,7 @@ async function createEventShifts(proposalId) {
   // Build positions_needed from the FULL paid roster: bartenders (num_bartenders
   // plus the additional-bartender add-on), banquet servers, and barbacks.
   const addons = await loadStaffingAddons(proposal, pool);
-  const positions = deriveStaffingRoster(proposal, addons);
+  const positions = deriveStaffingRoster(proposal, addons, await pricedHoursFor(proposal, pool));
   // Supply-run default (hosted OR any provisioning add-on).
   const provSlugs = await provisioningSlugSet(pool);
   const isHosted = await isHostedProposal(proposal, pool);
@@ -406,7 +428,7 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
   // never drop a role below its already-approved (non-dropped) assignments,
   // capping there and logging staffing_shrink_capped per role.
   const addons = await loadStaffingAddons(proposal, db);
-  const desired = rosterCounts(deriveStaffingRoster(proposal, addons));
+  const desired = rosterCounts(deriveStaffingRoster(proposal, addons, await pricedHoursFor(proposal, db)));
   const approvedRes = await db.query(
     `SELECT position, COUNT(*)::int AS n FROM shift_requests
        WHERE shift_id = (SELECT id FROM shifts WHERE proposal_id = $1 LIMIT 1)
@@ -502,5 +524,6 @@ module.exports = {
   createDrinkPlan,
   syncShiftsFromProposal,
   deriveStaffingRoster,
+  pricedHoursFor,
   loadStaffingAddons,
 };

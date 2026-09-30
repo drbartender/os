@@ -14,7 +14,7 @@ import Icon from '../../../components/adminos/Icon';
 import { clampAddonQty } from '../../../components/AddonControls';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../../data/addonCategories';
 import { formatSetupTime } from '../../../utils/setupTime';
-import { initialFormFromProposal, recoverAddonQuantities } from './formState';
+import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours } from './formState';
 import { buildProposalPatchBody } from './patchBody';
 import { buildRepriceSummary } from './repriceSummary';
 import RepriceConfirmModal from './RepriceConfirmModal';
@@ -124,7 +124,7 @@ export default function ProposalEditorForm({
       // 1–10 stepper count needs each catalog row's slug/billing_type/
       // minimum_hours (proposal_addons.quantity stores a transformed value).
       const recovered = recoverAddonQuantities(proposal.addons, addonRes.data, {
-        durationHours: proposal.event_duration_hours,
+        durationHours: pricedDurationHours(proposal),
       });
       // Absorb the recovered addon_quantities into whatever baseline is ALREADY set
       // (a clean seed, OR a change-request overlay applied by the effect below) so
@@ -177,6 +177,10 @@ export default function ProposalEditorForm({
     const seq = ++calcSeqRef.current;
     const timer = setTimeout(() => {
       api.post('/proposals/calculate', {
+        // Editing an existing booking: the server prices the CONTRACT's hours
+        // (worked hours minus settled on-site extensions), so the preview
+        // equals what the PATCH will save.
+        ...(proposal?.id ? { proposal_id: proposal.id } : {}),
         package_id: Number(editForm.package_id),
         guest_count: Number(editForm.guest_count) || 50,
         duration_hours: Number(editForm.event_duration_hours) || 4,
@@ -233,6 +237,7 @@ export default function ProposalEditorForm({
     mandateDirty,
     mandateLocked,
     numBartendersOverride,
+    proposal?.id,
   ]);
 
   const isDirty = useMemo(
@@ -597,8 +602,18 @@ export default function ProposalEditorForm({
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Duration (hours)</label>
             <NumberStepper className="input" min={1} max={12} step={0.5} style={{ width: '100%' }}
               value={editForm.event_duration_hours}
-              onChange={v => update('event_duration_hours', v)}
+              onChange={v => { update('event_duration_hours', v); clearFieldError('event_duration_hours'); }}
               ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration" />
+            {Number(proposal?.settled_extension_hours) > 0 && (
+              <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+                Includes {Number(proposal.settled_extension_hours)}h of on-site extension, billed on its own
+                invoice. The contract prices {Math.max(
+                  Number(proposal.contract_floor_hours) || 0,
+                  (Number(editForm.event_duration_hours) || 0) - Number(proposal.settled_extension_hours)
+                )}h.
+              </p>
+            )}
+            <FieldError error={fieldErrors?.event_duration_hours} />
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Guest count</label>

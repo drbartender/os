@@ -25,6 +25,7 @@ const { requireUuidToken } = require('../../utils/tokens');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { calculateSyrupCost, calculateAddonCost } = require('../../utils/pricingEngine');
+const { contractDurationHours } = require('../../utils/contractDuration');
 const { createInvoice, writeLineItems, refreshUnlockedInvoices } = require('../../utils/invoiceHelpers');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
 const { SYRUP_NAME_LOOKUP } = require('../../utils/shoppingListGen');
@@ -289,6 +290,11 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
       const labAddonRows = ownedNextSlugs.length > 0
         ? (await client.query('SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true', [ownedNextSlugs])).rows
         : [];
+      // Contract hours once, not per add-on: a settled on-site extension moved
+      // the row (contractDuration.js). Same client, inside the transaction.
+      const labContractHours = labAddonRows.length
+        ? await contractDurationHours(client, proposal.id, proposal.event_duration_hours)
+        : null;
       for (const addon of labAddonRows) {
         // Store the ENGINE OUTPUT shape, the figures crud.js / proposalInsert.js
         // / public.js all write. This row is ALSO the fold's input leg
@@ -300,9 +306,7 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
         // line_total is provisional for additional-bartender (its gratuity
         // surcharge) and per_staff (needs totalStaff); the post-fold re-sync in
         // Step 3b settles both.
-        const priced = calculateAddonCost(
-          addon, proposal.guest_count || 1, Number(proposal.event_duration_hours), null, 1
-        );
+        const priced = calculateAddonCost(addon, proposal.guest_count || 1, labContractHours, null, 1);
         await client.query(`
           INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
           VALUES ($1, $2, $3, $4, $5, $6, $7)

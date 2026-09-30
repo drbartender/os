@@ -12,6 +12,7 @@ const { pool } = require('../../db');
 const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
 const { calculateAddonCost } = require('../../utils/pricingEngine');
+const { contractDurationHours } = require('../../utils/contractDuration');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
@@ -328,6 +329,11 @@ async function handleSubmit(req, res) {
         );
         const resolvedAddons = addonRes.rows;
 
+        // Contract hours once, not per add-on (contractDuration.js), same
+        // client, inside the transaction.
+        const submitContractHours = resolvedAddons.length
+          ? await contractDurationHours(client, proposal.id, proposal.event_duration_hours)
+          : null;
         // UPSERT each resolved addon into proposal_addons
         for (const addon of resolvedAddons) {
           const rate = Number(addon.rate);
@@ -366,9 +372,7 @@ async function handleSubmit(req, res) {
           let quantity = 1;
           let lineTotal = rate;
           if (priceable) {
-            const priced = calculateAddonCost(
-              addon, proposal.guest_count, Number(proposal.event_duration_hours), null, 1
-            );
+            const priced = calculateAddonCost(addon, proposal.guest_count, submitContractHours, null, 1);
             quantity = priced.quantity;
             lineTotal = Math.round(priced.total * 100) / 100;
           } else if (addon.billing_type === 'per_guest') {

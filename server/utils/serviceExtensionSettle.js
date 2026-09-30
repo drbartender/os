@@ -30,8 +30,10 @@
 const { pool } = require('../db');
 const { checkContractCurfew, curfewMessage } = require('./serviceCurfew');
 
-const SETTLE_OUTCOMES = new Set(['paid', 'overridden']);
-const CLOSE_OUTCOMES = new Set(['expired', 'cancelled']);
+// The outcome sets live in serviceExtensionOutcomes.js so contractDuration.js
+// (which every contract re-price reads) shares them without requiring this
+// module's db and curfew dependencies. Re-exported below.
+const { SETTLE_OUTCOMES, CLOSE_OUTCOMES } = require('./serviceExtensionOutcomes');
 
 const ACTION_BY_OUTCOME = Object.freeze({
   paid: 'extension_paid',
@@ -277,4 +279,4 @@ async function closeExtension({ extensionId, outcome, actorUserId = null, overri
   }
 }
 
-module.exports = { settleExtension, closeExtension, ACTION_BY_OUTCOME };
+module.exports = { settleExtension, closeExtension, ACTION_BY_OUTCOME, SETTLE_OUTCOMES, CLOSE_OUTCOMES };
