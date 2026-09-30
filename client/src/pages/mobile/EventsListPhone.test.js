@@ -108,13 +108,11 @@ test('Show more appends the next page and the end divider counts events', async 
   expect(screen.getByText('End of upcoming · 2 events')).toBeInTheDocument();
 });
 
-test('a live response renders "as of <fetch time>" with no dot', async () => {
+test('a live response shows no staleness line at all: only an offline copy says how old it is', async () => {
   api.get.mockResolvedValue(env([row()]));
   mount();
   await screen.findByText('Henderson');
-  const stale = screen.getByText(/^as of/).closest('.m-stale');
-  expect(stale.querySelector('.m-stale-dot')).toBeNull();
-  expect(stale.querySelector('.m-stale-time').textContent).toMatch(/\d{1,2}:\d{2} (AM|PM)$/);
+  expect(screen.queryByText(/as of/)).toBeNull();
   expect(screen.queryByText(/offline copy/)).toBeNull();
 });
 

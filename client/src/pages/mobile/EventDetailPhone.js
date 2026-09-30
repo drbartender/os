@@ -71,7 +71,6 @@ export default function EventDetailPhone() {
   const [plan, setPlan] = useState({ state: 'loading', row: null });         // loading | ready | none | failed
   const [money, setMoney] = useState({ state: 'loading', payload: null });   // loading | ready | failed
   const [stale, setStale] = useState({});                                    // read name -> cached-at stamp
-  const [fetchedAt, setFetchedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dead, setDead] = useState(false);
@@ -147,7 +146,7 @@ export default function EventDetailPhone() {
     let gone = false;
     const stamp = (name, res) => setStale((prev) => ({ ...prev, [name]: res.staleAt || null }));
     // Clear first: a different event id must never render over the last one.
-    setLoading(true); setError(null); setDead(false); setProposal(null); setStale({}); setFetchedAt(null);
+    setLoading(true); setError(null); setDead(false); setProposal(null); setStale({});
     setPlan({ state: 'loading', row: null });
     setMoney({ state: 'loading', payload: null });
 
@@ -156,7 +155,6 @@ export default function EventDetailPhone() {
         if (gone) return;
         setProposal(res.data);
         stamp('proposal', res);
-        setFetchedAt(new Date().toISOString());
       })
       .catch((err) => {
         if (gone) return;
@@ -199,7 +197,6 @@ export default function EventDetailPhone() {
 
   const staleAt = earliestStale(stale.proposal, stale.shifts, stale.plan, stale.money);
   const cachedTime = formatStaleTime(staleAt);
-  const liveTime = formatStaleTime(fetchedAt);
   const cancelled = !!proposal && proposal.status === 'archived';
   const toggle = (key) => setPanes((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -245,13 +242,12 @@ export default function EventDetailPhone() {
 
   return (
     <div>
-      {(cachedTime || liveTime) && (
+      {/* Only an offline copy says how old it is (Dallas, 2026-09-30). */}
+      {cachedTime && (
         <div className="m-stale">
-          {cachedTime && <span className="m-stale-dot" aria-hidden="true" />}
-          <span>{cachedTime ? 'offline copy · as of' : 'as of'} <span className="m-stale-time">{cachedTime || liveTime}</span></span>
-          {cachedTime && (
-            <button type="button" className="m-fail-retry" onClick={() => setAttempt((n) => n + 1)}>Refresh</button>
-          )}
+          <span className="m-stale-dot" aria-hidden="true" />
+          <span>offline copy · as of <span className="m-stale-time">{cachedTime}</span></span>
+          <button type="button" className="m-fail-retry" onClick={() => setAttempt((n) => n + 1)}>Refresh</button>
         </div>
       )}
 

@@ -143,7 +143,6 @@ export default function EventsListPhone() {
   // (A cancelled card counts no open slot: eventCards.js.)
   const sheetAssignable = !!sheetCard && scope !== 'past' && sheetCard.open > 0;
   const cachedTime = formatStaleTime(staleAt);
-  const liveTime = formatStaleTime(fetchedAt);
   const totalEvents = meta ? Number(meta.total_events || 0) : 0;
   const scopeEvents = meta ? Number(meta.scope_events || 0) : 0;
   const hasMore = !!(meta && meta.has_more);
@@ -208,10 +207,12 @@ export default function EventsListPhone() {
 
       {!loading && (!error || rows.length > 0) && (
         <>
-          {(cachedTime || liveTime) && (
+          {/* Only an offline copy says how old it is (Dallas, 2026-09-30): a live
+              list is simply current, and a clock above it was noise. */}
+          {cachedTime && (
             <div className="m-stale">
-              {cachedTime && <span className="m-stale-dot" aria-hidden="true" />}
-              <span>{cachedTime ? 'offline copy · as of' : 'as of'} <span className="m-stale-time">{cachedTime || liveTime}</span></span>
+              <span className="m-stale-dot" aria-hidden="true" />
+              <span>offline copy · as of <span className="m-stale-time">{cachedTime}</span></span>
             </div>
           )}
           {cards.map(card => <EventCard key={card.key} card={card} past={scope === 'past'} onTap={onTap} />)}

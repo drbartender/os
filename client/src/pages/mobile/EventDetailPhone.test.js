@@ -142,11 +142,11 @@ test('the when and setup lines, and Staffing open by default with the other two 
   expect(screen.queryByText('Client')).toBeNull();
 });
 
-test('a live read shows "as of"; a cache-served read shows the offline copy line with the dot', async () => {
+test('a live read shows no staleness line; a cache-served read shows the offline copy line with the dot', async () => {
   serve();
   const first = mount();
   await screen.findByText('Person 1');
-  expect(screen.getByText(/^as of/)).toBeInTheDocument();
+  expect(screen.queryByText(/as of/)).toBeNull();
   // The dot is decoration (aria-hidden): it has no role and no text to ask for.
   // eslint-disable-next-line testing-library/no-node-access
   expect(document.querySelector('.m-stale-dot')).toBeNull();
@@ -890,7 +890,8 @@ test('an offline copy offers Refresh, which reads the event again; a live one of
   await screen.findByText('Person 1');
   expect(screen.getByText(/^offline copy · as of/)).toBeInTheDocument();
   tap(screen.getByRole('button', { name: 'Refresh' }));
-  expect(await screen.findByText(/^as of/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText(/offline copy/)).toBeNull());
+  expect(screen.queryByText(/as of/)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   expect(reads).toBe(2);
   await waitFor(() => expect(ctx.setHeaderDetail).toHaveBeenLastCalledWith(expect.objectContaining({ guests: 150 })));
@@ -923,7 +924,7 @@ test('a roster read that lands live clears the offline line a cached one set', a
   expect(screen.getByText(/offline copy/)).toBeInTheDocument();
   tap(screen.getByRole('button', { name: 'stub changed' }));
   await waitFor(() => expect(screen.queryByText(/offline copy/)).toBeNull());
-  expect(screen.getByText(/^as of/)).toBeInTheDocument();
+  expect(screen.queryByText(/as of/)).toBeNull();
 });
 
 test('roster reloads are applied in the order they were asked for, not the order they land', async () => {
