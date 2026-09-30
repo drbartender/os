@@ -1995,8 +1995,9 @@ the accented spelling) or the two spellings stop matching each other.
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Financials chip puts Overpaid FIRST, as the
     desktop Payment card does (`ProposalDetailPaymentPanel.js`); the header's date line keeps its
     own "Cancelled" chip. Reorder the ladder in `eventDetailView.js` (overpaid before archived).
-  - A staffer under half a mile from the venue reads "0 mi" (whole miles, so a stolen phone's
-    cache cannot place a home to the block).
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: a staffer under half a mile from the venue reads
+    "<1 mi", not "0 mi" (`staffMeta` in `staffingSheet.js`). Display only; the whole-mile rule
+    stays (a stolen phone's cache cannot place a home to the block).
   - A tap on the lower part of the client's name in the header opens Maps, where the name sits
     inside the venue link's width; the alternative is a header 4px taller than the design.
   - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
