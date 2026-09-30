@@ -1992,9 +1992,10 @@ the accented spelling) or the two spellings stop matching each other.
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Back button's name becomes plain "Back".
     It returns wherever you came from; the name is `aria-label` only (`AdminLayout.js` passes
     "Back to Events" / "Back to Proposals" to `MobileHeader.js`), so this is screen-reader text.
-  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone Financials chip puts Overpaid FIRST, as the
-    desktop Payment card does (`ProposalDetailPaymentPanel.js`); the header's date line keeps its
-    own "Cancelled" chip. Reorder the ladder in `eventDetailView.js` (overpaid before archived).
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: a CANCELLED event holding an overpayment shows
+    Overpaid on the phone Financials chip, as the desktop Payment card does
+    (`ProposalDetailPaymentPanel.js`); the header's date line keeps its own "Cancelled" chip. On a
+    live event a bank debit in flight (Processing) still outranks Overpaid, the ma-e2 law.
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: a staffer under half a mile from the venue reads
     "<1 mi", not "0 mi" (`staffMeta` in `staffingSheet.js`). Display only; the whole-mile rule
     stays (a stolen phone's cache cannot place a home to the block).
@@ -2006,8 +2007,8 @@ the accented spelling) or the two spellings stop matching each other.
   - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
     line under the client (`aa03a2e6`, pushed 2026-09-30, `MobileHeader.js` `m-dhead-kind`).
   - DECIDED 2026-09-30 (Dallas), BUILD OWED, contrast (measured on `--bg-2`): the House Lights
-    balance-due amount on the detail (`.m-money-bal`, warn at 58% lightness, 2.2:1) darkens to
-    about 5:1, same hue; After Hours is 6.6:1 and stays. The phone's small `--ink-4` labels
+    balance-due label and amount on the detail (`.m-money-bal`, `--ms-camel`, 2.77:1) darken to
+    about 5:1, same hue (`hsl(38 63% 30%)`, 5.3:1); After Hours (warn at 58%, 6.6:1) stays. The phone's small `--ink-4` labels
     (rail month, "GUESTS", section summaries and labels; 1.9:1 House Lights, 2.6:1 After Hours)
     move up to `--ink-3` (3.9:1 and 4.6:1). Applicant initials (2.8:1 After Hours) stay: the
     name sits beside them.
