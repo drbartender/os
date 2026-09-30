@@ -1864,16 +1864,17 @@ the accented spelling) or the two spellings stop matching each other.
   the list. Recommended shape: the owed amount on every owing card in a quiet tone, turning red
   once the balance due date has passed. The red needs `balance_due_date` added to the feed; the
   rest is client-only. Like the desktop, it would count a bank debit still in flight as owed.
-- **The phone's Text button should open Google Voice, not Messages (Dallas, Pixel walk 2026-09-30:
-  *"I don't want to text from my personal number"*).** `contactsOf` in
-  `client/src/utils/eventDetailView.js` builds a plain `sms:` link, which Android hands to the
-  default texting app. Likely fix: an Android intent link aimed at the Voice app
-  (`com.google.android.apps.googlevoice`, scheme `smsto`) with a web fallback. Not yet tried on a
-  device, so the first step is a test on the Pixel. The Call link has the same exposure: `tel:`
-  rings from the personal line unless the Voice app is set to place calls. Worth weighing before
-  building: a text from Voice stays off the client's record, while the client's thread in OS
-  Messages sends from the business number their automated texts already come from and lands
-  replies in the inbox. The phone app has no Messages screen yet.
+- **ON HOLD (Dallas, 2026-09-30): the phone's Text button change waits for the phone Messages
+  screen.** From the Pixel walk: *"I don't want to text from my personal
+  number."* Today `contactsOf` in `client/src/utils/eventDetailView.js` builds a plain `sms:` link,
+  which Android hands to the personal texting app. The likely shape once that screen exists: Text
+  opens the client's OS thread, which sends from the business number their automated texts
+  already come from and lands replies in the inbox. The other option, a link into the Google Voice
+  app, is held with it; a Voice text never reaches the client's record. Phone
+  Messages is Phase 3 of the mobile admin spec (`2026-08-13-mobile-admin-design.md`), so that
+  spec's Messages lane owns this change. Until then, text from the desktop Messages page. Still
+  open, and not solved by the thread: the Call link's `tel:` rings from the personal line unless
+  the Voice app is set to place calls.
 - **Phone Events list polish (`a84555c3`, `9a73d5ba`), reviewed 2026-09-29, verdict PASS.** The two
   commits had no reviewer when they landed. What the review left, all Minor and display only:
   - `eventCards.js` maps a state name to its code by exact match on a plain object: "illinois" and
