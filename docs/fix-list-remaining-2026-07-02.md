@@ -1998,8 +1998,11 @@ the accented spelling) or the two spellings stop matching each other.
   - DECIDED 2026-09-30 (Dallas), BUILD OWED: a staffer under half a mile from the venue reads
     "<1 mi", not "0 mi" (`staffMeta` in `staffingSheet.js`). Display only; the whole-mile rule
     stays (a stolen phone's cache cannot place a home to the block).
-  - A tap on the lower part of the client's name in the header opens Maps, where the name sits
-    inside the venue link's width; the alternative is a header 4px taller than the design.
+  - ~~A tap on the lower part of the client's name in the header opens Maps.~~ CLOSED 2026-09-30 by
+    `aa03a2e6`: the type line now always sits between the name and the venue (`getEventTypeLabel`
+    falls back to "event"), and the link's 17px upward reach (`.m-dhead-venue` padding) ends at
+    the 16px type line plus its 2px gap, 1px short of the name. What remains: a tap on the event
+    type opens Maps. Harmless; leave it.
   - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
     line under the client (`aa03a2e6`, pushed 2026-09-30, `MobileHeader.js` `m-dhead-kind`).
   - Contrast, each one the benchmark's own value: House Lights balance-due amount 2.77:1; the small
