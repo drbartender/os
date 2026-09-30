@@ -1976,8 +1976,10 @@ the accented spelling) or the two spellings stop matching each other.
     goes on the phone detail as an amber chip on the date line, on any event not cancelled
     (`tip_jar === false`, already in the `/proposals/:id` read). The "Last-minute: verify
     staffing" badge (`last_minute_hold`) stays desktop only: skip it on the phone.
-  - The phone LIST counts heads and the phone DETAIL counts roles, so the two fractions can differ
-    for one event (an approved role the roster never declared; an over-filled role).
+  - DECIDED 2026-09-30 (Dallas), BUILD OWED: the phone LIST counts by ROLE, the detail's rule
+    (`staffingSheet.js`), so an extra bartender never reads full while a barback slot is open.
+    The list feed already carries `approved_by_role`; client only (`eventCards.js` `finishCard`,
+    which today sums heads via `approvedCount` capped at slots).
   - "Edit details" is a STICKY switch: it pins the event detail to Desktop view, and every event
     on that phone then opens in Desktop view until "Phone view" is tapped.
   - A desktop window that crosses 700px wide drops an unsaved event edit: the route forks by
