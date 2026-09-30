@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
 
 const { SEED_ROWS, SNAPSHOTS, runFixtures, stripIds } = require('./potionCatalog.test.js');
 const { buildCatalogSlices } = require('./potionCatalog');
-const { generateShoppingList } = require('./shoppingList');
+const { generateShoppingList, buildGeneratorInputFromConsult } = require('./shoppingList');
 const {
   loadCatalog, matchCustomNames, resolveDrinkIds, reportUnresolvedIngredients,
   buildPlannerGeneratorInput, buildDerivation, buildDerivationForPlan, applyAdminSetHolds,
@@ -111,6 +111,127 @@ test('shared structured ingredient across drinks boosts once (+1 per extra drink
   // 100 guests: base ceil(100/25)=4, +1 for the second drink sharing it.
   assert.equal(titos.qty, 5);
   assert.equal(titos.size, '750mL');
+});
+
+// ─── No duplicate lines (a drink ingredient already on the list) ─────────────
+// Every recipe merges LAST, against the complete baseline: an ingredient that
+// is already a stock line (mixer, garnish, wine style, supply) gets no second
+// line; the stock par stands, +1 per additional drink using it. The full_bar
+// branch always worked this way; sig_beer_wine, consult and mocktails merged
+// first and then pushed the baseline blind (prod plans 103, 106, 134).
+
+function duplicateItems(list) {
+  const dups = [];
+  for (const section of ['liquorBeerWine', 'everythingElse']) {
+    const seen = new Set();
+    for (const line of list[section]) {
+      const k = line.item.toLowerCase();
+      if (seen.has(k)) dups.push(`${section}:${line.item}`);
+      seen.add(k);
+    }
+  }
+  return dups;
+}
+
+test('no fixture lists an item twice in a section (catalog and legacy paths)', () => {
+  for (const cat of [catalog, null]) {
+    const out = runFixtures(generateShoppingList, cat);
+    for (const name of Object.keys(out)) {
+      assert.deepEqual(duplicateItems(out[name]), [], `${name} (${cat ? 'catalog' : 'legacy'})`);
+    }
+  }
+});
+
+test('sig_beer_wine: a drink ingredient already on the list is not added again', () => {
+  const spritz = {
+    name: 'Spritz',
+    ingredients: [
+      { ingredient: 'Prosecco', amount: 3, unit: 'oz' },
+      { ingredient: 'Soda Water', amount: 1, unit: 'oz' },
+    ],
+  };
+  const rickey = {
+    name: 'Rickey',
+    ingredients: [
+      { ingredient: 'Soda Water', amount: 4, unit: 'oz' },
+      { ingredient: 'Lime wedge', amount: 1, unit: 'each' },
+    ],
+  };
+  const out = generateShoppingList({
+    guestCount: 100, serviceStyle: 'sig_beer_wine',
+    signatureCocktails: [spritz, rickey], wineSelections: ['Sparkling'],
+    mixersForSignatureDrinks: true,
+  }, catalog);
+  assert.deepEqual(duplicateItems(out), []);
+  const line = (section, item) => out[section].filter(i => i.item === item);
+  // Wine style par stands; the drink needs no extra line.
+  assert.deepEqual(line('liquorBeerWine', 'Champagne').map(i => i.qty), [12]);
+  // Stock mixer par 6, +1 because two drinks use it.
+  assert.deepEqual(line('everythingElse', 'Club Soda').map(i => i.qty), [7]);
+  assert.deepEqual(line('everythingElse', 'Limes').map(i => i.qty), [12]);
+});
+
+test('consult full mixers: a drink ingredient already on the list is not added again', () => {
+  const input = buildGeneratorInputFromConsult({
+    barType: 'sig_beer_wine', spirits: ['vodka'], beer: false, wine: [], mixers: 'full',
+    customCocktails: [{ name: 'Mojito', ingredients: ['rum', 'simple syrup', 'soda water', 'lime wedge'] }],
+    customMocktails: [], mocktailsEnabled: false, notes: '',
+  }, { clientName: 'X', guestCount: 160, eventDate: '2026-08-01' }, [], []);
+  const out = generateShoppingList(input, catalog);
+  assert.deepEqual(duplicateItems(out), []);
+  const qty = (item) => out.everythingElse.filter(i => i.item === item).map(i => i.qty);
+  assert.deepEqual(qty('Simple Syrup'), [4]);
+  assert.deepEqual(qty('Club Soda'), [10]);
+  assert.deepEqual(qty('Limes'), [20]);
+});
+
+test('consult matching mixers: a paired mixer the drink also uses keeps its par', () => {
+  // Matching mode never doubled (addMatchingMixers skips names already
+  // listed), but the old order let the recipe line win at 1 per 25 guests.
+  // Merge-last makes the par stand here too, as in every other branch.
+  const input = buildGeneratorInputFromConsult({
+    barType: 'sig_beer_wine', spirits: ['vodka'], beer: false, wine: [], mixers: 'matching',
+    customCocktails: [{ name: 'Screwdriver', ingredients: ['vodka', 'orange juice'] }],
+    customMocktails: [], mocktailsEnabled: false, notes: '',
+  }, { clientName: 'X', guestCount: 120, eventDate: '2026-08-01' }, [], []);
+  const out = generateShoppingList(input, catalog);
+  assert.deepEqual(duplicateItems(out), []);
+  assert.deepEqual(out.everythingElse.filter(i => i.item === 'Orange Juice').map(i => i.qty), [2]);
+});
+
+test('mocktails: a drink ingredient that is a stock supply is not added again', () => {
+  const rows = SEED_ROWS.map(r => (r.id === 'water' ? { ...r, ingredient_aliases: ['still water'] } : r));
+  const out = generateShoppingList({
+    guestCount: 100, serviceStyle: 'mocktails',
+    signatureCocktails: [{ name: 'Cucumber Cooler', ingredients: ['still water'] }],
+  }, buildCatalogSlices(rows));
+  assert.deepEqual(duplicateItems(out), []);
+  assert.deepEqual(out.everythingElse.filter(i => i.item === 'Water').map(i => i.qty), [4]);
+});
+
+test('a self-provided syrup the recipes already put on the list is not added again', () => {
+  const rows = SEED_ROWS.concat([{
+    id: 'ginger-syrup', item: 'Ginger Syrup', size: '750mL', qty_per_100: '1',
+    section: 'everythingElse', role: 'mixer', spirit_key: null, style_key: null,
+    paired_spirits: [], ingredient_aliases: ['ginger syrup'], in_full_bar: false,
+    is_active: true, sort_order: 400,
+  }]);
+  const out = generateShoppingList({
+    guestCount: 100, serviceStyle: 'sig_beer_wine', mixersForSignatureDrinks: false,
+    signatureCocktails: [{ name: 'Penicillin', ingredients: ['ginger syrup'] }],
+    syrupSelfProvided: ['ginger'], syrupNamesById: { ginger: 'Ginger' },
+  }, buildCatalogSlices(rows));
+  assert.deepEqual(duplicateItems(out), []);
+  // The recipe line (1 per 25 guests) already covers the self-provided bottle.
+  assert.deepEqual(out.everythingElse.filter(i => i.item === 'Ginger Syrup').map(i => i.qty), [4]);
+
+  // A stock syrup line below the self-provided count is raised, not doubled.
+  const stock = buildCatalogSlices(rows.map(r => (r.id === 'ginger-syrup' ? { ...r, in_full_bar: true } : r)));
+  const full = generateShoppingList({
+    guestCount: 150, serviceStyle: 'full_bar',
+    syrupSelfProvided: ['ginger'], syrupNamesById: { ginger: 'Ginger' },
+  }, stock);
+  assert.deepEqual(full.everythingElse.filter(i => i.item === 'Ginger Syrup').map(i => i.qty), [3]);
 });
 
 test('matchCustomNames: normalized exact equality only, never fuzzy', () => {

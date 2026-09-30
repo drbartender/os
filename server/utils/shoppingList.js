@@ -256,6 +256,10 @@ function buildWineItems(wineSelections, guestCount, bottles, slices) {
 // +1 per additional use. Per-serving amounts do not drive purchase math in
 // v1. Unresolved rows are collected for the caller to report (never a silent
 // wrong match, never a silent drop without a trace).
+// Every caller runs this LAST, after all baseline rows (pars, beer/wine,
+// mixers, garnishes, supplies) are in: its exists-check is the only dedup,
+// so a baseline pushed after it lands a second line for an ingredient the
+// recipes already added (prod plans 103, 106, 134).
 function mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved) {
   const resolvedRows = [];
   for (const drink of signatureCocktails) {
@@ -347,9 +351,17 @@ function addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse
   for (const syrupId of syrupSelfProvided) {
     const name = syrupNamesById?.[syrupId];
     if (!name) continue;
+    // Already listed (a recipe called for it, or a stock row): one line,
+    // never below the self-provided count.
+    const item = `${name} Syrup`;
+    const existing = everythingElse.find(i => i.item.toLowerCase() === item.toLowerCase());
+    if (existing) {
+      existing.qty = Math.max(existing.qty, bottlesPerFlavor);
+      continue;
+    }
     everythingElse.push({
       _id: uid(),
-      item: `${name} Syrup`,
+      item,
       size: '750mL',
       qty: bottlesPerFlavor,
     });
@@ -398,7 +410,6 @@ function buildConsultLists(eventData, bottles, slices, unresolved) {
   if (Array.isArray(wineSelections) && wineSelections.length > 0) {
     liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
   }
-  mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
   if (mixerMode === 'full') {
     everythingElse.push(...scaleItems(slices.basicMixers, guestCount, bottles));
     everythingElse.push(...scaleItems(slices.garnishes, guestCount, bottles));
@@ -406,6 +417,7 @@ function buildConsultLists(eventData, bottles, slices, unresolved) {
     addMatchingMixers(additionalSpirits || [], everythingElse, guestCount, bottles, slices);
   }
   everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
+  mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
 
   return { liquorBeerWine, everythingElse };
 }
@@ -428,7 +440,6 @@ function buildPlannerLists(eventData, bottles, slices, unresolved) {
     everythingElse = scaleItems(slices.pars100.everythingElse, guestCount, bottles);
     mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
   } else if (serviceStyle === 'sig_beer_wine') {
-    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
     liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles, slices));
     liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
     if (mixersForSignatureDrinks !== false) {
@@ -436,6 +447,7 @@ function buildPlannerLists(eventData, bottles, slices, unresolved) {
       everythingElse.push(...scaleItems(slices.garnishes, guestCount, bottles));
     }
     everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
+    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
   } else if (serviceStyle === 'beer_wine') {
     liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles, slices));
     liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
@@ -444,8 +456,8 @@ function buildPlannerLists(eventData, bottles, slices, unresolved) {
     // mocktails / unknown: recipe ingredients + supplies. The old branch was
     // supplies-only, so a mocktails-only plan ignored its selected drinks'
     // seeded recipes entirely (second-opinion finding 1).
-    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
     everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
+    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
   }
 
   return { liquorBeerWine, everythingElse };

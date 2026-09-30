@@ -804,10 +804,11 @@ pushes every self-provided syrup onto `everythingElse` unconditionally with no r
 `proposalSyrups`. A client who marks a syrup self-provided that DRB is also comping is told to go
 buy it. Procurement defect, client-facing, zero money exposure.
 
-Second, narrower defect in the same function: it lacks the duplicate-name guard its immediate
-sibling has at `:339`, so a syrup already on the list from another path is pushed twice. Note
-`shoppingListGen.js:390-401` handles the same input separately — check both when fixing; they are
-not copies of one function.
+Second, narrower defect in the same function: its duplicate guard is an exact name match, and
+three `SYRUP_NAME_LOOKUP` labels do not match their catalog rows. A self-provided grenadine lands
+as "Grenadine (Pomegranate) Syrup" beside a recipe's "Grenadine"; orgeat as "Orgeat (Almond)
+Syrup" beside "Orgeat"; vanilla-bean as "Vanilla Bean Syrup" beside "Vanilla Syrup". Resolve the
+self-provided syrup through the catalog alias index instead of building a label.
 
 ### "Copy compare link" hands the client the sign page, not the comparison
 

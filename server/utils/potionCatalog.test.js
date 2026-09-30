@@ -7,6 +7,11 @@
 // the legacy generator BEFORE any catalog wiring (lane potions-a, 2026-07-09);
 // lane potions-b's generator test re-runs the same FIXTURE_INPUTS through the
 // catalog-driven generator against these same snapshots.
+// Re-frozen 2026-09-30 for sig_beer_wine_120, consult_full_120 and
+// consult_matching_120 only: recipes now merge after the baseline, so those
+// three lost the duplicate lines the old order froze in (sig_beer_wine_120
+// listed Pineapple Juice and Sprite twice) and changed line order. Nothing
+// else moved; the full_bar and beer_wine snapshots are untouched.
 //
 // Run: node -r dotenv/config --test server/utils/potionCatalog.test.js
 const test = require('node:test');
@@ -1562,26 +1567,6 @@ const SNAPSHOTS = {
   ],
   "liquorBeerWine": [
    {
-    "item": "Malibu Coconut Rum",
-    "size": "750mL",
-    "qty": 5
-   },
-   {
-    "item": "Blue Curacao",
-    "size": "750mL",
-    "qty": 5
-   },
-   {
-    "item": "Tito's Vodka",
-    "size": "750mL",
-    "qty": 5
-   },
-   {
-    "item": "Raspberry Vodka",
-    "size": "750mL",
-    "qty": 5
-   },
-   {
     "item": "Michelob Ultra",
     "size": "24pk",
     "qty": 3
@@ -1605,29 +1590,29 @@ const SNAPSHOTS = {
     "item": "Champagne",
     "size": "750mL",
     "qty": 15
+   },
+   {
+    "item": "Malibu Coconut Rum",
+    "size": "750mL",
+    "qty": 5
+   },
+   {
+    "item": "Blue Curacao",
+    "size": "750mL",
+    "qty": 5
+   },
+   {
+    "item": "Tito's Vodka",
+    "size": "750mL",
+    "qty": 5
+   },
+   {
+    "item": "Raspberry Vodka",
+    "size": "750mL",
+    "qty": 5
    }
   ],
   "everythingElse": [
-   {
-    "item": "Pineapple Juice",
-    "size": "64oz",
-    "qty": 5
-   },
-   {
-    "item": "Ginger Beer",
-    "size": "4 pack",
-    "qty": 5
-   },
-   {
-    "item": "Sprite",
-    "size": "12 pack",
-    "qty": 5
-   },
-   {
-    "item": "Lemonade (REAL)",
-    "size": "1G",
-    "qty": 5
-   },
    {
     "item": "Coca Cola",
     "size": "12 pack",
@@ -1732,6 +1717,16 @@ const SNAPSHOTS = {
     "item": "Ice",
     "size": "lbs",
     "qty": 180
+   },
+   {
+    "item": "Ginger Beer",
+    "size": "4 pack",
+    "qty": 5
+   },
+   {
+    "item": "Lemonade (REAL)",
+    "size": "1G",
+    "qty": 5
    },
    {
     "item": "Lavender Syrup",
@@ -1909,11 +1904,6 @@ const SNAPSHOTS = {
   ],
   "everythingElse": [
    {
-    "item": "Ginger Beer",
-    "size": "4 pack",
-    "qty": 5
-   },
-   {
     "item": "Coca Cola",
     "size": "12 pack",
     "qty": 3
@@ -2017,6 +2007,11 @@ const SNAPSHOTS = {
     "item": "Ice",
     "size": "lbs",
     "qty": 180
+   },
+   {
+    "item": "Ginger Beer",
+    "size": "4 pack",
+    "qty": 5
    }
   ],
   "serviceStyle": "sig_beer_wine",
@@ -2106,11 +2101,6 @@ const SNAPSHOTS = {
   ],
   "everythingElse": [
    {
-    "item": "Ginger Beer",
-    "size": "4 pack",
-    "qty": 5
-   },
-   {
     "item": "Cranberry Juice",
     "size": "64oz",
     "qty": 3
@@ -2179,6 +2169,11 @@ const SNAPSHOTS = {
     "item": "Ice",
     "size": "lbs",
     "qty": 180
+   },
+   {
+    "item": "Ginger Beer",
+    "size": "4 pack",
+    "qty": 5
    }
   ],
   "serviceStyle": "sig_beer_wine",
