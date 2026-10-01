@@ -1515,6 +1515,17 @@ the accented spelling) or the two spellings stop matching each other.
   the fresh one. Decide whether a size edit is part of the hold (match on item, carry the held
   size) before changing it; an admin can legitimately want two sizes of one item. Found 2026-09-30.
 
+- **The planner has no inspiration-image upload, so mood boards land in the logo slot (Dallas,
+  2026-10-01).** The custom-menu step's only image field is `LogoUploadField` ("Add your logo
+  (optional)", writing `selections.companyLogo` through `POST /drink-plans/t/:token/logo`).
+  Clients use it for mood boards, so the stored image is sometimes a logo and sometimes a style
+  reference, and a client with both can send only one. The menu art generator (spec
+  `2026-10-01-menu-art-generator-design.md`) works around it with a per-draft role picker on that
+  image. Build: a separate optional "inspiration image" upload on `MenuDesignV2` (custom style only;
+  the legacy wizard is being deleted), same token-gated route shape and magic-byte check as the
+  logo, its own selections key, read by the generator as the default reference image. Deferred out
+  of the generator's v1 by Dallas to keep client-facing planner changes out of that lane.
+
 ---
 
 ## Staff, shifts, and the roster
