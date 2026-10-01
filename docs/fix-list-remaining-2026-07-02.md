@@ -1785,6 +1785,14 @@ the accented spelling) or the two spellings stop matching each other.
     Dallas missed a call his phone never rang; no per-chain email says why. The boot warning is the
     only signal.
   - `handleNoShow` labels a uid that exists only as a PRIOR uid `unknown_uid` in Sentry.
+  - **Out-of-order reschedules can move a consult back to a stale slot, silently** (codex, push review
+    2026-10-01; Dallas: push as-is). The reschedule UPDATE resolves its old uid through the prior lists
+    too, so IF Cal.com names the ORIGINAL booking on a second reschedule AND delivers two reschedules
+    out of order, the late older one ("A to B" after "A to C") matches A in the consult's prior list
+    and moves it to B. Dropping the prior-list match would not fix it (wrong slot plus the real one
+    stopped, with an email), and it would make the likelier in-order case noisy. Follow-up: a Sentry
+    warning in `handleRescheduled` whenever the old uid resolves ONLY through `calcom_prior_event_ids`,
+    so the first real reschedule shows which way Cal.com behaves; decide then.
 
 - **`GET /api/voice/vm/:token` has a per-IP limiter but no global or per-token ceiling, and buffers
   the whole recording per request.** `express-rate-limit` counts requests per window, not requests in
@@ -1827,6 +1835,14 @@ the accented spelling) or the two spellings stop matching each other.
   and it is not in that module's exports. The cap-trip path that shipped goes through
   `consultCallCaps.fileCapTrip` instead. Delete it, or the next person will read it as the live
   path and reason about the wrong code.
+
+- **Staffing-rule comment and doc drift, from the 2026-10-01 push-time seam sweep.** None changes
+  behavior. README.md's `shifts.js` folder-tree line omits `roleFill` / `rowRoleFill` (ARCHITECTURE.md
+  already documents them); `client/src/components/adminos/shifts.test.js` still says
+  `parsePositionsCount` drives the Events and Overview unstaffed counts and that the drawer computes
+  `neededCount(parsePositionsNeeded(...))`, where `roleFill` / `rowRoleFill` now do; and in
+  `client/src/pages/admin/overview/queueItems.js` the staffing lane inserted `neededNoun` between
+  `buildStaffingItems` and its header comment, so that comment now reads as describing `neededNoun`.
 
 ## Admin UI and the two skins
 

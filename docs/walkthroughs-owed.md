@@ -1818,10 +1818,9 @@ What each surface should show once shipped:
 
 
 
-### Consult call bridge hardening (fix list section 0). Merged 2026-09-30 as `9bca97e0` and `580a194b`.
+### Consult call bridge hardening (fix list section 0). Merged 2026-09-30 as `9bca97e0` and `580a194b`; pushed 2026-10-01 (`81ab6761..d4b3f0b6`).
 
-Lanes `calcom-prior-uids` and `consult-bridge-hardening`, NOT pushed at merge. Graduates to Tier 3b
-by this tier's own rule once `git merge-base --is-ancestor 580a194b origin/main` passes.
+Lanes `calcom-prior-uids` and `consult-bridge-hardening`. Live in production, so the walk below is owed now.
 
 One real billed walk, on a synthetic consult in the 2026-08-26 shape (a consult row with no Cal.com
 booking, `booker_phone` a phone you hold, slot a few minutes out):
@@ -1842,7 +1841,7 @@ out of `call_audit`, the attempt rows, the log and Sentry.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
-- [ ] **Before the push that carries `580a194b` (consult bridge hardening): two read-only checks.**
+- [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The remaining step is after the deploy: the boot log must not show a `[phone config]` warning. Original note:
       (1) Prod probe, the unconfirmed-bridge reaper's first tick flips and emails every historical
       match: `SELECT id FROM consult_call_attempts WHERE status = 'connected' AND bridge_duration_sec
       IS NULL AND client_no_answer_at IS NULL`. On 2026-09-30 it returned nothing (both `connected`
