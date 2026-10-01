@@ -1646,6 +1646,21 @@ which is the largest client-facing change in the drop and is listed first becaus
       - [ ] Show more keeps a two-shift event together. Production has no two-shift event; walk it on
             the first one.
 
+- [ ] **Phone owner decisions and the staffing rule (lanes phone-owner-decisions `016477d9`,
+      staffing-rule-by-role `36a67b4f`, pushed 2026-10-01).** About five minutes, mostly on the Pixel:
+      - On an event whose client paid to skip the tip jar, the phone detail's date line shows an amber
+        "No tip jar" chip; a cancelled event never does. No prod event may have one today; walk it on
+        the first.
+      - In House Lights, the detail's "Balance due" label and amount read as a darker camel, and the
+        small grey labels (month on the list's date rail, "GUESTS", section summaries) read one shade
+        darker in both skins. Nothing should look heavier than its neighbours.
+      - In the assignment sheet, a staffer under half a mile from the venue reads "<1 mi".
+      - On desktop: open an event, start an edit, drag the window under 700px wide. The page stays put
+        with the edit intact; the next page you open is the phone layout.
+      - The staffing rule changes nothing visible on today's data (every roster is single-role); the
+        first mixed-role roster is the walk: an extra bartender must not read the barback slot filled
+        on the card, the Needs staff chip, the badge, the desktop Unstaffed tab and the drawer.
+
 - [ ] **Agreement v4 on the proposal page (lane agreement-v4, `0122fa2e`).** Live: `git merge-base
       --is-ancestor 0122fa2e origin/main` exits 0 (pushed 2026-09-30). Open an UNSIGNED hosted
       proposal as the client sees it: the agreement's Section 8.1 is the v4 text, and under the
