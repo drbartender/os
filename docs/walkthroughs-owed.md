@@ -1841,7 +1841,7 @@ out of `call_audit`, the attempt rows, the log and Sentry.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
-- [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The remaining step is after the deploy: the boot log must not show a `[phone config]` warning. Original note:
+- [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:
       (1) Prod probe, the unconfirmed-bridge reaper's first tick flips and emails every historical
       match: `SELECT id FROM consult_call_attempts WHERE status = 'connected' AND bridge_duration_sec
       IS NULL AND client_no_answer_at IS NULL`. On 2026-09-30 it returned nothing (both `connected`
