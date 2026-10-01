@@ -1514,6 +1514,12 @@ the accented spelling) or the two spellings stop matching each other.
   8 pack" to "12 pack") gets no match on the next regenerate, so the held line is appended beside
   the fresh one. Decide whether a size edit is part of the hold (match on item, carry the held
   size) before changing it; an admin can legitimately want two sizes of one item. Found 2026-09-30.
+- **Escape in the recipe editor's ingredient suggestions closes the whole drawer.**
+  `onIngredientKeyDown` (`client/src/components/potions/RecipeEditor.js`) dismisses the open
+  suggestion list on Escape with `preventDefault` but no `stopPropagation`, and `Drawer` listens
+  for Escape on `window`, so the same keypress also closes the shopping list's recipe drawer
+  mid-recipe. The recipe is flushed on close, so nothing is lost; the admin is thrown out of the
+  Next run. Fix: `e.stopPropagation()` in that branch. Found 2026-10-01.
 
 - **The planner has no inspiration-image upload, so mood boards land in the logo slot (Dallas,
   2026-10-01).** The custom-menu step's only image field is `LogoUploadField` ("Add your logo
