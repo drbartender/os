@@ -108,9 +108,10 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A caller can hit silence, or "an application error has occurred" | yes |
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
+| 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: lead 431 on 10/1, lead 417 on 9/24** |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
-| 5 | Thumbtack first-reply verify is FIXED and live, owes its next-real-lead proof | no, and the fix cannot regress it |
+| 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
 
 ---
 
@@ -884,6 +885,22 @@ classifies as a quiet 'missed' — no alert, not in the attention feed. So a lea
 nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 `va/admin_call_status='failed'` in the feed WHERE.
 
+### Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is a quiet miss
+
+Happened 2026-10-01 (lead 431, 8:18 PM) and 2026-09-24 (lead 417). When the card on file
+declines, Thumbtack leaves the new lead's charge `Pending` (no `lead_price`) and redirects pro
+pages to `/fullscreen-takeover`: "You're not getting new leads. You've stopped showing up in
+customer search results because your card isn't working." The agent's reply step finds no CTA,
+sees a URL without the negotiation id, and reports `lead_not_found` (`thumbtack-agent/src/index.js`,
+the `urlCarriesId` branch). The server marks the reply `failed` and sends the same generic Sentry
+warning a lead that genuinely failed to load gets. Nothing says "Thumbtack stopped sending
+leads." On 431 the email harvest still worked (the price-estimate page loaded) and the day call
+still fired (missed).
+
+Fix: read `/fullscreen-takeover` (or an "Update card" button) as its own reason, say
+`billing_blocked`, add it to `FIRST_REPLY_FAIL_REASONS`, and send an admin email on it instead of
+the warning stream. Both captures: `~/.thumbtack-profile/diag/*-no-cta-no-composer.{png,json}`.
+
 ### A staffer taken off a shift can still be texted its reminder and its thank-you
 
 Nothing at SEND time checks that the person is still on the shift: `handleShiftReminder` and
@@ -1020,36 +1037,13 @@ client if the script runs as-is:
 `migrateDrinkMeta.js` has no such gate. Both scripts are idempotent and snapshot/skip-guarded; dry
 run first.
 
-### Thumbtack first-reply verify is FIXED and live, owes its next-real-lead proof
+### Leads 322-327 still read `failed`; backfill them to `sent` after an inbox check
 
-FIXED 2026-08-26, merged `ca19198d`, agent restarted on it. Agent-only, so it is
-already live on the box; it is not deployed to Render and needs no push to take effect.
-
-What was wrong: Thumbtack began navigating the tab off the lead thread back to
-`/pro-leads` the moment Send is clicked (between 8/20 19:34 and 8/22 15:25 — our agent
-code had not changed since `fe8ec58b` on 8/11). The post-send proof needed the template
-text visible in the thread AND the composer read back empty, both readable only on the
-thread page, so the 12s window always timed out and reported `send_unverified`. Leads
-322-327 all delivered and all read `failed`. No lead was lost: the failed path still
-fires the day call (6/6 got one, 5 connected) and the offer query only offers `pending`,
-so a flipped row is never re-driven.
-
-The fix keeps the in-place check as a fast path, breaks out the moment the tab leaves
-the thread, then re-opens the lead URL and proves the captured text is rendered there.
-The redirect is never read as proof of a send. New `thumbtack-agent/src/sendVerify.js`
-holds the three judgments as pure functions (snippet pattern, on-thread URL test,
-delivered-vs-draft) with 16 unit tests, and `npm test` in that package now runs all
-three suites instead of only `extract.test.js`.
-
-**What it owes: the next real lead.** Watch for `reply <id> -> sent (day|night)` in
-`journalctl --user -u thumbtack-agent`. Two failure shapes to look for if it does not
-land: a `send-unverified-reopened` diag capture means the re-opened thread never showed
-the text (check whether the URL still carries the negotiation id), and a plain
-`send-unverified` means the tab never left the thread at all.
-
-Then backfill 322-327 to `sent` once the six threads are eyeballed in the TT inbox —
-Dallas confirmed 327 (Tanya Flowers) delivered, the other five are inferred from an
-identical diag signature, not verified.
+The first-reply verify fix (`ca19198d`, 2026-08-26) has its real-lead proof: 12 leads since 9/25
+read `sent` in prod (418-420, 422-430, checked 2026-10-01). What is left is the old bug's residue.
+Leads 322-327 delivered but read `failed`. Dallas confirmed 327 (Tanya Flowers) delivered; the
+other five are inferred from an identical diag signature, not verified. Eyeball those five
+threads in the TT inbox, then backfill to `sent` with a guarded DO block on prod.
 
 ---
 ---
