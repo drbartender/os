@@ -10,6 +10,7 @@ const { publicReadLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError } = require('../../utils/errors');
 const { requireUuidToken } = require('../../utils/tokens');
+const { COMPARE_VISIBLE_STATUSES } = require('../../utils/proposalGroups');
 
 const router = express.Router();
 
@@ -30,9 +31,6 @@ const OPTION_SELECT = `
   p.pricing_snapshot->>'floor_reason' AS floor_reason,
   (p.pricing_snapshot->>'billed_guests')::int AS billed_guests,
   (p.pricing_snapshot->>'floor_applied')::boolean AS floor_applied`;
-
-// An option is client-visible once it has been sent (never a bare draft).
-const VISIBLE_STATUSES = ['sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed'];
 
 async function loadGroup(token) {
   const { rows: [g] } = await pool.query(
@@ -100,17 +98,21 @@ function shape(g, options) {
 router.get('/group/:token', publicReadLimiter, requireUuidToken('token', 'This comparison is no longer available'), asyncHandler(async (req, res) => {
   const loaded = await loadGroup(req.params.token);
   if (!loaded) throw new NotFoundError('This comparison is no longer available');
-  const visible = loaded.members.filter((m) => VISIBLE_STATUSES.includes(m.status));
+  const visible = loaded.members.filter((m) => COMPARE_VISIBLE_STATUSES.includes(m.status));
   if (visible.length === 0) throw new NotFoundError('This comparison is no longer available');
   res.json(shape(loaded.g, visible));
 }));
 
 // GET /api/proposals/group/:token/preview — admin preview; ignores the visibility
 // gate so admin can review the comparison (including draft options) before sending.
+// Each option carries client_visible so the preview can name the ones the client
+// cannot see yet; the public payload above never needs it (every option is visible).
 router.get('/group/:token/preview', auth, requireAdminOrManager, requireUuidToken('token', 'Comparison not found'), asyncHandler(async (req, res) => {
   const loaded = await loadGroup(req.params.token);
   if (!loaded) throw new NotFoundError('Comparison not found');
-  res.json(shape(loaded.g, loaded.members));
+  const shaped = shape(loaded.g, loaded.members);
+  shaped.options = shaped.options.map((o) => ({ ...o, client_visible: COMPARE_VISIBLE_STATUSES.includes(o.status) }));
+  res.json(shaped);
 }));
 
 module.exports = router;

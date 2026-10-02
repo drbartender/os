@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { API_BASE_URL as BASE_URL } from '../../../utils/api';
+import api, { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import PackageMatrix from './PackageMatrix';
 
@@ -16,8 +16,14 @@ import PackageMatrix from './PackageMatrix';
 // these redirects). "Choose this one" still hands off to that option's normal
 // sign/pay page with ?choose=1 (the marker that stops ProposalView bouncing
 // back here). No agreement, no gratuity, no card entry.
+//
+// preview (admin only, /compare/:token/preview on the admin host): reads the
+// authed preview endpoint, which includes options the client cannot see yet,
+// skips both redirects, and turns the choose buttons off. Choosing from here
+// would open the client's proposal page as the client and could flip it to
+// viewed, so the preview never navigates there.
 
-export default function ProposalCompare() {
+export default function ProposalCompare({ preview = false }) {
   const { token } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
@@ -29,28 +35,33 @@ export default function ProposalCompare() {
     let cancelled = false;
     setLoading(true);
     setError('');
-    axios.get(`${BASE_URL}/proposals/group/${token}`)
+    const load = preview
+      ? api.get(`/proposals/group/${token}/preview`)
+      : axios.get(`${BASE_URL}/proposals/group/${token}`);
+    load
       .then((res) => { if (!cancelled) setData(res.data); })
       .catch((err) => {
         if (cancelled) return;
-        setError(err?.response?.status === 404
+        // api.js rejects with a flattened { status }; raw axios keeps err.response.
+        // eslint-disable-next-line no-restricted-syntax
+        setError((err?.response?.status ?? err?.status) === 404
           ? 'This comparison is no longer available.'
           : 'Something went wrong loading your options.');
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [token, reloadKey]);
+  }, [token, reloadKey, preview]);
 
   // A decided group routes to the booked option; a single visible option skips
   // the compare and goes straight to its proposal page.
   useEffect(() => {
-    if (!data) return;
+    if (!data || preview) return;
     if (data.decided && data.chosen_token) {
       navigate(`/proposal/${data.chosen_token}?choose=1`, { replace: true });
     } else if (data.options && data.options.length === 1) {
       navigate(`/proposal/${data.options[0].token}?choose=1`, { replace: true });
     }
-  }, [data, navigate]);
+  }, [data, navigate, preview]);
 
   if (loading) {
     return (
@@ -71,7 +82,8 @@ export default function ProposalCompare() {
       </div>
     );
   }
-  if (!data || data.decided || (data.options || []).length < 2) return null; // redirecting
+  if (!data) return null;
+  if (!preview && (data.decided || (data.options || []).length < 2)) return null; // redirecting
 
   const h = data.event_header || {};
   const eventTypeLabel = getEventTypeLabel({
@@ -94,10 +106,28 @@ export default function ProposalCompare() {
     billed_guests: o.billed_guests,
     floor_applied: o.floor_applied,
   }));
+  const hiddenFromClient = preview
+    ? data.options.filter((o) => !o.client_visible)
+      .map((o) => `${o.package_name || 'No package yet'} (${o.status === 'draft' ? 'not sent yet' : o.status})`)
+    : [];
+  // Say what the client's own link opens right now, which the redirects above
+  // decide: the booked option, a single proposal, nothing, or this comparison.
+  const clientVisibleCount = data.options.length - hiddenFromClient.length;
+  let previewLead = 'This is the comparison your client sees.';
+  if (data.decided) previewLead = 'The client\'s link opens the option they booked, not this comparison.';
+  else if (clientVisibleCount === 0) previewLead = 'The client\'s link shows nothing yet: no option has been sent.';
+  else if (clientVisibleCount === 1) previewLead = 'The client\'s link currently opens a single proposal, not this comparison.';
+  else if (hiddenFromClient.length > 0) previewLead = 'Your client sees this comparison without the hidden options listed here.';
 
   return (
     <div className="pkg-compare-page">
       <div className="pkg-compare-inner">
+        {preview && (
+          <div className="pkg-compare-preview" role="note">
+            <strong>Preview.</strong> {previewLead} The choose buttons are off here.
+            {hiddenFromClient.length > 0 && ` Hidden from the client: ${hiddenFromClient.join(', ')}.`}
+          </div>
+        )}
         <p className="kicker no-rule center pkg-compare-kicker">
           Your Options{data.client_name ? ` · For ${data.client_name}` : ''}
         </p>
@@ -111,7 +141,7 @@ export default function ProposalCompare() {
           }}
           columns={columns}
           chooseLabel="Choose this one"
-          onChoose={(col) => navigate(`/proposal/${col.token}?choose=1`)}
+          onChoose={preview ? undefined : (col) => navigate(`/proposal/${col.token}?choose=1`)}
         />
       </div>
     </div>

@@ -13,6 +13,12 @@ const { ConflictError, NotFoundError } = require('./errors');
 const GROUPABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified'];
 const MAX_OPTIONS = 3;
 
+// An option is client-visible on the public compare page once it has been sent
+// (never a bare draft, never archived). The public endpoint (compareGroup.js)
+// filters on this, and the admin summary counts it, so the Alternatives panel
+// knows whether the compare link will actually show a comparison.
+const COMPARE_VISIBLE_STATUSES = ['sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed'];
+
 // Map a proposals row (snake_case) onto insertProposalRecord's camelCase field
 // bag. Copies the shared logistics + the source's package/pricing so the clone
 // is immediately valid; admin swaps the package afterward. NOTE: insertProposalRecord
@@ -172,12 +178,14 @@ async function getGroupForProposal(proposalId, db = pool) {
     group_token: row.token,
     decided: row.chosen_proposal_id !== null,
     chosen_proposal_id: row.chosen_proposal_id,
+    compare_visible_count: members.filter((m) => COMPARE_VISIBLE_STATUSES.includes(m.status)).length,
     members,
   };
 }
 
 module.exports = {
   GROUPABLE_STATUSES,
+  COMPARE_VISIBLE_STATUSES,
   MAX_OPTIONS,
   addAlternative,
   removeAlternative,

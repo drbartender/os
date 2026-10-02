@@ -149,7 +149,7 @@ export default function PackageMatrix({
       return <button type="button" className="pkg-matrix-choose" disabled>Current package</button>;
     }
     return (
-      <button type="button" className="pkg-matrix-choose" onClick={() => onChoose && onChoose(c)}>
+      <button type="button" className="pkg-matrix-choose" disabled={!onChoose} onClick={() => onChoose && onChoose(c)}>
         {chooseLabel}
       </button>
     );

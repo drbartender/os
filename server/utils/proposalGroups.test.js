@@ -7,7 +7,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { pool } = require('../db');
 const {
-  addAlternative, removeAlternative, getGroupMembers, MAX_OPTIONS,
+  addAlternative, removeAlternative, getGroupMembers, getGroupForProposal, MAX_OPTIONS,
 } = require('./proposalGroups');
 
 const createdProposalIds = new Set();
@@ -90,4 +90,25 @@ test('removeAlternative dissolves a 2-member group and frees the survivor', asyn
   assert.strictEqual(survivor.group_id, null, 'survivor reverts to solo');
   const { rows: grp } = await pool.query('SELECT id FROM proposal_groups WHERE id = $1', [groupId]);
   assert.strictEqual(grp.length, 0, 'the group row is deleted');
+});
+
+// The admin Alternatives panel offers "Copy compare link" only when the public
+// page would show a comparison, which needs two client-visible options. This
+// count is that page's own visibility filter, so the two cannot drift.
+test('getGroupForProposal counts the options the client can see on the compare page', async () => {
+  const src = await insertSource({ status: 'sent' });
+  const { groupId, newProposalId } = await addAlternative(src.id, 1, pool);
+  createdGroupIds.add(groupId);
+  createdProposalIds.add(newProposalId);
+
+  let summary = await getGroupForProposal(src.id);
+  assert.strictEqual(summary.compare_visible_count, 1, 'a fresh clone is a draft, so only the source is visible');
+
+  await pool.query(`UPDATE proposals SET status = 'viewed' WHERE id = $1`, [newProposalId]);
+  summary = await getGroupForProposal(src.id);
+  assert.strictEqual(summary.compare_visible_count, 2, 'both options sent: the link shows a comparison');
+
+  await pool.query(`UPDATE proposals SET status = 'archived' WHERE id = $1`, [src.id]);
+  summary = await getGroupForProposal(newProposalId);
+  assert.strictEqual(summary.compare_visible_count, 1, 'an archived option is hidden from the client');
 });

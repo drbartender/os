@@ -551,6 +551,9 @@ function AppRoutes() {
       <Route path="/plan/:token/lab" element={<EnhancementLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
       <Route path="/compare/:token" element={<ProposalCompare />} />
+      {/* Admin preview of a comparison, drafts included; opened from the
+          Alternatives panel on Proposal Detail. Full-bleed like the client page. */}
+      <Route path="/compare/:token/preview" element={<ProtectedRoute adminOnly><ProposalCompare preview /></ProtectedRoute>} />
       <Route path="/invoice/:token" element={<InvoicePage />} />
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       <Route path="/tip/:token" element={<TipPage />} />

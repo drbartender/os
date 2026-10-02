@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 const crypto = require('node:crypto');
+const jwt = require('jsonwebtoken');
 const { pool } = require('../../db');
 const proposalsRouter = require('./index');
 const { addAlternative } = require('../../utils/proposalGroups');
@@ -18,6 +19,8 @@ let server, baseUrl;
 const proposalIds = [];
 const groupIds = [];
 const clientIds = [];
+const userIds = [];
+let adminToken;
 
 async function seedGroup({ bothSent }) {
   const c = await pool.query(`INSERT INTO clients (name, email) VALUES ('CMP Test', $1) RETURNING id`,
@@ -47,6 +50,13 @@ function get(path, headers = {}) {
 }
 
 before(async () => {
+  const { rows: [u] } = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, 'x', 'admin', 'approved', 0) RETURNING id`,
+    [`cmp-${NONCE}-admin@example.test`]);
+  userIds.push(u.id);
+  adminToken = jwt.sign({ userId: u.id, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
   const app = express();
   app.use('/api/proposals', proposalsRouter);
   app.use((err, req, res, _next) => {
@@ -68,6 +78,7 @@ after(async () => {
   if (groupIds.length) await pool.query('DELETE FROM proposal_groups WHERE id = ANY($1::int[])', [groupIds]);
   if (pids.length) await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [pids]);
   if (clientIds.length) await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [clientIds]);
+  if (userIds.length) await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [userIds]);
   await pool.end();
 });
 
@@ -119,4 +130,27 @@ test('admin preview requires auth', async () => {
   const { groupToken } = await seedGroup({ bothSent: false });
   const r = await get(`/api/proposals/group/${groupToken}/preview`);
   assert.ok(r.status === 401 || r.status === 403, `preview must be blocked without a token, got ${r.status}`);
+});
+
+// One option sent, one still a draft: the public page sees one option (and would
+// redirect to its sign page), while the admin preview shows both and flags the
+// draft, which is what the Alternatives panel's Preview comparison opens.
+test('admin preview shows every option and flags the ones the client cannot see', async () => {
+  const { groupToken, sourceId, cloneId } = await seedGroup({ bothSent: false });
+  await pool.query(`UPDATE proposals SET status = 'sent' WHERE id = $1`, [sourceId]);
+
+  const pub = await get(`/api/proposals/group/${groupToken}`);
+  assert.equal(pub.status, 200, pub.body);
+  const pubBody = JSON.parse(pub.body);
+  assert.deepEqual(pubBody.options.map((o) => o.id), [sourceId], 'public page sees only the sent option');
+  assert.ok(!('client_visible' in pubBody.options[0]), 'public payload is unchanged: no client_visible flag');
+
+  const r = await get(`/api/proposals/group/${groupToken}/preview`, { Authorization: `Bearer ${adminToken}` });
+  assert.equal(r.status, 200, r.body);
+  const body = JSON.parse(r.body);
+  const byId = Object.fromEntries(body.options.map((o) => [o.id, o]));
+  assert.equal(body.options.length, 2, 'preview includes the draft');
+  assert.equal(byId[sourceId].client_visible, true);
+  assert.equal(byId[cloneId].client_visible, false);
+  assert.equal(byId[cloneId].status, 'draft');
 });

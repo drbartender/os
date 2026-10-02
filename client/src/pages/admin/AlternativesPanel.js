@@ -31,6 +31,19 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
   const sourceGroupable = GROUPABLE_STATUSES.includes(proposal.status) && !(Number(proposal.amount_paid) > 0);
   const canAdd = !decided && members.length < 3 && (group.grouped || sourceGroupable);
   const hasDraft = members.some((m) => m.status === 'draft');
+  // The public compare page shows only SENT options, opens the booked option
+  // once the group is decided, and skips straight to the sign page when fewer
+  // than two options are visible (ProposalCompare.js). So the link shows a real
+  // comparison only when nothing is decided, nothing is still a draft, and at
+  // least two options are visible; Copy is offered only then.
+  const visibleCount = Number(group.compare_visible_count) || 0;
+  const linkShowsComparison = !decided && !hasDraft && visibleCount >= 2;
+  let copyHint = '';
+  if (!decided && !linkShowsComparison) {
+    if (hasDraft && visibleCount >= 2) copyHint = 'An option is still a draft, so the client\'s comparison would leave it out. Send it first, then copy the link.';
+    else if (hasDraft) copyHint = 'The client\'s compare page only shows sent options. Send them first, then the link is ready to copy.';
+    else copyHint = 'Fewer than two options are live, so the compare link would open a single proposal instead of a comparison.';
+  }
 
   const apiError = (err, fallback) => err?.response?.data?.error
     || (typeof err?.response?.data === 'string' ? err.response.data : null)
@@ -155,10 +168,23 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
               <Icon name="send" size={12} />Send options
             </button>
           )}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={copyCompareLink}>
-            <Icon name={copied ? 'check' : 'copy'} size={12} />{copied ? 'Copied' : 'Copy compare link'}
-          </button>
+          {!decided && (
+            <a
+              className="btn btn-ghost btn-sm"
+              href={`/compare/${group.group_token}/preview`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Icon name="eye" size={12} />Preview comparison
+            </a>
+          )}
+          {linkShowsComparison && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={copyCompareLink}>
+              <Icon name={copied ? 'check' : 'copy'} size={12} />{copied ? 'Copied' : 'Copy compare link'}
+            </button>
+          )}
         </div>
+        {copyHint && <div className="muted tiny" style={{ marginTop: 8 }}>{copyHint}</div>}
         {sendOpen && (
           <SendModal
             action="proposal_send_group"

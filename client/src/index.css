@@ -10222,6 +10222,16 @@ html[data-app="admin-os"] .location-suggest-item.active {
   align-items: center; justify-content: center; gap: 16px;
 }
 .pkg-compare-kicker { display: flex; justify-content: center; margin: 0 0 6px; color: var(--brass) !important; }
+/* Admin-only preview notice (/compare/:token/preview); the client never sees it. */
+.pkg-compare-preview {
+  margin: 0 0 20px;
+  padding: 10px 14px;
+  border: 1px dashed var(--brass);
+  border-radius: 8px;
+  color: var(--cream-text);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
 .pkg-compare-title {
   font-family: var(--font-display);
   font-weight: 400;
