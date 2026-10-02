@@ -1854,6 +1854,28 @@ the consult sweep); a redelivered or superseded Cal.com event can no longer file
 consult; malformed `ADMIN_PHONE` / `VA_CELL` are never dialed and warn at boot; Zul's number stays
 out of `call_audit`, the attempt rows, the log and Sentry.
 
+### Shopping list: Next through the custom recipes before the list is rewritten. Committed 2026-10-02 as `0c9d2fe0`, NOT yet pushed.
+
+Moves to Tier 3b the moment `git merge-base --is-ancestor 0c9d2fe0 origin/main` says yes. Test-
+and lint-verified only (18 component tests); never opened in a browser, because the dev DB holds
+no plan with a waiting custom request.
+
+The walk, on an event whose shopping list shows "Client requested: recipe needed" with TWO OR
+MORE rows (a plan where the client typed several custom drinks):
+- Make a manual edit to the list first (change a quantity), so a premature rewrite would show.
+- Add recipe on the first row. The drawer's bottom button reads Next: "<second request>". Add a
+  row, click Next: the drawer swaps to the second drink, no confirm appears, and your manual edit
+  is still on the list underneath.
+- On the last request the button reads Done, update list. Click it: ONE confirm naming every
+  drink, then one regenerate; the handled rows leave the box.
+- Separately: close the drawer partway (X) and confirm the row reads Recipe added and nothing was
+  rewritten; Edit recipe on it reopens the rows you typed, not an empty recipe.
+- Match existing on one row mid-run marks it Matched to X and does not prompt.
+
+Known and logged, not a defect of this walk: Escape inside the ingredient suggestions closes the
+whole drawer (fix list, Potions). The single-request flow is unchanged and is the Tier 3b
+"Match existing" item's walk.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:
