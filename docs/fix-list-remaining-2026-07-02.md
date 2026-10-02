@@ -45,7 +45,7 @@ Triaged against code and prod the same day (2026-09-22). Build order is the orde
 first three sit above the divider.
 
 1. BEO finalize clicks → SHIPPED 2026-09-22 (lane beo-approve-is-review, `3934cffc`, pushed 2026-09-24); residuals under Potions → Derived BEO finalize follow-ups.
-2. **"Copy compare link" bounces the client to the sign page** → §2.
+2. "Copy compare link" bounces the client to the sign page → SHIPPED 2026-10-02 (`a43f864e`, quick fix on main).
 3. **Margarita salt lands at four or more containers** → §2.
 4. Supplies chip is grey on the desktop events list → Admin UI (one word).
 5. Show when an event was booked → Admin UI (client-only).
@@ -99,7 +99,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
-| 2 | "Copy compare link" hands the client the sign page, not the comparison | **yes: group 20, made 9/22, one sent + one draft** |
 | 2 | The shopping list asks for four or more containers of margarita salt | yes, on any salt-rimmed menu |
 | 2 | A Lab syrup strips unrelated items off the shopping list (ginger takes the ginger beer) | no (0 plans have picked a Lab syrup) |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
@@ -715,30 +714,6 @@ three `SYRUP_NAME_LOOKUP` labels do not match their catalog rows. A self-provide
 as "Grenadine (Pomegranate) Syrup" beside a recipe's "Grenadine"; orgeat as "Orgeat (Almond)
 Syrup" beside "Orgeat"; vanilla-bean as "Vanilla Bean Syrup" beside "Vanilla Syrup". Resolve the
 self-provided syrup through the catalog alias index instead of building a label.
-
-### "Copy compare link" hands the client the sign page, not the comparison
-
-Dallas, 2026-09-22: *"when I click 'copy compare link' in the alternative section of a proposal it
-doesn't give me the comparison. it just goes straight to a contract."* Reproduced in prod the same
-day: group 20 (created 2026-09-22) holds 858 `viewed` and 872 `draft`.
-
-The button (`AlternativesPanel.js`, `copyCompareLink`) builds `/compare/<group token>`, the same
-URL the options email sends. The public group endpoint (`compareGroup.js`, `VISIBLE_STATUSES`)
-drops every `draft` option, and `ProposalCompare.js` hard-redirects (`replace: true`) to
-`/proposal/<token>?choose=1`, the sign-and-pay page, whenever it is left with ONE visible option
-or the group is decided. So the link is right and the page is doing what it was built to do; the
-admin surface lies about it. "Copy compare link" renders unconditionally on any grouped proposal,
-where "Send options" is gated on `hasDraft && !decided`, so the copy is offered before the second
-option has ever been sent.
-
-Fix is on the admin side, two parts. (1) Gate or relabel the button: while any option is still
-`draft`, say "Send options first: the compare page only shows sent options" (or disable it); once
-decided, hide it. (2) If Dallas wants to SEE the comparison himself before sending, the admin
-preview endpoint already exists and has no caller: `GET /api/proposals/group/:token/preview`
-(`compareGroup.js`) ignores the visibility gate. A "Preview comparison" link beside the copy
-button is the missing piece; the public compare page would need an admin-preview mode or a sibling
-route to read from it. Do not touch the redirect effects or `?choose=1` (both load-bearing, see the
-entry above).
 
 ### The shopping list asks for four or more containers of margarita salt
 

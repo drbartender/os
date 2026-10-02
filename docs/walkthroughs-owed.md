@@ -1876,6 +1876,22 @@ Known and logged, not a defect of this walk: Escape inside the ingredient sugges
 whole drawer (fix list, Potions). The single-request flow is unchanged and is the Tier 3b
 "Match existing" item's walk.
 
+### Alternatives panel: Copy compare link only when it shows a comparison, plus Preview comparison. Committed 2026-10-02 as `a43f864e`, NOT yet pushed.
+
+Moves to Tier 3b the moment `git merge-base --is-ancestor a43f864e origin/main` says yes. Verified by
+tests (server 6/6 + 5/5, client 9/9), one code reviewer, and a dev browser check of the PUBLIC side
+only: with both options sent the client link showed the comparison, and the preview URL signed out
+lands on login. The admin panel and the preview page were never opened signed in.
+
+The walk, on a proposal with Add an alternative used once (two options, the new one still a draft):
+- The panel shows Send options and Preview comparison, NO Copy compare link, and a line saying the
+  compare page only shows sent options.
+- Preview comparison opens a new tab: both columns, a dashed banner saying the client's link
+  currently opens a single proposal and naming the draft as hidden, choose buttons greyed out.
+- Send options. Copy compare link appears and the hint goes. Open the copied link in a private
+  window: the side-by-side comparison, not a contract.
+- Group 20 in prod (858 viewed, 872 draft) is the live case: its panel should now hide Copy.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:
