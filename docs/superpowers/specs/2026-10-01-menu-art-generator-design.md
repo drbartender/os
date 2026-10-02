@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-01
 **Status:** brainstormed and approved section by section with Dallas on 2026-10-01 (flow, generation, storage and approval, failures and testing). Spec fleet (grounding, gaps, risk) run the same day: 1 blocker, 18 warnings, about 20 suggestions, all folded in at Dallas's direction, with his three calls recorded in section 3 (decisions 8 to 10).
-**Visual design:** in progress in claude.ai/design from the brief vendored at `docs/design-artifacts/2026-10-01-menu-designer/brief.md`. Section 11 gates the page lane on it.
+**Visual design:** COMPLETE 2026-10-01. Artifact "Dr. Bartender Menu Designer" (https://claude.ai/artifact/CFXJvLLMr57mEyp1bP5jiJ, version `1790874392-ddd7`), snapshotted at `docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html`, built from the brief at `docs/design-artifacts/2026-10-01-menu-designer/brief.md`. Section 11 is the amended visual contract, and the fields the design added are folded into sections 4 to 9.
 
 ## 1. Goal and scope
 
@@ -75,9 +75,18 @@ From the spec review (Dallas's calls):
    - **Dr. Bartender mark** switch, on by default.
    - **Generate**. Once a draft exists it reads **Start over**, which replaces the draft after a confirm.
 4. Generation fills the preview progressively: words within seconds, then the background, then each drink. Pending slots are visible. Text editing and the font and color pickers stay disabled until the words land.
-5. Editing: click any text to edit it in place; per drink **Re-roll art** (optional note, up to 200 characters) and **Hide from menu**; background **Re-roll**; **Font pairing**; **Text color**; **Text panel** (none, soft, solid) and **Logo placement** (above the title, or replacing it) when the visual design keeps those options. With more than 8 drinks, Dallas picks which 8 get art. Edits autosave with a visible saving / saved / failed indicator.
-6. **Approve** first flushes any pending autosave, then renders and posts, disabled and showing progress throughout. It confirms first when a different print file is already posted.
-7. States: initial load; load error; not set up (no key); empty (never generated); no drinks on the plan; no plan on the event; generating; words failed (with Retry); a piece failed; daily cap reached (with the reset time); plan changed; brief edited; saving / saved / save failed; save conflict (reloaded); Approve in progress; Approve rejected; approved; edited since approval; print file replaced by a manual upload; print file removed; marked "no menu needed".
+5. Editing:
+   - Click any text on the menu to edit it in place: the title, the four section headings, drink names and descriptions, and the "also at the bar" labels and lines.
+   - Per drink: **Re-roll art** (optional note, up to 200 characters) and **Hide**.
+   - **Re-roll background.**
+   - **Font pairing.**
+   - **Ink** and **Accent** colors. Each pairing has a light-art and a dark-art default, chosen by how bright the background is, and Dallas can override either.
+   - **Text backing:** Off / Soft (default) / Panel.
+   - When the planner image is the logo: **Placement** (above the title, or replacing it) and **Backing** (none or a badge).
+   - **Drink limits:** up to 8 drinks are illustrated. Visible drinks 9 to 12 list as text under "More from the bar", and more than 12 visible drinks must be hidden down to 12.
+   - Edits autosave with a visible saving / saved / failed indicator.
+6. **Approve** first flushes any pending autosave, then renders and posts, disabled and showing progress throughout. It confirms first when a different print file is already posted. It is blocked while any text is flagged "Too long" (section 11).
+7. States: initial load; load error; not set up (no key); empty (never generated); no drinks on the plan; no plan on the event; generating; words failed (with Retry); a piece failed; daily cap reached (with the reset time); plan changed (Update draft / Dismiss); plan changed after approval; brief edited; saving / saved / save failed; save conflict (reloaded); text too long; Approve in progress; Approve rejected; approved; edited since approval; print file replaced by a manual upload; print file removed; marked "no menu needed".
 
 ## 5. Generation pipeline
 
@@ -103,15 +112,17 @@ Deterministic fields never go to the model for authoring: catalog names and desc
 - `title` (default "Bar Menu");
 - per drink: `display_name` (the client's rename applied, or a themed name when the brief asks), `name_ai_suggested` (true when invented rather than taken from the catalog or an explicit client rename), `description` only for client-typed drinks (`description_ai_written: true`), and `visual_note` (glass, color, garnish);
 - `font_pairing`, one of the fixed ids in section 10.3;
-- `ink_color`, `#rrggbb`.
+- `palette`, up to 6 `#rrggbb` colors read from the client's theme text (empty when the brief names none), shown as swatches in the brief panel;
+- `accent_color`, a `#rrggbb` taken from that palette when it suits the pairing, otherwise null (null means the pairing's default for the background's tone).
 
-A catalog drink's description is always the catalog text. Output that fails validation fails the words step (section 12).
+`ink_color` is never set by the model; it starts null (the pairing default). A catalog drink's description is always the catalog text. Output that fails validation fails the words step (section 12).
 
 ### 5.4 Steps 2 and 3: the art
 
 - **Background:** one call at `MENU_ART_BACKGROUND_SIZE` (default `2560x3200`; `1664x2080` is the non-experimental fallback), quality high, JPEG output. The prompt is built from the theme, colors, art direction and design notes, and always asks for decorative edges, a calm low-detail center for text, and no lettering, words or numbers. With a reference image, the call goes through the edit endpoint with it as a style reference.
+- **Background tone:** when the background lands, the job reads the central 60% (width and height) with `sharp` `stats()`. It stores the mean color as `ground_rgb` (`"r,g,b"`), which colors the Soft and Panel text backings, and stores `tone`: `dark` when that color's relative luminance is below 0.4, otherwise `light`. The tone picks the pairing's light-art or dark-art ink and accent defaults and the mark color.
 - **Drinks:** one call per drink with `has_art`, sequential, 1024x1024, `background: "transparent"`, PNG output, through the edit endpoint with the background (downscaled to 1024 px wide with `sharp`) plus the reference image when set. The prompt carries `visual_note` and asks for one isolated illustration with no text and no background. A re-roll appends Dallas's note.
-- **Default art set:** the first 8 drinks in the section 5.2 order get `has_art`. An added drink gets art when fewer than 8 already have it.
+- **Default art set:** the first 8 drinks in the section 5.2 order get `has_art` (mocktails count toward the 8). A drink added by Update draft gets art when fewer than 8 visible drinks already have it.
 - **Reading images back:** `storage.js` gains `readFile(key)` (`getSignedUrl` plus a bounded `fetch`, the `eventDetails.js` pattern, returning `{ buffer, contentType }`, throwing `ExternalServiceError('r2', ...)` on failure). The job uses it for the background on every drink call and re-roll, the uploaded reference, and the planner image.
 
 ### 5.5 Running the job
@@ -147,7 +158,7 @@ Start over keeps the stored reference when no new file is attached and the sourc
 - Re-rolling the background does not re-roll the drinks; Dallas re-rolls any drink that no longer matches.
 
 **Daily cap (reservation).**
-- Every image is reserved inside the request that asks for it (Generate, re-roll, add-drink), in a transaction that first takes `LOCK TABLE menu_art_calls IN EXCLUSIVE MODE`. (Advisory locks are a no-op on the Neon pooler; a transaction-scoped table lock is not.)
+- Every image is reserved inside the request that asks for it (Generate, re-roll, Update draft), in a transaction that first takes `LOCK TABLE menu_art_calls IN EXCLUSIVE MODE`. (Advisory locks are a no-op on the Neon pooler; a transaction-scoped table lock is not.)
 - It then counts rows of kind `image` created in the last 24 hours with status other than `released`, refuses if the request would pass `MENU_ART_DAILY_IMAGE_CAP` (default 60) with `new AppError('Daily menu art limit reached.', 429, 'MENU_ART_CAP_REACHED')`, and otherwise inserts one `reserved` row per image.
 - The job moves a reservation to `sent` at the call, then `ok` or `failed`. A superseded run's unspent reservations become `released`.
 - One reservation stands for at most one billed image, because only unbilled 429s are retried.
@@ -172,11 +183,14 @@ Added to `server/db/schema.sql` with idempotent statements.
 - `content JSONB NOT NULL`:
   - the words step's `words_status`, `words_error` and `words_heartbeat_at`;
   - `title`;
-  - `drinks[]`, each with `key`, `source` (`catalog` | `custom`), `catalog_kind`, `catalog_id`, `display_name`, `description`, `name_ai_suggested`, `description_ai_written`, `visual_note`, `hidden` and `has_art`;
+  - `headings`: `sig`, `mock`, `more` and `also`, defaulting to "Signature Cocktails", "Mocktails", "More from the bar" and "Also at the bar";
+  - `drinks[]`, each with `key`, `source` (`catalog` | `custom`), `catalog_kind` (`cocktail` | `mocktail` | null), `group` (`sig` | `mock`), `catalog_id`, `display_name`, `description`, `name_ai_suggested`, `description_ai_written`, `visual_note`, `hidden` and `has_art`;
   - `also_at_bar[]`, each with `label` and `text`;
-  - `font_pairing`, `ink_color`, `text_panel` and `logo_mode`.
+  - `palette` (up to 6 hex colors, display only);
+  - `font_pairing`, `ink_color` (hex or null), `accent_color` (hex or null), `text_backing` (`off` | `soft` | `panel`, default `soft`), `logo_mode` (`above_title` | `replaces_title`, default `above_title`) and `logo_badge` (boolean, default false).
 - `plan_fingerprint JSONB NOT NULL` (section 5.2)
-- `version INTEGER NOT NULL DEFAULT 1`, bumped by every content or inputs write (edits, Generate, add-drink)
+- `dismissed_plan_hash TEXT`, the plan fingerprint hash Dallas dismissed the plan-changed banner for (section 9)
+- `version INTEGER NOT NULL DEFAULT 1`, bumped by every content or inputs write (edits, Generate, Update draft, Dismiss)
 - `art_version INTEGER NOT NULL DEFAULT 0`, bumped by the job when a piece reaches `done`
 - `approved_version INTEGER`, `approved_art_version INTEGER`, `approved_print_key TEXT`, `approved_at TIMESTAMPTZ`, `approved_by INTEGER REFERENCES users(id)`
 - `created_at`, `updated_at` with the standard `update_updated_at_column` trigger
@@ -188,6 +202,7 @@ Added to `server/db/schema.sql` with idempotent statements.
 - `run_id UUID NOT NULL`
 - `status TEXT NOT NULL CHECK (status IN ('pending','working','done','failed'))`
 - `r2_key TEXT`, `error TEXT`, `reroll_note TEXT`, `heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, `started_at`, `finished_at`
+- `tone TEXT CHECK (tone IS NULL OR tone IN ('light','dark'))` and `ground_rgb TEXT`, set on the background piece only (section 5.4)
 
 **`menu_art_calls`** (the cap's ledger, the cost record, the audit trail)
 - `id SERIAL PRIMARY KEY`
@@ -200,7 +215,7 @@ Added to `server/db/schema.sql` with idempotent statements.
 
 **Writers.**
 - The job writes `menu_draft_pieces`, `art_version`, `menu_art_calls`, and exactly one fill of `content` by the words step (plus `words_status`, `words_error` and `words_heartbeat_at`), all conditional on `run_id`. The page keeps editing disabled until `words_status = 'done'`, so that fill lands before any edit is possible.
-- Every other `content` or `inputs` write (PATCH, add-drink, Generate) happens in a request under the `version` check.
+- Every other `content` or `inputs` write (PATCH, Update draft, Generate) happens in a request under the `version` check.
 - A PATCH and a job write touch different columns of `menu_drafts`.
 
 **R2 keys.**
@@ -218,7 +233,8 @@ New route file `server/routes/proposals/menuDrafts.js`, mounted in `server/route
 | `POST /api/proposals/:id/menu-draft/generate` | `adminWriteLimiter` | Multipart: optional `reference` plus `planner_image_role`, `reference_source`, `art_direction`, `drb_mark`. 503 not configured; 422 `MENU_NO_DRINKS` (`new AppError(..., 422, ...)`) when the plan has no drinks or no plan exists; 429 at cap. Supersedes any run in progress. 202 |
 | `PATCH /api/proposals/:id/menu-draft` | `menuDraftEditLimiter` | Body `{ version, content?, inputs? }`, validated per section 7.1. 409 `MENU_DRAFT_CHANGED` on version mismatch. Bumps `version`; returns the new one |
 | `POST /api/proposals/:id/menu-draft/pieces/:pieceKey/reroll` | `adminWriteLimiter` | Body `{ note? }`. Reserves one image. 202 |
-| `POST /api/proposals/:id/menu-draft/drinks` | `adminWriteLimiter` | Body `{ key, version }`, a key from the diff's `added`. Catalog fields directly; for a client-typed drink, a one-drink words call runs before any transaction opens. Then one transaction: version check (409), content write, reservation when the drink gets art, COMMIT. Then queues the art. 202 with the new `version` |
+| `POST /api/proposals/:id/menu-draft/sync` | `adminWriteLimiter` | **Update draft.** Body `{ version }`. Recomputes the diff (section 9). For each added client-typed drink, a words call for just those drinks runs before any transaction opens. Then one transaction: version check (409), append the added drinks (catalog fields directly, `has_art` per section 5.4), remove the dropped drinks and their piece rows, set `plan_fingerprint` to the current plan, reserve the added drinks' art, COMMIT. Then queues that art. 202 with the new `version` |
+| `POST /api/proposals/:id/menu-draft/dismiss-plan-change` | `menuDraftEditLimiter` | Body `{ version }`. Stores the current plan hash in `dismissed_plan_hash` under the version check. The banner stays hidden until the plan changes again |
 | `GET /api/proposals/:id/menu-draft/pieces/:pieceKey/image` | `menuDraftReadLimiter` | Streams the piece. Key must start with `menu-art/<id>/` and contain no `..` or `//` |
 | `GET /api/proposals/:id/menu-draft/reference` | `menuDraftReadLimiter` | Streams the uploaded reference. Key must start with `menu-art/<id>/ref-`, no `..` or `//` |
 | `GET /api/proposals/:id/menu-draft/planner-image` | `menuDraftReadLimiter` | Streams the planner image of the event's plan (lowest id). Key must start with `drink-plan-logos/<planId>-`, no `..` or `//`. 404 when the plan has none |
@@ -246,12 +262,17 @@ Upload checks:
 | `display_name` | 1 to 60 characters |
 | `description` | 0 to 200 characters |
 | `also_at_bar[].text` | 0 to 120 characters; labels fixed |
-| `ink_color` | `^#[0-9a-fA-F]{6}$` |
+| `ink_color`, `accent_color` | `^#[0-9a-fA-F]{6}$` or null |
+| `palette` | words-step output only; never accepted from PATCH |
+| `headings.sig`, `.mock`, `.more`, `.also` | 1 to 40 characters each |
+| `also_at_bar[].label` | 1 to 30 characters |
+| `logo_badge` | boolean |
 | `font_pairing` | one of the fixed ids (section 10.3) |
-| `text_panel` | `none`, `soft` or `solid` |
+| `text_backing` | `off`, `soft` or `panel` |
 | `logo_mode` | `above_title` or `replaces_title` |
-| `drinks[]` | PATCH replaces the array, but the set of `key`s must equal the stored set; a PATCH may change `display_name`, `description`, `hidden` and `has_art` only. Adding is add-drink's job; drinks are hidden, never removed |
-| `has_art` | at most 8 drinks true |
+| `drinks[]` | PATCH replaces the array, but the set of `key`s must equal the stored set; a PATCH may change `display_name`, `description`, `hidden` and `has_art` only (editing a name or description also sets its AI flag false). Adding and removing drinks is Update draft's job alone |
+| `has_art` | at most 8 visible drinks true |
+| visible drinks | at most 12 (`hidden` false); at most 4 of them without art (the More from the bar list) |
 
 A PATCH replaces only the top-level `content` and `inputs` keys it sends; anything it omits is untouched. It never writes the words-status fields.
 
@@ -283,7 +304,7 @@ A PATCH replaces only the top-level `content` and `inputs` keys it sends; anythi
 
 ## 9. Plan changed
 
-On every GET, the server rebuilds the plan through `menuDrinkSource.js` (lowest-id plan, decision 8's side) and returns `{ added: [{ key, name }], dropped: [{ key, name }], brief_edited }` against `plan_fingerprint`. The page shows a banner naming added and dropped drinks with **Add to draft** per added drink, and a softer "brief edited since this draft" note when only the brief changed. Dropped drinks are not removed; Dallas hides or keeps them. When the event has no plan, the page shows the draft read-only with "No drink plan on this event" and disables Generate and Add to draft.
+On every GET, the server rebuilds the plan through `menuDrinkSource.js` (lowest-id plan, decision 8's side) and returns `{ added: [{ key, name }], dropped: [{ key, name }], brief_edited }` against `plan_fingerprint`. The page shows a banner naming added and dropped drinks, with **Update draft** (the sync route: adds the added drinks and paints their art, removes the dropped ones) and **Dismiss** (hides the banner until the plan changes again). A softer "brief edited since this draft" note shows when only the brief changed. Update draft on an approved draft moves it to edited since approval. When the event has no plan, the page shows the draft read-only with "No drink plan on this event" and disables Generate and Update draft.
 
 ## 10. Client
 
@@ -300,42 +321,209 @@ Each file stays under 300 lines. `EventDetailPage.js` passes what the card alrea
 - **Polling.** `useMenuDraft` polls GET every 2 seconds while the words step or any piece is pending or working (after the stuck rule), and stops otherwise. On a 429 it backs off to 10 seconds and shows a quiet "reconnecting" note.
 - **Autosave.** Debounced at 800 ms, with a saving / saved / failed indicator. A 409 refetches the draft, drops unsaved local edits, and says "This draft changed elsewhere and was reloaded."
 - **Layer images** (background, drinks, planner logo) load through `api.get(path, { responseType: 'blob' })` into object URLs. They are cached by `r2_key` and re-fetched only when a piece's key changes, so an `art_version` bump downloads only the new piece. That keeps the export untainted and stays well inside the read limiter. Object URLs are revoked on replacement and unmount.
-- **The Dr. Bartender mark** is the same-origin `client/public/images/menu-logo-gold.png` unless the visual design supplies another.
+- **The Dr. Bartender mark** is the design's inline glyph plus the words "Dr. Bartender" (section 11), not `menu-logo-gold.png`.
 - **AI-written text** renders as plain React text, never HTML.
 - **Export failures** go to client Sentry (`tags: { area: 'menu-designer', step: 'export' }`).
 
 ### 10.3 Fonts
 
-**Pairing ids are fixed now,** shared by the server schema and validation (`server/utils/menuFontPairings.js`) and the client (`fontPairings.js`): `elegant-script`, `rustic`, `modern-clean`, `retro`, `spooky`, `tropical`. The visual design assigns each id its faces (title, heading, body) on the client; the server only knows the ids.
+**Pairing ids are fixed,** shared by the server schema and validation (`server/utils/menuFontPairings.js`) and the client (`fontPairings.js`): `elegant-script`, `rustic`, `modern-clean`, `retro`, `spooky`, `tropical`. The server knows only the ids; faces, sizes and default colors live on the client (section 11, table P).
 
-**Loading.** A pairing's stylesheet is injected as a plain `<link rel="stylesheet">`. Do NOT use the `media="print"` swap that `AdminLayout.js` uses; it lets `document.fonts.ready` resolve before the faces are declared, and the export would render in fallback fonts. Before rendering, the export awaits that link's `onload`, then `document.fonts.load()` for every face and weight the pairing uses, then `document.fonts.ready`.
+**Loading.** All menu faces load through one plain `<link rel="stylesheet">` injected when the designer page mounts (the Google Fonts URL listing every family and weight in table P, plus IBM Plex Sans 600 for the mark). Do NOT use the `media="print"` swap that `AdminLayout.js` uses; it lets `document.fonts.ready` resolve before the faces are declared, and the export would render in fallback fonts. Before rendering, the export awaits that link's `onload`, then `document.fonts.load()` for every face and weight the current pairing uses plus the mark face, then `document.fonts.ready`.
 
 ## 11. Visual contract
 
-**Benchmark.** The claude.ai/design artifact produced from `docs/design-artifacts/2026-10-01-menu-designer/brief.md`, in the Dr. Bartender OS Design System project (`72035042-c993-47e2-9dc8-c452b7bf5fa4`). It covers:
-- **Part 1, the designer page** in the OS skin, every state in section 4.7.
-- **Part 2, the printed menu layouts:**
-  - templates for 1 to 8 illustrated drinks, with and without mocktails, client logo and also-at-the-bar lines;
-  - faces for the six pairing ids;
-  - the legibility treatment over unknown art (the `text_panel` options);
-  - logo placement (`logo_mode`).
+**Benchmark.** The artifact "Dr. Bartender Menu Designer" (https://claude.ai/artifact/CFXJvLLMr57mEyp1bP5jiJ, version `1790874392-ddd7`), snapshotted at `docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html`. Claude Design delivered it as a published artifact, not a design-system project, so it was pulled with the Artifact read rather than DesignSync; the snapshot is the same bytes. Open the snapshot in a browser: its state buttons walk Part 1, and Boards A to F, the legibility study and the pairing cards show Part 2. The quality bar for Part 2 remains `client/public/menu-samples/39.webp` and `40.webp`.
 
-The quality bar for Part 2 is `client/public/menu-samples/39.webp` and `40.webp`.
+**Gate: satisfied 2026-10-01.** The artifact is complete, snapshotted, and this section carries the per-screen layout, the component vocabulary and the token rule. The plan's front-matter records this amendment as the page lane's dependency.
 
-**Gate.** The page lane does not start until all four of these are done:
-- the artifact is complete;
-- its screens are pulled through DesignSync (`list_files`, then `get_file`) and snapshotted under `docs/design-artifacts/2026-10-01-menu-designer/`;
-- this section is amended with the per-screen layout and composition, the component vocabulary, and the token rule;
-- the plan's front-matter records that amendment as the page lane's dependency.
+**What the snapshot is and is not.** The admin chrome in it is a stand-in for the OS skin (the artifact says so), and its drink and background art is placeholder SVG; the AI supplies real art as images. Its JavaScript (state strip, timers, simulated generation) is mockup scaffolding, not code to port. Layout, composition, copy, component choices and every number below are the contract.
 
-**Token rule.** For Part 1, design-system tokens map to existing `index.css` tokens. Part 2 does not use OS tokens; its colors come from `ink_color` and the pairing.
+### 11.1 Part 1: the designer page (`/events/:id/menu`, OS skin)
 
-**Server-lane coupling, made explicit.**
-- The server lanes fix the pairing ids, `text_panel` and `logo_mode` now, so they can merge before the artifact.
-- If the amendment adds a draft field the server must validate, that amendment reopens the server lane for the schema and PATCH validation before the page lane builds on it.
-- An option the design drops is removed from the page, and its value stays at its default.
+**Frame.** One card: a top bar, then two columns: the brief aside (350 px, right border) and the stage (the darker ground, padded 16 / 22 / 22).
 
-**Ownership.** The page lane owns visual fidelity and works from the pulled screen files. `ui-ux-review` judges it against the artifact.
+**Top bar**, left to right:
+- a back link to the event, using the event page's own header label (client name plus `getEventTypeLabel`, never a stored title);
+- a muted crumb: event date and guest count;
+- the title "Bar menu";
+- right-aligned:
+  - the status chip (`StatusChip`): Not started, Generating, Draft, Approved, or Edited since approval;
+  - the save indicator, a quiet chip reading Saving..., Saved, or Save failed (warn);
+  - the Approve button: **Approve**, **Approve again** after edits, or a disabled **Approved**. It is disabled while empty, generating, saving, too long or approving, and reads "Approving..." while it posts.
+
+  Approve opens an anchored popover: "**Replace the event's print file?** The version approved <date> / The hand-made file uploaded <date> will be replaced with this menu, rendered at 2400 x 3000.", with Cancel and **Approve and replace**. With nothing posted it approves directly.
+
+**Brief aside**, top to bottom. Each block has an uppercase muted 12 px label with an optional lowercase note on the right.
+1. **Client brief** (*from the planner*): a read-only tinted box with Theme and colors (plus `palette` swatches as 18 px dots), Drink naming notes, and Design notes.
+2. **Planner image**:
+   - a 76 px thumbnail plus "What is it?" as a three-way segmented control: Logo on top / Style reference / Ignore;
+   - under Logo: **Placement** (Above the title / Replaces the title) and **Backing** (None / Badge), each a segmented control.
+3. **Reference image** (*optional, one total*), in one of three states:
+   - an uploaded file row with Remove, and the note "Your upload is the style reference. The client's image went back to Ignore.";
+   - the note "Using the client's planner image as the style reference." with **Upload from computer instead**;
+   - a dashed drop zone, "No reference image", with **Upload from computer**.
+
+   Always followed by the note "Steers the style only. It's never printed."
+4. **Art direction**: a two-row textarea.
+5. **Dr. Bartender mark**: a switch row.
+6. **Generate block**:
+   - empty: a full-width primary **Generate** with the note "Words show up in seconds. Art follows, about 2 minutes in all.";
+   - generating: a disabled "Generating...";
+   - otherwise: a full-width **Start over**, whose inline danger confirm reads "**Start over?** This replaces all art and discards your text edits." with **Start over** and Cancel.
+7. **On the menu** (*N drinks, M of 8 illustrated*): a bordered list. Each row has:
+   - a small outline glass glyph;
+   - the display name, over "Signature" or "Mocktail";
+   - pills: From the plan (empty state), Hidden, Failed, Painting, Queued, AI-written description, AI-suggested name;
+   - a quiet Hide or Show button.
+
+   Hidden rows are muted and struck through. A row just added by Update draft is tinted with the accent.
+
+**Stage**, top to bottom:
+1. **Banner stack** (8 px gap). A banner is a rounded row with a tone dot, the text, and right-side actions. Tones: warn, ok, bad, neutral (surface). The design's four:
+   - **plan changed**, warn: "The plan changed since this draft: **added X**, **dropped Y**.", with primary **Update draft** and **Dismiss**;
+   - **approved**, ok: "**This is the event's print file.** Approved <date>, 2400 x 3000 JPEG, staff can download it from the event page.", with **Download print file**. The design's "PNG" becomes JPEG (section 8);
+   - **edited since approval**, warn: "**Edited since approval.** Approve again to update the print file. Staff still see the <date> version.";
+   - **piece failed**, bad: "<Drink>'s art didn't come through. Re-roll that slot; the rest of the draft is fine."
+2. **Tools bar**: a bordered strip that is disabled (faded, inert) until the words land. It holds:
+   - **Font pairing**, a select reading "<Name> · <Theme>", with an "AI pick" tag while it is still the words step's choice;
+   - a divider, then **Ink** and **Accent** color inputs;
+   - a divider, then **Text backing**, a segmented Off / Soft / Panel;
+   - a divider, then **Re-roll background**.
+3. **Preview column**, 520 px wide and centered: the 4:5 frame showing the 800 x 1000 canvas scaled to fit, then the meta row:
+   - generating: a 4 px progress bar, then "Words are in. Painting the background..." or "Painting <drink> · n of m drinks done", with "about N min left" on the right;
+   - otherwise: "8 x 10 in · prints at 2400 x 3000 px", with "Click any text to edit" on the right.
+
+**Empty preview.** A dashed 4:5 card holding a ghost skeleton of the layout, "Nothing generated yet", the line "Check the brief and decide what the client's image is, then press Generate. The words appear first, then the background, then each drink.", and **Generate**.
+
+**On-canvas editing (never printed):**
+- **Text:** editable text shows a 2 px accent outline on hover and focus; AI-written or AI-suggested text has a dotted accent underline until edited; Enter commits the edit.
+- **Drinks:**
+  - hovering a drink slot shows dark pill buttons **Re-roll art** and **Hide** above the art;
+  - a slot that is painting shows a dashed box "Painting..." with a moving sheen, and a waiting one shows "Queued";
+  - a failed slot is red-tinted: "Art didn't come through", with **Re-roll**.
+- **Background:** while the background is painting, the canvas shows a flat ground with "Painting the background..." and the sheen.
+- **Reduced motion:** with `prefers-reduced-motion`, both sheens stop.
+
+**States the design did not draw** are built from the same parts:
+
+| State | Treatment |
+|---|---|
+| Loading | Skeleton of the two columns |
+| Couldn't load | Bad banner with Retry |
+| Not set up | Empty preview card, title "Menu art is not set up", no Generate |
+| No drinks, or no plan | Empty card stating the reason, Generate disabled. A no-plan event with a draft shows it read-only under a neutral banner, "No drink plan on this event" |
+| Words failed | Bad banner with the reason and **Retry**. Every slot reads "Not attempted" (failed style, no re-roll) |
+| Daily cap reached | Warn banner, "60 images today, resets in X". Generate and every re-roll disabled |
+| Brief edited | Neutral banner, "The client edited their menu notes since this draft." |
+| Save conflict | Warn banner, "This draft changed elsewhere and was reloaded." |
+| Text too long | Bad banner, "Some text is too long to fit. Shorten the flagged text." The flagged element gets a danger outline; Approve disabled |
+| Approve rejected | Bad banner with the server's reason |
+| Replaced by a manual upload | Neutral banner, "The event's print file was replaced by an upload on <date>." |
+| Print file removed | Neutral banner, "The print file was removed from the event." |
+| Marked no menu needed | Neutral banner, "This event is marked No menu needed." |
+| Plan changed after approval | The approved and plan-changed banners together |
+
+### 11.2 Part 2: the printed menu (800 x 1000 canvas, 100 px = 1 in; not the OS skin)
+
+**Layers, back to front:**
+1. the background image, full bleed;
+2. the text backing;
+3. the page: logo, title, ornament, drink groups, More from the bar, Also at the bar;
+4. the mark.
+
+**Page box.**
+- Padding 58 top, 66 sides, 86 bottom.
+- A centered flex column with a 20 px gap.
+- Text centered.
+- The safe area is 40 px inside the trim for text, logo and mark; the background runs to the edge.
+
+**Head.**
+- **Logo:** 96 px tall above the title, or 150 px tall when replacing it. With **Badge**, it sits on `#fbf8f2` with a 20 px radius, 10/14 padding and a soft shadow, for white-box logos and dark art.
+- **Title:** in the pairing's title face, at its size, weight, case and tracking, in the accent color.
+- **Ornament:** a 230 x 14 rule with a center diamond and two dots, in the accent color.
+
+**Drink groups.**
+- **Group heading:** in the heading face, 15 px, 0.22em tracking, uppercase, accent color, with 46 px hairlines either side. Signatures and mocktails are separate groups; mocktails start a new row under their own heading and count toward the 8 illustrated.
+- **Rows:** split per group by count. 1, 2 and 3 are one row; 4 is 2 + 2; 5 is 3 + 2; 6 is 3 + 3; 7 is 4 + 3; 8 is 4 + 4. Rows are centered, with gaps of 16 vertical and 26 horizontal.
+- **Slot width** by row length: 1 → 360, 2 → 250, 3 → 200, 4 → 152 px.
+- **Slot contents:** the art box (height `--il`, width 0.72 x `--il`), then the name (heading face at its size and weight, ink), then the description (body face at its size and weight, ink, line-height 1.32). Gap 6.
+- **Art height:** starts by the total row count across both groups: 1 → 280, 2 → 210, 3 → 165, 4 or more → 130. While the page is taller than 1000 px it shrinks in 6 px steps, never below 65 px. Text never shrinks for art.
+
+**More from the bar** (visible drinks without art, at most 4): a group heading, then a two-column grid 620 px wide with gaps of 10 and 40. Names are at 0.82 x the heading size and descriptions at 0.93 x the body size.
+
+**Also at the bar:**
+- A footer pinned to the bottom of the page box (`margin-top: auto`), max width 560.
+- Its group heading, then one line per entry: the label (heading face, accent, uppercase, 0.08em, 0.78em) followed by the text (body face).
+- Leaving it out returns its space to the art.
+
+**Mark.**
+- Absolute, 44 from the right and 40 from the bottom.
+- The 11 x 14 glyph (the design's `MARKGLYPH` path), then "Dr. Bartender" in IBM Plex Sans 600, 10.5 px, uppercase, 0.24em.
+- Color `rgba(255,255,255,.8)` on dark tone, `rgba(25,22,32,.72)` on light.
+
+**Text backing** (color from the background piece's `ground_rgb`):
+- **Off:** nothing.
+- **Soft** (default): an elliptical feather, 60% x 56% at the center, at 0.8 alpha, 0.58 at 58%, and 0 at 86%.
+- **Panel:** inset 50 / 54 px, filled at 0.86 alpha, with a 7 px inner ring of the same fill and a 1 px accent hairline inside it.
+
+**Type floors and overflow.** Names never go below 20 px and descriptions never below 14 px. If the page still overflows with the art at 65 px:
+1. heading and body sizes step down once, by 10%, never below the floors;
+2. if it still overflows, the overflowing elements are flagged "Too long" (section 11.1), and Approve stays disabled until the text is shortened.
+
+**Colors.** Ink and accent default to the pairing's light-art or dark-art set by the background piece's `tone`. While the background is pending, the light set applies. `ink_color` and `accent_color` override when set.
+
+**Table P: pairings** (sizes in canvas px; a design key in brackets where it differs from the fixed id):
+
+| id | Name · theme | Title | Heading (names) | Body | Light art ink / accent | Dark art ink / accent |
+|---|---|---|---|---|---|---|
+| `elegant-script` [script] | Garden Script · Elegant script | Pinyon Script 400, 88 | Cormorant Garamond 700, 25 | Cormorant Garamond 500, 17.5 | `#2c2238` / `#8a6a2f` | `#f5eedf` / `#dcbc6e` |
+| `rustic` | Barn & Ledger · Rustic | Rye 400, 60, 0.02em | Alegreya SC 700, 22, 0.02em | Alegreya 400, 16 | `#33251a` / `#8e3b1c` | `#f2e7d3` / `#e5a45a` |
+| `modern-clean` [modern] | Gallery · Clean modern | Josefin Sans 300, 54, uppercase, 0.32em | Josefin Sans 600, 18, 0.1em | Karla 400, 15 | `#1d232b` / `#3d5c8c` | `#eef2f6` / `#a7c4f2` |
+| `retro` [disco] | Mirror Ball · Retro / disco | Shrikhand 400, 68 | Righteous 400, 21, 0.01em | Work Sans 400, 15 | `#2a1838` / `#c8336f` | `#fcf0f7` / `#ffb0d0` |
+| `spooky` | Hollow · Spooky | Creepster 400, 84, 0.03em | IM Fell English SC 400, 23, 0.02em | IM Fell English 400, 16 | `#1f1a15` / `#8d2f10` | `#f0e7d7` / `#f2902e` |
+| `tropical` | Tiki Hour · Tropical | Pacifico 400, 64 | Fredoka 600, 22 | Nunito Sans 400, 15 | `#173a38` / `#cf4f37` | `#f2fbf6` / `#ffb27a` |
+
+### 11.3 Export parity (the preview must match the printed file)
+
+- **Render a hidden instance.** The export renders a hidden, unscaled 800 x 1000 `MenuCanvas` instance without the editor affordances (the `MenuPNG.jsx` precedent), never the scaled live preview.
+- **No CSS features `html2canvas` can't draw.** It does not draw `backdrop-filter`, so the Panel backing has no blur in the preview or the export; the 0.86 fill carries it alone.
+- **The Soft backing is an image layer.** It is drawn to an offscreen canvas and placed as an image, so the export reproduces it exactly instead of depending on `html2canvas` radial-gradient support.
+- **Vector parts are images or plain shapes.** The ornament and the mark glyph are inline SVG with a fixed size and a stroke color set directly, not a CSS variable.
+
+### 11.4 Token rule and components
+
+**Part 1 maps the design's stand-in tokens to the admin skin's `index.css` tokens:**
+
+| Design token | `index.css` token |
+|---|---|
+| `--ground` | `--bg-0` |
+| `--surface` | `--bg-1` |
+| `--surface-2` | `--bg-2` |
+| `--stage` | `--bg-3` |
+| `--ink` | `--ink-1` |
+| `--muted` | `--ink-3` |
+| `--line` | `--line-1` |
+| `--accent`, `--accent-soft`, `--accent-ink` | the same names |
+| ok, warn and danger, with their soft variants | the hsl status tokens (`--ok-h/-s`, `--warn-h/-s`, `--danger-h/-s`) and the `StatusChip` kinds |
+| `--shadow` | `--shadow-card` (the popover takes `--shadow-pop`) |
+| `--f-ui` | `--font-ui` |
+| `--f-display` | `--font-display` |
+| `--f-mono` | `--font-numeric` |
+
+Both skins (light and dark) come from those tokens.
+
+**Part 2 uses no OS tokens.** Its colors come from table P, `ink_color` / `accent_color`, and the background's `tone` and `ground_rgb`.
+
+**Components:**
+- reuse `StatusChip` and the adminos `Icon`;
+- design `.btn.primary`, `.btn`, `.btn.quiet` and `.btn.danger` map to the existing `btn btn-primary`, `btn-secondary`, `btn-ghost` and `btn-danger`;
+- new page CSS goes in `index.css` under an `md-` prefix (segmented control, banner, tools bar, brief blocks, drink list, preview frame);
+- the print canvas uses an `mc-` prefix and is styled only through the variables in table P.
+
+### 11.5 Ownership
+
+The page lane owns visual fidelity and works from the snapshot (layout, numbers, copy). `ui-ux-review` judges it against the artifact: usability-clean but off-design is a finding.
 
 ## 12. Failure modes
 
@@ -354,6 +542,8 @@ The quality bar for Part 2 is `client/public/menu-samples/39.webp` and `40.webp`
 | Planner image removed after generation, or R2 404 on a layer | That layer shows missing; Approve fails naming it; the logo role reads "planner image removed" |
 | R2 unavailable | `ExternalServiceError`; the piece or Approve fails; nothing half-written in the database |
 | Browser export fails | Approve shows the error; client Sentry; nothing posted |
+| Text overflows the page after the art reaches 65 px and the one type step | Elements flagged "Too long"; Approve disabled until shortened (section 11.2) |
+| Background tone cannot be read (`sharp` error) | `tone` stays null and the light set applies; the piece is still `done` |
 | Draft changed between export and approve | 409 `MENU_DRAFT_CHANGED`: "The draft changed. Approve again." |
 | Autosave conflict | Draft reloaded, unsaved local edits dropped, the page says so |
 | Proposal deleted | Draft and pieces cascade; ledger rows keep a null `proposal_id` |
@@ -391,7 +581,7 @@ Same-change docs:
   - `menuAlsoAtBar.js`, including "None", "Other" and the consult beer boolean;
   - the staleness diff;
   - the stuck rule;
-  - `layouts.js` geometry for 1 to 8 drinks;
+  - `layouts.js` row splits and slot widths for 1 to 8 illustrated drinks, the More from the bar list, and the art-height start values (section 11);
   - validation for every row of section 7.1;
   - `matchCustomNames`'s additive `row`, with existing shopping-list suites unchanged.
 - **Routes** (`server/routes/proposals/menuDrafts.test.js`, shared dev DB, one suite at a time from the repo root):
@@ -399,8 +589,8 @@ Same-change docs:
   - Generate creates the draft and pieces, refuses with no drinks, no plan, and at cap, and the reservation holds under two concurrent Generates;
   - a second Generate supersedes the first, which writes nothing and makes no further call;
   - the words failure sweep fails every piece;
-  - PATCH: version conflict; key-set change refused; more than 8 `has_art` refused; it never touches pieces, `art_version` or the words status;
-  - add-drink: version conflict;
+  - PATCH: version conflict; key-set change refused; more than 8 `has_art`, more than 12 visible, or more than 4 visible without art refused; `palette` refused; it never touches pieces, `art_version` or the words status;
+  - Update draft: version conflict; adds added drinks with the art default; removes dropped drinks and their pieces; resets the fingerprint; Dismiss persists until the plan changes again;
   - re-roll: refused while working, allowed when stuck;
   - the pieceKey pattern and every key-prefix guard;
   - Approve rejects non-JPEG, wrong dimensions, a stale `version`, a stale `art_version` and a not-done piece. On success it sets `menu_print_key` inside the transaction, clears `menu_not_required`, stamps the posted versions, writes the activity row, and fires duty reaccrual only after commit;
@@ -408,7 +598,9 @@ Same-change docs:
   - removal and "no menu needed" read correctly.
 - **Admin download:** `GET /api/proposals/:id/menu-print` returns 404 with no file, enforces the prefix guard and auth.
 - **Existing suites the change reaches stay green:** `server/routes/proposals/menuPrint.test.js`, `server/routes/eventDetails.test.js`, `server/routes/beo.test.js`, `server/utils/dutyLines.test.js`, and the shopping-list suites that cover `matchCustomNames` / `loadRecipeCandidates`.
-- **Visual:** `ui-ux-review` against the artifact.
+- **Client:** `layouts.js` (row splits, slot widths, art-height start, More from the bar cap) and the color resolver (pairing set by tone, overrides) as pure tests; `exportMenu.js` waits on the font link and every layer, and fails naming a missing layer.
+- **Server tone:** the background tone and `ground_rgb` from `sharp` on a known dark and a known light fixture image.
+- **Visual:** `ui-ux-review` against the artifact snapshot, both skins, and the boards' cases (1 drink with logo above and badge; 3 drinks; the 5-drink garden sample; 4 drinks with nothing else; 6 drinks with the long name and the logo replacing the title; the 12-drink maximum).
 - **Live smoke on dev:** one full generation against OpenAI. Then approve onto a dev proposal, download it as staff, and read the actual cost on OpenAI's usage page.
 - **Rollout check:** Dallas generates for one or two real upcoming custom events and compares them with hand-made quality before approving one for print.
 

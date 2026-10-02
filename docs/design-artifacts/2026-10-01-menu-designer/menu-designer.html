@@ -1,0 +1,749 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Dr. Bartender Menu Designer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pinyon+Script&family=Cormorant+Garamond:wght@500;600;700&family=Rye&family=Alegreya+SC:wght@700&family=Alegreya:wght@400;500&family=Josefin+Sans:wght@300;600&family=Karla:wght@400;500&family=Shrikhand&family=Righteous&family=Work+Sans:wght@400;500&family=Creepster&family=IM+Fell+English+SC&family=IM+Fell+English&family=Pacifico&family=Fredoka:wght@500;600&family=Nunito+Sans:wght@400;600&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#eceff3; --surface:#ffffff; --surface-2:#f5f7f9; --ink:#17202b; --muted:#5b6676; --line:#d5dbe3;
+  --accent:#0f6b66; --accent-ink:#ffffff; --accent-soft:#dbefed;
+  --warn:#8a5300; --warn-soft:#fcefd6; --danger:#ad2f1c; --danger-soft:#fbe3de; --ok:#1f6b45; --ok-soft:#dbf0e3;
+  --stage:#dde2e8; --shadow:0 1px 2px rgba(16,24,40,.06),0 10px 28px rgba(16,24,40,.09);
+  --f-display:'Bricolage Grotesque',system-ui,sans-serif; --f-ui:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif; --f-mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#11151b; --surface:#1a2029; --surface-2:#212833; --ink:#e7eaef; --muted:#9ba5b3; --line:#2e3744;
+    --accent:#4fb8ae; --accent-ink:#0b1513; --accent-soft:#183a38;
+    --warn:#f0b65a; --warn-soft:#3a2c14; --danger:#f08a76; --danger-soft:#3d1d17; --ok:#6fcf98; --ok-soft:#173326;
+    --stage:#0c0f14; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#11151b; --surface:#1a2029; --surface-2:#212833; --ink:#e7eaef; --muted:#9ba5b3; --line:#2e3744;
+  --accent:#4fb8ae; --accent-ink:#0b1513; --accent-soft:#183a38;
+  --warn:#f0b65a; --warn-soft:#3a2c14; --danger:#f08a76; --danger-soft:#3d1d17; --ok:#6fcf98; --ok-soft:#173326;
+  --stage:#0c0f14; --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font:15px/1.55 var(--f-ui)}
+.wrap{max-width:1340px;margin:0 auto;padding:40px 24px 96px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* page header */
+.top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;margin-bottom:28px}
+.eyebrow{font:500 12px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.top h1{font-size:clamp(30px,4vw,44px);font-weight:700;letter-spacing:-.01em;line-height:1.05}
+.top p{max-width:66ch;color:var(--muted);margin:12px 0 0}
+.toc{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px}
+.toc a{text-decoration:none;color:var(--muted);border-bottom:1px solid var(--line)}
+.toc a:hover{color:var(--accent);border-color:var(--accent)}
+section.part{margin-top:56px}
+.part-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:6px}
+.part-h h2{font-size:26px;font-weight:700}
+.tag{font:500 11.5px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:4px 7px}
+.lede{color:var(--muted);max-width:72ch;margin:0 0 20px}
+
+/* state strip (mockup annotation, not product UI) */
+.strip{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:14px;font:500 12.5px var(--f-mono)}
+.strip span{color:var(--muted);margin-right:4px}
+.strip button{font:inherit;border:1px dashed var(--line);background:transparent;color:var(--muted);border-radius:4px;padding:5px 9px;cursor:pointer}
+.strip button[aria-pressed="true"]{border-style:solid;border-color:var(--ink);color:var(--ink);background:var(--surface)}
+
+/* ---------- OS stand-in skin ---------- */
+.os-scroll{overflow-x:auto;border-radius:10px;box-shadow:var(--shadow)}
+.os{min-width:1180px;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.os-bar{display:flex;align-items:center;gap:16px;padding:12px 18px;border-bottom:1px solid var(--line);position:relative}
+.os-back{font-weight:500;text-decoration:none;color:var(--ink);font-size:14px}
+.os-back:hover{color:var(--accent)}
+.os-crumb{color:var(--muted);font-size:13.5px}
+.os-title{font:600 15px var(--f-ui)}
+.os-bar-r{margin-left:auto;display:flex;align-items:center;gap:10px}
+.chip{font:600 12px/1 var(--f-ui);padding:5px 9px;border-radius:999px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.acc{background:var(--accent-soft);color:var(--accent)}
+.btn{font:500 13px/1.2 var(--f-ui);padding:8px 13px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover:not(:disabled){filter:brightness(1.08)}
+.btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn.quiet{border-color:transparent;background:transparent;color:var(--muted);padding-inline:8px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.block{width:100%;padding:10px 14px;font-size:14px}
+.pop{position:absolute;right:18px;top:calc(100% + 6px);z-index:5;width:340px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:14px 16px;font-size:13.5px}
+.pop p{margin:0 0 12px}
+.pop .row{display:flex;gap:8px;justify-content:flex-end}
+
+.os-main{display:grid;grid-template-columns:350px minmax(0,1fr)}
+.brief{border-right:1px solid var(--line);padding:18px 18px 24px;display:flex;flex-direction:column;gap:18px;background:var(--surface)}
+.bp{display:flex;flex-direction:column;gap:8px}
+.bp-h{font:600 12px/1 var(--f-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.bp-h em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:400}
+.ro{background:var(--surface-2);border-radius:8px;padding:12px 13px;display:flex;flex-direction:column;gap:10px;font-size:13.5px}
+.ro dt{font-weight:600;font-size:12px;color:var(--muted)}
+.ro dd{margin:2px 0 0}
+.sw{display:flex;gap:5px;margin-top:6px}
+.sw i{width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.img-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:12px;align-items:start}
+.thumb{width:76px;height:76px;border-radius:6px;border:1px solid var(--line);background:#fbf8f3;display:grid;place-items:center}
+.thumb svg{width:62px;height:62px}
+.ctl{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--muted)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;border-right:1px solid var(--line);background:transparent;padding:6px 10px;font:500 12.5px var(--f-ui);color:var(--muted);cursor:pointer;white-space:nowrap}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+.note{font-size:12.5px;color:var(--muted);margin:0}
+.note.acc{color:var(--accent)}
+.file{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--line);border-radius:6px;padding:7px 10px;font:500 13px var(--f-mono)}
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:12px;text-align:center;font-size:13px;color:var(--muted)}
+textarea{width:100%;font:14px/1.45 var(--f-ui);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:9px 10px;resize:vertical;min-height:62px}
+.switch{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:14px}
+.switch input{appearance:none;width:36px;height:20px;border-radius:999px;background:var(--line);position:relative;cursor:pointer;transition:background .15s}
+.switch input::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.switch input:checked{background:var(--accent)}
+.switch input:checked::after{transform:translateX(16px)}
+.confirm{border:1px solid var(--danger);background:var(--danger-soft);border-radius:8px;padding:12px;font-size:13.5px;display:flex;flex-direction:column;gap:10px}
+.confirm .row{display:flex;gap:8px}
+.dl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.dl li{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13.5px}
+.dl li:last-child{border-bottom:0}
+.dl li.off{color:var(--muted)}
+.dl li.off .nm{text-decoration:line-through}
+.dl .gl{width:24px;height:30px;color:var(--muted)}
+.dl .nm{display:flex;flex-direction:column;line-height:1.3;min-width:0}
+.dl .nm small{color:var(--muted);font-size:11.5px}
+.dl .new{background:var(--accent-soft)}
+.mini{font:600 10.5px/1 var(--f-ui);padding:3px 6px;border-radius:4px;background:var(--surface-2);color:var(--muted);letter-spacing:.02em}
+.mini.ai{background:var(--accent-soft);color:var(--accent)}
+.mini.bad{background:var(--danger-soft);color:var(--danger)}
+.mini.run{background:var(--warn-soft);color:var(--warn)}
+
+.stage{background:var(--stage);padding:16px 22px 22px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.banner{display:flex;align-items:center;gap:12px;padding:10px 12px 10px 14px;border-radius:8px;font-size:13.5px;background:var(--surface);border:1px solid var(--line)}
+.banner b{font-weight:600}
+.banner .sp{margin-left:auto;display:flex;gap:6px}
+.banner.warn{background:var(--warn-soft);border-color:transparent;color:var(--ink)}
+.banner.ok{background:var(--ok-soft);border-color:transparent}
+.banner.bad{background:var(--danger-soft);border-color:transparent}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}
+.banner.warn .dot{background:var(--warn)} .banner.ok .dot{background:var(--ok)} .banner.bad .dot{background:var(--danger)}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--muted)}
+.tools[aria-disabled="true"]{opacity:.5;pointer-events:none}
+.tools label{display:flex;align-items:center;gap:7px}
+.tools select{font:500 13px var(--f-ui);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+.tools input[type=color]{width:30px;height:26px;border:1px solid var(--line);border-radius:5px;padding:2px;background:var(--surface);cursor:pointer}
+.tools .sep{width:1px;height:22px;background:var(--line)}
+.aipick{font:600 10.5px/1 var(--f-ui);color:var(--accent);background:var(--accent-soft);padding:3px 6px;border-radius:4px}
+.pv-wrap{display:flex;justify-content:center;padding-top:4px}
+.pv-col{width:520px;display:flex;flex-direction:column;gap:8px}
+.pv-meta{display:flex;justify-content:space-between;gap:12px;font:500 12px var(--f-mono);color:var(--muted)}
+.prog{height:4px;border-radius:2px;background:rgba(127,127,127,.25);overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent);transition:width .4s}
+
+/* ---------- menu canvas ---------- */
+.mf{position:relative;width:100%;aspect-ratio:4/5;overflow:hidden;background:#d9d6d2;box-shadow:0 1px 2px rgba(0,0,0,.12),0 12px 30px rgba(0,0,0,.18)}
+.menu{position:absolute;left:0;top:0;width:800px;height:1000px;transform-origin:0 0;overflow:hidden;color:var(--mi);-webkit-font-smoothing:antialiased}
+.menu .bg,.menu .bk{position:absolute;inset:0}
+.menu .bg svg{position:absolute;inset:0;width:800px;height:1000px}
+.menu .page{position:relative;min-height:1000px;padding:58px 66px 86px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center}
+.m-head{display:flex;flex-direction:column;align-items:center;gap:4px}
+.m-logo{display:grid;place-items:center}
+.m-logo svg{display:block;height:96px;width:auto}
+.m-logo.rep svg{height:150px}
+.m-logo.badge{background:#fbf8f2;border-radius:20px;padding:10px 14px;box-shadow:0 3px 14px rgba(0,0,0,.28)}
+.m-title{font-family:var(--tf);font-size:var(--ts);font-weight:var(--tw);text-transform:var(--tt);letter-spacing:var(--tk);color:var(--ma);line-height:1.2;margin:0;padding:0 .1em}
+.m-orn{width:230px;height:14px;color:var(--ma)}
+.m-group{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%}
+.m-gh{font-family:var(--hf);font-weight:var(--hw);font-size:15px;line-height:1.2;letter-spacing:.22em;text-transform:uppercase;color:var(--ma);display:flex;align-items:center;gap:14px;margin:0}
+.m-gh::before,.m-gh::after{content:"";width:46px;height:1px;background:currentColor;opacity:.7}
+.m-row{display:flex;justify-content:center;gap:16px 26px;width:100%}
+.m-slot{flex:0 0 var(--sw);display:flex;flex-direction:column;align-items:center;gap:6px;position:relative}
+.m-art{height:var(--il);width:calc(var(--il) * .72);color:var(--ma);position:relative}
+.m-art svg{width:100%;height:100%;overflow:visible;display:block}
+.m-name{font-family:var(--hf);font-weight:var(--hw);font-size:var(--hs);line-height:1.12;letter-spacing:var(--hk);color:var(--mi);text-wrap:balance;margin:0}
+.m-desc{font-family:var(--bf);font-weight:var(--bw);font-size:var(--bs);line-height:1.32;color:var(--mi);text-wrap:balance;margin:0}
+.m-more{display:grid;grid-template-columns:1fr 1fr;gap:10px 40px;width:620px}
+.m-more div{display:flex;flex-direction:column;gap:2px}
+.m-more .m-name{font-size:calc(var(--hs) * .82)}
+.m-more .m-desc{font-size:calc(var(--bs) * .93)}
+.m-also{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px;max-width:560px}
+.m-also p{margin:0;font-family:var(--bf);font-weight:var(--bw);font-size:var(--bs);line-height:1.35}
+.m-also .lab{font-family:var(--hf);font-weight:var(--hw);color:var(--ma);letter-spacing:.08em;text-transform:uppercase;font-size:.78em;margin-right:.55em}
+.m-mark{position:absolute;right:44px;bottom:40px;display:flex;align-items:center;gap:7px;font:600 10.5px/1 'IBM Plex Sans',sans-serif;letter-spacing:.24em;text-transform:uppercase}
+.m-mark svg{width:11px;height:14px}
+/* in-canvas editor affordances (never print) */
+.menu.ed [data-k]{border-radius:4px;outline:2px solid transparent;outline-offset:4px;cursor:text;transition:outline-color .12s}
+.menu.ed [data-k]:hover{outline-color:rgba(43,179,168,.85)}
+.menu.ed [data-k]:focus{outline-color:#2bb3a8;outline-style:solid}
+.menu.ed .ai{text-decoration:underline dotted 2px rgba(43,179,168,.95);text-underline-offset:5px}
+.s-tools{position:absolute;top:-6px;left:50%;transform:translateX(-50%);display:flex;gap:6px;opacity:0;transition:opacity .12s;z-index:2}
+.m-slot:hover .s-tools,.m-slot:focus-within .s-tools{opacity:1}
+.cbtn{font:600 17px/1 'IBM Plex Sans',sans-serif;padding:8px 12px;border-radius:7px;border:0;background:rgba(18,22,30,.86);color:#fff;cursor:pointer;white-space:nowrap}
+.cbtn:hover{background:#0f6b66}
+.slot-st{position:absolute;inset:0;border:2.5px dashed rgba(90,90,100,.55);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;font:600 17px/1.2 'IBM Plex Sans',sans-serif;color:rgba(40,40,50,.75);background:rgba(255,255,255,.35);padding:8px}
+.dark .slot-st{border-color:rgba(255,255,255,.4);color:rgba(255,255,255,.8);background:rgba(255,255,255,.06)}
+.slot-st.run{overflow:hidden}
+.slot-st.run::before{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);background-size:220% 100%;animation:sh 1.3s linear infinite}
+.slot-st.bad{border-color:rgba(190,50,30,.85);background:rgba(255,236,232,.88);color:#8c2414}
+.bg-pending{background:#e9e6ea}
+.bg-pending span{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:600 20px 'IBM Plex Sans',sans-serif;color:rgba(40,40,50,.45);white-space:nowrap}
+.bg-pending::before{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 35%,rgba(255,255,255,.6) 50%,transparent 65%);background-size:240% 100%;animation:sh 1.6s linear infinite}
+@keyframes sh{from{background-position:120% 0}to{background-position:-120% 0}}
+@media (prefers-reduced-motion: reduce){.slot-st.run::before,.bg-pending::before{animation:none}.prog i{transition:none}}
+.pv-empty{position:relative;width:100%;aspect-ratio:4/5;border:2px dashed var(--line);background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:36px;text-align:center}
+.ghost{width:62%;display:flex;flex-direction:column;align-items:center;gap:10px;opacity:.55}
+.ghost b{display:block;height:12px;border-radius:3px;background:var(--line)}
+.ghost .gr{display:flex;gap:10px;justify-content:center;width:100%}
+.ghost .gr i{width:22%;aspect-ratio:.72;border:1.5px dashed var(--muted);border-radius:6px}
+.pv-empty h3{font-size:19px}
+.pv-empty p{margin:0;color:var(--muted);max-width:40ch;font-size:14px}
+
+/* ---------- rules / boards ---------- */
+.rules{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:14px}
+@media (max-width:1000px){.rules{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:520px){.rules{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.wf-card{margin:0;display:flex;flex-direction:column;gap:8px}
+.wf{aspect-ratio:4/5;background:var(--surface);border:1px solid var(--line);padding:9% 9% 11%;display:flex;flex-direction:column;align-items:center;gap:5%}
+.wf-t{width:52%;height:6%;border-radius:2px;background:var(--accent);opacity:.75}
+.wf-gh{width:34%;height:2%;background:var(--muted);opacity:.5}
+.wf-row{flex:1;display:flex;gap:5%;justify-content:center;width:100%;min-height:0}
+.wf-row i{width:var(--w);border:1.5px dashed var(--muted);border-radius:3px;display:block}
+.wf-also{width:70%;display:flex;flex-direction:column;gap:4px;align-items:center}
+.wf-also b{display:block;height:3px;width:100%;background:var(--line)}
+.wf-also b:first-child{width:40%;background:var(--muted);opacity:.5}
+.wf-card figcaption{font-size:13px;display:flex;justify-content:space-between;gap:6px}
+.wf-card figcaption span{font:500 12px var(--f-mono);color:var(--muted)}
+.rulelist{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px 28px;margin:22px 0 0;padding:0;list-style:none}
+.rulelist li{border-top:1px solid var(--line);padding-top:10px;font-size:14px}
+.rulelist b{display:block;font-weight:600;margin-bottom:2px}
+.rulelist span{color:var(--muted)}
+.boards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:30px 26px}
+@media (max-width:980px){.boards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.boards{grid-template-columns:minmax(0,1fr)}}
+.board{margin:0;display:flex;flex-direction:column;gap:12px}
+.board figcaption{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;font-size:13.5px}
+.board .lt{grid-row:span 2;font:700 26px/1 var(--f-display);color:var(--accent)}
+.board .cap{font-weight:600}
+.board .sub{color:var(--muted);font-size:12.5px}
+.legi-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:18px}
+.legi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
+@media (max-width:980px){.legi{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.legi figure{margin:0;display:flex;flex-direction:column;gap:8px}
+.legi figcaption{font-size:13px}
+.legi figcaption b{display:block}
+.legi figcaption span{color:var(--muted)}
+.limits{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:22px}
+.limits div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;font-size:14px}
+.limits b{display:block;font-family:var(--f-display);font-size:16px;margin-bottom:4px}
+.limits p{margin:0;color:var(--muted)}
+.pairs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+@media (max-width:980px){.pairs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.pairs{grid-template-columns:minmax(0,1fr)}}
+.pair{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.pair-sp{display:grid;grid-template-columns:1fr 1fr}
+.pair-sp div{padding:16px 14px 14px;text-align:center;display:flex;flex-direction:column;gap:4px;min-height:150px;justify-content:center}
+.pair-sp .t{line-height:1.15}
+.pair-sp .n{line-height:1.15}
+.pair-sp .d{line-height:1.3}
+.pair-meta{padding:12px 16px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px;font-size:13px}
+.pair-meta .hd{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.pair-meta .hd b{font-family:var(--f-display);font-size:16px}
+.pair-meta .hd span{font:500 11.5px var(--f-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.pair-meta dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;margin:0}
+.pair-meta dt{color:var(--muted)}
+.pair-meta dd{margin:0;font-family:var(--f-mono);font-size:12px}
+.footnote{margin-top:48px;color:var(--muted);font-size:13px;max-width:80ch}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Design mockup · brief v2 · Oct 1, 2026</div>
+      <h1>Menu Designer</h1>
+      <p>The admin page that turns a client's drink plan into a framed 8×10 bar menu, and the layout system that menu sits on. The admin chrome is a stand-in for the OS skin, so swap in its real tokens. The art is placeholder line work; the AI paints the real backgrounds and drinks.</p>
+    </div>
+    <nav class="toc" aria-label="Sections">
+      <a href="#designer">Designer page</a><a href="#rules">Layout rules</a><a href="#boards">Boards A–F</a><a href="#legibility">Legibility</a><a href="#pairings">Font pairings</a>
+    </nav>
+  </header>
+
+  <section class="part" id="designer">
+    <div class="part-h"><h2>Part 1 · The designer page</h2><span class="tag">/events/:id/menu · OS skin</span></div>
+    <p class="lede">Brief on the left, live 8×10 preview on the right. Everything works: click text on the menu to edit it, hover a drink for Re-roll art and Hide, change the pairing, colors and text backing. Use the state buttons to jump between the states in the brief, or press Generate from the empty state to watch a draft fill in.</p>
+    <div class="strip" id="strip" role="group" aria-label="Mockup state"></div>
+    <div class="os-scroll"><div class="os" id="os"></div></div>
+  </section>
+
+  <section class="part" id="rules">
+    <div class="part-h"><h2>Part 2 · Layout rules</h2><span class="tag">800 × 1000 canvas · 100 px = 1 in</span></div>
+    <p class="lede">One system, not 64 templates. Rows hold up to four drinks and split top-heavy. Text is laid out first; the art takes whatever height is left.</p>
+    <div class="rules" id="wfs"></div>
+    <ul class="rulelist">
+      <li><b>Rows</b><span>Up to 4 per row. 5 → 3 + 2, 7 → 4 + 3. Short rows center under long ones.</span></li>
+      <li><b>Mocktails</b><span>Start a new row under their own heading, split by the same rule. They count toward the 8 illustrated.</span></li>
+      <li><b>Art size</b><span>Starts large and shrinks in 6 px steps until the page fits. It never goes below 0.65 in (65 px). Text never shrinks for art.</span></li>
+      <li><b>Logo</b><span>Above the title adds about 1 in at the top. Replacing the title takes the title's space at 1.5 in tall.</span></li>
+      <li><b>More from the bar</b><span>Drinks 9–12 sit between the drinks and Also at the bar, in two text columns.</span></li>
+      <li><b>Also at the bar</b><span>Pinned to the bottom, above the mark row. Leaving it out gives its space back to the art.</span></li>
+      <li><b>Safe area</b><span>Text, logo and mark stay 0.4 in (40 px) inside the trim. The background runs to the edge.</span></li>
+      <li><b>Type floors</b><span>Descriptions 10 pt (14 px). Names 14 pt (20 px). Overflow steps down once, then flags "Too long".</span></li>
+    </ul>
+  </section>
+
+  <section class="part" id="boards">
+    <div class="part-h"><h2>Boards A–F</h2><span class="tag">placeholder art</span></div>
+    <p class="lede">Finished boards from the brief. Each one uses a different pairing and backdrop, to show the same skeleton holding up under very different art.</p>
+    <div class="boards" id="boardgrid"></div>
+  </section>
+
+  <section class="part" id="legibility">
+    <div class="part-h"><h2>Legibility over unknown art</h2><span class="tag">board C × 4 backdrops</span></div>
+    <p class="lede">Three defenses stack up. The background prompt asks for a calm center. A text backing sits behind the words. The ink set flips between each pairing's light-art and dark-art colors, based on how bright the art behind the text is.</p>
+    <div class="legi-head"><span class="note">Text backing</span><div class="seg" id="lg-seg" role="group" aria-label="Text backing"></div></div>
+    <div class="legi" id="legi"></div>
+    <div class="limits">
+      <div><b>Off</b><p>Bare text. Only holds when the center really is calm, like the garden here. On the speakeasy, the cobwebs cut into the title. Dallas has to turn it on deliberately.</p></div>
+      <div><b>Soft (default)</b><p>A feathered scrim in the art's own ground color, strongest behind the text column and gone by the edges. The art still reads. Its limit: high-contrast detail in the center still shows through at about 20%.</p></div>
+      <div><b>Panel</b><p>A frosted card with a hairline in the accent color. Always legible, but it hides the most art. Use it when the art comes back busy or when a photo-like style reference was used.</p></div>
+    </div>
+  </section>
+
+  <section class="part" id="pairings">
+    <div class="part-h"><h2>Font pairings</h2><span class="tag">Google Fonts · title / heading / body</span></div>
+    <p class="lede">Six pairings, each with default ink and accent colors for light art and for dark art. The AI pre-picks one by theme, and Dallas can override both colors.</p>
+    <div class="pairs" id="pairs"></div>
+  </section>
+
+  <p class="footnote">Sample content is fictional. Roscoe &amp; Phoebe's garden wedding comes from the brief. The Hollow Halloween Bash is the 12-drink stress test. Monograms and logos are placeholders for what clients upload.</p>
+</div>
+
+<script>
+/* ================= data ================= */
+const PAIRINGS = {
+  script:{name:'Garden Script',theme:'Elegant script',t:["'Pinyon Script', 'Snell Roundhand', cursive",88,400,'none','0'],h:["'Cormorant Garamond', Georgia, serif",25,700,'none','0'],b:["'Cormorant Garamond', Georgia, serif",17.5,500],light:{ink:'#2c2238',accent:'#8a6a2f'},dark:{ink:'#f5eedf',accent:'#dcbc6e'},fam:['Pinyon Script','Cormorant Garamond 700','Cormorant Garamond 500']},
+  rustic:{name:'Barn & Ledger',theme:'Rustic',t:["'Rye', Georgia, serif",60,400,'none','.02em'],h:["'Alegreya SC', Georgia, serif",22,700,'none','.02em'],b:["'Alegreya', Georgia, serif",16,400],light:{ink:'#33251a',accent:'#8e3b1c'},dark:{ink:'#f2e7d3',accent:'#e5a45a'},fam:['Rye','Alegreya SC 700','Alegreya 400']},
+  modern:{name:'Gallery',theme:'Clean modern',t:["'Josefin Sans', 'Helvetica Neue', sans-serif",54,300,'uppercase','.32em'],h:["'Josefin Sans', 'Helvetica Neue', sans-serif",18,600,'uppercase','.1em'],b:["'Karla', 'Helvetica Neue', sans-serif",15,400],light:{ink:'#1d232b',accent:'#3d5c8c'},dark:{ink:'#eef2f6',accent:'#a7c4f2'},fam:['Josefin Sans 300','Josefin Sans 600','Karla 400']},
+  disco:{name:'Mirror Ball',theme:'Retro / disco',t:["'Shrikhand', Georgia, serif",68,400,'none','0'],h:["'Righteous', 'Trebuchet MS', sans-serif",21,400,'none','.01em'],b:["'Work Sans', 'Helvetica Neue', sans-serif",15,400],light:{ink:'#2a1838',accent:'#c8336f'},dark:{ink:'#fcf0f7',accent:'#ffb0d0'},fam:['Shrikhand','Righteous','Work Sans 400']},
+  spooky:{name:'Hollow',theme:'Spooky',t:["'Creepster', Impact, fantasy",84,400,'none','.03em'],h:["'IM Fell English SC', Georgia, serif",23,400,'none','.02em'],b:["'IM Fell English', Georgia, serif",16,400],light:{ink:'#1f1a15',accent:'#8d2f10'},dark:{ink:'#f0e7d7',accent:'#f2902e'},fam:['Creepster','IM Fell English SC','IM Fell English']},
+  tropical:{name:'Tiki Hour',theme:'Tropical',t:["'Pacifico', 'Brush Script MT', cursive",64,400,'none','0'],h:["'Fredoka', 'Trebuchet MS', sans-serif",22,600,'none','0'],b:["'Nunito Sans', 'Helvetica Neue', sans-serif",15,400],light:{ink:'#173a38',accent:'#cf4f37'},dark:{ink:'#f2fbf6',accent:'#ffb27a'},fam:['Pacifico','Fredoka 600','Nunito Sans 400']}
+};
+const BGS = {
+  garden:{dark:false,scrim:'252,248,250',label:'Pastel garden'},
+  navy:{dark:true,scrim:'15,24,48',label:'Navy and gold'},
+  spooky:{dark:true,scrim:'16,12,11',label:'Spooky speakeasy'},
+  tropical:{dark:false,scrim:'253,245,230',label:'Tropical luau'}
+};
+const H = {sig:'Signature Cocktails',mock:'Mocktails',more:'More from the bar',also:'Also at the bar'};
+const GARDEN = {
+  title:'Bar Menu', h:{...H},
+  drinks:[
+    {id:'g1',name:'Roscoe’s Paloma',desc:'Tequila, grapefruit, lime, and soda. Bright and a little tart.',glass:'highball',liq:'#f6b0a6',gar:['grapefruit']},
+    {id:'g2',name:'The Groom’s Old Fashioned',desc:'Bourbon, bitters, orange, and a touch of sugar. Smooth and classic.',glass:'rocks',liq:'#c98a3a',gar:['orangepeel']},
+    {id:'g3',name:'Lavender Lemon Drop',desc:'Vodka, lemon, and lavender syrup. Floral and crisp.',glass:'martini',liq:'#efe2a0',gar:['lavender']},
+    {id:'g4',name:'Phoebe’s Garden Spritz',desc:'Aperol, prosecco, and soda. Light and sunny.',glass:'wine',liq:'#f39a4a',gar:['orange']}
+  ],
+  mocktails:[{id:'g5',name:'Coral Crush',desc:'Strawberry, lime, mint, and sparkling water.',glass:'highball',liq:'#f58a78',gar:['strawberry'],ai:true}],
+  more:[],
+  also:[['Beer and Wine','Pinot Grigio, Cabernet, Prosecco, Miller Lite, Corona.'],['Spirits','Vodka, Tequila, Bourbon.'],['Non-Alcoholic','Athletic Brewing NA, sparkling water, cranberry juice.']]
+};
+const CUKE = {id:'g6',name:'Cucumber Mule',desc:'Vodka, cucumber, lime, and ginger beer.',glass:'mug',liq:'#c4743c',gar:['lime']};
+const HALLOW = {
+  title:'Bar Menu', h:{...H},
+  drinks:[
+    {id:'h1',name:'Wake the Dead Espresso Martini',desc:'Vodka, fresh espresso, coffee liqueur, and a whisper of vanilla, shaken hard and topped with a velvety foam.',glass:'martini',liq:'#3a2216',gar:['beans']},
+    {id:'h2',name:'Witch’s Brew Margarita',desc:'Tequila, lime, and green apple. Sour and bright.',glass:'coupe',liq:'#a5cf55',gar:['salt','lime']},
+    {id:'h3',name:'Black Cat Old Fashioned',desc:'Bourbon, black walnut bitters, and orange.',glass:'rocks',liq:'#7c3a17',gar:['orangepeel']},
+    {id:'h4',name:'Poison Apple Sangria',desc:'Red wine, apple brandy, cinnamon, and sliced apple.',glass:'wine',liq:'#7d1733',gar:['apple']},
+    {id:'h5',name:'Graveyard Mule',desc:'Vodka, ginger beer, and lime, with a blackberry.',glass:'mug',liq:'#b8692f',gar:['lime']},
+    {id:'h6',name:'Pumpkin Spice Whiskey Sour',desc:'Rye, pumpkin syrup, lemon, and egg white.',glass:'coupe',liq:'#e3913b',gar:['foam']}
+  ],
+  mocktails:[
+    {id:'h7',name:'Haunted Hayride Cider',desc:'Spiced apple cider, orange, and sparkling water.',glass:'highball',liq:'#c9822f',gar:['cinnamon']},
+    {id:'h8',name:'Bloody Shirley',desc:'Grenadine, lemon-lime soda, and blood orange.',glass:'highball',liq:'#c8202f',gar:['cherry']}
+  ],
+  more:[
+    {name:'Smoke and Mirrors Mezcal Negroni',desc:'Mezcal, Campari, and sweet vermouth.'},
+    {name:'Midnight Manhattan',desc:'Rye, sweet vermouth, and cherry.'},
+    {name:'Ghost Pepper Paloma',desc:'Tequila, grapefruit, and a little heat.'},
+    {name:'Corpse Reviver No. 2',desc:'Gin, Lillet, orange liqueur, lemon, and absinthe.'}
+  ],
+  also:[['Beer and Wine','Pumpkin ale, Cabernet, Prosecco, Modelo.'],['Spirits','Vodka, Tequila, Bourbon, Rye.'],['Non-Alcoholic','Hot cider, sparkling water, cola.']]
+};
+const clone = o => JSON.parse(JSON.stringify(o));
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+/* ================= art ================= */
+const SK = 'stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"';
+function garnish(g, x, y){
+  switch(g){
+    case 'grapefruit': return `<path d="M${x-11} ${y} A11 11 0 0 1 ${x+11} ${y}Z" fill="#f59a8f" ${SK}/><path d="M${x} ${y} L${x-6} ${y-8} M${x} ${y} L${x+6} ${y-8} M${x} ${y} L${x} ${y-10}" stroke="#fff3ef" stroke-width="1.2"/>`;
+    case 'orangepeel': return `<path d="M${x-4} ${y-16} q12 6 4 16 q-7 10 5 19" fill="none" stroke="#e8892f" stroke-width="3.6" stroke-linecap="round"/>`;
+    case 'lavender': return `<path d="M${x} ${y+6} L${x+8} ${y-24}" stroke="#6f8f5a" stroke-width="1.6"/>${[0,1,2,3,4].map(i=>`<ellipse cx="${x+2+i*1.6}" cy="${y-6-i*4.5}" rx="2.6" ry="1.7" fill="#9b7fc7" transform="rotate(-60 ${x+2+i*1.6} ${y-6-i*4.5})"/>`).join('')}`;
+    case 'orange': return `<circle cx="${x}" cy="${y}" r="10" fill="#f2a03b" ${SK}/>${[0,60,120].map(a=>`<path d="M${x} ${y-8} L${x} ${y+8}" stroke="#fff1d6" stroke-width="1" transform="rotate(${a} ${x} ${y})"/>`).join('')}`;
+    case 'strawberry': return `<path d="M${x} ${y+10} C${x-11} ${y+2} ${x-9} ${y-8} ${x} ${y-6} C${x+9} ${y-8} ${x+11} ${y+2} ${x} ${y+10}Z" fill="#e2433f" ${SK}/><path d="M${x-5} ${y-7} L${x} ${y-12} L${x+5} ${y-7}" fill="#6ea35a" stroke="#6ea35a" stroke-width="2"/>`;
+    case 'lime': return `<circle cx="${x}" cy="${y}" r="9" fill="#a8d05a" ${SK}/><circle cx="${x}" cy="${y}" r="5.5" fill="none" stroke="#e9f6cf" stroke-width="1"/>`;
+    case 'salt': return '';
+    case 'apple': return `<path d="M${x-9} ${y} A9 9 0 0 0 ${x+9} ${y}Z" fill="#f4eccd" stroke="#b5202f" stroke-width="2.4"/>`;
+    case 'cherry': return `<path d="M${x} ${y} q4 -14 12 -18" fill="none" stroke="#3d6b2e" stroke-width="1.8"/><circle cx="${x}" cy="${y+2}" r="6" fill="#a3122a" ${SK}/>`;
+    case 'cinnamon': return `<rect x="${x-3}" y="${y-30}" width="6" height="44" rx="2.5" fill="#8a4a22" transform="rotate(14 ${x} ${y})"/>`;
+    default: return '';
+  }
+}
+function glass(d){
+  const L = d.liq, gs = d.gar || [];
+  const base = `<path d="M50 72 L50 122" ${SK}/><ellipse cx="50" cy="124" rx="20" ry="4" fill="none" ${SK}/>`;
+  let s='';
+  switch(d.glass){
+    case 'highball':
+      s=`<path d="M31 34 L34.5 125 Q50 128 65.5 125 L69 34Z" fill="${L}"/>
+      <rect x="38" y="46" width="13" height="13" rx="2" transform="rotate(12 44 52)" fill="rgba(255,255,255,.35)" stroke="currentColor" stroke-width="1.3"/>
+      <rect x="47" y="66" width="13" height="13" rx="2" transform="rotate(-10 53 72)" fill="rgba(255,255,255,.3)" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M58 3 L52 112" ${SK}/>
+      <path d="M30 18 L34 127 Q50 131 66 127 L70 18" fill="none" ${SK}/><ellipse cx="50" cy="18" rx="20" ry="3.2" fill="none" ${SK}/>`;
+      s += gs.map(g=>garnish(g,69,20)).join(''); break;
+    case 'rocks':
+      s=`<path d="M26.5 76 L29 123 Q50 127 71 123 L73.5 76Z" fill="${L}"/>
+      <rect x="37" y="78" width="25" height="25" rx="3" transform="rotate(-8 49 90)" fill="rgba(255,255,255,.32)" stroke="currentColor" stroke-width="1.4"/>
+      <path d="M24 52 L28.5 125 Q50 130 71.5 125 L76 52" fill="none" ${SK}/><ellipse cx="50" cy="52" rx="26" ry="4.2" fill="none" ${SK}/>`;
+      s += gs.map(g=>garnish(g,70,60)).join(''); break;
+    case 'martini':
+      s=`<path d="M21 31 L79 31 L50 65Z" fill="${L}"/>`;
+      if(gs.includes('beans')) s+=`<path d="M21 31 L79 31 L74 37 L26 37Z" fill="#e9d7b9"/>${[[42,33],[50,32],[58,33]].map(([x,y])=>`<ellipse cx="${x}" cy="${y}" rx="3.2" ry="2" fill="#4a2a17"/>`).join('')}`;
+      s+=`<path d="M12 24 L50 70 L88 24" fill="none" ${SK}/><ellipse cx="50" cy="24" rx="38" ry="3.6" fill="none" ${SK}/>${base}`;
+      s += gs.filter(g=>g!=='beans').map(g=>garnish(g,80,26)).join(''); break;
+    case 'coupe':
+      s=`<path d="M19 34 Q50 76 81 34Z" fill="${L}"/>`;
+      if(gs.includes('foam')) s+=`<path d="M19 34 L81 34 Q78 41 74 44 L26 44 Q22 41 19 34Z" fill="#f3e6cc"/>${[44,50,56].map(x=>`<circle cx="${x}" cy="38" r="1.4" fill="#8b2b12"/>`).join('')}`;
+      if(gs.includes('salt')) s+=[18,26,34,42,58,66,74,82].map(x=>`<circle cx="${x}" cy="${x<50?29.5:29.5}" r="1.3" fill="#fff" stroke="currentColor" stroke-width=".6"/>`).join('');
+      s+=`<path d="M14 30 Q18 54 38 66 Q50 72 62 66 Q82 54 86 30" fill="none" ${SK}/><ellipse cx="50" cy="30" rx="36" ry="4" fill="none" ${SK}/>${base}`;
+      s += gs.filter(g=>g!=='foam'&&g!=='salt').map(g=>garnish(g,84,30)).join(''); break;
+    case 'wine':
+      s=`<path d="M28.5 44 Q28 72 50 75 Q72 72 71.5 44Z" fill="${L}"/>
+      <path d="M30 14 Q22 70 50 77 Q78 70 70 14" fill="none" ${SK}/><ellipse cx="50" cy="14" rx="20" ry="3" fill="none" ${SK}/>
+      <path d="M50 77 L50 122" ${SK}/><ellipse cx="50" cy="124" rx="20" ry="4" fill="none" ${SK}/>`;
+      s += gs.map(g=>g==='orange'?garnish(g,48,52):garnish(g,52,58)).join(''); break;
+    case 'mug':
+      s=`<path d="M27 44 L28.5 122 Q50 126 71.5 122 L73 44Z" fill="${L}"/>
+      ${[[38,64],[56,84],[44,102],[62,58]].map(([x,y])=>`<circle cx="${x}" cy="${y}" r="2.2" fill="rgba(255,255,255,.28)"/>`).join('')}
+      <path d="M26 40 L27.5 123 Q50 128 72.5 123 L74 40" fill="none" ${SK}/><ellipse cx="50" cy="40" rx="24" ry="3.6" fill="${L}" ${SK}/>
+      <path d="M74 56 Q93 57 92 80 Q91 101 73 102" fill="none" ${SK}/>
+      <path d="M36 40 q-6 -14 4 -22 q2 10 8 14" fill="#7fb36a" stroke="#4f7d3f" stroke-width="1.4"/>`;
+      s += gs.map(g=>garnish(g,66,40)).join(''); break;
+  }
+  return `<svg viewBox="0 0 100 140" aria-hidden="true">${s}</svg>`;
+}
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function edgePt(r, band){
+  const side=Math.floor(r()*4), along=r()<.62?(r()<.5?r()*.3:1-r()*.3):r(), dep=r()*band;
+  if(side===0) return [along*800, dep];
+  if(side===1) return [800-dep, along*1000];
+  if(side===2) return [along*800, 1000-dep];
+  return [dep, along*1000];
+}
+function bgHTML(kind, v=0){
+  const r = rng(11 + v*97 + kind.length);
+  let svg='';
+  if(kind==='garden'){
+    const pal=['#c9b6e4','#f4a48e','#9fb0e8','#e7c25a','#8e5a8f','#f2b9c9'];
+    let leaves='', flowers='';
+    for(let i=0;i<46;i++){const [x,y]=edgePt(r,95);const a=r()*360;leaves+=`<ellipse cx="${x}" cy="${y}" rx="${18+r()*14}" ry="${6+r()*4}" fill="${r()<.5?'#9db88f':'#7fa07a'}" opacity=".6" transform="rotate(${a} ${x} ${y})"/>`;}
+    for(let i=0;i<34;i++){const [x,y]=edgePt(r,80);const rad=14+r()*22;const c=pal[Math.floor(r()*pal.length)];const n=5+Math.floor(r()*2);const rot=r()*72;
+      for(let k=0;k<n;k++){const a=rot+k*360/n;flowers+=`<ellipse cx="${x+rad*.48}" cy="${y}" rx="${rad*.56}" ry="${rad*.33}" fill="${c}" opacity=".78" transform="rotate(${a} ${x} ${y})"/>`;}
+      flowers+=`<circle cx="${x}" cy="${y}" r="${rad*.2}" fill="${r()<.5?'#e7c25a':'#8e5a8f'}" opacity=".9"/>`;}
+    svg=`<defs><filter id="wcG" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="2" seed="${3+v}"/><feDisplacementMap in="SourceGraphic" scale="7"/></filter></defs><g filter="url(#wcG)">${leaves}${flowers}</g>`;
+    return `<div class="bg" style="background:radial-gradient(circle at 0% 0%,rgba(201,182,228,.85),transparent 32%),radial-gradient(circle at 100% 6%,rgba(244,164,142,.65),transparent 28%),radial-gradient(circle at 0% 100%,rgba(159,176,232,.75),transparent 32%),radial-gradient(circle at 100% 100%,rgba(201,182,228,.8),transparent 30%),radial-gradient(circle at 100% 55%,rgba(231,194,90,.3),transparent 18%),#faf6f8"><svg viewBox="0 0 800 1000">${svg}</svg></div>`;
+  }
+  if(kind==='navy'){
+    const g='#c9a75a';
+    const fan=(cx,cy,sx,sy)=>`<g transform="translate(${cx} ${cy}) scale(${sx} ${sy})" fill="none" stroke="${g}">${[34,50,66].map(rr=>`<path d="M${rr} 0 A${rr} ${rr} 0 0 1 0 ${rr}" stroke-width="1.4"/>`).join('')}${[0,15,30,45,60,75,90].map(a=>`<path d="M0 0 L${66*Math.cos(a*Math.PI/180)} ${66*Math.sin(a*Math.PI/180)}" stroke-width=".9"/>`).join('')}<path d="M0 0 L90 90" stroke-width=".8" opacity=".6"/></g>`;
+    let stars='';for(let i=0;i<60;i++){const [x,y]=edgePt(r,70);stars+=`<circle cx="${x}" cy="${y}" r="${.8+r()*1.6}" fill="${g}" opacity="${.35+r()*.5}"/>`;}
+    svg=`${stars}<rect x="22" y="22" width="756" height="956" fill="none" stroke="${g}" stroke-width="2"/><rect x="31" y="31" width="738" height="938" fill="none" stroke="${g}" stroke-width=".9"/>${fan(31,31,1,1)}${fan(769,31,-1,1)}${fan(31,969,1,-1)}${fan(769,969,-1,-1)}<path d="M360 22 L400 10 L440 22 M360 978 L400 990 L440 978" fill="none" stroke="${g}" stroke-width="1.2"/>`;
+    return `<div class="bg" style="background:radial-gradient(ellipse 70% 60% at 50% 45%,#22345f,#121b35 75%)"><svg viewBox="0 0 800 1000">${svg}</svg></div>`;
+  }
+  if(kind==='spooky'){
+    const web=(tx,sx)=>{let s=`<g transform="translate(${tx} 0) scale(${sx} 1)" fill="none" stroke="rgba(232,222,204,.38)" stroke-width="1.1">`;const angs=[0,14,28,42,56,70,84,90];
+      angs.forEach(a=>{s+=`<path d="M0 0 L${240*Math.cos(a*Math.PI/180)} ${240*Math.sin(a*Math.PI/180)}"/>`;});
+      [42,82,122,162,200].forEach(rr=>{for(let i=0;i<angs.length-1;i++){const a1=angs[i]*Math.PI/180,a2=angs[i+1]*Math.PI/180,am=(a1+a2)/2;s+=`<path d="M${rr*Math.cos(a1)} ${rr*Math.sin(a1)} Q${rr*.86*Math.cos(am)} ${rr*.86*Math.sin(am)} ${rr*Math.cos(a2)} ${rr*Math.sin(a2)}"/>`;}});
+      return s+'</g>';};
+    const bat=(x,y,sc)=>`<path transform="translate(${x} ${y}) scale(${sc})" d="M0 0 q6 -9 12 -2 q2 -6 4 -6 q2 0 4 6 q6 -7 12 2 q-6 -2 -9 3 q-3 -3 -7 2 q-4 -5 -7 -2 q-3 -5 -9 -3Z" fill="#050404" opacity=".85"/>`;
+    let bats='';for(let i=0;i<6;i++){bats+=bat(560+r()*190,46+r()*90,1.2+r()*1.4);}
+    const stones=`<path d="M0 1000 L0 948 Q120 920 260 944 Q400 966 540 940 Q680 916 800 944 L800 1000Z" fill="#070605"/><path d="M84 958 L84 912 Q104 888 124 912 L124 958Z" fill="#0d0b0a"/><path d="M680 952 L680 902 Q702 876 724 902 L724 952Z" fill="#0d0b0a"/><path d="M150 960 L150 934 L160 924 L170 934 L170 960Z" fill="#0d0b0a"/>`;
+    svg=`${web(0,1)}${web(800,-1)}${bats}${stones}`;
+    return `<div class="bg" style="background:radial-gradient(circle at 8% 96%,rgba(242,144,46,.28),transparent 22%),radial-gradient(circle at 92% 96%,rgba(242,144,46,.24),transparent 22%),radial-gradient(ellipse 80% 40% at 50% 100%,rgba(38,74,54,.55),transparent 70%),radial-gradient(ellipse 70% 60% at 50% 42%,#2b2421,#0e0b0a 78%)"><svg viewBox="0 0 800 1000">${svg}</svg></div>`;
+  }
+  if(kind==='tropical'){
+    const greens=['#1f7a6a','#2e9b7f','#156356','#5aa66a'];
+    let leaves='',fl='';
+    for(let i=0;i<22;i++){const [x,y]=edgePt(r,40);const len=110+r()*90;const ang=Math.atan2(500-y,400-x)*180/Math.PI+(r()-.5)*70;const c=greens[Math.floor(r()*greens.length)];
+      let veins='';for(let k=1;k<6;k++){const px=len*k/6;veins+=`<path d="M${px} 0 L${px+16} ${-len*.2} M${px} 0 L${px+16} ${len*.2}" stroke="rgba(255,255,255,.35)" stroke-width="1.4"/>`;}
+      leaves+=`<g transform="translate(${x} ${y}) rotate(${ang})"><path d="M0 0 Q${len*.45} ${-len*.36} ${len} 0 Q${len*.45} ${len*.36} 0 0Z" fill="${c}"/><path d="M0 0 L${len} 0" stroke="rgba(255,255,255,.45)" stroke-width="1.6"/>${veins}</g>`;}
+    for(let i=0;i<9;i++){const [x,y]=edgePt(r,70);const rad=20+r()*14;const rot=r()*72;
+      for(let k=0;k<5;k++){fl+=`<ellipse cx="${x+rad*.5}" cy="${y}" rx="${rad*.6}" ry="${rad*.42}" fill="#e8604c" transform="rotate(${rot+k*72} ${x} ${y})"/>`;}
+      fl+=`<circle cx="${x}" cy="${y}" r="${rad*.18}" fill="#ffd166"/>`;}
+    svg=leaves+fl;
+    return `<div class="bg" style="background:radial-gradient(ellipse 65% 55% at 50% 48%,#fff7e8,#f6dfb6 85%)"><svg viewBox="0 0 800 1000">${svg}</svg></div>`;
+  }
+}
+function logoSVG(kind){
+  if(kind==='rp'){
+    let leaves='';for(let i=0;i<14;i++){const a=(200+i*10)*Math.PI/180,x=60+46*Math.cos(a),y=60-46*Math.sin(a);leaves+=`<ellipse cx="${x}" cy="${y}" rx="5" ry="2.2" fill="#8fa97c" transform="rotate(${-(200+i*10)+90} ${x} ${y})"/>`;}
+    return `<svg viewBox="0 0 120 120" role="img" aria-label="Roscoe and Phoebe monogram"><circle cx="60" cy="60" r="54" fill="none" stroke="#5b3566" stroke-width="1.6"/><circle cx="60" cy="60" r="49" fill="none" stroke="#5b3566" stroke-width=".7"/>${leaves.replace(/200/g,'200')}<text x="60" y="66" text-anchor="middle" font-family="'Cormorant Garamond',Georgia,serif" font-weight="600" font-size="34" fill="#5b3566">R&amp;P</text><text x="60" y="84" text-anchor="middle" font-family="'IBM Plex Mono',monospace" font-size="7.5" letter-spacing="2" fill="#5b3566">10·18·26</text></svg>`;
+  }
+  return `<svg viewBox="0 0 230 130" role="img" aria-label="The Hollow Halloween Bash logo"><rect width="230" height="130" fill="#ffffff"/><text x="115" y="58" text-anchor="middle" font-family="'Rye',Georgia,serif" font-size="30" fill="#1a1512">THE HOLLOW</text><path d="M40 72 L190 72" stroke="#c25a14" stroke-width="2"/><text x="115" y="94" text-anchor="middle" font-family="'IBM Plex Mono',monospace" font-size="11" letter-spacing="3" fill="#1a1512">HALLOWEEN BASH · 2026</text></svg>`;
+}
+const ORN = `<svg class="m-orn" viewBox="0 0 230 14" aria-hidden="true"><path d="M0 7 H96 M134 7 H230" stroke="currentColor" stroke-width="1"/><path d="M115 1 L121 7 L115 13 L109 7Z" fill="currentColor"/><circle cx="101" cy="7" r="1.6" fill="currentColor"/><circle cx="129" cy="7" r="1.6" fill="currentColor"/></svg>`;
+const MARKGLYPH = `<svg viewBox="0 0 11 14" aria-hidden="true"><path d="M1 1 H10 L5.5 7 Z M5.5 7 V12.5 M3 12.8 H8" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>`;
+
+/* ================= menu render ================= */
+const ROWS = {1:[1],2:[2],3:[3],4:[2,2],5:[3,2],6:[3,3],7:[4,3],8:[4,4]};
+const SLOTW = {1:360,2:250,3:200,4:152};
+function chunk(list){const out=[];let i=0;for(const c of (ROWS[list.length]||[])){out.push(list.slice(i,i+c));i+=c;}return out;}
+function menuHTML(m, o){
+  const P=PAIRINGS[o.pairing], B=BGS[o.bg], pend=o.bgStatus==='pending';
+  const set=(B.dark&&!pend)?P.dark:P.light, ink=o.ink||set.ink, acc=o.accent||set.accent;
+  const ed=!!o.edit, st=o.status||{}, hid=o.hidden||{};
+  const E=(k)=>ed?` contenteditable="true" spellcheck="false" data-k="${k}"`:'';
+  const vars=`--mi:${ink};--ma:${acc};--tf:${P.t[0]};--ts:${P.t[1]}px;--tw:${P.t[2]};--tt:${P.t[3]};--tk:${P.t[4]};--hf:${P.h[0]};--hs:${P.h[1]}px;--hw:${P.h[2]};--hk:${P.h[4]};--bf:${P.b[0]};--bs:${P.b[1]}px;--bw:${P.b[2]}`;
+  const sig=m.drinks.map((d,i)=>({...d,_k:'drinks.'+i})).filter(d=>!hid[d.id]);
+  const mk=(m.mocktails||[]).map((d,i)=>({...d,_k:'mocktails.'+i})).filter(d=>!hid[d.id]);
+  const rowsTotal=chunk(sig).length+chunk(mk).length;
+  const slot=(d,cols)=>{
+    const s=st[d.id]||'done';
+    let art;
+    if(s==='done') art=glass(d)+(ed?`<div class="s-tools"><button class="cbtn" data-act="reroll" data-id="${d.id}">Re-roll art</button><button class="cbtn" data-act="hide" data-id="${d.id}">Hide</button></div>`:'');
+    else if(s==='pending') art=`<div class="slot-st run">Painting…</div>`;
+    else if(s==='queued') art=`<div class="slot-st">Queued</div>`;
+    else art=`<div class="slot-st bad">Art didn’t come through<button class="cbtn" data-act="reroll" data-id="${d.id}">Re-roll</button></div>`;
+    return `<div class="m-slot" style="--sw:${SLOTW[cols]}px"><div class="m-art">${art}</div><p class="m-name"${E(d._k+'.name')}>${esc(d.name)}</p><p class="m-desc${d.ai?' ai':''}"${E(d._k+'.desc')}>${esc(d.desc)}</p></div>`;
+  };
+  const group=(list,hk)=>!list.length?'':`<section class="m-group"><h2 class="m-gh"${E('h.'+hk)}>${esc(m.h[hk])}</h2>${chunk(list).map(row=>`<div class="m-row">${row.map(d=>slot(d,row.length)).join('')}</div>`).join('')}</section>`;
+  const L=o.logo;
+  const logo = L?`<div class="m-logo${L.mode==='replace'?' rep':''}${L.badge?' badge':''}">${logoSVG(L.kind)}</div>`:'';
+  const title = (L&&L.mode==='replace')?'':`<h1 class="m-title"${E('title')}>${esc(m.title)}</h1>`;
+  const more = (m.more&&m.more.length)?`<section class="m-group"><h2 class="m-gh"${E('h.more')}>${esc(m.h.more)}</h2><div class="m-more">${m.more.map((d,i)=>`<div><p class="m-name"${E('more.'+i+'.name')}>${esc(d.name)}</p><p class="m-desc"${E('more.'+i+'.desc')}>${esc(d.desc)}</p></div>`).join('')}</div></section>`:'';
+  const also = o.also===false?'':`<footer class="m-also"><h2 class="m-gh"${E('h.also')}>${esc(m.h.also)}</h2>${m.also.map((a,i)=>`<p><span class="lab"${E('also.'+i+'.0')}>${esc(a[0])}</span><span${E('also.'+i+'.1')}>${esc(a[1])}</span></p>`).join('')}</footer>`;
+  const sc=B.scrim;
+  let bk='';
+  if(!pend&&o.backing==='soft') bk=`<div class="bk" style="background:radial-gradient(ellipse 60% 56% at 50% 50%,rgba(${sc},.8),rgba(${sc},.58) 58%,rgba(${sc},0) 86%)"></div>`;
+  if(!pend&&o.backing==='panel') bk=`<div class="bk" style="inset:50px 54px;background:rgba(${sc},.86);backdrop-filter:blur(5px);box-shadow:inset 0 0 0 7px rgba(${sc},.86),inset 0 0 0 8px ${acc}"></div>`;
+  const mark = o.mark===false?'':`<div class="m-mark" style="color:${B.dark&&!pend?'rgba(255,255,255,.8)':'rgba(25,22,32,.72)'}">${MARKGLYPH}Dr. Bartender</div>`;
+  const il0 = Math.min({1:280,2:210,3:165,4:130}[Math.min(rowsTotal,4)]||130, 999);
+  return `<div class="menu${ed?' ed':''}${(B.dark&&!pend)?' dark':''}" style="${vars};--il:${il0}px" data-il0="${il0}">${pend?`<div class="bg bg-pending"><span>Painting the background…</span></div>`:bgHTML(o.bg,o.bgVariant||0)}${bk}<div class="page"><header class="m-head">${logo}${title}${ORN}</header>${group(sig,'sig')}${group(mk,'mock')}${more}${also}</div>${mark}</div>`;
+}
+function fit(menu){
+  if(!menu) return;
+  const page=menu.querySelector('.page');let il=+menu.dataset.il0;
+  menu.style.setProperty('--il',il+'px');
+  while(page.scrollHeight>1001&&il>65){il-=6;menu.style.setProperty('--il',il+'px');}
+}
+const ro = new ResizeObserver(es=>es.forEach(e=>scaleFrame(e.target)));
+function scaleFrame(f){const m=f.querySelector('.menu');if(m) m.style.transform=`scale(${f.clientWidth/800})`;}
+function mount(frame, m, o){frame.innerHTML=menuHTML(m,o);scaleFrame(frame);fit(frame.querySelector('.menu'));ro.observe(frame);}
+const refitAll=()=>document.querySelectorAll('.menu').forEach(fit);
+
+/* ================= designer ================= */
+const STATES=[['empty','Empty'],['generating','Generating'],['draft','Draft ready'],['failed','A piece failed'],['plan','Plan changed'],['approved','Approved'],['edited','Edited since approval'],['both','Plan changed after approval']];
+const D={state:'draft',model:clone(GARDEN),status:{},hidden:{},bgStatus:'done',bgVariant:0,pairing:'script',ink:'#3a2647',accent:'#7a4a86',backing:'soft',role:'logo',place:'above',badge:false,mark:true,upload:false,dir:'Loose watercolor florals, soft edges, a few mustard accents.',confirm:null,dismissed:false,added:null,timers:[]};
+const allDrinks=()=>[...D.model.drinks,...D.model.mocktails];
+function clearTimers(){D.timers.forEach(clearTimeout);D.timers=[];}
+function preset(s){
+  clearTimers();D.state=s;D.model=clone(GARDEN);D.hidden={};D.confirm=null;D.dismissed=false;D.added=null;D.bgStatus='done';D.status={};
+  if(s==='generating'){const ids=allDrinks().map(d=>d.id);D.status={[ids[0]]:'done',[ids[1]]:'done',[ids[2]]:'pending',[ids[3]]:'queued',[ids[4]]:'queued'};}
+  if(s==='failed'){D.status={g3:'failed'};}
+  renderAll();
+}
+function simulate(){
+  clearTimers();D.model=clone(GARDEN);D.hidden={};D.confirm=null;D.dismissed=false;D.added=null;D.state='generating';D.bgStatus='pending';
+  const ids=allDrinks().map(d=>d.id);D.status={};ids.forEach(id=>D.status[id]='queued');renderAll();
+  let t=1100;D.timers.push(setTimeout(()=>{D.bgStatus='done';renderPreview();renderMeta();},t));
+  ids.forEach((id,i)=>{D.timers.push(setTimeout(()=>{D.status[id]='pending';renderPreview();renderMeta();},t+i*1300));D.timers.push(setTimeout(()=>{D.status[id]='done';renderPreview();renderMeta();},t+(i+1)*1300));});
+  D.timers.push(setTimeout(()=>{D.state='draft';renderAll();},t+ids.length*1300+80));
+}
+const isApproved=()=>D.state==='approved'||D.state==='both';
+function touched(){ if(isApproved()){D.state='edited';D.confirm=null;renderChrome();} }
+function chipFor(){return {empty:['','Not started'],generating:['warn','Generating'],draft:['acc','Draft'],failed:['acc','Draft'],plan:['acc','Draft'],approved:['ok','Approved'],edited:['warn','Edited since approval'],both:['ok','Approved']}[D.state];}
+function renderStrip(){
+  document.getElementById('strip').innerHTML=`<span>Mockup state</span>`+STATES.map(([k,l])=>`<button data-state="${k}" aria-pressed="${D.state===k}">${l}</button>`).join('');
+}
+function briefHTML(){
+  const empty=D.state==='empty', gen=D.state==='generating';
+  const roleSeg=[['logo','Logo on top'],['style','Style reference'],['ignore','Ignore']].map(([k,l])=>`<button data-act="role" data-v="${k}" aria-pressed="${D.role===k}">${l}</button>`).join('');
+  const sub=D.role==='logo'?`<div class="ctl">Placement<div class="seg">${[['above','Above the title'],['replace','Replaces the title']].map(([k,l])=>`<button data-act="place" data-v="${k}" aria-pressed="${D.place===k}">${l}</button>`).join('')}</div></div><div class="ctl">Backing<div class="seg">${[[false,'None'],[true,'Badge']].map(([k,l])=>`<button data-act="badge" data-v="${k}" aria-pressed="${D.badge===k}">${l}</button>`).join('')}</div></div>`:'';
+  let ref;
+  if(D.upload) ref=`<div class="file"><span>garden-moodboard.jpg</span><button class="btn quiet" data-act="unupload">Remove</button></div><p class="note acc">Your upload is the style reference. The client's image went back to Ignore.</p>`;
+  else if(D.role==='style') ref=`<p class="note acc">Using the client's planner image as the style reference.</p><button class="btn" data-act="upload">Upload from computer instead</button>`;
+  else ref=`<div class="drop">No reference image<br><button class="btn" data-act="upload" style="margin-top:8px">Upload from computer</button></div>`;
+  const gbtn = empty?`<button class="btn primary block" data-act="generate">Generate</button><p class="note">Words show up in seconds. Art follows, about 2 minutes in all.</p>`
+    : gen?`<button class="btn primary block" disabled>Generating…</button>`
+    : (D.confirm==='startover'?`<div class="confirm"><b>Start over?</b><span>This replaces all art and discards your text edits.</span><div class="row"><button class="btn danger" data-act="startover-yes">Start over</button><button class="btn" data-act="cancel">Cancel</button></div></div>`:`<button class="btn block" data-act="startover">Start over</button>`);
+  const list=allDrinks().map(d=>{const h=D.hidden[d.id], s=D.status[d.id]||'done', isM=D.model.mocktails.includes(d);
+    let pill = empty?'<span class="mini">From the plan</span>':h?'<span class="mini">Hidden</span>':s==='failed'?'<span class="mini bad">Failed</span>':s==='pending'?'<span class="mini run">Painting</span>':s==='queued'?'<span class="mini">Queued</span>':'';
+    if(!empty&&!h&&d.ai) pill+=' <span class="mini ai">AI-written description</span>';
+    return `<li class="${h?'off':''}${D.added===d.id?' new':''}"><span class="gl">${glass({...d,liq:'transparent',gar:[]})}</span><span class="nm"><span>${esc(d.name)}</span><small>${isM?'Mocktail':'Signature'} ${pill}</small></span>${empty?'':`<button class="btn quiet" data-act="${h?'show':'hide'}" data-id="${d.id}">${h?'Show':'Hide'}</button>`}</li>`;}).join('');
+  const shown=allDrinks().filter(d=>!D.hidden[d.id]).length;
+  return `
+  <div class="bp"><h3 class="bp-h">Client brief <em>from the planner</em></h3>
+    <dl class="ro">
+      <div><dt>Theme and colors</dt><dd>Garden party, soft and happy.<div class="sw">${['#9fb0e8','#c9b6e4','#f4a48e','#6b3a6e','#e7c25a'].map(c=>`<i style="background:${c}" title="${c}"></i>`).join('')}</div></dd></div>
+      <div><dt>Drink naming notes</dt><dd>Name the Old Fashioned after the groom. Keep “Phoebe’s Garden Spritz” exactly.</dd></div>
+      <div><dt>Design notes</dt><dd>Lots of flowers, nothing too formal. Our dog Roscoe is the ring bearer!</dd></div>
+    </dl></div>
+  <div class="bp"><h3 class="bp-h">Planner image</h3>
+    <div class="img-row"><div class="thumb">${logoSVG('rp')}</div><div class="ctl">What is it?<div class="seg">${roleSeg}</div></div></div>${sub}</div>
+  <div class="bp"><h3 class="bp-h">Reference image <em>optional · one total</em></h3>${ref}<p class="note">Steers the style only. It's never printed.</p></div>
+  <div class="bp"><h3 class="bp-h"><label for="d-dir">Art direction</label></h3><textarea id="d-dir" rows="2">${esc(D.dir)}</textarea></div>
+  <label class="switch" for="d-mark"><span>Dr. Bartender mark</span><input type="checkbox" id="d-mark" ${D.mark?'checked':''}></label>
+  <div class="bp">${gbtn}</div>
+  <div class="bp"><h3 class="bp-h">On the menu <em>${shown} drinks · ${Math.min(shown,8)} of 8 illustrated</em></h3><ul class="dl">${list}</ul></div>`;
+}
+function bannersHTML(){
+  let b='';
+  const planOn=(D.state==='plan'||D.state==='both')&&!D.dismissed;
+  if(planOn) b+=`<div class="banner warn"><span class="dot"></span><span>The plan changed since this draft: <b>added Cucumber Mule</b>, <b>dropped Lavender Lemon Drop</b>.</span><span class="sp"><button class="btn primary" data-act="update">Update draft</button><button class="btn" data-act="dismiss">Dismiss</button></span></div>`;
+  if(isApproved()) b+=`<div class="banner ok"><span class="dot"></span><span><b>This is the event's print file.</b> Approved Oct 1, 2026 · 2400 × 3000 PNG · staff can download it from the event page.</span><span class="sp"><button class="btn">Download print file</button></span></div>`;
+  if(D.state==='edited') b+=`<div class="banner warn"><span class="dot"></span><span><b>Edited since approval.</b> Approve again to update the print file. Staff still see the Oct 1 version.</span></div>`;
+  if(D.state==='failed'&&Object.values(D.status).includes('failed')) b+=`<div class="banner bad"><span class="dot"></span><span>Lavender Lemon Drop's art didn't come through. Re-roll that slot; the rest of the draft is fine.</span></div>`;
+  return b;
+}
+function toolsHTML(){
+  const off=D.state==='empty';
+  return `<div class="tools" aria-disabled="${off}">
+    <label for="d-pairing">Font pairing <select id="d-pairing">${Object.entries(PAIRINGS).map(([k,p])=>`<option value="${k}" ${D.pairing===k?'selected':''}>${p.name} · ${p.theme}</option>`).join('')}</select></label>${D.pairing==='script'?'<span class="aipick">AI pick</span>':''}
+    <span class="sep"></span>
+    <label for="d-ink">Ink <input type="color" id="d-ink" value="${D.ink}"></label>
+    <label for="d-accent">Accent <input type="color" id="d-accent" value="${D.accent}"></label>
+    <span class="sep"></span>
+    <span>Text backing</span><div class="seg">${['off','soft','panel'].map(k=>`<button data-act="backing" data-v="${k}" aria-pressed="${D.backing===k}">${k[0].toUpperCase()+k.slice(1)}</button>`).join('')}</div>
+    <span class="sep"></span>
+    <button class="btn" data-act="rerollbg">Re-roll background</button>
+  </div>`;
+}
+function approveHTML(){
+  const [cls,lbl]=chipFor();
+  let btn;
+  if(D.state==='empty'||D.state==='generating') btn=`<button class="btn primary" disabled>Approve</button>`;
+  else if(isApproved()) btn=`<button class="btn" disabled>Approved</button>`;
+  else if(D.state==='edited') btn=`<button class="btn primary" data-act="approve">Approve again</button>`;
+  else btn=`<button class="btn primary" data-act="approve">Approve</button>`;
+  const pop = D.confirm==='approve'?`<div class="pop" role="dialog" aria-label="Confirm approval"><p><b>Replace the event's print file?</b><br>${D.state==='edited'?'The version approved Oct 1':'The hand-made file uploaded Sep 12'} will be replaced with this menu, rendered at 2400 × 3000.</p><div class="row"><button class="btn" data-act="cancel">Cancel</button><button class="btn primary" data-act="approve-yes">Approve and replace</button></div></div>`:'';
+  return `<span class="chip ${cls}">${lbl}</span>${btn}${pop}`;
+}
+function renderChrome(){
+  const os=document.getElementById('os');
+  os.querySelector('.os-bar-r').innerHTML=approveHTML();
+  os.querySelector('.brief').innerHTML=briefHTML();
+  os.querySelector('#banners').innerHTML=bannersHTML();
+  os.querySelector('#toolslot').innerHTML=toolsHTML();
+  renderStrip();renderMeta();
+}
+function renderMeta(){
+  const el=document.getElementById('pvmeta');if(!el) return;
+  const ids=allDrinks().filter(d=>!D.hidden[d.id]).map(d=>d.id), done=ids.filter(id=>(D.status[id]||'done')==='done').length;
+  if(D.state==='generating'){
+    const cur=allDrinks().find(d=>D.status[d.id]==='pending');
+    const txt=D.bgStatus==='pending'?'Words are in. Painting the background…':cur?`Painting ${cur.name} · ${done} of ${ids.length} drinks done`:`${done} of ${ids.length} drinks done`;
+    const pct=D.bgStatus==='pending'?8:Math.round(15+85*done/ids.length);
+    el.innerHTML=`<div class="prog"><i style="width:${pct}%"></i></div><div class="pv-meta"><span>${txt}</span><span>about ${Math.max(1,Math.ceil((ids.length-done)*0.4))} min left</span></div>`;
+  } else el.innerHTML=`<div class="pv-meta"><span>8 × 10 in · prints at 2400 × 3000 px</span><span>${D.state==='empty'?'':'Click any text to edit'}</span></div>`;
+}
+function renderPreview(){
+  const f=document.getElementById('pv');
+  if(D.state==='empty'){
+    f.className='';f.innerHTML=`<div class="pv-empty"><div class="ghost"><b style="width:40%;height:22px"></b><b style="width:26%;height:6px"></b><div class="gr"><i></i><i></i></div><div class="gr"><i></i><i></i></div><div class="gr"><i></i></div><b style="width:60%;margin-top:10px"></b><b style="width:50%"></b></div><h3>Nothing generated yet</h3><p>Check the brief and decide what the client's image is, then press Generate. The words appear first, then the background, then each drink.</p><button class="btn primary" data-act="generate">Generate</button></div>`;return;
+  }
+  f.className='mf';
+  const logo=D.role==='logo'?{kind:'rp',mode:D.place,badge:D.badge}:null;
+  mount(f,D.model,{bg:'garden',bgVariant:D.bgVariant,bgStatus:D.bgStatus,pairing:D.pairing,ink:D.ink,accent:D.accent,backing:D.backing,logo,mark:D.mark,edit:true,status:D.status,hidden:D.hidden});
+}
+function renderAll(){
+  const os=document.getElementById('os');
+  os.innerHTML=`<div class="os-bar"><a class="os-back" href="#designer">← Roscoe &amp; Phoebe’s wedding</a><span class="os-crumb">Sat, Oct 18, 2026 · 140 guests</span><span class="os-title">Bar menu</span><div class="os-bar-r"></div></div>
+  <div class="os-main"><aside class="brief"></aside><section class="stage"><div id="banners" style="display:flex;flex-direction:column;gap:8px"></div><div id="toolslot"></div><div class="pv-wrap"><div class="pv-col"><div id="pv"></div><div id="pvmeta"></div></div></div></section></div>`;
+  renderChrome();renderPreview();
+}
+function setPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++)o=o[p[i]];o[p[p.length-1]]=val;}
+function defaultsFor(k){const s=PAIRINGS[k].light;return k==='script'?{ink:'#3a2647',accent:'#7a4a86'}:{ink:s.ink,accent:s.accent};}
+function rerollSlot(id){D.status[id]='pending';renderPreview();renderChrome();D.timers.push(setTimeout(()=>{D.status[id]='done';renderPreview();renderChrome();},1400));}
+
+document.addEventListener('click',e=>{
+  const sb=e.target.closest('[data-state]');if(sb){preset(sb.dataset.state);return;}
+  const b=e.target.closest('#os [data-act]');if(!b) return;
+  const a=b.dataset.act, v=b.dataset.v, id=b.dataset.id;
+  if(a!=='upload'&&a!=='unupload'&&b.tagName==='A') e.preventDefault();
+  switch(a){
+    case 'generate': simulate(); break;
+    case 'startover': D.confirm='startover'; renderChrome(); break;
+    case 'startover-yes': simulate(); break;
+    case 'cancel': D.confirm=null; renderChrome(); break;
+    case 'approve': D.confirm='approve'; renderChrome(); break;
+    case 'approve-yes': D.state='approved'; D.confirm=null; D.dismissed=false; renderChrome(); break;
+    case 'role': D.role=v; if(v==='style'&&D.upload) D.upload=false; renderChrome(); renderPreview(); if(D.state!=='empty') touched(); break;
+    case 'place': D.place=v; renderChrome(); renderPreview(); touched(); break;
+    case 'badge': D.badge=v==='true'; renderChrome(); renderPreview(); touched(); break;
+    case 'upload': D.upload=true; if(D.role==='style') D.role='ignore'; renderChrome(); renderPreview(); break;
+    case 'unupload': D.upload=false; renderChrome(); break;
+    case 'backing': D.backing=v; renderChrome(); renderPreview(); touched(); break;
+    case 'rerollbg': D.bgStatus='pending'; renderPreview(); D.timers.push(setTimeout(()=>{D.bgStatus='done';D.bgVariant++;renderPreview();},1500)); touched(); break;
+    case 'reroll': rerollSlot(id); touched(); break;
+    case 'hide': D.hidden[id]=true; renderChrome(); renderPreview(); touched(); break;
+    case 'show': delete D.hidden[id]; renderChrome(); renderPreview(); touched(); break;
+    case 'dismiss': D.dismissed=true; renderChrome(); break;
+    case 'update': {
+      const wasApproved=isApproved();
+      D.model.drinks=D.model.drinks.filter(d=>d.id!=='g3'); D.model.drinks.push(clone(CUKE)); D.added='g6';
+      D.state=wasApproved?'edited':'draft'; D.dismissed=false; renderChrome(); rerollSlot('g6'); break; }
+  }
+});
+document.addEventListener('input',e=>{
+  const k=e.target.closest('#os [data-k]');
+  if(k){setPath(D.model,k.dataset.k,k.textContent);k.classList.remove('ai');touched();return;}
+  if(e.target.id==='d-ink'){D.ink=e.target.value;renderPreview();touched();}
+  if(e.target.id==='d-accent'){D.accent=e.target.value;renderPreview();touched();}
+  if(e.target.id==='d-dir'){D.dir=e.target.value;}
+});
+document.addEventListener('change',e=>{
+  if(e.target.id==='d-pairing'){D.pairing=e.target.value;Object.assign(D,defaultsFor(D.pairing));renderChrome();renderPreview();touched();}
+  if(e.target.id==='d-mark'){D.mark=e.target.checked;renderPreview();touched();}
+});
+document.addEventListener('keydown',e=>{const k=e.target.closest&&e.target.closest('[data-k]');if(k&&e.key==='Enter'){e.preventDefault();k.blur();}});
+
+/* ================= rules, boards, legibility, pairings ================= */
+document.getElementById('wfs').innerHTML=[1,2,3,4,5,6,7,8].map(n=>{const rows=ROWS[n];return `<figure class="wf-card"><div class="wf"><div class="wf-t"></div><div class="wf-gh"></div>${rows.map(c=>`<div class="wf-row">${`<i style="--w:${{1:34,2:26,3:22,4:18}[c]}%"></i>`.repeat(c)}</div>`).join('')}<div class="wf-also"><b></b><b></b><b></b></div></div><figcaption><strong>${n} drink${n>1?'s':''}</strong><span>${rows.join(' + ')}</span></figcaption></figure>`;}).join('');
+
+const g=GARDEN, hw=HALLOW;
+const BOARDS=[
+  {l:'A',cap:'1 drink, logo above the title',sub:'Also at the bar on · Garden Script over navy and gold · logo on a badge',m:{...clone(g),drinks:[clone(g.drinks[0])],mocktails:[]},o:{bg:'navy',pairing:'script',backing:'soft',logo:{kind:'rp',mode:'above',badge:true}}},
+  {l:'B',cap:'3 drinks, no logo',sub:'Also at the bar on · Tiki Hour over a tropical luau',m:{...clone(g),drinks:clone(g.drinks.slice(0,3)),mocktails:[]},o:{bg:'tropical',pairing:'tropical',backing:'soft'}},
+  {l:'C',cap:'The garden wedding sample',sub:'4 signatures + 1 mocktail · logo above · Garden Script, accent from the client palette',m:clone(g),o:{bg:'garden',pairing:'script',ink:'#3a2647',accent:'#7a4a86',backing:'soft',logo:{kind:'rp',mode:'above'}}},
+  {l:'D',cap:'4 signatures, nothing else',sub:'No mocktail, no logo, no also at the bar · Gallery over the garden',m:{...clone(g),mocktails:[]},o:{bg:'garden',bgVariant:2,pairing:'modern',backing:'soft',also:false}},
+  {l:'E',cap:'6 drinks, the long name, logo replaces the title',sub:'110-character description · white-box JPG logo on a badge · Barn & Ledger over the speakeasy',m:{...clone(hw),mocktails:[],more:[]},o:{bg:'spooky',pairing:'rustic',backing:'soft',logo:{kind:'hollow',mode:'replace',badge:true}}},
+  {l:'F',cap:'The 12-drink maximum',sub:'6 signatures + 2 mocktails illustrated, 4 in More from the bar · Hollow over the speakeasy',m:clone(hw),o:{bg:'spooky',bgVariant:1,pairing:'spooky',backing:'soft'}}
+];
+document.getElementById('boardgrid').innerHTML=BOARDS.map((b,i)=>`<figure class="board"><div class="mf" id="bd${i}"></div><figcaption><span class="lt">${b.l}</span><span class="cap">${b.cap}</span><span class="sub">${b.sub}</span></figcaption></figure>`).join('');
+BOARDS.forEach((b,i)=>mount(document.getElementById('bd'+i),b.m,b.o));
+
+let LG='soft';
+const LGB=[['garden','Light ink set'],['navy','Dark ink set'],['spooky','Dark ink set'],['tropical','Light ink set']];
+document.getElementById('legi').innerHTML=LGB.map(([k,s],i)=>`<figure><div class="mf" id="lg${i}"></div><figcaption><b>${BGS[k].label}</b><span>${s} · ${PAIRINGS.script.name}</span></figcaption></figure>`).join('');
+function renderLegi(){
+  document.getElementById('lg-seg').innerHTML=['off','soft','panel'].map(k=>`<button data-lg="${k}" aria-pressed="${LG===k}">${k[0].toUpperCase()+k.slice(1)}</button>`).join('');
+  LGB.forEach(([k],i)=>mount(document.getElementById('lg'+i),GARDEN,{bg:k,pairing:'script',backing:LG,logo:{kind:'rp',mode:'above',badge:BGS[k].dark}}));
+}
+document.getElementById('lg-seg').addEventListener('click',e=>{const b=e.target.closest('[data-lg]');if(b){LG=b.dataset.lg;renderLegi();}});
+renderLegi();
+
+document.getElementById('pairs').innerHTML=Object.values(PAIRINGS).map(p=>{
+  const sp=(set,bg)=>`<div style="background:${bg}"><span class="t" style="font-family:${p.t[0]};font-weight:${p.t[2]};text-transform:${p.t[3]};letter-spacing:${p.t[4]};font-size:${Math.round(p.t[1]*.42)}px;color:${set.accent}">Bar Menu</span><span class="n" style="font-family:${p.h[0]};font-weight:${p.h[2]};font-size:${Math.round(p.h[1]*.78)}px;color:${set.ink}">Roscoe’s Paloma</span><span class="d" style="font-family:${p.b[0]};font-weight:${p.b[2]};font-size:${Math.round(p.b[1]*.86)}px;color:${set.ink}">Tequila, grapefruit, lime, and soda.</span></div>`;
+  return `<article class="pair"><div class="pair-sp">${sp(p.light,'#f8f4ee')}${sp(p.dark,'#16192a')}</div><div class="pair-meta"><div class="hd"><b>${p.name}</b><span>${p.theme}</span></div><dl><dt>Title</dt><dd>${p.fam[0]}</dd><dt>Heading</dt><dd>${p.fam[1]}</dd><dt>Body</dt><dd>${p.fam[2]}</dd><dt>Light art</dt><dd>ink ${p.light.ink} · accent ${p.light.accent}</dd><dt>Dark art</dt><dd>ink ${p.dark.ink} · accent ${p.dark.accent}</dd></dl></div></article>`;
+}).join('');
+
+renderAll();
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>{refitAll();setTimeout(refitAll,600);});
+</script>
+
+</body></html>
