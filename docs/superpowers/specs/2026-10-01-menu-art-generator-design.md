@@ -102,13 +102,13 @@ From the spec review (Dallas's calls):
 - **Side:** `consult_selections` when `shopping_list_source = 'consult'`, otherwise `selections` (decision 8).
 - **Drinks**, in this order: signature cocktails (catalog ids), then client-typed cocktails, then mocktails (catalog ids), then client-typed mocktails (consult side only; mocktails only when `mocktailsEnabled` or `barType === 'mocktails'` there). Catalog lookups ignore `is_active`, so a deactivated drink keeps its name and description. An id with no row at all is treated as client-typed.
 - **Typed names that match a real drink** resolve through the existing matcher. `matchCustomNames` gains an additive `row` field on each matched entry (the candidate row as passed in), and `loadRecipeCandidates` additionally selects `id`, `description` and its `src` as the kind. Existing callers read only `name` and `ingredients`, so both changes are invisible to them. A matched typed name becomes that catalog drink, and a drink both picked and typed appears once.
-- **Keys:** `cocktail:<id>`, `mocktail:<id>`, `custom:<slug>`, where the slug is the typed name lowercased with every run of characters outside `a-z0-9` turned into one hyphen, trimmed of hyphens, at most 60 characters. Two typed names with the same slug are one drink (first kept).
+- **Keys:** `cocktail:<id>`, `mocktail:<id>`, `custom:<slug>`, where the slug is the typed name lowercased with every run of characters outside `a-z0-9` turned into one hyphen, trimmed of hyphens, at most 60 characters; a name that slugs to nothing (emoji, non-Latin script) falls back to `x` plus the first 8 hex of the name's SHA-1. Two typed names with the same slug are one drink (first kept).
 - **Bar lines** through a fixed label table (`server/utils/menuAlsoAtBar.js`), deliberately finer than the house menu's `collapseBeerWine`: beer becomes "Light beer", "Craft beer", "IPA", "Seltzer"; "Non-Alcoholic" and "Non-Alcoholic (Athletic Brewing)" become "Athletic Brewing NA" on the Non-Alcoholic line; wine becomes "Red", "White", "Sparkling"; spirits are listed by name plus `spiritsOther`; "None" and "Other" render nothing. The consult side maps `beer: true` to the house mix and its lowercase wine categories to the same labels; a field the side lacks renders nothing. Dallas adds brand names by editing.
 - **Brief fingerprint:** the drink keys sorted, plus a SHA-256 over the three brief fields with null as empty, trimmed, and internal whitespace collapsed.
 
 ### 5.3 Step 1: the words
 
-Deterministic fields never go to the model for authoring: catalog names and descriptions, and the bar lines. One structured-output call (`MENU_ART_TEXT_MODEL`) receives the brief, the event type label, and the drink list (key, catalog name, catalog description or "client-typed", consult ingredients when present) and returns JSON validated against a schema:
+Deterministic fields never go to the model for authoring: catalog names and descriptions, and the bar lines. One structured-output call (`MENU_ART_TEXT_MODEL`) receives the brief (each field cut to 1,000 characters), the event type label, and the drink list (key, catalog name, catalog description or "client-typed", consult ingredients when present) and returns JSON validated against a schema:
 - `title` (default "Bar Menu");
 - per drink: `display_name` (the client's rename applied, or a themed name when the brief asks), `name_ai_suggested` (true when invented rather than taken from the catalog or an explicit client rename), `description` only for client-typed drinks (`description_ai_written: true`), and `visual_note` (glass, color, garnish);
 - `font_pairing`, one of the fixed ids in section 10.3;
@@ -225,7 +225,7 @@ Added to `server/db/schema.sql` with idempotent statements.
 
 ## 7. API
 
-New route file `server/routes/proposals/menuDrafts.js`, mounted in `server/routes/proposals/index.js` beside `menuPrint` (before `crud` and `getOne`). Every route uses `auth`, `requireAdminOrManager` (decision 9) and `asyncHandler`, with an integer-validated `:id`, and returns 404 when the proposal does not exist. `:pieceKey` arrives URL-encoded and must match `^(background|(cocktail|mocktail|custom):[a-z0-9-]{1,100})$`.
+New route file `server/routes/proposals/menuDrafts.js`, mounted in `server/routes/proposals/index.js` beside `menuPrint` (before `crud` and `getOne`). Approve lives in its own file, `server/routes/proposals/menuDraftApprove.js`, mounted right after it, so the approve work can be built in parallel with the page. Every route uses `auth`, `requireAdminOrManager` (decision 9) and `asyncHandler`, with an integer-validated `:id`, and returns 404 when the proposal does not exist. `:pieceKey` arrives URL-encoded and must match `^(background|(cocktail|mocktail|custom):[a-z0-9-]{1,100})$`.
 
 | Method and path | Limiter | Does |
 |---|---|---|
@@ -329,7 +329,7 @@ Each file stays under 300 lines. `EventDetailPage.js` passes what the card alrea
 
 **Pairing ids are fixed,** shared by the server schema and validation (`server/utils/menuFontPairings.js`) and the client (`fontPairings.js`): `elegant-script`, `rustic`, `modern-clean`, `retro`, `spooky`, `tropical`. The server knows only the ids; faces, sizes and default colors live on the client (section 11, table P).
 
-**Loading.** All menu faces load through one plain `<link rel="stylesheet">` injected when the designer page mounts (the Google Fonts URL listing every family and weight in table P, plus IBM Plex Sans 600 for the mark). Do NOT use the `media="print"` swap that `AdminLayout.js` uses; it lets `document.fonts.ready` resolve before the faces are declared, and the export would render in fallback fonts. Before rendering, the export awaits that link's `onload`, then `document.fonts.load()` for every face and weight the current pairing uses plus the mark face, then `document.fonts.ready`.
+**Loading.** All menu faces load through one plain `<link rel="stylesheet">` injected when the designer page mounts (the Google Fonts URL listing every family and weight in table P, plus IBM Plex Sans 600 for the mark). Do NOT use the `media="print"` swap that `AdminLayout.js` uses; it lets `document.fonts.ready` resolve before the faces are declared, and the export would render in fallback fonts. Before rendering, the export awaits that link's `onload`, then `document.fonts.load()` for every face and weight the current pairing uses plus the mark face, then `document.fonts.ready`. Each wait times out at 10 seconds, and a timeout fails Approve naming the font.
 
 ## 11. Visual contract
 
