@@ -1,6 +1,6 @@
 import React from 'react';
 import '@testing-library/jest-dom'; // per-file import — this repo has no setupTests.js
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import NeedsRecipeSection from './NeedsRecipeSection';
 import api from '../../utils/api';
 
@@ -9,13 +9,37 @@ jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(
 // under test only needs to know WHICH drink it opened them on.
 jest.mock('../adminos/Drawer', () => ({
   __esModule: true,
-  default: ({ open, children }) => (open ? <div data-testid="drawer">{children}</div> : null),
+  default: ({ open, children, footer, onClose }) => (open ? (
+    <div data-testid="drawer">
+      <button type="button" onClick={onClose}>Close drawer</button>
+      {children}
+      {footer}
+    </div>
+  ) : null),
 }));
+// "Add ingredient" stands in for the admin typing a recipe row; "Save" for
+// the editor's save landing (it reports the saved drink back). flush lands
+// unless a test sets mockFlushResult to false (a save that failed).
+let mockFlushResult = true;
 jest.mock('../potions/RecipeEditor', () => {
   const ReactMock = require('react');
   return {
     __esModule: true,
-    default: ReactMock.forwardRef(({ drink }, ref) => <div data-testid="recipe-editor">{drink.name}</div>),
+    default: ReactMock.forwardRef(({ drink, type, onRowsChange, onDrinkChange }, ref) => {
+      ReactMock.useImperativeHandle(ref, () => ({ flush: () => Promise.resolve(mockFlushResult) }));
+      return (
+        <div data-testid="recipe-editor">
+          {drink.name} ({(drink.ingredients || []).length} rows)
+          <button type="button" onClick={() => onRowsChange(1)}>Add ingredient</button>
+          <button
+            type="button"
+            onClick={() => { onRowsChange(1); onDrinkChange({ ...drink, ingredients: [{ ingredient: 'lime' }] }, type); }}
+          >
+            Save
+          </button>
+        </div>
+      );
+    }),
   };
 });
 
@@ -40,6 +64,7 @@ function renderSection(needsRecipe = [{ name: 'old fashion' }]) {
 }
 
 beforeEach(() => {
+  mockFlushResult = true;
   jest.clearAllMocks();
   mockLists();
   jest.spyOn(window, 'confirm').mockReturnValue(true);
@@ -127,7 +152,7 @@ test('Add recipe on a text the picker already matched reuses that drink, never a
   fireEvent.click(await screen.findByRole('button', { name: /Old Fashioned/ }));
   await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add recipe' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit recipe' }));
   expect(await screen.findByTestId('drawer')).toHaveTextContent('Old Fashioned');
   // Only the alias append hit the network; no POST /cocktails minted a duplicate.
   expect(api.post).toHaveBeenCalledTimes(1);
@@ -162,4 +187,159 @@ test('no close match tells the admin so, rather than guessing', async () => {
   renderSection([{ name: 'the blue drink from my cousins wedding' }]);
   fireEvent.click(screen.getByRole('button', { name: 'Match existing' }));
   expect(await screen.findByText(/No close match/)).toBeInTheDocument();
+});
+
+// ─── Next: work through every request before the list is rewritten ──────────
+
+// New drafts for texts no admin drink matches; alias appends echo the drink.
+function mockCreates() {
+  api.post.mockImplementation((url, body) => {
+    if (url === '/cocktails') {
+      return Promise.resolve({ data: {
+        id: body.name.replace(/\s+/g, '-'), name: body.name, is_active: false,
+        ingredients: [], request_aliases: [body.name],
+      } });
+    }
+    if (url === '/cocktails/old-fashioned/request-aliases') {
+      return Promise.resolve({ data: { ...OLD_FASHIONED, request_aliases: [body.alias] } });
+    }
+    return Promise.reject(new Error(`unexpected POST ${url}`));
+  });
+}
+
+test('Next walks the remaining requests without rewriting the list; Done folds them in once', async () => {
+  mockCreates();
+  const { onRegenerate } = renderSection([{ name: 'ranch water' }, { name: 'lavender fizz' }, { name: 'smoky thing' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add recipe' })[0]);
+  expect(await screen.findByTestId('recipe-editor')).toHaveTextContent('ranch water');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Next: "lavender fizz"' }));
+  await waitFor(() => expect(screen.getByTestId('recipe-editor')).toHaveTextContent('lavender fizz'));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Next: "smoky thing"' }));
+  await waitFor(() => expect(screen.getByTestId('recipe-editor')).toHaveTextContent('smoky thing'));
+  expect(window.confirm).not.toHaveBeenCalled();
+  expect(onRegenerate).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Done, update list' }));
+  await waitFor(() => expect(onRegenerate).toHaveBeenCalledTimes(1));
+  expect(window.confirm).toHaveBeenCalledTimes(1);
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Fold 3 drinks into the list'));
+  expect(screen.queryByTestId('drawer')).not.toBeInTheDocument();
+});
+
+test('closing the drawer partway leaves the list alone; the last recipe folds them all in', async () => {
+  mockCreates();
+  const { onRegenerate } = renderSection([{ name: 'ranch water' }, { name: 'lavender fizz' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add recipe' })[0]);
+  await screen.findByTestId('recipe-editor');
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+
+  await waitFor(() => expect(screen.queryByTestId('drawer')).not.toBeInTheDocument());
+  expect(window.confirm).not.toHaveBeenCalled();
+  expect(onRegenerate).not.toHaveBeenCalled();
+  expect(screen.getByText('Recipe added')).toBeInTheDocument();
+
+  // The one still open is the last: closing it after a recipe folds both.
+  fireEvent.click(screen.getByRole('button', { name: 'Add recipe' }));
+  expect(await screen.findByRole('button', { name: 'Done, update list' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+  await waitFor(() => expect(onRegenerate).toHaveBeenCalledTimes(1));
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Fold 2 drinks into the list'));
+});
+
+test('Match existing mid-run marks the row and waits for the rest', async () => {
+  mockCreates();
+  const { onRegenerate } = renderSection([{ name: 'old fashion' }, { name: 'ranch water' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Match existing' })[0]);
+  fireEvent.click(await screen.findByRole('button', { name: /Old Fashioned/ }));
+
+  expect(await screen.findByText('Matched to Old Fashioned')).toBeInTheDocument();
+  expect(window.confirm).not.toHaveBeenCalled();
+  expect(onRegenerate).not.toHaveBeenCalled();
+});
+
+test('Next skips a request already handled', async () => {
+  mockCreates();
+  renderSection([{ name: 'ranch water' }, { name: 'old fashion' }, { name: 'smoky thing' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Match existing' })[1]);
+  fireEvent.click(await screen.findByRole('button', { name: /Old Fashioned/ }));
+  await screen.findByText('Matched to Old Fashioned');
+
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add recipe' })[0]);
+  await screen.findByTestId('recipe-editor');
+  expect(screen.getByRole('button', { name: 'Next: "smoky thing"' })).toBeInTheDocument();
+});
+
+test('a failed save on Next stays on the recipe', async () => {
+  mockCreates();
+  const { onRegenerate } = renderSection([{ name: 'ranch water' }, { name: 'lavender fizz' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add recipe' })[0]);
+  await screen.findByTestId('recipe-editor');
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  mockFlushResult = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Next: "lavender fizz"' }));
+
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Next: "lavender fizz"' })).toBeEnabled());
+  expect(screen.getByTestId('recipe-editor')).toHaveTextContent('ranch water');
+  expect(api.post).toHaveBeenCalledTimes(1); // only the first draft; the next was never opened
+  expect(onRegenerate).not.toHaveBeenCalled();
+});
+
+test('closing while Next is still opening the next drink does nothing', async () => {
+  let finishCreate;
+  api.post.mockImplementation((url, body) => {
+    const draft = { id: body.name.replace(/\s+/g, '-'), name: body.name, is_active: false, ingredients: [], request_aliases: [body.name] };
+    if (body.name === 'lavender fizz') return new Promise((resolve) => { finishCreate = () => resolve({ data: draft }); });
+    return Promise.resolve({ data: draft });
+  });
+  const { onRegenerate } = renderSection([{ name: 'ranch water' }, { name: 'lavender fizz' }, { name: 'smoky thing' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add recipe' })[0]);
+  await screen.findByTestId('recipe-editor');
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Next: "lavender fizz"' }));
+  await waitFor(() => expect(finishCreate).toBeDefined());
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+  await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  // Ignored, not queued: the drawer never closed, so it cannot pop back open.
+  expect(screen.getByTestId('drawer')).toBeInTheDocument();
+  finishCreate();
+  await waitFor(() => expect(screen.getByTestId('recipe-editor')).toHaveTextContent('lavender fizz'));
+  expect(window.confirm).not.toHaveBeenCalled();
+  expect(onRegenerate).not.toHaveBeenCalled();
+});
+
+test('Edit recipe reopens the recipe that was saved, not the empty draft', async () => {
+  mockCreates();
+  renderSection([{ name: 'ranch water' }, { name: 'lavender fizz' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add recipe' })[0]);
+  expect(await screen.findByTestId('recipe-editor')).toHaveTextContent('ranch water (0 rows)');
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+  await screen.findByText('Recipe added');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit recipe' }));
+  expect(await screen.findByTestId('recipe-editor')).toHaveTextContent('ranch water (1 rows)');
+  expect(api.post).toHaveBeenCalledTimes(1); // reused, never a second draft
+});
+
+test('a matched row reopened with Edit recipe stays matched', async () => {
+  mockCreates();
+  renderSection([{ name: 'old fashion' }, { name: 'ranch water' }]);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Match existing' })[0]);
+  fireEvent.click(await screen.findByRole('button', { name: /Old Fashioned/ }));
+  await screen.findByText('Matched to Old Fashioned');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit recipe' }));
+  await screen.findByTestId('recipe-editor');
+  fireEvent.click(screen.getByRole('button', { name: 'Add ingredient' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+  await waitFor(() => expect(screen.queryByTestId('drawer')).not.toBeInTheDocument());
+  expect(screen.getByText('Matched to Old Fashioned')).toBeInTheDocument();
 });

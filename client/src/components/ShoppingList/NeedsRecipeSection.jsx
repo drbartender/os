@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../utils/api';
 import Drawer from '../adminos/Drawer';
 import RecipeEditor from '../potions/RecipeEditor';
@@ -11,8 +11,14 @@ import { matchKey, rankDrinkMatches } from '../../utils/rankDrinkMatches';
 //     server matcher resolves it on every future plan without an admin touch.
 //   Add recipe: author a new recipe in the drawer (reuse-before-create).
 // Fold-in happens via the modal's regenerate, confirm-gated because it
-// replaces manual edits.
-const foldPrompt = (name) => `Fold "${name}" into the list? Regenerating replaces your manual edits, and saving will set the list back to Needs review.`;
+// replaces manual edits. It waits until every request is handled: the
+// drawer's Next walks to the next one, and only the last (Done, or closing
+// the drawer on it) rewrites the list, once. A request handled along the
+// way is marked on its row.
+const FOLD_TAIL = 'Regenerating replaces your manual edits, and saving will set the list back to Needs review.';
+const foldPrompt = (names) => (names.length === 1
+  ? `Fold "${names[0]}" into the list? ${FOLD_TAIL}`
+  : `Fold ${names.length} drinks into the list (${names.join(', ')})? ${FOLD_TAIL}`);
 
 const DANGER = 'hsl(var(--danger-h) var(--danger-s) 55%)';
 
@@ -27,7 +33,11 @@ function drinkTags(drink) {
 export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenerate }) {
   const [addingRecipe, setAddingRecipe] = useState(null); // name being created, or null
   const [addRecipeError, setAddRecipeError] = useState('');
-  const [drawerTarget, setDrawerTarget] = useState(null); // { drink, type } or null
+  const [drawerTarget, setDrawerTarget] = useState(null); // { drink, type, isNew, requestName } or null
+  const [advancing, setAdvancing] = useState(false);      // Next / Done saving the open recipe
+  // One drawer exit at a time: X, scrim and Escape stay live while Next or
+  // Done saves, and a second exit would reopen the drawer or prompt twice.
+  const settlingRef = useRef(false);
   const [pars, setPars] = useState(null);                 // lazy: fetched on first drawer open
   const [parsError, setParsError] = useState(false);
   const [rowCount, setRowCount] = useState(0);
@@ -42,6 +52,37 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
   // Match-existing picker for the ONE row that has it open, or null.
   const [matching, setMatching] = useState(null); // { index, name, query, busy, error }
   const editorRef = useRef(null); // RecipeEditor flush handle (imperative ref)
+
+  // Requests handled this pass, by the client's text: { kind: 'recipe' |
+  // 'match', drinkName }. The ref is read after awaits; the state renders the
+  // row marks. A regenerate replaces the request list, which starts a new pass.
+  const resolvedRef = useRef({});
+  const [resolved, setResolved] = useState({});
+  const requestNames = (needsRecipe || []).map((e) => e.name);
+  const requestKey = requestNames.join('\u0000');
+  useEffect(() => {
+    resolvedRef.current = {};
+    setResolved((prev) => (Object.keys(prev).length ? {} : prev));
+  }, [requestKey]);
+
+  const markResolved = (name, info) => {
+    const next = { ...resolvedRef.current, [name]: info };
+    resolvedRef.current = next;
+    setResolved(next);
+    return next;
+  };
+
+  // The next request still waiting, in list order after `current`, wrapping.
+  const nextRequest = (current, done) => {
+    const i = requestNames.indexOf(current);
+    const order = [...requestNames.slice(i + 1), ...requestNames.slice(0, Math.max(i, 0))];
+    return order.find((n) => n !== current && !done[n]) || null;
+  };
+
+  const offerFold = (done) => {
+    const names = [...new Set(Object.values(done).map((r) => r.drinkName))];
+    if (names.length > 0 && window.confirm(foldPrompt(names))) onRegenerate();
+  };
 
   const loadPars = async () => {
     try {
@@ -99,7 +140,7 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
       const existing = await findExistingDrink(name);
       if (existing) {
         setRowCount((existing.drink.ingredients || []).length);
-        setDrawerTarget({ ...existing, isNew: (existing.drink.ingredients || []).length === 0 });
+        setDrawerTarget({ ...existing, isNew: (existing.drink.ingredients || []).length === 0, requestName: name });
         return;
       }
       const res = await api.post('/cocktails', {
@@ -108,7 +149,7 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
       // Future re-clicks reuse it.
       commitDrinkLists({ ...drinkListsRef.current, cocktails: [...drinkListsRef.current.cocktails, res.data] });
       setRowCount(0);
-      setDrawerTarget({ drink: res.data, type: 'cocktails', isNew: true });
+      setDrawerTarget({ drink: res.data, type: 'cocktails', isNew: true, requestName: name });
     } catch (err) {
       setAddRecipeError(err?.message || `Could not add "${name}". Try again.`);
     } finally {
@@ -146,13 +187,14 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
       });
       setMatching(null);
       if ((updated.ingredients || []).length > 0) {
-        if (window.confirm(foldPrompt(updated.name))) onRegenerate();
+        const done = markResolved(name, { kind: 'match', drinkName: updated.name });
+        if (nextRequest(name, done) === null) offerFold(done);
       } else {
         // The drink exists but has no recipe yet: author it right here. The
         // alias just written means the fold-in and any later Add recipe on
         // this text land on THIS drink, never a new one.
         setRowCount(0);
-        setDrawerTarget({ drink: updated, type: drink.table, isNew: true });
+        setDrawerTarget({ drink: updated, type: drink.table, isNew: true, requestName: name });
       }
     } catch (err) {
       setMatching((m) => (m ? {
@@ -161,19 +203,87 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
     }
   };
 
+  // Save the open recipe and count it. Flush BEFORE deciding/folding:
+  // regenerate reads the drink tables, so an edit still inside the editor's
+  // debounce (or a PUT still on the wire) would fold in a stale recipe
+  // (review finding: silent incomplete list). A failed flush already
+  // toasted; the caller then never folds or moves on from a recipe that did
+  // not save. A recipe with no rows is not counted as handled.
+  const settleDrawer = async (target) => {
+    let ok = true;
+    try { ok = (await editorRef.current?.flush()) !== false; } catch (_) { ok = false; }
+    let done = resolvedRef.current;
+    if (ok && target && rowCount > 0) {
+      // A matched row reopened with Edit recipe stays "Matched to".
+      const prior = done[target.requestName];
+      done = markResolved(target.requestName, prior
+        ? { ...prior, drinkName: target.drink.name }
+        : { kind: 'recipe', drinkName: target.drink.name });
+    }
+    return { ok, done };
+  };
+
+  // Close (X, scrim, Escape): the list is rewritten only when this was the
+  // last request still waiting; otherwise it waits for the rest.
   const closeDrawer = async () => {
+    if (settlingRef.current) return;
+    settlingRef.current = true;
+    try {
+      const target = drawerTarget;
+      const { ok, done } = await settleDrawer(target);
+      setDrawerTarget(null);
+      if (!ok || !target || rowCount === 0) return;
+      if (nextRequest(target.requestName, done) === null) offerFold(done);
+    } finally {
+      settlingRef.current = false;
+    }
+  };
+
+  // Next: save this recipe and open the next waiting request in place. A
+  // failed save stays on this recipe; a failed open stays too, with the error.
+  const advanceDrawer = async () => {
+    if (settlingRef.current) return;
+    settlingRef.current = true;
     const target = drawerTarget;
-    // Flush BEFORE deciding/folding: regenerate reads the drink tables, so an
-    // edit still inside the editor's debounce (or a PUT still on the wire)
-    // would fold in a stale recipe (review finding: silent incomplete list).
-    // A failed flush already toasted; skip the fold-in prompt rather than
-    // offer to fold a recipe that did not save.
-    let flushedOk = true;
-    try { flushedOk = (await editorRef.current?.flush()) !== false; } catch (_) { flushedOk = false; }
-    setDrawerTarget(null);
-    if (!flushedOk) return;
-    if (target && rowCount > 0 && window.confirm(foldPrompt(target.drink.name))) {
-      onRegenerate();
+    setAdvancing(true);
+    try {
+      const { ok, done } = await settleDrawer(target);
+      if (!ok) return;
+      const next = nextRequest(target.requestName, done);
+      if (next) await handleAddRecipe(next);
+    } finally {
+      settlingRef.current = false;
+      setAdvancing(false);
+    }
+  };
+
+  // Done: save, close, and fold every handled request in with one regenerate.
+  const finishDrawer = async () => {
+    if (settlingRef.current) return;
+    settlingRef.current = true;
+    setAdvancing(true);
+    try {
+      const { ok, done } = await settleDrawer(drawerTarget);
+      setDrawerTarget(null);
+      if (ok) offerFold(done);
+    } finally {
+      settlingRef.current = false;
+      setAdvancing(false);
+    }
+  };
+
+  // A saved recipe updates the cached drink lists too, so a later Edit recipe
+  // on this request reopens what was saved, not the empty draft.
+  const handleDrinkChange = (u, forType) => {
+    // Cocktail and mocktail ids are independent slugs: match the table too.
+    setDrawerTarget((prev) => (prev && (!u.id || (prev.drink.id === u.id && (!forType || prev.type === forType)))
+      ? { ...prev, drink: { ...prev.drink, ...u } } : prev));
+    const table = forType || drawerTarget?.type;
+    if (u.id && table && drinkListsRef.current?.[table]) {
+      commitDrinkLists({
+        ...drinkListsRef.current,
+        [table]: drinkListsRef.current[table].map((d) => (d.id === u.id ? { ...d, ...u } : d)),
+      });
     }
   };
 
@@ -182,6 +292,7 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
   if (!hasNeedsRecipe && !hasUnresolved && !drawerTarget) return null;
 
   const actionsLocked = addingRecipe !== null || Boolean(matching?.busy);
+  const drawerNext = drawerTarget ? nextRequest(drawerTarget.requestName, resolved) : null;
 
   return (
     <>
@@ -218,13 +329,31 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
           <p style={{ color: 'var(--ink-1)', fontFamily: 'var(--font-display)', fontSize: '0.9rem', margin: '0 0 0.5rem' }}>
             Client requested: recipe needed
           </p>
-          {needsRecipe.map((entry, i) => (
+          {needsRecipe.map((entry, i) => {
+            const done = resolved[entry.name];
+            return (
             <div key={(entry.name || '') + '-' + i}>
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 gap: '0.75rem', padding: '0.25rem 0',
               }}>
                 <span style={{ color: 'var(--ink-2)', fontSize: '0.85rem' }}>{entry.name}</span>
+                {done ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
+                    <span style={{ color: 'hsl(var(--ok-h) var(--ok-s) 50%)', fontSize: '0.8rem' }}>
+                      {done.kind === 'match' ? `Matched to ${done.drinkName}` : 'Recipe added'}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      onClick={() => handleAddRecipe(entry.name)}
+                      disabled={actionsLocked}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      {addingRecipe === entry.name ? 'Opening…' : 'Edit recipe'}
+                    </button>
+                  </div>
+                ) : (
                 <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
                   <button
                     type="button"
@@ -245,6 +374,7 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
                     {addingRecipe === entry.name ? 'Adding…' : 'Add recipe'}
                   </button>
                 </div>
+                )}
               </div>
 
               {/* Anchored by index AND name: a regenerate replaces the list, and
@@ -304,7 +434,8 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
           {addRecipeError && (
             <p style={{ color: DANGER, fontSize: '0.8rem', margin: '0.5rem 0 0' }}>
               {addRecipeError}
@@ -318,6 +449,30 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
         open={!!drawerTarget}
         onClose={closeDrawer}
         crumb={<span className="drawer-crumb">{drawerTarget?.isNew === false ? 'Potions · Recipe' : 'Potions · New recipe'}</span>}
+        footer={drawerTarget && pars !== null && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.75rem',
+            padding: '0.75rem 1.25rem', borderTop: '1px solid var(--accent-line)',
+          }}>
+            {addRecipeError && (
+              <span style={{ color: DANGER, fontSize: '0.8rem', marginRight: 'auto' }}>{addRecipeError}</span>
+            )}
+            {drawerNext ? (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={advanceDrawer}
+                disabled={advancing || addingRecipe !== null}
+              >
+                {addingRecipe === drawerNext ? 'Opening…' : `Next: "${drawerNext}"`}
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary btn-sm" onClick={finishDrawer} disabled={advancing}>
+                Done, update list
+              </button>
+            )}
+          </div>
+        )}
       >
         {drawerTarget && (
           pars === null ? (
@@ -331,12 +486,13 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
                 </div>
               )}
               <RecipeEditor
+                key={`${drawerTarget.type}-${drawerTarget.drink.id}`}
                 ref={editorRef}
                 drink={drawerTarget.drink}
                 type={drawerTarget.type}
                 pars={pars}
                 autoFocusName
-                onDrinkChange={(u) => setDrawerTarget((prev) => (prev ? { ...prev, drink: { ...prev.drink, ...u } } : prev))}
+                onDrinkChange={handleDrinkChange}
                 onParsChange={(p) => setPars((prev) => [...(prev || []), p])}
                 onRowsChange={setRowCount}
               />
