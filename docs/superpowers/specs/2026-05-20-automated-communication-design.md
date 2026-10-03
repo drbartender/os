@@ -576,7 +576,7 @@ Hi [client_first_name], time to lock in drinks for your [event_type] on [event_d
 
 1. Potion Planner: [link] (about 5 min, easiest)
 2. Book a 15-minute phone consult: [scheduling link]
-3. Call or text us at [phone] and we'll walk through it together
+3. Call us at [COMPANY_PHONE, the 1922] or text [COMPANY_TEXT_PHONE, the 888] and we'll walk through it together (amended 2026-10-02: [phone] was filled from ADMIN_PHONE, a personal cell; client-facing numbers come only from server/utils/companyPhone.js)
 
 Cheers, Dallas
 ```
@@ -584,7 +584,7 @@ Cheers, Dallas
 **SMS:**
 
 ```
-Hi, Dallas here. Time to lock in drinks for [event_date]. Use the Potion Planner: [link], or book a consult: [scheduling link]. Or just call us.
+Hi, Dallas here. Time to lock in drinks for [event_date]. Use the Potion Planner: [link], or book a consult: [scheduling link]. Or just call us at [COMPANY_PHONE, the 1922]. (amended 2026-10-02: sent from the 888, whose voice line nobody answers)
 ```
 
 #### 3.8 Drink plan submitted confirmation
