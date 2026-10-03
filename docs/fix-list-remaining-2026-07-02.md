@@ -1650,6 +1650,16 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Comms and marketing
 
+- **Answering a presence nudge with "yes" also fires the SMS opt-in machinery** (found 2026-10-02 by
+  the purge-cell database review, pre-existing). `presenceScheduler.js:25` NUDGE_COPY says `Reply
+  "yes"`, and `smsInbound.js:18` has `yes` in START_WORDS, so the reply hits `detectOptKeyword`
+  before anything else: `applyOptIn` runs on admin user 1, `alertOptKeyword` fans an admin alert,
+  and Twilio sends its own re-subscribe compliance text back. The presence stamp lands first
+  (`routes/sms.js:74`), so the feature works; the cost is one admin alert plus one carrier
+  auto-reply per answered nudge, all landing on the 312 since the nudge moved there. Fix: change
+  the copy to a word that is no opt keyword (e.g. "here"), or short-circuit the keyword path when
+  `stampByNudgePhone` matched.
+
 - **Drip residuals from the 2026-09-24 push-time fleet, none reachable without a race or a DB
   blip** (the reachable ones sit in §3):
   - `cancelMarketingForProposal` runs `handOffDripToSibling` before its own suppress UPDATE with no
