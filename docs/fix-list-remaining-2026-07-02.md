@@ -1778,9 +1778,12 @@ the accented spelling) or the two spellings stop matching each other.
   can never produce the `If-None-Match`/`If-Range` the ETag code carefully reasons about, so that
   path is unreachable and iOS Safari's probe-then-body pattern costs TWO full authenticated Twilio
   downloads per playback. Requires a valid token, so hardening, not a live hole.
-- **The 888's voiceUrl still points at the dead CheckCherry webhook.** Harmless in practice — nobody
-  calls the 888, its job is SMS and that correctly points at `/api/sms/inbound` — but it is a live
-  number pointing at a dead third party. Point it at a hangup or the primary handler.
+- **The 888's voiceUrl still points at the dead CheckCherry webhook.** NOT harmless (corrected
+  2026-10-02): the drink-plan nudge SMS, sent from the 888 to every booking seconds after the
+  deposit, ends "Or just call us.", so a client who calls the number that texted them reaches a dead
+  third party. SMS correctly points at `/api/sms/inbound`. Point the 888's voice at the primary
+  handler (`/api/voice/inbound/primary`, rings the 312 GV), or change that SMS copy to name the 1922.
+  Twilio console change, no code; confirm in the console before flipping.
 - **`voicemailListen.js:78-79` overstates its 404 uniformity.** True among the `notFound()` cases,
   but a non-UUID path segment is rejected earlier by `requireUuidToken` and returns JSON. Nothing
   leaks either way; worth correcting because the next person will trust the comment over the code.
