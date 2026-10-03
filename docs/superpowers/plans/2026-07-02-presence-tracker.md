@@ -59,7 +59,7 @@ lanes:
 - Test lead ranks use 900+ values so they never collide with the real dev rows (rank 1 and 2) under the partial UNIQUE index.
 - Commits are in-lane checkpoints (squashed at merge): explicit pathspec always, never `git add .`.
 - Backfill emails verified against prod Neon (`production` branch) 2026-07-02: Dallas = `admin@drbartender.com` (id 1), Zul = `zul@drbartender.com` (id 2). Both rows also exist on dev.
-- Dallas's cell (`+19703330527`) IS committed in the schema backfill, by his explicit call 2026-07-02 (private repo; he wants the nudge working day one, no manual rollout step). It is his real cell, deliberately NOT the shared 312 GV line on his contractor profile. The scheduler still treats a NULL phone on an sms-channel user as "send unconfirmed" (log + Sentry, no stamp, no flip) as defense in depth.
+- SUPERSEDED 2026-10-02: the repo is public, so the cell was purged from schema.sql and these docs, and the admin's nudge phone is now the 312 Google Voice line (prod row moved the same day). Original 2026-07-02 note: Dallas's cell IS committed in the schema backfill, by his explicit call 2026-07-02 (believed a private repo; he wants the nudge working day one, no manual rollout step). It is his real cell, deliberately NOT the shared 312 GV line on his contractor profile. The scheduler still treats a NULL phone on an sms-channel user as "send unconfirmed" (log + Sentry, no stamp, no flip) as defense in depth.
 
 ---
 
@@ -122,7 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_presence_log_user_started
 UPDATE users SET presence_lead_rank = 1, presence_nudge_channel = 'telegram'
   WHERE email = 'zul@drbartender.com' AND presence_lead_rank IS NULL;
 UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms',
-    presence_nudge_phone = '+19703330527'
+    presence_nudge_phone = '<cell, purged 2026-10-02>'
   WHERE email = 'admin@drbartender.com' AND presence_lead_rank IS NULL;
 
 -- Strip display name (plan-review finding): the admin account's contractor
@@ -159,7 +159,7 @@ FROM users WHERE presence_lead_rank IS NOT NULL ORDER BY presence_lead_rank;
 SELECT user_id, state, taking_leads, started_at, ended_at FROM presence_log WHERE ended_at IS NULL;
 ```
 
-Expected: 2 users (zul rank 1 telegram; admin rank 2 sms with `presence_nudge_phone` `+19703330527`), both `away` with `presence_since` set; 2 open away intervals.
+Expected: 2 users (zul rank 1 telegram; admin rank 2 sms with `presence_nudge_phone` `<cell, purged 2026-10-02>`), both `away` with `presence_since` set; 2 open away intervals.
 
 - [ ] **Step 3: Run the block a second time (idempotency proof)**
 
@@ -1875,7 +1875,7 @@ git commit -m "presence: docs + env flag"
 
 1. Prod schema applies via initDb on boot; verify:
    `SELECT id, email, presence_lead_rank, presence_nudge_channel, presence_nudge_phone, presence_since FROM users WHERE presence_lead_rank IS NOT NULL;`
-   Expected: exactly zul@ (rank 1, telegram) and admin@ (rank 2, sms, phone `+19703330527`), both with `presence_since`, plus one open away interval each in presence_log.
+   Expected: exactly zul@ (rank 1, telegram) and admin@ (rank 2, sms, phone `<cell, purged 2026-10-02>`), both with `presence_since`, plus one open away interval each in presence_log.
 2. Smoke in prod: flip states in the strip, open the drawer, confirm the pointer.
 3. First real 6h desk stint: confirm the nudge arrives (Zul: Telegram; Dallas: SMS from the 888 OS number) and that replying "yes" (Zul) keeps the state, and silence flips to away 30 min later with the interval closed at the nudge time.
 4. Dallas sets a custom notification sound for the 888 OS Twilio number on his cell so nudges are audibly distinct (no code).

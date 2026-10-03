@@ -128,7 +128,8 @@ alone.
 Backfill (idempotent statements in schema.sql, no-op where the account is absent):
 Zul's admin account (`zul@drbartender.com`) gets rank 1 + channel 'telegram';
 Dallas's admin account (`admin@drbartender.com`) gets rank 2 + channel 'sms' +
-`presence_nudge_phone` = `'+19703330527'` (his cell, committed literally by his
+`presence_nudge_phone` = his cell (SUPERSEDED 2026-10-02: the repo is public, the cell was
+purged, and the value is now the 312 Google Voice line; original note: committed literally by his
 explicit call 2026-07-02: private repo, and he wants the nudge working day one with
 no manual rollout step; NEVER the shared 312 GV line, which is what sits on his
 contractor profile). Both emails verified against the prod users table 2026-07-02
@@ -384,7 +385,7 @@ re-review + `/second-opinion` at push. The feature itself carries no money movem
    mismatch): `SELECT id, email, presence_lead_rank, presence_nudge_channel,
    presence_nudge_phone FROM users WHERE presence_lead_rank IS NOT NULL` on prod
    must return exactly the two expected rows (zul rank 1 telegram; admin rank 2
-   sms with phone `+19703330527`), each with `presence_since` set and an open away
+   sms with phone `<cell, purged 2026-10-02>`), each with `presence_since` set and an open away
    interval in presence_log.
 3. Smoke: flip states in the strip in both skins + rail mode; open the drawer;
    confirm the pointer follows the derivation table.
