@@ -171,7 +171,7 @@ Sent by the claim winner, from `TWILIO_PHONE_NUMBER`, to `VM_TEXT_DESTINATION` f
 
 ## 6. Error handling and edge cases
 
-- **Non-US or missing booker number** (Aaran's `+2482280958` is the live example): never dialed. `skipped_invalid_phone` at booking time plus the bounded email; visible in the attention feed until the slot passes.
+- **Non-US or missing booker number** (a live booking stored a US number without its leading 1, a 10-digit `+248...` value; real number redacted 2026-10-02, the repo is public): never dialed. `skipped_invalid_phone` at booking time plus the bounded email; visible in the attention feed until the slot passes.
 - **Pre-deploy bookings** have no `booker_phone`. None are in the future at spec time; any that appear are handled by the sweep's open step (skip + email), no backfill.
 - **Near-slot and past-slot bookings.** A webhook landing inside 90 seconds of the slot opens with `next_ring_at` already past and rings on the next tick; a slot that passed by up to 3 minutes still opens (late ring); beyond that, `skipped_missed_window` + email.
 - **Cancel after the chain opened.** Re-checked before every admin ring, before the Zul hop, and at press-1; a cancel mid-chain lands `skipped_cancelled` at the next of those points. A bridge already in progress is left alone.
