@@ -8,6 +8,8 @@
  * SMS copy below.
  */
 
+const { COMPANY_PHONE } = require('./companyPhone');
+
 /** Defensive fallbacks so a missing merge field never renders 'undefined'. */
 function ev(label) { return label || 'event'; }
 function dt(date) { return date || 'your event'; }
@@ -42,9 +44,11 @@ function dripTouch5Sms({ eventDate, link }) {
 }
 
 // ─── 3.7 Drink plan nudge SMS ────────────────────────────────────
+// Names the 1922: this goes out from the 888, whose voice line is not ours to
+// answer, so a bare "call us" sent the client to a number nobody picks up.
 function drinkPlanNudgeSms({ eventDate, plannerUrl, consultUrl }) {
   const consultClause = consultUrl ? `, or book a consult: ${consultUrl}` : '';
-  return `Hi, Dallas here. Time to lock in drinks for ${dt(eventDate)}. Use the Potion Planner: ${plannerUrl}${consultClause}. Or just call us.`;
+  return `Hi, Dallas here. Time to lock in drinks for ${dt(eventDate)}. Use the Potion Planner: ${plannerUrl}${consultClause}. Or just call us at ${COMPANY_PHONE}.`;
 }
 
 // ─── 3.5 Balance due today SMS ───────────────────────────────────

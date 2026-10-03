@@ -40,6 +40,7 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
 const { firstNameOf } = require('./firstName');
+const { COMPANY_PHONE, COMPANY_TEXT_PHONE } = require('./companyPhone');
 
 const BRAND = { primary: '#3b2314', secondary: '#6b4226' };
 const DAY_SECONDS = 86400;
@@ -55,14 +56,13 @@ function esc(str) {
  * Drink-plan nudge email body. Spec 3.7: three ways to lock in drinks.
  * NO em dashes. ctaButton inlined to avoid the emailTemplates.js require cycle.
  */
-function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay, plannerUrl, consultUrl, phone }) {
+function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay, plannerUrl, consultUrl }) {
   const name = clientFirstName || 'there';
   const consultLine = consultUrl
     ? `<li>Book a 15-minute phone consult: <a href="${esc(consultUrl)}">${esc(consultUrl)}</a></li>`
     : '';
-  const phoneLine = phone
-    ? `<li>Call or text us at ${esc(phone)} and we'll walk through it together</li>`
-    : `<li>Call or text us and we'll walk through it together</li>`;
+  // The company lines, never an env-configured agent number (see companyPhone.js).
+  const phoneLine = `<li>Call us at ${esc(COMPANY_PHONE)} or text ${esc(COMPANY_TEXT_PHONE)} and we'll walk through it together</li>`;
   return {
     subject: `Time to lock in drinks for your ${eventTypeLabel} event`,
     html: wrapEmail(`
@@ -81,7 +81,7 @@ function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay
       `Hi ${firstNameOf(name)}, time to lock in drinks for your ${eventTypeLabel} on ${eventDateDisplay}. Three ways to do it:`,
       `1. Potion Planner: ${plannerUrl} (about 5 minutes, easiest)`,
       consultUrl ? `2. Book a 15-minute phone consult: ${consultUrl}` : null,
-      `${consultUrl ? '3' : '2'}. Call or text us${phone ? ` at ${phone}` : ''} and we'll walk through it together`,
+      `${consultUrl ? '3' : '2'}. Call us at ${COMPANY_PHONE} or text ${COMPANY_TEXT_PHONE} and we'll walk through it together`,
       'Cheers, Dallas',
     ].filter(Boolean).join('\n'),
   };
@@ -142,7 +142,6 @@ async function handleDrinkPlanNudgeEmail({ entity }) {
     eventDateDisplay: eventDateSms(ctx.event_date) || 'your event',
     plannerUrl: ctx.token ? `${PUBLIC_SITE_URL}/plan/${ctx.token}` : `${PUBLIC_SITE_URL}/plan`,
     consultUrl: process.env.CAL_BOOKING_URL || null,
-    phone: process.env.ADMIN_PHONE || null,
   });
   await sendEmail({ to: ctx.client_email, ...tpl });
 }

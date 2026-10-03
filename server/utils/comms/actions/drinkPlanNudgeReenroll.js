@@ -143,7 +143,6 @@ function defaultParts(row) {
       eventTypeLabel,
       eventDateDisplay: formatEventDateForSms(row.event_date) || 'your event',
       plannerUrl,
-      phone: process.env.ADMIN_PHONE || null,
     }),
     sms: {
       body: smsTemplates.drinkPlanNudgeSms({

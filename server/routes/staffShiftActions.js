@@ -909,8 +909,8 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
     daysOut: hoursOut / 24,
   });
 
-  // ADMIN_PHONE hotline SMS — separate fan-out target (Dallas's personal
-  // phone), distinct from the admin-user-phone broadcast above.
+  // ADMIN_PHONE hotline SMS — separate fan-out target (the 312 Google Voice
+  // line, never a personal cell), distinct from the admin-user-phone broadcast above.
   if (process.env.ADMIN_PHONE) {
     try {
       await sendAndLogSms({

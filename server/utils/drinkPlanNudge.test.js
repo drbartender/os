@@ -2,7 +2,8 @@ require('dotenv').config();
 const { test, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
-const { registerDrinkPlanNudgeHandlers, scheduleDrinkPlanNudge, loadNudgeContext } = require('./drinkPlanNudge');
+const { registerDrinkPlanNudgeHandlers, scheduleDrinkPlanNudge, loadNudgeContext, drinkPlanNudgeEmail } = require('./drinkPlanNudge');
+const { COMPANY_PHONE, COMPANY_TEXT_PHONE } = require('./companyPhone');
 const { getHandlerMeta, _clearHandlersForTest } = require('./scheduledMessageDispatcher');
 
 let clientId;
@@ -41,6 +42,32 @@ afterEach(async () => {
 after(async () => {
   await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
   await pool.end();
+});
+
+// The nudge printed ADMIN_PHONE (Dallas's personal cell) as "call or text us
+// at", and clients texted his cell. Pinned on the legacy builder the dispatcher
+// sends; the compose-modal parts carry the same pin in emailTemplates.parts.test.js.
+test('drinkPlanNudgeEmail > prints the company lines, never ADMIN_PHONE or a stray phone arg', () => {
+  const prev = process.env.ADMIN_PHONE;
+  try {
+    process.env.ADMIN_PHONE = '+19995550123';
+    const tpl = drinkPlanNudgeEmail({
+      clientFirstName: 'Morgan',
+      eventTypeLabel: 'anniversary',
+      eventDateDisplay: 'March 3',
+      plannerUrl: 'https://drbartender.com/plan/tok',
+      consultUrl: null,
+      phone: '+19995550199',
+    });
+    for (const body of [tpl.html, tpl.text]) {
+      assert.ok(!body.includes('9995550123'), 'ADMIN_PHONE never reaches a client');
+      assert.ok(!body.includes('9995550199'), 'a stray phone arg is ignored');
+      assert.ok(body.includes(COMPANY_PHONE) && body.includes(COMPANY_TEXT_PHONE), 'company lines printed');
+    }
+  } finally {
+    if (prev === undefined) delete process.env.ADMIN_PHONE;
+    else process.env.ADMIN_PHONE = prev;
+  }
 });
 
 test('registerDrinkPlanNudgeHandlers > registers email + sms types, operational, T-21 offset', () => {

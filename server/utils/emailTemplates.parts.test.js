@@ -18,6 +18,7 @@ const {
   drinkPlanNudgeParts,
   consultRecapParts,
 } = require('./lifecycleEmailTemplates');
+const { COMPANY_PHONE, COMPANY_TEXT_PHONE } = require('./companyPhone');
 
 // Shared shape assertions every parts function must satisfy.
 function assertPartsShape(parts) {
@@ -148,12 +149,37 @@ test('drinkPlanNudgeParts: shape + cta.url', () => {
     eventTypeLabel: 'anniversary',
     eventDateDisplay: 'March 3',
     plannerUrl: 'https://drbartender.com/plan/tok',
-    phone: '312-555-0100',
   });
   assertPartsShape(p);
   assert.equal(p.cta.url, 'https://drbartender.com/plan/tok');
   assert.equal(p.cta.label, 'Open the Potion Planner');
-  assert.ok(p.bodyText.includes('312-555-0100'), 'phone line included when phone provided');
+  assert.ok(p.bodyText.includes(`Call us at ${COMPANY_PHONE} or text ${COMPANY_TEXT_PHONE}`), 'prints the company lines');
+});
+
+// The nudge printed ADMIN_PHONE (Dallas's personal cell) as "call or text us
+// at", and clients texted his cell. The client-facing number is the company
+// line, full stop: no env var and no caller argument can put another one there.
+test('drinkPlanNudgeParts never prints ADMIN_PHONE or a caller-supplied phone', () => {
+  const prev = process.env.ADMIN_PHONE;
+  try {
+    process.env.ADMIN_PHONE = '+19995550123';
+    const args = {
+      clientFirstName: 'Morgan',
+      eventTypeLabel: 'anniversary',
+      eventDateDisplay: 'March 3',
+      plannerUrl: 'https://drbartender.com/plan/tok',
+      phone: '+19995550199',
+    };
+    const parts = drinkPlanNudgeParts(args);
+    for (const body of [parts.bodyText]) {
+      assert.ok(!body.includes('9995550123'), 'ADMIN_PHONE never reaches a client');
+      assert.ok(!body.includes('9995550199'), 'a stray phone arg is ignored');
+      assert.ok(body.includes(COMPANY_PHONE) && body.includes(COMPANY_TEXT_PHONE), 'company lines printed');
+    }
+  } finally {
+    if (prev === undefined) delete process.env.ADMIN_PHONE;
+    else process.env.ADMIN_PHONE = prev;
+  }
 });
 
 test('drinkPlanNudgeParts: Cal.com consult line gated on CAL_BOOKING_URL', () => {

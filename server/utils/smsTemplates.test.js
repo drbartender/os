@@ -47,6 +47,7 @@ test('drinkPlanNudgeSms > points at planner and consult', () => {
   const s = t.drinkPlanNudgeSms({ eventDate: 'June 1', plannerUrl: 'https://x/plan/abc', consultUrl: 'https://cal/x' });
   assert.match(s, /lock in drinks/);
   assert.match(s, /https:\/\/x\/plan\/abc/);
+  assert.ok(s.endsWith('Or just call us at (224) 222-1922.'), 'names the company call line, not the 888 sender');
   assertNoEmDash(s, 'drinkPlanNudgeSms');
 });
 

@@ -1,6 +1,8 @@
 /** Shared constants — single source of truth for hardcoded business values */
 
 export const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/GjZsSHG5BsRCR2yc9Z2b5A';
+// COMPANY_PHONE and COMPANY_TEXT_PHONE are mirrored in server/utils/companyPhone.js
+// (the numbers server-rendered client emails and SMS print). Change both together.
 // VOICE: the primary business line (+12242221922). This is the number to CALL.
 export const COMPANY_PHONE = '(224) 222-1922';
 export const COMPANY_PHONE_TEL = 'tel:+12242221922';

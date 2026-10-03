@@ -4426,8 +4426,11 @@ ALTER TABLE users DROP CONSTRAINT IF EXISTS users_presence_nudge_channel_check;
 ALTER TABLE users ADD CONSTRAINT users_presence_nudge_channel_check
   CHECK (presence_nudge_channel IS NULL OR presence_nudge_channel IN ('sms', 'telegram'));
 -- E.164 destination for sms-channel nudges AND the inbound sign-of-life match
--- key. This is deliberately NOT contractor_profiles.phone and NEVER the shared
--- 312 Google Voice line (that is what sits on the admin contractor profile).
+-- key. Its own column, NOT contractor_profiles.phone. It MAY hold the same 312
+-- Google Voice line as the admin contractor profile (it does since 2026-10-02,
+-- when a personal cell was purged from it): the two match surfaces are disjoint
+-- (presenceStore.stampByNudgePhone reads only this column and never affects
+-- routing; smsInbound's sender lookup reads only contractor_profiles.phone).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_nudge_phone VARCHAR(20);
 -- IANA zone the user actually lives in, so the presence strip can show each
 -- person's local wall-clock time to the OTHER person (a browser-derived zone
@@ -4461,8 +4464,12 @@ CREATE INDEX IF NOT EXISTS idx_presence_log_user_started
 -- table 2026-07-02 (admin@drbartender.com id 1, zul@drbartender.com id 2).
 UPDATE users SET presence_lead_rank = 1, presence_nudge_channel = 'telegram'
   WHERE email = 'zul@drbartender.com' AND presence_lead_rank IS NULL;
+-- The admin's nudge goes to the 312 Google Voice line (the admin-alert line),
+-- never a personal cell: this repo is public. The cell that sat here was removed
+-- from the tree 2026-10-02 (git history still carries it), and prod's row was
+-- moved by hand the same day, since this guarded statement never re-runs there.
 UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms',
-    presence_nudge_phone = '+19703330527'
+    presence_nudge_phone = '+13125889401'
   WHERE email = 'admin@drbartender.com' AND presence_lead_rank IS NULL;
 
 -- Zul works from Quezon City; every other account defaults to Chicago via the

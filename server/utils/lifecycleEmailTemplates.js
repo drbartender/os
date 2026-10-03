@@ -20,6 +20,7 @@
 
 const { esc } = require('./htmlEscape');
 const { firstNameOf } = require('./firstName');
+const { COMPANY_PHONE, COMPANY_TEXT_PHONE } = require('./companyPhone');
 
 const BRAND = {
   dark: '#2d1810',
@@ -610,7 +611,7 @@ function portalInviteParts({ clientName, portalUrl }) {
  * process.env.CAL_BOOKING_URL is set, reproducing the legacy conditional (whose
  * handler passes consultUrl = process.env.CAL_BOOKING_URL || null).
  */
-function drinkPlanNudgeParts({ clientFirstName, eventTypeLabel = 'event', eventDateDisplay, plannerUrl, phone }) {
+function drinkPlanNudgeParts({ clientFirstName, eventTypeLabel = 'event', eventDateDisplay, plannerUrl }) {
   const name = clientFirstName || 'there';
   const when = eventDateDisplay || 'your event';
   const consultUrl = process.env.CAL_BOOKING_URL || null;
@@ -618,7 +619,7 @@ function drinkPlanNudgeParts({ clientFirstName, eventTypeLabel = 'event', eventD
     `Time to lock in drinks for your ${eventTypeLabel} on ${when}. Three ways to do it:`,
     '1. Potion Planner: tap the button below, about 5 minutes and easiest.',
     consultUrl ? `2. Book a 15-minute phone consult: ${consultUrl}.` : null,
-    `${consultUrl ? '3' : '2'}. Call or text us${phone ? ` at ${phone}` : ''} and we'll walk through it together.`,
+    `${consultUrl ? '3' : '2'}. Call us at ${COMPANY_PHONE} or text ${COMPANY_TEXT_PHONE} and we'll walk through it together.`,
   ].filter(Boolean).join('\n');
   const paragraphs = [
     `Hi ${firstNameOf(name)},`,
