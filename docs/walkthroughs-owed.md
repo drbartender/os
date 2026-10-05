@@ -1892,6 +1892,22 @@ The walk, on a proposal with Add an alternative used once (two options, the new 
   window: the side-by-side comparison, not a contract.
 - Group 20 in prod (858 viewed, 872 draft) is the live case: its panel should now hide Copy.
 
+### Pantry & Pars "Recipe @ 100": margarita salt at one container. Merged 2026-10-05 as `addd55ad`, NOT yet pushed.
+
+Moves to Tier 3b the moment `git merge-base --is-ancestor addd55ad origin/main` says yes. Verified by
+tests (generator 69/69 with the frozen-snapshot parity intact, potions routes 21/21, Pantry tab 6/6,
+consult/BEO/hosted/lab suites green), a five-agent fleet, and real lists generated from the dev DB in a
+rolled-back transaction. The Pantry tab itself was never opened signed in (the admin sign-in token was
+blocked in that session).
+
+- After the first prod boot, one read-only check: `SELECT id, recipe_qty_per_100 FROM par_items WHERE
+  recipe_qty_per_100 IS NOT NULL` returns margarita-salt, tajin and sanding-sugar at 1, nothing else.
+- Potions, Pantry & Pars: a "Recipe @ 100" column beside "@ N"; those three read 1, everything else is
+  empty; hovering the header explains it. Type 2 on one, reload, it sticks; clear it, reload, empty.
+- Generate a BYOB list for an event with a Margarita or Paloma at 50 to 100 guests: Margarita Salt reads
+  1 (2 above 100 guests), with no extra container for a second salt-rimmed drink. Ginger Beer and Fresh
+  Mint come out exactly as before. Lists you already hand-edited keep your numbers on regenerate.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

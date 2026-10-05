@@ -46,7 +46,7 @@ first three sit above the divider.
 
 1. BEO finalize clicks → SHIPPED 2026-09-22 (lane beo-approve-is-review, `3934cffc`, pushed 2026-09-24); residuals under Potions → Derived BEO finalize follow-ups.
 2. "Copy compare link" bounces the client to the sign page → SHIPPED 2026-10-02 (`a43f864e`, quick fix on main).
-3. **Margarita salt lands at four or more containers** → §2.
+3. Margarita salt lands at four or more containers → SHIPPED 2026-10-05 (`addd55ad`, lane recipe-qty); follow-ups under Potions.
 4. Supplies chip is grey on the desktop events list → Admin UI (one word).
 5. Show when an event was booked → Admin UI (client-only).
 6. Admin cannot download the menu print file → Admin UI (one route, one button).
@@ -99,7 +99,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
-| 2 | The shopping list asks for four or more containers of margarita salt | yes, on any salt-rimmed menu |
 | 2 | A Lab syrup strips unrelated items off the shopping list (ginger takes the ginger beer) | no (0 plans have picked a Lab syrup) |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
 | 3 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
@@ -715,29 +714,6 @@ as "Grenadine (Pomegranate) Syrup" beside a recipe's "Grenadine"; orgeat as "Org
 Syrup" beside "Orgeat"; vanilla-bean as "Vanilla Bean Syrup" beside "Vanilla Syrup". Resolve the
 self-provided syrup through the catalog alias index instead of building a label.
 
-### The shopping list asks for four or more containers of margarita salt
-
-Dallas: *"Generally only need one container of margarita salt."* Prod par row `margarita-salt`:
-`qty_per_100 = 1`, `size = container`, `in_full_bar = false`, alias `margarita salt` (same shape for
-`tajin`). Because it is not in the full-bar baseline it only ever reaches a list through a recipe
-ingredient, and that path ignores `qty_per_100` entirely: `mergeSignatureRecipes`
-(`server/utils/shoppingList.js`, the "Add missing items" loop) lands any recipe-resolved item not
-already on the list at `Math.max(1, Math.ceil(guestCount / 25))`, then adds +1 per additional
-signature drink that uses it. 100 guests = 4 containers; two salt-rimmed drinks = 5. The comment
-above the loop calls this a deliberate v1 carry-over ("quantities are usually right"). The buffer
-multipliers in `shoppingListGen.js` are display metadata and never touch the number.
-
-Same defect for every non-baseline recipe item: prod has 67 active `in_full_bar = false` rows
-(mint, basil, cucumber, Tajin, sanding sugar, orgeat, grenadine, every flavored syrup, every
-specialty spirit, and so on), all carrying a `qty_per_100` the generator never reads on this path.
-
-Fix, smallest true one: in that loop, when the resolved row has a par row (`slices.byId`, whose
-`qty` IS `qty_per_100`), use `scaleQty(parRow.qty, guestCount)` (the baseline's own
-`ceil(q × guests / 100)`) instead of `guests / 25`; keep the +1-per-extra-drink boost; legacy-map
-fallback rows (no par id) keep the old rule. Salt then lands at 1 up to 100 guests and 2 above,
-which matches "generally one". Run `potionCatalog.test.js` and the shoppingList suites; this
-changes every recipe-derived quantity, so eyeball one real BYOB list before and after.
-
 ### A Lab syrup strips unrelated items off the shopping list
 
 `refreshListAfterLabChange` (`server/routes/drinkPlans/labListRefresh.js`, the lab-syrup strip)
@@ -1270,6 +1246,20 @@ the only thing keeping "Maraschino Cherries" off the Luxardo row. `normalizeName
 so **NEVER put an accent in an item name or alias** (Tajin, not the accented spelling; Kahlua, not
 the accented spelling) or the two spellings stop matching each other.
 
+- **Recipe @ 100 candidates, Dallas's call (2026-10-05).** `par_items.recipe_qty_per_100` (Pantry &
+  Pars, "Recipe @ 100") shipped preset only on Margarita Salt, Tajin and Sanding Sugar, the three the
+  approved lists cut to one container every time (`admin_set` lines, 2026-08/09). The same lists show
+  these also cut to about one per event by hand, on 1 to 3 lists each, so they were left blank rather
+  than guessed: Campari, Lillet Blanc, Lucid Absinthe, Dolin Dry, Carpano Antica, Myers's Dark Rum,
+  Olives, Grenadine. Setting one to 1 stops the hand edit; blank keeps 1 per 25 guests plus 1 per extra
+  drink. Ginger Beer, Cold Brew, Fresh Mint and the signature spirits sit at the 1-per-25 rule
+  untouched on every list, so leave those blank.
+- **The Pantry tab's "@ N" projection is wrong for "Recipes only" rows.** That column scales
+  `qty_per_100`, which no generator path reads for a row whose only call-on is a recipe (the recipe
+  merge uses 1 per 25 guests, or Recipe @ 100 when set). So every recipe-only row shows a placeholder
+  "1 per 100" that never reaches a list; it is what made salt look correct in the tab and seeded the
+  original misdiagnosis of the salt entry. Fix: for a "Recipes only" row, project the recipe rule
+  instead (Recipe @ 100 scaled, else ceil(guests / 25)), or show a dash.
 - **`cost` is null on 85 of 97 active par rows.** Biggest remaining gap; the package-editor margin
   rail is waiting on it.
 - `paired_spirits` empty on 31 of 44 mixers + garnishes (feeds `SPIRIT_MIXER_PAIRINGS` /
