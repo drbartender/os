@@ -385,7 +385,7 @@ re-review + `/second-opinion` at push. The feature itself carries no money movem
    mismatch): `SELECT id, email, presence_lead_rank, presence_nudge_channel,
    presence_nudge_phone FROM users WHERE presence_lead_rank IS NOT NULL` on prod
    must return exactly the two expected rows (zul rank 1 telegram; admin rank 2
-   sms with phone `<cell, purged 2026-10-02>`), each with `presence_since` set and an open away
+   sms with phone `+13125889401`), each with `presence_since` set and an open away
    interval in presence_log.
 3. Smoke: flip states in the strip in both skins + rail mode; open the drawer;
    confirm the pointer follows the derivation table.
