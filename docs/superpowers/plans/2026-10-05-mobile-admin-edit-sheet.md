@@ -4,7 +4,7 @@
 
 **Goal:** On the phone event detail, "Edit details" opens a bottom sheet that edits an upcoming event's date, start time, duration and guest count and saves them through the desktop editor's own path, showing the repriced total and the desktop's notify step; a new "Note" row edits the internal booking note.
 
-**Architecture:** No server change. The pieces of the desktop editor the phone needs that still live inside `ProposalEditorForm.js` (bartender-override detection, the preview request body, the stored gratuity, the mandate lock, the class-package gate) and inside `NotifyConfirmModal.jsx` (draft seeding, the notify payload, the per-channel outcome toasts) move into two shared modules, `proposalEditor/editorCore.js` and `comms/notifyDrafts.js`; the desktop then calls them with its behaviour unchanged except one new reprice line (the automatic gratuity email). The phone gets one pure view-model (`utils/editSheetView.js`), one hook that does every read and write (`components/mobile/useEditSheet.js`), and two sheets (`EditSheet.js`, `NoteSheet.js`) built from the assignment sheet's existing vocabulary. `EventDetailPhone` mounts them through the push-history drawer param, so Android Back closes a sheet and stays on the page.
+**Architecture:** No server change. The pieces of the desktop editor the phone needs that still live inside `ProposalEditorForm.js` (bartender-override detection, the preview request body, the stored gratuity, the mandate lock, the class-package gate) and inside `NotifyConfirmModal.jsx` (draft seeding, the notify payload, the per-channel outcome toasts) move into two shared modules, `proposalEditor/editorCore.js` and `comms/notifyDrafts.js`; the desktop then calls them with its behaviour unchanged except one new reprice line (the automatic gratuity email). The phone gets one pure view-model (`utils/editSheetView.js`), one hook that does every read and write (`components/mobile/useEditSheet.js`), and two sheets (`EditSheet.js`, `NoteSheet.js`) built from the assignment sheet's existing vocabulary. `EventDetailPhone` mounts them through the push-history drawer param, so Android Back closes a sheet and stays on the page. **Two lanes** (plan fleet, 2026-10-05): `ma-e3a-editor-core` (Task 1, the shared modules and the desktop rewire, pinned by characterization tests written first) merges first; `ma-e3-edit-sheet` (Tasks 2 to 9) is cut from main after it, so the desktop change and the phone sheets are separate commits that revert separately.
 
 **Tech Stack:** React 18 + react-router 6.30, jest + RTL 13 (jest-dom imported per file, CRA `resetMocks: true`), the existing `api` client (axios), `playwright-core` with the bundled Chromium for the phone-viewport gate. Server endpoints are used as they are.
 
@@ -37,9 +37,9 @@
 - `scripts/sensitive-paths.txt` lists `client/src/pages/mobile/EventDetailPhone.js`, `server/routes/proposals/crud.js`, `server/routes/proposals/notifyPreflight.js`; it does not list anything under `client/src/pages/admin/proposalEditor/` or `client/src/components/comms/`.
 
 **Decisions this plan makes (each is in the spec, section 3, "Brainstorm decisions of 2026-10-05", except the ones marked "plan", which Task 8 adds there). They are the complete list of intended departures from the benchmark: `ui-ux-review` treats them as the contract, and any other difference is a finding.**
-1. The sheet opens on an upcoming, live event only; a past event keeps "desktop view"; a stored copy reads "needs connection"; unlocked, the row reads "date · time · guests" (spec).
-2. Duration steps in half hours, 1 to 12, reading "4.5 hr"; Guests step in fives landing on multiples of five, 1 to 1000; the row label is "Duration", as drawn (spec).
-3. Setup is read-only and carries no arrow (the benchmark draws an arrow) (spec).
+1. The sheet opens on an upcoming, live event only; a past event keeps "desktop view"; a cancelled event keeps having no Edit details row, as lane ma-e2 built it; a stored copy reads "needs connection"; unlocked, the row reads "date · time · guests" (spec). The sheet opens only once the roster has settled, because the roster is what says whether the event has finished (plan).
+2. Duration steps in half hours, 1 to 12, reading "4.5 hr"; Guests step in fives landing on multiples of five, 1 to 1000; the row label is "Duration", as drawn (spec). The stepper's value box is 56px wide where the design system draws 40px, so "4.5 hr" fits (plan).
+3. Setup is read-only and carries no arrow (the benchmark draws an arrow) (spec). When the stored start time cannot be read, it shows the setup clock instead ("from 17:15") (plan).
 4. Date and Start use the phone's own pickers, the picker opening on a tap anywhere on the row; Start is clamped to 06:00 to 23:30; the date picker starts at today, Chicago's (spec).
 5. Picking the start time the event already has keeps the stored value as stored ("7:00 PM" stays "7:00 PM"), so an unchanged time never reads as a reschedule (plan).
 6. The new total shows only after a field changed. An untouched sheet says "Done" and closes without a request, even when today's catalog would price the event differently (plan).
@@ -48,7 +48,7 @@
 9. "This event changed since you opened it." with Reload, when the row's `updated_at` moved; Reload re-reads and discards the sheet's edits (spec).
 10. The notify step mirrors the desktop popup, in the same sheet, with "Don't send" the main, rightmost button and a staff block off by default; the wording is not editable on the phone (spec).
 11. Past the curfew: an inline confirm with the server's reason, "Book it anyway? This will be recorded.", "Keep editing" and "Book it anyway"; "Keep editing" leaves "Not saved. The end time is past our 2:00 AM service curfew." (spec; the declined line is the desktop's copy).
-12. While a save is in flight a "Saving" line shows above the buttons, every control is disabled, and the scrim and Escape do nothing (plan, the ma-e2 law).
+12. While a save is in flight the button that sent it reads "Saving" (in the notify step, the one of "Send the update" and "Don't send" that was tapped), every control is disabled, and the scrim and Escape do nothing (spec).
 13. After a save: "Event updated." and the desktop's channel toasts; the sheet closes; the detail re-reads fresh, and says "Saved. The event below could not be refreshed and may be out of date." with Retry if it cannot (spec).
 14. The extension hint and the multi-shift note sit under Duration and under Guests (spec; multi-shift copy plan).
 15. The Note row sits between Financials and Edit details on every event, cancelled included; it shows the note's first line or "Add a note"; on a stored copy it reads "needs connection" (spec; placement plan).
@@ -58,20 +58,21 @@
 
 - **No em dashes** in copy, comments, commit messages or docs. Commas, colons, parentheses, the middle dot. A missing value renders as nothing.
 - **No server change.** The lane edits nothing under `server/` and does not touch the service worker.
-- **Desktop behaviour is frozen** apart from the gratuity reprice line: the desktop editor's preview body, save payload, toasts, curfew retry and notify popup are byte-for-byte what they were. Task 1's tests and the existing editor suites pin it; Checkpoint A reviews it.
-- **Fresh reads only in the sheets.** `useEditSheet.js` and `NoteSheet.js` import `api` and never `offlineRead`; no request they make carries `X-Offline-Ok`. The read after a save in `EventDetailPhone` is plain `api.get` too.
+- **Desktop behaviour is frozen** apart from the gratuity reprice line: the desktop editor's preview body, save payload, toasts, curfew retry and notify popup are byte-for-byte what they were. Pinned by characterization tests Task 1 writes FIRST and runs green on the unrefactored code (the full `/calculate` body, an override with a locked mandate, and the notify popup's ticks, over-cap and payload); lane ma-e3a's fleet reviews it; its close walks the desktop editor once in a browser.
+- **Fresh reads only in the sheets.** `useEditSheet.js` and `NoteSheet.js` import `api` and never `offlineRead`; no request they make carries `X-Offline-Ok`. After a save, `EventDetailPhone` re-reads the event and the invoices with plain `api.get`, and the roster through `readShifts(false)`, which never applies a stored copy (lane ma-e2).
 - **The save payload is the desktop's:** `buildProposalPatchBody(form, { isClassPackage, numBartendersOverride, includeGratuityMandate: false, includeVenue: false })` on the form `initialFormFromProposal` + `recoverAddonQuantities` built, with only the four sheet fields replaced. Never a hand-built partial body.
 - **One write at a time,** guarded by a ref, so a double tap sends one request. **Every PATCH re-reads the proposal first** and refuses when its `updated_at` moved since the sheet opened. **Writes never queue.**
 - **Unique `m-*` class names for everything this lane adds,** modifiers included (`m-edit-native`, never `m-edit native`). Existing classes are reused as they are.
 - **44px minimum tap targets** for every button, row and checkbox label this lane adds.
 - **Copy from the benchmark, verbatim:** "Edit details", "date · time · guests", "needs connection", "event edit · reprices the booking", "Date", "Start", "Duration", "Setup", "Guests", "New total", "balance due becomes <$>", "Confirm new total", "Done", "Cancel".
-- **Copy from the desktop, verbatim:** the extension hint "Includes <N>h of on-site extension, billed on its own invoice. The contract prices <N>h."; "Event updated."; "Saved, but the email failed: <reason>", "Saved, but the text failed: <reason>", "Saved. Email not sent: <reason>", "Saved. Text not sent: <reason>"; "Not saved. The end time is past our 2:00 AM service curfew."; "Book it anyway? This will be recorded."; the notify step's "Notify the client?", "Date changed", "Start time changed", "Location changed", "Current contact on file: <name> (<contact>).", "Email", "Text", "<Email|Text> unavailable: <reason>", "This message is not editable.", "Notify assigned staff", "Text (SMS)", "Staff are notified only when the date, time, or location actually changes.", "Send the update", "Don't send"; every reprice line `buildRepriceSummary` writes.
-- **Added copy, held here so a reviewer can check it:** "Loading the event", "Couldn't load this event. Editing needs a connection.", "This event can no longer be edited here. Use desktop view.", "Couldn't price the change.", "This event changed since you opened it.", "Reload", "Retry", "Keep editing", "Book it anyway", "No connection, didn't save.", "Saving", "Something went wrong. Try again.", "Saved. The event below could not be refreshed and may be out of date.", "This event has <N> shifts. Changing the date or time here does not move them; each shift is edited from desktop view.", the gratuity line "The gratuity rises to <$>, so the client is emailed the new amount automatically, unless email to them is turned off.", the screen-reader names "Edit details", "Note", "Close", "Shorter", "Longer", "Fewer guests", "More guests", "Text the assigned staff", "Email the assigned staff" (the staff boxes' visible labels stay the desktop's "Text (SMS)" and "Email"; a distinct name keeps them apart from the client's "Email"); and for the note: "Note", "Add a note", "internal · never shown to staff or clients", "Loading the note", "Couldn't load the note. Editing needs a connection.", "This note changed since you opened it.", "The note is now empty.", "Discard mine", "Save mine", "Save".
+- **Copy from the desktop, verbatim:** the extension hint "Includes <N>h of on-site extension, billed on its own invoice. The contract prices <N>h."; "Event updated."; "Saved, but the email failed: <reason>", "Saved, but the text failed: <reason>", "Saved. Email not sent: <reason>", "Saved. Text not sent: <reason>"; "Not saved. The end time is past our 2:00 AM service curfew."; "Book it anyway? This will be recorded."; the notify step's "Notify the client?", "Date changed", "Start time changed", "Location changed", "Current contact on file: <name> (<contact>).", "Email", "Text", "<Email|Text> unavailable: <reason>", "This message is not editable.", "Text (SMS)", "Staff are notified only when the date, time, or location actually changes.", "Send the update", "Don't send"; every reprice line `buildRepriceSummary` writes.
+- **Added copy, held here so a reviewer can check it:** "Loading the event", "Couldn't load this event. Editing needs a connection.", "This event can no longer be edited here. Use desktop view.", "Couldn't price the change.", "This event changed since you opened it.", "Reload", "Retry", "Keep editing", "Book it anyway", "No connection, didn't save.", "Saving", "Something went wrong. Try again.", "Saved. The event below could not be refreshed and may be out of date.", "Notify assigned staff" (the desktop's section heading; its checkbox reads "Notify assigned staff if this save reschedules the event", and the phone shows the step only when the save does), "This event has <N> shifts. Changing the date or time here does not move them; each shift is edited from desktop view.", the gratuity line "The gratuity rises to <$>, so the client is emailed the new amount automatically, unless email to them is turned off.", the screen-reader names "Edit details", "Note", "Close", "Shorter", "Longer", "Fewer guests", "More guests", "Text the assigned staff", "Email the assigned staff" (the staff boxes' visible labels stay the desktop's "Text (SMS)" and "Email"; a distinct name keeps them apart from the client's "Email"); and for the note: "Note", "Add a note", "internal · never shown to staff or clients", "Loading the note", "Couldn't load the note. Editing needs a connection.", "This note changed since you opened it.", "The note is now empty.", "Discard mine", "Save mine", "Save".
 - **Client tests:** `import '@testing-library/jest-dom'` in every test file; a `jest.mock` factory closes over `mock`-prefixed names only; CRA runs `resetMocks: true`, so mock return values are set in each test or a `beforeEach`; a ToastContext stub is one stable object.
 - **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/` (a lint warning is fatal there, and local lint misses `no-undef`).
-- **File sizes:** new files stay under 400 lines; `EventDetailPhone.js` stays under 450 (the two new rows live in `EventDetailSections.js`); `ProposalEditorForm.js` shrinks.
+- **File sizes:** new source files stay under 400 lines (test files are exempt); `EventDetailPhone.js` stays under 450 (the two new rows live in `EventDetailSections.js`); `ProposalEditorForm.js` shrinks.
 - **Explicit staging only;** commit messages carry NO backticks; never `npm install` inside the lane (it replaces the shared `node_modules` symlink).
-- **Docs law:** README folder tree (six new source files), ARCHITECTURE (the phone event detail passage), walkthroughs-owed (the Pixel walk), the fix list.
+- **Docs law:** README folder tree (two new source files in lane ma-e3a, four in ma-e3), ARCHITECTURE (the editor and notify popup in ma-e3a, the phone event detail passage in ma-e3), walkthroughs-owed (the Pixel walk). The fix list and the spec are edited on main by the orchestrator, never in a lane.
+- **Known intermittent tests, not this work's:** `EventsListPhone.test.js` "scroll offsets are saved only after the loaded list has been restored" and one `AssignmentSheet.test.js` test can fail under full-suite load and pass alone (seen 2026-10-05 in the plan fleet's mirror). Re-run the file alone before treating either as a regression.
 
 ## Review Focus
 
@@ -89,28 +90,22 @@ Also pinned, lower on the list: a client with no email and no phone on a date ch
 
 ```yaml
 lanes:
-  - id: ma-e3-edit-sheet
+  - id: ma-e3a-editor-core
     phase: 3
     scope: >
-      Phone edit sheet for the EVENT detail (date, start, duration, guests),
-      saving through the desktop editor's own path: fresh reads, the desktop
-      form state and complete payload without the venue keys, the shared
-      /calculate preview, the desktop's reprice lines plus a new shared
-      gratuity-email line, the desktop's notify step (Don't send primary,
-      staff off), the curfew acknowledgement, a re-read before every PATCH
-      that refuses when updated_at moved. A Note row and sheet for the
-      internal booking note. Shared modules extracted from the desktop editor
-      and the notify popup with desktop behaviour unchanged. Visual fidelity
-      to the benchmark's Edit details row and edit sheet is owned here: the
-      design system's stepper CSS is folded in and the benchmark's inline
-      treatment becomes m-* classes.
-    inputs:
-      - docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html
-      - docs/design-artifacts/_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-mobile.css
+      Desktop only, behaviour frozen. Characterization tests written first and
+      run green on the unrefactored code (the full /calculate body, an override
+      with a locked mandate, the notify popup's ticks, over-cap and payload).
+      The editor pieces the phone needs move out of ProposalEditorForm.js into
+      editorCore.js; the notify popup's draft logic and the outcome toasts move
+      into notifyDrafts.js; patchBody gains includeVenue and staffNotifyFlags;
+      buildRepriceSummary gains the automatic gratuity-email line, the one
+      visible desktop change. Docs and sensitive-path entries for these files.
     footprint:
       - client/src/pages/admin/proposalEditor/editorCore.js
       - client/src/pages/admin/proposalEditor/editorCore.test.js
       - client/src/pages/admin/proposalEditor/ProposalEditorForm.js
+      - client/src/pages/admin/proposalEditor/ProposalEditorForm.extension.test.js
       - client/src/pages/admin/proposalEditor/patchBody.js
       - client/src/pages/admin/proposalEditor/patchBody.test.js
       - client/src/pages/admin/proposalEditor/repriceSummary.js
@@ -118,6 +113,35 @@ lanes:
       - client/src/components/comms/notifyDrafts.js
       - client/src/components/comms/notifyDrafts.test.js
       - client/src/components/comms/NotifyConfirmModal.jsx
+      - client/src/components/comms/NotifyConfirmModal.test.jsx
+      - scripts/sensitive-paths.txt
+      - README.md
+      - ARCHITECTURE.md
+    depends_on: []
+    review_fleet: [code-review, consistency-check, security-review, second-opinion]
+    # Declared full fleet whatever the mechanical rule says: the files only join
+    # scripts/sensitive-paths.txt in this lane's own last step. code-review and
+    # consistency-check carry the brief below (desktop byte-equivalence, the
+    # gratuity condition); security-review: patchBody builds the money PATCH and
+    # notifyDrafts builds what reaches a client. second-opinion at push.
+
+  - id: ma-e3-edit-sheet
+    phase: 3
+    scope: >
+      Phone edit sheet for the EVENT detail (date, start, duration, guests),
+      saving through the desktop editor's own path: fresh reads, the desktop
+      form state and complete payload without the venue keys, the shared
+      /calculate preview, the desktop's reprice lines, the desktop's notify
+      step (Don't send primary, staff off), the curfew acknowledgement, a
+      re-read before every PATCH that refuses when updated_at moved. A Note row
+      and sheet for the internal booking note. Visual fidelity to the
+      benchmark's Edit details row and edit sheet is owned here: the design
+      system's stepper CSS is folded in and the benchmark's inline treatment
+      becomes m-* classes.
+    inputs:
+      - docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html
+      - docs/design-artifacts/_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-mobile.css
+    footprint:
       - client/src/utils/editSheetView.js
       - client/src/utils/editSheetView.test.js
       - client/src/utils/eventDetailView.js
@@ -135,8 +159,7 @@ lanes:
       - README.md
       - ARCHITECTURE.md
       - docs/walkthroughs-owed.md
-      - docs/fix-list-remaining-2026-07-02.md
-    depends_on: []  # ma-e2-event-detail is merged (91dcfab8) and live
+    depends_on: [ma-e3a-editor-core]   # merged to main before this lane is cut
     review_fleet: [code-review, consistency-check, security-review, performance-review, ui-ux-review, second-opinion]
     # A sensitive path (EventDetailPhone.js) is in the footprint and the lane adds a
     # money write surface, so this is the full fleet that applies. security-review:
@@ -152,17 +175,19 @@ lanes:
   # the proposal variant), ma-f3-search.
 ```
 
-**Task order.** Tasks run in the order written: 1, Checkpoint A, 2, 3, 4, 5, 6, 7, 8, 9. Task 1 is the shared modules and the desktop rewire; Checkpoint A (the orchestrator runs `code-review` and `consistency-check` on Task 1's diff, brief below) must pass before any phone code. Task 2 is pure and independent of Task 1's React changes but imports two of its modules. Task 3 builds the hook and the edit view; Task 4 adds the notify step to both; Task 5 is the note sheet; Task 6 wires both sheets into the detail; Task 7 is the browser gate; Task 8 the docs; Task 9 the lane close.
+**Task order.** Lane ma-e3a: Task 1, then its close (Task 1 Steps 14 and 15: docs, the fleet with the brief below, a desktop browser check, the merge). Then lane ma-e3 is cut from main: Tasks 2, 3, 4, 5, 6, 7, 8, 9 in that order. Task 2 is pure and imports one module from lane ma-e3a (`repriceSummary.js`). Task 3 builds the hook and the edit view; Task 4 adds the notify step to both; Task 5 is the note sheet; Task 6 wires both sheets into the detail; Task 7 is the browser gate; Task 8 the docs; Task 9 the lane close. Tasks 3, 4 and 5 share `index.css` and `mobileClassContract.test.js`, so they stay serial.
 
-**Checkpoint A brief (after Task 1).** `code-review` and `consistency-check`, each on `git diff <lane base>..HEAD` after Task 1. Ask: is every desktop call site byte-equivalent to before (the preview body for every combination of override, mandate dirty and locked, proposal id; the save payload with `includeVenue` defaulted; the toasts in the same order; NotifyConfirmModal's drafts, over-cap and payload for the edit, payment and refund popups); is the gratuity line's condition the server's own (`crud.js:531-551`, `gratuityMandate.js:58-65`), and is it absent wherever the server would not send the email; does any import cycle appear. Findings fold into Task 1 before Task 2 starts.
+**Lane ma-e3a review brief (Task 1 Step 15).** `code-review` and `consistency-check`, each on the lane's diff, with `security-review` on `patchBody.js` and `notifyDrafts.js`. Ask: is every desktop call site byte-equivalent to before (the preview body for every combination of override, mandate dirty and locked, proposal id; the save payload with `includeVenue` defaulted; the toasts in the same order; NotifyConfirmModal's drafts, over-cap and payload for the edit, payment and refund popups); do the characterization tests actually fail if a key moves; is the gratuity line's condition the server's own (`crud.js:531-551`, `gratuityMandate.js:58-65`), and is it absent wherever the server would not send the email; does any import cycle appear. Findings fold into the lane before its merge.
 
 **Who writes what.** An implementer sees this header and their own task, commits only the paths their task names, and reports anything the plan should record. The plan and the spec live on main and are edited there by the orchestrator, never from the lane.
 
 ---
 
-### Task 1: Shared editor and notify modules, desktop rewired, the gratuity line
+### Task 1: Shared editor and notify modules, desktop rewired, the gratuity line (lane ma-e3a-editor-core)
 
 **Files:**
+- Modify: `client/src/pages/admin/proposalEditor/ProposalEditorForm.extension.test.js` (characterization, first)
+- Create: `client/src/components/comms/NotifyConfirmModal.test.jsx` (characterization, first)
 - Create: `client/src/pages/admin/proposalEditor/editorCore.js`
 - Create: `client/src/pages/admin/proposalEditor/editorCore.test.js`
 - Create: `client/src/components/comms/notifyDrafts.js`
@@ -171,12 +196,96 @@ lanes:
 - Modify: `client/src/pages/admin/proposalEditor/repriceSummary.js`, `repriceSummary.test.js`
 - Modify: `client/src/pages/admin/proposalEditor/ProposalEditorForm.js`
 - Modify: `client/src/components/comms/NotifyConfirmModal.jsx`
+- Modify (Step 14): `README.md`, `ARCHITECTURE.md`, `scripts/sensitive-paths.txt`
 
 **Interfaces:**
 - Produces (editorCore.js): `detectNumBartendersOverride(proposal, packages) → number|null`; `storedGratuityOf(proposal) → { rate: number, tipJar: boolean }`; `mandateLockedFor(proposal) → boolean`; `isClassPackageFor(selectedPkg, proposal) → boolean`; `buildCalculateBody(form, { proposalId, numBartendersOverride, tipJar, gratuityRate, includeMandate }) → object`.
 - Produces (notifyDrafts.js): `SUBJECT_MAX = 300`, `SMS_MAX_CHARS = 640`, `REASON_LABELS`, `humanizeReason(reason) → string`, `initialDrafts(notices) → Draft[]` where `Draft = { type, channels: string[], subject, bodyText, smsBody }`, `draftsOverCap(notices, drafts) → boolean`, `buildNotifyEntries(notices, drafts) → object[]`, `noticeOutcomes(notifications) → { kind: 'error'|'info', text }[]`.
 - Produces (patchBody.js): `buildProposalPatchBody(form, { ..., includeVenue = true })`; `staffNotifyFlags({ enabled, sms, email }) → { notify_assigned_staff, notify_staff_sms, notify_staff_email }`.
 - Produces (repriceSummary.js): `buildRepriceSummary({ status, totalPrice, amountPaid, newTotal, offContractPaidCents = 0, gratuityOrigin = null, oldGratuityTotal = null, newGratuityTotal = null })`.
+
+- [ ] **Step 0a: Pin the desktop before touching it**
+
+Nothing yet pins the whole desktop preview body or the notify popup (the extension test reads two keys; the popup has no render test). Write these first, against the code as it is.
+
+Append to `client/src/pages/admin/proposalEditor/ProposalEditorForm.extension.test.js`:
+
+```js
+// Pinned before lane ma-e3a moved the preview body into editorCore.js: the
+// whole /calculate body, field for field, so the move cannot change a key.
+test('the preview body, every field (characterization)', async () => {
+  mount(proposalWith({ settled_extension_hours: 0 }));
+  await waitFor(() => expect(api.post).toHaveBeenCalled());
+  const body = api.post.mock.calls.filter(([url]) => url === '/proposals/calculate').pop()[1];
+  expect(body).toEqual({
+    proposal_id: 4242, package_id: 1, guest_count: 100, duration_hours: 5, num_bars: 0,
+    addon_ids: [], addon_variants: {}, addon_quantities: {}, syrup_selections: [], adjustments: [],
+    total_price_override: null, tip_jar: true, gratuity_rate: 0,
+  });
+});
+
+test('an override and a stored gratuity ride the preview; a locked mandate does not (characterization)', async () => {
+  mount(proposalWith({
+    num_bartenders: 3, amount_paid: '100', client_signed_at: '2027-01-01T00:00:00.000Z', gratuity_floor_rate: 12,
+    pricing_snapshot: { total: 350, gratuity: { rate: 12, tip_jar: false, staff_count: 3, hours: 5 } },
+  }));
+  await waitFor(() => expect(api.post).toHaveBeenCalled());
+  const body = api.post.mock.calls.filter(([url]) => url === '/proposals/calculate').pop()[1];
+  expect(body).toMatchObject({ num_bartenders: 3, tip_jar: false, gratuity_rate: 12 });
+  expect(body).not.toHaveProperty('gratuity_mandate_total');
+});
+```
+
+Create `client/src/components/comms/NotifyConfirmModal.test.jsx`:
+
+```js
+import React from 'react';
+import '@testing-library/jest-dom';
+import { render, screen, fireEvent } from '@testing-library/react';
+import NotifyConfirmModal from './NotifyConfirmModal';
+
+// Pinned before lane ma-e3a moved the draft logic into notifyDrafts.js. The
+// edit popup is called with primary="quiet"; the payment and refund popups use
+// the same component.
+const notices = [{
+  type: 'event_details_changed', composable: true, reasons: ['event_date changed'],
+  recipient: { name: 'Alexis', email: 'a@example.com', phone: null },
+  channels: { email: { available: true, default: true }, sms: { available: true, default: false } },
+  draft: { email: { subject: 'Your event moved', body_text: 'Hi' }, sms: { body: 'Moved' } },
+}];
+const props = { notices, primary: 'quiet', onCancel: () => {}, onQuiet: () => {}, onSend: () => {} };
+
+test('ticks the available, defaulted channels and sends their text (characterization)', () => {
+  const onSend = jest.fn();
+  render(<NotifyConfirmModal {...props} onSend={onSend} />);
+  expect(screen.getByRole('checkbox', { name: 'Email' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'Text' })).not.toBeChecked();
+  expect(screen.getByText('Date changed. Current contact on file: Alexis (a@example.com).')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Send the update' }));
+  expect(onSend).toHaveBeenCalledWith([
+    { type: 'event_details_changed', channels: ['email'], email: { subject: 'Your event moved', body_text: 'Hi' } },
+  ]);
+});
+
+test('an emptied subject on a ticked channel disables Send (characterization)', () => {
+  render(<NotifyConfirmModal {...props} />);
+  fireEvent.change(screen.getByPlaceholderText('Subject'), { target: { value: '' } });
+  expect(screen.getByRole('button', { name: 'Send the update' })).toBeDisabled();
+});
+
+test("Don't send is rightmost on the edit popup and sends nothing (characterization)", () => {
+  const onQuiet = jest.fn();
+  render(<NotifyConfirmModal {...props} onQuiet={onQuiet} />);
+  expect(screen.getAllByRole('button').map((b) => b.textContent).slice(-3)).toEqual(['Cancel', 'Send the update', "Don't send"]);
+  fireEvent.click(screen.getByRole('button', { name: "Don't send" }));
+  expect(onQuiet).toHaveBeenCalled();
+});
+```
+
+- [ ] **Step 0b: Run them green on the unrefactored code**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/proposalEditor/ProposalEditorForm.extension.test.js src/components/comms/NotifyConfirmModal.test.jsx`
+Expected: PASS, 8 tests (verified 2026-10-05 against main in a scratch copy, and again against the refactored code). They stay green through Step 12; a failure there means the refactor moved desktop behaviour.
 
 - [ ] **Step 1: Write the failing tests for editorCore**
 
@@ -274,7 +383,7 @@ import {
 } from './notifyDrafts';
 
 const notice = (over = {}) => ({
-  type: 'event_details', composable: true,
+  type: 'event_details_changed', composable: true,
   channels: { email: { available: true, default: true }, sms: { available: true, default: false } },
   draft: { email: { subject: 'Your event moved', body_text: 'Hi' }, sms: { body: 'Moved' } },
   ...over,
@@ -289,10 +398,10 @@ test('humanizeReason names the columns in admin words and passes anything else t
 
 test('initialDrafts ticks the channels that are available AND defaulted, and seeds the text', () => {
   expect(initialDrafts([notice()])).toEqual([{
-    type: 'event_details', channels: ['email'], subject: 'Your event moved', bodyText: 'Hi', smsBody: 'Moved',
+    type: 'event_details_changed', channels: ['email'], subject: 'Your event moved', bodyText: 'Hi', smsBody: 'Moved',
   }]);
   expect(initialDrafts([notice({ channels: { email: { available: false, default: true } }, draft: {} })]))
-    .toEqual([{ type: 'event_details', channels: [], subject: '', bodyText: '', smsBody: '' }]);
+    .toEqual([{ type: 'event_details_changed', channels: [], subject: '', bodyText: '', smsBody: '' }]);
 });
 
 test('draftsOverCap: a ticked channel with empty or over-long text is refused; untick it and it is not', () => {
@@ -309,12 +418,12 @@ test('draftsOverCap: a ticked channel with empty or over-long text is refused; u
 test('buildNotifyEntries: one entry per notice with a ticked channel, text only for a composable one', () => {
   const n = [notice()];
   expect(buildNotifyEntries(n, [{ ...initialDrafts(n)[0], channels: ['email', 'sms'] }])).toEqual([{
-    type: 'event_details', channels: ['email', 'sms'],
+    type: 'event_details_changed', channels: ['email', 'sms'],
     email: { subject: 'Your event moved', body_text: 'Hi' }, sms: { body: 'Moved' },
   }]);
   expect(buildNotifyEntries(n, [{ ...initialDrafts(n)[0], channels: [] }])).toEqual([]);
   const fixed = [notice({ composable: false })];
-  expect(buildNotifyEntries(fixed, initialDrafts(fixed))).toEqual([{ type: 'event_details', channels: ['email'] }]);
+  expect(buildNotifyEntries(fixed, initialDrafts(fixed))).toEqual([{ type: 'event_details_changed', channels: ['email'] }]);
 });
 
 test('noticeOutcomes: failures, then real skips; "not selected" stays silent', () => {
@@ -722,9 +831,21 @@ import { noticeOutcomes } from '../../../components/comms/notifyDrafts';
 ```js
   const mandateLocked = mandateLockedFor(proposal);
 ```
-5. Replace the whole `api.post('/proposals/calculate', { ... })` argument object (`:179-208`) so the call reads:
+5. Replace the whole `api.post('/proposals/calculate', { ... })` argument object (`:179-208`) so the call reads as below. The pricing fields are passed BY NAME, never as the whole `editForm`: the effect's dependency list names each pricing field, and passing the whole form makes `react-hooks/exhaustive-deps` demand `editForm`, which fails the CI build (plan fleet, 2026-10-05); adding `editForm` to the list instead would re-ask the preview and flip `previewStale` on every keystroke in a client or venue field, which changes desktop behaviour.
 ```js
-      api.post('/proposals/calculate', buildCalculateBody(editForm, {
+      api.post('/proposals/calculate', buildCalculateBody({
+        package_id: editForm.package_id,
+        guest_count: editForm.guest_count,
+        event_duration_hours: editForm.event_duration_hours,
+        num_bars: editForm.num_bars,
+        addon_ids: editForm.addon_ids,
+        addon_variants: editForm.addon_variants,
+        addon_quantities: editForm.addon_quantities,
+        syrup_selections: editForm.syrup_selections,
+        adjustments: editForm.adjustments,
+        total_price_override: editForm.total_price_override,
+        gratuity_mandate_total: editForm.gratuity_mandate_total,
+      }, {
         proposalId: proposal?.id,
         numBartendersOverride,
         tipJar: storedTipJar,
@@ -732,7 +853,7 @@ import { noticeOutcomes } from '../../../components/comms/notifyDrafts';
         includeMandate: mandateDirty && !mandateLocked,
       }))
 ```
-(the `.then` and `.catch` that follow stay as they are; the effect's dependency list stays as it is).
+(the `.then` and `.catch` that follow stay as they are; the effect's dependency list stays exactly as it is).
 6. In `buildBody`, replace the `isClassPackage:` line and its two comment lines with:
 ```js
     isClassPackage: isClassPackageFor(selectedPkg, proposal),
@@ -765,20 +886,33 @@ import {
 - [ ] **Step 12: Run every editor and comms suite plus the CI build**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/proposalEditor src/components/comms src/pages/admin/ProposalDetail src/pages/admin/EventDetailPage`
-Expected: PASS (the extension test still sees `proposal_id` 4242 and `duration_hours` 5; the smoke test resolves the graph).
+Expected: PASS, including the Step 0a characterization tests unchanged (the extension test still sees `proposal_id` 4242 and `duration_hours` 5; the smoke test resolves the graph).
 Run: `cd client && CI=true npx react-scripts build`
-Expected: "Compiled" (a missing-source-map warning from html2pdf.js is old and not this lane's), exit 0.
+Expected: "Compiled with warnings." where the only warning is the old missing source map from html2pdf.js, exit 0. Any lint line naming a lane file is a failure.
 
 - [ ] **Step 13: Commit**
 
 ```bash
-git add client/src/pages/admin/proposalEditor/editorCore.js client/src/pages/admin/proposalEditor/editorCore.test.js client/src/components/comms/notifyDrafts.js client/src/components/comms/notifyDrafts.test.js client/src/pages/admin/proposalEditor/patchBody.js client/src/pages/admin/proposalEditor/patchBody.test.js client/src/pages/admin/proposalEditor/repriceSummary.js client/src/pages/admin/proposalEditor/repriceSummary.test.js client/src/pages/admin/proposalEditor/ProposalEditorForm.js client/src/components/comms/NotifyConfirmModal.jsx
+git add client/src/pages/admin/proposalEditor/ProposalEditorForm.extension.test.js client/src/components/comms/NotifyConfirmModal.test.jsx client/src/pages/admin/proposalEditor/editorCore.js client/src/pages/admin/proposalEditor/editorCore.test.js client/src/components/comms/notifyDrafts.js client/src/components/comms/notifyDrafts.test.js client/src/pages/admin/proposalEditor/patchBody.js client/src/pages/admin/proposalEditor/patchBody.test.js client/src/pages/admin/proposalEditor/repriceSummary.js client/src/pages/admin/proposalEditor/repriceSummary.test.js client/src/pages/admin/proposalEditor/ProposalEditorForm.js client/src/components/comms/NotifyConfirmModal.jsx
 git commit -m "refactor(editor): shared editor and notify modules for the phone sheet; the reprice confirm names the automatic gratuity email"
 ```
 
-### Checkpoint A (orchestrator, before Task 2)
+- [ ] **Step 14: Docs and sensitive paths for lane ma-e3a**
 
-Run `code-review` and `consistency-check` on the Task 1 diff with the brief in the header. Fold every finding into Task 1 (new commits) and re-run the suites in Step 12. Record the verdicts in the Self-Review.
+README folder tree, one line each in their folders: `client/src/pages/admin/proposalEditor/editorCore.js # shared editor pieces: override detection, preview body, stored gratuity (desktop editor + phone edit sheet)` and `client/src/components/comms/notifyDrafts.js # notify-client drafts, payload and outcome toasts (desktop popup + phone notify step)`. ARCHITECTURE: where the proposal/event editor and the notify-client popup are described, name `editorCore.js` and `notifyDrafts.js` as the shared halves and say the reprice confirm now names the automatic gratuity email. `scripts/sensitive-paths.txt`, with a comment line "Shared proposal-editor payload, preview and notice builders (lane ma-e3a): the money PATCH and what reaches a client":
+```
+client/src/pages/admin/proposalEditor/patchBody.js
+client/src/pages/admin/proposalEditor/editorCore.js
+client/src/components/comms/notifyDrafts.js
+```
+```bash
+git add README.md ARCHITECTURE.md scripts/sensitive-paths.txt
+git commit -m "docs(editor): editorCore and notifyDrafts in README and ARCHITECTURE; sensitive paths"
+```
+
+- [ ] **Step 15: Lane ma-e3a close (orchestrator)**
+
+Run the whole client suite and the CI build. Run the lane's fleet with the brief in the header (`code-review`, `consistency-check`, `security-review`); fold findings with re-review by the seats that own the changed files. Walk the desktop editor once in a browser against a dev fixture (the Task 7 fixture recipe): open the event's editor, hours +1, the reprice confirm (with the gratuity line when the fixture carries a gratuity and money paid), Save, the toasts; and confirm the `/calculate` request body matches the characterization test's shape. Merge with `scripts/merge-lane.sh ma-e3a-editor-core docs/superpowers/plans/2026-10-05-mobile-admin-edit-sheet.md ma-e3a-editor-core`, re-run the client suite on main, confirm the lane files are byte-identical on main, clean up, write the board line. Then cut `ma-e3-edit-sheet` from main with `npm run worktree:new -- ma-e3-edit-sheet`.
 
 ### Task 2: The edit sheet's pure view-model
 
@@ -1462,8 +1596,8 @@ test('a second tap while a save is in flight sends nothing', async () => {
   await waitFor(() => expect(confirmBtn()).toBeEnabled());
   fireEvent.click(confirmBtn());
   await screen.findByText('Saving');
-  fireEvent.click(confirmBtn());
-  fireEvent.click(confirmBtn());
+  fireEvent.click(screen.getByRole('button', { name: 'Saving' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Saving' }));
   release();
   await waitFor(() => expect(mockToast.success).toHaveBeenCalled());
   expect(api.patch).toHaveBeenCalledTimes(1);
@@ -1983,11 +2117,10 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
             </>
           )}
         </div>
-        {sheet.busy && <div className="m-saving" role="status">Saving</div>}
         {ready && !sheet.pending && (
           <div className="m-acts">
             <button type="button" className="m-act m-act-quiet" disabled={sheet.busy} onClick={() => closers.current.onClose()}>Cancel</button>
-            <button type="button" className="m-act m-act-primary" disabled={!canConfirm} onClick={onConfirm}>{confirmLabel}</button>
+            <button type="button" className="m-act m-act-primary" disabled={!canConfirm} onClick={onConfirm}>{sheet.busy ? 'Saving' : confirmLabel}</button>
           </div>
         )}
       </div>
@@ -1998,7 +2131,7 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
 
 - [ ] **Step 5: Add the CSS**
 
-In `client/src/index.css`, inside the mobile block, directly after the `.m-fail` family (the last `.m-fail*` rule), add:
+In `client/src/index.css`, inside the mobile block, directly after the rule `html[data-app="admin-os"] .m-fail-retry.m-fail-quiet` (the end of the sheet's failure rules in the dark block, before the light-skin overrides), add:
 
 ```css
 /* Edit sheet (lane ma-e3; benchmark 2026-09-15, the edit sheet). The stepper is
@@ -2063,7 +2196,7 @@ Append to `client/src/components/mobile/EditSheet.test.js`:
 
 ```js
 const NOTICE = {
-  type: 'event_details', composable: true, reasons: ['event_date changed'],
+  type: 'event_details_changed', composable: true, reasons: ['event_date changed'],
   recipient: { name: 'Alexis Henderson', email: 'alexis.hend@gmail.com', phone: '+13125550184' },
   channels: { email: { available: true, default: true }, sms: { available: true, default: true } },
   autopay_notice: null,
@@ -2113,7 +2246,7 @@ test('Send the update sends the standard text on the ticked channels, and the st
   fireEvent.click(screen.getByRole('button', { name: 'Send the update' }));
   await waitFor(() => expect(onSaved).toHaveBeenCalled());
   expect(api.patch.mock.calls[0][1]).toMatchObject({
-    notify: [{ type: 'event_details', channels: ['email'], email: { subject: 'Your event date changed', body_text: 'Hi Alexis, your event is now on Aug 22.' } }],
+    notify: [{ type: 'event_details_changed', channels: ['email'], email: { subject: 'Your event date changed', body_text: 'Hi Alexis, your event is now on Aug 22.' } }],
     notify_assigned_staff: true, notify_staff_sms: true, notify_staff_email: false,
   });
 });
@@ -2123,7 +2256,7 @@ test('a second tap on Send the update sends one PATCH', async () => {
   await toNotifyStep({ patch: () => new Promise((resolve) => { release = () => resolve({ data: { notifications: [] } }); }) });
   fireEvent.click(screen.getByRole('button', { name: 'Send the update' }));
   await screen.findByText('Saving');
-  fireEvent.click(screen.getByRole('button', { name: 'Send the update' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Saving' }));
   fireEvent.click(screen.getByRole('button', { name: "Don't send" }));
   release();
   await waitFor(() => expect(mockToast.success).toHaveBeenCalled());
@@ -2275,13 +2408,20 @@ function NotifyStep({ sheet }) {
             <div className="m-fail" role="alert"><span className="m-fail-msg">{sheet.error}</span></div>
           )}
 ```
-4. After the edit view's `m-acts` footer, add the notify footer (the order puts "Don't send" rightmost, as the desktop's `primary="quiet"` does):
+4. Change the React import to `import React, { useRef, useState } from 'react';` and add, directly after the `useEditSheet(...)` line:
+```js
+  // Which notify button sent the save, so that one reads "Saving".
+  const [tapped, setTapped] = useState(null);
+```
+5. After the edit view's `m-acts` footer, add the notify footer (the order puts "Don't send" rightmost, as the desktop's `primary="quiet"` does):
 ```js
         {ready && sheet.pending && (
           <div className="m-acts">
             <button type="button" className="m-act m-act-quiet" disabled={sheet.busy} onClick={sheet.backToEdit}>Cancel</button>
-            <button type="button" className="m-act m-act-quiet" disabled={sheet.busy || !sheet.canSend} onClick={sheet.sendUpdate}>Send the update</button>
-            <button type="button" className="m-act m-act-primary" disabled={sheet.busy} onClick={sheet.dontSend}>Don't send</button>
+            <button type="button" className="m-act m-act-quiet" disabled={sheet.busy || !sheet.canSend}
+              onClick={() => { setTapped('send'); sheet.sendUpdate(); }}>{sheet.busy && tapped === 'send' ? 'Saving' : 'Send the update'}</button>
+            <button type="button" className="m-act m-act-primary" disabled={sheet.busy}
+              onClick={() => { setTapped('quiet'); sheet.dontSend(); }}>{sheet.busy && tapped === 'quiet' ? 'Saving' : "Don't send"}</button>
           </div>
         )}
 ```
@@ -2597,12 +2737,11 @@ export default function NoteSheet({ proposalId, draft = null, onDraft, onSaved, 
             </>
           )}
         </div>
-        {busy && <div className="m-saving" role="status">Saving</div>}
         <div className="m-acts">
           <button type="button" className="m-act m-act-quiet" disabled={busy} onClick={cancel}>Cancel</button>
           <button type="button" className="m-act m-act-primary"
             disabled={busy || phase !== 'ready' || theirs !== null || text === stored}
-            onClick={() => save(false)}>Save</button>
+            onClick={() => save(false)}>{busy ? 'Saving' : 'Save'}</button>
         </div>
       </div>
     </>
@@ -2775,12 +2914,46 @@ test('a re-read after a save that fails says so, with Retry', async () => {
   await waitFor(() => expect(screen.queryByText('Saved. The event below could not be refreshed and may be out of date.')).toBeNull());
 });
 
-test('an edit param for another event, or for a past event, is dropped', async () => {
+test('an edit param for another event is dropped', async () => {
   serve();
   mount({ initial: '/events/13?drawer=edit&drawerId=99' });
   await screen.findByText('Person 1');
   await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
   expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+// Plan fleet, 2026-10-05: the stored-copy case is spec section 7's money law
+// (no money sheet opens from a cache-served read), and the held-roster case is
+// mutation-checked: without the roster gate the sheet opens on the date alone.
+test('an edit param on a past event, or on a stored copy, opens nothing and is dropped', async () => {
+  serve({ '/shifts/by-proposal/13': { data: [shift(1, { finished: true })] } });
+  const first = mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  first.unmount();
+  serve({ '/proposals/13': { data: PROPOSAL, staleAt: '2026-10-05T12:00:00.000Z' } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+test('the edit sheet waits for the roster: a deep link to an event that finished today never opens it', async () => {
+  const roster = held();
+  serve({ '/shifts/by-proposal/13': () => roster.entry });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByRole('button', { name: /^Edit details/ });
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  roster.release({ data: [shift(1, { finished: true })] });
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+test('a cancelled shift beside the live one does not count as a second shift', async () => {
+  serve({ '/shifts/by-proposal/13': { data: [shift(1), shift(2, { status: 'cancelled', requesters: [] })] } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  expect(await screen.findByTestId('edit-shifts')).toHaveTextContent('1');
 });
 ```
 
@@ -2892,21 +3065,25 @@ const SAVED_BEHIND = 'Saved. The event below could not be refreshed and may be o
 ```
 6. After the existing `assignable` computation, add the edit and note sheet rules:
 ```js
-  // The edit and note sheets. A parameter that can open neither here (another
-  // event's id, a past event, a stored copy) is dropped once the event has
-  // loaded. An edit sheet already open stays open if the roster loads behind
-  // it and reads the event as finished: it is the person's work in progress.
+  // The edit and note sheets. The edit sheet waits for the roster to settle,
+  // because the roster is what says whether the event has finished: opened on
+  // the date alone, a deep link to an event that ended today would open, and
+  // stay open. A parameter that can open neither sheet here (another event's
+  // id, a past event, a stored copy) is dropped once the event and its roster
+  // have loaded. An edit sheet already open stays open if a later roster read
+  // says the event finished: it is the person's work in progress.
   const todayYmd = ctDay(new Date());
   const editable = !!proposal && !cancelled && editableEvent(proposal, shifts, todayYmd);
   const editMode = staleAt ? 'offline' : (editable ? 'edit' : 'desktop');
+  const rosterSettled = shifts.forId === id && shifts.state !== 'loading';
   const forThis = drawer.id !== null && String(drawer.id) === String(id);
-  const editOpen = drawer.kind === 'edit' && forThis && !staleAt && (editable || editLatch.current);
+  const editOpen = drawer.kind === 'edit' && forThis && !staleAt && rosterSettled && (editable || editLatch.current);
   editLatch.current = editOpen;
   const noteOpen = drawer.kind === 'note' && forThis && !staleAt;
   useEffect(() => {
-    if (!proposal) return;
+    if (!proposal || !rosterSettled) return;
     if ((drawer.kind === 'edit' && !editOpen) || (drawer.kind === 'note' && !noteOpen)) closeDrawer();
-  }, [proposal, drawer.kind, editOpen, noteOpen, closeDrawer]);
+  }, [proposal, rosterSettled, drawer.kind, editOpen, noteOpen, closeDrawer]);
 ```
 7. Directly after the staleness-line block (`{cachedTime && (...)}`), add:
 ```js
@@ -2933,7 +3110,7 @@ const SAVED_BEHIND = 'Saved. The event below could not be refreshed and may be o
           proposalId={proposal.id}
           clientName={proposal.client_name}
           kind={headerOf(proposal).kind}
-          shiftCount={shifts.state === 'ready' ? shifts.rows.length : 0}
+          shiftCount={shifts.state === 'ready' ? shifts.rows.filter((row) => row.status !== 'cancelled').length : 0}
           onClose={drawer.close}
           onSaved={() => { drawer.close(); reloadAfterSave(); }}
         />
@@ -2999,6 +3176,7 @@ Playwright with the bundled Chromium at 390x844 (and 320x640 for overflow), dev 
 - E9: Android-style Back (`page.goBack()`) with the edit sheet open closes it and stays on the detail.
 - E10: at 320 wide nothing overflows horizontally; every new button and row is at least 44px tall (`getBoundingClientRect`); `elementFromPoint` at the centre of Confirm hits Confirm.
 - E11: the benchmark comparison: the edit sheet next to the benchmark's edit sheet at the same width, both skins; every difference is one of the Decisions or a finding.
+- (The desktop editor's own browser check ran at lane ma-e3a's close, Task 1 Step 15.)
 
 - [ ] **Step 3: Record**
 
@@ -3011,35 +3189,32 @@ Write the table into "Browser checks" at the end of this plan, on main. A FAIL g
 
 - [ ] **Step 1: README folder tree**
 
-Add one line each, in their folders: `client/src/pages/admin/proposalEditor/editorCore.js # shared editor pieces: override detection, preview body, stored gratuity (desktop editor + phone edit sheet)`; `client/src/components/comms/notifyDrafts.js # notify-client drafts, payload and outcome toasts (desktop popup + phone notify step)`; `client/src/utils/editSheetView.js # pure view-model for the phone edit sheet`; `client/src/components/mobile/useEditSheet.js # the phone edit sheet's reads and writes`; `client/src/components/mobile/EditSheet.js # phone edit sheet: date, start, duration, guests, notify step`; `client/src/components/mobile/NoteSheet.js # phone note sheet: the internal booking note`.
+Add one line each, in their folders (editorCore.js and notifyDrafts.js went in with lane ma-e3a): `client/src/utils/editSheetView.js # pure view-model for the phone edit sheet`; `client/src/components/mobile/useEditSheet.js # the phone edit sheet's reads and writes`; `client/src/components/mobile/EditSheet.js # phone edit sheet: date, start, duration, guests, notify step`; `client/src/components/mobile/NoteSheet.js # phone note sheet: the internal booking note`.
 
 - [ ] **Step 2: ARCHITECTURE**
 
-In the "Phone event detail" passage: replace "on a cache-served read the Edit details row reads "needs connection" and does nothing, and otherwise it opens the Desktop view of this screen until the lane ma-e3 edit sheet lands" with a description of the two rows and the edit sheet (fresh reads, the desktop payload without the venue keys, the shared preview and reprice lines, the notify step, the re-read on `updated_at` before every PATCH, the curfew acknowledgement, the fresh re-read after a save) and the note sheet (`PATCH /proposals/:id/notes`, the kept draft, the changed-meanwhile choice). Add an "Edit sheet" bullet in the same style as the "Assignment sheet" bullet. Name `editorCore.js` and `notifyDrafts.js` where the editor and the notify popup are described.
+In the "Phone event detail" passage: replace "on a cache-served read the Edit details row reads "needs connection" and does nothing, and otherwise it opens the Desktop view of this screen until the lane ma-e3 edit sheet lands" with a description of the two rows and the edit sheet (fresh reads, the desktop payload without the venue keys, the shared preview and reprice lines, the notify step, the re-read on `updated_at` before every PATCH, the curfew acknowledgement, the fresh re-read after a save) and the note sheet (`PATCH /proposals/:id/notes`, the kept draft, the changed-meanwhile choice). Add an "Edit sheet" bullet in the same style as the "Assignment sheet" bullet.
 
 - [ ] **Step 3: Sensitive paths**
 
-Add to `scripts/sensitive-paths.txt`, with a comment line "Phone edit sheet (lane ma-e3): the money write surface and the shared payload, preview and notice builders":
+Add to `scripts/sensitive-paths.txt`, with a comment line "Phone edit sheet (lane ma-e3): the money write surface" (the shared builders joined the list in lane ma-e3a):
 ```
 client/src/components/mobile/useEditSheet.js
-client/src/pages/admin/proposalEditor/patchBody.js
-client/src/pages/admin/proposalEditor/editorCore.js
-client/src/components/comms/notifyDrafts.js
 ```
 
 - [ ] **Step 4: Walkthroughs owed**
 
 Add a Tier 3b entry for the Pixel walk, gated on the squash being on origin: E1 to E9 of Task 7 on a real booking Dallas chooses, with one real date change sent through "Don't send" and one hours change on a paid event to see the gratuity line (and the client's automatic email, which is real in prod).
 
-- [ ] **Step 5: Fix list and spec additions (orchestrator, on main)**
+- [ ] **Step 5: Fix list (orchestrator, on main, never in the lane)**
 
-Mark the Admin UI entry "Edit details is a STICKY switch" as superseded for upcoming events (the edit sheet opens instead; past events still pin Desktop view). Add the plan decisions marked "plan" in the header (5, 6, 12, 15 placement, 16 head copy and disabled Save, 7 and 14 copy) to the spec's 2026-10-05 list. Add a line under the desktop twin of the stale-edit gap ("An editor tab left open across an on-site settle writes the old hours back"): the phone is closed by this lane's `updated_at` check; the desktop still is not.
+Mark the Admin UI entry "Edit details is a STICKY switch" as superseded for upcoming events (the edit sheet opens instead; past events still pin Desktop view). Add a line under the desktop twin of the stale-edit gap ("An editor tab left open across an on-site settle writes the old hours back"): the phone is closed by this lane's `updated_at` check; the desktop still is not. (The plan decisions marked "plan" were folded into the spec's 2026-10-05 list on main with the plan fleet, before the lanes were cut.)
 
 - [ ] **Step 6: Commit (lane files only)**
 
 ```bash
-git add README.md ARCHITECTURE.md scripts/sensitive-paths.txt docs/walkthroughs-owed.md docs/fix-list-remaining-2026-07-02.md
-git commit -m "docs(phone): the edit sheet and note sheet in README and ARCHITECTURE; sensitive paths; the owed walk"
+git add README.md ARCHITECTURE.md scripts/sensitive-paths.txt docs/walkthroughs-owed.md
+git commit -m "docs(phone): the edit sheet and note sheet in README and ARCHITECTURE; sensitive path; the owed walk"
 ```
 
 ### Task 9: Lane close
@@ -3060,8 +3235,10 @@ Fix rounds re-reviewed by the seats that own the changed files. Record the as-bu
 
 ## Self-Review (2026-10-05)
 
-1. **Spec coverage.** Section 3, 2026-10-05: scope (event variant) Tasks 3 and 6; which events Tasks 2 (`editableEvent`) and 6 (`EditRow` modes); steppers and pickers Tasks 2 and 3; Setup read-only Task 3; the note Tasks 5 and 6; saving (fresh reads, desktop payload, no venue, no mandate, no contact) Tasks 1 and 3; the preview and the disabled Confirm Task 3; the confirm lines and the shared gratuity line Tasks 1 and 2; the button labels Task 2; changed since open Task 3 (and at the notify send, Task 4); the notify step Task 4; refusals and Saving Task 3; after a save Tasks 3 and 6; the extension hint and multi-shift note Tasks 2 and 3; the head and Back behaviour Tasks 3 and 5; no server change throughout. Section 4 structured edits Task 3; section 7 (no stored copy for a money sheet, writes never queue) Tasks 3, 5, 6; section 10 (inline failures) Tasks 3 to 6; section 11 (gate) Task 7. No gap found.
+1. **Spec coverage.** Section 3, 2026-10-05: scope (event variant) Tasks 3 and 6; which events Tasks 2 (`editableEvent`) and 6 (`EditRow` modes, the roster gate); steppers and pickers Tasks 2 and 3; Setup read-only Task 3; the note Tasks 5 and 6; saving (fresh reads, desktop payload, no venue, no mandate, no contact) Tasks 1 and 3; the preview and the disabled Confirm Task 3; the confirm lines and the shared gratuity line Tasks 1 and 2; the button labels Task 2; changed since open Task 3 (and at the notify send, Task 4); the notify step Task 4; refusals and "Saving" on the button Tasks 3 to 5; after a save Tasks 3 and 6; the extension hint and multi-shift note Tasks 2 and 3; the head and Back behaviour Tasks 3 and 5; no server change throughout. Section 4 structured edits Task 3; section 7 (no stored copy for a money sheet, writes never queue) Tasks 3, 5, 6; section 10 (inline failures) Tasks 3 to 6; section 11 (gate) Task 7. No gap found.
 2. **Placeholders.** None: every code step carries its code, and Task 6 Step 1 names the one existing test it deletes and the three it keeps.
-3. **Type consistency.** `useEditSheet` returns exactly the names Task 3's interface lists and Tasks 3 and 4 use (`pending`, `drafts`, `staff`, `setStaff`, `canSend`, `toggleChannel`, `sendUpdate`, `dontSend`, `backToEdit`, `acknowledgeCurfew`, `declineCurfew`, `reload`, `retryPreview`). `confirmView` returns `{ repriced, oldTotal, newTotal, balanceLine, lines, button }` (Task 2) as Task 3 draws it. `buildRepriceSummary`'s new keys are the same three in Tasks 1, 2 and the desktop rewire. `staffNotifyFlags` is defined in Task 1 and used in Task 3. `EditRow` modes `'edit' | 'desktop' | 'offline'` match Task 6's `editMode`.
-4. **Review Focus.** The five lines each name their test; the lower list names its tasks.
-5. **Known, accepted edges.** A proposal with a `total_price_override` keeps its total while its gratuity may still rise, so the gratuity email can go out with no reprice line (the summary only speaks on a reprice); prod has none upcoming, and the desktop shares it. A row write that changes nothing the sheet shows (a client opening their proposal page stamps `updated_at`) still reads as "changed since you opened it"; Reload costs one tap and is the safe direction. A start time stored in an unparseable shape shows blank and is sent as stored unless changed.
+3. **Type consistency.** `useEditSheet` returns exactly the names Task 3's interface lists and Tasks 3 and 4 use. `confirmView` returns `{ repriced, oldTotal, newTotal, balanceLine, lines, button }` (Task 2) as Task 3 draws it. `buildRepriceSummary`'s new keys are the same three in Tasks 1, 2 and the desktop rewire. `staffNotifyFlags` is defined in Task 1 and used in Task 3. `EditRow` modes `'edit' | 'desktop' | 'offline'` match Task 6's `editMode`.
+4. **Review Focus.** The five lines each name their test; the lower list names its tasks, the stored-copy and past-event deep links included (Task 6).
+5. **Known, accepted edges.** A proposal with a `total_price_override` keeps its total while its gratuity may still rise, so the gratuity email can go out with no reprice line (the summary only speaks on a reprice); prod has none upcoming, and the desktop shares it. Any write to the row while the sheet is open reads as "changed since you opened it", including a client merely opening their proposal page (`publicToken.js` bumps `view_count` on every non-archived view, and the trigger stamps `updated_at`); Reload costs one tap and is the safe direction, where a field fingerprint would let a desktop add-on change made meanwhile be overwritten. A start time stored in an unparseable shape shows blank and is sent as stored unless changed.
+6. **Plan fleet, 2026-10-05 (three seats, Fable).** Decomposition PASS with three Importants, all folded: characterization tests written first in Task 1 (Step 0a), the desktop refactor made its own lane (`ma-e3a-editor-core`, merged first), fix-list edits kept on main. Fidelity PASS with one Important, folded: the stored-copy and past-event deep links are now pinned (Task 6); and Minors folded: "Saving" moved onto the button per the spec (Decision 12), the cancelled-event row wording (Decision 1, spec corrected), the staff checkbox label moved to added copy, the 56px stepper value and the setup fallback recorded (Decisions 2 and 3). Feasibility FAIL on one Blocker, folded: the desktop preview call passes the pricing fields by name, because passing the whole form fails `react-hooks/exhaustive-deps` in the CI build (Task 1 Step 10 item 5); and Minors folded: the server's real notice type `event_details_changed` in the fixtures, the cancelled shift left out of the multi-shift count, the exact CSS insertion point, the build's "Compiled with warnings." wording.
+7. **Verified by running, 2026-10-05, in a scratch copy of the client (nothing written in os).** Tasks 1 to 6 applied as written (with the fixes above): the full client suite 1706 of 1707, the one failure an `AssignmentSheet.test.js` test that passes alone (75 of 75, there and on main), now listed with the known intermittents; the CI build exit 0. The Step 0a characterization tests pass on today's main AND on the refactored code (8 of 8 each). The roster-gate test was mutation-checked: with the gate removed it fails, with it every one of the 71 detail tests passes.
