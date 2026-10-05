@@ -107,7 +107,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A caller can hit silence, or "an application error has occurred" | yes |
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
-| 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: lead 431 on 10/1, lead 417 on 9/24** |
+| 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
@@ -862,19 +862,21 @@ nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 
 ### Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is a quiet miss
 
-Happened 2026-10-01 (lead 431, 8:18 PM) and 2026-09-24 (lead 417). When the card on file
-declines, Thumbtack leaves the new lead's charge `Pending` (no `lead_price`) and redirects pro
-pages to `/fullscreen-takeover`: "You're not getting new leads. You've stopped showing up in
-customer search results because your card isn't working." The agent's reply step finds no CTA,
-sees a URL without the negotiation id, and reports `lead_not_found` (`thumbtack-agent/src/index.js`,
-the `urlCarriesId` branch). The server marks the reply `failed` and sends the same generic Sentry
+Happened three times: 2026-09-24 (lead 417), 2026-10-01 (lead 431), 2026-10-04 (lead 436). The
+card worked again in between each time (leads 432-435 replied fine on 10/4 before 436 hit it), so
+it keeps declining rather than being dead. When it declines, Thumbtack redirects pro pages to
+`/fullscreen-takeover`: "You're not getting new leads. You've stopped showing up in customer
+search results because your card isn't working." `charge_state = 'Pending'` is NOT a usable
+signal: lead 433 was `Pending` and replied fine. The agent's reply step finds no CTA, sees a URL
+without the negotiation id, and reports `lead_not_found` (`thumbtack-agent/src/index.js`, the
+`urlCarriesId` branch). The server marks the reply `failed` and sends the same generic Sentry
 warning a lead that genuinely failed to load gets. Nothing says "Thumbtack stopped sending
-leads." On 431 the email harvest still worked (the price-estimate page loaded) and the day call
-still fired (missed).
+leads." The email harvest still works through it (the price-estimate page loads) and the day
+call still fires.
 
 Fix: read `/fullscreen-takeover` (or an "Update card" button) as its own reason, say
 `billing_blocked`, add it to `FIRST_REPLY_FAIL_REASONS`, and send an admin email on it instead of
-the warning stream. Both captures: `~/.thumbtack-profile/diag/*-no-cta-no-composer.{png,json}`.
+the warning stream. Captures: `~/.thumbtack-profile/diag/*-no-cta-no-composer.{png,json}`.
 
 ### A staffer taken off a shift can still be texted its reminder and its thank-you
 
