@@ -8,6 +8,9 @@ import { useToast } from '../../../context/ToastContext';
 // call-on conditions (full-bar baseline, spirit/style keys, matching-mixer
 // pairings, recipe aliases); the generator pulls what an event needs. The
 // baseline qty is AT 100 GUESTS; the projected column previews scaling.
+// Recipe @ 100 is separate: what a signature drink's recipe buys when it puts
+// the item on a list. Empty keeps the generator's 1 per 25 guests (+1 per
+// extra drink); set, it is exactly that many per 100 guests (salt, Tajin).
 const SECTIONS = [
   { id: 'liquorBeerWine', label: 'Liquor · Beer · Wine' },
   { id: 'everythingElse', label: 'Everything Else' },
@@ -179,6 +182,8 @@ export default function PantryParsTab() {
               The generator scales every quantity by the event's guest count. Edit the Qty @ 100 column;
               the projected column previews the scaled order. "Called on" shows when an item joins a list.
               Cost is the per-unit purchase price in dollars (blank means not costed yet); it feeds the package margin rail.
+              Recipe @ 100 is what a signature drink buys when its recipe adds the item: blank means 1 per 25 guests,
+              plus 1 for each extra drink that uses it; set a number for things one container covers, like margarita salt.
             </div>
             {missingCost > 0 && (
               <div className="potions-cost-warn text-small">
@@ -244,6 +249,7 @@ export default function PantryParsTab() {
                     <th className="potions-col-cost">Cost $</th>
                     <th className="potions-col-amount">Qty @ 100</th>
                     <th className="potions-col-amount">@ {guests}</th>
+                    <th className="potions-col-amount" title="When a signature drink's recipe puts this item on a list: how many to buy per 100 guests. Empty: 1 per 25 guests, plus 1 for each extra drink that uses it.">Recipe @ 100</th>
                     <th className="col-desc">Called on</th>
                     <th className="col-spirit">Used by</th>
                     <th></th>
@@ -251,7 +257,7 @@ export default function PantryParsTab() {
                 </thead>
                 <tbody>
                   {shown.length === 0 && (
-                    <tr><td colSpan={9} className="text-muted potions-state">Nothing in this view.</td></tr>
+                    <tr><td colSpan={10} className="text-muted potions-state">Nothing in this view.</td></tr>
                   )}
                   {shown.map((row) => {
                     const fullIndex = sectionRows.indexOf(row);
@@ -309,6 +315,21 @@ export default function PantryParsTab() {
                             }} inputMode="decimal" />
                         </td>
                         <td className="potions-col-amount potions-projected">{scaleQty(row.qty_per_100, guests)}</td>
+                        <td className="potions-col-amount">
+                          <input className="input potions-cell potions-cell-num" value={row.recipe_qty_per_100 ?? ''}
+                            aria-label="Recipe quantity at 100 guests" inputMode="decimal" placeholder="—"
+                            onFocus={(e) => { focusSnapshot.current[`${row.id}:recipeQty`] = e.target.value; }}
+                            onChange={(e) => setPars((p) => p.map((r) => (r.id === row.id ? { ...r, recipe_qty_per_100: e.target.value } : r)))}
+                            onBlur={(e) => {
+                              const orig = focusSnapshot.current[`${row.id}:recipeQty`];
+                              const raw = e.target.value.trim();
+                              if (raw === (orig ?? '').trim()) return;
+                              if (raw === '') { saveCell(row, { recipe_qty_per_100: null }); return; }
+                              const rq = Number(raw);
+                              if (!Number.isFinite(rq) || rq <= 0 || rq > 10000) { load(); return; } // revert bad input (server caps at 10000)
+                              saveCell(row, { recipe_qty_per_100: rq });
+                            }} />
+                        </td>
                         <td className="col-desc potions-chips">
                           {calledOnChips(row).map((chip, i) => (
                             <StatusChip key={i} kind={chip.kind} dot={false}>{chip.text}</StatusChip>

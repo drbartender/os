@@ -113,6 +113,70 @@ test('shared structured ingredient across drinks boosts once (+1 per extra drink
   assert.equal(titos.size, '750mL');
 });
 
+// ─── Recipe quantity (par_items.recipe_qty_per_100) ─────────────────────────
+// Margarita salt only reaches a list through a recipe, where the legacy policy
+// bought 1 per 25 guests (4 at 100) plus 1 per extra drink. Every approved list
+// in prod cut it back to one container by hand (admin_set, 2026-08/09), even
+// with a Margarita AND a Paloma. A row's own recipe quantity replaces the rule
+// and takes no per-drink +1; a row without one keeps the rule exactly. Rows
+// arrive raw from pg, so NUMERIC is a string here, as in production.
+
+const SALT_ROW = {
+  id: 'margarita-salt', item: 'Margarita Salt', size: 'container', qty_per_100: '1',
+  section: 'everythingElse', role: 'garnish', spirit_key: null, style_key: null,
+  paired_spirits: [], ingredient_aliases: ['margarita salt'], in_full_bar: false,
+  is_active: true, sort_order: 900, recipe_qty_per_100: '1',
+};
+const saltCatalog = (recipeQty) => buildCatalogSlices([...SEED_ROWS, { ...SALT_ROW, recipe_qty_per_100: recipeQty }]);
+const saltDrink = (name) => ({ name, ingredients: [
+  { ingredient: 'Blanco Tequila', amount: 2, unit: 'oz' },
+  { ingredient: 'Margarita Salt', amount: 1, unit: 'each', note: 'rim' },
+] });
+const listFor = (guestCount, drinks, cat) => generateShoppingList({
+  guestCount, serviceStyle: 'sig_beer_wine', signatureCocktails: drinks, mixersForSignatureDrinks: false,
+}, cat);
+const qtyOf = (list, item) => (list.everythingElse.find((i) => i.item === item) || {}).qty;
+
+test('a row with its own recipe quantity buys that many per 100 guests, not 1 per 25', () => {
+  const cat = saltCatalog('1');
+  assert.equal(qtyOf(listFor(100, [saltDrink('Margarita')], cat), 'Margarita Salt'), 1, '100 guests: one container (was 4)');
+  assert.equal(qtyOf(listFor(15, [saltDrink('Margarita')], cat), 'Margarita Salt'), 1, 'never below one');
+  assert.equal(qtyOf(listFor(150, [saltDrink('Margarita')], cat), 'Margarita Salt'), 2, '150 guests: ceil(1.5)');
+  assert.equal(qtyOf(listFor(150, [saltDrink('Margarita')], saltCatalog('0.5')), 'Margarita Salt'), 1, 'a fraction scales too');
+});
+
+test('a row with its own recipe quantity takes no +1 for a second drink that uses it', () => {
+  const list = listFor(50, [saltDrink('Margarita'), saltDrink('Paloma')], saltCatalog('1'));
+  assert.equal(qtyOf(list, 'Margarita Salt'), 1, 'plan 121 shape: Margarita + Paloma at 50 guests (was 3)');
+  // The tequila the same two drinks share still gets the legacy +1.
+  const tequila = list.liquorBeerWine.find((i) => i.item === '1800 Blanco Tequila');
+  assert.equal(tequila.qty, 3, 'ceil(50/25)=2, +1 for the second drink');
+});
+
+test('a row without a recipe quantity keeps 1 per 25 guests plus the per-drink +1', () => {
+  for (const unset of [null, undefined, '0', 'junk']) {
+    const list = listFor(100, [saltDrink('Margarita'), saltDrink('Paloma')], saltCatalog(unset));
+    assert.equal(qtyOf(list, 'Margarita Salt'), 5, `recipe_qty_per_100=${unset}: ceil(100/25)=4, +1`);
+  }
+  // A seed row that never had the column at all (the legacy shape).
+  const mule = { name: 'Mule', ingredients: [{ ingredient: 'Ginger Beer', amount: 4, unit: 'oz' }] };
+  assert.equal(qtyOf(listFor(100, [mule], catalog), 'Ginger Beer'), 4, 'ginger beer is untouched');
+});
+
+test('a set recipe quantity never changes a line another path already listed', () => {
+  const withSet = buildCatalogSlices(SEED_ROWS.map((r) => (r.id === 'limes' ? { ...r, recipe_qty_per_100: '1' } : r)));
+  const twoLimeDrinks = [
+    { name: 'Daiquiri', ingredients: [{ ingredient: 'Lime wedge', amount: 1, unit: 'each' }] },
+    { name: 'Gimlet', ingredients: [{ ingredient: 'lime wheel', amount: 1, unit: 'each' }] },
+  ];
+  const fullBar = (cat) => generateShoppingList({ guestCount: 100, serviceStyle: 'full_bar', signatureCocktails: twoLimeDrinks }, cat);
+  // full_bar lists Limes from the baseline first, so the recipe merge only
+  // boosts it: the same line, +1 for the second drink, whether or not it is set.
+  assert.equal(qtyOf(fullBar(withSet), 'Limes'), qtyOf(fullBar(catalog), 'Limes'));
+  // With no baseline the recipe is what adds Limes, so the set number decides.
+  assert.equal(qtyOf(listFor(100, twoLimeDrinks, withSet), 'Limes'), 1);
+});
+
 // ─── No duplicate lines (a drink ingredient already on the list) ─────────────
 // Every recipe merges LAST, against the complete baseline: an ingredient that
 // is already a stock line (mixer, garnish, wine style, supply) gets no second

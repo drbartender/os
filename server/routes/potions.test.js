@@ -153,6 +153,52 @@ test('PUT /pars/:id partial-updates without clobbering', async () => {
   assert.equal(res.body.par.item, 'Potions Test Cordial');
 });
 
+test('PUT /pars/:id sets, keeps and clears recipe_qty_per_100', async () => {
+  const set = await request('PUT', '/api/potions/pars/potions-test-cordial', { recipe_qty_per_100: 0.5 });
+  assert.equal(set.status, 200);
+  assert.equal(Number(set.body.par.recipe_qty_per_100), 0.5);
+  // An unrelated edit must not clobber it (the CASE-flag, not a COALESCE).
+  const other = await request('PUT', '/api/potions/pars/potions-test-cordial', { qty_per_100: 2 });
+  assert.equal(other.status, 200);
+  assert.equal(Number(other.body.par.recipe_qty_per_100), 0.5);
+  for (const clear of [null, '']) {
+    await request('PUT', '/api/potions/pars/potions-test-cordial', { recipe_qty_per_100: 1 });
+    const cleared = await request('PUT', '/api/potions/pars/potions-test-cordial', { recipe_qty_per_100: clear });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.par.recipe_qty_per_100, null, `clear with ${JSON.stringify(clear)}`);
+  }
+  for (const bad of [0, -1, 'abc']) {
+    const res = await request('PUT', '/api/potions/pars/potions-test-cordial', { recipe_qty_per_100: bad });
+    assert.equal(res.status, 400, `rejects ${JSON.stringify(bad)}`);
+    assert.ok(res.body.fieldErrors.recipe_qty_per_100);
+  }
+});
+
+test('PUT /pars/:id caps both per-100 quantities at 10000', async () => {
+  for (const [field, bad] of [['recipe_qty_per_100', 10001], ['recipe_qty_per_100', '1e21'], ['qty_per_100', 10001]]) {
+    const res = await request('PUT', '/api/potions/pars/potions-test-cordial', { [field]: bad });
+    assert.equal(res.status, 400, `${field}=${bad} rejected`);
+    assert.ok(res.body.fieldErrors[field]);
+  }
+  const edge = await request('PUT', '/api/potions/pars/potions-test-cordial', { recipe_qty_per_100: 10000 });
+  assert.equal(edge.status, 200);
+  assert.equal(Number(edge.body.par.recipe_qty_per_100), 10000);
+  await request('PUT', '/api/potions/pars/potions-test-cordial', { recipe_qty_per_100: null });
+});
+
+test('POST /pars stores recipe_qty_per_100 when given, NULL when not', async () => {
+  const made = await request('POST', '/api/potions/pars', {
+    item: 'Potions Test Rim Salt', size: 'container', qty_per_100: 1,
+    section: 'everythingElse', role: 'garnish', recipe_qty_per_100: 1,
+  });
+  assert.equal(made.status, 201);
+  createdParIds.push(made.body.par.id);
+  assert.equal(Number(made.body.par.recipe_qty_per_100), 1);
+  const plain = await request('GET', '/api/potions/pars');
+  const cordial = plain.body.pars.find((r) => r.id === 'potions-test-cordial');
+  assert.equal(cordial.recipe_qty_per_100, null, 'a row created without it reads NULL');
+});
+
 test('DELETE /pars/:id blocks while referenced, soft-deletes when free', async () => {
   // titos-vodka is referenced by seeded draft recipes -> blocked.
   const blocked = await request('DELETE', '/api/potions/pars/titos-vodka');

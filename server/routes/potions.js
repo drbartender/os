@@ -250,6 +250,11 @@ router.get('/pars', auth, requireAdminOrManager, asyncHandler(async (req, res) =
   res.json({ pars });
 }));
 
+// Sanity ceiling for the two per-100-guests quantities. Prod's largest is 500
+// (9oz cups); the cap only stops a fat-fingered exponent ('1e308' overflows the
+// generator's scaleQty to Infinity, which a stored list serializes as a blank).
+const MAX_QTY_PER_100 = 10000;
+
 function validateParFields(body, { requireCore }) {
   const fieldErrors = {};
   const out = {};
@@ -264,7 +269,7 @@ function validateParFields(body, { requireCore }) {
   }
   if (body.qty_per_100 !== undefined || requireCore) {
     const qty = Number(body.qty_per_100);
-    if (!Number.isFinite(qty) || qty < 0) fieldErrors.qty_per_100 = 'Qty at 100 guests must be a number of 0 or more.';
+    if (!Number.isFinite(qty) || qty < 0 || qty > MAX_QTY_PER_100) fieldErrors.qty_per_100 = `Qty at 100 guests must be a number from 0 to ${MAX_QTY_PER_100}.`;
     else out.qty_per_100 = qty;
   }
   if (body.section !== undefined || requireCore) {
@@ -296,6 +301,18 @@ function validateParFields(body, { requireCore }) {
       else out.cost = cost;
     }
   }
+  // How many per 100 guests when a signature drink's recipe adds this item
+  // (nullable; null = explicit clear back to the 1-per-25 recipe default). A
+  // set value must be above 0: the generator never buys less than one, so a 0
+  // would read as "none" and buy one anyway. Mirrors the column CHECK.
+  if (body.recipe_qty_per_100 !== undefined) {
+    if (body.recipe_qty_per_100 === null || body.recipe_qty_per_100 === '') out.recipe_qty_per_100 = null;
+    else {
+      const rq = Number(body.recipe_qty_per_100);
+      if (!Number.isFinite(rq) || rq <= 0 || rq > MAX_QTY_PER_100) fieldErrors.recipe_qty_per_100 = `Recipe qty at 100 guests must be a number above 0 and at most ${MAX_QTY_PER_100} (or empty).`;
+      else out.recipe_qty_per_100 = rq;
+    }
+  }
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
   return out;
 }
@@ -317,13 +334,14 @@ router.post('/pars', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   for (const id of attempts) {
     try {
       const result = await pool.query(
-        `INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, style_key, paired_spirits, ingredient_aliases, in_full_bar, sort_order, cost)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        `INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, style_key, paired_spirits, ingredient_aliases, in_full_bar, sort_order, cost, recipe_qty_per_100)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
         [
           id, fields.item, fields.size ?? null, fields.qty_per_100, fields.section, fields.role,
           fields.spirit_key ?? null, fields.style_key ?? null,
           fields.paired_spirits ?? [], fields.ingredient_aliases ?? [],
           fields.in_full_bar ?? false, sortOrder, fields.cost ?? null,
+          fields.recipe_qty_per_100 ?? null,
         ]
       );
       return res.status(201).json({ par: { ...result.rows[0], used_by: [] } });
@@ -351,7 +369,8 @@ router.put('/pars/:id', auth, requireAdminOrManager, asyncHandler(async (req, re
        ingredient_aliases = COALESCE($12::text[], ingredient_aliases),
        in_full_bar       = COALESCE($13, in_full_bar),
        sort_order        = COALESCE($14, sort_order),
-       cost              = CASE WHEN $15::boolean THEN $16 ELSE cost END
+       cost              = CASE WHEN $15::boolean THEN $16 ELSE cost END,
+       recipe_qty_per_100 = CASE WHEN $18::boolean THEN $19::numeric ELSE recipe_qty_per_100 END
      WHERE id = $17 AND is_active = true
      RETURNING *`,
     [
@@ -368,6 +387,7 @@ router.put('/pars/:id', auth, requireAdminOrManager, asyncHandler(async (req, re
       Number.isFinite(Number(req.body?.sort_order)) ? Number(req.body.sort_order) : null,
       'cost' in fields, fields.cost ?? null,
       req.params.id,
+      'recipe_qty_per_100' in fields, fields.recipe_qty_per_100 ?? null,
     ]
   );
   if (!result.rows[0]) throw new NotFoundError('Catalog item not found.');

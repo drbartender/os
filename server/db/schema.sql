@@ -4828,6 +4828,32 @@ ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS hosted_visible BOOLEAN NOT NULL D
 -- Par-item unit cost in DOLLARS (margin math is directional, never accounting).
 ALTER TABLE par_items ADD COLUMN IF NOT EXISTS cost NUMERIC(10,2);
 
+-- How many to buy per 100 guests when a signature drink's recipe is what puts
+-- this item on a shopping list (mergeSignatureRecipes). NULL keeps the legacy
+-- recipe policy: 1 per 25 guests, +1 for each extra drink using the item. Set,
+-- it is the whole answer (no per-drink +1): a rim garnish or a small-pour
+-- bottle covers the event whatever the drink count. qty_per_100 cannot carry
+-- this: for recipe-only rows it is a placeholder 1 that no path reads, and
+-- reading it would quarter mint, ginger beer and the signature spirits too.
+-- The preset rides the column add (planner_version precedent above), so it
+-- runs on a DB that has never seen the column and never again: clearing a
+-- value in the Pantry tab must survive the next boot. The three are the items
+-- the 2026-08/09 approved lists cut to one container on every event. Never
+-- add this column by hand ahead of a deploy: the guard would then skip the
+-- preset for good (set the three in the Pantry tab if that ever happens).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'par_items' AND column_name = 'recipe_qty_per_100'
+  ) THEN
+    ALTER TABLE par_items ADD COLUMN recipe_qty_per_100 NUMERIC
+      CHECK (recipe_qty_per_100 IS NULL OR recipe_qty_per_100 > 0);
+    UPDATE par_items SET recipe_qty_per_100 = 1
+     WHERE id IN ('margarita-salt', 'tajin', 'sanding-sugar');
+  END IF;
+END $$;
+
 -- Structured package contents: one row per stocked category ("Tequila: 4
 -- bottles per 100 guests"), with SPLIT PARS — eligible_item_ids share the
 -- category volume, so listing two tequilas is showmanship, never double cost.

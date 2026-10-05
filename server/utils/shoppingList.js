@@ -155,7 +155,7 @@ const SPIRIT_PARS = {
 // Mixer pairings used when the consult form picks `mixers: 'matching'`. For each
 // selected spirit, the union of its paired mixer item names is included from
 // BASIC_MIXERS + GARNISHES (matched by exact `item` name). Sig drink ingredients
-// are added independently via mergeSignatureIngredients — these are additive.
+// are added independently via mergeSignatureRecipes — these are additive.
 const SPIRIT_MIXER_PAIRINGS = {
   vodka:   ['Cranberry Juice', 'Orange Juice', 'Tonic Water', 'Club Soda', 'Lime Juice (UNSWEET)', 'Limes'],
   gin:     ['Tonic Water', 'Club Soda', 'Lemon Juice', 'Simple Syrup', 'Lemons'],
@@ -250,11 +250,14 @@ function buildWineItems(wineSelections, guestCount, bottles, slices) {
 // Recipe-aware replacement for the old mergeSignatureIngredients. Rows may be
 // structured recipe objects OR legacy free-text strings; both resolve through
 // the catalog (potionCatalog.resolveRecipeRow: override-active-first, then
-// alias exact-then-longest-substring). Quantity POLICY is deliberately
-// unchanged from legacy (spec: "quantities are usually right"): a missing
-// item lands at 1 per 25 guests, and an item shared by multiple drinks gets
-// +1 per additional use. Per-serving amounts do not drive purchase math in
-// v1. Unresolved rows are collected for the caller to report (never a silent
+// alias exact-then-longest-substring). Quantity POLICY is the legacy one
+// (spec: "quantities are usually right"): a missing item lands at 1 per 25
+// guests, and an item shared by multiple drinks gets +1 per additional use.
+// The one exception is a catalog row with recipe_qty_per_100 set (margarita
+// salt, Tajin, a small-pour bottle): it lands at that many per 100 guests and
+// takes no per-drink +1, because one container covers the event however many
+// drinks use it. Per-serving amounts do not drive purchase math in v1.
+// Unresolved rows are collected for the caller to report (never a silent
 // wrong match, never a silent drop without a trace).
 // Every caller runs this LAST, after all baseline rows (pars, beer/wine,
 // mixers, garnishes, supplies) are in: its exists-check is the only dedup,
@@ -276,16 +279,25 @@ function mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingEls
       // the map's own — so this transform is a no-op on the fallback path.
       const parRow = slices.byId ? slices.byId.get(resolved.itemId) : null;
       const size = (parRow && parRow.role === 'spirit' && resolved.size === '1.75L') ? '750mL' : resolved.size;
+      // byId holds RAW par_items rows (pg returns NUMERIC as a string). Legacy
+      // fallback rows have no par row, so they keep the 1-per-25 policy.
+      const rawRecipeQty = parRow ? parRow.recipe_qty_per_100 : null;
+      const recipeQty100 = (rawRecipeQty === null || rawRecipeQty === undefined) ? NaN : Number(rawRecipeQty);
       resolvedRows.push({
         key: resolved.itemId || resolved.item.toLowerCase(),
         item: resolved.item,
         size,
         section: resolved.section,
+        recipeQty100: recipeQty100 > 0 ? recipeQty100 : null,
       });
     }
   }
 
-  // Add missing items (legacy policy: first occurrence wins, 1 per 25 guests).
+  // Add missing items (first occurrence wins): the row's own recipe quantity
+  // when the catalog sets one, else the legacy 1 per 25 guests. Keys added at
+  // their own recipe quantity are remembered, because only THOSE lines skip
+  // the boost below.
+  const addedAtRecipeQty = new Set();
   for (const r of resolvedRows) {
     const targetList = r.section === 'liquorBeerWine' ? liquorBeerWine : everythingElse;
     const exists = targetList.find(i => i.item.toLowerCase() === r.item.toLowerCase());
@@ -294,18 +306,25 @@ function mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingEls
         _id: uid(),
         item: r.item,
         size: r.size,
-        qty: Math.max(1, Math.ceil(guestCount / 25)),
+        qty: r.recipeQty100 !== null
+          ? scaleQty(r.recipeQty100, guestCount)
+          : Math.max(1, Math.ceil(guestCount / 25)),
       });
+      if (r.recipeQty100 !== null) addedAtRecipeQty.add(r.key);
     }
   }
 
   // Boost items used by multiple signature drinks (+1 per additional use,
-  // applied once per resolved item — legacy applied once per map key).
+  // applied once per resolved item — legacy applied once per map key). A line
+  // this merge added at the row's own recipe quantity is never boosted: that
+  // number is the answer. A line some other path put on the list (a full-bar
+  // par, a pairing) keeps the legacy boost even when its row sets a recipe
+  // quantity, because the recipe did not decide that line.
   const counts = {};
   for (const r of resolvedRows) counts[r.key] = (counts[r.key] || 0) + 1;
   const boosted = new Set();
   for (const r of resolvedRows) {
-    if (counts[r.key] < 2 || boosted.has(r.key)) continue;
+    if (counts[r.key] < 2 || boosted.has(r.key) || addedAtRecipeQty.has(r.key)) continue;
     boosted.add(r.key);
     const targetList = r.section === 'liquorBeerWine' ? liquorBeerWine : everythingElse;
     const item = targetList.find(i => i.item.toLowerCase() === r.item.toLowerCase());
