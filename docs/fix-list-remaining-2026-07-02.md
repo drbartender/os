@@ -107,7 +107,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
-| 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | **YES — shift 353, upcoming 10/16, 2 approved staff** |
+| 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
 
@@ -904,10 +904,10 @@ ma-e2 Task 6 review; second opinion (codex), verified against the code.
 
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
 
-**REACHABILITY FLIPPED 2026-08-25.** This was parked on "0 overnight rosters" and that count has
-changed: prod now has two shifts whose `end_time` is before their `start_time`, and shift **353**
-is UPCOMING (2026-10-16, 8:00 PM to 12:00 AM, status `open`, **2 approved staff**). It was shelved
-on a number, and the number moved.
+**Reachability, checked 2026-10-06: ZERO.** Shift 353 (2026-10-16, 8:00 PM to 12:00 AM), which
+flipped this to "yes" on 2026-08-25, is now cancelled with no approved staff, and it could never have
+triggered it: a shift that ends exactly at midnight is finished by the time the two readers start to
+disagree. No live shift runs past midnight (end before start, parsed as clock times, not text).
 
 `staffPortal.js` orders the staffer's own next-shift card by the end instant alone;
 `findNearestApprovedShift` now leads its ORDER BY with a "not dated before today" tiebreak. Between
@@ -915,9 +915,8 @@ on a number, and the number moved.
 or CONFIRM acts on TONIGHT's. **The CONFIRM case is the sharper one:** the staffer reads "your next
 shift: A", texts CONFIRM, and `acknowledged_at` lands on B.
 
-Reachability against prod: currently ZERO — no staffer holds a live approved shift whose end
-instant crosses midnight. It becomes reachable the moment anyone is approved onto the one
-overnight-wrap shift or a future NULL-end evening one.
+It becomes reachable the moment someone is approved onto a shift that ends AFTER midnight, or onto
+an evening shift with no end time (the assumed end then runs past midnight).
 
 **Dallas's call, and it is a product decision, not a mechanical fix.** Either make them match (two
 lines, `chicagoTodayYmd` is already imported there), or keep the divergence and write down why —
