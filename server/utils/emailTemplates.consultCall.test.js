@@ -19,7 +19,7 @@ const SLOT = new Date('2026-10-10T15:00:00.000Z');
 const BASE = {
   bookerName: 'Tyler Anderson',
   scheduledAt: SLOT,
-  phoneDisplay: '256-328-1203',
+  phoneDisplay: '256-555-0186',
   adminUrl: 'https://admin.example.test/clients/7',
   proposalUrl: 'https://admin.example.test/proposals/42',
 };
@@ -113,8 +113,8 @@ test('the undialable banner never leaks onto an unrelated reason', () => {
 test('the Number row is always present, formatted or raw', () => {
   const formatted = consultCallAdmin({ ...BASE, reason: 'call failed' });
   assert.ok(formatted.html.includes('>Number</td>'), 'Number row in the table');
-  assert.ok(formatted.html.includes('256-328-1203'), formatted.html);
-  assert.ok(formatted.text.includes('256-328-1203'), formatted.text);
+  assert.ok(formatted.html.includes('256-555-0186'), formatted.html);
+  assert.ok(formatted.text.includes('256-555-0186'), formatted.text);
 
   // A bad number is exactly the case where nobody was rung and no text went
   // out, so the raw typed string has to ride along.

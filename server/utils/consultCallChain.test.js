@@ -24,7 +24,7 @@ const { API_URL } = require('./urls');
 // every fixture cleans up after itself.
 
 const RUN = `ccc-test-${Date.now()}`;
-const VALID_PHONE = '+12563281203';
+const VALID_PHONE = '+12565550186';
 const consultIds = [];
 
 let emails = [];
@@ -618,7 +618,7 @@ test('sendChainEmail: formats a dialable number, passes a bad one through, and s
   const good = await makeConsult('mail-good', { phone: VALID_PHONE, offsetSec: -900 });
   await chain.fileMissedWindow({ consultId: good });
   assert.equal(emails.length, 1);
-  assert.ok(emails[0].emailText.includes('256-328-1203'), emails[0].emailText);
+  assert.ok(emails[0].emailText.includes('256-555-0186'), emails[0].emailText);
   assert.ok(emails[0].emailText.includes('Test Booker'), emails[0].emailText);
 
   emails = [];
@@ -1105,7 +1105,7 @@ test('onLegTerminal: ring 3 with VA_CELL unset lands missed and texts Dallas exa
   assert.equal(texts[0].to, TEXT_DEST);
   assert.equal(
     texts[0].body,
-    `Missed consult call with Tyler Anderson at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-328-1203.`
+    `Missed consult call with Tyler Anderson at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-555-0186.`
   );
   assert.ok(!texts[0].body.includes('—'), 'no em dashes in texted copy');
   assert.equal(texts[0].meta.skipLog, true, 'an internal ops alert never files into the client ledger');
@@ -1358,7 +1358,7 @@ test('sendMissedText: the client-no-answer wording is its own sentence', async (
   assert.equal(texts.length, 1);
   assert.equal(
     texts[0].body,
-    `Consult client did not answer: Tyler Anderson at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-328-1203.`
+    `Consult client did not answer: Tyler Anderson at ${clockTimeWithMinutes(await slotOf(consultId))}. Their number is 256-555-0186.`
   );
   assert.equal(texts[0].to, TEXT_DEST);
 });

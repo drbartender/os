@@ -1854,7 +1854,7 @@ the consult sweep); a redelivered or superseded Cal.com event can no longer file
 consult; malformed `ADMIN_PHONE` / `VA_CELL` are never dialed and warn at boot; Zul's number stays
 out of `call_audit`, the attempt rows, the log and Sentry.
 
-### Shopping list: Next through the custom recipes before the list is rewritten. Committed 2026-10-02 as `0c9d2fe0`, NOT yet pushed.
+### Shopping list: Next through the custom recipes before the list is rewritten. Committed 2026-10-02 as `0c9d2fe0`.
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor 0c9d2fe0 origin/main` says yes. Test-
 and lint-verified only (18 component tests); never opened in a browser, because the dev DB holds
@@ -1876,7 +1876,7 @@ Known and logged, not a defect of this walk: Escape inside the ingredient sugges
 whole drawer (fix list, Potions). The single-request flow is unchanged and is the Tier 3b
 "Match existing" item's walk.
 
-### Alternatives panel: Copy compare link only when it shows a comparison, plus Preview comparison. Committed 2026-10-02 as `a43f864e`, NOT yet pushed.
+### Alternatives panel: Copy compare link only when it shows a comparison, plus Preview comparison. Committed 2026-10-02 as `a43f864e`.
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor a43f864e origin/main` says yes. Verified by
 tests (server 6/6 + 5/5, client 9/9), one code reviewer, and a dev browser check of the PUBLIC side
@@ -1892,7 +1892,7 @@ The walk, on a proposal with Add an alternative used once (two options, the new 
   window: the side-by-side comparison, not a contract.
 - Group 20 in prod (858 viewed, 872 draft) is the live case: its panel should now hide Copy.
 
-### Pantry & Pars "Recipe @ 100": margarita salt at one container. Merged 2026-10-05 as `addd55ad`, NOT yet pushed.
+### Pantry & Pars "Recipe @ 100": margarita salt at one container. Merged 2026-10-05 as `addd55ad`.
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor addd55ad origin/main` says yes. Verified by
 tests (generator 69/69 with the frozen-snapshot parity intact, potions routes 21/21, Pantry tab 6/6,
@@ -1908,7 +1908,7 @@ blocked in that session).
   1 (2 above 100 guests), with no extra container for a second salt-rimmed drink. Ginger Beer and Fresh
   Mint come out exactly as before. Lists you already hand-edited keep your numbers on regenerate.
 
-### Admin UI batch: Supplies chip, balance due date, menu-print Download, Package details add-ons. Merged 2026-10-06 as `7a1aa28b`, NOT yet pushed.
+### Admin UI batch: Supplies chip, balance due date, menu-print Download, Package details add-ons. Merged 2026-10-06 as `7a1aa28b`.
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor 7a1aa28b origin/main` says yes. Verified by
 tests (175 client tests across the touched suites on main, menuPrint 17/17, eventDetails 19/19, beo

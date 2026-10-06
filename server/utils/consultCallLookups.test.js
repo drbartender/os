@@ -69,7 +69,7 @@ async function makeConsult(tag, { clientId = null, proposalId = null, dayOffset 
     `INSERT INTO consults (client_id, proposal_id, scheduled_at, calcom_event_id, status, booker_name, booker_phone)
      VALUES ($1, $2,
              date_trunc('second', NOW()) + make_interval(days => $3),
-             $4, 'scheduled', 'Lookup Booker', '+12563281203')
+             $4, 'scheduled', 'Lookup Booker', '+12565550186')
      RETURNING id, scheduled_at`,
     [clientId, proposalId, dayOffset, `${RUN}-${tag}`]
   );
@@ -114,7 +114,7 @@ async function makeAttempt(consult, {
 async function makeConsultSharingSlotWith(tag, { clientId, twin }) {
   const { rows: [c] } = await pool.query(
     `INSERT INTO consults (client_id, proposal_id, scheduled_at, calcom_event_id, status, booker_name, booker_phone)
-     SELECT $1, NULL, t.scheduled_at, $3, 'scheduled', 'Lookup Booker', '+12563281203'
+     SELECT $1, NULL, t.scheduled_at, $3, 'scheduled', 'Lookup Booker', '+12565550186'
        FROM consults t WHERE t.id = $2
      RETURNING id, scheduled_at`,
     [clientId, twin.id, `${RUN}-${tag}`]

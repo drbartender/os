@@ -125,7 +125,7 @@ Signature policy: fail closed in every environment (`isValidTwilioRequest`, 403 
 - `POST /digit?attempt&leg&ring&play`: `9` replays (max 3 plays); anything but `1` hangs up. `1`: validate `booker_phone` through `toUsE164` FIRST (a bad target apologizes and lets the callback advance); `guardStillScheduled` (rev 2: a cancel between rings must never dial the client; failure apologizes with "This consult was cancelled. Goodbye." and the callback terminates the chain as `skipped_cancelled`); then claim `calling_admin (AND admin_ring = ring) | calling_va -> connected`, `answered_by = leg`, `bridge_started_at = NOW()`; winner responds
   `<Dial answerOnBridge="true" callerId="{leg == admin ? CONSULT_CALLER_ID : VOICE_CALLER_ID}" timeLimit="{VA_CALL_TIME_LIMIT_SEC || 1800}" action="/api/voice/consult/dialend?attempt&leg"><Number statusCallback="/status?attempt&leg=client">{target}</Number></Dial>`.
   `CONSULT_CALLER_ID` unset or not strict E.164 falls back to `VOICE_CALLER_ID` with a boot warning (rev 2: format-checked, not just presence-checked, next to the 1a env check in `server/index.js`, so a Render typo cannot make every press-1 Dial fail at Twilio while the row sits `connected`). Attribute-value invariant from the lead router: nothing but validated integers, fixed enums, env values, and `toUsE164` output ever lands in a TwiML attribute.
-- `POST /dialend?attempt&leg` (rev 2, the Dial `action`): reads `DialCallStatus`. `completed` -> `<Hangup/>` (the conversation happened). Anything else (`no-answer`, `busy`, `failed`, `canceled`) -> set `detail = 'client_no_answer'` on the `connected` row (guarded `WHERE status = 'connected' AND detail IS NULL`), the claim winner sends the client-no-answer text to Dallas (5.2), and the agent hears "They did not answer. Their number is 256-328-1203. Goodbye." then `<Hangup/>`. The row stays `connected` (it is terminal and never reaped) and the detail line renders "connected, no answer".
+- `POST /dialend?attempt&leg` (rev 2, the Dial `action`): reads `DialCallStatus`. `completed` -> `<Hangup/>` (the conversation happened). Anything else (`no-answer`, `busy`, `failed`, `canceled`) -> set `detail = 'client_no_answer'` on the `connected` row (guarded `WHERE status = 'connected' AND detail IS NULL`), the claim winner sends the client-no-answer text to Dallas (5.2), and the agent hears "They did not answer. Their number is 256-555-0186. Goodbye." then `<Hangup/>`. The row stays `connected` (it is terminal and never reaped) and the detail line renders "connected, no answer".
 - `POST /status?attempt&leg&ring`: ignore non-terminal statuses. `leg=client`: record `bridge_duration_sec` from `CallDuration`. `leg=admin|va`: `onLegTerminal({ attemptId, leg, ring, callStatus })`. A leg that already pressed 1 leaves the row `connected` and every guard no-ops. Always 200 TwiML, even on internal error (Twilio retries 5xx; the claims already guard state).
 
 ### 4.6 Briefing builder (`server/utils/consultCallBriefing.js`)
@@ -134,7 +134,7 @@ Pure text; the TwiML layer escapes. Own helpers, no lead-bridge import:
 - `spokenClockTime(instant)`: Chicago wall clock, "10 AM" on the hour, "10:15 AM" otherwise.
 - `clockTimeWithMinutes(instant)`: "10:00 AM" always (for the text and the email).
 - `spokenDateOnly(value)`: takes node-pg's DATE (a Date at local midnight; read the LOCAL calendar parts) or a `YYYY-MM-DD` string, formats "Saturday October 10th" without ever treating the value as an instant.
-- `formatUsPhoneForText(e164)`: `+12563281203` -> `256-328-1203`.
+- `formatUsPhoneForText(e164)`: `+12565550186` -> `256-555-0186`.
 
 Inputs: booker name, `scheduled_at`, ring number, whether the listener is Zul, whether Dallas was ever rung, and the linked proposal's `event_date`, `guest_count`, and id when a proposal is linked. Absent fields are skipped, never spoken as "unknown".
 
@@ -159,8 +159,8 @@ Category: the existing `lead_call` admin-notification category, with its setting
 
 Sent by the claim winner, from `TWILIO_PHONE_NUMBER`, to `VM_TEXT_DESTINATION` falling back to `ADMIN_PHONE` (strict E.164 check), as an internal alert the way the primary-line voicemail text is (`meta.skipLog`, no client message-ledger row; `messageType: 'consult_call_alert'`). The number is always formatted from the `toUsE164` output, never the raw column.
 
-- Fully missed chain: "Missed consult call with Tyler Anderson at 10:00 AM. Their number is 256-328-1203."
-- Client did not answer after a press-1 (4.5 `/dialend`): "Consult client did not answer: Tyler Anderson at 10:00 AM. Their number is 256-328-1203."
+- Fully missed chain: "Missed consult call with Tyler Anderson at 10:00 AM. Their number is 256-555-0186."
+- Client did not answer after a press-1 (4.5 `/dialend`): "Consult client did not answer: Tyler Anderson at 10:00 AM. Their number is 256-555-0186."
 
 **No valid destination (rev 2):** if neither env value is a strict E.164 number, the `missed` transition sends the 5.1 email with reason `missed, no text destination` instead, so a fully missed consult is never invisible. `sendMissedText` returns a discriminated result (`sent` / `no_destination` / `no_attempt` / `send_failed`), not a boolean, because `sendSMS` THROWS on a Twilio failure: a send that failed is reported with its own reason, `missed, text failed`, so an outage is never described to the operator as an unset `VM_TEXT_DESTINATION`.
 

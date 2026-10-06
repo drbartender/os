@@ -1,5 +1,5 @@
-// The pieces of the proposal/event editor that the phone edit sheet (lane
-// ma-e3, client/src/components/mobile/useEditSheet.js) shares with the desktop
+// The pieces of the proposal/event editor that the phone edit sheet (built in
+// lane ma-e3 as client/src/components/mobile/useEditSheet.js) shares with the desktop
 // editor (ProposalEditorForm.js). Moved out of ProposalEditorForm verbatim:
 // one copy, so the two surfaces cannot drift. The other shared builders live
 // beside this file: formState.js (the form a proposal seeds), patchBody.js

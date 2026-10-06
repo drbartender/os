@@ -105,7 +105,7 @@ async function makeProposal(tag) {
 async function makeConsult(tag, { clientId, proposalId, dayOffset = 1 }) {
   const { rows: [c] } = await pool.query(
     `INSERT INTO consults (client_id, proposal_id, scheduled_at, calcom_event_id, status, booker_name, booker_phone)
-     VALUES ($1, $2, date_trunc('second', NOW()) + make_interval(days => $3), $4, 'scheduled', 'Route Booker', '+12563281203')
+     VALUES ($1, $2, date_trunc('second', NOW()) + make_interval(days => $3), $4, 'scheduled', 'Route Booker', '+12565550186')
      RETURNING id, scheduled_at`,
     [clientId, proposalId, dayOffset, `${RUN}-${tag}`]
   );

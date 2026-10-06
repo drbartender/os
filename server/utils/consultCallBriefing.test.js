@@ -116,14 +116,14 @@ test('spokenDateOnly returns null on anything unparseable', () => {
 // ─── formatUsPhoneForText ────────────────────────────────────────
 
 test('formatUsPhoneForText renders a US E.164 number as dashed digits', () => {
-  assert.equal(formatUsPhoneForText('+12563281203'), '256-328-1203');
+  assert.equal(formatUsPhoneForText('+12565550186'), '256-555-0186');
 });
 
 test('formatUsPhoneForText returns anything else exactly as given', () => {
   assert.equal(formatUsPhoneForText('+639171234567'), '+639171234567');
-  assert.equal(formatUsPhoneForText('(256) 328-1203'), '(256) 328-1203');
+  assert.equal(formatUsPhoneForText('(256) 555-0186'), '(256) 555-0186');
   assert.equal(formatUsPhoneForText('+1256328120'), '+1256328120');
-  assert.equal(formatUsPhoneForText('+125632812034'), '+125632812034');
+  assert.equal(formatUsPhoneForText('+125655501864'), '+125655501864');
   assert.equal(formatUsPhoneForText(null), null);
   assert.equal(formatUsPhoneForText(undefined), undefined);
 });

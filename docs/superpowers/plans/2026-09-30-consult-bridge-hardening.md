@@ -1699,7 +1699,7 @@ test('stale arm (switch off): stale rows are parked skipped_disabled, ZERO email
 
 - [ ] **Step 2: Sweep wiring tests**
 
-In `server/utils/consultCallSweep.test.js`, directly after `const VALID_PHONE = '+12563281203';` add:
+In `server/utils/consultCallSweep.test.js`, directly after `const VALID_PHONE = '+12565550186';` add:
 
 ```js
 

@@ -117,7 +117,7 @@ function spokenDateOnly(value) {
 }
 
 /**
- * "+12563281203" -> "256-328-1203" for texted and spoken copy. Anything that
+ * "+12565550186" -> "256-555-0186" for texted and spoken copy. Anything that
  * is not a US E.164 number comes back exactly as given.
  */
 function formatUsPhoneForText(e164) {

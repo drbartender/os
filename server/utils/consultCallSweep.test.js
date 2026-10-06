@@ -29,7 +29,7 @@ const sweep = require('./consultCallSweep');
 // instead of silently re-opening a chain every 60 seconds until the cap trips.
 
 const RUN = `ccs-test-${Date.now()}`;
-const VALID_PHONE = '+12563281203';
+const VALID_PHONE = '+12565550186';
 
 // The reaper is table-wide like every sweep query and has its own suite
 // (consultCallReaper.test.js). A no-op by default here, so a stranded row some

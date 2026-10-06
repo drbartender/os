@@ -1443,7 +1443,7 @@ holds the SMS body copy (mirrors `emailTemplates.js`). Scheduled SMS touches
 register dispatcher handlers like their email siblings: `dripSmsHandlers.js`
 (drip touches 1/3/5-sms), `drinkPlanNudge.js` (the drink-plan nudge, email + SMS,
 T-21; its "call us / text us" line prints `companyPhone.js`, never an env-configured
-agent number, since `ADMIN_PHONE` is a personal line), `balanceSmsHandlers.js` (non-autopay balance due-today / late t1 / late
+agent number, since `ADMIN_PHONE` is internal routing (the 312 Google Voice line), never a client-facing number), `balanceSmsHandlers.js` (non-autopay balance due-today / late t1 / late
 t3 SMS), and `eventEveSms.js` (the event-eve SMS, T-24h from event start, with
 bespoke wall-clock timing). `balanceReminderScheduling.js` holds the
 balance-reminder ladder scheduler (extracted from `stripe.js`). Immediate SMS

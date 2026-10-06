@@ -21,8 +21,8 @@ const chain = require('../utils/consultCallChain');
 const router = require('./voiceConsultCall');
 
 const RUN = `vcc-test-${Date.now()}`;
-const VALID_PHONE = '+12563281203';
-const SPOKEN_PHONE = '256-328-1203';
+const VALID_PHONE = '+12565550186';
+const SPOKEN_PHONE = '256-555-0186';
 // A fixed slot, carrying microseconds on purpose (R12: a value that round-trips
 // through JS comes back truncated). 15:00Z on October 10th 2026 is 10 AM in
 // Chicago, so the spoken time is deterministic in any process timezone.

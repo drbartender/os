@@ -718,7 +718,8 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
 // IS responsible for finding their own cover, per spec §6.5), but
 // dropped_at + drop_emergency=true mark the row for the manager dashboard.
 // Notifications: notifyAdminCategory (admin users), an ADMIN_PHONE hotline
-// SMS (Dallas's personal phone), AND an audit row on proposal_activity_log.
+// SMS (the 312 Google Voice line, never a personal cell), AND an audit row on
+// proposal_activity_log.
 
 const MIN_EMERGENCY_REASON_LEN = 10;
 const MAX_EMERGENCY_REASON_LEN = 500;
