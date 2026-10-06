@@ -308,3 +308,34 @@ test('GET /conversations does not count thumbtack-relay echoes as unread', async
   assert.ok(d, `seeded D must appear: ${r.body}`);
   assert.equal(d.unread_count, 1, `D's real unread inbound must count: ${r.body}`);
 });
+
+// ── To and picture media reach processInboundSms (spec 2026-10-06) ───────────
+test('POST /inbound forwards To and the Twilio-hosted picture media to processInboundSms', async () => {
+  processCalls = [];
+  process.env.NODE_ENV = 'test';
+  const r = await request('POST', '/api/sms/inbound', {
+    body: {
+      From: '+13125550111', To: '+12242221922', Body: '', MessageSid: 'SM_test_media',
+      NumMedia: '2',
+      MediaUrl0: 'https://api.twilio.com/2010-04-01/Accounts/ACtest/Messages/MMtest/Media/MEtest0',
+      MediaContentType0: 'image/JPEG',
+      MediaUrl1: 'https://example.invalid/not-twilio.jpg',
+      MediaContentType1: 'image/png',
+      MediaUrl2: 'https://api.twilio.com/2010-04-01/Accounts/ACtest/Messages/MMtest/Media/MEtest2',
+      MediaContentType2: 'image/gif',
+    },
+  });
+  assert.equal(r.status, 200, r.body);
+  const plain = await request('POST', '/api/sms/inbound', {
+    body: { From: '+13125550111', Body: 'hi', MessageSid: 'SM_test_plain' },
+  });
+  assert.equal(plain.status, 200, plain.body);
+  assert.equal(processCalls.length, 2);
+  assert.equal(processCalls[0].to, '+12242221922');
+  assert.deepEqual(processCalls[0].media, [{
+    url: 'https://api.twilio.com/2010-04-01/Accounts/ACtest/Messages/MMtest/Media/MEtest0',
+    content_type: 'image/jpeg',
+  }], 'only Twilio-hosted URLs, only below NumMedia, content type lowercased');
+  assert.equal(processCalls[1].to, undefined);
+  assert.deepEqual(processCalls[1].media, []);
+});

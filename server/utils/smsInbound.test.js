@@ -20,6 +20,20 @@ const {
   __setDeps,
 } = require('./smsInbound');
 
+// Phones whose STOP-set texts in this file now write sms_optouts (spec
+// 2026-10-06, decision 10: every sender, every line). Removed in before() and
+// after(), together with the rows the line-aware tests below record.
+const OPTOUT_TEST_PHONES = [
+  '8392750001', '3125550177',
+  '3125550190', '3125550191', '3125550192', '3125550193', '3125550194',
+  '3125550195', '3125550196', '3125550197', '3125550198', '3125550199',
+  '9998887771', '9998887779',
+  // The new opt tests below. Not 3125550505: that is a seeded dev client.
+  '3125550503', '3125550504', '3125550506', '3125550508', '3125550510',
+  // Amendment 32's opting-back-in tests.
+  '3125550509', '3125550512',
+];
+
 test('detectOptKeyword > recognizes STOP and equivalents, case-insensitive', () => {
   for (const word of ['STOP', 'stop', '  Stop ', 'UNSUBSCRIBE', 'end', 'CANCEL', 'quit']) {
     assert.strictEqual(detectOptKeyword(word), 'stop', `expected stop for "${word}"`);
@@ -83,6 +97,8 @@ before(async () => {
   await pool.query("DELETE FROM users WHERE email = 'sms-lookup-staff@example.com'");
   await pool.query("DELETE FROM clients WHERE email = 'sms-lookup-client@example.com'");
   await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_help_%'");
+  await pool.query('DELETE FROM sms_optouts WHERE phone_last10 = ANY($1::text[])', [OPTOUT_TEST_PHONES]);
+  await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_l4_%' OR twilio_sid LIKE 'SMtest_d17_%'");
 
   const c = await pool.query(
     `INSERT INTO clients (name, email, phone) VALUES ('SMS Lookup Client', 'sms-lookup-client@example.com', '3125550148')
@@ -127,6 +143,8 @@ after(async () => {
   await pool.query('DELETE FROM clients WHERE id = $1', [lsClientId]);
   await pool.query("DELETE FROM thumbtack_leads WHERE negotiation_id IN ('tt-relay-proxy-test', 'tt-relay-legacy-test')");
   await pool.query('DELETE FROM clients WHERE id = $1', [ttClientId]);
+  await pool.query('DELETE FROM sms_optouts WHERE phone_last10 = ANY($1::text[])', [OPTOUT_TEST_PHONES]);
+  await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_l4_%' OR twilio_sid LIKE 'SMtest_d17_%'");
   await pool.end();
 });
 
@@ -805,20 +823,21 @@ test('processInboundSms > a retried opt-keyword MessageSid does not alert twice'
 });
 
 test('processInboundSms > the unknown-sender alert does NOT claim a preference was stored', async () => {
-  // setSmsEnabled has no 'unknown' branch — it writes nothing, anywhere. The
-  // first version of this alert still said "they are now unsubscribed", which
-  // matters beyond wording: there is no per-number suppression list, so a
-  // clients row created later starts sms_enabled = true and the drip can text a
-  // number that already said STOP. Telling the admin it was handled hides that.
+  // setSmsEnabled has no 'unknown' branch, so no PREFERENCE is written. The
+  // first version of this alert still said "they are now unsubscribed", which a
+  // clients row created later would contradict: it starts sms_enabled = true.
+  // Since 2026-10-06 the number IS on the per-phone opt-out list (sms_optouts),
+  // so the alert says that, and that the carrier holds it too.
   try {
     const calls = await captureAlerts(async () => {
       await processInboundSms({ from: '+19998887779', body: 'STOP', twilioSid: 'SMtest_opt_unknown_copy' });
     });
     assert.equal(calls.length, 1);
-    assert.doesNotMatch(calls[0].emailText, /now unsubscribed/i, 'nothing was stored, so do not say it was');
+    assert.doesNotMatch(calls[0].emailText, /now unsubscribed/i, 'no preference was stored, so do not say it was');
     assert.doesNotMatch(calls[0].emailText, /cannot reply by SMS/i, 'there is no thread to reply on');
-    assert.match(calls[0].emailText, /no record for this number/i);
-    assert.match(calls[0].emailText, /carrier/i, 'and says where the opt-out DOES live');
+    assert.match(calls[0].emailText, /not a client or staff member/i);
+    assert.match(calls[0].emailText, /now on our opt-out list/i, 'says where the opt-out lives on our side');
+    assert.match(calls[0].emailText, /carrier/i, 'and at the carrier');
   } finally {
     await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_opt_unknown_copy'");
   }
@@ -832,7 +851,7 @@ test('processInboundSms > a KNOWN client still gets the real preference copy', a
       await processInboundSms({ from: '+13125550198', body: 'STOP', twilioSid: 'SMtest_opt_known_copy' });
     });
     assert.match(calls[0].emailText, /now unsubscribed/i);
-    assert.doesNotMatch(calls[0].emailText, /no record for this number/i);
+    assert.doesNotMatch(calls[0].emailText, /not a client or staff member/i);
     const after = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [clientId]);
     assert.strictEqual(after.rows[0].communication_preferences?.sms_enabled, false,
       'and the preference really was written, which is what licenses the copy');
@@ -860,4 +879,568 @@ test('processInboundSms > the compliance action runs BEFORE the alert, not after
     assert.strictEqual(enabledAtAlertTime, false,
       'the opt-out must already be committed when the alert reads it');
   });
+});
+
+// ─── The 2026-10-06 extraction (lane sms-lines, Task 1) ─────────────────────
+// The shift commands moved to smsShiftCommands.js and last10 to phone.js.
+// smsInbound re-exports them, so every caller and every test above still runs
+// the moved code itself, never a copy.
+test('extraction > smsInbound re-exports the moved functions themselves, not copies', () => {
+  const inbound = require('./smsInbound');
+  const shift = require('./smsShiftCommands');
+  const phone = require('./phone');
+  // typeof first: undefined === undefined would pass the identity check vacuously.
+  const pairs = [
+    ['findStaffCandidatesByPhone', inbound.findStaffCandidatesByPhone, shift.findStaffCandidatesByPhone],
+    ['findNearestApprovedShift', inbound.findNearestApprovedShift, shift.findNearestApprovedShift],
+    ['resolveShiftResponder', inbound.resolveShiftResponder, shift.resolveShiftResponder],
+    ['handleConfirm', inbound.handleConfirm, shift.handleConfirm],
+    ['handleCant', inbound.handleCant, shift.handleCant],
+    ['last10', inbound.last10, phone.last10],
+  ];
+  for (const [name, reexported, moved] of pairs) {
+    assert.strictEqual(typeof moved, 'function', `${name} is defined where it moved to`);
+    assert.strictEqual(reexported, moved, `smsInbound must re-export ${name} itself, not a copy`);
+  }
+  assert.strictEqual(inbound.last10('+1 (312) 555-0501'), '3125550501');
+  assert.strictEqual(inbound.last10('555-0501'), null, 'fewer than 10 digits is no key');
+  assert.strictEqual(inbound.last10(null), null);
+});
+
+// ─── Line-aware inbound, and one opt-out for every line (spec 2026-10-06) ───
+
+const { activeOptOut } = require('./smsOptOut');
+const ORIG_888 = process.env.TWILIO_PHONE_NUMBER;
+const FAKE_888 = '+18885550100';
+
+function restore888() {
+  if (ORIG_888 === undefined) delete process.env.TWILIO_PHONE_NUMBER;
+  else process.env.TWILIO_PHONE_NUMBER = ORIG_888;
+}
+
+async function rowFor(sid) {
+  const r = await pool.query('SELECT client_id, body, metadata FROM sms_messages WHERE twilio_sid = $1', [sid]);
+  return r.rows[0];
+}
+
+test('detectOptKeyword > STOPALL, OPTOUT and REVOKE opt out; the START set is unchanged', () => {
+  for (const word of ['STOPALL', 'stopall', ' OptOut ', 'REVOKE', 'revoke']) {
+    assert.strictEqual(detectOptKeyword(word), 'stop', `expected stop for "${word}"`);
+  }
+  for (const word of ['START', 'UNSTOP', 'yes']) assert.strictEqual(detectOptKeyword(word), 'start');
+  assert.strictEqual(detectOptKeyword('revoke my booking please'), null, 'whole-body matches only');
+});
+
+test('processInboundSms > stores the real To, the picture media and the outcome', async () => {
+  await withOptClient('3125550501', 'Picture Client', async (clientId) => {
+    const media = [{
+      url: 'https://api.twilio.com/2010-04-01/Accounts/ACtest/Messages/MMtest/Media/MEtest',
+      content_type: 'image/jpeg',
+    }];
+    const calls = await captureAlerts(async () => {
+      const r = await processInboundSms({
+        from: '+13125550501', to: '+12242221922', body: '', twilioSid: 'SMtest_l4_media', media,
+      });
+      assert.strictEqual(r.outcome, 'client_message');
+    });
+    assert.strictEqual(calls.length, 1, 'the client alert still goes out');
+    // Twilio media is not always a picture, so the alert counts attachments.
+    assert.ok(calls[0].emailText.includes('"" (1 attachment).'), 'the alert says the text carried one attachment');
+    assert.ok(calls[0].smsBody.includes('"" (1 attachment).'), 'and so does its SMS');
+    const row = await rowFor('SMtest_l4_media');
+    assert.strictEqual(row.client_id, clientId);
+    assert.strictEqual(row.body, '', 'a picture-only text keeps its empty body');
+    assert.strictEqual(row.metadata.to, '+12242221922');
+    assert.deepStrictEqual(row.metadata.media, media);
+    assert.strictEqual(row.metadata.outcome, 'client_message');
+  });
+});
+
+test('processInboundSms > a missing To records the 888 number, and no media key', async () => {
+  process.env.TWILIO_PHONE_NUMBER = FAKE_888;
+  try {
+    await captureAlerts(async () => {
+      const r = await processInboundSms({ from: '+13125550502', body: 'Who is this?', twilioSid: 'SMtest_l4_noto' });
+      assert.strictEqual(r.outcome, 'unknown_sender');
+    });
+    const row = await rowFor('SMtest_l4_noto');
+    assert.strictEqual(row.metadata.to, FAKE_888);
+    assert.strictEqual('media' in row.metadata, false);
+    assert.strictEqual(row.metadata.outcome, 'unknown_sender');
+  } finally {
+    restore888();
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_l4_noto'");
+  }
+});
+
+test('processInboundSms > every settled row carries its outcome: help, relay, opt', async () => {
+  try {
+    await captureAlerts(async () => {
+      await processInboundSms({ from: '+19998887777', body: 'HELP', twilioSid: 'SMtest_l4_out_help' });
+      await processInboundSms({ from: '+18392750001', body: 'replied on Thumbtack', twilioSid: 'SMtest_l4_out_relay' });
+      await processInboundSms({ from: '+13125550503', body: 'START', twilioSid: 'SMtest_l4_out_start' });
+    });
+    assert.strictEqual((await rowFor('SMtest_l4_out_help')).metadata.outcome, 'help');
+    assert.strictEqual((await rowFor('SMtest_l4_out_relay')).metadata.outcome, 'thumbtack_relay');
+    assert.strictEqual((await rowFor('SMtest_l4_out_start')).metadata.outcome, 'opt_start');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_l4_out_%'");
+  }
+});
+
+test('processInboundSms > every STOP-set word writes sms_optouts for an unknown number, and START clears it', async () => {
+  try {
+    await captureAlerts(async () => {
+      for (const word of ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'END', 'CANCEL', 'QUIT', 'OPTOUT', 'REVOKE']) {
+        await pool.query("DELETE FROM sms_optouts WHERE phone_last10 = '3125550504'");
+        const r = await processInboundSms({
+          from: '+13125550504', to: '+12242220082', body: word, twilioSid: `SMtest_l4_set_${word}`,
+        });
+        assert.strictEqual(r.outcome, 'opt_stop', word);
+        const optout = await pool.query(
+          "SELECT source, line, cleared_at FROM sms_optouts WHERE phone_last10 = '3125550504'"
+        );
+        assert.deepStrictEqual(optout.rows, [{ source: 'keyword', line: '0082', cleared_at: null }],
+          `${word} must write the record, with the line it came in on`);
+      }
+      const r = await processInboundSms({ from: '+13125550504', body: 'UNSTOP', twilioSid: 'SMtest_l4_set_UNSTOP' });
+      assert.strictEqual(r.outcome, 'opt_start');
+    });
+    assert.strictEqual(await activeOptOut('+13125550504'), null, 'START cleared it');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_l4_set_%'");
+  }
+});
+
+test('processInboundSms > a known client texting STOPALL flips the preference AND writes the record', async () => {
+  await withOptClient('3125550510', 'Stopall Client', async (clientId) => {
+    await captureAlerts(async () => {
+      const r = await processInboundSms({ from: '+13125550510', body: 'stopall', twilioSid: 'SMtest_l4_client_stopall' });
+      assert.strictEqual(r.outcome, 'opt_stop');
+    });
+    const c = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [clientId]);
+    assert.strictEqual(c.rows[0].communication_preferences.sms_enabled, false);
+    assert.ok(await activeOptOut('+13125550510'));
+  });
+});
+
+test('processInboundSms > a relayed STOP writes the per-phone record but leaves the client preference alone', async () => {
+  try {
+    const r = await processInboundSms({ from: '+18392750001', body: 'STOP', twilioSid: 'SMtest_l4_relay_stop' });
+    assert.strictEqual(r.outcome, 'thumbtack_relay');
+    const c = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [ttClientId]);
+    assert.notStrictEqual(c.rows[0].communication_preferences?.sms_enabled, false,
+      "the client's preference is not a proxy number's to change");
+    assert.ok(await activeOptOut('+18392750001'), 'Twilio blocks that number from this line now, and so does the OS');
+    const row = await rowFor('SMtest_l4_relay_stop');
+    assert.strictEqual(row.metadata.thumbtack_relay, true);
+    assert.strictEqual(row.metadata.opt_keyword, 'stop');
+    const start = await processInboundSms({ from: '+18392750001', body: 'START', twilioSid: 'SMtest_l4_relay_start' });
+    assert.strictEqual(start.outcome, 'thumbtack_relay');
+    assert.strictEqual(await activeOptOut('+18392750001'), null);
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid IN ('SMtest_l4_relay_stop', 'SMtest_l4_relay_start')");
+  }
+});
+
+test('processInboundSms > the opt-out record lands BEFORE the alert, like the preference', async () => {
+  let activeAtAlertTime = 'alert never fired';
+  __setDeps({
+    notifyAdminCategory: async () => { activeAtAlertTime = Boolean(await activeOptOut('+13125550506')); },
+  });
+  try {
+    await processInboundSms({ from: '+13125550506', body: 'REVOKE', twilioSid: 'SMtest_l4_order' });
+  } finally {
+    __setDeps({ notifyAdminCategory: realNotify });
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_l4_order'");
+  }
+  assert.strictEqual(activeAtAlertTime, true);
+});
+
+test('processInboundSms > an unknown number texting START is told it is not on the opt-out list now', async () => {
+  try {
+    const calls = await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550508', body: 'START', twilioSid: 'SMtest_l4_unknown_start' });
+    });
+    assert.strictEqual(calls.length, 1);
+    // Not "off it again": the number may never have been on it.
+    assert.match(calls[0].emailText, /not on our opt-out list now/i);
+    assert.doesNotMatch(calls[0].emailText, /re-subscribed/i, 'no preference was stored');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_l4_unknown_start'");
+  }
+});
+
+test('handleCant > settles the inbound row with outcome staff_cant inside the drop transaction', async () => {
+  const uid = await mkStaff(`l4-cant-outcome-${Date.now()}@example.com`, 'approved', '3125550507');
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  await pool.query(
+    `INSERT INTO sms_messages (direction, recipient_phone, body, message_type, status, twilio_sid, metadata, processed)
+     VALUES ('inbound', '+13125550507', 'CANT', 'general', 'received', 'SMtest_l4_cant', '{}'::jsonb, false)`
+  );
+  try {
+    const result = await handleCant(uid, 'SMtest_l4_cant');
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.shiftId, shiftId);
+    const row = await pool.query("SELECT processed, metadata FROM sms_messages WHERE twilio_sid = 'SMtest_l4_cant'");
+    assert.strictEqual(row.rows[0].processed, true);
+    assert.strictEqual(row.rows[0].metadata.outcome, 'staff_cant');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_l4_cant'");
+    await pool.query('DELETE FROM shift_requests WHERE id = $1', [requestId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+    await cleanupStaff([uid]);
+  }
+});
+
+// ─── Opting back in: only START or UNSTOP clears sms_optouts (spec 2026-10-06, amendment 32) ───
+// On the toll-free 888 Twilio does not treat YES as an opt-in, so the OS record
+// stays in force too. A YES still runs the preference opt-in and still counts.
+
+test('processInboundSms > a YES leaves an unknown number on sms_optouts, and START takes it off', async () => {
+  try {
+    const calls = await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550509', body: 'STOP', twilioSid: 'SMtest_l4_a32_unknown_stop' });
+      const yes = await processInboundSms({ from: '+13125550509', body: 'Yes', twilioSid: 'SMtest_l4_a32_unknown_yes' });
+      assert.strictEqual(yes.outcome, 'opt_start', 'a YES is still the opt-in branch');
+    });
+    assert.ok(await activeOptOut('+13125550509'), 'a YES must not clear the record');
+    const row = await rowFor('SMtest_l4_a32_unknown_yes');
+    assert.strictEqual(row.body, 'Yes', 'the YES is kept as a message');
+    assert.strictEqual(row.metadata.opt_keyword, 'start');
+    assert.strictEqual(row.metadata.outcome, 'opt_start');
+    assert.strictEqual(calls.length, 2);
+    assert.doesNotMatch(calls[1].emailText, /not on our opt-out list now/i, 'nothing came off the list');
+    assert.match(calls[1].emailText, /only START or UNSTOP/i);
+    await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550509', body: 'START', twilioSid: 'SMtest_l4_a32_unknown_start' });
+    });
+    assert.strictEqual(await activeOptOut('+13125550509'), null, 'START clears it');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_l4_a32_unknown_%'");
+  }
+});
+
+test('processInboundSms > a known client texting YES gets the preference back but stays on sms_optouts until UNSTOP', async () => {
+  await withOptClient('3125550512', 'Yes Client', async (clientId) => {
+    const pref = async () => (await pool.query(
+      'SELECT communication_preferences FROM clients WHERE id = $1', [clientId]
+    )).rows[0].communication_preferences.sms_enabled;
+    const calls = await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550512', body: 'STOP', twilioSid: 'SMtest_l4_a32_client_stop' });
+      assert.strictEqual(await pref(), false);
+      await processInboundSms({ from: '+13125550512', body: 'YES', twilioSid: 'SMtest_l4_a32_client_yes' });
+    });
+    assert.strictEqual(await pref(), true, 'the existing preference opt-in still runs on a YES');
+    assert.ok(await activeOptOut('+13125550512'), 'but the record stays in force');
+    assert.strictEqual(calls.length, 2);
+    assert.match(calls[1].emailText, /only START or UNSTOP/i);
+    await captureAlerts(async () => {
+      await processInboundSms({ from: '+13125550512', body: 'unstop', twilioSid: 'SMtest_l4_a32_client_unstop' });
+    });
+    assert.strictEqual(await activeOptOut('+13125550512'), null, 'UNSTOP clears it');
+  });
+});
+
+test('processInboundSms > a relayed YES leaves the proxy on sms_optouts; a relayed START clears it', async () => {
+  try {
+    await processInboundSms({ from: '+18392750001', body: 'STOP', twilioSid: 'SMtest_l4_a32_relay_stop' });
+    const yes = await processInboundSms({ from: '+18392750001', body: 'yes', twilioSid: 'SMtest_l4_a32_relay_yes' });
+    assert.strictEqual(yes.outcome, 'thumbtack_relay');
+    assert.ok(await activeOptOut('+18392750001'), 'a relayed YES must not clear it');
+    assert.strictEqual((await rowFor('SMtest_l4_a32_relay_yes')).metadata.opt_keyword, 'start');
+    await processInboundSms({ from: '+18392750001', body: 'START', twilioSid: 'SMtest_l4_a32_relay_start' });
+    assert.strictEqual(await activeOptOut('+18392750001'), null);
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_l4_a32_relay_%'");
+  }
+});
+
+test('processInboundSms > an unknown number texting YES is never told it opted in, and gets no carrier claim', async () => {
+  // The alert says only what happened: a YES opts nobody in on the toll-free
+  // 888 and leaves sms_optouts as it was.
+  try {
+    const calls = await captureAlerts(async () => {
+      const r = await processInboundSms({ from: '+13125550513', body: 'Yes', twilioSid: 'SMtest_l4_yes_subject' });
+      assert.strictEqual(r.outcome, 'opt_start');
+    });
+    assert.strictEqual(calls.length, 1);
+    assert.doesNotMatch(calls[0].subject, /opted in/i);
+    assert.strictEqual(calls[0].subject, 'An unrecognized number texted "Yes"; the opt-out list is unchanged');
+    assert.doesNotMatch(calls[0].emailText, /carrier opt-in/i, 'YES is not a carrier opt-in keyword on the 888');
+    assert.match(calls[0].emailText, /often means something else/i, 'it is still flagged as ambiguous');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_l4_yes_subject'");
+  }
+});
+
+// ─── Decision 17: shift commands only answer shift texts (spec 2026-10-06) ──
+// A staffer's CONFIRM or CANT is a shift command only on the 888, and only
+// when the latest text DRB sent them was automated. Otherwise a "Can't"
+// answering Zul's "Can you cover Saturday?" would release their own shift.
+
+const { latestDrbTextWasAutomated } = require('./smsInbound');
+const D17_NONCE = `${Date.now()}`;
+const D17_PHONE = '+13125550511';
+
+function d17Staff(label) {
+  return mkStaff(`d17-${label}-${D17_NONCE}@example.com`, 'approved', '3125550511');
+}
+
+async function d17Human() {
+  const u = await pool.query(
+    "INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ($1, 'x', 'admin', 'approved') RETURNING id",
+    [`d17-human-${D17_NONCE}-${Math.random().toString(36).slice(2, 8)}@example.com`]
+  );
+  return u.rows[0].id;
+}
+
+async function d17Outbound({
+  senderId = null, recipientId = null, status = 'sent', minutesAgo, messageType = 'general', clientId = null,
+}) {
+  await pool.query(
+    `INSERT INTO sms_messages (direction, sender_id, recipient_id, recipient_phone, body, message_type, status, client_id, created_at)
+     VALUES ('outbound', $1, $2, $3, 'A text DRB sent', $4, $5, $6, NOW() - ($7::int * INTERVAL '1 minute'))`,
+    [senderId, recipientId, D17_PHONE, messageType, status, clientId, minutesAgo]
+  );
+}
+
+// Inbound rows from the staffer carry the same recipient_phone, so one delete
+// clears both directions.
+async function d17Cleanup(uids, humans = []) {
+  await pool.query('DELETE FROM sms_messages WHERE recipient_phone = $1', [D17_PHONE]);
+  await cleanupStaff(uids);
+  if (humans.length) await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [humans]);
+}
+
+test('latestDrbTextWasAutomated > the latest outbound text, by phone or recipient id; none is not automated', async () => {
+  const uid = await d17Staff('latest');
+  const human = await d17Human();
+  try {
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: D17_PHONE }), false,
+      'DRB never texted them: not automated');
+    await d17Outbound({ minutesAgo: 120 });
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: D17_PHONE }), true);
+    await d17Outbound({ senderId: human, recipientId: uid, minutesAgo: 60 });
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: '(312) 555-0511' }), false,
+      'a human texted them last');
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: null }), false,
+      'found by recipient id alone, as the human staff send stores it');
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: null, phone: null }), false);
+  } finally {
+    await d17Cleanup([uid], [human]);
+  }
+});
+
+test('decision 17 > a failed human text never reached them, so the automated text before it still governs', async () => {
+  const uid = await d17Staff('failed');
+  const human = await d17Human();
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  try {
+    await d17Outbound({ minutesAgo: 120 });
+    await d17Outbound({ senderId: human, recipientId: uid, status: 'failed', minutesAgo: 10 });
+    let result;
+    await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: 'Confirm', twilioSid: 'SMtest_d17_failed' });
+    });
+    assert.strictEqual(result.outcome, 'staff_confirm');
+    const sr = await pool.query('SELECT acknowledged_at FROM shift_requests WHERE id = $1', [requestId]);
+    assert.ok(sr.rows[0].acknowledged_at instanceof Date);
+  } finally {
+    await d17Cleanup([uid], [human]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('decision 17 > CANT on the 888 after an automated text releases the shift, as before', async () => {
+  const uid = await d17Staff('cant');
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  process.env.TWILIO_PHONE_NUMBER = FAKE_888;
+  try {
+    await d17Outbound({ minutesAgo: 60 });
+    let result;
+    await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, to: FAKE_888, body: "Can't", twilioSid: 'SMtest_d17_cant' });
+    });
+    assert.strictEqual(result.outcome, 'staff_cant');
+    assert.match(result.reply, /you are off the/);
+    const sr = await pool.query('SELECT status FROM shift_requests WHERE id = $1', [requestId]);
+    assert.strictEqual(sr.rows[0].status, 'denied');
+    const sh = await pool.query('SELECT status FROM shifts WHERE id = $1', [shiftId]);
+    assert.strictEqual(sh.rows[0].status, 'open');
+    assert.strictEqual((await rowFor('SMtest_d17_cant')).metadata.outcome, 'staff_cant');
+  } finally {
+    restore888();
+    await d17Cleanup([uid]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('decision 17 > CANT after a human text is conversation: no reply, the shift untouched, an admin email', async () => {
+  const uid = await d17Staff('human-cant');
+  const human = await d17Human();
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  try {
+    await d17Outbound({ minutesAgo: 120 });
+    await d17Outbound({ senderId: human, recipientId: uid, minutesAgo: 30 });
+    let result;
+    const calls = await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: 'CANT', twilioSid: 'SMtest_d17_human_cant' });
+    });
+    assert.deepStrictEqual(result, { outcome: 'conversation', reply: null });
+    const sr = await pool.query('SELECT status FROM shift_requests WHERE id = $1', [requestId]);
+    assert.strictEqual(sr.rows[0].status, 'approved', 'the staffer is still on the roster');
+    const sh = await pool.query('SELECT status FROM shifts WHERE id = $1', [shiftId]);
+    assert.strictEqual(sh.rows[0].status, 'filled');
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].category, 'routine_admin');
+    assert.strictEqual(calls.filter((c) => c.smsBody).length, 0, 'the routine email, never an SMS');
+    // A real drop must not read like any other freeform text in the inbox.
+    assert.strictEqual(calls[0].subject, 'Staff texted CANT but no shift was changed');
+    assert.match(calls[0].emailText, /treated as conversation/);
+    assert.ok(calls[0].emailText.includes(
+      'It was not applied as a shift command because the latest text DRB sent them came from a person, '
+      + 'or it came in on a 224 line. Answer them directly, and change the shift by hand if they meant it.'
+    ));
+    assert.strictEqual((await rowFor('SMtest_d17_human_cant')).metadata.outcome, 'conversation');
+  } finally {
+    await d17Cleanup([uid], [human]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('decision 17 > CONFIRM on the 1922 is conversation, even after an automated text', async () => {
+  const uid = await d17Staff('1922');
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  try {
+    await d17Outbound({ minutesAgo: 60 });
+    let result;
+    const calls = await captureAlerts(async () => {
+      result = await processInboundSms({
+        from: D17_PHONE, to: '+12242221922', body: 'CONFIRM', twilioSid: 'SMtest_d17_1922',
+      });
+    });
+    assert.deepStrictEqual(result, { outcome: 'conversation', reply: null });
+    assert.strictEqual(calls[0].subject, 'Staff texted CONFIRM but no shift was changed');
+    const sr = await pool.query('SELECT acknowledged_at FROM shift_requests WHERE id = $1', [requestId]);
+    assert.strictEqual(sr.rows[0].acknowledged_at, null, 'nothing was acknowledged');
+    assert.strictEqual((await rowFor('SMtest_d17_1922')).metadata.to, '+12242221922');
+  } finally {
+    await d17Cleanup([uid]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('decision 17 > free text on the 888 after an automated text still gets the automated staff reply', async () => {
+  const uid = await d17Staff('free');
+  try {
+    await d17Outbound({ minutesAgo: 60 });
+    let result;
+    await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: 'Running ten minutes late', twilioSid: 'SMtest_d17_free' });
+    });
+    assert.strictEqual(result.outcome, 'staff_freeform');
+    assert.match(result.reply, /this number is automated/);
+  } finally {
+    await d17Cleanup([uid]);
+  }
+});
+
+test('decision 17 > free text after a human text gets no automated reply', async () => {
+  const uid = await d17Staff('free-human');
+  const human = await d17Human();
+  try {
+    await d17Outbound({ senderId: human, recipientId: uid, minutesAgo: 5 });
+    let result;
+    const calls = await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: 'Yes I can cover it', twilioSid: 'SMtest_d17_free_human' });
+    });
+    assert.deepStrictEqual(result, { outcome: 'conversation', reply: null });
+    assert.strictEqual(calls[0].subject, 'Staff texted Dr. Bartender', 'any other conversation keeps the plain subject');
+    assert.doesNotMatch(calls[0].emailText, /not applied as a shift command/);
+  } finally {
+    await d17Cleanup([uid], [human]);
+  }
+});
+
+test('decision 17 > a staffer DRB has never texted gets conversation, never a shift command', async () => {
+  const uid = await d17Staff('never');
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  try {
+    let result;
+    await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: 'cant', twilioSid: 'SMtest_d17_never' });
+    });
+    assert.deepStrictEqual(result, { outcome: 'conversation', reply: null });
+    const sr = await pool.query('SELECT status FROM shift_requests WHERE id = $1', [requestId]);
+    assert.strictEqual(sr.rows[0].status, 'approved');
+  } finally {
+    await d17Cleanup([uid]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+// Only a text DRB sent the staffer AS STAFF counts. An admin alert, a
+// dead-letter alert or an automated text on a client's thread also has no
+// sender, but it is not a shift text, so it can never reopen shift commands.
+
+test('decision 17 > an admin alert after a human text does not reopen shift commands: a CANT is conversation', async () => {
+  const uid = await d17Staff('alert-after-human');
+  const human = await d17Human();
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  try {
+    await d17Outbound({ senderId: human, recipientId: uid, minutesAgo: 30 });
+    // The staffer's phone also gets admin alerts (sendAndLogSms: no sender, no recipient id).
+    await d17Outbound({ messageType: 'admin_urgent_client_reply', minutesAgo: 5 });
+    let result;
+    const calls = await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: "Can't", twilioSid: 'SMtest_d17_alert_human' });
+    });
+    assert.deepStrictEqual(result, { outcome: 'conversation', reply: null });
+    const sr = await pool.query('SELECT status FROM shift_requests WHERE id = $1', [requestId]);
+    assert.strictEqual(sr.rows[0].status, 'approved', 'the staffer is still on the roster');
+    const sh = await pool.query('SELECT status FROM shifts WHERE id = $1', [shiftId]);
+    assert.strictEqual(sh.rows[0].status, 'filled', 'the shift was not re-opened');
+    assert.strictEqual(calls[0].subject, 'Staff texted CANT but no shift was changed');
+  } finally {
+    await d17Cleanup([uid], [human]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('decision 17 > an admin alert after an automated shift text neither blocks nor opens the lane: a CONFIRM acts', async () => {
+  const uid = await d17Staff('alert-after-auto');
+  const { shiftId, requestId } = await mkApprovedShift(uid, 10);
+  try {
+    await d17Outbound({ messageType: 'shift_reminder', minutesAgo: 120 });
+    await d17Outbound({ messageType: 'admin_urgent_client_reply', minutesAgo: 5 });
+    let result;
+    await captureAlerts(async () => {
+      result = await processInboundSms({ from: D17_PHONE, body: 'CONFIRM', twilioSid: 'SMtest_d17_alert_auto' });
+    });
+    assert.strictEqual(result.outcome, 'staff_confirm');
+    const sr = await pool.query('SELECT acknowledged_at FROM shift_requests WHERE id = $1', [requestId]);
+    assert.ok(sr.rows[0].acknowledged_at instanceof Date, 'the shift reminder still governs');
+  } finally {
+    await d17Cleanup([uid]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('latestDrbTextWasAutomated > admin alerts, dead-letter alerts and client-thread texts are not texts DRB sent them as staff', async () => {
+  const uid = await d17Staff('not-staff-texts');
+  try {
+    await d17Outbound({ messageType: 'admin_urgent_booking', minutesAgo: 60 });
+    await d17Outbound({ messageType: 'initial_proposal', clientId: lsClientId, minutesAgo: 30 });
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: D17_PHONE }), false,
+      'an admin alert and an automated client-thread text are the only outbound rows: not automated');
+    await d17Outbound({ messageType: 'critical_path_dead_letter_alert', minutesAgo: 10 });
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: D17_PHONE }), false,
+      'nor is a dead-letter alert');
+    // Control: an older shift text is still found behind the newer rows it skips.
+    await d17Outbound({ messageType: 'shift_reminder', minutesAgo: 240 });
+    assert.strictEqual(await latestDrbTextWasAutomated({ staffUserId: uid, phone: D17_PHONE }), true);
+  } finally {
+    await d17Cleanup([uid]);
+  }
 });

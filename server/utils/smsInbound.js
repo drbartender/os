@@ -6,16 +6,34 @@ const { pool } = require('../db');
 const Sentry = require('@sentry/node');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { getEventTypeLabel } = require('./eventTypes');
-const { releaseOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
 const { chicagoTodayYmd } = require('./businessTime');
 // The opt-keyword alert COPY lives in its own module: this file is at its size
 // cap, and the wording is the substance of that fix, not decoration.
 const { buildOptKeywordAlert } = require('./smsOptKeywordCopy');
-// THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
-const { shiftNotFinishedSql, shiftEndInstantSql } = require('./shiftEndInstant');
+// The one last-10-digit phone matcher, shared with smsShiftCommands.js so a
+// phone matches the same way everywhere. It lives in phone.js because that
+// module requires nothing, so anything can import it without a load cycle.
+const { last10 } = require('./phone');
+// The staff shift commands (CONFIRM, CANT and the shift pick they act on)
+// live in smsShiftCommands.js since 2026-10-06; re-exported below unchanged.
+const {
+  findStaffCandidatesByPhone, findNearestApprovedShift, resolveShiftResponder,
+  handleConfirm, handleCant, latestDrbTextWasAutomated,
+} = require('./smsShiftCommands');
+// Which DRB line a text came in on, and the per-phone opt-out record (spec
+// 2026-10-06, Inbox). Neither requires this file, so there is no load cycle.
+const { lineKeyForNumber } = require('./smsLines');
+const { recordOptOut, clearOptOut } = require('./smsOptOut');
 
-const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
+// Twilio's default opt-out keywords. STOPALL, OPTOUT and REVOKE joined on
+// 2026-10-06 (spec Inbox, section 9): Twilio honors them, and the OS did not.
+const STOP_WORDS = new Set(['stop', 'stopall', 'unsubscribe', 'end', 'cancel', 'quit', 'optout', 'revoke']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
+// Only these two take a number off sms_optouts (spec 2026-10-06, amendment 32).
+// YES stays in START_WORDS, so it still runs the preference opt-in as it always
+// has; but on the toll-free 888 Twilio does not treat YES as an opt-in, so the
+// OS record stays in force until an explicit START or UNSTOP.
+const OPTOUT_CLEAR_WORDS = new Set(['start', 'unstop']);
 // The two default HELP keywords a Twilio Advanced Opt-Out HELP response answers.
 const HELP_WORDS = new Set(['help', 'info']);
 
@@ -26,6 +44,8 @@ const AMBIGUOUS_RESPONSE_REPLY = `Dr. Bartender: we couldn't match this text to 
 const NO_CONFIRM_SHIFT_REPLY = `Dr. Bartender: we did not find an upcoming shift to confirm for you. Please ${HUMAN_CONTACT_LINE} if that seems wrong.`;
 const NO_CANT_SHIFT_REPLY = `Dr. Bartender: we did not find an upcoming shift to release for you. Please ${HUMAN_CONTACT_LINE} if that seems wrong.`;
 const FREEFORM_STAFF_REPLY = `Dr. Bartender: this number is automated. For anything else, please ${HUMAN_CONTACT_LINE}.`;
+// Decision 17's admin note on a CONFIRM or CANT it turned into conversation.
+const NOT_APPLIED_NOTE = 'It was not applied as a shift command because the latest text DRB sent them came from a person, or it came in on a 224 line. Answer them directly, and change the shift by hand if they meant it.';
 // Carrier/CTIA-shaped HELP reply: brand, message scope, rate disclosure, opt-out
 // keyword, and a support contact. Sent in code (not via Twilio Advanced Opt-Out)
 // so the promise the client SMS consent copy makes ("HELP for help") does not
@@ -76,20 +96,6 @@ function detectResponseCode(body) {
   if (word === 'confirm') return 'confirm';
   if (word === 'cant') return 'cant';
   return null;
-}
-
-/**
- * Extract the last 10 digits of a phone number for matching. Inbound numbers
- * arrive E.164 (+1XXXXXXXXXX); stored numbers are free-text. Returns null when
- * fewer than 10 digits are present.
- *
- * @param {string} phone
- * @returns {string|null}
- */
-function last10(phone) {
-  if (!phone || typeof phone !== 'string') return null;
-  const digits = phone.replace(/\D/g, '');
-  return digits.length >= 10 ? digits.slice(-10) : null;
 }
 
 // ─── Thumbtack proxy-relay detection (spec 2026-06-11) ─────────────────────
@@ -173,36 +179,6 @@ async function lookupSender(fromPhone) {
 }
 
 /**
- * Return the ids of every ACTIVE staff account whose contractor_profiles phone
- * matches an inbound number (by last-10 digits). A shared line (e.g. a company
- * Google Voice number) can map to several accounts. Blocked statuses
- * (deactivated/rejected/suspended, mirroring the auth.js block-list) are excluded
- * so a stale account can never win the match; COALESCE keeps NULL-status legacy
- * rows eligible. contractor_profiles.user_id is UNIQUE, so this is one row per
- * user without DISTINCT. ORDER BY makes the LIMIT cap deterministic across Twilio
- * retries, and the cap stops a placeholder/shared number spread across many rows
- * from piling up enough per-candidate work to blow the webhook timeout.
- *
- * @param {string} fromPhone - inbound E.164 number
- * @returns {Promise<number[]>} matching active user ids (may be empty)
- */
-async function findStaffCandidatesByPhone(fromPhone) {
-  const key = last10(fromPhone);
-  if (!key) return [];
-  const r = await pool.query(
-    `SELECT u.id
-       FROM contractor_profiles cp
-       JOIN users u ON u.id = cp.user_id
-      WHERE RIGHT(REGEXP_REPLACE(cp.phone, '\\D', '', 'g'), 10) = $1
-        AND COALESCE(u.onboarding_status, '') NOT IN ('deactivated', 'rejected', 'suspended')
-      ORDER BY cp.updated_at DESC
-      LIMIT 25`,
-    [key]
-  );
-  return r.rows.map((row) => row.id);
-}
-
-/**
  * Human-readable labels for staff user ids, for ADMIN-facing alert copy only.
  * These alerts used to say "A staff member", which left the reader guessing
  * from a phone number alone. Audience is internal, so this prefers the fullest
@@ -248,17 +224,26 @@ async function describeStaff(userIds) {
  *
  * @param {Object} args
  * @param {string} args.fromPhone - inbound E.164 sender number
+ * @param {string} [args.toPhone] - the DRB number texted (Twilio To)
  * @param {string} args.body - message text (may be empty)
  * @param {number|null} args.clientId - matched clients.id, or null
  * @param {string} [args.twilioSid] - Twilio MessageSid
+ * @param {Array<{url:string, content_type:string|null}>} [args.media] - picture messages
  * @param {Object} [args.metadata] - extra metadata to merge
  * @returns {Promise<Object|null>} the inserted row, or null when a concurrent
  *   retry already recorded this twilio_sid
  */
-async function recordInboundMessage({ fromPhone, body, clientId, twilioSid, metadata }) {
+async function recordInboundMessage({ fromPhone, toPhone, body, clientId, twilioSid, media, metadata }) {
   const phone = (fromPhone || 'unknown').slice(0, 50);
   const text = (body || '').slice(0, 2000);
-  const meta = { from: fromPhone || null, to: process.env.TWILIO_PHONE_NUMBER || null, ...(metadata || {}) };
+  // metadata.to is the DRB number actually texted (spec 2026-10-06). A caller
+  // with no To falls back to the 888, which is what every row said before.
+  const meta = {
+    from: fromPhone || null,
+    to: toPhone ? String(toPhone).slice(0, 50) : (process.env.TWILIO_PHONE_NUMBER || null),
+    ...(Array.isArray(media) && media.length ? { media } : {}),
+    ...(metadata || {}),
+  };
   // ON CONFLICT makes a concurrent Twilio retry that raced past the
   // processInboundSms SELECT-dedup a graceful no-op instead of a 23505 → 500.
   // The partial unique index idx_sms_messages_twilio_sid is the arbiter; a null
@@ -278,25 +263,31 @@ async function recordInboundMessage({ fromPhone, body, clientId, twilioSid, meta
 }
 
 /**
- * Flip an inbound row to processed=true once its side-effect has succeeded.
- * No-op without a twilio_sid (a SID-less inbound can't be deduped or healed).
+ * Flip an inbound row to processed=true once its side-effect has succeeded,
+ * and stamp the outcome it settled with as metadata.outcome (spec 2026-10-06:
+ * the Inbox reader skips a staff text that ran as a shift command). No-op
+ * without a twilio_sid: a SID-less inbound can't be deduped or healed, and it
+ * carries no outcome, so a reader treats it like a pre-2026-10-06 row.
  */
-async function markProcessed(twilioSid) {
+async function markProcessed(twilioSid, outcome) {
   if (!twilioSid) return;
   await pool.query(
-    "UPDATE sms_messages SET processed = true WHERE twilio_sid = $1 AND direction = 'inbound'",
-    [twilioSid]
+    `UPDATE sms_messages
+        SET processed = true,
+            metadata = metadata || jsonb_build_object('outcome', $2::text)
+      WHERE twilio_sid = $1 AND direction = 'inbound'`,
+    [twilioSid, outcome]
   );
 }
 
 /**
- * Settle the inbound row (processed=true) AFTER its side-effect succeeded, then
- * return the handler result. On a thrown side-effect this is never reached, so
- * the row stays processed=false and Twilio's retry re-runs the (idempotent)
- * handler — that is the heal.
+ * Settle the inbound row (processed=true, outcome stamped) AFTER its
+ * side-effect succeeded, then return the handler result. On a thrown
+ * side-effect this is never reached, so the row stays processed=false and
+ * Twilio's retry re-runs the (idempotent) handler, which is the heal.
  */
 async function settle(twilioSid, result) {
-  await markProcessed(twilioSid);
+  await markProcessed(twilioSid, result.outcome);
   return result;
 }
 
@@ -367,232 +358,17 @@ async function applyOptIn(sender) {
   await setSmsEnabled(sender, true);
 }
 
-/**
- * Find the texting staff member's nearest UNFINISHED approved shift.
- *
- * THE HIGHEST-STAKES CONSUMER OF THE VISIBILITY PREDICATE, because it is a
- * WRITE path: whatever this returns is what CANT denies and re-opens, and what
- * CONFIRM acknowledges. Both failure directions are real damage.
- *
- *   - Too narrow (the old `event_date >= CURRENT_DATE`, which resolves in the
- *     GMT session zone): a staffer texting CANT at 19:30 about TONIGHT matched
- *     nothing, so every caller — handleConfirm, handleCant, and the
- *     multi-account resolveShiftResponder tiebreak — took the "no upcoming
- *     shift" branch. The staffer was told there was nothing to release, the
- *     shift was never re-opened, and nobody was alerted, on the day of the
- *     event.
- *   - Too wide (the Chicago calendar day): this MORNING's finished brunch
- *     outranks tonight's event until midnight, so a bartender texting CANT at
- *     20:00 about tomorrow has the shift they ALREADY WORKED denied and
- *     re-opened — removing them from the roster payroll pays from. That is the
- *     P0 that killed the previous round.
- *
- * The end instant (server/utils/shiftEndInstant.js) is what makes both go
- * away, but only as far as the DATA allows, and the original wording here
- * ("a finished shift is not a candidate at all, no matter what day it is")
- * overclaimed. It is true when the end is KNOWN. When `end_time` is NULL the
- * end instant is ASSUMED (rule 2: start + booked length + overrun grace), so a
- * 9:00 PM start with a 4h booking is "not finished" until 05:00 the NEXT
- * morning.
- *
- * Do not re-quote a prod count here. The first version of this comment said
- * "11 of the 78 prod shifts have exactly that shape", lifted from a 2026-08-16
- * fix-list entry and never re-derived; by 2026-08-20 prod was 7 NULL-end of 72,
- * only 3 with an evening start, and NONE of those on a live approved roster.
- * The SHAPE is what matters, and it is reachable the moment anyone is approved
- * onto an evening shift with no end_time.
- *
- * That leaves a real window, 00:00 to about 08:00 Chicago: a bartender who
- * finished at 01:00 and texts CANT at 02:00 meaning TOMORROW had LAST NIGHT's
- * shift denied and re-opened, off the roster payroll pays from. Same damage as
- * the brunch P0, one calendar day over.
- *
- * ORDERING therefore has two terms, and the first one closes that window: a
- * shift dated before today NEVER outranks one dated today or later. It is a
- * tiebreak, not a filter — the candidate SET is still decided entirely by the
- * end instant, so nothing becomes invisible and a genuinely-overnight shift is
- * still returned when it is the only one.
- *
- * THE ACCEPTED COST, named so the next reader does not re-derive it as a bug:
- * a staffer still ON an overnight shift at 00:30 who ALSO holds a later shift
- * now drops the LATER one when they text CANT, where before they dropped the
- * one they were standing in. No ordering resolves both readings of a mid-shift
- * CANT. This side is chosen because the other destroys payroll for work already
- * performed, and it self-corrects: the reply names the date, and alertStaffCant
- * tells an admin.
- *
- * THE READ-SIDE TWIN HAS NOT MOVED: staffPortal.js's next-shift card still
- * orders by the end instant alone, so inside this same window the card and this
- * function can name different shifts. Open in the fix list, deliberately not
- * changed here.
- *
- * Then the end instant, not
- * `s.start_time`: start_time is free text, so the old ASC sort compared
- * '7:00 PM' against '8:00 AM' as strings and put the evening shift first on a
- * two-shift day. `s.id` breaks exact ties so the pick is deterministic.
- *
- * @param {number} staffUserId
- * @param {string} [todayYmd] the business day to measure "before today"
- *   against, as YYYY-MM-DD. Defaults to Chicago today, bound as a parameter
- *   rather than computed in SQL because this session runs at GMT and rolls over
- *   at 19:00 Chicago. It is a parameter at all because the DATABASE clock
- *   cannot be moved in a test, and this is the one input the ordering rule
- *   reads, so injecting it is what makes the rule testable at any hour.
- * @returns {Promise<Object|null>} the shift_requests+shifts row, or null
- */
-async function findNearestApprovedShift(staffUserId, todayYmd = chicagoTodayYmd()) {
-  // Shape-guarded, because this parameter is on an EXPORTED function and
-  // $2::date accepts far more than YYYY-MM-DD: 'today' and 'yesterday' resolve
-  // in the SESSION zone, which is GMT, reintroducing the exact rollover this
-  // family exists to kill; a Date object serializes to an ISO timestamp and
-  // resolves the same wrong way; and under DateStyle ISO,MDY '01-02-2026'
-  // parses silently as January 2. Anything that is not the one shape falls back
-  // to the correct value rather than throwing on a live SMS webhook.
-  const day = /^\d{4}-\d{2}-\d{2}$/.test(todayYmd) ? todayYmd : chicagoTodayYmd();
-  const r = await pool.query(
-    `SELECT sr.id AS request_id, s.id AS shift_id, s.event_date, s.start_time,
-            s.status AS shift_status, s.client_name, s.event_type, s.event_type_custom,
-            s.proposal_id
-     FROM shift_requests sr
-     JOIN shifts s ON s.id = sr.shift_id
-     LEFT JOIN proposals p ON p.id = s.proposal_id
-     WHERE sr.user_id = $1
-       AND sr.status = 'approved'
-       AND sr.dropped_at IS NULL
-       AND ${shiftNotFinishedSql('s', 'p')}
-       AND s.status NOT IN ('completed', 'cancelled')
-     ORDER BY (s.event_date < $2::date) ASC,
-              ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
-     LIMIT 1`,
-    [staffUserId, day]
-  );
-  return r.rows[0] || null;
-}
-
-/**
- * Decide which staff candidate a CONFIRM/CANT applies to when a number matches
- * more than one active account. The signal is "who has a matching upcoming
- * approved shift": exactly one such candidate -> act on them; none -> there is
- * nothing to act on; more than one -> refuse to guess and let a human resolve.
- *
- * @param {number[]} candidateIds
- * @returns {Promise<{status:'ok', staffUserId:number} | {status:'no_shift'} | {status:'ambiguous', userIds:number[]}>}
- */
-async function resolveShiftResponder(candidateIds) {
-  const withShift = [];
-  // ONE business day for the whole resolution, hoisted rather than recomputed
-  // per candidate: a loop straddling midnight would otherwise judge two
-  // candidates against two different "todays" and could return an ambiguity
-  // neither day alone produces.
-  const today = chicagoTodayYmd();
-  for (const uid of candidateIds || []) {
-    const shift = await findNearestApprovedShift(uid, today);
-    if (shift) withShift.push(uid);
-  }
-  if (withShift.length === 1) return { status: 'ok', staffUserId: withShift[0] };
-  if (withShift.length === 0) return { status: 'no_shift' };
-  return { status: 'ambiguous', userIds: withShift };
-}
-
-/**
- * Handle a staff CONFIRM response code: stamp acknowledged_at on the nearest
- * upcoming approved shift_request.
- *
- * @param {number} staffUserId
- * @returns {Promise<{ok:true, shiftId:number, eventDate:string, clientName:string|null} | {ok:false, reason:'no_shift'}>}
- */
-async function handleConfirm(staffUserId) {
-  const shift = await findNearestApprovedShift(staffUserId);
-  if (!shift) return { ok: false, reason: 'no_shift' };
-  await pool.query(
-    'UPDATE shift_requests SET acknowledged_at = NOW() WHERE id = $1',
-    [shift.request_id]
-  );
-  return { ok: true, shiftId: shift.shift_id, eventDate: shift.event_date, clientName: shift.client_name || null };
-}
-
-/**
- * Handle a staff CANT response code: un-assign the staffer from their nearest
- * upcoming approved shift and re-open that shift. Does NOT clear
- * shifts.auto_assigned_at — re-staffing is left to the admin (decision: CANT
- * is flag-and-alert, not auto-restaff). Returns shift info for the alert.
- *
- * @param {number} staffUserId
- * @returns {Promise<
- *   {ok:true, shiftId:number, requestId:number, eventDate:string, clientName:string|null, eventType:string|null, eventTypeCustom:string|null} |
- *   {ok:false, reason:'no_shift'}
- * >}
- */
-async function handleCant(staffUserId, twilioSid) {
-  const shift = await findNearestApprovedShift(staffUserId);
-  if (!shift) return { ok: false, reason: 'no_shift' };
-
-  const dbClient = await pool.connect();
-  let bonusReleased = false;
-  try {
-    await dbClient.query('BEGIN');
-    // $2::date is the CHICAGO business day, not NOW()::date. The DB session
-    // runs at GMT, so NOW()::date is already tomorrow from 19:00 Chicago — and
-    // an evening-of CANT is exactly the case this spec makes reachable, so the
-    // audit note recording the drop was stamped one day in the FUTURE, dated
-    // after the event it dropped. This is a NOTE about when a human acted, not
-    // a shift boundary, so it takes the business DAY and not the end instant.
-    await dbClient.query(
-      `UPDATE shift_requests
-       SET status = 'denied',
-           notes = TRIM(COALESCE(notes, '') || ' [Staff texted CANT ' || $2::date || ']')
-       WHERE id = $1`,
-      [shift.request_id, chicagoTodayYmd()]
-    );
-    // Out-of-Area lock (spec 2026-08-06 §6): CANT is a drop by text. The
-    // staffer is off the roster as of the UPDATE above, so their hold on an
-    // attached bonus releases here, in the same transaction. Holder-scoped, and
-    // the AMOUNT stays: the bonus re-arms for whoever restaffs the shift.
-    bonusReleased = await releaseOutOfAreaLock(dbClient, shift.shift_id, staffUserId);
-    // Re-open the shift so it shows as unstaffed. auto_assigned_at is left as-is
-    // on purpose so processScheduledAutoAssigns does not auto-re-staff it.
-    await dbClient.query(
-      "UPDATE shifts SET status = 'open' WHERE id = $1 AND status <> 'cancelled'",
-      [shift.shift_id]
-    );
-    // Settle the inbound SMS row in the SAME transaction as the drop (audit F1b).
-    // CANT flips shift_request status approved->denied, so a retry would
-    // re-resolve to a DIFFERENT branch (no_shift) and mis-alert; settling
-    // atomically here guarantees a retry is skipped as a true replay rather than
-    // re-entering CANT after the drop already committed.
-    if (twilioSid) {
-      await dbClient.query(
-        "UPDATE sms_messages SET processed = true WHERE twilio_sid = $1 AND direction = 'inbound'",
-        [twilioSid]
-      );
-    }
-    await dbClient.query('COMMIT');
-  } catch (err) {
-    try { await dbClient.query('ROLLBACK'); } catch (_) { /* already rolled back or connection dropped */ }
-    throw err;
-  } finally {
-    dbClient.release();
-  }
-
-  // Post-commit, pooled client already released.
-  if (bonusReleased) reaccrueDutyForProposal(shift.proposal_id);
-
-  return {
-    ok: true,
-    shiftId: shift.shift_id,
-    requestId: shift.request_id,
-    eventDate: shift.event_date,
-    clientName: shift.client_name || null,
-    eventType: shift.event_type || null,
-    eventTypeCustom: shift.event_type_custom || null,
-  };
-}
-
 /** Escape HTML metacharacters so untrusted inbound text is safe in email HTML. */
 function escapeHtml(s) {
   return String(s === null || s === undefined ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** " (1 attachment)" or " (N attachments)" after an alert's quoted body; Twilio media is not always a picture. */
+function attachmentNote(media) {
+  const n = Array.isArray(media) ? media.length : 0;
+  return n ? ` (${n} attachment${n === 1 ? '' : 's'})` : '';
 }
 
 /** Run an alert send without letting a failure escape. */
@@ -608,13 +384,13 @@ async function safeAlert(label, fn) {
 }
 
 /** Notify subscribed admins that a client texted in (urgent_client_reply). */
-async function alertInboundClient(client, body) {
+async function alertInboundClient(client, body, media) {
   await safeAlert('inbound_client', async () => {
     const name = client.name || 'A client';
     // Truncate the inbound text so the outbound alert SMS cannot exceed
     // Twilio's 1600-char limit and fail to send.
     const snippet = (body || '').slice(0, 600);
-    const line = `${name} texted Dr. Bartender: "${snippet}". Reply in the admin Messages page.`;
+    const line = `${name} texted Dr. Bartender: "${snippet}"${attachmentNote(media)}. Reply in the admin Messages page.`;
     await _deps.notifyAdminCategory({
       category: 'urgent_client_reply',
       subject: `${name} replied by text`,
@@ -728,6 +504,7 @@ async function alertOptKeyword({ sender, from, body, optKeyword }) {
     : (staffWho || (sender.type === 'staff' ? 'A staff member' : 'An unrecognized number'));
   const { subject, line } = buildOptKeywordAlert({
     senderType: sender.type, who, word, optKeyword, from,
+    isClearingWord: optKeyword === 'start' && OPTOUT_CLEAR_WORDS.has(word.toLowerCase()),
   });
 
   if (isClient) {
@@ -768,14 +545,25 @@ function fmtDate(d) {
  * `outcome` for logging plus an optional `reply`. Never throws for an expected
  * condition. Dedupes on `twilioSid`: a re-delivered MessageSid is a no-op.
  *
+ * Line-aware (spec 2026-10-06, Inbox): every recorded row carries the DRB
+ * number that was texted (metadata.to) and any picture media, and settles
+ * with its outcome. A STOP-set word writes sms_optouts and START or UNSTOP
+ * clears it (a YES does not), for every sender on every line.
+ *
  * @param {Object} args
  * @param {string} args.from - inbound E.164 number
+ * @param {string} [args.to] - the DRB number texted (Twilio `To`)
  * @param {string} args.body - message text
  * @param {string} [args.twilioSid]
+ * @param {Array<{url:string, content_type:string|null}>} [args.media] - picture messages
  * @returns {Promise<{outcome:string, reply:string|null}>}
  */
-async function processInboundSms({ from, body, twilioSid }) {
+async function processInboundSms({ from, to, body, twilioSid, media }) {
   const text = (body || '').trim();
+  // A To that is not one of our lines is stored as-is and treated as the 888.
+  const line = lineKeyForNumber(to) || '888';
+  // What every recorded row shares: who texted, which number, any pictures.
+  const base = { fromPhone: from, toPhone: to, media, twilioSid };
 
   // Idempotency + strand heal (audit F1b): only a SETTLED (processed=true) row
   // short-circuits as a true replay. An unsettled row — a prior attempt that
@@ -809,17 +597,22 @@ async function processInboundSms({ from, body, twilioSid }) {
   if (proxyLead) {
     // Client link: prefer the live clients.phone match; after real-number
     // capture the proxy no longer matches a client row, so fall back to the
-    // lead's client_id. Skipped on purpose: STOP/START (opt semantics do not
-    // transfer from a proxy), all alerts, all auto-replies.
+    // lead's client_id. Skipped on purpose: the client's STOP/START preference
+    // (opt semantics do not transfer from a proxy), all alerts, all auto-replies.
     const relayClientId = sender.type === 'client' ? sender.client.id : (proxyLead.clientId || null);
+    // A proxy's STOP is still a STOP to this line from that number, and Twilio
+    // now blocks it, so the per-phone record covers it like any sender's
+    // (decision 10). The client's preference is left alone.
+    const relayOpt = detectOptKeyword(text);
     const proceed = await recordAndShouldProcess({
-      fromPhone: from,
+      ...base,
       body: text,
       clientId: relayClientId,
-      twilioSid,
-      metadata: { thumbtack_relay: true },
+      metadata: relayOpt ? { thumbtack_relay: true, opt_keyword: relayOpt } : { thumbtack_relay: true },
     });
     if (!proceed) return { outcome: 'duplicate', reply: null };
+    if (relayOpt === 'stop') await recordOptOut({ phone: from, source: 'keyword', line });
+    if (relayOpt === 'start' && OPTOUT_CLEAR_WORDS.has(text.toLowerCase())) await clearOptOut({ phone: from });
     console.log(`[smsInbound] thumbtack_relay suppressed (sender ...${(last10(from) || '').slice(-4)}, client ${relayClientId || 'none'})`);
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.addBreadcrumb({
@@ -846,10 +639,19 @@ async function processInboundSms({ from, body, twilioSid }) {
   const optKeyword = detectOptKeyword(text);
   if (optKeyword) {
     const clientId = sender.type === 'client' ? sender.client.id : null;
-    const proceed = await recordAndShouldProcess({ fromPhone: from, body: text, clientId, twilioSid, metadata: { opt_keyword: optKeyword } });
+    const proceed = await recordAndShouldProcess({ ...base, body: text, clientId, metadata: { opt_keyword: optKeyword } });
     if (!proceed) return { outcome: 'duplicate', reply: null };
-    if (optKeyword === 'stop') await applyOptOut(sender);
-    else await applyOptIn(sender);
+    // The preference (a known client or staffer) and the per-phone record (any
+    // sender, unknown numbers included) both land BEFORE the alert. Both are
+    // idempotent, so a throw here leaves the row unsettled for Twilio's retry.
+    if (optKeyword === 'stop') {
+      await applyOptOut(sender);
+      await recordOptOut({ phone: from, source: 'keyword', line });
+    } else {
+      await applyOptIn(sender);
+      // A YES runs the preference opt-in but never clears the record (amendment 32).
+      if (OPTOUT_CLEAR_WORDS.has(text.toLowerCase())) await clearOptOut({ phone: from });
+    }
     await alertOptKeyword({ sender, from, body: text, optKeyword });
     return settle(twilioSid, { outcome: `opt_${optKeyword}`, reply: null });
   }
@@ -862,7 +664,7 @@ async function processInboundSms({ from, body, twilioSid }) {
   const helpKeyword = detectHelpKeyword(text);
   if (helpKeyword) {
     const clientId = sender.type === 'client' ? sender.client.id : null;
-    const proceed = await recordAndShouldProcess({ fromPhone: from, body: text, clientId, twilioSid, metadata: { help_keyword: true } });
+    const proceed = await recordAndShouldProcess({ ...base, body: text, clientId, metadata: { help_keyword: true } });
     if (!proceed) return { outcome: 'duplicate', reply: null };
     return settle(twilioSid, { outcome: 'help', reply: HELP_REPLY });
   }
@@ -870,17 +672,35 @@ async function processInboundSms({ from, body, twilioSid }) {
   // Record the message (client_id set only for a client sender). Heal-aware: an
   // unsettled prior record (stranded by a failed side-effect) is re-processed.
   const clientId = sender.type === 'client' ? sender.client.id : null;
-  const proceed = await recordAndShouldProcess({ fromPhone: from, body: text, clientId, twilioSid });
+  const proceed = await recordAndShouldProcess({ ...base, body: text, clientId });
   if (!proceed) return { outcome: 'duplicate', reply: null };
 
   if (sender.type === 'client') {
     // No auto-reply to clients — the admin replies personally from the
     // Messages page. We just alert the admin a client texted in.
-    await alertInboundClient(sender.client, text);
+    await alertInboundClient(sender.client, text, media);
     return settle(twilioSid, { outcome: 'client_message', reply: null });
   }
 
   if (sender.type === 'staff') {
+    // Decision 17 (spec 2026-10-06, Inbox): CONFIRM, CANT and the automated
+    // staff replies run only on the 888, and only when the latest text DRB sent
+    // this staffer was automated. On a 224 line, or after a human text, every
+    // staff text is conversation: stored, emailed to the admin, answered by a
+    // person. Otherwise a "Can't" answering Zul's "Can you cover Saturday?"
+    // would release the staffer's own shift.
+    const commandLane = line === '888'
+      && await latestDrbTextWasAutomated({ staffUserId: sender.staffUserId, phone: from });
+    if (!commandLane) {
+      const convoWho = await describeStaff(sender.staffUserId);
+      // A CONFIRM or CANT it did not apply says so in the subject, so a real
+      // drop never reads like any other text. Still the routine email, no SMS.
+      const convoCode = detectResponseCode(text);
+      await alertAdminEmail(
+        convoCode ? `Staff texted ${convoCode.toUpperCase()} but no shift was changed` : 'Staff texted Dr. Bartender',
+        `${convoWho.join('; ') || 'A staff member'} texted the ${line} line from ${from}: "${text}"${attachmentNote(media)}. It was treated as conversation, so no shift was changed and no automated reply was sent.${convoCode ? ` ${NOT_APPLIED_NOTE}` : ''}`);
+      return settle(twilioSid, { outcome: 'conversation', reply: null });
+    }
     const code = detectResponseCode(text);
     if (code === 'confirm' || code === 'cant') {
       // A phone can match more than one active staff account (e.g. a shared
@@ -946,7 +766,7 @@ async function processInboundSms({ from, body, twilioSid }) {
 
   // Unknown sender.
   await alertAdminEmail('Text from an unknown number',
-    `An unrecognized number (${from}) texted Dr. Bartender: "${text}".`);
+    `An unrecognized number (${from}) texted Dr. Bartender: "${text}"${attachmentNote(media)}.`);
   return settle(twilioSid, { outcome: 'unknown_sender', reply: null });
 }
 
@@ -954,6 +774,7 @@ module.exports = {
   detectOptKeyword,
   detectHelpKeyword,
   detectResponseCode,
+  last10,
   lookupSender,
   findStaffCandidatesByPhone,
   resolveShiftResponder,
@@ -963,6 +784,7 @@ module.exports = {
   handleConfirm,
   findNearestApprovedShift,
   handleCant,
+  latestDrbTextWasAutomated,
   alertInboundClient,
   alertOptKeyword,
   alertStaffCant,

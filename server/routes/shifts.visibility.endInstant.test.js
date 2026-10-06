@@ -329,7 +329,7 @@ test('no site in the family still hard-codes the calendar-day predicate', async 
   const files = [
     'routes/shifts.queries.js', 'routes/shifts.js', 'routes/messages.js',
     'routes/admin/settings.js', 'routes/staffPortal.js',
-    'utils/outstandingDocuments.js', 'utils/smsInbound.js',
+    'utils/outstandingDocuments.js', 'utils/smsShiftCommands.js',
   ];
   for (const f of files) {
     const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');

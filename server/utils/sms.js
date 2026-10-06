@@ -1,7 +1,11 @@
 const twilio = require('twilio');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { notificationsEnabled } = require('./notificationsEnabled');
 const { buildSmsLogEntry, logClientMessage } = require('./messageLog');
+const { LINE_KEYS, lineE164 } = require('./smsLines');
+const { recordOptOut, isTwilioOptOutError } = require('./smsOptOut');
+const { API_URL } = require('./urls');
 
 const client = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -15,27 +19,83 @@ else if (!notificationsEnabled()) console.log('[sms] Twilio initialized, but not
  * @param {Object} options
  * @param {string} options.to - Recipient phone number (E.164 format, e.g. +13125551234)
  * @param {string} options.body - Message text
- * @returns {Promise}
+ * @param {Object} [options.meta] - message_log context (clientId, proposalId, messageType, sentBy, skipLog)
+ * @param {string} [options.from] - a line key from smsLines.js ('888', '1922', '0082').
+ *   Omitted, it sends from TWILIO_PHONE_NUMBER exactly as before. An unknown key is
+ *   refused before anything is sent. A 224 send always names its line: nothing
+ *   relies on the Messaging Service number pool (spec 2026-10-06, section 9).
+ * @param {string} [options.statusCallback] - Twilio status callback URL (smsStatusCallbackUrl())
+ * @returns {Promise<Object>} the Twilio message (its `from` is the number Twilio
+ *   reports), or the dev stub { sid, from } when Twilio is absent or gated off
  */
-async function sendSMS({ to, body, meta }) {
+async function sendSMS({ to, body, meta, from, statusCallback }) {
   if (!to) throw new Error('SMS recipient phone number is required');
-  if (!client || !notificationsEnabled()) {
-    const why = !client ? 'Twilio creds not set' : 'notifications gated off';
-    // Redact recipient to last-4 and drop the body (keep only its length) — the
+  const hasLine = from !== undefined && from !== null;
+  if (hasLine && !LINE_KEYS.includes(from)) {
+    throw new Error(`sendSMS: unknown line "${from}"`);
+  }
+  const fromNumber = hasLine ? lineE164(from) : process.env.TWILIO_PHONE_NUMBER;
+  // The Twilio client and the gate come through the test seam (_deps, below),
+  // the way placeBridgedCall reads them. Unset, they are the module client and
+  // notificationsEnabled, so production behavior is unchanged.
+  const { client: activeClient, notificationsEnabled: notifEnabled } = _deps;
+  if (!activeClient || !notifEnabled()) {
+    const why = !activeClient ? 'Twilio creds not set' : 'notifications gated off';
+    // Redact recipient to last-4 and drop the body (keep only its length): the
     // body can carry client PII. Matches placeBridgedCall's slice(-4) idiom below.
     console.log(`[DEV] SMS skipped (${why}) → ...${String(to).slice(-4)} | Body length: ${String(body || '').length}`);
-    return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
+    return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`, from: fromNumber || null };
   }
+  if (hasLine && !fromNumber) throw new Error(`sendSMS: line ${from} has no number configured`);
+  const params = { from: fromNumber, to, body };
+  if (statusCallback) params.statusCallback = statusCallback;
   let message;
   try {
-    message = await client.messages.create({ from: process.env.TWILIO_PHONE_NUMBER, to, body });
+    message = await activeClient.messages.create(params);
   } catch (err) {
     logClientMessage(buildSmsLogEntry({ to, body, meta, error: err })); // fire-and-forget
+    // Twilio 21610: this number opted out of this sender. Record it so every
+    // line refuses it (decision 10). Best effort: a failed write is logged and
+    // must never replace the send error the caller is about to handle.
+    if (isTwilioOptOutError(err)) {
+      try {
+        await recordOptOut({ phone: to, source: 'twilio_21610', line: hasLine ? from : '888' });
+      } catch (optErr) {
+        // Visible, never thrown: no phone number in the log or the event.
+        console.error('[sms] could not record the 21610 opt-out:', optErr && optErr.message);
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(optErr, { tags: { area: 'sms_21610_record' } });
+        }
+      }
+    }
     throw err;
   }
   console.log(`SMS sent: ${message.sid} → ...${String(to).slice(-4)}`);
   logClientMessage(buildSmsLogEntry({ to, body, meta, result: message })); // fire-and-forget
   return message;
+}
+
+/**
+ * The status callback Messages-page and Inbox sends register: the API origin
+ * plus /api/sms/status (the same API_URL every Twilio voice callback uses).
+ */
+function smsStatusCallbackUrl() {
+  return `${API_URL}/api/sms/status`;
+}
+
+/**
+ * The error text stored on a failed human send's row: "Twilio <code> (failed)"
+ * when Twilio gave a numeric error code, else "Twilio send failed". It matches
+ * the status callback's "Twilio <code> (<status>)" whenever there is a code;
+ * without one, the callback stores "Twilio error (<status>)" and a send stores
+ * "Twilio send failed". Twilio's prose (which can quote the phone number) stays
+ * off the row. The admin group send keeps its raw message (POST /api/messages/send).
+ */
+function twilioErrorText(err) {
+  const code = err && err.code;
+  return code !== undefined && code !== null && /^\d+$/.test(String(code))
+    ? `Twilio ${code} (failed)`
+    : 'Twilio send failed';
 }
 
 /**
@@ -183,4 +243,4 @@ async function sendAndLogSms({ to, body, clientId = null, proposalId = null, mes
   return { sid, status: 'sent' };
 }
 
-module.exports = { sendSMS, normalizePhone, sendAndLogSms, placeBridgedCall, cancelBridgedCall, __setSmsDeps, _realSendSMS };
+module.exports = { sendSMS, smsStatusCallbackUrl, twilioErrorText, normalizePhone, sendAndLogSms, placeBridgedCall, cancelBridgedCall, __setSmsDeps, _realSendSMS };

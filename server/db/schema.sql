@@ -5243,3 +5243,70 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expires ON webauthn_challenges(expires_at);
+
+-- ─── Per-phone SMS opt-out record (spec 2026-10-06, Inbox, decision 10) ─────
+-- One row per phone, keyed by the same last-10-digit form the inbound matcher
+-- uses (server/utils/phone.js last10). Twilio keeps opt-outs per SENDING
+-- number, so the 888 and the 224 Messaging Service are separate domains there;
+-- this record is what makes one STOP cover every DRB line. Written by a
+-- STOP-set word to any line from any sender, and by Twilio error 21610 (an
+-- unsubscribed recipient) at send time or in the status callback. START or
+-- UNSTOP clears it by stamping cleared_at (a YES does not: on the toll-free
+-- 888 Twilio keeps the opt-out, spec amendment 32); the row stays as history.
+-- Read by the Messages reply and Inbox through server/utils/smsOptOut.js.
+-- The admin group send (POST /api/messages/send) does not consult it: it
+-- checks agreement consent only. Automated sends do not consult it yet (fix list).
+-- Never DELETE from sms_optouts: stamp cleared_at. The boot backfill re-seeds
+-- a deleted row whose latest opt word is still a STOP.
+CREATE TABLE IF NOT EXISTS sms_optouts (
+  phone_last10 TEXT PRIMARY KEY,
+  opted_out_at TIMESTAMPTZ NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('keyword','twilio_21610','backfill')),
+  line TEXT,
+  cleared_at TIMESTAMPTZ
+);
+
+-- One-time backfill, safe on every boot. Seeds sms_optouts from the BODY of
+-- every inbound opt word (any of the eight STOP words, START or UNSTOP; a YES
+-- is not one), taking the LATEST opt word per phone across all time. Only a
+-- phone whose latest opt word is a STOP gets a row, dated by that STOP. ON
+-- CONFLICT DO NOTHING makes every later boot a no-op for a phone that already
+-- has a row, active or cleared, so a START the live path recorded is never
+-- undone. recipient_phone holds the SENDER on an inbound row. line stays
+-- NULL: rows before 2026-10-06 never recorded which number was texted.
+INSERT INTO sms_optouts (phone_last10, opted_out_at, source, line)
+SELECT latest.phone_last10, COALESCE(latest.created_at, NOW()), 'backfill', NULL
+  FROM (
+    SELECT DISTINCT ON (RIGHT(REGEXP_REPLACE(m.recipient_phone, '\D', '', 'g'), 10))
+           RIGHT(REGEXP_REPLACE(m.recipient_phone, '\D', '', 'g'), 10) AS phone_last10,
+           CASE WHEN m.body ~* '^\s*(stop|stopall|unsubscribe|end|cancel|quit|optout|revoke)\s*$'
+                THEN 'stop' ELSE 'start' END AS opt_keyword,
+           m.created_at
+      FROM sms_messages m
+     WHERE m.direction = 'inbound'
+       -- The body, not metadata.opt_keyword: rows before 2026-10-06 never tagged
+       -- STOPALL, OPTOUT or REVOKE, relay rows were never tagged, and a YES
+       -- (tagged start) never cleared an opt-out (spec amendment 32). \s* trims
+       -- every kind of whitespace, as trim() does in the live detector.
+       AND m.body ~* '^\s*(stop|stopall|unsubscribe|end|cancel|quit|optout|revoke|start|unstop)\s*$'
+       AND LENGTH(REGEXP_REPLACE(m.recipient_phone, '\D', '', 'g')) >= 10
+     ORDER BY RIGHT(REGEXP_REPLACE(m.recipient_phone, '\D', '', 'g'), 10),
+              m.created_at DESC NULLS LAST, m.id DESC
+  ) latest
+ WHERE latest.opt_keyword = 'stop'
+ON CONFLICT (phone_last10) DO NOTHING;
+
+-- ─── Status callbacks that beat their row (spec 2026-10-06, Inbox) ─────────
+-- A human send writes its sms_messages row AFTER Twilio answers the create
+-- call, so a fast failed or undelivered status callback can arrive before the
+-- row exists. POST /api/sms/status keeps such a failure here, keyed by the
+-- Twilio sid, instead of dropping it, and the Inbox reader left-joins it by
+-- twilio_sid, so a text that never arrived still never counts as a reply.
+-- status is always 'failed' (the only status the callback ever stores), and
+-- error_message is the same "Twilio <code> (<status>)" text it writes on a row.
+CREATE TABLE IF NOT EXISTS sms_status_orphans (
+  twilio_sid TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

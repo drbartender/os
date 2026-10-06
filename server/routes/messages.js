@@ -1,7 +1,8 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
-const { sendSMS, normalizePhone } = require('../utils/sms');
+const { loadEligibleStaffRecipients, sendToStaffRecipient, StaffTextUnrecordedError } = require('../utils/staffText');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
@@ -13,6 +14,43 @@ const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
 const router = express.Router();
 
 const VALID_TYPES = ['general', 'invitation', 'reminder', 'announcement'];
+
+// Spec 2026-10-06 amendment 29: the log line for a group text whose record did
+// not save. Who, and whether the text went out; never the text or the number.
+// An unexpected error adds its name only, never its message, which can quote either.
+function logUnrecordedStaffText({ groupId, recipientId, sent, sqlState, errorName = null }) {
+  const fields = { group_id: groupId, recipient_id: recipientId, sql_state: sqlState };
+  if (errorName) fields.error_name = errorName;
+  console.error(`[messages/send] a staff text was ${sent ? 'sent' : 'not sent'} but its record did not save`, fields);
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureMessage('Staff group text not recorded', {
+      level: 'error',
+      tags: { route: 'POST /api/messages/send' },
+      extra: { ...fields, sent },
+    });
+  }
+}
+
+const SHIFT_NOT_VALID = 'That is not a valid shift';
+const SHIFT_GONE = 'That shift no longer exists';
+
+/**
+ * A group send's shift_id, checked before any text goes out: every row carries
+ * it, so a malformed or deleted one would fail each row's INSERT after its text
+ * was sent and lose the group's records behind a 200. Absent (null or
+ * undefined) is null; otherwise a positive integer naming an existing shift,
+ * returned as a number, or a 400 with fieldErrors.shift_id and that sentence.
+ */
+async function checkedShiftId(value) {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'string' && /^\d{1,10}$/.test(value.trim()) ? Number(value.trim()) : value;
+  if (!Number.isInteger(n) || n <= 0 || n > 2147483647) {
+    throw new ValidationError({ shift_id: SHIFT_NOT_VALID }, SHIFT_NOT_VALID);
+  }
+  const r = await pool.query('SELECT 1 FROM shifts WHERE id = $1', [n]);
+  if (r.rowCount === 0) throw new ValidationError({ shift_id: SHIFT_GONE }, SHIFT_GONE);
+  return n;
+}
 
 // ─── Get eligible SMS recipients (staff with consent + phone) ────
 
@@ -65,79 +103,56 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
   }
+  const shiftId = await checkedShiftId(shift_id);
 
   const group_id = crypto.randomUUID();
 
-  // Fetch recipients with consent verification
-  const recipientResult = await pool.query(`
-    SELECT u.id AS user_id, cp.preferred_name, cp.display_name, cp.phone, ag.sms_consent
-    FROM users u
-    JOIN contractor_profiles cp ON cp.user_id = u.id
-    JOIN agreements ag ON ag.user_id = u.id
-    WHERE u.id = ANY($1)
-      AND u.role IN ('staff', 'manager')
-      AND u.onboarding_status IN ('submitted', 'reviewed', 'approved')
-  `, [recipient_ids]);
-
-  // Twilio sends stay sequential (carrier throttle), but DB inserts batch into one query at the end.
-  const results = [];
-  const rows = []; // tuples for bulk INSERT
+  // The eligible staff, then one send and one row per recipient through the
+  // core the Inbox staff composer shares (server/utils/staffText.js). Twilio
+  // sends stay sequential (carrier throttle). The group send passes no line,
+  // no status callback and no send id, so it sends exactly as it always has.
+  // A row that fails to save never stops the group (spec amendment 29).
+  const recipients = await loadEligibleStaffRecipients(recipient_ids);
   const trimmedBody = body.trim();
+  const results = [];
   let sentCount = 0;
   let failedCount = 0;
 
-  for (const recipient of recipientResult.rows) {
-    const normalized = normalizePhone(recipient.phone);
-    // sms_messages.recipient_name is a display label, so it takes the display
-    // name (preferred name plus last initial) and falls back to the raw
-    // preferred name. Same call as beoHandlers / staffShiftHandlers, whose
-    // staff_name feeds the identical log column.
-    const recipientName = recipient.display_name || recipient.preferred_name;
-
-    if (!recipient.sms_consent) {
-      failedCount++;
-      rows.push([group_id, req.user.id, recipient.user_id, recipient.phone || 'none',
-        recipientName, trimmedBody, message_type, shift_id, null, 'failed', 'No SMS consent']);
-      results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: 'No SMS consent' });
-      continue;
-    }
-
-    if (!normalized) {
-      failedCount++;
-      rows.push([group_id, req.user.id, recipient.user_id, recipient.phone || 'none',
-        recipientName, trimmedBody, message_type, shift_id, null, 'failed', 'Invalid phone number']);
-      results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: 'Invalid phone number' });
-      continue;
-    }
-
+  for (const recipient of recipients) {
+    let status;
+    let errorMessage = null;
     try {
-      const message = await sendSMS({ to: normalized, body: trimmedBody });
+      const sent = await sendToStaffRecipient({
+        recipient,
+        body: trimmedBody,
+        senderId: req.user.id,
+        groupId: group_id,
+        messageType: message_type,
+        shiftId,
+      });
+      status = sent.status;
+      errorMessage = sent.row.error_message;
+    } catch (err) {
+      // Amendment 29: a group send never stops partway. The text may already
+      // have gone out; only its record is missing. Log it and carry on.
+      const unrecorded = err instanceof StaffTextUnrecordedError;
+      status = unrecorded && err.sendStatus === 'sent' ? 'sent' : 'failed';
+      errorMessage = (unrecorded && err.errorMessage) || 'Not recorded';
+      logUnrecordedStaffText({
+        groupId: group_id, recipientId: recipient.id, sent: status === 'sent', sqlState: unrecorded ? err.sqlState : null,
+        errorName: unrecorded ? null : String((err && err.name) || 'unknown'),
+      });
+    }
+    if (status === 'sent') {
       sentCount++;
-      rows.push([group_id, req.user.id, recipient.user_id, normalized,
-        recipientName, trimmedBody, message_type, shift_id, message.sid, 'sent', null]);
-      results.push({ recipient_id: recipient.user_id, status: 'sent' });
-    } catch (smsErr) {
+      results.push({ recipient_id: recipient.id, status: 'sent' });
+    } else {
       failedCount++;
-      rows.push([group_id, req.user.id, recipient.user_id, normalized || recipient.phone,
-        recipientName, trimmedBody, message_type, shift_id, null, 'failed', smsErr.message]);
-      results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: smsErr.message });
+      results.push({ recipient_id: recipient.id, status: 'failed', error_message: errorMessage });
     }
   }
 
-  if (rows.length) {
-    const placeholders = rows.map((_, i) => {
-      const b = i * 11;
-      return `($${b+1}, $${b+2}, $${b+3}, $${b+4}, $${b+5}, $${b+6}, $${b+7}, $${b+8}, $${b+9}, $${b+10}, $${b+11})`;
-    }).join(',');
-    await pool.query(
-      `INSERT INTO sms_messages (group_id, sender_id, recipient_id, recipient_phone, recipient_name,
-                                 body, message_type, shift_id, twilio_sid, status, error_message)
-       VALUES ${placeholders}`,
-      rows.flat()
-    );
-  }
-
-  res.json({ group_id, total: recipientResult.rows.length, sent: sentCount, failed: failedCount, results });
+  res.json({ group_id, total: recipients.length, sent: sentCount, failed: failedCount, results });
 }));
 
 // ─── Message history (grouped) ───────────────────────────────────

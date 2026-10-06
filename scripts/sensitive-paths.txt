@@ -117,6 +117,33 @@ server/routes/smsOptIn.js
 # recorded above -- a path that was simply NEVER CAUGHT -- and this list treats
 # that distinction as load-bearing, so the rationale had to say which one.
 server/utils/smsInbound.js
+# Sensitivity follows the code (2026-10-06, lane sms-lines Task 1): the staff
+# shift commands moved OUT of smsInbound.js, verbatim, so the decision 17 gate
+# (spec 2026-10-06 Inbox) could be added beside them under the 1000-line cap.
+# findNearestApprovedShift and handleCant, the reasons the file above is
+# listed, now live here; smsInbound.js re-exports them.
+server/utils/smsShiftCommands.js
+# The DRB text-line registry (spec 2026-10-06 Inbox): which number a human
+# reply leaves from and which lines may be offered at all. A wrong answer texts
+# a client from a number they have never seen, or a staffer from a 224 line the
+# A2P campaign does not cover.
+server/utils/smsLines.js
+# The per-phone opt-out record and the one "may a human text this person"
+# rule (spec 2026-10-06 Inbox, decision 10). Same compliance weight as
+# smsOptIn.js and messageSuppression.js: a bug here texts someone who said STOP.
+server/utils/smsOptOut.js
+# Sensitivity follows the code (2026-10-06, lane sms-lines review): last10 in
+# phone.js is the key every sms_optouts read and write uses, and the staff
+# match a CANT acts on; FAILED_DELIVERY_STATES in smsDeliveryStatus.js decides
+# what the public status webhook may write.
+server/utils/phone.js
+server/utils/smsDeliveryStatus.js
+# Staff texting (spec 2026-10-06 Inbox): the admin group send and the
+# single-recipient core it now shares with the Inbox text route. Both text
+# staff from the 888 and write the rows the shift-command gate (decision 17)
+# and the Inbox read as human replies.
+server/routes/messages.js
+server/utils/staffText.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes

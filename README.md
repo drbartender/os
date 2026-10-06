@@ -93,7 +93,8 @@ Copy `.env.example` and fill in values. This table is the fullest list, but it i
 | `RESEND_WEBHOOK_SECRET` | For email tracking | Resend webhook signing secret (svix) |
 | `TWILIO_ACCOUNT_SID` | For SMS | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | For SMS | Twilio auth token |
-| `TWILIO_PHONE_NUMBER` | For SMS | Twilio sender number |
+| `TWILIO_PHONE_NUMBER` | For SMS | Twilio sender number (the 888 line; the two 224 lines are fixed in `server/utils/smsLines.js`) |
+| `INBOX_TEXT_LINES` | No | Lines a human reply may text from (the Messages reply, and Inbox once it ships), as a comma list of `888`, `1922`, `0082`. Default `888`; unknown keys are ignored and the 888 is always on. Add a 224 line only after its round trip (a reply, a STOP and a START) shows up in `sms_messages` with the right `metadata.to` (spec 2026-10-06, decision 19). |
 | `STRIPE_SECRET_KEY` | For payments | Stripe live secret key |
 | `STRIPE_PUBLISHABLE_KEY` | For payments | Stripe live publishable key (served to the client via `/api/stripe/publishable-key`) |
 | `STRIPE_WEBHOOK_SECRET` | For payments | Stripe live webhook signing secret |
@@ -244,7 +245,7 @@ dr-bartender/
 │   │   │   ├── submitNotify.js # Post-commit submit comms (extracted from submit.js): confirmation emails, admin heads-up, lab follow-up scheduling
 │   │   │   └── submitSanitize.js # Selections allow-list + sanitizer for the public submit PUT (extracted from submit.js)
 │   │   ├── drinkPlanConsult.js # Admin consult-form routes (alternate input source for shopping lists)
-│   │   ├── messages.js         # SMS messaging to staff
+│   │   ├── messages.js         # SMS messaging to staff (per-recipient sends through utils/staffText.js)
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── packages.js         # Admin package-model API (planner v2): package_items contents CRUD, slots, makeability preview, directional margin
@@ -281,7 +282,7 @@ dr-bartender/
 │   │   ├── shifts.handlers.js  # Shift-lifecycle mutation handlers (update, cancel-or-unassign) extracted from shifts.js
 │   │   ├── staffShiftActions.js # Drop / Cover shift marketplace (drop, request-cover, claim-cover, emergency-drop, withdraw) under /api/shifts
 │   │   ├── adminCoverSwaps.js  # Admin cover-swap approval endpoints (mounted under /api/admin)
-│   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
+│   │   ├── sms.js              # Twilio inbound-SMS webhook (line-aware), the message status callback (POST /status), and the admin thread API
 │   │   ├── smsOptIn.js         # POST /api/sms/opt-in — public standalone SMS consent form (the /sms page); checkbox OPTIONAL (Twilio forced-consent rule), number required only when ticked; ticked records consent via utils/smsConsent.js, unticked upserts email_leads only and never touches clients
 │   │   ├── telegram.js         # Zul VA-calling OUTBOUND trigger: POST /api/telegram/:secret (secret path + secret_token header + user_id allowlist), NANP validation, confirm-before-dial (YES), claim-then-call bridge
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
@@ -466,7 +467,7 @@ dr-bartender/
 │   │   ├── metricsQueries.js   # Pure metrics filter parsing + SQL builders (resolveFilters, dateClause, qMoney, qWinRate, etc.)
 │   │   ├── orientationData.js  # Assembles the booking/receipt/planner payload for the orientation email
 │   │   ├── pendingCall.js      # VA-calling DB helpers: upsertPending, claimForDial (conditional UPDATE claim-then-call), attachCallSid, lookupTargetByCallSid, countPlacedSince (daily/per-min cap), recordAudit, pruneVaCallingRows
-│   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
+│   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1) + last10, the one last-10-digit phone matcher (sender lookup, shift commands, sms_optouts)
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine (stamps pricing_snapshot._version)
 │   │   ├── pricingSnapshot.js  # PRICING_SNAPSHOT_VERSION + readSnapshot(): tolerant versioned reader every server pricing_snapshot consumer routes through (legacy=v1 tolerated, unknown future version throws)
 │   │   ├── proposalInsert.js    # Shared proposals-row + addons INSERT builder (insertProposalRecord); single source of the proposal INSERT shape, used by the manual create route and the Thumbtack auto-draft util
@@ -485,15 +486,20 @@ dr-bartender/
 │   │   ├── shoppingListAddonCoverage.js # Maps active BYOB-support add-on slugs to the shopping-list items those add-ons cover (computeStripSet); generateShoppingList strips that set
 │   │   ├── refreshDisplayName.js # Recompute + persist contractor_profiles.display_name for one user (explicit pg handle required — no pool default; IS DISTINCT FROM guarded)
 │   │   ├── shoppingListGen.js  # Shared helpers: loadCatalog, resolveDrinkIds, matchCustomNames, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
-│   │   ├── sms.js              # Twilio SMS wrapper
+│   │   ├── sms.js              # Twilio SMS wrapper: sendSMS (optional line key from and statusCallback; Twilio 21610 writes sms_optouts), smsStatusCallbackUrl, twilioErrorText (the stored failure text), sendAndLogSms, placeBridgedCall
 │   │   ├── smsDeliveryStatus.js # Twilio delivery-failure handler — flags bad phone numbers (sets clients.phone_status='bad') on hard SMS failures
 │   │   ├── smsEventDate.js     # Shared SMS event-date formatter (Date or string to "June 12", null when missing)
 │   │   ├── smsConsent.js      # recordSmsConsent(...) — client SMS consent capture (A2P 10DLC): flips clients.communication_preferences.sms_enabled + stamps sms_opt_in/out_at, appends the append-only sms_consent_log proof row. Writes ONLY to a client row the same submit created (public form, unauthenticated); never lifts a prior STOP
-│   │   ├── smsInbound.js       # Inbound-SMS processing: keyword/response-code detection, sender lookup, orchestrator
+│   │   ├── smsInbound.js       # Inbound-SMS processing: keyword detection, sender lookup, line-aware orchestrator (stores metadata.to, metadata.media and metadata.outcome; opt keywords write sms_optouts for every sender; shift commands only on the 888 after an automated text)
+│   │   ├── smsLines.js         # DRB text-line registry (888, 1922, 0082): lineE164, lineKeyForNumber, enabledLines (INBOX_TEXT_LINES), ownLineForUser, allowedLines, defaultLine, lastHumanLineFromRows (the one default-line rule over sms_messages rows, shared with Inbox). Pure; reads env at call time
+│   │   ├── smsOptKeywordCopy.js # Admin-facing alert copy for an inbound opt keyword (buildOptKeywordAlert): says only what happened, so a YES never reads as opted in
+│   │   ├── smsOptOut.js        # Per-phone opt-out record (sms_optouts): recordOptOut, clearOptOut, activeOptOut, and textability, the "may a human text this person" rule the Messages reply and Inbox ask (the admin group send checks agreement consent only)
+│   │   ├── smsShiftCommands.js # Staff shift commands moved out of smsInbound.js: findStaffCandidatesByPhone, findNearestApprovedShift (the CANT/CONFIRM shift pick), resolveShiftResponder, handleConfirm, handleCant, latestDrbTextWasAutomated (decision 17)
 │   │   ├── smsTemplates.js     # Client-facing automated SMS body templates
 │   │   ├── staffDisplayName.js # computeDisplayName: "Preferred L." derivation (preferred name + legal-surname initial), single source for every display surface
 │   │   ├── staffDisplayName.validate.js # Preferred-name format rules + validatePreferredNameChange (grandfathers unchanged legacy values)
 │   │   ├── staffShiftHandlers.js # Staff-shift SMS: day-before reminder, post-event thank-you, schedule-change/cancel notices
+│   │   ├── staffText.js        # Single-recipient staff text core shared by POST /api/messages/send and the Inbox text route: loadEligibleStaffRecipients, sendToStaffRecipient
 │   │   ├── staffingMeta.js     # Events-worked count for the staffing reads (loadEventsWorked) and the picker's WHOLE-mile home-to-venue distance (candidateMeta, GET /admin/active-staff?shift_id=). Plain meta, never ranking; events_worked is pinned to GET /admin/users/:id/seniority by test
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── menuPrintFile.js    # sendMenuPrintFile: the ONE way a bar menu print file leaves the server (per-proposal key guard, R2 proxy, no-cache + ETag, streamed). Shared by the staff download (GET /shifts/:shiftId/menu-print) and the admin one (GET /proposals/:id/menu-print)
@@ -511,7 +517,7 @@ dr-bartender/
 │   │   ├── presenceStore.js    # Presence DB layer: strip payload + lead pointer, transactional transitions/toggle, log totals, id-scoped applyAutoFlip, stampByNudgePhone
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages
 │   │   ├── tokens.js           # Canonical public-token shape validation: UUID_RE, isUuid, requireUuidToken(param, message) middleware (404s a non-UUID :token before the DB so it can't cast-throw 22P02 -> 500)
-│   │   ├── twilioSignature.js  # Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router (fail-closed everywhere except voice.js's /bridge and /status, which keep the dev warn-and-allow)
+│   │   ├── twilioSignature.js  # Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router (fail-closed everywhere except voice.js's /bridge and /status and sms.js's /inbound and /status, which keep the dev warn-and-allow)
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   │   ├── usPhone.js          # US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl + 900/976) — primary VA-calling toll-fraud control
 │   │   ├── vaCallingScheduler.js # VA-calling scheduler body: pruneVaCallingRows + reapUndeliveredVoicemails (redelivers a voicemail stuck between claim and upload; Twilio never retries a 2xx'd recording callback) + checkTelegramWebhookHealth (re-runs setTelegramWebhook + emails admin when the webhook is unset or recently errored)
@@ -888,6 +894,10 @@ dr-bartender/
 - Per-user message history on individual staff profiles
 - Filters by SMS consent — only staff who opted in are eligible
 - Two-way SMS: Twilio inbound webhook, STOP/START opt-out, staff CONFIRM/CANT response codes, admin Messages thread UI
+- Line-aware texting (spec 2026-10-06): every inbound text records the DRB number it reached (`metadata.to`), its picture media and its processing outcome; a Messages-page reply records the line it left from and keeps the person on the line of their latest human-involved text, limited to `INBOX_TEXT_LINES`
+- One opt-out for every line: Twilio's full keyword set (STOPALL, OPTOUT and REVOKE included) plus a per-phone `sms_optouts` record written on any STOP-set word from any sender and on Twilio error 21610; the Messages reply refuses an opted-out number with 409
+- Delivery status: Messages-page replies register a Twilio status callback (`POST /api/sms/status`), so a text that fails after sending is marked failed
+- Shift commands only answer shift texts: CONFIRM and CANT act only on the 888 and only when DRB's latest text to that staffer as staff was automated (admin alerts and texts on a client's thread do not count); anything else is conversation for a human
 - Client-facing automated SMS: initial-proposal, sign+pay confirmation, unsigned-proposal drip (touches 1/3/5), drink-plan nudge, balance due-today and late-balance reminders, payment-failure alert, event-eve reminder, and reschedule notification, sent via Twilio and logged to sms_messages.
 - Notification infrastructure: per-channel daily overlap prevention, delivery-failure channel fallback, multi-admin notification subscriptions.
 
