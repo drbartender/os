@@ -16,6 +16,7 @@ const { ValidationError, ConflictError, NotFoundError } = require('../utils/erro
 const { ensureNotFinalized } = require('../utils/beoFinalize');
 const { generateShoppingList } = require('../utils/shoppingList');
 const { recipeRowLabel } = require('../utils/potionCatalog');
+const { buildConsultRecap } = require('../utils/consultRecap');
 const {
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
@@ -155,7 +156,8 @@ function sanitizeConsult(raw) {
 
 /** GET /api/drink-plans/:id/consult — fetch consult-form payload for pre-population.
  *  Returns the raw consult_selections so the form can re-open with the admin's
- *  prior input intact. Empty object when nothing's been saved yet. */
+ *  prior input intact. Empty object when nothing's been saved yet. Also
+ *  returns `recap`, the readable lines, for the shopping-list answers panel. */
 router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT consult_selections, consult_filled_at, consult_filled_by_user_id
@@ -163,10 +165,16 @@ router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  const consult = result.rows[0].consult_selections || null;
   res.json({
-    consult_selections: result.rows[0].consult_selections || null,
+    consult_selections: consult,
     consult_filled_at: result.rows[0].consult_filled_at || null,
     consult_filled_by_user_id: result.rows[0].consult_filled_by_user_id || null,
+    // The read-only recap (catalog names, the same lines as the client's
+    // recap email) for the shopping-list modal's answers panel. Null with no
+    // consult, or one with nothing to say. buildConsultRecap never rejects,
+    // so the raw blob the form pre-populates from always comes back.
+    recap: await buildConsultRecap(consult, pool),
   });
 }));
 

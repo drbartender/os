@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { BarMenuCard } from './BeoSections';
+import { BarMenuCard, ConsultCard } from './BeoSections';
 import api from '../../utils/api';
 
 jest.mock('../../utils/api', () => ({
@@ -42,5 +42,23 @@ describe('BarMenuCard download filename', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Download print file' }));
     await waitFor(() => expect(clicks).toHaveLength(1));
     expect(clicks[0]).toBe('bar-menu.png');
+  });
+});
+
+describe('ConsultCard', () => {
+  test('renders the server lines, label bold, never raw JSON', () => {
+    render(<ConsultCard lines={['Signature cocktails: French 75, Margarita', 'Custom cocktail: House Mule (vodka, ginger beer)']} />);
+    expect(screen.getByText('Consult')).toBeInTheDocument();
+    expect(screen.getByText('Signature cocktails:').tagName).toBe('STRONG');
+    expect(screen.getByText('French 75, Margarita')).toBeInTheDocument();
+    expect(screen.getByText('House Mule (vodka, ginger beer)')).toBeInTheDocument();
+    expect(screen.queryByText(/object Object/)).not.toBeInTheDocument();
+  });
+
+  test('renders nothing without lines', () => {
+    const { container: empty } = render(<ConsultCard lines={[]} />);
+    expect(empty).toBeEmptyDOMElement();
+    const { container: missing } = render(<ConsultCard />);
+    expect(missing).toBeEmptyDOMElement();
   });
 });

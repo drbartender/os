@@ -1,26 +1,34 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { formatConsultRecap, pickNextStepLine } = require('./consultRecap');
+const {
+  formatConsultRecap, consultRecapLines, humanizeDrinkId, unmatchedDrinkIds, pickNextStepLine,
+} = require('./consultRecap');
 
-test('formatConsultRecap: full mix of selections renders human-readable bullets', () => {
+test('formatConsultRecap: stored ids render as catalog names, in the shape the form writes', () => {
+  const names = {
+    cocktails: new Map([['old-fashioned', 'Old Fashioned'], ['margarita', 'Margarita']]),
+    mocktails: new Map([['virgin-mojito', 'Virgin Mojito']]),
+  };
   const lines = formatConsultRecap({
     barType: 'full_bar',
     spirits: ['vodka', 'tequila', 'whiskey'],
-    signatureDrinks: ['Old Fashioned', 'Margarita'],
+    signatureDrinks: ['old-fashioned', 'margarita'],
     customCocktails: [{ name: 'House Mule', ingredients: ['vodka', 'ginger beer', 'lime'] }],
     mocktailsEnabled: true,
-    mocktails: ['Virgin Mojito'],
+    mocktails: ['virgin-mojito'],
     beer: true,
-    wine: ['Cabernet', 'Sauvignon Blanc'],
-  });
-  const blob = lines.join(' | ');
-  assert.match(blob, /full bar/i);
-  assert.match(blob, /vodka/i);
-  assert.match(blob, /Old Fashioned/);
-  assert.match(blob, /House Mule/);
-  assert.match(blob, /Virgin Mojito/i);
-  assert.match(blob, /beer/i);
-  assert.match(blob, /Cabernet/);
+    wine: ['red', 'white'],
+    mixers: 'full',
+  }, names);
+  assert.ok(lines.includes('Bar style: Full bar'));
+  assert.ok(lines.includes('Spirits: Vodka, Tequila, Whiskey'));
+  assert.ok(lines.includes('Signature cocktails: Old Fashioned, Margarita'));
+  assert.ok(lines.includes('Custom cocktail: House Mule (vodka, ginger beer, lime)'));
+  assert.ok(lines.includes('Mocktails: Virgin Mojito'));
+  assert.ok(lines.includes('Beer: yes'));
+  assert.ok(lines.includes('Wine: Red, White'));
+  assert.ok(lines.includes('Mixers: Full set'));
+  assert.doesNotMatch(lines.join(' | '), /old-fashioned|virgin-mojito/);
 });
 
 test('formatConsultRecap: beer/wine-only event omits cocktail lines', () => {
@@ -114,4 +122,53 @@ test('pickNextStepLine: unknown defaults to the BYOB line (safer default)', () =
     pickNextStepLine(null),
     "We'll send your shopping list shortly."
   );
+});
+
+test('formatConsultRecap: an id with no catalog name reads as words, never a slug', () => {
+  const lines = formatConsultRecap({ signatureDrinks: ['french-75', 'long_gone_sour'], mocktails: ['no-name-spritz'] });
+  assert.ok(lines.includes('Signature cocktails: French 75, Long Gone Sour'));
+  assert.ok(lines.includes('Mocktails: No Name Spritz'));
+});
+
+test('formatConsultRecap: a picked id that is not a string or a number is skipped, never stringified', () => {
+  const lines = formatConsultRecap({ signatureDrinks: ['margarita', { id: 'x' }, '', null, 7] });
+  assert.ok(lines.includes('Signature cocktails: Margarita, 7'));
+  assert.doesNotMatch(lines.join(' | '), /object Object/);
+});
+
+test('formatConsultRecap: the Mixers line prints only on the bars that offer the choice', () => {
+  const mixers = (c) => formatConsultRecap(c).find((l) => l.startsWith('Mixers:'));
+  assert.equal(mixers({ barType: 'full_bar', mixers: 'full' }), 'Mixers: Full set');
+  assert.equal(mixers({ barType: 'sig_beer_wine', mixers: 'matching' }), 'Mixers: Only those that match your spirits');
+  assert.equal(mixers({ barType: 'full_bar', mixers: 'none' }), 'Mixers: None beyond your signature cocktail ingredients');
+  assert.equal(mixers({ barType: 'beer_wine', mixers: 'none' }), undefined);
+  assert.equal(mixers({ barType: 'mocktails', mixers: 'none' }), undefined);
+  assert.equal(mixers({ barType: 'full_bar', mixers: 'weird' }), undefined);
+  assert.equal(mixers({ mixers: 'full' }), undefined);
+});
+
+test('humanizeDrinkId: dashes, underscores and spaces split; each word capitalised', () => {
+  assert.equal(humanizeDrinkId('french-75'), 'French 75');
+  assert.equal(humanizeDrinkId('mccoy-swamp-juice'), 'Mccoy Swamp Juice');
+  assert.equal(humanizeDrinkId(''), '');
+  assert.equal(humanizeDrinkId(null), '');
+  // An id made only of separators keeps its raw form rather than vanishing.
+  assert.equal(humanizeDrinkId('--'), '--');
+});
+
+test('consultRecapLines: [] exactly where the email prints its placeholder', () => {
+  assert.deepEqual(consultRecapLines({}), []);
+  assert.deepEqual(consultRecapLines(null), []);
+  assert.deepEqual(consultRecapLines({ spirits: [], notes: '   ' }), []);
+  assert.deepEqual(
+    formatConsultRecap({ spirits: [], notes: '   ' }),
+    ['(no specific selections captured; notes are on file)']
+  );
+});
+
+test('unmatchedDrinkIds: the picked ids the lookup did not name', () => {
+  const names = { cocktails: new Map([['a', 'A']]), mocktails: new Map() };
+  assert.deepEqual(unmatchedDrinkIds({ signatureDrinks: ['a', 'b'], mocktails: ['c'] }, names), ['b', 'c']);
+  assert.deepEqual(unmatchedDrinkIds({}, names), []);
+  assert.deepEqual(unmatchedDrinkIds(null), []);
 });

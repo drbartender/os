@@ -189,7 +189,6 @@ export default function ShiftDetail() {
   const teamRoster = Array.isArray(details?.team_roster) ? details.team_roster : [];
   const viewer = details?.viewer || { is_admin: false, is_assigned: false, is_acknowledged: false };
   const selections = drinkPlan?.selections || {};
-  const consultSelections = drinkPlan?.consult_selections || null;
   const isDrinkPlanFinalized = !!drinkPlan?.finalized_at;
   const proposalId = proposal?.id || null;
 
@@ -686,7 +685,7 @@ export default function ShiftDetail() {
       />
       <NotesCard title="Notes from the lead" body={drinkPlan?.admin_notes} />
       <NotesCard title="From the client" body={selections.notes} />
-      <ConsultCard consultSelections={consultSelections} />
+      <ConsultCard lines={drinkPlan?.consult_recap} />
 
       {/* ── Assigned-only extras ──────────────────────────────────────── */}
 

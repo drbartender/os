@@ -450,22 +450,30 @@ export function NotesCard({ title, body }) {
   );
 }
 
-export function ConsultCard({ consultSelections }) {
-  if (!consultSelections || Object.keys(consultSelections).length === 0) return null;
+// The consult as the server formats it (server/utils/consultRecap.js: catalog
+// names, the same lines the client's recap email carries). The card used to
+// print the raw JSON, so a custom drink reached the bar as "[object Object]".
+export function ConsultCard({ lines }) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
   return (
     <div className="sp-card tight">
       <div className="sp-card-head">
         <div className="sp-card-title">Consult</div>
       </div>
       <div style={{ fontSize: 12.5, color: 'var(--sp-ink-3)', lineHeight: 1.55 }}>
-        {Object.entries(consultSelections)
-          .filter(([, v]) => v !== null && v !== undefined && v !== '')
-          .map(([k, v]) => (
-            <div key={k} style={{ padding: '4px 0' }}>
-              <strong style={{ color: 'var(--sp-ink-2)' }}>{k}:</strong>{' '}
-              {Array.isArray(v) ? v.join(', ') : String(v)}
+        {lines.map((line, i) => {
+          const cut = line.indexOf(': ');
+          return (
+            <div key={i} style={{ padding: '4px 0' }}>
+              {cut > 0 ? (
+                <>
+                  <strong style={{ color: 'var(--sp-ink-2)' }}>{line.slice(0, cut + 1)}</strong>{' '}
+                  {line.slice(cut + 2)}
+                </>
+              ) : line}
             </div>
-          ))}
+          );
+        })}
       </div>
     </div>
   );

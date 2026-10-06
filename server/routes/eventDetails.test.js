@@ -383,3 +383,30 @@ test('menu-print: legacy proposal-less shift has no menu file', async () => {
   const res = await request('GET', `/api/shifts/${manualShiftId}/menu-print`, { token: assignedToken });
   assert.strictEqual(res.status, 404);
 });
+
+test('event-details: the consult rides as recap lines with drink names', async () => {
+  const cocktailId = `evdet-recap-${NONCE}`;
+  await pool.query("INSERT INTO cocktails (id, name, is_active) VALUES ($1, 'EvDet Recap Sour', false)", [cocktailId]);
+  const dp = await pool.query(
+    'INSERT INTO drink_plans (proposal_id, client_name, consult_selections) VALUES ($1, $2, $3::jsonb) RETURNING id',
+    [proposalId, `EvDet Recap ${NONCE}`, JSON.stringify({
+      barType: 'full_bar',
+      signatureDrinks: [cocktailId],
+      customCocktails: [{ name: 'House Mule', ingredients: ['vodka', 'ginger beer'] }],
+    })]
+  );
+  try {
+    const res = await request('GET', `/api/shifts/${shiftId}/event-details`, { token: browsingToken });
+    assert.strictEqual(res.status, 200);
+    const lines = res.body.drink_plan.consult_recap;
+    assert.ok(Array.isArray(lines), 'consult_recap is an array of lines');
+    assert.ok(lines.includes('Signature cocktails: EvDet Recap Sour'));
+    assert.ok(lines.includes('Custom cocktail: House Mule (vodka, ginger beer)'));
+    assert.doesNotMatch(JSON.stringify(lines), /object Object/);
+    // Kept for ONE release so a staff tab opened before the deploy keeps today's card.
+    assert.deepStrictEqual(res.body.drink_plan.consult_selections.signatureDrinks, [cocktailId]);
+  } finally {
+    await pool.query('DELETE FROM drink_plans WHERE id = $1', [dp.rows[0].id]);
+    await pool.query('DELETE FROM cocktails WHERE id = $1', [cocktailId]);
+  }
+});

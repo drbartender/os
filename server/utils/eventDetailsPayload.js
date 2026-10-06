@@ -27,6 +27,7 @@ const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
 const { computeDisplayName } = require('./staffDisplayName');
 const { barRequiredSql } = require('../routes/shifts.queries');
+const { buildConsultRecap } = require('./consultRecap');
 
 /**
  * Read auth for any event-details surface. Throws NotFoundError when the
@@ -90,7 +91,16 @@ async function buildEventDetailsPayload(req, proposalId) {
             (selections ? '_logoFilename') AS has_logo
        FROM drink_plans WHERE proposal_id = $1`,
     [proposalId]
-  );
+  ).then(async (r) => {
+    // The consult as readable lines (catalog names, never ids or raw JSON).
+    // Chained onto this read rather than awaited after the barrier, so its
+    // name lookup overlaps the other five reads instead of adding a round
+    // trip to the staff portal's hottest read. No plan row means no lookup;
+    // buildConsultRecap never rejects, so it can never fail the barrier.
+    const row = r.rows[0];
+    if (row) row.consult_recap = await buildConsultRecap(row.consult_selections, pool);
+    return r;
+  });
 
   const addonsRowP = pool.query(
     // Money columns (rate, line_total) are deliberately NOT selected: crew need
@@ -316,6 +326,10 @@ async function buildEventDetailsPayload(req, proposalId) {
       finalized_by: dp.finalized_by,
       selections: dp.selections,
       consult_selections: dp.consult_selections,
+      // The readable consult. consult_selections above rides along for ONE
+      // release so a staff tab opened before the deploy keeps today's card
+      // until it reloads; dropping it is a follow-up on the ledger.
+      consult_recap: dp.consult_recap ?? null,
       admin_notes: dp.admin_notes,
       has_logo: dp.has_logo === true,
     } : null,

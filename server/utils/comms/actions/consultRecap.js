@@ -24,7 +24,7 @@ const { sendEmail } = require('../../email');
 const { logClientMessage } = require('../../messageLog');
 const { renderPartsEmail } = require('../render');
 const { consultRecapParts } = require('../../lifecycleEmailTemplates');
-const { formatConsultRecap, pickNextStepLine } = require('../../consultRecap');
+const { formatConsultRecap, pickNextStepLine, loadConsultDrinkNames, unmatchedDrinkIds } = require('../../consultRecap');
 const { checkEmailDomain } = require('../../emailValidation');
 const { getEventTypeLabel } = require('../../../utils/eventTypes');
 const { NotFoundError } = require('../../errors');
@@ -113,7 +113,7 @@ async function resolveRecipient(planId) {
   return resolveFromRow(await load(planId));
 }
 
-function defaultParts(row) {
+function defaultParts(row, names) {
   const eventTypeLabel = getEventTypeLabel({
     event_type: row.event_type,
     event_type_custom: row.event_type_custom,
@@ -131,7 +131,7 @@ function defaultParts(row) {
       clientName: row.client_name,
       eventTypeLabel,
       formattedEventDate,
-      drinkRecapLines: formatConsultRecap(row.consult_selections),
+      drinkRecapLines: formatConsultRecap(row.consult_selections, names),
       nextStepLine: pickNextStepLine(barOption),
     }),
     sms: null,
@@ -139,7 +139,10 @@ function defaultParts(row) {
 }
 
 async function buildMessages(planId) {
-  return defaultParts(await load(planId));
+  const row = await load(planId);
+  // Names load here and in dispatch, never in load(): resolveRecipient never
+  // prints a drink, so it runs no extra query.
+  return defaultParts(row, await loadConsultDrinkNames(row.consult_selections, pool));
 }
 
 /**
@@ -175,7 +178,18 @@ async function ensureSideEffects(planId) {
 async function dispatch(planId, message, channels, ctx = {}) {
   const row = await load(planId);
   const recipient = resolveFromRow(row);
-  const defaults = defaultParts(row);
+  // loadConsultDrinkNames never throws (a failed lookup degrades to humanized
+  // names), so the one-shot first-save send can never be lost to it.
+  const names = await loadConsultDrinkNames(row.consult_selections, pool);
+  // Catalog drift: picked ids the catalog no longer names. Skipped when the
+  // lookup itself failed (that is already reported, and every id would read
+  // as drift); capped so a hand-built row cannot flood the log.
+  const unmatched = names.failed ? [] : unmatchedDrinkIds(row.consult_selections, names);
+  if (unmatched.length) {
+    const shown = unmatched.slice(0, 20).map((id) => id.slice(0, 80));
+    console.warn(`[consult_recap] plan ${planId}: no catalog name for ${JSON.stringify(shown)}`);
+  }
+  const defaults = defaultParts(row, names);
   const results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
 
   const wantEmail = channels.includes('email');

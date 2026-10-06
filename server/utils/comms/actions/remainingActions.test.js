@@ -18,6 +18,7 @@ const { getAction } = require('../../comms/registry');
 
 const LIVE_EMAIL = 'remaining-live@example.test';
 const STALE_EMAIL = 'remaining-stale@example.test';
+const RECAP_COCKTAIL_ID = 'remaining-recap-sour';
 let clientId, proposalId, planId, invoiceId, paidInvoiceId, planToken, invoiceToken;
 
 before(async () => {
@@ -35,6 +36,15 @@ before(async () => {
   );
   await pool.query('DELETE FROM proposals WHERE client_id IN (SELECT id FROM clients WHERE email = $1)', [LIVE_EMAIL]);
   await pool.query('DELETE FROM clients WHERE email = $1', [LIVE_EMAIL]);
+
+  // An inactive catalog drink for the consult recap to name (never on a menu).
+  // Its name deliberately differs from the humanized id ("Remaining Recap
+  // Sour"), so the assertion below can tell a resolved name from the fallback.
+  await pool.query('DELETE FROM cocktails WHERE id = $1', [RECAP_COCKTAIL_ID]);
+  await pool.query(
+    "INSERT INTO cocktails (id, name, is_active) VALUES ($1, 'Remaining Recap Sour (catalog)', false)",
+    [RECAP_COCKTAIL_ID]
+  );
 
   const c = await pool.query(
     "INSERT INTO clients (name, email, phone) VALUES ('Remaining Test', $1, '3125550143') RETURNING id",
@@ -57,9 +67,11 @@ before(async () => {
         (client_name, client_email, event_type, event_date, proposal_id,
          consult_selections, consult_filled_at)
      VALUES ('Remaining Test', $1, 'wedding-reception', CURRENT_DATE + INTERVAL '21 days', $2,
-             '{"barType":"full_bar","spirits":["vodka","gin"],"signatureDrinks":["Margarita"]}'::jsonb, NULL)
+             $3::jsonb, NULL)
      RETURNING id, token`,
-    [STALE_EMAIL, proposalId]
+    [STALE_EMAIL, proposalId, JSON.stringify({
+      barType: 'full_bar', spirits: ['vodka', 'gin'], signatureDrinks: [RECAP_COCKTAIL_ID], mixers: 'full',
+    })]
   );
   planId = dp.rows[0].id;
   planToken = dp.rows[0].token;
@@ -90,6 +102,7 @@ after(async () => {
   await pool.query('DELETE FROM drink_plans WHERE id = $1', [planId]);
   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
   await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
+  await pool.query('DELETE FROM cocktails WHERE id = $1', [RECAP_COCKTAIL_ID]);
   await pool.end();
 });
 
@@ -214,6 +227,9 @@ test('consultRecap: buildMessages has no CTA and a recap line, with BYOB vs host
   assert.match(byob.email.subject, /recap/i);
   assert.equal(byob.email.cta, null, 'the recap email has no CTA button');
   assert.ok(byob.email.bodyText.includes('Full bar'), 'consult selections render into the body');
+  assert.ok(byob.email.bodyText.includes('Signature cocktails: Remaining Recap Sour (catalog)'), 'drink ids render as catalog names');
+  assert.ok(!byob.email.bodyText.includes(RECAP_COCKTAIL_ID), 'never the raw catalog id');
+  assert.ok(byob.email.bodyText.includes('Mixers: Full set'), 'a full bar prints its mixer choice');
   assert.ok(byob.email.bodyText.includes("We'll send your shopping list shortly."), 'BYOB next-step line');
 
   // Point the proposal at a per_guest (hosted) package: the next-step line flips.
