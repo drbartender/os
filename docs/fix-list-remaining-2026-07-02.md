@@ -96,6 +96,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
 | 2 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
 | 2 | A client's line item renames itself on a no-op fold | yes |
+| 2 | The post-consult recap email lists drinks by catalog slug ("french-75") | **yes: 6 of the 9 recaps sent (10/06)** |
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
@@ -682,6 +683,17 @@ drops the variant from `snapshot.addons[]` and a `champagne-toast` sold as
 `non-alcoholic-bubbles` reverts to "Champagne Toast" on the client-facing snapshot; the next
 writer then persists `variant = null` off that snapshot. No money moves. The fix is one column in
 a SELECT.
+
+### The post-consult recap email lists drinks by their catalog slug
+
+`formatConsultRecap` (`server/utils/consultRecap.js`) joins `signatureDrinks` and `mocktails`
+straight into the email, and `ConsultationForm.jsx` stores catalog ids there (`french-75`,
+`old-fashioned`), so the client reads "Signature cocktails: french-75, old-fashioned". Its suite
+passes because the fixture holds display names (`'Old Fashioned'`), a shape the form never writes.
+**Reached clients: 6 of the 9 consult recaps sent on prod (2026-07-19 to 2026-10-05) carried picked
+cocktails, and none was edited before sending.** Fix it in the formatter (resolve ids to names) so
+the email, the staff `ConsultCard` and the shopping-list modal read one recap. Folded into the build
+for the Potions entry "Planner answers beside the shopping list".
 
 ### The compare card jumps on the client's first tap
 
