@@ -32,9 +32,13 @@ const { AppError } = require('../../utils/errors');
 const storagePath = require.resolve('../../utils/storage');
 const realStorage = require('../../utils/storage');
 const uploadCalls = [];
+const signedCalls = [];
 require.cache[storagePath].exports = {
   ...realStorage,
   uploadFile: async (buffer, filename) => { uploadCalls.push({ buffer, filename }); },
+  // The download signs a URL and fetches it; the fetch itself is swapped per
+  // test (withFetch) so no request ever leaves the box.
+  getSignedUrl: async (key) => { signedCalls.push(key); return `https://r2.invalid/${key}`; },
 };
 
 const menuPrintRouter = require('./menuPrint');
@@ -91,7 +95,7 @@ function request(method, urlPath, { token, json, file } = {}) {
         res.on('end', () => {
           let parsed = null;
           try { parsed = data ? JSON.parse(data) : null; } catch { /* non-JSON */ }
-          resolve({ status: res.statusCode, body: parsed, raw: data });
+          resolve({ status: res.statusCode, body: parsed, raw: data, headers: res.headers });
         });
       }
     );
@@ -281,4 +285,87 @@ test('auth: staff cannot upload, flag, or delete', async () => {
 test('unknown proposal id 404s', async () => {
   const res = await request('DELETE', '/api/proposals/99999999/menu-print', { token: adminToken });
   assert.strictEqual(res.status, 404);
+});
+
+// ─── Download (GET) ─────────────────────────────────────────────────────────
+// Admin reads the posted file back through the same guard + stream the staff
+// route uses (utils/menuPrintFile.js). R2 is a real Response from a swapped
+// global fetch, so the stream path is the production one.
+
+// Node's own fetch Response (the server lint config predates the global).
+const { Response } = globalThis;
+
+async function setKey(key) {
+  await pool.query('UPDATE proposals SET menu_print_key = $2 WHERE id = $1', [proposalId, key]);
+}
+async function withFetch(impl, fn) {
+  const real = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => { calls.push(url); return impl(url, opts); };
+  try { return await fn(calls); } finally { global.fetch = real; }
+}
+
+test('download: admin gets the posted file as an attachment, never cached stale', async () => {
+  const key = `menu-print/${proposalId}/fixture-${NONCE}.pdf`;
+  await setKey(key);
+  await withFetch(
+    () => new Response(PDF_BYTES, { status: 200, headers: { 'content-type': 'application/pdf' } }),
+    async (calls) => {
+      const res = await request('GET', `/api/proposals/${proposalId}/menu-print`, { token: adminToken });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.raw, PDF_BYTES.toString());
+      assert.strictEqual(res.headers['content-type'], 'application/pdf');
+      assert.strictEqual(res.headers['content-disposition'], `attachment; filename="bar-menu-${proposalId}.pdf"`);
+      assert.strictEqual(res.headers['cache-control'], 'private, no-cache');
+      assert.ok(signedCalls.includes(key), 'signed the stored key');
+      assert.deepStrictEqual(calls, [`https://r2.invalid/${key}`]);
+    }
+  );
+});
+
+test('download: staff are refused on the admin route', async () => {
+  await setKey(`menu-print/${proposalId}/fixture-${NONCE}.pdf`);
+  const res = await request('GET', `/api/proposals/${proposalId}/menu-print`, { token: staffToken });
+  assert.strictEqual(res.status, 403);
+});
+
+test('download: nothing posted is a 404', async () => {
+  await setKey(null);
+  const res = await request('GET', `/api/proposals/${proposalId}/menu-print`, { token: adminToken });
+  assert.strictEqual(res.status, 404);
+});
+
+test("download: a key outside this proposal's folder is refused and never fetched", async () => {
+  for (const bad of [`menu-print/99999999/x.pdf`, `menu-print/${proposalId}/../x.pdf`, `menu-print/${proposalId}//x.pdf`]) {
+    await setKey(bad);
+    await withFetch(() => { throw new Error('must not fetch'); }, async (calls) => {
+      const res = await request('GET', `/api/proposals/${proposalId}/menu-print`, { token: adminToken });
+      assert.strictEqual(res.status, 404, `${bad} refused`);
+      assert.strictEqual(calls.length, 0, `${bad} never reached R2`);
+    });
+  }
+});
+
+test('download: an R2 failure is a clean 502 that leaks nothing', async () => {
+  await setKey(`menu-print/${proposalId}/fixture-${NONCE}.pdf`);
+  await withFetch(() => new Response('upstream detail', { status: 500 }), async () => {
+    const res = await request('GET', `/api/proposals/${proposalId}/menu-print`, { token: adminToken });
+    assert.strictEqual(res.status, 502);
+    assert.ok(!res.raw.includes('upstream detail'));
+    assert.ok(!res.raw.includes('r2.invalid'));
+  });
+  await setKey(null);
+});
+
+test('download: an unknown proposal id 404s', async () => {
+  const res = await request('GET', '/api/proposals/99999999/menu-print', { token: adminToken });
+  assert.strictEqual(res.status, 404);
+});
+
+test('an id past int4 is a 404 on every verb, never a 500', async () => {
+  const huge = '99999999999999999999';
+  const get = await request('GET', `/api/proposals/${huge}/menu-print`, { token: adminToken });
+  assert.strictEqual(get.status, 404);
+  const del = await request('DELETE', `/api/proposals/${huge}/menu-print`, { token: adminToken });
+  assert.strictEqual(del.status, 404);
 });

@@ -13,15 +13,13 @@
 // so the specific paths here are reached; keep it that way if shifts.js grows.
 
 const express = require('express');
-const crypto = require('crypto');
-const { Readable, pipeline } = require('stream');
 const { pool } = require('../db');
 const { auth, requireOnboarded } = require('../middleware/auth');
 const { beoReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
-const { NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
+const { NotFoundError, PermissionError } = require('../utils/errors');
 const { authorizeEventRead, buildEventDetailsPayload } = require('../utils/eventDetailsPayload');
-const { getSignedUrl } = require('../utils/storage');
+const { sendMenuPrintFile } = require('../utils/menuPrintFile');
 
 const router = express.Router();
 
@@ -170,51 +168,9 @@ router.get('/:shiftId/menu-print', auth, requireOnboarded, beoReadLimiter, async
   }
 
   const p = await pool.query('SELECT menu_print_key FROM proposals WHERE id = $1', [shift.proposal_id]);
-  const key = p.rows[0] && p.rows[0].menu_print_key;
-  if (!key) throw new NotFoundError('No menu print file for this event.');
-  // Path-traversal guard. Keys are server-generated under menu-print/<id>/, so
-  // pin BOTH the per-proposal prefix and reject any traversal segment: a prefix
-  // check alone would accept `menu-print/../<anything>` and, worse, would let a
-  // key belonging to one proposal be served under another.
-  const expectedPrefix = `menu-print/${shift.proposal_id}/`;
-  if (!key.startsWith(expectedPrefix) || key.includes('..') || key.includes('//')) {
-    throw new NotFoundError('No menu print file for this event.');
-  }
-
-  const url = await getSignedUrl(key);
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 8000);
-  let upstream;
-  try {
-    upstream = await fetch(url, { signal: ac.signal });
-  } catch (err) {
-    throw new ExternalServiceError('r2', err, 'Menu file is temporarily unavailable.');
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!upstream.ok) {
-    throw new ExternalServiceError('r2', new Error(`Upstream returned ${upstream.status}`), 'Menu file is temporarily unavailable.');
-  }
-  const ext = (key.split('.').pop() || 'pdf').replace(/[^a-z0-9]/gi, '');
-  res.set('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
-  res.set('Content-Disposition', `attachment; filename="bar-menu-${shift.proposal_id}.${ext}"`);
-  // no-cache, not max-age: this URL is stable but the object behind it is
-  // replaceable (a re-upload mints a new key and repoints the column). Caching
-  // for an hour would hand a staffer yesterday's menu to print and carry to the
-  // venue with no signal anything was wrong. ETag lets the browser revalidate
-  // cheaply; the key changes on every upload, so its digest is a free correct
-  // validator (the key itself stays server-side).
-  res.set('Cache-Control', 'private, no-cache');
-  res.set('ETag', `"${crypto.createHash('sha256').update(key).digest('hex').slice(0, 32)}"`);
-  // Stream, never buffer: a print-resolution file can run to the 10MB upload
-  // cap, and holding it whole in memory per download is the failure mode.
-  // pipeline (not pipe) tears down BOTH sides: a mid-stream R2 error destroys
-  // the socket (headers are gone, a failed download is the honest outcome),
-  // and a client disconnect destroys the R2 stream so the upstream fetch
-  // cannot linger until its own socket timeout.
-  const len = upstream.headers.get('content-length');
-  if (len) res.set('Content-Length', len);
-  pipeline(Readable.fromWeb(upstream.body), res, () => {});
+  // Guard, R2 proxy, caching headers and streaming: shared with the admin
+  // download (utils/menuPrintFile.js) so the two cannot drift.
+  await sendMenuPrintFile(res, shift.proposal_id, p.rows[0] && p.rows[0].menu_print_key);
 }));
 
 module.exports = router;

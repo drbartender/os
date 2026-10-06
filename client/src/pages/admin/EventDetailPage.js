@@ -32,6 +32,7 @@ import { venueMapQuery } from '../../components/VenueAddressFields';
 import { STAFF_URL } from '../../utils/constants';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import OutOfAreaKnob from './OutOfAreaKnob';
+import PackageDetails from './PackageDetails';
 import { useMobileView } from '../../context/MobileViewContext';
 import EventDetailPhone from '../mobile/EventDetailPhone';
 
@@ -534,27 +535,13 @@ function EventDetailPageDesktop() {
                       </div>
                     )}
 
-                    {(packageStructured || includes.length > 0) && (
-                      <details style={{ marginTop: 12 }}>
-                        <summary className="meta-k" style={{ cursor: 'pointer' }}>Package details</summary>
-                        <div style={{ marginTop: 8, fontSize: 12.5 }}>
-                          {packageStructured ? (
-                            packageStructured.map((section, si) => (
-                              <div key={si} style={{ marginBottom: 8 }}>
-                                <div style={{ fontWeight: 600, marginBottom: 2 }}>{section.heading}</div>
-                                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                                  {section.items.map((item, i) => <li key={i}>{item}</li>)}
-                                </ul>
-                              </div>
-                            ))
-                          ) : (
-                            <ul style={{ margin: 0, paddingLeft: 18 }}>
-                              {includes.map((item, i) => <li key={i}>{item}</li>)}
-                            </ul>
-                          )}
-                        </div>
-                      </details>
-                    )}
+                    {/* Package contents + every add-on with its catalog description (shared with Proposal Detail). */}
+                    <PackageDetails
+                      packageStructured={packageStructured}
+                      includes={includes}
+                      addons={proposal.addons}
+                      snapshotAddons={snapshot?.addons}
+                    />
                   </div>
                 </div>
               )}

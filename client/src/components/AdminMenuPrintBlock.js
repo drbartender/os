@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import api from '../utils/api';
 import Icon from './adminos/Icon';
 import StatusChip from './adminos/StatusChip';
+import { downloadMenuPrint } from '../utils/downloadMenuPrint';
 
 // Tri-state, derived exactly the way the server derives it: an uploaded file
 // always wins, the "not required" flag only reads through when no file exists.
@@ -44,6 +45,7 @@ function errorText(err, fallback) {
 export default function AdminMenuPrintBlock({ proposalId, menuPrintKey, menuNotRequired, onChange }) {
   const fileInputRef = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
 
   const status = deriveStatus(menuPrintKey, menuNotRequired);
@@ -108,6 +110,21 @@ export default function AdminMenuPrintBlock({ proposalId, menuPrintKey, menuNotR
 
   const triggerPicker = () => fileInputRef.current?.click();
 
+  // The finished print file Dallas posted, read back through the admin route
+  // (GET /proposals/:id/menu-print). Its own flag, not `busy`: downloading
+  // never blocks an upload, and an upload never blocks reading the old file.
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError('');
+    try {
+      await downloadMenuPrint(`/proposals/${proposalId}/menu-print`);
+    } catch (err) {
+      setError(errorText(err, 'Could not download the menu file.'));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="card">
       <div className="card-head">
@@ -128,6 +145,19 @@ export default function AdminMenuPrintBlock({ proposalId, menuPrintKey, menuNotR
         />
 
         <div className="vstack" style={{ gap: 6 }}>
+          {hasFile && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ justifyContent: 'center' }}
+              onClick={handleDownload}
+              disabled={downloading}
+            >
+              <Icon name="download" size={11} />
+              {downloading ? 'Downloading…' : 'Download'}
+            </button>
+          )}
+
           <button
             type="button"
             className="btn btn-secondary btn-sm"

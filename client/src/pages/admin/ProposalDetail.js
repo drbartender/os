@@ -19,6 +19,7 @@ import { ctDay, fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adm
 import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
+import PackageDetails from './PackageDetails';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import ProposalDetailStopDrip from './ProposalDetailStopDrip';
 import CancelEventDialog from './CancelEventDialog';
@@ -682,28 +683,13 @@ export default function ProposalDetail() {
                     </div>
                   )}
 
-                  {/* Package details (optional, structured if present) */}
-                  {(packageStructured || includes.length > 0) && (
-                    <details style={{ marginTop: 12 }}>
-                      <summary className="meta-k" style={{ cursor: 'pointer' }}>Package details</summary>
-                      <div style={{ marginTop: 8, fontSize: 12.5 }}>
-                        {packageStructured ? (
-                          packageStructured.map((section, si) => (
-                            <div key={si} style={{ marginBottom: 8 }}>
-                              <div style={{ fontWeight: 600, marginBottom: 2 }}>{section.heading}</div>
-                              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                                {section.items.map((item, i) => <li key={i}>{item}</li>)}
-                              </ul>
-                            </div>
-                          ))
-                        ) : (
-                          <ul style={{ margin: 0, paddingLeft: 18 }}>
-                            {includes.map((item, i) => <li key={i}>{item}</li>)}
-                          </ul>
-                        )}
-                      </div>
-                    </details>
-                  )}
+                  {/* Package contents + every add-on with its catalog description (shared with Event Detail). */}
+                  <PackageDetails
+                    packageStructured={packageStructured}
+                    includes={includes}
+                    addons={proposal.addons}
+                    snapshotAddons={snapshot?.addons}
+                  />
                 </div>
               </div>
 

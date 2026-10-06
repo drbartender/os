@@ -78,7 +78,7 @@ const tokenFor = (u) => jwt.sign({ userId: u.id, tokenVersion: u.token_version }
 // Captured from the CURRENT code, before the projection moved: the exact sorted
 // column list the legacy admin array returns. Pinning it is what makes the
 // "verbatim" move a verified claim instead of a trusted one.
-const LEGACY_KEYS = ["approved_by_role","approved_count","approved_staff","auto_assign_days_before","auto_assigned_at","bar_required","client_email","client_name","client_phone","consult_at","created_at","created_by","created_by_email","end_time","equipment_required","event_date","event_duration_hours","event_type","event_type_custom","guest_count","id","lat","lng","location","menu_done","notes","out_of_area_attached_at","out_of_area_attached_by","out_of_area_bonus_cents","out_of_area_locked_at","out_of_area_locked_user_id","package_bar_type","package_category","package_name","pending_count","pending_staff","plan_input_landed","positions_needed","proposal_amount_paid","proposal_guest_count","proposal_id","proposal_status","proposal_token","proposal_total","request_count","setup_minutes_before","shopping_list_status","start_time","status","supply_run_overridden","supply_run_required","updated_at"];
+const LEGACY_KEYS = ["approved_by_role","approved_count","approved_staff","auto_assign_days_before","auto_assigned_at","bar_required","client_email","client_name","client_phone","consult_at","created_at","created_by","created_by_email","end_time","equipment_required","event_date","event_duration_hours","event_type","event_type_custom","guest_count","id","lat","lng","location","menu_done","notes","out_of_area_attached_at","out_of_area_attached_by","out_of_area_bonus_cents","out_of_area_locked_at","out_of_area_locked_user_id","package_bar_type","package_category","package_name","pending_count","pending_staff","plan_input_landed","positions_needed","proposal_amount_paid","proposal_balance_due_date","proposal_guest_count","proposal_id","proposal_status","proposal_token","proposal_total","request_count","setup_minutes_before","shopping_list_status","start_time","status","supply_run_overridden","supply_run_required","updated_at"];
 let adminToken, staffToken, staffId, clientId, propA, propB, propC, propD, propE, propF;
 const S = {}; // fixture key -> shift id
 
@@ -199,6 +199,16 @@ test('legacy call: bare array, every fixture present, the column set unchanged, 
   assert.deepEqual(keys, LEGACY_KEYS);
   assert.equal('event_key' in r.body[0], false);
   assert.equal('venue_city' in r.body[0], false);
+});
+
+// The desktop Status column prints "Due <date>" / "Past due <date>" from this
+// field and slices YYYY-MM-DD off the front, the same way it reads event_date.
+test('legacy call carries the balance due date the Status column prints', async () => {
+  await pool.query('UPDATE proposals SET balance_due_date = $2::date WHERE id = $1', [propA, '2031-05-04']);
+  const r = await get('/api/shifts', adminToken);
+  const row = r.body.find((x) => x.id === S.a1);
+  assert.ok(row, 'seeded shift present');
+  assert.equal(String(row.proposal_balance_due_date).slice(0, 10), '2031-05-04');
 });
 
 // The dev DB holds other upcoming events; walk one-event pages until ours shows.

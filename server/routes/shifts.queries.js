@@ -220,6 +220,10 @@ function adminShiftsSelectSql(extraColumns = '') {
         u.email AS created_by_email,
         p.total_price AS proposal_total,
         p.amount_paid AS proposal_amount_paid,
+        -- When the balance is due: the desktop Status column prints it under an
+        -- owed chip ("Due Oct 12" / "Past due Oct 1"). A DATE, so it serializes
+        -- like event_date and the client slices the YYYY-MM-DD off the front.
+        p.balance_due_date AS proposal_balance_due_date,
         COALESCE(p.guest_count, s.guest_count) AS proposal_guest_count,
         p.token AS proposal_token,
         p.status AS proposal_status,

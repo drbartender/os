@@ -2,8 +2,9 @@
 //
 // Staff are responsible for printing the bar menu and bringing it framed; this
 // is where admin posts the file they print, or declares that this event needs
-// no printed menu. Staff download it through the authed proxy at
-// GET /api/shifts/:shiftId/menu-print (server/routes/eventDetails.js).
+// no printed menu, and downloads it back (GET below). Staff download it through
+// the authed proxy at GET /api/shifts/:shiftId/menu-print
+// (server/routes/eventDetails.js); both stream through utils/menuPrintFile.js.
 //
 // Storage: R2 under menu-print/<proposalId>/<uuid>.<ext>. Replacing or removing
 // a file ORPHANS the old object — storage.js exposes no delete, and this
@@ -16,10 +17,11 @@ const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
-const { adminWriteLimiter } = require('../../middleware/rateLimiters');
+const { adminWriteLimiter, beoReadLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError, ConflictError } = require('../../utils/errors');
 const { uploadFile } = require('../../utils/storage');
+const { sendMenuPrintFile } = require('../../utils/menuPrintFile');
 
 const router = express.Router();
 
@@ -64,7 +66,9 @@ function statusOf(row) {
 }
 
 async function getProposalRow(id) {
-  if (!Number.isFinite(id)) throw new NotFoundError('Proposal not found.');
+  // Bounded to int4: parseInt accepts '99999999999999999999', and pg would
+  // raise 22003 on the compare, a 500 that pages Sentry instead of a 404.
+  if (!Number.isInteger(id) || id <= 0 || id > 2147483647) throw new NotFoundError('Proposal not found.');
   const r = await pool.query(
     'SELECT id, menu_print_key, menu_not_required FROM proposals WHERE id = $1',
     [id]
@@ -72,6 +76,16 @@ async function getProposalRow(id) {
   if (!r.rowCount) throw new NotFoundError('Proposal not found.');
   return r.rows[0];
 }
+
+// GET /:id/menu-print — download the posted file (admin/manager). Keyed by the
+// proposal so an event with no shift row can still be read; the traversal guard
+// and the R2 stream are the staff route's, shared through menuPrintFile.js.
+// beoReadLimiter is the staff route's per-user read budget: every call presigns
+// and streams up to 10 MB from R2, and a human never comes near 60 in 15 min.
+router.get('/:id/menu-print', auth, requireAdminOrManager, beoReadLimiter, asyncHandler(async (req, res) => {
+  const row = await getProposalRow(parseInt(req.params.id, 10));
+  await sendMenuPrintFile(res, row.id, row.menu_print_key);
+}));
 
 // POST /:id/menu-print — upload or replace the print file.
 router.post('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {

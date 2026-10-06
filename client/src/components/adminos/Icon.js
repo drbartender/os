@@ -18,6 +18,7 @@ const ICONS = {
   filter: <><path d="M3 5h18l-7 9v5l-4 2v-7L3 5Z"/></>,
   sort: <><path d="M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3"/></>,
   down: <><polyline points="6 9 12 15 18 9"/></>,
+  download: <><path d="M12 4v11"/><polyline points="7 10 12 15 17 10"/><path d="M5 20h14"/></>,
   right: <><polyline points="9 6 15 12 9 18"/></>,
   left: <><polyline points="15 6 9 12 15 18"/></>,
   up: <><polyline points="18 15 12 9 6 15"/></>,

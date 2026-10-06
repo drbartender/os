@@ -16,9 +16,9 @@ import useUrlListState from '../../hooks/useUrlListState';
 import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
-import { fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
+import { fmtDate, fmtTimeRange24, dayDiff, ctDay } from '../../components/adminos/format';
 import { rowRoleFill, isCancelledEvent } from '../../components/adminos/shifts';
-import { eventPlanState, eventPaymentState } from '../../components/adminos/eventPlan';
+import { eventPlanState, eventPaymentState, eventBalanceDue } from '../../components/adminos/eventPlan';
 import { useMobileView } from '../../context/MobileViewContext';
 import EventsListPhone from '../mobile/EventsListPhone';
 
@@ -278,8 +278,12 @@ function EventsDashboardDesktop() {
 const PLAN_CHIP_KIND = { client: 'neutral', you: 'warn', done: 'ok' };
 const PAY_CHIP_KIND = { paid: 'ok', owed: 'danger', cancelled: 'neutral' };
 
-// Bar and Supplies are FACTS about the event, not alarms, so they stay quiet
-// and dotless rather than competing with the Plan column's amber.
+// Bar and Supplies are FACTS about the event, not alarms, so they stay
+// dotless rather than competing with the Plan column's amber. Supplies wears
+// the info blue (Dallas, 2026-09-22: "the grey is too incognito"); Bar stays
+// neutral. The phone list colours these on its own (.m-tag-*), where blue is Bar.
+const PREP_CHIP_KIND = { Bar: 'neutral', Supplies: 'info' };
+
 function PrepCell({ event: e }) {
   const tags = [];
   if (e.bar_required) tags.push('Bar');
@@ -287,7 +291,7 @@ function PrepCell({ event: e }) {
   if (!tags.length) return <span className="muted">—</span>;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-      {tags.map(t => <StatusChip key={t} kind="neutral" dot={false}>{t}</StatusChip>)}
+      {tags.map(t => <StatusChip key={t} kind={PREP_CHIP_KIND[t]} dot={false}>{t}</StatusChip>)}
     </div>
   );
 }
@@ -310,6 +314,12 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   const [searchParams] = useSearchParams();
   const guestCount = e.guest_count || e.proposal_guest_count;
   const pay = eventPaymentState(e);
+  // When an owed balance is due, against the CHICAGO day; same year rule as the
+  // Date column so a 2027 due date never reads as next month's.
+  const due = eventBalanceDue(e, ctDay(Date.now()));
+  const dueOpts = due && due.ymd.slice(0, 4) !== String(new Date().getFullYear())
+    ? { year: 'numeric' }
+    : undefined;
   const fullyPaid = pay.kind === 'paid';
 
   // The package name earns a place only when it changes how the event runs.
@@ -368,6 +378,11 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
         {pay.kind === 'none'
           ? <span className="muted">{pay.label}</span>
           : <StatusChip kind={PAY_CHIP_KIND[pay.kind]}>{pay.label}</StatusChip>}
+        {due && (
+          <div className={due.pastDue ? 'sub pay-past-due' : 'sub'}>
+            {due.pastDue ? 'Past due ' : 'Due '}{fmtDate(due.ymd, dueOpts)}
+          </div>
+        )}
       </td>
       <td className="shrink" onMouseUp={(ev) => ev.stopPropagation()}>
         <KebabMenu items={kebabItems} />

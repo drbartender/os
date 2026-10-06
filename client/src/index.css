@@ -13530,6 +13530,10 @@ html[data-app="admin-os"][data-skin="light"] .chip.ok { color: hsl(145 55% 32%);
 html[data-app="admin-os"][data-skin="light"] .chip.warn { color: hsl(28 88% 34%);  background: hsl(38 92% 52% / 0.16); }
 html[data-app="admin-os"][data-skin="light"] .chip.danger { color: hsl(358 72% 40%); background: hsl(358 72% 55% / 0.14); }
 html[data-app="admin-os"][data-skin="light"] .chip.info { color: hsl(208 72% 36%); background: hsl(208 72% 52% / 0.14); }
+/* Events list Status column: the "Past due <date>" line under an owed chip, in the
+   same red as .chip.danger's text on each skin. An upcoming "Due <date>" stays .sub. */
+html[data-app="admin-os"] .sub.pay-past-due { color: hsl(358 72% 65%); font-weight: 600; }
+html[data-app="admin-os"][data-skin="light"] .sub.pay-past-due { color: hsl(358 72% 40%); }
 
 /* Inline clickable client name in the EventDetailPage heading — looks like the
    heading text, behaves like a link (keyboard-focusable, hover/focus underline). */

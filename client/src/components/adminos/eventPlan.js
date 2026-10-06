@@ -97,3 +97,21 @@ export function eventPaymentState(e) {
   if (paid >= total) return { kind: 'paid', label: 'Paid in Full' };
   return { kind: 'owed', label: fmt$(total - paid) };
 }
+
+/**
+ * The line under an owed Status chip: when the balance is due, and whether that
+ * day has passed. `{ ymd, pastDue }`, or null unless the event OWES money and
+ * its proposal carries a due date (paid, cancelled and proposal-less rows get
+ * nothing). Due TODAY is not past due.
+ *
+ * `todayYmd` is the Chicago day, passed in (ctDay(Date.now())) so the flip
+ * never rides the browser's zone; with no override dayDiff compares against
+ * the browser's local day, like the Plan column does.
+ */
+export function eventBalanceDue(e, todayYmd) {
+  if (eventPaymentState(e).kind !== 'owed') return null;
+  const raw = e.proposal_balance_due_date;
+  const ymd = typeof raw === 'string' ? raw.slice(0, 10) : null;
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  return { ymd, pastDue: dayDiff(ymd, todayYmd) < 0 };
+}

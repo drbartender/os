@@ -1,4 +1,4 @@
-import { eventPlanState, eventPaymentState } from './eventPlan';
+import { eventPlanState, eventPaymentState, eventBalanceDue } from './eventPlan';
 
 // Every case pins `today` so a passing suite never depends on the wall clock.
 const TODAY = '2026-08-25';
@@ -190,5 +190,43 @@ describe('eventPlanState on a BYOB row with input but no list', () => {
   it('still waits on the planner when nothing has landed', () => {
     const s = eventPlanState(base({ package_category: 'byob', plan_input_landed: false }), TODAY);
     expect(s).toEqual({ owner: 'client', tags: ['Planner'] });
+  });
+});
+
+// The line under an owed Status chip on the desktop Events list (Dallas,
+// 2026-10-06: the due date under the balance, past due in red). The DATE
+// arrives serialized like event_date, so the helper slices YYYY-MM-DD off it.
+describe('eventBalanceDue', () => {
+  const owed = (over = {}) => base({
+    proposal_total: 1200, proposal_amount_paid: 400,
+    proposal_balance_due_date: '2026-08-29T05:00:00.000Z', ...over,
+  });
+
+  it('gives the due day, not yet past due, when it is ahead', () => {
+    expect(eventBalanceDue(owed(), TODAY)).toEqual({ ymd: '2026-08-29', pastDue: false });
+  });
+
+  it('is not past due on the due day itself', () => {
+    expect(eventBalanceDue(owed({ proposal_balance_due_date: '2026-08-25' }), TODAY).pastDue).toBe(false);
+  });
+
+  it('is past due the day after', () => {
+    expect(eventBalanceDue(owed({ proposal_balance_due_date: '2026-08-24' }), TODAY))
+      .toEqual({ ymd: '2026-08-24', pastDue: true });
+  });
+
+  it('shows nothing once the balance is paid, however late the date', () => {
+    expect(eventBalanceDue(owed({ proposal_amount_paid: 1200, proposal_balance_due_date: '2026-08-01' }), TODAY)).toBeNull();
+  });
+
+  it('shows nothing on a cancelled event or a row with no proposal', () => {
+    expect(eventBalanceDue(owed({ proposal_status: 'archived' }), TODAY)).toBeNull();
+    expect(eventBalanceDue(owed({ proposal_id: null }), TODAY)).toBeNull();
+  });
+
+  it('shows nothing when the proposal carries no due date (or a malformed one)', () => {
+    for (const bad of [null, undefined, '', 'soon', 42]) {
+      expect(eventBalanceDue(owed({ proposal_balance_due_date: bad }), TODAY)).toBeNull();
+    }
   });
 });
