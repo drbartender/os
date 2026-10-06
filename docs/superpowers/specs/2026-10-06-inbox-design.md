@@ -1093,3 +1093,112 @@ These text people from three numbers, enforce opt-out, touch shift release, or c
 
    Each step must appear in `sms_messages` with the right `metadata.to` and outcome. STOP must block every line, and HELP must be answered once. Only then is the line added to `INBOX_TEXT_LINES` in Render.
 7. **Run alongside Cowork.** Dallas and Zul use Inbox for a week alongside the Cowork job, and pieces 3 and 4 follow. The Cowork job is retired (piece 5) once Inbox has earned trust.
+
+## 17. Amendments from planning (2026-10-06)
+
+The plan (`docs/superpowers/plans/2026-10-06-inbox.md`) was written lane by lane against this spec and verified against main. Planning surfaced the points below. Each one amends the section named, and the plan implements the amended reading.
+
+1. **Lane order (sections 15, 16).** `send-attribution` runs after `sms-lines`, because both edit `server/utils/sms.js`, a sensitive path. `inbox-engine` follows both. `inbox-ai` and `inbox-page` follow `inbox-engine` and run in parallel.
+2. **Send idempotency (sections 7, 8).** A unique index on `sms_messages` cannot stop two concurrent requests from both texting, because the staff send core writes its row after the Twilio call. So the index is replaced by a reservation table, `inbox_sends`:
+   ```sql
+   inbox_sends (
+     send_id UUID PRIMARY KEY,
+     person_key TEXT NOT NULL,
+     user_id INTEGER REFERENCES users(id),
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     result JSONB
+   )
+   ```
+   - The text route inserts the reservation before any Twilio call.
+   - A repeat of a `send_id` that has a stored result gets that result back.
+   - A repeat while the first send is still running gets 409.
+   - `metadata.send_id` is still recorded on the `sms_messages` row, for tracing.
+3. **`send_id` reuse (sections 4.3, 10).**
+   - **Kept:** the client keeps a `send_id` when the server never answered (a network error); on 409 `INBOX_SEND_IN_PROGRESS`, which means the first send is still running; and on any answer with no error code, such as a rate-limiter 429, which arrives before any reservation.
+   - **Spent:** any other answer spends the id, including a Twilio failure that stored a failed row and 409 `INBOX_SEND_UNRECORDED`. The next tap then gets a new id. Otherwise a failed text could never be re-sent.
+   - **Stuck reservations:** a reservation older than 2 minutes with no stored result answers `INBOX_SEND_UNRECORDED`, so a crashed request can never block a draft for good.
+4. **Which staff texts are skipped (section 5.3).** Lane `sms-lines` stores a `metadata.outcome` on every inbound text. The staff values are:
+   - `staff_confirm` and `staff_cant`: a shift actually changed. These two, and only these, are skipped as inbound.
+   - `staff_confirm_no_shift`, `staff_cant_no_shift`, `staff_confirm_ambiguous`, `staff_cant_ambiguous`, `staff_cant_race`, `staff_freeform` and `conversation`: each still needs a human answer, so each counts.
+5. **Keyword rows in the AI slice (section 6.2).** Only the seven unambiguous opt words (`stop`, `stopall`, `unsubscribe`, `optout`, `revoke`, `start`, `unstop`) are left out of the slice. `help`, `info`, `cancel`, `yes`, `end` and `quit` stay, because section 5.3 counts them as real messages.
+6. **The AI call (section 6.3).**
+   - It uses `client.beta.messages.parse()`, which carries the fallback beta in a header. The hand-validated fallback path is not needed.
+   - When the model is a Haiku, the call omits `effort` and the fallback.
+   - Every call has a 2-minute deadline, because the SDK otherwise waits out any `retry-after` with no ceiling. The deadline is tied by a test to the 5-minute stale-`pending` window.
+   - Messages are capped at 1,500 characters each and prompts at 12,000, dropping the oldest lines first.
+   - The AI-read status reads "off" when the key is unset or the scheduler is disabled.
+   - The daily cap counts attempts, not rows.
+7. **The first-text prefix (sections 8, 9).** The "Dr. Bartender: " prefix on a first text from a 224 line applies to the Messages-page reply as well as to Inbox. The item payload carries it as a map by line, for example `{ "1922": "Dr. Bartender: " }`.
+8. **422 responses (section 8).** `server/utils/errors.js` has no 422 class. `inbox-engine` builds them from `AppError` directly.
+9. **Refund-notice callers (section 2).** `cancel.js:683` and `cancelLineItem.js:225` are two more human callers. Both pass `sentBy`.
+10. **Allowlist strings (sections 5.4, 26).**
+    - `ANSWERING_MESSAGE_TYPES` = `proposal_sent`, `initial_proposal`, `proposal_sent_sms`, `proposal_options_sent`, `invoice_sent`, `shopping_list_ready`, `shopping_list_ready_sms`, `consult_recap`, `change_request_decision`, `reschedule`.
+    - `PROPOSAL_SEND_MESSAGE_TYPES` is the first four.
+    - A `send_now` create writes no `status_changed` row. Inbox therefore sees that send through its `message_log` rows alone.
+    - When an `sms:` row and an `ml:` row are merged into one event, the author and the type come from the `ml:` row. The "Send to client" and event-details texts leave `sender_id` NULL on purpose.
+11. **Messages route suite (section 14).** None existed. `sms-lines` creates `server/routes/messages.send.test.js` and runs it green against the old route before the extraction.
+12. **Item payload (section 8).** The item gains:
+    - `status` (`waiting`, `snoozed`, `handled` or `quiet`);
+    - `snooze` (`{ until, by_name, mine }` or null);
+    - `closed` (`{ reason_text, closed_at, by }` or null);
+    - `state.since`, when the claim was made.
+13. **Client routes and display (sections 4, 10, 11).**
+    - **Route:** one route, `/inbox/:personKey?`, so drafts survive moving between the list and an item.
+    - **Toast:** it sits under the header, as the design draws it.
+    - **Snooze dates:** Pick a date offers tomorrow through 7 days out.
+    - **Closed items:** a closed item hides On it, Snooze and Done but keeps the reply box.
+    - **Handled rows:** they carry a muted "what they needed" line (section 4.5 wins over the mock).
+    - **Feed times:** feed times are relative, and the Chicago clock time with "CT" sits in their hover text.
+    - **House Lights:** the shipped light-skin rules apply to Inbox as to every admin page.
+14. **The CLAUDE.md design-convention amendment (section 9)** is committed on main with the plan, before any lane, so `inbox-page` builds from the vendored export with the convention already allowing it.
+15. **Fix-list additions:**
+    - Shift approval and auto-assign texts (`shifts.approval.js:370`, `:590`; `autoAssign.js:402`) write no `sms_messages` row, so decision 17 cannot see them. This errs safe: no shift is released, but a CONFIRM may land in Inbox.
+    - Admin links styled as `.btn` render in IM Fell (`ClientDetail.js`, `PayPanel.js`, `PlansDrawer.js`).
+    - The client's signed-confirmation email (`publicToken.js:598`) logs as `'other'`.
+16. **Rules details pinned by `inbox-engine` (sections 5.5, 8):**
+    - A claim also ends when any reply follows it, holding or real.
+    - A Reopen ends an active snooze.
+    - A Reopen on or after the event's Chicago date overrides "event happened".
+    - The AI slice is capped at 20 lines after the anchor, plus up to 3 lines of context.
+    - Thumbtack's own system texts on relay numbers (for example "undeliverable") count as inbound.
+    - `parsePersonKey` is stricter than the section 8 pattern for `c-` and `s-`: no leading zeros, and at most int4.
+    - The effective text-route limit is 10 sends a minute per user, because the shared `adminWriteLimiter` sits in front of the Inbox limiter.
+    - `INBOX_HISTORY_START` is set to midnight Chicago, 30 days before the day `inbox-engine` is cut, and a test checks that.
+17. **Photos (section 4.2):** Twilio media URLs may need account credentials to load. The first prod picture message confirms whether the link opens directly. If it does not, a follow-up proxies it, and nothing else changes.
+18. **Loading (section 5.7).** `inbox-engine` reads light event headers (no message text) since the history floor in pass 1, rather than SQL aggregates, and loads full rows only for the people who matter. Today that is a few thousand rows. The engine logs a warning when pass 1 passes 50,000 headers, which is the signal to add aggregates. The AI tick reads the same 30-second cached snapshot as the page, and only an explicit `fresh` read bypasses it.
+19. **Delivery callbacks that arrive before their row (sections 7, 9).** Twilio can report `failed` or `undelivered` before the sending request has inserted its `sms_messages` row. `POST /api/sms/status` then records the failure in `sms_status_orphans`:
+    ```sql
+    sms_status_orphans (
+      twilio_sid TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      error_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    ```
+    The SMS reader treats any row whose SID appears there as failed, so a fast failure is never lost.
+20. **One failure text and one line rule (sections 8, 9).**
+    - `twilioErrorText(err)` in `server/utils/sms.js` formats every stored send failure as `Twilio <code> (failed)`. The status callback already uses this form.
+    - `lastHumanLineFromRows(rows)` in `server/utils/smsLines.js` is the single "last human-involved line" rule. It counts Thumbtack relay rows as the person's 888 texts. The Messages reply and Inbox both use it.
+21. **The "they texted" hint (sections 4.3, 8).** The item's `reply` gains `their_line`, the line of the person's latest inbound text, which feeds the hint. `last_line` keeps its meaning for the FROM default.
+22. **Moved person keys (sections 5.2, 7).** An unknown number can become a client, and a Thumbtack lead can gain one. The engine therefore folds every action, seen mark and read stored under a person's alias keys into their current key:
+    - an alias key is the `p-` key of any phone they own, or the `t-` key of any lead they own;
+    - reads match by `subject_ref` alone;
+    - a key with taps but no events never creates a person, so there are no phantom waiting rows.
+23. **One event per failed send (section 5.4).** A send that throws leaves an SMS row with no SID and, when the client has a proposal, a `message_log` row with no provider id. The two are paired as one event when they fall within 10 seconds for the same person.
+24. **Copy and display:**
+    - **No-proposal label:** a lead with no proposal shows "Not sent yet", the design's copy.
+    - **Opt-keyword alert:** the unknown-sender opt-keyword alert copy changes, because decision 10 made the old copy false.
+    - **Validation messages:** they carry their real copy, never "Please fix the errors below".
+    - **Toasts:** the Inbox toast styling (its placement under the header, and the square House Lights edges) applies only while Inbox is open. Every other admin page keeps today's toast.
+25. **Privacy line (section 9).** It reads "without your phone number, email address, or card and account numbers". Short numbers, such as guest counts, are kept in what the AI reads, because they are what the person is asking about.
+26. **The AI call, refined (sections 6.3, 6.6).**
+    - **Tokens:** `max_tokens` is 4096, because thinking is always on.
+    - **Model:** `INBOX_AI_MODEL` accepts only `claude-opus-5-5` or `claude-haiku-4-5`; any other value falls back to the default, with one boot warning.
+    - **Pre-clip:** each line is cut to 3,000 characters before redaction, then to 1,500 after.
+    - **Cap warning:** it is throttled to once an hour.
+    - **Cost:** a maximal read costs about 2 to 2.5 cents, so the cap's worst day is about $7 to $8.
+27. **Unsettled inbound rows (section 5.3).** A row whose processing has not finished, and so has no outcome yet, counts as inbound. The old whole-body CONFIRM and CANT rule applies only to processed rows from before `sms-lines`.
+28. **For piece 4.** Bridge calls already use the event channel `voice`, so the Google Voice reader needs its own token, such as `gvoice`.
+29. **Group staff sends (lane `sms-lines`, decision 7).** After the extraction, each staffer's row is inserted right after that staffer's text, instead of all rows at the end. A database error mid-group therefore stops the remaining sends, instead of losing the record of the texts already sent. Dallas confirms this before `sms-lines` is cut.
+30. **Merge and push pairing (sections 15, 16).** `inbox-ai` merges before `inbox-page`. `inbox-page` then re-verifies against the new HEAD. No push carries `inbox-ai` without `inbox-page`, because the key is already in Render and AI reads would start with no page to show them.
+31. **Unknown-number keys (section 8).** The page accepts `p-` keys of exactly 10 digits. The server accepts 1 to 20, but only ever builds 10-digit keys, so the two never disagree in practice. A 400 on an item read shows the "gone" state.
