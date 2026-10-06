@@ -838,15 +838,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
 
     // Staffing-driven gratuity change (§7): the crew grew, so the gratuity total
     // rose at the SAME rate the client agreed to. Notify by email (not SMS),
-    // best-effort, post-commit — a failure must NEVER 500 the committed PATCH.
+    // best-effort, post-commit: a failure must NEVER 500 the committed PATCH.
     //
     // DELIBERATELY AUTOMATIC, not part of the notify opt-in (owner decision
-    // 2026-07-22): this is a billing disclosure — the invoice cascade above
+    // 2026-07-22): this is a billing disclosure. The invoice cascade above
     // mints/grows a payable invoice with no email of its own, so this is the
     // only thing telling the client they owe more. Only the suppression gate
-    // applies: a missing or placeholder address, or a permanent bounce
-    // (email_status 'bad'); a client has no email preference. See the
-    // notify-client spec reversal note before ever folding this into the popup.
+    // applies: a missing or placeholder address, a permanent bounce
+    // (email_status 'bad'), or an archived proposal (this PATCH does not refuse
+    // one); a client has no email preference. See the notify-client spec
+    // reversal note before ever folding this into the popup.
     if (notifyStaffingGratuity) {
       try {
         const full = await pool.query(
