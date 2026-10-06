@@ -1908,6 +1908,22 @@ blocked in that session).
   1 (2 above 100 guests), with no extra container for a second salt-rimmed drink. Ginger Beer and Fresh
   Mint come out exactly as before. Lists you already hand-edited keep your numbers on regenerate.
 
+### Admin UI batch: Supplies chip, balance due date, menu-print Download, Package details add-ons. Merged 2026-10-06 as `7a1aa28b`, NOT yet pushed.
+
+Moves to Tier 3b the moment `git merge-base --is-ancestor 7a1aa28b origin/main` says yes. Verified by
+tests (175 client tests across the touched suites on main, menuPrint 17/17, eventDetails 19/19, beo
+29/29, the shifts list 10/10 in both timezones), three reviewers, and the CI client build. Never
+opened signed in (the admin sign-in token was blocked in that session).
+
+- Events (desktop): the Prep column's Supplies chip is blue, Bar stays grey. In the Status column every
+  event that owes money shows "Due <date>" under the amount; one already past its due date shows
+  "Past due <date>" in red (two were past due on 10/06). Paid and cancelled rows show no line.
+- An event with a posted bar menu: the Bar menu print card has Download above Replace; the file saves
+  as bar-menu-<id>.pdf (or .png/.jpg) and is the one you uploaded.
+- An event with The Foundation: open Package details. Add-ons lists The Foundation with its description
+  and "Includes: Ice Delivery, Cups & Disposables, Bottled Water"; a champagne toast with the
+  non-alcoholic option reads "Non-Alcoholic Bubbles Toast". Same on the matching proposal's page.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

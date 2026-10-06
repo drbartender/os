@@ -47,10 +47,10 @@ first three sit above the divider.
 1. BEO finalize clicks → SHIPPED 2026-09-22 (lane beo-approve-is-review, `3934cffc`, pushed 2026-09-24); residuals under Potions → Derived BEO finalize follow-ups.
 2. "Copy compare link" bounces the client to the sign page → SHIPPED 2026-10-02 (`a43f864e`, quick fix on main).
 3. Margarita salt lands at four or more containers → SHIPPED 2026-10-05 (`addd55ad`, lane recipe-qty); follow-ups under Potions.
-4. Supplies chip is grey on the desktop events list → Admin UI (one word).
-5. Show when an event was booked → Admin UI (client-only).
-6. Admin cannot download the menu print file → Admin UI (one route, one button).
-7. "Package details" never shows what is in The Foundation → Admin UI.
+4. Supplies chip is grey on the desktop events list → SHIPPED 2026-10-06 (`7a1aa28b`, lane admin-ui-batch; info blue, Bar stays grey, phone untouched).
+5. Show when an event was booked → DROPPED by Dallas 2026-10-06 (the message history covers it). Shipped instead in `7a1aa28b`: the desktop Events list prints the balance due date under an owed Status chip, red once past due.
+6. Admin cannot download the menu print file → SHIPPED 2026-10-06 (`7a1aa28b`).
+7. "Package details" never shows what is in The Foundation → SHIPPED 2026-10-06 (`7a1aa28b`).
 8. Planner answers beside the shopping list → Potions.
 9. Fresh-squeezed juice add-on → Potions (needs a rate from Dallas).
 10. Staff opt-in for "menu is ready to print" → Staff, shifts, and the roster.
@@ -2043,41 +2043,6 @@ the accented spelling) or the two spellings stop matching each other.
     leading section icons are bright where the benchmark's are grey.
   - Words: "No connection, didn't save."; the button that writes reads "Approve" and not
     "Approve as Bartender" (a failed save now names the role).
-- **Supplies chip on the events list is grey (Dallas: *"the grey is too incognito"*, maybe blue).**
-  Desktop: `PrepCell` in `EventsDashboard.js` renders `Bar` and `Supplies` as `StatusChip
-  kind="neutral" dot={false}` by design ("facts, not alarms"). A blue chip token already exists and
-  `StatusChip` accepts it: `kind="info"` (`.chip.info`, fixed hue 208, both skins). One-word change
-  for Supplies. Phone (`EventsListPhone.js`): Supplies is GREEN in House Lights and VIOLET in After
-  Hours since `a84555c3` (`.m-tag-supplies`), and Bar is BLUE (`.m-tag-bar`, `--info`), so making
-  phone Supplies blue collides with Bar;
-  leave the phone row alone unless Dallas says otherwise.
-- **Show when an event was booked (Dallas: *"I want to know when an event was booked."*).** No
-  surface shows it. The right column is `proposals.accepted_at` (stamped `COALESCE(accepted_at,
-  NOW())` by public sign-and-pay, admin status → accepted, and admin record-payment; the Stripe
-  webhooks do NOT stamp it, so a pay-without-sign row can be NULL). It is already on the
-  `EventDetailPage` payload (`GET /proposals/:id` is `SELECT p.*`) and never rendered. Render
-  "Booked <date>" in the event header beside the event date, as `COALESCE(accepted_at,
-  client_signed_at, first succeeded proposal_payments.created_at)`. Client-only for the detail
-  page; an events-list column would need the field added to the `/shifts` list query.
-- **Admin cannot download the menu print file.** `AdminMenuPrintBlock.js` (event detail, "Bar menu
-  print") has Upload / Replace / Remove / "No menu needed" and no download or preview; the only
-  read route is the assigned-staff one, `GET /shifts/:shiftId/menu-print` (`eventDetails.js`; admin
-  bypasses the assignment check but it is keyed by shift). Add `GET /proposals/:id/menu-print` next
-  to the POST/PATCH/DELETE in `menuPrint.js` (same R2 proxy + traversal guard as the staff route)
-  and a Download button on the card when status is `ready`. The file is the finished PRINT file
-  Dallas uploaded, not a client artifact: the client only ever supplies a brief
-  (`selections.menuTheme` / `drinkNaming` / `menuDesignNotes`) and a logo.
-- **"Package details" never shows what is in The Foundation (Dallas: *"when I click on package
-  details I need to see the add-on details as well"*).** The disclosure on `EventDetailPage.js`
-  (and its twin on `ProposalDetail.js`) renders the hard-coded `PACKAGES` catalog
-  (`client/src/data/packages.js`) or `service_packages.includes`, and nothing about the proposal's
-  add-ons; add-ons reach the page only as `PricingBreakdown` lines, a label and a dollar amount.
-  Bundle contents live in `BUNDLE_INCLUDED` (`bundleConfig.js`, re-exported by
-  `client/src/utils/proposalRules.js`): the-foundation = ice-delivery-only + cups-disposables-only
-  + bottled-water-only. `BundlePicker.js` already renders exactly that list with names from the
-  add-on catalog. Build: under the package list in the same disclosure, one block per proposal
-  add-on with its `service_addons.description`, and for a bundle the included component names. No
-  schema change.
 - **Two client-side Chicago-day helpers now exist.** `utils/chicagoDay.js` (staff skin, added
   2026-08-25 with the paid_at fix) and `ctDay` in `components/adminos/format.js` (admin skin,
   added the same day) are the same function. They were kept separate because `pages/staff`
