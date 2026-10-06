@@ -370,6 +370,14 @@ scripts/testdb-smoke.js
 scripts/money-smoke-list.txt
 .husky/pre-push
 
+# The dev-JWT minters and their shared dev-only gate (2026-10-06). dev-signin.js
+# runs WITHOUT a prompt (Dallas's allow rule in ~/.claude/settings.json pins its
+# absolute path), so an edit to it, or to the gate both scripts trust, is code
+# that runs unprompted and mints sessions. Security review, 2026-10-06.
+scripts/dev-signin.js
+scripts/mobile-capture.js
+scripts/lib/devDbGate.js
+
 # Mobile-admin auth + PWA perimeter (2026-08-14, spec 2026-08-13-mobile-admin
 # section 8). The webauthn routes mint sessions; AuthContext and
 # SessionExpiryHandler decide when a token is destroyed; the admin service

@@ -19,17 +19,13 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { URL } = require('node:url');
+const { assertDevDatabase } = require('./lib/devDbGate');
 
 function die(msg) { console.error('[mobile:check] ' + msg); process.exit(1); }
 
 // ---- Environment gate: BEFORE any DB connection or token minting ----
-if (process.env.NODE_ENV === 'production') die('refusing to run: NODE_ENV=production');
-if (!process.env.DATABASE_URL) die('DATABASE_URL missing');
+assertDevDatabase(die);
 if (!process.env.JWT_SECRET) die('JWT_SECRET missing');
-const DEV_DB_HOSTS = ['ep-old-feather-adoh3rf3-pooler.c-2.us-east-1.aws.neon.tech'];
-const dbHost = new URL(process.env.DATABASE_URL).hostname;
-if (!DEV_DB_HOSTS.includes(dbHost)) die(`refusing to run: DATABASE_URL host "${dbHost}" is not the dev branch`);
 
 const { chromium } = require('playwright-core');
 const { Pool } = require('pg');
