@@ -1968,10 +1968,9 @@ Client view both keep the panel. What is left:
 - The 2 upcoming bookings whose planner answers carry no activeModules show "which has no answers to
   show here". Settled (Dallas, 10/06): old plans keep behaving as they have; handle one when it comes up.
 
-### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged as the lane's squash, NOT yet pushed.
+### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged 2026-10-06 as `589092fc`, NOT yet pushed.
 
-Put the squash sha here at merge: `git log main --oneline --grep 'merge(lane ma-e3-edit-sheet'` prints
-it. It moves to Tier 3b the moment `git merge-base --is-ancestor <that sha> origin/main` says yes.
+It moves to Tier 3b the moment `git merge-base --is-ancestor 589092fc origin/main` says yes.
 Walked on dev only, headless at phone width in both skins (Task 7 of
 `docs/superpowers/plans/2026-10-05-mobile-admin-edit-sheet.md`, every check PASS); the fleet fold
 (2026-10-06) is pinned in jsdom and measured on a static render, with the live-browser measurements

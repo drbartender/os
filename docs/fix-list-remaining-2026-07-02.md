@@ -542,7 +542,9 @@ settle; and a second extension the same night prices from 4h and bills the paid 
 Older than the ext-contract-hours lane, which made it safer. Fix: the editor sends the duration
 it loaded and the PATCH answers 409 when the stored duration no longer matches (the cancel-line
 fingerprint pattern), which still lets the runbook's deliberate hand revert through. Found by the
-2026-09-30 push-time review (second opinion, database and code seats).
+2026-09-30 push-time review (second opinion, database and code seats). The phone is closed: its edit
+sheet (lane ma-e3-edit-sheet, `589092fc`) re-reads the proposal before every PATCH and refuses when
+`updated_at` moved since it opened. The desktop editor still is not.
 
 ### The on-site extension quotes every client the v4 formula, whatever they signed
 
@@ -1847,6 +1849,31 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, not
+  pushed).** Parked by its review fleet and fold re-reviews; none changes money or a message.
+  - Rules the phone copies from the desktop instead of sharing, identical today and each able to
+    drift: the extension hint (`editSheetView.js` beside the inline JSX in `ProposalEditorForm.js`),
+    the curfew prompt, declined line and retry rule (`useEditSheet.js` and `EditSheet.js` beside
+    `ProposalEditorForm.js`; a third copy in `ProposalCreate.js`), the field bounds (start 06:00 to
+    23:30, hours 1 to 12 by halves, guests 1 to 1000), and the Send predicate (`useEditSheet.js`
+    beside `NotifyConfirmModal.jsx`). Move each into the shared modules lane ma-e3a started
+    (`editorCore.js`, `notifyDrafts.js`).
+  - A save waits on three round trips in a row (preflight, re-read, PATCH); asking the preflight
+    and the re-read together saves one.
+  - After a save the page shows the old figures with no cue until the fresh re-read lands.
+  - A save that fails after Android Back closed the sheet says nothing (the page stays truthful:
+    nothing saved).
+  - A locked event keeps offering Edit details (the sheet itself finds the lock); the loading,
+    failed and locked states have no footer, as in the assignment sheet (exits: scrim, Back, Escape).
+  - When "Save mine" re-reads and finds yet another version, the refreshed choice puts an enabled
+    Save mine under the finger (needs the note to change twice while open plus a mistimed tap).
+  - Back mid-save, then reopening the same sheet before the save settles, lets the old save close
+    the new sheet (history stays right).
+  - A server draft over the cap disables "Send the update" with no reason shown (the phone has no
+    editor or counter); Don't send still saves.
+  - After "Discard mine" focus falls to the page body.
+  - Unpinned in tests: the notify checkboxes and the preview's Retry being held during the arm.
+
 - **On dev, just opening the shopping list modal un-approves the list.** React StrictMode (on in
   `client/src/index.js`) runs the modal's autosave effect twice on mount; the `isFirstRender` ref
   (`ShoppingListModal.jsx:134-142`, from the original build) only skips the first run, so every open
@@ -2021,6 +2048,8 @@ the accented spelling) or the two spellings stop matching each other.
     which today sums heads via `approvedCount` capped at slots).
   - DECIDED 2026-09-30 (Dallas): leave it. "Edit details" stays a STICKY switch (every event opens
     in Desktop view until "Phone view" is tapped); the ma-e3 phone edit sheet replaces it soon.
+    SUPERSEDED for upcoming events by lane ma-e3-edit-sheet (merged 2026-10-06 as `589092fc`, not
+    pushed): Edit details opens the phone edit sheet; a past event still opens Desktop view.
   - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): phone vs desktop is decided when a page OPENS, not on
     every resize. Wider than first filed: `AdminLayout.js` renders the Outlet at two different tree
     positions (phone chrome line ~269, desktop ~288), so crossing 700px remounts WHATEVER admin
@@ -2170,6 +2199,13 @@ the accented spelling) or the two spellings stop matching each other.
 ---
 
 ## Platform, schema, and test gates
+
+- **The API sends no CORS max-age, so the browser re-asks the preflight every few seconds.** The
+  admin and staff apps call the API cross-origin with an Authorization header, so each request needs
+  an OPTIONS preflight, and without `Access-Control-Max-Age` Chrome keeps the answer about five
+  seconds. A phone save on the edit sheet becomes up to six network round trips instead of three.
+  Fix: add `maxAge: 7200` (Chrome's cap) to the options `server/middleware/corsOptions.js`
+  (`corsDelegate`) builds. Found by lane ma-e3's performance seat, 2026-10-06; outside that lane.
 
 - **The admin PATCH takes `event_duration_hours` with no type or range check.** A crafted -3 from an
   admin or manager reaches the engine and the NUMERIC(4,1) column; the editor's stepper clamps

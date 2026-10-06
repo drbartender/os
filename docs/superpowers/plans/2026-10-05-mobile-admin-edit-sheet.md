@@ -3251,3 +3251,46 @@ Fix rounds re-reviewed by the seats that own the changed files. Record the as-bu
 - Hand-off to Tasks 3 and 4 (security notes): `draftsOverCap` pairs drafts with notices by index while `buildNotifyEntries` pairs them by type, so the phone seeds its drafts with `initialDrafts(notices)` exactly as the desktop does.
 - Desktop walk PASS on a dev fixture (lane client on its own port, the dev API): the `/calculate` body matched the characterization shape key for key; the reprice confirm carried the gratuity line with the right figures on two saves; a save that also changed the stored location opened the notify popup (Email and Text ticked, Cancel, Send the update, Don't send left to right) and Send carried the composed entry; a plain save went straight through with `notify: []`; the toast was "Event updated." each time. The dev server log showed the automatic gratuity email skipped (notifications off on dev) exactly on the two saves the line announced. Screenshots in `~/.playwright-mcp/ma-e3a-desktop/`.
 
+## Lane ma-e3 close record (2026-10-06)
+
+- Merged to main as `589092fc` after a rebase onto `4447eb84` (README: the lane's `mobile/` tree line and main's `admin/` line combined; walkthroughs-owed: main's three Tier 6 entries kept, the phone entry after them). The lane's code and CSS patches were checked identical to the reviewed ones after the rebase; main's tree is byte-identical to the lane tip `4b54ed0a`. Client suite 1871/1871 (151 suites) on the rebased lane and again on main; CI build exit 0 with only the html2pdf.js source-map warning. Not pushed.
+- Reviews: a task review (spec and quality) after every task, with a scoped re-review after each fix round; Fable ran out of credits partway, so reviews ran on Opus from Task 3's re-review on (Dallas's floor). The lane fleet (security, consistency, code, ui-ux, performance) passed with no Critical; its five Importants (the sheet jumping under the finger as figures load, no request timeouts, errors after Confirm landing below the fold, two paths missing from sensitive-paths) folded in one dispatch, then re-reviews found one family (the view changing under a quick second tap) in four more short rounds, closed with one sheet-wide arm. Push time: the sensitive-path re-review and /second-opinion on this lane's commits.
+
+### As-built deltas from this plan
+
+1. Task 2: canStep is directional (a stored value past a bound, such as 13 hours after an on-site extension, disables "+" rather than letting it lower the value) and reads a missing value as 0.
+2. Task 3: any edit withdraws an open curfew confirm, so "Book it anyway" never sends values the sheet no longer shows; Confirm is guarded so two taps in one tick send one save; a late preview answer never replaces a newer one.
+3. Task 4: the notify step's buttons arm 500ms after it opens (EditSheet `armDelayMs`, default 500); long words in the message preview wrap.
+4. Task 5: a kept note draft is `{ text, base }`; reopened after the note moved, the changed-meanwhile choice opens at once; every save, "Save mine" included, re-reads and compares note content; Cancel discards a kept draft only once it has been shown.
+5. Task 6: the Edit details and Note rows (and their deep links) wait until the roster, plan and invoices reads settle; the sheets' closers act only while the URL still shows that sheet; the after-save re-read keeps order; the multi-shift note counts every shift, cancelled included (the spec corrected on main).
+6. Fold: the sheet holds a fixed height (80dvh), keeps the last figure on screen dimmed while the next loads, keeps a content floor that only rises while ready (reset on a reload, a failed load or a lock), restores its scroll after the notify step, and puts a problem after Confirm in view with focus on the safe button; reads, the preview and the preflight time out after 10 seconds (never the PATCH); the changed-meanwhile guards fail closed; a lost PATCH answer reads "No connection. It may not have saved; reopen the event to check."; a curfew retry that carries a notice says "Your update to the client goes out with it."; the shared summary supplies the balance; Escape and the scrim in the notify step return to the edit view; after every view swap under the finger (first ready, after a reload, the notify step opening and closing) the new controls, the scrim and Escape hold for 500ms; the notify footer sets Cancel and "Send the update" on one row and "Don't send" full width beneath, with no wrapped label (Dallas, 2026-10-06). Visual and accessibility fixes from the ui-ux seat: the light-skin stepper keeps rounded corners, disabled staff boxes dim, the balance-date notice carries the warning tint, the staff Text box's name contains "(SMS)", step values announce, "Book it anyway" uses the house danger-outlined confirm.
+7. Dallas, 2026-10-06: the half-second hold stays; the copy stands; the fixed height goes to a design-tool pass, already returned ("readout above, controls pinned": the price readout above the rows, rows and footer pinned to the bottom), which ships as its own follow-up lane.
+
+### Browser checks (headless Chrome against the lane's own API and client, dev database, notifications off)
+
+| Check | Result |
+|---|---|
+| E1 the row and the sheet's stored values, both skins | PASS |
+| E2 the desktop's complete payload, start as stored, no venue keys, no mandate; the database row | PASS |
+| E3 the notify step (Email and Text ticked, Don't send main), Don't send saves with no notice, the shift moves | PASS (both skins) |
+| E4 changed since open: no PATCH, Reload shows fresh values | PASS |
+| E5 curfew: the server's reason, Keep editing focused and in view at 320x568, the acknowledgement on the retry only | PASS |
+| E6 offline stored copy: both rows read "needs connection" and open nothing | PASS (both skins) |
+| E7 the note: save, first line, kept draft on Back, Cancel clears | PASS |
+| E8 a past event's row reads "desktop view" | PASS (both skins) |
+| E9 Android Back closes the sheet and stays on the detail | PASS |
+| E10 320 wide: no sideways scroll, every button 44px or more | PASS |
+| E11 beside the benchmark at 460 wide, both skins | PASS |
+| E12 Back during a slow save stays on the detail; the save lands | PASS |
+| E13 a double tap on Confirm that opens the notify step sends nothing | PASS |
+| E14 the steppers keep their position through loading, landing and stepping, 390 and 360 wide | PASS |
+| E15 a stale event and a lost save answer in view, safe button focused, 390 and 320 wide | PASS |
+| E16 the scrim in the notify step returns to the edit view, nothing sent | PASS |
+| E17 scrolled content does not drag the steppers (a withdrawn curfew confirm; back to stored values at 320) | PASS |
+| E18 after Reload the fresh form is in view at 320 and 360 | PASS |
+| E19 double taps on Reload, the notify Cancel and the Edit details row change nothing and stack no history | PASS |
+| E20 a scroll during the arm after a refused send is not undone | PASS |
+| E21 the notify footer's labels each sit on one line at 390, 360 and 320 | PASS |
+
+Scripts and screenshots: the session scratchpad (`ma-e3-gate.js`) and `~/.playwright-mcp/ma-e3-gate/`. The owed Pixel walk is in `docs/walkthroughs-owed.md` (Tier 6 until the push).
+
