@@ -1903,8 +1903,8 @@ consult/BEO/hosted/lab suites green), a five-agent fleet, and real lists generat
 rolled-back transaction. The Pantry tab itself was never opened signed in (the admin sign-in token was
 blocked in that session).
 
-- After the first prod boot, one read-only check: `SELECT id, recipe_qty_per_100 FROM par_items WHERE
-  recipe_qty_per_100 IS NOT NULL` returns margarita-salt, tajin and sanding-sugar at 1, nothing else.
+- DONE 2026-10-06, after the first prod boot: `SELECT id, recipe_qty_per_100 FROM par_items WHERE
+  recipe_qty_per_100 IS NOT NULL` returned margarita-salt, tajin and sanding-sugar at 1, nothing else.
 - Potions, Pantry & Pars: a "Recipe @ 100" column beside "@ N"; those three read 1, everything else is
   empty; hovering the header explains it. Type 2 on one, reload, it sticks; clear it, reload, empty.
 - Generate a BYOB list for an event with a Margarita or Paloma at 50 to 100 guests: Margarita Salt reads
