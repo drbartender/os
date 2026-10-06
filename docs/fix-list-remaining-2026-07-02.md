@@ -108,6 +108,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
+| 4 | The staff brief's consult card prints a custom drink as `[object Object]` | **yes: 2 upcoming bookings carry one (10/06)** |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
@@ -920,6 +921,19 @@ flag, none with an upcoming booking. Lane ma-e3a fold re-review.
 
 ## 4. Staff-facing
 
+### The staff brief's consult card prints a custom drink as `[object Object]`
+
+`ConsultCard` (`client/src/components/staff/BeoSections.js`) prints the raw `consult_selections`
+JSON that `eventDetailsPayload.js` sends: camelCase keys as labels (`barType: full_bar`,
+`mocktailsEnabled: false`), and every custom cocktail or mocktail, stored as `{ name, ingredients }`,
+joined as `[object Object]`. The brief's signature-cocktail card reads the planner's `selections`,
+not the consult (`ShiftDetail.js`), so on a consult-fed plan this card is where a bartender reads
+the consult's drinks, and a custom one has no name. **Reachable: 2 upcoming bookings carry a consult
+custom drink (prod, 2026-10-06); 14 of the 23 consults ever saved have one.** The server already
+renders this JSON properly for the post-consult client email (`formatConsultRecap`,
+`server/utils/consultRecap.js`); render the card by the same rules. Build it with the Potions entry
+"Planner answers beside the shopping list", which needs the same consult recap in the admin modal.
+
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
 
 **Reachability, checked 2026-10-06: ZERO.** Shift 353 (2026-10-16, 8:00 PM to 12:00 AM), which
@@ -1458,13 +1472,15 @@ the accented spelling) or the two spellings stop matching each other.
   `/events/:id` and `/proposals/:id`); the planner recap is `DrinkPlanSelections.js`, mounted in
   exactly one place, the Selections card on `/drink-plans/:id`, which the modal covers. On the event
   and proposal pages there is no recap at all. The answers are `drink_plans.selections` (already on
-  `GET /drink-plans/:id` and `/by-proposal/:id`); the consult answers (`consult_selections`) have NO
-  read-only recap anywhere, only the `ConsultationForm.jsx` editor, and `shopping_list_source` says
-  which of the two fed the list. `DerivationStrip.jsx` inside the modal already shows the derived
+  `GET /drink-plans/:id` and `/by-proposal/:id`); the consult answers (`consult_selections`) have no
+  admin read-only recap, only the `ConsultationForm.jsx` editor (the staff brief's `ConsultCard` is a
+  raw JSON dump, filed under Staff-facing), and `shopping_list_source` says which of the two fed the
+  list (all 23 saved consults on prod fed their list, 2026-10-06). `DerivationStrip.jsx` inside the modal already shows the derived
   numbers (drinkers × hours × pace), so the slot exists. Build: a collapsible side rail (desktop) or
   top section (narrow) inside the modal rendering `DrinkPlanSelections` for the source that fed the
-  list, plus a compact read-only consult recap when the source is `consult`. Modal-only; no new
-  endpoint.
+  list, plus a compact read-only consult recap when the source is `consult`, rendered by the rules of
+  the server's `formatConsultRecap` (`server/utils/consultRecap.js`, the post-consult email) rather
+  than a third set, and shared with the staff `ConsultCard` fix. Modal-only; no new endpoint.
 - **Fresh-squeezed juice add-on (Dallas, 2026-09-22).** No such add-on exists; juice is only ever
   bundled today (`full-mixers-only`, `the-full-compound` and `soft-drink-addon` all list bottled OJ,
   cranberry and pineapple) and every juice par row is shelf-stable bottled. **Needs from Dallas
