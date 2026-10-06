@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-staff.css">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; background: #16181c; }
+    a { color: hsl(212 70% 66%); text-decoration: none; }
+    a:hover { color: hsl(212 80% 76%); text-decoration: underline; }
+  </style>
+</helmet>
+<section id="1" data-app="admin-os" data-skin="dark" data-screen-label="Inbox turn 1" style="min-width: max-content; padding: 48px 56px 80px; background: #16181c; font-family: var(--font-ui, sans-serif); color: var(--ink-1); -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; gap: 64px;">
+  <div style="display: flex; flex-direction: column; gap: 8px; max-width: 760px;">
+    <div style="font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">Turn 1 &#183; Admin OS &#183; new screen</div>
+    <h1 style="margin: 0; font-size: 34px; font-weight: 600; letter-spacing: -0.02em;">Inbox</h1>
+    <p style="margin: 0; font-size: 16px; line-height: 1.55; color: var(--ink-2); text-wrap: pretty;">One row per person waiting on Dallas or Zul, merged across Thumbtack, the 888, 1922 and 0082 lines, email, Zola, Google Voice and staff texts. Longest wait first. Every phone frame is live: tap a row, reply, claim, snooze, close, reopen.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600;">1 &#183; Phone list</h2>
+      <p style="margin: 0; font-size: 15px; color: var(--ink-3); max-width: 820px; line-height: 1.5;">Inbox is the first tab, badge counts who's waiting. The rail is the wait, red past 24 hours. Chips mark the three variants. Feed health closes the list.</p>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: flex-start;">
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1a" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1a" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1a</a><span style="font-size: 14px; color: var(--ink-2);">After Hours</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="list" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1b" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1b" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1b</a><span style="font-size: 14px; color: var(--ink-2);">House Lights</span></div>
+          <dc-import name="InboxPhone" skin="light" start="list" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600;">2 &#183; One item opened</h2>
+      <p style="margin: 0; font-size: 15px; color: var(--ink-3); max-width: 900px; line-height: 1.5;">Context card first, then every message across channels, each tagged. Actions and reply sit in the thumb zone. Texts reply inline from the line they used (<a href="#1c">1c</a>). Other channels get one button out (<a href="#1e">1e</a>). Opted out of texts (<a href="#1g">1g</a>). Snooze sheet (<a href="#1i">1i</a>).</p>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: flex-start;">
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1c" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1c" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1c</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; text, From switch</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="detail" open-id="tomas" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1d" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1d" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1d</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; text, From switch</span></div>
+          <dc-import name="InboxPhone" skin="light" start="detail" open-id="tomas" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1e" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1e" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1e</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; Thumbtack</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="detail" open-id="priya" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1f" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1f" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1f</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; Thumbtack</span></div>
+          <dc-import name="InboxPhone" skin="light" start="detail" open-id="priya" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1g" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1g" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1g</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; opted out</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="detail" open-id="ruth" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1h" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1h" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1h</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; opted out</span></div>
+          <dc-import name="InboxPhone" skin="light" start="detail" open-id="ruth" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1i" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1i" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1i</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; Snooze</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="snooze" open-id="grace" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1j" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1j" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1j</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; Snooze</span></div>
+          <dc-import name="InboxPhone" skin="light" start="snooze" open-id="grace" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600;">3 &#183; Recently handled</h2>
+      <p style="margin: 0; font-size: 15px; color: var(--ink-3); max-width: 820px; line-height: 1.5;">Last 7 days by day. Each row says why it closed and who: D for Dallas, Z for Zul, a dashed AI mark when the system closed it. Reopen is one tap.</p>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: flex-start;">
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1k" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1k" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1k</a><span style="font-size: 14px; color: var(--ink-2);">After Hours</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="handled" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1l" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1l" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1l</a><span style="font-size: 14px; color: var(--ink-2);">House Lights</span></div>
+          <dc-import name="InboxPhone" skin="light" start="handled" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600;">4 &#183; Desktop</h2>
+      <p style="margin: 0; font-size: 15px; color: var(--ink-3); max-width: 900px; line-height: 1.5;">Inbox joins Workspace under Overview with a live badge. People waiting, the thread and the context card side by side. Rows follow the Needs attention queue; the thread and reply follow Messages.</p>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: flex-start;">
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1m" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1m" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1m</a><span style="font-size: 14px; color: var(--ink-2);">After Hours</span></div>
+          <dc-import name="InboxDesktop" skin="dark" open-id="tomas" hot-hours="{{ hotHours }}" hint-size="1440px,900px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1n" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1n" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1n</a><span style="font-size: 14px; color: var(--ink-2);">House Lights</span></div>
+          <dc-import name="InboxDesktop" skin="light" open-id="priya" hot-hours="{{ hotHours }}" hint-size="1440px,900px"></dc-import>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600;">5 &#183; States</h2>
+      <p style="margin: 0; font-size: 15px; color: var(--ink-3); max-width: 900px; line-height: 1.5;">Empty, loading, error. The error says outright that it is not an empty inbox, keeps a red border, swaps the badge for !, and shows the last known count. Retry is live.</p>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: flex-start;">
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1o" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1o" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1o</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; empty</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="empty" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1p" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1p" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1p</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; empty</span></div>
+          <dc-import name="InboxPhone" skin="light" start="empty" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1q" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1q" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1q</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; loading</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="loading" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1r" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1r" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1r</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; loading</span></div>
+          <dc-import name="InboxPhone" skin="light" start="loading" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showDark }}" hint-placeholder-val="{{ true }}">
+        <div id="1s" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1s" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1s</a><span style="font-size: 14px; color: var(--ink-2);">After Hours &#183; error</span></div>
+          <dc-import name="InboxPhone" skin="dark" start="error" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showLight }}" hint-placeholder-val="{{ true }}">
+        <div id="1t" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;"><a href="#1t" style="padding: 3px 8px; border-radius: 4px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-decoration: none;">1t</a><span style="font-size: 14px; color: var(--ink-2);">House Lights &#183; error</span></div>
+          <dc-import name="InboxPhone" skin="light" start="error" tab-pos="{{ tabPos }}" hot-hours="{{ hotHours }}" hint-size="393px,852px"></dc-import>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;skins&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Both&quot;,&quot;After Hours&quot;,&quot;House Lights&quot;],&quot;default&quot;:&quot;Both&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Canvas&quot;},&quot;tabPos&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;first&quot;,&quot;third&quot;],&quot;default&quot;:&quot;first&quot;,&quot;tsType&quot;:&quot;'first' | 'third'&quot;,&quot;section&quot;:&quot;Phone&quot;},&quot;hotHours&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:24,&quot;min&quot;:4,&quot;max&quot;:72,&quot;step&quot;:4,&quot;unit&quot;:&quot;h&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Phone&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const skins = this.props.skins ?? 'Both';
+    return {
+      showDark: skins !== 'House Lights',
+      showLight: skins !== 'After Hours',
+      tabPos: this.props.tabPos ?? 'first',
+      hotHours: this.props.hotHours ?? 24
+    };
+  }
+}
+</script>
+</body>
+</html>

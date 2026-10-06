@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-staff.css">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <script src="inbox-data.js"></script>
+  <style>
+    @keyframes m-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+    @keyframes m-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes m-sheet-fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    a { color: inherit; text-decoration: none; }
+    a:hover { text-decoration: underline; text-underline-offset: 2px; }
+    [data-app="admin-os"] main::-webkit-scrollbar { width: 0; height: 0; }
+  </style>
+</helmet>
+<div data-app="admin-os" data-skin="{{ skin }}" data-density="comfy" style="width: 393px; height: 852px; font-family: var(--font-ui, sans-serif); -webkit-font-smoothing: antialiased; color: var(--ink-1);">
+  <div style="width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; position: relative; transform: translateZ(0); border: 1px solid var(--line-3); border-radius: 20px; box-shadow: var(--shadow-pop); background: var(--bg-0);">
+    <div style="flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg-0); color: var(--ink-1); font-family: var(--font-ui);">
+
+      <sc-if value="{{ isList }}" hint-placeholder-val="{{ true }}">
+        <header style="display: flex; align-items: center; gap: 0.25rem; min-height: 52px; padding: 0 0.5rem 0 1rem; background: var(--bg-1); border-bottom: 1px solid var(--line-1); flex-shrink: 0;">
+          <span aria-hidden="true" style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; margin-right: 8px; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 13px; line-height: 1;">&#8478;</span>
+          <span style="flex: 1; margin: 0; font-size: 16px; font-weight: 600; font-family: var(--font-display); color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Inbox</span>
+          <button type="button" aria-label="Search" style="display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; background: none; border: none; border-radius: var(--radius); color: var(--ink-2); cursor: pointer;" style-active="background: var(--row-hover);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+          <button type="button" aria-label="Switch to desktop view" title="Desktop view" style="display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; background: none; border: none; border-radius: var(--radius); color: var(--ink-2); cursor: pointer;" style-active="background: var(--row-hover);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+        </header>
+        <div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px 4px; background: var(--bg-0);">
+          <div role="radiogroup" aria-label="Inbox view" style="display: flex; flex: none; border: 1px solid var(--line-2); border-radius: {{ T.r }}; overflow: hidden;">
+            <button type="button" role="radio" onClick="{{ onWaiting }}" style="display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; border: none; cursor: pointer; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; background: {{ segW.bg }}; color: {{ segW.fg }};">Waiting<span style="font-family: var(--font-numeric); font-size: 11px; opacity: 0.9;">{{ waitingCountLabel }}</span></button>
+            <button type="button" role="radio" onClick="{{ onHandled }}" style="display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; border: none; border-left: 1px solid var(--line-2); cursor: pointer; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; background: {{ segH.bg }}; color: {{ segH.fg }};">Handled<span style="font-family: var(--font-numeric); font-size: 11px; opacity: 0.9;">{{ hCountLabel }}</span></button>
+          </div>
+        </div>
+        <main data-screen-label="Inbox list" style="flex: 1; overflow-y: auto; padding: 6px 12px 14px; background: var(--bg-0); min-height: 0; scrollbar-width: none;">
+
+          <sc-if value="{{ showLoading }}" hint-placeholder-val="{{ false }}">
+            <div style="text-align: center; padding: 4px 0 12px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">first sync &#183; fetching the inbox</div>
+            <sc-for list="{{ skels }}" as="sk" hint-placeholder-count="4">
+              <div aria-hidden="true" style="display: flex; gap: 8px; width: 100%; box-sizing: border-box; padding: 12px 14px 12px 10px; margin: 0 0 0.5rem; background: var(--bg-2); border: 1px solid {{ T.cardBorder }}; border-radius: {{ T.rLg }}; box-shadow: {{ T.cardShadow }};">
+                <span style="width: 44px; height: 42px; flex: none; border-radius: var(--radius-sm); background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite;"></span>
+                <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; justify-content: center;">
+                  <span style="height: 11px; width: {{ sk.w1 }}; border-radius: 3px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite;"></span>
+                  <span style="height: 9px; width: {{ sk.w2 }}; border-radius: 3px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite;"></span>
+                </span>
+              </div>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ showError }}" hint-placeholder-val="{{ false }}">
+            <div role="alert" style="margin: 24px 2px 12px; padding: 22px 16px 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; border: 1px solid {{ T.failBorder }}; border-radius: {{ T.r }};">
+              <span style="display: flex; color: {{ T.failInk }};">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="alert" size="{{ n28 }}" hint-size="28px,28px"></x-import>
+              </span>
+              <div style="font-size: 13px; font-weight: 600; color: {{ T.failInk }};">Couldn't load the inbox</div>
+              <div style="font-size: 11.5px; color: var(--ink-2); max-width: 260px; line-height: 1.55;">This is not an empty inbox. People may still be waiting; the list just didn't arrive.</div>
+              <div style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); line-height: 1.5;">Last good load 2:12 PM &#183; 8 were waiting</div>
+              <button type="button" onClick="{{ onRetry }}" style="margin-top: 6px; min-height: 44px; min-width: 88px; padding: 0 16px; border: none; border-radius: {{ T.r }}; background: var(--accent); color: {{ T.onAccent }}; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;">Retry</button>
+            </div>
+            <div style="text-align: center; font-size: 11.5px; color: var(--ink-3); line-height: 1.5; padding: 0 16px;">Network error. Check your connection.</div>
+          </sc-if>
+
+          <sc-if value="{{ showEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 70px 24px 40px; text-align: center; color: {{ T.okInk }};">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="check" size="{{ n28 }}" hint-size="28px,28px"></x-import>
+              <div style="font-size: 13px; font-weight: 600; color: var(--ink-2);">Nobody's waiting</div>
+              <div style="font-size: 11.5px; color: var(--ink-3); max-width: 230px; line-height: 1.55;">Everyone has a reply. New messages land here the moment a feed delivers them.</div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ showWaiting }}" hint-placeholder-val="{{ true }}">
+            <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+              <button type="button" onClick="{{ r.onTap }}" style="display: flex; flex-direction: row; align-items: stretch; gap: 8px; width: 100%; box-sizing: border-box; padding: 10px 14px 10px 10px; margin: 0 0 0.5rem; background: var(--bg-2); border: 1px solid {{ T.cardBorder }}; border-radius: {{ T.rLg }}; box-shadow: {{ T.cardShadow }}; color: var(--ink-1); font-family: var(--font-ui); text-align: left; cursor: pointer;" style-active="background: var(--row-hover);">
+                <span style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 44px; flex: none; border-right: 1px solid var(--line-1); padding-right: 7px;">
+                  <span style="font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: {{ r.railColor }};">{{ r.waitN }}</span>
+                  <span style="font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: {{ r.railUnitColor }};">{{ r.waitU }}</span>
+                </span>
+                <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center;">
+                  <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+                    <span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.name }}</span>
+                  </span>
+                  <span style="display: block; font-size: 12.5px; line-height: 17px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.need }}</span>
+                  <span style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 3px;">
+                    <sc-if value="{{ r.hasChip }}" hint-placeholder-val="{{ false }}">
+                      <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ r.chipKind }}" hint-size="auto,20px">{{ r.chipLabel }}</x-import>
+                    </sc-if>
+                    <span style="margin-left: auto; display: inline-flex; gap: 4px;">
+                      <sc-for list="{{ r.tags }}" as="tg" hint-placeholder-count="1">
+                        <span style="display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--line-2); background: var(--bg-3); color: var(--ink-2); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;">{{ tg.label }}</span>
+                      </sc-for>
+                    </span>
+                  </span>
+                </span>
+              </button>
+            </sc-for>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 8px 4px;">
+              <span style="flex: 1; height: 1px; background: var(--line-2);"></span>
+              <span style="flex: none; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">{{ endLabel }}</span>
+              <span style="flex: 1; height: 1px; background: var(--line-2);"></span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ hasSnoozed }}" hint-placeholder-val="{{ false }}">
+            <sc-for list="{{ snoozedRows }}" as="sz" hint-placeholder-count="1">
+              <div style="display: flex; align-items: center; gap: 8px; margin: 8px 2px 0; font-size: 11.5px; color: var(--ink-3);">
+                <span style="display: flex; color: var(--ink-4);">
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clock" size="{{ n14 }}" hint-size="14px,14px"></x-import>
+                </span>
+                <span style="flex: 1; min-width: 0; line-height: 1.45;">{{ sz.name }} snoozed until <span style="font-family: var(--font-numeric);">{{ sz.until }}</span></span>
+                <button type="button" onClick="{{ sz.onWake }}" style="flex: none; min-height: 44px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: var(--bg-2); color: var(--ink-1); font-family: var(--font-ui); font-size: 12px; font-weight: 600; cursor: pointer;">Wake</button>
+              </div>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ showHandled }}" hint-placeholder-val="{{ false }}">
+            <div style="margin: 2px 2px 10px; font-size: 11.5px; color: var(--ink-3); line-height: 1.5;">Closed in the last 7 days, and why. Reopen puts it back in Waiting.</div>
+            <sc-for list="{{ hGroups }}" as="g" hint-placeholder-count="2">
+              <section style="margin-bottom: 1rem;">
+                <h2 style="margin: 0 0 0.25rem; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); font-family: var(--font-mono);">{{ g.day }}</h2>
+                <div style="background: var(--bg-2); border: 1px solid {{ T.cardBorder }}; border-radius: {{ T.rLg }}; overflow: hidden;">
+                  <sc-for list="{{ g.items }}" as="h" hint-placeholder-count="3">
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 14px; border-top: {{ h.bt }};">
+                      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;">
+                        <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+                          <span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ h.name }}</span>
+                          <span style="flex: none; font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ h.time }}</span>
+                        </span>
+                        <span style="display: flex; align-items: center; gap: 7px; min-width: 0;">
+                          <span aria-hidden="true" style="flex: none; min-width: 20px; height: 20px; padding: 0 3px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: {{ h.whoBorder }}; background: {{ h.whoBg }}; color: {{ h.whoFg }}; font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;">{{ h.who }}</span>
+                          <span style="flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ h.reason }}</span>
+                        </span>
+                        <span style="display: flex;">
+                          <span style="display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--line-2); background: var(--bg-3); color: var(--ink-2); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;">{{ h.chLabel }}</span>
+                        </span>
+                      </span>
+                      <button type="button" onClick="{{ h.onReopen }}" style="flex: none; min-height: 44px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: var(--bg-1); color: var(--ink-1); font-family: var(--font-ui); font-size: 12px; font-weight: 600; cursor: pointer;">Reopen</button>
+                    </div>
+                  </sc-for>
+                </div>
+              </section>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ showFeeds }}" hint-placeholder-val="{{ true }}">
+            <div style="margin: 14px 2px 2px; padding-top: 10px; border-top: 1px solid var(--line-1); display: flex; flex-wrap: wrap; align-items: center; row-gap: 2px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink-3); line-height: 1.7;">
+              <span style="text-transform: uppercase; letter-spacing: 0.12em; margin-right: 8px;">Feeds</span>
+              <sc-for list="{{ feeds }}" as="f" hint-placeholder-count="4">
+                <span style="display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; color: {{ f.color }};">
+                  <sc-if value="{{ f.stale }}" hint-placeholder-val="{{ false }}">
+                    <span aria-hidden="true" style="width: 6px; height: 6px; flex: none; border-radius: 50%; background: {{ T.staleDot }};"></span>
+                  </sc-if>
+                  <span>{{ f.name }} {{ f.ago }}</span>
+                  <span style="color: var(--ink-4); padding: 0 5px 0 1px;">{{ f.sep }}</span>
+                </span>
+              </sc-for>
+            </div>
+          </sc-if>
+        </main>
+      </sc-if>
+
+      <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+        <header style="display: flex; align-items: center; gap: 0.25rem; min-height: 60px; padding: 8px 8px 8px 2px; background: var(--bg-1); border-bottom: 1px solid var(--line-1); flex-shrink: 0;">
+          <button type="button" aria-label="Back" onClick="{{ onBack }}" style="display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; background: none; border: none; border-radius: var(--radius); color: var(--ink-2); cursor: pointer;" style-active="background: var(--row-hover);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+              <h1 style="flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 600; font-family: var(--font-display); color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ cur.name }}</h1>
+              <sc-if value="{{ cur.hasGuests }}" hint-placeholder-val="{{ false }}">
+                <span style="flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3);">{{ cur.guests }} <small style="font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-3);">GUESTS</small></span>
+              </sc-if>
+            </div>
+            <div style="font-family: var(--font-display); font-size: 12.5px; line-height: 16px; color: var(--ink-3); font-weight: 400;">{{ cur.kindLine }}</div>
+          </div>
+          <button type="button" aria-label="Switch to desktop view" title="Desktop view" style="display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; background: none; border: none; border-radius: var(--radius); color: var(--ink-2); cursor: pointer;" style-active="background: var(--row-hover);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+        </header>
+        <main data-screen-label="Inbox item" style="flex: 1; overflow-y: auto; padding: 12px; background: var(--bg-0); min-height: 0; scrollbar-width: none;">
+          <sc-if value="{{ cur.closed }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 4px 6px 4px 12px; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: var(--bg-1);">
+              <span style="display: flex; color: {{ T.okInk }};">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="check" size="{{ n16 }}" hint-size="16px,16px"></x-import>
+              </span>
+              <span style="flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.5;">{{ cur.closedNote }}</span>
+              <button type="button" onClick="{{ onReopenCur }}" style="flex: none; min-height: 44px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: var(--bg-2); color: var(--ink-1); font-family: var(--font-ui); font-size: 12px; font-weight: 600; cursor: pointer;">Reopen</button>
+            </div>
+          </sc-if>
+
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 10px; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">
+            <span>Waiting <span style="font-weight: 600; color: {{ cur.waitColor }};">{{ cur.waitLong }}</span></span>
+            <sc-if value="{{ cur.hasChip }}" hint-placeholder-val="{{ false }}">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ cur.chipKind }}" hint-size="auto,20px">{{ cur.chipLabel }}</x-import>
+            </sc-if>
+            <sc-if value="{{ cur.hasNote }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3);">{{ cur.stateNote }}</span>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ ctx.has }}" hint-placeholder-val="{{ true }}">
+            <section aria-label="Context" style="margin-bottom: 14px; background: var(--bg-2); border: 1px solid {{ T.cardBorder }}; border-radius: {{ T.rLg }}; overflow: hidden;">
+              <div style="display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 16px;">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ ctx.chipKind }}" hint-size="auto,20px">{{ ctx.chipLabel }}</x-import>
+                <span style="flex: 1; min-width: 0; font-size: 13px; color: var(--ink-1);">{{ ctx.type }}</span>
+              </div>
+              <sc-for list="{{ ctx.rows }}" as="cr" hint-placeholder-count="3">
+                <div style="display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 6px 16px; box-sizing: border-box; border-top: 1px solid var(--line-1);">
+                  <span style="width: 62px; flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">{{ cr.label }}</span>
+                  <span style="flex: 1; min-width: 0; font-family: var(--font-numeric); font-size: 12.5px; line-height: 17px; color: var(--ink-1);">{{ cr.value }}</span>
+                  <sc-if value="{{ cr.hasChip }}" hint-placeholder-val="{{ false }}">
+                    <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ cr.chipKind }}" hint-size="auto,20px">{{ cr.chipLabel }}</x-import>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ ctx.hasMoney }}" hint-placeholder-val="{{ true }}">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 1px solid var(--line-2);">
+                  <div style="display: flex; flex-direction: column; gap: 2px; padding: 9px 12px 10px 16px;">
+                    <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">Total</span>
+                    <span style="font-family: var(--font-numeric); font-size: 13px; font-weight: 600; color: var(--ink-1);">{{ ctx.money.total }}</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 2px; padding: 9px 12px 10px; border-left: 1px solid var(--line-1);">
+                    <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">Paid</span>
+                    <span style="font-family: var(--font-numeric); font-size: 13px; font-weight: 600; color: var(--ink-1);">{{ ctx.money.paid }}</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 2px; padding: 9px 12px 10px; border-left: 1px solid var(--line-1);">
+                    <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">Balance</span>
+                    <span style="font-family: var(--font-numeric); font-size: 13px; font-weight: 600; color: {{ ctx.balColor }};">{{ ctx.money.balance }}</span>
+                    <span style="font-family: var(--font-numeric); font-size: 10.5px; color: var(--ink-3);">{{ ctx.money.balSub }}</span>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ ctx.showNoMoney }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 9px 16px 10px; border-top: 1px solid var(--line-2); font-size: 11.5px; color: var(--ink-3); line-height: 1.5;">No quote yet. Totals show here once a proposal goes out.</div>
+              </sc-if>
+              <div style="display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--line-1);">
+                <sc-for list="{{ ctx.linkItems }}" as="lk" hint-placeholder-count="3">
+                  <button type="button" onClick="{{ lk.onTap }}" style="flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: none; font-family: var(--font-ui); font-size: 12px; font-weight: 600; color: var(--ink-2); cursor: pointer; white-space: nowrap;">{{ lk.label }}<span style="display: flex; color: var(--ink-4);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n12 }}" hint-size="12px,12px"></x-import></span></button>
+                </sc-for>
+              </div>
+            </section>
+          </sc-if>
+
+          <h2 style="margin: 0 0 0.5rem; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); font-family: var(--font-mono);">Messages &#183; {{ cur.chanCount }}</h2>
+          <div style="display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px;">
+            <sc-for list="{{ thread }}" as="m" hint-placeholder-count="3">
+              <sc-if value="{{ m.isDay }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; align-items: center; gap: 10px; padding: 6px 8px 2px;">
+                  <span style="flex: 1; height: 1px; background: var(--line-2);"></span>
+                  <span style="flex: none; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">{{ m.day }}</span>
+                  <span style="flex: 1; height: 1px; background: var(--line-2);"></span>
+                </div>
+              </sc-if>
+              <sc-if value="{{ m.isSys }}" hint-placeholder-val="{{ false }}">
+                <div style="align-self: center; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-3); padding: 0 8px;">{{ m.sys }}</div>
+              </sc-if>
+              <sc-if value="{{ m.isMsg }}" hint-placeholder-val="{{ true }}">
+                <div style="align-self: {{ m.align }}; max-width: 86%; min-width: 150px; box-sizing: border-box; padding: 8px 12px 9px; border-radius: 12px; background: {{ m.bg }}; border: 1px solid {{ m.border }};">
+                  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-bottom: 4px;">
+                    <span style="display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--line-2); background: var(--bg-3); color: var(--ink-2); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;">{{ m.tag }}</span>
+                    <span style="font-family: var(--font-numeric); font-size: 10.5px; color: var(--ink-3); white-space: nowrap;">{{ m.meta }}</span>
+                  </div>
+                  <sc-if value="{{ m.hasSubject }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size: 12.5px; font-weight: 600; color: var(--ink-1); margin-bottom: 2px;">{{ m.subject }}</div>
+                  </sc-if>
+                  <div style="font-size: 13px; line-height: 1.45; color: var(--ink-1); white-space: pre-wrap; word-break: break-word;">{{ m.body }}</div>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </main>
+
+        <sc-if value="{{ showDock }}" hint-placeholder-val="{{ true }}">
+          <div style="flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--bg-1); border-top: 1px solid var(--line-2);">
+            <div style="display: flex; gap: 8px;">
+              <button type="button" onClick="{{ onClaim }}" style="flex: 1; min-height: 44px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: {{ T.r }}; border: 1px solid {{ claimBtn.border }}; background: {{ claimBtn.bg }}; color: {{ claimBtn.fg }}; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ claimBtn.icon }}" size="{{ n16 }}" hint-size="16px,16px"></x-import>{{ claimBtn.label }}
+              </button>
+              <button type="button" onClick="{{ onSnoozeOpen }}" style="flex: 1; min-height: 44px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: {{ T.r }}; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-2); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clock" size="{{ n16 }}" hint-size="16px,16px"></x-import>Snooze
+              </button>
+              <button type="button" onClick="{{ onDone }}" style="flex: 1; min-height: 44px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: {{ T.r }}; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-2); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="check" size="{{ n16 }}" hint-size="16px,16px"></x-import>Done
+              </button>
+            </div>
+
+            <sc-if value="{{ replyText }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);">From</span>
+                <div role="radiogroup" aria-label="Send from" style="display: flex; flex: none; border: 1px solid var(--line-2); border-radius: {{ T.r }}; overflow: hidden;">
+                  <sc-for list="{{ lines }}" as="ln" hint-placeholder-count="3">
+                    <button type="button" role="radio" onClick="{{ ln.onTap }}" style="min-height: 44px; min-width: 52px; padding: 0 9px; border: none; border-left: {{ ln.bl }}; cursor: pointer; font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; background: {{ ln.bg }}; color: {{ ln.fg }};">{{ ln.label }}</button>
+                  </sc-for>
+                </div>
+                <span style="flex: 1; min-width: 0; text-align: right; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.02em; line-height: 1.4; color: {{ fromHintColor }};">{{ fromHint }}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ showComposer }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; gap: 8px; align-items: flex-end;">
+                <textarea rows="1" value="{{ draft }}" onChange="{{ onDraft }}" placeholder="{{ placeholder }}" aria-label="Reply" style="flex: 1; min-width: 0; height: 44px; min-height: 44px; box-sizing: border-box; padding: 11px 12px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: {{ T.r }}; color: var(--ink-1); font-family: var(--font-ui); font-size: 16px; line-height: 1.3; resize: none; outline: none; overflow: hidden;"></textarea>
+                <button type="button" aria-label="Send" onClick="{{ onSend }}" disabled="{{ sendOff }}" style="flex: none; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border: none; border-radius: {{ T.r }}; background: var(--accent); color: {{ T.onAccent }}; cursor: pointer; opacity: {{ sendOpacity }};">
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="send" size="{{ n18 }}" hint-size="18px,18px"></x-import>
+                </button>
+              </div>
+            </sc-if>
+            <sc-if value="{{ replyStaff }}" hint-placeholder-val="{{ false }}">
+              <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink-3);">sends from the staff line, same as the shift texts</div>
+            </sc-if>
+
+            <sc-if value="{{ replyOptout }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: var(--bg-2);">
+                <span aria-hidden="true" style="width: 6px; height: 6px; flex: none; margin-top: 6px; border-radius: 50%; background: {{ T.staleDot }};"></span>
+                <span style="flex: 1; font-size: 11.5px; color: var(--ink-2); line-height: 1.5;"><strong style="color: var(--ink-1); font-weight: 600;">Opted out of texts.</strong> {{ optoutText }}</span>
+              </div>
+              <button type="button" onClick="{{ onOpenAlt }}" style="width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; border: none; border-radius: {{ T.r }}; background: var(--accent); color: {{ T.onAccent }}; font-family: var(--font-ui); font-size: 13px; font-weight: 600; cursor: pointer;">{{ altLabel }}<x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n16 }}" hint-size="16px,16px"></x-import></button>
+            </sc-if>
+
+            <sc-if value="{{ replyOpen }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ onOpenApp }}" style="width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; border: none; border-radius: {{ T.r }}; background: var(--accent); color: {{ T.onAccent }}; font-family: var(--font-ui); font-size: 13px; font-weight: 600; cursor: pointer;">{{ openLabel }}<x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n16 }}" hint-size="16px,16px"></x-import></button>
+              <div style="text-align: center; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink-3);">{{ openHint }}</div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </sc-if>
+
+      <nav aria-label="Primary" style="display: flex; flex-shrink: 0; background: var(--bg-1); border-top: 1px solid var(--line-2);">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <button type="button" onClick="{{ t.onTap }}" aria-label="{{ t.aria }}" style="position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 6px; min-height: 52px; background: none; border: none; color: {{ t.color }}; text-decoration: none; font-size: 11px; font-family: var(--font-ui); cursor: pointer;">
+            <sc-if value="{{ t.active }}" hint-placeholder-val="{{ false }}">
+              <span aria-hidden="true" style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 28px; height: 2px; background: var(--accent);"></span>
+            </sc-if>
+            <span style="position: relative; display: flex;">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ t.icon }}" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+              <sc-if value="{{ t.hasBadge }}" hint-placeholder-val="{{ false }}">
+                <span aria-hidden="true" style="position: absolute; top: -4px; right: -12px; padding: 2px 5px; border-radius: 8px; background: {{ t.badgeBg }}; border: {{ t.badgeBorder }}; color: {{ t.badgeFg }}; font-size: 10px; line-height: 1; font-family: var(--font-numeric);">{{ t.badge }}</span>
+              </sc-if>
+            </span>
+            <span>{{ t.label }}</span>
+          </button>
+        </sc-for>
+      </nav>
+    </div>
+
+    <sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+      <div role="status" style="position: absolute; top: 66px; left: 12px; right: 12px; z-index: 950; display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; min-height: 44px; box-sizing: border-box; background: var(--bg-1); color: var(--ink-1); border: 1px solid var(--line-2); border-left: 3px solid {{ toast.edge }}; border-radius: {{ T.r }}; box-shadow: var(--shadow-pop); font-size: 13px; animation: toast-in 180ms ease-out;">
+        <span style="flex: 1; line-height: 1.35;">{{ toast.msg }}</span>
+        <sc-if value="{{ toast.hasUndo }}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{ onUndo }}" style="flex: none; min-height: 40px; padding: 0 12px; background: none; border: none; color: {{ T.link }}; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;">Undo</button>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+      <button type="button" aria-label="Close" onClick="{{ onSheetClose }}" style="position: absolute; inset: 0; z-index: 900; width: 100%; height: 100%; padding: 0; border: none; background: rgba(0, 0, 0, 0.5); animation: m-sheet-fade 180ms ease;"></button>
+      <div role="dialog" aria-label="Snooze" style="position: absolute; left: 0; right: 0; bottom: 0; z-index: 901; display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--line-2); border-bottom: none; border-radius: {{ T.sheetR }}; box-shadow: var(--shadow-pop); animation: m-sheet-up 240ms cubic-bezier(0.2, 0.8, 0.2, 1); padding-bottom: 10px;">
+        <div style="flex: none; width: 36px; height: 4px; border-radius: 2px; background: var(--line-3); margin: 8px auto 4px;"></div>
+        <div style="flex: none; padding: 2px 16px 10px; border-bottom: 1px solid var(--line-1);">
+          <h2 style="margin: 0; font-size: 13px; font-weight: 600; font-family: var(--font-ui); color: var(--ink-1);">Snooze {{ cur.name }}</h2>
+          <div style="margin-top: 5px; font-size: 11.5px; color: var(--ink-3); line-height: 1.5;">Hidden until then. It comes back to Waiting with its full wait time.</div>
+        </div>
+        <sc-for list="{{ snoozeOpts }}" as="so" hint-placeholder-count="3">
+          <button type="button" onClick="{{ so.onTap }}" style="display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 16px; background: none; border: none; border-top: {{ so.bt }}; color: var(--ink-1); font-size: 13px; font-family: var(--font-ui); text-align: left; cursor: pointer;" style-active="background: var(--row-hover);">
+            <span style="display: flex; color: var(--ink-3);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ so.icon }}" size="{{ n20 }}" hint-size="20px,20px"></x-import></span>
+            <span style="flex: 1;">{{ so.label }}</span>
+            <span style="font-family: var(--font-numeric); font-size: 12px; color: var(--ink-3);">{{ so.when }}</span>
+          </button>
+        </sc-for>
+        <sc-if value="{{ pickOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 2px 12px 8px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px;">
+            <sc-for list="{{ days }}" as="d" hint-placeholder-count="7">
+              <button type="button" onClick="{{ d.onTap }}" style="min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 0; border: 1px solid var(--line-2); border-radius: {{ T.r }}; background: var(--bg-2); cursor: pointer;">
+                <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-3);">{{ d.dow }}</span>
+                <span style="font-family: var(--font-numeric); font-size: 16px; font-weight: 600; color: var(--ink-1);">{{ d.day }}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="padding: 0 16px 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink-3);">wakes at 8:00 AM on the day you pick</div>
+        </sc-if>
+        <button type="button" onClick="{{ onSheetClose }}" style="display: flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; padding: 0 16px; background: none; border: none; border-top: 1px solid var(--line-1); color: var(--ink-2); font-size: 13px; font-weight: 600; font-family: var(--font-ui); cursor: pointer;">Cancel</button>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:393,&quot;height&quot;:852},&quot;skin&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;'dark' | 'light'&quot;},&quot;start&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;list&quot;,&quot;detail&quot;,&quot;snooze&quot;,&quot;handled&quot;,&quot;empty&quot;,&quot;loading&quot;,&quot;error&quot;],&quot;default&quot;:&quot;list&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;openId&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;priya&quot;,&quot;tomas&quot;,&quot;marcus&quot;,&quot;dana&quot;,&quot;ruth&quot;,&quot;brandt&quot;,&quot;grace&quot;,&quot;jordan&quot;],&quot;default&quot;:&quot;tomas&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;tabPos&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;first&quot;,&quot;third&quot;],&quot;default&quot;:&quot;first&quot;,&quot;tsType&quot;:&quot;'first' | 'third'&quot;},&quot;hotHours&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:24,&quot;min&quot;:4,&quot;max&quot;:72,&quot;tsType&quot;:&quot;number&quot;}}">
+class Component extends DCLogic {
+  state = { ready: false };
+
+  componentDidMount() {
+    const go = () => { if (window.InboxData) this.init(); else this._t = setTimeout(go, 40); };
+    go();
+  }
+  componentWillUnmount() { clearTimeout(this._t); clearTimeout(this._tt); clearTimeout(this._rt); }
+  componentDidUpdate(prev) {
+    if (window.InboxData && (prev.start !== this.props.start || prev.openId !== this.props.openId)) this.init();
+  }
+
+  init() {
+    const D = window.InboxData, p = this.props, start = p.start || 'list';
+    const items = D.people.map(x => Object.assign({}, x, { status: 'waiting', thread: x.thread.slice() }));
+    if (start === 'detail' || start === 'snooze') {
+      const it = items.find(i => i.id === (p.openId || 'tomas'));
+      if (it) it.unread = false;
+    }
+    this.setState({
+      ready: true, items, extra: [], removed: {},
+      screen: (start === 'detail' || start === 'snooze') ? 'detail' : 'list',
+      tab: start === 'handled' ? 'handled' : 'waiting',
+      openId: p.openId || 'tomas',
+      load: ['empty', 'loading', 'error'].indexOf(start) >= 0 ? start : 'ready',
+      sheet: start === 'snooze' ? 'snooze' : null, pick: false,
+      from: {}, draft: '', toast: null, undo: null
+    });
+  }
+
+  tok(skin) {
+    if (skin === 'light') return {
+      r: '0', rLg: '0', sheetR: '0', link: 'var(--accent)', onAccent: 'var(--bg-0)',
+      hot: 'var(--ms-bordeaux)', warnInk: 'hsl(38 63% 30%)', okInk: 'var(--ms-emerald)',
+      failBorder: 'var(--ms-bordeaux)', failInk: 'var(--ms-bordeaux)', cardBorder: 'var(--line-2)', cardShadow: 'none',
+      tabBadge: 'hsl(var(--danger-h) var(--danger-s) 45%)', chipOnInk: 'var(--accent-ink)', aiBorder: '1px dashed var(--ink-4)',
+      edgeOk: 'var(--ms-emerald)', edgeInfo: 'var(--ms-navy)', staleDot: 'var(--ms-camel)', zulBg: 'hsl(var(--info-h) var(--info-s) 36% / 0.1)'
+    };
+    return {
+      r: 'var(--radius)', rLg: 'var(--radius-lg)', sheetR: 'var(--radius-lg) var(--radius-lg) 0 0',
+      link: 'hsl(var(--accent-h) var(--accent-s) 62%)', onAccent: '#fff',
+      hot: '#ff4d4d', warnInk: 'hsl(var(--warn-h) var(--warn-s) 58%)', okInk: 'hsl(var(--ok-h) var(--ok-s) 52%)',
+      failBorder: 'rgba(255, 77, 77, 0.6)', failInk: '#ff4d4d', cardBorder: 'var(--line-1)', cardShadow: 'var(--shadow-card)',
+      tabBadge: 'hsl(var(--danger-h) var(--danger-s) 45%)', chipOnInk: 'hsl(var(--accent-h) var(--accent-s) 62%)', aiBorder: '1px dashed var(--line-3)',
+      edgeOk: 'hsl(var(--ok-h) var(--ok-s) 45%)', edgeInfo: 'hsl(var(--info-h) var(--info-s) 45%)', staleDot: 'hsl(var(--warn-h) var(--warn-s) 52%)',
+      zulBg: 'hsl(var(--info-h) var(--info-s) 52% / 0.16)'
+    };
+  }
+
+  snap() {
+    const s = this.state;
+    return { items: s.items.map(i => Object.assign({}, i, { thread: i.thread.slice() })), extra: s.extra.slice(), removed: Object.assign({}, s.removed) };
+  }
+  say(msg, edge, undo) {
+    clearTimeout(this._tt);
+    this.setState({ toast: { msg, edge, hasUndo: !!undo }, undo: undo || null });
+    this._tt = setTimeout(() => this.setState({ toast: null, undo: null }), 4200);
+  }
+  patch(id, fn) {
+    this.setState(s => ({ items: s.items.map(i => (i.id === id ? fn(Object.assign({}, i)) : i)) }));
+  }
+  replyFor(ch) {
+    const D = window.InboxData;
+    if (ch.indexOf('text') === 0) return { mode: 'text', line: ch.slice(4) };
+    if (ch === 'staff') return { mode: 'staff' };
+    return { mode: 'open', app: D.APP[ch] || ch };
+  }
+
+  open(id) {
+    this.patch(id, i => { i.unread = false; return i; });
+    this.setState({ screen: 'detail', openId: id, draft: '', sheet: null, pick: false });
+  }
+  close(id, reason, msg, T, prior) {
+    const D = window.InboxData, before = prior || this.snap();
+    const it = this.state.items.find(i => i.id === id);
+    this.patch(id, i => { i.status = 'handled'; i.closedReason = reason; i.closedAt = D.nowTime; return i; });
+    this.setState(s => ({ extra: s.extra.concat([{ id: 'x-' + id, ref: id, name: it.name, ch: it.last, need: it.need, reason, who: 'D', time: D.nowTime }]) }));
+    this.say(msg, T.edgeOk, before);
+  }
+  reopenRef(id, T) {
+    const before = this.snap();
+    const it = this.state.items.find(i => i.id === id);
+    this.patch(id, i => { i.status = 'waiting'; return i; });
+    this.setState(s => ({ extra: s.extra.filter(e => e.ref !== id) }));
+    this.say((it ? it.name : 'It') + ' is back in Waiting.', T.edgeInfo, before);
+  }
+  reopenSeed(h, T) {
+    const D = window.InboxData, before = this.snap();
+    const item = {
+      id: h.id, name: h.name, hrs: 0, wait: { n: '0', u: 'MIN', long: 'reopened just now' },
+      need: h.need, channels: [h.ch], last: h.ch, state: 'reopened', unread: false, ctx: null,
+      reply: this.replyFor(h.ch), status: 'waiting',
+      thread: [{ dir: 'in', ch: h.ch, time: h.time, body: h.need }, { sys: 'Was closed: ' + h.reason }, { sys: 'Reopened by you \u00b7 ' + D.nowTime }]
+    };
+    this.setState(s => ({ items: s.items.concat([item]), removed: Object.assign({}, s.removed, { [h.id]: true }) }));
+    this.say(h.name + ' is back in Waiting.', T.edgeInfo, before);
+  }
+  snooze(when, T) {
+    const before = this.snap(), id = this.state.openId;
+    this.patch(id, i => { i.status = 'snoozed'; i.until = when; return i; });
+    this.setState({ sheet: null, pick: false, screen: 'list', tab: 'waiting' });
+    this.say('Snoozed until ' + when + '.', T.edgeInfo, before);
+  }
+
+  renderVals() {
+    const s = this.state, p = this.props;
+    const skin = p.skin || 'dark';
+    const T = this.tok(skin);
+    const D = window.InboxData || { CH: {}, APP: {}, people: [], handled: [], feeds: [], nowTime: '' };
+    const CH = D.CH;
+    const items = s.items || [];
+    const load = s.load || 'ready';
+    const hot = p.hotHours ?? 24;
+    const isList = (s.screen || 'list') === 'list';
+    const tab = s.tab || 'waiting';
+    const live = load === 'ready';
+    const waiting = live ? items.filter(i => i.status === 'waiting').sort((a, b) => b.hrs - a.hrs) : [];
+    const snoozed = live ? items.filter(i => i.status === 'snoozed') : [];
+    const count = waiting.length;
+
+    const chipOf = (i) => i.state === 'zul' ? ['info', "Zul's on it"]
+      : i.state === 'you' ? ['ok', "You're on it"]
+      : i.state === 'promised' ? ['warn', "You said you'd follow up"]
+      : i.state === 'reopened' ? ['neutral', 'Reopened']
+      : i.unread ? ['accent', 'Not read yet'] : null;
+
+    const rows = waiting.map(i => {
+      const c = chipOf(i), isHot = i.hrs >= hot;
+      return {
+        name: i.name, need: i.need, waitN: i.wait.n, waitU: i.wait.u,
+        railColor: isHot ? T.hot : 'var(--ink-1)', railUnitColor: isHot ? T.hot : 'var(--ink-3)',
+        hasChip: !!c, chipKind: c ? c[0] : 'neutral', chipLabel: c ? c[1] : '',
+        tags: i.channels.map(ch => ({ label: CH[ch] || ch })),
+        onTap: () => this.open(i.id)
+      };
+    });
+
+    const seed = D.handled.map(g => ({ day: g.day, items: g.items.filter(h => !(s.removed || {})[h.id]) }));
+    const ex = (s.extra || []).slice().reverse();
+    if (ex.length && seed.length) seed[0] = { day: seed[0].day, items: ex.concat(seed[0].items) };
+    const hGroups = seed.filter(g => g.items.length).map(g => ({
+      day: g.day,
+      items: g.items.map((h, k) => ({
+        name: h.name, time: h.time, reason: h.reason, who: h.who, chLabel: CH[h.ch] || h.ch,
+        bt: k === 0 ? 'none' : '1px solid var(--line-1)',
+        whoBg: h.who === 'AI' ? 'transparent' : h.who === 'Z' ? T.zulBg : 'var(--accent-soft)',
+        whoBorder: h.who === 'AI' ? T.aiBorder : '1px solid transparent',
+        whoFg: h.who === 'AI' ? 'var(--ink-3)' : 'var(--ink-2)',
+        onReopen: () => (h.ref ? this.reopenRef(h.ref, T) : this.reopenSeed(h, T))
+      }))
+    }));
+    const hCount = hGroups.reduce((a, g) => a + g.items.length, 0);
+
+    const feeds = load === 'error'
+      ? [{ name: 'Feed status', ago: 'unknown until the inbox loads', stale: true, color: T.warnInk, sep: '' }]
+      : D.feeds.map((f, k, a) => ({ name: f.name, ago: f.ago, stale: f.stale, color: f.stale ? T.warnInk : 'var(--ink-3)', sep: k < a.length - 1 ? '\u00b7' : '' }));
+
+    const segOn = { bg: 'var(--accent)', fg: T.onAccent }, segOff = { bg: 'var(--bg-2)', fg: 'var(--ink-3)' };
+
+    const pos = p.tabPos || 'first';
+    const inboxBadge = load === 'error' ? '!' : load === 'loading' ? '' : String(count);
+    const inboxTab = { id: 'inbox', label: 'Inbox', icon: 'mail', badge: inboxBadge, hasBadge: load === 'error' || (load === 'ready' && count > 0) };
+    const others = [
+      { id: 'events', label: 'Events', icon: 'calendar', badge: '2', hasBadge: true },
+      { id: 'proposals', label: 'Proposals', icon: 'clipboard', badge: '3', hasBadge: true },
+      { id: 'more', label: 'More', icon: 'menu', badge: '6', hasBadge: true, neutral: true }
+    ];
+    const tabList = pos === 'first' ? [inboxTab].concat(others) : [others[0], others[1], inboxTab, others[2]];
+    const tabs = tabList.map(t => ({
+      label: t.label, icon: t.icon, badge: t.badge, hasBadge: t.hasBadge,
+      aria: t.hasBadge && t.id === 'inbox' ? 'Inbox, ' + (load === 'error' ? 'failed to load' : t.badge + ' waiting') : t.label,
+      active: t.id === 'inbox', color: t.id === 'inbox' ? 'var(--accent)' : 'var(--ink-3)',
+      badgeBg: t.neutral ? 'var(--bg-3)' : T.tabBadge, badgeBorder: t.neutral ? '1px solid var(--line-2)' : 'none',
+      badgeFg: t.neutral ? 'var(--ink-2)' : '#fff',
+      onTap: t.id === 'inbox' ? () => this.setState({ screen: 'list', sheet: null }) : () => {}
+    }));
+
+    const it = items.find(i => i.id === s.openId) || items[0] || { name: '', wait: {}, channels: [], thread: [], reply: {}, ctx: null };
+    const c = chipOf(it);
+    const ctxD = it.ctx;
+    const first = (it.name || '').split(' ')[0];
+    const closed = it.status === 'handled';
+    const cur = {
+      name: it.name, hasGuests: !!ctxD && ctxD.guests != null, guests: ctxD ? ctxD.guests : '',
+      kindLine: ctxD ? ctxD.chip.label + ' \u00b7 ' + ctxD.type : (CH[it.last] || ''),
+      waitLong: it.wait.long || '', waitColor: (it.hrs >= hot) ? T.hot : 'var(--ink-1)',
+      hasChip: !!c, chipKind: c ? c[0] : 'neutral', chipLabel: c ? c[1] : '',
+      hasNote: !!it.stateNote && (it.state === 'zul' || it.state === 'promised'), stateNote: it.stateNote || '',
+      closed, closedNote: 'Handled \u00b7 ' + (it.closedReason || '') + ' \u00b7 ' + (it.closedAt || ''),
+      chanCount: it.channels.length === 1 ? (CH[it.channels[0]] || '') : it.channels.length + ' channels'
+    };
+    const ctx = ctxD ? {
+      has: true, chipKind: ctxD.chip.kind, chipLabel: ctxD.chip.label, type: ctxD.type,
+      rows: ctxD.rows.map(r => ({ label: r.label, value: r.value, hasChip: !!r.chip, chipKind: r.chip ? r.chip.kind : 'neutral', chipLabel: r.chip ? r.chip.label : '' })),
+      hasMoney: !!ctxD.money, showNoMoney: !ctxD.money && ctxD.chip.label !== 'Staff',
+      money: ctxD.money || {}, balColor: ctxD.money && ctxD.money.settled ? T.okInk : T.warnInk,
+      linkItems: ctxD.links.map(l => ({ label: l, onTap: () => this.say('Opens ' + l + ' for ' + it.name + '.', T.edgeInfo) }))
+    } : { has: false, rows: [], linkItems: [], money: {} };
+
+    const thread = it.thread.map(m => {
+      if (m.day) return { isDay: true, isSys: false, isMsg: false, day: m.day };
+      if (m.sys) return { isDay: false, isSys: true, isMsg: false, sys: m.sys };
+      const out = m.dir === 'out';
+      return {
+        isDay: false, isSys: false, isMsg: true,
+        align: out ? 'flex-end' : 'flex-start', bg: out ? 'var(--accent-soft)' : 'var(--bg-2)',
+        border: out ? 'var(--accent-line)' : 'var(--line-1)',
+        tag: (CH[m.ch] || m.ch) + (m.voicemail ? ' \u00b7 Voicemail' : ''),
+        meta: (out ? (m.who || 'You') + ' \u00b7 ' : '') + m.time + (m.voicemail ? ' \u00b7 ' + m.voicemail : ''),
+        hasSubject: !!m.subject, subject: m.subject || '', body: m.body
+      };
+    });
+
+    const r = it.reply || {};
+    const line = (s.from || {})[it.id] || r.line;
+    const lines = ['888', '1922', '0082'].map((L, k) => ({
+      label: L, bg: L === line ? 'var(--accent)' : 'var(--bg-2)', fg: L === line ? T.onAccent : 'var(--ink-3)',
+      bl: k ? '1px solid var(--line-2)' : 'none',
+      onTap: () => this.setState(st => ({ from: Object.assign({}, st.from, { [it.id]: L }) }))
+    }));
+    const draft = s.draft || '';
+    const sendOff = !draft.trim();
+    const onSend = () => {
+      const text = (this.state.draft || '').trim();
+      if (!text) return;
+      const isStaff = r.mode === 'staff';
+      const ch = isStaff ? 'staff' : 'text' + line;
+      const before = this.snap();
+      const days = it.thread.filter(m => m.day);
+      const needDay = !days.length || days[days.length - 1].day !== 'Today';
+      this.patch(it.id, i => { i.thread = i.thread.concat((needDay ? [{ day: 'Today' }] : []).concat([{ dir: 'out', ch, time: D.nowTime, who: 'You', body: text }])); return i; });
+      this.setState({ draft: '' });
+      setTimeout(() => this.close(it.id, isStaff ? 'You texted back' : 'You texted back from ' + line, isStaff ? 'Sent. Moved to Handled.' : 'Sent from ' + line + '. Moved to Handled.', T, before), 0);
+    };
+
+    const claimBtn = it.state === 'you'
+      ? { label: "You're on it", icon: 'check', bg: 'var(--accent-soft)', border: 'var(--accent)', fg: T.chipOnInk }
+      : it.state === 'zul'
+        ? { label: 'Take over', icon: 'userplus', bg: 'var(--bg-2)', border: 'var(--line-2)', fg: 'var(--ink-2)' }
+        : { label: 'On it', icon: 'pin', bg: 'var(--bg-2)', border: 'var(--line-2)', fg: 'var(--ink-2)' };
+    const onClaim = () => {
+      const was = it.state;
+      if (was === 'you') { this.patch(it.id, i => { i.state = i.prevState || null; return i; }); this.say('Released. Back to unclaimed.', T.edgeInfo); }
+      else { this.patch(it.id, i => { i.prevState = was === 'zul' ? null : was; i.state = 'you'; return i; }); this.say(was === 'zul' ? 'Taken over from Zul. Zul sees it moved to you.' : "You're on it. Zul sees it claimed.", T.edgeOk); }
+    };
+
+    const days = [['THU', 8], ['FRI', 9], ['SAT', 10], ['SUN', 11], ['MON', 12], ['TUE', 13], ['WED', 14]].map(([dow, d]) => ({
+      dow, day: String(d), onTap: () => this.snooze(dow.charAt(0) + dow.slice(1).toLowerCase() + ' Oct ' + d + ', 8:00 AM', T)
+    }));
+    const snoozeOpts = [
+      { icon: 'clock', label: '3 hours', when: '5:41 PM', onTap: () => this.snooze('5:41 PM', T) },
+      { icon: 'sun', label: 'Tomorrow morning', when: 'Wed 8:00 AM', onTap: () => this.snooze('Wed 8:00 AM', T) },
+      { icon: 'calendar', label: 'Pick a date', when: s.pick ? '' : 'next 7 days', onTap: () => this.setState(st => ({ pick: !st.pick })) }
+    ].map((o, k) => Object.assign(o, { bt: k ? '1px solid var(--line-1)' : 'none' }));
+
+    return {
+      skin, T, n12: 12, n14: 14, n16: 16, n18: 18, n20: 20, n28: 28,
+      isList, isDetail: !isList,
+      segW: tab === 'waiting' ? segOn : segOff, segH: tab === 'handled' ? segOn : segOff,
+      onWaiting: () => this.setState({ tab: 'waiting' }), onHandled: () => this.setState({ tab: 'handled' }),
+      waitingCountLabel: load === 'loading' ? '' : load === 'error' ? '?' : String(count),
+      hCountLabel: load === 'ready' || load === 'empty' ? String(hCount) : '',
+      showLoading: load === 'loading', showError: load === 'error',
+      showEmpty: tab === 'waiting' && (load === 'empty' || (live && count === 0)),
+      showWaiting: tab === 'waiting' && live && count > 0,
+      showHandled: tab === 'handled' && (live || load === 'empty'),
+      showFeeds: load !== 'loading',
+      skels: [{ w1: '62%', w2: '44%' }, { w1: '70%', w2: '38%' }, { w1: '55%', w2: '46%' }, { w1: '66%', w2: '40%' }],
+      onRetry: () => { this.setState({ load: 'loading' }); clearTimeout(this._rt); this._rt = setTimeout(() => this.setState({ load: 'ready' }), 1100); },
+      rows, endLabel: count ? count + ' waiting \u00b7 oldest ' + waiting[0].wait.long : '',
+      hasSnoozed: tab === 'waiting' && snoozed.length > 0,
+      snoozedRows: snoozed.map(i => ({ name: i.name, until: i.until, onWake: () => { this.patch(i.id, x => { x.status = 'waiting'; return x; }); this.say(i.name + ' is back in Waiting.', T.edgeInfo); } })),
+      hGroups, feeds, tabs,
+      cur, ctx, thread,
+      onBack: () => this.setState({ screen: 'list', sheet: null, pick: false }),
+      onReopenCur: () => this.reopenRef(it.id, T),
+      showDock: !closed,
+      replyText: !closed && r.mode === 'text', replyStaff: !closed && r.mode === 'staff',
+      replyOptout: !closed && r.mode === 'optout', replyOpen: !closed && r.mode === 'open',
+      showComposer: !closed && (r.mode === 'text' || r.mode === 'staff'),
+      lines, fromHint: line === r.line ? 'last texted ' + r.line : 'they texted ' + r.line,
+      fromHintColor: line === r.line ? 'var(--ink-3)' : T.warnInk,
+      draft, onDraft: (e) => this.setState({ draft: e.target.value }),
+      placeholder: r.mode === 'staff' ? 'Text ' + first : 'Text ' + first + ' from ' + line,
+      sendOff, sendOpacity: sendOff ? '0.45' : '1', onSend,
+      optoutText: first + ' replied STOP on ' + (r.optedOut || '') + '. Texts from 888, 1922 or 0082 will not deliver.',
+      altLabel: 'Open in ' + (r.alt || 'Gmail'),
+      onOpenAlt: () => this.say('Opens the email thread in ' + (r.alt || 'Gmail') + '.', T.edgeInfo),
+      openLabel: 'Open in ' + (r.app || ''),
+      openHint: 'closes here on its own once you reply in ' + (r.app || ''),
+      onOpenApp: () => this.say('Opens ' + it.name + ' in ' + (r.app || '') + '.', T.edgeInfo),
+      claimBtn, onClaim,
+      onSnoozeOpen: () => this.setState({ sheet: 'snooze', pick: false }),
+      onDone: () => { this.close(it.id, 'You marked it done', 'Done. Moved to Handled.', T); this.setState({ screen: 'list' }); },
+      sheetOpen: s.sheet === 'snooze', pickOpen: !!s.pick, snoozeOpts, days,
+      onSheetClose: () => this.setState({ sheet: null, pick: false }),
+      hasToast: !!s.toast, toast: s.toast || { msg: '', edge: 'transparent', hasUndo: false },
+      onUndo: () => { const u = this.state.undo; if (u) this.setState({ items: u.items, extra: u.extra, removed: u.removed, toast: null, undo: null }); }
+    };
+  }
+}
+</script>
+</body>
+</html>
