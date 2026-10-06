@@ -1,6 +1,7 @@
 import React from 'react';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
+import { noteFirstLine } from '../../utils/editSheetView';
 
 // The presentational sections of the phone event detail (spec
 // 2026-08-13-mobile-admin section 4 Detail; benchmark 2026-09-15, Event
@@ -158,6 +159,61 @@ export function MoneySection({ open, onToggle, fin, moneyState }) {
           )}
         </>
       )}
+    </section>
+  );
+}
+
+// The Edit details row (spec section 3, brainstorm decisions of 2026-10-05).
+//   'edit'    an upcoming, live event on a fresh read: opens the edit sheet.
+//   'desktop' a past event: opens the Desktop view, as before lane ma-e3.
+//   'offline' a stored copy: "needs connection", and does nothing.
+// held: a read the edit sheet waits for is still loading. The row keeps its
+// label and takes no tap until it settles, so no tap can push an entry for a
+// sheet that is not showing yet; it says so with aria-busy and a dimmed note.
+export function EditRow({ mode, held = false, onEdit, onDesktop }) {
+  return (
+    <section className="m-section">
+      <button type="button" className="m-section-row" disabled={mode === 'offline' || held}
+        aria-busy={held ? 'true' : undefined} onClick={mode === 'edit' ? onEdit : onDesktop}>
+        <Icon name="pen" size={20} />
+        <span className="m-section-name">Edit details</span>
+        {mode === 'offline' ? (
+          <span className="m-edit-note m-edit-note-locked">
+            <span className="m-stale-dot" aria-hidden="true" />needs connection
+          </span>
+        ) : (
+          <>
+            <span className="m-edit-note">{mode === 'edit' ? 'date · time · guests' : 'desktop view'}</span>
+            <span className="m-section-caret" aria-hidden="true"><Icon name="right" size={16} /></span>
+          </>
+        )}
+      </button>
+    </section>
+  );
+}
+
+// The Note row: the internal booking note (proposals.admin_notes), on every
+// event, cancelled included. It shows the note's first line. held: the Edit
+// details row's hold, and its cue, for the same reads.
+export function NoteRow({ note, offline, held = false, onOpen }) {
+  const line = noteFirstLine(note);
+  return (
+    <section className="m-section">
+      <button type="button" className="m-section-row" disabled={offline || held}
+        aria-busy={held ? 'true' : undefined} onClick={onOpen}>
+        <Icon name="clipboard" size={20} />
+        <span className="m-section-name m-note-name">Note</span>
+        {offline ? (
+          <span className="m-edit-note m-edit-note-locked">
+            <span className="m-stale-dot" aria-hidden="true" />needs connection
+          </span>
+        ) : (
+          <>
+            <span className="m-note-preview">{line || 'Add a note'}</span>
+            <span className="m-section-caret" aria-hidden="true"><Icon name="right" size={16} /></span>
+          </>
+        )}
+      </button>
     </section>
   );
 }

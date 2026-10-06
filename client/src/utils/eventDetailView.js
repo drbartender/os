@@ -54,7 +54,7 @@ function readJson(value) {
 // A value that is not a number renders as zero: the shared formatters answer a
 // dash glyph for bad input, and phone copy carries none.
 const MINUS = String.fromCharCode(0x2212);
-function dollars(n) {
+export function dollars(n) {
   const num = Number(n);
   if (n === null || n === undefined || n === '' || !Number.isFinite(num)) return fmt$2dp(0);
   return num < 0 ? `${MINUS}${fmt$2dp(Math.abs(num))}` : fmt$2dp(num);

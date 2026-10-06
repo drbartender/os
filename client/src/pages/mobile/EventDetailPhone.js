@@ -1,16 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import api from '../../utils/api';
 import { offlineGet } from '../../utils/offlineRead';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import { useMobileView } from '../../context/MobileViewContext';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import AssignmentSheet from '../../components/mobile/AssignmentSheet';
+import EditSheet from '../../components/mobile/EditSheet';
+import NoteSheet from '../../components/mobile/NoteSheet';
+import { ctDay } from '../../components/adminos/format';
 import { formatStaleTime } from '../../utils/staleTime';
+import { editableEvent } from '../../utils/editSheetView';
 import {
   headerOf, whenOf, setupOf, contactsOf, staffingOf, financialsOf, earliestStale, closedWord,
 } from '../../utils/eventDetailView';
-import { Caret, ContactsSection, MoneySection } from './EventDetailSections';
+import { Caret, ContactsSection, MoneySection, EditRow, NoteRow } from './EventDetailSections';
 
 // Phone event detail (spec 2026-08-13-mobile-admin section 4 Detail; benchmark
 // docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Event detail).
@@ -43,12 +48,14 @@ import { Caret, ContactsSection, MoneySection } from './EventDetailSections';
 // package details, the staff BEO view, the plan logo, the house menu image,
 // and the waitlist and requests-on-file counts. In the desktop drawer only:
 // equipment and supply-run edits, over-filling a role, editing a past or
-// cancelled roster. The Edit details row opens that Desktop view until the
-// edit sheet (lane ma-e3) lands.
+// cancelled roster. The Edit details row opens the edit sheet on an upcoming,
+// live event and the Desktop view on a past one; the Note row edits the
+// internal booking note on every event (lane ma-e3).
 const LOAD_FAILED = 'Network error. Check your connection.';
 const ROSTERLESS = 'No roles are declared on this shift. Staff it from desktop view.';
 // The kinds of drawer that are phone sheets here. Module scope: one identity.
-const SHEETS = ['shift'];
+const SHEETS = ['shift', 'edit', 'note'];
+const SAVED_BEHIND = 'Saved. The event below could not be refreshed and may be out of date.';
 const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
 // An id the database can hold. Anything else can never load, all digits or not.
 const validId = (id) => /^\d+$/.test(String(id)) && Number(id) >= 1 && Number(id) <= 2147483647;
@@ -76,6 +83,10 @@ export default function EventDetailPhone() {
   const [dead, setDead] = useState(false);
   const [panes, setPanes] = useState({ contact: false, staffing: true, pay: false });
   const [attempt, setAttempt] = useState(0);
+  const [noteDraft, setNoteDraft] = useState(null);
+  const [refresh, setRefresh] = useState('idle'); // idle | reading | behind
+  const editLatch = useRef(false);
+  const noteLatch = useRef(false);
 
   // The route is dead. The chrome is told, and falls back to /events; the
   // screen also renders a way back of its own. The chrome listens from a layout
@@ -86,20 +97,17 @@ export default function EventDetailPhone() {
     window.dispatchEvent(new CustomEvent('mobile-route-dead'));
   }, []);
 
-  // Every roster read takes a number. An answer goes on screen when it is
-  // NEWER THAN WHAT IS THERE and the screen still shows its event, so a read
-  // that lands late (an older reload, or another event's) changes nothing.
-  // "Newest asked" would be the wrong rule: a newer read that fails would
-  // then throw away an older one that succeeded, and the loading line would
-  // never leave.
-  //   fresh: a first read or a Retry of one. Nothing to keep, so it shows the
-  //   loading line and, if it fails, says why there is no roster.
-  //   not fresh: the reload after a sheet write, or a Retry of one. It never
-  //   takes the phone's stored copy, which is the roster from BEFORE the
-  //   write. If it fails, or only a stored copy answers, the roster on screen
-  //   stays and is marked as possibly behind. It stays marked until an answer
-  //   asked for AFTER the failed one lands: an older answer can predate the
-  //   write the failed read was for.
+  // Every roster read takes a number. An answer goes on screen when it is NEWER THAN WHAT
+  // IS THERE and the screen still shows its event, so a read that lands late (an older
+  // reload, or another event's) changes nothing. "Newest asked" would be the wrong rule: a
+  // newer read that fails would then throw away an older one that succeeded, and the
+  // loading line would never leave.
+  //   fresh: a first read or a Retry of one. Nothing to keep, so it shows the loading line
+  //   and, if it fails, says why there is no roster.
+  //   not fresh: the reload after a sheet write, or a Retry of one. It never takes the
+  //   phone's stored copy, which is the roster from BEFORE the write. If it fails, or only
+  //   a stored copy answers, the roster on screen stays, marked as possibly behind, until an
+  //   answer asked for AFTER the failed one lands (an older one can predate the write).
   const asked = useRef(0);
   const applied = useRef(0);
   const failed = useRef(0);
@@ -183,6 +191,28 @@ export default function EventDetailPhone() {
     if (refreshBadges) refreshBadges();
   }, [readShifts, refreshBadges]);
 
+  // After an edit save: the event, the invoices and the roster moved. Never the
+  // stored copy, which predates the save. Numbered as readShifts is (see there):
+  // an older answer or failure that lands late changes nothing.
+  const saved = useRef({ asked: 0, applied: 0, failed: 0 });
+  const reloadAfterSave = useCallback(() => {
+    const mine = ++saved.current.asked;
+    const newer = () => mine > saved.current.applied && showing.current === id;
+    setRefresh('reading');
+    readShifts(false);
+    if (refreshBadges) refreshBadges();
+    Promise.all([api.get(`/proposals/${id}`), api.get(`/invoices/proposal/${id}`)])
+      .then(([p, inv]) => {
+        if (!newer()) return;
+        saved.current.applied = mine;
+        setProposal(p.data);
+        setMoney({ state: 'ready', payload: inv.data });
+        setStale((prev) => ({ ...prev, proposal: null, money: null }));
+        setRefresh(mine < saved.current.failed ? 'behind' : 'idle');
+      })
+      .catch(() => { if (newer()) { saved.current.failed = Math.max(saved.current.failed, mine); setRefresh('behind'); } });
+  }, [id, readShifts, refreshBadges]);
+
   useEffect(() => {
     if (!setHeaderDetail) return undefined;
     setHeaderDetail(proposal ? headerOf(proposal) : null);
@@ -219,6 +249,32 @@ export default function EventDetailPhone() {
   const assignable = !!sheetGroup && !sheetGroup.view.closedReason && !sheetGroup.view.rosterless
     && sheetGroup.view.open > 0;
 
+  // The edit and note sheets. Both rows' taps, and both sheets, wait for every read the
+  // gate needs: the roster says whether the event has finished (by date alone, a link to an
+  // event that ended today opens), and a cached drink plan or invoices answer would shut a
+  // sheet on the edits. A parameter neither sheet can open (another event, a past one, a
+  // stored copy) is dropped once those reads settle. The latches keep an open sheet open:
+  // the edit sheet's past the event turning past; the note sheet's past everything, a later
+  // stale stamp included, as it reads and re-reads fresh on its own.
+  const editable = !!proposal && !cancelled && editableEvent(proposal, shifts, ctDay(new Date()));
+  const editMode = staleAt ? 'offline' : (editable ? 'edit' : 'desktop');
+  const readsSettled = shifts.forId === id && shifts.state !== 'loading' && plan.state !== 'loading' && money.state !== 'loading';
+  const forThis = drawer.id !== null && String(drawer.id) === String(id);
+  const editOpen = drawer.kind === 'edit' && forThis && !staleAt && readsSettled && (editable || editLatch.current);
+  editLatch.current = editOpen;
+  const noteOpen = drawer.kind === 'note' && forThis && (noteLatch.current || (!staleAt && readsSettled));
+  noteLatch.current = noteOpen;
+  useEffect(() => {
+    if (!proposal || !readsSettled) return;
+    if ((drawer.kind === 'edit' && !editOpen) || (drawer.kind === 'note' && !noteOpen)) closeDrawer();
+  }, [proposal, readsSettled, drawer.kind, editOpen, noteOpen, closeDrawer]);
+  // The two sheets' closers. A save holds the closer from the render where Save was tapped;
+  // if Back closed the sheet meanwhile, that drawer.close would pop a second entry and leave
+  // the event. So a closer acts only while the URL shows its sheet, via the latest close.
+  const live = useRef({ kind: null, close: null });
+  live.current = { kind: drawer.kind, close: drawer.close };
+  const closeIfShowing = useCallback((kind) => { if (live.current.kind === kind) live.current.close(); }, []);
+
   if (dead) {
     return (
       <div className="m-empty">
@@ -248,6 +304,12 @@ export default function EventDetailPhone() {
           <span className="m-stale-dot" aria-hidden="true" />
           <span>offline copy · as of <span className="m-stale-time">{cachedTime}</span></span>
           <button type="button" className="m-fail-retry" onClick={() => setAttempt((n) => n + 1)}>Refresh</button>
+        </div>
+      )}
+      {refresh === 'behind' && (
+        <div className="m-fail m-saved-behind" role="alert">
+          <span className="m-fail-msg">{SAVED_BEHIND}</span>
+          <button type="button" className="m-fail-retry" onClick={reloadAfterSave}>Retry</button>
         </div>
       )}
 
@@ -343,24 +405,11 @@ export default function EventDetailPhone() {
         moneyState={money.state}
       />
 
+      <NoteRow note={proposal.admin_notes} offline={!!staleAt} held={!readsSettled} onOpen={() => drawer.open('note', proposal.id)} />
+
       {!cancelled && (
-        <section className="m-section">
-          <button type="button" className="m-section-row" disabled={!!staleAt}
-            onClick={() => setDesktopView('event-detail', true)}>
-            <Icon name="pen" size={20} />
-            <span className="m-section-name">Edit details</span>
-            {staleAt ? (
-              <span className="m-edit-note m-edit-note-locked">
-                <span className="m-stale-dot" aria-hidden="true" />needs connection
-              </span>
-            ) : (
-              <>
-                <span className="m-edit-note">desktop view</span>
-                <span className="m-section-caret" aria-hidden="true"><Icon name="right" size={16} /></span>
-              </>
-            )}
-          </button>
-        </section>
+        <EditRow mode={editMode} held={!readsSettled} onEdit={() => drawer.open('edit', proposal.id)}
+          onDesktop={() => setDesktopView('event-detail', true)} />
       )}
 
       {sheetOpen && (
@@ -372,6 +421,26 @@ export default function EventDetailPhone() {
           onClose={drawer.close}
           onChanged={reloadShifts}
           onDead={drawer.close}
+        />
+      )}
+      {/* Every shift, cancelled included: a save moves a shift only when there is exactly one (syncShiftsFromProposal). */}
+      {editOpen && (
+        <EditSheet
+          proposalId={proposal.id}
+          clientName={proposal.client_name}
+          kind={headerOf(proposal).kind}
+          shiftCount={shifts.state === 'ready' ? shifts.rows.length : 0}
+          onClose={() => closeIfShowing('edit')}
+          onSaved={() => { closeIfShowing('edit'); reloadAfterSave(); }}
+        />
+      )}
+      {noteOpen && (
+        <NoteSheet
+          proposalId={proposal.id}
+          draft={noteDraft}
+          onDraft={setNoteDraft}
+          onSaved={(note) => setProposal((p) => (p ? { ...p, admin_notes: note } : p))}
+          onClose={() => closeIfShowing('note')}
         />
       )}
     </div>

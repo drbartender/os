@@ -1968,6 +1968,54 @@ Client view both keep the panel. What is left:
 - The 2 upcoming bookings whose planner answers carry no activeModules show "which has no answers to
   show here". Settled (Dallas, 10/06): old plans keep behaving as they have; handle one when it comes up.
 
+### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged as the lane's squash, NOT yet pushed.
+
+Put the squash sha here at merge: `git log main --oneline --grep 'merge(lane ma-e3-edit-sheet'` prints
+it. It moves to Tier 3b the moment `git merge-base --is-ancestor <that sha> origin/main` says yes.
+Walked on dev only, headless at phone width in both skins (Task 7 of
+`docs/superpowers/plans/2026-10-05-mobile-admin-edit-sheet.md`, every check PASS); the fleet fold
+(2026-10-06) is pinned in jsdom and measured on a static render, with the live-browser measurements
+left to the controller. Never on a real phone, never against prod data. On the Pixel, on a real
+upcoming booking you choose. Every save here is real: a priced change reprices the booking and
+rebuilds its unlocked invoices, and a date or time change moves its shift. The sheet's main button
+reads "Confirm new total" when the total moves and "Done" when it does not; Done saves a change too,
+and with nothing changed it just closes. About fifteen minutes:
+- Edit details reads "date · time · guests"; the sheet shows the date ("SAT OCT 24" style), Start,
+  Duration ("4.5 hr" style), Setup "<N> min before" with no arrow, and Guests. Both skins.
+- Tap Longer, then More guests, a few times in quick succession, then step back to where you
+  started: the steppers never move under your finger, and while each new total loads the last one
+  stays on screen, dimmed. Cancel.
+- One hours change on a paid event whose hours really are changing and which carries a gratuity
+  the client chose (not one set by hand): Longer, and the sheet shows the New total, "balance due
+  becomes", and the desktop's reprice lines, among them "The gratuity rises to $X, so the client
+  is emailed the new amount automatically". That email is real in prod and goes out on Confirm new
+  total with no popup. Tap Confirm new total; the sheet closes and the detail shows the new figures.
+- One real date change (a date that really is moving): pick the date and tap the main button (it
+  reads Done when the total does not move), and "Notify the client?" opens with Email and Text
+  ticked and "Don't send" the main button, across the footer's second row. Tap Don't send: it
+  saves without messaging the client, and the event's shift moves with it.
+- Open the sheet and step Guests, then on desktop save the same booking's internal note (its
+  proposal page, "Admin notes", then "Save notes") before you tap the main button on the phone:
+  "This event changed since you opened it." comes into view, nothing saves, and Reload shows the
+  fresh values.
+- On an event of three hours or more that starts before 23:30 (so the refusal is certain: the
+  server lets an existing breach through when a change does not make it worse), set Start to
+  23:30 and tap the main button (Don't send, if the notify step opens): the curfew confirm reads
+  the server's reason and scrolls into view with both of its buttons showing. Step Duration and the
+  confirm withdraws; then Cancel. Never tap "Book it anyway": it books past the curfew for real and
+  is recorded.
+- Airplane mode on a detail you opened before: Note and Edit details both read "needs connection",
+  each at the far end of its row, and open nothing.
+- The Note row reads the note's first line, or "Add a note". Type a line, Save, and the row shows
+  it. Reopen, type, press Back: reopening shows the kept draft, and Cancel clears it. Put the
+  note back as it was.
+- A past event: Edit details reads "desktop view" and opens the Desktop view.
+- Back with the edit sheet open closes it and stays on the detail.
+Two things to look at and judge: every control stays dimmed for half a second after each swap (the
+form's first appearance, a reload, the notify step opening, each step back to the form), and the
+notify footer is two rows, Cancel and "Send the update" over a full-width "Don't send", no label
+wrapped. Say whether either reads wrong on the Pixel.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

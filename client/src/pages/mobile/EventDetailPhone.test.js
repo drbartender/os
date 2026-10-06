@@ -1,4 +1,6 @@
 import React from 'react';
+import fs from 'fs';
+import path from 'path';
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -6,7 +8,7 @@ import EventDetailPhone from './EventDetailPhone';
 import api from '../../utils/api';
 import { ctDay } from '../../components/adminos/format';
 
-jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
+jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn(), patch: jest.fn() } }));
 const mockMobileView = { isPhone: true, desktopView: jest.fn(() => false), setDesktopView: jest.fn() };
 jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockMobileView }));
 // The sheet has its own suite; here it is a stub that exposes its props.
@@ -22,6 +24,40 @@ jest.mock('../../components/mobile/AssignmentSheet', () => ({
       <button type="button" onClick={onDead}>stub dead</button>
     </div>
   ),
+}));
+// The edit and note sheets have their own suites too. Each stub also keeps the
+// props it was last drawn with, for a call made after the sheet has gone (a
+// save that settles after Back closed it).
+const mockSheets = {};
+jest.mock('../../components/mobile/EditSheet', () => ({
+  __esModule: true,
+  default: (props) => {
+    mockSheets.edit = props;
+    const { proposalId, shiftCount, onClose, onSaved } = props;
+    return (
+      <div data-testid="edit-sheet">
+        <span data-testid="edit-id">{String(proposalId)}</span>
+        <span data-testid="edit-shifts">{String(shiftCount)}</span>
+        <button type="button" onClick={onClose}>stub edit close</button>
+        <button type="button" onClick={onSaved}>stub edit saved</button>
+      </div>
+    );
+  },
+}));
+jest.mock('../../components/mobile/NoteSheet', () => ({
+  __esModule: true,
+  default: (props) => {
+    mockSheets.note = props;
+    const { draft, onDraft, onSaved, onClose } = props;
+    return (
+      <div data-testid="note-sheet">
+        <span data-testid="note-draft">{String(draft)}</span>
+        <button type="button" onClick={() => onDraft('half written')}>stub note keep</button>
+        <button type="button" onClick={() => onSaved('New note line')}>stub note saved</button>
+        <button type="button" onClick={onClose}>stub note close</button>
+      </div>
+    );
+  },
 }));
 
 const PROPOSAL = {
@@ -70,6 +106,8 @@ function Probe() {
   return (
     <>
       <div data-testid="loc">{l.pathname + l.search}</div>
+      {/* The history entry itself: any navigation, a replace included, changes it. */}
+      <div data-testid="key">{l.key}</div>
       <button type="button" onClick={() => n(-1)}>back</button>
       <button type="button" onClick={() => n('/events/14')}>go to 14</button>
       <button type="button" onClick={() => n('/events/14?drawer=shift&drawerId=18')}>go to 14 with its sheet</button>
@@ -596,16 +634,6 @@ test('a lost connection with nothing cached shows the error with Retry, and reco
   expect(await screen.findByText('Person 1')).toBeInTheDocument();
 });
 
-test('Edit details opens the Desktop view of this screen', async () => {
-  serve();
-  mount();
-  await screen.findByText('Person 1');
-  const edit = screen.getByRole('button', { name: /^Edit details/ });
-  expect(within(edit).getByText('desktop view')).toBeInTheDocument();
-  tap(edit);
-  expect(mockMobileView.setDesktopView).toHaveBeenCalledWith('event-detail', true);
-});
-
 test('on a cache-served read Edit details needs a connection and does nothing', async () => {
   serve({ '/proposals/13': { data: PROPOSAL, staleAt: '2026-09-29T17:00:00.000Z' } });
   mount();
@@ -1019,4 +1047,494 @@ test('a shift with no declared roles shows the note on the card instead of an As
   mount();
   expect(await screen.findByText('No roles are declared on this shift. Staff it from desktop view.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Assign staff/ })).toBeNull();
+});
+
+test('an upcoming event: Edit details reads date · time · guests and opens the edit sheet', async () => {
+  serve();
+  mount();
+  await screen.findByText('Person 1');
+  const row = screen.getByRole('button', { name: /^Edit details/ });
+  expect(row).toHaveTextContent('date · time · guests');
+  tap(row);
+  expect(await screen.findByTestId('edit-sheet')).toBeInTheDocument();
+  expect(screen.getByTestId('edit-id')).toHaveTextContent('13');
+  expect(screen.getByTestId('edit-shifts')).toHaveTextContent('1');
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=edit&drawerId=13');
+  expect(mockMobileView.setDesktopView).not.toHaveBeenCalled();
+});
+
+test('a past event keeps desktop view', async () => {
+  serve({ '/shifts/by-proposal/13': { data: [shift(1, { finished: true })] } });
+  mount();
+  await screen.findByText('Person 1');
+  const row = screen.getByRole('button', { name: /^Edit details/ });
+  expect(row).toHaveTextContent('desktop view');
+  tap(row);
+  expect(mockMobileView.setDesktopView).toHaveBeenCalledWith('event-detail', true);
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+test('a stored copy: both rows read needs connection and open nothing', async () => {
+  serve({ '/proposals/13': { data: PROPOSAL, staleAt: '2026-10-05T12:00:00.000Z' } });
+  mount();
+  await screen.findByText('Person 1');
+  const edit = screen.getByRole('button', { name: /^Edit details/ });
+  const note = screen.getByRole('button', { name: /^Note/ });
+  expect(edit).toBeDisabled();
+  expect(note).toBeDisabled();
+  expect(edit).toHaveTextContent('needs connection');
+  expect(note).toHaveTextContent('needs connection');
+});
+
+test('the Note row shows the first line or Add a note, and opens on a cancelled event too', async () => {
+  serve({ '/proposals/13': { data: { ...PROPOSAL, status: 'archived', archive_reason: 'client_cancelled', admin_notes: '\nGate code 4412\nmore' } } });
+  mount();
+  await screen.findByText('Person 1');
+  expect(screen.queryByRole('button', { name: /^Edit details/ })).toBeNull();
+  const note = screen.getByRole('button', { name: /^Note/ });
+  expect(note).toHaveTextContent('Gate code 4412');
+  tap(note);
+  expect(await screen.findByTestId('note-sheet')).toBeInTheDocument();
+});
+
+test('a note draft is kept between openings, and a save shows the new first line', async () => {
+  serve();
+  mount();
+  await screen.findByText('Person 1');
+  expect(screen.getByRole('button', { name: /^Note/ })).toHaveTextContent('Add a note');
+  tap(screen.getByRole('button', { name: /^Note/ }));
+  tap(await screen.findByText('stub note keep'));
+  tap(screen.getByText('stub note close'));
+  await waitFor(() => expect(screen.queryByTestId('note-sheet')).toBeNull());
+  tap(screen.getByRole('button', { name: /^Note/ }));
+  expect(await screen.findByTestId('note-draft')).toHaveTextContent('half written');
+  tap(screen.getByText('stub note saved'));
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Note/ })).toHaveTextContent('New note line'));
+});
+
+test('after an edit save the sheet closes and the detail re-reads fresh, never a stored copy', async () => {
+  let reads = 0;
+  serve({ '/proposals/13': () => { reads += 1; return { data: reads === 1 ? PROPOSAL : { ...PROPOSAL, total_price: '3900.00' } }; } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  tap(await screen.findByText('stub edit saved'));
+  // The first wait is for the re-read to land and show. A wait that passes at
+  // once ends before the re-read answers, and the answer then lands outside act.
+  await waitFor(() => expect(within(section('Financials')).getByText('$3,900.00')).toBeInTheDocument());
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  expect(api.get).toHaveBeenCalledWith('/proposals/13');
+  expect(api.get).toHaveBeenCalledWith('/invoices/proposal/13');
+});
+
+test('a re-read after a save that fails says so, with Retry', async () => {
+  let fail = false;
+  let reads = 0;
+  serve({
+    '/proposals/13': () => { reads += 1; return fail ? { reject: NETWORK } : { data: reads === 1 ? PROPOSAL : { ...PROPOSAL, total_price: '3900.00' } }; },
+  });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('stub edit saved');
+  fail = true;
+  tap(screen.getByText('stub edit saved'));
+  expect(await screen.findByText('Saved. The event below could not be refreshed and may be out of date.')).toBeInTheDocument();
+  fail = false;
+  tap(screen.getByRole('button', { name: 'Retry' }));
+  // The first wait is for the Retry's re-read to land (see the test above).
+  await waitFor(() => expect(within(section('Financials')).getByText('$3,900.00')).toBeInTheDocument());
+  expect(screen.queryByText('Saved. The event below could not be refreshed and may be out of date.')).toBeNull();
+});
+
+test('an edit param for another event is dropped', async () => {
+  serve();
+  mount({ initial: '/events/13?drawer=edit&drawerId=99' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+// Plan fleet, 2026-10-05: the stored-copy case is spec section 7's money law
+// (no money sheet opens from a cache-served read), and the held-roster case is
+// mutation-checked: without the roster gate the sheet opens on the date alone.
+test('an edit param on a past event, or on a stored copy, opens nothing and is dropped', async () => {
+  serve({ '/shifts/by-proposal/13': { data: [shift(1, { finished: true })] } });
+  const first = mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  first.unmount();
+  serve({ '/proposals/13': { data: PROPOSAL, staleAt: '2026-10-05T12:00:00.000Z' } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+test('the edit sheet waits for the roster: a deep link to an event that finished today never opens it', async () => {
+  const roster = held();
+  serve({ '/shifts/by-proposal/13': () => roster.entry });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByRole('button', { name: /^Edit details/ });
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  roster.release({ data: [shift(1, { finished: true })] });
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+});
+
+// Controller ruling (fleet fold, 2026-10-06): the server's syncShiftsFromProposal
+// counts every shift, cancelled included, and moves the shift only at exactly
+// one, so the multi-shift note counts every shift too.
+test('a cancelled shift beside the live one counts as a second shift, as the server\'s shift sync counts it', async () => {
+  serve({ '/shifts/by-proposal/13': { data: [shift(1), shift(2, { status: 'cancelled', requesters: [] })] } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  expect(await screen.findByTestId('edit-shifts')).toHaveTextContent('2');
+});
+
+// Controller ruling, Task 5 review: a save holds the closers from the render
+// where Save was tapped. When Back closes the sheet while the save is out,
+// those closers must close nothing: a plain drawer.close from that render
+// pops a second history entry and leaves the event, usually for the list.
+// The edit sheet's late save still re-reads the event.
+test('a save that settles after Back closed the edit sheet stays on the event, and still re-reads it fresh', async () => {
+  let reads = 0;
+  serve({ '/proposals/13': () => { reads += 1; return { data: reads === 1 ? PROPOSAL : { ...PROPOSAL, total_price: '3900.00' } }; } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByTestId('edit-sheet');
+  const late = mockSheets.edit;
+  tap(screen.getByRole('button', { name: 'back' }));
+  await waitFor(() => expect(screen.queryByTestId('edit-sheet')).toBeNull());
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+  const entry = screen.getByTestId('key').textContent;
+  await act(async () => { late.onSaved(); });
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+  expect(screen.getByTestId('key').textContent).toBe(entry);
+  expect(api.get).toHaveBeenCalledWith('/proposals/13');
+  expect(api.get).toHaveBeenCalledWith('/invoices/proposal/13');
+  await waitFor(() => expect(within(section('Financials')).getByText('$3,900.00')).toBeInTheDocument());
+  expect(screen.getByText('Person 1')).toBeInTheDocument();
+});
+
+test('a sheet closer that runs after Back closed its sheet closes nothing; a late note save still shows the note', async () => {
+  serve();
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByTestId('edit-sheet');
+  const edit = mockSheets.edit;
+  tap(screen.getByRole('button', { name: 'back' }));
+  await waitFor(() => expect(screen.queryByTestId('edit-sheet')).toBeNull());
+  const entry = screen.getByTestId('key').textContent;
+  await act(async () => { edit.onClose(); });
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+  expect(screen.getByTestId('key').textContent).toBe(entry);
+
+  tap(screen.getByRole('button', { name: /^Note/ }));
+  await screen.findByTestId('note-sheet');
+  const note = mockSheets.note;
+  tap(screen.getByRole('button', { name: 'back' }));
+  await waitFor(() => expect(screen.queryByTestId('note-sheet')).toBeNull());
+  expect(screen.getByTestId('key').textContent).toBe(entry);
+  // The note sheet's save ends with onSaved, then onClose.
+  await act(async () => { note.onSaved('Late note line'); });
+  expect(screen.getByRole('button', { name: /^Note/ })).toHaveTextContent('Late note line');
+  await act(async () => { note.onClose(); });
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+  expect(screen.getByTestId('key').textContent).toBe(entry);
+  expect(screen.getByText('Person 1')).toBeInTheDocument();
+});
+
+// Pins the Task 6 implementer added: behaviours the brief names that no test
+// above held, each shown to fail on its mutation (task-6-report.md).
+test('an open edit sheet stays open when a roster read already out says the event finished', async () => {
+  const reload = held();
+  let reads = 0;
+  serve({ '/shifts/by-proposal/13': () => { reads += 1; return reads === 1 ? { data: [shift(1)] } : reload.entry; } });
+  mount({ initial: '/events/13?drawer=shift&drawerId=1' });
+  await screen.findByText('Person 1');
+  tap(screen.getByRole('button', { name: 'stub changed' }));   // a roster reload goes out
+  tap(screen.getByRole('button', { name: 'stub close' }));
+  await waitFor(() => expect(screen.queryByTestId('sheet')).toBeNull());
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  expect(await screen.findByTestId('edit-sheet')).toBeInTheDocument();
+  await act(async () => { reload.release({ data: [shift(1, { finished: true })] }); });
+  // The person's work in progress: the sheet stays, and so does its entry.
+  expect(screen.getByTestId('edit-sheet')).toBeInTheDocument();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=edit&drawerId=13');
+});
+
+test('a note param on a stored copy, or for another event, opens nothing and is dropped', async () => {
+  serve({ '/proposals/13': { data: PROPOSAL, staleAt: '2026-10-05T12:00:00.000Z' } });
+  const first = mount({ initial: '/events/13?drawer=note&drawerId=13' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+  first.unmount();
+  serve();
+  mount({ initial: '/events/13?drawer=note&drawerId=99' });
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+});
+
+test('after an edit save the roster, the tab badge and the payment detail are read again too', async () => {
+  let rosterReads = 0;
+  let invoiceReads = 0;
+  const inFlight = { ...INVOICES, pending_payments: [{ amount_cents: 175000, started_at: '2999-08-05T15:00:00.000Z', invoice_id: 2, invoice_number: 'INV-0363' }] };
+  serve({
+    '/shifts/by-proposal/13': () => { rosterReads += 1; return { data: [shift(1, rosterReads > 1 ? { requesters: [person(1), person(2)] } : {})] }; },
+    '/invoices/proposal/13': () => { invoiceReads += 1; return { data: invoiceReads > 1 ? inFlight : INVOICES }; },
+  });
+  const { ctx } = mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  tap(await screen.findByText('stub edit saved'));
+  await waitFor(() => expect(within(section('Staffing')).getByText('2/2')).toBeInTheDocument());
+  await waitFor(() => expect(within(section('Financials')).getByText('Processing')).toBeInTheDocument());
+  expect(ctx.refreshBadges).toHaveBeenCalledTimes(1);
+});
+
+test('an edit param waits for a roster that lands after the event, then opens the sheet', async () => {
+  const roster = held();
+  serve({ '/shifts/by-proposal/13': () => roster.entry });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByRole('button', { name: /^Edit details/ });
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=edit&drawerId=13');
+  await act(async () => { roster.release({ data: [shift(1)] }); });
+  expect(screen.getByTestId('edit-sheet')).toBeInTheDocument();
+});
+
+test('the Note row shows only the note\'s first line', async () => {
+  serve({ '/proposals/13': { data: { ...PROPOSAL, admin_notes: 'Gate code 4412\nPark behind the barn' } } });
+  mount();
+  await screen.findByText('Person 1');
+  const note = screen.getByRole('button', { name: /^Note/ });
+  expect(note).toHaveTextContent('Gate code 4412');
+  expect(note).not.toHaveTextContent('Park behind the barn');
+});
+
+// Review fix round 1 (controller ruling, 2026-10-06): the Edit details row and
+// an edit param wait for every read the sheet's gate needs (the roster, the
+// drink plan, the invoices), and the re-reads after saves keep their order.
+test('Edit details takes no tap while the roster is loading, so held taps stack no history', async () => {
+  const roster = held();
+  serve({ '/shifts/by-proposal/13': () => roster.entry });
+  mount();
+  const row = await screen.findByRole('button', { name: /^Edit details/ });
+  expect(row).toHaveTextContent('date · time · guests');   // the label stays as it is while held
+  tap(row);
+  tap(row);
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+  expect(row).toBeDisabled();
+  await act(async () => { roster.release({ data: [shift(1)] }); });
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  // Now the row opens the sheet, and one close leaves the URL bare.
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  expect(await screen.findByTestId('edit-sheet')).toBeInTheDocument();
+  tap(screen.getByText('stub edit close'));
+  await waitFor(() => expect(screen.queryByTestId('edit-sheet')).toBeNull());
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+});
+
+test('an edit param waits for the drink-plan read, and opens once it lands fresh', async () => {
+  const plan = held();
+  serve({ '/drink-plans/by-proposal/13': () => plan.entry });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  expect(screen.getByRole('button', { name: /^Edit details/ })).toBeDisabled();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=edit&drawerId=13');
+  await act(async () => { plan.release({ data: PLAN }); });
+  expect(screen.getByTestId('edit-sheet')).toBeInTheDocument();
+});
+
+test('a drink-plan read that settles stale keeps the edit sheet shut, and the row reads needs connection', async () => {
+  const plan = held();
+  serve({ '/drink-plans/by-proposal/13': () => plan.entry });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  await act(async () => { plan.release({ data: PLAN, staleAt: '2026-10-05T12:00:00.000Z' }); });
+  const row = screen.getByRole('button', { name: /^Edit details/ });
+  expect(row).toHaveTextContent('needs connection');
+  expect(row).toBeDisabled();
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+});
+
+test('two re-reads after saves that land out of order: the newer answer stays on screen', async () => {
+  const first = held();
+  const second = held();
+  let reads = 0;
+  serve({ '/proposals/13': () => { reads += 1; if (reads === 1) return { data: PROPOSAL }; return reads === 2 ? first.entry : second.entry; } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  tap(await screen.findByText('stub edit saved'));                 // re-read 1 goes out
+  await waitFor(() => expect(screen.queryByTestId('edit-sheet')).toBeNull());
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  tap(await screen.findByText('stub edit saved'));                 // re-read 2 goes out
+  expect(reads).toBe(3);
+  await act(async () => { second.release({ data: { ...PROPOSAL, total_price: '4100.00' } }); });
+  expect(within(section('Financials')).getByText('$4,100.00')).toBeInTheDocument();
+  await act(async () => { first.release({ data: { ...PROPOSAL, total_price: '3900.00' } }); });
+  expect(within(section('Financials')).getByText('$4,100.00')).toBeInTheDocument();
+});
+
+test('an older re-read that fails after a newer one landed raises no notice', async () => {
+  const first = held();
+  const second = held();
+  let reads = 0;
+  serve({ '/proposals/13': () => { reads += 1; if (reads === 1) return { data: PROPOSAL }; return reads === 2 ? first.entry : second.entry; } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  tap(await screen.findByText('stub edit saved'));
+  await waitFor(() => expect(screen.queryByTestId('edit-sheet')).toBeNull());
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  tap(await screen.findByText('stub edit saved'));
+  expect(reads).toBe(3);
+  await act(async () => { second.release({ data: { ...PROPOSAL, total_price: '4100.00' } }); });
+  await act(async () => { first.refuse(NETWORK); });
+  expect(screen.queryByText('Saved. The event below could not be refreshed and may be out of date.')).toBeNull();
+  expect(within(section('Financials')).getByText('$4,100.00')).toBeInTheDocument();
+});
+
+test('an edit param waits for the invoices read too, and opens once it lands fresh', async () => {
+  const invoices = held();
+  serve({ '/invoices/proposal/13': () => invoices.entry });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('Person 1');
+  expect(screen.queryByTestId('edit-sheet')).toBeNull();
+  expect(screen.getByRole('button', { name: /^Edit details/ })).toBeDisabled();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=edit&drawerId=13');
+  await act(async () => { invoices.release({ data: INVOICES }); });
+  expect(screen.getByTestId('edit-sheet')).toBeInTheDocument();
+});
+
+test('a newer re-read that fails keeps the notice up when an older one lands after it', async () => {
+  const first = held();
+  const second = held();
+  let reads = 0;
+  serve({ '/proposals/13': () => { reads += 1; if (reads === 1) return { data: PROPOSAL }; return reads === 2 ? first.entry : second.entry; } });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  tap(await screen.findByText('stub edit saved'));
+  await waitFor(() => expect(screen.queryByTestId('edit-sheet')).toBeNull());
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  tap(await screen.findByText('stub edit saved'));
+  expect(reads).toBe(3);
+  await act(async () => { second.refuse(NETWORK); });
+  expect(screen.getByText('Saved. The event below could not be refreshed and may be out of date.')).toBeInTheDocument();
+  // Newer than the screen, so the older answer shows; asked before the second
+  // save, so it can still be behind, and the notice stays.
+  await act(async () => { first.release({ data: { ...PROPOSAL, total_price: '3900.00' } }); });
+  expect(within(section('Financials')).getByText('$3,900.00')).toBeInTheDocument();
+  expect(screen.getByText('Saved. The event below could not be refreshed and may be out of date.')).toBeInTheDocument();
+});
+
+// ---- Fleet fold (lane ma-e3, 2026-10-06) ----
+const css = fs.readFileSync(path.resolve(__dirname, '../../index.css'), 'utf8');
+
+// Item 12 (D-M3): the Note row has the Edit details row's hold, and the note sheet latches once open.
+test('the Note row takes no tap while the roster is loading, so held taps stack no history', async () => {
+  const roster = held();
+  serve({ '/shifts/by-proposal/13': () => roster.entry });
+  mount();
+  const row = await screen.findByRole('button', { name: /^Note/ });
+  expect(row).toHaveTextContent('Add a note');   // the label stays as it is while held
+  tap(row);
+  tap(row);
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+  expect(row).toBeDisabled();
+  await act(async () => { roster.release({ data: [shift(1)] }); });
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+  tap(screen.getByRole('button', { name: /^Note/ }));
+  expect(await screen.findByTestId('note-sheet')).toBeInTheDocument();
+  tap(screen.getByText('stub note close'));
+  await waitFor(() => expect(screen.queryByTestId('note-sheet')).toBeNull());
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/);
+});
+
+test('a note param waits for the drink-plan read, and opens once it lands fresh', async () => {
+  const plan = held();
+  serve({ '/drink-plans/by-proposal/13': () => plan.entry });
+  mount({ initial: '/events/13?drawer=note&drawerId=13' });
+  await screen.findByText('Person 1');
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+  expect(screen.getByRole('button', { name: /^Note/ })).toBeDisabled();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=note&drawerId=13');
+  await act(async () => { plan.release({ data: PLAN }); });
+  expect(screen.getByTestId('note-sheet')).toBeInTheDocument();
+});
+
+test('a note param waits for the invoices read too, and opens once it lands fresh', async () => {
+  const invoices = held();
+  serve({ '/invoices/proposal/13': () => invoices.entry });
+  mount({ initial: '/events/13?drawer=note&drawerId=13' });
+  await screen.findByText('Person 1');
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=note&drawerId=13');
+  await act(async () => { invoices.release({ data: INVOICES }); });
+  expect(screen.getByTestId('note-sheet')).toBeInTheDocument();
+});
+
+test('a drink-plan read that settles stale keeps the note sheet shut, and the row reads needs connection', async () => {
+  const plan = held();
+  serve({ '/drink-plans/by-proposal/13': () => plan.entry });
+  mount({ initial: '/events/13?drawer=note&drawerId=13' });
+  await screen.findByText('Person 1');
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+  await act(async () => { plan.release({ data: PLAN, staleAt: '2026-10-05T12:00:00.000Z' }); });
+  const row = screen.getByRole('button', { name: /^Note/ });
+  expect(row).toHaveTextContent('needs connection');
+  expect(row).toBeDisabled();
+  expect(screen.queryByTestId('note-sheet')).toBeNull();
+  await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/13$/));
+});
+
+// D-M3's scenario: a read that turns stale after the note sheet opened must
+// not shut it on the person's typing. (In the app the sheet's scrim covers this
+// Retry; the rule holds whatever starts the read.)
+test('an open note sheet stays open when a later read comes back from the stored copy', async () => {
+  let reads = 0;
+  serve({ '/shifts/by-proposal/13': () => { reads += 1; return reads === 1 ? { reject: NETWORK } : { data: [shift(1)], staleAt: STAMP }; } });
+  mount();
+  expect(await screen.findByText("Couldn't load staffing.")).toBeInTheDocument();
+  tap(screen.getByRole('button', { name: /^Note/ }));
+  expect(await screen.findByTestId('note-sheet')).toBeInTheDocument();
+  tap(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByText(/^offline copy · as of/)).toBeInTheDocument();
+  expect(screen.getByTestId('note-sheet')).toBeInTheDocument();
+  expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=note&drawerId=13');
+});
+
+// Item 14 (U-M8): the held rows give a cue, with no new words.
+test('while held, Edit details and Note say they are busy and dim their notes; the cue leaves once the reads settle', async () => {
+  const roster = held();
+  serve({ '/shifts/by-proposal/13': () => roster.entry });
+  mount();
+  const edit = await screen.findByRole('button', { name: /^Edit details/ });
+  const note = screen.getByRole('button', { name: /^Note/ });
+  expect(edit).toHaveAttribute('aria-busy', 'true');
+  expect(note).toHaveAttribute('aria-busy', 'true');
+  expect(edit).toHaveTextContent('date · time · guests');
+  await act(async () => { roster.release({ data: [shift(1)] }); });
+  expect(screen.getByRole('button', { name: /^Edit details/ })).not.toHaveAttribute('aria-busy');
+  expect(screen.getByRole('button', { name: /^Note/ })).not.toHaveAttribute('aria-busy');
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-section-row\[aria-busy="true"\] \.m-edit-note,[^{]*\.m-section-row\[aria-busy="true"\] \.m-note-preview,[^{]*\.m-section-row\[aria-busy="true"\] \.m-section-caret \{ opacity: 0\.45; \}/);
+});
+
+// Item 15 (U-M9): the behind notice takes the page's inset, not the sheet's.
+test('the saved-but-behind notice lines up with the when line and the sections', async () => {
+  let fail = false;
+  serve({ '/proposals/13': () => (fail ? { reject: NETWORK } : { data: PROPOSAL }) });
+  mount({ initial: '/events/13?drawer=edit&drawerId=13' });
+  await screen.findByText('stub edit saved');
+  fail = true;
+  tap(screen.getByText('stub edit saved'));
+  const line = await screen.findByText('Saved. The event below could not be refreshed and may be out of date.');
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(line.closest('.m-fail')).toHaveClass('m-saved-behind');
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-fail\.m-saved-behind \{ margin: 0 0 10px; \}/);
+});
+
+// Item 16 (U-M10): offline, the Note row's "needs connection" sits at the far end, like Edit details'.
+test('offline, the Note row\'s needs connection follows the label and is pushed to the far end', async () => {
+  serve({ '/proposals/13': { data: PROPOSAL, staleAt: '2026-10-05T12:00:00.000Z' } });
+  mount();
+  await screen.findByText('Person 1');
+  const locked = within(screen.getByRole('button', { name: /^Note/ })).getByText('needs connection');
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(locked.previousElementSibling).toHaveClass('m-section-name', 'm-note-name');
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-section-name\.m-note-name \+ \.m-edit-note \{ margin-left: auto; \}/);
 });

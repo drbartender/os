@@ -432,3 +432,14 @@ server/utils/notificationChannelResolver.js
 client/src/pages/admin/proposalEditor/patchBody.js
 client/src/pages/admin/proposalEditor/editorCore.js
 client/src/components/comms/notifyDrafts.js
+
+# Phone edit sheet (lane ma-e3): the money write surface
+# useEditSheet.js writes; editSheetView.js holds the updated_at guard's comparator,
+# the curfew acknowledgement trigger and which reprice lines show; EditSheet.js holds
+# Confirm's priced-preview gate and the client-send buttons with their arm delay;
+# repriceSummary.js writes the confirm's money lines and the one disclosure of the
+# automatic gratuity email, on both surfaces.
+client/src/components/mobile/useEditSheet.js
+client/src/utils/editSheetView.js
+client/src/components/mobile/EditSheet.js
+client/src/pages/admin/proposalEditor/repriceSummary.js
