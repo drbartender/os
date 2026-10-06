@@ -2015,6 +2015,19 @@ form's first appearance, a reload, the notify step opening, each step back to th
 notify footer is two rows, Cancel and "Send the update" over a full-width "Don't send", no label
 wrapped. Say whether either reads wrong on the Pixel.
 
+### Texts know their line, and one opt-out covers every line (lane sms-lines). Merged 2026-10-06 as `811f9092`, NOT yet pushed.
+
+Once pushed. Each step texts the 888 from the 312 (your staff account; it is never a client row):
+- Text STOP. The alert email arrives; the inbound row in `sms_messages` carries `metadata.to` (the
+  888) and `metadata.outcome = 'opt_stop'`, and `sms_optouts` holds the 312 with `source = 'keyword'`.
+  While it stands, admin alert texts to the 312 fail at Twilio (21610), so do the next step right away.
+- Text START. The row reads `opt_start` and the `sms_optouts` row gets `cleared_at`. Admin alert
+  texts reach the 312 again.
+- Text a picture with no words. The row carries `metadata.media` with a Twilio-hosted link.
+This is the 888 leg of spec section 16's round trip; the 224 legs follow when each line is pointed at
+the OS. The Messages-page refusal for an opted-out client is covered by tests only (the 312 has no
+client thread).
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

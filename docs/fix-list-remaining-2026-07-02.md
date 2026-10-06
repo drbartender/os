@@ -108,6 +108,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
+| 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
@@ -919,6 +920,20 @@ the new address. Fix: reset `email_status` when `PUT /clients/:id` changes the e
 already resets `phone_status` when a client re-confirms a phone, `publicToken.js`), and give the
 marketing route its control on the contact row. Prod, read-only, 2026-10-06: 5 clients carry the
 flag, none with an upcoming booking. Lane ma-e3a fold re-review.
+
+### The admin group staff text skips the opt-out record
+
+`POST /api/messages/send` (`server/routes/messages.js`, through `server/utils/staffText.js`)
+checks only the staffer's agreement consent and a usable phone. It reads neither `sms_optouts` nor
+`users.communication_preferences.sms_enabled`, so a staffer who opted out by texting a 224 line
+(once that line takes inbound), or whose texts were turned off some way other than STOP, still gets
+an admin group text from the 888. A STOP to the 888 itself is safe: Twilio blocks that pair (21610)
+and the send records it. Pre-existing: lane sms-lines (`811f9092`) kept the group send frozen
+(spec 2026-10-06 section 9, pinned by `messages.send.test.js`) and made its docs say so, and the
+staff STOP alert's "you cannot reply by SMS" is untrue for this one send. **Dallas's call:** run each
+recipient through `textability({ kind: 'staff', ... })` before the send and record a failed row on
+a refusal (it changes the characterization suite and the spec's "behavior does not change"). Found by
+the lane's security and consistency reviews.
 
 ## 4. Staff-facing
 
@@ -1747,6 +1762,40 @@ the accented spelling) or the two spellings stop matching each other.
 - **The marketing compose canvas** (block palette / Look / Send test) is deferred pending Dallas's go.
 
 ---
+
+### Lane sms-lines review leftovers (2026-10-06)
+
+Parked by the lane's review fleet (merge `811f9092`); none of them can text the wrong person.
+- **The "no shift was changed" alert names two reasons** (a person texted last, or a 224 line). A
+  staffer with no staff-side outbound row on record lands there too (never texted, or only the
+  approval and assign notices, which write no row). Copy only.
+- **Three docs overstate decision 17's skip list.** README's SMS bullet, ARCHITECTURE's inbound
+  bullet and the `latestDrbTextWasAutomated` JSDoc say texts on a client's thread do not count; only
+  sender-less ones are skipped (a human reply on a client thread to a shared phone still counts, the
+  safe direction).
+- **The 888 staff freeform alert does not count attachments**; the client, unknown-sender and
+  conversation alerts do.
+- **A failed reply whose INSERT then throws reaches the global handler,** which logs the whole pg
+  error; a constraint detail could quote the row. Nothing went out.
+- **`/inbound`'s catch builds its Sentry extra with `String(req.body.From)`,** which throws on a
+  bracketed field off production when Sentry is set (production 403s unsigned requests first).
+- **No committed test pins** `/status` writing a 21610 before the row bookkeeping, or `sendSMS`
+  sending a failed 21610 record to Sentry; both were verified by review-time stubs only.
+- **`sms_status_orphans` is never pruned.** Tiny volume; prune it if it grows.
+- **Decision 17's lookup is a sequential scan** (an OR across `recipient_id` and a last-10
+  expression), about 2 ms at prod's size. Add a partial expression index on the outbound last-10 if
+  `sms_messages` passes about 50k rows or the slow-query log shows it.
+- **A deleted human sender's staff texts read as automated** (`sender_id` is ON DELETE SET NULL), so
+  a CANT after one acts as a shift command. Only after an admin or manager user is deleted.
+- **The Inbox staff send registers a status callback, but the staff core does not fold orphans**
+  into its row. Inbox reads them; a staff SMS history screen would show "sent" for a fast failure.
+- **The shared `adminWriteLimiter` (10 writes a minute per admin) fronts the Messages reply**
+  (spec section 9); a live exchange plus other admin writes can hit a 429.
+- **Stale comments** in `server/routes/staffPortal.js` (the pointer to a `smsInbound.js` line about
+  `event_date < today`) and `server/routes/shifts.handlers.js` (a CANT text "smsInbound.js") name
+  `smsInbound.js` for code now in `smsShiftCommands.js`.
+- **Optional:** the reply's three pre-send reads could run with `Promise.all`; worth it only if Render
+  and Neon sit in different regions.
 
 ## Voice
 
