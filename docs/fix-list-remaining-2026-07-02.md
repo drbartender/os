@@ -110,6 +110,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 4 | The staff brief's consult card prints a custom drink as `[object Object]` | **yes: 2 upcoming bookings carry one (10/06)** |
+| 4 | The staff brief shows an unsubmitted planner draft's drinks as the event's menu | **yes: 3 upcoming bookings, 1 of them consult-fed (10/06)** |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
@@ -945,6 +946,19 @@ custom drink (prod, 2026-10-06); 14 of the 23 consults ever saved have one.** Th
 renders this JSON properly for the post-consult client email (`formatConsultRecap`,
 `server/utils/consultRecap.js`); render the card by the same rules. Build it with the Potions entry
 "Planner answers beside the shopping list", which needs the same consult recap in the admin modal.
+
+### The staff brief shows an unsubmitted planner draft's drinks as the event's menu
+
+The staff brief's drink cards (`SignatureCocktailsCard`, `MocktailsCard`, the menu card) read the
+planner's `selections` with no look at `drink_plans.status` (`ShiftDetail.js:191`, `:309-316`), so a
+draft the client never submitted reads to a bartender as the menu. On a consult-fed plan the list
+was built from the consult, and the planner draft played no part in it. **Reachable, prod
+2026-10-06: 3 upcoming live bookings carry a draft (`draft`/`pending`) planner with picked drinks;
+1 of them also carries a consult.** The payload already ships `dp.status`. **Dallas's call (what a
+bartender should see):** recommendation is to label those cards "From the client's planner, not
+submitted" when the status is not `submitted`/`reviewed`, and to hide them outright when a consult
+exists (the consult card then carries the drinks). Surfaced by the spec-risk review of the
+shopping-list answers spec, 2026-10-06.
 
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
 
