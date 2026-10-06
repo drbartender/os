@@ -2466,6 +2466,16 @@ the accented spelling) or the two spellings stop matching each other.
   it. It is wrapped in its own try/catch, so nothing crashes: the cost is a misleading
   `ROLLBACK failed` line in the logs during exactly the incident someone would be reading them
   for. Guard the rollback on `!released`.
+- **Exact pins hold `express` and `dompurify` one patch behind their advisory fixes.** `express`
+  4.22.2 → 4.22.3 (it brings `qs` 6.15.3, the copy Twilio shares) and `dompurify` 3.4.11 →
+  3.4.16. `npm audit fix` cannot move an exact pin. Neither is reachable here, checked 2026-10-06:
+  the `qs` array-limit fix needs the `comma` and `throwOnLimitExceeded` parse options and Express
+  passes neither (a 1500-item comma value parses as one string), the `qs` `isBuffer` fix sits on
+  the `stringify` path and no server code stringifies request data, and all three DOMPurify
+  advisories need `IN_PLACE` or `CUSTOM_ELEMENT_HANDLING`, which neither sanitizer sets
+  (`admin/blog.js`, `emailSanitize.js`). Hygiene that quiets the deploy log: bump both pins,
+  confirm `npm ls qs` dedupes to 6.16, run the gate. Left by the 2026-10-06 audit pass
+  (`348b52e0`).
 
 ### Tech debt (deliberate deferrals from the 2026-04-24 full audit)
 
@@ -2547,10 +2557,14 @@ re-grep before surgery.
   of a lazy body endpoint.
 - **`uuid` GHSA-w5hq-g745-h8pq.** The advisory needs a `buf` argument on v3/v5/v6; every site uses v4
   with no `buf`, so the path is unreachable. The only fix npm offers is a semver-major.
-- **`@opentelemetry/core` GHSA-8988-4f7v-96qf.** Pulled transitively by `@sentry/node`'s OTel
-  instrumentation and tightly version-coupled, so forcing core alone risks breaking Sentry tracing.
-  The Sentry bump did NOT clear it — `@sentry/node` is `^10.49.0` and the lockfile still resolves
-  core at 2.6.1, below 2.8.0. Re-check whether a newer Sentry line clears it.
+- **`nodemon` → `chokidar` → `braces` (3 high, dev only).** Render's deploy-log count includes
+  them; prod starts with plain `node server/index.js`. The `braces` DoS needs a hostile glob
+  pattern and nodemon only watches patterns we wrote. npm's only offer is a downgrade to
+  nodemon 1.x.
+- **`csv-parse` below 7.0.2 (moderate).** Only the two one-off CC import scripts load it
+  (`scripts/cc-clients-import.js`, `scripts/cc-ledger-import.js`), each parsing a CSV handed to
+  it locally; nothing served touches it. The fix is a semver-major. If those scripts retire, drop
+  the dependency instead.
 - **record-payment reads `currentPaid` pre-transaction.** The `currentPaid === 0` gate for the
   client-lock hoist and the same-client sweep uses a value read before `BEGIN`. Consequences are
   benign (an extra client lock is harmless, a re-sweep is idempotent, and the amount math uses
