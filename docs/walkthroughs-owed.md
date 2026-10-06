@@ -1741,8 +1741,10 @@ to rot. Do that again for the next thing that sits here.
       LIVE since the 2026-08-26 push) caps rings at `ADMIN_PHONE` at `CONSULT_CALL_DAILY_CAP` x `MAX_ADMIN_RINGS`, 30 a day
       by default, counted over EVERY attempt row including cancelled ones.** Named as the variable
       on purpose: which handset that is has been written down wrong three times, as the 312,
-      when Twilio's log shows the agent legs going to the 970. `ADMIN_PHONE` is unset on the dev
-      box, so only Render's env settles it. That is ample for a
+      when Twilio's log shows the agent legs going to the 970. That was true through the launch
+      walk; since 2026-10-06 Render's `ADMIN_PHONE` IS the 312 (Dallas confirmed, after the
+      personal-cell purge), so the admin legs now ring through Google Voice. It is unset on the
+      dev box, so only Render's env settles it. That is ample for a
       launch call, but a book-cancel-rebook rehearsal loop now spends real budget, and a trip
       files `skipped_cap`/`dial_cap_tripped` and emails once per rolling window. If the phone
       stops ringing mid-rehearsal, check that before suspecting the bridge.
@@ -1768,7 +1770,8 @@ to rot. Do that again for the next thing that sits here.
       The walk, which IS the launch gate: confirm the Cal.com event type's minimum booking notice
       allows a slot a few minutes out, lowering it for the test if not. Book a slot on your own
       Cal.com page with a phone that is NOT his own cell and is NOT the 312, which forwards to it:
-      `ADMIN_PHONE` is the 970 itself, so both legs otherwise land on one handset. Zul's line is the
+      `ADMIN_PHONE` was the 970 itself at the time (the 312 since 2026-10-06), so both legs
+      otherwise land on one handset. Zul's line is the
       easy answer, since she is already in the loop. Expect the 970 to ring between 90 and 30 seconds
       before the slot; the briefing should speak your own name, the slot time, and the linked
       proposal's event date and guest count. Press 1. The 970 should ring showing the **1922**, with
@@ -2084,6 +2087,24 @@ opened signed in (the admin sign-in token was blocked in that session).
       active link in the account is a real bartender's tip-page link, as designed.
 
 ## Tier 5 — never exercised end-to-end
+
+- [ ] **The lead-call and consult bridges through Google Voice (owed since 2026-10-06).**
+      Render's `ADMIN_PHONE` moved from the old cell to the 312 on 2026-10-06, so the FIRST ring
+      of both bridges now goes through Google Voice. Both were proven only against a direct
+      cell. The design already survives a voicemail answer (voicemail cannot press 1, so the
+      status callback advances the chain to Zul), but two Google Voice behaviors are new:
+      · Voicemail pickup at about 25 s: the lead-call agent ring is `AGENT_RING_SECONDS` = 25
+        (`leadCallTrigger.js`), right at that boundary, so a missed answer can cost the lead
+        35 to 45 s before Zul's leg and leave the briefing in the 312's voicemail. The consult
+        admin ring is 20 s (`consultCallChain.js` `ADMIN_RING_SECONDS`), under it. The primary
+        line already rings 18 s for exactly this reason (`VM_PRIMARY_RING_SEC`).
+      · Call screening: if Google Voice screens the bridges' caller IDs, it answers first and
+        asks for a name, so the bridge's spoken briefing and its "press 1" land on the screener.
+      The walk: one real or test Thumbtack lead and one test Cal.com booking. Each time the
+      phone should ring with no screening prompt, the briefing should play from its start, and
+      pressing 1 should bridge. If screening shows up, add the bridge caller IDs to the Google
+      Voice contacts (or turn screening off for them); if the lead ring loses to voicemail,
+      drop `AGENT_RING_SECONDS` to 18 to match the primary line.
 
 - [~] **Comms SMS smoke, end-to-end — STOP/START PASSED 2026-08-14, the rest still owed.**
       **HONEST STATUS OF THE REST, 2026-08-14: this item is EXHAUSTED as far as a human
