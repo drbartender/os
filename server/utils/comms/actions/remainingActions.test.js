@@ -71,6 +71,7 @@ before(async () => {
      RETURNING id, token`,
     [STALE_EMAIL, proposalId, JSON.stringify({
       barType: 'full_bar', spirits: ['vodka', 'gin'], signatureDrinks: [RECAP_COCKTAIL_ID], mixers: 'full',
+      notes: 'Team only: upsell the champagne toast',
     })]
   );
   planId = dp.rows[0].id;
@@ -231,6 +232,8 @@ test('consultRecap: buildMessages has no CTA and a recap line, with BYOB vs host
   assert.ok(!byob.email.bodyText.includes(RECAP_COCKTAIL_ID), 'never the raw catalog id');
   assert.ok(byob.email.bodyText.includes('Mixers: Full set'), 'a full bar prints its mixer choice');
   assert.ok(byob.email.bodyText.includes("We'll send your shopping list shortly."), 'BYOB next-step line');
+  assert.ok(!byob.email.bodyText.includes('Notes:') && !byob.email.bodyText.includes('champagne'),
+    'the compose draft carries no consult notes');
 
   // Point the proposal at a per_guest (hosted) package: the next-step line flips.
   const pkg = await pool.query(

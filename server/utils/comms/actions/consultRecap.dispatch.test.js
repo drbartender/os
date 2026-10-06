@@ -53,6 +53,7 @@ before(async () => {
      RETURNING id`,
     [CLIENT_EMAIL, proposalId, JSON.stringify({
       barType: 'full_bar', signatureDrinks: [COCKTAIL_ID], mixers: 'full',
+      notes: 'Admin shorthand: upsell the champagne toast',
     })]
   );
   planId = dp.rows[0].id;
@@ -78,4 +79,7 @@ test('dispatch with no message (the automatic first-save send) emails drink name
   assert.ok(!text.includes(COCKTAIL_ID), 'never the raw catalog id in the text');
   assert.ok(html.includes('Dispatch Recap Sour (catalog)'), 'html names the drink');
   assert.ok(!html.includes(COCKTAIL_ID), 'never the raw catalog id in the html');
+  // The consult notes are the team's shorthand: never in the client email.
+  assert.ok(!text.includes('Notes:') && !text.includes('champagne'), 'no consult notes in the text');
+  assert.ok(!html.includes('Notes:') && !html.includes('champagne'), 'no consult notes in the html');
 });

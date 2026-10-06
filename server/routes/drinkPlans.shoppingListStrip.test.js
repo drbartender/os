@@ -128,3 +128,22 @@ test('public token GET never serves underscore-prefixed keys', async () => {
   const servedKeys = Object.keys(res.body.shopping_list).filter((k) => k.startsWith('_'));
   assert.deepEqual(servedKeys, []);
 });
+
+test('public token GET never serves the list notes (consult or admin notes, team-only)', async () => {
+  await pool.query(
+    `UPDATE drink_plans
+       SET shopping_list = $1::jsonb, shopping_list_status = 'approved'
+     WHERE id = $2`,
+    [JSON.stringify({
+      guestCount: 50, liquorBeerWine: [], everythingElse: [],
+      notes: 'Bride hates gin, upsell the champagne toast',
+    }), planId]
+  );
+  const { rows } = await pool.query('SELECT token FROM drink_plans WHERE id = $1', [planId]);
+  const res = await request('GET', `/api/drink-plans/t/${rows[0].token}/shopping-list`, undefined, null);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ready, true);
+  assert.equal(res.body.shopping_list.guestCount, 50, 'the list itself still serves');
+  assert.ok(!('notes' in res.body.shopping_list), 'no notes key on the public list');
+  assert.ok(!JSON.stringify(res.body).includes('champagne'), 'the note text appears nowhere in the response');
+});

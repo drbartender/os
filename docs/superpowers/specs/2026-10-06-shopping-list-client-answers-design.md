@@ -4,6 +4,8 @@
 
 **As built:** both lanes merged 2026-10-06 (`7d9a8d38`, `fb9bae0b`); the deltas from this spec that review produced are recorded in the plan's "As built" section.
 
+**Amended 2026-10-06 (Dallas, after the build):** the consult notes are team-only. Decision 6 no longer holds word for word: the recap email drops the Notes line, while the staff Consult card and the answers panel keep it (`consultRecapLines` prints notes only when a team surface passes `includeNotes: true`), so a notes-only consult emails the placeholder. The client's public shopping-list JSON no longer serves the list's `notes` key either.
+
 **Ledger entries this closes** (`docs/fix-list-remaining-2026-07-02.md`):
 - Potions, "Planner answers beside the shopping list" (Dallas's 2026-09-22 drop, item 8).
 - Section 4, "The staff brief's consult card prints a custom drink as `[object Object]`".

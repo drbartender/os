@@ -67,7 +67,7 @@ before(async () => {
   await pool.query("INSERT INTO cocktails (id, name, is_active) VALUES ($1, 'Route Recap Sour', false)", [COCKTAIL_ID]);
   const a = await pool.query(
     "INSERT INTO drink_plans (client_name, consult_selections) VALUES ('Consult Recap Route', $1::jsonb) RETURNING id",
-    [JSON.stringify({ barType: 'sig_beer_wine', signatureDrinks: [COCKTAIL_ID], mixers: 'matching', beer: true })]
+    [JSON.stringify({ barType: 'sig_beer_wine', signatureDrinks: [COCKTAIL_ID], mixers: 'matching', beer: true, notes: 'Bring the copper mugs' })]
   );
   withConsultId = a.rows[0].id;
   const b = await pool.query("INSERT INTO drink_plans (client_name) VALUES ('Consult Recap Route') RETURNING id");
@@ -107,6 +107,7 @@ test('consult GET: recap lines carry drink names beside the unchanged raw blob',
   assert.deepEqual(res.body.consult_selections.signatureDrinks, [COCKTAIL_ID], 'the form still pre-populates from the raw blob');
   assert.ok(res.body.recap.includes('Signature cocktails: Route Recap Sour'));
   assert.ok(res.body.recap.includes('Mixers: Only those that match your spirits'));
+  assert.ok(res.body.recap.includes('Notes: Bring the copper mugs'), 'the admin panel keeps the consult notes');
   assert.ok(!res.body.recap.join(' ').includes(COCKTAIL_ID), 'never the raw id');
 });
 

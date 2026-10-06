@@ -393,6 +393,7 @@ test('event-details: the consult rides as recap lines with drink names', async (
       barType: 'full_bar',
       signatureDrinks: [cocktailId],
       customCocktails: [{ name: 'House Mule', ingredients: ['vodka', 'ginger beer'] }],
+      notes: 'Bring the copper mugs',
     })]
   );
   try {
@@ -402,6 +403,7 @@ test('event-details: the consult rides as recap lines with drink names', async (
     assert.ok(Array.isArray(lines), 'consult_recap is an array of lines');
     assert.ok(lines.includes('Signature cocktails: EvDet Recap Sour'));
     assert.ok(lines.includes('Custom cocktail: House Mule (vodka, ginger beer)'));
+    assert.ok(lines.includes('Notes: Bring the copper mugs'), 'staff see the consult notes (Dallas, 2026-10-06)');
     assert.doesNotMatch(JSON.stringify(lines), /object Object/);
     // Kept for ONE release so a staff tab opened before the deploy keeps today's card.
     assert.deepStrictEqual(res.body.drink_plan.consult_selections.signatureDrinks, [cocktailId]);

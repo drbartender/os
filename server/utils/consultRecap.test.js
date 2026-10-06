@@ -156,7 +156,25 @@ test('humanizeDrinkId: dashes, underscores and spaces split; each word capitalis
   assert.equal(humanizeDrinkId('--'), '--');
 });
 
-test('consultRecapLines: [] exactly where the email prints its placeholder', () => {
+test('formatConsultRecap: the notes stay off the client email; the staff lines keep them', () => {
+  const consult = { barType: 'beer_wine', beer: true, notes: 'Bride hates gin, upsell the champagne toast' };
+  const email = formatConsultRecap(consult);
+  assert.ok(email.includes('Beer: yes'));
+  assert.doesNotMatch(email.join(' | '), /Notes|hates gin|champagne/);
+  const team = consultRecapLines(consult, {}, { includeNotes: true });
+  assert.ok(team.includes('Notes: Bride hates gin, upsell the champagne toast'));
+  // Client-safe by default: a caller that forgets the flag gets no notes.
+  assert.doesNotMatch(consultRecapLines(consult).join(' | '), /Notes|hates gin/);
+});
+
+test('formatConsultRecap: a notes-only consult emails the placeholder, never the notes', () => {
+  const consult = { spirits: [], notes: 'Call back about the venue bar' };
+  assert.deepEqual(formatConsultRecap(consult), ['(no specific selections captured; notes are on file)']);
+  assert.deepEqual(consultRecapLines(consult, {}, { includeNotes: true }), ['Notes: Call back about the venue bar']);
+  assert.deepEqual(consultRecapLines(consult), []);
+});
+
+test('consultRecapLines: [] for a consult with nothing to say, where the email prints its placeholder', () => {
   assert.deepEqual(consultRecapLines({}), []);
   assert.deepEqual(consultRecapLines(null), []);
   assert.deepEqual(consultRecapLines({ spirits: [], notes: '   ' }), []);

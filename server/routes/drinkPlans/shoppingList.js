@@ -61,6 +61,10 @@ function registerPublicShoppingListRoute(router) {
     for (const key of Object.keys(publicList)) {
       if (key.startsWith('_')) delete publicList[key];
     }
+    // `notes` is the consult's notes or the plan's admin notes, copied in by
+    // the generator (server/utils/shoppingList.js, server/utils/shoppingListGen.js).
+    // Team-only (Dallas, 2026-10-06), and no client page or PDF reads it.
+    delete publicList.notes;
     res.json({
       ready: true,
       shopping_list: publicList,

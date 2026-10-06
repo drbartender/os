@@ -94,6 +94,13 @@ test('buildConsultRecap: null for a missing, empty or nothing-to-say consult (ne
   assert.equal(await buildConsultRecap({ spirits: [], notes: '  ' }, pool), null);
 });
 
+test('buildConsultRecap: the staff card keeps the notes the client email leaves out', async () => {
+  const lines = await buildConsultRecap({ beer: true, notes: ' Bring the copper mugs ' }, pool);
+  assert.deepEqual(lines, ['Beer: yes', 'Notes: Bring the copper mugs']);
+  // A notes-only consult still shows: the emptiness check counts the notes too.
+  assert.deepEqual(await buildConsultRecap({ notes: 'Call the venue' }, pool), ['Notes: Call the venue']);
+});
+
 test('buildConsultRecap: a consult the formatter cannot read returns null, never a throw', async () => {
   // A row written before the sanitizer, or by hand: String() on this element throws.
   const hostile = { spirits: [{ toString() { throw new Error('unreadable'); } }] };

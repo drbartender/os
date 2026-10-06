@@ -67,8 +67,10 @@ function ingredientSuffix(rows) {
  * The saved consult_selections JSON as one-line strings, drink ids resolved
  * through `names` ({ cocktails: Map, mocktails: Map }). Fields are all
  * optional; missing fields are skipped. [] when there is nothing to say.
+ * The consult notes are team-only (Dallas, 2026-10-06), so the Notes line
+ * prints only when a team surface passes includeNotes: true.
  */
-function consultRecapLines(consult, names = {}) {
+function consultRecapLines(consult, names = {}, { includeNotes = false } = {}) {
   if (!consult || typeof consult !== 'object') return [];
   const { cocktails, mocktails } = names || {};
   const lines = [];
@@ -119,7 +121,7 @@ function consultRecapLines(consult, names = {}) {
     lines.push(`Mixers: ${MIXER_LABELS.get(consult.mixers)}`);
   }
 
-  if (consult.notes && typeof consult.notes === 'string' && consult.notes.trim()) {
+  if (includeNotes && consult.notes && typeof consult.notes === 'string' && consult.notes.trim()) {
     lines.push(`Notes: ${consult.notes.trim()}`);
   }
 
@@ -127,9 +129,10 @@ function consultRecapLines(consult, names = {}) {
 }
 
 /**
- * Render the saved consult_selections JSON into a list of one-line strings
- * suitable for the postConsultClient email recap. Never empty: a consult with
- * nothing to say gets the notes-on-file placeholder, as it always has.
+ * The client recap email's lines (consultRecapParts, through the
+ * consult_recap comms action). No consult notes: they are written for the
+ * team (Dallas, 2026-10-06). Never empty: a consult with nothing else to say
+ * gets the notes-on-file placeholder.
  */
 function formatConsultRecap(consult = {}, names = {}) {
   const lines = consultRecapLines(consult, names);
@@ -192,16 +195,17 @@ function unmatchedDrinkIds(consult, names = {}) {
 
 /**
  * The consult as readable lines for the staff Consult card and the shopping
- * list's answers panel, or null. Null, never the email's placeholder, for a
- * missing, non-object or empty consult, or one with nothing to say, so those
+ * list's answers panel, or null. TEAM SURFACES ONLY: it carries the consult
+ * notes the client email leaves out. Null, never the email's placeholder, for
+ * a missing, non-object or empty consult, or one with nothing to say, so those
  * surfaces hide instead of printing a line about nothing. Never rejects.
  */
 async function buildConsultRecap(consult, db) {
   if (!consult || typeof consult !== 'object' || Array.isArray(consult)) return null;
   try {
-    if (consultRecapLines(consult).length === 0) return null;
+    if (consultRecapLines(consult, {}, { includeNotes: true }).length === 0) return null;
     const names = await loadConsultDrinkNames(consult, db);
-    return consultRecapLines(consult, names);
+    return consultRecapLines(consult, names, { includeNotes: true });
   } catch (err) {
     // A row written before the sanitizer, or by hand, that the formatter
     // cannot read: the card hides instead of failing the staff brief or the

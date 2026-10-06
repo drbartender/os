@@ -170,10 +170,11 @@ router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     consult_selections: consult,
     consult_filled_at: result.rows[0].consult_filled_at || null,
     consult_filled_by_user_id: result.rows[0].consult_filled_by_user_id || null,
-    // The read-only recap (catalog names, the same lines as the client's
-    // recap email) for the shopping-list modal's answers panel. Null with no
-    // consult, or one with nothing to say. buildConsultRecap never rejects,
-    // so the raw blob the form pre-populates from always comes back.
+    // The read-only recap (catalog names: the client email's lines plus the
+    // consult notes the email leaves out) for the shopping-list modal's
+    // answers panel. Null with no consult, or one with nothing to say.
+    // buildConsultRecap never rejects, so the raw blob the form pre-populates
+    // from always comes back.
     recap: await buildConsultRecap(consult, pool),
   });
 }));

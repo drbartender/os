@@ -451,8 +451,9 @@ export function NotesCard({ title, body }) {
 }
 
 // The consult as the server formats it (server/utils/consultRecap.js: catalog
-// names, the same lines the client's recap email carries). The card used to
-// print the raw JSON, so a custom drink reached the bar as "[object Object]".
+// names, the client email's lines plus the consult notes the email leaves
+// out, Dallas 2026-10-06). The card used to print the raw JSON, so a custom
+// drink reached the bar as "[object Object]".
 export function ConsultCard({ lines }) {
   if (!Array.isArray(lines) || lines.length === 0) return null;
   return (
