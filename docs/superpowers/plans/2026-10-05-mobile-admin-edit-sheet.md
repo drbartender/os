@@ -66,7 +66,7 @@
 - **44px minimum tap targets** for every button, row and checkbox label this lane adds.
 - **Copy from the benchmark, verbatim:** "Edit details", "date · time · guests", "needs connection", "event edit · reprices the booking", "Date", "Start", "Duration", "Setup", "Guests", "New total", "balance due becomes <$>", "Confirm new total", "Done", "Cancel".
 - **Copy from the desktop, verbatim:** the extension hint "Includes <N>h of on-site extension, billed on its own invoice. The contract prices <N>h."; "Event updated."; "Saved, but the email failed: <reason>", "Saved, but the text failed: <reason>", "Saved. Email not sent: <reason>", "Saved. Text not sent: <reason>"; "Not saved. The end time is past our 2:00 AM service curfew."; "Book it anyway? This will be recorded."; the notify step's "Notify the client?", "Date changed", "Start time changed", "Location changed", "Current contact on file: <name> (<contact>).", "Email", "Text", "<Email|Text> unavailable: <reason>", "This message is not editable.", "Text (SMS)", "Staff are notified only when the date, time, or location actually changes.", "Send the update", "Don't send"; every reprice line `buildRepriceSummary` writes.
-- **Added copy, held here so a reviewer can check it:** "Loading the event", "Couldn't load this event. Editing needs a connection.", "This event can no longer be edited here. Use desktop view.", "Couldn't price the change.", "This event changed since you opened it.", "Reload", "Retry", "Keep editing", "Book it anyway", "No connection, didn't save.", "Saving", "Something went wrong. Try again.", "Saved. The event below could not be refreshed and may be out of date.", "Notify assigned staff" (the desktop's section heading; its checkbox reads "Notify assigned staff if this save reschedules the event", and the phone shows the step only when the save does), "This event has <N> shifts. Changing the date or time here does not move them; each shift is edited from desktop view.", the gratuity line "The gratuity rises to <$>, so the client is emailed the new amount automatically, unless email to them is turned off.", the screen-reader names "Edit details", "Note", "Close", "Shorter", "Longer", "Fewer guests", "More guests", "Text the assigned staff", "Email the assigned staff" (the staff boxes' visible labels stay the desktop's "Text (SMS)" and "Email"; a distinct name keeps them apart from the client's "Email"); and for the note: "Note", "Add a note", "internal · never shown to staff or clients", "Loading the note", "Couldn't load the note. Editing needs a connection.", "This note changed since you opened it.", "The note is now empty.", "Discard mine", "Save mine", "Save".
+- **Added copy, held here so a reviewer can check it:** "Loading the event", "Couldn't load this event. Editing needs a connection.", "This event can no longer be edited here. Use desktop view.", "Couldn't price the change.", "This event changed since you opened it.", "Reload", "Retry", "Keep editing", "Book it anyway", "No connection, didn't save.", "Saving", "Something went wrong. Try again.", "Saved. The event below could not be refreshed and may be out of date.", "Notify assigned staff" (the desktop's section heading; its checkbox reads "Notify assigned staff if this save reschedules the event", and the phone shows the step only when the save does), "This event has <N> shifts. Changing the date or time here does not move them; each shift is edited from desktop view.", the gratuity line "The gratuity rises to <$>, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.", the screen-reader names "Edit details", "Note", "Close", "Shorter", "Longer", "Fewer guests", "More guests", "Text the assigned staff", "Email the assigned staff" (the staff boxes' visible labels stay the desktop's "Text (SMS)" and "Email"; a distinct name keeps them apart from the client's "Email"); and for the note: "Note", "Add a note", "internal · never shown to staff or clients", "Loading the note", "Couldn't load the note. Editing needs a connection.", "This note changed since you opened it.", "The note is now empty.", "Discard mine", "Save mine", "Save".
 - **Client tests:** `import '@testing-library/jest-dom'` in every test file; a `jest.mock` factory closes over `mock`-prefixed names only; CRA runs `resetMocks: true`, so mock return values are set in each test or a `beforeEach`; a ToastContext stub is one stable object.
 - **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/` (a lint warning is fatal there, and local lint misses `no-undef`).
 - **File sizes:** new source files stay under 400 lines (test files are exempt); `EventDetailPhone.js` stays under 450 (the two new rows live in `EventDetailSections.js`); `ProposalEditorForm.js` shrinks.
@@ -480,7 +480,7 @@ Append to `client/src/pages/admin/proposalEditor/repriceSummary.test.js`:
 // The gratuity staffing-change email is automatic (crud.js post-commit,
 // gratuityMandate.js staffingGratuityOrigin): neither confirm said so until lane ma-e3.
 describe('the automatic gratuity email line', () => {
-  const LINE = 'The gratuity rises to $160.00, so the client is emailed the new amount automatically, unless email to them is turned off.';
+  const LINE = 'The gratuity rises to $160.00, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.';
   const base = { status: 'deposit_paid', totalPrice: '1000', amountPaid: '100', newTotal: 1040, oldGratuityTotal: 120, newGratuityTotal: 160 };
   it('shows when money is paid, the gratuity was not set by hand, and it rises', () => {
     expect(buildRepriceSummary(base).lines).toContain(LINE);
@@ -791,7 +791,7 @@ and insert this block immediately before the final `lines.push('Unlocked invoice
   const newG = Number(newGratuityTotal);
   if (paid > 0 && gratuityOrigin !== 'admin' && newGratuityTotal != null
     && Number.isFinite(newG) && newG - oldG > 0.004) {
-    lines.push(`The gratuity rises to ${usd(newG)}, so the client is emailed the new amount automatically, unless email to them is turned off.`);
+    lines.push(`The gratuity rises to ${usd(newG)}, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.`);
   }
 ```
 
@@ -1096,7 +1096,7 @@ describe('confirmView', () => {
   });
   test('the gratuity line arrives through the shared summary', () => {
     const v = confirmView({ proposal: booked, preview: { total: 3700, gratuityTotal: 160 }, changed: true });
-    expect(v.lines).toContain('The gratuity rises to $160.00, so the client is emailed the new amount automatically, unless email to them is turned off.');
+    expect(v.lines).toContain('The gratuity rises to $160.00, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.');
   });
 });
 
