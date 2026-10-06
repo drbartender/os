@@ -1933,41 +1933,40 @@ Moves to Tier 3b the moment `git merge-base --is-ancestor 7d9a8d38 origin/main` 
 tests (198 server tests across the 14 suites that load an edited file, all green one at a time; a
 dispatch test that fails against a send without names; the staff client suites; the CI build) and four
 reviewers (code, consistency, security, performance), each re-confirmed after one fix round. The client
-email was rendered on dev and read before merge. The staff card was NOT opened in a signed-in browser
-in that session (the minted-token sign-in was blocked); the client lane's browser pass covers it.
+email was rendered on dev and read before merge. **Dev, signed in, 2026-10-06 (scripts/dev-signin.js):**
+the staff Consult card on shift 15 (plan 19, staffer 5) renders bold labels and readable lines, no
+`[object Object]`; that consult names no drinks, so the drink-name half below is still owed.
 
 - A consult-fed event (prod has 2 upcoming bookings whose consult names a custom drink): the staff
   event page's Consult card shows bold labels and drink names ("Signature cocktails: Margarita",
   "Custom cocktail: House Mule (vodka, ginger beer, lime)"), never `[object Object]` or a camelCase key.
 - The next consult saved for a new client: the automatic recap email names the drinks and, on a full
   or signature-cocktail bar, carries a Mixers line ("Mixers: None beyond your signature cocktail
-  ingredients" when the consult picked none).
+  ingredients" when the consult picked none). It carries NO "Notes:" line even when the consult has
+  notes (Dallas, 10/06, `ed1f7ee3`); the staff Consult card for that event does show them.
 
 ### Client's answers beside the shopping list. Merged 2026-10-06 as `fb9bae0b` (with `7d9a8d38`, the recap it reads).
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor fb9bae0b origin/main` says yes. Verified by
 tests (54 client tests across the touched suites on main, every new one mutation-checked by review), the
 CI build, the CSS scope check, and three reviewers (code, the cross-lane recap contract, UI/UX), each
-re-confirmed after a fix round. **Never rendered:** UI/UX was a static code review, because signing a
-dev admin into the browser was refused in that session. This walk is the only visual check it has had.
+re-confirmed after a fix round. **Dev, signed in, 2026-10-06 (scripts/dev-signin.js), all as expected:**
+opened from plan 19's page, its event page and a submitted plan's proposal page (empty state "No
+planner or consult answers yet."); the switch opens on the consult (the newer set), the planner side
+reads "From the planner, not submitted" with "This list was built from the consult." and shows no
+menu design or logistics; Hide answers gives the 960px modal and survives a reload; widths 1440,
+1366, 1280, 1200 (1rem gutters) and 1024 (stacked, capped at 40vh), no sideways scroll; sticky at
+1280x800 and 1366x768 holds 81px from the top (under the 60px bar) and never covers the footer;
+both skins read clearly; Tab, Space and Enter work on the switch with a visible ring; Editor and
+Client view both keep the panel. What is left:
 
-- Open a shopping list from a drink plan's page, an event's page and a proposal's page: a "Client's
-  answers" panel sits right of the list. On a plan with both a consult and a planner, a Consult /
-  Planner switch opens on the newer set; flipping it changes only the panel (nothing saves) and, when
-  the shown set did not build the list, a line says which did. Planner answers show drinks, spirits,
-  beer and wine, syrups, add-ons, crowd and notes, never menu design or parking.
-- Sticky: on a long planner set at a laptop height (1280x800, 1366x768), scroll the list; the panel
-  should stick just under the top bar with its last line reachable inside its own scroll, and let go
-  cleanly at the end without covering the footer.
-- Show answers / Hide answers: hiding returns today's 960px modal; the choice survives a reload.
-- Widths 1440, 1200 and 1024: two columns at 1200 and up with a real gutter at the sides; below 1200
-  the panel stacks above the list, capped near 40% of the screen with its own scroll.
-- Both skins: the panel's muted text, the selected switch segment (bold, darkest text, accent
-  underline) against the unselected one, and the panel well against the modal.
-- Keyboard: Tab reaches the panel and the switch segments (ring inside the segment); Space and Enter flip.
-- Editor, Client view and a finalized (read-only) list: the panel shows in all three.
-- The 2 upcoming bookings whose planner answers carry no activeModules (ledger, Potions) show "which has
-  no answers to show here" by design until that card gap is fixed.
+- Sticky on a LONG planner set: the panel's last line reachable inside its own scroll. No dev plan
+  had a long v2 answer set on a list already in review (opening plan 17 would have flipped its list
+  status, see the Admin UI ledger entry on dev autosave).
+- A finalized (read-only) list: the panel shows. No dev plan has a finalized list, and staging one
+  on the shared dev DB was refused, so this waits for a real finalized plan.
+- The 2 upcoming bookings whose planner answers carry no activeModules show "which has no answers to
+  show here". Settled (Dallas, 10/06): old plans keep behaving as they have; handle one when it comes up.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

@@ -108,8 +108,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
-| 3 | Consult notes go word for word into the client's recap email and onto the staff brief, and the form never says so | yes, on any consult with notes |
-| 4 | The staff brief shows an unsubmitted planner draft's drinks as the event's menu | **yes: 3 upcoming bookings, 1 of them consult-fed (10/06)** |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
@@ -920,31 +918,7 @@ already resets `phone_status` when a client re-confirms a phone, `publicToken.js
 marketing route its control on the contact row. Prod, read-only, 2026-10-06: 5 clients carry the
 flag, none with an upcoming booking. Lane ma-e3a fold re-review.
 
-### Consult notes go word for word into the client's recap email and onto the staff brief
-
-The consult form's "Notes" textarea (`ConsultationForm.jsx:330-337`) gives no hint of its audience,
-yet `consultRecapLines` prints it as "Notes: ..." in the post-consult recap email, sent automatically
-on the first save with no preview (`drinkPlanConsult.js:300-321`), and on the staff brief's Consult
-card, which any onboarded staffer browsing the event can read. An internal remark, or a phone number
-typed into the notes (which also sidesteps the payload's structured phone redaction), reaches both.
-Older than lane consult-recap (`7d9a8d38`); surfaced by its security review, 2026-10-06.
-**Dallas's call:** helper text under the field ("Goes word for word into the client's recap email and
-onto the staff event page."), or a separate internal-notes key the recap never prints.
-
 ## 4. Staff-facing
-
-### The staff brief shows an unsubmitted planner draft's drinks as the event's menu
-
-The staff brief's drink cards (`SignatureCocktailsCard`, `MocktailsCard`, the menu card) read the
-planner's `selections` with no look at `drink_plans.status` (`ShiftDetail.js:191`, `:309-316`), so a
-draft the client never submitted reads to a bartender as the menu. On a consult-fed plan the list
-was built from the consult, and the planner draft played no part in it. **Reachable, prod
-2026-10-06: 3 upcoming live bookings carry a draft (`draft`/`pending`) planner with picked drinks;
-1 of them also carries a consult.** The payload already ships `dp.status`. **Dallas's call (what a
-bartender should see):** recommendation is to label those cards "From the client's planner, not
-submitted" when the status is not `submitted`/`reviewed`, and to hide them outright when a consult
-exists (the consult card then carries the drinks). Surfaced by the spec-risk review of the
-shopping-list answers spec, 2026-10-06.
 
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
 
@@ -1487,14 +1461,6 @@ the accented spelling) or the two spellings stop matching each other.
   (`server/routes/drinkPlans.js:284-315`) resolve the planner's `selections` only, so a plan whose
   list the consult built shows none of the consult's drinks there. Read the consult when it built the
   list (`buildConsultRecap` already names its drinks). Lane consult-recap consistency review.
-- **Planner answers stored without `activeModules` show nowhere.** `DrinkPlanSelections` (the plan
-  page's Selections card, and the shopping-list answers panel that reuses it) renders the v2 drink
-  answers only when `selections.activeModules` exists; without it the row takes the legacy branch and
-  its `signatureDrinks`, `customCocktails` and `crowd` never render, while the list generator reads
-  them anyway. Prod, 2026-10-06: 5 plans hold such answers, 2 of them upcoming live bookings, 2 with
-  a list; the answers panel says the list "has no answers to show here" for them. Fix: infer the
-  modules from the keys present when `activeModules` is missing (or backfill it), in the card and in
-  `answerSets.hasPlannerAnswers` together. Found while closing lane sl-client-answers.
 - **Fresh-squeezed juice add-on (Dallas, 2026-09-22).** No such add-on exists; juice is only ever
   bundled today (`full-mixers-only`, `the-full-compound` and `soft-drink-addon` all list bottled OJ,
   cranberry and pineapple) and every juice par row is shelf-stable bottled. **Needs from Dallas
@@ -1881,6 +1847,15 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Admin UI and the two skins
 
+- **On dev, just opening the shopping list modal un-approves the list.** React StrictMode (on in
+  `client/src/index.js`) runs the modal's autosave effect twice on mount; the `isFirstRender` ref
+  (`ShoppingListModal.jsx:134-142`, from the original build) only skips the first run, so every open
+  PUTs the unchanged list, and that route sets `shopping_list_status = 'pending_review'` and clears
+  `shopping_list_approved_at` (`server/routes/drinkPlans/shoppingList.js:121-126`). Dev only:
+  production never double-runs effects. It skews dev walks (an approved dev list reads "being
+  reviewed" to the client after an admin glance). Fix: skip the save when the payload equals the one
+  the modal opened with, instead of counting renders. Seen on the 2026-10-06 dev walk (the "Unsaved"
+  flash on open, then a bumped `updated_at` on plan 19).
 - **The notify popup's main choice has no weight in the admin skin.** `NotifyConfirmModal.jsx` gives
   its main choice `btn btn-success` (the quiet button by default, so "Don't send" in the editor and
   the quiet choice in the payment, refund and cancel-line popups), but the admin reset
@@ -2796,6 +2771,18 @@ re-grep before surgery.
 
 One line each. These exist to stop a lane being opened, not to record history.
 
+- **Consult notes print for staff, never in the client email** (Dallas, 2026-10-06). *"Can we not
+  have consult notes in the client email. Ok for staff to see."* `formatConsultRecap` drops them;
+  the staff brief's Consult card and the shopping list's answers panel keep them. Do not re-raise
+  the staff-side exposure.
+- **Staff follow the drink plan as it evolves, unsubmitted planner drafts included** (Dallas,
+  2026-10-06). *"I'm fine with the staff being able to follow along as the event changes into its
+  final state."* The staff brief's drink cards read the planner's `selections` whatever
+  `drink_plans.status` says. Do not add a submitted-only gate or a draft label.
+- **Planner answers stored without `activeModules` stay as they are** (Dallas, 2026-10-06). *"If
+  there are old plans that will behave the way they have been we'll just deal with those when they
+  come up."* No inference, no backfill (5 such plans on prod, 2 upcoming, 10/06). Handle one when it
+  comes up.
 - **The consult sibling stop keeps `skipped_cancelled` / `rescheduled_unresolved` (2026-09-30).** A
   status of its own was decided against: the one-row email closed the silence, and a rename changes
   no behavior.
