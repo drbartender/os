@@ -51,7 +51,7 @@ first three sit above the divider.
 5. Show when an event was booked → DROPPED by Dallas 2026-10-06 (the message history covers it). Shipped instead in `7a1aa28b`: the desktop Events list prints the balance due date under an owed Status chip, red once past due.
 6. Admin cannot download the menu print file → SHIPPED 2026-10-06 (`7a1aa28b`).
 7. "Package details" never shows what is in The Foundation → SHIPPED 2026-10-06 (`7a1aa28b`).
-8. Planner answers beside the shopping list → Potions.
+8. Planner answers beside the shopping list → SHIPPED 2026-10-06 (lane consult-recap `7d9a8d38`, lane sl-client-answers `fb9bae0b`; not pushed). Residuals under Potions.
 9. Fresh-squeezed juice add-on → Potions (needs a rate from Dallas).
 10. Staff opt-in for "menu is ready to print" → Staff, shifts, and the roster.
 11. Additional clients on a proposal → Unbuilt projects (design call first).
@@ -1487,21 +1487,14 @@ the accented spelling) or the two spellings stop matching each other.
   (`server/routes/drinkPlans.js:284-315`) resolve the planner's `selections` only, so a plan whose
   list the consult built shows none of the consult's drinks there. Read the consult when it built the
   list (`buildConsultRecap` already names its drinks). Lane consult-recap consistency review.
-- **Planner answers beside the shopping list (Dallas, 2026-09-22: *"I want to see the answers from
-  the potion planner on the shopping list. I often click back and forth."*).** The list is a portal
-  modal (`ShoppingListModal.jsx`, opened from `ShoppingListButton.jsx` on `/drink-plans/:id`,
-  `/events/:id` and `/proposals/:id`); the planner recap is `DrinkPlanSelections.js`, mounted in
-  exactly one place, the Selections card on `/drink-plans/:id`, which the modal covers. On the event
-  and proposal pages there is no recap at all. The answers are `drink_plans.selections` (already on
-  `GET /drink-plans/:id` and `/by-proposal/:id`); the consult answers (`consult_selections`) have no
-  admin read-only recap, only the `ConsultationForm.jsx` editor (the staff brief's `ConsultCard` is a
-  raw JSON dump, filed under Staff-facing), and `shopping_list_source` says which of the two fed the
-  list (all 23 saved consults on prod fed their list, 2026-10-06). `DerivationStrip.jsx` inside the modal already shows the derived
-  numbers (drinkers × hours × pace), so the slot exists. Build: a collapsible side rail (desktop) or
-  top section (narrow) inside the modal rendering `DrinkPlanSelections` for the source that fed the
-  list, plus a compact read-only consult recap when the source is `consult`, rendered by the rules of
-  the server's `formatConsultRecap` (`server/utils/consultRecap.js`, the post-consult email) rather
-  than a third set, and shared with the staff `ConsultCard` fix. Modal-only; no new endpoint.
+- **Planner answers stored without `activeModules` show nowhere.** `DrinkPlanSelections` (the plan
+  page's Selections card, and the shopping-list answers panel that reuses it) renders the v2 drink
+  answers only when `selections.activeModules` exists; without it the row takes the legacy branch and
+  its `signatureDrinks`, `customCocktails` and `crowd` never render, while the list generator reads
+  them anyway. Prod, 2026-10-06: 5 plans hold such answers, 2 of them upcoming live bookings, 2 with
+  a list; the answers panel says the list "has no answers to show here" for them. Fix: infer the
+  modules from the keys present when `activeModules` is missing (or backfill it), in the card and in
+  `answerSets.hasPlannerAnswers` together. Found while closing lane sl-client-answers.
 - **Fresh-squeezed juice add-on (Dallas, 2026-09-22).** No such add-on exists; juice is only ever
   bundled today (`full-mixers-only`, `the-full-compound` and `soft-drink-addon` all list bottled OJ,
   cranberry and pineapple) and every juice par row is shelf-stable bottled. **Needs from Dallas

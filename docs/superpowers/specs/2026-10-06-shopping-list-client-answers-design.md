@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-06. **Status:** designed in chat with Dallas, each decision approved as it was made (bounded brainstorm). He asked for the spec and plan to be reviewed before any build. **Rev 2 (2026-10-06):** folds in the design fleet (spec-grounding, spec-gaps, spec-risk, plan-fidelity, plan-decomposition): the name lookup fails soft on every path, the panel reads the admin catalogs, the width moves into classes, the planner set is defined by its drink answers, the staff payload keeps the raw key for one release, and the docs are scheduled.
 
+**As built:** both lanes merged 2026-10-06 (`7d9a8d38`, `fb9bae0b`); the deltas from this spec that review produced are recorded in the plan's "As built" section.
+
 **Ledger entries this closes** (`docs/fix-list-remaining-2026-07-02.md`):
 - Potions, "Planner answers beside the shopping list" (Dallas's 2026-09-22 drop, item 8).
 - Section 4, "The staff brief's consult card prints a custom drink as `[object Object]`".

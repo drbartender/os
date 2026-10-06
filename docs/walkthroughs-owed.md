@@ -1943,6 +1943,32 @@ in that session (the minted-token sign-in was blocked); the client lane's browse
   or signature-cocktail bar, carries a Mixers line ("Mixers: None beyond your signature cocktail
   ingredients" when the consult picked none).
 
+### Client's answers beside the shopping list. Merged 2026-10-06 as `fb9bae0b` (with `7d9a8d38`, the recap it reads).
+
+Moves to Tier 3b the moment `git merge-base --is-ancestor fb9bae0b origin/main` says yes. Verified by
+tests (54 client tests across the touched suites on main, every new one mutation-checked by review), the
+CI build, the CSS scope check, and three reviewers (code, the cross-lane recap contract, UI/UX), each
+re-confirmed after a fix round. **Never rendered:** UI/UX was a static code review, because signing a
+dev admin into the browser was refused in that session. This walk is the only visual check it has had.
+
+- Open a shopping list from a drink plan's page, an event's page and a proposal's page: a "Client's
+  answers" panel sits right of the list. On a plan with both a consult and a planner, a Consult /
+  Planner switch opens on the newer set; flipping it changes only the panel (nothing saves) and, when
+  the shown set did not build the list, a line says which did. Planner answers show drinks, spirits,
+  beer and wine, syrups, add-ons, crowd and notes, never menu design or parking.
+- Sticky: on a long planner set at a laptop height (1280x800, 1366x768), scroll the list; the panel
+  should stick just under the top bar with its last line reachable inside its own scroll, and let go
+  cleanly at the end without covering the footer.
+- Show answers / Hide answers: hiding returns today's 960px modal; the choice survives a reload.
+- Widths 1440, 1200 and 1024: two columns at 1200 and up with a real gutter at the sides; below 1200
+  the panel stacks above the list, capped near 40% of the screen with its own scroll.
+- Both skins: the panel's muted text, the selected switch segment (bold, darkest text, accent
+  underline) against the unselected one, and the panel well against the modal.
+- Keyboard: Tab reaches the panel and the switch segments (ring inside the segment); Space and Enter flip.
+- Editor, Client view and a finalized (read-only) list: the panel shows in all three.
+- The 2 upcoming bookings whose planner answers carry no activeModules (ledger, Potions) show "which has
+  no answers to show here" by design until that card gap is fixed.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:
