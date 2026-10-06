@@ -419,3 +419,8 @@ server/utils/marketingAudience.js
 server/utils/messageSuppression.js
 server/utils/channelFallback.js
 server/utils/notificationChannelResolver.js
+
+# Shared proposal-editor payload, preview and notice builders (lane ma-e3a): the money PATCH and what reaches a client
+client/src/pages/admin/proposalEditor/patchBody.js
+client/src/pages/admin/proposalEditor/editorCore.js
+client/src/components/comms/notifyDrafts.js

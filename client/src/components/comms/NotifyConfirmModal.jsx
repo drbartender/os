@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  SUBJECT_MAX, SMS_MAX_CHARS, humanizeReason, initialDrafts, draftsOverCap, buildNotifyEntries,
+} from './notifyDrafts';
 
 // Confirmation shown when a save would message the client (notify-client
 // contract, 2026-07-22). One block per notice; composable notices are
@@ -16,17 +19,6 @@ import { createPortal } from 'react-dom';
 // replied personally); the payment/refund popups use primary="send"
 // (receipts are usually wanted). The ORDER flips with it so the reflex
 // position is never the sender in one context and the suppressor in another.
-const SUBJECT_MAX = 300;
-const SMS_MAX_CHARS = 640;
-
-// Server reasons arrive as `${column} changed`; show the admin words, not columns.
-const REASON_LABELS = {
-  'event_date changed': 'Date changed',
-  'event_start_time changed': 'Start time changed',
-  'event_location changed': 'Location changed',
-};
-const humanizeReason = (r) => REASON_LABELS[r] || r;
-
 export default function NotifyConfirmModal({
   notices,
   primary = 'quiet',
@@ -38,15 +30,7 @@ export default function NotifyConfirmModal({
   onQuiet,
   onSend,
 }) {
-  const [drafts, setDrafts] = useState(() => (notices || []).map((n) => ({
-    type: n.type,
-    channels: Object.entries(n.channels || {})
-      .filter(([, c]) => c && c.available && c.default)
-      .map(([k]) => k),
-    subject: n.draft?.email?.subject || '',
-    bodyText: n.draft?.email?.body_text || '',
-    smsBody: n.draft?.sms?.body || '',
-  })));
+  const [drafts, setDrafts] = useState(() => initialDrafts(notices));
 
   const modalRef = useRef(null);
 
@@ -94,24 +78,10 @@ export default function NotifyConfirmModal({
       : [...drafts[i].channels, ch],
   });
 
-  const overCap = drafts.some((d, i) => {
-    if (!notices[i].composable) return false;
-    if (d.channels.includes('email') && (d.subject.length > SUBJECT_MAX || !d.subject.trim() || !d.bodyText.trim())) return true;
-    if (d.channels.includes('sms') && (d.smsBody.length > SMS_MAX_CHARS || !d.smsBody.trim())) return true;
-    return false;
-  });
+  const overCap = draftsOverCap(notices, drafts);
   const anyChannel = drafts.some((d) => d.channels.length > 0);
 
-  const buildNotify = () => drafts
-    .filter((d) => d.channels.length > 0)
-    .map((d, i) => {
-      const notice = notices.find((n) => n.type === d.type);
-      const out = { type: d.type, channels: d.channels };
-      if (!notice.composable) return out;
-      if (d.channels.includes('email')) out.email = { subject: d.subject, body_text: d.bodyText };
-      if (d.channels.includes('sms')) out.sms = { body: d.smsBody };
-      return out;
-    });
+  const buildNotify = () => buildNotifyEntries(notices, drafts);
 
   const quietBtn = (
     <button

@@ -17,6 +17,10 @@ import { formatSetupTime } from '../../../utils/setupTime';
 import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours } from './formState';
 import { buildProposalPatchBody } from './patchBody';
 import { buildRepriceSummary } from './repriceSummary';
+import {
+  detectNumBartendersOverride, storedGratuityOf, mandateLockedFor, isClassPackageFor, buildCalculateBody,
+} from './editorCore';
+import { noticeOutcomes } from '../../../components/comms/notifyDrafts';
 import RepriceConfirmModal from './RepriceConfirmModal';
 import NotifyConfirmModal from '../../../components/comms/NotifyConfirmModal';
 import PackageSection from './PackageSection';
@@ -64,22 +68,12 @@ export default function ProposalEditorForm({
   const [pendingBody, setPendingBody] = useState(null);
   const [notifyBusy, setNotifyBusy] = useState(false);
 
-  // Explicit bartender-count override detection (push-review money finding):
-  // stored num_bartenders equals the computed actual, so it is an admin
-  // override only when it differs from what the ORIGINAL inputs required.
-  // It must round-trip through preview AND PATCH or any editor save silently
-  // drops charged over-ratio bartenders. A retired original package (absent
-  // from the active catalog) makes detection impossible: fall back to not
-  // sending (the server recomputes, matching pre-editor behavior).
-  const numBartendersOverride = useMemo(() => {
-    const stored = Number(proposal.num_bartenders);
-    if (!stored) return null;
-    const originalPkg = packages.find(p => p.id === Number(proposal.package_id));
-    if (!originalPkg) return null;
-    const per = Number(originalPkg.guests_per_bartender) || 100;
-    const required = Math.max(1, Math.ceil((Number(proposal.guest_count) || 0) / per));
-    return stored !== required ? stored : null;
-  }, [packages, proposal]);
+  // Explicit bartender-count override (editorCore.js carries the why). It
+  // must round-trip through preview AND PATCH.
+  const numBartendersOverride = useMemo(
+    () => detectNumBartendersOverride(proposal, packages),
+    [packages, proposal]
+  );
 
   // True while the debounced /calculate preview lags the form (a pricing input
   // changed and the response has not landed). handleSave treats a stale
@@ -96,20 +90,15 @@ export default function ProposalEditorForm({
   const [notifyStaffSms, setNotifyStaffSms] = useState(false);
   const [notifyStaffEmail, setNotifyStaffEmail] = useState(false);
 
-  // The gratuity is NOT editable here (election-at-payment, spec 2026-08-03):
-  // the client elects it at sign-and-pay and the Stripe webhook persists it.
-  // These stored values only feed the preview request so a paid proposal's
-  // gratuity line keeps rendering (and rescaling) while staff/hours are edited.
-  const storedGratuityRate = Number(proposal?.pricing_snapshot?.gratuity?.rate) || 0;
-  const storedTipJar = proposal?.pricing_snapshot?.gratuity?.tip_jar !== false;
+  // Stored gratuity rate and jar, for the preview only (editorCore.js).
+  const { rate: storedGratuityRate, tipJar: storedTipJar } = storedGratuityOf(proposal);
 
   // Admin gratuity mandate (spec 2026-08-10). Locked once signed or paid: a
   // recorded signature must never stand against a total admin changed after.
   // Dirty-gated: the key is sent (to preview AND save) only when the admin
   // touched the mandate this session — an untouched form omits it so the
   // server rescales the stored mandate at the canonical rate.
-  const mandateLocked = Number(proposal?.amount_paid || 0) > 0
-    || proposal?.client_signed_at != null || proposal?.status === 'accepted';
+  const mandateLocked = mandateLockedFor(proposal);
   const [mandateDirty, setMandateDirty] = useState(false);
 
   // Load packages + addons
@@ -176,36 +165,25 @@ export default function ProposalEditorForm({
     setPreviewStale(true);
     const seq = ++calcSeqRef.current;
     const timer = setTimeout(() => {
-      api.post('/proposals/calculate', {
-        // Editing an existing booking: the server prices the CONTRACT's hours
-        // (worked hours minus settled on-site extensions), so the preview
-        // equals what the PATCH will save.
-        ...(proposal?.id ? { proposal_id: proposal.id } : {}),
-        package_id: Number(editForm.package_id),
-        guest_count: Number(editForm.guest_count) || 50,
-        duration_hours: Number(editForm.event_duration_hours) || 4,
-        num_bars: Number(editForm.num_bars) || 0,
-        ...(numBartendersOverride != null ? { num_bartenders: numBartendersOverride } : {}),
-        addon_ids: (editForm.addon_ids || []).map(Number),
-        addon_variants: editForm.addon_variants || {},
-        addon_quantities: editForm.addon_quantities || {},
-        syrup_selections: editForm.syrup_selections || [],
-        adjustments: editForm.adjustments || [],
+      api.post('/proposals/calculate', buildCalculateBody({
+        package_id: editForm.package_id,
+        guest_count: editForm.guest_count,
+        event_duration_hours: editForm.event_duration_hours,
+        num_bars: editForm.num_bars,
+        addon_ids: editForm.addon_ids,
+        addon_variants: editForm.addon_variants,
+        addon_quantities: editForm.addon_quantities,
+        syrup_selections: editForm.syrup_selections,
+        adjustments: editForm.adjustments,
         total_price_override: editForm.total_price_override,
-        // Preview at the STORED rate/jar so a paid proposal's gratuity line
-        // scales with staff/hours and matches what will save (election is
-        // client-owned at sign-and-pay; this form cannot edit it).
-        tip_jar: storedTipJar,
-        gratuity_rate: storedGratuityRate,
-        // Draft mandate rides the preview only once touched (dirty-gated);
-        // untouched, the stored-rate line above already previews a stored
-        // mandate correctly (its rate equals the floor). Transient typing
-        // states ('' / 0) are withheld so the preview never 400s mid-entry.
-        ...(mandateDirty && !mandateLocked
-          && (editForm.gratuity_mandate_total == null || Number(editForm.gratuity_mandate_total) > 0)
-          ? { gratuity_mandate_total: editForm.gratuity_mandate_total }
-          : {}),
-      })
+        gratuity_mandate_total: editForm.gratuity_mandate_total,
+      }, {
+        proposalId: proposal?.id,
+        numBartendersOverride,
+        tipJar: storedTipJar,
+        gratuityRate: storedGratuityRate,
+        includeMandate: mandateDirty && !mandateLocked,
+      }))
         .then(res => {
           if (seq !== calcSeqRef.current) return; // stale response: a newer edit owns the preview
           setEditPreview(res.data); setPreviewStale(false); setError('');
@@ -358,9 +336,7 @@ export default function ProposalEditorForm({
   // single payload source for both mounts — see patchBody.js).
   const buildBody = () => buildProposalPatchBody(editForm, {
     includeGratuityMandate: mandateDirty && !mandateLocked,
-    // Retired package (absent from the active catalog): keep the stored
-    // class semantics instead of silently clearing class_options.
-    isClassPackage: selectedPkg ? selectedPkg.bar_type === 'class' : proposal.class_options != null,
+    isClassPackage: isClassPackageFor(selectedPkg, proposal),
     numBartendersOverride,
     changeRequestId: changeRequest?.id, // preflight's CR gate rides on this key
     staffNotify: showStaffNotifyToggles
@@ -386,17 +362,8 @@ export default function ProposalEditorForm({
       }
       const res = await api.patch(`/proposals/${proposal.id}`, { ...patchBody, notify });
       toast.success(showStaffNotifyToggles ? 'Event updated.' : 'Proposal updated.');
-      // Per-channel truth (notify-client contract): failures and real skips
-      // surface; "not selected" and never-offered channels stay silent.
-      (res.data.notifications || []).forEach((n) => {
-        if (n.email === 'failed') toast.error(`Saved, but the email failed: ${n.email_error || 'unknown error'}`);
-        if (n.sms === 'failed') toast.error(`Saved, but the text failed: ${n.sms_error || 'unknown error'}`);
-        ['email', 'sms'].forEach((ch) => {
-          if (n[ch] === 'skipped' && n.skip_reasons?.[ch] && n.skip_reasons[ch] !== 'not selected') {
-            toast.info(`Saved. ${ch === 'email' ? 'Email' : 'Text'} not sent: ${n.skip_reasons[ch]}`);
-          }
-        });
-      });
+      // Per-channel truth (notify-client contract): notifyDrafts.js.
+      noticeOutcomes(res.data.notifications).forEach((o) => toast[o.kind](o.text));
       onSaved?.(res.data);
       return true;
     } catch (err) {
@@ -507,6 +474,9 @@ export default function ProposalEditorForm({
       totalPrice: proposal.total_price,
       amountPaid: proposal.amount_paid,
       offContractPaidCents: proposal.off_contract_paid_cents,
+      gratuityOrigin: proposal.gratuity_rate_change_origin,
+      oldGratuityTotal: proposal?.pricing_snapshot?.gratuity?.total,
+      newGratuityTotal: (!previewStale && editPreview) ? editPreview?.gratuity?.total : null,
       // Stale preview = unknown total: fall into the generic-confirm branch
       // rather than comparing against an outdated number (see previewStale).
       newTotal: (!previewStale && editPreview) ? editPreview.total : null,

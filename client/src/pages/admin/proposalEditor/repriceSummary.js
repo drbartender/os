@@ -21,7 +21,10 @@ const usd = (n) => '$' + Number(n).toLocaleString('en-US', {
 // come out before any claim that the client is overpaid, or a proposal that
 // simply bought syrups reads as owed a refund (prod 599). Same netting the
 // payment panel chip and the refund route use (spec 2026-09-15).
-export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal, offContractPaidCents = 0 }) {
+export function buildRepriceSummary({
+  status, totalPrice, amountPaid, newTotal, offContractPaidCents = 0,
+  gratuityOrigin = null, oldGratuityTotal = null, newGratuityTotal = null,
+}) {
   if (!BOOKED_STATUSES.includes(status)) return null;
 
   if (newTotal == null) {
@@ -114,6 +117,21 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal, 
     }
   } else if (next < contractPaid) {
     lines.push(`Client is now overpaid by ${usd(contractPaid - next)}. A refund is likely owed.`);
+  }
+  // The gratuity staffing-change email (crud.js post-commit; the condition is
+  // gratuityMandate.js staffingGratuityOrigin with isPaid = amount_paid > 0):
+  // sent automatically, outside the notify popup, when the booking has money
+  // paid, the gratuity was not set by hand, and the gratuity total rises.
+  // Neither confirm said so until lane ma-e3 (2026-10-05). The send can still
+  // be stopped, hence the "unless": a missing or placeholder address (crud.js,
+  // email.js) or a permanent bounce (email_status 'bad', messageSuppression.js).
+  // There is no email preference to turn off, and an archived proposal never
+  // reaches this confirm.
+  const oldG = Number(oldGratuityTotal) || 0;
+  const newG = Number(newGratuityTotal);
+  if (paid > 0 && gratuityOrigin !== 'admin' && newGratuityTotal != null
+    && Number.isFinite(newG) && newG - oldG > 0.004) {
+    lines.push(`The gratuity rises to ${usd(newG)}, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.`);
   }
   lines.push('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.');
 

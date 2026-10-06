@@ -1,4 +1,4 @@
-import { buildProposalPatchBody } from './patchBody';
+import { buildProposalPatchBody, staffNotifyFlags } from './patchBody';
 
 // A representative filled form, shaped like initialFormFromProposal output.
 const form = {
@@ -106,5 +106,34 @@ describe('gratuity mandate key (spec 2026-08-10)', () => {
     const body = buildProposalPatchBody({ ...form, gratuity_mandate_total: 100 }, { includeGratuityMandate: true });
     expect(Object.prototype.hasOwnProperty.call(body, 'tip_jar')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(body, 'gratuity_total')).toBe(false);
+  });
+});
+
+describe('includeVenue (lane ma-e3)', () => {
+  const VENUE = ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip'];
+  it('sends the five venue keys by default, as before', () => {
+    const body = buildProposalPatchBody(form, {});
+    VENUE.forEach((k) => expect(body).toHaveProperty(k));
+  });
+  it('includeVenue: false leaves out exactly the five venue keys', () => {
+    const full = buildProposalPatchBody(form, {});
+    const lean = buildProposalPatchBody(form, { includeVenue: false });
+    VENUE.forEach((k) => expect(lean).not.toHaveProperty(k));
+    const rest = { ...full };
+    VENUE.forEach((k) => { delete rest[k]; });
+    expect(lean).toEqual(rest);
+  });
+});
+
+describe('staffNotifyFlags', () => {
+  it('sends the sub-flags only under the parent toggle', () => {
+    expect(staffNotifyFlags({ enabled: false, sms: true, email: true }))
+      .toEqual({ notify_assigned_staff: false, notify_staff_sms: false, notify_staff_email: false });
+    expect(staffNotifyFlags({ enabled: true, sms: true, email: false }))
+      .toEqual({ notify_assigned_staff: true, notify_staff_sms: true, notify_staff_email: false });
+  });
+  it('is what the payload carries for a staff choice', () => {
+    expect(buildProposalPatchBody(form, { staffNotify: { enabled: true, sms: false, email: true } }))
+      .toMatchObject({ notify_assigned_staff: true, notify_staff_sms: false, notify_staff_email: true });
   });
 });

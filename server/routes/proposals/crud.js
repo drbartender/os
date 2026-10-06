@@ -844,8 +844,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // 2026-07-22): this is a billing disclosure — the invoice cascade above
     // mints/grows a payable invoice with no email of its own, so this is the
     // only thing telling the client they owe more. Only the suppression gate
-    // (prefs/bounce/placeholder) applies; see the notify-client spec reversal
-    // note before ever folding this into the popup.
+    // applies: a missing or placeholder address, or a permanent bounce
+    // (email_status 'bad'); a client has no email preference. See the
+    // notify-client spec reversal note before ever folding this into the popup.
     if (notifyStaffingGratuity) {
       try {
         const full = await pool.query(

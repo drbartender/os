@@ -360,3 +360,30 @@ describe('buildRepriceSummary: deposit_paid returning to paid in full', () => {
     expect(s.lines.join(' ')).not.toContain(PROMO);
   });
 });
+
+// The gratuity staffing-change email is automatic (crud.js post-commit,
+// gratuityMandate.js staffingGratuityOrigin): neither confirm said so until lane ma-e3.
+describe('the automatic gratuity email line', () => {
+  const LINE = 'The gratuity rises to $160.00, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.';
+  const base = { status: 'deposit_paid', totalPrice: '1000', amountPaid: '100', newTotal: 1040, oldGratuityTotal: 120, newGratuityTotal: 160 };
+  it('shows when money is paid, the gratuity was not set by hand, and it rises', () => {
+    expect(buildRepriceSummary(base).lines).toContain(LINE);
+    expect(buildRepriceSummary({ ...base, gratuityOrigin: 'staffing' }).lines).toContain(LINE);
+  });
+  it('sits just before the invoice line, which stays last', () => {
+    const { lines } = buildRepriceSummary(base);
+    expect(lines[lines.length - 2]).toBe(LINE);
+    expect(lines[lines.length - 1]).toBe('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.');
+  });
+  it('does not show when nothing is paid, when the gratuity was set by hand, or when it does not rise', () => {
+    expect(buildRepriceSummary({ ...base, amountPaid: '0' }).lines).not.toContain(LINE);
+    expect(buildRepriceSummary({ ...base, gratuityOrigin: 'admin' }).lines).not.toContain(LINE);
+    expect(buildRepriceSummary({ ...base, newGratuityTotal: 120 }).lines.some((l) => l.startsWith('The gratuity rises'))).toBe(false);
+    expect(buildRepriceSummary({ ...base, newGratuityTotal: 100 }).lines.some((l) => l.startsWith('The gratuity rises'))).toBe(false);
+    expect(buildRepriceSummary({ ...base, newGratuityTotal: null }).lines.some((l) => l.startsWith('The gratuity rises'))).toBe(false);
+  });
+  it('old callers that pass no gratuity figures get no line', () => {
+    const { lines } = buildRepriceSummary({ status: 'deposit_paid', totalPrice: '1000', amountPaid: '100', newTotal: 1040 });
+    expect(lines.some((l) => l.startsWith('The gratuity rises'))).toBe(false);
+  });
+});

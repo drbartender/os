@@ -1,9 +1,20 @@
 // The ONE place a proposal-editor save payload is built. Both mounts of
-// ProposalEditorForm (proposal page and event page) call this, so the two
-// surfaces cannot drift. History: the old EventEditForm built its own payload
-// and omitted addon_quantities; the server defaults an absent quantity to 1
-// (safeAddonQty), so a date edit from the event page silently reset admin-set
-// add-on quantities. Structural fix: one builder, always complete.
+// ProposalEditorForm (proposal page and event page) and the phone edit sheet
+// (lane ma-e3) call this, so the surfaces cannot drift. History: the old
+// EventEditForm built its own payload and omitted addon_quantities; the server
+// defaults an absent quantity to 1 (safeAddonQty), so a date edit from the
+// event page silently reset admin-set add-on quantities. Structural fix: one
+// builder, always complete.
+
+// Sub-flags only ride when the parent toggle is on, so an unchecked parent
+// never leaks a stale sub-flag (EventEditForm's Phase 4a rule, preserved).
+export function staffNotifyFlags(staffNotify) {
+  return {
+    notify_assigned_staff: !!staffNotify.enabled,
+    notify_staff_sms: !!(staffNotify.enabled && staffNotify.sms),
+    notify_staff_email: !!(staffNotify.enabled && staffNotify.email),
+  };
+}
 
 export function buildProposalPatchBody(form, {
   isClassPackage = false,
@@ -11,16 +22,12 @@ export function buildProposalPatchBody(form, {
   staffNotify = null,
   numBartendersOverride = null,
   includeGratuityMandate = false,
+  includeVenue = true,
 } = {}) {
   const body = {
     event_date: form.event_date,
     event_start_time: form.event_start_time,
     event_duration_hours: Number(form.event_duration_hours),
-    venue_name: form.venue_name,
-    venue_street: form.venue_street,
-    venue_city: form.venue_city,
-    venue_state: form.venue_state,
-    venue_zip: form.venue_zip,
     guest_count: Number(form.guest_count),
     package_id: Number(form.package_id),
     num_bars: Number(form.num_bars) || 0,
@@ -45,6 +52,17 @@ export function buildProposalPatchBody(form, {
       ? null
       : Number(form.setup_minutes_before),
   };
+  // The five venue parts. The phone edit sheet never edits location and
+  // leaves them out (includeVenue: false): absent, the server keeps every
+  // column (COALESCE) and composes no new event_location, so a legacy row whose
+  // stored location differs from its parts never reads as a location change.
+  if (includeVenue) {
+    body.venue_name = form.venue_name;
+    body.venue_street = form.venue_street;
+    body.venue_city = form.venue_city;
+    body.venue_state = form.venue_state;
+    body.venue_zip = form.venue_zip;
+  }
   // No election keys, ever (election-at-payment, spec 2026-08-03): the tip-jar
   // election is client-owned at sign-and-pay and persisted by the Stripe
   // webhook. The admin PATCH ignores tip_jar/gratuity_total, so sending them
@@ -60,12 +78,6 @@ export function buildProposalPatchBody(form, {
       ? null : Number(form.gratuity_mandate_total);
   }
   if (changeRequestId != null) body.change_request_id = changeRequestId;
-  if (staffNotify) {
-    // Sub-flags only ride when the parent toggle is on, so an unchecked parent
-    // never leaks a stale sub-flag (EventEditForm's Phase 4a rule, preserved).
-    body.notify_assigned_staff = !!staffNotify.enabled;
-    body.notify_staff_sms = !!(staffNotify.enabled && staffNotify.sms);
-    body.notify_staff_email = !!(staffNotify.enabled && staffNotify.email);
-  }
+  if (staffNotify) Object.assign(body, staffNotifyFlags(staffNotify));
   return body;
 }
