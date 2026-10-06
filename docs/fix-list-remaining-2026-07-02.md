@@ -96,7 +96,6 @@ Ordered by how close each one is to actually costing money or a client.
 | 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
 | 2 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
 | 2 | A client's line item renames itself on a no-op fold | yes |
-| 2 | The post-consult recap email lists drinks by catalog slug ("french-75") | **yes: 6 of the 9 recaps sent (10/06)** |
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
@@ -109,7 +108,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
-| 4 | The staff brief's consult card prints a custom drink as `[object Object]` | **yes: 2 upcoming bookings carry one (10/06)** |
+| 3 | Consult notes go word for word into the client's recap email and onto the staff brief, and the form never says so | yes, on any consult with notes |
 | 4 | The staff brief shows an unsubmitted planner draft's drinks as the event's menu | **yes: 3 upcoming bookings, 1 of them consult-fed (10/06)** |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
@@ -685,17 +684,6 @@ drops the variant from `snapshot.addons[]` and a `champagne-toast` sold as
 writer then persists `variant = null` off that snapshot. No money moves. The fix is one column in
 a SELECT.
 
-### The post-consult recap email lists drinks by their catalog slug
-
-`formatConsultRecap` (`server/utils/consultRecap.js`) joins `signatureDrinks` and `mocktails`
-straight into the email, and `ConsultationForm.jsx` stores catalog ids there (`french-75`,
-`old-fashioned`), so the client reads "Signature cocktails: french-75, old-fashioned". Its suite
-passes because the fixture holds display names (`'Old Fashioned'`), a shape the form never writes.
-**Reached clients: 6 of the 9 consult recaps sent on prod (2026-07-19 to 2026-10-05) carried picked
-cocktails, and none was edited before sending.** Fix it in the formatter (resolve ids to names) so
-the email, the staff `ConsultCard` and the shopping-list modal read one recap. Folded into the build
-for the Potions entry "Planner answers beside the shopping list".
-
 ### The compare card jumps on the client's first tap
 
 The current option shows `total_price` verbatim on first load and an engine price after any
@@ -932,20 +920,18 @@ already resets `phone_status` when a client re-confirms a phone, `publicToken.js
 marketing route its control on the contact row. Prod, read-only, 2026-10-06: 5 clients carry the
 flag, none with an upcoming booking. Lane ma-e3a fold re-review.
 
+### Consult notes go word for word into the client's recap email and onto the staff brief
+
+The consult form's "Notes" textarea (`ConsultationForm.jsx:330-337`) gives no hint of its audience,
+yet `consultRecapLines` prints it as "Notes: ..." in the post-consult recap email, sent automatically
+on the first save with no preview (`drinkPlanConsult.js:300-321`), and on the staff brief's Consult
+card, which any onboarded staffer browsing the event can read. An internal remark, or a phone number
+typed into the notes (which also sidesteps the payload's structured phone redaction), reaches both.
+Older than lane consult-recap (`7d9a8d38`); surfaced by its security review, 2026-10-06.
+**Dallas's call:** helper text under the field ("Goes word for word into the client's recap email and
+onto the staff event page."), or a separate internal-notes key the recap never prints.
+
 ## 4. Staff-facing
-
-### The staff brief's consult card prints a custom drink as `[object Object]`
-
-`ConsultCard` (`client/src/components/staff/BeoSections.js`) prints the raw `consult_selections`
-JSON that `eventDetailsPayload.js` sends: camelCase keys as labels (`barType: full_bar`,
-`mocktailsEnabled: false`), and every custom cocktail or mocktail, stored as `{ name, ingredients }`,
-joined as `[object Object]`. The brief's signature-cocktail card reads the planner's `selections`,
-not the consult (`ShiftDetail.js`), so on a consult-fed plan this card is where a bartender reads
-the consult's drinks, and a custom one has no name. **Reachable: 2 upcoming bookings carry a consult
-custom drink (prod, 2026-10-06); 14 of the 23 consults ever saved have one.** The server already
-renders this JSON properly for the post-consult client email (`formatConsultRecap`,
-`server/utils/consultRecap.js`); render the card by the same rules. Build it with the Potions entry
-"Planner answers beside the shopping list", which needs the same consult recap in the admin modal.
 
 ### The staff brief shows an unsubmitted planner draft's drinks as the event's menu
 
@@ -1492,6 +1478,15 @@ the accented spelling) or the two spellings stop matching each other.
   `pending_review` rows (5 BYOB, 5 package-less) padding the badge with nothing to act on. Add the
   prep queue's upcoming-only rule to the count.
 
+- **The consult writer stores an object entry as the literal "[object Object]".** `sanitizeConsult`'s
+  `stringArrayField` (`server/routes/drinkPlanConsult.js:98`) runs `String()` on every list element, so
+  an object posted in `signatureDrinks` or `mocktails` is saved as that string and the recap humanizes
+  it right back. Unreachable from the form (it posts catalog ids); a hand-built PUT only. Filter at the
+  writer with the rule `drinkIds` uses in `server/utils/consultRecap.js`. Lane consult-recap review.
+- **The Potions plans drawer lists no drinks for a consult-fed plan.** Its `drink_names`
+  (`server/routes/drinkPlans.js:284-315`) resolve the planner's `selections` only, so a plan whose
+  list the consult built shows none of the consult's drinks there. Read the consult when it built the
+  list (`buildConsultRecap` already names its drinks). Lane consult-recap consistency review.
 - **Planner answers beside the shopping list (Dallas, 2026-09-22: *"I want to see the answers from
   the potion planner on the shopping list. I often click back and forth."*).** The list is a portal
   modal (`ShoppingListModal.jsx`, opened from `ShoppingListButton.jsx` on `/drink-plans/:id`,
@@ -1556,6 +1551,15 @@ the accented spelling) or the two spellings stop matching each other.
 
 ## Staff, shifts, and the roster
 
+- **Drop `consult_selections` from the staff event-details payload.** Lane consult-recap
+  (`7d9a8d38`) ships the readable `consult_recap` beside the raw blob for ONE release, so a staff tab
+  opened before the deploy keeps its card; `ShiftDetail.js` no longer reads the raw key and
+  `client/public/staff-sw.js` caches no fetches. Remove the key, and the comment that points here in
+  `server/utils/eventDetailsPayload.js`, in the first change after that release is live.
+- **The staff payload's drink-plan read has no ORDER BY.** `drink_plans.proposal_id` is not unique,
+  and `eventDetailsPayload.js` takes whichever plan row comes first, while the admin by-proposal read
+  takes the lowest id, so on a proposal with two plans the staff brief can describe a different plan
+  than the admin sees. Add `ORDER BY id`. Lane consult-recap consistency review, 2026-10-06.
 - **No server route refuses a write on a shift that has finished.** Approve, Deny, Remove and
   Assign on a past shift are all accepted (`shifts.approval.js`, `shifts.js`), and an Assign texts
   and emails the person. The phone sheet blocks it from the `finished` key the shifts reads send

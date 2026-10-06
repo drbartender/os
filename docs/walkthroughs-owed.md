@@ -1927,6 +1927,22 @@ opened signed in (the admin sign-in token was blocked in that session).
   and "Includes: Ice Delivery, Cups & Disposables, Bottled Water"; a champagne toast with the
   non-alcoholic option reads "Non-Alcoholic Bubbles Toast". Same on the matching proposal's page.
 
+### Consult recap with drink names: staff Consult card, client recap email, consult GET. Merged 2026-10-06 as `7d9a8d38`.
+
+Moves to Tier 3b the moment `git merge-base --is-ancestor 7d9a8d38 origin/main` says yes. Verified by
+tests (198 server tests across the 14 suites that load an edited file, all green one at a time; a
+dispatch test that fails against a send without names; the staff client suites; the CI build) and four
+reviewers (code, consistency, security, performance), each re-confirmed after one fix round. The client
+email was rendered on dev and read before merge. The staff card was NOT opened in a signed-in browser
+in that session (the minted-token sign-in was blocked); the client lane's browser pass covers it.
+
+- A consult-fed event (prod has 2 upcoming bookings whose consult names a custom drink): the staff
+  event page's Consult card shows bold labels and drink names ("Signature cocktails: Margarita",
+  "Custom cocktail: House Mule (vodka, ginger beer, lime)"), never `[object Object]` or a camelCase key.
+- The next consult saved for a new client: the automatic recap email names the drinks and, on a full
+  or signature-cocktail bar, carries a Mixers line ("Mixers: None beyond your signature cocktail
+  ingredients" when the consult picked none).
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:
