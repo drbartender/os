@@ -8830,6 +8830,136 @@ html[data-app="admin-os"] .doc-preview-empty {
   text-align: center;
 }
 
+/* ─── Shopping list: the client's answers panel (spec 2026-10-06) ─── */
+html[data-app="admin-os"] .sl-modal-box {
+  max-width: 960px;
+}
+html[data-app="admin-os"] .sl-modal-body--answers {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-right: 1.25rem;
+}
+html[data-app="admin-os"] .sl-modal-body--answers .sl-modal-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+html[data-app="admin-os"] .sl-answers {
+  flex: 0 0 300px;
+  width: 300px;
+  margin-top: 1.25rem;
+  /* The overlay (the scroll container) pads its top by 60px + 1.5rem, and a
+     stuck sticky box is offset by that padding, so top: 0 already sits just
+     under the app bar; the height leaves a 1rem gap at the bottom. */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 60px - 2.5rem);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  color: var(--ink-1);
+  font-size: 13px;
+  line-height: 1.5;
+}
+html[data-app="admin-os"] .sl-answers-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 0.875rem 0.5rem;
+  border-bottom: 1px solid var(--line-2);
+}
+html[data-app="admin-os"] .sl-answers-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--ink-1);
+}
+html[data-app="admin-os"] .sl-answers-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+html[data-app="admin-os"] .sl-answers-seg {
+  background: transparent;
+  color: var(--ink-2);
+  border: none;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+html[data-app="admin-os"] .sl-answers-seg:focus-visible {
+  outline-offset: -2px; /* the switch's overflow: hidden would clip an outside ring */
+}
+html[data-app="admin-os"] .sl-answers-seg.is-on {
+  background: var(--accent-soft);
+  color: var(--ink-1);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+html[data-app="admin-os"] .sl-answers-source {
+  margin: 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--ink-2);
+}
+html[data-app="admin-os"] .sl-answers-note {
+  margin: 0;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-sm);
+}
+html[data-app="admin-os"] .sl-answers-body {
+  padding: 0.75rem 0.875rem;
+}
+html[data-app="admin-os"] .sl-answers-lines {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+html[data-app="admin-os"] .sl-answers-lines li {
+  padding: 0.15rem 0;
+}
+html[data-app="admin-os"] .sl-answers-muted,
+html[data-app="admin-os"] .sl-answers .text-muted {
+  color: var(--ink-2);
+}
+html[data-app="admin-os"] .sl-answers .text-small {
+  font-size: 12px;
+}
+html[data-app="admin-os"] .sl-answers-planner > :last-child {
+  margin-bottom: 0;
+}
+html[data-app="admin-os"] .sl-answers-muted p {
+  margin: 0 0 0.5rem;
+}
+@media (min-width: 1200px) {
+  html[data-app="admin-os"] .sl-modal-box--answers {
+    max-width: min(1280px, calc(100% - 2rem));
+  }
+}
+@media (max-width: 1199.98px) {
+  html[data-app="admin-os"] .sl-modal-body--answers {
+    flex-direction: column;
+    align-items: stretch;
+    padding-right: 0;
+  }
+  html[data-app="admin-os"] .sl-answers {
+    order: -1;
+    position: static;
+    flex: none;
+    width: auto;
+    max-height: 40vh;
+    margin: 1rem 1.25rem 0;
+  }
+}
+
 /* ─── Menu Samples Modal ─────────────────────────────────── */
 .menu-samples-overlay {
   position: fixed;

@@ -22,6 +22,7 @@ import NeedsRecipeSection from './NeedsRecipeSection';
 import SendModal from '../SendModal';
 import { beoOutcomeCopy, beoToastKind } from '../../utils/beoOutcomeCopy';
 import DerivationStrip, { ClientPreview } from './DerivationStrip';
+import ClientAnswersPanel, { readAnswersOpen, writeAnswersOpen } from './ClientAnswersPanel';
 
 // Editor / Client-view segmented toggle button styling. Active reads as an
 // accent-soft pill; inactive is quiet. Skin-safe (no hard-coded contrast pair).
@@ -55,6 +56,15 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // 'edit' shows the editable instrumented list; 'preview' shows exactly the
   // plain-language copy the client reads at /shopping-list/:token.
   const [mode, setMode] = useState('edit');
+  // The client's answers beside the list (spec 2026-10-06). Open by default;
+  // the choice is a per-browser convenience.
+  const [answersOpen, setAnswersOpen] = useState(readAnswersOpen);
+  const showAnswers = answersOpen && Boolean(planId);
+  const toggleAnswers = () => {
+    const next = !answersOpen;
+    setAnswersOpen(next);
+    writeAnswersOpen(next);
+  };
   // Set after a regenerate that held one or more admin-set quantities, so the
   // hold (HARD REQ #2) is visible instead of silent. Cleared on the next regen.
   const [heldNotice, setHeldNotice] = useState(null);
@@ -500,11 +510,10 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       overflowY: 'auto',
       paddingTop: 'calc(60px + 1.5rem)',
     }}>
-      <div style={{
+      <div className={showAnswers ? 'sl-modal-box sl-modal-box--answers' : 'sl-modal-box'} style={{
         backgroundColor: 'var(--bg-elev)',
         margin: '0 auto 1.5rem',
         width: '100%',
-        maxWidth: 960,
         borderRadius: 'var(--radius-lg)',
         boxShadow: 'var(--shadow-pop)',
         border: '1px solid var(--line-2)',
@@ -542,6 +551,17 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             <button onClick={() => setMode('edit')} style={segBtn(mode === 'edit')} disabled={locked}>Editor</button>
             <button onClick={() => setMode('preview')} style={segBtn(mode === 'preview')}>Client view</button>
           </div>
+          {planId && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={toggleAnswers}
+              aria-expanded={answersOpen}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {answersOpen ? 'Hide answers' : 'Show answers'}
+            </button>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <label style={{ color: 'var(--ink-2)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>Guests:</label>
             <input
@@ -587,6 +607,8 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           }}>×</button>
         </div>
 
+        <div className={showAnswers ? 'sl-modal-body sl-modal-body--answers' : 'sl-modal-body'}>
+          <div className="sl-modal-main">
         {locked && (
           <div style={{
             margin: '1rem 1.25rem 0',
@@ -692,6 +714,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             approved={approveStatus === 'approved'}
           />
         )}
+          </div>
+          {showAnswers && <ClientAnswersPanel planId={planId} />}
+        </div>
 
         {/* ── Footer actions ── */}
         <div style={{

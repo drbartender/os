@@ -16,16 +16,40 @@ function isNewFormat(sel) {
   return sel && sel.activeModules;
 }
 
-export default function DrinkPlanSelections({ plan, cocktails = [], mocktails = [] }) {
+// listOnly: the shopping-list modal's answers panel (spec 2026-10-06) shows
+// only the answers that drive the list, so menu design and every logistics
+// answer stay on the plan page's full card.
+export default function DrinkPlanSelections({ plan, cocktails = [], mocktails = [], listOnly = false }) {
   const sel = plan.selections || {};
 
   if (isNewFormat(sel)) {
-    return <NewSelections plan={plan} sel={sel} cocktails={cocktails} mocktails={mocktails} />;
+    return <NewSelections plan={plan} sel={sel} cocktails={cocktails} mocktails={mocktails} listOnly={listOnly} />;
   }
-  return <LegacySelections plan={plan} sel={sel} cocktails={cocktails} />;
+  return <LegacySelections plan={plan} sel={sel} cocktails={cocktails} listOnly={listOnly} />;
 }
 
-function NewSelections({ plan, sel, cocktails, mocktails }) {
+// One string each for the crowd and guest-preference answers, so the full
+// card (inside Logistics) and the list-only card render them identically.
+function crowdText(sel) {
+  const c = sel.crowd;
+  if (!c) return null;
+  const hasDrinkers = c.drinkers !== null && c.drinkers !== undefined;
+  if (!hasDrinkers && !c.profile) return null;
+  const count = hasDrinkers ? `${c.drinkers} drinkers` : 'drinker count unsure';
+  return `Crowd: ${count}${c.profile ? ` · ${String(c.profile).replace(/_/g, ' ')}` : ''}`;
+}
+
+function guestPreferencesText(sel) {
+  const gp = sel.guestPreferences;
+  if (!gp || Object.keys(gp).length === 0) return null;
+  return `Guest preferences: ${Object.entries(gp)
+    .map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${String(v).replace(/_/g, ' ')}`)
+    .join(' · ')}`;
+}
+
+function NewSelections({ plan, sel, cocktails, mocktails, listOnly }) {
+  const crowd = crowdText(sel);
+  const prefs = guestPreferencesText(sel);
   const am = sel.activeModules;
   const pick = QUICK_PICKS.find(p => p.key === plan.serving_type);
   const selectedDrinks = cocktails.filter(d => (sel.signatureDrinks || []).includes(d.id));
@@ -129,7 +153,7 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
       {/* Menu Design — three-way (custom / house / none) post-2026-05-20.
           Legacy plans wrote `customMenuDesign: true|false` and no `menuStyle`;
           map them into the new buckets so already-saved plans still render. */}
-      {(() => {
+      {!listOnly && (() => {
         const menuStyle = sel.menuStyle
           ?? (sel.customMenuDesign === true ? 'custom'
             : sel.customMenuDesign === false ? 'none'
@@ -156,7 +180,8 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
         <p className="mb-1"><strong>Anything else:</strong> <span className="text-muted">{sel.additionalNotes}</span></p>
       )}
 
-      {/* Logistics */}
+      {/* Logistics: not shown in the shopping-list answers panel */}
+      {!listOnly && (
       <div className="mb-1">
         <strong>Logistics:</strong>
         {logistics.dayOfContact?.name && (
@@ -185,21 +210,19 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
         {sel.powerAtBar && (
           <p className="text-muted">Power at the bar: {{ yes: 'Outlet within 50 ft', no: 'No outlet nearby', unsure: 'Not sure yet' }[sel.powerAtBar] || sel.powerAtBar}</p>
         )}
-        {sel.crowd && ((sel.crowd.drinkers !== null && sel.crowd.drinkers !== undefined) || sel.crowd.profile) && (
-          <p className="text-muted">
-            Crowd: {sel.crowd.drinkers !== null && sel.crowd.drinkers !== undefined ? `${sel.crowd.drinkers} drinkers` : 'drinker count unsure'}
-            {sel.crowd.profile ? ` · ${String(sel.crowd.profile).replace(/_/g, ' ')}` : ''}
-          </p>
-        )}
-        {sel.guestPreferences && Object.keys(sel.guestPreferences).length > 0 && (
-          <p className="text-muted">
-            Guest preferences: {Object.entries(sel.guestPreferences).map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${String(v).replace(/_/g, ' ')}`).join(' · ')}
-          </p>
-        )}
+        {crowd && <p className="text-muted">{crowd}</p>}
+        {prefs && <p className="text-muted">{prefs}</p>}
         {/* Backward compat */}
         {logistics.ice && <p className="text-muted">Ice machine: {logistics.ice}</p>}
         {logistics.other && !logistics.accessNotes && <p className="text-muted">Notes: {logistics.other}</p>}
       </div>
+      )}
+      {listOnly && (crowd || prefs) && (
+        <div className="mb-1">
+          {crowd && <p className="text-muted">{crowd}</p>}
+          {prefs && <p className="text-muted">{prefs}</p>}
+        </div>
+      )}
 
       {/* Flavor Add-Ons (Dr. Bartender supplied) */}
       {getAllUniqueSyrups(sel.syrupSelections).length > 0 && (
@@ -245,9 +268,18 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
   );
 }
 
-function LegacySelections({ plan, sel, cocktails }) {
+function LegacySelections({ plan, sel, cocktails, listOnly }) {
   const typeName = LEGACY_SERVING_TYPES[plan.serving_type];
   const selectedDrinks = cocktails.filter(d => (sel.signatureCocktails || []).includes(d.id));
+  // The "no selections" line shows only when nothing above it renders; it used
+  // to sit under a plan's own beer or wine answers whenever typeName and
+  // spirits were empty.
+  const anyAnswer = Boolean(
+    typeName || selectedDrinks.length || sel.spirits?.length || sel.barFocus
+    || sel.wineStyles?.length || sel.beerStyles?.length || sel.beerWineBalance
+    || sel.beerWineNotes || sel.fullBarNotes || sel.mocktailNotes
+    || (!listOnly && sel.logisticsNotes)
+  );
 
   return (
     <>
@@ -290,11 +322,11 @@ function LegacySelections({ plan, sel, cocktails }) {
       {sel.mocktailNotes && (
         <div className="mb-1"><strong>Mocktail Preferences:</strong><p className="text-muted">{sel.mocktailNotes}</p></div>
       )}
-      {sel.logisticsNotes && (
+      {!listOnly && sel.logisticsNotes && (
         <div className="mb-1"><strong>Logistics:</strong><p className="text-muted">{sel.logisticsNotes}</p></div>
       )}
 
-      {!typeName && !sel.spirits?.length && !sel.logisticsNotes && (
+      {!anyAnswer && (
         <p className="text-muted">Client hasn't made any selections yet.</p>
       )}
     </>
