@@ -28,22 +28,24 @@ Consult answers (`drink_plans.consult_selections`) have three renderings today a
 4. **A switch when both exist.** The panel header carries a two-way switch, Consult and Planner, each with its date or "not submitted". The panel opens on the newest set every time; a flip is not remembered, because a remembered choice could hide answers that arrive later. The switch only changes what the panel shows. It never rebuilds the list. Rebuilding stays on the plan page's existing source switch (`PATCH /api/drink-plans/:id/shopping-list-source`), which discards edits and resets the list to review.
 5. **Mismatch note.** Whenever the panel shows a set the list was not built from, one line says which one was: "This list was built from the consult." or "This list was built from the planner." No note when `shopping_list_source` is null.
 6. **One consult recap everywhere.** The server recap resolves catalog ids to drink names and gains a Mixers line. The recap email, the staff Consult card and the new panel all read it. Client-facing consequence: the recap email shows real drink names and, for a full bar or signature-cocktail bar, a Mixers line.
-7. **Layout.** On a wide screen the panel sits to the right of the list and stays in view while the list scrolls; the modal widens to make room. On a narrow screen it stacks above the list. An "Answers" button in the modal header shows and hides it, and the choice is remembered per browser. It shows in the Editor, in Client view, and in the read-only finalized view.
+7. **Layout.** On a wide screen the panel sits to the right of the list and stays in view while the list scrolls; the modal widens to make room. On a narrow screen it stacks above the list. A "Show answers" / "Hide answers" button in the modal header shows and hides it, and the choice is remembered per browser. It shows in the Editor, in Client view, and in the read-only finalized view.
 
 ## 3. Design
 
 ### 3.1 Server: one consult recap
 
 `server/utils/consultRecap.js`:
-- `formatConsultRecap(consult = {}, names = {})` stays pure. `names` is `{ cocktails: { [id]: name }, mocktails: { [id]: name } }`. `signatureDrinks` resolve through `names.cocktails`, `mocktails` through `names.mocktails`; an id with no entry renders through `humanizeDrinkId(id)` (split on `-` and `_`, capitalise each word: `french-75` becomes `French 75`). Omitting `names` keeps today's call shape working and every id humanizes.
+- `formatConsultRecap(consult = {}, names = {})` stays pure. `names` is `{ cocktails: Map<id, name>, mocktails: Map<id, name> }` (Maps, so a lookup never touches an object's prototype and never trips `security/detect-object-injection`). `signatureDrinks` resolve through `names.cocktails`, `mocktails` through `names.mocktails`; an id with no entry renders through `humanizeDrinkId(id)` (split on `-`, `_` and spaces, capitalise each word: `french-75` becomes `French 75`). Omitting `names` keeps today's call shape working and every id humanizes.
+- The line-building moves into `consultRecapLines(consult, names)`, which returns `[]` for a consult with nothing to say; `formatConsultRecap` returns those lines or, when empty, today's placeholder ("(no specific selections captured; notes are on file)"), so the email is unchanged in that case.
 - New Mixers line, only when `barType` is `full_bar` or `sig_beer_wine` and `mixers` is a known mode, placed after the wine line: `full` reads "Mixers: Full set", `matching` reads "Mixers: Only those that match your spirits", `none` reads "Mixers: None". (The form forces `none` on beer-and-wine and mocktail-only bars, `ConsultationForm.jsx:102,137`, so those bars never print it.)
-- New `async loadConsultDrinkNames(consult, db)`: collects the ids present, runs `SELECT id, name FROM cocktails WHERE id = ANY($1::text[])` and the same against `mocktails`, and returns the `names` shape. Skips a table with no ids (no query at all for a consult with none). `db` is the caller's handle (the pool, or a client the caller already holds, per the one-connection rule).
-- Exported alongside the existing two.
+- New `async loadConsultDrinkNames(consult, db)`: collects the string ids present, runs `SELECT id, name FROM cocktails WHERE id = ANY($1::text[])` and the same against `mocktails`, and returns the `names` shape. Skips a table with no ids (no query at all for a consult with none). `db` is the caller's handle (the pool, or a client the caller already holds, per the one-connection rule).
+- New `async buildConsultRecap(consult, db)`: `null` for a missing, non-object or empty consult, and `null` when `consultRecapLines` comes back empty (so the staff card and the panel hide rather than print the email's placeholder); otherwise the lines with names resolved. The staff payload and the consult GET call this; the email keeps calling the formatter so its placeholder survives.
+- Exported alongside the existing two: `consultRecapLines`, `humanizeDrinkId`, `loadConsultDrinkNames`, `buildConsultRecap`.
 
 Three readers:
 - **Recap email** (`server/utils/comms/actions/consultRecap.js`): `load()` (`:38`) attaches `row.drink_names = await loadConsultDrinkNames(row.consult_selections, pool)`; `defaultParts` (`:116`, call at `:134`) passes it to the formatter. `buildMessages` (`:141`) and `dispatch` (`:175`, `defaults` at `:178`) both go through `load()`, so the draft the admin sees and the defaults `dispatch` compares against stay identical and `body_edited` stays honest.
-- **Consult GET** (`server/routes/drinkPlanConsult.js:159`): the response gains `recap`, the formatted lines, or `null` when `consult_selections` is null. Existing fields unchanged; the form still pre-populates from the raw blob.
-- **Staff payload** (`server/utils/eventDetailsPayload.js`): after the drink-plan row loads (`:87`), compute the lines when `consult_selections` is a non-empty object. The payload's `drink_plan.consult_recap` (lines or null) replaces `drink_plan.consult_selections` (`:318`). Both routes built on this payload (`GET /api/shifts/:shiftId/event-details`, `GET /api/beo/:proposalId`) change together; the staff `ShiftDetail.js` is the only client reader of the raw blob.
+- **Consult GET** (`server/routes/drinkPlanConsult.js:159`): the response gains `recap: await buildConsultRecap(consult_selections, pool)`, the lines or `null`. Existing fields unchanged; the form still pre-populates from the raw blob.
+- **Staff payload** (`server/utils/eventDetailsPayload.js`): the drink-plan read (`dpRowP`, `:87`) chains `buildConsultRecap(row.consult_selections, pool)` onto its own promise and stores the result on the row, so the name lookup overlaps the other five reads inside the existing `Promise.all` barrier instead of adding a round trip to the staff portal's hottest read (and it runs no query at all for a consult that names no drinks). The payload's `drink_plan.consult_recap` (lines or null) replaces `drink_plan.consult_selections` (`:318`). Both routes built on this payload (`GET /api/shifts/:shiftId/event-details`, `GET /api/beo/:proposalId`) change together; the staff `ShiftDetail.js` is the only client reader of the raw blob.
 
 ### 3.2 Staff Consult card
 
@@ -51,18 +53,18 @@ Three readers:
 
 ### 3.3 Admin panel
 
-`client/src/components/ShoppingList/answerSets.js`, pure: `pickAnswerSets(plan, hasConsult)` returns `{ sets, initial }`. `sets` lists the sets that exist, in the order Consult, Planner, each `{ key, at, submitted }`. A planner set exists when `plan.selections` is a non-empty object; a consult set exists when `hasConsult`. `initial` applies decision 3, ties going to the consult.
+`client/src/components/ShoppingList/answerSets.js`, pure: `pickAnswerSets(plan, hasConsult)` returns `{ sets, initial }`. `sets` lists the sets that exist, in the order Consult, Planner, each `{ key, at, submitted }`. A planner set exists when `plan.selections` is a non-empty object; a consult set exists when `hasConsult`, which the panel sets only when the consult GET returned a non-empty `recap` (a consult saved as `{}`, which the hosted path can write, is no set at all). `initial` applies decision 3: the planner opens first only when it was submitted strictly after a known consult stamp; a tie, or a consult with no stamp, goes to the consult. The same module holds the copy helpers `sourceLine`, `switchLabel` and `mismatchNote`.
 
 `client/src/components/ShoppingList/ClientAnswersPanel.jsx`, props `{ planId }`:
 - Loads in parallel `GET /drink-plans/:id`, `GET /cocktails`, `GET /mocktails`, then `GET /drink-plans/:id/consult` when `has_consult_selections`. Any failure is an error state with Retry (an empty catalog would silently drop picked drinks, since `DrinkPlanSelections` filters picks against the catalog). Loading state while in flight. Empty state "No planner or consult answers yet." when `sets` is empty.
-- Header: "Client's answers", the source line ("From the consult, Oct 2" / "From the planner, submitted Sep 25" / "From the planner, not submitted", Chicago day via `fmtDateFull(ctDay(ts))` as `DrinkPlanDetail.js` does), the switch when two sets exist, and the mismatch note.
+- Header: "Client's answers", the source line ("From the consult, Oct 2" / "From the planner, submitted Sep 25" / "From the planner, not submitted", Chicago day via `fmtDate(ctDay(ts))`, the short form of what `DrinkPlanDetail.js` does with `fmtDateFull`, to fit a 300px panel), the switch when two sets exist, and the mismatch note.
 - Planner view: `<DrinkPlanSelections plan={plan} cocktails={…} mocktails={…} listOnly />`. Consult view: the `recap` lines.
 
 `DrinkPlanSelections.js` gains `listOnly` (default false, so the plan page is unchanged). With it on: the Menu Design block (`:129-153`) and the Logistics block (`:159-202`) do not render; drinkers and crowd profile (`:188`) and guest preferences (`:194`), which live inside Logistics today, render in their own "Crowd" block; the legacy view drops `logisticsNotes` (`:293`).
 
 ### 3.4 Modal layout
 
-`ShoppingListModal.jsx` is 930 lines against the 1000-line hard cap, so the panel lives in its own file and the modal takes only an import, the "Answers" header button with its remembered state, and a layout wrapper around the body (target under 40 added lines).
+`ShoppingListModal.jsx` is 930 lines against the 1000-line hard cap, so the panel lives in its own file and the modal takes only an import, the header button ("Show answers" / "Hide answers", `aria-pressed`) with its remembered state, and a layout wrapper around the body (target under 40 added lines). The storage helpers (`readAnswersOpen`, `writeAnswersOpen`) live in the panel's file.
 - Wide (viewport 1200px and up), panel open: the modal's max width grows from 960 to 1280 and the body becomes two columns, the existing list (flexible, `min-width: 0`) and the 300px panel. The panel is sticky (`top: calc(60px + 1rem)`, clearing the app bar the overlay already pads for) with its own scroll (`max-height: calc(100vh - 60px - 2rem)`).
 - Narrow (below 1200px), panel open: the panel stacks above the list at full width.
 - Closed: the modal is exactly today's 960px layout.
@@ -87,10 +89,11 @@ No schema change, no new endpoint, no money path. List generation, the plan page
 ## 5. Testing
 
 Server (`node:test`, one suite at a time from the repo root against the shared dev DB, pass count read each run):
-- `server/utils/consultRecap.test.js`: fixtures move to the stored shape (slug ids, wine categories); names resolve from the map; a missing id humanizes; the Mixers line appears for `full_bar` and `sig_beer_wine` only; existing behaviours hold. `loadConsultDrinkNames` against seeded rows with unique ids, cleaned up after.
-- `server/utils/comms/actions/remainingActions.test.js`: the consult fixture's drink becomes a seeded cocktail with a unique id; the drafted body carries its name and not its id.
-- `server/routes/drinkPlanConsult.test.js`: `GET /:id/consult` returns `recap` with names; `null` with no consult.
-- `server/routes/eventDetails.test.js`: the payload carries `drink_plan.consult_recap` lines and no `consult_selections` key.
+- `server/utils/consultRecap.test.js` (pure): fixtures move to the stored shape (slug ids, wine categories); names resolve from the map; a missing id humanizes; the Mixers line appears for `full_bar` and `sig_beer_wine` only; `consultRecapLines` is `[]` where the formatter prints its placeholder; existing behaviours hold.
+- `server/utils/consultRecap.names.test.js` (new, dev DB): `loadConsultDrinkNames` against seeded inactive rows with unique ids (one id seeded in BOTH tables under different names, so each list provably resolves against its own table), no query for a consult with no drinks, and `buildConsultRecap` returning `null` for a missing, empty or nothing-to-say consult.
+- `server/utils/comms/actions/remainingActions.test.js`: the consult fixture's drink becomes a seeded cocktail with a unique id; the drafted body carries its name and the Mixers line, and not its id.
+- `server/routes/drinkPlanConsult.recap.test.js` (new; `drinkPlanConsult.test.js` covers a helper and has no HTTP harness): `GET /api/drink-plans/:id/consult` returns `recap` with names alongside the unchanged raw blob; `recap: null` with no consult.
+- `server/routes/eventDetails.test.js`: the payload carries `drink_plan.consult_recap` lines with names and no `consult_selections` key.
 
 Client (jest + RTL, `CI=true npx react-scripts test --watchAll=false <files>`):
 - `answerSets.test.js`: consult newer, planner newer, draft planner vs consult, tie, only one set each way, neither, `{}` selections.
@@ -98,8 +101,8 @@ Client (jest + RTL, `CI=true npx react-scripts test --watchAll=false <files>`):
 - `DrinkPlanSelections.test.js`: `listOnly` hides Menu Design and Logistics and keeps the Crowd block; default render unchanged.
 - `client/src/components/staff/BeoSections.test.js`: `ConsultCard` renders lines; null on empty.
 
-Browser (dev server on :3000): open the modal from a drink-plan page and an event page at 1440px and 1024px widths, in both skins; check the sticky panel, the switch, the narrow stacking and the closed state matching today's layout.
+Browser (the lane's own dev servers on :5001 and :3001, so a dev server another window left on :3000/:5000 is never disturbed): open the modal from a drink-plan page and an event page at 1440px and 1024px widths, in both skins; check the sticky panel, the switch, the narrow stacking and the closed state matching today's layout. The staff Consult card is checked at `http://staff.localhost:3001` on an event whose consult names a custom drink.
 
 ## 6. Review
 
-Nothing touched is on `scripts/sensitive-paths.txt` (checked with `scripts/sensitive-match.js` against every file in the plan), so the light track: per lane, code-review plus the suites, consistency-check on the recap lane (three readers of one formatter), and ui-ux-review on the panel lane.
+`scripts/sensitive-match.js` run against every file in the plan (2026-10-06): two match, both through `server/utils/comms/actions/*.js` (the comms registry drives every admin-initiated external send): `server/utils/comms/actions/consultRecap.js` and its suite `remainingActions.test.js`. So the recap lane takes the full fleet that applies before merge (code-review, consistency-check across the three readers of one formatter, security-review on the staff payload's new key and the client email's content, performance-review on the staff payload's hot read), and at push the sensitive-path re-review plus `/second-opinion`. The panel lane touches nothing sensitive: code-review plus ui-ux-review, judged on usability and both skins (no design artifact exists for this surface).
