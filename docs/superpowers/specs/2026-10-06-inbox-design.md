@@ -1199,6 +1199,14 @@ The plan (`docs/superpowers/plans/2026-10-06-inbox.md`) was written lane by lane
     - **Cost:** a maximal read costs about 2 to 2.5 cents, so the cap's worst day is about $7 to $8.
 27. **Unsettled inbound rows (section 5.3).** A row whose processing has not finished, and so has no outcome yet, counts as inbound. The old whole-body CONFIRM and CANT rule applies only to processed rows from before `sms-lines`.
 28. **For piece 4.** Bridge calls already use the event channel `voice`, so the Google Voice reader needs its own token, such as `gvoice`.
-29. **Group staff sends (lane `sms-lines`, decision 7).** After the extraction, each staffer's row is inserted right after that staffer's text, instead of all rows at the end. A database error mid-group therefore stops the remaining sends, instead of losing the record of the texts already sent. Dallas confirms this before `sms-lines` is cut.
+29. **Group staff sends (lane `sms-lines`, decision 7).** A group staff send never stops partway.
+    - Each staffer's record is saved right after their text.
+    - A record that fails to save is logged, without any message text or phone number, and the group carries on, so every staffer still gets the text.
+    - Dallas, 2026-10-06, did not want either trade-off: losing every record, or stopping the send.
+    - A single-recipient Inbox send still reports a failed save, as 500 `INBOX_SEND_UNRECORDED`.
 30. **Merge and push pairing (sections 15, 16).** `inbox-ai` merges before `inbox-page`. `inbox-page` then re-verifies against the new HEAD. No push carries `inbox-ai` without `inbox-page`, because the key is already in Render and AI reads would start with no page to show them.
 31. **Unknown-number keys (section 8).** The page accepts `p-` keys of exactly 10 digits. The server accepts 1 to 20, but only ever builds 10-digit keys, so the two never disagree in practice. A 400 on an item read shows the "gone" state.
+32. **Opting back in (sections 5.8, 7).** Only START or UNSTOP clears an `sms_optouts` row, as on Twilio's toll-free 888, where YES does not undo an opt-out. A "yes" still counts as a message and still runs the existing client-preference opt-in. The OS opt-out record stays in force until an explicit START or UNSTOP.
+33. **Twilio, confirmed 2026-10-06:**
+    - **Advanced Opt-Out** is off on the 224 Messaging Service, and stays off, because enabling it is one-way. Twilio applies its standard keywords on every number, so no extra words join the STOP set.
+    - **Inbound webhooks:** the service hands inbound texts to each number's own webhook (`use_inbound_webhook_on_number` is true). Rollout step 3 therefore needs only the 0082's `sms_url`.
