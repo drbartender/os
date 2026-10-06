@@ -10,6 +10,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 - **proposal-compare-and-book** — compare and book on the proposal page. Spec only, no plan yet, so this is not lane-ready; carried here so it is not lost behind the marketing phases. Absorbs the parked compare-page reskin and Dallas's 8/10 item 8 (the client-facing compare surface is unreadable at 3 options, worse at more). NOTE 2026-08-19: section 5 of that spec (the money seam, which puts the commit point in the public sign endpoint) is SUPERSEDED by [the options-drawer design](superpowers/specs/2026-08-14-proposal-options-drawer-design.md). What is still ready here is the compare-surface readability work, not the sign-time commit. [spec](superpowers/specs/2026-08-11-proposal-compare-and-book-design.md)
 
+- **ma-e3b-edit-sheet-layout**: READY, not cut. The design-tool pass on the phone edit sheet's fixed height came back as "readout above, controls pinned" (the price readout above the rows, rows and footer pinned to the bottom, Setup as a line under Start, "was 3 hr" under a changed field). Design export: ~/win-share/Event edit sheet mobile layout.zip (vendor into docs/design-artifacts when the lane starts). Needs: a spec amendment with a Visual contract, a short plan, then the usual review and browser gate.
 ## In flight
 
 <!-- lane open and building. Stale-lane flags and stalled/orphaned branches surface here. One line per item. -->
