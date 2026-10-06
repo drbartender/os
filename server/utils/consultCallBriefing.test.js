@@ -122,7 +122,7 @@ test('formatUsPhoneForText renders a US E.164 number as dashed digits', () => {
 test('formatUsPhoneForText returns anything else exactly as given', () => {
   assert.equal(formatUsPhoneForText('+639171234567'), '+639171234567');
   assert.equal(formatUsPhoneForText('(256) 555-0186'), '(256) 555-0186');
-  assert.equal(formatUsPhoneForText('+1256328120'), '+1256328120');
+  assert.equal(formatUsPhoneForText('+1256555018'), '+1256555018');
   assert.equal(formatUsPhoneForText('+125655501864'), '+125655501864');
   assert.equal(formatUsPhoneForText(null), null);
   assert.equal(formatUsPhoneForText(undefined), undefined);
