@@ -107,6 +107,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
+| 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
@@ -899,6 +900,23 @@ Fix shape: a deny that refuses unless the request is still pending, and a re-rea
 ma-e2 Task 6 review; second opinion (codex), verified against the code.
 
 ---
+
+### A corrected email address stays marked bounced, so the client's emails keep vanishing
+
+A permanent bounce sets `clients.email_status = 'bad'` (the Resend webhook,
+`server/routes/emailMarketingWebhook.js`), and from then on every immediate email to that client is
+dropped: `shouldSendImmediate` in `server/utils/messageSuppression.js` returns `bad_contact`, and the
+scheduled dispatcher applies the same rule. Correcting the address does not clear it. The editor's
+save sends the new address through `PUT /clients/:id` (`server/routes/clients.js`), which updates
+name, email, phone, source and notes and never touches `email_status`; the one reset,
+`PUT /marketing/contacts/:id/email-status`, has no caller in `client/src`. So after an admin fixes a
+bounced address, the client still gets nothing: the automatic gratuity email after a crew change is
+suppressed with only a server log line, while the editor's reprice confirm says the client is emailed
+"unless their email address is missing or has bounced", which the admin knows is no longer true of
+the new address. Fix: reset `email_status` when `PUT /clients/:id` changes the email (the sign route
+already resets `phone_status` when a client re-confirms a phone, `publicToken.js`), and give the
+marketing route its control on the contact row. Prod, read-only, 2026-10-06: 5 clients carry the
+flag, none with an upcoming booking. Lane ma-e3a fold re-review.
 
 ## 4. Staff-facing
 
@@ -1708,9 +1726,6 @@ the accented spelling) or the two spellings stop matching each other.
   decides the count. Its sibling `past-all` gets this right. Fix:
   `rule: 'Paid us · tagged Corporate · event finished'`, and sweep the other five audiences for the
   same drift between `rule` and `includes`.
-- **`PUT /contacts/:id/email-status` has no admin UI.** The route is real and tested
-  (`marketingContacts.js:185`) but nothing in `client/src` calls it, so an admin who fixes a bounced
-  address cannot un-mark it from a screen. One control on the contact row.
 - **SMS cost line:** one non-GSM-7 letter in a bartender's preferred name (Zoë, Núñez, 李娜) flips the
   event-eve SMS from 2 to 4 segments. Cost, not correctness.
 - **Paystub PDF renders CJK preferred names as mojibake on the fallback path only** (no crash;
@@ -1826,6 +1841,25 @@ the accented spelling) or the two spellings stop matching each other.
   `buildStaffingItems` and its header comment, so that comment now reads as describing `neededNoun`.
 
 ## Admin UI and the two skins
+
+- **The notify popup's main choice has no weight in the admin skin.** `NotifyConfirmModal.jsx` gives
+  its main choice `btn btn-success` (the quiet button by default, so "Don't send" in the editor and
+  the quiet choice in the payment, refund and cancel-line popups), but the admin reset
+  `html[data-app="admin-os"] button { background: none }` in `client/src/index.css` outranks
+  `.btn-success`, and the admin skin restyles only `.btn-primary` and `.btn-secondary`. The main
+  choice renders as a plain label beside the others. Every `btn-success` under the admin skin is flat
+  the same way (the cocktail menu's active toggles, the shopping list modal on the drink plan page).
+  Give `.btn-success` an admin-skin rule, or move the popup to `.btn-primary`. Seen in lane ma-e3a's
+  desktop walk, 2026-10-06.
+- **A gratuity rise that the same edit cancels out opens no confirm, and the client is still
+  emailed.** `buildRepriceSummary` (`client/src/pages/admin/proposalEditor/repriceSummary.js`) returns
+  nothing when the total holds, before it looks at the gratuity, while the server's automatic gratuity
+  email keys on the gratuity total alone (`staffingGratuityOrigin`, `server/utils/gratuityMandate.js`).
+  Add the additional-bartender add-on to a paid booking and comp it with a matching discount: the
+  total holds, the editor saves with no confirm, and the client is emailed that their gratuity rose
+  with no warning to the admin. The phone edit sheet edits no add-ons or discounts, so the desktop
+  editor is where this happens. Fix direction: let a gratuity rise open the confirm on its own. That
+  changes desktop behaviour, so it waits for an owner call. Lane ma-e3a consistency review, 2026-10-06.
 
 - **The phone header can drop a real venue name.** `envelopeOf` in
   `client/src/utils/eventDetailView.js` treats a name as the street typed again when the house
