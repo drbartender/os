@@ -1796,6 +1796,28 @@ Parked by the lane's review fleet (merge `811f9092`); none of them can text the 
   `smsInbound.js` for code now in `smsShiftCommands.js`.
 - **Optional:** the reply's three pre-send reads could run with `Promise.all`; worth it only if Render
   and Neon sit in different regions.
+- **An unrecognized To number reads as the 888 for text commands** (push review, 2026-10-07).
+  `smsInbound.js:564` stores `lineKeyForNumber(to) || '888'`, and that line feeds decision 17's
+  command gate, so a text to a fourth Twilio number pointed at this webhook could run CONFIRM or
+  CANT. Unreachable with today's three lines. Fix: gate on `lineKeyForNumber(to) === '888'` and keep
+  the fallback for storage only.
+- **`/status` hands the raw error to Sentry** (`routes/sms.js:219`), where a pg error's detail can
+  quote the row; the reply route sends only the SQLSTATE. Match it.
+- **`sms_optouts.source`'s CHECK lives only inside `CREATE TABLE IF NOT EXISTS`** (`schema.sql:5264`),
+  so a new source value never reaches an existing table; ship it as a guarded DROP/ADD.
+- **A 21610 records an opt-out for an internal alert number too** (`server/utils/sms.js:57-71`), and
+  `textability()` then refuses hand-sent Inbox and Messages texts to any client or staff row with
+  those digits. Decision 10 working as written; worth knowing before an alert number shares digits
+  with a staff row.
+- **Two CANTs for the same assignment processed at once both run** (`handleCant`, moved verbatim from
+  `smsInbound.js`): the select sits outside the transaction and the update takes no lock, so both
+  reopen the shift and both notify. Pre-existing.
+- **Two comment slips in the `sms_optouts` block** (`schema.sql:5255`, `:5290`): a re-STOP after a
+  START overwrites the row (only the latest cycle survives), and `\s*` misses the U+00A0 and U+FEFF
+  that JS `trim()` strips (0 prod rows).
+- **The boot backfill runs on the incoming instance,** so a STOP the outgoing instance handles during
+  a deploy writes the preference but no `sms_optouts` row until the next boot. Nil exposure today;
+  it matters once Inbox texts unknown senders or the 224 lines.
 
 ## Voice
 
@@ -1898,8 +1920,9 @@ Parked by the lane's review fleet (merge `811f9092`); none of them can text the 
 
 ## Admin UI and the two skins
 
-- **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, not
-  pushed).** Parked by its review fleet and fold re-reviews; none changes money or a message.
+- **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, pushed
+  2026-10-07).** Parked by its review fleet, fold re-reviews and the push review; none changes money
+  or a message.
   - Rules the phone copies from the desktop instead of sharing, identical today and each able to
     drift: the extension hint (`editSheetView.js` beside the inline JSX in `ProposalEditorForm.js`),
     the curfew prompt, declined line and retry rule (`useEditSheet.js` and `EditSheet.js` beside
@@ -1909,7 +1932,9 @@ Parked by the lane's review fleet (merge `811f9092`); none of them can text the 
     (`editorCore.js`, `notifyDrafts.js`).
   - A save waits on three round trips in a row (preflight, re-read, PATCH); asking the preflight
     and the re-read together saves one.
-  - After a save the page shows the old figures with no cue until the fresh re-read lands.
+  - After a save the page shows the old figures with no cue until the fresh re-read lands, and
+    its two re-reads carry no timeout (`EventDetailPhone.js:198-214`), so on a hung socket the old
+    total stays with no "may be out of date" banner. Pass `{ timeout: READ_TIMEOUT_MS }`.
   - A save that fails after Android Back closed the sheet says nothing (the page stays truthful:
     nothing saved).
   - A locked event keeps offering Edit details (the sheet itself finds the lock); the loading,
@@ -1922,6 +1947,19 @@ Parked by the lane's review fleet (merge `811f9092`); none of them can text the 
     editor or counter); Don't send still saves.
   - After "Discard mine" focus falls to the page body.
   - Unpinned in tests: the notify checkboxes and the preview's Retry being held during the arm.
+  - The multi-shift note vanishes when the roster read failed (`EventDetailPhone.js:432` passes 0
+    unless the roster is ready), so a date move on a two-shift event goes unwarned while the server
+    leaves both shifts behind (`syncShiftsFromProposal` moves a lone shift only). Treat a roster
+    that is not ready as unknown. (Push review, 2026-10-07, as are the four below.)
+  - The stale-edit guard is client-only: the sheet re-reads `updated_at`, then PATCHes, and
+    `crud.js` takes no expected version, so an edit landing between the two is overwritten. The
+    desktop editor has no guard at all.
+  - Dismissing an edited sheet (scrim, Escape, Cancel, Back) drops the edits with no confirm; the
+    desktop editor asks.
+  - A pinned total override shows no cue on the phone, so a guest or duration change previews an
+    unchanged total.
+  - Nits: start times step by 5 minutes where the desktop offers half hours; one "Fewer guests" tap
+    clamps a stored count above 1000 straight to 1000.
 
 - **On dev, just opening the shopping list modal un-approves the list.** React StrictMode (on in
   `client/src/index.js`) runs the modal's autosave effect twice on mount; the `isFirstRender` ref
@@ -2249,6 +2287,10 @@ Parked by the lane's review fleet (merge `811f9092`); none of them can text the 
 
 ## Platform, schema, and test gates
 
+- **The consult-notes guard sits outside the sensitive list** (push review, 2026-10-07).
+  `server/utils/consultRecap.js` (notes off by default) and `server/routes/drinkPlans/shoppingList.js`
+  (the public list drops `notes`) keep team-only notes away from clients, but an edit there gets only
+  the light review. Add both to `scripts/sensitive-paths.txt`.
 - **The API sends no CORS max-age, so the browser re-asks the preflight every few seconds.** The
   admin and staff apps call the API cross-origin with an Authorization header, so each request needs
   an OPTIONS preflight, and without `Access-Control-Max-Age` Chrome keeps the answer about five

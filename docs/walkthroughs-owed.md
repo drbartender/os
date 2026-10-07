@@ -1927,7 +1927,7 @@ opened signed in (the admin sign-in token was blocked in that session).
   and "Includes: Ice Delivery, Cups & Disposables, Bottled Water"; a champagne toast with the
   non-alcoholic option reads "Non-Alcoholic Bubbles Toast". Same on the matching proposal's page.
 
-### Consult recap with drink names: staff Consult card, client recap email, consult GET. Merged 2026-10-06 as `7d9a8d38`.
+### Consult recap with drink names: staff Consult card, client recap email, consult GET. Merged 2026-10-06 as `7d9a8d38`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor 7d9a8d38 origin/main` says yes. Verified by
 tests (198 server tests across the 14 suites that load an edited file, all green one at a time; a
@@ -1945,7 +1945,7 @@ the staff Consult card on shift 15 (plan 19, staffer 5) renders bold labels and 
   ingredients" when the consult picked none). It carries NO "Notes:" line even when the consult has
   notes (Dallas, 10/06, `ed1f7ee3`); the staff Consult card for that event does show them.
 
-### Client's answers beside the shopping list. Merged 2026-10-06 as `fb9bae0b` (with `7d9a8d38`, the recap it reads).
+### Client's answers beside the shopping list. Merged 2026-10-06 as `fb9bae0b` (with `7d9a8d38`, the recap it reads); pushed 2026-10-07 (`5e6ae928..b3148da4`).
 
 Moves to Tier 3b the moment `git merge-base --is-ancestor fb9bae0b origin/main` says yes. Verified by
 tests (54 client tests across the touched suites on main, every new one mutation-checked by review), the
@@ -1968,7 +1968,7 @@ Client view both keep the panel. What is left:
 - The 2 upcoming bookings whose planner answers carry no activeModules show "which has no answers to
   show here". Settled (Dallas, 10/06): old plans keep behaving as they have; handle one when it comes up.
 
-### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged 2026-10-06 as `589092fc`, NOT yet pushed.
+### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged 2026-10-06 as `589092fc`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
 
 It moves to Tier 3b the moment `git merge-base --is-ancestor 589092fc origin/main` says yes.
 Walked on dev only, headless at phone width in both skins (Task 7 of
@@ -2015,7 +2015,7 @@ form's first appearance, a reload, the notify step opening, each step back to th
 notify footer is two rows, Cancel and "Send the update" over a full-width "Don't send", no label
 wrapped. Say whether either reads wrong on the Pixel.
 
-### Texts know their line, and one opt-out covers every line (lane sms-lines). Merged 2026-10-06 as `811f9092`, NOT yet pushed.
+### Texts know their line, and one opt-out covers every line (lane sms-lines). Merged 2026-10-06 as `811f9092`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
 
 Once pushed. Each step texts the 888 from the 312 (your staff account; it is never a client row):
 - Text STOP. The alert email arrives; the inbound row in `sms_messages` carries `metadata.to` (the
