@@ -2028,6 +2028,20 @@ This is the 888 leg of spec section 16's round trip; the 224 legs follow when ea
 the OS. The Messages-page refusal for an opted-out client is covered by tests only (the 312 has no
 client thread).
 
+### Every human-click client send records who sent it (lane send-attribution). Merged 2026-10-08 as `63f3eeef`; not pushed.
+
+Once pushed. Nothing on screen changes except the contact history, so most of this is a read-only
+prod check of `message_log` after the next real sends:
+- A "Send to client" (or a proposal created with Send now) writes `proposal_sent` (email) and
+  `initial_proposal` (text) rows on that proposal, with `sent_by` set to whoever clicked; its
+  `sms_messages` row keeps `sender_id` NULL.
+- A cancel confirmation, a change-request decision or a staffing gratuity disclosure ledgers
+  `cancel_confirmation`, `change_request_decision` or `gratuity_disclosure` on its own proposal (not
+  the client's newest), with the clicking admin.
+- A refund notice from the admin refund, cancel refund or cancel-line routes carries the admin; one
+  the Stripe webhook or the stale-pending sweep sends still ledgers NULL.
+- In the admin, the client's contact history shows those sends as sent by us, not automated.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

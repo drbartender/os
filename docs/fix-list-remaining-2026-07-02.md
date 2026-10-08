@@ -1819,6 +1819,34 @@ Parked by the lane's review fleet (merge `811f9092`); none of them can text the 
   a deploy writes the preference but no `sms_optouts` row until the next boot. Nil exposure today;
   it matters once Inbox texts unknown senders or the 224 lines.
 
+### Lane send-attribution review leftovers (2026-10-08)
+
+Parked by the lane's review fleet (merge `63f3eeef`); none of them changes who gets a message or
+what it costs.
+- **A staffing approval's client confirmation ledgers NULL.** A staffing user's approval click
+  (`confirmStaffingIfFullyStaffed` in `server/routes/shifts.approval.js`) sends the client the
+  fully-staffed confirmation through `server/utils/lastMinuteStaffingConfirmation.js` (email, and
+  `sendAndLogSms`) with no `sentBy`; the autoAssign scheduler sends the same one. It is outside the
+  Inbox spec's section 2 list and not an answering type, so Inbox is unaffected, but the contact
+  history calls a clicked send automated, and the ARCHITECTURE `sent_by` bullet still ends "NULL
+  means an automated send".
+- **The writer scan reads three call-site shapes only.** `answeringMessageTypes.test.js` pins every
+  allowlisted type's write sites, but a second email or SMS entry inside an already-pinned comms
+  action, or a writer that names its type through a variable or a double-quoted string, would not
+  move the pin. Nothing writes either shape today.
+- **The cancel confirmation re-reads the client's name** with its own pooled SELECT
+  (`server/routes/proposals/cancel.js`, just before the send) although `assembleContext` already
+  loaded `client_name`; one primary-key lookup per cancel.
+- **`noticeAttribution.test.js` is looser than it reads.** Its `sendEmail` stand-in ledgers every
+  email its four flows send, so a future non-client email there whose address matched a dev client
+  would leave a dev ledger row its purge never removes; the purge has no `proposal_refunds` or
+  `proposal_payments` step (no fixture creates either today); and its cancel case cannot see a
+  dropped `meta.clientId`, because `logClientMessage` refills `client_id` from the email address.
+- **`refreshUnlockedInvoices` runs three queries at once on one client**
+  (`server/utils/invoiceLifecycle.js`, a `Promise.all` of `client.query` calls). pg 8.20 queues
+  them and prints a DeprecationWarning (five suites in the lane's sweep show it); pg 9 removes that
+  queueing. Pre-existing. Fix: await the three in turn.
+
 ## Voice
 
 - **The lead call bridge still stores a Twilio error MESSAGE in `lead_call_attempts.detail`**
