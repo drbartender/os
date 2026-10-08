@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-staff.css">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; -webkit-font-smoothing: antialiased; }
+    @keyframes m-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+    a { color: hsl(212 60% 62%); text-decoration: none; }
+    a:hover { color: hsl(212 70% 72%); }
+  </style>
+</helmet>
+<div style="display: inline-flex; flex-direction: column; gap: 10px; vertical-align: top;">
+  <div ref="{{ frameRef }}" data-app="admin-os" data-skin="{{ skin }}" data-density="comfy" data-screen-label="Edit details sheet" style="position: relative; box-sizing: content-box; width: {{ wpx }}; height: {{ hpx }}; overflow: hidden; border: 1px solid var(--line-3); border-radius: 20px; box-shadow: var(--shadow-pop); background: var(--bg-0); font-family: var(--font-ui, sans-serif); color: var(--ink-1);">
+
+    <div style="position: absolute; inset: 0; display: flex; flex-direction: column;">
+      <header style="display: flex; align-items: center; gap: 4px; min-height: 60px; padding: 8px 8px 8px 2px; box-sizing: border-box; background: var(--bg-1); border-bottom: 1px solid var(--line-1); flex-shrink: 0;">
+        <span style="display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; color: var(--ink-2);">
+          <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+        </span>
+        <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+          <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+            <span style="flex: 1; min-width: 0; font-size: 16px; font-weight: 600; font-family: var(--font-display); color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Beaumont <span style="color: var(--ink-3); font-weight: 400;">&#183; Anniversary</span></span>
+            <span style="flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3);">25 <span style="font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4);">GUESTS</span></span>
+          </span>
+          <span style="display: inline-flex; align-items: center; gap: 5px; min-width: 0; font-family: var(--font-numeric); font-size: 11.5px; font-weight: 600; color: {{ linkColor }};"><span style="min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Thalia Hall</span><span style="flex: none; display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n12 }}" hint-size="12px,12px"></x-import></span></span>
+        </span>
+        <span style="display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; color: var(--ink-2);">
+          <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+        </span>
+      </header>
+      <main style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; background: var(--bg-0);">
+        <div style="display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px;">
+          <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">SUN NOV 15 &#183; 17:00&#8211;20:00</span>
+          <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3);">setup from 16:15 &#183; 45 min before</span>
+        </div>
+        <div style="margin-bottom: 8px; background: var(--bg-2); border: 1px solid {{ listLine }}; border-radius: {{ listR }}; overflow: hidden;">
+          <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; font-size: var(--fs-body); color: var(--ink-1);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+            <span style="flex: 1;">Contacts</span>
+            <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4);">day-of pending</span>
+            <span style="flex: none; display: flex; color: var(--ink-4);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+          </div>
+        </div>
+        <div style="margin-bottom: 8px; background: var(--bg-2); border: 1px solid {{ listLine }}; border-radius: {{ listR }}; overflow: hidden;">
+          <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; font-size: var(--fs-body); color: var(--ink-1);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="userplus" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+            <span style="flex: 1;">Staffing</span>
+            <span style="flex: none; font-family: var(--font-numeric); font-size: 12px; font-weight: 600; color: {{ okColor }};">1/1</span>
+            <span style="flex: none; display: flex; color: var(--ink-4); transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 7px 16px; box-sizing: border-box; border-top: 1px solid var(--line-1); font-size: var(--fs-body); color: var(--ink-1);">
+            <span style="width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; font-weight: 600;">MO</span>
+            <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;">
+              <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Maya Ortiz</span>
+              <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">Bartender</span>
+            </span>
+            <span style="flex: none; display: flex; color: {{ okColor }};"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="check" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+          </div>
+        </div>
+        <div style="margin-bottom: 8px; background: var(--bg-2); border: 1px solid {{ listLine }}; border-radius: {{ listR }}; overflow: hidden;">
+          <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; font-size: var(--fs-body); color: var(--ink-1);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="dollar" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+            <span style="flex: 1;">Financials</span>
+            <span style="flex: none; font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2);">$398</span>
+            <span class="chip warn" style="flex: none;"><span class="chip-dot"></span>Balance due</span>
+            <span style="flex: none; display: flex; color: var(--ink-4);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+          </div>
+        </div>
+        <div style="margin-bottom: 8px; background: var(--bg-2); border: 1px solid {{ listLine }}; border-radius: {{ listR }}; overflow: hidden;">
+          <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; font-size: var(--fs-body); color: var(--ink-1);">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="pen" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+            <span style="flex: 1;">Edit details</span>
+            <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4);">date &#183; time &#183; guests</span>
+            <span style="flex: none; display: flex; color: var(--ink-4);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div aria-hidden="true" style="position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);"></div>
+
+    <div role="dialog" aria-modal="true" aria-label="Edit details" style="position: absolute; left: 0; right: 0; bottom: 0; max-height: calc(100% - 12px); display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--line-2); border-bottom: none; border-radius: {{ sheetR }}; box-shadow: var(--shadow-pop);">
+      <div style="flex: none; width: 36px; height: 4px; border-radius: 2px; background: var(--line-3); margin: 8px auto 4px;"></div>
+      <div style="flex: none; padding: 2px 16px 10px; border-bottom: 1px solid var(--line-1);">
+        <div style="font-size: var(--fs-h3); font-weight: 600; color: var(--ink-1);">Beaumont <span style="color: var(--ink-3); font-weight: 400;">&#183; Anniversary</span></div>
+        <div style="margin-top: 5px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);">event edit &#183; reprices the booking</div>
+      </div>
+
+      <div data-m="readout" style="flex: 0 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding: 10px 16px 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; min-height: 18px;">
+          <span style="flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);">{{ roLabel }}</span>
+          <span style="flex: none; display: flex; align-items: center; gap: 8px; opacity: {{ roOpacity }}; transition: opacity 120ms ease;">
+            <sc-if value="{{ roShowOld }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-3);">{{ roOld }}</span>
+              <span style="color: var(--ink-4);">&#8594;</span>
+            </sc-if>
+            <span style="font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: var(--ink-1);">{{ roNew }}</span>
+          </span>
+        </div>
+        <div style="margin-top: 3px; display: flex; align-items: center; gap: 8px; min-height: 15px;">
+          <span style="flex: 1; min-width: 0; display: flex;"><sc-if value="{{ roPricing }}" hint-placeholder-val="{{ false }}">{{ pricingTag }}</sc-if></span>
+          <span style="flex: none; font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); opacity: {{ roOpacity }}; transition: opacity 120ms ease;">{{ roSub }}</span>
+        </div>
+        <sc-if value="{{ roHasLines }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px; opacity: {{ roOpacity }}; transition: opacity 120ms ease;">
+            <sc-for list="{{ roLines }}" as="ln" hint-placeholder-count="3">
+              <p style="margin: 0; font-size: 11px; line-height: 1.5; color: var(--ink-2); text-wrap: pretty;">{{ ln }}</p>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ roOver }}" hint-placeholder-val="{{ false }}">
+          <div style="position: sticky; bottom: -10px; height: 24px; margin: -14px -16px -10px; background: linear-gradient(to bottom, transparent, var(--bg-elev)); pointer-events: none;"></div>
+        </sc-if>
+      </div>
+
+      <div style="flex: none;">
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; border-top: 1px solid var(--line-2); color: var(--ink-1); font-size: var(--fs-body); cursor: pointer;">
+          <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="calendar" size="{{ n18 }}" hint-size="18px,18px"></x-import>
+          <span style="flex: 1;">Date</span>
+          <span style="flex: none; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">SUN NOV 15</span>
+          <span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; border-top: 1px solid var(--line-1); color: var(--ink-1); font-size: var(--fs-body); cursor: pointer;">
+          <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clock" size="{{ n18 }}" hint-size="18px,18px"></x-import>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <span>Start</span>
+            <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3);">setup 45 min before</span>
+          </span>
+          <span style="flex: none; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">17:00</span>
+          <span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; border-top: 1px solid var(--line-1); color: var(--ink-1); font-size: var(--fs-body);">
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <span>Duration</span>
+            <sc-if value="{{ hWasOn }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3);">{{ hWas }}</span>
+            </sc-if>
+          </span>
+          <span data-m="duration" style="flex: none; display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: {{ r }};">
+            <button type="button" aria-label="Shorter" disabled="{{ hDownDis }}" onClick="{{ onHDown }}" style="min-width: 44px; min-height: 44px; padding: 0; background: none; border: none; color: {{ hDownInk }}; font-size: 18px; font-family: var(--font-mono); cursor: {{ stepCursor }};">&#8722;</button>
+            <span style="width: 68px; text-align: center; font-family: var(--font-numeric); font-size: 15px; color: var(--ink-1);">{{ hText }}</span>
+            <button type="button" aria-label="Longer" disabled="{{ hUpDis }}" onClick="{{ onHUp }}" style="min-width: 44px; min-height: 44px; padding: 0; background: none; border: none; color: {{ hUpInk }}; font-size: 18px; font-family: var(--font-mono); cursor: {{ stepCursor }};">+</button>
+          </span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 16px; border-top: 1px solid var(--line-1); color: var(--ink-1); font-size: var(--fs-body);">
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <span>Guests</span>
+            <sc-if value="{{ gWasOn }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3);">{{ gWas }}</span>
+            </sc-if>
+          </span>
+          <span data-m="guests" style="flex: none; display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: {{ r }};">
+            <button type="button" aria-label="Fewer guests" disabled="{{ gDownDis }}" onClick="{{ onGDown }}" style="min-width: 44px; min-height: 44px; padding: 0; background: none; border: none; color: {{ gDownInk }}; font-size: 18px; font-family: var(--font-mono); cursor: {{ stepCursor }};">&#8722;</button>
+            <span style="width: 68px; text-align: center; font-family: var(--font-numeric); font-size: 15px; color: var(--ink-1);">{{ gText }}</span>
+            <button type="button" aria-label="More guests" disabled="{{ gUpDis }}" onClick="{{ onGUp }}" style="min-width: 44px; min-height: 44px; padding: 0; background: none; border: none; color: {{ gUpInk }}; font-size: 18px; font-family: var(--font-mono); cursor: {{ stepCursor }};">+</button>
+          </span>
+        </div>
+      </div>
+
+      <div style="flex: none; display: flex; gap: 8px; padding: 10px 16px 14px; border-top: 1px solid var(--line-1);">
+        <button type="button" onClick="{{ onCancel }}" style="flex: 1; min-height: 44px; border: 1px solid var(--line-2); border-radius: {{ r }}; background: var(--bg-2); color: var(--ink-2); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;">Cancel</button>
+        <button type="button" disabled="{{ primeDis }}" onClick="{{ onConfirm }}" style="flex: 1; min-height: 44px; border: none; border-radius: {{ r }}; background: var(--accent); color: {{ primeInk }}; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; opacity: {{ primeOpacity }}; cursor: {{ primeCursor }}; transition: opacity 120ms ease;">{{ primeLabel }}</button>
+      </div>
+    </div>
+
+    <sc-if value="{{ guidesOn }}" hint-placeholder-val="{{ false }}">
+      <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: {{ gdTop }}; height: 0; border-top: 1px dashed {{ guideColor }}; pointer-events: none;"></div>
+      <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: {{ ggTop }}; height: 0; border-top: 1px dashed {{ guideColor }}; pointer-events: none;"></div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ captionOn }}" hint-placeholder-val="{{ false }}">
+    <div data-app="admin-os" data-skin="dark" style="display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--ink-3);">
+      <span>Duration &#177; <span style="color: var(--ink-1);">{{ dBottom }}</span></span>
+      <span>Guests &#177; <span style="color: var(--ink-1);">{{ gBottom }}</span></span>
+      <span>px from bottom</span>
+      <sc-if value="{{ roOver }}" hint-placeholder-val="{{ false }}"><span style="color: hsl(var(--warn-h) var(--warn-s) 60%);">readout scrolls</span></sc-if>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 420, &quot;height&quot;: 900}, &quot;skin&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;dark&quot;, &quot;light&quot;], &quot;default&quot;: &quot;dark&quot;, &quot;tsType&quot;: &quot;'dark' | 'light'&quot;}, &quot;mode&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;live&quot;, &quot;untouched&quot;, &quot;changed&quot;, &quot;loading&quot;], &quot;default&quot;: &quot;live&quot;, &quot;tsType&quot;: &quot;'live' | 'untouched' | 'changed' | 'loading'&quot;}, &quot;w&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 390, &quot;min&quot;: 300, &quot;max&quot;: 440, &quot;tsType&quot;: &quot;number&quot;}, &quot;h&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 844, &quot;min&quot;: 520, &quot;max&quot;: 960, &quot;tsType&quot;: &quot;number&quot;}, &quot;guides&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;}, &quot;caption&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;}, &quot;delay&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;min&quot;: 200, &quot;max&quot;: 3000, &quot;step&quot;: 100, &quot;unit&quot;: &quot;ms&quot;, &quot;default&quot;: 900, &quot;tsType&quot;: &quot;number&quot;}}">
+class Component extends DCLogic {
+  frameRef = React.createRef();
+  state = { h: 3, g: 25, loading: false, fig: null, meas: null };
+  seq = 0;
+
+  componentDidMount() {
+    this.measure();
+    const f = this.frameRef.current;
+    if (f && window.ResizeObserver) {
+      this.ro = new ResizeObserver(() => this.measure());
+      this.ro.observe(f);
+      f.querySelectorAll('[data-m]').forEach((el) => this.ro.observe(el));
+    }
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.measure());
+    this.t0 = setTimeout(() => this.measure(), 500);
+  }
+  componentDidUpdate() { this.measure(); }
+  componentWillUnmount() {
+    if (this.ro) this.ro.disconnect();
+    clearTimeout(this.timer); clearTimeout(this.t0);
+  }
+
+  measure() {
+    const f = this.frameRef.current;
+    if (!f) return;
+    const top = (el) => { let y = 0; while (el && el !== f) { y += el.offsetTop; el = el.offsetParent; } return y; };
+    const d = f.querySelector('[data-m="duration"]');
+    const g = f.querySelector('[data-m="guests"]');
+    const ro = f.querySelector('[data-m="readout"]');
+    if (!d || !g) return;
+    const H = f.clientHeight;
+    const next = { dy: top(d), gy: top(g), H, over: !!ro && ro.scrollHeight > ro.clientHeight + 1 };
+    const m = this.state.meas;
+    if (!m || m.dy !== next.dy || m.gy !== next.gy || m.H !== next.H || m.over !== next.over) this.setState({ meas: next });
+  }
+
+  usd(n) { return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  price(h, g) {
+    return { total: Math.max(120, 398 + (h - 3) * 136 + (g - 25) * 10), grat: Math.max(0, 60 + (h - 3) * 25 + (g - 25) * 0.5) };
+  }
+  // buildRepriceSummary (repriceSummary.js) for this booking: deposit_paid, $100.00 paid, gratuity not set by hand.
+  lines(fig) {
+    const OLD = 398, PAID = 100, OLDG = 60, usd = (n) => this.usd(n);
+    const next = fig.total, delta = next - OLD, out = [];
+    if (Math.round(PAID * 100) >= Math.round(next * 100)) out.push('This event will return to paid in full.');
+    if (delta > 0) out.push(`The ${usd(delta)} increase will be billed to the client (added to the open balance invoice, or as a new Additional Services invoice).`);
+    else if (next < PAID) out.push(`Client is now overpaid by ${usd(PAID - next)}. A refund is likely owed.`);
+    if (fig.grat - OLDG > 0.004) out.push(`The gratuity rises to ${usd(fig.grat)}, so the client is emailed the new amount automatically, unless their email address is missing or has bounced.`);
+    out.push('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.');
+    return out;
+  }
+
+  step(field, dir) {
+    if ((this.props.mode || 'live') !== 'live') return;
+    let { h, g } = this.state;
+    if (field === 'h') h = Math.min(12, Math.max(1, h + dir * 0.5));
+    else g = Math.min(1000, Math.max(5, g + dir * 5));
+    clearTimeout(this.timer);
+    const mine = ++this.seq;
+    if (h === 3 && g === 25) { this.setState({ h, g, loading: false, fig: null }); return; }
+    this.setState({ h, g, loading: true });
+    const base = Number(this.props.delay) || 900;
+    this.timer = setTimeout(() => {
+      if (mine !== this.seq) return;
+      this.setState({ loading: false, fig: this.price(h, g) });
+    }, base * (0.6 + Math.random() * 0.8));
+  }
+  reset() {
+    clearTimeout(this.timer); this.seq++;
+    this.setState({ h: 3, g: 25, loading: false, fig: null });
+  }
+
+  renderVals() {
+    const p = this.props;
+    const mode = p.mode || 'live';
+    const live = mode === 'live';
+    const light = p.skin === 'light';
+    const w = Number(p.w) || 390, hh = Number(p.h) || 844;
+    let v, fig, loading;
+    if (live) { v = { h: this.state.h, g: this.state.g }; loading = this.state.loading; fig = this.state.fig; }
+    else if (mode === 'changed') { v = { h: 5, g: 35 }; loading = false; fig = this.price(5, 35); }
+    else if (mode === 'loading') { v = { h: 5, g: 40 }; loading = true; fig = this.price(5, 35); }
+    else { v = { h: 3, g: 25 }; loading = false; fig = null; }
+    const changed = v.h !== 3 || v.g !== 25;
+    if (!changed) { fig = null; loading = false; }
+    const repriced = !!fig && Math.abs(fig.total - 398) >= 0.005;
+
+    let ro;
+    if (!changed || (!loading && !repriced)) {
+      ro = { label: 'Total', showOld: false, old: '', nw: this.usd(398), sub: 'paid ' + this.usd(100) + ' \u00b7 balance due ' + this.usd(298), lines: [], dim: false, pricing: false };
+    } else if (!fig) {
+      ro = { label: 'New total', showOld: true, old: this.usd(398), nw: '\u00b7\u00b7\u00b7', sub: 'balance due becomes \u00b7\u00b7\u00b7', lines: [], dim: false, pricing: true };
+    } else {
+      ro = { label: 'New total', showOld: true, old: this.usd(398), nw: this.usd(fig.total), sub: 'balance due becomes ' + this.usd(Math.max(0, fig.total - 100)), lines: this.lines(fig), dim: loading, pricing: loading };
+    }
+    const confirm = changed && (loading || repriced);
+    const m = this.state.meas;
+    const dis = (b) => (b ? 'var(--ink-4)' : 'var(--ink-1)');
+    const guidesOn = !!m && (p.guides === true || p.guides === 'true');
+    const captionOn = !!m && p.caption !== false && p.caption !== 'false';
+
+    return {
+      skin: light ? 'light' : 'dark',
+      wpx: w + 'px', hpx: hh + 'px',
+      n12: 12, n16: 16, n18: 18, n20: 20,
+      r: light ? '0' : 'var(--radius)',
+      sheetR: light ? '0' : 'var(--radius-lg) var(--radius-lg) 0 0',
+      listR: light ? '0' : 'var(--radius-lg)',
+      listLine: light ? 'var(--line-2)' : 'var(--line-1)',
+      linkColor: light ? 'var(--accent)' : 'hsl(var(--accent-h) var(--accent-s) 62%)',
+      okColor: light ? 'var(--ms-emerald)' : 'hsl(var(--ok-h) var(--ok-s) 52%)',
+      primeInk: light ? 'var(--bg-0)' : '#fff',
+      guideColor: light ? 'hsl(300 70% 42%)' : 'hsl(300 80% 72%)',
+      frameRef: this.frameRef,
+
+      roLabel: ro.label, roShowOld: ro.showOld, roOld: ro.old, roNew: ro.nw, roSub: ro.sub,
+      roLines: ro.lines, roHasLines: ro.lines.length > 0, roOpacity: ro.dim ? 0.45 : 1, roPricing: ro.pricing,
+      roOver: !!m && m.over,
+      pricingTag: React.createElement('span', { style: { fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 400, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)', animation: 'm-pulse 1.2s ease-in-out infinite' } }, 'pricing'),
+
+      hText: v.h + ' hr', gText: String(v.g),
+      hWasOn: v.h !== 3, hWas: 'was 3 hr', gWasOn: v.g !== 25, gWas: 'was 25',
+      hDownDis: v.h <= 1, hUpDis: v.h >= 12, gDownDis: v.g <= 5, gUpDis: v.g >= 1000,
+      hDownInk: dis(v.h <= 1), hUpInk: dis(v.h >= 12), gDownInk: dis(v.g <= 5), gUpInk: dis(v.g >= 1000),
+      stepCursor: live ? 'pointer' : 'default',
+      onHDown: () => this.step('h', -1), onHUp: () => this.step('h', 1),
+      onGDown: () => this.step('g', -1), onGUp: () => this.step('g', 1),
+
+      primeLabel: confirm ? 'Confirm new total' : 'Done',
+      primeDis: loading, primeOpacity: loading ? 0.45 : 1, primeCursor: loading ? 'default' : 'pointer',
+      onConfirm: () => { if (live && !loading) this.reset(); },
+      onCancel: () => { if (live) this.reset(); },
+
+      guidesOn, captionOn,
+      gdTop: m ? m.dy + 'px' : '0px', ggTop: m ? m.gy + 'px' : '0px',
+      dBottom: m ? String(m.H - m.dy) : '', gBottom: m ? String(m.H - m.gy) : '',
+    };
+  }
+}
+</script>
+</body>
+</html>

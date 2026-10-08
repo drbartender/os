@@ -1,0 +1,49 @@
+/* ==========================================================================
+   Dr. Bartender OS — Layout, density, radius, z-index tokens
+   Density (Comfy default + Compact) drives row heights + cell paddings via
+   [data-density]; sidebar Full/Rail via [data-sidebar]. Values verbatim from
+   the live [data-app="admin-os"] rules.
+   ========================================================================== */
+
+[data-app="admin-os"],
+[data-app="staff"] {
+  /* Radius */
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+
+  /* Layout */
+  --sidebar-w: 220px;
+  --sidebar-rail-w: 54px;
+  --header-h: 44px;
+  --content-max: 1440px;
+  --gap: 0.75rem;
+
+  /* Density defaults (Comfy is the shipped default) */
+  --row-h: 44px;
+  --cell-pad-y: 0.7rem;
+  --cell-pad-x: 0.9rem;
+  --font-size-base: 14px;
+
+  /* z-index scale */
+  --z-drawer: 51;   /* @kind other */
+  --z-scrim: 50;    /* @kind other */
+  --z-palette: 80;  /* @kind other */
+  --z-menu: 1000;   /* @kind other */
+}
+
+/* ---- Density: Comfy (default) ------------------------------------------- */
+[data-app="admin-os"][data-density="comfy"] {
+  --row-h: 44px;
+  --cell-pad-y: 0.7rem;
+  --cell-pad-x: 0.9rem;
+  --font-size-base: 14px;
+}
+
+/* ---- Density: Compact --------------------------------------------------- */
+[data-app="admin-os"][data-density="compact"] {
+  --row-h: 30px;
+  --cell-pad-y: 0.35rem;
+  --cell-pad-x: 0.6rem;
+  --font-size-base: 12.5px;
+}

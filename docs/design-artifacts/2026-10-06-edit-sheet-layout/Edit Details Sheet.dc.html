@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-staff.css">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; background: #0b0d10; -webkit-font-smoothing: antialiased; }
+    a { color: hsl(212 60% 62%); text-decoration: none; }
+    a:hover { color: hsl(212 70% 72%); }
+  </style>
+</helmet>
+<section data-app="admin-os" data-skin="dark" data-density="comfy" style="box-sizing: border-box; width: max-content; padding: 72px 80px 120px; background: var(--bg-0); color: var(--ink-1); font-family: var(--font-ui);">
+  <div id="1a" style="display: flex; flex-direction: column; gap: 72px;">
+
+    <div style="display: flex; align-items: flex-start; gap: 72px;">
+      <div style="width: 600px; display: flex; flex-direction: column; gap: 22px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-family: var(--font-mono); font-size: 12px; font-weight: 600; padding: 3px 8px; border: 1px solid var(--accent-line); background: var(--accent-soft); color: hsl(var(--accent-h) var(--accent-s) 66%); border-radius: var(--radius-sm);">1a</span>
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">Mobile admin &#183; Event detail &#183; Edit details sheet</span>
+        </div>
+        <h1 style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15;">Readout above, controls pinned</h1>
+        <p style="margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); text-wrap: pretty;">The sheet is anchored to the bottom, so only what sits <em>above</em> the controls may change height. Everything that appears, updates or clears goes in one readout between the head and the rows. When it grows, the sheet grows upward and the head rises; the rows and the footer stay put. Untouched, the readout shows the booking as it stands, and the sheet is only as tall as its content.</p>
+
+        <div style="display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg-1);">
+          <div style="display: grid; grid-template-columns: 96px minmax(0, 1fr) 132px; gap: 16px; align-items: baseline; padding: 12px 16px;">
+            <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">Head</span>
+            <span style="font-size: 13px; line-height: 1.5; color: var(--ink-2);">Client &#183; event type, EVENT EDIT &#183; REPRICES THE BOOKING</span>
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); text-align: right;">fixed</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 96px minmax(0, 1fr) 132px; gap: 16px; align-items: baseline; padding: 12px 16px; border-top: 1px dashed hsl(300 80% 72% / 0.6); border-bottom: 1px dashed hsl(300 80% 72% / 0.6); background: hsl(300 80% 72% / 0.06);">
+            <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: hsl(300 80% 78%);">Readout</span>
+            <span style="font-size: 13px; line-height: 1.5; color: var(--ink-1);">Total &#8596; New total, the balance line, one to three reprice lines, and every conditional line: couldn't price, changed since you opened it, the curfew confirm, the extension hint, the multi-shift note.</span>
+            <span style="font-family: var(--font-mono); font-size: 11px; color: hsl(300 80% 78%); text-align: right;">grows upward, scrolls past max height</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 96px minmax(0, 1fr) 132px; gap: 16px; align-items: baseline; padding: 12px 16px;">
+            <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">Rows</span>
+            <span style="font-size: 13px; line-height: 1.5; color: var(--ink-2);">Date, Start (setup underneath, read-only), Duration, Guests</span>
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); text-align: right;">pinned to bottom</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 96px minmax(0, 1fr) 132px; gap: 16px; align-items: baseline; padding: 12px 16px; border-top: 1px solid var(--line-1);">
+            <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">Footer</span>
+            <span style="font-size: 13px; line-height: 1.5; color: var(--ink-2);">Cancel &#183; Done / Confirm new total</span>
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); text-align: right;">pinned to bottom</span>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2);"><span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); padding-top: 2px;">01</span><span>Nothing that comes and goes sits between the rows or under them. The extension hint and the multi-shift note move up into the readout, because under Duration they would push Guests down.</span></div>
+          <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2);"><span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); padding-top: 2px;">02</span><span>Untouched, the readout shows the stored total, what's paid and the balance. That data is already loaded, so it needs no request, and the button still says Done.</span></div>
+          <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2);"><span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); padding-top: 2px;">03</span><span>Total turns into New total and the balance line turns into "balance due becomes" without changing height, so the first tap changes the height of nothing. Only the reprice lines arriving make it taller.</span></div>
+          <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2);"><span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); padding-top: 2px;">04</span><span>While a new figure loads, the last figure dims under PRICING. The steppers stay live. Only Confirm waits.</span></div>
+          <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2);"><span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); padding-top: 2px;">05</span><span>A changed field shows "was 3 hr" under its label. That fits inside the 48px row, so no row grows. The stepper's value slot is a fixed 68px, so "10.5 hr" can't push the &#8722; button sideways.</span></div>
+          <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2);"><span style="font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); padding-top: 2px;">06</span><span>Setup is a read-only line under Start, since it's set in minutes before the start. Dropping its 48px row, and setting the reprice lines without a bullet indent, lets three lines fit at 320 &#215; 568. Max height is 100dvh &#8722; 12px. Longer copy scrolls inside the readout.</span></div>
+        </div>
+        <p style="margin: 0; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; color: var(--ink-3);">Dashed magenta lines show the top edge of each stepper. The figure under each phone is measured live from the page: the stepper's distance from the bottom of the screen.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; align-items: baseline; gap: 12px;">
+          <span style="font-size: 15px; font-weight: 600;">Try it</span>
+          <span style="font-size: 13px; color: var(--ink-3);">Tap + quickly. Each change waits a simulated {{ priceDelayLabel }} for its price. Cancel resets.</span>
+        </div>
+        <div style="display: flex; gap: 28px; align-items: flex-start;">
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">After Hours &#183; 390 &#215; 844</span>
+            <dc-import name="EditSheetPhone" skin="dark" mode="live" w="390" h="844" guides="{{ showGuides }}" delay="{{ priceDelay }}" hint-size="392px,880px"></dc-import>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);">House Lights &#183; 390 &#215; 844</span>
+            <dc-import name="EditSheetPhone" skin="light" mode="live" w="390" h="844" guides="{{ showGuides }}" delay="{{ priceDelay }}" hint-size="392px,880px"></dc-import>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line-2);">
+        <span style="font-family: var(--font-mono); font-size: 22px; font-weight: 600;">390 &#215; 844</span>
+      </div>
+      <div style="display: flex; gap: 80px;">
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);">After Hours</span>
+          <div style="display: flex; gap: 28px; align-items: flex-start;">
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">Untouched</span><dc-import name="EditSheetPhone" skin="dark" mode="untouched" w="390" h="844" guides="{{ showGuides }}" hint-size="392px,880px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">After a change &#183; three reprice lines</span><dc-import name="EditSheetPhone" skin="dark" mode="changed" w="390" h="844" guides="{{ showGuides }}" hint-size="392px,880px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">New figure loading</span><dc-import name="EditSheetPhone" skin="dark" mode="loading" w="390" h="844" guides="{{ showGuides }}" hint-size="392px,880px"></dc-import></div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);">House Lights</span>
+          <div style="display: flex; gap: 28px; align-items: flex-start;">
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">Untouched</span><dc-import name="EditSheetPhone" skin="light" mode="untouched" w="390" h="844" guides="{{ showGuides }}" hint-size="392px,880px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">After a change &#183; three reprice lines</span><dc-import name="EditSheetPhone" skin="light" mode="changed" w="390" h="844" guides="{{ showGuides }}" hint-size="392px,880px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">New figure loading</span><dc-import name="EditSheetPhone" skin="light" mode="loading" w="390" h="844" guides="{{ showGuides }}" hint-size="392px,880px"></dc-import></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line-2);">
+        <span style="font-family: var(--font-mono); font-size: 22px; font-weight: 600;">360 &#215; 740</span>
+      </div>
+      <div style="display: flex; gap: 80px;">
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);">After Hours</span>
+          <div style="display: flex; gap: 28px; align-items: flex-start;">
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">Untouched</span><dc-import name="EditSheetPhone" skin="dark" mode="untouched" w="360" h="740" guides="{{ showGuides }}" hint-size="362px,776px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">After a change &#183; three reprice lines</span><dc-import name="EditSheetPhone" skin="dark" mode="changed" w="360" h="740" guides="{{ showGuides }}" hint-size="362px,776px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">New figure loading</span><dc-import name="EditSheetPhone" skin="dark" mode="loading" w="360" h="740" guides="{{ showGuides }}" hint-size="362px,776px"></dc-import></div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);">House Lights</span>
+          <div style="display: flex; gap: 28px; align-items: flex-start;">
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">Untouched</span><dc-import name="EditSheetPhone" skin="light" mode="untouched" w="360" h="740" guides="{{ showGuides }}" hint-size="362px,776px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">After a change &#183; three reprice lines</span><dc-import name="EditSheetPhone" skin="light" mode="changed" w="360" h="740" guides="{{ showGuides }}" hint-size="362px,776px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">New figure loading</span><dc-import name="EditSheetPhone" skin="light" mode="loading" w="360" h="740" guides="{{ showGuides }}" hint-size="362px,776px"></dc-import></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line-2);">
+        <span style="font-family: var(--font-mono); font-size: 22px; font-weight: 600;">320 &#215; 568</span>
+      </div>
+      <div style="display: flex; gap: 80px;">
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);">After Hours</span>
+          <div style="display: flex; gap: 28px; align-items: flex-start;">
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">Untouched</span><dc-import name="EditSheetPhone" skin="dark" mode="untouched" w="320" h="568" guides="{{ showGuides }}" hint-size="322px,604px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">After a change &#183; three reprice lines</span><dc-import name="EditSheetPhone" skin="dark" mode="changed" w="320" h="568" guides="{{ showGuides }}" hint-size="322px,604px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">New figure loading</span><dc-import name="EditSheetPhone" skin="dark" mode="loading" w="320" h="568" guides="{{ showGuides }}" hint-size="322px,604px"></dc-import></div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);">House Lights</span>
+          <div style="display: flex; gap: 28px; align-items: flex-start;">
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">Untouched</span><dc-import name="EditSheetPhone" skin="light" mode="untouched" w="320" h="568" guides="{{ showGuides }}" hint-size="322px,604px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">After a change &#183; three reprice lines</span><dc-import name="EditSheetPhone" skin="light" mode="changed" w="320" h="568" guides="{{ showGuides }}" hint-size="322px,604px"></dc-import></div>
+            <div style="display: flex; flex-direction: column; gap: 10px;"><span style="font-size: 13px; color: var(--ink-2);">New figure loading</span><dc-import name="EditSheetPhone" skin="light" mode="loading" w="320" h="568" guides="{{ showGuides }}" hint-size="322px,604px"></dc-import></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showGuides&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Annotations&quot;}, &quot;priceDelay&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;min&quot;: 200, &quot;max&quot;: 3000, &quot;step&quot;: 100, &quot;unit&quot;: &quot;ms&quot;, &quot;default&quot;: 900, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Live demo&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const d = Number(this.props.priceDelay ?? 900);
+    return {
+      showGuides: this.props.showGuides ?? true,
+      priceDelay: d,
+      priceDelayLabel: (d / 1000).toFixed(1).replace(/\.0$/, '') + 's',
+    };
+  }
+}
+</script>
+</body>
+</html>
