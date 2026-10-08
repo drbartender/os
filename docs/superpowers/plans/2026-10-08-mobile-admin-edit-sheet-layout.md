@@ -4,7 +4,7 @@
 
 **Goal:** Rebuild the phone edit sheet's layout to Dallas's design pass "readout above, controls pinned": everything that comes and goes sits in one readout between the head and the rows, and the four rows and the footer stay at the bottom of the screen, so nothing under a stepper can move.
 
-**Architecture:** Client only, three files of code plus CSS. The pure view-model (`editSheetView.js`) gains `readoutView` (the readout's two top lines and its lines for every state) and the "was" lines; `useEditSheet.js` hands the sheet `readout` in place of `view`; `EditSheet.js` draws head, readout, rows, footer in that order. The readout has two parts: its copy (the total, the balance line, the reprice lines, the notes), which scrolls past the max height, and under it the notices, which do not scroll, so they are pinned above the rows as the rows are. The notify step fills the sheet's max height. The sheet drops the fixed height, the content floor and the notify-step scroll restore; its half-second arm also counts the sheet opening and every phase change; after a reload the fresh sheet takes focus. `index.css` carries the new block. Money behaviour is untouched: the reads, the preview, the payload, the re-read guard, the curfew retry and the notify step's logic are byte for byte what lane ma-e3 shipped.
+**Architecture:** Client only, three files of code plus CSS. The pure view-model (`editSheetView.js`) gains `readoutView` (the readout's two top lines and its lines for every state) and the "was" lines; `useEditSheet.js` hands the sheet `readout` in place of `view`; `EditSheet.js` draws head, readout, rows, footer in that order. The readout has two parts: its copy (the total, the balance line, the reprice lines, the notes), which scrolls past the max height, and under it the notices, which do not scroll, so they are pinned above the rows as the rows are. The notify step fills the sheet's max height. The sheet drops the fixed height, the content floor and the notify-step scroll restore; its half-second arm also counts the sheet opening and every phase change; after a reload the fresh sheet takes focus; as it closes, however it closes, it holds the screen's taps for the half second (a small new `utils/tapGuard.js`); at its max height its thin strip of scrim does nothing in the edit view; and the event detail tells it when a bank payment is in flight (one prop). `index.css` carries the new block. Money behaviour is untouched: the reads, the preview, the payload, the re-read guard, the curfew retry and the notify step's logic are byte for byte what lane ma-e3 shipped.
 
 **Tech Stack:** React 18, jest + RTL 13 (jest-dom imported per file, CRA `resetMocks: true`), `playwright-core` 1.61 driving `/opt/google/chrome/chrome` for the gate.
 
@@ -12,14 +12,16 @@
 
 **Benchmark (Visual contract):** `docs/design-artifacts/2026-10-06-edit-sheet-layout/`, Dallas's export, snapshotted byte for byte, the working input. `Edit Details Sheet.dc.html` is the canvas (untouched, a change with three reprice lines, a figure loading; 390x844, 360x740, 320x568; both skins; two live demos); `EditSheetPhone.dc.html` is the sheet over the event detail and holds every number (inline styles). Render it: `python3 -I -m http.server 8765 --bind 127.0.0.1 --directory docs/design-artifacts/2026-10-06-edit-sheet-layout` inside one foreground command, headless Chrome on `Edit%20Details%20Sheet.dc.html`, stop the server by its PID (never `pkill -f`). Its own live figure under each phone, verified 2026-10-08: Duration's stepper top 164px and Guests' 116px above the screen bottom in all 20 frames; the untouched sheet 381px (readout 56px); three reprice lines 515px at 390 and 531px at 360 and 320.
 
-**Scope:** `client/src/utils/editSheetView.js`, `client/src/components/mobile/useEditSheet.js`, `client/src/components/mobile/EditSheet.js`, their tests, `client/src/index.css`, README and ARCHITECTURE lines. Not touched: the server, the service worker, `EventDetailPhone.js` (the sheet's props do not change), the note sheet, the assignment sheet (it keeps `.m-sheet`'s 80dvh cap), the desktop editor.
+**Scope:** `client/src/utils/editSheetView.js`, `client/src/utils/tapGuard.js` (new), `client/src/components/mobile/useEditSheet.js`, `client/src/components/mobile/EditSheet.js`, one prop in `client/src/pages/mobile/EventDetailPhone.js`, their tests, `client/src/index.css`, README and ARCHITECTURE lines. Not touched: the server, the service worker, the note sheet and the assignment sheet (they keep `.m-sheet`'s 80dvh cap and take no tap guard yet; on the fix list), the desktop editor.
 
 **Proven context (verified against main `4430906a` on 2026-10-08; re-checked at `62e7e614`, after another window's lane merge `63f3eeef`: the lane's code files are unchanged, the README lines below moved by two):**
 - Lane ma-e3 (`589092fc`) and ma-e3a (`675727cc`) are on origin (`git merge-base --is-ancestor`, both true; pushed 2026-10-07 in `5e6ae928..b3148da4`).
 - `EditSheet.js` (386 lines): the arm `:55-78` (`viewSig = ready ? (pending || proposal) : null`, `holding = ready && ...`, so nothing is held while loading); the floor `:20-41` (with `holdFloor`'s comment `:20-24` and `dropFloor`'s `:33-36`) and `:113-131`; the notify scroll restore `:133-153` (the Confirm-focus effect `:154-158` stays); the render `:160-306` (rows, then the total block, hint, notices under the rows; `m-sheet-body` wraps both views); `NotifyStep` `:311-386`, whose message preview renders UNDER its channel boxes, only while the channel is ticked (`:328-355`).
 - `useEditSheet.js:132` `const view = base ? confirmViewNow(...) : null`, returned as `view` (`:237`); `EditSheet.js` is its only consumer. The preview effect `:103-129` asks `/proposals/calculate` once as the sheet opens and again as guests or hours move; that first ask stays (spec: a date-only save reprices on the server when the catalog moved).
 - `editSheetView.js`: `confirmView` `:183` (its balance line is the literal "balance due becomes ..." at `:207`), `confirmViewNow` `:217` (its pending return `:222` uses `ELLIPSIS`, `:32`), `setupMinutesText` `:110`, `sheetDateText` `:101`, `startInputValue` `:78`, `fmtHours` `:60`; imports `BOOKED_STATUSES`, `dollars`, `fmtTime24`. `buildRepriceSummary.newBalance` is `next - paid` on raw `amount_paid`; `financialsOf` (`eventDetailView.js:233`) owes `total - paid` on the same basis and reads "Overpaid" from `overpayment_cents` (`:302-310`), which `GET /proposals/:id` returns netted (`server/routes/proposals/getOne.js:133`).
-- `useSheetFocus.js:13` focuses the sheet as it mounts; nothing focuses it again after a reload (the button that had focus unmounts).
+- `useSheetFocus.js:13` focuses the sheet as it mounts; nothing focuses it again after a reload (the button that had focus unmounts). Escape reaches the sheet through `closers.current.onClose`; the scrim calls the same.
+- `EventDetailPhone.js` (448 lines, sensitive-listed): `fin = financialsOf(proposal, money.payload)` `:226`, whose `pending` lists the bank debits in flight from the invoices read; the EditSheet mount `:428-435`. The sheet opens only once the reads it waits on have settled, never on a stored copy. Its test mocks `EditSheet` and keeps the props it was last drawn with in `mockSheets.edit` (`EventDetailPhone.test.js:31-46`); the in-flight invoices fixture is at `:263`.
+- The sheets render inside `main`'s stacking context (z-index 1); the scrim is z 900 and the sheet z 901 there, which paints them over the header and the tab bar. A layer appended to `document.body` with `position: fixed` and z-index 1300 sits over all of them (the lock screen is 1200).
 - `index.css`: the global `.visually-hidden` (`:601`); the sheet family `:21728-21772` (`.m-sheet` caps at `max-height: 80dvh`, `.m-sheet-body { flex: 1; min-height: 0; overflow-y: auto; }`, so a sheet is as tall as its content up to its cap); the edit block `:21812-21849` (`.m-sheet.m-edit-sheet { height: 80dvh; }`, `.m-edit-content { display: flow-root; }`, `.m-stepper-value { min-width: 56px }`); the notify footer `:21883-21885`; the House Lights squared list `:21936-21940` (no stepper in it; `--radius` is 6px in both skins); reduced motion `:21966-21970`. `.m-stepper-*` and `.m-edit-*` classes are used only by `EditSheet.js` (and `.m-edit-note*` by `EventDetailSections.js`, untouched).
 - `mobileClassContract.test.js`: every `m-*` class in `EditSheet.js` must appear as a selector in `index.css`. `mobileDetailCss.test.js:80` pins the reduced-motion block (`.m-sheet, .m-sheet-scrim { animation: none; }` then `.m-section-caret`).
 - Sensitive-listed (`scripts/sensitive-paths.txt:469-471`): `useEditSheet.js`, `editSheetView.js`, `EditSheet.js`. Full lane fleet, and the sensitive-path re-review plus `/second-opinion` at push.
@@ -30,12 +32,12 @@
 ## Global Constraints
 
 - **No em dashes** in copy, comments, commit messages or docs.
-- **Money behaviour is frozen.** No change to what is read, sent or saved, to the timeouts, the re-read guard, the curfew retry or the notify step's logic. `useEditSheet.js` changes one name (`view` becomes `readout`). The existing payload, preflight, guard, curfew and notify tests stay green unchanged.
+- **Money behaviour is frozen.** No change to what is read, sent or saved, to the timeouts, the re-read guard, the curfew retry or the notify step's logic. `useEditSheet.js` changes one name (`view` becomes `readout`) and passes one display-only input through (`inFlight`). The existing payload, preflight, guard, curfew and notify tests stay green unchanged.
 - **Copy from the export, verbatim:** "Total", "New total", "paid <$> · balance due <$>", "balance due becomes <$>", "pricing" (drawn uppercase by CSS), "was <value>", "setup <N> min before", "···" (three U+00B7). Added: "paid <$> · overpaid <$>", and "pending" (heard by a screen reader in place of the dots). Everything else is lane ma-e3's approved copy, unchanged.
 - **Unique `m-*` class names,** every one defined in `index.css`. **44px** minimum for every button and row.
 - **Client tests:** `import '@testing-library/jest-dom'` in every test file; `jest.mock` factories close over `mock`-prefixed names only.
 - **Client gate before every commit:** `cd client && CI=true npx react-scripts build` (exit 0; the html2pdf.js source-map warning is the only known warning).
-- **File size:** `EditSheet.js` stays under 450 lines; if it would pass, `NotifyStep` moves to `client/src/components/mobile/EditSheetNotify.js` unchanged (and gets its README line).
+- **File size:** `EditSheet.js` stays under 450 lines; if it would pass, `NotifyStep` moves to `client/src/components/mobile/EditSheetNotify.js` unchanged (and gets its README line). `EventDetailPhone.js` stays under 450 (it is 448; this lane adds one line).
 - **Explicit staging only;** commit with `git commit -F - <<'MSG'` (no backticks in messages); never `npm install` inside the lane.
 - **Known intermittents, not this work's:** `EventsListPhone.test.js` "scroll offsets are saved only after the loaded list has been restored" and one `AssignmentSheet.test.js` test; re-run the file alone before calling either a regression.
 
@@ -61,15 +63,21 @@ lanes:
       rows (Date, Start with the setup under it, Duration, Guests) and the
       footer at the bottom of the screen; the sheet as tall as its content, at
       most the screen less 12px; the notify step at the max height. The
-      half-second arm also counts the sheet opening and every phase change. No
-      money, payload or server change. Visual fidelity to the export is owned
-      here.
+      half-second arm also counts the sheet opening and every phase change;
+      the screen's taps are held for the half second as the sheet closes; the
+      scrim's thin strip at the max height does nothing in the edit view; the
+      detail passes in whether a bank payment is in flight. No money, payload
+      or server change. Visual fidelity to the export is owned here.
     inputs:
       - docs/design-artifacts/2026-10-06-edit-sheet-layout/Edit Details Sheet.dc.html
       - docs/design-artifacts/2026-10-06-edit-sheet-layout/EditSheetPhone.dc.html
     footprint:
       - client/src/utils/editSheetView.js
       - client/src/utils/editSheetView.test.js
+      - client/src/utils/tapGuard.js
+      - client/src/utils/tapGuard.test.js
+      - client/src/pages/mobile/EventDetailPhone.js
+      - client/src/pages/mobile/EventDetailPhone.test.js
       - client/src/components/mobile/useEditSheet.js
       - client/src/components/mobile/EditSheet.js
       - client/src/components/mobile/EditSheet.test.js
@@ -104,7 +112,7 @@ lanes:
 
 **Interfaces:**
 - Consumes: `confirmViewNow`, `confirmView`, `BOOKED_STATUSES`, `dollars`, `sheetDateText`, `startInputValue`, `fmtHours`, `setupMinutesText`, `fmtTime24` (all already in or imported by this module).
-- Produces: `PENDING_FIGURE` (string, three U+00B7); `BALANCE_BECOMES` (`'balance due becomes'`); `readoutView({ proposal, preview, shown, changed })` returning `{ label: 'Total'|'New total', old: string|null, now: string, sub: string|null, pricing: boolean, dim: boolean, pending: boolean, lines: string[], button: 'Done'|'Confirm new total' }`; `wasLine(field, initial, now, todayYmd)` returning `string|null` for `field` in `event_date`, `event_start_time`, `event_duration_hours`, `guest_count`; `startSubLine(proposal, initial, now)` returning `string|null`. `confirmViewNow`'s pending return gains `pending: true` and draws `PENDING_FIGURE` in place of the ellipsis.
+- Produces: `PENDING_FIGURE` (string, three U+00B7); `BALANCE_BECOMES` (`'balance due becomes'`); `readoutView({ proposal, preview, shown, changed, inFlight })` (`inFlight` optional, default false: the detail's word that a bank debit is in flight) returning `{ label: 'Total'|'New total', old: string|null, now: string, sub: string|null, pricing: boolean, dim: boolean, pending: boolean, lines: string[], button: 'Done'|'Confirm new total' }`; `wasLine(field, initial, now, todayYmd)` returning `string|null` for `field` in `event_date`, `event_start_time`, `event_duration_hours`, `guest_count`; `startSubLine(proposal, initial, now)` returning `string|null`. `confirmViewNow`'s pending return gains `pending: true` and draws `PENDING_FIGURE` in place of the ellipsis.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -148,6 +156,12 @@ describe('readoutView', () => {
   test('an overpaid row says so, from the server\'s netted figure, in place of a balance of $0.00', () => {
     expect(readoutView({ proposal: { ...booked, amount_paid: '4000.00', overpayment_cents: 35000 }, preview: null, shown: null, changed: false }).sub)
       .toBe('paid $4,000.00 · overpaid $350.00');
+  });
+  test('a bank payment in flight, which the detail passes in, is said ahead of a balance or an overpayment', () => {
+    expect(readoutView({ proposal: booked, preview: null, shown: null, changed: false, inFlight: true }).sub)
+      .toBe('paid $1,900.00 · bank payment in flight');
+    expect(readoutView({ proposal: { ...booked, overpayment_cents: 35000 }, preview: null, shown: null, changed: false, inFlight: true }).sub)
+      .toBe('paid $1,900.00 · bank payment in flight');
   });
   test('a change that leaves the total where it was reads as untouched', () => {
     const atOpen = { state: 'ready', total: 3650, gratuityTotal: 120 };
@@ -243,8 +257,10 @@ After `confirmViewNow`, add:
 // (pending). Paid is amount_paid and the balance the total less paid, floored
 // at zero: the basis of the shared summary's newBalance and of the detail's
 // Financials, so the three agree; an overpaid row reads the server's netted
-// overpayment_cents, as the detail's Financials does.
-export function readoutView({ proposal, preview, shown, changed }) {
+// overpayment_cents, as the detail's Financials does; a bank debit in flight,
+// which only the detail's invoices read knows (inFlight), outranks both, as it
+// does on the detail's chip.
+export function readoutView({ proposal, preview, shown, changed, inFlight = false }) {
   const p = proposal || {};
   const v = confirmViewNow({ proposal: p, preview, shown, changed });
   const booked = BOOKED_STATUSES.includes(p.status);
@@ -253,11 +269,9 @@ export function readoutView({ proposal, preview, shown, changed }) {
     const paid = Number(p.amount_paid) || 0;
     const over = Number(p.overpayment_cents) || 0;
     let sub = null;
-    if (booked) {
-      sub = over > 0
-        ? `paid ${dollars(paid)} · overpaid ${dollars(over / 100)}`
-        : `paid ${dollars(paid)} · balance due ${dollars(Math.max(0, total - paid))}`;
-    }
+    if (booked && inFlight) sub = `paid ${dollars(paid)} · bank payment in flight`;
+    else if (booked && over > 0) sub = `paid ${dollars(paid)} · overpaid ${dollars(over / 100)}`;
+    else if (booked) sub = `paid ${dollars(paid)} · balance due ${dollars(Math.max(0, total - paid))}`;
     return { label: 'Total', old: null, now: dollars(total), sub, pricing: false, dim: false, pending: false, lines: [], button: v.button };
   }
   const pending = !!v.pending;
@@ -312,24 +326,27 @@ git commit -F - <<'MSG'
 feat(phone): the edit sheet readout's view-model and the was lines
 
 readoutView gives the readout's two top lines for every state (Total with
-paid and balance, or overpaid from the server's netted figure; New total
-with the balance it becomes; the last figure dimmed under PRICING; three
-dots before any figure). wasLine and startSubLine give the line under a
-changed field's label.
+paid and balance, or overpaid from the server's netted figure, or a bank
+payment in flight when the detail says so; New total with the balance it
+becomes; the last figure dimmed under PRICING; three dots before any
+figure). wasLine and startSubLine give the line under a changed field's
+label.
 MSG
 ```
 
-### Task 2: The arm covers the sheet opening and every phase change
+### Task 2: Touch safety: the arm on the opening and every phase change, focus after a reload, taps held as the sheet closes, the scrim's thin strip
 
-Task 2 lands the protection before the layout that needs it: on today's 80dvh sheet a phase change moves nothing, so the only visible effect until Task 3 is the half-second hold on the loading sheet's scrim; its tests hold either way. A reviewer reading it against main should judge it as preparation for Task 3, not as a fix to the 80dvh sheet.
+Task 2 lands the protection before the layout that needs it: on today's 80dvh sheet a phase change moves nothing and the sheet never reaches its new max height, so the visible effects until Task 3 are the half-second hold on the loading sheet's scrim and the hold after the sheet closes; its tests hold either way. A reviewer reading it against main should judge it as preparation for Task 3, not as a fix to the 80dvh sheet.
 
 **Files:**
-- Modify: `client/src/components/mobile/EditSheet.js:55-78`, the failed state's Retry (`:202`), and one effect after `useSheetFocus` (`:93`)
+- Create: `client/src/utils/tapGuard.js`, `client/src/utils/tapGuard.test.js`
+- Modify: `client/src/components/mobile/EditSheet.js:55-78` (the arm), the failed state's Retry (`:202`), the scrim's `onClick` (`:188`), and effects after `useSheetFocus` (`:93`)
+- Modify: `client/src/index.css` (one rule, after the `.m-sheet-scrim` rule, outside the block Task 3 replaces)
 - Test: `client/src/components/mobile/EditSheet.test.js`
 
 **Interfaces:**
 - Consumes: `sheet.phase` (`'loading' | 'ready' | 'failed' | 'locked'`), `sheet.pending`, `sheet.proposal`.
-- Produces: `holding` (boolean), now true for `armDelayMs` after the sheet mounts and after every phase change, in any phase; the dialog takes focus when the sheet returns to ready without focus inside it. Task 3 keeps both as they are.
+- Produces: `holding` (boolean), now true for `armDelayMs` after the sheet mounts and after every phase change, in any phase; the dialog takes focus when the sheet returns to ready without focus inside it; `holdTaps(ms)` (`utils/tapGuard.js`), called as the sheet unmounts; `scrimTap()`, the scrim's handler, which does nothing in the edit view while the sheet stands at its max height. Task 3 keeps all of them, and its render calls `scrimTap`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -410,12 +427,90 @@ test('after a reload the fresh sheet takes focus, since the button that had it i
   expect(await screen.findByText('150')).toBeInTheDocument();
   expect(screen.getByRole('dialog', { name: 'Edit details' })).toHaveFocus();
 });
+
+test('as the sheet closes, however it closes, the screen\'s taps are held for the arm, then let go', async () => {
+  // eslint-disable-next-line testing-library/no-node-access
+  document.body.querySelectorAll('.m-tap-guard').forEach((g) => g.remove());
+  serve();
+  mount({ armDelayMs: 300 });
+  await ready();
+  cleanup();   // the page unmounts the sheet: Done, Cancel, the scrim, Escape, Back or a save
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(document.body.querySelector('.m-tap-guard')).not.toBeNull();
+  await pastTheArm();
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(document.body.querySelector('.m-tap-guard')).toBeNull();
+});
+
+test('at its max height the sheet\'s thin strip of scrim does nothing in the edit view; Escape still closes; in the notify step it still steps back', async () => {
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.getAttribute && this.getAttribute('role') === 'dialog') {
+      const height = window.innerHeight - 12;
+      return { x: 0, y: 12, top: 12, left: 0, right: 0, bottom: window.innerHeight, width: 0, height };
+    }
+    return realRect.call(this);
+  };
+  try {
+    const { onClose } = await toNotifyStep();
+    // The notify step at its max height: the strip steps back, which discards nothing.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText('Notify the client?')).toBeNull();
+    // The edit view at its max height: the strip does nothing; Escape closes.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  } finally {
+    Element.prototype.getBoundingClientRect = realRect;
+  }
+});
+```
+
+Create `client/src/utils/tapGuard.test.js`:
+
+```js
+import '@testing-library/jest-dom';
+import fs from 'fs';
+import path from 'path';
+import { holdTaps } from './tapGuard';
+
+// eslint-disable-next-line testing-library/no-node-access
+const guard = () => document.body.querySelector('.m-tap-guard');
+afterEach(() => {
+  jest.useRealTimers();
+  // eslint-disable-next-line testing-library/no-node-access
+  document.body.querySelectorAll('.m-tap-guard').forEach((g) => g.remove());
+});
+
+test('holds the whole screen for the time given, then lets go', () => {
+  jest.useFakeTimers();
+  holdTaps(500);
+  expect(guard()).not.toBeNull();
+  expect(guard()).toHaveAttribute('aria-hidden', 'true');
+  jest.advanceTimersByTime(499);
+  expect(guard()).not.toBeNull();
+  jest.advanceTimersByTime(1);
+  expect(guard()).toBeNull();
+});
+
+test('no time, no hold', () => {
+  holdTaps(0);
+  expect(guard()).toBeNull();
+});
+
+test('the layer covers the screen above the sheets, the header and the tab bar', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../index.css'), 'utf8');
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-tap-guard \{ position: fixed; inset: 0; z-index: 1300; \}/);
+});
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js -t "arm, while|double tap on Reload leaves|failed load's Retry|fresh sheet takes focus"`
-Expected: FAIL: the scrim and Escape both close the loading sheet (`onClose` called twice), Retry is enabled at once, and focus is on the document body after the reload.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js -t "arm, while|double tap on Reload leaves|failed load's Retry|fresh sheet takes focus|taps are held|thin strip"`
+Expected: FAIL: the scrim and Escape both close the loading sheet (`onClose` called twice), Retry is enabled at once, focus is on the document body after the reload, no `.m-tap-guard` appears as the sheet unmounts, and the strip closes the sheet at its max height.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/tapGuard.test.js`
+Expected: FAIL: `./tapGuard` cannot be found.
 
 - [ ] **Step 3: Implement**
 
@@ -466,26 +561,74 @@ Right after `useSheetFocus(sheetRef, closers);`, add:
     const el = sheetRef.current;
     if (sheet.phase === 'ready' && el && !el.contains(document.activeElement)) el.focus();
   }, [sheet.phase]);
+
+  // As the sheet closes, however it closes, the screen's taps are held for the
+  // arm, so the second tap of a double tap on Done, Cancel, the scrim or a save
+  // lands on nothing beneath (the detail, its header, the tab bar under the
+  // footer).
+  useEffect(() => () => holdTaps(armDelayMs), [armDelayMs]);
+
+  // At its max height the sheet leaves a 12px strip of scrim above it: too thin
+  // to be a deliberate dismiss, and in the edit view a tap there would discard
+  // the edits, so there it does nothing (Cancel, Back and Escape still close).
+  // In the notify step it still steps back, which discards nothing.
+  const scrimTap = () => {
+    const el = sheetRef.current;
+    const atMax = !!el && el.getBoundingClientRect().height >= window.innerHeight - 12.5;
+    if (atMax && !sheet.pending) return;
+    closers.current.onClose();
+  };
+```
+
+Add `import { holdTaps } from '../../utils/tapGuard';` to the imports, and give the scrim the new handler: `<button type="button" className="m-sheet-scrim" aria-label="Close" tabIndex={-1} onClick={scrimTap} />`.
+
+Create `client/src/utils/tapGuard.js`:
+
+```js
+// For a moment after a phone sheet closes, an invisible layer over the whole
+// screen takes any tap (design pass 2026-10-06, lane ma-e3b). Without it, the
+// second tap of a double tap on the sheet's footer or scrim lands on whatever
+// was beneath: the event detail, its header, or the tab bar under the footer.
+// It is appended to the document's body, so it outlives the sheet that asked.
+export function holdTaps(ms) {
+  if (!(ms > 0) || typeof document === 'undefined' || !document.body) return;
+  const guard = document.createElement('div');
+  guard.className = 'm-tap-guard';
+  guard.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(guard);
+  setTimeout(() => guard.remove(), ms);
+}
+```
+
+In `index.css`, right after the `.m-sheet-scrim` rule (outside the edit block Task 3 replaces), add:
+
+```css
+/* For the half second after a phone sheet closes, a layer over the whole screen
+   takes the second tap of a double tap (utils/tapGuard.js). It hangs off the
+   document's body, above the sheets, the header, the tab bar and the lock. */
+html[data-app="admin-os"] .m-tap-guard { position: fixed; inset: 0; z-index: 1300; }
 ```
 
 - [ ] **Step 4: Run the file to verify everything passes**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js`
-Expected: PASS, every test, including the existing arm tests ("nothing else arms" among them) unchanged.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js src/utils/tapGuard.test.js`
+Expected: PASS, every test in both files, including the existing arm tests ("nothing else arms" among them) and the existing scrim tests unchanged (jsdom has no layout, so the sheet is never at its max height there unless a test says so).
 
 - [ ] **Step 5: Build and commit**
 
 Run: `cd client && CI=true npx react-scripts build` (exit 0).
 
 ```bash
-git add client/src/components/mobile/EditSheet.js client/src/components/mobile/EditSheet.test.js
+git add client/src/components/mobile/EditSheet.js client/src/components/mobile/EditSheet.test.js client/src/utils/tapGuard.js client/src/utils/tapGuard.test.js client/src/index.css
 git commit -F - <<'MSG'
-fix(phone): the edit sheet's arm counts its opening and every phase change
+fix(phone): touch safety for the edit sheet ahead of its new layout
 
 A content-sized sheet gets shorter while it loads, so the second tap of a
 double tap on Edit details or Reload would land on the scrim and close it.
-The scrim, Escape and a failed load's Retry now wait the half second too,
-and after a reload the fresh sheet takes focus back.
+The scrim, Escape and a failed load's Retry now wait the half second too;
+after a reload the fresh sheet takes focus back; as the sheet closes the
+screen's taps are held for the half second (utils/tapGuard.js); and at the
+sheet's max height its thin strip of scrim does nothing in the edit view.
 MSG
 ```
 
@@ -497,11 +640,12 @@ MSG
 - Modify: `client/src/index.css` (the edit sheet block, the House Lights squared list, reduced motion)
 - Test: `client/src/components/mobile/EditSheet.test.js`
 - Read, not changed: `client/src/utils/mobileDetailCss.test.js:80` (it pins the reduced-motion block Step 5 edits: `.m-sheet-scrim { animation: none; }` verbatim, then `.m-section-caret`)
-- Modify: `README.md:603,610`, `ARCHITECTURE.md:2098`
+- Modify: `client/src/pages/mobile/EventDetailPhone.js:428-435` (one prop), test `client/src/pages/mobile/EventDetailPhone.test.js`
+- Modify: `README.md:603,610` and the utils tree, `ARCHITECTURE.md:2098`
 
 **Interfaces:**
-- Consumes: Task 1's `readoutView`, `wasLine`, `startSubLine`, `PENDING_FIGURE`, `BALANCE_BECOMES`; Task 2's `holding` and its focus effect.
-- Produces: the hook returns `readout` (Task 1's shape) in place of `view`; the DOM the gate measures: `.m-sheet.m-edit-sheet` (with `.m-edit-notifying` while the notify step is open) > `.m-sheet-handle`, `.m-sheet-head`, `.m-edit-readout` (the copy), `.m-edit-notices` (the strip, empty when no notice shows), `.m-edit-rows` (exactly four `.m-sheet-row`), `.m-acts.m-edit-acts`; in the notify step `.m-sheet-body` and `.m-acts.m-acts-notify.m-edit-acts`; the steppers' buttons keep their names (Shorter, Longer, Fewer guests, More guests).
+- Consumes: Task 1's `readoutView` (with `inFlight`), `wasLine`, `startSubLine`, `PENDING_FIGURE`, `BALANCE_BECOMES`; Task 2's `holding`, its focus effect, the unmount hold and `scrimTap`.
+- Produces: `EditSheet` takes `inFlight` (boolean, default false) and passes it to `useEditSheet({ ..., inFlight })`, which passes it to `readoutView`; the event detail passes `inFlight={!!fin && fin.pending.length > 0}`. The hook returns `readout` (Task 1's shape) in place of `view`; the DOM the gate measures: `.m-sheet.m-edit-sheet` (with `.m-edit-notifying` while the notify step is open) > `.m-sheet-handle`, `.m-sheet-head`, `.m-edit-readout` (the copy), `.m-edit-notices` (the strip, empty when no notice shows), `.m-edit-rows` (exactly four `.m-sheet-row`), `.m-acts.m-edit-acts`; in the notify step `.m-sheet-body` and `.m-acts.m-acts-notify.m-edit-acts`; the steppers' buttons keep their names (Shorter, Longer, Fewer guests, More guests).
 
 - [ ] **Step 1: Rewrite and add the tests**
 
@@ -754,16 +898,37 @@ test('a screen reader hears the two top lines as one, and "pending" in place of 
   expect(screen.getAllByText('pending')).toHaveLength(2);
   for (const dots of screen.getAllByText(PENDING_FIGURE)) expect(dots).toHaveAttribute('aria-hidden', 'true');
 });
+
+test('a bank payment in flight that the detail passes in is said on the untouched readout', async () => {
+  serve();
+  mount({ inFlight: true });
+  await ready();
+  expect(screen.getByText('paid $1,900.00 · bank payment in flight')).toBeInTheDocument();
+});
+```
+
+10. In `EventDetailPhone.test.js`, at the end of `an upcoming event: Edit details reads date · time · guests and opens the edit sheet`, add `expect(mockSheets.edit.inFlight).toBe(false);`, and after that test add:
+
+```js
+test('the edit sheet hears when a bank payment is in flight, so its readout can say so', async () => {
+  serve({ '/invoices/proposal/13': { data: { ...INVOICES, pending_payments: [{ amount_cents: 175000, started_at: '2999-08-05T15:00:00.000Z', invoice_id: 2, invoice_number: 'INV-0363' }] } } });
+  mount();
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(within(section('Financials')).getByText('Processing')).toBeInTheDocument());
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  await screen.findByTestId('edit-sheet');
+  expect(mockSheets.edit.inFlight).toBe(true);
+});
 ```
 
 - [ ] **Step 2: Run the file to verify the new tests fail**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js`
-Expected: FAIL on the rewritten and new tests (no `.m-edit-readout` or `.m-edit-notices`, Setup still a row, no "Total" line, no `m-edit-notifying`, no live region); everything else passes.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js src/pages/mobile/EventDetailPhone.test.js`
+Expected: FAIL on the rewritten and new tests (no `.m-edit-readout` or `.m-edit-notices`, Setup still a row, no "Total" line, no in-flight line, no `m-edit-notifying`, no live region; the detail passes no `inFlight`, so the two detail assertions read undefined); everything else passes.
 
 - [ ] **Step 3: The hook**
 
-In `useEditSheet.js`: import `readoutView` in place of `confirmViewNow`; replace `:132` with `const readout = base ? readoutView({ proposal: base.proposal, preview, shown, changed }) : null;`; return `readout,` in place of `view,`. Nothing else changes in this file.
+In `useEditSheet.js`: import `readoutView` in place of `confirmViewNow`; the signature takes the detail's word on a bank debit in flight, `export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400, inFlight = false }) {`; replace `:132` with `const readout = base ? readoutView({ proposal: base.proposal, preview, shown, changed, inFlight }) : null;`; return `readout,` in place of `view,`. Nothing else changes in this file (four lines).
 
 - [ ] **Step 4: The sheet**
 
@@ -788,7 +953,7 @@ In `EditSheet.js`:
 // height, so a channel's message showing or hiding moves nothing.
 ```
 
-4. After the imports, add `const ARROW = String.fromCharCode(0x2192);`
+4. After the imports, add `const ARROW = String.fromCharCode(0x2192);`. The component's signature takes `inFlight = false` after `armDelayMs = 500`, and its first line passes it on: `const sheet = useEditSheet({ proposalId, onSaved, previewDelayMs, inFlight });`.
 5. Replace the step-change block (from `// A step change moves focus too:` through its `useLayoutEffect`) with:
 
 ```js
@@ -879,7 +1044,7 @@ In `EditSheet.js`:
 
   return (
     <>
-      <button type="button" className="m-sheet-scrim" aria-label="Close" tabIndex={-1} onClick={() => closers.current.onClose()} />
+      <button type="button" className="m-sheet-scrim" aria-label="Close" tabIndex={-1} onClick={scrimTap} />
       <div className={`m-sheet m-edit-sheet${ready && sheet.pending ? ' m-edit-notifying' : ''}`} role="dialog" aria-modal="true" aria-label="Edit details" tabIndex={-1} ref={sheetRef}>
         <div className="m-sheet-handle" />
         <div className="m-sheet-head">
@@ -1015,6 +1180,8 @@ In `EditSheet.js`:
 
 `NotifyStep` below the component is unchanged.
 
+In `EventDetailPhone.js`, the EditSheet mount (`:428-435`) gains one prop after `shiftCount`: `inFlight={!!fin && fin.pending.length > 0}` (the bank debits in flight from the invoices read, as the Financials chip reads them). The file stays under 450 lines.
+
 - [ ] **Step 5: The stylesheet**
 
 In `index.css`, replace the block from the comment `/* Edit sheet (lane ma-e3; benchmark 2026-09-15, the edit sheet).` through `html[data-app="admin-os"] .m-edit-content { display: flow-root; }` (its comments included) with:
@@ -1109,22 +1276,22 @@ In the House Lights list that begins `html[data-app="admin-os"][data-skin="light
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js src/utils/editSheetView.test.js src/utils/mobileClassContract.test.js src/utils/mobileDetailCss.test.js`
-Expected: PASS, every test in the four files.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/EditSheet.test.js src/utils/editSheetView.test.js src/utils/mobileClassContract.test.js src/utils/mobileDetailCss.test.js src/pages/mobile/EventDetailPhone.test.js src/utils/tapGuard.test.js`
+Expected: PASS, every test in the six files.
 Then the whole client suite: `cd client && CI=true npx react-scripts test --watchAll=false` (read the pass count; only the two known intermittents may need a lone re-run).
 
 - [ ] **Step 7: Docs**
 
-`README.md:603` (`editSheetView.js`): after "the confirm lines from the desktop's buildRepriceSummary," add "the readout's lines (the stored total or the new one, the balance or the overpaid figure, PRICING) and the was lines,". `README.md:610`: "(bottom sheet: date, start, duration, guests, the notify step; it draws)" becomes "(bottom sheet: a readout above the date, start, duration and guests rows, which stay at the bottom of the screen; the notify step; it draws)".
+`README.md:603` (`editSheetView.js`): after "the confirm lines from the desktop's buildRepriceSummary," add "the readout's lines (the stored total or the new one, the balance, the overpaid figure or a bank payment in flight, PRICING) and the was lines,". In the same `utils/` tree, add one line for the new file in its alphabetical place: `tapGuard.js          # holdTaps(ms): a layer over the whole phone screen that takes taps for a moment after a sheet closes` (match the neighbouring lines' indentation and column). `README.md:610`: "(bottom sheet: date, start, duration, guests, the notify step; it draws)" becomes "(bottom sheet: a readout above the date, start, duration and guests rows, which stay at the bottom of the screen; the notify step; it draws)".
 
-`ARCHITECTURE.md:2098` ("Edit sheet"): "(Date, Start, Duration, a read-only Setup, Guests)" becomes "(Date, Start with the setup under it, Duration, Guests)". Replace the sentences from "The sheet keeps one height (80dvh)," through "Back from the notify step, the edit view comes back scrolled where it was." with: "Its layout is the design pass of 2026-10-06 ("readout above, controls pinned", `docs/design-artifacts/2026-10-06-edit-sheet-layout/`): one readout between the head and the rows. Its copy (the total and its balance line, the reprice lines, the extension hint, the multi-shift note) scrolls past the max height, under a fade while it overflows; under the copy, not scrolling, sit the notices ("Couldn't price the change.", a save's line, the changed-meanwhile notice, the curfew confirm, in that order); the notices, the rows and the footer sit at the bottom of the screen, so when a notice leaves, copy slides into its place and no button moves. The sheet is as tall as its content, at most the screen less 12px, and the whole sheet scrolls only on a screen too short even for its rows and footer. Untouched, the readout shows the stored total, what is paid and the balance (or the server's netted overpaid figure) from the event read ("Total"); after a change, "New total $old → $new" and "balance due becomes $X" in the same two lines, so the first tap changes the height of nothing; while a newer figure is on its way the last one stays, dimmed, under PRICING (before any figure describes the change, three dots, which a screen reader hears as "pending"; the two lines are a polite live region). A changed field shows what it was under its label ("was 3 hr"). The notify step fills the max height, so a channel's message showing or hiding moves nothing." In the arm sentence, "(the form's first ready render after the sheet opens or reloads, the notify step opening, ...)" becomes "(the sheet opening, every change of phase (loading, ready, failed, locked), the notify step opening, ...)", and add after it: "The sheet being as tall as its content, a phase change moves its top edge, which is why the opening and the phases arm too; after a reload the fresh sheet takes focus."
+`ARCHITECTURE.md:2098` ("Edit sheet"): "(Date, Start, Duration, a read-only Setup, Guests)" becomes "(Date, Start with the setup under it, Duration, Guests)". Replace the sentences from "The sheet keeps one height (80dvh)," through "Back from the notify step, the edit view comes back scrolled where it was." with: "Its layout is the design pass of 2026-10-06 ("readout above, controls pinned", `docs/design-artifacts/2026-10-06-edit-sheet-layout/`): one readout between the head and the rows. Its copy (the total and its balance line, the reprice lines, the extension hint, the multi-shift note) scrolls past the max height, under a fade while it overflows; under the copy, not scrolling, sit the notices ("Couldn't price the change.", a save's line, the changed-meanwhile notice, the curfew confirm, in that order); the notices, the rows and the footer sit at the bottom of the screen, so when a notice leaves, copy slides into its place and no button moves. The sheet is as tall as its content, at most the screen less 12px, and the whole sheet scrolls only on a screen too short even for its rows and footer. Untouched, the readout shows the stored total, what is paid and the balance (or the server's netted overpaid figure) from the event read ("Total"); after a change, "New total $old → $new" and "balance due becomes $X" in the same two lines, so the first tap changes the height of nothing; while a newer figure is on its way the last one stays, dimmed, under PRICING (before any figure describes the change, three dots, which a screen reader hears as "pending"; the two lines are a polite live region). A changed field shows what it was under its label ("was 3 hr"). The notify step fills the max height, so a channel's message showing or hiding moves nothing. When the detail's invoices read shows a bank debit in flight, the detail passes `inFlight` and the untouched readout reads "paid $X · bank payment in flight". As the sheet closes, however it closes, `holdTaps` (`client/src/utils/tapGuard.js`) lays an invisible layer over the whole screen for the half second, so a double tap's second tap lands on nothing beneath; at the sheet's max height its 12px strip of scrim does nothing in the edit view (Cancel, Back and Escape still close)." In the arm sentence, "(the form's first ready render after the sheet opens or reloads, the notify step opening, ...)" becomes "(the sheet opening, every change of phase (loading, ready, failed, locked), the notify step opening, ...)", and add after it: "The sheet being as tall as its content, a phase change moves its top edge, which is why the opening and the phases arm too; after a reload the fresh sheet takes focus."
 
 - [ ] **Step 8: Build and commit**
 
 Run: `cd client && CI=true npx react-scripts build` (exit 0). Check `wc -l client/src/components/mobile/EditSheet.js` is under 450 (else move `NotifyStep` to `EditSheetNotify.js` unchanged, import it, add its README line, re-run Step 6).
 
 ```bash
-git add client/src/components/mobile/useEditSheet.js client/src/components/mobile/EditSheet.js client/src/components/mobile/EditSheet.test.js client/src/index.css README.md ARCHITECTURE.md
+git add client/src/components/mobile/useEditSheet.js client/src/components/mobile/EditSheet.js client/src/components/mobile/EditSheet.test.js client/src/pages/mobile/EventDetailPhone.js client/src/pages/mobile/EventDetailPhone.test.js client/src/index.css README.md ARCHITECTURE.md
 git commit -F - <<'MSG'
 feat(phone): readout above, controls pinned (the edit sheet's design pass)
 
@@ -1194,6 +1361,9 @@ Playwright with `/opt/google/chrome/chrome`, headless, `hasTouch: true`, each ch
 - G6 The rows at 320: no sideways scroll; every button and row at least 44px; "was 19:00 · setup <N> min before" fits or ends in an ellipsis inside its row; `elementFromPoint` at Confirm's centre is Confirm (E10).
 - G7 The notify step: the sheet is `innerHeight - 12` tall; its footer's labels each on one line (E21); Email ticked off and on again (two taps, 150ms apart) leaves the Email box at the same top and the step open, nothing sent; at 320x568 its body scrolls inside the sheet.
 - G8 A short screen (568x300, the phone layout in a landscape browser tab), After Hours only: the sheet scrolls as a whole and its footer can be reached; nothing overflows sideways.
+- G9 Taps held as the sheet closes, at 390 in After Hours: two taps 150ms apart on Cancel (untouched, so it closes): the sheet closes, the second tap reaches nothing (the URL stays on the detail, no tab change, no second sheet); the same on Done; the same on the scrim. A single tap on a detail row 600ms after the sheet closed does open it.
+- G10 The scrim's thin strip, at 320x568 with the sheet at its max height (G3's long readout): a tap 6px from the top of the screen leaves the sheet open with its edits; Escape closes it; in the notify step the same tap steps back to the edit view.
+- The in-flight readout is not staged in the browser (a bank debit in flight needs payment rows the fixture does not make); its wiring is pinned by the jsdom tests in Tasks 1 and 3.
 
 - [ ] **Step 3: Record**
 
@@ -1214,3 +1384,4 @@ Write the table into "Browser checks" at the end of this plan, on main. A FAIL g
 5. **Verified by running, first draft, 2026-10-08,** in a scratch copy of the client (nothing written in os; one Fable feasibility agent, then the orchestrator): Tasks 1 to 3 as then written went red for their stated reasons and then green; the whole client suite 151 of 151 suites, 1887 of 1887 tests; the CI build exit 0 with only the html2pdf.js source-map warning and no lint finding; `EditSheet.js` at 381 lines; five mutations each failed their named test, a sixth (the curfew confirm moved above the notes) failed the curfew-last test. Folded from that run: Task 1 carries the one `EditSheet.test.js` assertion that follows the new pending glyph; Task 2 Step 2 counts two closes; Task 3 Step 5 puts the PRICING rule first in the reduced-motion block (`mobileDetailCss.test.js:80` pins it); Step 6 runs that file.
 6. **Plan review, 2026-10-08 (three Fable seats: plan-fidelity, plan-decomposition, spec-gaps; feasibility was item 5's run).** Two Blockers, both folded: (fidelity) a single scrolling readout keeps its top, not its foot, so at 320x568 a notice that leaves pulls the one below it up, Reload into Retry's place; the readout is now its copy, which scrolls, and a strip of notices under it, which does not; (gaps) in a content-sized sheet, ticking a channel in the notify step shows or hides its message under the box, resizes the sheet and moves the box under the thumb, possibly onto the scrim; the notify step now fills the max height. Warnings folded: Task 3's review runs after the gate (decomposition); the spec names the notify-step scroll restore among what this replaces, the fade follows the export (whenever the copy overflows), and the failed figure, the hints' style and the notices' inset are declared (fidelity); "Couldn't price" takes no focus and is never scrolled away; the whole sheet scrolls on a screen too short for its rows and footer; the two top lines are a polite live region and the dots read "pending" (gaps). Suggestions folded: the export's `text-wrap: pretty`, button padding and the main button's 120ms transition; line one's 18px; the failed load's Retry in the arm; focus after a reload; the overpaid line from `overpayment_cents`; the numbers measured from the safe-area padding's edge; Task 2's note that it lands before the layout needs it; the reviewer's inputs; the deleted helpers' comments. Declined: the bank debit in flight on the readout (stated in the spec: the reprice confirm cannot see it either, and the detail's Financials behind the sheet can); the 12px of scrim above a sheet at its max height (the 80dvh sheet left a fifth of the screen as scrim, so this is less exposed than before, not more). Parked on the fix list: closing a sheet arms nothing beneath it (true before this lane).
 7. **Re-verified by running after the review's fold, 2026-10-08** (the same Fable agent, a fresh scratch copy of the client, nothing written in os): every task went red for exactly the reasons its Step 2 gives, then green; the four named files 262 of 262; the whole client suite 151 of 151 suites, 1891 of 1891 tests (the known `AssignmentSheet.test.js` intermittent fired once and passed alone, 75 of 75); the CI build exit 0 with no lint finding; `EditSheet.js` at 402 lines; `useEditSheet.js` changed in exactly three lines. Nine mutations each failed their named test: the old arm rule, the focus effect removed, the notices moved inside the copy, the notify class dropped, the live region removed, the overpaid line ignored, the fade's measure removed, the max-height rule removed, the stale notice above "Couldn't price". No errata.
+8. **Dallas, 2026-10-08: "fold the findings, then cut the lane."** The three review findings items 6 and 7 had left out are folded: as the sheet closes, however it closes, the screen's taps are held for the half second (`utils/tapGuard.js`, `holdTaps`, called as the sheet unmounts; Task 2, G9), which the review had parked on the fix list (the note and assignment sheets stay there); the detail passes in whether a bank debit is in flight and the untouched readout says "paid $X · bank payment in flight" (Tasks 1 and 3; one prop in `EventDetailPhone.js`), which item 6 had declined; and at the max height the scrim's 12px strip does nothing in the edit view (Task 2, G10), which item 6 had declined. These were not re-run in a scratch copy before the lane was cut: each arrives with its red-then-green steps, and the lane's task reviews and the gate check them.
