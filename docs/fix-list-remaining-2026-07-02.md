@@ -1988,6 +1988,10 @@ what it costs.
     unchanged total.
   - Nits: start times step by 5 minutes where the desktop offers half hours; one "Fewer guests" tap
     clamps a stored count above 1000 straight to 1000.
+  - Closing a sheet arms nothing beneath it: the second tap of a double tap on Done, Cancel or the
+    scrim lands on the event detail, or on the tab bar under the footer, and can navigate away. True
+    of the 80dvh sheet as well; the edit sheet's design pass (lane ma-e3b) does not change it. (The
+    ma-e3b plan review's gaps seat, 2026-10-08.)
 
 - **On dev, just opening the shopping list modal un-approves the list.** React StrictMode (on in
   `client/src/index.js`) runs the modal's autosave effect twice on mount; the `isFirstRender` ref
