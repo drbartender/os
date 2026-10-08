@@ -1891,6 +1891,28 @@ what it costs.
   them and prints a DeprecationWarning (five suites in the lane's sweep show it); pg 9 removes that
   queueing. Pre-existing. Fix: await the three in turn.
 
+### Lane inbox-engine review leftovers (2026-10-08)
+
+Parked by the lane's review fleet and its prod acceptance check (merge `55206db1`); none of them can text the wrong person or hide a waiting one.
+- **Cost, each on a trigger (performance review).** Every recompute re-reads all history since the fixed floor (about 0.5 MB today, growing about 0.4 MB a month), and an open tab plus lane inbox-ai's tick recompute about once a minute.
+  - **Dallas's call before lane inbox-ai turns its scheduler on:** Neon's monthly public-transfer allowance against about 21.6 GB per 30 days at launch (about 10.8 GB if the AI read shares the badge's snapshot, as lane inbox-ai is told to), about ten times that within a year.
+  - Pass 1 to SQL aggregates when Sentry shows `[inbox] pass 1 passed HEADER_WARN_ROWS` (about five months out); the first cut is message_log's automated rows older than 30 days, then narrowing pass 2 to the thread window plus the open set.
+  - Cap the engine's concurrent queries (a write during a compute starts a second compute, 18 queries each): Inbox list p95 over 1 s, or the warning.
+  - `/seen` patches the cached snapshot instead of clearing it: a compute over 500 ms.
+  - The inbound SMS and Thumbtack webhooks clear the cache and the text route drops `fresh` (touches `smsInbound.js`, sensitive): a compute over 1 s.
+  - One-pass feed query and a `thumbtack_messages(created_at)` index: `sms_messages` over 100k rows, or the query over 20 ms.
+  - An index for the first-text check, and the reply area's two reads in parallel: once a 224 line is on and `sms_messages` passes 50k rows.
+- **`inbox_sends` is never pruned, and a stored 201 answer holds the message body** (a second copy of every Inbox text). Prune answered rows after about 7 days, or store a slimmer answer.
+- **A refusal whose stored answer fails to save BEFORE Twilio is called answers a generic 500** and leaves the reservation unanswered, so a retry reads "still sending", then "may have gone out", though nothing went out.
+- **Privacy edges outside the lane:** the global error handler's unknown branch `console.error`s the whole error object (`server/index.js`), so a pg detail with row values can reach the console; the upload-limit Sentry log sends an unscrubbed `extra.path`; a percent-encoded `p-` key in a hand-crafted URL survives `scrubUrl` (the requester's own digits).
+- **The client textability check reads the client row's `phone_status` and `sms_enabled`, not the recipient's** (decision 29); safe direction only.
+- **Two small "last texted" edges:** the all-history rows ignore `sms_status_orphans` (an orphaned send that was never folded counts, which needs a failed fold first); a text since the floor matched to a client by phone with no `client_id` can make Inbox pick a newer line than Messages sees.
+- **On the spring-forward date the "event happened" close lands an hour early** (`eventLocalToUtc` takes the offset at noon UTC); cosmetic, once a year.
+- **The status callback clears the Inbox cache on every failed or undelivered callback,** a duplicate included (one extra recompute).
+- **Taps are accepted for any well-formed key, with no limiter** on `/seen` and `/actions` (admin-only; the shared `adminWriteLimiter` would 429 a quick triage).
+- **Tests to add:** texting an unknown number that texted first (the `kind: 'unknown'` textability path, end to end); the role-denial log's Sentry payload.
+- **Suggestion:** phone tapback reactions to our weekly shift confirmations count as inbound until the AI read closes them; a small reaction rule would remove the noise.
+
 ## Voice
 
 - **The lead call bridge still stores a Twilio error MESSAGE in `lead_call_attempts.detail`**

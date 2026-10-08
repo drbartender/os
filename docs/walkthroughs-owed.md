@@ -2062,6 +2062,11 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   to `INBOX_TEXT_LINES` in Render.
 - A week alongside the Cowork job (spec 16 step 7): Dallas and Zul use Inbox and Cowork side by side,
   and anything Cowork caught that Inbox missed goes to the fix list.
+- The first page view needs about eight hand Dones: the test client, and seven people whose only proposals
+  are unbooked quotes for dates that have passed (decision 22 closes only booked events). One customer is
+  split across two client records (a booked one and an archived duplicate on the same proxy number), so
+  their question waits on the duplicate. Task 18's acceptance run on 2026-10-08 found 38 waiting with no
+  AI reads yet; the thank-yous and the acknowledgments close once lane inbox-ai reads them.
 - The first prod picture message: its link opens from the thread. If Twilio asks for credentials, the
   link needs a proxy (spec amendment 17); file it on the fix list.
 
