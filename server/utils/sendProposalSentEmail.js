@@ -24,7 +24,10 @@ let _deps = {
 };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
-async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
+// sentBy (Inbox spec 2026-10-06, section 9) is the admin who clicked Send, a
+// VALUE from the route. The website quote wizard passes none, so its send
+// ledgers sent_by NULL and never counts as a reply.
+async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = null } = {}) {
   // ── Email half (existing behavior) ──
   try {
     if (!proposal || !proposal.client_email) {
@@ -41,7 +44,10 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
         proposalUrl,
         planUrl: null,
       });
-      await _deps.sendEmail({ to: proposal.client_email, ...tpl, meta: { proposalId: proposal.id, messageType: 'proposal_sent' } });
+      await _deps.sendEmail({
+        to: proposal.client_email, ...tpl,
+        meta: { proposalId: proposal.id, clientId: proposal.client_id || null, messageType: 'proposal_sent', sentBy },
+      });
     }
   } catch (emailErr) {
     if (process.env.SENTRY_DSN_SERVER) {
@@ -91,6 +97,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
       proposalId: proposal.id,
       messageType: 'initial_proposal',
       recipientName: proposal.client_name || null,
+      sentBy,
     });
   } catch (smsErr) {
     if (process.env.SENTRY_DSN_SERVER) {

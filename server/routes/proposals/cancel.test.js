@@ -1044,3 +1044,29 @@ test('execute and refund on an upgraded Full Payment row: the cancel snapshot ca
     assert.equal(refundsCreated.length, 0);
   } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
 });
+
+test('refund notice: the cancel refund carries the admin who issued it (Inbox spec section 9)', async () => {
+  const refundNotify = require('../../utils/refundClientNotify');
+  const sends = [];
+  refundNotify.__setDeps({ sendEmail: async (a) => { sends.push(a); return { id: 'stub' }; } });
+  const o = await seedBooked({ eventDaysOut: 30, totalPrice: 1000, amountPaid: 1000,
+    depositPaidCents: 10000, balancePaidCents: 90000 });
+  const prior = await setTodayPeriod('open');
+  try {
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'drb', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    const refunder = await mintAdmin();
+    const refunderId = seededUsers[seededUsers.length - 1];
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/refund`, refunder,
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(sends.length, 1, 'one aggregate refund notice');
+    assert.equal(sends[0].meta.messageType, 'refund_notice');
+    assert.equal(sends[0].meta.sentBy, refunderId);
+  } finally {
+    refundNotify.__setDeps({ sendEmail: require('../../utils/email').sendEmail });
+    await cleanupProposal(o);
+    await restoreTodayPeriod(prior);
+  }
+});

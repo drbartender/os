@@ -174,7 +174,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       if (pd.rows[0]) {
         await _deps.sendProposalSentEmail(
           { ...pd.rows[0], id: Number(req.params.id) },
-          { actorType: 'admin' },
+          { actorType: 'admin', sentBy: req.user.id },
         );
       }
     } catch (e) {

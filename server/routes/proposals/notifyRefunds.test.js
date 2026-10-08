@@ -101,3 +101,15 @@ test('no email on file: skipped; provider throw: failed with error, never thrown
   assert.equal(fail.email, 'failed');
   assert.match(fail.email_error, /resend down/);
 });
+
+test('an admin-triggered refund notice carries sentBy; the webhook and sweep shape (no sentBy) carries NULL', async () => {
+  const calls = [];
+  refundNotify.__setDeps({ sendEmail: async (a) => { calls.push(a); return { id: 'stub' }; } });
+  await sendRefundClientNotification({ proposalId: pOk, amountCents: 2500, source: 'in_app_route', sentBy: 4242 });
+  await sendRefundClientNotification({ proposalId: pOk, amountCents: 2500, source: 'refund_created_webhook' });
+  await sendRefundClientNotification({ proposalId: pOk, amountCents: 2500, source: 'pending_sweep' });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].meta, { proposalId: pOk, clientId: clientOkId, messageType: 'refund_notice', sentBy: 4242 });
+  assert.equal(calls[1].meta.sentBy, null);
+  assert.equal(calls[2].meta.sentBy, null);
+});

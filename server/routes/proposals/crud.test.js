@@ -58,6 +58,10 @@ let emailCalls = 0;
 // the bare proposals INSERT row has no client_email, so a false-green here
 // would mean the client email never actually had a recipient.
 let lastEmailProposal = null;
+// The options object the email stub last received: the route must hand the
+// clicking admin over as a VALUE (Inbox spec 2026-10-06, section 9).
+let lastEmailOpts = null;
+let primaryUserId;    // users.id behind primaryToken
 // When set, the createInvoiceOnSend stub throws this many more times then
 // reverts to the real helper. Lets case 6 fail the first attempt and a retry
 // succeed.
@@ -205,6 +209,7 @@ before(async () => {
   );
   assert.ok(users.rows.length >= 2,
     'test harness needs >=2 admin/manager users in the dev DB');
+  primaryUserId = users.rows[0].id;
   primaryToken = jwt.sign(
     { userId: users.rows[0].id, tokenVersion: users.rows[0].token_version },
     process.env.JWT_SECRET, { expiresIn: '1h' }
@@ -264,9 +269,10 @@ before(async () => {
     // is missing, so delegating would let a false-green slip through (counter
     // ticks, zero emails produced). Instead we capture the proposal the handler
     // passed so Case 1 can assert it was enriched (has a real recipient).
-    sendProposalSentEmail: (proposal) => {
+    sendProposalSentEmail: (proposal, opts) => {
       emailCalls += 1;
       lastEmailProposal = proposal;
+      lastEmailOpts = opts;
       return Promise.resolve();
     },
     createInvoiceOnSend: (...args) => {
@@ -355,6 +361,7 @@ after(async () => {
 test('Case 1: send_now true → 201 sent, invoice row exists, email sent once with a real recipient', async () => {
   emailCalls = 0;
   lastEmailProposal = null;
+  lastEmailOpts = null;
   const res = await request('POST', '/api/proposals', {
     token: primaryToken,
     body: validHostedBody({ send_now: true }),
@@ -368,6 +375,8 @@ test('Case 1: send_now true → 201 sent, invoice row exists, email sent once wi
   );
   assert.equal(inv.rows.length, 1, 'exactly one invoice row should exist');
   assert.equal(emailCalls, 1, 'sendProposalSentEmail should fire exactly once');
+  assert.equal(lastEmailOpts && lastEmailOpts.sentBy, primaryUserId,
+    'the send_now create must hand the clicking admin over as sentBy');
 
   // The email layer must receive an ENRICHED proposal — a non-empty
   // client_email string. The bare proposals INSERT row has no client_email
@@ -553,6 +562,7 @@ test('Case 9: top_shelf on a non-class package → 400, zero proposals created',
 test('Case 10: PATCH status draft→sent → sent, invoice row exists, email sent once', async () => {
   emailCalls = 0;
   lastEmailProposal = null;
+  lastEmailOpts = null;
   const token = await makeFreshAdmin();
   const proposalId = await insertDraftProposal();
 
@@ -567,6 +577,8 @@ test('Case 10: PATCH status draft→sent → sent, invoice row exists, email sen
   );
   assert.equal(inv.rows.length, 1, 'exactly one invoice row should exist after →sent');
   assert.equal(emailCalls, 1, 'sendProposalSentEmail should fire exactly once on →sent');
+  assert.equal(lastEmailOpts && lastEmailOpts.sentBy, jwt.decode(token).userId,
+    'Send to client must hand the clicking admin over as sentBy');
 
   // The email step must receive an ENRICHED proposal — the bare proposals row
   // has no client_email (that column lives on `clients`), so a non-empty

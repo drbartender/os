@@ -356,9 +356,12 @@ function buildEventDetailsDraft({ old, updated, ctx }) {
  * Runs AFTER the DB transaction commits; a provider failure is reported in
  * the per-channel result, never thrown past the caller's collection.
  *
+ * sentBy (Inbox spec 2026-10-06, section 9) is the admin whose save sent the
+ * notice, a VALUE from the PATCH route; both halves ledger it as sent_by.
+ *
  * @returns {{ email, sms, email_error, sms_error, skip_reasons }}
  */
-async function sendRescheduleEmail({ proposalId, channels, message }) {
+async function sendRescheduleEmail({ proposalId, channels, message, sentBy = null }) {
   const wantEmail = Array.isArray(channels) && channels.includes('email');
   const wantSms = Array.isArray(channels) && channels.includes('sms');
   const results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
@@ -445,7 +448,7 @@ async function sendRescheduleEmail({ proposalId, channels, message }) {
           subject: rendered.subject,
           html: rendered.html,
           text: rendered.text,
-          meta: { proposalId: ctx.id, clientId: ctx.client_id || null, messageType: 'reschedule' },
+          meta: { proposalId: ctx.id, clientId: ctx.client_id || null, messageType: 'reschedule', sentBy },
         });
         // Defense in depth behind the placeholder gate above: sendEmail's own
         // .invalid drop returns 'skipped-invalid' and must NEVER read as sent.
@@ -473,12 +476,16 @@ async function sendRescheduleEmail({ proposalId, channels, message }) {
     } else {
       try {
         const { sendAndLogSms } = require('./sms');
+        // proposalId: without it the ledger row fell back to the client's
+        // newest proposal, not the one whose details changed.
         const smsResult = await sendAndLogSms({
           to: ctx.client_phone,
           body: message.sms.body,
           clientId: ctx.client_id || null,
+          proposalId: ctx.id,
           messageType: 'reschedule',
           recipientName: ctx.client_name || null,
+          sentBy,
         });
         // sendAndLogSms returns { sid: null, status: 'skipped' } WITHOUT
         // throwing when the stored phone fails normalizePhone — that must

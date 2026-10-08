@@ -25,9 +25,15 @@ function __setDeps(d) { _deps = { ..._deps, ...d }; }
  * cancelled booking. Hence proposal is passed WITHOUT status below.
  *
  * Non-blocking: errors are captured to Sentry and logged, never thrown.
+ *
+ * sentBy (Inbox spec 2026-10-06, section 9) is the admin who triggered the
+ * refund, a VALUE from the in-app routes (admin refund, cancel refund,
+ * cancel-line). The refund.created webhook and the stale-pending sweep run with
+ * no user and omit it, so their notices ledger sent_by NULL. Never read
+ * req.user here.
  * @returns {{ email: 'sent'|'failed'|'skipped', skip_reasons: object, email_error?: string }}
  */
-async function sendRefundClientNotification({ proposalId, amountCents, source }) {
+async function sendRefundClientNotification({ proposalId, amountCents, source, sentBy = null }) {
   try {
     const { rows } = await pool.query(
       `SELECT p.total_price, p.amount_paid,
@@ -63,7 +69,7 @@ async function sendRefundClientNotification({ proposalId, amountCents, source })
     });
     const r = await _deps.sendEmail({
       to: a.client_email, ...tpl,
-      meta: { proposalId, clientId: a.client_id || null, messageType: 'refund_notice' },
+      meta: { proposalId, clientId: a.client_id || null, messageType: 'refund_notice', sentBy },
     });
     if (r && r.id === 'skipped-invalid') {
       // Defense in depth behind the placeholder gate above.

@@ -486,6 +486,9 @@ test('notify_client: refund case sends the refund notice; removal-only sends the
     assert.equal(refundSends.length, 1);
     assert.equal(removalSends.length, 0);
     assert.ok(a.exec.body.notifications.some((n) => n.type === 'refund_notice' && n.email === 'sent'));
+    // previewThenExecute mints the execute admin last (Inbox spec section 9).
+    assert.equal(refundSends[0].meta.sentBy, seededUsers[seededUsers.length - 1],
+      'the refund notice carries the admin who executed the removal');
 
     const partlyPaid = await seedProposal({ status: 'deposit_paid', amountPaid: 100 });
     const b = await previewThenExecute(partlyPaid, { execBody: { notify_client: true } });
@@ -493,6 +496,8 @@ test('notify_client: refund case sends the refund notice; removal-only sends the
     assert.equal(removalSends.length, 1);
     assert.equal(refundSends.length, 1); // unchanged
     assert.match(removalSends[0].subject, /total was updated/i);
+    assert.equal(removalSends[0].meta.sentBy, seededUsers[seededUsers.length - 1],
+      'the removal notice carries the admin who executed it');
     assert.ok(b.exec.body.notifications.some((n) => n.type === 'line_item_removed_notice' && n.email === 'sent'));
   } finally {
     refundNotify.__setDeps({ sendEmail: require('../../utils/email').sendEmail });

@@ -552,6 +552,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
       proposalId,
       amountCents: plan.amountCents,
       source: 'in_app_route',
+      sentBy: req.user.id,
     });
     notifications.push({ type: 'refund_notice', sms: null, ...r });
   } else if (notify_client === true && !recon?.applied) {

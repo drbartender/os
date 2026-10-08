@@ -141,3 +141,9 @@ server/routes/proposals/publicToken.additionalTime.test.js
 # over the proposal PATCH, the extras fold, cancel-line, the roster, the
 # preview and the read, on the prod-shaped schema. About 15s.
 server/utils/contractDuration.extension.test.js
+
+# Inbox answering allowlist (spec 2026-10-06, lane send-attribution). Not
+# money math: a static scan that fails when an allowlisted type's pinned write
+# sites change, which would silently change what closes an Inbox item.
+# Pure, under a second.
+server/utils/answeringMessageTypes.test.js

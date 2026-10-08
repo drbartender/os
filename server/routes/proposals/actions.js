@@ -375,7 +375,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
             const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
             const r = await _deps.sendEmail({
               to: pd.client_email, ...tpl,
-              meta: { proposalId: proposal.id, clientId: pd.client_id || null, messageType: 'payment_received' },
+              meta: { proposalId: proposal.id, clientId: pd.client_id || null, messageType: 'payment_received', sentBy: req.user.id },
             });
             if (r && r.id === 'skipped-invalid') {
               // Defense in depth behind the placeholder gate above.

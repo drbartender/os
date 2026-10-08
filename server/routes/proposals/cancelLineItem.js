@@ -222,14 +222,14 @@ router.post('/:id/cancel-line', auth, adminOnly, adminWriteLimiter, asyncHandler
     }
     const refundedCents = refunds.filter((r) => r.status === 'succeeded').reduce((sum, r) => sum + r.amount_cents, 0);
     if (notify_client === true && refundedCents > 0) {
-      const n = await sendRefundClientNotification({ proposalId, amountCents: refundedCents, source: 'cancel_line' });
+      const n = await sendRefundClientNotification({ proposalId, amountCents: refundedCents, source: 'cancel_line', sentBy: req.user.id });
       notifications.push({ type: 'refund_notice', ...n });
     } else if (notify_client === true && plan.splits.length === 0) {
       // No Stripe splits: either nothing is owed back, or the overpayment is
       // all external/CC money returned by hand — the notice says so.
       const n = await sendLineItemRemovedNotice({
         proposalId, removedLabel: result.removedLabel, newTotal: result.newTotal,
-        manualReturnCents: plan.manualReturnCents,
+        manualReturnCents: plan.manualReturnCents, sentBy: req.user.id,
       });
       notifications.push({ type: 'line_item_removed_notice', ...n });
     } else if (notify_client === true) {

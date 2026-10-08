@@ -340,6 +340,11 @@ server/utils/cancellationMath.js
 # (consistency review, 2026-07-26).
 server/utils/gratuityStaffNotice.js
 server/utils/lineItemRemovedNotify.js
+# The staffing-driven gratuity disclosure (2026-10-06, Inbox lane
+# send-attribution) moved OUT of routes/proposals/crud.js, listed above, for the
+# file-size ratchet. It is the only notice telling a paid client they owe more
+# after a crew change. Sensitivity follows the code.
+server/utils/gratuityDisclosureNotify.js
 # Payout mirror. stripeWebhookHandlers/payout.js is a thin dispatcher; the
 # substance is here — writes money-bearing cents columns and ATTRIBUTES lines
 # back to payments / tips / refunds. Sensitivity follows the code (chunk-3

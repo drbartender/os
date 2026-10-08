@@ -83,7 +83,7 @@ router.post('/change-requests/:id/decline', auth, requireAdminOrManager, asyncHa
   try {
     const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');
     const p = await pool.query('SELECT * FROM proposals WHERE id = $1', [cr.proposal_id]);
-    if (p.rows[0]) await notifyClientOfDecision(cr, p.rows[0], 'declined');
+    if (p.rows[0]) await notifyClientOfDecision(cr, p.rows[0], 'declined', { sentBy: req.user.id });
   } catch (e) { console.error('decline notify failed (non-blocking):', e.message); }
   res.json({ change_request: cr });
 }));

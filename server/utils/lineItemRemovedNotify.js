@@ -58,9 +58,10 @@ function lineItemRemovedNotice({ clientName, removedLabel, newTotal, newBalance,
  * @param {string} a.removedLabel
  * @param {number} a.newTotal  dollars
  * @param {number} [a.manualReturnCents]  external/CC overpayment returned by hand
+ * @param {number|null} [a.sentBy]  the admin who executed the removal, a value from the route (message_log.sent_by)
  * @returns {Promise<{email:'sent'|'failed'|'skipped', skip_reasons:object, email_error?:string}>}
  */
-async function sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal, manualReturnCents = 0 }) {
+async function sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal, manualReturnCents = 0, sentBy = null }) {
   try {
     const { rows } = await pool.query(
       `SELECT p.total_price, p.amount_paid,
@@ -95,7 +96,7 @@ async function sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal, m
     });
     const r = await _deps.sendEmail({
       to: a.client_email, ...tpl,
-      meta: { proposalId, clientId: a.client_id || null, messageType: 'line_item_removed_notice' },
+      meta: { proposalId, clientId: a.client_id || null, messageType: 'line_item_removed_notice', sentBy },
     });
     if (r && r.id === 'skipped-invalid') {
       return { email: 'skipped', skip_reasons: { email: 'Placeholder address (.invalid); no email was sent.' } };

@@ -112,3 +112,36 @@ test2('sendProposalSentEmail > an SMS failure does not throw', async () => {
     email_status: 'ok', phone_status: 'ok',
   }, { actorType: 'admin' }));
 });
+
+test('sendProposalSentEmail > an admin send ledgers the admin on the email and the SMS (Inbox spec section 9)', async () => {
+  let emailArgs = null;
+  let smsArgs = null;
+  __setDeps({
+    sendEmail: async (a) => { emailArgs = a; },
+    emailTemplates: { proposalSent: () => ({ subject: 'S', html: 'H' }) },
+    sendAndLogSms: async (a) => { smsArgs = a; return { sid: 'x', status: 'sent' }; },
+  });
+  await sendProposalSentEmail(
+    { ...baseProposal, client_id: 7, client_phone: '3125550111', communication_preferences: {}, email_status: 'ok', phone_status: 'ok' },
+    { actorType: 'admin', sentBy: 4242 },
+  );
+  assert.deepEqual(emailArgs.meta, { proposalId: 42, clientId: 7, messageType: 'proposal_sent', sentBy: 4242 });
+  assert.equal(smsArgs.messageType, 'initial_proposal');
+  assert.equal(smsArgs.sentBy, 4242);
+});
+
+test('sendProposalSentEmail > a caller with no sentBy (the website quote wizard) ledgers NULL on both halves', async () => {
+  let emailArgs = null;
+  let smsArgs = null;
+  __setDeps({
+    sendEmail: async (a) => { emailArgs = a; },
+    emailTemplates: { proposalSent: () => ({ subject: 'S', html: 'H' }) },
+    sendAndLogSms: async (a) => { smsArgs = a; return { sid: 'x', status: 'sent' }; },
+  });
+  await sendProposalSentEmail(
+    { ...baseProposal, client_id: 7, client_phone: '3125550111', communication_preferences: {}, email_status: 'ok', phone_status: 'ok' },
+    { actorType: 'client' },
+  );
+  assert.equal(emailArgs.meta.sentBy, null);
+  assert.equal(smsArgs.sentBy, null);
+});

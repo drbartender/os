@@ -6,16 +6,13 @@ const { calculateProposal } = require('../../utils/pricingEngine');
 const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { validateVenue, normalizeVenueState, resolvePendingLocation } = require('../../utils/venueAddress');
-const { sendEmail } = require('../../utils/email');
-const emailTemplates = require('../../utils/emailTemplates');
+const { sendGratuityStaffingDisclosure } = require('../../utils/gratuityDisclosureNotify');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { rescheduleProposalInTx, sendRescheduleEmail } = require('../../utils/rescheduleProposal');
 const { validateNotifyList, NOTICE_EVENT_DETAILS } = require('../../utils/clientNotices');
-const { shouldSendImmediate } = require('../../utils/messageSuppression');
-const { isPlaceholderEmail } = require('../../utils/emailValidation');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
@@ -289,7 +286,7 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
              FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1`, [proposal.id]);
         if (enriched.rows[0]) {
-          await _deps.sendProposalSentEmail(enriched.rows[0], { actorType: 'admin' });
+          await _deps.sendProposalSentEmail(enriched.rows[0], { actorType: 'admin', sentBy: req.user.id });
         }
       } catch (e) {
         console.error('Post-send email step failed (non-blocking) for proposal', proposal.id);
@@ -811,6 +808,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           proposalId: parseInt(req.params.id, 10),
           channels: eventNotice.channels,
           message: { email: eventNotice.email, sms: eventNotice.sms },
+          sentBy: req.user.id,
         });
         notifications.push({ type: NOTICE_EVENT_DETAILS, ...r });
       } catch (emailErr) {
@@ -836,51 +834,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       }
     }
 
-    // Staffing-driven gratuity change (§7): the crew grew, so the gratuity total
-    // rose at the SAME rate the client agreed to. Notify by email (not SMS),
-    // best-effort, post-commit: a failure must NEVER 500 the committed PATCH.
-    //
-    // DELIBERATELY AUTOMATIC, not part of the notify opt-in (owner decision
-    // 2026-07-22): this is a billing disclosure. The invoice cascade above
-    // mints/grows a payable invoice with no email of its own, so this is the
-    // only thing telling the client they owe more. Only the suppression gate
-    // applies: a missing or placeholder address, a permanent bounce
-    // (email_status 'bad'), or an archived proposal (this PATCH does not refuse
-    // one); a client has no email preference. See the notify-client spec
-    // reversal note before ever folding this into the popup.
+    // Staffing-driven gratuity change (§7): a billing disclosure, deliberately
+    // automatic (owner decision 2026-07-22), sent best-effort post-commit. The
+    // gates and their reasons moved with the code to gratuityDisclosureNotify.js
+    // (file-size ratchet); the helper never throws into this committed PATCH.
     if (notifyStaffingGratuity) {
-      try {
-        const full = await pool.query(
-          `SELECT p.total_price, p.pricing_snapshot, p.status AS current_status,
-                  c.email AS client_email, c.name AS client_name,
-                  c.communication_preferences, c.email_status, c.phone_status
-             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
-          [req.params.id]
-        );
-        const row = full.rows[0];
-        const gate = row ? await shouldSendImmediate({
-          proposal: { id: req.params.id, status: row.current_status },
-          client: row,
-          channel: 'email',
-        }) : { ok: false, reason: 'bad_contact' };
-        if (row && row.client_email && !isPlaceholderEmail(row.client_email) && gate.ok) {
-          await sendEmail({
-            to: row.client_email,
-            ...emailTemplates.gratuityStaffingChange({
-              name: row.client_name,
-              newTotal: Number(row.total_price),
-              gratuity: (row.pricing_snapshot && row.pricing_snapshot.gratuity) || null,
-            }),
-          });
-        } else {
-          console.log(`[gratuityDisclosure] suppressed for proposal ${req.params.id}: ${!row || !row.client_email ? 'no email on file' : isPlaceholderEmail(row.client_email) ? 'placeholder address' : gate.reason}`);
-        }
-      } catch (mailErr) {
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(mailErr, { tags: { route: 'proposals/update', issue: 'gratuity-staffing-email' } });
-        }
-        console.error('Gratuity staffing-change email failed (non-blocking):', mailErr);
-      }
+      await sendGratuityStaffingDisclosure({ proposalId: parseInt(req.params.id, 10), sentBy: req.user.id });
     }
 
     // Plan 2d / W2: re-anchor the New Year touch after a reschedule.
@@ -939,7 +898,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         const crRow = await pool.query('SELECT * FROM proposal_change_requests WHERE id = $1', [change_request_id]);
         if (crRow.rows[0] && crRow.rows[0].status === 'approved') {
           const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
-          if (freshP.rows[0]) await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
+          if (freshP.rows[0]) await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved', { sentBy: req.user.id });
         }
       } catch (notifyErr) {
         if (process.env.SENTRY_DSN_SERVER) {

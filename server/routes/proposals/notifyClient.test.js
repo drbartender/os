@@ -392,6 +392,7 @@ test('the reviewed text reaches the send seam verbatim, per-channel truth return
   assert.equal(calls[0].message.email.subject, 'S-REVIEWED');
   assert.equal(calls[0].message.email.bodyText, 'B-REVIEWED');
   assert.deepEqual(calls[0].channels, ['email']);
+  assert.equal(calls[0].sentBy, jwt.decode(adminToken).userId, 'the PATCH hands the clicking admin over as sentBy');
   const entry = res.body.notifications.find((n) => n.type === 'event_details_changed');
   assert.equal(entry.email, 'sent');
 });
@@ -532,6 +533,9 @@ test('record-payment notify_client=true: receipt attempted and reported at the s
   assert.equal(entry.email, 'sent');
   assert.equal(emailCalls.length, 1);
   assert.match(emailCalls[0].subject || '', /payment|deposit|received/i);
+  assert.equal(emailCalls[0].meta.messageType, 'payment_received');
+  assert.equal(emailCalls[0].meta.sentBy, jwt.decode(adminToken).userId,
+    'the receipt carries the admin who recorded the payment');
 });
 
 test('record-payment notify_client=true on a .invalid client: skipped, never sent', async () => {

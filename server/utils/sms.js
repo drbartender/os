@@ -206,9 +206,13 @@ function __setSmsDeps(d) { _deps = { ..._deps, ...d }; }
  * @param {number|null} [args.clientId=null] - clients.id for thread grouping
  * @param {string} args.messageType - touch identifier, e.g. 'initial_proposal'
  * @param {string|null} [args.recipientName=null] - display name
+ * @param {number|null} [args.sentBy=null] - the admin behind a human-click send
+ *   ("Send to client", the event-details notice), a VALUE from the route,
+ *   ledgered as message_log.sent_by. Scheduler callers omit it. It is never
+ *   written to sms_messages.sender_id, which marks a hand-typed text.
  * @returns {Promise<{sid: string|null, status: 'sent'|'skipped'}>}
  */
-async function sendAndLogSms({ to, body, clientId = null, proposalId = null, messageType, recipientName = null }) {
+async function sendAndLogSms({ to, body, clientId = null, proposalId = null, messageType, recipientName = null, sentBy = null }) {
   if (!messageType || typeof messageType !== 'string') {
     throw new Error('sendAndLogSms: messageType is required');
   }
@@ -220,7 +224,7 @@ async function sendAndLogSms({ to, body, clientId = null, proposalId = null, mes
 
   let sid = null;
   try {
-    const msg = await _deps.sendSMS({ to: normalized, body, meta: { proposalId, clientId, messageType } });
+    const msg = await _deps.sendSMS({ to: normalized, body, meta: { proposalId, clientId, messageType, sentBy } });
     sid = msg && msg.sid ? msg.sid : null;
   } catch (sendErr) {
     await pool.query(

@@ -379,3 +379,27 @@ test('the headline overpayment works end to end: paid in full by card, then repr
   assert.equal(after.amount_paid, 80000);
   assert.equal(after.status, 'paid', 'no phantom balance on a live pay link');
 });
+
+test('notify_client: the refund notice carries the admin who issued the refund (Inbox spec section 9)', async () => {
+  const refundNotify = require('../utils/refundClientNotify');
+  const sends = [];
+  refundNotify.__setDeps({ sendEmail: async (a) => { sends.push(a); return { id: 'stub' }; } });
+  try {
+    const o = await seed({ overpaidBy: 400 });
+    // seed() marks the client bounced so the other tests send nothing; this one needs a deliverable address.
+    await pool.query(
+      `UPDATE clients SET email_status = 'ok' WHERE id = (SELECT client_id FROM proposals WHERE id = $1)`,
+      [o.proposalId]
+    );
+    const r = await request('POST', `/api/stripe/refund/${o.proposalId}`, {
+      token: adminToken,
+      body: { amount: 100, reason: 'service credit', idempotency_key: key(), notify_client: true },
+    });
+    assert.equal(r.status, 200, r.raw);
+    assert.equal(sends.length, 1, 'one refund notice');
+    assert.equal(sends[0].meta.messageType, 'refund_notice');
+    assert.equal(sends[0].meta.sentBy, adminUserId);
+  } finally {
+    refundNotify.__setDeps({ sendEmail: require('../utils/email').sendEmail });
+  }
+});

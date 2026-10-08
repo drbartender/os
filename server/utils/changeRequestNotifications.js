@@ -7,6 +7,11 @@ const { getEventTypeLabel } = require('./eventTypes');
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://drbartender.com';
 const ADMIN_URL = process.env.CLIENT_URL || 'https://admin.drbartender.com';
 
+// Dependency seam for tests (mirrors refundClientNotify.__setDeps). It covers
+// the client decision email only; the admin alert keeps the direct sendEmail.
+let _deps = { sendEmail };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
+
 function labelFor(proposal) {
   return getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
 }
@@ -27,8 +32,11 @@ async function notifyAdminOfChangeRequest(cr, proposal) {
 }
 
 // Client email on a decision (approved / declined). Re-reads the proposal for the
-// fresh total/balance after an approve+apply.
-async function notifyClientOfDecision(cr, proposal, outcome) {
+// fresh total/balance after an approve+apply. sentBy is the deciding admin, a
+// VALUE from the route (this helper never reads req.user). The row ledgers its
+// own type and proposal (Inbox spec 2026-10-06, section 9); with no meta it
+// logged as 'other' against the client's newest proposal.
+async function notifyClientOfDecision(cr, proposal, outcome, { sentBy = null } = {}) {
   const c = (await pool.query('SELECT name, email FROM clients WHERE id = $1', [proposal.client_id])).rows[0] || {};
   if (!c.email) return;
   const portalUrl = `${PUBLIC_SITE_URL}/my-proposals`;
@@ -40,7 +48,10 @@ async function notifyClientOfDecision(cr, proposal, outcome) {
   } else {
     tpl = templates.changeRequestDeclined({ clientName: c.name, eventLabel: labelFor(proposal), reason: cr.decision_note || 'The change was not available.', portalUrl });
   }
-  await sendEmail({ to: c.email, ...tpl });
+  await _deps.sendEmail({
+    to: c.email, ...tpl,
+    meta: { proposalId: proposal.id, clientId: proposal.client_id || null, messageType: 'change_request_decision', sentBy },
+  });
 }
 
-module.exports = { notifyAdminOfChangeRequest, notifyClientOfDecision };
+module.exports = { notifyAdminOfChangeRequest, notifyClientOfDecision, __setDeps };

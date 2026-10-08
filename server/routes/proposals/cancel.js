@@ -279,6 +279,7 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
   let affectedShiftStaff = []; // [{ shiftId, userIds }]
   const bartendersByShift = new Map(); // shiftId -> [bartender user ids], captured pre-denial
   let clientEmail = null;
+  let clientId = null;
   let eventTypeLabel = 'event';
 
   const dbClient = await pool.connect();
@@ -320,6 +321,7 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
     }
 
     clientEmail = ctx.proposal.client_email;
+    clientId = ctx.proposal.client_id;
     eventTypeLabel = getEventTypeLabel({
       event_type: ctx.proposal.event_type, event_type_custom: ctx.proposal.event_type_custom,
     });
@@ -467,7 +469,12 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
         refundLine: refundLineCopy(math.refundCents),
         cancelledBy,
       });
-      await sendEmail({ to: clientEmail, ...tpl });
+      // Own type, own proposal, the clicking admin (Inbox spec 2026-10-06, section 9);
+      // with no meta this logged as 'other' against the client's newest proposal.
+      await sendEmail({
+        to: clientEmail, ...tpl,
+        meta: { proposalId: Number(req.params.id), clientId, messageType: 'cancel_confirmation', sentBy: req.user.id },
+      });
     } catch (emailErr) {
       Sentry.captureException(emailErr, { tags: { route: 'proposals/cancel', step: 'client-email' } });
     }
@@ -680,7 +687,7 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
   // also honoring the dialog's suppress checkbox.
   const notifications = [];
   if (anyApplied && refundedCents > 0 && !suppressClientEmail) {
-    const r = await sendRefundClientNotification({ proposalId: req.params.id, amountCents: refundedCents, source: 'cancel_refund' });
+    const r = await sendRefundClientNotification({ proposalId: req.params.id, amountCents: refundedCents, source: 'cancel_refund', sentBy: req.user.id });
     notifications.push({ type: 'refund_notice', sms: null, ...r });
   }
 
