@@ -2811,6 +2811,12 @@ re-grep before surgery.
   YTD totals exportable; the output itself has no plan and no code. Needs a spec first (form
   generation vs export-for-accountant is an open design call). **Clock: recipient copies due ~Jan 31.**
   Gates: Zul's real W-9, and the `users.exclude_from_1099` flag honored.
+  **Off-system pay the ledger cannot see:** Fareed (user 208) is paid as Staffing Manager, outside
+  shift payroll. No table holds that pay: `payouts` is shift-based and `staff_payment_history`
+  rejects post-6/02 rows. Monthly paystub PDFs (generated 2026-10-08, kept in the win-share, not
+  the repo) are the record, amounts included. His 1099 must add this pay to his event payouts, and
+  later months need adding too. Either the spec gives non-shift contractor pay a home, or this gets
+  added by hand.
 - **Client portal v2 remainder.** Still absent entirely: the Big Experiment and Account tabs, the
   day-of brief slot (decisions captured: preferred name + headshot + "subject to change", no
   phone/messaging, 30-90 min generic arrival), quote-resume, and in-portal sign/pay/lab. Overview,
