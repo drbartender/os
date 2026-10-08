@@ -8,7 +8,7 @@ import {
 } from '../../pages/admin/proposalEditor/editorCore';
 import { initialDrafts, buildNotifyEntries, draftsOverCap, noticeOutcomes } from '../comms/notifyDrafts';
 import {
-  confirmViewNow, fieldsChanged, changedSinceOpen, saveErrorText, curfewReason, sheetValuesOf, editLockedReason,
+  readoutView, fieldsChanged, changedSinceOpen, saveErrorText, curfewReason, sheetValuesOf, editLockedReason,
   READ_TIMEOUT_MS,
 } from '../../utils/editSheetView';
 
@@ -39,7 +39,7 @@ export const CURFEW_DECLINED = 'Not saved. The end time is past our 2:00 AM serv
 const NO_STAFF = { enabled: false, sms: false, email: false };
 const READ = { timeout: READ_TIMEOUT_MS };
 
-export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400 }) {
+export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400, inFlight = false }) {
   const toast = useToast();
   const [load, setLoad] = useState({ phase: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -129,7 +129,7 @@ export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400
   }, [base, guests, hours, previewAttempt, previewDelayMs]);
 
   const changed = !!(base && values && fieldsChanged(base.initial, values));
-  const view = base ? confirmViewNow({ proposal: base.proposal, preview, shown, changed }) : null;
+  const readout = base ? readoutView({ proposal: base.proposal, preview, shown, changed, inFlight }) : null;
 
   const setValue = useCallback((field, value) => {
     setValues((cur) => (cur ? { ...cur, [field]: value } : cur));
@@ -234,7 +234,7 @@ export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400
     setValue,
     preview,
     retryPreview,
-    view,
+    readout,
     changed,
     busy,
     error,

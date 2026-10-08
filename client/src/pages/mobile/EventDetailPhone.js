@@ -430,6 +430,7 @@ export default function EventDetailPhone() {
           clientName={proposal.client_name}
           kind={headerOf(proposal).kind}
           shiftCount={shifts.state === 'ready' ? shifts.rows.length : 0}
+          inFlight={!!fin && fin.pending.length > 0}
           onClose={() => closeIfShowing('edit')}
           onSaved={() => { closeIfShowing('edit'); reloadAfterSave(); }}
         />

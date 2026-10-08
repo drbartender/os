@@ -29,7 +29,10 @@ export const LOCKED_NOTE = 'This event can no longer be edited here. Use desktop
 export const READ_TIMEOUT_MS = 10000;
 const GENERIC = 'Something went wrong. Try again.';
 const CURFEW_DEFAULT = 'This booking runs past our 2:00 AM service curfew.';
-const ELLIPSIS = String.fromCharCode(0x2026);
+// A figure not yet known, as the design pass draws it (2026-10-06): three middle dots.
+export const PENDING_FIGURE = String.fromCharCode(0xb7).repeat(3);
+// The second line after a change, before its figure.
+export const BALANCE_BECOMES = 'balance due becomes';
 // Under the curfew sentence when "Book it anyway" resends a notice the screen no longer shows.
 export const RIDES_CLIENT = 'Your update to the client goes out with it.';
 export const RIDES_BOTH = 'Your update to the client and the assigned staff goes out with it.';
@@ -204,7 +207,7 @@ export function confirmView({ proposal, preview, changed }) {
     repriced: true,
     oldTotal: dollars(oldNum),
     newTotal: dollars(newNum),
-    balanceLine: booked && known ? `balance due becomes ${dollars(Math.max(0, Number(summary.newBalance) || 0))}` : null,
+    balanceLine: booked && known ? `${BALANCE_BECOMES} ${dollars(Math.max(0, Number(summary.newBalance) || 0))}` : null,
     lines: known ? summary.lines : [],
     button: 'Confirm new total',
   };
@@ -213,13 +216,76 @@ export function confirmView({ proposal, preview, changed }) {
 // The block as it stands while a newer figure is on its way, or failed: the
 // last figure that landed stays on screen, marked stale (Confirm is disabled
 // until the new one lands). Before any figure describes a change, it shows the
-// stored total and an ellipsis. So the block never leaves under the finger.
+// stored total and three dots. So the block never leaves under the finger.
 export function confirmViewNow({ proposal, preview, shown, changed }) {
   if (preview && preview.state === 'ready') return confirmView({ proposal, preview, changed });
   if (!changed) return confirmView({ proposal, preview: null, changed });
   const last = confirmView({ proposal, preview: shown, changed });
   if (last.repriced) return { ...last, stale: true };
-  return { ...last, repriced: true, stale: true, newTotal: ELLIPSIS, button: 'Confirm new total' };
+  return { ...last, repriced: true, stale: true, pending: true, newTotal: PENDING_FIGURE, button: 'Confirm new total' };
+}
+
+// The readout's two top lines and its lines (design pass 2026-10-06, "readout
+// above, controls pinned"). Untouched, or after a change that leaves the total
+// where it was: the booking as it stands, from the event row. After a change
+// that reprices: "New total", old and new, the balance it becomes, and the
+// reprice lines. While the next figure is on its way the last one stays,
+// dimmed, under PRICING; before any figure describes the change, three dots
+// (pending). Paid is amount_paid and the balance the total less paid, floored
+// at zero: the basis of the shared summary's newBalance and of the detail's
+// Financials, so the three agree; an overpaid row reads the server's netted
+// overpayment_cents, as the detail's Financials does; a bank debit in flight,
+// which only the detail's invoices read knows (inFlight), outranks both, as it
+// does on the detail's chip, and is said on any row the detail marks in
+// flight, booked or not; the balance and overpaid lines are booked-only.
+export function readoutView({ proposal, preview, shown, changed, inFlight = false }) {
+  const p = proposal || {};
+  const v = confirmViewNow({ proposal: p, preview, shown, changed });
+  const booked = BOOKED_STATUSES.includes(p.status);
+  if (!v.repriced) {
+    const total = Number(p.total_price) || 0;
+    const paid = Number(p.amount_paid) || 0;
+    const over = Number(p.overpayment_cents) || 0;
+    let sub = null;
+    if (inFlight) sub = `paid ${dollars(paid)} · bank payment in flight`;
+    else if (booked && over > 0) sub = `paid ${dollars(paid)} · overpaid ${dollars(over / 100)}`;
+    else if (booked) sub = `paid ${dollars(paid)} · balance due ${dollars(Math.max(0, total - paid))}`;
+    return { label: 'Total', old: null, now: dollars(total), sub, pricing: false, dim: false, pending: false, lines: [], button: v.button };
+  }
+  const pending = !!v.pending;
+  return {
+    label: 'New total',
+    old: v.oldTotal,
+    now: v.newTotal,
+    sub: pending ? (booked ? `${BALANCE_BECOMES} ${PENDING_FIGURE}` : null) : v.balanceLine,
+    pricing: !!changed && !!preview && preview.state === 'loading',
+    dim: !!v.stale && !pending,
+    pending,
+    lines: v.lines,
+    button: v.button,
+  };
+}
+
+// What a changed field held when the sheet opened ("was 3 hr", design pass
+// 2026-10-06), drawn under its label inside the row. Null for a field that has
+// not changed, or one whose stored value cannot be read.
+export function wasLine(field, initial, now, todayYmd) {
+  if (!initial || !now) return null;
+  const a = initial[field];
+  const b = now[field];
+  let was = '';
+  if (field === 'event_date') was = a !== b ? sheetDateText(a, todayYmd) : '';
+  else if (field === 'event_start_time') was = fmtTime24(a) !== fmtTime24(b) ? startInputValue(a) : '';
+  else if (field === 'event_duration_hours') was = Number(a) !== Number(b) ? fmtHours(a) : '';
+  else if (field === 'guest_count') was = Number(a) !== Number(b) ? String(Number(a)) : '';
+  return was ? `was ${was}` : null;
+}
+
+// The line under Start: what it was, once changed, then the setup ("setup 45
+// min before"; "setup from 17:15" when the stored start cannot be read).
+export function startSubLine(proposal, initial, now) {
+  const setup = setupMinutesText(proposal);
+  return [wasLine('event_start_time', initial, now), setup ? `setup ${setup}` : null].filter(Boolean).join(' · ') || null;
 }
 
 // The line under the curfew sentence when the held retry still carries a

@@ -5,7 +5,7 @@ import '@testing-library/jest-dom';
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import EditSheet from './EditSheet';
 import api from '../../utils/api';
-import { READ_TIMEOUT_MS } from '../../utils/editSheetView';
+import { READ_TIMEOUT_MS, PENDING_FIGURE } from '../../utils/editSheetView';
 
 jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn(), patch: jest.fn() } }));
 const mockToast = { success: jest.fn(), error: jest.fn(), info: jest.fn() };
@@ -69,6 +69,15 @@ beforeAll(() => { Element.prototype.scrollIntoView = function scrollIntoView() {
 afterAll(() => { delete Element.prototype.scrollIntoView; });
 beforeEach(() => { scrolled.length = 0; mockToast.success.mockReset(); mockToast.error.mockReset(); mockToast.info.mockReset(); });
 afterEach(() => { jest.useRealTimers(); });
+// A sheet mounted with an arm holds the screen's taps as it unmounts: its guard
+// lands on document.body one tick after RTL's cleanup (which runs first) and
+// stays for armDelayMs. Wait that tick and take it down, so no test starts
+// under the last one's guard.
+afterEach(async () => {
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  // eslint-disable-next-line testing-library/no-node-access
+  document.body.querySelectorAll('.m-tap-guard').forEach((g) => g.remove());
+});
 
 // Every read is a plain fresh read: the read timeout and nothing else, so no
 // header (the stored-copy X-Offline-Ok above all) can ride. The preview and the
@@ -96,19 +105,25 @@ test('reads the event and both catalogs fresh, never from the stored copy', asyn
   expectPlainReads();
 });
 
-test('the head, the rows as drawn, the stored values, and Setup with no arrow', async () => {
+test('the head, the readout, its notices, then Date, Start, Duration and Guests, then the footer; Setup is the line under Start', async () => {
   serve();
   mount();
   await ready();
-  expect(screen.getByRole('dialog', { name: 'Edit details' })).toBeInTheDocument();
+  const dialog = screen.getByRole('dialog', { name: 'Edit details' });
+  // eslint-disable-next-line testing-library/no-node-access
+  expect([...dialog.children].map((el) => el.className)).toEqual(['m-sheet-handle', 'm-sheet-head', 'm-edit-readout', 'm-edit-notices', 'm-edit-rows', 'm-acts m-edit-acts']);
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(dialog.querySelector('.m-edit-notices').children).toHaveLength(0);
+  // eslint-disable-next-line testing-library/no-node-access
+  const names = [...dialog.querySelector('.m-edit-rows').children].map((row) => row.querySelector('.m-edit-label').firstChild.textContent);
+  expect(names).toEqual(['Date', 'Start', 'Duration', 'Guests']);
   expect(screen.getByText('event edit · reprices the booking')).toBeInTheDocument();
   expect(screen.getByText('THU AUG 15 2999')).toBeInTheDocument();
   expect(screen.getByLabelText('Start')).toHaveValue('19:00');
+  expect(screen.getByText('setup 45 min before')).toBeInTheDocument();
+  expect(screen.queryByText('Setup')).toBeNull();
   expect(screen.getByText('4 hr')).toBeInTheDocument();
   expect(screen.getByText('140')).toBeInTheDocument();
-  expect(screen.getByText('45 min before')).toBeInTheDocument();
-  // eslint-disable-next-line testing-library/no-node-access, testing-library/prefer-presence-queries
-  expect(screen.getByText('Setup').closest('.m-sheet-row').querySelector('.m-edit-caret')).toBeNull();
 });
 
 test('duration steps in half hours and guests in fives, and the floors hold', async () => {
@@ -130,6 +145,9 @@ test('an untouched sheet says Done and closes without a request', async () => {
   await ready();
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/proposals/calculate', expect.any(Object), { timeout: READ_TIMEOUT_MS }));
   expect(screen.queryByText('New total')).toBeNull();
+  expect(screen.getByText('Total')).toBeInTheDocument();
+  expect(screen.getByText('$3,650.00')).toBeInTheDocument();
+  expect(screen.getByText('paid $1,900.00 · balance due $1,750.00')).toBeInTheDocument();
   fireEvent.click(confirmBtn());
   expect(onClose).toHaveBeenCalled();
   expect(api.patch).not.toHaveBeenCalled();
@@ -140,12 +158,14 @@ test('a change asks the server for the new total and shows the booked lines', as
   mount();
   await ready();
   more('More guests');
-  // The block shows at once (the stored total and an ellipsis), then the figure lands in it.
+  // The readout says New total at once (three dots), then the figure lands in it.
   expect(await screen.findByText('$3,800.00')).toBeInTheDocument();
   expect(screen.getByText('New total')).toBeInTheDocument();
   expect(screen.getByText('$3,650.00')).toBeInTheDocument();
   expect(screen.getByText('balance due becomes $1,900.00')).toBeInTheDocument();
   expect(screen.getByText('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.')).toBeInTheDocument();
+  // Plain lines, no bullet indent (design pass 2026-10-06).
+  expect(screen.getByText('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.').tagName).toBe('P');
   expect(confirmBtn()).toHaveTextContent('Confirm new total');
   const body = api.post.mock.calls.filter(([u]) => u === '/proposals/calculate').pop()[1];
   expect(body).toMatchObject({ proposal_id: 13, guest_count: 145, duration_hours: 4, num_bartenders: 3, addon_quantities: { 7: 2 } });
@@ -659,7 +679,7 @@ const CURFEW_SENTENCE = 'This booking ends at 2:30 AM, past the 2:00 AM curfew. 
 const css = fs.readFileSync(path.resolve(__dirname, '../../index.css'), 'utf8');
 
 // Item 1 (P-I1, D-I1): the total block never leaves while a figure is on its way.
-test('while the next figure loads the last one stays, dimmed, and Confirm waits for the new one', async () => {
+test('while the next figure loads the last one stays, dimmed under PRICING, and Confirm waits for the new one', async () => {
   serve();
   const asks = [];
   const served = api.post.getMockImplementation();
@@ -668,53 +688,91 @@ test('while the next figure loads the last one stays, dimmed, and Confirm waits 
     : served(url, body, config)));
   const ask = (guests) => asks.filter((a) => a.guests === guests).pop();
   // eslint-disable-next-line testing-library/no-node-access
-  const block = () => screen.getByText('New total').closest('.m-edit-total').parentElement;
+  const figure = () => screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-edit-figure');
   mount();
   await ready();
+  // Untouched: the stored booking at once, before the figure asked at open has landed.
+  expect(screen.getByText('Total')).toBeInTheDocument();
+  expect(screen.getByText('paid $1,900.00 · balance due $1,750.00')).toBeInTheDocument();
   await waitFor(() => expect(ask(140)).toBeDefined());
   await act(async () => { ask(140).resolve({ data: { total: 3650, gratuity: { total: 120 } } }); });
-  expect(screen.queryByText('New total')).toBeNull();
-  // The first change, before any figure describes it: the stored total and an ellipsis, dimmed.
+  // The first change, before any figure describes it: three dots under PRICING, nothing dimmed.
   more('More guests');
   expect(screen.getByText('New total')).toBeInTheDocument();
-  expect(screen.getByText(String.fromCharCode(0x2026))).toBeInTheDocument();
-  expect(block()).toHaveClass('m-edit-total-stale');
-  expect(block()).toHaveAttribute('aria-busy', 'true');
+  expect(screen.getAllByText(PENDING_FIGURE)).toHaveLength(2);   // the figure and the balance line
+  expect(screen.getByText('balance due becomes')).toBeInTheDocument();
+  expect(screen.getByText('pricing')).toBeInTheDocument();
+  expect(figure()).not.toHaveClass('m-edit-dim');
+  expect(figure()).toHaveAttribute('aria-busy', 'true');
   expect(confirmBtn()).toHaveTextContent('Confirm new total');
   expect(confirmBtn()).toBeDisabled();
   await waitFor(() => expect(ask(145)).toBeDefined());
   await act(async () => { ask(145).resolve({ data: { total: 3800, gratuity: { total: 120 } } }); });
   expect(screen.getByText('$3,800.00')).toBeInTheDocument();
-  expect(block()).not.toHaveClass('m-edit-total-stale');
+  expect(screen.queryByText('pricing')).toBeNull();
+  expect(figure()).not.toHaveClass('m-edit-dim');
+  expect(figure()).not.toHaveAttribute('aria-busy');
   expect(confirmBtn()).toBeEnabled();
-  // A further step: the figure that landed stays, with its balance line, dimmed, until the next lands.
+  // A further step: the figure that landed stays, with its balance line, dimmed under PRICING.
   more('More guests');
   expect(screen.getByText('$3,800.00')).toBeInTheDocument();
   expect(screen.getByText('balance due becomes $1,900.00')).toBeInTheDocument();
-  expect(block()).toHaveClass('m-edit-total-stale');
-  expect(confirmBtn()).toHaveTextContent('Confirm new total');
+  expect(screen.getByText('pricing')).toBeInTheDocument();
+  expect(figure()).toHaveClass('m-edit-dim');
   expect(confirmBtn()).toBeDisabled();
   await waitFor(() => expect(ask(150)).toBeDefined());
   await act(async () => { ask(150).resolve({ data: { total: 3900, gratuity: { total: 120 } } }); });
   expect(screen.getByText('$3,900.00')).toBeInTheDocument();
-  expect(screen.queryByText('$3,800.00')).toBeNull();
-  expect(block()).not.toHaveClass('m-edit-total-stale');
+  expect(figure()).not.toHaveClass('m-edit-dim');
   expect(confirmBtn()).toBeEnabled();
-  // Back to the stored values: nothing changed, so no block, and Done closes.
+  // Back to the stored values: the readout reads Total again, and Done closes.
   more('Fewer guests');
   more('Fewer guests');
+  expect(screen.getByText('Total')).toBeInTheDocument();
   expect(screen.queryByText('New total')).toBeNull();
   expect(confirmBtn()).toHaveTextContent('Done');
   expect(confirmBtn()).toBeEnabled();
 });
 
-test('the edit sheet keeps one height, so a figure that loads, lands or leaves never moves the steppers', async () => {
-  serve();
+// The spec's declared state for a first figure that fails: no figure has
+// described the change, so the readout keeps its three dots, with no PRICING
+// (nothing is on its way) and nothing dimmed (no figure to dim), and the
+// failure with its Retry sits in the notices.
+test('a first change whose figure fails before any figure lands: New total and its balance line keep three dots, no PRICING, nothing dimmed, and the failure with Retry in the notices', async () => {
+  let failing = false;
+  serve({ calculate: () => (failing ? { reject: NETWORK } : { total: 3650, gratuity: { total: 120 } }) });
   mount();
   await ready();
-  expect(screen.getByRole('dialog', { name: 'Edit details' })).toHaveClass('m-sheet', 'm-edit-sheet');
-  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-sheet\.m-edit-sheet \{ height: 80dvh; \}/);
-  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-edit-total-stale \{ opacity: 0\.5; \}/);
+  // The figure asked at open, for the stored values, lands; the change's own fails.
+  await waitFor(() => expect(api.post.mock.calls.filter(([u]) => u === '/proposals/calculate')).toHaveLength(1));
+  failing = true;
+  more('More guests');
+  await screen.findByText("Couldn't price the change.");
+  const dialog = screen.getByRole('dialog', { name: 'Edit details' });
+  expect(screen.getByText('New total')).toBeInTheDocument();
+  expect(screen.getAllByText(PENDING_FIGURE)).toHaveLength(2);   // the figure and the balance line
+  expect(screen.getByText('balance due becomes')).toBeInTheDocument();
+  expect(screen.queryByText('pricing')).toBeNull();
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(dialog.querySelector('.m-edit-figure')).not.toHaveClass('m-edit-dim');
+  // eslint-disable-next-line testing-library/no-node-access
+  const notices = dialog.querySelector('.m-edit-notices');
+  expect(notices).toContainElement(screen.getByText("Couldn't price the change."));
+  expect(notices).toContainElement(screen.getByRole('button', { name: 'Retry' }));
+});
+
+test('the stylesheet: as tall as its content up to the screen less 12px (scrolling whole only when even that is too short, its overscroll contained), the notify step at the max, the copy scrolls but keeps its two top lines, the notices hold up to their cap and then scroll inside their strip, the rows and footer hold, a 68px value, a square light stepper, PRICING still under reduced motion', () => {
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-sheet\.m-edit-sheet \{ max-height: calc\(100dvh - 12px\); overflow-y: auto; overscroll-behavior: contain; \}/);
+  expect(css).not.toMatch(/\.m-edit-sheet \{[^}]*(^|[^-])height:/m);
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-sheet\.m-edit-sheet\.m-edit-notifying \{ height: calc\(100dvh - 12px\); \}/);
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-edit-readout \{[^}]*flex: 0 1 auto;[^}]*min-height: 58px;[^}]*overflow-y: auto;/);
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-edit-notices \{[^}]*flex: none; padding: 0 16px;[^}]*max-height: max\(104px, calc\(100dvh - 410px - env\(safe-area-inset-bottom, 0px\)\)\);[^}]*overflow-y: auto;\s*\}/);
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-edit-rows \{ flex: none; \}/);
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-acts\.m-edit-acts \{ flex: none; padding: 10px 16px 14px; border-top: 1px solid var\(--line-1\); \}/);
+  expect(css).toMatch(/html\[data-app="admin-os"\] \.m-stepper-value \{[^}]*width: 68px;/);
+  expect(css).toMatch(/\[data-skin="light"\] \.m-stepper-ctl \{ border-radius: 0; \}/);
+  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[^}]*\.m-edit-pricing \{ animation: none; \}/);
+  expect(css).not.toMatch(/m-edit-content|m-edit-total-stale|m-edit-static/);
 });
 
 // Item 2 (P-I2): a read that hangs fails visibly.
@@ -742,7 +800,7 @@ test('a preview that never answers becomes the failure line with Retry once the 
 });
 
 // Item 3 (U-I1, U-M5): what goes wrong after Confirm is brought into view, and takes focus.
-test('the curfew confirm is brought into view, its safe button takes focus, and Book it anyway is the danger-outlined confirm', async () => {
+test('the curfew confirm\'s button row is brought into view, its safe button takes focus, and Book it anyway is the danger-outlined confirm', async () => {
   serve({ patch: () => Promise.reject(CURFEW_NO) });
   mount();
   await ready();
@@ -752,7 +810,7 @@ test('the curfew confirm is brought into view, its safe button takes focus, and 
   const keep = await screen.findByRole('button', { name: 'Keep editing' });
   await waitFor(() => expect(keep).toHaveFocus());
   // eslint-disable-next-line testing-library/no-node-access
-  expect(scrolled).toContain(keep.closest('.m-confirm'));
+  expect(scrolled).toContain(keep.closest('.m-confirm-btns'));
   // U-M12: the house inline confirm (AssignmentSheet), quiet safe button beside a danger-outlined one.
   expect(keep).toHaveClass('m-act', 'm-act-quiet');
   expect(screen.getByRole('button', { name: 'Book it anyway' })).toHaveClass('m-act', 'm-act-confirm');
@@ -974,185 +1032,14 @@ test('a step announces the new value', async () => {
   expect(screen.getByText('140')).toHaveAttribute('aria-live', 'polite');
 });
 
-test('the stylesheet: the light stepper keeps its corners, the staff channels dim while off, the autopay notice is tinted as a warning', () => {
-  expect(css).not.toMatch(/\[data-skin="light"\][^{]*\.m-stepper-ctl[^{]*\{[^}]*border-radius: 0/);
+test('the stylesheet: the staff channels dim while off, the autopay notice is tinted as a warning', () => {
   expect(css).toMatch(/html\[data-app="admin-os"\] \.m-notify-sub\.m-notify-sub-off \{ opacity: 0\.45; \}/);
   expect(css).toMatch(/html\[data-app="admin-os"\] \.m-notify-sub\.m-notify-sub-off \.m-notify-check \{ cursor: default; \}/);
   expect(css).toMatch(/html\[data-app="admin-os"\] \.m-notify-autopay \{[^}]*background: hsl\(var\(--warn-h\) var\(--warn-s\)/);
   expect(css).toMatch(/html\[data-app="admin-os"\]\[data-skin="light"\] \.m-notify-autopay \{[^}]*background: hsl\(var\(--warn-h\) var\(--warn-s\)/);
 });
 
-// Fold round D (re-review P1): with the body scrolled, a prompt that leaves or
-// a total that returns to the stored values used to shorten the content, the
-// scroll clamped, and the steppers slid under the finger. The content's floor
-// (its min-height) is the tallest it has been since the sheet opened.
-test('the body content never shrinks while the sheet is open: its floor only rises, and starts again when the sheet opens', async () => {
-  // jsdom has no layout. Here the content's natural height is how many
-  // elements it holds, so it grows and shrinks with what the sheet shows; as
-  // in a browser, its box is never shorter than its min-height.
-  const realRect = Element.prototype.getBoundingClientRect;
-  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
-    if (!this.classList || !this.classList.contains('m-edit-content')) return realRect.call(this);
-    // eslint-disable-next-line testing-library/no-node-access
-    const height = Math.max(this.querySelectorAll('*').length, parseFloat(this.style.minHeight) || 0);
-    return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: height, width: 0, height };
-  };
-  try {
-    serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), patch: () => Promise.reject(CURFEW_NO) });
-    mount();
-    await ready();
-    // eslint-disable-next-line testing-library/no-node-access
-    const content = () => screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-edit-content');
-    // eslint-disable-next-line testing-library/no-node-access
-    const natural = () => content().querySelectorAll('*').length;
-    const floor = () => parseFloat(content().style.minHeight) || 0;
-    const floors = [floor()];
-    more('Longer');
-    await waitFor(() => expect(confirmBtn()).toBeEnabled());   // the block shows: taller
-    floors.push(floor());
-    fireEvent.click(confirmBtn());
-    await screen.findByRole('button', { name: 'Keep editing' });   // the curfew confirm: taller still
-    floors.push(floor());
-    const tallest = floor();
-    expect(tallest).toBe(natural());
-    // One step back withdraws the confirm and returns to the stored values: the content shrinks.
-    more('Shorter');
-    expect(screen.queryByRole('button', { name: 'Keep editing' })).toBeNull();
-    expect(screen.queryByText('New total')).toBeNull();
-    floors.push(floor());
-    expect(natural()).toBeLessThan(tallest);
-    expect(floor()).toBe(tallest);
-    for (let i = 1; i < floors.length; i += 1) expect(floors[i]).toBeGreaterThanOrEqual(floors[i - 1]);
-    expect(floors[0]).toBeGreaterThan(0);
-    expect(tallest).toBeGreaterThan(floors[0]);
-    // A new opening measures afresh.
-    cleanup();
-    serve();
-    mount();
-    await ready();
-    expect(floor()).toBe(natural());
-    expect(floor()).toBeLessThan(tallest);
-  } finally {
-    Element.prototype.getBoundingClientRect = realRect;
-  }
-});
-
-test('back from the notify step, the edit view is scrolled where it was, so the steppers come back where they were', async () => {
-  serve({ notices: [NOTICE] });
-  const { onClose } = mount();
-  await ready();
-  // jsdom keeps no scroll position: give the body one.
-  // eslint-disable-next-line testing-library/no-node-access
-  const body = screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-sheet-body');
-  let top = 0;
-  Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v; } });
-  top = 120;   // the admin scrolled the edit view down
-  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2999-08-22' } });
-  await waitFor(() => expect(confirmBtn()).toBeEnabled());
-  fireEvent.click(confirmBtn());
-  await screen.findByText('Notify the client?');
-  top = 340;   // and scrolled the notify step down to its staff choices
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(screen.getByText('THU AUG 22 2999')).toBeInTheDocument();
-  expect(top).toBe(120);
-  // The scrim and Escape step back the same way.
-  fireEvent.click(confirmBtn());
-  await screen.findByText('Notify the client?');
-  top = 500;
-  fireEvent.keyDown(document, { key: 'Escape' });
-  expect(top).toBe(120);
-  expect(onClose).not.toHaveBeenCalled();
-});
-
-// Fold round E (re-review D, P1): leaving the ready phase (a reload, a failed
-// load, a lock) drops the floor and puts the body back at its top, so what
-// loads is in view; the floor then starts again from the new content.
 const MOVED = { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z', guest_count: 150 };
-async function toStaleNotice(reloadRead) {
-  let reads = 0;
-  api.get.mockImplementation((url) => {
-    if (url === '/proposals/13') {
-      reads += 1;
-      if (reads === 1) return Promise.resolve({ data: PROPOSAL });
-      if (reads === 2) return Promise.resolve({ data: MOVED });   // the re-read before the PATCH: moved
-      return reloadRead();
-    }
-    if (url === '/proposals/packages') return Promise.resolve({ data: [PKG] });
-    if (url === '/proposals/addons') return Promise.resolve({ data: [BARBACK] });
-    return Promise.reject({ status: 404 });
-  });
-  api.post.mockImplementation((url) => (url === '/proposals/calculate'
-    ? Promise.resolve({ data: { total: 3800, gratuity: { total: 120 } } })
-    : Promise.resolve({ data: { notices: [] } })));
-  mount();
-  await ready();
-  const dialog = screen.getByRole('dialog', { name: 'Edit details' });
-  // eslint-disable-next-line testing-library/no-node-access
-  const content = dialog.querySelector('.m-edit-content');
-  // eslint-disable-next-line testing-library/no-node-access
-  const body = dialog.querySelector('.m-sheet-body');
-  // jsdom keeps no scroll position: give the body one.
-  const scroll = { top: 0 };
-  Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => scroll.top, set: (v) => { scroll.top = v; } });
-  more('More guests');
-  await waitFor(() => expect(confirmBtn()).toBeEnabled());
-  fireEvent.click(confirmBtn());
-  await screen.findByRole('button', { name: 'Reload' });
-  scroll.top = 337;   // the notice brought into view at the foot of a scrolled body
-  return {
-    scroll,
-    floor: () => parseFloat(content.style.minHeight) || 0,
-    // eslint-disable-next-line testing-library/no-node-access
-    natural: () => content.querySelectorAll('*').length,
-  };
-}
-// jsdom has no layout: the content's natural height is the number of elements
-// it holds, and, as in a browser, its box is never shorter than its min-height.
-function withCountedHeights(run) {
-  const realRect = Element.prototype.getBoundingClientRect;
-  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
-    if (!this.classList || !this.classList.contains('m-edit-content')) return realRect.call(this);
-    // eslint-disable-next-line testing-library/no-node-access
-    const height = Math.max(this.querySelectorAll('*').length, parseFloat(this.style.minHeight) || 0);
-    return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: height, width: 0, height };
-  };
-  return Promise.resolve().then(run).finally(() => { Element.prototype.getBoundingClientRect = realRect; });
-}
-
-test('Reload from the stale notice drops the floor and puts the body back at its top; the floor starts again from what loads', () => withCountedHeights(async () => {
-  let land;
-  const s = await toStaleNotice(() => new Promise((resolve) => { land = () => resolve({ data: MOVED }); }));
-  const tallest = s.floor();
-  expect(tallest).toBe(s.natural());
-  fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
-  // While it loads: back at the top, and the floor is the loading line's, not the old one.
-  expect(screen.getByText('Loading the event')).toBeInTheDocument();
-  expect(s.scroll.top).toBe(0);
-  expect(s.floor()).toBe(s.natural());
-  expect(s.floor()).toBeLessThan(tallest);
-  // The fresh form: still at the top, its floor measured from itself.
-  await act(async () => { land(); });
-  expect(await screen.findByText('150')).toBeInTheDocument();
-  expect(s.scroll.top).toBe(0);
-  expect(s.floor()).toBe(s.natural());
-  expect(s.floor()).toBeLessThan(tallest);
-}));
-
-test('a failed reload\'s line and Retry, and the locked message, are not left under a stale floor', () => withCountedHeights(async () => {
-  for (const [reloadRead, says] of [
-    [() => Promise.reject(NETWORK), "Couldn't load this event. Editing needs a connection."],
-    [() => Promise.resolve({ data: { ...MOVED, status: 'completed' } }), 'This event can no longer be edited here. Use desktop view.'],
-  ]) {
-    const s = await toStaleNotice(reloadRead);
-    const tallest = s.floor();
-    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
-    expect(await screen.findByText(says)).toBeInTheDocument();
-    expect(s.scroll.top).toBe(0);
-    expect(s.floor()).toBe(s.natural());
-    expect(s.floor()).toBeLessThan(tallest);
-    cleanup();
-  }
-}));
 
 // Fold round F (re-review E, P1): one arm for the whole sheet. Every time the
 // sheet swaps the view under the finger, the new view's controls (and the scrim
@@ -1237,12 +1124,12 @@ test('a curfew refusal after a send swaps back to the form: its buttons are held
 });
 
 // Fold round G (re-review F, P1): the arm's end moves focus, never the scroll.
-// The curfew confirm or the stale notice is scrolled into view once, as it
-// appears; its safe button takes focus once the view is armed, and a scroll
-// made inside the arm stays where the finger left it.
+// The curfew confirm's button row or the stale notice is scrolled into view
+// once, as it appears; its safe button takes focus once the view is armed, and
+// a scroll made inside the arm stays where the finger left it.
 const settle = () => act(async () => { await new Promise((resolve) => { setTimeout(resolve, 50); }); });
 
-test('after a curfew refusal from the notify step, the confirm is scrolled into view once, and the arm\'s end only moves focus to Keep editing', async () => {
+test('after a curfew refusal from the notify step, the confirm\'s button row is scrolled into view once, and the arm\'s end only moves focus to Keep editing', async () => {
   let calls = 0;
   await toNotifyStep({ patch: () => { calls += 1; return calls === 1 ? Promise.reject(CURFEW_NO) : Promise.resolve({ data: { notifications: [] } }); } }, { armDelayMs: 300 });
   await waitFor(() => expect(screen.getByRole('button', { name: "Don't send" })).toBeEnabled());
@@ -1251,12 +1138,12 @@ test('after a curfew refusal from the notify step, the confirm is scrolled into 
   expect(keep).toBeDisabled();
   const focusing = jest.spyOn(keep, 'focus');
   // eslint-disable-next-line testing-library/no-node-access
-  const box = keep.closest('.m-confirm');
-  await waitFor(() => expect(scrolled).toContain(box));
+  const row = keep.closest('.m-confirm-btns');
+  await waitFor(() => expect(scrolled).toContain(row));
   await waitFor(() => expect(keep).toHaveFocus());
   expect(keep).toBeEnabled();
   await settle();
-  expect(scrolled.filter((el) => el === box)).toHaveLength(1);
+  expect(scrolled.filter((el) => el === row)).toHaveLength(1);
   // The focus itself scrolls nothing either.
   expect(focusing).toHaveBeenCalledTimes(1);
   expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
@@ -1363,4 +1250,362 @@ test('the notify footer: Cancel and Send the update share the first row, Don\'t 
   expect(confirmBtn().parentElement).toHaveClass('m-acts');
   // eslint-disable-next-line testing-library/no-node-access
   expect(confirmBtn().parentElement).not.toHaveClass('m-acts-notify');
+});
+
+// ma-e3b (design pass 2026-10-06): the sheet is as tall as its content, so a
+// phase change moves its top edge, and the second tap of a double tap can land
+// on the scrim. The sheet opening and every phase change arm too.
+function serveStale(reloadRead) {
+  let reads = 0;
+  api.get.mockImplementation((url) => {
+    if (url === '/proposals/13') {
+      reads += 1;
+      if (reads === 1) return Promise.resolve({ data: PROPOSAL });
+      if (reads === 2) return Promise.resolve({ data: MOVED });   // the re-read before the PATCH: moved
+      return reloadRead();
+    }
+    if (url === '/proposals/packages') return Promise.resolve({ data: [PKG] });
+    if (url === '/proposals/addons') return Promise.resolve({ data: [BARBACK] });
+    return Promise.reject({ status: 404 });
+  });
+  api.post.mockImplementation((url) => (url === '/proposals/calculate'
+    ? Promise.resolve({ data: { total: 3800, gratuity: { total: 120 } } })
+    : Promise.resolve({ data: { notices: [] } })));
+}
+const pastTheArm = () => act(async () => { await new Promise((resolve) => { setTimeout(resolve, 350); }); });
+const aTick = () => act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+
+test('the sheet opening holds the scrim and Escape for the arm, while the event still loads', async () => {
+  api.get.mockImplementation(() => new Promise(() => {}));   // the reads have not answered
+  const { onClose } = mount({ armDelayMs: 300 });
+  expect(screen.getByText('Loading the event')).toBeInTheDocument();
+  // The second tap of a double tap on Edit details, on the scrim above a short sheet.
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(onClose).not.toHaveBeenCalled();
+  await pastTheArm();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test('Reload holds the scrim and Escape while the event reloads, so a double tap on Reload leaves the sheet open', async () => {
+  serveStale(() => new Promise(() => {}));   // the reload has not answered
+  const { onClose } = mount({ armDelayMs: 300 });
+  await ready();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'More guests' })).toBeEnabled());
+  more('More guests');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
+  expect(screen.getByText('Loading the event')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(onClose).not.toHaveBeenCalled();
+  await pastTheArm();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test('a failed load\'s Retry is held for the arm, then takes a tap', async () => {
+  serve({ proposal: { reject: NETWORK } });
+  mount({ armDelayMs: 300 });
+  expect(await screen.findByRole('button', { name: 'Retry' })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled());
+  serve();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await ready();
+});
+
+test('after a reload the fresh sheet takes focus, since the button that had it is gone', async () => {
+  serveStale(() => Promise.resolve({ data: MOVED }));
+  mount();
+  await ready();
+  more('More guests');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
+  expect(await screen.findByText('150')).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Edit details' })).toHaveFocus();
+});
+
+test('as the sheet closes, however it closes, the screen\'s taps are held for the arm, then let go', async () => {
+  // eslint-disable-next-line testing-library/no-node-access
+  document.body.querySelectorAll('.m-tap-guard').forEach((g) => g.remove());
+  serve();
+  mount({ armDelayMs: 300 });
+  await ready();
+  cleanup();   // the page unmounts the sheet: Done, Cancel, the scrim, Escape, Back or a save
+  await aTick();   // the hold waits one tick (see the StrictMode test below)
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(document.body.querySelector('.m-tap-guard')).not.toBeNull();
+  await pastTheArm();
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(document.body.querySelector('.m-tap-guard')).toBeNull();
+});
+
+test('at its max height the sheet\'s thin strip of scrim does nothing in the edit view; Escape still closes; in the notify step it still steps back', async () => {
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.getAttribute && this.getAttribute('role') === 'dialog') {
+      const height = window.innerHeight - 12;
+      return { x: 0, y: 12, top: 12, left: 0, right: 0, bottom: window.innerHeight, width: 0, height };
+    }
+    return realRect.call(this);
+  };
+  try {
+    const { onClose } = await toNotifyStep();
+    // The notify step at its max height: the strip steps back, which discards nothing.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText('Notify the client?')).toBeNull();
+    // The edit view at its max height: the strip does nothing; Escape closes.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  } finally {
+    Element.prototype.getBoundingClientRect = realRect;
+  }
+});
+
+test('a strip of scrim as tall as a thumb closes the sheet from the edit view; a sheet just short of its cap leaves one too thin, which does nothing', async () => {
+  const realRect = Element.prototype.getBoundingClientRect;
+  let top = 30;   // a sheet just short of its cap: a 30px strip above it
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.getAttribute && this.getAttribute('role') === 'dialog') {
+      const height = window.innerHeight - top;
+      return { x: 0, y: top, top, left: 0, right: 0, bottom: window.innerHeight, width: 0, height };
+    }
+    return realRect.call(this);
+  };
+  try {
+    serve();
+    const { onClose } = mount();
+    await ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).not.toHaveBeenCalled();
+    top = 100;   // a 100px strip: a deliberate dismiss
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  } finally {
+    Element.prototype.getBoundingClientRect = realRect;
+  }
+});
+
+test('a failed load\'s Retry that fails again leaves focus on the dialog, since the Retry that had it is gone', async () => {
+  serve({ proposal: { reject: NETWORK } });
+  mount();
+  const retry = await screen.findByRole('button', { name: 'Retry' });
+  retry.focus();   // the button has focus as it is pressed (a keyboard, or a tap on Android)
+  expect(retry).toHaveFocus();
+  fireEvent.click(retry);
+  expect(screen.getByText('Loading the event')).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't load this event. Editing needs a connection.")).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Edit details' })).toHaveFocus();
+});
+
+test('the locked message holds the scrim for the arm too, then the scrim closes the sheet', async () => {
+  serve({ proposal: { ...PROPOSAL, status: 'completed' } });
+  const { onClose } = mount({ armDelayMs: 300 });
+  expect(await screen.findByText('This event can no longer be edited here. Use desktop view.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(onClose).not.toHaveBeenCalled();
+  await pastTheArm();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+// React.StrictMode (client/src/index.js) runs each effect's cleanup once right
+// after mount in development, then the effect again: that is not a close.
+test('under React.StrictMode, as in development, the sheet opening lays no tap guard; its closing still does', async () => {
+  serve();
+  render(
+    <React.StrictMode>
+      <EditSheet proposalId={13} clientName="Alexis Henderson" kind="Wedding Reception" onClose={jest.fn()} onSaved={jest.fn()} previewDelayMs={0} armDelayMs={300} />
+    </React.StrictMode>,
+  );
+  await ready();
+  await aTick();
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(document.body.querySelector('.m-tap-guard')).toBeNull();
+  cleanup();   // the page unmounts the sheet
+  await aTick();
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(document.body.querySelector('.m-tap-guard')).not.toBeNull();
+});
+
+// ma-e3b: readout above, controls pinned.
+test('the copy holds what comes and goes in order, the notices sit in their own strip under it, and the rows hold only the four rows', async () => {
+  let failing = false;
+  let reads = 0;
+  api.get.mockImplementation((url) => {
+    if (url === '/proposals/13') {
+      reads += 1;
+      return Promise.resolve({ data: reads === 1 ? { ...PROPOSAL, settled_extension_hours: 1, contract_floor_hours: 3 } : MOVED });
+    }
+    if (url === '/proposals/packages') return Promise.resolve({ data: [PKG] });
+    if (url === '/proposals/addons') return Promise.resolve({ data: [BARBACK] });
+    return Promise.reject({ status: 404 });
+  });
+  api.post.mockImplementation((url) => (url === '/proposals/calculate'
+    ? (failing ? Promise.reject(NETWORK) : Promise.resolve({ data: { total: 3800, gratuity: { total: 120 } } }))
+    : Promise.resolve({ data: { notices: [] } })));
+  mount({ shiftCount: 2 });
+  await ready();
+  more('More guests');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  await screen.findByRole('button', { name: 'Reload' });   // changed since you opened it
+  failing = true;
+  more('More guests');   // a step while that notice shows; its figure fails
+  await screen.findByText("Couldn't price the change.");
+  const dialog = screen.getByRole('dialog', { name: 'Edit details' });
+  // eslint-disable-next-line testing-library/no-node-access
+  const copy = [...dialog.querySelector('.m-edit-readout').children].map((el) => el.textContent);
+  expect(copy[0]).toMatch(/^New total/);
+  expect(copy.slice(1)).toEqual([
+    'Includes 1h of on-site extension, billed on its own invoice. The contract prices 3h.',
+    'This event has 2 shifts. Changing the date or time here does not move them; each shift is edited from desktop view.',
+  ]);
+  // eslint-disable-next-line testing-library/no-node-access
+  expect([...dialog.querySelector('.m-edit-notices').children].map((el) => el.textContent)).toEqual([
+    "Couldn't price the change.Retry",
+    'This event changed since you opened it.Reload',
+  ]);
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(dialog.querySelector('.m-edit-rows').children).toHaveLength(4);
+});
+
+test('the curfew confirm is the strip\'s last notice, right above the rows, and Keep editing leaves the save\'s line there', async () => {
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), patch: () => Promise.reject(CURFEW_NO) });
+  mount({ shiftCount: 2 });
+  await ready();
+  more('Longer');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  const keep = await screen.findByRole('button', { name: 'Keep editing' });
+  // eslint-disable-next-line testing-library/no-node-access
+  const notices = screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-edit-notices');
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(notices.lastElementChild).toHaveClass('m-confirm');
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(notices.lastElementChild).toContainElement(keep);
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(notices.nextElementSibling).toHaveClass('m-edit-rows');
+  fireEvent.click(keep);
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(notices.lastElementChild).toHaveTextContent('Not saved. The end time is past our 2:00 AM service curfew.');
+});
+
+test('a changed field says what it was, inside its row', async () => {
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }) });
+  mount();
+  await ready();
+  expect(screen.queryByText(/^was /)).toBeNull();
+  more('Longer');
+  more('More guests');
+  fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2999-08-22' } });
+  fireEvent.change(screen.getByLabelText('Start'), { target: { value: '20:00' } });
+  // eslint-disable-next-line testing-library/no-node-access
+  const rowOf = (text) => screen.getByText(text).closest('.m-sheet-row');
+  expect(rowOf('was 4 hr')).toBe(rowOf('Duration'));
+  expect(rowOf('was 140')).toBe(rowOf('Guests'));
+  expect(rowOf('was THU AUG 15 2999')).toBe(rowOf('Date'));
+  expect(rowOf('was 19:00 · setup 45 min before')).toBe(rowOf('Start'));
+  more('Shorter');   // back to the stored hours, the line goes
+  expect(screen.queryByText('was 4 hr')).toBeNull();
+});
+
+test('the fade at the copy\'s foot shows whenever the copy overflows, as the export draws it', async () => {
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }) });
+  mount();
+  await ready();
+  // eslint-disable-next-line testing-library/no-node-access
+  const readout = screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-edit-readout');
+  // eslint-disable-next-line testing-library/no-node-access
+  const fade = () => readout.querySelector('.m-edit-fade');
+  expect(fade()).toBeNull();
+  // jsdom has no layout: 300px of copy in a 200px box; a step re-renders and re-measures.
+  let height = 300;
+  Object.defineProperty(readout, 'scrollHeight', { configurable: true, get: () => height });
+  Object.defineProperty(readout, 'clientHeight', { configurable: true, get: () => 200 });
+  more('More guests');
+  expect(fade()).not.toBeNull();
+  height = 200;   // it fits again
+  more('Fewer guests');
+  expect(fade()).toBeNull();
+});
+
+test('the notify step fills the sheet\'s max height while it is open, so a channel\'s message showing or hiding moves nothing', async () => {
+  await toNotifyStep();
+  const dialog = screen.getByRole('dialog', { name: 'Edit details' });
+  expect(dialog).toHaveClass('m-edit-notifying');
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(dialog).not.toHaveClass('m-edit-notifying');
+});
+
+test('a screen reader hears the two top lines as one, and "pending" in place of the three dots', async () => {
+  serve();
+  api.post.mockImplementation(() => new Promise(() => {}));   // no figure ever lands
+  mount();
+  await ready();
+  more('More guests');
+  // eslint-disable-next-line testing-library/no-node-access
+  const live = screen.getByText('New total').closest('[aria-live]');
+  expect(live).toHaveAttribute('aria-live', 'polite');
+  expect(live).toHaveAttribute('aria-atomic', 'true');
+  expect(live).toHaveTextContent('balance due becomes');
+  expect(screen.getAllByText('pending')).toHaveLength(2);
+  for (const dots of screen.getAllByText(PENDING_FIGURE)) expect(dots).toHaveAttribute('aria-hidden', 'true');
+});
+
+test('a screen reader hears "to" between the old total and the new one, where the eye sees the arrow', async () => {
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }) });
+  mount();
+  await ready();
+  more('More guests');
+  await screen.findByText('$3,800.00');
+  // The live region as it is read: without the parts hidden from a screen reader.
+  // eslint-disable-next-line testing-library/no-node-access
+  const heard = screen.getByText('New total').closest('[aria-live]').cloneNode(true);
+  // eslint-disable-next-line testing-library/no-node-access
+  heard.querySelectorAll('[aria-hidden="true"]').forEach((el) => el.remove());
+  expect(heard.textContent).toContain('$3,650.00 to $3,800.00');
+});
+
+test('a bank payment in flight that the detail passes in is said on the untouched readout', async () => {
+  serve();
+  mount({ inFlight: true });
+  await ready();
+  expect(screen.getByText('paid $1,900.00 · bank payment in flight')).toBeInTheDocument();
+});
+
+// The thin strip's rule holds only in the edit view, the one view with a
+// Cancel: the loading line, a failed load and the locked message have none,
+// so there the scrim stays a way out however thin its strip.
+test('a thin strip of scrim still closes the sheet while it loads, after a failed load and on the locked message, which have no Cancel', async () => {
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.getAttribute && this.getAttribute('role') === 'dialog') {
+      const height = window.innerHeight - 12;
+      return { x: 0, y: 12, top: 12, left: 0, right: 0, bottom: window.innerHeight, width: 0, height };
+    }
+    return realRect.call(this);
+  };
+  try {
+    const views = [
+      ['Loading the event', () => api.get.mockImplementation(() => new Promise(() => {}))],
+      ["Couldn't load this event. Editing needs a connection.", () => serve({ proposal: { reject: NETWORK } })],
+      ['This event can no longer be edited here. Use desktop view.', () => serve({ proposal: { ...PROPOSAL, status: 'completed' } })],
+    ];
+    for (const [says, setUp] of views) {
+      setUp();
+      const { onClose } = mount();
+      expect(await screen.findByText(says)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+      cleanup();
+    }
+  } finally {
+    Element.prototype.getBoundingClientRect = realRect;
+  }
 });

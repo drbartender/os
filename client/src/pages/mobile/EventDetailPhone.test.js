@@ -1061,6 +1061,17 @@ test('an upcoming event: Edit details reads date · time · guests and opens the
   expect(screen.getByTestId('edit-shifts')).toHaveTextContent('1');
   expect(screen.getByTestId('loc')).toHaveTextContent('/events/13?drawer=edit&drawerId=13');
   expect(mockMobileView.setDesktopView).not.toHaveBeenCalled();
+  expect(mockSheets.edit.inFlight).toBe(false);
+});
+
+test('the edit sheet hears when a bank payment is in flight, so its readout can say so', async () => {
+  serve({ '/invoices/proposal/13': { data: { ...INVOICES, pending_payments: [{ amount_cents: 175000, started_at: '2999-08-05T15:00:00.000Z', invoice_id: 2, invoice_number: 'INV-0363' }] } } });
+  mount();
+  await screen.findByText('Person 1');
+  await waitFor(() => expect(within(section('Financials')).getByText('Processing')).toBeInTheDocument());
+  tap(screen.getByRole('button', { name: /^Edit details/ }));
+  await screen.findByTestId('edit-sheet');
+  expect(mockSheets.edit.inFlight).toBe(true);
 });
 
 test('a past event keeps desktop view', async () => {

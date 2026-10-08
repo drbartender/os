@@ -21733,6 +21733,11 @@ html[data-app="admin-os"] .m-sheet-scrim {
   position: fixed; inset: 0; z-index: 900; width: 100%; height: 100%; padding: 0; border: none;
   background: rgba(0, 0, 0, 0.5); animation: m-sheet-fade 180ms ease;
 }
+/* For the half second after a phone sheet closes, a layer over the whole screen
+   takes the second tap of a double tap (utils/tapGuard.js). It hangs off the
+   document's body, above the sheets, the header and the tab bar; under the
+   lock (10000) and the toasts (10500). */
+html[data-app="admin-os"] .m-tap-guard { position: fixed; inset: 0; z-index: 1300; }
 html[data-app="admin-os"] .m-sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 901; max-height: 80dvh;
   display: flex; flex-direction: column; outline: none;
@@ -21809,44 +21814,100 @@ html[data-app="admin-os"] .m-fail-retry:disabled { opacity: 0.45; cursor: defaul
 /* Dismiss beside Retry: the safe one of the two is the quiet one. */
 html[data-app="admin-os"] .m-fail-retry.m-fail-quiet { border-color: transparent; background: transparent; color: var(--ink-2); }
 
-/* Edit sheet (lane ma-e3; benchmark 2026-09-15, the edit sheet). The stepper is
-   the design system's (components-mobile.css), folded; the value is wider than
-   drawn so "4.5 hr" fits. A date or time row carries its native input across the
-   whole row, transparent, so a tap anywhere opens the phone's own picker. */
-html[data-app="admin-os"] .m-stepper-ctl { display: flex; align-items: center; flex: none; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--radius); }
-html[data-app="admin-os"] .m-stepper-btn { min-width: 44px; min-height: 44px; background: none; border: none; color: var(--ink-1); font-size: 18px; font-family: var(--font-mono); cursor: pointer; }
-html[data-app="admin-os"] .m-stepper-btn:disabled { color: var(--ink-4); cursor: default; }
-html[data-app="admin-os"] .m-stepper-value { min-width: 56px; text-align: center; font-family: var(--font-numeric); font-size: 15px; color: var(--ink-1); }
-html[data-app="admin-os"] .m-edit-pick { position: relative; }
-html[data-app="admin-os"] .m-edit-pick:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
-html[data-app="admin-os"] .m-edit-native { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
-html[data-app="admin-os"] .m-edit-label { flex: 1; }
-html[data-app="admin-os"] .m-edit-value { flex: none; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
-html[data-app="admin-os"] .m-edit-caret { flex: none; display: flex; color: var(--ink-4); }
-html[data-app="admin-os"] .m-sheet-row.m-edit-static,
-html[data-app="admin-os"] .m-sheet-row.m-edit-stepper-row { cursor: default; }
-html[data-app="admin-os"] .m-edit-hint { padding: 0 16px 10px; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
-html[data-app="admin-os"] .m-edit-total { border-top: 1px solid var(--line-2); padding: 10px 16px; display: flex; align-items: center; gap: 8px; }
-html[data-app="admin-os"] .m-edit-total-label { flex: 1; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1); }
+/* Edit sheet (lane ma-e3; layout from the design pass of 2026-10-06, "readout
+   above, controls pinned", benchmark docs/design-artifacts/2026-10-06-edit-
+   sheet-layout). The sheet is as tall as its content, at most the screen less
+   12px. Everything that comes and goes is in the readout: its copy shrinks and
+   scrolls past that height, and its notices, under the copy, scroll inside
+   their own strip only when they alone outgrow the room the rows and footer
+   leave, as a curfew confirm with its rides line does on a 320x568 phone (its
+   button row is then brought into view); the notices, the rows and the footer
+   never shrink, so they sit at the bottom of the screen whatever the copy
+   says. On a screen too short even for those (a phone in landscape in a
+   browser tab), the readout keeps its two top lines in view (a min-height
+   that holds them) and the whole sheet scrolls for the rest, so the footer
+   stays reachable; that scroll is contained, so a drag past its end never
+   moves the page behind the scrim. The notify step fills the max height, so a
+   channel's message showing or hiding under its box moves nothing. The
+   stepper is the design system's (components-mobile.css), folded, with a
+   fixed 68px value slot so "10.5 hr" cannot push the minus button sideways. A
+   date or time row carries its native input across the whole row,
+   transparent, so a tap anywhere opens the phone's own picker. */
+html[data-app="admin-os"] .m-sheet.m-edit-sheet { max-height: calc(100dvh - 12px); overflow-y: auto; overscroll-behavior: contain; }
+html[data-app="admin-os"] .m-sheet.m-edit-sheet.m-edit-notifying { height: calc(100dvh - 12px); }
+html[data-app="admin-os"] .m-edit-readout {
+  flex: 0 1 auto; min-height: 58px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: none; padding: 10px 16px;
+}
+html[data-app="admin-os"] .m-edit-readout::-webkit-scrollbar { display: none; }
+html[data-app="admin-os"] .m-edit-total { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+html[data-app="admin-os"] .m-edit-total-label { flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .m-edit-figs { flex: none; display: flex; align-items: center; gap: 8px; transition: opacity 120ms ease; }
 html[data-app="admin-os"] .m-edit-total-old { font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-3); }
 html[data-app="admin-os"] .m-edit-arrow { color: var(--ink-4); }
 html[data-app="admin-os"] .m-edit-total-new { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: var(--ink-1); }
-html[data-app="admin-os"] .m-edit-bal { padding: 0 16px 8px; text-align: right; font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); }
-html[data-app="admin-os"] .m-edit-lines { margin: 0 16px 10px; padding: 0 0 0 16px; font-size: 11px; line-height: 1.5; color: var(--ink-2); }
-html[data-app="admin-os"] .m-edit-lines li + li { margin-top: 4px; }
-/* The last figure, kept on screen while the next one is on its way. */
-html[data-app="admin-os"] .m-edit-total-stale { opacity: 0.5; }
-/* One height for the edit sheet, the most the sheet system allows: a figure
-   that loads, lands or leaves below the steppers never moves them, where a
-   content-sized bottom sheet moved them about 200px under the finger. The body
-   scrolls what does not fit. */
-html[data-app="admin-os"] .m-sheet.m-edit-sheet { height: 80dvh; }
-/* Everything the edit sheet's body scrolls, in one box whose min-height the
-   sheet ratchets up to the tallest it has been (EditSheet.js holdFloor), so a
-   prompt that leaves while the body is scrolled cannot clamp the scroll and
-   pull the steppers down. flow-root keeps the last child's margin inside the
-   box, where the floor covers it. */
-html[data-app="admin-os"] .m-edit-content { display: flow-root; }
+/* The second line keeps its height whatever it says, so "Total" turning into
+   "New total" changes the height of nothing. */
+html[data-app="admin-os"] .m-edit-sub { margin-top: 3px; display: flex; align-items: center; gap: 8px; min-height: 15px; }
+html[data-app="admin-os"] .m-edit-pricing { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); animation: m-edit-pulse 1.2s ease-in-out infinite; }
+@keyframes m-edit-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+html[data-app="admin-os"] .m-edit-bal { margin-left: auto; flex: none; font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); transition: opacity 120ms ease; }
+html[data-app="admin-os"] .m-edit-lines { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; transition: opacity 120ms ease; }
+html[data-app="admin-os"] .m-edit-lines p { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
+/* The last figure, kept while the next is on its way or failed: the figures
+   dim, the label and PRICING do not. */
+html[data-app="admin-os"] .m-edit-figure.m-edit-dim .m-edit-figs,
+html[data-app="admin-os"] .m-edit-figure.m-edit-dim .m-edit-bal,
+html[data-app="admin-os"] .m-edit-figure.m-edit-dim .m-edit-lines { opacity: 0.45; }
+html[data-app="admin-os"] .m-edit-hint { margin: 8px 0 0; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
+/* Whenever the copy overflows, as the export draws it (EditSheet.js measures it). */
+html[data-app="admin-os"] .m-edit-fade {
+  position: sticky; bottom: -10px; height: 24px; margin: -14px -16px -10px;
+  background: linear-gradient(to bottom, transparent, var(--bg-elev)); pointer-events: none;
+}
+/* The notices: under the copy, their foot on the rows, inset by the readout's
+   16px. When one leaves, copy from above slides into its place, never another
+   button: inside the readout, a scrolling box that keeps its top, a notice
+   that left would pull the one below it up into the finger's place. They
+   scroll inside their own strip only when they alone outgrow the room the
+   rows and footer leave, as a curfew confirm with its rides line does on a
+   320x568 phone; the confirm's button row is then brought into view
+   (EditSheet.js). The cap is the screen less 410px (the 12px gap, the head,
+   the readout's two top lines, the four rows and the footer, with about 15px
+   of slack) and less the bottom inset the sheet pads for, so a gesture bar
+   cannot eat that slack; never under 104px, which keeps a capped confirm's
+   buttons and a few lines of its words in view. It keeps the platform's own
+   scrollbar, which shows while it scrolls. Its scroll is not contained:
+   where the whole sheet scrolls (landscape), a drag that starts on a notice
+   scrolls the sheet, whose own containment keeps the page still. Empty,
+   the strip has no height. */
+html[data-app="admin-os"] .m-edit-notices {
+  flex: none; padding: 0 16px;
+  max-height: max(104px, calc(100dvh - 410px - env(safe-area-inset-bottom, 0px)));
+  overflow-y: auto;
+}
+html[data-app="admin-os"] .m-edit-notices .m-fail,
+html[data-app="admin-os"] .m-edit-notices .m-sheet-note,
+html[data-app="admin-os"] .m-edit-notices .m-confirm { margin: 0 0 10px; }
+html[data-app="admin-os"] .m-edit-rows { flex: none; }
+html[data-app="admin-os"] .m-edit-rows > .m-sheet-row:first-child { border-top-color: var(--line-2); }
+html[data-app="admin-os"] .m-stepper-ctl { display: flex; align-items: center; flex: none; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--radius); }
+html[data-app="admin-os"] .m-stepper-btn { min-width: 44px; min-height: 44px; padding: 0; background: none; border: none; color: var(--ink-1); font-size: 18px; font-family: var(--font-mono); cursor: pointer; }
+html[data-app="admin-os"] .m-stepper-btn:disabled { color: var(--ink-4); cursor: default; }
+html[data-app="admin-os"] .m-stepper-value { flex: none; width: 68px; text-align: center; font-family: var(--font-numeric); font-size: 15px; color: var(--ink-1); }
+html[data-app="admin-os"] .m-edit-pick { position: relative; }
+html[data-app="admin-os"] .m-edit-pick:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+html[data-app="admin-os"] .m-edit-native { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+/* The label column: the name, and under it what a changed field was (or, under
+   Start, the setup), inside the 48px row. */
+html[data-app="admin-os"] .m-edit-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+html[data-app="admin-os"] .m-edit-was { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-app="admin-os"] .m-edit-value { flex: none; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-edit-caret { flex: none; display: flex; color: var(--ink-4); }
+html[data-app="admin-os"] .m-sheet-row.m-edit-stepper-row { cursor: default; }
+/* The footer in both views: Cancel and the main button, or the notify step's two rows. */
+html[data-app="admin-os"] .m-acts.m-edit-acts { flex: none; padding: 10px 16px 14px; border-top: 1px solid var(--line-1); }
+html[data-app="admin-os"] .m-acts.m-edit-acts .m-act-primary { transition: opacity 120ms ease; }
 
 /* The notify step (lane ma-e3): the desktop popup's content, in the sheet. */
 html[data-app="admin-os"] .m-notify { padding: 12px 16px 6px; }
@@ -21929,15 +21990,16 @@ html[data-app="admin-os"] .m-sheet-nomatch { padding: 18px 16px 8px; text-align:
 
 /* House Lights: squared corners, the skin's own ink for links, red, green and amber */
 html[data-app="admin-os"][data-skin="light"] .m-section { border-color: var(--line-2); box-shadow: none; }
-/* Squared in House Lights: the sections, the sheet, the buttons and the search
-   field. The confirm box, the failed-save box, the note and the avatars keep
-   their radius, as drawn. */
+/* Squared in House Lights: the sections, the sheet, the buttons, the search
+   field and the stepper (design pass 2026-10-06). The confirm box, the
+   failed-save box, the note and the avatars keep their radius, as drawn. */
 html[data-app="admin-os"][data-skin="light"] .m-section,
 html[data-app="admin-os"][data-skin="light"] .m-sheet,
 html[data-app="admin-os"][data-skin="light"] .m-act,
 html[data-app="admin-os"][data-skin="light"] .m-fail-retry,
 html[data-app="admin-os"][data-skin="light"] .m-contact-act,
-html[data-app="admin-os"][data-skin="light"] .m-sheet-search { border-radius: 0; }
+html[data-app="admin-os"][data-skin="light"] .m-sheet-search,
+html[data-app="admin-os"][data-skin="light"] .m-stepper-ctl { border-radius: 0; }
 html[data-app="admin-os"][data-skin="light"] .m-dhead-venue,
 html[data-app="admin-os"][data-skin="light"] .m-contact-link,
 html[data-app="admin-os"][data-skin="light"] .m-person-go,
@@ -21964,6 +22026,7 @@ html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-mone
 /* Motion is decoration here. The one media query in this block, and it is not
    a width query: the phone layout is decided in JS (useMobileView). */
 @media (prefers-reduced-motion: reduce) {
+  html[data-app="admin-os"] .m-edit-pricing { animation: none; }
   html[data-app="admin-os"] .m-sheet,
   html[data-app="admin-os"] .m-sheet-scrim { animation: none; }
   html[data-app="admin-os"] .m-section-caret { transition: none; }

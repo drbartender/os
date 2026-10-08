@@ -4,6 +4,7 @@ import {
   sheetDateText, setupMinutesText, extensionHint, multiShiftNote, editableEvent, editLockedReason,
   sheetValuesOf, fieldsChanged, changedSinceOpen, confirmView, saveErrorText, curfewReason, noteFirstLine,
   confirmViewNow, curfewRidesLine, NO_CONNECTION, SAVE_UNCONFIRMED, LOCKED_NOTE, READ_TIMEOUT_MS,
+  readoutView, wasLine, startSubLine, PENDING_FIGURE,
 } from './editSheetView';
 import { buildRepriceSummary } from '../pages/admin/proposalEditor/repriceSummary';
 
@@ -231,11 +232,11 @@ describe('confirmViewNow', () => {
     expect(confirmViewNow({ proposal: booked, preview: { state: 'failed' }, shown: landed, changed: true }))
       .toMatchObject({ repriced: true, stale: true, newTotal: '$3,800.00' });
   });
-  test('before any figure describes a change: the stored total and an ellipsis, and no lines', () => {
+  test('before any figure describes a change: the stored total and three dots, and no lines', () => {
     const atOpen = { state: 'ready', total: 3650, gratuityTotal: 120 };
     for (const shown of [null, atOpen]) {
       expect(confirmViewNow({ proposal: booked, preview: { state: 'loading' }, shown, changed: true })).toMatchObject({
-        repriced: true, stale: true, oldTotal: '$3,650.00', newTotal: String.fromCharCode(0x2026), balanceLine: null, lines: [], button: 'Confirm new total',
+        repriced: true, stale: true, pending: true, oldTotal: '$3,650.00', newTotal: PENDING_FIGURE, balanceLine: null, lines: [], button: 'Confirm new total',
       });
     }
   });
@@ -243,6 +244,96 @@ describe('confirmViewNow', () => {
     const v = confirmViewNow({ proposal: booked, preview: { state: 'loading' }, shown: landed, changed: false });
     expect(v).toMatchObject({ repriced: false, button: 'Done', lines: [] });
     expect(v.stale).toBeFalsy();
+  });
+});
+
+// ma-e3b (design pass 2026-10-06): the readout's two top lines.
+describe('readoutView', () => {
+  const booked = {
+    status: 'deposit_paid', total_price: '3650.00', amount_paid: '1900.00', off_contract_paid_cents: 0,
+    gratuity_rate_change_origin: null, pricing_snapshot: { gratuity: { total: 120 } },
+  };
+  const landed = { state: 'ready', total: 3800, gratuityTotal: 120 };
+  test('untouched: the stored total, what is paid and the balance, and Done, before any figure lands', () => {
+    expect(readoutView({ proposal: booked, preview: { state: 'loading' }, shown: null, changed: false })).toEqual({
+      label: 'Total', old: null, now: '$3,650.00', sub: 'paid $1,900.00 · balance due $1,750.00',
+      pricing: false, dim: false, pending: false, lines: [], button: 'Done',
+    });
+  });
+  test('the balance is floored at $0.00 when nothing is netted as overpaid', () => {
+    for (const [paid, shown] of [['3650.00', '$3,650.00'], ['4000.00', '$4,000.00']]) {
+      expect(readoutView({ proposal: { ...booked, amount_paid: paid }, preview: null, shown: null, changed: false }).sub)
+        .toBe(`paid ${shown} · balance due $0.00`);
+    }
+  });
+  test('an overpaid row says so, from the server\'s netted figure, in place of a balance of $0.00', () => {
+    expect(readoutView({ proposal: { ...booked, amount_paid: '4000.00', overpayment_cents: 35000 }, preview: null, shown: null, changed: false }).sub)
+      .toBe('paid $4,000.00 · overpaid $350.00');
+  });
+  test('a bank payment in flight, which the detail passes in, is said ahead of a balance or an overpayment', () => {
+    expect(readoutView({ proposal: booked, preview: null, shown: null, changed: false, inFlight: true }).sub)
+      .toBe('paid $1,900.00 · bank payment in flight');
+    expect(readoutView({ proposal: { ...booked, overpayment_cents: 35000 }, preview: null, shown: null, changed: false, inFlight: true }).sub)
+      .toBe('paid $1,900.00 · bank payment in flight');
+  });
+  test('a change that leaves the total where it was reads as untouched', () => {
+    const atOpen = { state: 'ready', total: 3650, gratuityTotal: 120 };
+    expect(readoutView({ proposal: booked, preview: atOpen, shown: atOpen, changed: true }))
+      .toMatchObject({ label: 'Total', now: '$3,650.00', sub: 'paid $1,900.00 · balance due $1,750.00', pending: false, button: 'Done' });
+  });
+  test('a landed figure: New total, old to new, the balance it becomes, the lines', () => {
+    const r = readoutView({ proposal: booked, preview: landed, shown: landed, changed: true });
+    expect(r).toMatchObject({
+      label: 'New total', old: '$3,650.00', now: '$3,800.00', sub: 'balance due becomes $1,900.00',
+      pricing: false, dim: false, pending: false, button: 'Confirm new total',
+    });
+    expect(r.lines[r.lines.length - 1]).toBe('Unlocked invoices will be rebuilt at the new pricing. Locked and manual invoices stay untouched.');
+  });
+  test('while the next figure loads, the last one stays, dimmed, under PRICING', () => {
+    expect(readoutView({ proposal: booked, preview: { state: 'loading' }, shown: landed, changed: true }))
+      .toMatchObject({ label: 'New total', now: '$3,800.00', sub: 'balance due becomes $1,900.00', pricing: true, dim: true, pending: false });
+  });
+  test('before any figure describes the change: three dots under PRICING, nothing dimmed', () => {
+    expect(readoutView({ proposal: booked, preview: { state: 'loading' }, shown: null, changed: true })).toEqual({
+      label: 'New total', old: '$3,650.00', now: PENDING_FIGURE, sub: `balance due becomes ${PENDING_FIGURE}`,
+      pricing: true, dim: false, pending: true, lines: [], button: 'Confirm new total',
+    });
+  });
+  test('a failed figure keeps the last one dimmed, with no PRICING', () => {
+    expect(readoutView({ proposal: booked, preview: { state: 'failed' }, shown: landed, changed: true }))
+      .toMatchObject({ now: '$3,800.00', pricing: false, dim: true, pending: false });
+  });
+  test('an unbooked row carries no balance line', () => {
+    expect(readoutView({ proposal: { ...booked, status: 'accepted' }, preview: null, shown: null, changed: false }).sub).toBeNull();
+  });
+  test('a bank payment in flight is said on an unbooked row too, as the detail says it on any row it marks in flight', () => {
+    expect(readoutView({ proposal: { ...booked, status: 'accepted', amount_paid: '0.00' }, preview: null, shown: null, changed: false, inFlight: true }).sub)
+      .toBe('paid $0.00 · bank payment in flight');
+  });
+});
+
+describe('was lines', () => {
+  const initial = { event_date: '2999-08-15', event_start_time: '7:00 PM', event_duration_hours: 4, guest_count: 140 };
+  test('nothing for a field that has not changed', () => {
+    for (const field of Object.keys(initial)) expect(wasLine(field, initial, initial, '2026-10-08')).toBeNull();
+  });
+  test('what a changed field held when the sheet opened', () => {
+    expect(wasLine('event_duration_hours', initial, { ...initial, event_duration_hours: 4.5 })).toBe('was 4 hr');
+    expect(wasLine('guest_count', initial, { ...initial, guest_count: 145 })).toBe('was 140');
+    expect(wasLine('event_date', initial, { ...initial, event_date: '2999-08-22' }, '2026-10-08')).toBe('was THU AUG 15 2999');
+    expect(wasLine('event_start_time', initial, { ...initial, event_start_time: '20:00' })).toBe('was 19:00');
+  });
+  test('the same start in another shape is not a change', () => {
+    expect(wasLine('event_start_time', initial, { ...initial, event_start_time: '19:00' })).toBeNull();
+  });
+  test('a stored value that cannot be read says nothing', () => {
+    expect(wasLine('event_start_time', { ...initial, event_start_time: 'later' }, { ...initial, event_start_time: '20:00' })).toBeNull();
+  });
+  test('the line under Start: what it was, once changed, then the setup', () => {
+    const p = { setup_time_display: '18:15', event_start_time: '7:00 PM' };
+    expect(startSubLine(p, initial, initial)).toBe('setup 45 min before');
+    expect(startSubLine(p, initial, { ...initial, event_start_time: '20:00' })).toBe('was 19:00 · setup 45 min before');
+    expect(startSubLine({}, initial, initial)).toBeNull();
   });
 });
 
