@@ -69,7 +69,8 @@ Ordered by how close each one is to actually costing money or a client.
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
-| 1 | Invoice line items do not add up to the invoice total | **yes, on any override'd proposal** |
+| 1 | Invoice line items do not add up: a discount prints as a CHARGE, a hidden adjustment prints, an override itemizes at catalog | **yes: 13 open invoices on upcoming events list the client's discount as a charge (26 invoices, 22 proposals, 10/08)** |
+| 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)** |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
@@ -83,7 +84,8 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | A concurrent payment links the wrong row to the invoice | yes, under concurrency |
 | 1 | Clearing a sub-$50 mandate orphans a bartender's gratuity | no (1 mandate, at exactly $50, archived) |
 | 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
-| 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25** |
+| 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25.** Open exposure 10/08: one surcharged proposal (854); the other 11 adjusted open ones carry discounts |
+| 1 | Proposals sent without a `sent_at` are invisible to the Money Board | yes, reporting only (29 rows, 8/25) |
 | 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one** |
 | 1 | An editor tab left open across an on-site settle writes the old hours back | rarely: a tab open across the settle; one extension ever (842) |
 | 1 | The on-site extension quotes the v4 formula whatever the client signed | yes on a hosted package; on the Core Reaction the package rate matches |
@@ -93,13 +95,17 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | The added-time rate a client signs to is not locked: a catalog rate change moves it for signed clients | no, until an extra-hour rate is changed |
 | 2 | The emailed compare link still lands on the old page | **yes — 9 of 13 groups never chose** |
 | 2 | The sign 409 still says "already been accepted" for an archived proposal | yes, from a tab open before the sweep |
-| 2 | The planner quotes pre-batched at a rate it does not bill | **yes** |
+| 2 | The planner quotes pre-batched at a rate it does not bill | no: the live rate is $2.00, same as the copy (10/08); bites on the first rate change |
 | 2 | The v1 planner under-quotes parking | **yes — v1 drafts still live** |
 | 2 | A client's line item renames itself on a no-op fold | yes |
 | 2 | The compare card jumps on the client's first tap | no (0 affected rows) |
 | 2 | The shopping list says to buy a syrup DRB is supplying | yes — **PARKED by Dallas** |
 | 2 | Signed documents do not say who is covered | yes — **blocked on the broker** |
 | 2 | A Lab syrup strips unrelated items off the shopping list (ginger takes the ginger beer) | no (0 plans have picked a Lab syrup) |
+| 3 | A signed-but-unpaid client keeps getting the unsigned-proposal drip, and Stop cannot reach it | yes, on any sign-then-abandon |
+| 3 | A staffer taken off a shift can still be texted its reminder and thank-you | yes, by a drop, swap or deny (only Remove is closed) |
+| 3 | Unassign suppresses a staffer's reminders, and a re-assign never brings them back | yes, on unassign then re-assign |
+| 3 | The desktop ShiftDrawer can notify twice, and a Deny can land on someone just approved | yes, on a retry or a race |
 | 3 | An unsubscribed lead can be resurrected by capitalisation | yes |
 | 3 | A campaign keeps mailing someone who unsubscribed mid-send | yes, on a long send |
 | 3 | CSV lead import loses rows and reports success | yes |
@@ -110,6 +116,9 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
+| 4 | The staff shift page's shopping-list card never renders | yes, for every staffer |
+| 4 | Cover swaps have no working admin path | one claim ever (request 529, still pending) |
+| 4 | The server accepts an over-fill, and nothing locks the shift | yes, under concurrency |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
 
@@ -222,7 +231,24 @@ claimed this needed re-deriving because the citation was off; it was off by one 
 
 ### Invoice line items do not add up to the invoice total
 
-`generateLineItemsFromProposal` is override-blind: it always itemizes from catalog, so any
+**The live half, measured 2026-10-08: a discount prints as a charge.** The adjustments loop in
+`generateLineItemsFromProposal` (`invoiceLineItems.js`) pushes `toCents(adj.amount)` for every
+adjustment, while `pricingEngine` negates `type === 'discount'`, and it ignores `visible`, which
+the client proposal page honors (`ProposalView.js` skips a hidden adjustment and negates a
+discount). So a Thumbtack proposal at $350 with a $100 "Courtesy" discount gets invoice lines
+reading $350 plus "Courtesy $100.00", summing to $450 on a $250 contract, and a hidden "Budget
+Match Discount" the client never saw on the proposal prints on the invoice as a charge. The
+client invoice page renders every line (`InvoicePage.js`, the line-items table). Prod, read-only:
+26 non-void invoices across 22 proposals, 13 of them open on 13 upcoming events, and the
+Thumbtack Courtesy discount is routine, so every new one adds to it. It also makes the
+deposit-to-full upgrade and the full-payment backfill keep old lines on a discounted proposal
+(`generated_sum_mismatch`). Filed 2026-08-28 below the divider as "dev has 0 adjustments";
+promoted here 2026-10-08. One owner decision: how a hidden adjustment and an override present
+on an invoice (the proposal page shows catalog lines that do not sum to its total in both cases).
+Existing open invoices need their lines regenerated after the fix; paid, locked ones are a
+separate call.
+
+**The original half.** `generateLineItemsFromProposal` is also override-blind: it always itemizes from catalog, so any
 proposal whose `total_price_override` differs from catalog gets an invoice with a correct total
 sitting over line items that do not sum to it (Shiralee INV-0120: $450 of lines on a $270
 invoice). Verified 2026-08-23: `invoiceLineItems.js` contains no `total_price_override` reference.
@@ -361,49 +387,25 @@ beside `storedToInputCount` in `addonQuantity.js`, called by the two pre-fold wr
 fourth local patch is how the definitions drifted apart in the first place. The cancel-line
 write-back (`lineItemCancel.js:518`) is the same family and closes with the same inverse.
 
-### Paying in full on a deposit-terms proposal strands the remainder off the invoice ledger
+### The full-payment backfill never ran: paid-in-full receipts still read "Deposit $100"
 
-Found 2026-08-25 chasing Meg Henke (proposal 770). She is genuinely paid: Stripe captured
-$425, `proposals.amount_paid` = 425, status `balance_paid`. But her only invoice is the
-`Deposit` row at $100 due / $100 paid, so $325 of collected money has no invoice.
+The code fix shipped 2026-08-28 (lane full-pay-invoice, `a784a578`): a full payment on deposit
+terms now upgrades the open Deposit invoice to Full Payment at all three payment entrances. What
+is still owed is the repair of the rows minted before it. **Checked 2026-10-08: the apply never
+ran.** INV-0329 and INV-0336, the two the runbook names, still read Deposit $100 paid, and a rough
+shape count (not the script's own dry run) still finds 26 paid Deposit rows sitting under a full payment (ids 442 to 774). The
+client portal's Receipts tab documents each of those payments as a $100 deposit, and a refund on
+one walks only the linked $100 at the invoice level.
 
-Mechanism. `createInvoiceOnSend` mints the label from `payment_type` AT SEND TIME, so a
-deposit-terms send gets a `Deposit` invoice fixed at `deposit_amount`. When the client then
-picks pay-in-full at checkout, `stripeCreateIntent.js:222` flips `proposals.payment_type` to
-`'full'` but never re-shapes the already-minted invoice. The webhook credits the proposal
-correctly, then the label-blind fallback (`paymentIntentSucceeded.js:~600`) links the whole
-capture onto the only open invoice; `linkPaymentToInvoice` caps the credit at remaining due
-and drops the rest. Nothing mints a row for the remainder either, because
-`createBalanceInvoice` is gated on `paymentType === 'deposit'`.
-
-The cap is CORRECT and must stay — it is the seam-sweep M1/M2/L2 guard (`a3e2236b`,
-2026-07-02) that stops a stale intent overfilling an invoice. Before it, this same flow
-overfilled the Deposit row ($100 due / $425 paid), which kept the ledger TOTAL right by
-accident. The cap turned a cosmetic overfill into a real gap. Fix upstream, not at the cap:
-on the deposit→full upgrade, either relabel/re-amount the open Deposit invoice to
-`Full Payment` at `total_price − external_paid`, or drop the `paymentType === 'deposit'`
-gate so a `Balance` invoice mints for the remainder.
-
-Blast radius: the 2026-08-25 snapshot counted 13 proposals since 2026-07-02 (~$4,605); the
-backfill's shape query reaches back further and finds 26 by shape, 25 to apply (2026-08-28
-dry run), and that query supersedes this list. The named 13: 770 Meg Henke $325 · 767 Karen Habenicht $200 · 713 Anthony Holter $250 · 675 Angelo
-Corso $250 · 674 Raizl Lifshitz $300 · 666 Jelena Pesoli $600 · 660 Laura Millies $300 ·
-659 Jason Fowler $350 · 635 Andrea Ashford $300 · 633 Dora Travaglio $380 · 625 Allyson
-Gietl $350 · 623 William Buchar $750 · 573 Aaliyah Gaston $250. Needs a backfill alongside
-the code fix. (The OTHER ~18 proposals with a proposal-vs-ledger gap are the
-`external_paid` CC-transfer cohort — documented, different, leave alone.)
-
-NOT affected, verified in code: payroll (the fee numerator's
-`GREATEST(0, pp.amount - links.linked_cents)` term for `deposit/balance/full` explicitly
-recovers the unlinked remainder, so gratuity fee-netting is right); client-portal outstanding
-balance (`clientPortal.js:56,130` read only `sent`/`partially_paid`, and these Deposit rows
-are `paid`, so clients correctly show $0 owed); proposal-level money, which stays
-authoritative. What IS wrong: the invoice/receipt record documents a $425 payment as a $100
-deposit, and a refund on any of the 13 walks only the linked $100 at the invoice level.
-
-Sentry has been reporting this since July — `DRBARTENDER-SERVER-1E`
-`invoice_link_overflow_capped`, 6 events in 90d, including 16:44:36 on 2026-08-25 which is
-Meg's exact payment. Do not resolve that issue as noise; it is the tripwire for this bug.
+The tool is built and reviewed: `server/scripts/backfillFullPaymentInvoices.js`, dry run by
+default, `--apply` only with an exact `--expect` list built from a FRESH dry run, its own runbook
+in `docs/superpowers/plans/2026-08-28-full-pay-invoice.md`, and the verification walk in
+`docs/walkthroughs-owed.md`. **Claude cannot point it at prod from this box** (the Neon
+connection-string call is blocked), so Dallas runs it with the prod URL, or it gets ported to a
+guarded DO block. Run it AFTER the invoice line-item generator fix above: the script keeps old lines on a
+discounted proposal (`generated_sum_mismatch`), so running first freezes the wrong-sign lines.
+Sentry `DRBARTENDER-SERVER-1E` (`invoice_link_overflow_capped`) is the tripwire for this bug; do not
+resolve it as noise.
 
 ### The webhook trusts its own math over what Stripe actually captured
 
@@ -1065,14 +1067,6 @@ here by default.
   2026-04-25 to 2026-09-19). The phone event detail states the total on a "Paid to date" row, as
   the desktop panel's figures imply. The data itself is unreconciled. ma-e2 Task 7 re-review,
   read-only prod query.
-- **Invoice line items carry a discount with the wrong sign.** `generateLineItemsFromProposal`
-  (`invoiceLineItems.js`, adjustments loop) pushes `toCents(adj.amount)` for every adjustment,
-  while `pricingEngine` negates `type === 'discount'`. A $50 goodwill discount renders as a +$50
-  line on every invoice built from the snapshot, and the lines sum to total_price + 2x the
-  discount, so the deposit-to-full upgrade and the backfill both refuse to regenerate lines on a
-  discounted proposal (`generated_sum_mismatch`, old lines kept). Dev has 0 adjustments today.
-  Fix in the generator (sign by type), then check the invoice page renders a negative line.
-  Found by the 2026-08-28 lane 2 verifier.
 - **A full or deposit capture on a `confirmed` row leaves a phantom outstanding balance.** Both
   webhook credit UPDATEs are `WHERE status NOT IN ('confirmed','completed','archived')`, so a
   proposal an admin advanced to `confirmed` (allowed from `accepted`, `lifecycle.js`) with its
