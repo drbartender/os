@@ -145,6 +145,14 @@ server/utils/smsDeliveryStatus.js
 server/routes/messages.js
 server/utils/staffText.js
 
+# Inbox (spec 2026-10-06): it texts people from three numbers, enforces the
+# opt-out on every line, and decides who is waiting on DRB; the route file and
+# every module the rules, the readers and the text route live in. The
+# matcher's '*' never crosses '/', so the ** below matches the files directly
+# in server/utils/inbox/ and nothing deeper: the folder stays flat.
+server/routes/admin/inbox.js
+server/utils/inbox/**
+
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes
 # the pre-existing Zul-bridge gap (voice.js/telegram.js/utils/sms.js holds

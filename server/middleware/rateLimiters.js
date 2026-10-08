@@ -280,6 +280,17 @@ const webauthnLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === 'test',
 });
 
+// The Inbox text route's own cap (spec 2026-10-06, section 8): 20 texts a
+// minute per user, beside adminWriteLimiter. Its own bucket, keyed by user id.
+const inboxTextLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => (req.user && req.user.id ? `inbox-text-${req.user.id}` : req.ip),
+  message: { error: 'Too many texts in a minute. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -302,4 +313,5 @@ module.exports = {
   emailChangeConfirmLimiter,
   serviceExtensionLimiter,
   webauthnLimiter,
+  inboxTextLimiter,
 };

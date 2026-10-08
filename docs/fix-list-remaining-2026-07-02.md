@@ -115,10 +115,13 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
+| 3 | Automated texts never check the per-phone opt-out record | not today (the two STOPs on prod from numbers with no client row are both staffers, 10/06); it opens with the first STOP to a 224 line from a number no client or staffer has yet |
+| 3 | A text Twilio reports undeliverable never marks the phone bad | yes, once a client's number goes dead (0 clients flagged on prod, 10/06) |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 4 | The staff shift page's shopping-list card never renders | yes, for every staffer |
 | 4 | Cover swaps have no working admin path | one claim ever (request 529, still pending) |
 | 4 | The server accepts an over-fill, and nothing locks the shift | yes, under concurrency |
+| 4 | The shift approval and auto-assign texts write no `sms_messages` row, so a CONFIRM after one can land in Inbox | rarely: a CONFIRM or CANT answering one of those texts when a human text came before it (errs safe: no shift is released) |
 | 5 | `applyPackageLineup2026` cannot run — two gates open | blocks the run |
 | 5 | Leads 322-327 still read `failed`; backfill to `sent` after an inbox check | no |
 
@@ -937,6 +940,36 @@ recipient through `textability({ kind: 'staff', ... })` before the send and reco
 a refusal (it changes the characterization suite and the spec's "behavior does not change"). Found by
 the lane's security and consistency reviews.
 
+### Automated texts never check the per-phone opt-out record
+
+The Inbox lanes (spec 2026-10-06) record an SMS opt-out once per phone in `sms_optouts`
+(`server/utils/smsOptOut.js`): a STOP-set word to any DRB line from any sender, and Twilio error 21610
+at send or in the status callback. Every human send (the Messages reply and Inbox) refuses an active
+row on every line through `textability()`. Automated sends do not look: `shouldSendImmediate`
+(`server/utils/messageSuppression.js`) and the scheduled SMS handlers read
+`communication_preferences.sms_enabled` and `phone_status` only. So a phone whose opt-out lives only
+in `sms_optouts` keeps getting the scheduler's texts. The case that bites: a STOP to a 224 line from a
+number no client or staffer had yet, which later becomes a client, is still texted from the 888, a
+separate Twilio opt-out domain that never saw the STOP. Fix shape: one `activeOptOut(phone)` lookup in
+`shouldSendImmediate` and the SMS handlers, the rule `textability()` already applies. Out of Inbox's
+scope by spec section 1; spec section 13 files it here. Prod, read-only, 2026-10-06: the only two STOPs
+from numbers with no client row are both staffers.
+
+### A text Twilio reports undeliverable never marks the phone bad
+
+`clients.phone_status = 'bad'` is what stops DRB texting a dead number: `shouldSendImmediate` and the
+scheduled SMS handlers suppress on it, and Inbox and the Messages reply refuse it ("This number can't
+receive texts"). Nothing sets it. `markPhoneStatusFromSmsResult` (`server/utils/smsDeliveryStatus.js`)
+was written for a status callback and has no caller, and the callback lane sms-lines adds
+(`POST /api/sms/status`) only flips the row to `failed` (or keeps the failure in `sms_status_orphans`)
+and records a 21610, on purpose (spec 2026-10-06 section 9). So a client whose number is disconnected
+keeps getting automated texts that fail one by one, and Inbox keeps offering Send. Fix shape: from the
+status callback, flip `phone_status` on the permanent codes only (21211, 21614, 30005, 30006; never a
+transient 30003 or 30008, which `markPhoneStatusFromSmsResult` does not tell apart today), for the
+client whose phone matches the row's recipient, and clear it when the client's phone changes (the sign
+route already clears it on a re-confirmed phone, `publicToken.js`). Spec section 13 files it here.
+Prod, read-only, 2026-10-06: 0 clients carry the flag.
+
 ## 4. Staff-facing
 
 ### The staffer's next-shift card and their CANT/CONFIRM text can name different shifts
@@ -993,6 +1026,17 @@ last slot in between. The server logs `staffing_overfill`, the roster reads 2/1,
 counts both. The desktop drawer has no re-read at all. Fix shape: a conditional assign on the
 server (lock the shift row, re-check that the role has room), in `shifts.approval.js`, a sensitive
 file. ma-e2 second opinion (codex), verified.
+
+### The shift approval and auto-assign texts write no sms_messages row
+
+The approval and assignment notices (`server/routes/shifts.approval.js:370` and `:590`,
+`server/utils/autoAssign.js:402`) call `sendSMS` directly, so no `sms_messages` row records them.
+Decision 17 (lane sms-lines) runs CONFIRM and CANT as shift commands only when DRB's latest text to
+that staffer was automated, and it reads `sms_messages` to know: after one of these notices it still
+sees the human text that came before, so the staffer's CONFIRM or CANT becomes a conversation that
+lands in Inbox instead of acting on the shift. Errs safe: no shift is released or confirmed by
+mistake, but a CONFIRM can go unanswered until someone reads it. Fix shape: send the three through
+`sendAndLogSms`, which writes the row with `sender_id` NULL (automated). Spec amendment 15.
 
 ---
 
@@ -1754,6 +1798,12 @@ the accented spelling) or the two spellings stop matching each other.
   first real campaign blast; campaigns share the allowance with transactional sends, so raise
   `RESEND_DAILY_CAP` on Render when the plan changes or the Overview budget reads false.
 - **The marketing compose canvas** (block palette / Look / Send test) is deferred pending Dallas's go.
+- **The client's signed-confirmation email logs as `'other'`.** `server/routes/proposals/publicToken.js:598`
+  sends `proposalSignedConfirmation` through `sendEmail` with no `meta`, so `message_log` records it with
+  `message_type 'other'` against the client's newest proposal, the same gap lane send-attribution closed
+  for the three untyped notices. It is client-triggered and can never close an Inbox item, so only the
+  ledger's labels are wrong. Fix shape: pass `meta: { proposalId, clientId, messageType:
+  'proposal_signed_confirmation' }`. Spec amendment 15.
 
 ---
 
@@ -2341,6 +2391,13 @@ what it costs.
   `GRATUITY_FLOOR_RATE` (`pricingEngine.js:236`). Lift the client to a shared constant.
 - **Mobile remediation batches 5-8** (tablet band 768-1024, 4 standalone Highs, post-C1 residual,
   Med/Low cleanup) are genuinely unstarted. C1 is done.
+- **Admin links styled as `.btn` render in IM Fell.** The public `.btn` rule (`client/src/index.css:373`)
+  sets `font-family: var(--font-body)`, which is IM Fell English, and the admin reset only covers
+  `<button>` (`html[data-app="admin-os"] button { font: inherit }`, `:12116`), so an `<a>` or `<Link>`
+  with `.btn` keeps the public serif inside the admin. Live at `ClientDetail.js` (the mailto and tel
+  links), `PayPanel.js` (the two pay links) and `PlansDrawer.js` ("Full index"). Inbox scopes its own fix
+  (`.ib-pane a.btn`); the real fix is one admin rule, `html[data-app="admin-os"] a.btn { font-family:
+  var(--font-ui); }`. Found by lane inbox-page while proving its screens, 2026-10-06 (spec amendment 15).
 
 ---
 

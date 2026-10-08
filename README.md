@@ -214,6 +214,7 @@ dr-bartender/
 │   │   │   ├── payrollTax.js   # /payroll/contractors/:id/payment-history + /payroll/tax-totals + /payroll/tax-totals/:id/exclude — imported-ledger blends + 1099 year totals (read-only + one boolean PATCH)
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
 │   │   │   ├── leadCalls.js    # /lead-call-attention — lead-call bridge FAULT rows only (failed / misconfigured chains on still-new TT leads, 7-day window) for the overview Sales tab; missed + after-hours are deliberate non-items (2026-07-20)
+│   │   │   ├── inbox.js        # /inbox (spec 2026-10-06): list, item (404 with moved_to), seen, actions + Undo, text (adminWriteLimiter + 20 a minute, send_id reserved in inbox_sends); routes only, the rules live in utils/inbox/
 │   │   │   └── ccImport/       # Live CC re-trigger endpoints (v1 import/review admin UI removed 2026-07-07)
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
@@ -282,7 +283,7 @@ dr-bartender/
 │   │   ├── shifts.handlers.js  # Shift-lifecycle mutation handlers (update, cancel-or-unassign) extracted from shifts.js
 │   │   ├── staffShiftActions.js # Drop / Cover shift marketplace (drop, request-cover, claim-cover, emergency-drop, withdraw) under /api/shifts
 │   │   ├── adminCoverSwaps.js  # Admin cover-swap approval endpoints (mounted under /api/admin)
-│   │   ├── sms.js              # Twilio inbound-SMS webhook (line-aware), the message status callback (POST /status), and the admin thread API
+│   │   ├── sms.js              # Twilio inbound-SMS webhook (line-aware), the message status callback (POST /status), and the admin thread API; the status callback and the Messages reply clear the Inbox cache, and a first reply from a 224 line takes the Inbox first-text prefix
 │   │   ├── smsOptIn.js         # POST /api/sms/opt-in — public standalone SMS consent form (the /sms page); checkbox OPTIONAL (Twilio forced-consent rule), number required only when ticked; ticked records consent via utils/smsConsent.js, unticked upserts email_leads only and never touches clients
 │   │   ├── telegram.js         # Zul VA-calling OUTBOUND trigger: POST /api/telegram/:secret (secret path + secret_token header + user_id allowlist), NANP validation, confirm-before-dial (YES), claim-then-call bridge
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
@@ -426,6 +427,36 @@ dr-bartender/
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
 │   │   ├── googlePlaces.js     # Google Places venue-search proxy
 │   │   ├── drinkPlanExtras.js  # Shared pay-now extras amount helper (computeExtrasBreakdown; mirrors create-intent math)
+│   │   ├── inbox/              # Inbox (spec 2026-10-06): one list of everyone waiting on DRB, DERIVED live from the source tables; flat on purpose (the sensitive-path glob server/utils/inbox/** never crosses '/')
+│   │   │   ├── constants.js    # The history floor INBOX_HISTORY_START (a FIXED instant, never moved forward), the windows, the reason labels, OPT_WORDS; code, not env
+│   │   │   ├── personKey.js    # c-/s-/p-/t- person keys: an identity, never an address
+│   │   │   ├── people.js       # Who is who (spec 5.2): our own numbers, clients newest first, send-eligible staff, Thumbtack proxy leads; resolved at read time
+│   │   │   ├── aliases.js      # Moved keys: taps stored under a person's old p-, s- or t- key fold onto their current key, unless that key still has events of its own; reads match by subject_ref
+│   │   │   ├── readSms.js      # SMS headers and details: the line from metadata.to, the seven opt words as system lines, relay notices and the words a quoted one carries, shift commands skipped by metadata.outcome, a failure the status callback kept in sms_status_orphans, Twilio failure reasons
+│   │   │   ├── readThumbtack.js # Thumbtack Customer and Business messages, keyed through thumbtack_leads.negotiation_id
+│   │   │   ├── readMessageLog.js # message_log sends (type, sent_by; a bounce makes the send failed)
+│   │   │   ├── readProposalSends.js # proposal_activity_log sends (sent, resent, group_sent) with the actor's role
+│   │   │   ├── readCalls.js    # Connected lead-call and consult-call bridges, with who answered
+│   │   │   ├── details.js      # Pass 2: bodies, media and subjects, only for people waiting, snoozed or recently handled
+│   │   │   ├── normalize.js    # One event stream: the floor, group sends collapsed, SMS and ledger twins linked (a send that threw pairs with its failed ledger row), proposal deliveries absorbed, relay notices (one that quotes their words is their Thumbtack message), the auto first reply
+│   │   │   ├── classify.js     # What counts as them writing and as a reply (spec 5.3, 5.4), the need line, channel tags
+│   │   │   ├── rules.js        # computeInbox, PURE (spec 5.5, 5.6): anchor, unanswered, promises, sticky needs-reply, snooze, claim, reopen, event happened
+│   │   │   ├── reasons.js      # The Recently handled reason table (spec 4.5)
+│   │   │   ├── subjects.js     # What the AI read is offered, with the slice lane inbox-ai redacts
+│   │   │   ├── thread.js       # An opened item's messages and system lines, in Chicago time
+│   │   │   ├── contextFormat.js # The context card's four shapes (client or lead, staff, Thumbtack lead, unknown), PURE
+│   │   │   ├── context.js      # Loads the context card
+│   │   │   ├── payload.js      # The snake_case list and item bodies
+│   │   │   ├── replyRules.js   # Decision 29's recipient (the number they last texted from), the rows lane sms-lines' lastHumanLineFromRows reads, their line, PURE
+│   │   │   ├── lastHumanRows.js # A client's newest human-involved text over their whole history, the rows the Messages reply and the reply area both hand lastHumanLineFromRows
+│   │   │   ├── reply.js        # The reply area and the text target: who can be texted, which lines, the opt-out, the per-line first-text prefix
+│   │   │   ├── firstText.js    # "Dr. Bartender: " on the first text from a 224 line, shared with the Messages reply
+│   │   │   ├── feeds.js        # Feed health: the newest Thumbtack message and the newest text in on each line
+│   │   │   ├── aiStatus.js     # The AI read status on the feed line (a placeholder answering off until lane inbox-ai replaces it)
+│   │   │   ├── cache.js        # The 30-second cache the list, the item and the AI read share (the badge accepts a snapshot up to 2 minutes old); every write clears it
+│   │   │   ├── engine.js       # Two passes (light headers since the floor, then full rows), getInbox, getItem (moved_to), getWaitingCount (2 s, else null), getReadSubjects (cached; real names or null; never the legal hold)
+│   │   │   ├── actions.js      # On it, Let go, Done, Snooze (1 minute to 8 days), Wake, Reopen, Undo (own tap, 60 s) and the deliberate open
+│   │   │   └── textSend.js     # The Inbox text: the send_id reserved in inbox_sends before Twilio, the checks, one send, the stored answer
 │   │   ├── invoiceHelpers.js   # FACADE re-exporting the invoice helper siblings below (public interface unchanged)
 │   │   ├── invoiceShared.js    # Shared invoice internals (toCents, pool fallback)
 │   │   ├── invoiceLineItems.js # Line-item building/writing (generateLineItemsFromProposal, writeLineItems)
@@ -735,6 +766,13 @@ dr-bartender/
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut). **Manual**: nothing runs it automatically, and the only `SessionStart` hook is `scripts/show-location.js`. Run it deliberately when opening a session with lanes outstanding, and in the push sweep |
 
 ## Key Features
+
+### Inbox (spec 2026-10-06)
+- **One list of everyone waiting on DRB**, whichever way they wrote: Thumbtack, a text to the 888, the 1922 or the 0082, or a staff text. One row per person, longest wait first, red at 24 hours, with one chip at most: On it, a promised follow-up, Reopened, or Not read yet. Snoozed people sit below with Wake; Recently handled (7 days) says how each one closed, with Reopen.
+- **Derived, never copied.** `server/utils/inbox/` reads the source tables live (texts, Thumbtack messages, the message ledger, proposal sends, bridge calls) and stores only what no source holds: the taps (`inbox_actions`, append-only), who opened what (`inbox_seen`), the AI read (`inbox_reads`) and the text reservations (`inbox_sends`). A person waits until a human replies on any channel, someone taps Done, or the AI read says no reply is needed. A reply that only promises a follow-up keeps them waiting; a picture, an empty text or a Thumbtack message the OS never received is never closed by the AI (a relay notice that quotes the customer's words counts as their Thumbtack message and the AI may read it; only an unquoted, unmatched notice is "never received"); once a booked event has happened, what came before it closes, unless a Reopen or a follow-up we promised on or after the event day keeps it open. Nothing before the fixed history floor (`INBOX_HISTORY_START` in `server/utils/inbox/constants.js`) opens an item, and the floor never moves.
+- **Taps**: On it (a 4-hour claim, with Take over), Done, Snooze (1 minute to 8 days), Wake and Reopen, each with a 60-second Undo for the person who tapped. Opening an item on purpose marks it seen and, for a client, marks their texts read. A tap made while someone was an unknown number follows them when the number becomes a client.
+- **Replying**: to the number they last texted from, from the line of the latest human-involved text (the one rule the Messages reply also uses; staff and Thumbtack proxy numbers get the 888 only), and never to a number that has not texted DRB. One opt-out rule for every line (409), a bad number refused (422), the "Dr. Bartender: " introduction on a first text from a 224 line (on the Messages reply too), and a client-generated `send_id` reserved before Twilio is called, so a double tap or a retry texts once.
+- **The badge** is `badge-counts.inbox_waiting`: snoozed people are not counted, and a count that fails or takes over 2 seconds is null and shows "!". The list, the item and the AI read share a 30-second cache that every write clears; the badge accepts a snapshot up to 2 minutes old, so an open tab does not recompute the inbox on every poll.
 
 ### Phone Admin PWA (spec 2026-08-13, passkey unlock live 2026-08-16)
 - The admin host is installable: `client/public/admin-manifest.json` ("DrB OS", `start_url` `/events`, standalone, portrait) plus metas injected at runtime behind the admin host gate by `client/src/utils/installAdminPwaMeta.js`. More renders an explicit "Install app" row when the browser offers one and the app is not already standalone. The staff PWA is an untouched sibling with its own manifest, injector, and service worker

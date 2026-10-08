@@ -40,6 +40,13 @@ const scrubUrl = (u) => {
     // The listen token IS the auth on a route that streams a client's recorded
     // voice, so it must never come to rest in telemetry (spec 2026-08-10).
     .replace(/\/api\/voice\/vm\/[^/?#]+/g, '/api/voice/vm/[redacted]')
+    // An Inbox person key for an unknown number is p- plus the last ten digits
+    // of the phone (spec 2026-10-06), so every /api/admin/inbox/p-... URL
+    // carries a phone number. Not a token, but it must never come to rest in
+    // telemetry either. Case-insensitive because Express matches paths that
+    // way, so /INBOX/p-... still reaches the route. c- and s- keys are row ids,
+    // not phones, and stay readable.
+    .replace(/\/inbox\/p-\d+/gi, '/inbox/p-[redacted]')
     .replace(/[?&]token=[^&]+/g, (m) => m[0] + 'token=[redacted]')
     // Twilio Account SID. Not a public token: it is the basic-auth USERNAME on
     // the media fetch, so it is half a credential pair, and it rides in the

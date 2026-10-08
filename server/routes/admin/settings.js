@@ -9,6 +9,10 @@ const { getStripPayload } = require('../../utils/presenceStore');
 // THE shift-visibility predicate, shared with GET /api/shifts/unstaffed-upcoming.
 const { shiftNotFinishedSql } = require('../../utils/shiftEndInstant');
 const { openSlotsSql } = require('../../utils/positionsNeeded');
+// Inbox waiting count (spec 2026-10-06 section 8). Never throws: a failure, or
+// a computation past BADGE_TIMEOUT_MS, is null and the badge shows "!".
+const { getWaitingCount } = require('../../utils/inbox/engine');
+const { BADGE_TIMEOUT_MS } = require('../../utils/inbox/constants');
 
 const router = express.Router();
 
@@ -127,6 +131,10 @@ router.post('/backfill-geocodes', auth, adminOnly, asyncHandler(async (req, res)
  *  exceptions are new_applications and pending_reviews: the Hiring and Reviews
  *  surfaces are adminOnly, so both counts are zeroed for managers below. */
 router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Started first and awaited last, so the Inbox count runs beside the counts
+  // query instead of after it. It never rejects, so it can never fail this
+  // route or leave an unhandled rejection behind if the query below throws.
+  const inboxWaiting = getWaitingCount({ timeoutMs: BADGE_TIMEOUT_MS });
   const result = await pool.query(`
     SELECT
       (SELECT COUNT(*) FROM proposals WHERE status IN ('sent', 'viewed', 'modified'))::int AS pending_proposals,
@@ -184,6 +192,7 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
     console.warn('[badge-counts] presence block failed:', err.message);
     counts.presence = null;
   }
+  counts.inbox_waiting = await inboxWaiting;
   res.json(counts);
 }));
 

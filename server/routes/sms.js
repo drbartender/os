@@ -18,6 +18,12 @@ const {
   recordOptOut, textability, isTwilioOptOutError, optedOutMessage, BAD_NUMBER_MESSAGE,
 } = require('../utils/smsOptOut');
 const { lineKeyForNumber, defaultLine, lastHumanLineFromRows } = require('../utils/smsLines');
+// Inbox (spec 2026-10-06, section 8 and amendment 7): every write here clears
+// the engine's 30-second cache, and a reply that is the first text from a 224
+// line to a number starts "Dr. Bartender: ", the rule the Inbox composer shows.
+const inboxCache = require('../utils/inbox/cache');
+const { withFirstTextPrefix } = require('../utils/inbox/firstText');
+const { lastHumanRowsForClient } = require('../utils/inbox/lastHumanRows');
 const { FAILED_DELIVERY_STATES } = require('../utils/smsDeliveryStatus');
 
 const router = express.Router();
@@ -187,6 +193,7 @@ router.post('/status', statusLimiter, async (req, res) => {
     // below can never skip it.
     if (code === '21610') {
       await recordOptOut({ phone: to, source: 'twilio_21610', line: lineKeyForNumber(from) });
+      inboxCache.invalidate();
     }
     if (sid && FAILED_DELIVERY_STATES.has(status)) {
       const errorText = `Twilio ${code || 'error'} (${status})`;
@@ -213,6 +220,7 @@ router.post('/status', statusLimiter, async (req, res) => {
         // whichever side writes second sees the other's write.
         if (orphan.rowCount > 0) await flip();
       }
+      inboxCache.invalidate(); // a reply that failed re-opens its item (spec 5.4)
     }
   } catch (err) {
     if (process.env.SENTRY_DSN_SERVER) {
@@ -286,19 +294,10 @@ router.get('/conversations/:clientId', auth, requireAdminOrManager, asyncHandler
 // The line of the most recent human-involved text with this client (spec 5.8,
 // decision 9), by the one rule Inbox also uses: lastHumanLineFromRows in
 // smsLines.js (their texts, a relay text as their 888 text, our human replies
-// that did not fail). The WHERE clause mirrors that rule only so the newest
-// candidate is the one row fetched; the function still decides.
+// that did not fail), over the client's whole history as lastHumanRows.js
+// reads it, the rows Inbox's reply area reads too.
 async function lastHumanLineForClient(clientId) {
-  const r = await pool.query(
-    `SELECT id, direction, sender_id, status, metadata, created_at
-       FROM sms_messages
-      WHERE client_id = $1
-        AND (direction = 'inbound' OR (sender_id IS NOT NULL AND status IS DISTINCT FROM 'failed'))
-      ORDER BY created_at DESC NULLS LAST, id DESC
-      LIMIT 1`,
-    [clientId]
-  );
-  return lastHumanLineFromRows(r.rows);
+  return lastHumanLineFromRows(await lastHumanRowsForClient(clientId, pool));
 }
 
 // The reply's length cap, in the group send's own words (POST /api/messages/send).
@@ -374,6 +373,8 @@ router.post('/conversations/:clientId/reply', auth, requireAdminOrManager, admin
     isProxy: Boolean(await findThumbtackProxyLead(to)),
   });
 
+  const text = await withFirstTextPrefix({ body, line, to });
+
   let twilioSid = null;
   let status = 'sent';
   let errorMessage = null;
@@ -381,7 +382,7 @@ router.post('/conversations/:clientId/reply', auth, requireAdminOrManager, admin
   let optedOutAtSend = false;
   try {
     const sent = await sendSMS({
-      to, body, from: line, statusCallback: smsStatusCallbackUrl(),
+      to, body: text, from: line, statusCallback: smsStatusCallbackUrl(),
       meta: { clientId, sentBy: req.user.id },
     });
     twilioSid = sent && sent.sid ? sent.sid : null;
@@ -402,7 +403,7 @@ router.post('/conversations/:clientId/reply', auth, requireAdminOrManager, admin
          (direction, client_id, recipient_phone, recipient_name, body, message_type, status, twilio_sid, error_message, sender_id, metadata)
        VALUES ('outbound', $1, $2, $3, $4, 'general', $5, $6, $7, $8, $9)
        RETURNING id, direction, body, status, twilio_sid, read_at, created_at`,
-      [clientId, to, client.name || null, body, status, twilioSid, errorMessage, req.user.id,
+      [clientId, to, client.name || null, text, status, twilioSid, errorMessage, req.user.id,
         JSON.stringify({ line: lineKeyForNumber(fromNumber) || line })]
     );
   } catch (err) {
@@ -430,6 +431,8 @@ router.post('/conversations/:clientId/reply', auth, requireAdminOrManager, admin
       reportReplyStepFailed('could not fold an early failure callback into the row', clientId, err, 'warning');
     }
   }
+
+  inboxCache.invalidate();
 
   // Twilio refused with 21610: sendSMS has already written sms_optouts, and the
   // failed row above keeps the attempt in the thread.

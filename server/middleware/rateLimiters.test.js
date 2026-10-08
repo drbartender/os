@@ -8,7 +8,7 @@ const express = require('express');
 // exports: signLimiter for the generic "over-max → 429 + configured envelope"
 // path, and adminWriteLimiter for the per-user bucket-keying guarantee. Both
 // have small maxes so the test hits max+1 with no timer waits.
-const { signLimiter, adminWriteLimiter, webauthnLimiter } = require('./rateLimiters');
+const { signLimiter, adminWriteLimiter, webauthnLimiter, inboxTextLimiter } = require('./rateLimiters');
 
 let server, baseUrl;
 
@@ -34,6 +34,7 @@ before(async () => {
   app.use((req, res, next) => { const uid = req.headers['x-test-user']; if (uid) req.user = { id: uid }; next(); });
   app.get('/admin', adminWriteLimiter, (req, res) => res.json({ ok: true }));
   app.get('/webauthn', webauthnLimiter, (req, res) => res.json({ ok: true }));
+  app.get('/inbox-text', inboxTextLimiter, (req, res) => res.json({ ok: true }));
   server = app.listen(0);
   await new Promise((r) => server.on('listening', r));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -92,4 +93,16 @@ test('webauthnLimiter: 30 per IP with the unlock envelope, and NODE_ENV=test ski
     if (prev === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = prev;
   }
+});
+
+test('inboxTextLimiter: 20 texts a minute per user, in its own bucket, with its own envelope', async () => {
+  for (let i = 0; i < 20; i++) {
+    const r = await hit('/inbox-text', { 'x-test-user': 'C' });
+    assert.equal(r.status, 200, `user C text ${i + 1} of 20 should pass, got ${r.status}`);
+  }
+  const over = await hit('/inbox-text', { 'x-test-user': 'C' });
+  assert.equal(over.status, 429, 'the 21st text in a minute trips it');
+  assert.deepEqual(JSON.parse(over.body), { error: 'Too many texts in a minute. Please wait a moment.' });
+  assert.equal((await hit('/inbox-text', { 'x-test-user': 'D' })).status, 200, 'another user is unaffected');
+  assert.equal((await hit('/admin', { 'x-test-user': 'C' })).status, 200, 'a bucket of its own, apart from adminWriteLimiter');
 });

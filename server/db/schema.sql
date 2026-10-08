@@ -5310,3 +5310,86 @@ CREATE TABLE IF NOT EXISTS sms_status_orphans (
   error_message TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ─── Inbox (spec docs/superpowers/specs/2026-10-06-inbox-design.md, section 7) ───
+-- Inbox is DERIVED: it reads thumbtack_messages, sms_messages, message_log,
+-- proposal_activity_log and the two call tables live and copies none of them.
+-- It stores only what no source table holds: the human taps (inbox_actions,
+-- append-only; Undo stamps undone_at and nothing is deleted), who deliberately
+-- opened what (inbox_seen, one upserted row per person), and the AI read
+-- (inbox_reads, one row per (kind, subject_ref), written by the read job).
+-- person_key is the rules' identity (c-<client>, s-<user>, p-<last 10 digits>,
+-- t-<negotiation>), never a phone number.
+CREATE TABLE IF NOT EXISTS inbox_actions (
+  id SERIAL PRIMARY KEY,
+  person_key TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('claim','release','done','snooze','wake','reopen')),
+  until_at TIMESTAMPTZ,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  undone_at TIMESTAMPTZ,
+  CHECK ((action = 'snooze') = (until_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_actions_person ON inbox_actions(person_key, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS inbox_seen (
+  person_key TEXT PRIMARY KEY,
+  seen_at TIMESTAMPTZ NOT NULL,
+  seen_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS inbox_reads (
+  id SERIAL PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('inbound','outbound')),
+  subject_ref TEXT NOT NULL,
+  person_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','ok','error','refused')),
+  needs_reply BOOLEAN,
+  holding BOOLEAN,
+  summary TEXT,
+  promised_by TEXT,
+  reason TEXT,
+  model TEXT,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (kind, subject_ref)
+);
+
+-- The CREATE TABLE bodies above run only on a database that lacks the table, so
+-- a value added there alone would reach fresh databases and never dev or prod.
+-- Each enumerated CHECK is therefore ALSO a DROP + ADD inside a DO block (atomic:
+-- a failed ADD rolls its DROP back), the file's standing pattern. A widening goes
+-- in BOTH sites. These are the names Postgres gives the inline CHECKs.
+DO $$ BEGIN
+  ALTER TABLE inbox_actions DROP CONSTRAINT IF EXISTS inbox_actions_action_check;
+  ALTER TABLE inbox_actions ADD CONSTRAINT inbox_actions_action_check
+    CHECK (action IN ('claim','release','done','snooze','wake','reopen'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE inbox_reads DROP CONSTRAINT IF EXISTS inbox_reads_kind_check;
+  ALTER TABLE inbox_reads ADD CONSTRAINT inbox_reads_kind_check
+    CHECK (kind IN ('inbound','outbound'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE inbox_reads DROP CONSTRAINT IF EXISTS inbox_reads_status_check;
+  ALTER TABLE inbox_reads ADD CONSTRAINT inbox_reads_status_check
+    CHECK (status IN ('pending','ok','error','refused'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Inbox text idempotency (spec 8, hardened by lane sms-lines): the text route
+-- reserves the client-generated send_id HERE before it calls Twilio, so a
+-- double tap or a retry can never text twice, even when two requests race. A
+-- unique index on sms_messages could not promise that: the staff send core
+-- writes its row only after the Twilio call returns. result holds the first
+-- answer (HTTP status and body) once there is one; NULL means still sending.
+-- sms_messages.metadata.send_id is still written, for tracing.
+CREATE TABLE IF NOT EXISTS inbox_sends (
+  send_id UUID PRIMARY KEY,
+  person_key TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  result JSONB
+);
+-- ─── end Inbox ───

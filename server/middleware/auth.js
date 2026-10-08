@@ -3,6 +3,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { AppError, PermissionError } = require('../utils/errors');
 const presenceActivity = require('../utils/presenceActivity');
+const { scrubUrl } = require('../utils/sentryScrub');
 
 // Log access-control failures so a deliberate probe by a logged-in staff
 // account is visible. OWASP A09 — admin/manager routes are the highest-
@@ -17,7 +18,7 @@ function logRoleDenial(req, requiredLabel) {
           user_id: req.user?.id || null,
           role: req.user?.role || null,
           method: req.method,
-          path: req.originalUrl,
+          path: scrubUrl(req.originalUrl), // an Inbox p- key holds a phone number
         },
       });
     }

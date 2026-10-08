@@ -2042,6 +2042,29 @@ prod check of `message_log` after the next real sends:
   the Stripe webhook or the stale-pending sweep sends still ledgers NULL.
 - In the admin, the client's contact history shows those sends as sent by us, not automated.
 
+### Inbox, the server side (lane inbox-engine). Moves to Tier 3b with the page: check `git log origin/main --oneline --grep='merge(lane inbox-page)'`.
+
+The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
+are walked with the page. Verified by the lane's suites on the dev DB and a read-only rules run over
+prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
+
+- The first prod page view: the waiting list matches Task 18's acceptance run, less whatever was
+  answered since. Watch the first hour of prod AI reads once lane inbox-ai is live, and sanity-check
+  every Recently handled reason against the real thread.
+- Dallas and Zul each claim one real item, reply to it FROM INBOX on the 888, and close it: one
+  `sms_messages` row with `metadata.line` and `metadata.send_id` appears, and the item moves to
+  Recently handled with "You texted back from 888".
+- Point the 0082's Twilio `sms_url` at `https://api.drbartender.com/api/sms/inbound` (Dallas approves
+  or makes the change) and confirm the Messaging Service defers inbound to each number's own webhook.
+- The 224 round trips (spec 16 step 6), each line in turn: Dallas texts it from his own phone, replies
+  from Inbox on that line, then texts STOP and START. Each step lands in `sms_messages` with the right
+  `metadata.to` and outcome, STOP blocks every line, and HELP is answered once. Only then add the line
+  to `INBOX_TEXT_LINES` in Render.
+- A week alongside the Cowork job (spec 16 step 7): Dallas and Zul use Inbox and Cowork side by side,
+  and anything Cowork caught that Inbox missed goes to the fix list.
+- The first prod picture message: its link opens from the thread. If Twilio asks for credentials, the
+  link needs a proxy (spec amendment 17); file it on the fix list.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

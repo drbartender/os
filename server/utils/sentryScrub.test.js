@@ -17,6 +17,56 @@ test('scrubUrl redacts every public token shape it knows', () => {
   assert.equal(scrubUrl(undefined), undefined);
 });
 
+// An unknown number's Inbox person key is p- plus the last ten digits of the
+// phone (spec 2026-10-06), and it sits in every /api/admin/inbox/:personKey
+// URL. A 555 fixture.
+const P_DIGITS = '8475550134';
+const P_KEY = `p-${P_DIGITS}`;
+
+test('scrubUrl redacts an Inbox p- key in every form its routes take; c- and s- ids stay', () => {
+  const forms = [
+    `/api/admin/inbox/${P_KEY}`,
+    `/api/admin/inbox/${P_KEY}/text`,
+    `/api/admin/inbox/${P_KEY}/seen`,
+    `/api/admin/inbox/${P_KEY}/actions`,
+    `/api/admin/inbox/${P_KEY}?from=badge&n=1`,
+    `https://api.drbartender.com/api/admin/inbox/${P_KEY}/text`,
+    `GET /api/admin/inbox/${P_KEY}`,
+    `/api/admin/inbox/p-${'5'.repeat(20)}`, // the key admits 1 to 20 digits
+    `/API/ADMIN/INBOX/${P_KEY}`, // Express matches paths case-insensitively
+  ];
+  for (const u of forms) {
+    const out = scrubUrl(u);
+    assert.doesNotMatch(out, /\d{2,}/, `a digit run of the key survived in ${u}`);
+    assert.match(out, /\/inbox\/p-\[redacted\]/, u);
+  }
+  assert.equal(scrubUrl(`/api/admin/inbox/${P_KEY}/text?n=1`), '/api/admin/inbox/p-[redacted]/text?n=1');
+  // Row ids are not phones: a client's or a staffer's key is left alone.
+  assert.equal(scrubUrl('/api/admin/inbox/c-123/text'), '/api/admin/inbox/c-123/text');
+  assert.equal(scrubUrl('/api/admin/inbox/s-45'), '/api/admin/inbox/s-45');
+});
+
+test('an Inbox p- key leaves no digits on either pipeline', () => {
+  const url = `https://api.drbartender.com/api/admin/inbox/${P_KEY}/text`;
+  const error = scrubErrorEvent({
+    request: { url },
+    tags: { route: `/api/admin/inbox/${P_KEY}/text` },
+    transaction: `POST /api/admin/inbox/${P_KEY}/text`,
+    breadcrumbs: [{ message: `POST ${url}`, data: { url } }],
+  });
+  const transaction = scrubTransactionEvent({
+    transaction: `GET /api/admin/inbox/${P_KEY}`,
+    request: { url },
+    contexts: { trace: { data: { url, 'url.full': url, 'url.path': `/api/admin/inbox/${P_KEY}`, 'http.target': `/api/admin/inbox/${P_KEY}` } } },
+    spans: [{ data: { 'http.url': url }, description: `GET /api/admin/inbox/${P_KEY}` }],
+  });
+  for (const event of [error, transaction]) {
+    const json = JSON.stringify(event);
+    assert.ok(!json.includes(P_DIGITS), json);
+    assert.doesNotMatch(json, /p-\d/);
+  }
+});
+
 test('an ERROR event is scrubbed on url, route tag, body, and headers', () => {
   const event = scrubErrorEvent({
     request: { url: URL_WITH_TOKEN, data: { secret: 1 }, headers: { authorization: 'x' }, query_string: 'token=abc' },
