@@ -1988,6 +1988,38 @@ what it costs.
     since lane ma-e3b (client/src/utils/tapGuard.js, holdTaps, called as the sheet unmounts); one
     such call fits each of the other two. (The ma-e3b plan review's gaps seat, 2026-10-08.)
 
+- **Phone edit sheet follow-ups (lane ma-e3b-edit-sheet-layout, "readout above, controls pinned",
+  merged 2026-10-08 as `5181767c`, not pushed).** Parked by its task reviews and lane fleet; none
+  changes money or a message.
+  - With catalog drift (a booking whose package or add-on prices moved since it was priced), the
+    figure the sheet asks for as it opens shows, dimmed, as the "New total" while the first
+    change's figure loads, and stays if that figure fails. Confirm waits throughout, so nothing
+    saves on it. The cure is in `useEditSheet.js` (it seeds `shown` from the open-time figure),
+    which lane ma-e3b left frozen. (Task 3 review, 2026-10-08.)
+  - The curfew confirm asks twice: the server's reason ends "Confirm to book it anyway." and the
+    sheet adds "Book it anyway? This will be recorded." (the copy approved in ma-e3). Dallas's
+    call which one goes. The extra line is also what pushes a confirm with its rides line past
+    the notices strip's cap on a 320x568 phone (the strip then scrolls inside itself).
+  - The readout's fade covers the lower 14px of the last reprice line at the end of a long
+    scroll, and the balance line's lower edge in landscape when the copy is hidden. Both stay
+    readable. A cure reserves the fade's height while it shows, which feeds the fade's own
+    overflow measure, so it wants a small design of its own. (Fleet ui-ux, 2026-10-08.)
+  - The notices strip's capped state (a curfew confirm with its rides line on a 320x568 phone):
+    the strip's head cuts through the confirm's first line, its foot hides the box's bottom
+    padding, border and gap, and nothing at rest says the strip scrolls. The rows, the footer
+    and both buttons are where they should be, so a tap is safe. The named fix is to scroll the
+    strip to its end and show a sticky fade at its head while it is scrolled. It needs a scroll
+    listener that takes `EditSheet.js` past its 450 lines, so `NotifyStep` moves out first.
+    (Fleet ui-ux re-review, 2026-10-08.)
+  - Owner call, not owed: `--ink-3` measures 4.39:1 (After Hours) and 4.45:1 (House Lights) on
+    the sheet's background, just under 4.5:1. The sheet uses it at 10 to 12.5px for the old
+    total, PRICING, the balance line, the hints and the "was" lines. Raising the token (about
+    `#828b99` dark, `#746e62` light) clears every use at once but restyles every admin-os
+    surface. The 2026-09-30 decision moved the phone's small labels to ink-3 knowingly.
+    (Fleet ui-ux, 2026-10-08.)
+  - `EventDetailPhone.js` is at 449 lines against its 450-line ceiling (the ma-e3 plans'
+    constraint). The next lane that touches it splits it first.
+
 - **On dev, just opening the shopping list modal un-approves the list.** React StrictMode (on in
   `client/src/index.js`) runs the modal's autosave effect twice on mount; the `isFirstRender` ref
   (`ShoppingListModal.jsx:134-142`, from the original build) only skips the first run, so every open
