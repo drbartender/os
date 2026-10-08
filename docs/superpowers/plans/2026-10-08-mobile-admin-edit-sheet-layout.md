@@ -21,7 +21,7 @@
 - `editSheetView.js`: `confirmView` `:183` (its balance line is the literal "balance due becomes ..." at `:207`), `confirmViewNow` `:217` (its pending return `:222` uses `ELLIPSIS`, `:32`), `setupMinutesText` `:110`, `sheetDateText` `:101`, `startInputValue` `:78`, `fmtHours` `:60`; imports `BOOKED_STATUSES`, `dollars`, `fmtTime24`. `buildRepriceSummary.newBalance` is `next - paid` on raw `amount_paid`; `financialsOf` (`eventDetailView.js:233`) owes `total - paid` on the same basis and reads "Overpaid" from `overpayment_cents` (`:302-310`), which `GET /proposals/:id` returns netted (`server/routes/proposals/getOne.js:133`).
 - `useSheetFocus.js:13` focuses the sheet as it mounts; nothing focuses it again after a reload (the button that had focus unmounts). Escape reaches the sheet through `closers.current.onClose`; the scrim calls the same.
 - `EventDetailPhone.js` (448 lines, sensitive-listed): `fin = financialsOf(proposal, money.payload)` `:226`, whose `pending` lists the bank debits in flight from the invoices read; the EditSheet mount `:428-435`. The sheet opens only once the reads it waits on have settled, never on a stored copy. Its test mocks `EditSheet` and keeps the props it was last drawn with in `mockSheets.edit` (`EventDetailPhone.test.js:31-46`); the in-flight invoices fixture is at `:263`.
-- The sheets render inside `main`'s stacking context (z-index 1); the scrim is z 900 and the sheet z 901 there, which paints them over the header and the tab bar. A layer appended to `document.body` with `position: fixed` and z-index 1300 sits over all of them (the lock screen is 1200).
+- The sheets render inside `main`'s stacking context (z-index 1); the scrim is z 900 and the sheet z 901 there, which paints them over the header and the tab bar. A layer appended to `document.body` with `position: fixed` and z-index 1300 sits over all of them, and under the phone lock (10000) and the toasts (10500).
 - `index.css`: the global `.visually-hidden` (`:601`); the sheet family `:21728-21772` (`.m-sheet` caps at `max-height: 80dvh`, `.m-sheet-body { flex: 1; min-height: 0; overflow-y: auto; }`, so a sheet is as tall as its content up to its cap); the edit block `:21812-21849` (`.m-sheet.m-edit-sheet { height: 80dvh; }`, `.m-edit-content { display: flow-root; }`, `.m-stepper-value { min-width: 56px }`); the notify footer `:21883-21885`; the House Lights squared list `:21936-21940` (no stepper in it; `--radius` is 6px in both skins); reduced motion `:21966-21970`. `.m-stepper-*` and `.m-edit-*` classes are used only by `EditSheet.js` (and `.m-edit-note*` by `EventDetailSections.js`, untouched).
 - `mobileClassContract.test.js`: every `m-*` class in `EditSheet.js` must appear as a selector in `index.css`. `mobileDetailCss.test.js:80` pins the reduced-motion block (`.m-sheet, .m-sheet-scrim { animation: none; }` then `.m-section-caret`).
 - Sensitive-listed (`scripts/sensitive-paths.txt:469-471`): `useEditSheet.js`, `editSheetView.js`, `EditSheet.js`. Full lane fleet, and the sensitive-path re-review plus `/second-opinion` at push.
@@ -33,7 +33,7 @@
 
 - **No em dashes** in copy, comments, commit messages or docs.
 - **Money behaviour is frozen.** No change to what is read, sent or saved, to the timeouts, the re-read guard, the curfew retry or the notify step's logic. `useEditSheet.js` changes one name (`view` becomes `readout`) and passes one display-only input through (`inFlight`). The existing payload, preflight, guard, curfew and notify tests stay green unchanged.
-- **Copy from the export, verbatim:** "Total", "New total", "paid <$> · balance due <$>", "balance due becomes <$>", "pricing" (drawn uppercase by CSS), "was <value>", "setup <N> min before", "···" (three U+00B7). Added: "paid <$> · overpaid <$>", and "pending" (heard by a screen reader in place of the dots). Everything else is lane ma-e3's approved copy, unchanged.
+- **Copy from the export, verbatim:** "Total", "New total", "paid <$> · balance due <$>", "balance due becomes <$>", "pricing" (drawn uppercase by CSS), "was <value>", "setup <N> min before", "···" (three U+00B7). Added: "paid <$> · overpaid <$>", "paid <$> · bank payment in flight" (the detail's own words), and "pending" (heard by a screen reader in place of the dots). Everything else is lane ma-e3's approved copy, unchanged.
 - **Unique `m-*` class names,** every one defined in `index.css`. **44px** minimum for every button and row.
 - **Client tests:** `import '@testing-library/jest-dom'` in every test file; `jest.mock` factories close over `mock`-prefixed names only.
 - **Client gate before every commit:** `cd client && CI=true npx react-scripts build` (exit 0; the html2pdf.js source-map warning is the only known warning).
@@ -605,7 +605,8 @@ In `index.css`, right after the `.m-sheet-scrim` rule (outside the edit block Ta
 ```css
 /* For the half second after a phone sheet closes, a layer over the whole screen
    takes the second tap of a double tap (utils/tapGuard.js). It hangs off the
-   document's body, above the sheets, the header, the tab bar and the lock. */
+   document's body, above the sheets, the header and the tab bar; under the
+   lock (10000) and the toasts (10500). */
 html[data-app="admin-os"] .m-tap-guard { position: fixed; inset: 0; z-index: 1300; }
 ```
 
