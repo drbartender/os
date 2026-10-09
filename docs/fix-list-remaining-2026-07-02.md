@@ -69,8 +69,8 @@ Ordered by how close each one is to actually costing money or a client.
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
-| 1 | Invoice line items: fixed on main (lane invoice-lines, `3e71a01c`, not pushed); after the push, 27 existing invoices need the repair | **yes until pushed: prod still prints a discount as a charge, 13 open invoices (10/09)** |
-| 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; run after invoice-lines ships |
+| 1 | Invoice line items: fix LIVE (pushed 2026-10-09, `7d5e5f8c..0aa87c76`); 27 existing invoices still need the repair | **yes until repaired: 13 open invoices still list a discount as a charge** |
+| 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
@@ -232,14 +232,13 @@ already-overpaid, fully-locked proposal that invoices the client for money we al
 **Verified 2026-08-23**: the function is at `:339` and reads no `amount_paid`. (An earlier note
 claimed this needed re-deriving because the citation was off; it was off by one line.)
 
-### Invoice line items: fixed on main; push it, then repair the 27 invoices already wrong
+### Invoice line items: fix live; repair the 27 invoices already wrong
 
-The generator fix is merged (lane invoice-lines, `3e71a01c`, 2026-10-09; spec
-`docs/superpowers/specs/2026-10-08-invoice-line-items-design.md`) and NOT pushed. Until it ships,
-prod keeps minting invoices whose lines print a discount as a charge, print hidden adjustments,
-and itemize an override at catalog.
+The generator fix is live (lane invoice-lines, `3e71a01c`, pushed 2026-10-09 in
+`7d5e5f8c..0aa87c76`; spec `docs/superpowers/specs/2026-10-08-invoice-line-items-design.md`), so
+new invoices add up. The invoices minted before it still carry the old lines.
 
-**After the push, the repair (spec section 4.4).** A guarded `DO` block through the Neon MCP,
+**The repair (spec section 4.4).** A guarded `DO` block through the Neon MCP,
 Dallas's yes on the exact rows first, a Neon restore branch of production immediately before it,
 and never at the same time as the full-payment backfill. Step 1 is the read-only approval list
 in the spec's appendix; rebuild it fresh on the day. The 2026-10-09 preview: 27 invoices, 14 open
@@ -389,10 +388,9 @@ default, `--apply` only with an exact `--expect` list built from a FRESH dry run
 in `docs/superpowers/plans/2026-08-28-full-pay-invoice.md`, and the verification walk in
 `docs/walkthroughs-owed.md`. **Claude cannot point it at prod from this box** (the Neon
 connection-string call is blocked), so Dallas runs it with the prod URL, or it gets ported to a
-guarded DO block. Run it after lane invoice-lines ships (the generator fix, merged `3e71a01c`):
-before that push the script keeps old lines on a discounted proposal (`generated_sum_mismatch`),
-which would freeze the wrong-sign lines. Never run it at the same time as the line-items repair
-above; both write locked receipts.
+guarded DO block. The generator fix it waited on is live (pushed 2026-10-09), so it can run; on a
+discounted proposal it now regenerates correctly signed lines. Never run it at the same time as
+the line-items repair above; both write locked receipts.
 Sentry `DRBARTENDER-SERVER-1E` (`invoice_link_overflow_capped`) is the tripwire for this bug; do not
 resolve it as noise.
 
