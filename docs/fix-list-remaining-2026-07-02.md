@@ -1895,7 +1895,7 @@ what it costs.
 
 Parked by the lane's review fleet and its prod acceptance check (merge `c7a901d3`); none of them can text the wrong person or hide a waiting one.
 - **Cost, each on a trigger (performance review).** Every recompute re-reads all history since the fixed floor (about 0.5 MB today, growing about 0.4 MB a month), and an open tab plus lane inbox-ai's tick recompute about once a minute.
-  - **Dallas's call before lane inbox-ai turns its scheduler on:** Neon's monthly public-transfer allowance against about 21.6 GB per 30 days at launch (about 10.8 GB if the AI read shares the badge's snapshot, as lane inbox-ai is told to), about ten times that within a year.
+  - **Dallas's call before lane inbox-ai turns its scheduler on:** Neon's monthly public-transfer allowance against about 21.6 GB per 30 days at launch (about 10.8 GB if the AI read shares the badge's snapshot, as lane inbox-ai is told to), about ten times that within a year. The badge's half started with the 2026-10-08 push: every visible admin tab's badge poll runs the engine (snapshot up to 120 s old) though nothing shows the count until lane inbox-page ships, up to about 10.8 GB per 30 days with a tab visible around the clock.
   - Pass 1 to SQL aggregates when Sentry shows `[inbox] pass 1 passed HEADER_WARN_ROWS` (about five months out); the first cut is message_log's automated rows older than 30 days, then narrowing pass 2 to the thread window plus the open set.
   - Cap the engine's concurrent queries (a write during a compute starts a second compute, 18 queries each): Inbox list p95 over 1 s, or the warning.
   - `/seen` patches the cached snapshot instead of clearing it: a compute over 500 ms.
@@ -1912,6 +1912,26 @@ Parked by the lane's review fleet and its prod acceptance check (merge `c7a901d3
 - **Taps are accepted for any well-formed key, with no limiter** on `/seen` and `/actions` (admin-only; the shared `adminWriteLimiter` would 429 a quick triage).
 - **Tests to add:** texting an unknown number that texted first (the `kind: 'unknown'` textability path, end to end); the role-denial log's Sentry payload.
 - **Suggestion:** phone tapback reactions to our weekly shift confirmations count as inbound until the AI read closes them; a small reaction rule would remove the noise.
+
+### Push 2026-10-08 review leftovers
+
+Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the push.
+- **Before lane invoice-lines merges (another window's lane), rebase it: `git rebase --onto main 3987af19` in its worktree.** It was cut from `3987af19`, a main commit that the pre-push rewrite replaced (one fix-list note lost its pay figures, so every later sha changed; commit `7d5e5f8c`'s message maps the ones the docs quote). Its 3 commits touch none of the rewritten docs, so the rebase is conflict-free. Without it the squash-merge conflicts in the fix list, the board and two plans, and taking the lane's side there would put the stripped pay details back. Its commits also cite a spec, `docs/superpowers/specs/2026-10-08-invoice-line-items-design.md`, that is in neither main nor the lane.
+- **`server/utils/answeringMessageTypes.js` is not on the sensitive list.** Its allowlist decides which sends count as a reply and close an Inbox item, the same call `server/utils/inbox/**` is listed for, so an edit to it alone gets only the light review. Add it to `scripts/sensitive-paths.txt` beside `gratuityDisclosureNotify.js`.
+- **A text with no `group_id` gets a group size of every such row, not 1** (`server/utils/inbox/readSms.js`, `COUNT(*) OVER (PARTITION BY m.group_id)`: Postgres puts every NULL in one partition). Latent, because every hand-sent staff writer sets a `group_id` today. It goes live when an Inbox text to an unknown number (written with no `group_id`) later keys to a staffer, for example an applicant who gets hired: the reply stops counting and the person shows as waiting until someone taps Done. Fix: `CASE WHEN m.group_id IS NULL THEN 1 ELSE COUNT(*) OVER (PARTITION BY m.group_id) END`, plus a readers test with two NULL-group rows. Fold it into the next Inbox lane.
+- **Two limiters on the Inbox text route:** `adminWriteLimiter` (10 a minute, shared with every admin write) runs before `inboxTextLimiter`, so the spec's 20 a minute never governs. Keep one.
+- **Inbox texts a client at the number on their newest inbound text; Messages texts `clients.phone`** (decision 29, no age bound but the floor). A client who changed numbers and has not texted from the new one gets Inbox texts at the old number, which may have been reassigned. Owner call: prefer `clients.phone` when it is newer than that row, or fall back to it past `THREAD_DAYS`.
+- **Render's platform request log records `p-` paths** (`/api/admin/inbox/p-<digits>`), outside the repo and every scrub. Not a leak to another person.
+- **The pool sets no `idleTimeoutMillis`,** so pg's 10 s default closes the sockets between engine computes (120 to 180 s apart) and each compute reopens about a dozen TLS connections (dev: about 520 ms cold against 240 ms warm). Anything above 180 s keeps them warm at no pooler cost.
+- **Read Neon's transfer graph about a week after the deploy (around 2026-10-15)** to calibrate the 0.5 to 1 MB a compute against real bytes (the performance review's section 3 table).
+- **A test fixture uses a real-format phone number:** the relay-notice fixture in `server/utils/inbox/replyRules.test.js` and its copy in the Inbox plan use a geographic US number outside the 555 range. Prod holds no such number (checked by hash), but it could be a stranger's and the repo is public. Swap it for a 555-01xx fixture.
+- **Docs and board:**
+  - The board's "In flight" never prunes: sms-lines, send-attribution, ma-e3b and inbox-engine still read "building" though all four merged, and two lines lack their leading `- `, so each folds into the bullet above. `board-write.sh` only appends, so pruning needs a move or remove mode (or a deliberate hand edit).
+  - The fix list cites `.ib-pane a.btn` as if it were on main; `.ib-pane` arrives with lane inbox-page. Reword to "lane inbox-page scopes ...".
+  - The Inbox walkthrough's "Dallas texts it from his own phone" (walkthroughs-owed, copied from the spec's acceptance steps) should name the 312 GV: a personal cell may never become a DB row.
+  - The `inbox_waiting` badge key is documented only in README; ARCHITECTURE has never had a `GET /badge-counts` row.
+  - No walkthrough covers ma-e3b: add a sentence to the ma-e3 edit-sheet entry, or a short ma-e3b entry (the layout, the tap guard, the 44px strip on the Pixel).
+  - The lane leftover blocks, this one included, sit between a `---` and `## Voice` with no section rule, so they render under "Comms and marketing". Cosmetic.
 
 ## Voice
 
