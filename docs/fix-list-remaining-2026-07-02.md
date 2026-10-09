@@ -1893,7 +1893,7 @@ what it costs.
 
 ### Lane inbox-engine review leftovers (2026-10-08)
 
-Parked by the lane's review fleet and its prod acceptance check (merge `55206db1`); none of them can text the wrong person or hide a waiting one.
+Parked by the lane's review fleet and its prod acceptance check (merge `c7a901d3`); none of them can text the wrong person or hide a waiting one.
 - **Cost, each on a trigger (performance review).** Every recompute re-reads all history since the fixed floor (about 0.5 MB today, growing about 0.4 MB a month), and an open tab plus lane inbox-ai's tick recompute about once a minute.
   - **Dallas's call before lane inbox-ai turns its scheduler on:** Neon's monthly public-transfer allowance against about 21.6 GB per 30 days at launch (about 10.8 GB if the AI read shares the badge's snapshot, as lane inbox-ai is told to), about ten times that within a year.
   - Pass 1 to SQL aggregates when Sentry shows `[inbox] pass 1 passed HEADER_WARN_ROWS` (about five months out); the first cut is message_log's automated rows older than 30 days, then narrowing pass 2 to the thread window plus the open set.
@@ -2061,7 +2061,7 @@ Parked by the lane's review fleet and its prod acceptance check (merge `55206db1
     such call fits each of the other two. (The ma-e3b plan review's gaps seat, 2026-10-08.)
 
 - **Phone edit sheet follow-ups (lane ma-e3b-edit-sheet-layout, "readout above, controls pinned",
-  merged 2026-10-08 as `5181767c`, not pushed).** Parked by its task reviews and lane fleet; none
+  merged 2026-10-08 as `d7fa4742`, not pushed).** Parked by its task reviews and lane fleet; none
   changes money or a message.
   - With catalog drift (a booking whose package or add-on prices moved since it was priced), the
     figure the sheet asks for as it opens shows, dimmed, as the "New total" while the first

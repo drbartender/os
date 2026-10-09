@@ -14,7 +14,7 @@
 
 **Scope:** `client/src/utils/editSheetView.js`, `client/src/utils/tapGuard.js` (new), `client/src/components/mobile/useEditSheet.js`, `client/src/components/mobile/EditSheet.js`, one prop in `client/src/pages/mobile/EventDetailPhone.js`, their tests, `client/src/index.css`, README and ARCHITECTURE lines. Not touched: the server, the service worker, the note sheet and the assignment sheet (they keep `.m-sheet`'s 80dvh cap and take no tap guard yet; on the fix list), the desktop editor.
 
-**Proven context (verified against main `4430906a` on 2026-10-08; re-checked at `62e7e614`, after another window's lane merge `63f3eeef`: the lane's code files are unchanged, the README lines below moved by two):**
+**Proven context (verified against main `4430906a` on 2026-10-08; re-checked at `045c3267`, after another window's lane merge `63f3eeef`: the lane's code files are unchanged, the README lines below moved by two):**
 - Lane ma-e3 (`589092fc`) and ma-e3a (`675727cc`) are on origin (`git merge-base --is-ancestor`, both true; pushed 2026-10-07 in `5e6ae928..b3148da4`).
 - `EditSheet.js` (386 lines): the arm `:55-78` (`viewSig = ready ? (pending || proposal) : null`, `holding = ready && ...`, so nothing is held while loading); the floor `:20-41` (with `holdFloor`'s comment `:20-24` and `dropFloor`'s `:33-36`) and `:113-131`; the notify scroll restore `:133-153` (the Confirm-focus effect `:154-158` stays); the render `:160-306` (rows, then the total block, hint, notices under the rows; `m-sheet-body` wraps both views); `NotifyStep` `:311-386`, whose message preview renders UNDER its channel boxes, only while the channel is ticked (`:328-355`).
 - `useEditSheet.js:132` `const view = base ? confirmViewNow(...) : null`, returned as `view` (`:237`); `EditSheet.js` is its only consumer. The preview effect `:103-129` asks `/proposals/calculate` once as the sheet opens and again as guests or hours move; that first ask stays (spec: a date-only save reprices on the server when the catalog moved).
@@ -1389,7 +1389,7 @@ Write the table into "Browser checks" at the end of this plan, on main. A FAIL g
 
 ## Lane ma-e3b close record (2026-10-08)
 
-- Merged to main as `5181767c`, the squash of lane tip `107ced93`, cut from `cba0b39e`. Main had moved only by docs and board commits, none on the lane's files, so the merge met no conflict, and every lane file is byte-identical on main. The client suite on main after the merge passed 152 suites and 1907 tests. The CI build on the lane tip exited 0 with only the html2pdf.js source-map warning. Not pushed.
+- Merged to main as `d7fa4742`, the squash of lane tip `107ced93`, cut from `be0add2c`. Main had moved only by docs and board commits, none on the lane's files, so the merge met no conflict, and every lane file is byte-identical on main. The client suite on main after the merge passed 152 suites and 1907 tests. The CI build on the lane tip exited 0 with only the html2pdf.js source-map warning. Not pushed.
 - Reviews:
   - Before the cut: a plan review by three Fable seats, and two runs of the plan in a scratch copy of the client.
   - A task review (Fable) after each of Tasks 1 to 3, with a scoped re-review (Opus) after each fix round (one round each for Tasks 2 and 3). Task 3's review ran after the browser gate, as the plan orders.
