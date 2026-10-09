@@ -1836,6 +1836,21 @@ blocked in that session).
   1 (2 above 100 guests), with no extra container for a second salt-rimmed drink. Ginger Beer and Fresh
   Mint come out exactly as before. Lists you already hand-edited keep your numbers on regenerate.
 
+### Invoice lines add up: discounts negative, hidden adjustments and overrides folded into the package line. Merged 2026-10-09 as `3e71a01c`; pushed 2026-10-09 (`7d5e5f8c..0aa87c76`).
+
+Live, and the 27 invoices minted before it were repaired on prod the same day (18:22 UTC; Neon
+restore branch `br-twilight-tooth-adnxs8cg` taken first). Verified by tests (invoiceLineItems
+24/24, the deposit-to-full upgrade 15/15, all 40 suites that reach line generation, 56 money suites
+at the gate) and by SQL after the repair. Never opened in a browser.
+
+- INV-0490 (proposal 918) on the client invoice page: lines read The Core Reaction $350.00 and
+  Courtesy -$100.00 in both money columns, Invoice Total $100.00 (the deposit). Save as PDF and check
+  the same two lines print with the minus sign.
+- INV-0487 (proposal 913): no "Budget Match Discount" line anywhere; The Core Reaction reads $250.00
+  beside Bar Rental $50.00.
+- On any proposal, add a discount with "Client sees" unchecked, save, and open its invoice: the
+  discount gets no line and the package line drops by it.
+
 ### Admin UI batch: Supplies chip, balance due date, menu-print Download, Package details add-ons. Merged 2026-10-06 as `7a1aa28b`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
 
 Live; checked 2026-10-09 with `git merge-base --is-ancestor 7a1aa28b origin/main`. Verified by

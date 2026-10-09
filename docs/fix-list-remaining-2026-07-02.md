@@ -69,7 +69,6 @@ Ordered by how close each one is to actually costing money or a client.
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
-| 1 | Invoice line items: fix LIVE (pushed 2026-10-09, `7d5e5f8c..0aa87c76`); 27 existing invoices still need the repair | **yes until repaired: 13 open invoices still list a discount as a charge** |
 | 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
@@ -231,27 +230,6 @@ straight to the invoice as `amountDueCents` (`:347`) with no read of `amount_pai
 already-overpaid, fully-locked proposal that invoices the client for money we already have.
 **Verified 2026-08-23**: the function is at `:339` and reads no `amount_paid`. (An earlier note
 claimed this needed re-deriving because the citation was off; it was off by one line.)
-
-### Invoice line items: fix live; repair the 27 invoices already wrong
-
-The generator fix is live (lane invoice-lines, `3e71a01c`, pushed 2026-10-09 in
-`7d5e5f8c..0aa87c76`; spec `docs/superpowers/specs/2026-10-08-invoice-line-items-design.md`), so
-new invoices add up. The invoices minted before it still carry the old lines.
-
-**The repair (spec section 4.4).** A guarded `DO` block through the Neon MCP,
-Dallas's yes on the exact rows first, a Neon restore branch of production immediately before it,
-and never at the same time as the full-payment backfill. Step 1 is the read-only approval list
-in the spec's appendix; rebuild it fresh on the day. The 2026-10-09 preview: 27 invoices, 14 open
-(8 sign flips, 5 hidden discounts into the package line, proposal 756's override fold) and 13
-paid receipts (12 sign flips, 1 hidden discount, INV-0455 on proposal 888); every open one lands
-exactly on its contract and every one has a package line. Receipts get no fold to the current
-total, and money columns never move. Residue the repair lists and never touches: INV-0228
-"Special Offer" on proposal 664 (its adjustment is gone) and INV-0467 "Balance" on proposal 789
-(not an adjustment line).
-
-**The CC tail is NOT part of this, and must not be "fixed".** The Check Cherry balance invoices are
-hand-minted by `scripts/cc-balance-invoice.js` with the discount already negative and a "Less
-deposit already paid" credit line; the repair excludes `external_paid > 0`.
 
 ### A tip refund has no gratuity scope, so cancel-line can offer it a second time
 
@@ -1074,6 +1052,12 @@ here by default.
 ---
 
 ## Money and payroll (internal correctness)
+
+- **INV-0228 (proposal 664, a paid receipt) still carries a +$160 "Special Offer" line that no
+  adjustment explains.** The 2026-10-09 line-items repair (spec 2026-10-08 section 4.4) matched
+  lines to the proposal's CURRENT adjustments, and 664 no longer has one, so the repair listed this
+  line as residue and left it. If it was a discount, that receipt shows it as a charge. A hand fix
+  (negate the line, after checking the proposal's history) if Dallas wants the receipt right.
 
 - **Trace: does a native Full Payment invoice record a gratuity elected at payment?** Raised by the
   invoice-lines spec review (2026-10-08, gaps lens), from a code reading: a Full Payment invoice
