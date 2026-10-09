@@ -136,8 +136,10 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
   const externalCents = toCents(prop.external_paid);
   const lockedTotal = Number(lockedResult.rows[0].locked_total);
 
-  // Fresh line items (shared across all unlocked invoices for this proposal)
-  const lineItems = await generateLineItemsFromProposal(proposalId, client);
+  // Fresh line items, shared across all unlocked invoices for this proposal and
+  // built on the first write: generation reports any fold it makes, so a
+  // refresh that writes nothing must not build (and report) them.
+  let lineItems = null;
 
   for (const invoice of unlockedResult.rows) {
     let amountDue;
@@ -168,6 +170,9 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
     if (upd.rowCount === 0) continue;
 
     // Replace line items
+    if (!lineItems) {
+      lineItems = await generateLineItemsFromProposal(proposalId, client, { totalPrice: prop.total_price });
+    }
     await writeLineItems(invoice.id, lineItems, client);
   }
 }
@@ -223,7 +228,7 @@ async function createInvoiceOnSend(proposalId, dbClient) {
     client
   );
 
-  const lineItems = await generateLineItemsFromProposal(proposalId, client);
+  const lineItems = await generateLineItemsFromProposal(proposalId, client, { totalPrice: prop.total_price });
   await writeLineItems(invoice.id, lineItems, client);
 
   return invoice;
@@ -280,7 +285,7 @@ async function createBalanceInvoice(proposalId, dbClient) {
     client
   );
 
-  const lineItems = await generateLineItemsFromProposal(proposalId, client);
+  const lineItems = await generateLineItemsFromProposal(proposalId, client, { totalPrice: prop.total_price });
   await writeLineItems(invoice.id, lineItems, client);
 
   return invoice;
@@ -501,15 +506,15 @@ async function upgradeDepositInvoiceToFull(proposalId, dbClient, { paymentCents 
     [amountDueCents, p.balance_due_date || null, target.id]
   );
 
-  // Same guard as the backfill: the generator builds from pricing_snapshot +
-  // addons and never reads total_price_override, so on an override'd or
-  // legacy-snapshot proposal its lines can sum to something other than the
-  // contract. Lines that contradict the contract (or no lines at all) are
-  // worse than the Deposit's stale ones, so those stay. The comparison is to
-  // total_price, not to amount_due: like createInvoiceOnSend's native Full
-  // Payment invoice, the lines describe the whole contract and external_paid
-  // is a netting on amount_due only.
-  const lineItems = await generateLineItemsFromProposal(proposalId, client);
+  // Same guard as the backfill. The generator folds any gap to total_price
+  // into the package line (spec 2026-10-08), so its lines reach the contract
+  // whenever the snapshot has a package line; what this still refuses is a
+  // package-less (legacy or empty) snapshot, or no lines at all. Lines that
+  // contradict the contract are worse than the Deposit's stale ones, so those
+  // stay. The comparison is to total_price, not to amount_due: like
+  // createInvoiceOnSend's native Full Payment invoice, the lines describe the
+  // whole contract and external_paid is a netting on amount_due only.
+  const lineItems = await generateLineItemsFromProposal(proposalId, client, { totalPrice: p.total_price });
   const generatedCents = lineItems.reduce((sum, it) => sum + Number(it.line_total), 0);
   const linesRegenerated = lineItems.length > 0 && generatedCents === toCents(p.total_price);
   if (linesRegenerated) {

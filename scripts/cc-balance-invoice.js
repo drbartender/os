@@ -9,11 +9,12 @@
 // Nothing is emailed, ever. Dallas writes the client email himself; this only
 // makes the invoice exist and be payable.
 //
-// generateLineItemsFromProposal is override-blind: it always itemizes from
-// catalog, so for a CC contract it renders a correct total over line items that
-// do not match it. Rather than teach that generator about a retired pricing
-// model, this script mints the shape by hand, the one INV-0193 (Jack Van Dyke)
-// ended up with:
+// generateLineItemsFromProposal folds the gap to the contract into the package
+// line (spec 2026-10-08), but it has no idea that a CC contract's deposit sits in
+// external_paid, so it cannot draw the "Less deposit already paid" credit line a
+// CC balance invoice needs. Rather than teach that generator about a retired
+// pricing model, this script mints the shape by hand, the one INV-0193 (Jack Van
+// Dyke) ended up with:
 //
 //   label 'Balance'  - a real CONTRACT_LABELS member, so refundHelpers does not
 //                      classify a later refund as extra-scope and refuse to
@@ -23,8 +24,10 @@
 //                      invoice requires sent/partially_paid and the client hits
 //                      "This invoice is no longer available" at pay time.
 //   locked = true    - refreshUnlockedInvoices rebuilds an UNLOCKED invoice's
-//                      line items from the snapshot on any admin save, which
-//                      would replace the itemization below with catalog lines.
+//                      line items on any admin save, which would replace the
+//                      itemization below with the generator's: the gap folded
+//                      into the package line and no deposit credit, so they
+//                      sum to total_price, not amount_due.
 //   line items summing exactly to amount_due, deposit shown as a credit.
 //
 // Delete this script once Check Cherry is cancelled (2026-07-21).

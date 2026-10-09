@@ -282,11 +282,12 @@ async function applyCandidate(db, c) {
     );
     if (linesRegenerated) {
       const items = await generateLineItemsFromProposal(c.proposal_id, client);
-      // The generator builds from pricing_snapshot + addons and never reads
-      // total_price_override, so on an override'd or legacy-snapshot proposal its
-      // lines can sum to something other than the money actually collected.
-      // Writing those would leave a locked, client-visible invoice whose lines
-      // contradict its own amount_due, which is worse than stale lines.
+      // The generator folds any gap to total_price into the package line (spec
+      // 2026-10-08), so its lines reach the contract whenever the snapshot has a
+      // package line. A package-less (legacy or empty) snapshot cannot, and the
+      // contract can differ from the money actually collected. Writing those
+      // would leave a locked, client-visible invoice whose lines contradict its
+      // own amount_due, which is worse than stale lines.
       const generatedCents = items.reduce((sum, it) => sum + Number(it.line_total), 0);
       if (generatedCents === paymentCents) {
         await writeLineItems(c.invoice_id, items, client);

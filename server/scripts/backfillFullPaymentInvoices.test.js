@@ -202,11 +202,11 @@ test('the regenerate decision comes from the total read under the lock, not the 
 });
 
 test('lines are left alone when the generated lines do not sum to the payment', async () => {
-  // An empty snapshot stands in for the real hazard: generateLineItemsFromProposal
-  // builds from pricing_snapshot + addons and never reads total_price_override, so on
-  // an override'd or legacy proposal its lines can sum to something other than the
-  // money collected. The in-tx total check passes here (550 === the 55000 payment);
-  // only the generated sum catches it.
+  // An empty snapshot is the remaining hazard: generateLineItemsFromProposal folds
+  // any gap to the contract into the package line, so only a package-less (legacy
+  // or empty) snapshot can generate lines that miss the money collected. The in-tx
+  // total check passes here (550 === the 55000 payment); only the generated sum
+  // catches it.
   const s = await seedStranded({ totalPrice: 550, paymentCents: 55000, pricingSnapshot: {} });
   const [cand] = (await selectCandidates(pool)).filter((r) => r.proposal_id === s.proposalId);
   assert.ok(cand, 'the total still matches, so the total check alone would regenerate');

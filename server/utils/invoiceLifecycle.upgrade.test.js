@@ -205,23 +205,56 @@ test('nothing owed means nothing to relabel', async () => {
   assert.equal((await invoice(invoiceId)).label, 'Deposit', 'a zero-due sent row would refuse every later link');
 });
 
-test('lines that do not sum to the money stay as they were, and the breadcrumb says so', async () => {
+test('a contract the snapshot does not itemize is folded into the package line, and the lines are rewritten', async () => {
   const { proposalId, invoiceId } = await seed();
   // An override moves total_price off the snapshot the generator builds from.
   await pool.query('UPDATE proposals SET total_price = 999 WHERE id = $1', [proposalId]);
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
+     VALUES ($1, 'Deposit', 1, 10000, 10000, 'manual')`, [invoiceId]);
+  const out = await inTx((c) => upgradeDepositInvoiceToFull(proposalId, c));
+  assert.equal(out.label, 'Full Payment');
+  assert.equal(Number(out.amount_due), 99900, 'the money is re-derived from the proposal');
+  // The snapshot itemizes $550; the $449 it does not lands on the package line.
+  const linesAfter = (await pool.query('SELECT description, line_total FROM invoice_line_items WHERE invoice_id = $1 ORDER BY id', [invoiceId])).rows;
+  assert.deepEqual(linesAfter, [{ description: 'The Core Reaction', line_total: 99900 }]);
+  const bc = await breadcrumbs(proposalId);
+  assert.equal(bc[0].details.lines_regenerated, true);
+  assert.equal(bc[0].details.lines_skipped_reason, null);
+});
+
+test('a snapshot with no package line keeps the old lines, and the breadcrumb says so', async () => {
+  const { proposalId, invoiceId } = await seed();
+  // Nothing to fold onto, so the generated set ($100 of add-on) cannot reach
+  // the $550 contract: the sum check, not the empty check, refuses it.
+  await pool.query(`UPDATE proposals SET pricing_snapshot = '{}'::jsonb WHERE id = $1`, [proposalId]);
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, NULL, 'Ice Delivery', 'flat', 100, 1, 100)`, [proposalId]);
   // A real old line, so the assertion proves survival rather than "nothing was ever written".
   await pool.query(
     `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
      VALUES ($1, 'Deposit', 1, 10000, 10000, 'manual')`, [invoiceId]);
   const linesBefore = (await pool.query('SELECT description, line_total FROM invoice_line_items WHERE invoice_id = $1 ORDER BY id', [invoiceId])).rows;
-  assert.equal(linesBefore.length, 1);
   const out = await inTx((c) => upgradeDepositInvoiceToFull(proposalId, c));
   assert.equal(out.label, 'Full Payment');
-  assert.equal(Number(out.amount_due), 99900, 'the money is re-derived from the proposal');
-  // (The lines sum to the snapshot's 550, not the 999 contract, so they stay.)
+  assert.equal(Number(out.amount_due), 55000, 'the money is still re-derived from the proposal');
   const linesAfter = (await pool.query('SELECT description, line_total FROM invoice_line_items WHERE invoice_id = $1 ORDER BY id', [invoiceId])).rows;
-  assert.deepEqual(linesAfter, linesBefore, 'lines that would contradict the total are not written');
+  assert.deepEqual(linesAfter, linesBefore, 'lines that miss the contract never replace real lines');
   const bc = await breadcrumbs(proposalId);
   assert.equal(bc[0].details.lines_regenerated, false);
   assert.equal(bc[0].details.lines_skipped_reason, 'generated_sum_mismatch');
+});
+
+test('an empty generation never replaces real lines', async () => {
+  const { proposalId, invoiceId } = await seed();
+  await pool.query(`UPDATE proposals SET pricing_snapshot = '{}'::jsonb WHERE id = $1`, [proposalId]);
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
+     VALUES ($1, 'Deposit', 1, 10000, 10000, 'manual')`, [invoiceId]);
+  const linesBefore = (await pool.query('SELECT description, line_total FROM invoice_line_items WHERE invoice_id = $1 ORDER BY id', [invoiceId])).rows;
+  await inTx((c) => upgradeDepositInvoiceToFull(proposalId, c));
+  const linesAfter = (await pool.query('SELECT description, line_total FROM invoice_line_items WHERE invoice_id = $1 ORDER BY id', [invoiceId])).rows;
+  assert.deepEqual(linesAfter, linesBefore);
+  assert.equal((await breadcrumbs(proposalId))[0].details.lines_skipped_reason, 'generated_sum_mismatch');
 });

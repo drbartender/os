@@ -70,6 +70,13 @@ server/utils/invoiceLifecycle.additionalInvoice.test.js
 server/utils/invoiceLifecycle.external.test.js
 server/utils/invoiceLifecycle.voidRemint.test.js
 
+# Invoice line items (spec 2026-10-08): discounts sign negative, hidden
+# adjustments and overrides fold into the package line so the lines add up to
+# the contract; the deposit-to-full upgrade now regenerates lines on those
+# proposals, so its suite is gated too.
+server/utils/invoiceLineItems.test.js
+server/utils/invoiceLifecycle.upgrade.test.js
+
 # Cancel line item (fold legs + scoped refunds + routes)
 server/utils/refundHelpers.scope.test.js
 server/utils/lineItemCancel.test.js

@@ -57,6 +57,20 @@ test('an invoice with a pending payment shows the processing card and no Pay but
   expect(mockApi.get).not.toHaveBeenCalledWith('/stripe/publishable-key');
 });
 
+test('a discount line renders as a negative amount in both money columns (the PDF is this page)', async () => {
+  apiGet({
+    ...baseInvoice, amount_due: 25000,
+    line_items: [
+      { id: 1, description: 'The Core Reaction', quantity: 1, unit_price: 35000, line_total: 35000 },
+      { id: 2, description: 'Courtesy', quantity: 1, unit_price: -10000, line_total: -10000 },
+    ],
+  });
+  render(<InvoicePage />);
+  const row = (await screen.findByText('Courtesy')).closest('tr');
+  const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
+  expect(cells).toEqual(['Courtesy', '1', '-$100.00', '-$100.00']);
+});
+
 test('a pending payment for another invoice on the proposal still hides Pay (D3)', async () => {
   apiGet({ ...baseInvoice, pending_payment: { ...pending, invoice_id: 999, invoice_number: 'INV-0999' }, pending_payment_for_this_invoice: false });
   const { container } = render(<InvoicePage />);
