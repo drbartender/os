@@ -2069,6 +2069,9 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     sheet adds "Book it anyway? This will be recorded." (the copy approved in ma-e3). Dallas's
     call which one goes. The extra line is also what pushes a confirm with its rides line past
     the notices strip's cap on a 320x568 phone (the strip then scrolls inside itself).
+    Dallas, 2026-10-09: leave the curfew as it is. Parties rarely run to 2:00 AM, admins can
+    already book past it ("Book it anyway", audited), and opening on-site extensions past 2:00 AM
+    with N/A-only service after it is parked. Do not re-raise it unless he does.
   - The readout's fade covers the lower 14px of the last reprice line at the end of a long
     scroll, and the balance line's lower edge in landscape when the copy is hidden. Both stay
     readable. A cure reserves the fade's height while it shows, which feeds the fade's own
