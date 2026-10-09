@@ -17,7 +17,19 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ---
 
-## Status: refreshed 2026-08-21
+## Status: refreshed 2026-10-09
+
+**`origin/main` is `7d5e5f8c`, pushed 2026-10-08 (`b3148da4..7d5e5f8c`).** Re-state this sha
+whenever you edit this block. On 2026-10-09 every Tier 6 entry carrying a merge sha was checked
+with `git merge-base --is-ancestor` against it: all thirteen were live and moved to the end of
+Tier 3b, and lane ma-e3b (`d7fa4742`, in the same push, never entered here) was added. Tier 6 now
+holds only Inbox, which waits on lane inbox-page. Count the boxes with the greps below rather
+than trusting a number.
+
+**Everything from here down to Tier 1 is the 2026-08-21 refresh, kept as history.** Its sha, its
+"genuinely left for a human" order and its cohort notes are all stale; most of that order has
+since been walked. Read the tiers, not this block, for what is owed.
+
 
 **`origin/main` is `4ee51d00`, pushed 2026-08-21 (37 commits, `9cccd3da..4ee51d00`).**
 Whenever you edit this block, re-state that sha, because the next session's staleness check
@@ -1678,6 +1690,303 @@ which is the largest client-facing change in the drop and is listed first becaus
       settles, save an unrelated field in the editor and confirm the total does not move and no
       additional invoice appears. Reload any editor tab opened before the deploy first.
 
+**THE 2026-08-26 TO 2026-10-08 COHORT, moved here from Tier 6 on 2026-10-09.** Every one of these
+sat in Tier 6 with its merge sha, and every sha was an ancestor of `origin/main` (`7d5e5f8c`) when
+checked on 2026-10-09; two had been live since 2026-08-26 under a "queued" heading. The ma-e3b
+layout lane, pushed 2026-10-08 and missing from this file, was added beside the phone edit sheet
+entry it rebuilt. Each entry keeps its original wording apart from its push-state sentence, which
+now reads as the live check it is.
+
+- [ ] **An opt keyword now alerts a human. Merged 2026-08-25 as `81148d8b`, LIVE since the 2026-08-26 push.**
+      Live check, no marker to rot: `git merge-base --is-ancestor 81148d8b origin/main` (exit 0 = live).
+      Until this shipped, a client texting *Cancel* was silently unsubscribed and nobody was
+      told, and prod holds four inbound "yes" messages that went the same way. The compliance
+      action is unchanged; what is new is the admin alert behind it.
+      **The walk is a real text, because the whole finding is that a test cannot see this.**
+      From a phone that is NOT a live client's, text `Cancel` to the DRB Twilio number, then
+      confirm the alert arrives and reads right: it must carry the word verbatim, name the
+      sender, say they are now unsubscribed, say you can no longer reply by SMS, and flag that
+      "Cancel" often means something else. Then text `START` from the same phone to undo the
+      opt-out, and confirm that alert says re-subscribed and does NOT claim replies are blocked.
+      A client sender routes to `urgent_client_reply`, so this sends Dallas an SMS as well as an
+      email; that is deliberate and matches what any other inbound client text already did.
+      **Do not run this from a real client's phone** — a live opt-out is a live opt-out.
+
+- [ ] **Client-uploaded logos are downloadable again. Merged 2026-08-26 as `a302f946`, LIVE since the 2026-08-26 push.**
+      Live check, no marker to rot: `git merge-base --is-ancestor a302f946 origin/main` (exit 0 = live).
+      Every logo a client had ever uploaded through their potion planner returned NOT_FOUND on
+      download, all seven of them, from the first upload in June onward. The plan-save PUT replaced
+      the selections blob wholesale, dropping the R2 key on the first save after the upload, while
+      the URL built from it survived. The staff BEO reads the same key, so it had been reporting
+      "no logo" on all seven events too. The files were never lost and the seven rows are already
+      backfilled, so the data half was already live; **as of the 2026-08-26 push the code half is too, and the whole thing needs looking at.**
+      **The walk is two surfaces, because the backfill fixed the rows but nobody has seen either
+      one render.** On the admin event-detail page for proposal 718 (Tyler Anderson), confirm the
+      logo displays and "Download original" saves a real PNG. Then open the same event in the staff
+      portal and confirm the BEO now shows the logo rather than claiming there is none. Spot-check a
+      second one, ideally plan 91 (Khaitan) since it is the only JPG in the set and the only row
+      still in draft.
+      **Then, after the push, upload a NEW logo and save the plan again** — that is the half the
+      backfill cannot prove, and it is the half that was actually broken.
+
+
+### Consult call bridge, the READ side. Merged 2026-09-30 as `5157d29c`.
+
+Lane `consult-call-surfacing`, built 2026-08-26, rebased onto `3585e612` and merged on Dallas's
+go 2026-09-30. Live; checked 2026-10-09 with
+`git merge-base --is-ancestor 5157d29c origin/main`.
+
+What to walk when it does, three surfaces:
+- **Needs attention** on the admin overview. Consult call faults now appear beside the Thumbtack
+  lead ones, with their own labels. A fault does NOT retire when the slot passes, which was a
+  deliberate correction: a failed consult is a promised call not delivered, so the slot passing
+  CREATES the obligation rather than ending it.
+- **Proposal detail** and **client detail**. The newest chain per proposal, and one line per
+  consult for a client. Check the line reads cleanly in both skins (it spans both grid columns
+  on client detail by design).
+- **Notification settings**, the "Call bridge failures" category. One line, 199 characters, and it
+  now says explicitly that not every fault emails so the feed is worth checking too.
+
+**Walkable now: real rows exist.** Read from prod 2026-09-30: four `consult_call_attempts` rows.
+What each surface should show once shipped:
+- Client 1887: "Sep 8, 1:30 PM · missed".
+- Client 1913: "Sep 15, 4:00 PM · connected (Dallas, 6:18)".
+- Client 1910 AND proposal 842: "Sep 18, 11:00 AM · missed".
+- Attempt 1 (the 2026-08-25 launch-test chain) has neither a `proposal_id` nor a `client_id`, so
+  it renders nowhere. Correct, not a miss.
+- **Needs attention shows NO consult item.** None of the four rows is a fault status (two
+  `missed`, two `connected`), and missed consults alert by text instead. An empty feed here is the
+  healthy state, not a regression. The fault labels and the cap / stopped-reschedule wording are
+  pinned by tests; they cannot be walked until a real fault happens.
+
+
+
+### Consult call bridge hardening (fix list section 0). Merged 2026-09-30 as `9bca97e0` and `580a194b`; pushed 2026-10-01 (`81ab6761..d4b3f0b6`).
+
+Lanes `calcom-prior-uids` and `consult-bridge-hardening`. Live in production, so the walk below is owed now.
+
+One real billed walk, on a synthetic consult in the 2026-08-26 shape (a consult row with no Cal.com
+booking, `booker_phone` a phone you hold, slot a few minutes out):
+- Let ring 1 answer, and press 1 during the SECOND reading of the briefing, not the first. The
+  bridge must connect. Before this merge that press did nothing on both bridges. The lead bridge
+  got the same fix; any real Thumbtack lead call is its walk.
+
+NOT walkable, and proven by the route and chain tests instead: the kill switch half. With
+`CONSULT_CALL_ENABLED=false` the sweep places no ring at all, and a Render env change restarts the
+service, which outlives a 20-second ring placed before the flip. So nobody can hear the off message
+on a real call; do not spend a billed call trying.
+
+What else changed, none of it needing a walk: every consult fault now reaches Dallas once (a single
+stopped consult, a failed client-no-answer text, a press-1 Twilio never reported, the reaper riding
+the consult sweep); a redelivered or superseded Cal.com event can no longer file a duplicate
+consult; malformed `ADMIN_PHONE` / `VA_CELL` are never dialed and warn at boot; Zul's number stays
+out of `call_audit`, the attempt rows, the log and Sentry.
+
+### Shopping list: Next through the custom recipes before the list is rewritten. Committed 2026-10-02 as `0c9d2fe0`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor 0c9d2fe0 origin/main`. Test-
+and lint-verified only (18 component tests); never opened in a browser, because the dev DB holds
+no plan with a waiting custom request.
+
+The walk, on an event whose shopping list shows "Client requested: recipe needed" with TWO OR
+MORE rows (a plan where the client typed several custom drinks):
+- Make a manual edit to the list first (change a quantity), so a premature rewrite would show.
+- Add recipe on the first row. The drawer's bottom button reads Next: "<second request>". Add a
+  row, click Next: the drawer swaps to the second drink, no confirm appears, and your manual edit
+  is still on the list underneath.
+- On the last request the button reads Done, update list. Click it: ONE confirm naming every
+  drink, then one regenerate; the handled rows leave the box.
+- Separately: close the drawer partway (X) and confirm the row reads Recipe added and nothing was
+  rewritten; Edit recipe on it reopens the rows you typed, not an empty recipe.
+- Match existing on one row mid-run marks it Matched to X and does not prompt.
+
+Known and logged, not a defect of this walk: Escape inside the ingredient suggestions closes the
+whole drawer (fix list, Potions). The single-request flow is unchanged and is the Tier 3b
+"Match existing" item's walk.
+
+### Alternatives panel: Copy compare link only when it shows a comparison, plus Preview comparison. Committed 2026-10-02 as `a43f864e`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor a43f864e origin/main`. Verified by
+tests (server 6/6 + 5/5, client 9/9), one code reviewer, and a dev browser check of the PUBLIC side
+only: with both options sent the client link showed the comparison, and the preview URL signed out
+lands on login. The admin panel and the preview page were never opened signed in.
+
+The walk, on a proposal with Add an alternative used once (two options, the new one still a draft):
+- The panel shows Send options and Preview comparison, NO Copy compare link, and a line saying the
+  compare page only shows sent options.
+- Preview comparison opens a new tab: both columns, a dashed banner saying the client's link
+  currently opens a single proposal and naming the draft as hidden, choose buttons greyed out.
+- Send options. Copy compare link appears and the hint goes. Open the copied link in a private
+  window: the side-by-side comparison, not a contract.
+- Group 20 in prod (858 viewed, 872 draft) is the live case: its panel should now hide Copy.
+
+### Pantry & Pars "Recipe @ 100": margarita salt at one container. Merged 2026-10-05 as `addd55ad`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor addd55ad origin/main`. Verified by
+tests (generator 69/69 with the frozen-snapshot parity intact, potions routes 21/21, Pantry tab 6/6,
+consult/BEO/hosted/lab suites green), a five-agent fleet, and real lists generated from the dev DB in a
+rolled-back transaction. The Pantry tab itself was never opened signed in (the admin sign-in token was
+blocked in that session).
+
+- DONE 2026-10-06, after the first prod boot: `SELECT id, recipe_qty_per_100 FROM par_items WHERE
+  recipe_qty_per_100 IS NOT NULL` returned margarita-salt, tajin and sanding-sugar at 1, nothing else.
+- Potions, Pantry & Pars: a "Recipe @ 100" column beside "@ N"; those three read 1, everything else is
+  empty; hovering the header explains it. Type 2 on one, reload, it sticks; clear it, reload, empty.
+- Generate a BYOB list for an event with a Margarita or Paloma at 50 to 100 guests: Margarita Salt reads
+  1 (2 above 100 guests), with no extra container for a second salt-rimmed drink. Ginger Beer and Fresh
+  Mint come out exactly as before. Lists you already hand-edited keep your numbers on regenerate.
+
+### Admin UI batch: Supplies chip, balance due date, menu-print Download, Package details add-ons. Merged 2026-10-06 as `7a1aa28b`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor 7a1aa28b origin/main`. Verified by
+tests (175 client tests across the touched suites on main, menuPrint 17/17, eventDetails 19/19, beo
+29/29, the shifts list 10/10 in both timezones), three reviewers, and the CI client build. Never
+opened signed in (the admin sign-in token was blocked in that session).
+
+- Events (desktop): the Prep column's Supplies chip is blue, Bar stays grey. In the Status column every
+  event that owes money shows "Due <date>" under the amount; one already past its due date shows
+  "Past due <date>" in red (two were past due on 10/06). Paid and cancelled rows show no line.
+- An event with a posted bar menu: the Bar menu print card has Download above Replace; the file saves
+  as bar-menu-<id>.pdf (or .png/.jpg) and is the one you uploaded.
+- An event with The Foundation: open Package details. Add-ons lists The Foundation with its description
+  and "Includes: Ice Delivery, Cups & Disposables, Bottled Water"; a champagne toast with the
+  non-alcoholic option reads "Non-Alcoholic Bubbles Toast". Same on the matching proposal's page.
+
+### Consult recap with drink names: staff Consult card, client recap email, consult GET. Merged 2026-10-06 as `7d9a8d38`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor 7d9a8d38 origin/main`. Verified by
+tests (198 server tests across the 14 suites that load an edited file, all green one at a time; a
+dispatch test that fails against a send without names; the staff client suites; the CI build) and four
+reviewers (code, consistency, security, performance), each re-confirmed after one fix round. The client
+email was rendered on dev and read before merge. **Dev, signed in, 2026-10-06 (scripts/dev-signin.js):**
+the staff Consult card on shift 15 (plan 19, staffer 5) renders bold labels and readable lines, no
+`[object Object]`; that consult names no drinks, so the drink-name half below is still owed.
+
+- A consult-fed event (prod has 2 upcoming bookings whose consult names a custom drink): the staff
+  event page's Consult card shows bold labels and drink names ("Signature cocktails: Margarita",
+  "Custom cocktail: House Mule (vodka, ginger beer, lime)"), never `[object Object]` or a camelCase key.
+- The next consult saved for a new client: the automatic recap email names the drinks and, on a full
+  or signature-cocktail bar, carries a Mixers line ("Mixers: None beyond your signature cocktail
+  ingredients" when the consult picked none). It carries NO "Notes:" line even when the consult has
+  notes (Dallas, 10/06, `ed1f7ee3`); the staff Consult card for that event does show them.
+
+### Client's answers beside the shopping list. Merged 2026-10-06 as `fb9bae0b` (with `7d9a8d38`, the recap it reads); pushed 2026-10-07 (`5e6ae928..b3148da4`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor fb9bae0b origin/main`. Verified by
+tests (54 client tests across the touched suites on main, every new one mutation-checked by review), the
+CI build, the CSS scope check, and three reviewers (code, the cross-lane recap contract, UI/UX), each
+re-confirmed after a fix round. **Dev, signed in, 2026-10-06 (scripts/dev-signin.js), all as expected:**
+opened from plan 19's page, its event page and a submitted plan's proposal page (empty state "No
+planner or consult answers yet."); the switch opens on the consult (the newer set), the planner side
+reads "From the planner, not submitted" with "This list was built from the consult." and shows no
+menu design or logistics; Hide answers gives the 960px modal and survives a reload; widths 1440,
+1366, 1280, 1200 (1rem gutters) and 1024 (stacked, capped at 40vh), no sideways scroll; sticky at
+1280x800 and 1366x768 holds 81px from the top (under the 60px bar) and never covers the footer;
+both skins read clearly; Tab, Space and Enter work on the switch with a visible ring; Editor and
+Client view both keep the panel. What is left:
+
+- Sticky on a LONG planner set: the panel's last line reachable inside its own scroll. No dev plan
+  had a long v2 answer set on a list already in review (opening plan 17 would have flipped its list
+  status, see the Admin UI ledger entry on dev autosave).
+- A finalized (read-only) list: the panel shows. No dev plan has a finalized list, and staging one
+  on the shared dev DB was refused, so this waits for a real finalized plan.
+- The 2 upcoming bookings whose planner answers carry no activeModules show "which has no answers to
+  show here". Settled (Dallas, 10/06): old plans keep behaving as they have; handle one when it comes up.
+
+### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged 2026-10-06 as `589092fc`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
+
+Live; checked 2026-10-09 with `git merge-base --is-ancestor 589092fc origin/main`.
+Walked on dev only, headless at phone width in both skins (Task 7 of
+`docs/superpowers/plans/2026-10-05-mobile-admin-edit-sheet.md`, every check PASS); the fleet fold
+(2026-10-06) is pinned in jsdom and measured on a static render, with the live-browser measurements
+left to the controller. Never on a real phone, never against prod data. On the Pixel, on a real
+upcoming booking you choose. Every save here is real: a priced change reprices the booking and
+rebuilds its unlocked invoices, and a date or time change moves its shift. The sheet's main button
+reads "Confirm new total" when the total moves and "Done" when it does not; Done saves a change too,
+and with nothing changed it just closes. About fifteen minutes:
+- Edit details reads "date · time · guests"; the sheet shows four rows: the date ("SAT OCT 24" style),
+  Start with "setup <N> min before" under it (since lane ma-e3b, below), Duration ("4.5 hr" style), and Guests. Both skins.
+- Tap Longer, then More guests, a few times in quick succession, then step back to where you
+  started: the steppers never move under your finger, and while each new total loads the last one
+  stays on screen, dimmed. Cancel.
+- One hours change on a paid event whose hours really are changing and which carries a gratuity
+  the client chose (not one set by hand): Longer, and the sheet shows the New total, "balance due
+  becomes", and the desktop's reprice lines, among them "The gratuity rises to $X, so the client
+  is emailed the new amount automatically". That email is real in prod and goes out on Confirm new
+  total with no popup. Tap Confirm new total; the sheet closes and the detail shows the new figures.
+- One real date change (a date that really is moving): pick the date and tap the main button (it
+  reads Done when the total does not move), and "Notify the client?" opens with Email and Text
+  ticked and "Don't send" the main button, across the footer's second row. Tap Don't send: it
+  saves without messaging the client, and the event's shift moves with it.
+- Open the sheet and step Guests, then on desktop save the same booking's internal note (its
+  proposal page, "Admin notes", then "Save notes") before you tap the main button on the phone:
+  "This event changed since you opened it." comes into view, nothing saves, and Reload shows the
+  fresh values.
+- On an event of three hours or more that starts before 23:30 (so the refusal is certain: the
+  server lets an existing breach through when a change does not make it worse), set Start to
+  23:30 and tap the main button (Don't send, if the notify step opens): the curfew confirm reads
+  the server's reason and scrolls into view with both of its buttons showing. Step Duration and the
+  confirm withdraws; then Cancel. Never tap "Book it anyway": it books past the curfew for real and
+  is recorded.
+- Airplane mode on a detail you opened before: Note and Edit details both read "needs connection",
+  each at the far end of its row, and open nothing.
+- The Note row reads the note's first line, or "Add a note". Type a line, Save, and the row shows
+  it. Reopen, type, press Back: reopening shows the kept draft, and Cancel clears it. Put the
+  note back as it was.
+- A past event: Edit details reads "desktop view" and opens the Desktop view.
+- Back with the edit sheet open closes it and stays on the detail.
+Two things to look at and judge: every control stays dimmed for half a second after each swap (the
+form's first appearance, a reload, the notify step opening, each step back to the form), and the
+notify footer is two rows, Cancel and "Send the update" over a full-width "Don't send", no label
+wrapped. Say whether either reads wrong on the Pixel.
+
+### The phone edit sheet's layout, "readout above, controls pinned" (lane ma-e3b-edit-sheet-layout). Merged 2026-10-08 as `d7fa4742`; pushed 2026-10-08 (`b3148da4..7d5e5f8c`).
+
+Walk it in the same Pixel session as the entry above: it rebuilt the sheet that walk opens. Verified
+headless at 390, 360 and 320 wide in both skins (the plan's gate, G1 to G11, all PASS) and by a
+five-seat fleet; never on a real phone. Money behaviour is byte for byte lane ma-e3 (the reads, the
+preview, the payload, the re-read guard, the curfew retry, the notify step), so this is a look-and-touch
+walk:
+- Top to bottom: the head, the readout (the total, the balance line, any reprice lines), any notice,
+  the four rows, the footer. The rows and the footer stay at the bottom of the screen; a notice
+  arriving or leaving, or the readout growing, moves no button.
+- A changed field shows what it was under its label ("was 3 hr").
+- Double tap Cancel: the sheet closes and the second tap lands on nothing, so the event detail
+  underneath does not react. (The note sheet and the assignment sheet do not have this yet; fix list.)
+- With a long readout, so the sheet stands at its full height with only a thin strip of dimmed screen
+  above it, tap that strip: nothing happens in the edit view. Cancel, Back and Escape still close.
+- If an event happens to have a bank payment processing, its untouched readout reads
+  "paid $X · bank payment in flight". Skip if none exists; do not make one.
+Judge on the Pixel: does a long readout scrolling under its fade read clearly. Its known nits are
+parked on the fix list (the phone edit sheet follow-ups).
+
+### Texts know their line, and one opt-out covers every line (lane sms-lines). Merged 2026-10-06 as `811f9092`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
+
+Each step texts the 888 from the 312 (your staff account; it is never a client row):
+- Text STOP. The alert email arrives; the inbound row in `sms_messages` carries `metadata.to` (the
+  888) and `metadata.outcome = 'opt_stop'`, and `sms_optouts` holds the 312 with `source = 'keyword'`.
+  While it stands, admin alert texts to the 312 fail at Twilio (21610), so do the next step right away.
+- Text START. The row reads `opt_start` and the `sms_optouts` row gets `cleared_at`. Admin alert
+  texts reach the 312 again.
+- Text a picture with no words. The row carries `metadata.media` with a Twilio-hosted link.
+This is the 888 leg of spec section 16's round trip; the 224 legs follow when each line is pointed at
+the OS. The Messages-page refusal for an opted-out client is covered by tests only (the 312 has no
+client thread).
+
+### Every human-click client send records who sent it (lane send-attribution). Merged 2026-10-08 as `63f3eeef`; pushed 2026-10-08 (`b3148da4..7d5e5f8c`).
+
+Nothing on screen changes except the contact history, so most of this is a read-only
+prod check of `message_log` after the next real sends:
+- A "Send to client" (or a proposal created with Send now) writes `proposal_sent` (email) and
+  `initial_proposal` (text) rows on that proposal, with `sent_by` set to whoever clicked; its
+  `sms_messages` row keeps `sender_id` NULL.
+- A cancel confirmation, a change-request decision or a staffing gratuity disclosure ledgers
+  `cancel_confirmation`, `change_request_decision` or `gratuity_disclosure` on its own proposal (not
+  the client's newest), with the clicking admin.
+- A refund notice from the admin refund, cancel refund or cancel-line routes carries the admin; one
+  the Stripe webhook or the stale-pending sweep sends still ledgers NULL.
+- In the admin, the client's contact history shows those sends as sent by us, not automated.
+
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
 The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
@@ -1685,6 +1994,10 @@ unshipped. All three former occupants had in fact shipped and were sitting under
 banner reading as pending work, the palette sweep for five days across every admin
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
+
+**As of 2026-10-09 the one owed occupant is Inbox, the server side, at the end of this tier; it waits
+on lane inbox-page.** Everything else that sat here with a merge sha was live, and moved to the end of
+Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
 
 **NO LONGER EMPTY as of 2026-08-26: one occupant, the consult call SURFACING lane, listed at the end of this tier.** Before that it read EMPTY AGAIN, because the consult call bridge sat here from the 2026-08-25 merge
 until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on
@@ -1706,21 +2019,6 @@ carried the check rather than a marker:
 
 Nothing had to be remembered or re-derived at push time, and no "UNPUSHED" note had a chance
 to rot. Do that again for the next thing that sits here.
-
-- [ ] **An opt keyword now alerts a human. Merged 2026-08-25 as `81148d8b`, LIVE since the 2026-08-26 push.**
-      Live check, no marker to rot: `git merge-base --is-ancestor 81148d8b origin/main` (exit 0 = live).
-      Until this shipped, a client texting *Cancel* was silently unsubscribed and nobody was
-      told, and prod holds four inbound "yes" messages that went the same way. The compliance
-      action is unchanged; what is new is the admin alert behind it.
-      **The walk is a real text, because the whole finding is that a test cannot see this.**
-      From a phone that is NOT a live client's, text `Cancel` to the DRB Twilio number, then
-      confirm the alert arrives and reads right: it must carry the word verbatim, name the
-      sender, say they are now unsubscribed, say you can no longer reply by SMS, and flag that
-      "Cancel" often means something else. Then text `START` from the same phone to undo the
-      opt-out, and confirm that alert says re-subscribed and does NOT claim replies are blocked.
-      A client sender routes to `urgent_client_reply`, so this sends Dallas an SMS as well as an
-      email; that is deliberate and matches what any other inbound client text already did.
-      **Do not run this from a real client's phone** — a live opt-out is a live opt-out.
 
 - [x] **DONE 2026-08-26. Consult call bridge, the launch call. Merged 2026-08-25 as `fafa0d6f`.**
       Kept as the record, not as a task. Proved across two runs, both confirmed in Twilio's own
@@ -1787,261 +2085,6 @@ to rot. Do that again for the next thing that sits here.
       whether it is worth fixing for both.
 
 
-- [ ] **Client-uploaded logos are downloadable again. Merged 2026-08-26 as `a302f946`, LIVE since the 2026-08-26 push.**
-      Live check, no marker to rot: `git merge-base --is-ancestor a302f946 origin/main` (exit 0 = live).
-      Every logo a client had ever uploaded through their potion planner returned NOT_FOUND on
-      download, all seven of them, from the first upload in June onward. The plan-save PUT replaced
-      the selections blob wholesale, dropping the R2 key on the first save after the upload, while
-      the URL built from it survived. The staff BEO reads the same key, so it had been reporting
-      "no logo" on all seven events too. The files were never lost and the seven rows are already
-      backfilled, so the data half was already live; **as of the 2026-08-26 push the code half is too, and the whole thing needs looking at.**
-      **The walk is two surfaces, because the backfill fixed the rows but nobody has seen either
-      one render.** On the admin event-detail page for proposal 718 (Tyler Anderson), confirm the
-      logo displays and "Download original" saves a real PNG. Then open the same event in the staff
-      portal and confirm the BEO now shows the logo rather than claiming there is none. Spot-check a
-      second one, ideally plan 91 (Khaitan) since it is the only JPG in the set and the only row
-      still in draft.
-      **Then, after the push, upload a NEW logo and save the plan again** — that is the half the
-      backfill cannot prove, and it is the half that was actually broken.
-
-
-### Consult call bridge, the READ side. Merged 2026-09-30 as `5157d29c`.
-
-Lane `consult-call-surfacing`, built 2026-08-26, rebased onto `3585e612` and merged on Dallas's
-go 2026-09-30. Graduates to Tier 3b by this tier's own rule once
-`git merge-base --is-ancestor 5157d29c origin/main` passes.
-
-What to walk when it does, three surfaces:
-- **Needs attention** on the admin overview. Consult call faults now appear beside the Thumbtack
-  lead ones, with their own labels. A fault does NOT retire when the slot passes, which was a
-  deliberate correction: a failed consult is a promised call not delivered, so the slot passing
-  CREATES the obligation rather than ending it.
-- **Proposal detail** and **client detail**. The newest chain per proposal, and one line per
-  consult for a client. Check the line reads cleanly in both skins (it spans both grid columns
-  on client detail by design).
-- **Notification settings**, the "Call bridge failures" category. One line, 199 characters, and it
-  now says explicitly that not every fault emails so the feed is worth checking too.
-
-**Walkable now: real rows exist.** Read from prod 2026-09-30: four `consult_call_attempts` rows.
-What each surface should show once shipped:
-- Client 1887: "Sep 8, 1:30 PM · missed".
-- Client 1913: "Sep 15, 4:00 PM · connected (Dallas, 6:18)".
-- Client 1910 AND proposal 842: "Sep 18, 11:00 AM · missed".
-- Attempt 1 (the 2026-08-25 launch-test chain) has neither a `proposal_id` nor a `client_id`, so
-  it renders nowhere. Correct, not a miss.
-- **Needs attention shows NO consult item.** None of the four rows is a fault status (two
-  `missed`, two `connected`), and missed consults alert by text instead. An empty feed here is the
-  healthy state, not a regression. The fault labels and the cap / stopped-reschedule wording are
-  pinned by tests; they cannot be walked until a real fault happens.
-
-
-
-### Consult call bridge hardening (fix list section 0). Merged 2026-09-30 as `9bca97e0` and `580a194b`; pushed 2026-10-01 (`81ab6761..d4b3f0b6`).
-
-Lanes `calcom-prior-uids` and `consult-bridge-hardening`. Live in production, so the walk below is owed now.
-
-One real billed walk, on a synthetic consult in the 2026-08-26 shape (a consult row with no Cal.com
-booking, `booker_phone` a phone you hold, slot a few minutes out):
-- Let ring 1 answer, and press 1 during the SECOND reading of the briefing, not the first. The
-  bridge must connect. Before this merge that press did nothing on both bridges. The lead bridge
-  got the same fix; any real Thumbtack lead call is its walk.
-
-NOT walkable, and proven by the route and chain tests instead: the kill switch half. With
-`CONSULT_CALL_ENABLED=false` the sweep places no ring at all, and a Render env change restarts the
-service, which outlives a 20-second ring placed before the flip. So nobody can hear the off message
-on a real call; do not spend a billed call trying.
-
-What else changed, none of it needing a walk: every consult fault now reaches Dallas once (a single
-stopped consult, a failed client-no-answer text, a press-1 Twilio never reported, the reaper riding
-the consult sweep); a redelivered or superseded Cal.com event can no longer file a duplicate
-consult; malformed `ADMIN_PHONE` / `VA_CELL` are never dialed and warn at boot; Zul's number stays
-out of `call_audit`, the attempt rows, the log and Sentry.
-
-### Shopping list: Next through the custom recipes before the list is rewritten. Committed 2026-10-02 as `0c9d2fe0`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
-
-Moves to Tier 3b the moment `git merge-base --is-ancestor 0c9d2fe0 origin/main` says yes. Test-
-and lint-verified only (18 component tests); never opened in a browser, because the dev DB holds
-no plan with a waiting custom request.
-
-The walk, on an event whose shopping list shows "Client requested: recipe needed" with TWO OR
-MORE rows (a plan where the client typed several custom drinks):
-- Make a manual edit to the list first (change a quantity), so a premature rewrite would show.
-- Add recipe on the first row. The drawer's bottom button reads Next: "<second request>". Add a
-  row, click Next: the drawer swaps to the second drink, no confirm appears, and your manual edit
-  is still on the list underneath.
-- On the last request the button reads Done, update list. Click it: ONE confirm naming every
-  drink, then one regenerate; the handled rows leave the box.
-- Separately: close the drawer partway (X) and confirm the row reads Recipe added and nothing was
-  rewritten; Edit recipe on it reopens the rows you typed, not an empty recipe.
-- Match existing on one row mid-run marks it Matched to X and does not prompt.
-
-Known and logged, not a defect of this walk: Escape inside the ingredient suggestions closes the
-whole drawer (fix list, Potions). The single-request flow is unchanged and is the Tier 3b
-"Match existing" item's walk.
-
-### Alternatives panel: Copy compare link only when it shows a comparison, plus Preview comparison. Committed 2026-10-02 as `a43f864e`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
-
-Moves to Tier 3b the moment `git merge-base --is-ancestor a43f864e origin/main` says yes. Verified by
-tests (server 6/6 + 5/5, client 9/9), one code reviewer, and a dev browser check of the PUBLIC side
-only: with both options sent the client link showed the comparison, and the preview URL signed out
-lands on login. The admin panel and the preview page were never opened signed in.
-
-The walk, on a proposal with Add an alternative used once (two options, the new one still a draft):
-- The panel shows Send options and Preview comparison, NO Copy compare link, and a line saying the
-  compare page only shows sent options.
-- Preview comparison opens a new tab: both columns, a dashed banner saying the client's link
-  currently opens a single proposal and naming the draft as hidden, choose buttons greyed out.
-- Send options. Copy compare link appears and the hint goes. Open the copied link in a private
-  window: the side-by-side comparison, not a contract.
-- Group 20 in prod (858 viewed, 872 draft) is the live case: its panel should now hide Copy.
-
-### Pantry & Pars "Recipe @ 100": margarita salt at one container. Merged 2026-10-05 as `addd55ad`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
-
-Moves to Tier 3b the moment `git merge-base --is-ancestor addd55ad origin/main` says yes. Verified by
-tests (generator 69/69 with the frozen-snapshot parity intact, potions routes 21/21, Pantry tab 6/6,
-consult/BEO/hosted/lab suites green), a five-agent fleet, and real lists generated from the dev DB in a
-rolled-back transaction. The Pantry tab itself was never opened signed in (the admin sign-in token was
-blocked in that session).
-
-- DONE 2026-10-06, after the first prod boot: `SELECT id, recipe_qty_per_100 FROM par_items WHERE
-  recipe_qty_per_100 IS NOT NULL` returned margarita-salt, tajin and sanding-sugar at 1, nothing else.
-- Potions, Pantry & Pars: a "Recipe @ 100" column beside "@ N"; those three read 1, everything else is
-  empty; hovering the header explains it. Type 2 on one, reload, it sticks; clear it, reload, empty.
-- Generate a BYOB list for an event with a Margarita or Paloma at 50 to 100 guests: Margarita Salt reads
-  1 (2 above 100 guests), with no extra container for a second salt-rimmed drink. Ginger Beer and Fresh
-  Mint come out exactly as before. Lists you already hand-edited keep your numbers on regenerate.
-
-### Admin UI batch: Supplies chip, balance due date, menu-print Download, Package details add-ons. Merged 2026-10-06 as `7a1aa28b`; pushed 2026-10-06 (`d4b3f0b6..5e6ae928`).
-
-Moves to Tier 3b the moment `git merge-base --is-ancestor 7a1aa28b origin/main` says yes. Verified by
-tests (175 client tests across the touched suites on main, menuPrint 17/17, eventDetails 19/19, beo
-29/29, the shifts list 10/10 in both timezones), three reviewers, and the CI client build. Never
-opened signed in (the admin sign-in token was blocked in that session).
-
-- Events (desktop): the Prep column's Supplies chip is blue, Bar stays grey. In the Status column every
-  event that owes money shows "Due <date>" under the amount; one already past its due date shows
-  "Past due <date>" in red (two were past due on 10/06). Paid and cancelled rows show no line.
-- An event with a posted bar menu: the Bar menu print card has Download above Replace; the file saves
-  as bar-menu-<id>.pdf (or .png/.jpg) and is the one you uploaded.
-- An event with The Foundation: open Package details. Add-ons lists The Foundation with its description
-  and "Includes: Ice Delivery, Cups & Disposables, Bottled Water"; a champagne toast with the
-  non-alcoholic option reads "Non-Alcoholic Bubbles Toast". Same on the matching proposal's page.
-
-### Consult recap with drink names: staff Consult card, client recap email, consult GET. Merged 2026-10-06 as `7d9a8d38`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
-
-Moves to Tier 3b the moment `git merge-base --is-ancestor 7d9a8d38 origin/main` says yes. Verified by
-tests (198 server tests across the 14 suites that load an edited file, all green one at a time; a
-dispatch test that fails against a send without names; the staff client suites; the CI build) and four
-reviewers (code, consistency, security, performance), each re-confirmed after one fix round. The client
-email was rendered on dev and read before merge. **Dev, signed in, 2026-10-06 (scripts/dev-signin.js):**
-the staff Consult card on shift 15 (plan 19, staffer 5) renders bold labels and readable lines, no
-`[object Object]`; that consult names no drinks, so the drink-name half below is still owed.
-
-- A consult-fed event (prod has 2 upcoming bookings whose consult names a custom drink): the staff
-  event page's Consult card shows bold labels and drink names ("Signature cocktails: Margarita",
-  "Custom cocktail: House Mule (vodka, ginger beer, lime)"), never `[object Object]` or a camelCase key.
-- The next consult saved for a new client: the automatic recap email names the drinks and, on a full
-  or signature-cocktail bar, carries a Mixers line ("Mixers: None beyond your signature cocktail
-  ingredients" when the consult picked none). It carries NO "Notes:" line even when the consult has
-  notes (Dallas, 10/06, `ed1f7ee3`); the staff Consult card for that event does show them.
-
-### Client's answers beside the shopping list. Merged 2026-10-06 as `fb9bae0b` (with `7d9a8d38`, the recap it reads); pushed 2026-10-07 (`5e6ae928..b3148da4`).
-
-Moves to Tier 3b the moment `git merge-base --is-ancestor fb9bae0b origin/main` says yes. Verified by
-tests (54 client tests across the touched suites on main, every new one mutation-checked by review), the
-CI build, the CSS scope check, and three reviewers (code, the cross-lane recap contract, UI/UX), each
-re-confirmed after a fix round. **Dev, signed in, 2026-10-06 (scripts/dev-signin.js), all as expected:**
-opened from plan 19's page, its event page and a submitted plan's proposal page (empty state "No
-planner or consult answers yet."); the switch opens on the consult (the newer set), the planner side
-reads "From the planner, not submitted" with "This list was built from the consult." and shows no
-menu design or logistics; Hide answers gives the 960px modal and survives a reload; widths 1440,
-1366, 1280, 1200 (1rem gutters) and 1024 (stacked, capped at 40vh), no sideways scroll; sticky at
-1280x800 and 1366x768 holds 81px from the top (under the 60px bar) and never covers the footer;
-both skins read clearly; Tab, Space and Enter work on the switch with a visible ring; Editor and
-Client view both keep the panel. What is left:
-
-- Sticky on a LONG planner set: the panel's last line reachable inside its own scroll. No dev plan
-  had a long v2 answer set on a list already in review (opening plan 17 would have flipped its list
-  status, see the Admin UI ledger entry on dev autosave).
-- A finalized (read-only) list: the panel shows. No dev plan has a finalized list, and staging one
-  on the shared dev DB was refused, so this waits for a real finalized plan.
-- The 2 upcoming bookings whose planner answers carry no activeModules show "which has no answers to
-  show here". Settled (Dallas, 10/06): old plans keep behaving as they have; handle one when it comes up.
-
-### The phone edit sheet and note sheet (lane ma-e3-edit-sheet). Merged 2026-10-06 as `589092fc`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
-
-It moves to Tier 3b the moment `git merge-base --is-ancestor 589092fc origin/main` says yes.
-Walked on dev only, headless at phone width in both skins (Task 7 of
-`docs/superpowers/plans/2026-10-05-mobile-admin-edit-sheet.md`, every check PASS); the fleet fold
-(2026-10-06) is pinned in jsdom and measured on a static render, with the live-browser measurements
-left to the controller. Never on a real phone, never against prod data. On the Pixel, on a real
-upcoming booking you choose. Every save here is real: a priced change reprices the booking and
-rebuilds its unlocked invoices, and a date or time change moves its shift. The sheet's main button
-reads "Confirm new total" when the total moves and "Done" when it does not; Done saves a change too,
-and with nothing changed it just closes. About fifteen minutes:
-- Edit details reads "date · time · guests"; the sheet shows the date ("SAT OCT 24" style), Start,
-  Duration ("4.5 hr" style), Setup "<N> min before" with no arrow, and Guests. Both skins.
-- Tap Longer, then More guests, a few times in quick succession, then step back to where you
-  started: the steppers never move under your finger, and while each new total loads the last one
-  stays on screen, dimmed. Cancel.
-- One hours change on a paid event whose hours really are changing and which carries a gratuity
-  the client chose (not one set by hand): Longer, and the sheet shows the New total, "balance due
-  becomes", and the desktop's reprice lines, among them "The gratuity rises to $X, so the client
-  is emailed the new amount automatically". That email is real in prod and goes out on Confirm new
-  total with no popup. Tap Confirm new total; the sheet closes and the detail shows the new figures.
-- One real date change (a date that really is moving): pick the date and tap the main button (it
-  reads Done when the total does not move), and "Notify the client?" opens with Email and Text
-  ticked and "Don't send" the main button, across the footer's second row. Tap Don't send: it
-  saves without messaging the client, and the event's shift moves with it.
-- Open the sheet and step Guests, then on desktop save the same booking's internal note (its
-  proposal page, "Admin notes", then "Save notes") before you tap the main button on the phone:
-  "This event changed since you opened it." comes into view, nothing saves, and Reload shows the
-  fresh values.
-- On an event of three hours or more that starts before 23:30 (so the refusal is certain: the
-  server lets an existing breach through when a change does not make it worse), set Start to
-  23:30 and tap the main button (Don't send, if the notify step opens): the curfew confirm reads
-  the server's reason and scrolls into view with both of its buttons showing. Step Duration and the
-  confirm withdraws; then Cancel. Never tap "Book it anyway": it books past the curfew for real and
-  is recorded.
-- Airplane mode on a detail you opened before: Note and Edit details both read "needs connection",
-  each at the far end of its row, and open nothing.
-- The Note row reads the note's first line, or "Add a note". Type a line, Save, and the row shows
-  it. Reopen, type, press Back: reopening shows the kept draft, and Cancel clears it. Put the
-  note back as it was.
-- A past event: Edit details reads "desktop view" and opens the Desktop view.
-- Back with the edit sheet open closes it and stays on the detail.
-Two things to look at and judge: every control stays dimmed for half a second after each swap (the
-form's first appearance, a reload, the notify step opening, each step back to the form), and the
-notify footer is two rows, Cancel and "Send the update" over a full-width "Don't send", no label
-wrapped. Say whether either reads wrong on the Pixel.
-
-### Texts know their line, and one opt-out covers every line (lane sms-lines). Merged 2026-10-06 as `811f9092`; pushed 2026-10-07 (`5e6ae928..b3148da4`).
-
-Once pushed. Each step texts the 888 from the 312 (your staff account; it is never a client row):
-- Text STOP. The alert email arrives; the inbound row in `sms_messages` carries `metadata.to` (the
-  888) and `metadata.outcome = 'opt_stop'`, and `sms_optouts` holds the 312 with `source = 'keyword'`.
-  While it stands, admin alert texts to the 312 fail at Twilio (21610), so do the next step right away.
-- Text START. The row reads `opt_start` and the `sms_optouts` row gets `cleared_at`. Admin alert
-  texts reach the 312 again.
-- Text a picture with no words. The row carries `metadata.media` with a Twilio-hosted link.
-This is the 888 leg of spec section 16's round trip; the 224 legs follow when each line is pointed at
-the OS. The Messages-page refusal for an opted-out client is covered by tests only (the 312 has no
-client thread).
-
-### Every human-click client send records who sent it (lane send-attribution). Merged 2026-10-08 as `63f3eeef`; not pushed.
-
-Once pushed. Nothing on screen changes except the contact history, so most of this is a read-only
-prod check of `message_log` after the next real sends:
-- A "Send to client" (or a proposal created with Send now) writes `proposal_sent` (email) and
-  `initial_proposal` (text) rows on that proposal, with `sent_by` set to whoever clicked; its
-  `sms_messages` row keeps `sender_id` NULL.
-- A cancel confirmation, a change-request decision or a staffing gratuity disclosure ledgers
-  `cancel_confirmation`, `change_request_decision` or `gratuity_disclosure` on its own proposal (not
-  the client's newest), with the clicking admin.
-- A refund notice from the admin refund, cancel refund or cancel-line routes carries the admin; one
-  the Stripe webhook or the stale-pending sweep sends still ledgers NULL.
-- In the admin, the client's contact history shows those sends as sent by us, not automated.
-
 ### Inbox, the server side (lane inbox-engine). Moves to Tier 3b with the page: check `git log origin/main --oneline --grep='merge(lane inbox-page)'`.
 
 The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
@@ -2056,7 +2099,7 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   Recently handled with "You texted back from 888".
 - Point the 0082's Twilio `sms_url` at `https://api.drbartender.com/api/sms/inbound` (Dallas approves
   or makes the change) and confirm the Messaging Service defers inbound to each number's own webhook.
-- The 224 round trips (spec 16 step 6), each line in turn: Dallas texts it from his own phone, replies
+- The 224 round trips (spec 16 step 6), each line in turn: Dallas texts it from the 312 GV, replies
   from Inbox on that line, then texts STOP and START. Each step lands in `sms_messages` with the right
   `metadata.to` and outcome, STOP blocks every line, and HELP is answered once. Only then add the line
   to `INBOX_TEXT_LINES` in Render.

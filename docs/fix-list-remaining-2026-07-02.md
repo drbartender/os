@@ -51,7 +51,7 @@ first three sit above the divider.
 5. Show when an event was booked → DROPPED by Dallas 2026-10-06 (the message history covers it). Shipped instead in `7a1aa28b`: the desktop Events list prints the balance due date under an owed Status chip, red once past due.
 6. Admin cannot download the menu print file → SHIPPED 2026-10-06 (`7a1aa28b`).
 7. "Package details" never shows what is in The Foundation → SHIPPED 2026-10-06 (`7a1aa28b`).
-8. Planner answers beside the shopping list → SHIPPED 2026-10-06 (lane consult-recap `7d9a8d38`, lane sl-client-answers `fb9bae0b`; not pushed). Residuals under Potions.
+8. Planner answers beside the shopping list → SHIPPED 2026-10-06 (lane consult-recap `7d9a8d38`, lane sl-client-answers `fb9bae0b`; pushed 2026-10-07). Residuals under Potions.
 9. Fresh-squeezed juice add-on → Potions (needs a rate from Dallas).
 10. Staff opt-in for "menu is ready to print" → Staff, shifts, and the roster.
 11. Additional clients on a proposal → Unbuilt projects (design call first).
@@ -1928,9 +1928,9 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 - **Docs and board:**
   - The board's "In flight" never prunes: sms-lines, send-attribution, ma-e3b and inbox-engine still read "building" though all four merged, and two lines lack their leading `- `, so each folds into the bullet above. `board-write.sh` only appends, so pruning needs a move or remove mode (or a deliberate hand edit).
   - The fix list cites `.ib-pane a.btn` as if it were on main; `.ib-pane` arrives with lane inbox-page. Reword to "lane inbox-page scopes ...".
-  - The Inbox walkthrough's "Dallas texts it from his own phone" (walkthroughs-owed, copied from the spec's acceptance steps) should name the 312 GV: a personal cell may never become a DB row.
+  - ~~The Inbox walkthrough's "Dallas texts it from his own phone" (walkthroughs-owed, copied from the spec's acceptance steps) should name the 312 GV: a personal cell may never become a DB row.~~ DONE 2026-10-09: it names the 312 GV.
   - The `inbox_waiting` badge key is documented only in README; ARCHITECTURE has never had a `GET /badge-counts` row.
-  - No walkthrough covers ma-e3b: add a sentence to the ma-e3 edit-sheet entry, or a short ma-e3b entry (the layout, the tap guard, the 44px strip on the Pixel).
+  - ~~No walkthrough covers ma-e3b: add a sentence to the ma-e3 edit-sheet entry, or a short ma-e3b entry (the layout, the tap guard, the 44px strip on the Pixel).~~ DONE 2026-10-09: walkthroughs-owed has a ma-e3b entry beside the ma-e3 one, and the ma-e3 entry's rows now read as ma-e3b left them.
   - The lane leftover blocks, this one included, sit between a `---` and `## Voice` with no section rule, so they render under "Comms and marketing". Cosmetic.
 
 ## Voice
@@ -2081,7 +2081,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     such call fits each of the other two. (The ma-e3b plan review's gaps seat, 2026-10-08.)
 
 - **Phone edit sheet follow-ups (lane ma-e3b-edit-sheet-layout, "readout above, controls pinned",
-  merged 2026-10-08 as `d7fa4742`, not pushed).** Parked by its task reviews and lane fleet; none
+  merged 2026-10-08 as `d7fa4742`, pushed 2026-10-08).** Parked by its task reviews and lane fleet; none
   changes money or a message.
   - With catalog drift (a booking whose package or add-on prices moved since it was priced), the
     figure the sheet asks for as it opens shows, dimmed, as the "New total" while the first
@@ -2260,7 +2260,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   today, about 11 ms at 10x. Recipe when it matters: select the not-finished open rows in a
   subquery with `OFFSET 0`, then apply `openSlotsSql` (1.53 to 0.72 ms at 1x, 57.8 to 17.6 at 50x,
   identical results). Performance review of lane staffing-rule-by-role, 2026-09-30.
-- ~~**QUEUED LANE (Dallas, 2026-09-30): one staffing rule everywhere, by ROLE.**~~ SHIPPED in `36a67b4f` (lane staffing-rule-by-role, merged 2026-09-30, not pushed; plan `docs/superpowers/plans/2026-09-30-staffing-rule-by-role.md` carries the as-built record). Beyond the list below it also moved the last-minute staffed confirmation (it emails and texts the client), the desktop ShiftDrawer, the event page and the Assign-to-event modal onto the rule. Original entry: Lane
+- ~~**QUEUED LANE (Dallas, 2026-09-30): one staffing rule everywhere, by ROLE.**~~ SHIPPED in `36a67b4f` (lane staffing-rule-by-role, merged 2026-09-30, live in prod; plan `docs/superpowers/plans/2026-09-30-staffing-rule-by-role.md` carries the as-built record). Beyond the list below it also moved the last-minute staffed confirmation (it emails and texts the client), the desktop ShiftDrawer, the event page and the Assign-to-event modal onto the rule. Original entry: Lane
   `phone-owner-decisions` put the phone Events LIST on the detail's rule (`roleFill` /
   `rowRoleFill`, `client/src/components/adminos/shifts.js`), but these still count HEADS
   (`approved_count` against the roster length), so a mixed-role over-fill (roster Bartender x2 +
@@ -2276,11 +2276,11 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   Database review seat. Reach today: none (0 mixed-role rosters in prod on 2026-09-29, and the phone
   refuses to over-fill). Found by the consistency and code reviews of that lane.
 - **OWNER DECISIONS on the phone event detail (lane ma-e2, `91dcfab8`), each one Dallas's to make.**
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): the "No tip jar (client paid to skip it)" warning
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod): the "No tip jar (client paid to skip it)" warning
     goes on the phone detail as an amber chip on the date line, on any event not cancelled
     (`tip_jar === false`, already in the `/proposals/:id` read). The "Last-minute: verify
     staffing" badge (`last_minute_hold`) stays desktop only: skip it on the phone.
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): the phone LIST counts by ROLE, the detail's rule
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod): the phone LIST counts by ROLE, the detail's rule
     (`staffingSheet.js`), so an extra bartender never reads full while a barback slot is open.
     The list feed already carries `approved_by_role`; client only (`eventCards.js` `finishCard`,
     which today sums heads via `approvedCount` capped at slots).
@@ -2288,7 +2288,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     in Desktop view until "Phone view" is tapped); the ma-e3 phone edit sheet replaces it soon.
     SUPERSEDED for upcoming events by lane ma-e3-edit-sheet (merged 2026-10-06 as `589092fc`, not
     pushed): Edit details opens the phone edit sheet; a past event still opens Desktop view.
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): phone vs desktop is decided when a page OPENS, not on
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod): phone vs desktop is decided when a page OPENS, not on
     every resize. Wider than first filed: `AdminLayout.js` renders the Outlet at two different tree
     positions (phone chrome line ~269, desktop ~288), so crossing 700px remounts WHATEVER admin
     page is open (any unsaved form, a message draft, an open dialog), live since the shell shipped
@@ -2297,14 +2297,14 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     (portrait-locked); reachable on a desktop window under 700px and a phone browser tab rotated.
     As built, a tap to the SAME path does not re-latch (a phone browser tab opened landscape on
     /events, rotated, then Events tapped again stays desktop until another route). Accepted.
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): the phone Back button's name becomes plain "Back".
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod): the phone Back button's name becomes plain "Back".
     It returns wherever you came from; the name is `aria-label` only (`AdminLayout.js` passes
     "Back to Events" / "Back to Proposals" to `MobileHeader.js`), so this is screen-reader text.
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): a CANCELLED event holding an overpayment shows
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod): a CANCELLED event holding an overpayment shows
     Overpaid on the phone Financials chip, as the desktop Payment card does
     (`ProposalDetailPaymentPanel.js`); the header's date line keeps its own "Cancelled" chip. On a
     live event a bank debit in flight (Processing) still outranks Overpaid, the ma-e2 law.
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed): a staffer under half a mile from the venue reads
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod): a staffer under half a mile from the venue reads
     "<1 mi", not "0 mi" (`staffMeta` in `staffingSheet.js`). Display only; the whole-mile rule
     stays (a stolen phone's cache cannot place a home to the block).
   - ~~A tap on the lower part of the client's name in the header opens Maps.~~ CLOSED 2026-09-30 by
@@ -2314,7 +2314,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     type opens Maps. Harmless; leave it.
   - ~~The event type is cut off in the detail header.~~ CLOSED 2026-09-30: the type has its own
     line under the client (`aa03a2e6`, pushed 2026-09-30, `MobileHeader.js` `m-dhead-kind`).
-  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, not pushed), contrast (measured on `--bg-2`): the House Lights
+  - DECIDED 2026-09-30 (Dallas), SHIPPED in `016477d9` (lane phone-owner-decisions, merged 2026-09-30, live in prod), contrast (measured on `--bg-2`): the House Lights
     balance-due label and amount on the detail (`.m-money-bal`, `--ms-camel`, 2.77:1) darken to
     about 5:1, same hue (`hsl(38 63% 30%)`, 5.3:1); After Hours (warn at 58%, 6.6:1) stays. The phone's small `--ink-4` labels
     (rail month, "GUESTS", section summaries and labels; 1.9:1 House Lights, 2.6:1 After Hours)
