@@ -8,7 +8,7 @@ logging with a Sentry tripwire for unexplained gaps, the page's visibility test,
 line-matching rule for the repair, a restore point, before-state breadcrumbs, row locks, and drift
 assertions. Every finding was checked against code or prod before it was folded; one was rejected
 with data (section 6).
-**As built (2026-10-08, lane `invoice-lines`):** the code fleet (code-review PASS, consistency PASS
+**As built (lane `invoice-lines`, merged 2026-10-09 as `3e71a01c`):** the code fleet (code-review PASS, consistency PASS
 after one comment fix, security SAFE) and the second opinion (codex and gemini pro, no findings)
 ran on the lane. Four build-stage changes from that review are folded into the sections below:
 `refreshUnlockedInvoices` builds its lines on the first write only, so a refresh that writes
@@ -318,3 +318,51 @@ full-pay backfill entry loses its "run it after the generator fix" note.
   dismissed.
 - **The admin record-payment entrance runs the upgrade without a savepoint** (risk). True and
   pre-existing; the fold adds no new failure there, so it stays out of this change.
+
+## Appendix A. The repair's step 1 query (read-only)
+
+The approval list for section 4.4, run through the Neon MCP on the production branch. Rebuild it
+fresh on the day; never approve from an old run. It lists every invoice the repair would touch,
+with its before-lines md5 (the drift fingerprint step 2 embeds), its sum before and after the sign
+correction, its contract, and its class. The 2026-10-09 preview returned 27 rows: 14 open, all
+explained, and 13 receipts.
+
+```sql
+-- Invoice line-items repair, STEP 1 (read-only approval list). Spec 2026-10-08 §4.4.
+-- Rebuild FRESH immediately before step 2; never approve from an old run.
+WITH scope AS (
+  SELECT i.id AS invoice_id, i.invoice_number, i.label, i.locked, i.proposal_id, p.total_price, p.total_price_override,
+         CASE WHEN jsonb_typeof(p.pricing_snapshot->'adjustments') = 'array' THEN p.pricing_snapshot->'adjustments' ELSE '[]'::jsonb END AS adjs
+    FROM invoices i JOIN proposals p ON p.id = i.proposal_id
+   WHERE i.status <> 'void' AND i.label IN ('Deposit','Balance','Full Payment') AND COALESCE(p.external_paid,0) = 0 AND p.id <> 600
+), adj AS (
+  SELECT s.invoice_id, a.v->>'type' AS type,
+         CASE WHEN COALESCE(a.v->>'label','') = '' THEN 'Adjustment' ELSE a.v->>'label' END AS match_desc,
+         round(abs((a.v->>'amount')::numeric) * 100)::int AS cents,
+         (a.v->'visible' = 'true'::jsonb) AS visible
+    FROM scope s, jsonb_array_elements(s.adjs) a(v)
+), matched AS (
+  SELECT li.id AS line_id, li.invoice_id, a.type, a.visible, a.cents,
+         CASE WHEN a.visible AND a.type = 'discount' THEN 'negate' WHEN NOT a.visible THEN 'remove_into_package' ELSE 'none' END AS action
+    FROM invoice_line_items li JOIN adj a ON a.invoice_id = li.invoice_id
+   WHERE li.source_type = 'manual' AND li.description = a.match_desc AND li.line_total = a.cents
+), per_inv AS (
+  SELECT s.invoice_id, s.invoice_number, s.proposal_id, s.locked, s.total_price, s.total_price_override,
+         (SELECT COALESCE(sum(line_total),0) FROM invoice_line_items WHERE invoice_id = s.invoice_id) AS sum_before,
+         (SELECT count(*) FROM matched m WHERE m.invoice_id = s.invoice_id AND m.action = 'negate') AS n_negate,
+         (SELECT count(*) FROM matched m WHERE m.invoice_id = s.invoice_id AND m.action = 'remove_into_package') AS n_hidden,
+         (SELECT COALESCE(sum(CASE WHEN m.type='discount' THEN m.cents ELSE 0 END),0) FROM matched m WHERE m.invoice_id = s.invoice_id AND m.action <> 'none') AS corrected_discount_cents,
+         (SELECT count(*) FROM invoice_line_items WHERE invoice_id = s.invoice_id AND source_type = 'package') AS pkg_lines,
+         (SELECT md5(string_agg(id || ':' || description || ':' || line_total || ':' || unit_price || ':' || source_type, '|' ORDER BY id)) FROM invoice_line_items WHERE invoice_id = s.invoice_id) AS lines_md5
+    FROM scope s
+)
+SELECT invoice_id, invoice_number, proposal_id, locked, n_negate, n_hidden, pkg_lines, sum_before,
+       sum_before - 2*corrected_discount_cents AS sum_after_sign_fix, round(total_price*100)::int AS contract_cents, lines_md5,
+       CASE WHEN locked THEN 'receipt'
+            WHEN (sum_before - 2*corrected_discount_cents) = round(total_price*100) THEN 'open-explained'
+            WHEN total_price_override IS NOT NULL OR n_hidden > 0 THEN 'open-explained(fold)'
+            ELSE 'open-UNEXPLAINED' END AS class
+  FROM per_inv
+ WHERE n_negate + n_hidden > 0 OR (NOT locked AND total_price_override IS NOT NULL AND sum_before <> round(total_price*100))
+ ORDER BY locked, proposal_id, invoice_number;
+```

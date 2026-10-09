@@ -69,8 +69,8 @@ Ordered by how close each one is to actually costing money or a client.
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
-| 1 | Invoice line items do not add up: a discount prints as a CHARGE, a hidden adjustment prints, an override itemizes at catalog | **yes: 13 open invoices on upcoming events list the client's discount as a charge (26 invoices, 22 proposals, 10/08)** |
-| 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)** |
+| 1 | Invoice line items: fixed on main (lane invoice-lines, `3e71a01c`, not pushed); after the push, 27 existing invoices need the repair | **yes until pushed: prod still prints a discount as a charge, 13 open invoices (10/09)** |
+| 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; run after invoice-lines ships |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
@@ -232,43 +232,27 @@ already-overpaid, fully-locked proposal that invoices the client for money we al
 **Verified 2026-08-23**: the function is at `:339` and reads no `amount_paid`. (An earlier note
 claimed this needed re-deriving because the citation was off; it was off by one line.)
 
-### Invoice line items do not add up to the invoice total
+### Invoice line items: fixed on main; push it, then repair the 27 invoices already wrong
 
-**The live half, measured 2026-10-08: a discount prints as a charge.** The adjustments loop in
-`generateLineItemsFromProposal` (`invoiceLineItems.js`) pushes `toCents(adj.amount)` for every
-adjustment, while `pricingEngine` negates `type === 'discount'`, and it ignores `visible`, which
-the client proposal page honors (`ProposalView.js` skips a hidden adjustment and negates a
-discount). So a Thumbtack proposal at $350 with a $100 "Courtesy" discount gets invoice lines
-reading $350 plus "Courtesy $100.00", summing to $450 on a $250 contract, and a hidden "Budget
-Match Discount" the client never saw on the proposal prints on the invoice as a charge. The
-client invoice page renders every line (`InvoicePage.js`, the line-items table). Prod, read-only:
-26 non-void invoices across 22 proposals, 13 of them open on 13 upcoming events, and the
-Thumbtack Courtesy discount is routine, so every new one adds to it. It also makes the
-deposit-to-full upgrade and the full-payment backfill keep old lines on a discounted proposal
-(`generated_sum_mismatch`). Filed 2026-08-28 below the divider as "dev has 0 adjustments";
-promoted here 2026-10-08. One owner decision: how a hidden adjustment and an override present
-on an invoice (the proposal page shows catalog lines that do not sum to its total in both cases).
-Existing open invoices need their lines regenerated after the fix; paid, locked ones are a
-separate call.
+The generator fix is merged (lane invoice-lines, `3e71a01c`, 2026-10-09; spec
+`docs/superpowers/specs/2026-10-08-invoice-line-items-design.md`) and NOT pushed. Until it ships,
+prod keeps minting invoices whose lines print a discount as a charge, print hidden adjustments,
+and itemize an override at catalog.
 
-**The original half.** `generateLineItemsFromProposal` is also override-blind: it always itemizes from catalog, so any
-proposal whose `total_price_override` differs from catalog gets an invoice with a correct total
-sitting over line items that do not sum to it (Shiralee INV-0120: $450 of lines on a $270
-invoice). Verified 2026-08-23: `invoiceLineItems.js` contains no `total_price_override` reference.
+**After the push, the repair (spec section 4.4).** A guarded `DO` block through the Neon MCP,
+Dallas's yes on the exact rows first, a Neon restore branch of production immediately before it,
+and never at the same time as the full-payment backfill. Step 1 is the read-only approval list
+in the spec's appendix; rebuild it fresh on the day. The 2026-10-09 preview: 27 invoices, 14 open
+(8 sign flips, 5 hidden discounts into the package line, proposal 756's override fold) and 13
+paid receipts (12 sign flips, 1 hidden discount, INV-0455 on proposal 888); every open one lands
+exactly on its contract and every one has a package line. Receipts get no fold to the current
+total, and money columns never move. Residue the repair lists and never touches: INV-0228
+"Special Offer" on proposal 664 (its adjustment is gone) and INV-0467 "Balance" on proposal 789
+(not an adjustment line).
 
-**Measured against prod 2026-08-25.** 38 proposals carry an override, 13 CC transfers and 25
-native. Every affected invoice is NATIVE: 10 non-void invoices across 9 proposals. Nine of the
-ten are Deposit invoices, where the $100 due is right and only the lines behind it show catalog
-list; the tenth is Balance INV-0120. Widest spread is proposal 770, $1,100 of lines on a $425
-contract.
-
-**The CC tail is NOT part of this, and must not be "fixed".** All seven CC balance invoices sum
-EXACTLY to their own `amount_due`, because `scripts/cc-balance-invoice.js` mints the shape by
-hand. They sit $100 under `total_price` only because that is the CC deposit already sitting in
-`external_paid`, carried on the invoice as a credit. Correct by construction.
-
-Deliberately NOT fixed alongside the drink-plan money fix: every invoice flows through that
-generator, so it is its own lane.
+**The CC tail is NOT part of this, and must not be "fixed".** The Check Cherry balance invoices are
+hand-minted by `scripts/cc-balance-invoice.js` with the discount already negative and a "Less
+deposit already paid" credit line; the repair excludes `external_paid > 0`.
 
 ### A tip refund has no gratuity scope, so cancel-line can offer it a second time
 
@@ -405,8 +389,10 @@ default, `--apply` only with an exact `--expect` list built from a FRESH dry run
 in `docs/superpowers/plans/2026-08-28-full-pay-invoice.md`, and the verification walk in
 `docs/walkthroughs-owed.md`. **Claude cannot point it at prod from this box** (the Neon
 connection-string call is blocked), so Dallas runs it with the prod URL, or it gets ported to a
-guarded DO block. Run it AFTER the invoice line-item generator fix above: the script keeps old lines on a
-discounted proposal (`generated_sum_mismatch`), so running first freezes the wrong-sign lines.
+guarded DO block. Run it after lane invoice-lines ships (the generator fix, merged `3e71a01c`):
+before that push the script keeps old lines on a discounted proposal (`generated_sum_mismatch`),
+which would freeze the wrong-sign lines. Never run it at the same time as the line-items repair
+above; both write locked receipts.
 Sentry `DRBARTENDER-SERVER-1E` (`invoice_link_overflow_capped`) is the tripwire for this bug; do not
 resolve it as noise.
 
@@ -1090,6 +1076,16 @@ here by default.
 ---
 
 ## Money and payroll (internal correctness)
+
+- **Trace: does a native Full Payment invoice record a gratuity elected at payment?** Raised by the
+  invoice-lines spec review (2026-10-08, gaps lens), from a code reading: a Full Payment invoice
+  minted at send (full terms) is linked at payment by `linkOpenContractInvoice`, which caps the
+  credit at `amount_due - amount_paid` (`invoiceLinking.js`) with no re-derivation, so a gratuity
+  elected at checkout would land as overflow. Prod 2026-10-08 shows no instance: the only
+  non-transfer Full Payment invoice on a gratuity proposal that is short of its contract or its
+  payment is INV-0448 (proposal 883), an upgraded deposit whose gap is a $125 surcharge added
+  after payment. Trace the path end to end before acting; if it is real, the overflow email and
+  Sentry `invoice_link_overflow_capped` already make it loud.
 
 - **OWNER DECISION: a class supply pack pays the $50 hosted duty, not the $20 one.** Class packages
   are `per_guest`, so `isHostedPackage` puts them on the hosted branch of `dutyLines.js`, where any
@@ -1916,8 +1912,6 @@ Parked by the lane's review fleet and its prod acceptance check (merge `c7a901d3
 ### Push 2026-10-08 review leftovers
 
 Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the push.
-- ~~**Before lane invoice-lines merges (another window's lane), rebase it: `git rebase --onto main 3987af19` in its worktree.**~~ DONE 2026-10-09 (Dallas ran it): the lane now sits on `6b205efe`. Its old base `3987af19` was replaced by the pre-push rewrite (one fix-list note lost its pay figures, so every later sha changed; commit `7d5e5f8c`'s message maps the ones the docs quote). Its 3 commits came across unchanged (range-diff all "=", its 10 files byte-identical), so only their ids changed (old tip `f45236aa`, new `9e621d1e`), and its squash-merge no longer conflicts.
-- **Lane invoice-lines' commits cite a spec, `docs/superpowers/specs/2026-10-08-invoice-line-items-design.md`, that is in neither main nor the lane.** Ask its window where it went before the lane merges.
 - **`server/utils/answeringMessageTypes.js` is not on the sensitive list.** Its allowlist decides which sends count as a reply and close an Inbox item, the same call `server/utils/inbox/**` is listed for, so an edit to it alone gets only the light review. Add it to `scripts/sensitive-paths.txt` beside `gratuityDisclosureNotify.js`.
 - **A text with no `group_id` gets a group size of every such row, not 1** (`server/utils/inbox/readSms.js`, `COUNT(*) OVER (PARTITION BY m.group_id)`: Postgres puts every NULL in one partition). Latent, because every hand-sent staff writer sets a `group_id` today. It goes live when an Inbox text to an unknown number (written with no `group_id`) later keys to a staffer, for example an applicant who gets hired: the reply stops counting and the person shows as waiting until someone taps Done. Fix: `CASE WHEN m.group_id IS NULL THEN 1 ELSE COUNT(*) OVER (PARTITION BY m.group_id) END`, plus a readers test with two NULL-group rows. Fold it into the next Inbox lane.
 - **Two limiters on the Inbox text route:** `adminWriteLimiter` (10 a minute, shared with every admin write) runs before `inboxTextLimiter`, so the spec's 20 a minute never governs. Keep one.
@@ -2445,6 +2439,25 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 ---
 
 ## Platform, schema, and test gates
+
+- **The public proposal route hands the browser hidden adjustments and the override.**
+  `server/routes/proposals/publicToken.js` selects `p.pricing_snapshot`, spreads the row into the
+  response, and deletes only the top-level `total_price_override`; the snapshot still carries
+  every adjustment (label, amount, `visible: false`) and its own `total_price_override`. The
+  proposal page hides them only in the DOM (`ProposalView.js`, `if (!adj.visible) return`), so
+  "Client sees" off is a display choice, not a confidentiality control, on that page (the invoice
+  route prints only visible adjustments since lane invoice-lines). Fix: send a sanitized copy of
+  the snapshot (adjustments filtered to visible, `total_price_override` dropped, `breakdown`
+  checked for hidden labels), after confirming what ProposalView reads so the totals it shows do
+  not move. Raised by the invoice-lines security review, 2026-10-08.
+- **An adjustment label over 255 characters overflows `invoice_line_items.description`**
+  (VARCHAR(255)). Nothing bounds the label: the editor input has no `maxLength` and the admin PATCH
+  stores `adjustments` from the body as is. A visible label that long makes `writeLineItems`
+  throw: under the upgrade's savepoint on the webhook rails it degrades, but `createBalanceInvoice`
+  and `createInvoiceOnSend` run inside payment webhook transactions with no savepoint, so the
+  payment record rolls back and Stripe retries. Latent: the longest label on prod is 28 characters
+  (2026-10-09). Fix: a `ValidationError` on the admin PATCH and POST past 255 (or a lower UX cap)
+  plus `maxLength` on the input. Raised by the invoice-lines security review, 2026-10-08.
 
 - **The consult-notes guard sits outside the sensitive list** (push review, 2026-10-07).
   `server/utils/consultRecap.js` (notes off by default) and `server/routes/drinkPlans/shoppingList.js`
