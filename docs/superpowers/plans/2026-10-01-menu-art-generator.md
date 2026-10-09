@@ -1,6 +1,6 @@
 ---
 spec: docs/superpowers/specs/2026-10-01-menu-art-generator-design.md
-designGate: satisfied by 84aed5bc (spec section 11 amended from artifact version 1790874392-ddd7, snapshot docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html)
+designGate: REOPENED 2026-10-09 for the page lane (designer moved into an event-page section, brief v3); server lanes unaffected. Earlier: satisfied by 84aed5bc (spec section 11 amended from artifact version 1790874392-ddd7, snapshot docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html)
 lanes:
   - id: menu-art-foundation
     footprint:

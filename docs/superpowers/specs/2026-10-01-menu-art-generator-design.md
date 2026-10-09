@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-01
 **Status:** brainstormed and approved section by section with Dallas on 2026-10-01 (flow, generation, storage and approval, failures and testing). Spec fleet (grounding, gaps, risk) run the same day: 1 blocker, 18 warnings, about 20 suggestions, all folded in at Dallas's direction, with his three calls recorded in section 3 (decisions 8 to 10).
-**Visual design:** COMPLETE 2026-10-01. Artifact "Dr. Bartender Menu Designer" (https://claude.ai/artifact/CFXJvLLMr57mEyp1bP5jiJ, version `1790874392-ddd7`), snapshotted at `docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html`, built from the brief at `docs/design-artifacts/2026-10-01-menu-designer/brief.md`. Section 11 is the amended visual contract, and the fields the design added are folded into sections 4 to 9.
+**Visual design: REOPENED 2026-10-09 for the admin experience.** Dallas moved the designer off its own page and into a section of the event page, in the right column between Drink plan and Bar menu print, with editing opening over the event page. Brief v3 is at `docs/design-artifacts/2026-10-01-menu-designer/brief.md`. Until the new design returns, sections 4.1 to 4.3, 10.1 and 11.1 (the `/events/:id/menu` page) are superseded, and the page lane may not start. The 2026-10-01 artifact remains the benchmark for the printed menu (11.2, 11.3, table P). Earlier note: visual design COMPLETE 2026-10-01. Artifact "Dr. Bartender Menu Designer" (https://claude.ai/artifact/CFXJvLLMr57mEyp1bP5jiJ, version `1790874392-ddd7`), snapshotted at `docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html`, built from the brief at `docs/design-artifacts/2026-10-01-menu-designer/brief.md`. Section 11 is the amended visual contract, and the fields the design added are folded into sections 4 to 9.
 
 ## 1. Goal and scope
 
@@ -335,7 +335,7 @@ Each file stays under 300 lines. `EventDetailPage.js` passes what the card alrea
 
 **Benchmark.** The artifact "Dr. Bartender Menu Designer" (https://claude.ai/artifact/CFXJvLLMr57mEyp1bP5jiJ, version `1790874392-ddd7`), snapshotted at `docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html`. Claude Design delivered it as a published artifact, not a design-system project, so it was pulled with the Artifact read rather than DesignSync; the snapshot is the same bytes. Open the snapshot in a browser: its state buttons walk Part 1, and Boards A to F, the legibility study and the pairing cards show Part 2. The quality bar for Part 2 remains `client/public/menu-samples/39.webp` and `40.webp`.
 
-**Gate: satisfied 2026-10-01.** The artifact is complete, snapshotted, and this section carries the per-screen layout, the component vocabulary and the token rule. The plan's front-matter records this amendment as the page lane's dependency.
+**Gate: REOPENED 2026-10-09 for Part 1** (placement moved into the event page; see the header). Part 2 stays satisfied. Earlier: **satisfied 2026-10-01.** The artifact is complete, snapshotted, and this section carries the per-screen layout, the component vocabulary and the token rule. The plan's front-matter records this amendment as the page lane's dependency.
 
 **What the snapshot is and is not.** The admin chrome in it is a stand-in for the OS skin (the artifact says so), and its drink and background art is placeholder SVG; the AI supplies real art as images. Its JavaScript (state strip, timers, simulated generation) is mockup scaffolding, not code to port. Layout, composition, copy, component choices and every number below are the contract.
 
