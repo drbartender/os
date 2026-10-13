@@ -830,6 +830,22 @@ async function start() {
         clearHealthRow('consult_call_sweep');
       }
 
+      // Inbox AI read (spec 2026-10-06 section 6.4): every 60 s, reads the
+      // Inbox subjects that have no ok or refused read yet, oldest first, at
+      // most 20 a tick and INBOX_AI_DAILY_CAP a rolling 24 hours. A paid
+      // external API that receives client message text, so the tick carries
+      // the in-flight guard of service_extension_sweep and consult_call_sweep
+      // above; it lives in readJob.js's makeInboxReadTick so a test can hold
+      // it. With ANTHROPIC_API_KEY unset every tick does nothing.
+      if (enabled('RUN_INBOX_READ_SCHEDULER')) {
+        const { makeInboxReadTick } = require('./utils/inbox/readJob');
+        const wrapped = wrapScheduler('inbox_ai_read', 60, makeInboxReadTick());
+        setTimeout(wrapped, 40000); // 60s cadence; 40s is off every sibling's boot slot
+        setInterval(wrapped, 60000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('inbox_ai_read');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();

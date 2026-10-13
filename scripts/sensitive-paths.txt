@@ -152,6 +152,9 @@ server/utils/staffText.js
 # in server/utils/inbox/ and nothing deeper: the folder stays flat.
 server/routes/admin/inbox.js
 server/utils/inbox/**
+# The one module that requires @anthropic-ai/sdk (lane inbox-ai): a paid API
+# that receives client message text from the read job in the folder above.
+server/utils/anthropicClient.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes
@@ -353,6 +356,11 @@ server/utils/lineItemRemovedNotify.js
 # file-size ratchet. It is the only notice telling a paid client they owe more
 # after a crew change. Sensitivity follows the code.
 server/utils/gratuityDisclosureNotify.js
+# Inbox answering allowlist (lane send-attribution): which send types count as
+# a reply and close an Inbox item, with PROPOSAL_SEND_MESSAGE_TYPES. The same
+# call server/utils/inbox/** is listed for: a wrong entry silently closes a
+# waiting person's item, or never closes it.
+server/utils/answeringMessageTypes.js
 # Payout mirror. stripeWebhookHandlers/payout.js is a thin dispatcher; the
 # substance is here — writes money-bearing cents columns and ATTRIBUTES lines
 # back to payments / tips / refunds. Sensitivity follows the code (chunk-3

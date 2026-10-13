@@ -14,6 +14,7 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 | Payments | Stripe (Elements + webhooks) |
 | Email | Resend |
 | SMS | Twilio |
+| AI read (Inbox) | Anthropic via `@anthropic-ai/sdk` + `zod`, reached only through `server/utils/anthropicClient.js` |
 | VA calling (Zul) | Telegram Bot API (raw HTTPS trigger) + Twilio Programmable Voice callback bridge |
 | Web Push | `web-push` (VAPID) for staff-portal notifications |
 | WebAuthn | `@simplewebauthn/server` + `@simplewebauthn/browser` for phone-admin passkey unlock (12h device session) |
@@ -114,6 +115,10 @@ Copy `.env.example` and fill in values. This table is the fullest list, but it i
 | `CAL_WEBHOOK_SECRET` | For Cal.com | HMAC-SHA256 signing secret for the Cal.com webhook. Required in prod; webhook returns 503 if unset. |
 | `CAL_BOOKING_URL` | For Cal.com | Public Cal.com booking page URL. Surfaced in three client comms touches (drink-plan nudge email + SMS, six-months-out marketing). Optional; templates omit the consult line when unset. |
 | `GOOGLE_PLACES_API_KEY` | For venue search | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
+| `ANTHROPIC_API_KEY` | For the Inbox AI read | Server-only Anthropic key. Unset means the read is off: no calls, unread questions stay waiting, replies still close items, and the Inbox feed line says the AI read is off. Set in Render 2026-10-06. |
+| `INBOX_AI_MODEL` | Optional | AI read model: `claude-opus-5-5` (default; low effort, server-side refusal fallback) or `claude-haiku-4-5` (cheaper; the request then leaves out effort and the fallback). Any other value falls back to the default, with one warning at boot. |
+| `INBOX_AI_DAILY_CAP` | Optional | Max AI read attempts per rolling 24 hours, counted from `inbox_reads`. Default 300; `0`, blank or nonsense falls back to 300. A typical read is about 2 to 3 cents and the ceiling about 10 cents (`max_tokens` 4096 spent on output), so the cap's worst day is about $30. At the cap reads pause, with a Sentry warning at most once an hour. |
+| `RUN_INBOX_READ_SCHEDULER` | Optional | `false` disables the 60-second Inbox AI read (`inbox_ai_read`). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. Render has it at `false` since 2026-10-09 (the read ships dark until the Neon transfer call on the fix list). |
 | `SENTRY_DSN_SERVER` | For error tracking | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | For error tracking | Client-side Sentry DSN (optional in dev; required in prod) |
 | `VAPID_PUBLIC_KEY` | For staff push | Web Push (VAPID) public key. Generate with `npx web-push generate-vapid-keys`. |
@@ -342,6 +347,7 @@ dr-bartender/
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
 │   │   ├── additionalTimeRate.js # What one added hour costs on a booking's package line, for the client proposal page (agreement v4 Section 8.1); pure, reads the live catalog row through pricingEngine.extraHourCharge so it always equals what the on-site extension bills; null for a class or no package
 │   │   ├── agreementVersions.js # Allowlist + current/legacy version constants for the proposal Service Agreement
+│   │   ├── anthropicClient.js  # The ONLY module that requires @anthropic-ai/sdk: one client (30 s timeout, 2 retries, host pinned), refuses a real client under NODE_ENV=test, re-exports the SDK zod helper; describeAiError/formatAiError reduce a failure to class, HTTP status and request id
 │   │   ├── paystubData.js      # Assembles paystub render data (payout + events + YTD) per (contractor, period)
 │   │   ├── paystubPdf.js       # PDFKit renderer for staff paystubs (mirrors agreementPdf.js)
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
@@ -452,10 +458,13 @@ dr-bartender/
 │   │   │   ├── reply.js        # The reply area and the text target: who can be texted, which lines, the opt-out, the per-line first-text prefix
 │   │   │   ├── firstText.js    # "Dr. Bartender: " on the first text from a 224 line, shared with the Messages reply
 │   │   │   ├── feeds.js        # Feed health: the newest Thumbtack message and the newest text in on each line
-│   │   │   ├── aiStatus.js     # The AI read status on the feed line (a placeholder answering off until lane inbox-ai replaces it)
+│   │   │   ├── aiStatus.js     # The AI read status for the feed line (off, paused, failing, on) and the daily-cap count: one definition for the read job and GET /api/admin/inbox, read on every request, never throwing
 │   │   │   ├── cache.js        # The 30-second cache the list, the item and the AI read share (the badge accepts a snapshot up to 2 minutes old); every write clears it
 │   │   │   ├── engine.js       # Two passes (light headers since the floor, then full rows), getInbox, getItem (moved_to), getWaitingCount (2 s, else null), getReadSubjects (cached; real names or null; never the legal hold)
 │   │   │   ├── actions.js      # On it, Let go, Done, Snooze (1 minute to 8 days), Wake, Reopen, Undo (own tap, 60 s) and the deliberate open
+│   │   │   ├── aiRedact.js     # Before anything leaves for the AI read: links to [link], addresses to [email], runs of 7+ digits to [number], the person's capitalized surname dropped (an everyday-word one only right after the first name); the engine's OPT_WORDS rows left out
+│   │   │   ├── aiRead.js       # The AI read: two fixed system prompts, two zod schemas, the beta parse call (claude-opus-5-5 at low effort with the refusal fallback, or claude-haiku-4-5), a 2-minute deadline, size bounds, server-side trimming; a failure comes back as class, status and request id
+│   │   │   ├── readJob.js      # The 60 s inbox_ai_read tick over the badge's snapshot (up to 2 minutes old): pending reservation before each call, oldest first, 20 a tick, 3 attempts, rolling daily cap, the legal hold never read (its client, any number on record for them, their leads), content-free error rows; makeInboxReadTick holds the in-flight guard
 │   │   │   └── textSend.js     # The Inbox text: the send_id reserved in inbox_sends before Twilio, the checks, one send, the stored answer
 │   │   ├── invoiceHelpers.js   # FACADE re-exporting the invoice helper siblings below (public interface unchanged)
 │   │   ├── invoiceShared.js    # Shared invoice internals (toCents, pool fallback)
@@ -772,7 +781,9 @@ dr-bartender/
 - **Derived, never copied.** `server/utils/inbox/` reads the source tables live (texts, Thumbtack messages, the message ledger, proposal sends, bridge calls) and stores only what no source holds: the taps (`inbox_actions`, append-only), who opened what (`inbox_seen`), the AI read (`inbox_reads`) and the text reservations (`inbox_sends`). A person waits until a human replies on any channel, someone taps Done, or the AI read says no reply is needed. A reply that only promises a follow-up keeps them waiting; a picture, an empty text or a Thumbtack message the OS never received is never closed by the AI (a relay notice that quotes the customer's words counts as their Thumbtack message and the AI may read it; only an unquoted, unmatched notice is "never received"); once a booked event has happened, what came before it closes, unless a Reopen or a follow-up we promised on or after the event day keeps it open. Nothing before the fixed history floor (`INBOX_HISTORY_START` in `server/utils/inbox/constants.js`) opens an item, and the floor never moves.
 - **Taps**: On it (a 4-hour claim, with Take over), Done, Snooze (1 minute to 8 days), Wake and Reopen, each with a 60-second Undo for the person who tapped. Opening an item on purpose marks it seen and, for a client, marks their texts read. A tap made while someone was an unknown number follows them when the number becomes a client.
 - **Replying**: to the number they last texted from, from the line of the latest human-involved text (the one rule the Messages reply also uses; staff and Thumbtack proxy numbers get the 888 only), and never to a number that has not texted DRB. One opt-out rule for every line (409), a bad number refused (422), the "Dr. Bartender: " introduction on a first text from a 224 line (on the Messages reply too), and a client-generated `send_id` reserved before Twilio is called, so a double tap or a retry texts once.
-- **The badge** is `badge-counts.inbox_waiting`: snoozed people are not counted, and a count that fails or takes over 2 seconds is null and shows "!". The list, the item and the AI read share a 30-second cache that every write clears; the badge accepts a snapshot up to 2 minutes old, so an open tab does not recompute the inbox on every poll.
+- **The badge** is `badge-counts.inbox_waiting`: snoozed people are not counted, and a count that fails or takes over 2 seconds is null and shows "!". The list and the item share a 30-second cache that every write clears; the badge and the AI read accept a snapshot up to 2 minutes old, so an open tab does not recompute the inbox on every poll, and the read job recomputes only when nothing refreshed it (about every third minute when idle).
+
+**AI read (lane inbox-ai).** Every 60 seconds the `inbox_ai_read` scheduler asks Anthropic two narrow questions about each new subject: does this person still need a reply (judging every unanswered message, so a "Thanks!" after a question cannot close it), and is our latest reply only a holding reply that promises a follow-up. Phone, card and account numbers, email addresses, links and the person's surname (when capitalized; an everyday-word surname only right after the first name) are removed first, the legal-hold client is never read, and every failure leaves the item where a careful human would want it: an unread question stays waiting, an unread reply still counts. Off without `ANTHROPIC_API_KEY`; capped by `INBOX_AI_DAILY_CAP`; the feed line says when it is off, paused or failing.
 
 ### Phone Admin PWA (spec 2026-08-13, passkey unlock live 2026-08-16)
 - The admin host is installable: `client/public/admin-manifest.json` ("DrB OS", `start_url` `/events`, standalone, portrait) plus metas injected at runtime behind the admin host gate by `client/src/utils/installAdminPwaMeta.js`. More renders an explicit "Install app" row when the browser offers one and the app is not already standalone. The staff PWA is an untouched sibling with its own manifest, injector, and service worker

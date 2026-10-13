@@ -81,7 +81,7 @@ test('when, phone, staff, Thumbtack and unknown shapes', () => {
   assert.equal(F.formatWhen('2027-01-09', '6:30 pm', '2026-11-20'), 'Sat, Jan 9, 2027 · 6:30 PM');
   assert.equal(F.formatWhen('2026-12-05', null, '2026-11-20'), 'Sat, Dec 5');
   assert.equal(F.phoneDisplay('+13125550100'), '(312) 555-0100');
-  assert.equal(F.phoneDisplay('+447700900123'), '+447700900123');
+  assert.equal(F.phoneDisplay('+443125550189'), '+443125550189');
   assert.equal(F.phoneDisplay(null), null);
   const shift = { id: 44, event_date: '2026-11-28', start_time: '17:00', location: 'The Barn', event_type: 'wedding-reception', event_type_custom: null, open_slots: 1, total: 4 };
   assert.deepEqual(F.staffContext({ userId: 7, role: 'Bartender', shift, todayYmd: '2026-11-20' }), {

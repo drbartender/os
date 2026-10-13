@@ -252,6 +252,7 @@ Explicit-only Claude agents for reviewing specs and plans BEFORE any code is wri
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend
 - **SMS**: Twilio
+- **AI read (Inbox)**: Anthropic, through `@anthropic-ai/sdk` (pinned 0.131.0) and `zod` for the two output schemas. Server code reaches the SDK ONLY through `server/utils/anthropicClient.js` (one client: 30 s timeout, 2 retries, the API host pinned), which refuses to build a real client under `NODE_ENV=test`. Its one caller is the Inbox read job (`server/utils/inbox/readJob.js`), which drops phone, card and account numbers, email addresses, links and the person's surname (when capitalized; an everyday-word surname only right after the first name) before anything leaves the OS (`aiRedact.js`) and never reads the legal-hold client.
 - **VA calling (Zul)**: Telegram Bot API (raw HTTPS to the Bot API, no SDK) as the outbound-call trigger channel + Twilio Programmable Voice (`calls.create`) callback bridge that dials Zul's PH cell and bridges to a US target with the 224 as caller ID
 - **Web Push**: `web-push` (VAPID) for staff-portal browser / PWA notifications
 - **Booking / scheduling**: Cal.com (webhook integration; self-hosted target for V2)
@@ -314,6 +315,10 @@ See `.env.example` for the full list. Key ones:
 | `CAL_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for the Cal.com webhook. Fails closed: webhook returns 503 if unset. |
 | `CAL_BOOKING_URL` | Public Cal.com booking page URL. Surfaced in 3 client comms touches (drink-plan nudge email + SMS, six-months-out marketing). Optional; templates omit the consult line when unset. |
 | `GOOGLE_PLACES_API_KEY` | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
+| `ANTHROPIC_API_KEY` | Enables the Inbox AI read (spec 2026-10-06 section 6). Server-only, read only by `server/utils/anthropicClient.js`. Unset (the dev box) means the read is off: no calls, an unread question stays waiting, replies still close items, and the Inbox feed line says the AI read is off. Set in Render 2026-10-06. |
+| `INBOX_AI_MODEL` | Optional. Model for the AI read: `claude-opus-5-5` (the default, sent at `output_config.effort: 'low'` with the server-side refusal fallback, `fallbacks: "default"` under beta `server-side-fallback-2026-07-01`) or `claude-haiku-4-5` (about a quarter of the cost; the request then leaves out effort and the fallback, which the claude-api docs do not list for it). Any other value falls back to the default, with one console warning at boot. |
+| `INBOX_AI_DAILY_CAP` | Optional. Max AI read ATTEMPTS per rolling 24 hours, counted from `inbox_reads` (default 300; `0`, blank or nonsense fall back to 300, the `LEAD_CALL_DAILY_CAP` precedent). A typical read is about 2 to 3 cents and the ceiling about 10 cents (`max_tokens` 4096 spent on output), so the cap's worst day is about $30. At the cap reads pause, a Sentry warning goes out at most once an hour, and the feed line says paused. The off switches are the key and `RUN_INBOX_READ_SCHEDULER=false`. |
+| `RUN_INBOX_READ_SCHEDULER` | Optional. Set to `false` to disable the 60-second Inbox AI read (`inbox_ai_read`, first run 40 s after boot); the feed line then says the AI read is off. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. Render has it at `false` since 2026-10-09: the read ships dark until Dallas's Neon transfer call (fix list). |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | Client-side Sentry DSN (optional in dev; required in prod) |

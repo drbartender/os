@@ -50,7 +50,7 @@ test('who is who: client_id, then the newest client, then send-eligible staff, t
   assert.equal(mapSmsHeader(row({ direction: 'outbound', status: 'sent', recipient_id: 20, recipient_phone: '+13125550120', sender_id: 2 }), index).personKey, 's-20');
   assert.equal(mapSmsHeader(row({ recipient_phone: '+13125550130' }), index).personKey, 'p-3125550130', 'a profile that is not send-eligible is an unknown number');
   assert.equal(mapSmsHeader(row({ recipient_phone: '+18725550160' }), index).personKey, 't-555002', 'a proxy number resolves to its lead');
-  assert.equal(mapSmsHeader(row({ recipient_phone: '+447700900123' }), index).personKey, 'p-7700900123');
+  assert.equal(mapSmsHeader(row({ recipient_phone: '+443125550189' }), index).personKey, 'p-3125550189');
 });
 
 test('a relay text names the newest lead created before it, and a relay notice is flagged', () => {

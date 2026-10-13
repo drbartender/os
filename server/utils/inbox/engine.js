@@ -197,8 +197,9 @@ function directoryFor(snap) {
 }
 
 async function getInbox({ viewerId }) {
-  const snap = await getSnapshot();
-  const aiStatus = await aiReadStatus();
+  // Side by side: the status reads inbox_reads on every request and never
+  // rejects (a failed read answers 'failing'), so it cannot fail the list.
+  const [snap, aiStatus] = await Promise.all([getSnapshot(), aiReadStatus()]);
   return listPayload({ result: runRules(snap, viewerId), directory: directoryFor(snap), feeds: snap.feeds, aiStatus, generatedAt: snap.now });
 }
 

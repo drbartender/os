@@ -317,3 +317,33 @@ test('pass 2: bodies, media, subjects and the failure reason, by ref', async () 
   assert.equal(tt.text, 'Looking for a bartender');
   assert.deepEqual([email.text, email.meta.subject], [null, 'Your proposal']);
 });
+
+test('a text written without a group_id reads as a group of one (the column default; the reader guards a NULL)', async () => {
+  const { rows: cols } = await pool.query(
+    `SELECT is_nullable, column_default FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'sms_messages' AND column_name = 'group_id'`
+  );
+  assert.equal(cols.length, 1);
+  assert.equal(cols[0].is_nullable, 'NO', 'group_id can be NULL now: the CASE in readSms.js is what keeps those texts groups of one');
+  assert.match(cols[0].column_default || '', /gen_random_uuid/, 'group_id lost its fresh-uuid default');
+  // Two texts from the admin to the staffer, neither naming group_id, so each
+  // takes the column default. On the staff channel a user's text is a reply
+  // only in a group of one (classify.js).
+  const mine = (await pool.query(
+    `INSERT INTO sms_messages (direction, sender_id, recipient_id, recipient_phone, body, status) VALUES
+       ('outbound', $1, $2, $3, 'Call time is 5pm', 'sent'),
+       ('outbound', $1, $2, $3, 'Parking is behind the hall', 'sent')
+     RETURNING id`,
+    [ids.admin, ids.staff, P.staff]
+  )).rows.map((r) => r.id);
+  try {
+    // The whole window, as the engine reads it: the window count runs after
+    // WHERE, so a read narrowed to these ids would count only them.
+    const index = await loadPeopleIndex(pool);
+    const { rows } = await pool.query(SMS_HEADERS_SQL, [INBOX_HISTORY_START]);
+    const read = rows.filter((r) => mine.includes(r.id)).map((r) => mapSmsHeader(r, index));
+    assert.deepEqual(read.map((e) => [e.personKey, e.channel, e.meta.groupSize]), [[`s-${ids.staff}`, 'staff_text', 1], [`s-${ids.staff}`, 'staff_text', 1]]);
+  } finally {
+    await pool.query('DELETE FROM sms_messages WHERE id = ANY($1::int[])', [mine]);
+  }
+});

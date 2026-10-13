@@ -13,7 +13,7 @@ export default function PrivacyPage() {
       eyebrow="No. 08 · The Fine Print"
       title="Privacy Policy"
       intro="What we collect, why we collect it, and what we never do with it."
-      lastUpdated="July 22, 2026"
+      lastUpdated="October 9, 2026"
     >
       <p>
         Dr. Bartender LLC ("Dr. Bartender," "we," "us") provides bartending services
@@ -118,6 +118,7 @@ export default function PrivacyPage() {
         <li>Stripe, to process payments</li>
         <li>Twilio, to send and receive text messages and calls</li>
         <li>Resend, to send email</li>
+        <li>Anthropic, to sort and summarize messages you send us (without your phone number, email address, or card and account numbers)</li>
         <li>Google, for venue address lookup</li>
         <li>Sentry, for error diagnostics</li>
         <li>Cloudflare and Neon, for file storage and our database</li>

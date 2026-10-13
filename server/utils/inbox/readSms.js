@@ -31,6 +31,11 @@ const RELAY_QUOTED_SQL = `(COALESCE(m.metadata->>'thumbtack_relay', '') = 'true'
             AND m.body ~* 'replied to you on thumbtack'
             AND m.body ~ '(^|\\n)[[:blank:]]*-{3,}[[:blank:]]*\\r?\\n.*\\S')`;
 
+// group_size: a text sent alone is a group of one. sms_messages.group_id is
+// NOT NULL with a fresh-uuid default today, so the CASE never fires; it keeps
+// a NULL id from lumping every such row into one "group send" (Postgres puts
+// all NULLs in one partition) if that ever changes. readers.test.js pins the
+// column's default.
 function smsHeadersSql({ withOrphans = true } = {}) {
   const status = withOrphans ? "CASE WHEN o.twilio_sid IS NOT NULL THEN 'failed' ELSE m.status END" : 'm.status';
   const join = withOrphans ? "\n    LEFT JOIN sms_status_orphans o ON o.twilio_sid = m.twilio_sid AND m.direction = 'outbound'" : '';
@@ -49,7 +54,7 @@ function smsHeadersSql({ withOrphans = true } = {}) {
          CASE WHEN jsonb_typeof(m.metadata->'media') = 'array'
               THEN jsonb_array_length(m.metadata->'media') > 0 ELSE false END AS has_media,
          CASE WHEN length(btrim(m.body)) <= 12 THEN lower(btrim(m.body)) END AS short_word,
-         COUNT(*) OVER (PARTITION BY m.group_id)::int AS group_size
+         (CASE WHEN m.group_id IS NULL THEN 1 ELSE COUNT(*) OVER (PARTITION BY m.group_id) END)::int AS group_size
     FROM sms_messages m${join}
    WHERE m.created_at >= $1`;
 }

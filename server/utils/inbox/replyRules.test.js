@@ -9,10 +9,10 @@ const { ZUL, HOUR, ago } = k;
 
 test('decision 29: the number they last texted from, never one rebuilt from the key', () => {
   const events = normalizeEvents([
-    k.smsIn('p-7700900123', ago(5 * HOUR), 'Hello from abroad', { phone: '+447700900123' }),
-    k.relayNotice('p-7700900123', ago(4 * HOUR), { phone: '+18725550188' }),
+    k.smsIn('p-3125550189', ago(5 * HOUR), 'Hello from abroad', { phone: '+443125550189' }),
+    k.relayNotice('p-3125550189', ago(4 * HOUR), { phone: '+18725550188' }),
   ]);
-  assert.equal(pickRecipient({ events }), '+447700900123', 'a Thumbtack notice is never their text');
+  assert.equal(pickRecipient({ events }), '+443125550189', 'a Thumbtack notice is never their text');
   const later = normalizeEvents([
     k.smsIn('c-1', ago(5 * HOUR), 'From my old phone', { phone: '+13125550101' }),
     k.smsIn('c-1', ago(4 * HOUR), 'From my new phone', { phone: '+13125550102' }),
