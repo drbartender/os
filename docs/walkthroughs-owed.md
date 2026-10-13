@@ -2100,7 +2100,7 @@ to rot. Do that again for the next thing that sits here.
       whether it is worth fixing for both.
 
 
-### Inbox, the server side (lane inbox-engine). Moves to Tier 3b with the page: check `git log origin/main --oneline --grep='merge(lane inbox-page)'`.
+### Inbox, the server side (lane inbox-engine, and the AI read, lane inbox-ai merged 2026-10-13 as `dcb3c471`). Moves to Tier 3b with the page: check `git log origin/main --oneline --grep='merge(lane inbox-page)'`.
 
 The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
 are walked with the page. Verified by the lane's suites on the dev DB and a read-only rules run over
@@ -2127,6 +2127,14 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   AI reads yet; the thank-yous and the acknowledgments close once lane inbox-ai reads them.
 - The first prod picture message: its link opens from the thread. If Twilio asks for credentials, the
   link needs a proxy (spec amendment 17); file it on the fix list.
+- The AI read ships DARK (`RUN_INBOX_READ_SCHEDULER=false` in Render since 2026-10-09; the key is set).
+  Switching it on is Dallas's call together with the Neon transfer decision (fix list, Comms and
+  marketing, "Lane inbox-ai review leftovers"): the idle tick recomputes the inbox every third minute,
+  about 0.25 to 0.5 GB a day. When he flips it: within the first hour the feed line reads "on", the
+  `inbox_ai_read` row in `scheduler_health` is ok, `inbox_reads` gains ok rows for the waiting
+  thank-yous and acknowledgments (and they move to Recently handled with an AI reason), no row holds
+  `error` text beyond a class and status, and Sentry shows no `inbox_ai_read` warning. The ceiling is
+  about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
