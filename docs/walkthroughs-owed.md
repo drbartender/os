@@ -2100,12 +2100,17 @@ to rot. Do that again for the next thing that sits here.
       whether it is worth fixing for both.
 
 
-### Inbox, the server side (lane inbox-engine, and the AI read, lane inbox-ai merged 2026-10-13 as `dcb3c471`). Moves to Tier 3b with the page: check `git log origin/main --oneline --grep='merge(lane inbox-page)'`.
+### Inbox (lanes inbox-engine, inbox-ai `dcb3c471` and inbox-page `39cdc98c`, all merged by 2026-10-13, NOT pushed). Moves to Tier 3b once `git merge-base --is-ancestor 39cdc98c origin/main` exits 0.
 
 The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
 are walked with the page. Verified by the lane's suites on the dev DB and a read-only rules run over
 prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
 
+- The page itself, once pushed: open Inbox on the phone (the first tab) and on the desktop, in both
+  skins; open an item (it stops reading "Not read yet" for the other person); claim it; Done, then
+  Undo from the toast (the Inbox toast sits under the header, full width, no x); Snooze until
+  tomorrow, then Wake; on the desktop, type half a reply and let the list poll: the conversation
+  and the draft stay put. Lanes inbox-page's close record in the plan has the twenty-case harness.
 - The first prod page view: the waiting list matches Task 18's acceptance run, less whatever was
   answered since. Watch the first hour of prod AI reads once lane inbox-ai is live, and sanity-check
   every Recently handled reason against the real thread.
