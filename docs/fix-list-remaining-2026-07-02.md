@@ -112,7 +112,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
-| 3 | A repeat Thumbtack lead becomes a second client with no email, so the harvest collides and the new request cannot be emailed | **yes: 4 times (7/06, 8/07, 8/17, 10/13); open now: client 2008 / proposal 940 is a dup of 1907 / 839** |
+| 3 | A repeat Thumbtack lead becomes a second client with no email, so the harvest collides and the new request cannot be emailed | **yes: 4 times (7/06, 8/07, 8/17, 10/13)**; the 10/13 dup was merged by hand 10/14, the three older ones (1513, 1791, 1827) still sit |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
 | 3 | Automated texts never check the per-phone opt-out record | not today (the two STOPs on prod from numbers with no client row are both staffers, 10/06); it opens with the first STOP to a 224 line from a number no client or staffer has yet |
@@ -841,11 +841,12 @@ from it, and "Retry harvest" collides again. There is no merge tool: cleanup is 
 transaction that re-points `thumbtack_leads` + `proposals` to the original client and deletes the
 dup row (its only references are those two tables; `email_sends` cascades, the rest SET NULL).
 
-**Open now (10/14):** the client's second request is real (same date and guest count, but a longer booking,
-a higher budget and a different city). Proposal 839 on 1907 is `viewed`
-at $250 and finished its drip; auto-draft 940 on 2008 is `draft` at $350. The lead call on the new
-lead connected. Merge 2008 into 1907, then Dallas picks which proposal goes out. The three older
-dups (1513, 1791, 1827) can take the same merge; nothing is waiting on them.
+**10/14:** 2008 was merged into 1907 by the guarded transaction above (lead and proposal 940
+re-pointed, 2008 deleted, nothing orphaned). The second request was real (same date and guest
+count, but a longer booking, a higher budget and a different city), so 1907 now carries two
+proposals for one date: 839 `viewed` at $250 with its drip finished, and 940 `draft` at $350.
+Dallas picks which one goes out and archives the other. The three older dups (1513, 1791, 1827)
+can take the same merge; nothing is waiting on them.
 
 Fix: on the Thumbtack webhook path only (shared-secret auth, data from Thumbtack), let the
 phone + name match resolve an email-bearing `source='thumbtack'` row too, as an opt-in flag on
