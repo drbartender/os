@@ -2064,7 +2064,7 @@ of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an an
 by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
 to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
 
-### Admin push (lane ma-c-push, built 2026-10-14; moves to Tier 3b when its squash is an ancestor of `origin/main`)
+### Admin push (lane ma-c-push, built and merged 2026-10-14 as `f6d0b1a6`; moves to Tier 3b when that squash is an ancestor of `origin/main`)
 
 Before the push lands, or right after it: Dallas generates the VAPID pair (`npx web-push generate-vapid-keys`,
 anywhere Node runs) and sets `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in Render. Nothing goes in
@@ -2086,6 +2086,9 @@ The walk, on the Pixel, in the installed app:
 
 What the headless gate could not prove (2026-10-14): the banner landing. Headless Chrome subscribes
 at FCM but FCM answers 410 to the send, so step 3 is the one piece of proof only the phone gives.
+
+Dev only: an admin-phone subscription stored before the surface tag landed (`6039eb0c`, 2026-10-14) carries
+none, so that phone reads on but gets no admin banners until its switch is cycled. Prod has no entries.
 
 **NO LONGER EMPTY as of 2026-08-26: one occupant, the consult call SURFACING lane, listed at the end of this tier.** Before that it read EMPTY AGAIN, because the consult call bridge sat here from the 2026-08-25 merge
 until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on
