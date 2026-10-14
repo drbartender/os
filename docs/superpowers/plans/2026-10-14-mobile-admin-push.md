@@ -15,25 +15,26 @@
 **Scope:** server: `server/utils/adminPush.js` (new), `server/utils/pushDispatch.js`, `server/utils/adminNotifications.js`, `server/routes/me.js`, `server/routes/mePush.js` (new), `server/index.js` (one mount line), `server/db/schema.sql` (one column), `server/routes/webauthn.js` (the revoke), nine call sites (`server/routes/proposals/public.js`, `server/routes/proposals/publicToken.js`, `server/utils/stripePaymentNotifications.js`, `server/utils/bankPaymentProcessingNotify.js`, `server/utils/lastMinuteAlert.js`, `server/routes/staffShiftActions.js`, `server/utils/smsInbound.js`, `server/routes/drinkPlans/submitNotify.js`). Client: `client/src/utils/pushSubscribe.js`, `client/src/utils/adminPush.js` (new), `client/src/utils/notificationsView.js` (new), `client/src/pages/mobile/NotificationsPhone.js` (new), `client/src/pages/mobile/MorePage.js`, `client/src/utils/screenKey.js`, `client/src/components/AdminLayout.js` (one map entry), `client/src/context/AuthContext.js` (one call in logout), `client/src/App.js` (one route), `client/public/admin-sw.js`, `client/src/index.css`. Docs: README, ARCHITECTURE, CLAUDE.md env table, `scripts/sensitive-paths.txt`, `scripts/mobile-capture.manifest.json`, walkthroughs-owed, the fix list, the spec (two sentences).
 
 **Proven context (verified against main `20389657` on 2026-10-14):**
-- `server/utils/adminNotifications.js` (147 lines): `VALID_CATEGORIES` `:9-23`; `resolveCategoryRecipients(category)` `:36-57` selects `u.id, u.email, u.communication_preferences, cp.phone` for `role IN ('admin','manager')` with `COALESCE(u.notification_preferences->>$1, 'true') = 'true'`; `notifyAdminCategory({ category, subject, emailHtml, emailText, smsBody })` `:75-145` loops recipients (email, then SMS when `smsBody` and `prefs.sms_enabled !== false`), never throws, returns `{ emailed, texted }`; exports `:147`. Test `server/utils/adminNotifications.test.js` inserts real admin, manager and staff rows into the dev DB and asserts `resolveCategoryRecipients` (additive columns are safe).
-- `server/utils/pushDispatch.js` (134 lines): `dispatchPushRow(row)` reads `staff_notification_preferences` with a plain query `:30-33`, marks the row `failed` when the user is gone `:34-40`, `suppressed` / `no_push_subscriptions` when there are none `:42-48`, sends each subscription through `pushSender.sendPush` (module-level require `:24`, so tests monkey-patch it) `:53-69`, prunes gone endpoints in a short `FOR UPDATE` transaction `:71-110`, then records `sent` (breadcrumb `push_partial_prune` when some were gone) or `failed` with `all_subscriptions_gone` | `push_send_failed` `:113-133`. No test file of its own.
+- `server/utils/adminNotifications.js` (147 lines): `VALID_CATEGORIES` `:9-23`; `resolveCategoryRecipients(category)` `:36-57` (its SELECT `:43-50`, its mapping `:51-56`) selects `u.id, u.email, u.communication_preferences, cp.phone` for `role IN ('admin','manager')` with `COALESCE(u.notification_preferences->>$1, 'true') = 'true'`; `notifyAdminCategory({ category, subject, emailHtml, emailText, smsBody })` `:75-145` loops recipients (email, then SMS when `smsBody` and `prefs.sms_enabled !== false`), never throws, returns `{ emailed, texted }`; exports `:147`. Test `server/utils/adminNotifications.test.js` inserts real admin, manager and staff rows into the dev DB and asserts `resolveCategoryRecipients` (additive columns are safe).
+- `server/utils/pushDispatch.js` (134 lines): header comment `:1-18`, `Sentry` and `pool` requires `:20-21`, the `pushSender` require `:23` (its comment `:22`); `dispatchPushRow(row)` reads `staff_notification_preferences` with a plain query `:30-33`, marks the row `failed` when the user is gone `:34-40`, `suppressed` / `no_push_subscriptions` when there are none `:42-48`, sends each subscription through `pushSender.sendPush` `:53-69`, prunes gone endpoints in a short `FOR UPDATE` transaction `:71-110`, then records `sent` (breadcrumb `push_partial_prune` when some were gone) or `failed` with `all_subscriptions_gone` | `push_send_failed` `:113-133`. Its regression read is `server/utils/scheduledMessageDispatcher.test.js:923-1000`, three push-channel tests (no subscriptions suppressed; sends ok and prunes gone, keeps flaky; all fail) that monkey-patch `pushSender.sendPush` through the module object.
 - `server/utils/pushSender.js`: `sendPush({ subscription, title, body, url, tag, icon })` returns `{ ok }`, `{ ok: false, gone: true }` on 410/404, `{ ok: false, error }` otherwise, and `{ ok: false, error: 'vapid_unset' }` when `VAPID_PRIVATE_KEY` is unset (checked per call). `pushSender.test.js` generates keys with `webpush.generateVAPIDKeys()` when the env has none.
 - `server/routes/me.js` (303 lines): `router.use(auth)` `:18`; `NOTIFICATION_CATEGORIES` `:24-38`; `applyNotificationPrefPatch(current, patch)` `:47-75` (pure, throws `ValidationError` on an unknown key, a non-boolean, or an empty patch); `GET /notification-preferences` `:266-279`; `PATCH /notification-preferences` with `requireAdminOrManager` `:283-299`; exports `:301-303`. Test `me.notificationPrefs.test.js` pins the pure helper. Mounted at `/api/me` in `server/index.js:342`, before `./routes/staffPortal` `:346`, whose `router.use(auth)` (`staffPortal.js:45`, no role gate) hosts `POST` and `DELETE /push-subscriptions` (`staffPortal/notifications.js:134-233`; the stored entry is `{ endpoint, keys: { p256dh, auth }, user_agent, subscribed_at }`, 10-cap, evict oldest).
-- `server/middleware/rateLimiters.js`: `adminWriteLimiter` `:147-154`, 10 per minute keyed by user id, and it has NO `NODE_ENV=test` skip (the four skips at `:204`, `:233`, `:245`, `:264` belong to other limiters), so a test file may call the test route fewer than ten times.
-- Call sites, each already passing the category the spec names: `server/routes/proposals/public.js:573-583` (`clientSignedAdmin`, `urgent_booking`; has `client_name`, `eventTypeLabel`, `proposal.id`); `server/routes/proposals/publicToken.js:600-608` (same template; `pd.client_name`, `eventTypeLabel`, `pd.id`); `server/utils/stripePaymentNotifications.js:188-199` (`isCoupledSigning` picks `signedAndPaidAdmin` + `urgent_booking` or `paymentReceivedAdmin` + `routine_finance`; has `pi.client_name`, `eventLabel`, `amountFormatted`, `payLabel`, `proposalId`); `server/utils/bankPaymentProcessingNotify.js:74-94` (`notifyAdminBankPaymentProcessing`; `initial` = deposit or full; `client`, `label`, `dollars`, `proposalId`; its test `bankPaymentProcessingNotify.test.js:13` replaces `require('./adminNotifications').notifyAdminCategory` with a recorder); `server/utils/lastMinuteAlert.js:31-42` (`label`, `date`, `time`, `p.id`); `server/routes/staffShiftActions.js`: the wrapper `notifyManagementOfAction({ category, subject, emailHtml, emailText, smsBody, daysOut })` `:197-222` is called by the clean drop `:329-336` (ctx has `shift_event_type`, `client_name`, `event_date`, `position`, `proposal_id`) and the cover request `:465-472`, while the swap proposal `:687-696` calls `notifyAdminCategory` directly (`sc = swapResult.shift_context` with `event_type_label`, `event_date_long`, `client_name`, `position`; `swapResult.shift_id`); `server/utils/smsInbound.js:465-471` (`alertStaffCant`, through `_deps.notifyAdminCategory`, `__setDeps` `:136`; `cant.shiftId`, `cant.clientName`, `eventLabel`, `dateStr`, `outLabel`); `server/routes/drinkPlans/submitNotify.js:79-98` (`sendFinancialSubmitNotifications`, admin email only when `balanceChanged`, with `pn.id`, `clientName`, `pn.event_type`) and `sendFastPathConfirmation(planId, selections)` `:142+` (selects `p.id`, `c.name AS client_name`, the proposal's `event_type`, `event_type_custom`). Both tails are awaited post-commit in `submit.js:622` and `:729`.
+- `server/middleware/rateLimiters.js`: `adminWriteLimiter` `:147-154`, 10 per minute keyed `admin-<user id>` in memory, and it has NO `NODE_ENV=test` skip (the five skips at `:204`, `:233`, `:245`, `:264`, `:280` belong to other limiters), so a test file may call the test route fewer than ten times per process; repeated runs start fresh.
+- There is NO `server/middleware/errorHandler.js` (the directory holds asyncHandler, auth, corsOptions, rateLimiters). The global error handler is inline at `server/index.js:446-482`; a route test writes its own, as `server/routes/webauthn.test.js:135-143` does over `AppError.statusCode` (`requireAdminOrManager` hands a `PermissionError` to `next`, `server/middleware/auth.js:88-92`).
+- Call sites, each already passing the category the spec names: `server/routes/proposals/public.js:573-583` (`clientSignedAdmin`, `urgent_booking`; has `client_name`, `eventTypeLabel`, `proposal.id`); `server/routes/proposals/publicToken.js:600-608` (same template; `pd.client_name`, `eventTypeLabel`, `pd.id`); `server/utils/stripePaymentNotifications.js:188-199` (`isCoupledSigning` picks `signedAndPaidAdmin` + `urgent_booking` or `paymentReceivedAdmin` + `routine_finance`; has `pi.client_name`, `eventLabel`, `amountFormatted`, `payLabel`, `proposalId`); `server/utils/bankPaymentProcessingNotify.js:74-94` (`notifyAdminBankPaymentProcessing`; `initial` = deposit or full; `client`, `label`, `dollars`, `proposalId`; its test `bankPaymentProcessingNotify.test.js:13` replaces `require('./adminNotifications').notifyAdminCategory` with a recorder); `server/utils/lastMinuteAlert.js:31-42` (`label`, `date`, `time`, `p.id`); `server/routes/staffShiftActions.js`: the wrapper `notifyManagementOfAction({ category, subject, emailHtml, emailText, smsBody, daysOut })` `:197-222` is called by the clean drop `:329-336` (ctx has `shift_event_type`, `client_name`, `event_date`, `position`, `proposal_id`) and the cover request `:465-472`, while the swap proposal `:687-696` calls `notifyAdminCategory` directly (`sc = swapResult.shift_context` with `event_type_label`, `event_date_long`, `client_name`, `position`; `swapResult.shift_id`); `server/utils/smsInbound.js:465-471` (`alertStaffCant`, through `_deps.notifyAdminCategory`, `__setDeps` `:136`; `cant.shiftId`, `cant.clientName`, `eventLabel`, `dateStr`, `outLabel`; `handleCant` in `server/utils/smsShiftCommands.js:263-271` returns `{ ok, shiftId, requestId, eventDate, clientName, eventType, eventTypeCustom }` and NO `proposalId` or `position`, though its SELECT already reads `s.proposal_id` at `:133`; the only suite that records that alert is `server/utils/smsInbound.nearestShift.endInstant.test.js:207-241`, through `sent[0]`; `smsInbound.test.js` has none); the swap's `shift_context` (`staffShiftActions.js:641-650`) carries no `proposal_id` though `orig.proposal_id` is selected at `:527`; `server/routes/drinkPlans/submitNotify.js:79-98` (`sendFinancialSubmitNotifications`, admin email only when `balanceChanged`, with `pn.id`, `clientName`, `pn.event_type`) and `sendFastPathConfirmation(planId, selections)` `:142+` (selects `p.id`, `c.name AS client_name`, the proposal's `event_type`, `event_type_custom`). Both tails are awaited post-commit in `submit.js:622` and `:729`.
 - `server/routes/webauthn.js:193-213`: the revoke deletes the credential and bumps `token_version` in one transaction on `client`. `webauthn.test.js:276` pins IDOR, the owner delete and the bump.
 - `server/db/schema.sql:2969`: `ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB NOT NULL DEFAULT '{...}'`; `:3772` the staff blob. `server/db/index.js` re-executes `schema.sql` on every server boot, so prod DDL self-applies; the dev DB needs the statement run by hand before the suites (Task 1).
 - `client/src/utils/pushSubscribe.js`: `permissionState()` ('unsupported' | Notification.permission), `isPushSubscribed()` `:85-97`, `subscribePush()` `:108-155` (reads `process.env.REACT_APP_VAPID_PUBLIC_KEY`, registers `/staff-sw.js`, POSTs `/me/push-subscriptions`), `unsubscribePush()` `:163-185`; `/staff-sw.js` is hard-coded three times. Callers: `client/src/pages/staff/account/NotificationsSection.js:5-8` (no arguments). Test `pushSubscribe.test.js` pins `urlBase64ToUint8Array` only.
-- `client/src/pages/mobile/MorePage.js` (113 lines): NAV sections, then `<MoreSecurityRow />`, then Lighting. `MorePage.test.js` mocks AuthContext, UserPrefsContext, MoreSecurityRow and installPrompt with plain functions and renders through an `Outlet context={{ badges }}`.
-- `client/src/components/AdminLayout.js:257-263`: `DETAIL_BACK = { 'event-detail': '/events', 'proposal-detail': '/proposals', 'inbox-item': '/inbox' }` decides the back-arrow header; `MobileHeader` (`:50-112`) renders Back when `onBack`, the search button only without Back, and the Desktop-view escape unless `screenKey === 'more'`, calling `setDesktopView(screenKey, true)`. `client/src/utils/screenKey.js`: `routeScreenKey` returns the first segment for `/more/...`; `TITLES` map. `client/src/context/MobileViewContext.js:31-45`: `desktopView(screenKey)`, `setDesktopView(screenKey, on)`.
-- `client/src/context/AuthContext.js:112-117`: `logout` calls `purgeMobileAdminState()` then removes the token synchronously. `client/src/utils/adminSw.js:54-60` `purgeMobileAdminState`.
-- `client/public/admin-sw.js`: `SW_VERSION = 'admin-sw-2026-09-29-v10'` `:33`; `API_EXACT` `:185-196`; `isAllowlisted` `:197-215`; `notificationclick` `:376-420` focuses a window on the exact path or `openWindow`s a new one, and never navigates an open window on another path. `client/src/utils/adminSwAllowlist.test.js` runs the real file in a vm context and reads `isAllowlisted`, `SW_VERSION` and the listeners.
+- `client/src/pages/mobile/MorePage.js` (126 lines): `InstallRow`, the NAV sections, then `<MoreSecurityRow />`, then Lighting. `MorePage.test.js` mocks AuthContext, UserPrefsContext, MoreSecurityRow and installPrompt with plain functions and renders through an `Outlet context={{ badges }}`.
+- `client/src/components/AdminLayout.js:257-263`: `DETAIL_BACK = { 'event-detail': '/events', 'proposal-detail': '/proposals', 'inbox-item': '/inbox' }` decides the back-arrow header; `MobileHeader` (`client/src/components/mobile/MobileHeader.js:53-111`) renders Back (aria-label "Back", by design: it returns wherever you came from, Dallas 2026-09-30) when `onBack`, the search button only without Back, and the Desktop-view escape unless `screenKey === 'more'`, calling `setDesktopView(screenKey, true)`. `client/src/utils/screenKey.js`: `routeScreenKey` returns the first segment for `/more/...`; `TITLES` map. `client/src/context/MobileViewContext.js:31-45`: `desktopView(screenKey)`, `setDesktopView(screenKey, on)`.
+- `client/src/context/AuthContext.js:112-117`: `logout` calls `purgeMobileAdminState()` then removes the token synchronously. `client/src/utils/adminSw.js:54-60` `purgeMobileAdminState`. `client/src/context/AuthContext.test.js:12` mocks `../utils/adminSw` and `../utils/api`; `AdminLayout.badges.test.js:14` mocks AuthContext whole.
+- `client/public/admin-sw.js`: `SW_VERSION = 'admin-sw-2026-09-29-v10'` `:33`; `API_EXACT` `:185-196`; `isAllowlisted` `:197-212`; `notificationclick` `:376-420` focuses a window on the exact path or `openWindow`s a new one, and never navigates an open window on another path. `client/src/utils/adminSwAllowlist.test.js` runs the real file in a vm context and reads `isAllowlisted`, `SW_VERSION` and the listeners; its version assertion is the regex at `:95` (`/^admin-sw-\d{4}-\d{2}-\d{2}-v10$/`), after a `not.toBe` of the v8 name at `:94`.
 - `client/src/utils/offlineRead.js`: `offlineGet(url, config)` adds `X-Offline-Ok: 1`; a cache-served response carries `res.staleAt`. `client/src/utils/staleTime.js`: `formatStaleTime(iso)`. `EventsListPhone.js:213-216` is the `.m-stale` markup ("offline copy · as of").
-- `client/src/index.css`: `.m-more-row` `:21256-21274` (`span { flex: 1 }`, `svg:last-child` ink 4), `.m-seg-note` `:21328`, `.m-stale` `:21162`. `client/src/utils/mobileClassContract.test.js:8-14` lists the phone files whose `m-*` classes must exist in `index.css`.
+- `client/src/index.css`: `.m-more-row` `:21256-21274` (`span { flex: 1 }`, `svg:last-child` ink 4), `.m-seg-note` `:21328`, `.m-stale` `:21162`; `@keyframes m-pulse` at `:21543`; the sheets' reduced-motion block `:22053-22058`; the House Lights comment `:21335-21337` with the light-skin rules after it; `--link` is defined nowhere in the file. `client/src/utils/mobileClassContract.test.js:7-22` lists the phone files whose `m-*` classes must exist in `index.css`.
 - `client/src/components/adminos/Icon.js` has `bell`, `chat`, `alert`, `left`, `right`, `external`.
-- `scripts/mobile-capture.manifest.json:68-75`: admin pages on host `localhost` with `"auth": "admin"` and `"authAssert": ".m-shell"`.
+- `scripts/mobile-capture.manifest.json:68-77`: admin pages on host `localhost` with `"auth": "admin"` and `"authAssert": ".m-shell"`; the `admin-event-detail` entry spans `:75-77`.
 - Lanes share `.env` and `client/.env` by symlink (`scripts/worktree-new.js:14-15`), so a lane's server reads main's env; dev has no VAPID keys (`.env` has none; `.env.example:259-262` documents them). Prod has never stored a push subscription (checked 2026-10-14).
-- Sensitive-listed (`scripts/sensitive-paths.txt`): `staffShiftActions.js:79`, `smsInbound.js:119`, `submitNotify.js:294`, `publicToken.js:406`, `webauthn.js:436`, `AuthContext.js:438`, `admin-sw.js:440`. Full lane fleet; sensitive re-review and `/second-opinion` at push.
+- Sensitive-listed (`scripts/sensitive-paths.txt`), nine lane files: `staffShiftActions.js:79`, `schema.sql:83`, `smsInbound.js:119`, `smsShiftCommands.js:125`, `submitNotify.js:294`, `server/index.js:384`, `publicToken.js:406`, `webauthn.js:436`, `AuthContext.js:438`, `admin-sw.js:440`. Full lane fleet; a merge conflict in any of them escalates to Dallas; sensitive re-review and `/second-opinion` at push.
 
 **Decisions this plan makes** (with the spec's section 7 and the 2026-10-14 decisions list, the contract for review):
 1. The push leg is fire-and-forget inside `notifyAdminCategory`: the sends start after the email and SMS loop and are NOT awaited by the caller; `adminNotifications.__flushPush()` awaits them for tests. The return gains `pushQueued` (recipients eligible), not a delivery count.
@@ -41,10 +42,16 @@
 3. A kind's banner url is a path (`/events/:id`, `/proposals/:id`); a staffing banner with no proposal id (a manual shift) opens `/staffing`.
 4. The More row's state needs no server read: device permission plus the admin registration's subscription. The screen adds the server's key to that.
 5. The server-unset state ("Push isn't set up on the server yet.") shows whenever the preferences read returns `push.public_key: null`; the switch is disabled and the test row reads "Phone is off".
-6. `notificationclick` gains one behaviour: with no window on the exact path, it focuses any open admin window and navigates it to the target, and opens a new window only when none is open. The spec's "changes it only for the allowlist entry" sentence is amended in Task 11.
+6. `notificationclick` gains one behaviour: with no window on the exact path, it focuses an open admin window and navigates it to the target, and opens a new window only when none is open. It navigates and opens ONLY a same-origin path (the payload's url is parsed against the worker's origin; anything else becomes `/`), so a banner can never steer the app off the admin host. The spec's "changes it only for the allowlist entry" sentence is amended in Task 11. Dallas may veto this before Task 9 runs; the fallback is the fix-list line in Task 11 Step 5.
 7. Logout unsubscribes this device at once in the browser; the server copy is deleted by the DELETE when it wins the race with the token removal, and otherwise dies on the next send's 410. Recorded in the spec in Task 11.
 8. The test endpoint answers 200 with `{ subscriptions, sent, failed, gone, reason }`; `reason` is `vapid_unset` or `no_subscriptions` when nothing could send, else null. The row reads "Didn't send" unless `sent > 0`.
-9. The kind switch flips optimistically with `aria-busy` until the PATCH settles; a failed PATCH flips back and the row's trailing slot reads "Didn't save" with Retry.
+9. The kind switch flips optimistically with `aria-busy` until the PATCH settles; a failed PATCH flips back and the row's trailing slot reads "Didn't save" with Retry, rendered as a sibling of the switch inside its list item (interactive content may not nest in a button).
+10. The banner body carries the event date where the site has it: the five booking, payment and drink-plan builders take `dateLabel` (from `formatEventDateLong`, as the bank notice already formats it) and end the body with " · <date>"; a site without the date in hand passes nothing and the body stands without it.
+11. `publicKey()` answers the public key only when the private key is also set: a server that cannot sign must not invite a subscription it can never serve.
+12. The back arrow keeps the chrome's "Back" label (the event, proposal and Inbox details' precedent; it returns wherever you came from), not the benchmark's "Back to More".
+13. Beyond the drawing, the screen has: a failed-load state ("Couldn't load notification settings." with Retry) when the read fails with no stored copy; two toasts when enabling fails short of a denial ("Android did not grant permission.", "Could not turn notifications on."); an `unsupported` device state (no service worker or no Push API) that hides the More row and disables the switch; and the server-unset sub-line "Not set up on the server yet" under the switch, beside the note the spec names. The spec's plan-decisions sentence gains them in Task 11.
+14. Texted drops and swap proposals open the event too: `handleCant`'s result gains `proposalId` (its SELECT already reads it) and the swap's `shift_context` gains `proposal_id` (already selected as `orig.proposal_id`); a manual shift still has none and opens `/staffing`. The CANT banner's position reads "Bartender" (the texted command is a bartender's).
+15. "Sending" on the test row keeps the row's ink and is not a disabled state (the benchmark keeps `nTestInk` at ink 1 while sending; a second tap is ignored by the handler).
 
 ## Global Constraints
 
@@ -56,7 +63,7 @@
 - **Client tests:** `import '@testing-library/jest-dom'` in every test file; `jest.mock` factories close over `mock`-prefixed names only; plain functions where `resetMocks` would wipe a `jest.fn` implementation.
 - **Client gate before every client commit:** `cd client && CI=true npx react-scripts build` (exit 0).
 - **Unique `m-*` class names, every one defined in `index.css`** with the `html[data-app="admin-os"]` prefix; **44px** minimum for every button and row.
-- **File size:** `NotificationsPhone.js` under 350 lines, `adminPush.js` (server) under 300, `me.js` under 400.
+- **File size:** `NotificationsPhone.js` under 350 lines, `adminPush.js` (server) under 300, `me.js` under 400. Four files the lane touches already sit over the 700 soft cap and grow by a few lines each (`staffShiftActions.js` 948 to about 963, `smsInbound.js` 795 to about 801, `server/index.js` 935 to 936, `App.js` 706 to 708): the ratchet warns and blocks only growth past 1000, so nothing blocks here, and a `staffShiftActions.js` split goes on the fix list (Task 11) because the next lane there must split first.
 - **Explicit staging only;** commit with `git commit -F - <<'MSG'` (no backticks in messages); never `npm install` inside the lane; never write VAPID keys to any file (the gate passes them as env vars on the command line).
 
 ## Review Focus
@@ -110,7 +117,10 @@ lanes:
       - server/utils/lastMinuteAlert.js
       - server/routes/staffShiftActions.js
       - server/utils/smsInbound.js
-      - server/utils/smsInbound.test.js
+      - server/utils/smsInbound.nearestShift.endInstant.test.js
+      - server/utils/smsShiftCommands.js
+      - server/routes/staffShiftActions.test.js
+      - server/routes/drinkPlans/submitPlannerV2.test.js
       - server/routes/drinkPlans/submitNotify.js
       - client/src/utils/pushSubscribe.js
       - client/src/utils/pushSubscribe.test.js
@@ -126,6 +136,7 @@ lanes:
       - client/src/utils/screenKey.test.js
       - client/src/components/AdminLayout.js
       - client/src/context/AuthContext.js
+      - client/src/context/AuthContext.test.js
       - client/src/App.js
       - client/public/admin-sw.js
       - client/src/utils/adminSwAllowlist.test.js
@@ -139,18 +150,20 @@ lanes:
       - docs/walkthroughs-owed.md
       - docs/fix-list-remaining-2026-07-02.md
       - docs/superpowers/specs/2026-08-13-mobile-admin-design.md
+      - docs/superpowers/plans/2026-10-14-mobile-admin-push.md
     depends_on: []   # ma-b-pwa and ma-d-auth are on origin
     review_fleet: [code-review, consistency-check, security-review, database-review, ui-ux-review, second-opinion]
-    # Seven sensitive-listed files and a new column, so the full fleet.
+    # Nine sensitive-listed files and a new column, so the full fleet.
     # security-review: the gates, the banner copy, the test route's scope,
-    # the revoke purge, logout. database-review: the column default and the
+    # the revoke purge, logout, and the worker's navigate (same-origin
+    # paths only). database-review: the column default and the
     # prune's FOR UPDATE. consistency-check: the kind labels on the phone
     # against the server's kinds, the category each call site passes.
     # ui-ux-review: the benchmark's Notifications screen, both skins, 390,
     # 360 and 320. second-opinion at push.
 ```
 
-**Execution:** subagent-driven, as Dallas chose for the previous lanes: implementers on Opus, each task's reviewer on Fable when available, else Opus. Tasks 1 to 5 are serial on the server (each builds on the module before it). **Checkpoint A** (a security and a database reviewer on the finished server contract: Tasks 1 to 5's diff, this header, the spec's section 7) runs BEFORE any client task, the method that paid for itself on lane ma-e2. Tasks 6 and 7 can run in parallel after Checkpoint A; Task 8 needs both; Task 9 is independent of 6 to 8. Task 10 (the signed-in browser gate), Task 11 (docs) and Task 12 (lane close) are the orchestrator's: subagents cannot mint the dev session.
+**Execution:** subagent-driven, as Dallas chose for the previous lanes: implementers on Opus, each task's reviewer on Fable when available, else Opus. Tasks 1 to 5 are serial on the server (Tasks 3 and 5 need only Task 1 and Task 4 needs 1 and 2, but the server suites share the dev DB one file at a time, so one implementer at a time). **Checkpoint A** (a security and a database reviewer on the finished server contract: Tasks 1 to 5's diff, this header, the spec's section 7) runs BEFORE any client task, the method that paid for itself on lane ma-e2. Tasks 6, 7, 8 and 9 are serial too: one lane worktree has one index and one `client/build`, so two implementers staging and committing in it would sweep each other's files into their commits (the shared-index trap) and race the build gate. Task 10 (the signed-in browser gate), Task 11 (docs) and Task 12 (lane close) are the orchestrator's: subagents cannot mint the dev session.
 
 **Each task reviewer's brief** carries: this header through "Who writes what"; the task's own text with its Interfaces block; the Review Focus lines that name the task; the spec's section 7 and the 2026-10-14 decisions list; the task's commit diff.
 
@@ -171,6 +184,8 @@ lanes:
 - Produces: `PUSH_KINDS` (frozen array of the seven kinds, in the screen's order), `isPushKind(kind)`, `pushTag(kind, recordId)`, `publicKey()` (the VAPID public key when BOTH keys are set, else null), `sendPushToUser({ userId, title, body, url, tag, icon }) -> Promise<{ subscriptions, sent, failed, gone }>`, `deleteAllSubscriptions(userId, db = pool)`, and the copy builders `pushCopy.bookingSigned`, `pushCopy.bookingSignedPaid`, `pushCopy.paymentLanded`, `pushCopy.bankPaymentStarted`, `pushCopy.lastMinuteBooking`, `pushCopy.drinkPlanSubmitted`, `pushCopy.staffingDrop`, `pushCopy.staffingCover`, `pushCopy.staffingSwap`, each returning `{ kind, title, body, url, recordId }`. Task 2 consumes `sendPushToUser`, `isPushKind`, `pushTag`; Task 3 consumes `PUSH_KINDS`, `publicKey`, `sendPushToUser`; Task 4 consumes `pushCopy`; Task 5 consumes `deleteAllSubscriptions`.
 
 - [ ] **Step 1: The column, applied to the dev DB by hand**
+
+The column leads the lane (nothing in this commit reads it) so the dev DB already holds it when Task 2's recipient SELECT lands; the DDL and the module are one commit because the module's tests seed the column's table.
 
 Append to `server/db/schema.sql`, right after the `notification_preferences` ALTER's closing `}'::jsonb;` line (find it with `grep -n "notification_preferences JSONB" server/db/schema.sql`):
 
@@ -286,7 +301,7 @@ test('deleteAllSubscriptions empties the array and keeps the rest of the blob', 
 test('pushCopy builds a path url, a tag-able record id, and never an em dash', () => {
   const c = adminPush.pushCopy;
   const all = [
-    c.bookingSigned({ clientName: 'Ada', eventTypeLabel: 'Wedding', proposalId: 7 }),
+    c.bookingSigned({ clientName: 'Ada', eventTypeLabel: 'Wedding', proposalId: 7, dateLabel: 'Saturday, October 18' }),
     c.bookingSignedPaid({ clientName: 'Ada', eventTypeLabel: 'Wedding', amount: '$1,200.00', proposalId: 7 }),
     c.paymentLanded({ clientName: 'Ada', eventTypeLabel: 'Wedding', amount: '$500.00', paymentType: 'balance', proposalId: 7 }),
     c.bankPaymentStarted({ clientName: 'Ada', eventTypeLabel: 'Wedding', amount: '$100.00', initial: true, proposalId: 7 }),
@@ -308,6 +323,8 @@ test('pushCopy builds a path url, a tag-able record id, and never an em dash', (
   }
   assert.match(all[3].title, /started/i);
   assert.doesNotMatch(all[3].body, /landed/i);
+  assert.match(all[0].body, / · Saturday, October 18$/, 'the date ends the body when the site has it');
+  assert.doesNotMatch(all[1].body, /undefined|null/, 'no date, no trace of one');
 });
 ```
 
@@ -431,29 +448,31 @@ async function deleteAllSubscriptions(userId, db = pool) {
 const who = (clientName) => (clientName && String(clientName).trim()) || 'A client';
 const eventUrl = (proposalId) => (proposalId ? `/events/${proposalId}` : '/staffing');
 const forClient = (clientName) => (clientName ? ` for ${clientName}` : '');
+// The event date ends the body when the site has it (decision 10).
+const dated = (body, dateLabel) => (dateLabel ? `${body} · ${dateLabel}` : body);
 const pushCopy = {
-  bookingSigned: ({ clientName, eventTypeLabel, proposalId }) => ({
+  bookingSigned: ({ clientName, eventTypeLabel, proposalId, dateLabel }) => ({
     kind: 'booking_signed', recordId: proposalId,
     title: `${who(clientName)} signed`,
-    body: `${eventTypeLabel}. Open the proposal.`,
+    body: dated(`${eventTypeLabel}. Open the proposal.`, dateLabel),
     url: `/proposals/${proposalId}`,
   }),
-  bookingSignedPaid: ({ clientName, eventTypeLabel, amount, proposalId }) => ({
+  bookingSignedPaid: ({ clientName, eventTypeLabel, amount, proposalId, dateLabel }) => ({
     kind: 'booking_signed_paid', recordId: proposalId,
     title: `${who(clientName)} signed and paid`,
-    body: `${eventTypeLabel} · ${amount}`,
+    body: dated(`${eventTypeLabel} · ${amount}`, dateLabel),
     url: eventUrl(proposalId),
   }),
-  paymentLanded: ({ clientName, eventTypeLabel, amount, paymentType, proposalId }) => ({
+  paymentLanded: ({ clientName, eventTypeLabel, amount, paymentType, proposalId, dateLabel }) => ({
     kind: 'payment_landed', recordId: proposalId,
     title: `Payment landed: ${amount}`,
-    body: `${who(clientName)} · ${eventTypeLabel}${paymentType ? ` (${paymentType})` : ''}`,
+    body: dated(`${who(clientName)} · ${eventTypeLabel}${paymentType ? ` (${paymentType})` : ''}`, dateLabel),
     url: eventUrl(proposalId),
   }),
-  bankPaymentStarted: ({ clientName, eventTypeLabel, amount, initial, proposalId }) => ({
+  bankPaymentStarted: ({ clientName, eventTypeLabel, amount, initial, proposalId, dateLabel }) => ({
     kind: initial ? 'booking_signed_paid' : 'payment_landed', recordId: proposalId,
     title: `Bank payment started: ${amount}`,
-    body: `${who(clientName)} · ${eventTypeLabel}. Settles in four to six business days.`,
+    body: dated(`${who(clientName)} · ${eventTypeLabel}. Settles in four to six business days.`, dateLabel),
     url: eventUrl(proposalId),
   }),
   lastMinuteBooking: ({ eventTypeLabel, date, time, proposalId }) => ({
@@ -462,10 +481,10 @@ const pushCopy = {
     body: `${eventTypeLabel} ${date} ${time}. Verify staffing now.`,
     url: eventUrl(proposalId),
   }),
-  drinkPlanSubmitted: ({ clientName, eventTypeLabel, proposalId }) => ({
+  drinkPlanSubmitted: ({ clientName, eventTypeLabel, proposalId, dateLabel }) => ({
     kind: 'drink_plan_submitted', recordId: proposalId,
     title: 'Drink plan submitted',
-    body: `${who(clientName)} · ${eventTypeLabel}. Start the shopping list and the menu.`,
+    body: dated(`${who(clientName)} · ${eventTypeLabel}. Start the shopping list and the menu.`, dateLabel),
     url: eventUrl(proposalId),
   }),
   staffingDrop: ({ clientName, eventTypeLabel, dateLabel, position, proposalId, shiftId }) => ({
@@ -498,7 +517,7 @@ Expected: `pass 8`, `fail 0`.
 
 - [ ] **Step 6: pushDispatch rides the shared routine**
 
-Replace `server/utils/pushDispatch.js:24-134` (from the `pushSender` require to the end) with:
+Replace `server/utils/pushDispatch.js:22-134` (from the comment above the `pushSender` require to the end) with:
 
 ```js
 const { sendPushToUser } = require('./adminPush');
@@ -559,11 +578,11 @@ async function dispatchPushRow(row) {
 module.exports = { dispatchPushRow };
 ```
 
-Keep the file's header comment (`:1-19`) and the `Sentry` and `pool` requires (`:21-22`); drop the `pushSender` require (the routine owns it now). The SERVER-17 paragraph in the header stays true: the routine it describes moved, it did not change.
+Keep the file's header comment (`:1-18`) and the `Sentry` and `pool` requires (`:20-21`); the `pushSender` require and its comment (`:22-23`) go (the routine owns it now; an unused require would only warn under lint-staged, but it is dead code). The SERVER-17 paragraph in the header stays true: the routine it describes moved, it did not change.
 
 - [ ] **Step 7: The dispatcher suites still pass**
 
-Run, one at a time: `node --test server/utils/scheduledMessageDispatcher.test.js` (if present; `ls server/utils/scheduledMessageDispatcher*.test.js`) and `node --test server/utils/adminPush.test.js`. Expected: every file `fail 0`; read the pass counts.
+Run, one at a time: `node --test server/utils/scheduledMessageDispatcher.test.js` (its three push-channel tests at `:923-1000` are the regression read for the refactor: no subscriptions suppressed, sends ok and prunes gone while keeping a flaky one, all fail) and `node --test server/utils/adminPush.test.js`. Expected: every file `fail 0`; read the pass counts.
 
 - [ ] **Step 8: Commit**
 
@@ -876,7 +895,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const adminPush = require('../utils/adminPush');
-const { errorHandler } = require('../middleware/errorHandler');
+const { AppError } = require('../utils/errors');
 
 const NONCE = `${Date.now()}-${process.pid}`;
 let server; let baseUrl; let admin; let staff; let adminToken; let staffToken;
@@ -904,7 +923,13 @@ before(async () => {
   app.use(express.json());
   app.use('/api/me', require('./me'));
   app.use('/api/me', require('./mePush'));
-  app.use(errorHandler);
+  // The repo's global handler is inline in server/index.js; a route harness
+  // writes its own, as webauthn.test.js:135-143 does. Copy that block here
+  // verbatim (AppError -> its statusCode and message; anything else 500).
+  app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    return res.status(500).json({ error: 'internal' });
+  });
   server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -988,7 +1013,7 @@ test('POST push-test is admin or manager only and reports what it could send', a
 });
 ```
 
-Check the error middleware's export name first (`grep -n "module.exports" server/middleware/errorHandler.js`) and use what it exports. The route reads `adminPush.sendPushToUser` through the module object at call time (not destructured) so the test's replacement takes effect; write `mePush.js` that way.
+The route reads `adminPush.sendPushToUser` through the module object at call time (not destructured) so the test's replacement takes effect; write `mePush.js` that way.
 
 - [ ] **Step 2: Run both, expect failures on the missing helper and module**
 
@@ -1177,7 +1202,10 @@ MSG
 - Modify: `server/utils/lastMinuteAlert.js:31-42`
 - Modify: `server/routes/staffShiftActions.js` (`notifyManagementOfAction` `:197-222`; the drop `:329-336`; the cover `:465-472`; the swap `:687-696`)
 - Modify: `server/utils/smsInbound.js:465-471`
-- Modify: `server/utils/smsInbound.test.js` (one assertion in the CANT alert test)
+- Modify: `server/utils/smsShiftCommands.js:263-271` (`handleCant`'s result gains `proposalId`)
+- Modify: `server/utils/smsInbound.nearestShift.endInstant.test.js:207-241` (one assertion in the test that records the CANT alert)
+- Modify: `server/routes/staffShiftActions.test.js` (a push recorder on the drop, cover and swap tests)
+- Modify: `server/routes/drinkPlans/submitPlannerV2.test.js` (the drink-plan push pin)
 - Modify: `server/routes/drinkPlans/submitNotify.js` (`sendFinancialSubmitNotifications` `:79+`, `sendFastPathConfirmation` `:142+`)
 
 **Interfaces:**
@@ -1191,24 +1219,35 @@ In `server/utils/bankPaymentProcessingNotify.test.js`, in the test that asserts 
 ```js
   assert.equal(adminCalls[0].push.kind, 'booking_signed_paid');
   assert.match(adminCalls[0].push.title, /Bank payment started/);
-  assert.equal(adminCalls[0].push.url, `/events/${proposalId}`);
+  assert.equal(adminCalls[0].push.url, `/events/${id}`);
 ```
+
+(that test holds the proposal id as `id`, `:82-96`)
 
 and in the routine (non-initial) test: `assert.equal(adminCalls[0].push.kind, 'payment_landed');`. Use the variables that test already holds for the proposal id and the recorded calls (`adminCalls` is the recorder at `:13`).
 
-In `server/utils/smsInbound.test.js`, in the test that drives `alertStaffCant` through `__setDeps({ notifyAdminCategory })` (find it with `grep -n "Bartender dropped" server/utils/smsInbound.test.js`), add to the recorded call's assertions:
+In `server/utils/smsInbound.nearestShift.endInstant.test.js:207-241`, the test that drives the CANT alert through a `notifyAdminCategory` recorder and reads `sent[0]`, add:
 
 ```js
-  assert.equal(call.push.kind, 'staffing_drop');
-  assert.equal(call.push.recordId, <the shift id that test knows>);
-  assert.match(call.push.title, /^Shift dropped: /);
+  assert.equal(sent[0].push.kind, 'staffing_drop');
+  assert.equal(sent[0].push.recordId, shiftId);
+  assert.equal(sent[0].push.url, `/events/${proposalId}`);
+  assert.match(sent[0].push.title, /^Shift dropped: /);
 ```
 
-Run each: `node --test server/utils/bankPaymentProcessingNotify.test.js`, `node --test server/utils/smsInbound.test.js`. Expected: the touched tests FAIL on `push` being undefined; everything else passes.
+using the names that test holds for its shift and proposal ids.
+
+In `server/routes/staffShiftActions.test.js`, the drop, cover and swap tests gain a push recorder on the leg itself (the suite has no `notifyAdminCategory` recorder and the module destructures it at load, so the seam is the push leg): at the top, `const adminNotifications = require('../utils/adminNotifications');`, a `before` that inserts one admin row subscribed to `urgent_staffing` with one stored subscription (the shape in `adminNotifications.test.js`) and an `after` that deletes it; in each of the three tests, `const pushed = []; adminNotifications.__setDeps({ sendPushToUser: async (a) => { pushed.push(a); return { subscriptions: 1, sent: 1, failed: 0, gone: 0 }; } });` before the request, `await adminNotifications.__flushPush();` after it, then `assert.equal(pushed[0].tag, 'staffing_drop:' + shiftId)` (cover and swap: `'staffing_cover_swap:' + shiftId`) and `assert.equal(pushed[0].url, '/events/' + proposalId)`, and a `finally` that restores `__setDeps({ sendPushToUser: require('../utils/adminPush').sendPushToUser })`.
+
+In `server/routes/drinkPlans/submitPlannerV2.test.js`, the same recorder around one submit with add-ons and one without (the fast path): both must record exactly one push with `tag` `'drink_plan_submitted:' + proposalId` and `url` `'/events/' + proposalId`, the seeded admin subscribed to `routine_admin`.
+
+Run each: `node --test server/utils/bankPaymentProcessingNotify.test.js`, `node --test server/utils/smsInbound.nearestShift.endInstant.test.js`, `node --test server/routes/staffShiftActions.test.js`, `node --test server/routes/drinkPlans/submitPlannerV2.test.js`. Expected: the touched tests FAIL on `push` or the recorder being empty; everything else passes.
 
 - [ ] **Step 2: The call sites**
 
 Each site adds a `require` of `pushCopy` (from `'../utils/adminPush'` or `'./adminPush'` as the file's depth needs) beside its `notifyAdminCategory` require, and one `push:` line. Nothing else moves.
+
+The date: `formatEventDateLong` from `server/utils/staffShiftHandlers.js` (the bank notice imports it; it takes a row with `event_date` and `event_timezone`). In `public.js` and `publicToken.js` the signed proposal row is `proposal` / `pd`; `publicToken.js`'s `pd` SELECT (`:588-592`) gains `p.event_date, p.event_timezone`. In `stripePaymentNotifications.js`, `pi` carries `event_date` (`:22` reads it for the SMS). Each of `public.js`, `publicToken.js`, `stripePaymentNotifications.js` and `submitNotify.js` adds `const { formatEventDateLong } = require(<relative path to>/utils/staffShiftHandlers);` beside its other requires (`bankPaymentProcessingNotify.js` has it). Where a site cannot cheaply have the date, pass `null`.
 
 `server/routes/proposals/public.js:578-583`:
 
@@ -1218,7 +1257,7 @@ Each site adds a `require` of `pushCopy` (from `'../utils/adminPush'` or `'./adm
           subject: `New Website Quote: ${eventTypeLabel}`,
           emailHtml: tpl2.html,
           emailText: tpl2.text,
-          push: pushCopy.bookingSigned({ clientName: client_name.trim(), eventTypeLabel, proposalId: proposal.id }),
+          push: pushCopy.bookingSigned({ clientName: client_name.trim(), eventTypeLabel, proposalId: proposal.id, dateLabel: proposal.event_date ? formatEventDateLong(proposal) : null }),
         });
 ```
 
@@ -1230,20 +1269,21 @@ Each site adds a `require` of `pushCopy` (from `'../utils/adminPush'` or `'./adm
           subject: tpl.subject,
           emailHtml: tpl.html,
           emailText: tpl.text,
-          push: pushCopy.bookingSigned({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id }),
+          push: pushCopy.bookingSigned({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, dateLabel: pd.event_date ? formatEventDateLong(pd) : null }),
         });
 ```
 
 `server/utils/stripePaymentNotifications.js:199`:
 
 ```js
+    const dateLabel = pi?.event_date ? formatEventDateLong(pi) : null;
     const push = isCoupledSigning
-      ? pushCopy.bookingSignedPaid({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, proposalId })
-      : pushCopy.paymentLanded({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId });
+      ? pushCopy.bookingSignedPaid({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, proposalId, dateLabel })
+      : pushCopy.paymentLanded({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, dateLabel });
     await notifyAdminCategory({ category: isCoupledSigning ? 'urgent_booking' : 'routine_finance', subject: adminTpl.subject, emailHtml: adminTpl.html, emailText: adminTpl.text, push });
 ```
 
-`server/utils/bankPaymentProcessingNotify.js:89-94`:
+`server/utils/bankPaymentProcessingNotify.js:89-94` (the admin half's SELECT at `:76-80` gains `p.event_date, p.event_timezone`; `formatEventDateLong` is already imported there):
 
 ```js
     await notifyAdminCategory({
@@ -1251,7 +1291,7 @@ Each site adds a `require` of `pushCopy` (from `'../utils/adminPush'` or `'./adm
       subject: `Bank payment processing: ${client} (${label})`,
       emailText: `${line} ${url}`,
       emailHtml: `<p>${esc(line)}</p><p><a href="${url}">Open proposal #${proposalId}</a></p>`,
-      push: pushCopy.bankPaymentStarted({ clientName: pc.client_name, eventTypeLabel: label, amount: dollars, initial, proposalId }),
+      push: pushCopy.bankPaymentStarted({ clientName: pc.client_name, eventTypeLabel: label, amount: dollars, initial, proposalId, dateLabel: pc.event_date ? formatEventDateLong({ event_date: pc.event_date, event_timezone: pc.event_timezone }) : null }),
     });
 ```
 
@@ -1301,6 +1341,8 @@ async function notifyManagementOfAction({
     }),
 ```
 
+(`ctx` carries `shift_id`, `proposal_id`, `position`, `client_name` on both the drop and the cover path: verified.)
+
 the cover call (`:465-472`) gains the same shape through `pushCopy.staffingCover`, and the swap call (`:690-695`) gains:
 
 ```js
@@ -1310,7 +1352,7 @@ the cover call (`:465-472`) gains the same shape through `pushCopy.staffingCover
       }),
 ```
 
-Before writing these three, confirm the names: `grep -n "shift_id\|proposal_id" server/routes/staffShiftActions.js | head -30` shows what `ctx` carries on the drop and cover paths and what `shift_context` carries on the swap path (if `shift_context` has no proposal id, pass `null`; the banner then opens `/staffing`, decision 3). Record what you found in your report.
+The swap's `shift_context` (`:641-650`) carries no `proposal_id` today though the row is already selected as `orig.proposal_id` (`:527`): add `proposal_id: orig.proposal_id` to that object (decision 14), so the banner opens the event.
 
 `server/utils/smsInbound.js:465-471`:
 
@@ -1322,15 +1364,33 @@ Before writing these three, confirm the names: `grep -n "shift_id\|proposal_id" 
       emailText: ...unchanged...,
       ...(daysOut < 7 ? { smsBody: smsLine } : {}),
       push: pushCopy.staffingDrop({
-        clientName: cant.clientName, eventTypeLabel: eventLabel, dateLabel: dateStr, position: cant.position || 'Bartender',
+        clientName: cant.clientName, eventTypeLabel: eventLabel, dateLabel: dateStr, position: 'Bartender',
         proposalId: cant.proposalId || null, shiftId: cant.shiftId,
       }),
     });
 ```
 
-Check what `handleCant` returns (`grep -n "proposalId\|position" server/utils/smsShiftCommands.js | head`) and pass what exists; `null` where it does not.
+`handleCant` (`server/utils/smsShiftCommands.js:263-271`) returns no `proposalId` today though its SELECT reads `s.proposal_id` (`:133`): add `proposalId: s.proposal_id || null` to the returned object (decision 14; the file is sensitive-listed and in the footprint). The texted command is a bartender's, so the position is the literal.
 
-- [ ] **Step 3: The drink plan pushes on every submit**
+- [ ] **Step 3: Commit the nine sites**
+
+Run the suites of Step 4 that those files reach (all but the two drink-plan suites), then:
+
+```bash
+git add server/routes/proposals/public.js server/routes/proposals/publicToken.js server/utils/stripePaymentNotifications.js server/utils/bankPaymentProcessingNotify.js server/utils/bankPaymentProcessingNotify.test.js server/utils/lastMinuteAlert.js server/routes/staffShiftActions.js server/routes/staffShiftActions.test.js server/utils/smsInbound.js server/utils/smsShiftCommands.js server/utils/smsInbound.nearestShift.endInstant.test.js
+git commit -F - <<'MSG'
+feat(push): the nine call sites name their kind
+
+Client signed, signed and paid, payment landed, bank payment started,
+last-minute booking, shift drops (clean and texted), cover requests and
+swap proposals each pass a push block from pushCopy, with the event date
+where the site has it. Texted drops and swaps now carry the proposal id.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+MSG
+```
+
+- [ ] **Step 3b: The drink plan pushes on every submit (its own commit: new behaviour, reverts on its own)**
 
 In `server/routes/drinkPlans/submitNotify.js`, add `pushAdminKind` to the `adminNotifications` require and `pushCopy` from `'../../utils/adminPush'`. In `sendFinancialSubmitNotifications`, BEFORE the `if (pendingNotifications.balanceChanged)` block (the email keeps its throttle; the push does not have one):
 
@@ -1344,11 +1404,12 @@ In `server/routes/drinkPlans/submitNotify.js`, add `pushAdminKind` to the `admin
       clientName,
       eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
       proposalId: pn.id,
+      dateLabel: pn.event_date ? formatEventDateLong(pn) : null,
     }),
   }).catch((err) => console.error('Drink plan push failed (non-blocking):', err && err.message));
 ```
 
-In `sendFastPathConfirmation`, right after the row is read (`const row = r.rows[0]` or whatever the function names it; the SELECT already returns `p.id`, `c.name AS client_name`, `p.event_type`, `p.event_type_custom`; if it lacks `event_type_custom`, add it to the SELECT), and before the `client_email` check so a client with no email still pushes:
+In `sendFastPathConfirmation`, right after the row is read (`const row = r.rows[0]` or whatever the function names it; the SELECT already returns `p.id`, `c.name AS client_name`, `p.event_type`, `p.event_type_custom`; add `p.event_date, p.event_timezone` to it, and import `formatEventDateLong` from `'../../utils/staffShiftHandlers'`), and before the `client_email` check so a client with no email still pushes:
 
 ```js
     if (row && row.id) {
@@ -1358,6 +1419,7 @@ In `sendFastPathConfirmation`, right after the row is read (`const row = r.rows[
           clientName: row.client_name,
           eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
           proposalId: row.id,
+          dateLabel: row.event_date ? formatEventDateLong(row) : null,
         }),
       }).catch((err) => console.error('Drink plan push failed (non-blocking):', err && err.message));
     }
@@ -1377,19 +1439,17 @@ node --test server/routes/drinkPlans/submitPlannerV2.test.js
 node --test server/utils/adminNotifications.test.js
 ```
 
-Expected: `fail 0` in every file. The real `notifyAdminCategory` runs in several of them; with no VAPID keys in the dev env `sendPush` answers `vapid_unset` and nothing reaches a network.
+Expected: `fail 0` in every file. The real `notifyAdminCategory` runs in several of them; with no VAPID keys in the dev env `sendPush` answers `vapid_unset` and nothing reaches a network. If a dev-DB admin row holds a stored subscription, a push leg may run after a suite's `pool.end()`: `sendPushToUser` catches the pool error and returns zeros, so no open handle and no failing test, one stray Sentry capture at most. The three sites with no suite of their own (`stripePaymentNotifications.js`, `lastMinuteAlert.js`, `public.js`'s submit path) are read by `consistency-check` at lane close against the kind map in the spec.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit the drink-plan emit**
 
 ```bash
-git add server/routes/proposals/public.js server/routes/proposals/publicToken.js server/utils/stripePaymentNotifications.js server/utils/bankPaymentProcessingNotify.js server/utils/bankPaymentProcessingNotify.test.js server/utils/lastMinuteAlert.js server/routes/staffShiftActions.js server/utils/smsInbound.js server/utils/smsInbound.test.js server/routes/drinkPlans/submitNotify.js
+git add server/routes/drinkPlans/submitNotify.js server/routes/drinkPlans/submitPlannerV2.test.js
 git commit -F - <<'MSG'
-feat(push): the nine call sites name their kind; every drink-plan submit pushes
+feat(push): every drink-plan submit pushes, from both post-commit tails
 
-Client signed, signed and paid, payment landed, bank payment started,
-last-minute booking, shift drops (clean and texted), cover requests and
-swap proposals each pass a push block from pushCopy. A drink plan submit
-pushes from both post-commit tails; its email keeps the balance throttle.
+The submit is the cue to start the shopping list and the menu. Push only;
+the admin email keeps its balance-changed throttle.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
@@ -1463,6 +1523,7 @@ Before any client task: a `security-review` agent and a `database-review` agent 
 - Create: `client/src/utils/adminPush.js`
 - Create: `client/src/utils/adminPush.test.js`
 - Modify: `client/src/context/AuthContext.js:112-117` (one call in `logout`)
+- Modify: `client/src/context/AuthContext.test.js` (one assertion: logout unsubscribes)
 
 **Interfaces:**
 - Consumes: `POST`/`DELETE /me/push-subscriptions` (existing).
@@ -1470,7 +1531,7 @@ Before any client task: a `security-review` agent and a `database-review` agent 
 
 - [ ] **Step 1: The failing tests**
 
-Append to `client/src/utils/pushSubscribe.test.js`:
+In `client/src/utils/pushSubscribe.test.js`: the two `import` lines and the `jest.mock` below go at the TOP of the file with its existing import (`import/first`); the `describe` block is appended at the end. The fake resolves a registration by script path, but the browser's `getRegistration` resolves by scope (`client/src/utils/adminSw.js:21-22`), so on one origin the two workers share a scope and the path selects nothing: this test proves the plumbing passes the path and key through, not that the two workers are kept apart. Say so in the test's comment.
 
 ```js
 import { isPushSubscribed, unsubscribePush, subscribePush } from './pushSubscribe';
@@ -1683,7 +1744,7 @@ In `client/src/context/AuthContext.js`, import `{ disableAdminPush } from '../ut
   };
 ```
 
-`AuthContext.js` is sensitive-listed; this is the only line it gains. Its existing suites (`grep -ln "AuthContext" client/src/**/*.test.js`) must stay green; any that mock `../utils/adminSw` need `../utils/adminPush` mocked the same way (`disableAdminPush: () => Promise.resolve({ ok: true })`).
+`AuthContext.js` is sensitive-listed; this is the only line it gains. In `client/src/context/AuthContext.test.js` (it already mocks `../utils/adminSw` and `../utils/api`, so the new import loads), add `jest.mock('../utils/adminPush', () => ({ disableAdminPush: () => { mockDisableCalls.push(1); return Promise.resolve({ ok: true }); } }));` with `const mockDisableCalls = [];` above it, and in the test that exercises `logout` (or a new one that renders the provider, calls `logout` from a consumer, and checks the token is gone) assert `expect(mockDisableCalls).toHaveLength(1)`. `AdminLayout.badges.test.js` mocks AuthContext whole and needs nothing.
 
 - [ ] **Step 6: Run, expect all passing, then the client gate**
 
@@ -1768,7 +1829,7 @@ test('the test row status', () => {
   expect(testStatus({ offline: false, state: 'off', test: 'idle' })).toEqual({ text: 'Phone is off', tone: 'muted', disabled: true });
   expect(testStatus({ offline: false, state: 'server_unset', test: 'idle' })).toEqual({ text: 'Phone is off', tone: 'muted', disabled: true });
   expect(testStatus({ offline: false, state: 'on', test: 'idle' })).toEqual({ text: '', tone: null, disabled: false });
-  expect(testStatus({ offline: false, state: 'on', test: 'sending' })).toEqual({ text: 'Sending', tone: 'muted', disabled: true });
+  expect(testStatus({ offline: false, state: 'on', test: 'sending' })).toEqual({ text: 'Sending', tone: 'muted', disabled: false });
   expect(testStatus({ offline: false, state: 'on', test: 'sent' })).toEqual({ text: 'Sent', tone: 'ok', disabled: false });
   expect(testStatus({ offline: false, state: 'on', test: 'failed' })).toEqual({ text: 'Didn’t send', tone: 'danger', disabled: false });
 });
@@ -1869,7 +1930,9 @@ export function catsIntro(state) {
 export function testStatus({ offline, state, test }) {
   if (offline) return { text: 'Offline', tone: 'muted', disabled: true };
   if (state !== 'on') return { text: 'Phone is off', tone: 'muted', disabled: true };
-  if (test === 'sending') return { text: 'Sending', tone: 'muted', disabled: true };
+  // Sending keeps the row's ink (the benchmark's nTestInk stays ink 1); the
+  // handler ignores a second tap while a send is in flight (decision 15).
+  if (test === 'sending') return { text: 'Sending', tone: 'muted', disabled: false };
   if (test === 'sent') return { text: 'Sent', tone: 'ok', disabled: false };
   if (test === 'failed') return { text: 'Didn’t send', tone: 'danger', disabled: false };
   return { text: '', tone: null, disabled: false };
@@ -1923,7 +1986,10 @@ html[data-app="admin-os"] .m-more-state.danger { color: hsl(var(--danger-h) var(
 html[data-app="admin-os"][data-skin="light"] .m-more-state.ok { color: var(--ms-emerald); }
 html[data-app="admin-os"][data-skin="light"] .m-more-state.warn { color: hsl(var(--warn-h) var(--warn-s) 34%); }
 html[data-app="admin-os"][data-skin="light"] .m-more-state.danger { color: var(--ms-bordeaux); }
-html[data-app="admin-os"] .m-notif-retry { flex: none; min-height: 44px; padding: 0 8px; border: none; background: transparent; color: var(--link, hsl(212 60% 62%)); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+html[data-app="admin-os"] .m-notif-retry { flex: none; min-height: 44px; padding: 0 8px; border: none; background: transparent; color: hsl(212 60% 62%); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+/* A kind row whose save failed: the switch and its Retry sit side by side in the li. */
+html[data-app="admin-os"] .m-more-list li.m-row-retry { display: flex; align-items: center; }
+html[data-app="admin-os"] .m-more-list li.m-row-retry > .m-more-row { flex: 1; min-width: 0; }
 /* The note under the phone switch (blocked, or not set up on the server). */
 html[data-app="admin-os"] .m-notif-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 16px 12px; background: var(--bg-1); font-size: var(--fs-meta, 11.5px); color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
 html[data-app="admin-os"] .m-notif-note svg { flex: none; margin-top: 1px; color: hsl(var(--warn-h) var(--warn-s) 62%); }
@@ -1946,7 +2012,7 @@ html[data-app="admin-os"] .m-notif-skel-pill { width: 40px; height: 24px; flex: 
 html[data-app="admin-os"] .m-notif-skel li { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 16px; pointer-events: none; }
 ```
 
-And in the House Lights block (after `:21336`):
+The switch block MUST sit after `:21274`: `.m-more-row span { flex: 1 }` has the same specificity as `span.m-switch-track { flex: none }`, and the track keeps its 40px only because the later rule wins. And after the light-skin rules that follow the House Lights comment (`:21335-21337`):
 
 ```css
 html[data-app="admin-os"][data-skin="light"] span.m-switch-track,
@@ -1955,7 +2021,7 @@ html[data-app="admin-os"][data-skin="light"] .m-notif-skel-pill { border-radius:
 html[data-app="admin-os"][data-skin="light"] [aria-checked="true"] > span.m-switch-track > span.m-switch-thumb { background: var(--bg-0); }
 ```
 
-Check `m-pulse` is defined in `index.css` (`grep -n "@keyframes m-pulse" client/src/index.css`); if not, add `@keyframes m-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }` above the switch block, and under the existing reduced-motion block for the sheets add `.m-switch-thumb, .m-notif-skel-bar, .m-notif-skel-pill { animation: none; }` in the same `@media (prefers-reduced-motion: reduce)` rule. Check `--link` exists (`grep -n "\-\-link:" client/src/index.css | head -2`); if not, drop the var and keep the literal fallback.
+`@keyframes m-pulse` already exists (`:21543`, after the insertion point, which is fine for a keyframe). In the sheets' reduced-motion block (`:22053-22058`, `@media (prefers-reduced-motion: reduce)`) add `.m-switch-thumb, .m-notif-skel-bar, .m-notif-skel-pill { animation: none; }`. `--link` is defined nowhere in `index.css`, so the Retry colour is the literal above (the benchmark's link hue).
 
 - [ ] **Step 6: Build, commit**
 
@@ -2141,9 +2207,11 @@ test('the test row posts, reads Sent, and Didn’t send with Retry when nothing 
 test('a stored copy renders the offline banner with its time and disables everything', async () => {
   offlineGet.mockResolvedValue(PREFS({ staleAt: new Date().toISOString() }));
   renderScreen();
-  expect(await screen.findByText('Offline')).toBeInTheDocument();
+  // 'Offline' is also the test row's trailing state, so select the banner's title.
+  expect(await screen.findByText('Offline', { selector: '.m-notif-banner-title' })).toBeInTheDocument();
   expect(screen.getByText(/You are looking at the last saved settings/)).toBeInTheDocument();
-  expect(screen.getByText(/as of /)).toBeInTheDocument();
+  // RTL trims the span's own text to 'as of'.
+  expect(screen.getByText(/as of/)).toBeInTheDocument();
   for (const s of screen.getAllByRole('switch')) expect(s).toBeDisabled();
   expect(screen.getByText('Offline', { selector: '.m-more-state' })).toBeInTheDocument();
 });
@@ -2320,7 +2388,7 @@ export default function NotificationsPhone() {
   };
 
   const onTest = async () => {
-    if (tStatus.disabled) return;
+    if (tStatus.disabled || test === 'sending') return;
     setTest('sending');
     try {
       const res = await api.post('/me/push-test');
@@ -2425,7 +2493,7 @@ export default function NotificationsPhone() {
                 <div className="m-notif-group-help">{g.help}</div>
                 <ul className="m-more-list">
                   {g.kinds.map(({ kind, label }) => (
-                    <li key={kind}>
+                    <li key={kind} className={failed[kind] ? 'm-row-retry' : undefined}>
                       <button
                         type="button" className="m-more-row" role="switch"
                         aria-checked={kindOn(read.prefs, kind)} aria-busy={busy[kind] || undefined}
@@ -2433,9 +2501,11 @@ export default function NotificationsPhone() {
                       >
                         <span>{label}</span>
                         {failed[kind] && <span className="m-more-state danger">Didn’t save</span>}
-                        {failed[kind] && <span className="m-notif-retry" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); flip(kind); }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); flip(kind); } }}>Retry</span>}
                         <Track />
                       </button>
+                      {/* Retry is a sibling of the switch, never inside it: interactive
+                          content may not nest in a button (decision 9). */}
+                      {failed[kind] && <button type="button" className="m-notif-retry" onClick={() => flip(kind)}>Retry</button>}
                     </li>
                   ))}
                 </ul>
@@ -2452,7 +2522,7 @@ export default function NotificationsPhone() {
 }
 ```
 
-Notes for the implementer: the file uses the typographic apostrophe in "Couldn’t" and "Didn’t" (as the benchmark draws); the Retry inside a switch row is a `span[role=button]` because a `<button>` may not nest in a `<button>`, and it stops propagation so the row's own flip does not fire twice. If the test's `getByRole('button', { name: 'Retry' })` finds two (the row's and the test row's), scope the assertion with `within(sw('Shift drops').closest('li'))`.
+Notes for the implementer: the file uses the typographic apostrophe in "Couldn’t" and "Didn’t" (as the benchmark draws). If a test's `getByRole('button', { name: 'Retry' })` finds two (a kind row's and the test row's), scope the assertion with `within(sw('Shift drops').closest('li'))`.
 
 - [ ] **Step 5: The More row**
 
@@ -2525,18 +2595,19 @@ MSG
 
 - [ ] **Step 1: The failing tests**
 
-In `client/src/utils/adminSwAllowlist.test.js`, add `'/api/me/notification-preferences'` to the `test.each` list of paths that are cached, change the version assertion to `'admin-sw-2026-10-14-v11'` (find it with `grep -n "admin-sw-2026" client/src/utils/adminSwAllowlist.test.js`), and append:
+In `client/src/utils/adminSwAllowlist.test.js`, add `'/api/me/notification-preferences'` to the `test.each` list of paths that are cached, change the version regex at `:95` to `/^admin-sw-\d{4}-\d{2}-\d{2}-v11$/` (the `not.toBe` of the v8 name at `:94` stays), and append:
 
 ```js
 describe('notificationclick', () => {
-  function run(clients, data, { openWindow = true } = {}) {
-    const { onNotificationClick } = loadServiceWorkerWithClients(clients, openWindow);
+  function run(windows, data, { openWindow = true } = {}) {
+    const { onNotificationClick, clients } = loadServiceWorkerWithClients(windows, openWindow);
     const calls = [];
     const event = {
       notification: { close: () => calls.push(['close']), data },
       waitUntil: (p) => { calls.push(['waitUntil']); event.done = p; },
     };
     onNotificationClick(event);
+    // `clients` is the loader's object: its `opened` array records openWindow.
     return { calls, done: event.done, clients };
   }
   const client = (url) => {
@@ -2570,6 +2641,14 @@ describe('notificationclick', () => {
     await r.done;
     expect(r.clients.opened).toEqual(['/more/notifications']);
   });
+
+  test('a payload url off the admin origin navigates nothing and opens the root', async () => {
+    const a = client('https://admin.example.test/events');
+    const r = run([a], { url: 'https://evil.example.test/phish' });
+    await r.done;
+    expect(a.navigatedTo).toBeNull();
+    expect(r.clients.opened).toEqual(['/']);
+  });
 });
 ```
 
@@ -2584,11 +2663,11 @@ function loadServiceWorkerWithClients(windows, openWindow = true) {
   const self = { addEventListener: (type, fn) => { listeners[type] = fn; }, location: { origin: 'https://admin.example.test' }, clients, registration: { showNotification: async () => {} } };
   const context = vm.createContext({ self, caches: {}, fetch: () => Promise.reject(new Error('no network in test')), URL, Response: function Response() {}, Headers: function Headers() {}, console });
   vm.runInContext(src, context);
-  return { onNotificationClick: listeners.notificationclick };
+  return { onNotificationClick: listeners.notificationclick, clients };
 }
 ```
 
-(Match the `vm.createContext` globals the existing `loadServiceWorker` passes; copy its list and add `console` if it is missing. The `opened` array lives on `clients`, which `run` returns.)
+(Match the `vm.createContext` globals the existing `loadServiceWorker` passes; copy its list and add `console` if it is missing. The loader returns its `clients` object so `run` can read `opened`.)
 
 - [ ] **Step 2: Run, expect the three click tests and the version test to fail**
 
@@ -2607,7 +2686,25 @@ Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/adm
   '/api/me/notification-preferences',
 ```
 
-`notificationclick`: after the exact-path loop and before `openWindow`, add:
+`notificationclick`: the `targetPath` block (`:390-395`) becomes a same-origin resolution, so a payload can never steer the app off the admin host:
+
+```js
+      // Same-origin paths only (2026-10-14): the payload's url is resolved
+      // against this worker's origin, and anything else collapses to '/'.
+      let target = '/';
+      let targetPath = '/';
+      try {
+        const u = new URL(targetUrl, self.location.origin);
+        if (u.origin === self.location.origin) {
+          target = u.pathname + u.search + u.hash;
+          targetPath = u.pathname;
+        }
+      } catch (e) {
+        // unparseable: stays '/'
+      }
+```
+
+and `openWindow(targetUrl)` at the end becomes `openWindow(target)`. After the exact-path loop and before `openWindow`, add:
 
 ```js
       // No window on that path. An open admin window is navigated there
@@ -2618,7 +2715,7 @@ Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/adm
           if (!('focus' in client)) continue;
           try {
             await client.focus();
-            if ('navigate' in client) return client.navigate(targetUrl);
+            if ('navigate' in client) return client.navigate(target);
             return null;
           } catch (e) {
             // A client that cannot be focused or navigated (gone, or not
@@ -2707,7 +2804,7 @@ ARCHITECTURE: the `/api/me` route table (`:807-808`) gains the `push` block and 
 
 `scripts/sensitive-paths.txt`, beside `client/public/admin-sw.js` (`:440`), with a comment line each: `server/utils/adminPush.js` (the dispatch allowlist is the blast-radius guard; its copy reaches a locked screen), `server/utils/adminNotifications.js` (the three gates), `server/routes/mePush.js` (sends to devices on request), `client/src/utils/adminPush.js` (subscribes and unsubscribes a device). Run `node scripts/sensitive-match.js <each path>` (or however the matcher is invoked; see its header) to confirm each matches.
 
-`scripts/mobile-capture.manifest.json`, after the `admin-event-detail` entry (`:75`):
+`scripts/mobile-capture.manifest.json`, after the `admin-event-detail` entry (it spans `:75-77`; insert after `:77`):
 
 ```json
     { "name": "admin-notifications", "host": "localhost", "path": "/more/notifications", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell" },
@@ -2724,15 +2821,15 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 ```
 
-- [ ] **Step 4: The spec's two sentences (main)**
+- [ ] **Step 4: The spec's sentences (main): DONE at the plan-fleet fold on 2026-10-14, see the fold record at the end; nothing left for lane time unless Dallas vetoes decision 6, in which case both sentences revert and the click change moves to the fix list.**
 
-In section 7 Push: replace "`client/public/admin-sw.js` already displays pushes and handles clicks (lane ma-b); this lane changes it only for the allowlist entry." with "`client/public/admin-sw.js` already displays pushes and handles clicks (lane ma-b); this lane adds the allowlist entry and one behaviour to the click handler: with no window on the exact path it focuses an open admin window and navigates it there, and opens a new window only when none is open (plan decision 6, 2026-10-14)." In the Subscriptions bullet, after "Logout unsubscribes this device the same way, as part of section 7's purge, so a signed-out phone never buzzes." add "(The browser-side unsubscribe is immediate; the server's copy is deleted when the DELETE wins the race with the token removal, and otherwise dies on the next send's 410.)" No em dashes. Commit on main: `spec(mobile-admin): the click handler navigates; logout's unsubscribe race, stated`.
+What was written. In section 7 Push: replace "`client/public/admin-sw.js` already displays pushes and handles clicks (lane ma-b); this lane changes it only for the allowlist entry." with "`client/public/admin-sw.js` already displays pushes and handles clicks (lane ma-b); this lane adds the allowlist entry and one behaviour to the click handler: with no window on the exact path it focuses an open admin window and navigates it there, and opens a new window only when none is open; it navigates and opens same-origin paths only (plan decision 6, 2026-10-14)." In the Subscriptions bullet, after "Logout unsubscribes this device the same way, as part of section 7's purge, so a signed-out phone never buzzes." add "(The browser-side unsubscribe is immediate; the server's copy is deleted when the DELETE wins the race with the token removal, and otherwise dies on the next send's 410.)" No em dashes. In the section 3 plan-decisions sentence (the one that starts "Plan decisions, stated here so the contract is whole"), append items (6) to (10): the failed-load state with Retry; the two enable-failure toasts; the `unsupported` state hiding the More row; the server-unset sub-line "Not set up on the server yet"; the back arrow's "Back" label kept from the chrome; and that "Sending" keeps the row's ink. Commit on main: `spec(mobile-admin): the click handler navigates; logout's unsubscribe race; six more plan decisions`.
 
 - [ ] **Step 5: Walkthroughs owed and the fix list (main)**
 
 `docs/walkthroughs-owed.md`, Tier 6 (moves to Tier 3b with the push): "**Admin push (lane ma-c-push).** Before the push: Dallas generates the VAPID pair (`npx web-push generate-vapid-keys`) and sets `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in Render (nothing in Vercel). On the Pixel after the deploy: More shows the Notifications row reading Off; the screen's switch asks Android and turns on; Send a test notification lands a banner within seconds and the row reads Sent; tapping the banner opens the Notifications screen (through the lock if it is up); turn Shift drops off and back on; a real event (the next client signature or payment) lands a banner that opens the event; log out and confirm no banner lands on a test send from desktop. Zul repeats the enable on his phone when he wants it."
 
-Fix list, Admin UI, a "Push follow-ups (lane ma-c-push)" block: (1) replacing the 312's texts with push for a category needs a per-call-site SMS switch (SMS is decided per caller today), a later decision once push has proven itself; (2) Inbox pings stay out (the Inbox spec's "no pings"); (3) the `.m-switch` block is upstreamed to the design-system project `72035042` at lane close if Dallas approves the DesignSync write, else it stays owed here; (4) `staff-sw.js` still focuses by substring (the 8/14 finding) and does not navigate an open window; the admin worker's two fixes are its pattern.
+Fix list, Admin UI, a "Push follow-ups (lane ma-c-push)" block: (1) replacing the 312's texts with push for a category needs a per-call-site SMS switch (SMS is decided per caller today), a later decision once push has proven itself; (2) Inbox pings stay out (the Inbox spec's "no pings"); (3) the `.m-switch` block is upstreamed to the design-system project `72035042` at lane close if Dallas approves the DesignSync write, else it stays owed here; (4) `staff-sw.js` still focuses by substring (the 8/14 finding) and does not navigate an open window; the admin worker's two fixes are its pattern; (5) `server/routes/staffShiftActions.js` ends this lane at about 963 lines, under 40 from the 1000 ratchet, so the next lane that touches it splits it first (the per-concern composition router pattern of `server/routes/proposals/`).
 
 - [ ] **Step 6: The plan's as-built record (main)**
 
@@ -2750,6 +2847,10 @@ When the lane closes, append "Lane ma-c-push close record" with the as-built del
 ## Self-Review (2026-10-14)
 
 1. **Spec coverage.** Section 7 Push: the kinds and the one integration point (Tasks 1, 2); the kind-to-call-site map, every row (Task 4); the named exclusions (nothing passes a block for them; Task 2 drops an unknown kind); the three gates (Task 2); per-account switches and the per-device switch (Tasks 3, 6, 8); the key served by the API (Tasks 1, 3); the subscription store reused, `pushSubscribe` generalized, the real device state, logout and the revoke (Tasks 5, 6); the test send (Task 3); the banner copy rule and the tag (Task 1); deep links by kind (Task 1's `pushCopy`) and the lock holding the route (Task 9's click test, gate N10); the screen's route, header, escape target, offline caching and the four phone states (Tasks 7, 8, 9); the worker's one entry plus the navigate (Task 9, decision 6, spec amended in Task 11). Section 3's 2026-10-14 decisions: the More row, the header, the switch row and its sub-lines, the blocked note, the test row's states, the intro, the groups, the closing lines, the offline banner, the skeleton, the switch's CSS, the plan decisions 1 to 5 (Tasks 7, 8). Section 2's endpoint rule (the test route named). Render keys and the Pixel walk (Tasks 11, 12).
-2. **Placeholder scan.** None. Task 4 and Task 8 tell the implementer to confirm a field name before writing (`proposal_id` on the shift contexts; the webauthn harness's error-handler export) and what to pass when it is absent.
+2. **Placeholder scan.** None. The fleet fold removed the two "confirm before writing" hedges (the shift contexts' `proposal_id`, which is plumbed by decision 14, and the error handler, which is inline).
 3. **Type consistency.** `sendPushToUser` returns `{ subscriptions, sent, failed, gone }` in Tasks 1, 2 (stub), 3 (route and test); `push` blocks are `{ kind, title, body, url, recordId }` from `pushCopy` (Task 1) into `notifyAdminCategory` (Task 2) and the call sites (Task 4); `readDevicePushState` returns `'unsupported'|'blocked'|'on'|'off'` (Task 6) which `phoneState` (Task 7) maps with the key to the screen's five states (Task 8); `rowState` takes the device state on More and the derived state on the screen; `GET` answers `admin_push_preferences` and `push.public_key` (Task 3) which `NotificationsPhone` reads as `d.admin_push_preferences` and `d.push.public_key` (Task 8).
-4. **Review Focus.** 1 (lock holds the route): Task 9 and N10. 2 (category off on desktop): Task 2's third sub-test. 3 (permission revoked after subscribing): Task 6's state order test. 4 (two admins, one kind off): Task 2's first sub-test with adminA and adminB. 5 (a re-submit, a retried webhook): Task 1's `pushTag` test and every `pushCopy` builder setting `recordId`.
+4. **Review Focus.** 1 (lock holds the route): Task 9 and N10. 2 (category off on desktop): Task 2's third sub-test. 3 (permission revoked after subscribing): Task 6's state order test. 4 (two admins, one kind off): Task 2's first sub-test with adminA and adminB. 5 (a re-submit, a retried webhook): Task 1's `pushTag` test, every `pushCopy` builder setting `recordId`, and Task 4's recorder pins on the drop, cover, swap, CANT and drink-plan sites asserting the `kind:id` tag.
+
+## Plan fleet fold (2026-10-14)
+
+Three reviewers ran on `16daa37d` (fidelity PASS 0/4/4, decomposition PASS 0/7/7, feasibility FAIL 4/8/4; blockers were all test-step defects, every production step was found executable, and the feasibility reviewer proved the client suites in a scratch mirror). Everything was folded: the error-handler import that did not exist (Task 3), the CANT pin aimed at a suite without the recorder and outside the footprint (Task 4), the `clients` object the click-test loader dropped and two RTL matchers (Tasks 8, 9), the banner date (decision 10), the proposal id for texted drops and swaps (decision 14), the undeclared screen states (decision 13), the back label (12), the both-keys rule (11), Sending's ink (15), the same-origin guard on the worker's navigate (decision 6), the nine sensitive files, the serialized client tasks, the footprint gaps (`AuthContext.test.js`, the endInstant suite, `smsShiftCommands.js`, `staffShiftActions.test.js`, `submitPlannerV2.test.js`, this plan), the drink-plan emit as its own commit with its pin, the recorder pins on the staffing sites, the size growth stated, and the stale line numbers. Decision 6 (the worker navigates an open window) is the one item flagged for Dallas's veto before Task 9. The spec's sentences of Task 11 Step 4 were written at the fold.
