@@ -68,6 +68,7 @@ Ordered by how close each one is to actually costing money or a client.
 | # | what breaks | reachable today? |
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
+| 1 | A contract refund on a booking with no override is billed again by the next editor save | **yes: 847 (event 10/29)**; five completed and one archived carry the same gap |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -85,7 +86,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | The Enhancement Lab can delete an ADMIN-added shelf addon and shave the contract by its full price | not today (prop 607 becomes reachable the moment plan 102 is submitted) |
 | 1 | A client re-quotes around an admin surcharge on the public wizard, and booking archives the surcharged one | **yes, it happened: prop 883 skipped $125 on 9/25.** Open exposure 10/08: one surcharged proposal (854); the other 11 adjusted open ones carry discounts |
 | 1 | Proposals sent without a `sent_at` are invisible to the Money Board | yes, reporting only (29 rows, 8/25) |
-| 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one** |
+| 1 | An advance duration change bills nothing on a booking with an override | **yes: 606, 607 and 608 are confirmed and carry one**; closing by removing the override (design 10/14) |
 | 1 | An editor tab left open across an on-site settle writes the old hours back | rarely: a tab open across the settle; one extension ever (842) |
 | 1 | The on-site extension quotes the v4 formula whatever the client signed | yes on a hosted package; on the Core Reaction the package rate matches |
 | 1 | An extension invoice can be paid by bank debit, which cannot settle during the event | unknown, NOT TRACED |
@@ -186,6 +187,22 @@ a state nobody could see. The fix is a `refund.failed` subscription plus a rever
 which does not exist in any form today. Exposure is low and bounded (bank refunds are rare here,
 and a returned one is visible in the Stripe dashboard), but it is silent, which is what makes it
 worth writing down.
+
+### A contract refund on a booking with no override is billed again by the next editor save
+
+Found 2026-10-14. A contract-scope refund lowers `total_price` and nothing else
+(`applyRefundReconciliation`, `refundHelpers.js`). The package, hours, add-ons and `adjustments`
+that price the booking are untouched, so the next save from the editor or the phone edit sheet
+re-prices to the pre-refund total, even a save that only fixes the start time. The reprice
+confirm shows the increase; with every balance invoice locked, `createAdditionalInvoiceIfNeeded`
+then mints an Additional Services invoice for exactly the refund. Override'd bookings were fixed
+2026-08-25 (the override moves with the refund); bookings without one never were.
+
+**Live on 847** (event 10/29, `balance_paid`, a $285 contract refund on 10/14, its Full Payment
+invoice locked): any save there re-bills $285. Completed 54, 439, 595, 633 and 784 and archived
+500 carry the same gap and bite only if edited. Fix shape rides with the override removal
+(design started 2026-10-14): a contract-scope refund writes a discount line, so the price inputs
+and the total agree.
 
 ### Smaller refund residuals, all opened 2026-09-15
 
@@ -490,13 +507,18 @@ sign of any of it. The on-site extension is not affected: it prices from the cat
 
 Reachable on three confirmed bookings, all Check Cherry transfers whose override is the old
 contract total: 606 (10/17), 607 (10/22), 608 (2027-08-21). 607 moved from 5h to 6h would add
-$0 where the catalog adds $575. Not specific to the transfers: the Thumbtack auto-draft writes
-overrides as well, and 756 (event 10/24, `viewed`, unpaid) carries one now.
+$0 where the catalog adds $575. Not specific to the transfers: 756 (event 10/24, `viewed`,
+unpaid) carries one too. The Thumbtack auto-draft has never written an override (checked
+2026-10-14); the ones on Thumbtack proposals were typed in the editor.
 
 The manual recipe is in `docs/ops-runbook.md` §8.1 (lane agreement-v4). Fix shape: when a save
 changes duration and an override is set, show the catalog difference beside the override field
 and move the override by it, the way `foldExtrasIntoProposal` already does for extras. Needs
 Dallas's call on automatic versus one click.
+
+**Superseded 2026-10-14: Dallas is removing the override entirely.** Every override converts to
+a discount or surcharge line and the editor loses the Override total field; the design is in
+progress. That closes this entry by construction, since added hours then price at catalog.
 
 ### An editor tab left open across an on-site settle writes the old hours back
 
