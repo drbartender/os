@@ -1949,6 +1949,12 @@ Parked by the lane's review seats and the fix wave on `5061b9cd..3df1e98f`; none
 - **Smaller:** the keystroke path re-renders the whole page with nothing memoized (thread 3.5 ms at 300 rows, handled list 14 ms at 400; fine today); the context pane reads "Pick someone from the list." while an item loads; a draft does not follow an `INBOX_MOVED` hop; a moved-key deep link writes seen twice; the phone's Done and Snooze leave one dead Back press; `WHO` badges beyond D, Z and AI are not styled; `mobileClassContract` does not check `ib-` classes; focus lands on body after a desktop menu pick.
 - **From the re-review (2026-10-13):** when the desktop's own pick turns gone (the person's client row deleted, which no route does today) the page never picks again and the gone card's Back to Inbox goes to the URL already open, so the user clicks a row (no seen, no wrong recipient); two CSS checks in `inboxListViews.test.js` match exact rule text, so a reformat fails them with no behavior change; a message whose only media item is dropped by the https-only rule renders an empty bubble; the After Hours "Unsigned" chip in the context pane wants a look at 280 px.
 
+### Push 2026-10-14 second batch, sweep leftovers (docs only)
+
+Push-time sweep of the nine docs commits that followed the morning push. The one blocker, four client names in a ledger entry, was scrubbed before the push by amending that commit. Left:
+- **Comments still cite the old design-artifact file name** after the 2026-09-15 to 2026-10-14 rename: two comments in `client/src/index.css`, and the closed-lane notes `docs/design-artifacts/2026-10-06-edit-sheet-layout/github.md` and `docs/design-artifacts/2026-10-06-inbox/github.md`. Closed plans keep the old name on purpose.
+- **A run-on sentence in `ARCHITECTURE.md`**, the AI read paragraph ("stored as ParseError instead of throwing before stop_reason can be read with output_config"); the claims themselves match `aiRead.js`.
+
 ### Push 2026-10-08 review leftovers
 
 Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the push.
