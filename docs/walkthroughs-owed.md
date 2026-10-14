@@ -17,14 +17,13 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ---
 
-## Status: refreshed 2026-10-09
+## Status: refreshed 2026-10-14
 
-**`origin/main` is `7d5e5f8c`, pushed 2026-10-08 (`b3148da4..7d5e5f8c`).** Re-state this sha
-whenever you edit this block. On 2026-10-09 every Tier 6 entry carrying a merge sha was checked
-with `git merge-base --is-ancestor` against it: all thirteen were live and moved to the end of
-Tier 3b, and lane ma-e3b (`d7fa4742`, in the same push, never entered here) was added. Tier 6 now
-holds only Inbox, which waits on lane inbox-page. Count the boxes with the greps below rather
-than trusting a number.
+**`origin/main` is `c1167d96`, pushed 2026-10-14 (`0aa87c76..c1167d96`).** Re-state this sha
+whenever you edit this block. On 2026-10-14 the one Tier 6 entry, Inbox (`39cdc98c`), was checked
+with `git merge-base --is-ancestor` against it, found live and moved to the end of Tier 3b, so Tier 6
+is empty. The 2026-10-09 refresh did the same for thirteen entries and added lane ma-e3b (`d7fa4742`).
+Count the boxes with the greps below rather than trusting a number.
 
 **Everything from here down to Tier 1 is the 2026-08-21 refresh, kept as history.** Its sha, its
 "genuinely left for a human" order and its cohort notes are all stale; most of that order has
@@ -2002,6 +2001,50 @@ prod check of `message_log` after the next real sends:
   the Stripe webhook or the stale-pending sweep sends still ledgers NULL.
 - In the admin, the client's contact history shows those sends as sent by us, not automated.
 
+### Inbox: the waiting-on-you list (lanes inbox-engine, inbox-ai `dcb3c471` and inbox-page `39cdc98c`). Merged by 2026-10-13; pushed 2026-10-14 (`0aa87c76..c1167d96`).
+
+Live; checked 2026-10-14 with `git merge-base --is-ancestor 39cdc98c origin/main`. The page is live on both
+shells; the AI read inside it ships dark (last bullet).
+
+The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
+are walked with the page. Verified by the lane's suites on the dev DB and a read-only rules run over
+prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
+
+- The page itself: open Inbox on the phone (the first tab) and on the desktop, in both
+  skins; open an item (it stops reading "Not read yet" for the other person); claim it; Done, then
+  Undo from the toast (the Inbox toast sits under the header, full width, no x); Snooze until
+  tomorrow, then Wake; on the desktop, type half a reply and let the list poll: the conversation
+  and the draft stay put. Lane inbox-page's close record in the plan has the twenty-case harness.
+- The first prod page view: the waiting list matches Task 18's acceptance run, less whatever was
+  answered since. Watch the first hour of prod AI reads once lane inbox-ai is live, and sanity-check
+  every Recently handled reason against the real thread.
+- Dallas and Zul each claim one real item, reply to it FROM INBOX on the 888, and close it: one
+  `sms_messages` row with `metadata.line` and `metadata.send_id` appears, and the item moves to
+  Recently handled with "You texted back from 888".
+- Point the 0082's Twilio `sms_url` at `https://api.drbartender.com/api/sms/inbound` (Dallas approves
+  or makes the change) and confirm the Messaging Service defers inbound to each number's own webhook.
+- The 224 round trips (spec 16 step 6), each line in turn: Dallas texts it from the 312 GV, replies
+  from Inbox on that line, then texts STOP and START. Each step lands in `sms_messages` with the right
+  `metadata.to` and outcome, STOP blocks every line, and HELP is answered once. Only then add the line
+  to `INBOX_TEXT_LINES` in Render.
+- A week alongside the Cowork job (spec 16 step 7): Dallas and Zul use Inbox and Cowork side by side,
+  and anything Cowork caught that Inbox missed goes to the fix list.
+- The first page view needs about eight hand Dones: the test client, and seven people whose only proposals
+  are unbooked quotes for dates that have passed (decision 22 closes only booked events). One customer is
+  split across two client records (a booked one and an archived duplicate on the same proxy number), so
+  their question waits on the duplicate. Task 18's acceptance run on 2026-10-08 found 38 waiting with no
+  AI reads yet; the thank-yous and the acknowledgments close once lane inbox-ai reads them.
+- The first prod picture message: its link opens from the thread. If Twilio asks for credentials, the
+  link needs a proxy (spec amendment 17); file it on the fix list.
+- The AI read ships DARK (`RUN_INBOX_READ_SCHEDULER=false` in Render since 2026-10-09; the key is set).
+  Switching it on is Dallas's call together with the Neon transfer decision (fix list, Comms and
+  marketing, "Lane inbox-ai review leftovers"): the idle tick recomputes the inbox every third minute,
+  about 0.25 to 0.5 GB a day. When he flips it: within the first hour the feed line reads "on", the
+  `inbox_ai_read` row in `scheduler_health` is ok, `inbox_reads` gains ok rows for the waiting
+  thank-yous and acknowledgments (and they move to Recently handled with an AI reason), no row holds
+  `error` text beyond a class and status, and Sentry shows no `inbox_ai_read` warning. The ceiling is
+  about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
+
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
 The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
@@ -2010,9 +2053,10 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**As of 2026-10-09 the one owed occupant is Inbox, the server side, at the end of this tier; it waits
-on lane inbox-page.** Everything else that sat here with a merge sha was live, and moved to the end of
-Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
+**As of 2026-10-14 this tier is EMPTY again.** Inbox, the one occupant since 2026-10-09, moved to the end
+of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
+by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
+to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
 
 **NO LONGER EMPTY as of 2026-08-26: one occupant, the consult call SURFACING lane, listed at the end of this tier.** Before that it read EMPTY AGAIN, because the consult call bridge sat here from the 2026-08-25 merge
 until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on
@@ -2098,48 +2142,6 @@ to rot. Do that again for the next thing that sits here.
       press is lost. It is inherited from the shipped lead router AND from spec 4.5, so it is a
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
-
-
-### Inbox (lanes inbox-engine, inbox-ai `dcb3c471` and inbox-page `39cdc98c`, all merged by 2026-10-13, NOT pushed). Moves to Tier 3b once `git merge-base --is-ancestor 39cdc98c origin/main` exits 0.
-
-The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
-are walked with the page. Verified by the lane's suites on the dev DB and a read-only rules run over
-prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
-
-- The page itself, once pushed: open Inbox on the phone (the first tab) and on the desktop, in both
-  skins; open an item (it stops reading "Not read yet" for the other person); claim it; Done, then
-  Undo from the toast (the Inbox toast sits under the header, full width, no x); Snooze until
-  tomorrow, then Wake; on the desktop, type half a reply and let the list poll: the conversation
-  and the draft stay put. Lanes inbox-page's close record in the plan has the twenty-case harness.
-- The first prod page view: the waiting list matches Task 18's acceptance run, less whatever was
-  answered since. Watch the first hour of prod AI reads once lane inbox-ai is live, and sanity-check
-  every Recently handled reason against the real thread.
-- Dallas and Zul each claim one real item, reply to it FROM INBOX on the 888, and close it: one
-  `sms_messages` row with `metadata.line` and `metadata.send_id` appears, and the item moves to
-  Recently handled with "You texted back from 888".
-- Point the 0082's Twilio `sms_url` at `https://api.drbartender.com/api/sms/inbound` (Dallas approves
-  or makes the change) and confirm the Messaging Service defers inbound to each number's own webhook.
-- The 224 round trips (spec 16 step 6), each line in turn: Dallas texts it from the 312 GV, replies
-  from Inbox on that line, then texts STOP and START. Each step lands in `sms_messages` with the right
-  `metadata.to` and outcome, STOP blocks every line, and HELP is answered once. Only then add the line
-  to `INBOX_TEXT_LINES` in Render.
-- A week alongside the Cowork job (spec 16 step 7): Dallas and Zul use Inbox and Cowork side by side,
-  and anything Cowork caught that Inbox missed goes to the fix list.
-- The first page view needs about eight hand Dones: the test client, and seven people whose only proposals
-  are unbooked quotes for dates that have passed (decision 22 closes only booked events). One customer is
-  split across two client records (a booked one and an archived duplicate on the same proxy number), so
-  their question waits on the duplicate. Task 18's acceptance run on 2026-10-08 found 38 waiting with no
-  AI reads yet; the thank-yous and the acknowledgments close once lane inbox-ai reads them.
-- The first prod picture message: its link opens from the thread. If Twilio asks for credentials, the
-  link needs a proxy (spec amendment 17); file it on the fix list.
-- The AI read ships DARK (`RUN_INBOX_READ_SCHEDULER=false` in Render since 2026-10-09; the key is set).
-  Switching it on is Dallas's call together with the Neon transfer decision (fix list, Comms and
-  marketing, "Lane inbox-ai review leftovers"): the idle tick recomputes the inbox every third minute,
-  about 0.25 to 0.5 GB a day. When he flips it: within the first hour the feed line reads "on", the
-  `inbox_ai_read` row in `scheduler_health` is ok, `inbox_reads` gains ok rows for the waiting
-  thank-yous and acknowledgments (and they move to Recently handled with an AI reason), no row holds
-  `error` text beyond a class and status, and Sentry shows no `inbox_ai_read` warning. The ceiling is
-  about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

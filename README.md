@@ -95,7 +95,7 @@ Copy `.env.example` and fill in values. This table is the fullest list, but it i
 | `TWILIO_ACCOUNT_SID` | For SMS | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | For SMS | Twilio auth token |
 | `TWILIO_PHONE_NUMBER` | For SMS | Twilio sender number (the 888 line; the two 224 lines are fixed in `server/utils/smsLines.js`) |
-| `INBOX_TEXT_LINES` | No | Lines a human reply may text from (the Messages reply, and Inbox once it ships), as a comma list of `888`, `1922`, `0082`. Default `888`; unknown keys are ignored and the 888 is always on. Add a 224 line only after its round trip (a reply, a STOP and a START) shows up in `sms_messages` with the right `metadata.to` (spec 2026-10-06, decision 19). |
+| `INBOX_TEXT_LINES` | No | Lines a human reply may text from (the Messages reply and the Inbox reply), as a comma list of `888`, `1922`, `0082`. Default `888`; unknown keys are ignored and the 888 is always on. Add a 224 line only after its round trip (a reply, a STOP and a START) shows up in `sms_messages` with the right `metadata.to` (spec 2026-10-06, decision 19). |
 | `STRIPE_SECRET_KEY` | For payments | Stripe live secret key |
 | `STRIPE_PUBLISHABLE_KEY` | For payments | Stripe live publishable key (served to the client via `/api/stripe/publishable-key`) |
 | `STRIPE_WEBHOOK_SECRET` | For payments | Stripe live webhook signing secret |
@@ -458,12 +458,12 @@ dr-bartender/
 │   │   │   ├── reply.js        # The reply area and the text target: who can be texted, which lines, the opt-out, the per-line first-text prefix
 │   │   │   ├── firstText.js    # "Dr. Bartender: " on the first text from a 224 line, shared with the Messages reply
 │   │   │   ├── feeds.js        # Feed health: the newest Thumbtack message and the newest text in on each line
-│   │   │   ├── aiStatus.js     # The AI read status for the feed line (off, paused, failing, on) and the daily-cap count: one definition for the read job and GET /api/admin/inbox, read on every request, never throwing
+│   │   │   ├── aiStatus.js     # The AI read status for the feed line (off, paused, failing, on), plus the daily cap and read stats the job uses; the payload gets only the status word. One definition for the read job and GET /api/admin/inbox, read on every request, never throwing
 │   │   │   ├── cache.js        # The 30-second cache the list, the item and the AI read share (the badge accepts a snapshot up to 2 minutes old); every write clears it
 │   │   │   ├── engine.js       # Two passes (light headers since the floor, then full rows), getInbox, getItem (moved_to), getWaitingCount (2 s, else null), getReadSubjects (cached; real names or null; never the legal hold)
 │   │   │   ├── actions.js      # On it, Let go, Done, Snooze (1 minute to 8 days), Wake, Reopen, Undo (own tap, 60 s) and the deliberate open
 │   │   │   ├── aiRedact.js     # Before anything leaves for the AI read: links to [link], addresses to [email], runs of 7+ digits to [number], the person's capitalized surname dropped (an everyday-word one only right after the first name); the engine's OPT_WORDS rows left out
-│   │   │   ├── aiRead.js       # The AI read: two fixed system prompts, two zod schemas, the beta parse call (claude-opus-5-5 at low effort with the refusal fallback, or claude-haiku-4-5), a 2-minute deadline, size bounds, server-side trimming; a failure comes back as class, status and request id
+│   │   │   ├── aiRead.js       # The AI read: two fixed system prompts, two zod schemas, the beta create call with the structured-output format, parsed against the schema (claude-opus-5-5 at low effort with the refusal fallback, or claude-haiku-4-5), a 2-minute deadline, size bounds, server-side trimming; a failure comes back as class, status and request id
 │   │   │   ├── readJob.js      # The 60 s inbox_ai_read tick over the badge's snapshot (up to 2 minutes old): pending reservation before each call, oldest first, 20 a tick, 3 attempts, rolling daily cap, the legal hold never read (its client, any number on record for them, their leads), content-free error rows; makeInboxReadTick holds the in-flight guard
 │   │   │   └── textSend.js     # The Inbox text: the send_id reserved in inbox_sends before Twilio, the checks, one send, the stored answer
 │   │   ├── invoiceHelpers.js   # FACADE re-exporting the invoice helper siblings below (public interface unchanged)
