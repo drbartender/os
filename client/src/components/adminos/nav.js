@@ -8,6 +8,10 @@
 const NAV = [
   { section: 'Workspace', items: [
     { id: 'dashboard',   label: 'Overview',  icon: 'home',      path: '/dashboard' },
+    // Inbox (spec 2026-10-06): everyone waiting on a reply from Dallas or Zul.
+    // inbox_waiting is null when the server could not compute it; the sidebar
+    // and the phone tab draw that as "!", never as zero.
+    { id: 'inbox',       label: 'Inbox',     icon: 'mail',      path: '/inbox',     badgeKey: 'inbox_waiting', badgeTone: 'danger' },
     { id: 'events',      label: 'Events',    icon: 'calendar',  path: '/events',    badgeKey: 'unstaffed_events' },
     { id: 'proposals',   label: 'Proposals', icon: 'clipboard', path: '/proposals', badgeKey: 'pending_proposals' },
     { id: 'clients',     label: 'Clients',   icon: 'users',     path: '/clients' },
@@ -31,11 +35,18 @@ const NAV = [
   ]},
 ];
 
-/** One badge number per nav item. Sums `badgeKeys`, else reads `badgeKey`. */
+/**
+ * One badge number per nav item. Sums `badgeKeys`, else reads `badgeKey`.
+ * Returns null when a single `badgeKey` is present and null: the server is
+ * saying the count could not be computed (Inbox), which is not zero.
+ */
 export function navBadgeCount(item, badges) {
   const b = badges || {};
   if (Array.isArray(item?.badgeKeys)) return item.badgeKeys.reduce((n, k) => n + (Number(b[k]) || 0), 0);
-  if (item?.badgeKey) return Number(b[item.badgeKey]) || 0;
+  if (item?.badgeKey) {
+    if (b[item.badgeKey] === null) return null;
+    return Number(b[item.badgeKey]) || 0;
+  }
   return 0;
 }
 

@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
+import { SENTRY_SCRUB_HOOKS } from './utils/sentryScrub';
 
 // Lazy-load Sentry only when DSN is configured — keeps ~50-80KB out of the
 // main bundle for dev builds and any env that hasn't opted in.
@@ -23,6 +24,10 @@ if (process.env.REACT_APP_SENTRY_DSN_CLIENT) {
         /runtime\.sendMessage/,
         'Tab not found',
       ],
+      // An Inbox p- person key is ten phone digits in the page URL and its API
+      // requests: every error event, transaction and breadcrumb passes through
+      // the scrub first (spec 2026-10-06, section 17 item 42).
+      ...SENTRY_SCRUB_HOOKS,
     });
   });
 }

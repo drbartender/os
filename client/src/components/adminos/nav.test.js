@@ -49,3 +49,48 @@ test('Sidebar renders no Hiring/Tips/Reviews items and badges Staff with the sum
   const staffItem = screen.getByText('Staff').closest('.nav-item');
   expect(staffItem.querySelector('.nav-badge')).toHaveTextContent('2');
 });
+
+// Inbox (spec 2026-10-06 section 9): under Overview, badged by the waiting
+// count, and "!" when the server says the count could not be computed.
+test('Inbox sits right under Overview and reads the waiting count', () => {
+  const ids = NAV.find(s => s.section === 'Workspace').items.map(i => i.id);
+  expect(ids.slice(0, 2)).toEqual(['dashboard', 'inbox']);
+  expect(find('inbox')).toMatchObject({ path: '/inbox', badgeKey: 'inbox_waiting', badgeTone: 'danger' });
+});
+
+test('navBadgeCount returns null only when its key is present and null', () => {
+  expect(navBadgeCount(find('inbox'), { inbox_waiting: null })).toBeNull();
+  expect(navBadgeCount(find('inbox'), {})).toBe(0);
+  expect(navBadgeCount(find('inbox'), { inbox_waiting: 0 })).toBe(0);
+  expect(navBadgeCount(find('inbox'), { inbox_waiting: 7 })).toBe(7);
+  // A summed badge treats a null part as nothing, exactly as before.
+  expect(navBadgeCount({ badgeKeys: ['a', 'b'] }, { a: null, b: 2 })).toBe(2);
+});
+
+test('Sidebar draws "!" for a null Inbox count and keeps the other badges', () => {
+  render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <Sidebar badges={{ inbox_waiting: null, unstaffed_events: 3 }} />
+    </MemoryRouter>
+  );
+  const inboxBadge = screen.getByText('Inbox').closest('.nav-item').querySelector('.nav-badge');
+  expect(inboxBadge).toHaveTextContent('!');
+  expect(inboxBadge).toHaveClass('danger');
+  expect(screen.getByText('Events').closest('.nav-item').querySelector('.nav-badge')).toHaveTextContent('3');
+});
+
+test('Sidebar draws a count for Inbox, and nothing at zero', () => {
+  const { unmount } = render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <Sidebar badges={{ inbox_waiting: 4 }} />
+    </MemoryRouter>
+  );
+  expect(screen.getByText('Inbox').closest('.nav-item').querySelector('.nav-badge')).toHaveTextContent('4');
+  unmount();
+  render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <Sidebar badges={{ inbox_waiting: 0 }} />
+    </MemoryRouter>
+  );
+  expect(screen.getByText('Inbox').closest('.nav-item').querySelector('.nav-badge')).toBeNull();
+});

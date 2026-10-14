@@ -491,3 +491,11 @@ client/src/components/mobile/useEditSheet.js
 client/src/utils/editSheetView.js
 client/src/components/mobile/EditSheet.js
 client/src/pages/admin/proposalEditor/repriceSummary.js
+
+# Browser Sentry scrub (spec 2026-10-06 Inbox, section 17 item 42; lane
+# inbox-page). An Inbox p- person key is ten phone digits in the page URL and
+# its API requests, and these two files are all that keep it out of the
+# browser's error events, transactions and breadcrumbs. Same weight as
+# server/utils/sentryScrub.js above; index.js wires the hooks.
+client/src/utils/sentryScrub.js
+client/src/index.js

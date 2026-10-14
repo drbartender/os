@@ -8,6 +8,22 @@ const SUCCESS_TIMEOUT_MS = 5000;
 const ERROR_TIMEOUT_MS = 8000;
 const INFO_TIMEOUT_MS = 5000;
 
+// The optional second argument to success/error/info (spec 2026-10-06
+// section 9): { action: { label, onClick }, duration }. An action draws a
+// button on the toast (Inbox's Undo) that runs onClick once and dismisses the
+// toast; duration (ms) replaces the type's default timeout. Anything malformed
+// falls back to the defaults, so every existing one-argument caller is
+// unchanged.
+function optionsOf(opts, fallbackMs) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const ms = Number(o.duration);
+  const a = o.action;
+  const action = a && typeof a.onClick === 'function' && a.label
+    ? { label: String(a.label), onClick: a.onClick }
+    : null;
+  return { timeoutMs: Number.isFinite(ms) && ms > 0 ? ms : fallbackMs, action };
+}
+
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const idCounter = useRef(0);
@@ -22,10 +38,11 @@ export function ToastProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const push = useCallback((type, message, timeoutMs) => {
+  const push = useCallback((type, message, opts, fallbackMs) => {
+    const { timeoutMs, action } = optionsOf(opts, fallbackMs);
     const id = ++idCounter.current;
     setToasts((prev) => {
-      const next = [...prev, { id, type, message }];
+      const next = [...prev, { id, type, message, action }];
       if (next.length > MAX_VISIBLE) {
         // Drop oldest, clear its pending timeout
         const dropped = next.slice(0, next.length - MAX_VISIBLE);
@@ -51,9 +68,9 @@ export function ToastProvider({ children }) {
   }, []);
 
   const value = useMemo(() => ({
-    success: (m) => push('success', m, SUCCESS_TIMEOUT_MS),
-    error:   (m) => push('error',   m, ERROR_TIMEOUT_MS),
-    info:    (m) => push('info',    m, INFO_TIMEOUT_MS),
+    success: (m, opts) => push('success', m, opts, SUCCESS_TIMEOUT_MS),
+    error:   (m, opts) => push('error',   m, opts, ERROR_TIMEOUT_MS),
+    info:    (m, opts) => push('info',    m, opts, INFO_TIMEOUT_MS),
   }), [push]);
 
   return (

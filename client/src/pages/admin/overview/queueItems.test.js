@@ -54,18 +54,12 @@ describe('buildClientItems', () => {
     expect(buildClientItems([cr()], [])[0]).toMatchObject({ target: 'proposal', ref: 77 });
   });
 
-  test('only conversations with unread become items, shaped for the thread link', () => {
-    const items = buildClientItems([], [
-      { client_id: 5, name: 'Sam', unread_count: 2 },
-      { client_id: 6, name: 'Quiet', unread_count: 0 },
-    ]);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ target: 'sms', ref: 5, priority: 'warn', meta: '2' });
-  });
-
-  test('change requests list before SMS items', () => {
-    const items = buildClientItems([cr()], [{ client_id: 5, name: 'Sam', unread_count: 1 }]);
-    expect(items.map(i => i.type)).toEqual(['change-request', 'sms']);
+  // Unread texts left the Clients tab for Inbox (spec 2026-10-06 section 9).
+  // A stray second argument (the old conversations list) makes no rows.
+  test('texts never become items: the tab is change requests only', () => {
+    const convos = [{ client_id: 5, name: 'Sam', unread_count: 2 }];
+    expect(buildClientItems([], convos)).toEqual([]);
+    expect(buildClientItems([cr()], convos).map(i => i.type)).toEqual(['change-request']);
   });
 });
 
@@ -385,6 +379,10 @@ describe('queueItemHref', () => {
     expect(queueItemHref({ target: 'event', ref: 9 })).toBe('/events/9');
     expect(queueItemHref({ target: 'hiring', ref: null })).toBeNull();
   });
+  // Unread texts left the Clients tab for Inbox: no row targets sms any more.
+  test('an sms target has no link (no builder makes one)', () => {
+    expect(queueItemHref({ target: 'sms', ref: 7 })).toBeNull();
+  });
 });
 
 describe('buildPrepItems (cap removed)', () => {
@@ -406,6 +404,10 @@ describe('computeTabs', () => {
   test('dot is the worst priority within the tab', () => {
     const tabs = computeTabs({ ...base, staffing: [item('warn'), item('danger'), item('info')] });
     expect(tabs.find(t => t.key === 'staffing').dot).toBe('danger');
+  });
+
+  test('the Clients overflow goes to change requests, not Messages', () => {
+    expect(computeTabs(base).find(t => t.key === 'clients').overflowHref).toBe('/change-requests');
   });
 
   test('sales tab is absent when empty, present when non-empty', () => {

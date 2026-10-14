@@ -9,6 +9,9 @@ test.each([
   ['/staffing/users/9', 'staffing'],
   ['/staffing/payroll', 'staffing'],
   ['/dashboard', 'dashboard'],
+  ['/inbox', 'inbox'],
+  ['/inbox/c-12', 'inbox-item'],
+  ['/inbox/t-neg_123', 'inbox-item'],
 ])('routeScreenKey(%s) -> %s', (path, key) => {
   expect(routeScreenKey(path)).toBe(key);
 });
@@ -21,4 +24,6 @@ test('titles for the known screens, fallback capitalizes', () => {
   expect(screenTitle('more')).toBe('More');
   expect(screenTitle('staffing')).toBe('Staff');
   expect(screenTitle('blog')).toBe('Lab Notes');
+  expect(screenTitle('inbox')).toBe('Inbox');
+  expect(screenTitle('inbox-item')).toBe('Inbox');
 });

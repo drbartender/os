@@ -118,7 +118,12 @@ function AdminLayoutInner() {
       const { presence: p, ...counts } = r.data || {};
       setBadges(counts);
       if (p && startedAt > lastPresenceMutationRef.current) setPresence(p);
-    }).catch(() => {});
+    }).catch(() => {
+      // A failed fetch must not leave the Inbox badge showing a count it no
+      // longer knows (spec 2026-10-06 section 4.7): null draws "!". Every
+      // other count keeps its last value, as before.
+      setBadges((prev) => ({ ...prev, inbox_waiting: null }));
+    });
   }, []);
 
   useEffect(() => {
@@ -246,10 +251,12 @@ function AdminLayoutInner() {
   }, [mobileChrome]);
 
   if (mobileChrome) {
-    const isDetail = screenKey === 'event-detail' || screenKey === 'proposal-detail';
-    // On a restored cold launch history has no in-app entry behind the detail
-    // screen; navigate(-1) would exit the PWA. Fall back to the parent list.
-    const backTarget = screenKey === 'proposal-detail' ? '/proposals' : '/events';
+    // Detail screens get Back and the rich header; each falls back to its own
+    // list. On a restored cold launch history has no in-app entry behind the
+    // detail screen; navigate(-1) would exit the PWA.
+    const DETAIL_BACK = { 'event-detail': '/events', 'proposal-detail': '/proposals', 'inbox-item': '/inbox' };
+    const isDetail = Boolean(DETAIL_BACK[screenKey]);
+    const backTarget = DETAIL_BACK[screenKey] || '/events';
     const onBack = () => {
       if (window.history.state && window.history.state.idx > 0) navigate(-1);
       else navigate(backTarget, { replace: true });

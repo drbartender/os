@@ -7,11 +7,12 @@ import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
 import { canInstall, onInstallAvailability, promptInstall } from '../../utils/installPrompt';
 
-// The third tab: every admin surface that is not Events or Proposals, as tap
-// rows. Until a surface gets its phone-first treatment it opens its desktop
-// component inside the mobile chrome: ugly but reachable, which is the
-// no-dead-ends floor (spec section 1).
-const TAB_IDS = new Set(['events', 'proposals']);
+// The last tab: every admin surface that is not Inbox, Events or Proposals,
+// as tap rows. Until a surface gets its phone-first treatment it opens its
+// desktop component inside the mobile chrome: ugly but reachable, which is the
+// no-dead-ends floor (spec section 1). Inbox is a tab of its own (spec
+// 2026-10-06 section 9), so it is never listed here.
+const TAB_IDS = new Set(['inbox', 'events', 'proposals']);
 
 // Explicit install row (spec section 7): Chrome's own banner has moods; this
 // row renders whenever the captured beforeinstallprompt is in hand and the

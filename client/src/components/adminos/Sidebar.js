@@ -83,7 +83,16 @@ export default function Sidebar({ badges = {}, presence, onPresenceChange, onClo
                 >
                   <Icon name={item.icon} />
                   <span className="nav-label">{item.label}</span>
-                  {count > 0 && <span className="nav-badge">{count}</span>}
+                  {/* null: the server could not compute the count (Inbox).
+                      It draws "!", never a zero or a stale number. */}
+                  {(count === null || count > 0) && (
+                    <span
+                      className={item.badgeTone ? `nav-badge ${item.badgeTone}` : 'nav-badge'}
+                      title={count === null ? 'Count unavailable' : undefined}
+                    >
+                      {count === null ? '!' : count}
+                    </span>
+                  )}
                 </div>
               );
             })}

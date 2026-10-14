@@ -105,7 +105,6 @@ export default function OverviewPage() {
   const [adminExtrasLoading, setAdminExtrasLoading] = useState(true);
   const [leadCallLoading, setLeadCallLoading] = useState(true);
   const [changeRequests, setChangeRequests] = useState([]);
-  const [conversations, setConversations] = useState([]);
   const [leadCallAttention, setLeadCallAttention] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(true);
 
@@ -215,19 +214,15 @@ export default function OverviewPage() {
       .catch(() => {}) // proposal-derived queue items simply stay absent
       .finally(() => { if (!cancelled) setProposalsLoading(false); });
 
-    // Clients tab sources (admin+manager). One shared loading flag so the
-    // card's collapsed state can't flash before these resolve; either failing
-    // just means those items stay absent.
+    // Clients tab source (admin+manager): pending change requests. Unread texts
+    // left this card for Inbox (spec 2026-10-06 section 9). The loading flag
+    // keeps the card's collapsed state from flashing before it resolves; a
+    // failure just means those items stay absent.
     setClientsLoading(true);
-    Promise.allSettled([
-      api.get('/proposals/change-requests', { params: { status: 'pending' } }),
-      api.get('/sms/conversations'),
-    ]).then(([crRes, smsRes]) => {
-      if (cancelled) return;
-      if (crRes.status === 'fulfilled') setChangeRequests(crRes.value.data?.requests || []);
-      if (smsRes.status === 'fulfilled') setConversations(Array.isArray(smsRes.value.data) ? smsRes.value.data : []);
-      setClientsLoading(false);
-    });
+    api.get('/proposals/change-requests', { params: { status: 'pending' } })
+      .then(r => { if (!cancelled) setChangeRequests(r.data?.requests || []); })
+      .catch(() => {}) // change-request items simply stay absent
+      .finally(() => { if (!cancelled) setClientsLoading(false); });
 
     // Prep pipeline: the Potions-enriched drink-plans list (admin+manager).
     // Isolated like the rest: a failure just means no prep pills or items.
@@ -282,7 +277,7 @@ export default function OverviewPage() {
     () => buildStaffingItems(unstaffed, newApplications, uncertified, nameNotices, ackNameNotice),
     [unstaffed, newApplications, uncertified, nameNotices, ackNameNotice]);
   const prepItems = useMemo(() => buildPrepItems(drinkPlans), [drinkPlans]);
-  const clientItems = useMemo(() => buildClientItems(changeRequests, conversations), [changeRequests, conversations]);
+  const clientItems = useMemo(() => buildClientItems(changeRequests), [changeRequests]);
   const salesItems = useMemo(() => buildSalesItems(proposals, Date.now()), [proposals]);
   // Missed lead calls prepend AHEAD of the aging sent-proposal items: array
   // order IS the display order in NeedsYouStrip, and a missed live lead

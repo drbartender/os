@@ -174,6 +174,7 @@ const EmailCampaignDetail = lazy(() => import('./pages/admin/EmailCampaignDetail
 const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsDashboard'));
 const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
 const Messages = lazy(() => import('./pages/admin/Messages'));
+const Inbox = lazy(() => import('./pages/admin/Inbox'));
 const ReviewsPage = lazy(() => import('./pages/admin/staffHub/reviews/ReviewsPage'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
 
@@ -638,6 +639,8 @@ function AppRoutes() {
         <Route path="/events/shift/:id" element={<ShiftDetailRedirect />} />
         <Route path="/clients" element={<ClientsDashboard />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
+        {/* Inbox: one route for list and item, so its poll and drafts survive the move. */}
+        <Route path="/inbox/:personKey?" element={<Inbox />} />
         <Route path="/messages" element={<Messages />} />
         <Route path="/financials" element={<FinancialsRedirect />} />
         <Route path="/financials/payroll" element={<LegacyRedirect to="/staffing/payroll" />} />

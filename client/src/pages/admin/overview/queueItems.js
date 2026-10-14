@@ -19,7 +19,7 @@ const STAFFING_HORIZON_DAYS = 14;
 const OVERFLOW_HREF = {
   staffing: '/events',
   prep: '/drink-plans?tab=submitted',
-  clients: '/messages',
+  clients: '/change-requests',
   sales: '/proposals?tab=active',
 };
 
@@ -36,7 +36,6 @@ export function queueItemHref(a) {
   if (a.target === 'proposal') return `/proposals/${a.ref}`;
   if (a.target === 'client') return `/clients/${a.ref}`;
   if (a.target === 'drink-plan') return `/drink-plans/${a.ref}`;
-  if (a.target === 'sms') return `/messages?client=${a.ref}`;
   if (a.target === 'user') return `/staffing/users/${a.ref}`;
   return null;
 }
@@ -143,22 +142,18 @@ export function buildStaffingItems(unstaffed, newApplications, uncertified = [],
 }
 
 // A human is waiting on Dallas: pending change requests (danger inside the
-// 14-day edit window, mirroring the server's own urgency sort) then unread
-// inbound SMS. Both endpoints are admin+manager.
-export function buildClientItems(changeRequests, conversations) {
-  const crs = (changeRequests || []).map(r => ({
+// 14-day edit window, mirroring the server's own urgency sort). The endpoint
+// is admin+manager. Unread texts left this card for Inbox (spec 2026-10-06
+// section 9): Inbox tracks who is still waiting on a reply, where an unread
+// count only tracked who had opened a thread.
+export function buildClientItems(changeRequests) {
+  return (changeRequests || []).map(r => ({
     id: 'cr-' + r.id, type: 'change-request',
     priority: r.edit_window === 'inside_t14' ? 'danger' : 'warn',
     title: `${r.client_name || r.client_email || 'Client'} requested changes`,
     sub: `${getEventTypeLabel({ event_type: r.event_type, event_type_custom: r.event_type_custom })}${r.event_date ? ' · ' + fmtDate(String(r.event_date).slice(0, 10)) : ''}`,
     meta: 'review', target: 'proposal', ref: r.proposal_id,
   }));
-  const sms = (conversations || []).filter(c => Number(c.unread_count) > 0).map(c => ({
-    id: 'sms-' + c.client_id, type: 'sms', priority: 'warn',
-    title: `${c.name || c.phone || 'Client'} · ${c.unread_count} unread`,
-    sub: 'text message', meta: String(c.unread_count), target: 'sms', ref: c.client_id,
-  }));
-  return [...crs, ...sms];
 }
 
 // Sent but never viewed after 72h (a viewed proposal flips to viewed/modified,

@@ -11,6 +11,15 @@ const SOURCES = [
   'components/mobile/NoteSheet.js',
   'pages/mobile/EventDetailPhone.js',
   'pages/mobile/EventDetailSections.js',
+  'pages/mobile/InboxPhone.js',
+  'components/inbox/WaitingRows.js',
+  'components/inbox/HandledList.js',
+  'components/inbox/InboxStates.js',
+  'components/inbox/Thread.js',
+  'components/inbox/ContextViews.js',
+  'components/inbox/ItemActions.js',
+  'components/inbox/SnoozePickers.js',
+  'components/inbox/ReplyBar.js',
 ];
 
 // Every m-* token that appears inside a string or template literal in the
