@@ -2068,6 +2068,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 ## Admin UI and the two skins
 
 - **Push follow-ups (lane ma-c-push, built 2026-10-14; not yet merged at the time of writing, the
+- Notifications screen, deferred by the final design seat (2026-10-14): the "Didn't save" and failed test-send status spans mount with their text already set, so some screen readers skip the polite announcement (a permanently mounted status slot fixes it); the failed-load strip's chrome; px insets against the shell's rem; House Lights ink-3 meta text misses AA (design-system token, not the screen).
   close record in docs/superpowers/plans/2026-10-14-mobile-admin-push.md says when).** Parked by
   the plan fleet, Checkpoint A, the task reviews and the gate; none blocks the lane.
   - **OWNER DECISION: website quote requests on the phone.** The public quote form's "New Website
