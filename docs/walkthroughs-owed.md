@@ -2051,25 +2051,11 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   smoke first (the probe on the box; promoting it to `scripts/` is on the fix list). The ceiling is
   about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
 
-## Tier 6 — queued: will owe a walkthrough the moment it ships
+### Admin push (lane ma-c-push; merged 2026-10-14 as `f6d0b1a6`, PUSHED 2026-10-14 22:07 UTC in 3b2762ca..6e8f5c95; moved here from Tier 6 the same day)
 
-The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
-unshipped. All three former occupants had in fact shipped and were sitting under a "queued"
-banner reading as pending work, the palette sweep for five days across every admin
-surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
-do not leave it here because it is still unwalked.
-
-**As of 2026-10-14 (later) this tier holds ONE item, below.** Before it was added, it was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
-of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
-by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
-to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
-
-### Admin push (lane ma-c-push, built and merged 2026-10-14 as `f6d0b1a6`; moves to Tier 3b when that squash is an ancestor of `origin/main`)
-
-Before the push lands, or right after it: Dallas generates the VAPID pair (`npx web-push generate-vapid-keys`,
-anywhere Node runs) and sets `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in Render. Nothing goes in
-Vercel: the phone reads the public key from the API. Until the keys exist the screen says push is
-not set up on the server, which is true, and nothing else is affected.
+The VAPID keys went into Render by Dallas's hand before the push (2026-10-14). Nothing is in
+Vercel: the phone reads the public key from the API. If step 3 says "Didn't send", read the Render
+boot log for `[pushSender] VAPID setup failed` first: a mistyped pair still advertises the public key.
 
 The walk, on the Pixel, in the installed app:
 1. More shows a Notifications row reading Off. Open it.
@@ -2089,6 +2075,20 @@ at FCM but FCM answers 410 to the send, so step 3 is the one piece of proof only
 
 Dev only: an admin-phone subscription stored before the surface tag landed (`6039eb0c`, 2026-10-14) carries
 none, so that phone reads on but gets no admin banners until its switch is cycled. Prod has no entries.
+
+
+## Tier 6 — queued: will owe a walkthrough the moment it ships
+
+The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
+unshipped. All three former occupants had in fact shipped and were sitting under a "queued"
+banner reading as pending work, the palette sweep for five days across every admin
+surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
+do not leave it here because it is still unwalked.
+
+**As of 2026-10-14 (later) this tier holds ONE item, below.** Before it was added, it was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
+of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
+by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
+to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
 
 **NO LONGER EMPTY as of 2026-08-26: one occupant, the consult call SURFACING lane, listed at the end of this tier.** Before that it read EMPTY AGAIN, because the consult call bridge sat here from the 2026-08-25 merge
 until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on

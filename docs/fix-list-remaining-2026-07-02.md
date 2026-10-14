@@ -2067,7 +2067,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 
 ## Admin UI and the two skins
 
-- **Push follow-ups (lane ma-c-push, built and merged 2026-10-14 as `f6d0b1a6`, not pushed; the
+- **Push follow-ups (lane ma-c-push, built and merged 2026-10-14 as `f6d0b1a6`, pushed the same day in 3b2762ca..6e8f5c95; the
   close record in docs/superpowers/plans/2026-10-14-mobile-admin-push.md has the detail).** Parked by
   the plan fleet, Checkpoint A, the task reviews and the gate; none blocks the lane.
   - **OWNER DECISION: website quote requests on the phone.** The public quote form's "New Website
