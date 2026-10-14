@@ -112,7 +112,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
 | 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
-| 3 | Thumbtack repeat-lead dedup: fixed on main (`4a3b382c`); three older dup clients (1513, 1791, 1827) and the second-auto-draft product call remain | no: data cleanup plus a product call, nothing bites today |
+| 3 | Thumbtack repeat-lead dedup: fixed on main (`4a3b382c`); the second-auto-draft product call remains | no: a product call, nothing bites today |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
 | 3 | Automated texts never check the per-phone opt-out record | not today (the two STOPs on prod from numbers with no client row are both staffers, 10/06); it opens with the first STOP to a 224 line from a number no client or staffer has yet |
@@ -826,17 +826,14 @@ Fix: read `/fullscreen-takeover` (or an "Update card" button) as its own reason,
 `billing_blocked`, add it to `FIRST_REPLY_FAIL_REASONS`, and send an admin email on it instead of
 the warning stream. Captures: `~/.thumbtack-profile/diag/*-no-cta-no-composer.{png,json}`.
 
-### Thumbtack repeat leads: the dedup fix is on main; three older dup clients and one product call remain
+### Thumbtack repeat leads: the dedup fix is on main; one product call remains
 
 The webhook re-created a harvested repeat customer as a second, email-less client (four times by
-10/13; the 10/13 pair was merged by hand on 10/14). Fixed on main in `4a3b382c` (lane
+10/13; all four pairs were merged by hand on 10/14, no dup of that shape is left). Fixed on main in `4a3b382c` (lane
 tt-dedup-repeat-lead): `findOrCreateClientDetailed` takes `trustedPhoneMatch`, passed only by the
 Thumbtack webhook on a secret-verified request, so a phone + name match may also resolve an
 email-bearing `source='thumbtack'` row; a public-form identity is never reachable. Left open:
 
-- **Three older dup clients still sit:** 1513, 1791, 1827 (each `failed`, so the harvester will
-  not re-scrape them). Same guarded merge as the 10/14 one: re-point `thumbtack_leads` +
-  `proposals` to the original (1494, 1478, 1439), delete the dup. Nothing is waiting on them.
 - **Product call, the second auto-draft on a repeat lead.** Now that a repeat lead lands on the
   existing client, every repeat adds a second `draft` proposal to it. A repeat customer with a
   portal login sees that unreviewed draft (price snapshot included) on the portal focus card
