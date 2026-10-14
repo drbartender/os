@@ -12,6 +12,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 - **ma-e3b-edit-sheet-layout**: READY, not cut. The design-tool pass on the phone edit sheet's fixed height came back as "readout above, controls pinned" (the price readout above the rows, rows and footer pinned to the bottom, Setup as a line under Start, "was 3 hr" under a changed field). Design export: ~/win-share/Event edit sheet mobile layout.zip (vendor into docs/design-artifacts when the lane starts). Needs: a spec amendment with a Visual contract, a short plan, then the usual review and browser gate.
 - **ma-c-push** (Mobile Admin push per kind and the More > Notifications screen). Plan written and fleet-folded 2026-10-14; one plan decision (the worker navigates an open window on a banner tap) awaits Dallas before Task 9; prod needs the two VAPID keys in Render by his hand. [spec](superpowers/specs/2026-08-13-mobile-admin-design.md) section 7 [plan](superpowers/plans/2026-10-14-mobile-admin-push.md)
+- **ma-f1-proposals-list** (the phone Proposals list: the desktop Active bucket as date-rail cards with the stage chip and total, Newest lead / Event date, the Unviewed chip, Show more, states). Plan written 2026-10-14, plan fleet in progress; lane not cut. [spec](superpowers/specs/2026-08-13-mobile-admin-design.md) section 5 [plan](superpowers/plans/2026-10-14-mobile-admin-proposals-list.md)
 ## In flight
 
 <!-- lane open and building. Stale-lane flags and stalled/orphaned branches surface here. One line per item. -->
