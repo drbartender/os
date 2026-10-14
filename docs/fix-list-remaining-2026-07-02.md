@@ -842,6 +842,12 @@ email-bearing `source='thumbtack'` row; a public-form identity is never reachabl
   the same date, or keep `status='draft'` (or draft + Thumbtack source) out of the portal
   focus/upcoming queries so the admin's send stays the first client-visible moment. The draft's
   admin note ("add the client email before sending") is also stale for a matched client.
+- **Tidiness only, nine pre-harvester twins.** Nine Thumbtack phone + name groups from April
+  to June still hold an email-less row beside the email-bearing one, the other way round from
+  the bug: the email-less row is the older webhook row (`not_needed`, no proposals, no texts,
+  ten old leads between them). The harvester never queues `not_needed`, and the trusted match
+  prefers the email-bearing row, so nothing collides. Same guarded merge (re-point the leads,
+  delete the row) whenever it is worth ten minutes.
 
 ### A staffer taken off a shift can still be texted its reminder and its thank-you
 
