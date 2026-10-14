@@ -150,6 +150,10 @@ function register(router) {
       user_agent: userAgent,
       subscribed_at: new Date().toISOString(),
     };
+    // The surface the device subscribed from: the admin phone sends exactly
+    // 'admin'. Anything else stores no surface, and an entry without one is a
+    // staff entry, so each channel sends only to its own devices (adminPush.js).
+    if (body.surface === 'admin') newEntry.surface = 'admin';
 
     const client = await pool.connect();
     try {

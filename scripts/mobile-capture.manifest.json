@@ -75,6 +75,7 @@
     { "name": "admin-event-detail", "host": "localhost", "path": "/events/:token", "auth": "admin", "settleMs": 2600,
       "authAssert": ".m-section",
       "tokenQuery": "SELECT s.proposal_id::text AS token FROM shifts s WHERE s.proposal_id IS NOT NULL AND s.status <> 'cancelled' ORDER BY s.event_date DESC LIMIT 1" },
+    { "name": "admin-notifications", "host": "localhost", "path": "/more/notifications", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell" },
     { "name": "admin-event-sheet", "host": "localhost", "path": "/events?drawer=shift&drawerId=:token", "auth": "admin", "settleMs": 2600,
       "authAssert": ".m-sheet",
       "tokenQuery": "SELECT s.id::text AS token FROM shifts s WHERE s.status <> 'cancelled' ORDER BY s.event_date DESC LIMIT 1" },

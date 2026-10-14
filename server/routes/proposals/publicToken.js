@@ -5,6 +5,8 @@ const { signLimiter, proposalCheckoutLimiter, proposalPollLimiter, publicTokenIp
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { pushCopy } = require('../../utils/adminPush');
+const { formatEventDateLong } = require('../../utils/staffShiftHandlers');
 const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { getBookingWindow } = require('../../utils/bookingWindow');
@@ -587,7 +589,8 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   if (pendingPayment.rowCount === 0) {
     try {
       const fp = await pool.query(`
-        SELECT p.id, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+        SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.event_timezone,
+               c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
       `, [proposal.id]);
@@ -605,6 +608,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
           subject: tpl.subject,
           emailHtml: tpl.html,
           emailText: tpl.text,
+          push: pushCopy.bookingSigned({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, dateLabel: pd.event_date ? formatEventDateLong(pd) : null }),
         });
       }
     } catch (emailErr) {

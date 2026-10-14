@@ -21272,6 +21272,86 @@ html[data-app="admin-os"] .m-more-row {
 html[data-app="admin-os"] .m-more-row:active { background: var(--row-hover); }
 html[data-app="admin-os"] .m-more-row span { flex: 1; }
 html[data-app="admin-os"] .m-more-row svg:last-child { color: var(--ink-4); flex: none; }
+/* ---- Switch (mobile on/off, the design system's .m-switch family, added
+   2026-10-14 for More > Notifications). Two uses: standalone <button
+   class="m-switch" role="switch"> with the track inside, or a whole
+   .m-more-row as the switch with the track as its last child. State is read
+   from aria-checked / :disabled / aria-busy on the parent. ---- */
+html[data-app="admin-os"] .m-switch {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px; padding: 0; border: none; background: none; cursor: pointer;
+}
+html[data-app="admin-os"] span.m-switch-track {
+  position: relative; flex: none; width: 40px; height: 24px; box-sizing: border-box;
+  border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg-3);
+  transition: background 160ms ease, border-color 160ms ease, opacity 160ms ease;
+}
+html[data-app="admin-os"] span.m-switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--ink-3);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), background 160ms ease;
+}
+html[data-app="admin-os"] [aria-checked="true"] > span.m-switch-track { background: var(--accent); border-color: var(--accent); }
+html[data-app="admin-os"] [aria-checked="true"] > span.m-switch-track > span.m-switch-thumb { transform: translateX(16px); background: #fff; }
+html[data-app="admin-os"] :disabled > span.m-switch-track,
+html[data-app="admin-os"] [aria-disabled="true"] > span.m-switch-track { opacity: 0.4; }
+html[data-app="admin-os"] [aria-busy="true"] > span.m-switch-track > span.m-switch-thumb { transform: translateX(8px); animation: m-pulse 1.2s ease-in-out infinite; }
+html[data-app="admin-os"] :focus-visible > span.m-switch-track { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+/* A switch row's ring is its track's (above), never a second ring on the row. */
+html[data-app="admin-os"] .m-more-row[role="switch"]:focus-visible { outline: none; }
+/* A plain row's ring sits inside the row, so the list's overflow clip never cuts it. */
+html[data-app="admin-os"] .m-more-list .m-more-row:focus-visible,
+html[data-app="admin-os"] .m-more-list a.m-more-row:focus-visible { outline-offset: -2px; }
+/* A switch row: the two-line label, 56px for the phone switch. */
+html[data-app="admin-os"] .m-more-row.m-switch-row { min-height: 56px; padding-top: 8px; padding-bottom: 8px; }
+html[data-app="admin-os"] .m-more-row:disabled { cursor: default; }
+html[data-app="admin-os"] .m-more-row .m-more-sub { display: block; flex: none; margin-top: 2px; font-size: var(--fs-meta, 11.5px); color: var(--ink-3); line-height: 1.4; }
+/* The phone row's sub-line holds two lines, so a toggle never moves the rows below. */
+html[data-app="admin-os"] .m-switch-row .m-more-sub { min-height: calc(2 * 1.4em); }
+/* The trailing state on a row ("On", "Sent", "Didn't send"): mono, 10px, uppercase. */
+html[data-app="admin-os"] .m-more-row .m-more-state { flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); }
+html[data-app="admin-os"] .m-more-state.on { color: var(--ink-2); }
+html[data-app="admin-os"] .m-more-state.off,
+html[data-app="admin-os"] .m-more-state.muted { color: var(--ink-4); }
+html[data-app="admin-os"] .m-more-state.ok { color: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .m-more-state.warn { color: hsl(var(--warn-h) var(--warn-s) 62%); }
+html[data-app="admin-os"] .m-more-state.danger { color: hsl(var(--danger-h) var(--danger-s) 70%); }
+html[data-app="admin-os"][data-skin="light"] .m-more-state.ok { color: var(--ms-emerald); }
+html[data-app="admin-os"][data-skin="light"] .m-more-state.warn { color: hsl(var(--warn-h) var(--warn-s) 34%); }
+html[data-app="admin-os"][data-skin="light"] .m-more-state.danger { color: var(--ms-bordeaux); }
+html[data-app="admin-os"] .m-notif-retry { flex: none; min-height: 44px; padding: 0 8px; border: none; background: transparent; color: hsl(var(--accent-h) var(--accent-s) 62%); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+html[data-app="admin-os"][data-skin="light"] .m-notif-retry { color: var(--accent); }
+/* A kind row whose save failed: the switch and its Retry sit side by side in the li.
+   Retry is laid over the row just left of the track, and "Didn't save" makes
+   room for it, so the track never moves when the two appear. */
+html[data-app="admin-os"] .m-more-list li.m-row-retry { display: flex; align-items: center; }
+html[data-app="admin-os"] .m-more-list li.m-row-retry > .m-more-row { flex: 1; min-width: 0; }
+html[data-app="admin-os"] .m-more-list li.m-row-retry { position: relative; }
+html[data-app="admin-os"] .m-row-retry .m-notif-retry { position: absolute; right: calc(1rem + 40px + 0.75rem); top: 50%; transform: translateY(-50%); }
+html[data-app="admin-os"] .m-row-retry .m-more-state.danger { margin-right: 56px; }
+/* The note under the phone switch (blocked, or not set up on the server). */
+html[data-app="admin-os"] .m-notif-note { display: flex; gap: 0.75rem; align-items: flex-start; padding: 10px 1rem 12px; background: var(--bg-1); font-size: var(--fs-meta, 11.5px); color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
+html[data-app="admin-os"] .m-notif-note svg { flex: none; margin-top: 1px; color: hsl(var(--warn-h) var(--warn-s) 62%); }
+html[data-app="admin-os"][data-skin="light"] .m-notif-note svg { color: hsl(var(--warn-h) var(--warn-s) 34%); }
+/* The failed-load strip: one line with its Retry, centred on the row. */
+html[data-app="admin-os"] .m-notif-note-center { align-items: center; }
+/* The offline banner at the top of the screen. */
+html[data-app="admin-os"] .m-notif-banner { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg-1); display: flex; gap: 8px; align-items: flex-start; }
+html[data-app="admin-os"] .m-notif-banner .m-stale-dot { margin-top: 6px; }
+html[data-app="admin-os"] .m-notif-banner .m-stale { display: inline-flex; margin: 0; }
+html[data-app="admin-os"] .m-notif-banner-title { font-size: var(--fs-meta, 11.5px); font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .m-notif-banner-body { font-size: var(--fs-meta, 11.5px); color: var(--ink-3); line-height: 1.5; text-wrap: pretty; }
+/* What buzzes: the intro, a group's label and help, the closing lines. */
+html[data-app="admin-os"] .m-notif-intro { margin: 0 2px 12px; font-size: var(--fs-meta, 11.5px); color: var(--ink-3); line-height: 1.5; text-wrap: pretty; }
+html[data-app="admin-os"] .m-notif-group { margin: 0 0 14px; }
+html[data-app="admin-os"] .m-notif-group-label { padding: 0 2px; font-size: 12.5px; font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .m-notif-group-help { padding: 2px 2px 7px; font-size: var(--fs-meta, 11.5px); color: var(--ink-3); line-height: 1.45; text-wrap: pretty; }
+html[data-app="admin-os"] .m-notif-foot { display: flex; flex-direction: column; gap: 6px; padding: 0 2px 10px; font-size: var(--fs-meta, 11.5px); color: var(--ink-3); line-height: 1.55; text-wrap: pretty; }
+/* Loading: three groups of pulsing bars and track-shaped pills. */
+html[data-app="admin-os"] .m-notif-skel-bar { height: 10px; border-radius: 3px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite; }
+html[data-app="admin-os"] .m-notif-skel-bar.heading { height: 9px; margin: 2px 0 9px; }
+html[data-app="admin-os"] .m-notif-skel-pill { width: 40px; height: 24px; flex: none; border-radius: 999px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite; }
+html[data-app="admin-os"] .m-notif-skel li { display: flex; align-items: center; gap: 0.75rem; min-height: 44px; padding: 0 1rem; pointer-events: none; }
 html[data-app="admin-os"] .m-return-pill {
   position: fixed;
   right: 12px;
@@ -21348,6 +21428,10 @@ html[data-app="admin-os"][data-skin="light"] .m-return-pill {
 html[data-app="admin-os"][data-skin="light"] .m-seg-btn.active {
   color: var(--bg-0);
 }
+html[data-app="admin-os"][data-skin="light"] span.m-switch-track,
+html[data-app="admin-os"][data-skin="light"] span.m-switch-thumb,
+html[data-app="admin-os"][data-skin="light"] .m-notif-skel-pill { border-radius: 0; }
+html[data-app="admin-os"][data-skin="light"] [aria-checked="true"] > span.m-switch-track > span.m-switch-thumb { background: var(--bg-0); }
 
 /* ---- Mobile admin: lock screen + enrollment (spec 2026-08-13 section 8) ---- */
 html[data-app="admin-os"] .m-lock {
@@ -22055,6 +22139,12 @@ html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-mone
   html[data-app="admin-os"] .m-sheet,
   html[data-app="admin-os"] .m-sheet-scrim { animation: none; }
   html[data-app="admin-os"] .m-section-caret { transition: none; }
+  /* The busy thumb pulses under a (0,4,3) selector, so it is named in full here;
+     a bare .m-switch-thumb would lose to it. */
+  html[data-app="admin-os"] .m-switch-thumb,
+  html[data-app="admin-os"] [aria-busy="true"] > span.m-switch-track > span.m-switch-thumb,
+  html[data-app="admin-os"] .m-notif-skel-bar,
+  html[data-app="admin-os"] .m-notif-skel-pill { animation: none; }
 }
 /* ---- end: event detail and assignment sheet ---- */
 

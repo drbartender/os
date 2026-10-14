@@ -281,8 +281,15 @@ test('revoke: another user cannot delete my credential (404), owner can, and the
   const idor = await request('DELETE', `/api/auth/webauthn/credentials/${credRowId}`, { token: tokenB });
   assert.equal(idor.status, 404);
 
+  await pool.query(
+    `UPDATE users SET staff_notification_preferences = jsonb_set(COALESCE(staff_notification_preferences, '{}'::jsonb), '{push_subscriptions}', '[{"endpoint":"https://push.example.test/revoke","keys":{"p256dh":"p","auth":"a"}}]'::jsonb, true) WHERE id = $1`,
+    [userA.id]
+  );
+
   const ok = await request('DELETE', `/api/auth/webauthn/credentials/${credRowId}`, { token: tokenA });
   assert.equal(ok.status, 200);
+  const subs = (await pool.query(`SELECT staff_notification_preferences->'push_subscriptions' AS s FROM users WHERE id = $1`, [userA.id])).rows[0].s;
+  assert.deepEqual(subs, [], 'a revoke empties the stored push subscriptions (spec section 7, 2026-10-14)');
 
   // token_version bumped: the pre-revoke JWT is dead at the middleware.
   const me = await request('GET', '/api/auth/me', { token: tokenA });

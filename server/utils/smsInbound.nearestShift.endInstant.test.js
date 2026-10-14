@@ -47,6 +47,8 @@ const EMAIL_PREFIX = `cant-endinstant-${NONCE}-`;
 const F = {};
 let clock;
 let brunchStaffId, tiebreakStaffId, cantStaffId, noneStaffId, overnightStaffId;
+// The CANT target's proposal: the texted drop's admin banner opens its event.
+let cantProposalId;
 
 async function makeStaff(label) {
   const r = await pool.query(
@@ -136,6 +138,11 @@ before(async () => {
   // A staffer with a live shift, for the CANT write path.
   await seedShift('cantTarget', { date: clock.soon_d, startTime: '18:00', endTime: clock.soon_t });
   await approve(F.cantTarget, cantStaffId);
+  // Chicago zone, so the end instant (and the premise below) is unchanged.
+  cantProposalId = (await pool.query(
+    `INSERT INTO proposals (status, event_timezone) VALUES ('draft', 'America/Chicago') RETURNING id`
+  )).rows[0].id;
+  await pool.query('UPDATE shifts SET proposal_id = $1 WHERE id = $2', [cantProposalId, F.cantTarget]);
 
   // THE OVERNIGHT PAIR (2026-08-20). A late start with a NULL end_time takes
   // rule 2, so its end instant is start + booked + grace = about 05:00 the NEXT
@@ -178,6 +185,7 @@ after(async () => {
     await pool.query('DELETE FROM shift_requests WHERE shift_id = ANY($1::int[])', [ids]);
     await pool.query('DELETE FROM shifts WHERE id = ANY($1::int[])', [ids]);
   }
+  if (cantProposalId) await pool.query('DELETE FROM proposals WHERE id = $1', [cantProposalId]);
   await pool.query(`DELETE FROM users WHERE email LIKE '${EMAIL_PREFIX}%'`);
   await pool.end();
 });
@@ -239,6 +247,11 @@ test('CANT stamps the audit note with the CHICAGO business day, not the GMT day'
   assert.match(sent[0].emailText, /\(TODAY\)/,
     'a drop on the day of the event must read TODAY, never "past due"');
   assert.ok(sent[0].smsBody, 'an event today is inside the 7-day window, so it also texts');
+  // The admin phone's banner: a texted drop is a staffing_drop that opens the event.
+  assert.equal(sent[0].push.kind, 'staffing_drop');
+  assert.equal(sent[0].push.recordId, F.cantTarget);
+  assert.equal(sent[0].push.url, `/events/${cantProposalId}`);
+  assert.match(sent[0].push.title, /^Shift dropped: /);
 });
 
 test('a shift dated BEFORE today never outranks one dated today or later', async () => {

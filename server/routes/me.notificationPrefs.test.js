@@ -36,6 +36,22 @@ test('applyNotificationPrefPatch > rejects an empty patch', () => {
   );
 });
 
+const { applyAdminPushPrefPatch } = require('./me');
+
+test('applyAdminPushPrefPatch > merges a kind switch and keeps the rest', () => {
+  const merged = applyAdminPushPrefPatch({ staffing_drop: false }, { payment_landed: false });
+  assert.deepEqual(merged, { staffing_drop: false, payment_landed: false });
+});
+test('applyAdminPushPrefPatch > a true switch is stored as true (absent means on, true is explicit)', () => {
+  assert.deepEqual(applyAdminPushPrefPatch({ staffing_drop: false }, { staffing_drop: true }), { staffing_drop: true });
+});
+test('applyAdminPushPrefPatch > rejects an unknown kind, a non-boolean, an inherited name, an empty patch', () => {
+  assert.throws(() => applyAdminPushPrefPatch({}, { routine_thumbtack: true }), /kind/);
+  assert.throws(() => applyAdminPushPrefPatch({}, { staffing_drop: 'yes' }), /boolean/);
+  assert.throws(() => applyAdminPushPrefPatch({}, { constructor: true }), /kind/);
+  assert.throws(() => applyAdminPushPrefPatch({}, {}), /at least one/);
+});
+
 after(async () => {
   await pool.end();
 });

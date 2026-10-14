@@ -34,6 +34,7 @@ const {
 } = require('../utils/errors');
 const { hoursToEvent } = require('../utils/shiftTime');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
+const { pushCopy } = require('../utils/adminPush');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { parsePositionsNeeded } = require('../utils/positionsNeeded');
 const { canonicalizeRole } = require('../utils/staffingRoles');
@@ -201,6 +202,7 @@ async function notifyManagementOfAction({
   emailText,
   smsBody,
   daysOut,
+  push,
 }) {
   const args = {
     category,
@@ -211,6 +213,7 @@ async function notifyManagementOfAction({
   if (smsBody && Number.isFinite(daysOut) && daysOut <= 7) {
     args.smsBody = smsBody;
   }
+  if (push) args.push = push;
   try {
     await notifyAdminCategory(args);
   } catch (err) {
@@ -333,6 +336,10 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
     emailText: text,
     smsBody: null,
     daysOut: 999,
+    push: pushCopy.staffingDrop({
+      clientName: ctx.client_name, eventTypeLabel, dateLabel: eventDateLong, position: ctx.position,
+      proposalId: ctx.proposal_id, shiftId: ctx.shift_id,
+    }),
   });
 
   res.json({
@@ -468,6 +475,10 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
     emailText: text,
     smsBody,
     daysOut,
+    push: pushCopy.staffingCover({
+      clientName: ctx.client_name, eventTypeLabel, dateLabel: eventDateLong, position: ctx.position,
+      proposalId: ctx.proposal_id, shiftId: ctx.shift_id,
+    }),
   });
 
   // Fan out to qualified teammates. Fire-and-forget: the chunked enqueue can
@@ -647,6 +658,7 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
         start_time: orig.start_time,
         client_name: orig.client_name,
         position: claimerCanon,
+        proposal_id: orig.proposal_id,
       },
     };
   } catch (err) {
@@ -692,6 +704,10 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
       subject,
       emailHtml: html,
       emailText: text,
+      push: pushCopy.staffingSwap({
+        clientName: sc.client_name, eventTypeLabel: sc.event_type_label, dateLabel: sc.event_date_long, position: sc.position,
+        proposalId: sc.proposal_id || null, shiftId: swapResult.shift_id,
+      }),
     });
   } catch (err) {
     Sentry.captureException(err, {
@@ -908,6 +924,10 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
     emailText: text,
     smsBody: adminSmsBody,
     daysOut: hoursOut / 24,
+    push: pushCopy.staffingDrop({
+      clientName: ctx.client_name, eventTypeLabel, dateLabel: eventDateLong, position: ctx.position,
+      proposalId: ctx.proposal_id, shiftId: ctx.shift_id,
+    }),
   });
 
   // ADMIN_PHONE hotline SMS — separate fan-out target (the 312 Google Voice

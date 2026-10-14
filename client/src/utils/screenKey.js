@@ -10,6 +10,7 @@ export function routeScreenKey(pathname) {
   if (segs[0] === 'events') return segs.length > 1 ? 'event-detail' : 'events-list';
   if (segs[0] === 'proposals') return segs.length > 1 ? 'proposal-detail' : 'proposals-list';
   if (segs[0] === 'inbox') return segs.length > 1 ? 'inbox-item' : 'inbox';
+  if (segs[0] === 'more' && segs[1] === 'notifications') return 'notifications';
   return segs[0];
 }
 
@@ -20,6 +21,7 @@ const TITLES = {
   'proposal-detail': 'Proposal',
   'inbox-item': 'Inbox',
   more: 'More',
+  notifications: 'Notifications',
   dashboard: 'Overview',
 };
 

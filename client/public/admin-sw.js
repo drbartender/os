@@ -2,7 +2,8 @@
 // Plain static JS, NOT webpack-bundled; served at the origin root so it can
 // control top-level navigations. Three jobs:
 //   1. push events -> OS notifications (pattern copied from staff-sw.js).
-//   2. notificationclick -> focus or open the deep link.
+//   2. notificationclick -> focus the window on the deep link, else navigate
+//      an open window to it, else open one.
 //   3. Offline shell + stamped read cache:
 //      - navigations: network-first, fall back to cached index.html
 //      - content-HASHED /static/ assets: cache-first (immutable by name);
@@ -30,7 +31,7 @@
 //       .map((n) => caches.delete(n)));
 //     await self.registration.unregister();
 //   })()));
-const SW_VERSION = 'admin-sw-2026-09-29-v10';
+const SW_VERSION = 'admin-sw-2026-10-14-v11';
 const SHELL_CACHE = `admin-shell-${SW_VERSION}`;
 const API_CACHE = `admin-api-${SW_VERSION}`;
 
@@ -188,6 +189,10 @@ const API_EXACT = new Set([
   '/api/admin/badge-counts',
   '/api/admin/search',
   '/api/admin/active-staff',
+  // More > Notifications (spec section 7, 2026-10-14): the kind switches and
+  // the server's VAPID public key. The screen renders a stored copy disabled
+  // under an offline banner with the staleness time, and acts on nothing.
+  '/api/me/notification-preferences',
   // Offline cold-launch hydration (spec section 8): AuthContext boots from
   // the cached /auth/me when the network is gone. Transport-failure-only
   // fallback still applies, and a server-answered 401 EVICTS the entry (late
@@ -388,11 +393,18 @@ self.addEventListener('notificationclick', (event) => {
       // path. `URL.pathname` comparison keeps us host-agnostic (the worker
       // only ever runs on the admin origin, but matching by pathname avoids
       // surprises when query strings differ).
-      let targetPath = targetUrl;
+      // Same-origin paths only (2026-10-14): the payload's url is resolved
+      // against this worker's origin, and anything else collapses to '/'.
+      let target = '/';
+      let targetPath = '/';
       try {
-        targetPath = new URL(targetUrl, self.location.origin).pathname;
+        const u = new URL(targetUrl, self.location.origin);
+        if (u.origin === self.location.origin) {
+          target = u.pathname + u.search + u.hash;
+          targetPath = u.pathname;
+        }
       } catch (e) {
-        // targetUrl was not a parseable URL; fall through to substring check.
+        // unparseable: stays '/'
       }
 
       // A bare default ('/') means "just focus the app": match any open
@@ -410,10 +422,27 @@ self.addEventListener('notificationclick', (event) => {
         }
       }
 
+      // No window on that path. An open admin window is navigated there
+      // rather than a second one opened (2026-10-14): on the installed app a
+      // second window is a second copy of the app behind the first.
+      if (!isRootDefault) {
+        for (const client of allClients) {
+          if (!('focus' in client)) continue;
+          try {
+            await client.focus();
+            if ('navigate' in client) return await client.navigate(target);
+            return null;
+          } catch (e) {
+            // A client that cannot be focused or navigated (gone, or not
+            // controlled): fall through to the next, then to openWindow.
+          }
+        }
+      }
+
       // No matching window: open a new one. `openWindow` can be undefined in
       // some embedded contexts, so guard the call.
       if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
+        return self.clients.openWindow(target);
       }
       return null;
     })()

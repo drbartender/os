@@ -1,5 +1,5 @@
 /**
- * Gate for real outbound notifications (Resend email, Twilio SMS).
+ * Gate for real outbound notifications (Resend email, Twilio SMS, Web Push).
  *
  * Mirrors the RUN_SCHEDULERS philosophy (see server/index.js): real sends fire
  * only in production by default, so a local dev server pointed at the shared
@@ -13,6 +13,8 @@
  *
  * When this returns false, sendEmail / sendSMS take their existing
  * log-and-skip path — the same path used when credentials are absent.
+ * sendPush (pushSender.js) takes its own skip path: it logs the push
+ * service's host and returns { ok: false, error: 'notifications_off' }.
  *
  * @returns {boolean} true → really send; false → log only
  */

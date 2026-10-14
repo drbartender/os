@@ -5,6 +5,7 @@
 const { pool } = require('../db');
 const Sentry = require('@sentry/node');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { pushCopy } = require('./adminPush');
 const { getEventTypeLabel } = require('./eventTypes');
 const { chicagoTodayYmd } = require('./businessTime');
 // The opt-keyword alert COPY lives in its own module: this file is at its size
@@ -468,6 +469,10 @@ async function alertStaffCant(cant) {
       emailHtml: `<p>A bartender texted CANT for the <strong>${escapeHtml(who)}</strong> on <strong>${escapeHtml(dateStr)}</strong> (${escapeHtml(outLabel)}).</p><p>The shift has been re-opened and needs restaffing. It will show as unstaffed on the Events dashboard.</p>`,
       emailText: `A bartender texted CANT for the ${who} on ${dateStr} (${outLabel}). The shift has been re-opened and needs restaffing.`,
       ...(daysOut < 7 ? { smsBody: smsLine } : {}),
+      push: pushCopy.staffingDrop({
+        clientName: cant.clientName, eventTypeLabel: eventLabel, dateLabel: dateStr, position: 'Bartender',
+        proposalId: cant.proposalId || null, shiftId: cant.shiftId,
+      }),
     });
   });
 }

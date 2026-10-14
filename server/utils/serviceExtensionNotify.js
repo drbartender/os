@@ -182,7 +182,10 @@ async function notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, cont
     // needed and there is no dispatcher latency. Attempted whenever SMS did not
     // land, which is exactly when a staffer without consent needs another rung.
     if (!delivered) {
-      const subs = Array.isArray(r.staff_prefs?.push_subscriptions) ? r.staff_prefs.push_subscriptions : [];
+      // Admin-phone entries (surface 'admin') belong to the admin channel in
+      // adminPush.js; this is a staff banner, so only staff entries get it.
+      const subs = (Array.isArray(r.staff_prefs?.push_subscriptions) ? r.staff_prefs.push_subscriptions : [])
+        .filter((sub) => sub && sub.surface !== 'admin');
       for (const sub of subs) {
         const pushed = await safe(`staff_push_${r.id}`, () => sendPush({
           subscription: { endpoint: sub.endpoint, keys: sub.keys },
@@ -191,7 +194,7 @@ async function notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, cont
           url: `${STAFF_URL}/shifts`,
         }));
         // sendPush NEVER throws: it RESOLVES with { ok: false, gone } or
-        // { ok: false, error: 'vapid_unset' } on failure (pushSender.js:46-66).
+        // { ok: false, error: 'vapid_unset' } on failure (pushSender.js:78-104).
         // So a truthiness check would count every failure as a delivery, which
         // would suppress the staff_unreachable alert on exactly the decline
         // message that carries the insurance warning. Test ok === true.

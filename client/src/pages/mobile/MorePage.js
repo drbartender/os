@@ -6,6 +6,8 @@ import MoreSecurityRow from '../../components/mobile/MoreSecurityRow';
 import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
 import { canInstall, onInstallAvailability, promptInstall } from '../../utils/installPrompt';
+import { readDevicePushState } from '../../utils/adminPush';
+import { rowState } from '../../utils/notificationsView';
 
 // The last tab: every admin surface that is not Inbox, Events or Proposals,
 // as tap rows. Until a surface gets its phone-first treatment it opens its
@@ -34,6 +36,35 @@ function InstallRow() {
             <Icon name="plus" size={20} />
             <span>Install app</span>
           </button>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+// More > Notifications (spec section 7, 2026-10-14). The trailing state is
+// this phone's: Android's permission, then the admin worker's subscription.
+// No server read here; the screen adds the server's key to the picture.
+function NotificationsRow() {
+  const [device, setDevice] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    readDevicePushState().then((d) => { if (alive) setDevice(d); }).catch(() => { if (alive) setDevice('off'); });
+    return () => { alive = false; };
+  }, []);
+  if (device === 'unsupported') return null;
+  const st = device ? rowState(device) : null;
+  return (
+    <section>
+      <h2 className="m-more-heading">Notifications</h2>
+      <ul className="m-more-list">
+        <li>
+          <Link className="m-more-row" to="/more/notifications">
+            <Icon name="bell" size={20} />
+            <span>Push notifications</span>
+            {st && <span className={`m-more-state ${st.tone}`}>{st.text}</span>}
+            <Icon name="right" size={16} />
+          </Link>
         </li>
       </ul>
     </section>
@@ -93,6 +124,7 @@ export default function MorePage() {
           </section>
         );
       })}
+      <NotificationsRow />
       <MoreSecurityRow />
       {/* Benchmark composition: the Lighting section. Without it the phone
           has NO skin control (the desktop toggle lives in the sidebar footer,

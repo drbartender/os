@@ -15,6 +15,7 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { proposalUrl } = require('./urls');
 const { formatEventDateLong } = require('./staffShiftHandlers');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { pushCopy } = require('./adminPush');
 const { ADMIN_URL } = require('./urls');
 const { esc } = require('./htmlEscape');
 
@@ -72,7 +73,7 @@ async function notifyClientBankPaymentProcessing({ proposalId, amountCents, paym
 async function notifyAdminBankPaymentProcessing({ proposalId, amountCents, paymentType }) {
   try {
     const { rows } = await pool.query(
-      `SELECT p.event_type, p.event_type_custom, c.name AS client_name
+      `SELECT p.event_type, p.event_type_custom, p.event_date, p.event_timezone, c.name AS client_name
          FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1`,
       [proposalId]
@@ -90,6 +91,7 @@ async function notifyAdminBankPaymentProcessing({ proposalId, amountCents, payme
       subject: `Bank payment processing: ${client} (${label})`,
       emailText: `${line} ${url}`,
       emailHtml: `<p>${esc(line)}</p><p><a href="${url}">Open proposal #${proposalId}</a></p>`,
+      push: pushCopy.bankPaymentStarted({ clientName: pc.client_name, eventTypeLabel: label, amount: dollars, initial, proposalId, dateLabel: pc.event_date ? formatEventDateLong({ event_date: pc.event_date, event_timezone: pc.event_timezone }) : null }),
     });
     return { sent: true };
   } catch (err) {

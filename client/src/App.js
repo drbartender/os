@@ -139,6 +139,7 @@ const StaffV2AccountPage = lazy(() => import('./pages/staff/account/AccountPage'
 const StaffV2EmailVerifyPage = lazy(() => import('./pages/staff/EmailVerifyPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const MorePage = lazy(() => import('./pages/mobile/MorePage'));
+const NotificationsPhone = lazy(() => import('./pages/mobile/NotificationsPhone'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
 const StaffHubLayout = lazy(() => import('./pages/admin/staffHub/StaffHubLayout'));
@@ -609,6 +610,7 @@ function AppRoutes() {
       <Route element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<OverviewPage />} />
         <Route path="/more" element={<MorePage />} />
+        <Route path="/more/notifications" element={<NotificationsPhone />} />
         {/* The Staff hub (spec 2026-08-19). Roster lands; Hiring, Payroll and
             Reviews are admin-only children guarded with adminStrict at the
             route, because their APIs are the server's adminOnly and hiding a

@@ -441,6 +441,16 @@ client/public/admin-sw.js
 client/public/admin-manifest.json
 client/src/utils/installAdminPwaMeta.js
 
+# Admin push (lane ma-c-push, spec 2026-08-13-mobile-admin section 7).
+# adminPush.js: the dispatch allowlist is the blast-radius guard; its copy reaches a locked screen.
+server/utils/adminPush.js
+# adminNotifications.js: the three gates (category, kind switch, a stored subscription).
+server/utils/adminNotifications.js
+# mePush.js: sends to devices on request (POST /api/me/push-test).
+server/routes/mePush.js
+# client adminPush.js: subscribes and unsubscribes a device.
+client/src/utils/adminPush.js
+
 # Phone staffing (lane ma-e2): `position` keys payroll's tip split. The role a
 # plain Approve writes is resolved by classifyRequest (staffingRoles.js) and
 # allowed by roleStep (staffingSheet.js); useSheetWrites.js is the only phone

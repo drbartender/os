@@ -19,17 +19,12 @@
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-// Module-level (not destructured) so tests can monkey-patch pushSender.sendPush.
-const pushSender = require('./pushSender');
+const { sendPushToUser } = require('./adminPush');
 
 async function dispatchPushRow(row) {
   const payload = row.payload || {};
 
-  // Read the recipient's subscriptions WITHOUT holding a transaction.
-  const { rows: userRows } = await pool.query(
-    'SELECT staff_notification_preferences AS prefs FROM users WHERE id = $1',
-    [row.recipient_id]
-  );
+  const { rows: userRows } = await pool.query('SELECT 1 FROM users WHERE id = $1', [row.recipient_id]);
   if (userRows.length === 0) {
     await pool.query(
       "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
@@ -37,9 +32,31 @@ async function dispatchPushRow(row) {
     );
     return;
   }
-  const prefs = userRows[0].prefs || {};
-  const subs = Array.isArray(prefs.push_subscriptions) ? prefs.push_subscriptions : [];
-  if (subs.length === 0) {
+
+  // The send-and-prune routine is shared with the admin push channel
+  // (adminPush.js): no connection held across the network, the prune in its
+  // own short FOR UPDATE transaction, a dead endpoint removed by endpoint.
+  const r = await sendPushToUser({
+    userId: row.recipient_id,
+    title: payload.title,
+    body: payload.body,
+    url: payload.url,
+    tag: payload.tag || row.message_type,
+    icon: payload.icon,
+    surface: 'staff',
+  });
+
+  // A failed subscription read is not "no subscriptions": record it as failed
+  // with the reason, never as suppressed.
+  if (r.readFailed) {
+    await pool.query(
+      "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
+      [row.id, 'push_read_failed: ' + (r.error || 'unknown')]
+    );
+    return;
+  }
+
+  if (r.subscriptions === 0) {
     await pool.query(
       "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
       [row.id, 'no_push_subscriptions']
@@ -47,86 +64,23 @@ async function dispatchPushRow(row) {
     return;
   }
 
-  // Network sends, with NO DB connection held. 410/404 marks the sub for pruning;
-  // a transient failure keeps the sub for next time.
-  let anyOk = false;
-  let anyDegraded = false;
-  const goneEndpoints = [];
-  for (const sub of subs) {
-    const result = await pushSender.sendPush({
-      subscription: { endpoint: sub.endpoint, keys: sub.keys },
-      title: payload.title,
-      body: payload.body,
-      url: payload.url,
-      tag: payload.tag || row.message_type,
-      icon: payload.icon,
-    });
-    if (result && result.ok) {
-      anyOk = true;
-    } else if (result && result.gone) {
-      anyDegraded = true;
-      goneEndpoints.push(sub.endpoint);
-    }
-    // transient failure: keep the sub, prune nothing
-  }
-
-  // Prune dead subscriptions in a SHORT transaction. Re-read the current array
-  // under FOR UPDATE and remove only the gone endpoints, so a concurrent dispatch
-  // tick's add/remove of a different endpoint is preserved, not clobbered.
-  if (goneEndpoints.length > 0) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows: freshRows } = await client.query(
-        'SELECT staff_notification_preferences AS prefs FROM users WHERE id = $1 FOR UPDATE',
-        [row.recipient_id]
-      );
-      const freshSubs = Array.isArray(freshRows[0] && freshRows[0].prefs && freshRows[0].prefs.push_subscriptions)
-        ? freshRows[0].prefs.push_subscriptions
-        : [];
-      const gone = new Set(goneEndpoints);
-      const kept = freshSubs.filter((s) => !gone.has(s.endpoint));
-      if (kept.length !== freshSubs.length) {
-        await client.query(
-          `UPDATE users
-              SET staff_notification_preferences = jsonb_set(
-                staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
-            WHERE id = $1`,
-          [row.recipient_id, JSON.stringify(kept)]
-        );
-      }
-      await client.query('COMMIT');
-    } catch (pruneErr) {
-      try { await client.query('ROLLBACK'); } catch { /* connection may already be gone */ }
-      // Prune is best-effort: the sends already happened and a lingering dead sub
-      // is harmless (it just 410s again next tick). Never fail the row over it.
-      Sentry.addBreadcrumb({
-        category: 'notifications',
-        message: 'push_prune_failed',
-        data: { user_id: row.recipient_id, row_id: row.id, error: pruneErr && pruneErr.message },
-      });
-    } finally {
-      client.release();
-    }
-  }
-
   // Record the row outcome from the SEND result (independent of the prune).
-  if (anyOk) {
+  if (r.sent > 0) {
     await pool.query(
       "UPDATE scheduled_messages SET status = 'sent', sent_at = NOW(), error_message = NULL WHERE id = $1",
       [row.id]
     );
-    if (anyDegraded) {
+    if (r.gone > 0) {
       Sentry.addBreadcrumb({
         category: 'notifications',
         message: 'push_partial_prune',
-        data: { user_id: row.recipient_id, row_id: row.id, pruned: goneEndpoints.length },
+        data: { user_id: row.recipient_id, row_id: row.id, pruned: r.gone },
       });
     }
   } else {
     await pool.query(
       "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
-      [row.id, anyDegraded ? 'all_subscriptions_gone' : 'push_send_failed']
+      [row.id, r.gone > 0 ? 'all_subscriptions_gone' : 'push_send_failed']
     );
   }
 }

@@ -3,6 +3,30 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { normalizePhone } = require('./sms');
 const { QuotaExceededError } = require('./errors');
+const adminPush = require('./adminPush');
+
+// Injected for tests; the push leg is the only network the module reaches
+// besides email and SMS, and the suite must never contact a push service.
+let _deps = { sendPushToUser: adminPush.sendPushToUser };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
+
+// Every push leg started and not yet settled, plus every pushAdminKind call
+// still resolving its recipients. Callers never await the leg (spec section
+// 7: fire-and-forget after commit); tests do, through __flushPush. Every
+// tracked promise must catch its own errors: track marks it handled (the
+// then(untrack, untrack) below), so a rejection would otherwise be silent.
+const pendingPush = new Set();
+function track(p) {
+  pendingPush.add(p);
+  const untrack = () => { pendingPush.delete(p); };
+  p.then(untrack, untrack);
+  return p;
+}
+// Drains, not snapshots: a settling pushAdminKind queues its send legs after
+// a snapshot would have been taken, so loop until nothing is pending.
+async function __flushPush() {
+  while (pendingPush.size) await Promise.allSettled([...pendingPush]);
+}
 
 // The notification categories (spec 8.3). A notification declares its
 // category; the helper fans it out to every admin/manager subscribed to it.
@@ -30,7 +54,7 @@ const VALID_CATEGORIES = new Set([
  * resolves (phone = null, email-only recipient).
  *
  * @param {string} category one of VALID_CATEGORIES.
- * @returns {Promise<Array<{id:number, email:string, phone:string|null, communication_preferences:object}>>}
+ * @returns {Promise<Array<{id:number, email:string, phone:string|null, communication_preferences:object, admin_push_preferences:object, push_subscription_count:number}>>}
  */
 async function resolveCategoryRecipients(category) {
   if (!VALID_CATEGORIES.has(category)) {
@@ -41,7 +65,11 @@ async function resolveCategoryRecipients(category) {
   // text matches. The category name is validated above against an allowlist,
   // so interpolating it into the ->> path is safe (it is never user input).
   const { rows } = await pool.query(
-    `SELECT u.id, u.email, u.communication_preferences, cp.phone
+    `SELECT u.id, u.email, u.communication_preferences, cp.phone,
+            COALESCE(u.admin_push_preferences, '{}'::jsonb) AS admin_push_preferences,
+            COALESCE(jsonb_array_length(
+              CASE WHEN jsonb_typeof(u.staff_notification_preferences->'push_subscriptions') = 'array'
+                   THEN u.staff_notification_preferences->'push_subscriptions' ELSE '[]'::jsonb END), 0) AS push_subscription_count
        FROM users u
        LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
       WHERE u.role IN ('admin', 'manager')
@@ -53,7 +81,61 @@ async function resolveCategoryRecipients(category) {
     email: r.email,
     phone: r.phone || null,
     communication_preferences: r.communication_preferences || {},
+    admin_push_preferences: r.admin_push_preferences || {},
+    push_subscription_count: Number(r.push_subscription_count) || 0,
   }));
+}
+
+// The push leg. Gates, in order: the recipient list (the category gate,
+// already applied by resolveCategoryRecipients), the per-kind switch (an
+// absent key is ON), and at least one stored subscription. Returns how many
+// recipients it will try; the sends run in the background and never throw.
+// notifyAdminCategory starts this leg FIRST, before its email and SMS loop,
+// so a banner is never held behind the Resend and Twilio round trips.
+function pushRecipients(recipients, category, push) {
+  if (!push || !adminPush.isPushKind(push.kind)) {
+    if (push) console.error(`[adminNotifications] push dropped: unknown kind '${push && push.kind}' (category ${category})`);
+    return 0;
+  }
+  const eligible = recipients.filter((r) =>
+    (r.admin_push_preferences || {})[push.kind] !== false && (r.push_subscription_count || 0) > 0
+  );
+  if (!eligible.length) return 0;
+  const tag = adminPush.pushTag(push.kind, push.recordId);
+  for (const r of eligible) {
+    track((async () => {
+      try {
+        await _deps.sendPushToUser({ userId: r.id, title: push.title, body: push.body, url: push.url, tag, surface: 'admin' });
+      } catch (err) {
+        Sentry.captureException(err, {
+          tags: { feature: 'admin-notification', category, channel: 'push', kind: push.kind },
+          extra: { recipient_id: r.id },
+        });
+        console.error('[adminNotifications] push to user ' + r.id + ' failed:', err && err.message);
+      }
+    })());
+  }
+  // pushQueued is a RECIPIENT count: users whose stored array is non-empty, any
+  // surface. The per-user send then skips malformed and staff entries, so a
+  // counted recipient can land on zero devices; do not read it as a device count.
+  return eligible.length;
+}
+
+// Push only (no email, no SMS): the drink-plan submit uses this, whose email
+// keeps its own balance-changed throttle. The whole call is tracked, so a
+// fire-and-forget caller's recipient read and its send legs are both awaited
+// by __flushPush; a caller that awaits it still gets { pushQueued }.
+function pushAdminKind({ category, push }) {
+  return track((async () => {
+    let recipients = [];
+    try {
+      recipients = await resolveCategoryRecipients(category);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { feature: 'admin-notification', category, channel: 'push' } });
+      return { pushQueued: 0 };
+    }
+    return { pushQueued: pushRecipients(recipients, category, push) };
+  })());
 }
 
 /**
@@ -70,17 +152,22 @@ async function resolveCategoryRecipients(category) {
  * @param {string} args.emailHtml email HTML body.
  * @param {string} [args.emailText] email plain-text body.
  * @param {string} [args.smsBody] when set, also SMS subscribed admins.
- * @returns {Promise<{emailed:number, texted:number}>}
+ * @param {{kind:string,title:string,body:string,url:string,recordId?:number|string}} [args.push] when set, also push subscribed admins whose switch for this kind is on (spec section 7, 2026-10-14). Fire-and-forget.
+ * @returns {Promise<{emailed:number, texted:number, pushQueued:number}>}
  */
-async function notifyAdminCategory({ category, subject, emailHtml, emailText, smsBody }) {
+async function notifyAdminCategory({ category, subject, emailHtml, emailText, smsBody, push }) {
   let recipients = [];
   try {
     recipients = await resolveCategoryRecipients(category);
   } catch (err) {
     Sentry.captureException(err, { tags: { feature: 'admin-notification', category } });
     console.error(`[adminNotifications] resolve failed for '${category}':`, err.message);
-    return { emailed: 0, texted: 0 };
+    return { emailed: 0, texted: 0, pushQueued: 0 };
   }
+
+  // The push leg starts first (fire-and-forget), so its banners never wait on
+  // the sequential email and SMS sends below.
+  const pushQueued = pushRecipients(recipients, category, push);
 
   let emailed = 0;
   let texted = 0;
@@ -141,7 +228,7 @@ async function notifyAdminCategory({ category, subject, emailHtml, emailText, sm
     }
   }
 
-  return { emailed, texted };
+  return { emailed, texted, pushQueued };
 }
 
-module.exports = { notifyAdminCategory, resolveCategoryRecipients, VALID_CATEGORIES };
+module.exports = { notifyAdminCategory, pushAdminKind, resolveCategoryRecipients, VALID_CATEGORIES, __setDeps, __flushPush };

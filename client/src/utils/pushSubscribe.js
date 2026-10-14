@@ -5,16 +5,24 @@
 // module is the BROWSER side: register the SW, obtain a PushSubscription, and
 // POST it to /me/push-subscriptions. unsubscribePush() reverses both halves.
 //
-// Public surface — consumed by Tasks 54 + 56 (Notifications UI):
-//   permissionState()    → 'unsupported' | 'granted' | 'denied' | 'default'
-//   subscribePush()      → { ok, state }
-//   unsubscribePush()    → { ok }
-//   isPushSubscribed()   → boolean (this device currently has an active PushSubscription)
-//   isIosNeedsInstall()  → boolean (iOS Safari, not yet installed to home screen)
+// Public surface — consumed by Tasks 54 + 56 (Notifications UI), and by the
+// admin phone through utils/adminPush.js (2026-10-14). Every option defaults to
+// the staff portal's value, so the staff callers pass nothing:
+//   permissionState()                          → 'unsupported' | 'granted' | 'denied' | 'default'
+//   subscribePush({ swPath, vapidKey, surface }) → { ok, state }
+//       swPath defaults to /staff-sw.js, vapidKey to REACT_APP_VAPID_PUBLIC_KEY;
+//       surface 'admin' marks the admin phone's entry (absent = staff)
+//   unsubscribePush({ swPath, notifyServer })  → { ok }
+//       notifyServer: false skips the server DELETE (logout)
+//   isPushSubscribed({ swPath })               → boolean (this device currently has an active PushSubscription)
+//   isIosNeedsInstall()                        → boolean (iOS Safari, not yet installed to home screen)
 //
 // urlBase64ToUint8Array is also exported (named) for unit testing.
 
 import api from './api';
+
+// The staff portal registers /staff-sw.js with the build-time key; the admin phone passes its own worker and the key the API served (client/src/utils/adminPush.js).
+const STAFF_SW_PATH = '/staff-sw.js';
 
 /**
  * Decode a base64url-encoded VAPID public key into a Uint8Array. The browser's
@@ -82,12 +90,12 @@ export function permissionState() {
  * and "enable push" affordances. Null-safe and never throws — resolves false
  * on any UA without the service-worker API or on any lookup error.
  */
-export async function isPushSubscribed() {
+export async function isPushSubscribed({ swPath = STAFF_SW_PATH } = {}) {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     return false;
   }
   try {
-    const reg = await navigator.serviceWorker.getRegistration('/staff-sw.js');
+    const reg = await navigator.serviceWorker.getRegistration(swPath);
     if (!reg) return false;
     const sub = await reg.pushManager.getSubscription();
     return !!sub;
@@ -103,14 +111,18 @@ export async function isPushSubscribed() {
  * gymnastics.
  *
  * Server contract (matches the existing /me/push-subscriptions endpoint):
- *   { endpoint, keys: { p256dh, auth }, user_agent }
+ *   { endpoint, keys: { p256dh, auth }, user_agent, surface? }
+ * `surface: 'admin'` marks the admin phone's entry, so each channel sends only
+ * to its own devices; the staff portal sends none.
+ *
+ * A failed POST drops the browser subscription again and answers 'failed', so
+ * the device never reads as on while the server holds no row for it.
  */
-export async function subscribePush() {
+export async function subscribePush({ swPath = STAFF_SW_PATH, vapidKey = process.env.REACT_APP_VAPID_PUBLIC_KEY, surface } = {}) {
   if (permissionState() === 'unsupported') {
     return { ok: false, state: 'unsupported' };
   }
 
-  const vapidKey = process.env.REACT_APP_VAPID_PUBLIC_KEY;
   if (!vapidKey) {
     // Treat a missing key as unsupported from the caller's perspective —
     // they cannot do anything useful with an environment that hasn't been
@@ -132,7 +144,7 @@ export async function subscribePush() {
   // Register the SW served at the origin root. `register` is idempotent — a
   // repeat call returns the same registration object — so this is safe to
   // invoke on every subscribePush() without bookkeeping.
-  const reg = await navigator.serviceWorker.register('/staff-sw.js');
+  const reg = await navigator.serviceWorker.register(swPath);
   await navigator.serviceWorker.ready;
 
   const sub = await reg.pushManager.subscribe({
@@ -144,11 +156,21 @@ export async function subscribePush() {
   // same shape the server expects, so we just spread it.
   const subJson = sub.toJSON();
 
-  await api.post('/me/push-subscriptions', {
-    endpoint: subJson.endpoint,
-    keys: subJson.keys,
-    user_agent: navigator.userAgent,
-  });
+  try {
+    await api.post('/me/push-subscriptions', {
+      endpoint: subJson.endpoint,
+      keys: subJson.keys,
+      user_agent: navigator.userAgent,
+      ...(surface ? { surface } : {}),
+    });
+  } catch (e) {
+    try {
+      await sub.unsubscribe();
+    } catch (unsubErr) {
+      // Best effort: the server has no row, so a send can never reach it.
+    }
+    return { ok: false, state: 'failed' };
+  }
 
   return { ok: true, state: 'granted' };
 }
@@ -158,13 +180,18 @@ export async function subscribePush() {
  * fire it on logout / preference-flip without first checking whether a
  * subscription exists. Always returns `{ ok: true }`; the server side
  * tolerates missing-row deletes (it's a DELETE-by-endpoint, idempotent).
+ *
+ * `notifyServer: false` skips the server DELETE and drops only the browser's
+ * subscription. Logout passes it (2026-10-14): the token is gone before the
+ * DELETE could go out, so it would always 401. The push service then answers
+ * 410 for the dead endpoint and the server prunes the row on its next send.
  */
-export async function unsubscribePush() {
+export async function unsubscribePush({ swPath = STAFF_SW_PATH, notifyServer = true } = {}) {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     return { ok: true };
   }
 
-  const reg = await navigator.serviceWorker.getRegistration('/staff-sw.js');
+  const reg = await navigator.serviceWorker.getRegistration(swPath);
   if (!reg) return { ok: true };
 
   const sub = await reg.pushManager.getSubscription();
@@ -174,11 +201,13 @@ export async function unsubscribePush() {
   // A failed DELETE (404 already-gone, or a network blip) is non-fatal: the
   // server prunes any dead endpoint on the next 410 from the push service, so
   // we never block the user's unsubscribe on the round-trip.
-  try {
-    await api.delete('/me/push-subscriptions', { data: { endpoint: sub.endpoint } });
-  } catch (e) {
-    // Swallow — see above. The unsubscribe below still runs so the browser
-    // state matches what the user just asked for.
+  if (notifyServer) {
+    try {
+      await api.delete('/me/push-subscriptions', { data: { endpoint: sub.endpoint } });
+    } catch (e) {
+      // Swallow: see above. The unsubscribe below still runs so the browser
+      // state matches what the user just asked for.
+    }
   }
 
   await sub.unsubscribe();

@@ -12,6 +12,8 @@ const SOURCES = [
   'pages/mobile/EventDetailPhone.js',
   'pages/mobile/EventDetailSections.js',
   'pages/mobile/InboxPhone.js',
+  'pages/mobile/NotificationsPhone.js',
+  'pages/mobile/MorePage.js',
   'components/inbox/WaitingRows.js',
   'components/inbox/HandledList.js',
   'components/inbox/InboxStates.js',

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { purgeMobileAdminState, announceAdminSwUser } from '../utils/adminSw';
+import { disableAdminPush } from '../utils/adminPush';
 import { clearLastActive, isRevocationCode, phoneUnlockArmed, tokenExpMs } from '../utils/mobileLock';
 import api from '../utils/api';
 
@@ -40,6 +41,22 @@ function refuseStaleHydration(res) {
   return exp !== null && exp <= Date.now();
 }
 
+// Every purge of a phone session, in one place (spec 2026-08-13-mobile-admin
+// sections 7 and 8): unsubscribe this device from push, purge the SW caches
+// and the shell's localStorage (utils/adminSw.js), and drop the token. The
+// unsubscribe is LOCAL only (2026-10-14): the token is removed later in this
+// same tick, before the unsubscribe's first await resumes, so a server DELETE
+// would always go out tokenless, answer 401, and fire a false "session
+// expired". Instead the browser drops the subscription, the push service
+// answers 410 for that endpoint, and the server prunes the row on its next
+// send. Off the admin host the unsubscribe is a no-op (utils/adminPush.js).
+// Best effort, never awaited: a purge must not wait on a push service.
+function purgePhoneSession() {
+  disableAdminPush({ notifyServer: false }).catch(() => {});
+  purgeMobileAdminState();
+  localStorage.removeItem('token');
+}
+
 // Throttle visibilitychange refreshes — admins who tab-flip heavily would
 // otherwise trigger /auth/me on every focus event.
 const TAB_FOCUS_REFRESH_COOLDOWN_MS = 30_000;
@@ -73,8 +90,7 @@ export function AuthProvider({ children }) {
         .then(res => {
           // An offline snapshot never resurrects a session whose token died.
           if (refuseStaleHydration(res)) {
-            purgeMobileAdminState();
-            localStorage.removeItem('token');
+            purgePhoneSession();
             return;
           }
           setUser(res.data.user);
@@ -89,8 +105,7 @@ export function AuthProvider({ children }) {
           // caches survive, occluded: ProtectedRoute renders the lock gate
           // and a biometric tap re-mints without losing the offline cache.
           if (authFailureAction(err) === 'purge') {
-            purgeMobileAdminState();
-            localStorage.removeItem('token');
+            purgePhoneSession();
           }
         })
         .finally(() => setLoading(false));
@@ -110,10 +125,7 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
-    // Spec 2026-08-13-mobile-admin section 7: logout purges the phone's SW
-    // caches and shell localStorage (one call, defined in utils/adminSw.js).
-    purgeMobileAdminState();
-    localStorage.removeItem('token');
+    purgePhoneSession();
     setUser(null);
   };
 
@@ -130,8 +142,7 @@ export function AuthProvider({ children }) {
       // Same rule as the bootstrap: an offline snapshot cannot keep a session
       // alive past its own token's expiry.
       if (refuseStaleHydration(res)) {
-        purgeMobileAdminState();
-        localStorage.removeItem('token');
+        purgePhoneSession();
         setUser(null);
         return null;
       }
@@ -144,8 +155,7 @@ export function AuthProvider({ children }) {
       // session-expired event; leaving user state mounted preserves the
       // exact screen the unlock returns to.
       if (authFailureAction(err) === 'purge') {
-        purgeMobileAdminState();
-        localStorage.removeItem('token');
+        purgePhoneSession();
         setUser(null);
       }
       throw err;

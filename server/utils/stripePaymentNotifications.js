@@ -8,6 +8,8 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { pushCopy } = require('./adminPush');
+const { formatEventDateLong } = require('./staffShiftHandlers');
 const { renderEventIcs } = require('./icsCalendar');
 const { buildOrientationPayload } = require('./orientationData');
 const { shouldSendImmediate } = require('./messageSuppression');
@@ -19,7 +21,7 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
   try {
     const payInfo = await pool.query(`
       SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
-             p.autopay_enrolled, p.status, p.client_id, p.event_date,
+             p.autopay_enrolled, p.status, p.client_id, p.event_date, p.event_timezone,
              c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
              c.communication_preferences, c.email_status, c.phone_status
       FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
@@ -196,7 +198,13 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
     const adminTpl = isCoupledSigning
       ? emailTemplates.signedAndPaidAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl })
       : emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
-    await notifyAdminCategory({ category: isCoupledSigning ? 'urgent_booking' : 'routine_finance', subject: adminTpl.subject, emailHtml: adminTpl.html, emailText: adminTpl.text });
+    // The banner states the amount the way the email does ("$500.00").
+    const pushAmount = `$${amountFormatted}`;
+    const dateLabel = pi?.event_date ? formatEventDateLong(pi) : null;
+    const push = isCoupledSigning
+      ? pushCopy.bookingSignedPaid({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: pushAmount, proposalId, dateLabel })
+      : pushCopy.paymentLanded({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: pushAmount, paymentType: payLabel, proposalId, dateLabel });
+    await notifyAdminCategory({ category: isCoupledSigning ? 'urgent_booking' : 'routine_finance', subject: adminTpl.subject, emailHtml: adminTpl.html, emailText: adminTpl.text, push });
   } catch (emailErr) {
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(emailErr, {

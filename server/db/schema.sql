@@ -2982,6 +2982,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB
     "lead_call": true
   }'::jsonb;
 
+-- Mobile admin push (spec 2026-08-13-mobile-admin section 7, 2026-10-14): one
+-- switch per push KIND, per account. An absent key is ON. Kinds are the
+-- PUSH_KINDS list in server/utils/adminPush.js; nothing else is ever stored.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_push_preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 ALTER TABLE users ADD COLUMN IF NOT EXISTS communication_preferences JSONB
   NOT NULL DEFAULT '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb;
 

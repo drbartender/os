@@ -10,7 +10,9 @@
 const { pool } = require('../../db');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
-const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { notifyAdminCategory, pushAdminKind } = require('../../utils/adminNotifications');
+const { pushCopy } = require('../../utils/adminPush');
+const { formatEventDateLong } = require('../../utils/staffShiftHandlers');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { shouldSendImmediate } = require('../../utils/messageSuppression');
 const { ADMIN_URL } = require('../../utils/urls');
@@ -78,6 +80,24 @@ async function scheduleLabFollowupAfterSubmit(planId) {
 // bundle captured inside the submit transaction (see submit.js).
 async function sendFinancialSubmitNotifications(pendingNotifications, selections) {
   const { proposal: pn, snapshot, amountPaid, addonNames, clientName, clientEmail } = pendingNotifications;
+  // Every submit pushes (spec section 7, 2026-10-14): the submit is Dallas's
+  // cue to start the shopping list and the menu. The email below keeps its
+  // balance-changed throttle. Push only, under routine_admin like the email.
+  // Guarded on both sides: a synchronous throw building the banner and an
+  // async rejection of the emit each log and never reach the submit.
+  try {
+    pushAdminKind({
+      category: 'routine_admin',
+      push: pushCopy.drinkPlanSubmitted({
+        clientName,
+        eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
+        proposalId: pn.id,
+        dateLabel: pn.event_date ? formatEventDateLong(pn) : null,
+      }),
+    }).catch((err) => console.error('Drink plan push failed (non-blocking):', err && err.message));
+  } catch (err) {
+    console.error('Drink plan push failed (non-blocking):', err && err.message);
+  }
   // Admin heads-up stays throttled to balance-changing submits — a
   // zero-impact addon submit (all package-covered) doesn't warrant a ping.
   if (pendingNotifications.balanceChanged) {
@@ -144,6 +164,7 @@ async function sendFastPathConfirmation(planId, selections) {
     const r = await pool.query(`
       SELECT p.id, p.status AS proposal_status,
              p.event_type, p.event_type_custom, p.balance_due_date,
+             p.event_date, p.event_timezone,
              p.total_price, p.amount_paid,
              c.name AS client_name, c.email AS client_email,
              c.communication_preferences, c.email_status, c.phone_status,
@@ -155,8 +176,27 @@ async function sendFastPathConfirmation(planId, selections) {
       WHERE dp.id = $1
       LIMIT 1
     `, [planId]);
-    if (r.rows[0]?.client_email) {
-      const row = r.rows[0];
+    const row = r.rows[0];
+    // The push runs before the client_email check, so a client with no
+    // email still pushes. Push only; the client email below is unchanged.
+    // Guarded like the financial tail: a synchronous throw building the
+    // banner logs here and never skips the client confirmation below.
+    if (row && row.id) {
+      try {
+        pushAdminKind({
+          category: 'routine_admin',
+          push: pushCopy.drinkPlanSubmitted({
+            clientName: row.client_name,
+            eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
+            proposalId: row.id,
+            dateLabel: row.event_date ? formatEventDateLong(row) : null,
+          }),
+        }).catch((err) => console.error('Drink plan push failed (non-blocking):', err && err.message));
+      } catch (err) {
+        console.error('Drink plan push failed (non-blocking):', err && err.message);
+      }
+    }
+    if (row?.client_email) {
       // Respect suppression rules on the immediate send.
       const sendCheck = await shouldSendImmediate({
         proposal: { id: row.id, status: row.proposal_status || 'deposit_paid' },

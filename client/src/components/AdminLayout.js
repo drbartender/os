@@ -254,7 +254,7 @@ function AdminLayoutInner() {
     // Detail screens get Back and the rich header; each falls back to its own
     // list. On a restored cold launch history has no in-app entry behind the
     // detail screen; navigate(-1) would exit the PWA.
-    const DETAIL_BACK = { 'event-detail': '/events', 'proposal-detail': '/proposals', 'inbox-item': '/inbox' };
+    const DETAIL_BACK = { 'event-detail': '/events', 'proposal-detail': '/proposals', 'inbox-item': '/inbox', notifications: '/more' };
     const isDetail = Boolean(DETAIL_BACK[screenKey]);
     const backTarget = DETAIL_BACK[screenKey] || '/events';
     const onBack = () => {

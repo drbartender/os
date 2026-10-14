@@ -340,9 +340,10 @@ app.use('/api/contractor', require('./routes/contractor'));
 // /api/me/* path falls through to me.js / staffPortal.js as usual.
 app.use('/api/me', require('./routes/emailChange'));
 app.use('/api/me', require('./routes/me'));
-// Staff portal redesign endpoints — mounted AFTER me.js so any future path
-// collision lets me.js win. Today's me.js owns /tip-page, /tips,
-// /notification-preferences; this router owns the rest.
+app.use('/api/me', require('./routes/mePush')); // POST /push-test (admin push, spec section 7)
+// Staff portal redesign endpoints — mounted AFTER me.js and mePush.js so any
+// future path collision lets them win. Today's me.js owns /tip-page, /tips,
+// /notification-preferences; mePush.js owns /push-test; this router owns the rest.
 app.use('/api/me', require('./routes/staffPortal'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/application', require('./routes/application'));

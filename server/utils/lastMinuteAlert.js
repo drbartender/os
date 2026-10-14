@@ -4,6 +4,7 @@ const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
 const { ADMIN_URL } = require('./urls');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { pushCopy } = require('./adminPush');
 const { esc } = require('./htmlEscape');
 
 /**
@@ -40,6 +41,7 @@ async function notifyLastMinuteBooking(proposalId) {
         emailHtml: `<p>${esc(lmBody)}</p>`,
         emailText: lmBody,
         smsBody: lmBody,
+        push: pushCopy.lastMinuteBooking({ eventTypeLabel: label, date, time, proposalId: p.id }),
       });
     } catch (e) {
       console.error('[lastMinuteAlert] admin notification failed:', e.message);

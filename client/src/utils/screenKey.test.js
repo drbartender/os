@@ -27,3 +27,9 @@ test('titles for the known screens, fallback capitalizes', () => {
   expect(screenTitle('inbox')).toBe('Inbox');
   expect(screenTitle('inbox-item')).toBe('Inbox');
 });
+
+test('/more/notifications is its own screen, titled Notifications; /more stays More', () => {
+  expect(routeScreenKey('/more/notifications')).toBe('notifications');
+  expect(screenTitle('notifications')).toBe('Notifications');
+  expect(routeScreenKey('/more')).toBe('more');
+});

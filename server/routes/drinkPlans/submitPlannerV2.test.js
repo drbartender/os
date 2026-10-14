@@ -1,4 +1,5 @@
 require('dotenv').config();
+process.env.SEND_NOTIFICATIONS = 'false';
 
 // Planner v2 submit-path tests (lane pp2-planner, per-concern sibling of
 // submitExtras/submitOverride/submitReconcile):
@@ -24,6 +25,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
 const drinkPlansRouter = require('../drinkPlans');
+const adminNotifications = require('../../utils/adminNotifications');
 
 let server;
 let baseUrl;
@@ -32,6 +34,10 @@ let packageId;
 const proposalIds = [];
 const planTokens = {};
 const mocktailIds = [];
+// One admin subscribed to routine_admin with one stored push subscription, so
+// the submit-push test can read the banner each submit tail queues for it.
+let pushAdminId;
+const pushPids = {};
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
@@ -121,6 +127,22 @@ before(async () => {
     'UPDATE drink_plans SET planner_version = 1 WHERE token IN ($1, $2)',
     [planTokens.legacyPicksOnly, planTokens.legacyAddon]
   );
+  // Seeded after the others so the positional proposalIds[n] reads above hold.
+  pushPids.pushAddons = await seedPlan('pushAddons');
+  pushPids.pushFast = await seedPlan('pushFast');
+
+  const a = await pool.query(
+    `INSERT INTO users (email, password_hash, role) VALUES ($1, 'x', 'admin') RETURNING id`,
+    [`pp2-submit-admin-${NONCE}@example.com`]
+  );
+  pushAdminId = a.rows[0].id;
+  await pool.query(
+    `UPDATE users
+        SET notification_preferences = notification_preferences || '{"routine_admin": true}'::jsonb,
+            staff_notification_preferences = jsonb_set(staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
+      WHERE id = $1`,
+    [pushAdminId, JSON.stringify([{ endpoint: `https://push.example.test/pp2-${NONCE}`, keys: { p256dh: 'p', auth: 'a' } }])]
+  );
 
   const app = express();
   app.use(express.json());
@@ -144,6 +166,9 @@ before(async () => {
 
 after(async () => {
   await new Promise((r) => setTimeout(r, 300));
+  // Settle every push leg a submit started before its rows and the pool go.
+  await adminNotifications.__flushPush();
+  if (pushAdminId) await pool.query('DELETE FROM users WHERE id = $1', [pushAdminId]);
   for (const pid of proposalIds) {
     await pool.query('DELETE FROM invoice_line_items WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id=$1)', [pid]);
     await pool.query('DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id=$1)', [pid]);
@@ -323,4 +348,44 @@ test('a plan with no stored logo cannot be given one by the client', async () =>
   assert.strictEqual(res.status, 200);
   const sel = (await pool.query('SELECT selections FROM drink_plans WHERE token = $1', [planTokens.logoNever])).rows[0].selections;
   assert.strictEqual(sel._logoFilename, undefined);
+});
+
+// Every submit pushes (spec section 7, 2026-10-14): the submit is the cue to
+// start the shopping list and the menu, so BOTH post-commit tails emit one
+// drink_plan_submitted banner, the add-ons (financial) path and the no-add-ons
+// fast path. The push leg is the seam; only this suite's admin is read, since
+// the shared dev DB may hold other subscribed admins.
+test('every submit pushes one drink_plan_submitted banner, with add-ons or without', async () => {
+  const pushed = [];
+  adminNotifications.__setDeps({
+    sendPushToUser: (a) => { pushed.push(a); return Promise.resolve({ subscriptions: 1, sent: 1, failed: 0, gone: 0 }); },
+  });
+  try {
+    const cases = [
+      // One v2 mocktail pick on the hosted package bills pre-batched: the financial path.
+      { key: 'pushAddons', pid: pushPids.pushAddons, selections: { mocktails: [mocktailIds[0]] }, billed: true },
+      // Nothing billable: the fast path.
+      { key: 'pushFast', pid: pushPids.pushFast, selections: { menuStyle: 'house' }, billed: false },
+    ];
+    for (const c of cases) {
+      pushed.length = 0;
+      const res = await request('PUT', `/api/drink-plans/t/${planTokens[c.key]}`, {
+        body: { status: 'submitted', selections: c.selections },
+      });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const addons = await pool.query('SELECT 1 FROM proposal_addons WHERE proposal_id = $1', [c.pid]);
+      assert.strictEqual(addons.rows.length > 0, c.billed, `${c.key} took the ${c.billed ? 'financial' : 'fast'} path`);
+
+      // pushAdminKind tracks its own call, so one flush settles the
+      // recipient read and the send leg the submit tail started.
+      await adminNotifications.__flushPush();
+      const mine = pushed.filter((p) => p.userId === pushAdminId);
+      assert.strictEqual(mine.length, 1, `${c.key}: exactly one banner for the subscribed admin`);
+      assert.strictEqual(mine[0].tag, 'drink_plan_submitted:' + c.pid);
+      assert.strictEqual(mine[0].url, '/events/' + c.pid);
+      assert.strictEqual(mine[0].title, 'Drink plan submitted');
+    }
+  } finally {
+    adminNotifications.__setDeps({ sendPushToUser: require('../../utils/adminPush').sendPushToUser });
+  }
 });

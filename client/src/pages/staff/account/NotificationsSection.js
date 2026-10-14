@@ -322,6 +322,14 @@ export default function NotificationsSection() {
     return "Couldn't turn on push. Please try again.";
   }
 
+  // A server POST that fails after the browser granted permission answers
+  // 'failed' (the browser subscription is rolled back, so the device holds no
+  // stray subscription). The banner has no 'failed' state, so it falls back
+  // to the enable-push affordance, exactly as the thrown path below does.
+  function bannerStateFor(state) {
+    return state === 'failed' ? 'default' : state;
+  }
+
   // Push toggle. Three branches:
   //   - OFF → ON when permission is not yet granted: subscribe first; only
   //     flip the cell if the server-side POST succeeded. On failure update
@@ -357,7 +365,7 @@ export default function NotificationsSection() {
         // subscribePush returns the resolved permission state so the banner
         // (denied / default / unsupported) updates atomically with the failed
         // attempt. Toast it too, otherwise the cell just silently doesn't flip.
-        setPushPermission(result.state);
+        setPushPermission(bannerStateFor(result.state));
         toast.error(pushFailureMessage(result.state));
       }
       return;
@@ -376,7 +384,7 @@ export default function NotificationsSection() {
       toast.error("Couldn't turn on push. Check your browser's notification settings and try again.");
       return;
     }
-    setPushPermission(r.ok ? 'granted' : r.state);
+    setPushPermission(r.ok ? 'granted' : bannerStateFor(r.state));
     if (r.ok) setPushSubscribed(true);
     else toast.error(pushFailureMessage(r.state));
   }

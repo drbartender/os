@@ -13,6 +13,8 @@ jest.mock('../utils/adminSw', () => ({
   purgeMobileAdminState: (...a) => mockPurge(...a),
   announceAdminSwUser: (...a) => mockAnnounce(...a),
 }));
+const mockDisableCalls = [];
+jest.mock('../utils/adminPush', () => ({ disableAdminPush: (...a) => { mockDisableCalls.push(a); return Promise.resolve({ ok: true }); } }));
 const mockArmed = jest.fn(() => false);
 jest.mock('../utils/mobileLock', () => {
   const real = jest.requireActual('../utils/mobileLock');
@@ -22,11 +24,12 @@ jest.mock('../utils/mobileLock', () => {
 import { AuthProvider, useAuth } from './AuthContext';
 
 function Probe() {
-  const { user, loading, login } = useAuth();
+  const { user, loading, login, logout } = useAuth();
   return (
     <div>
       <span data-testid="state">{loading ? 'loading' : user ? user.email : 'no-user'}</span>
       <button onClick={() => login('tok-2', { id: 2, email: 'b@x.com' })}>login</button>
+      <button onClick={() => logout()}>logout</button>
     </div>
   );
 }
@@ -57,6 +60,18 @@ test('revocation (TOKEN_VERSION_MISMATCH) purges and clears even when armed', as
   expect(mockPurge).toHaveBeenCalled();
 });
 
+// Every purge site runs the one purgePhoneSession, so a revoked session also
+// drops this device's push subscription (locally: the token is already dead).
+test('a revocation on /auth/me unsubscribes this device from push locally', async () => {
+  mockDisableCalls.length = 0;
+  mockArmed.mockReturnValue(true);
+  renderWithToken({ status: 401, code: 'TOKEN_VERSION_MISMATCH', message: 'Session expired' });
+  await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('no-user'));
+  expect(mockDisableCalls).toEqual([[{ notifyServer: false }]]);
+  expect(mockPurge).toHaveBeenCalled();
+  expect(window.localStorage.getItem('token')).toBeNull();
+});
+
 test('plain 401 with unlock NOT armed purges and clears (desktop behavior)', async () => {
   mockArmed.mockReturnValue(false);
   renderWithToken({ status: 401, code: 'INVALID_TOKEN', message: 'Invalid token' });
@@ -83,6 +98,22 @@ test('login stores the token, announces, and dispatches session-restored', async
   expect(mockAnnounce).toHaveBeenCalledWith(2);
   expect(restored).toHaveBeenCalled();
   window.removeEventListener('session-restored', restored);
+});
+
+// Spec 2026-08-13-mobile-admin section 7 (2026-10-14): logout unsubscribes
+// this device from push, fire-and-forget, alongside the purge, and LOCALLY
+// only: the token is gone before a server DELETE could go out.
+test('logout clears the token, purges, and unsubscribes this device from push locally', async () => {
+  mockDisableCalls.length = 0;
+  window.localStorage.setItem('token', 'tok-1');
+  mockGet.mockResolvedValueOnce({ data: { user: { id: 12, email: 'a@x.com' } } });
+  render(<AuthProvider><Probe /></AuthProvider>);
+  await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('a@x.com'));
+  act(() => { screen.getByText('logout').click(); });
+  expect(window.localStorage.getItem('token')).toBeNull();
+  expect(screen.getByTestId('state')).toHaveTextContent('no-user');
+  expect(mockPurge).toHaveBeenCalled();
+  expect(mockDisableCalls).toEqual([[{ notifyServer: false }]]);
 });
 
 // Cross-window push review (2026-08-14): caching /auth/me let an offline

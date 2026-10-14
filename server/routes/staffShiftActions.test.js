@@ -1,4 +1,5 @@
 require('dotenv').config();
+process.env.SEND_NOTIFICATIONS = 'false';
 process.env.NODE_ENV = 'test';
 
 // Route-level tests for server/routes/staffShiftActions.js (spec §6.5).
@@ -22,6 +23,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
 const staffShiftActionsRouter = require('./staffShiftActions');
+const adminNotifications = require('../utils/adminNotifications');
 
 let server;
 let baseUrl;
@@ -32,6 +34,9 @@ let otherStaffUserId;
 let clientId;
 let proposalId;
 let payPeriodId;
+// One admin subscribed to urgent_staffing with one stored push subscription:
+// the drop, cover and swap tests read the banner their route queues for it.
+let pushAdminId;
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
@@ -68,6 +73,21 @@ function request(method, path, { token, body, headers } = {}) {
     if (payload) req.write(payload);
     req.end();
   });
+}
+
+// The push leg is the seam (the route destructures notifyAdminCategory at
+// load). The recorder sees every banner the real leg would send; a test reads
+// only the ones addressed to pushAdminId, since the shared dev DB may hold
+// other subscribed admins.
+function startPushRecorder() {
+  const pushed = [];
+  adminNotifications.__setDeps({
+    sendPushToUser: (a) => { pushed.push(a); return Promise.resolve({ subscriptions: 1, sent: 1, failed: 0, gone: 0 }); },
+  });
+  return pushed;
+}
+function stopPushRecorder() {
+  adminNotifications.__setDeps({ sendPushToUser: require('../utils/adminPush').sendPushToUser });
 }
 
 // Helpers — seed a shift on a given event_date with a given staffer approved.
@@ -133,6 +153,20 @@ before(async () => {
     [otherStaffUserId]
   );
 
+  const a = await pool.query(
+    `INSERT INTO users (email, password_hash, role, token_version)
+     VALUES ($1, $2, 'admin', 0) RETURNING id`,
+    [`drop-test-admin-${NONCE}@example.com`, ph]
+  );
+  pushAdminId = a.rows[0].id;
+  await pool.query(
+    `UPDATE users
+        SET notification_preferences = notification_preferences || '{"urgent_staffing": true}'::jsonb,
+            staff_notification_preferences = jsonb_set(staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
+      WHERE id = $1`,
+    [pushAdminId, JSON.stringify([{ endpoint: `https://push.example.test/drop-${NONCE}`, keys: { p256dh: 'p', auth: 'a' } }])]
+  );
+
   const c = await pool.query(
     `INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555552222') RETURNING id`,
     [`Drop Test ${NONCE}`, `drop-test-client-${NONCE}@example.com`]
@@ -179,6 +213,8 @@ before(async () => {
 });
 
 after(async () => {
+  // Settle every push leg a route started before its rows and the pool go.
+  await adminNotifications.__flushPush();
   await pool.query(`DELETE FROM scheduled_messages
                      WHERE recipient_id IN ($1, $2)
                         OR entity_id IN (SELECT id FROM shifts WHERE proposal_id = $3)`,
@@ -212,6 +248,7 @@ after(async () => {
   await pool.query(`DELETE FROM clients WHERE id = $1`, [clientId]);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN ($1, $2)`, [staffUserId, otherStaffUserId]);
   await pool.query(`DELETE FROM users WHERE id IN ($1, $2)`, [staffUserId, otherStaffUserId]);
+  if (pushAdminId) await pool.query(`DELETE FROM users WHERE id = $1`, [pushAdminId]);
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
 });
@@ -233,7 +270,14 @@ test('POST /drop > 14d+1h out succeeds, shift flips back to open', async () => {
   // open | filled | completed | cancelled — see the block comment at :515.
   await pool.query(`UPDATE shifts SET status = 'filled' WHERE id = $1`, [shiftId]);
 
-  const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
+  const pushed = startPushRecorder();
+  let res;
+  try {
+    res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
+    await adminNotifications.__flushPush();
+  } finally {
+    stopPushRecorder();
+  }
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   assert.strictEqual(res.body.success, true);
   assert.strictEqual(res.body.drop_reason, 'clean_drop');
@@ -246,6 +290,12 @@ test('POST /drop > 14d+1h out succeeds, shift flips back to open', async () => {
 
   const sh = await pool.query(`SELECT status FROM shifts WHERE id = $1`, [shiftId]);
   assert.strictEqual(sh.rows[0].status, 'open', 'shift flipped back to open when no other approved staffer remains');
+
+  const mine = pushed.filter((p) => p.userId === pushAdminId);
+  assert.strictEqual(mine.length, 1, 'one banner for the subscribed admin');
+  assert.strictEqual(mine[0].tag, 'staffing_drop:' + shiftId);
+  assert.strictEqual(mine[0].url, '/events/' + proposalId);
+  assert.match(mine[0].title, /^Shift dropped: /);
 });
 
 test('POST /drop > 13d 23h out returns 409 wrong_mode', async () => {
@@ -604,10 +654,17 @@ test('POST /request-cover > 72h+1h triggers cover flip and broadcast', async () 
   const { requestId, shiftId } = await seedShiftWithRequest({
     daysFromNow: 4, startTimeStr: '18:00', userId: staffUserId,
   });
-  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
-    token: staffToken,
-    body: { reason: 'Family conflict' },
-  });
+  const pushed = startPushRecorder();
+  let res;
+  try {
+    res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+      token: staffToken,
+      body: { reason: 'Family conflict' },
+    });
+    await adminNotifications.__flushPush();
+  } finally {
+    stopPushRecorder();
+  }
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   assert.strictEqual(res.body.success, true);
   // The broadcast is fire-and-forget (the chunked enqueue can take seconds at
@@ -620,6 +677,12 @@ test('POST /request-cover > 72h+1h triggers cover flip and broadcast', async () 
   const sr = await pool.query(`SELECT cover_requested_at, cover_reason FROM shift_requests WHERE id = $1`, [requestId]);
   assert.ok(sr.rows[0].cover_requested_at, 'cover_requested_at set');
   assert.strictEqual(sr.rows[0].cover_reason, 'Family conflict');
+
+  const mine = pushed.filter((p) => p.userId === pushAdminId);
+  assert.strictEqual(mine.length, 1, 'one banner for the subscribed admin');
+  assert.strictEqual(mine[0].tag, 'staffing_cover_swap:' + shiftId);
+  assert.strictEqual(mine[0].url, '/events/' + proposalId);
+  assert.match(mine[0].title, /^Cover requested: /);
 });
 
 test('POST /request-cover > 14d+1h returns 409 wrong_mode', async () => {
@@ -705,10 +768,17 @@ test('POST /claim-cover > 401 without JWT', async () => {
 
 test('POST /claim-cover > claimer happy path, UPSERTs pending row with replaced_by_request_id', async () => {
   const { shiftId, originalRequestId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
-  const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
-    token: otherStaffToken,
-    body: {},
-  });
+  const pushed = startPushRecorder();
+  let res;
+  try {
+    res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+      token: otherStaffToken,
+      body: {},
+    });
+    await adminNotifications.__flushPush();
+  } finally {
+    stopPushRecorder();
+  }
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   assert.strictEqual(res.body.success, true);
   assert.strictEqual(res.body.original_request_id, originalRequestId);
@@ -717,6 +787,12 @@ test('POST /claim-cover > claimer happy path, UPSERTs pending row with replaced_
   const sr = await pool.query(`SELECT status, replaced_by_request_id FROM shift_requests WHERE id = $1`, [res.body.new_request_id]);
   assert.strictEqual(sr.rows[0].status, 'pending');
   assert.strictEqual(sr.rows[0].replaced_by_request_id, originalRequestId);
+
+  const mine = pushed.filter((p) => p.userId === pushAdminId);
+  assert.strictEqual(mine.length, 1, 'one banner for the subscribed admin');
+  assert.strictEqual(mine[0].tag, 'staffing_cover_swap:' + shiftId);
+  assert.strictEqual(mine[0].url, '/events/' + proposalId, 'the swap carries the proposal id, so the banner opens the event');
+  assert.match(mine[0].title, /^Swap proposed: /);
 });
 
 test('POST /claim-cover > original requester cannot claim own cover', async () => {
@@ -830,10 +906,17 @@ test('POST /emergency-drop > <72h succeeds, status stays approved, dropped_at + 
   const { requestId, shiftId } = await seedShiftWithRequest({
     daysFromNow: 1, startTimeStr: '18:00', userId: staffUserId,
   });
-  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
-    token: staffToken,
-    body: { reason: 'Car broke down on the way to the airport.' },
-  });
+  const pushed = startPushRecorder();
+  let res;
+  try {
+    res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+      token: staffToken,
+      body: { reason: 'Car broke down on the way to the airport.' },
+    });
+    await adminNotifications.__flushPush();
+  } finally {
+    stopPushRecorder();
+  }
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   assert.strictEqual(res.body.drop_emergency, true);
   const sr = await pool.query(
@@ -856,6 +939,13 @@ test('POST /emergency-drop > <72h succeeds, status stays approved, dropped_at + 
   assert.strictEqual(audit.rows[0].actor_type, 'staff');
   assert.strictEqual(audit.rows[0].actor_id, staffUserId);
   assert.strictEqual(audit.rows[0].details.shift_id, shiftId);
+
+  // The emergency drop is a staffing_drop banner, the same as the clean drop.
+  const mine = pushed.filter((p) => p.userId === pushAdminId);
+  assert.strictEqual(mine.length, 1, 'one banner for the subscribed admin');
+  assert.strictEqual(mine[0].tag, 'staffing_drop:' + shiftId);
+  assert.strictEqual(mine[0].url, '/events/' + proposalId);
+  assert.match(mine[0].title, /^Shift dropped: /);
 });
 
 test('POST /emergency-drop > past event returns 409 event_started', async () => {

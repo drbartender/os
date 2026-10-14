@@ -935,6 +935,33 @@ test('push channel > no subscriptions => row suppressed with no_push_subscriptio
   assert.strictEqual(rows[0].error_message, 'no_push_subscriptions');
 });
 
+// The staff channel never sends to an admin-phone entry: a user whose only
+// subscription came from the admin phone has none for staff messages.
+test('push channel > an admin-phone entry only => row suppressed, nothing sent', async () => {
+  await setPushSubs([
+    { endpoint: 'https://example.test/admin-phone', keys: { p256dh: 'a', auth: 'a' }, subscribed_at: '2026-05-01T00:00:00Z', surface: 'admin' },
+  ]);
+  const original = pushSender.sendPush;
+  const sentTo = [];
+  pushSender.sendPush = async ({ subscription }) => { await Promise.resolve(); sentTo.push(subscription.endpoint); return { ok: true }; };
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, payload)
+       VALUES ($1, 'shift', 'disp_test_push_adminonly', 'staff', $2, 'push', NOW() - INTERVAL '1 minute', '{}'::jsonb)`,
+      [testProposalId, pushTestUserId]
+    );
+    await dispatchPending();
+    const { rows } = await pool.query(
+      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_push_adminonly'"
+    );
+    assert.strictEqual(rows[0].status, 'suppressed');
+    assert.strictEqual(rows[0].error_message, 'no_push_subscriptions');
+    assert.deepStrictEqual(sentTo, []);
+  } finally {
+    pushSender.sendPush = original;
+  }
+});
+
 test('push channel > sends ok, prunes 410-gone subs, retains transient failures', async () => {
   await setPushSubs([
     { endpoint: 'https://example.test/good', keys: { p256dh: 'a', auth: 'a' }, subscribed_at: '2026-05-01T00:00:00Z' },

@@ -74,6 +74,41 @@ function applyNotificationPrefPatch(current, patch) {
   return merged;
 }
 
+const { PUSH_KINDS, publicKey: pushPublicKey } = require('../utils/adminPush');
+const PUSH_KIND_SET = new Set(PUSH_KINDS);
+
+/**
+ * Merge a kind-switch patch (spec 2026-08-13-mobile-admin section 7, 2026-10-14)
+ * into the current admin_push_preferences. Pure. Throws ValidationError on an
+ * unknown kind, a non-boolean, or an empty patch. Object.keys yields own keys
+ * only; the Set is the guard, so a prototype name ("constructor", "__proto__")
+ * is refused like any other unknown key and never reaches merged.
+ */
+function applyAdminPushPrefPatch(current, patch) {
+  const keys = Object.keys(patch || {});
+  if (keys.length === 0) {
+    throw new ValidationError({ _form: 'Provide at least one kind to update.' }, 'Provide at least one kind to update.');
+  }
+  const merged = { ...(current || {}) };
+  for (const k of keys) {
+    if (!PUSH_KIND_SET.has(k)) {
+      throw new ValidationError({ [k]: 'Unknown push kind.' }, `Unknown push kind: ${k}`);
+    }
+    if (typeof patch[k] !== 'boolean') {
+      throw new ValidationError({ [k]: 'Must be a boolean.' }, `Push kind ${k} must be a boolean.`);
+    }
+    merged[k] = patch[k];
+  }
+  return merged;
+}
+
+// Every kind, absent = on, so the phone always renders all seven switches.
+function fullPushPrefs(stored) {
+  const out = {};
+  for (const k of PUSH_KINDS) out[k] = (stored || {})[k] !== false;
+  return out;
+}
+
 router.get('/tip-page', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`
     SELECT
@@ -262,42 +297,67 @@ router.get('/tips', asyncHandler(async (req, res) => {
   });
 }));
 
-// GET /api/me/notification-preferences: the current user's category subscriptions.
+// GET /api/me/notification-preferences: the current user's category
+// subscriptions, plus the phone's push kind switches and the server's VAPID
+// public key (null when the server cannot sign: the phone then says push is
+// not set up on the server). Spec 2026-08-13-mobile-admin section 7.
 router.get('/notification-preferences', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT notification_preferences FROM users WHERE id = $1',
+    'SELECT notification_preferences, admin_push_preferences FROM users WHERE id = $1',
     [req.user.id]
   );
-  // Backfill any missing category to true so the UI always renders all 11
-  // toggles even if a historical row predates a category being added.
   const stored = (rows[0] && rows[0].notification_preferences) || {};
   const prefs = {};
   for (const cat of NOTIFICATION_CATEGORIES) {
     prefs[cat] = stored[cat] !== false;
   }
-  res.json({ notification_preferences: prefs, categories: NOTIFICATION_CATEGORIES });
+  res.json({
+    notification_preferences: prefs,
+    categories: NOTIFICATION_CATEGORIES,
+    admin_push_preferences: fullPushPrefs(rows[0] && rows[0].admin_push_preferences),
+    push: { public_key: pushPublicKey(), kinds: [...PUSH_KINDS] },
+  });
 }));
 
-// PATCH /api/me/notification-preferences: toggle one or more categories.
+// PATCH /api/me/notification-preferences: toggle one or more categories, the
+// push kind switches (admin_push_preferences: { kind: boolean }), or both.
 // Admin/manager only: staff are never notification recipients.
 router.patch('/notification-preferences', requireAdminOrManager, asyncHandler(async (req, res) => {
-  const current = await pool.query(
-    'SELECT notification_preferences FROM users WHERE id = $1',
-    [req.user.id]
-  );
-  const merged = applyNotificationPrefPatch(
-    (current.rows[0] && current.rows[0].notification_preferences) || {},
-    req.body
-  );
+  const body = req.body || {};
+  const { admin_push_preferences: pushPatch, ...categoryPatch } = body;
+  const hasCategories = Object.keys(categoryPatch).length > 0;
+  // Present but not a plain object (a string, null, an array) is refused
+  // outright, never silently dropped beside a category toggle.
+  if (pushPatch !== undefined && (pushPatch === null || typeof pushPatch !== 'object' || Array.isArray(pushPatch))) {
+    throw new ValidationError({ admin_push_preferences: 'Must be an object of kind switches.' }, 'admin_push_preferences must be an object of kind switches.');
+  }
+  const hasPush = pushPatch !== undefined;
+  if (!hasCategories && !hasPush) {
+    throw new ValidationError({ _form: 'Provide at least one category or kind to update.' }, 'Provide at least one category or kind to update.');
+  }
+  // The helpers validate (they throw on a bad key or value); merged into {}
+  // they return exactly the validated patch. Only that patch is written, and
+  // jsonb || merges it in SQL against the row as it stands at UPDATE time, so
+  // two switches in flight (the phone flips each kind with its own PATCH; the
+  // desktop toggles categories on the same row) can never erase each other.
+  const categoryDelta = hasCategories ? applyNotificationPrefPatch({}, categoryPatch) : {};
+  const pushDelta = hasPush ? applyAdminPushPrefPatch({}, pushPatch) : {};
   const { rows } = await pool.query(
-    `UPDATE users SET notification_preferences = $1, updated_at = NOW()
-      WHERE id = $2
-      RETURNING notification_preferences`,
-    [JSON.stringify(merged), req.user.id]
+    `UPDATE users
+        SET notification_preferences = COALESCE(notification_preferences, '{}'::jsonb) || $1::jsonb,
+            admin_push_preferences = COALESCE(admin_push_preferences, '{}'::jsonb) || $2::jsonb,
+            updated_at = NOW()
+      WHERE id = $3
+      RETURNING notification_preferences, admin_push_preferences`,
+    [JSON.stringify(categoryDelta), JSON.stringify(pushDelta), req.user.id]
   );
-  res.json({ notification_preferences: rows[0].notification_preferences });
+  res.json({
+    notification_preferences: rows[0].notification_preferences,
+    admin_push_preferences: fullPushPrefs(rows[0].admin_push_preferences),
+  });
 }));
 
 module.exports = router;
 module.exports.applyNotificationPrefPatch = applyNotificationPrefPatch;
+module.exports.applyAdminPushPrefPatch = applyAdminPushPrefPatch;
 module.exports.NOTIFICATION_CATEGORIES = NOTIFICATION_CATEGORIES;

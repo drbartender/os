@@ -86,11 +86,17 @@ test('notifyAdminBankPaymentProcessing > a deposit is an urgent booking, an invo
   assert.equal(r.sent, true);
   assert.equal(adminCalls.length, 1);
   assert.equal(adminCalls[0].category, 'urgent_booking');
+  assert.equal(adminCalls[0].push.kind, 'booking_signed_paid');
+  assert.match(adminCalls[0].push.title, /Bank payment started/);
+  assert.equal(adminCalls[0].push.url, `/events/${id}`);
+  assert.equal(adminCalls[0].push.recordId, id);
+  assert.match(adminCalls[0].push.body, / · Saturday, September 19$/, 'the event date ends the banner body');
   assert.match(adminCalls[0].subject, /^Bank payment processing: Bank Notify Test \(Cocktail Party\)$/);
   assert.match(adminCalls[0].emailText, /\$100\.00 \(deposit\)/);
   assert.ok(!adminCalls[0].emailText.includes('—'));
   await notifyAdminBankPaymentProcessing({ proposalId: id, amountCents: 40000, paymentType: 'invoice' });
   assert.equal(adminCalls[1].category, 'routine_finance');
+  assert.equal(adminCalls[1].push.kind, 'payment_landed');
   const none = await notifyAdminBankPaymentProcessing({ proposalId: -1, amountCents: 1, paymentType: 'deposit' });
   assert.equal(none.sent, false);
 });

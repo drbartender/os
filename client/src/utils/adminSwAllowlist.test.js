@@ -23,6 +23,16 @@ function loadServiceWorker() {
     onFetch: listeners.fetch,
   };
 }
+function loadServiceWorkerWithClients(windows, openWindow = true) {
+  const src = fs.readFileSync(path.resolve(__dirname, '../../public/admin-sw.js'), 'utf8');
+  const listeners = {};
+  const clients = { opened: [], matchAll: async () => windows };
+  if (openWindow) clients.openWindow = async (u) => { clients.opened.push(u); return null; };
+  const self = { addEventListener: (type, fn) => { listeners[type] = fn; }, location: { origin: 'https://admin.example.test' }, clients, registration: { showNotification: async () => {} } };
+  const context = vm.createContext({ self, caches: {}, fetch: () => Promise.reject(new Error('no network in test')), URL, Response: function Response() {}, Headers: function Headers() {}, console, setTimeout, clearTimeout });
+  vm.runInContext(src, context);
+  return { onNotificationClick: listeners.notificationclick, clients };
+}
 const request = (headers = {}) => ({ headers: { get: (name) => (name.toLowerCase() in headers ? headers[name.toLowerCase()] : null) } });
 
 describe('admin service worker read allowlist', () => {
@@ -37,6 +47,7 @@ describe('admin service worker read allowlist', () => {
     '/api/admin/search',
     '/api/admin/active-staff',
     '/api/auth/me',
+    '/api/me/notification-preferences',
   ])('still caches %s', (p) => {
     expect(isAllowlisted(p)).toBe(true);
   });
@@ -92,7 +103,7 @@ describe('admin service worker read allowlist', () => {
 
   test('the version was bumped so installed phones pick the new allowlist up', () => {
     expect(version).not.toBe('admin-sw-2026-08-14-v8');
-    expect(version).toMatch(/^admin-sw-\d{4}-\d{2}-\d{2}-v10$/);
+    expect(version).toMatch(/^admin-sw-\d{4}-\d{2}-\d{2}-v11$/);
   });
 });
 
@@ -173,5 +184,90 @@ describe('storing and stale-serving are opt-in', () => {
         expect(event.waitUntil).not.toHaveBeenCalled();
       }
     }
+  });
+});
+
+describe('notificationclick', () => {
+  function run(windows, data, { openWindow = true } = {}) {
+    const { onNotificationClick, clients } = loadServiceWorkerWithClients(windows, openWindow);
+    const calls = [];
+    const event = {
+      notification: { close: () => calls.push(['close']), data },
+      waitUntil: (p) => { calls.push(['waitUntil']); event.done = p; },
+    };
+    onNotificationClick(event);
+    // `clients` is the loader's object: its `opened` array records openWindow.
+    return { calls, done: event.done, clients };
+  }
+  const client = (url) => {
+    const c = { url, focused: false, navigatedTo: null };
+    c.focus = async () => { c.focused = true; return c; };
+    c.navigate = async (u) => { c.navigatedTo = u; return c; };
+    return c;
+  };
+
+  test('focuses the window already on the exact path', async () => {
+    const a = client('https://admin.example.test/events/10');
+    const b = client('https://admin.example.test/events/1');
+    const r = run([a, b], { url: '/events/1' });
+    await r.done;
+    expect(b.focused).toBe(true);
+    expect(a.focused).toBe(false);
+    expect(b.navigatedTo).toBeNull();
+  });
+
+  test('with no window on the path, focuses an open admin window and navigates it there', async () => {
+    const a = client('https://admin.example.test/events');
+    const r = run([a], { url: '/events/7' });
+    await r.done;
+    expect(a.focused).toBe(true);
+    expect(a.navigatedTo).toBe('/events/7');
+    expect(r.clients.opened).toEqual([]);
+  });
+
+  test('with no window at all, opens one at the target', async () => {
+    const r = run([], { url: '/more/notifications' });
+    await r.done;
+    expect(r.clients.opened).toEqual(['/more/notifications']);
+  });
+
+  test('a payload url off the admin origin focuses the open window, navigates nothing, opens nothing', async () => {
+    const a = client('https://admin.example.test/events');
+    const r = run([a], { url: 'https://evil.example.test/phish' });
+    await r.done;
+    expect(a.focused).toBe(true);
+    expect(a.navigatedTo).toBeNull();
+    expect(r.clients.opened).toEqual([]);
+  });
+
+  test('a payload url off the admin origin, with no window open, opens the root', async () => {
+    const r = run([], { url: 'https://evil.example.test/phish' });
+    await r.done;
+    expect(r.clients.opened).toEqual(['/']);
+  });
+
+  // A script or document scheme has no admin origin, so it collapses to '/',
+  // the root default: focus the open window, navigate nothing, open nothing.
+  test.each([
+    ['javascript:alert(1)'],
+    ['data:text/html,x'],
+  ])('a %s payload url focuses the open window, navigates nothing, opens nothing', async (url) => {
+    const a = client('https://admin.example.test/events');
+    const r = run([a], { url });
+    await r.done;
+    expect(a.focused).toBe(true);
+    expect(a.navigatedTo).toBeNull();
+    expect(r.clients.opened).toEqual([]);
+  });
+
+  test('an open window that cannot be navigated falls through to opening the target', async () => {
+    // An uncontrolled window (matchAll includes them) rejects navigate().
+    const a = client('https://admin.example.test/events');
+    a.navigate = async () => { throw new TypeError('not controlled'); };
+    const r = run([a], { url: '/events/7' });
+    await r.done;
+    expect(a.focused).toBe(true);
+    expect(a.navigatedTo).toBeNull();
+    expect(r.clients.opened).toEqual(['/events/7']);
   });
 });

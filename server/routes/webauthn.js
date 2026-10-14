@@ -13,6 +13,7 @@ const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { webauthnLimiter } = require('../middleware/rateLimiters');
 const { AppError, ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { deleteAllSubscriptions } = require('../utils/adminPush');
 
 // WebAuthn passkey unlock for the phone admin surface (mobile-admin spec
 // 2026-08-13 section 8). Mounted under /api/auth/webauthn/ so every response,
@@ -205,6 +206,10 @@ function createWebauthnRouter(overrides = {}) {
       // token_version bump is a global logout by design, this session
       // included. The desktop performing the revoke simply logs back in.
       await client.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [req.user.id]);
+      // A revoke is a global logout; the phones' push subscriptions go with it
+      // (spec section 7, 2026-10-14), so a lost phone stops buzzing. The
+      // remaining phones re-enable with one tap.
+      await deleteAllSubscriptions(req.user.id, client);
       await client.query('COMMIT');
     } catch (e) {
       try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back */ }

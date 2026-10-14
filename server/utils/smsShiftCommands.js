@@ -197,7 +197,7 @@ async function handleConfirm(staffUserId) {
  *
  * @param {number} staffUserId
  * @returns {Promise<
- *   {ok:true, shiftId:number, requestId:number, eventDate:string, clientName:string|null, eventType:string|null, eventTypeCustom:string|null} |
+ *   {ok:true, shiftId:number, requestId:number, eventDate:string, clientName:string|null, eventType:string|null, eventTypeCustom:string|null, proposalId:number|null} |
  *   {ok:false, reason:'no_shift'}
  * >}
  */
@@ -268,6 +268,7 @@ async function handleCant(staffUserId, twilioSid) {
     clientName: shift.client_name || null,
     eventType: shift.event_type || null,
     eventTypeCustom: shift.event_type_custom || null,
+    proposalId: shift.proposal_id || null,
   };
 }
 
