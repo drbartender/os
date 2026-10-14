@@ -150,7 +150,11 @@ test('parseLead: V4 with no end time leaves eventDuration null (draft falls back
 });
 
 let server, baseUrl;
-const secret = process.env.THUMBTACK_WEBHOOK_SECRET || null;
+// The suite runs VERIFIED, as production does: a harness secret is installed when the
+// env has none, and every helper sends it. One test below drops the secret for a
+// single request to drive the dev-open branch.
+const secret = process.env.THUMBTACK_WEBHOOK_SECRET || 'harness-webhook-secret';
+process.env.THUMBTACK_WEBHOOK_SECRET = secret;
 const negA = `test-fail-${Date.now()}`;
 const negB = `test-pii-${Date.now()}`;
 const negC = `test-half-${Date.now()}`;
@@ -363,11 +367,11 @@ test('seeding: a new email-less Thumbtack lead flags its client pending', async 
 });
 
 test('seeding: a returning lead does NOT re-flag a client whose harvest already concluded', async () => {
-  // findOrCreateClient's phone match only fires on email-NULL, name-matching rows
-  // (anti-takeover guard in clientDedup.js), so a Thumbtack lead never resolves to a
-  // client that already has an email. The reachable protection is the STATUS guard:
-  // once a client's harvest concluded (failed/harvested), a new lead must not reset
-  // it to pending. Re-arm is an explicit admin action. Here we drive a 'failed' row.
+  // The webhook passes trustedPhoneMatch, so a returning lead CAN resolve to a
+  // Thumbtack-sourced client that already has an email (next test). This test drives
+  // the STATUS guard on an email-less row: once a client's harvest concluded
+  // (failed/harvested), a new lead must not reset it to pending. Re-arm is an
+  // explicit admin action. Here we drive a 'failed' row.
   thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => null });
   const phone = `+1555${String(Date.now()).slice(-7)}`;
   const name = 'Harness Returning';
@@ -400,6 +404,82 @@ test('seeding: a returning lead does NOT re-flag a client whose harvest already 
   assert.equal(r2.rows[0].client_id, clientId, 'lead 2 should dedupe onto the same email-null client by name+phone');
   const status = await pool.query('SELECT email_harvest_status FROM clients WHERE id = $1', [clientId]);
   assert.equal(status.rows[0].email_harvest_status, 'failed', 'a concluded (failed) harvest must NOT be reset to pending by a new lead');
+});
+
+test('a repeat lead from a client whose email was already harvested resolves to that client (no second row, email kept)', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => null });
+  const phone = `+1555${String(Date.now()).slice(-7)}`;
+  const name = 'Harness Harvested Repeat';
+  const mkBody = (neg) => JSON.stringify({
+    leadID: neg,
+    customer: { name, phone },
+    request: { category: 'Wedding Bartending', description: 'x', location: { city: 'Tampa', state: 'FL', zipCode: '33602' }, details: [] },
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-thumbtack-secret'] = secret;
+
+  // Lead 1 creates the email-less client.
+  const neg1 = `test-repeat-a-${Date.now()}`;
+  created.negotiationIds.push(neg1);
+  assert.equal((await httpReq('POST', '/api/thumbtack/leads', headers, mkBody(neg1))).status, 200);
+  const r1 = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg1]);
+  const clientId = r1.rows[0].client_id;
+  assert.ok(clientId, 'lead 1 should create a client');
+  created.clientIds.push(clientId);
+
+  // The harvester did its job: the client now carries an email.
+  const email = `harness.repeat.${Date.now()}@example.com`;
+  await pool.query("UPDATE clients SET email = $2, email_harvest_status = 'harvested' WHERE id = $1", [clientId, email]);
+
+  // The same person comes back through Thumbtack (which never sends the email).
+  const neg2 = `test-repeat-b-${Date.now()}`;
+  created.negotiationIds.push(neg2);
+  const res = await httpReq('POST', '/api/thumbtack/leads', headers, mkBody(neg2));
+  assert.equal(res.status, 200);
+  const r2 = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg2]);
+  if (r2.rows[0].client_id && r2.rows[0].client_id !== clientId) created.clientIds.push(r2.rows[0].client_id);
+  assert.equal(r2.rows[0].client_id, clientId, 'lead 2 should resolve to the harvested client by name+phone, not create a second row');
+  const c = await pool.query('SELECT email, email_harvest_status FROM clients WHERE id = $1', [clientId]);
+  assert.equal(c.rows[0].email, email, 'the harvested email is untouched');
+  assert.equal(c.rows[0].email_harvest_status, 'harvested', 'a harvested client is not re-seeded pending');
+});
+
+test('an unverified request (no secret configured, the dev-open branch) never gets the trusted match', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => null });
+  const phone = `+1555${String(Date.now()).slice(-7)}`;
+  const name = 'Harness Unverified Repeat';
+  const mkBody = (neg) => JSON.stringify({
+    leadID: neg,
+    customer: { name, phone },
+    request: { category: 'Wedding Bartending', description: 'x', location: { city: 'Tampa', state: 'FL', zipCode: '33602' }, details: [] },
+  });
+  const headers = { 'Content-Type': 'application/json', 'x-thumbtack-secret': secret };
+
+  // Lead 1, verified: creates the client; the harvester then fills the email.
+  const neg1 = `test-unverified-a-${Date.now()}`;
+  created.negotiationIds.push(neg1);
+  assert.equal((await httpReq('POST', '/api/thumbtack/leads', headers, mkBody(neg1))).status, 200);
+  const r1 = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg1]);
+  const clientId = r1.rows[0].client_id;
+  assert.ok(clientId, 'lead 1 should create a client');
+  created.clientIds.push(clientId);
+  await pool.query("UPDATE clients SET email = $2, email_harvest_status = 'harvested' WHERE id = $1", [clientId, `harness.unverified.${Date.now()}@example.com`]);
+
+  // Lead 2 arrives with NO secret configured and no header: the dev-open branch lets
+  // it through, but it is not a verified request, so it must not reach the harvested row.
+  const neg2 = `test-unverified-b-${Date.now()}`;
+  created.negotiationIds.push(neg2);
+  delete process.env.THUMBTACK_WEBHOOK_SECRET;
+  let res;
+  try {
+    res = await httpReq('POST', '/api/thumbtack/leads', { 'Content-Type': 'application/json' }, mkBody(neg2));
+  } finally {
+    process.env.THUMBTACK_WEBHOOK_SECRET = secret;
+  }
+  assert.equal(res.status, 200, 'the dev-open branch still accepts the lead');
+  const r2 = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg2]);
+  if (r2.rows[0].client_id && r2.rows[0].client_id !== clientId) created.clientIds.push(r2.rows[0].client_id);
+  assert.notEqual(r2.rows[0].client_id, clientId, 'an unverified lead must not attach to an email-bearing client');
 });
 
 test('duplicate-heal: a committed lead with no draft heals on redelivery; a fully-processed duplicate does not', async () => {

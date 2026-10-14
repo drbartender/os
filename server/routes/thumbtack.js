@@ -48,13 +48,17 @@ function verifyWebhook(req, res, next) {
       const decoded = Buffer.from(parts[1], 'base64').toString();
       // Thumbtack may send username:password or just the secret
       if (safeEqual(decoded, secret) || safeEqual(decoded.split(':').pop(), secret)) {
+        req.thumbtackVerified = true;
         return next();
       }
     }
   }
 
   // Custom header
-  if (safeEqual(req.headers['x-thumbtack-secret'], secret)) return next();
+  if (safeEqual(req.headers['x-thumbtack-secret'], secret)) {
+    req.thumbtackVerified = true;
+    return next();
+  }
 
   console.error('Thumbtack webhook auth failed');
   Sentry.captureMessage('Thumbtack webhook signature failure', {
@@ -444,7 +448,11 @@ router.post('/leads', asyncHandler(async (req, res) => {
       return res.status(200).json({ status: 'duplicate' });
     }
 
-    // Find or create the client (dedupes on email OR phone — see clientDedup.js)
+    // Find or create the client (dedupes on email OR phone — see clientDedup.js).
+    // trustedPhoneMatch follows actual verification (req.thumbtackVerified is set
+    // only on a secret match, never by the dev-open branch): the identity is then
+    // Thumbtack's, so a repeat customer whose email was already harvested resolves
+    // to their existing Thumbtack-sourced row instead of a second, email-less client.
     let clientId = null;
     if (lead.customerName || normalizePhone(lead.customerPhone)) {
       clientId = await findOrCreateClient(dbClient, {
@@ -452,6 +460,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
         phone: lead.customerPhone,
         source: 'thumbtack',
         notes: `Thumbtack lead — email needed. Category: ${lead.category || 'N/A'}`,
+        trustedPhoneMatch: req.thumbtackVerified === true,
       });
     }
 

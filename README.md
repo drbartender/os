@@ -380,7 +380,7 @@ dr-bartender/
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
 │   │   ├── companyPhone.js     # COMPANY_PHONE (the 1922, call) + COMPANY_TEXT_PHONE (the 888, text): the only numbers a client-facing template may print; mirrors client/src/utils/constants.js
 │   │   ├── clientAutomationSuspension.js # Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets clients.automation_suspended_at, cancels pending scheduled_messages)
-│   │   ├── clientDedup.js      # Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only); the single intake find-or-create
+│   │   ├── clientDedup.js      # Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only; trustedPhoneMatch for the Thumbtack webhook); the single intake find-or-create
 │   │   ├── clientNotices.js    # Notify-client contract: notice detection (event_details_changed) + notify-list validation shared by PATCH and preflight
 │   │   ├── comms/              # Compose-first client-send registry (backs POST /api/comms)
 │   │   │   ├── registry.js     # Auto-discovers actions/*.js at require time; defines + enforces the action contract (resolveRecipient/buildMessages/ensureSideEffects/dispatch)
