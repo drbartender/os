@@ -883,7 +883,7 @@ test('applyAdminPushPrefPatch > rejects an unknown kind, a non-boolean, an inher
 });
 ```
 
-Create `server/routes/mePush.test.js` (the hand-rolled harness `webauthn.test.js` uses, cut to this route):
+Create `server/routes/mePush.test.js` (the hand-rolled harness `webauthn.test.js` uses, cut to this route; as built in the lane it also seeds `admin2`, an admin with no stored subscription, for the `no_subscriptions` test, and carries a concurrent-PATCH test, see the build record at the end):
 
 ```js
 require('dotenv').config();
@@ -934,10 +934,20 @@ before(async () => {
   await new Promise((r) => server.listen(0, r));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
+// Delete first, guarded on the ids that exist, so a `before` that threw after
+// its INSERTs (the RED step does exactly that) leaves no rows on the shared
+// dev DB; close the server only if one exists; end the pool whatever happened.
 after(async () => {
-  await new Promise((r) => server.close(r));
-  await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [admin.id, staff.id]);
-  await pool.end();
+  try {
+    try {
+      const ids = [admin, admin2, staff].filter(Boolean).map((u) => u.id);
+      if (ids.length) await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [ids]);
+    } finally {
+      if (server) await new Promise((r) => server.close(r));
+    }
+  } finally {
+    await pool.end();
+  }
 });
 
 test('GET notification-preferences carries every kind (absent = on) and the push block', async () => {
@@ -1096,26 +1106,30 @@ router.patch('/notification-preferences', requireAdminOrManager, asyncHandler(as
   const body = req.body || {};
   const { admin_push_preferences: pushPatch, ...categoryPatch } = body;
   const hasCategories = Object.keys(categoryPatch).length > 0;
-  const hasPush = pushPatch && typeof pushPatch === 'object';
+  // Present but not a plain object (a string, null, an array) is refused
+  // outright, never silently dropped beside a category toggle.
+  if (pushPatch !== undefined && (pushPatch === null || typeof pushPatch !== 'object' || Array.isArray(pushPatch))) {
+    throw new ValidationError({ admin_push_preferences: 'Must be an object of kind switches.' }, 'admin_push_preferences must be an object of kind switches.');
+  }
+  const hasPush = pushPatch !== undefined;
   if (!hasCategories && !hasPush) {
     throw new ValidationError({ _form: 'Provide at least one category or kind to update.' }, 'Provide at least one category or kind to update.');
   }
-  const current = await pool.query(
-    'SELECT notification_preferences, admin_push_preferences FROM users WHERE id = $1',
-    [req.user.id]
-  );
-  const row = current.rows[0] || {};
-  const mergedCategories = hasCategories
-    ? applyNotificationPrefPatch(row.notification_preferences || {}, categoryPatch)
-    : (row.notification_preferences || {});
-  const mergedPush = hasPush
-    ? applyAdminPushPrefPatch(row.admin_push_preferences || {}, pushPatch)
-    : (row.admin_push_preferences || {});
+  // The helpers validate (they throw on a bad key or value); merged into {}
+  // they return exactly the validated patch. Only that patch is written, and
+  // jsonb || merges it in SQL against the row as it stands at UPDATE time, so
+  // two switches in flight (the phone flips each kind with its own PATCH; the
+  // desktop toggles categories on the same row) can never erase each other.
+  const categoryDelta = hasCategories ? applyNotificationPrefPatch({}, categoryPatch) : {};
+  const pushDelta = hasPush ? applyAdminPushPrefPatch({}, pushPatch) : {};
   const { rows } = await pool.query(
-    `UPDATE users SET notification_preferences = $1, admin_push_preferences = $2, updated_at = NOW()
+    `UPDATE users
+        SET notification_preferences = COALESCE(notification_preferences, '{}'::jsonb) || $1::jsonb,
+            admin_push_preferences = COALESCE(admin_push_preferences, '{}'::jsonb) || $2::jsonb,
+            updated_at = NOW()
       WHERE id = $3
       RETURNING notification_preferences, admin_push_preferences`,
-    [JSON.stringify(mergedCategories), JSON.stringify(mergedPush), req.user.id]
+    [JSON.stringify(categoryDelta), JSON.stringify(pushDelta), req.user.id]
   );
   res.json({
     notification_preferences: rows[0].notification_preferences,
@@ -2854,3 +2868,9 @@ When the lane closes, append "Lane ma-c-push close record" with the as-built del
 ## Plan fleet fold (2026-10-14)
 
 Three reviewers ran on `16daa37d` (fidelity PASS 0/4/4, decomposition PASS 0/7/7, feasibility FAIL 4/8/4; blockers were all test-step defects, every production step was found executable, and the feasibility reviewer proved the client suites in a scratch mirror). Everything was folded: the error-handler import that did not exist (Task 3), the CANT pin aimed at a suite without the recorder and outside the footprint (Task 4), the `clients` object the click-test loader dropped and two RTL matchers (Tasks 8, 9), the banner date (decision 10), the proposal id for texted drops and swaps (decision 14), the undeclared screen states (decision 13), the back label (12), the both-keys rule (11), Sending's ink (15), the same-origin guard on the worker's navigate (decision 6), the nine sensitive files, the serialized client tasks, the footprint gaps (`AuthContext.test.js`, the endInstant suite, `smsShiftCommands.js`, `staffShiftActions.test.js`, `submitPlannerV2.test.js`, this plan), the drink-plan emit as its own commit with its pin, the recorder pins on the staffing sites, the size growth stated, and the stale line numbers. Decision 6 (the worker navigates an open window) is the one item flagged for Dallas's veto before Task 9. The spec's sentences of Task 11 Step 4 were written at the fold.
+
+## Lane ma-c-push build record (in progress, 2026-10-14)
+
+- **Task 1** (`a4646065`, fix `6c54766a`): as planned, plus the review's one Important: `pool.connect()` moved inside the prune's try/finally and the prune call guarded, so `sendPushToUser` cannot throw (pinned by a test whose connect stub rejects only the promise form; pg-pool's `query` uses the callback form). As-built deltas: a read failure inside the routine leaves a dispatcher row `suppressed` rather than `failed` (both terminal, Sentry still captures); malformed stored subscriptions are skipped and dropped by any prune; `pushDispatch.js` does a separate existence read.
+- **Task 2** (`948c0e05`, fix `e31af53b`): as planned, plus: the push leg starts BEFORE the email and SMS loop (a banner is not held behind Resend and Twilio); the tests assert the fixture users' presence or absence in the sent list, never totals, so a real subscribed admin on the shared dev DB cannot break them.
+- **Task 3** (`21cdeb9a`, fixes `b2a5c3c6`, `aa5e495d`): as planned, plus two Important review findings in the brief's verbatim blocks and one load-bearing re-review finding, all three folded into the plan text above: the harness's `after` deletes first and guarded; a non-object `admin_push_preferences` beside a category key is a 400; and the PATCH merges in SQL (`column || $patch`, only the validated delta per column) instead of read-modify-write, because two quick kind flips from the phone lost one update and a desktop category toggle erased a phone kind toggle (the concurrent test failed on every run against the old code). `mePush.test.js` has 6 tests as built.
