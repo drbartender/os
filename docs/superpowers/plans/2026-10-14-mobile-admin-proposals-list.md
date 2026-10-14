@@ -26,21 +26,24 @@
 - `client/src/index.css` (22702 lines): the mobile block is scoped `html[data-app="admin-os"]`; the card family defined today: `.m-card .m-card-bal .m-card-body .m-card-cancelled .m-card-foot .m-card-guests .m-card-head .m-card-kind .m-card-meta .m-card-more .m-card-owes .m-card-skel .m-card-title .m-chip-toggle .m-empty .m-empty-body .m-empty-title .m-end .m-frac .m-listbar .m-more-error .m-rail .m-rail-day .m-rail-dow .m-rail-mon .m-retry-btn .m-seg .m-seg-btn .m-shiftnote .m-skel-bar .m-skel-note .m-skel-rail .m-stale .m-stale-dot .m-tag .m-tags`; `.m-rail` at `:21539` (44px, right rule), `.m-card-foot` at `:21561` (flex, wrap, `gap: 4px 6px`, `margin-top: 3px`), `.m-frac` at `:21566-21567`. The global `.chip` + `.chip-dot` carry `StatusChip`.
 - `client/src/utils/mobileClassContract.test.js`: `SOURCES` is a hand-kept list of phone files whose `m-*` tokens must exist in `index.css`; a new phone page joins it.
 - `scripts/mobile-capture.manifest.json:82`: `{ "name": "admin-proposals", "host": "localhost", "path": "/proposals", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell", "reportOnly": true }` (report-only because the tab had no phone screen).
-- Docs anchors: `README.md:701` (the `pages/mobile/` tree line, listing MorePage, EventsListPhone, EventDetailPhone, InboxPhone, NotificationsPhone); `ARCHITECTURE.md:339` (the `GET /` proposals row, which already documents `X-Total-Count`); `ARCHITECTURE.md:2135` ("Phone Events list" bullet; the new bullet goes right after it); `scripts/sensitive-paths.txt:466-467` (the phone pages listed, `EventDetailPhone.js`, `EventsListPhone.js`); `docs/fix-list-remaining-2026-07-02.md` near `:2965-2970` (the "Proposals tab still routes to the ORDINARY DESKTOP ADMIN PAGE ... until `ma-f1` lands" sentence); `docs/walkthroughs-owed.md` Tier 6.
+- Docs anchors: `README.md:701` (the `pages/mobile/` tree line, listing MorePage, EventsListPhone, EventDetailPhone, InboxPhone, NotificationsPhone); `ARCHITECTURE.md:339` (the `GET /` proposals row, which already documents `X-Total-Count`); `ARCHITECTURE.md:2135` ("Phone Events list" bullet; the new bullet goes right after it); `scripts/sensitive-paths.txt:466-467` (the phone pages listed, `EventDetailPhone.js`, `EventsListPhone.js`); `docs/fix-list-remaining-2026-07-02.md` about `:2991-2992` (search "ORDINARY DESKTOP ADMIN PAGE": the "... until `ma-f1` lands" sentence); `docs/walkthroughs-owed.md` Tier 6.
 - Benchmark Proposals tab (markup inside `data-screen-label="Proposals"`, the `proposals`/`pScoped`/`pList` script): rail 46px with a right rule (DOW 9px mono, day 20px numeric, month 8px mono); head `client` (600) with ` · kind` inline in ink-3, `guests GUESTS` at the right; `.m-card-meta`; a foot row with the total (numeric 12.5px, ink-2) and the chip at the right edge (`margin-left: auto`); the skeleton note `first sync · fetching proposals` with four pulsing cards; `.m-stale`; the empty block with a 28px icon; `Show more` + `N of M`; the end divider `End of active · N proposals`. Orders: `byLead` newest first (created), `byDate` soonest first; `unviewed` is `pstatus === 'sent'`; the Unviewed chip carries `unviewedCount` (the whole unviewed set) and the filtered list shows every unviewed row; empty copy: filtering with a non-empty bucket = check icon in the ok ink, "Everything opened" / "No sent proposal is waiting to be seen."; otherwise clipboard icon, "No active proposals" / "Drafts and sent quotes land here. Booked ones move to Events.". Meta fixtures: `viewed 5h ago · 3 views`, `modified by client 1d ago`, `sent 2d ago · not opened`, `accepted · awaiting deposit`, `draft · created 3d ago`, `sent 18h ago · not opened`.
 
 ## Plan decisions (stated here so the contract is whole)
 
-1. **The kind gets its own line**, not the artifact's inline `client · kind`. Dallas ruled that on the identical card family on 2026-09-24 ("beside the name it was ellipsised on nearly every card"), after the Proposals screen was drawn; the 10/14 refresh did not redraw it. Cost if wrong: one line more per card.
+1. **The kind gets its own line**, not the artifact's inline `client · kind`. Dallas ruled that on the identical card family on 2026-09-24 ("beside the name it was ellipsised on nearly every card"), after the Proposals screen was drawn; the 10/14 refresh did not redraw it. The same ruling set the family's rail at 44px with a 7px right inset and an 8px card gap (the artifact draws 46/10/12), so those metrics are inherited, not new. Cost if wrong: one line more per card.
 2. **`envelope=1` is opt-in.** Without it the route answers the bare array and `X-Total-Count` exactly as today. With it: `{ rows, total, bucket_total, unviewed_total, page, limit, has_more }`.
 3. **The chip count is the bucket's count**, whether or not the chip is on: `unviewed_total` is computed over the bucket without the Unviewed predicate. `bucket_total` is the bucket's size without the predicate too, so the "Everything opened" state can tell an empty filter from an empty bucket.
 4. **Orders:** Newest lead = `sort=created_at&dir=desc` (the route's own fallback, made addressable). Event date = `sort=event_date&dir=asc`, soonest first, blank dates last (the route's `NULLS LAST`).
 5. **Paging is uniform:** 50 per page in both orders and under the chip. The artifact's mock shows all unviewed rows at once because its set is five long; a 51st unviewed proposal still needs Show more.
 6. **A card opens `/proposals/:id`**, which today renders the desktop proposal page inside the phone chrome under the header title "Proposal". That is the same interim ma-e1 shipped for events before ma-e2; lane ma-f2 replaces it. Cost if wrong: none the phone did not already have.
-7. **Accepted meta:** `accepted · awaiting deposit` when nothing is paid; `accepted · $X paid` when `amount_paid` is positive (the bucket excludes `deposit_paid`, so this is the rare accepted-with-a-partial-payment row).
+7. **Accepted meta:** `accepted · awaiting deposit` when nothing is paid; `accepted · $X paid` when `amount_paid` is positive (the bucket excludes `deposit_paid`, so this is the rare accepted-with-a-partial-payment row). The list card carries no accepted time, as the artifact draws it (`accepted · awaiting deposit`); the detail's status line reads `accepted_at` and belongs to ma-f2.
 8. **No event date:** the rail shows an en dash in the day slot, with a visually hidden "no date"; under Event date the row sorts last.
 9. **The end divider hides under the chip** (as Events hides it under Needs staff): "End of active" would misdescribe a filtered list.
 10. **Relative times are hours-grained** (`5h ago`, `2d ago`) as the artifact writes them, from a pure `agoLabel(ts, now)`; the desktop's day-grained `relDayTs` is not reused because the artifact's copy is finer.
+11. **A live list shows no staleness line.** The artifact always draws `.m-stale`; Dallas ruled on 2026-09-30 (Events list) that only an offline copy says how old it is. Cost if wrong: one line of chrome.
+12. **The end divider is singular at one:** `End of active · 1 proposal`. The artifact's mock is always plural because its set is six long. Cost if wrong: one letter.
+13. **Desktop query keys are ignored at phone width.** A `/proposals?cohort=won` or `?tab=draft` link opened on the phone renders the phone list (the Active bucket, the phone's own `order` and `unviewed` keys); the desktop keys pass through the URL untouched (`useUrlListState` only reads declared keys), so Desktop view still honors them. Same as the Events fork. Cost if wrong: a drill-out from the Overview lands on the bucket, not the cohort, until the user escapes to Desktop view.
 
 ## Global Constraints
 
@@ -66,7 +69,7 @@
 1. **A proposal with no event date** under the Event date order: it sorts last, its card renders with the dash rail and no crash. Pinned in Task 1 (fixture D), Task 2 (`proposalCard` with `event_date: null`) and Task 4 (a null-date row renders).
 2. **A superseded response:** switching the order while page 1 is still in flight must never paint the old order's rows under the new toggle. Pinned in Task 4 (the first promise resolves after the second; the screen shows the second's rows).
 3. **Show more under the chip:** with `has_more` true and the chip on, Show more is offered and appends. Pinned in Task 4.
-4. **Legacy consumers keep the array:** no `envelope`, no `unviewed`, no new sort key = byte-identical behavior, and the desktop keeps paging. Pinned in Task 1 (test 1) and Task 5 (desktop regression by eye).
+4. **Legacy consumers keep the array:** no `envelope`, no `unviewed`, no new sort key = byte-identical behavior, and the desktop keeps paging. Pinned in Task 1 (test 1), Task 6 (P4) and Task 8 Step 3 (desktop regression by eye).
 5. **The chip count does not move when the chip turns on:** `unviewed_total` is independent of the predicate; the chip shows no number until the first envelope lands. Pinned in Task 1 (test 3) and Task 4 (the chip reads the same count before and after the tap).
 
 ---
@@ -307,7 +310,7 @@ test('an envelope with an empty bucket reports zeros, not nulls', async () => {
 });
 ```
 
-Append to `server/routes/proposals/list.sort.test.js`, after the last test:
+In `server/routes/proposals/list.sort.test.js`, add the production guard the Global Constraints require, right after the `jwt` require: `if (process.env.NODE_ENV === 'production') throw new Error('refusing to run route tests against production');`. Then append after the last test:
 
 ```js
 test('?sort=created_at (phone "Newest lead") is in the whitelist and behaves like the fallback', async () => {
@@ -322,7 +325,7 @@ test('?sort=created_at (phone "Newest lead") is in the whitelist and behaves lik
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test server/routes/proposals/list.phone.test.js`
-Expected: the legacy test passes; `envelope=1` fails (body is an array, `res.body.rows` undefined); `unviewed=1` fails (four rows come back); `sort=created_at&dir=asc` fails (the unknown key falls back to DESC, so the asc assertion sees D,C,B,A); the paging test fails on `has_more`.
+Expected: 1 pass, 6 fail. Only the legacy test passes. The envelope test fails on 'envelope is an object'; the unviewed, Event date and paging tests fail with `TypeError: Cannot read properties of undefined (reading 'map')` at `idsOf(res.body.rows)` (the body is still an array); the empty-bucket test fails its deepEqual (array versus object); `sort=created_at` fails on the asc assertion (the unknown key falls back to DESC, so asc sees D,C,B,A). The plan fleet proved this count against the unmodified route on 2026-10-14.
 
 Run: `node --test server/routes/proposals/list.sort.test.js`
 Expected: the new test fails on the asc assertion; the five existing tests pass.
@@ -420,7 +423,7 @@ Expected: 6 pass, 0 fail.
 
 - [ ] **Step 5: Run the suites this change reaches, one at a time**
 
-`node --test server/routes/proposals/crud.test.js`, then `node --test server/routes/proposals/crud.filters.test.js` (both mount the proposals router and read the list). Expected: every count unchanged from main (quote them). Then confirm no fixture rows remain: `SELECT count(*) FROM proposals WHERE event_type = 'phone-list-test'` is 0 and `SELECT count(*) FROM clients WHERE name LIKE 'PHONELIST-%'` is 0 (a `node -e` with the pool, or the Neon MCP against the dev branch).
+`node --test server/routes/proposals/crud.filters.test.js` (the one other suite that imports `./list`; `crud.test.js` only POSTs, and the eight suites mounting `./index` never GET the list). Expected: its count unchanged from main (quote it). Then confirm no fixture rows remain: `SELECT count(*) FROM proposals WHERE event_type = 'phone-list-test'` is 0 and `SELECT count(*) FROM clients WHERE name LIKE 'PHONELIST-%'` is 0 (a `node -e` with the pool, or the Neon MCP against the dev branch).
 
 - [ ] **Step 6: Commit**
 
@@ -594,9 +597,10 @@ export function agoLabel(ts, now = new Date()) {
 
 const dot = (parts) => parts.filter(Boolean).join(' · ');
 
-// One line per pipeline stage, from the real timestamps (spec section 3: sent_at,
-// last_viewed_at plus view_count, updated_at, created_at, accepted_at; no expiry
-// exists on a proposal, so nothing "expiring" is ever shown).
+// One line per pipeline stage, from the real timestamps (sent_at, last_viewed_at
+// plus view_count, updated_at, created_at). The list card carries no accepted
+// time, as the benchmark draws it; the detail's status line (lane ma-f2) reads
+// accepted_at. No expiry exists on a proposal, so nothing "expiring" is shown.
 export function proposalMeta(row, now = new Date()) {
   const ago = (ts) => agoLabel(ts, now);
   const views = Number(row.view_count || 0);
@@ -611,7 +615,7 @@ export function proposalMeta(row, now = new Date()) {
         views > 0 ? `${views} ${views === 1 ? 'view' : 'views'}` : '',
       ]);
     case 'modified':
-      return dot(['modified by client', row.updated_at ? ago(row.updated_at) : '']).replace(' · ', ' ');
+      return row.updated_at ? `modified by client ${ago(row.updated_at)}` : 'modified by client';
     case 'accepted': {
       const paid = Number(row.amount_paid || 0);
       return paid > 0 ? `accepted · ${fmt$(paid)} paid` : 'accepted · awaiting deposit';
@@ -644,12 +648,12 @@ export function proposalCard(row, now = new Date()) {
 }
 ```
 
-(The `modified` branch joins "modified by client" and the time with a space, not a middle dot: the benchmark line is `modified by client 1d ago`.)
+(The `modified` line carries no middle dot: the benchmark writes `modified by client 1d ago`.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/proposalCards.test.js`
-Expected: PASS, 11 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -663,19 +667,19 @@ MSG
 
 ---
 
-### Task 3: Two card rules in the mobile CSS, and the class contract
+### Task 3: Two card rules in the mobile CSS, and the class contract (no commit of its own: verified and committed inside Task 4)
 
 **Files:**
-- Modify: `client/src/index.css` (the mobile block, right after the `.m-frac.full` rule at `:21567`)
+- Modify: `client/src/index.css` (the mobile block, right after the `.m-frac.past` rule at `:21568`)
 - Modify: `client/src/utils/mobileClassContract.test.js` (`SOURCES`)
 
 - [ ] **Step 1: Add the page to the class contract (the failing test)**
 
-In `client/src/utils/mobileClassContract.test.js`, add `'pages/mobile/ProposalsListPhone.js',` to `SOURCES` after the `'pages/mobile/NotificationsPhone.js',` line. (The test reads the file; until Task 4 creates it the suite fails with ENOENT, which is the failing state. Task 4's commit is where this test goes green; run it there.)
+In `client/src/utils/mobileClassContract.test.js`, add `'pages/mobile/ProposalsListPhone.js',` to `SOURCES` after the `'pages/mobile/NotificationsPhone.js',` line. (The test reads the file; until Task 4 creates it the suite fails with ENOENT, which is the failing state. Task 4's commit is where this test goes green; run it there.) Do NOT add `EventsListPhone.js`: its `m-events-scroll` storage key would read as a missing class; that is a contract change for another day.
 
 - [ ] **Step 2: Add the rules**
 
-After `html[data-app="admin-os"] .m-frac.full { ... }` insert:
+After `html[data-app="admin-os"] .m-frac.past { ... }` (`:21568`) insert:
 
 ```css
 /* Proposals list card (lane ma-f1, benchmark Proposals tab): the total sits at
@@ -699,7 +703,7 @@ These two files are staged and committed with Task 4's page, so the class contra
 
 **Interfaces:**
 - Consumes: `offlineGet` (`../../utils/offlineRead`), `useUrlListState` (`../../hooks/useUrlListState`), `proposalCard` (`../../utils/proposalCards`), `formatStaleTime` (`../../utils/staleTime`), `StatusChip` and `Icon` (`../../components/adminos/`), the Task 1 envelope.
-- Produces: `export default function ProposalsListPhone()`; URL keys `order` (`lead` default, `date`) and `unviewed` (`'1'` or absent); sessionStorage keys `m-proposals-scroll:<order>:<0|1>`.
+- Produces: `export default function ProposalsListPhone()`; URL keys `order` (`lead` default, `date`) and `unviewed` (`'1'` or absent); sessionStorage keys `proposals-scroll:<order>:<0|1>` (no `m-` prefix: the class contract treats every `m-*` token in a phone source as a CSS class, which is also why `EventsListPhone.js` with its `m-events-scroll` key is absent from that contract's `SOURCES`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -877,23 +881,54 @@ test('tapping a card opens /proposals/:id', async () => {
   expect(await screen.findByTestId('detail')).toBeInTheDocument();
 });
 
-test('the first load shows the skeleton with the first-sync note; an order switch shows it again without the note', async () => {
+test('the first load shows the skeleton with the first-sync note', async () => {
   api.get.mockReturnValueOnce(new Promise(() => {}));
   mount();
   expect(screen.getByText('first sync · fetching proposals')).toBeInTheDocument();
   expect(document.querySelectorAll('.m-card-skel').length).toBe(4);
 });
 
-test('scroll restore: the offset is saved under the order and chip key once the list has loaded', async () => {
-  api.get.mockResolvedValue(env([row()]));
+test('an order switch shows the skeleton again, without the first-sync note', async () => {
+  api.get.mockResolvedValueOnce(env([row()]));
   mount();
   await screen.findByText('Ferreira');
+  api.get.mockReturnValue(new Promise(() => {}));   // the next page never lands
+  fireEvent.click(screen.getByRole('radio', { name: 'Event date' }));
+  await waitFor(() => expect(document.querySelectorAll('.m-card-skel').length).toBe(4));
+  expect(screen.queryByText('Ferreira')).toBeNull();
+  expect(screen.queryByText('first sync · fetching proposals')).toBeNull();
+});
+
+test('scroll offsets are saved only after the loaded list has been restored', async () => {
+  const realRaf = window.requestAnimationFrame;
+  window.requestAnimationFrame = (cb) => { cb(); return 1; };   // run the throttle inline
+  window.sessionStorage.setItem('proposals-scroll:lead:0', '120');
+  let resolve;
+  api.get.mockReturnValue(new Promise(r => { resolve = r; }));
+  render(
+    <MemoryRouter initialEntries={['/proposals']}>
+      <main id="main-content" style={{ overflow: 'auto', height: 300 }}>
+        <Routes><Route path="/proposals" element={<ProposalsListPhone />} /></Routes>
+      </main>
+    </MemoryRouter>
+  );
   const host = document.getElementById('main-content');
-  Object.defineProperty(host, 'scrollHeight', { value: 3000, configurable: true });
-  Object.defineProperty(host, 'clientHeight', { value: 800, configurable: true });
-  host.scrollTop = 640;
+  Object.defineProperty(host, 'scrollHeight', { value: 1000, configurable: true });
+  Object.defineProperty(host, 'clientHeight', { value: 300, configurable: true });
+  // The list is still the skeleton. A scroll here is the browser clamping, not
+  // the user, and it must not bury the offset we are about to restore.
+  host.scrollTop = 0;
   fireEvent.scroll(host);
-  await waitFor(() => expect(window.sessionStorage.getItem('m-proposals-scroll:lead:0')).toBe('640'));
+  expect(window.sessionStorage.getItem('proposals-scroll:lead:0')).toBe('120');
+  resolve(env([row()]));
+  await screen.findByText('Ferreira');
+  // The restore runs in an effect, which can land a tick after the card paints.
+  await waitFor(() => expect(host.scrollTop).toBe(120));
+  // Restored, so the user's own scrolling is saved again.
+  host.scrollTop = 40;
+  fireEvent.scroll(host);
+  expect(window.sessionStorage.getItem('proposals-scroll:lead:0')).toBe('40');
+  window.requestAnimationFrame = realRaf;
 });
 ```
 
@@ -925,7 +960,9 @@ import Icon from '../../components/adminos/Icon';
 // inside the phone chrome until lane ma-f2 draws the phone detail).
 const PAGE = 50;
 const LIST_DEFAULTS = { order: 'lead', unviewed: '' };
-const SCROLL_KEY = (order, unviewed) => `m-proposals-scroll:${order}:${unviewed ? 1 : 0}`;
+// No m- prefix on purpose: utils/mobileClassContract.test.js reads every m-*
+// token in this file as a CSS class.
+const SCROLL_KEY = (order, unviewed) => `proposals-scroll:${order}:${unviewed ? 1 : 0}`;
 const SKELETONS = [['62%', '44%'], ['70%', '38%'], ['55%', '46%'], ['66%', '40%']];
 
 function scrollHost() { return document.getElementById('main-content'); }
@@ -1155,7 +1192,7 @@ function ProposalCard({ card, onTap }) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/ProposalsListPhone.test.js src/utils/mobileClassContract.test.js`
-Expected: PASS, 13 tests in the page suite, the class contract green (every `m-*` token the page uses is defined, including the two from Task 3). Zero "not wrapped in act" warnings in the output. If `sr-only` is not a class the stylesheet defines, it is a global utility (it is used by `EventsListPhone.js:290`); it is not an `m-*` token so the contract ignores it.
+Expected: PASS, 14 tests in the page suite, the class contract green (every `m-*` token the page uses is defined, including the two from Task 3). Zero "not wrapped in act" warnings in the output. If `sr-only` is not a class the stylesheet defines, it is a global utility (it is used by `EventsListPhone.js:290`); it is not an `m-*` token so the contract ignores it.
 
 - [ ] **Step 5: Build**
 
@@ -1195,8 +1232,8 @@ const mockMobileView = { isPhone: false, desktopView: jest.fn(() => false), setD
 jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockMobileView }));
 jest.mock('../mobile/ProposalsListPhone', () => ({ __esModule: true, default: () => <div data-testid="phone-list" /> }));
 // The desktop body reads the list (an array plus the X-Total-Count header) and
-// the counts; one stub answers both shapes it can meet.
-jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(() => Promise.resolve({ data: [], headers: { 'x-total-count': '0' } })) } }));
+// the counts; one stub answers both shapes it can meet (re-armed in beforeEach).
+jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
 // Stable identity on purpose: a fresh toast object per render re-runs the
 // desktop body's fetch effect forever.
 const mockToast = { success: jest.fn(), error: jest.fn(), info: jest.fn() };
@@ -1209,7 +1246,14 @@ import ProposalsDashboard from './ProposalsDashboard';
 
 const mount = () => render(<MemoryRouter initialEntries={['/proposals']}><ProposalsDashboard /></MemoryRouter>);
 
-beforeEach(() => { jest.clearAllMocks(); });
+// CRA's jest runs with resetMocks: true, which wipes the implementation given
+// in the jest.mock factory before each test; the desktop body calls
+// api.get(...).then(...) synchronously inside an effect, so an undefined
+// return crashes the render. Re-arm the stub here, every test.
+beforeEach(() => {
+  jest.clearAllMocks();
+  api.get.mockImplementation(() => Promise.resolve({ data: [], headers: { 'x-total-count': '0' } }));
+});
 
 test('phone width without a Desktop-view override renders the phone list', () => {
   mockMobileView.isPhone = true; mockMobileView.desktopView.mockReturnValue(false);
@@ -1235,7 +1279,7 @@ test('desktop width renders the desktop dashboard', async () => {
 });
 ```
 
-If the desktop body needs one more provider to mount (a context the Events fork test did not need), stub it the same way in this file and name it in the task report; never change the desktop body to satisfy the test.
+The plan fleet ran this file against the real desktop body: with the `beforeEach` above, the two desktop tests pass with zero act() warnings and no further provider is needed (`usePalette` stubbed; `ClickableRow` and `EntityLink` under the MemoryRouter). Never change the desktop body to satisfy the test.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1317,7 +1361,7 @@ Reuse the scratchpad render recipe from the push lane (`render/shoot.js`: Playwr
 Chromium 390x844 (then 360 and 320 for P8), a dev admin session, `http://localhost:<lane client port>/proposals`:
 - P1: `.m-listbar` is sticky: scroll 800px, `document.elementFromPoint` at the Unviewed chip's center is the chip.
 - P2: tapping "Event date" changes the URL to `/proposals?order=date` without a new history entry (`history.length` unchanged); tapping a card and pressing Back returns to `/proposals?order=date`.
-- P3: the chip count equals the number of rows with `status === 'sent'` and `last_viewed_at === null` in a direct `GET /api/proposals?envelope=1&limit=200` for the same session, and equals that response's `unviewed_total`; turning the chip on does not change the number on the chip.
+- P3: the chip count equals `unviewed_total` in a direct `GET /api/proposals?envelope=1&limit=1` for the same session, and equals the number of rows with `status === 'sent'` and `last_viewed_at === null` across `GET /api/proposals?envelope=1&limit=200&page=N` paged until `has_more` is false (200 is the route's clamp); turning the chip on does not change the number on the chip.
 - P4: legacy shape: `GET /api/proposals` (no envelope) answers a JSON array and carries `X-Total-Count`; at desktop width `/proposals` renders the table, tabs, filters and pager exactly as on main (same first page of rows).
 - P5: `elementFromPoint` at the center of the first card and of Show more (seed enough rows, or set `limit` lower in the console only to force the button) returns the button itself.
 - P6: tapping a card lands on `/proposals/<id>`: the desktop proposal page renders inside the phone chrome under the header title "Proposal" (the interim until ma-f2); the chrome's back control returns to the list with the order and the chip intact.
@@ -1325,7 +1369,7 @@ Chromium 390x844 (then 360 and 320 for P8), a dev admin session, `http://localho
 - P8: both skins at 390, 360 and 320 beside the benchmark renders from Step 3: card anatomy (rail, name, kind line, guests, meta, total left, chip right), the chip and segmented styles, the skeleton, both empty states, Show more, the end divider; House Lights squared cards and the ok ink on the check icon.
 - P9: scroll restore within a launch: scroll to 1200, open a card, Back: the list restores at 1200 under the same order and chip; switch the order: lands at the top.
 
-Then dispatch the ui-ux-review seat against the benchmark's Proposals tab (the eight renders) with the lane servers up; adherence to the artifact is its primary benchmark, with Plan decision 1 (the kind on its own line) stated to it as the one sanctioned departure.
+Then dispatch the ui-ux-review seat against the benchmark's Proposals tab (the eight renders) with the lane servers up; adherence to the artifact is its primary benchmark. Brief it with the sanctioned departures so it does not re-flag them: decision 1 (the kind on its own line, and the family's 44/7/8 rail metrics), decision 5 (Show more can appear under the chip), decision 6 (a card opens the desktop page for now), decision 11 (no staleness line on a live list), decision 12 (singular at one), and the chip count that waits for the first envelope.
 
 - [ ] **Step 5: Commit**
 
@@ -1342,7 +1386,7 @@ MSG
 ### Task 7: Docs and ledgers
 
 **Files:**
-- Modify: `README.md:701`, `ARCHITECTURE.md:339` and after `:2135`, `scripts/sensitive-paths.txt` (after `:467`), `docs/walkthroughs-owed.md` (Tier 6), `docs/fix-list-remaining-2026-07-02.md` (the ma-f1 sentence near `:2965-2970`)
+- Modify: `README.md:701`, `ARCHITECTURE.md:339` and after `:2135`, `scripts/sensitive-paths.txt` (after `:467`), `docs/walkthroughs-owed.md` (end of Tier 6), `docs/fix-list-remaining-2026-07-02.md` (the ma-f1 sentence, search "ORDINARY DESKTOP ADMIN PAGE")
 
 - [ ] **Step 1: README**
 
@@ -1358,7 +1402,7 @@ After the "Phone Events list" bullet (`:2135`), add a bullet: `- **Phone Proposa
 
 `scripts/sensitive-paths.txt`: add `client/src/pages/mobile/ProposalsListPhone.js` on its own line after `client/src/pages/mobile/EventsListPhone.js`.
 
-`docs/walkthroughs-owed.md`, Tier 6, a new entry under the Admin push one:
+`docs/walkthroughs-owed.md`: the Admin push entry moved to Tier 3b on 2026-10-14, so Tier 6 (`## Tier 6`, about `:2080`) holds only the consult-call record. Append this entry at the END of Tier 6, right before `## Tier 4`, and amend the tier's "holds ONE item" sentence to two:
 
 ```markdown
 ### Proposals list on the phone (lane ma-f1-proposals-list, built 2026-10-XX; moves to Tier 3b when its squash is an ancestor of `origin/main`)
@@ -1372,7 +1416,7 @@ The walk, on the Pixel, in the installed app:
 6. Airplane mode, reopen the tab: the stored copy with "offline copy · as of".
 ```
 
-`docs/fix-list-remaining-2026-07-02.md`: at the sentence "the Proposals tab still routes to the ORDINARY DESKTOP ADMIN PAGE with no phone branch ... until `ma-f1` lands", append: **AMENDED 2026-10-XX: the Proposals LIST is built by lane `ma-f1-proposals-list` (`docs/superpowers/plans/2026-10-14-mobile-admin-proposals-list.md`); `/proposals` forks to the phone list at phone width. Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.**
+`docs/fix-list-remaining-2026-07-02.md`: at the sentence "the Proposals tab still routes to the ORDINARY DESKTOP ADMIN PAGE with no phone branch ... until `ma-f1` lands", append: **AMENDED 2026-10-XX: the Proposals LIST is built by lane `ma-f1-proposals-list` (`docs/superpowers/plans/2026-10-14-mobile-admin-proposals-list.md`); `/proposals` forks to the phone list at phone width. Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.** And one new bullet under Admin UI: `- Phone lists share their load and scroll mechanics by hand: EventsListPhone and ProposalsListPhone carry the same superseded-response guard, append-keeps-staleness rule and restore clamp. Extract a shared hook when a third paged phone list arrives (ma-f3 search is grouped, not paged, so not that one). Lane ma-f1, 2026-10-14.`
 
 - [ ] **Step 4: Commit**
 
@@ -1390,7 +1434,7 @@ MSG
 
 - [ ] **Step 1: Server suites, one at a time from the lane root**
 
-`node --test server/routes/proposals/list.phone.test.js`, `node --test server/routes/proposals/list.sort.test.js`, `node --test server/routes/proposals/crud.test.js`, `node --test server/routes/proposals/crud.filters.test.js`. Quote every count. Confirm no fixture rows remain.
+`node --test server/routes/proposals/list.phone.test.js`, `node --test server/routes/proposals/list.sort.test.js`, `node --test server/routes/proposals/crud.filters.test.js` (the three suites that import `./list`). Quote every count. Confirm no fixture rows remain.
 
 - [ ] **Step 2: Client suites and build**
 
@@ -1414,4 +1458,8 @@ Rebase the lane onto `main` first if main moved. Squash-merge through `os` on `m
 2. **Placeholder scan.** The `2026-10-XX` dates in Task 7 are filled at lane close (Task 8 Step 5 names it). No TBDs.
 3. **Type consistency.** The envelope names `rows, total, bucket_total, unviewed_total, page, limit, has_more` match between Task 1's route, its tests, Task 4's page and its tests. `proposalCard`'s shape (`key, id, ymd, noDate, rail, clientName, kind, guests, meta, total, chipLabel, chipKind`) matches Task 2's tests and Task 4's `ProposalCard`. URL keys `order` and `unviewed` match the manifest paths in Task 6 and the walk in Task 7. The screen key `proposals-list` matches `screenKey.js`.
 4. **Review Focus.** Each of the five lines names the task and test that pins it; all five tests exist in the task bodies above.
-5. **Known judgment calls, stated:** the ten Plan decisions above. The one departure from the artifact (the kind on its own line) follows Dallas's later ruling on the same card family and is called out for the ui-ux seat.
+5. **Known judgment calls, stated:** the thirteen Plan decisions above. Every departure from the artifact is numbered there and briefed to the ui-ux seat in Task 6.
+
+## Plan fleet fold (2026-10-14)
+
+Three seats (fidelity, decomposition, feasibility), all read against main `7d1eaf35`: fidelity PASS, decomposition PASS, feasibility FAIL on two proven breaks, all folded above. The breaks: the page's sessionStorage key carried an `m-` prefix, which the class contract reads as a CSS class (renamed `proposals-scroll:`; `EventsListPhone.js` stays out of the contract for the same reason); the fork test's `api.get` stub was wiped by CRA's `resetMocks` before the desktop body's synchronous `.then`, so the stub is re-armed in `beforeEach` (proven green with zero act() warnings). Also folded: the reached-suite list (the suites that import `./list`), the predicted red for Task 1 (1 pass, 6 fail, proven against the unmodified route), counts (12 and 14), the walkthrough entry's placement (end of Tier 6), the fix-list anchor, the production guard in `list.sort.test.js`, the `modified` line written directly, the module comment on `accepted_at`, the CSS insertion point, the P3 check under the route's 200 clamp, the template's scroll-restore harness, the order-switch skeleton test, and decisions 11 to 13 with the fuller brief for the design seat. Decomposition's recommendation kept: the page duplicates the Events list's mechanics rather than extracting a hook (the shipped, sensitive-listed Events page stays untouched; search is a different feed shape); the extraction is on the fix list for a third paged list.
