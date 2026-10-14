@@ -10,7 +10,7 @@ import Icon from '../../components/adminos/Icon';
 import AssignmentSheet from '../../components/mobile/AssignmentSheet';
 
 // Phone Events list (spec 2026-08-13-mobile-admin section 4 List; benchmark
-// docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Events tab).
+// docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html, Events tab).
 // Renders INSIDE AdminLayout's scrolling .m-main; the header and tab bar are
 // the chrome's. Reads the scoped, event-paged admin feed (GET /shifts?scope=)
 // and groups the per-shift rows into one card per event.

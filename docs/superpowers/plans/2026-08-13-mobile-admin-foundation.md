@@ -117,6 +117,12 @@ lanes:
   # ma-e1-events-list (planned there), ma-e2-event-detail, ma-e3-edit-sheet,
   # ma-f1-proposals-list, ma-f2-proposal-detail, ma-f3-search (declared there).
   # The entries below stay for the record; that plan's lane map is current.
+  # 2026-10-14: ma-c-push is REFINED by the spec's section 7 rewrite (push per
+  # KIND, seven kinds, Thumbtack leads and shift requests out, every drink-plan
+  # submit in, a test endpoint, the VAPID key served by the API) and the
+  # Notifications screen drawn that day. Its plan is
+  # docs/superpowers/plans/2026-10-14-mobile-admin-push.md; the entry below
+  # stays for the record.
   - id: ma-c-push
     phase: 2
     scope: >

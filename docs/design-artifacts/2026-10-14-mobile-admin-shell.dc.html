@@ -67,6 +67,17 @@
           </button>
         </header>
       </sc-if>
+      <sc-if value="{{ isNotif }}" hint-placeholder-val="{{ false }}">
+        <header class="m-header" style="padding: 8px 8px 8px 2px;">
+          <button type="button" class="m-iconbtn" aria-label="Back to More" onClick="{{ onNotifBack }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+          <h1 style="flex: 1; min-width: 0;">Notifications</h1>
+          <button type="button" class="m-iconbtn" aria-label="Switch to desktop view" onClick="{{ onDesktop }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+        </header>
+      </sc-if>
       <sc-if value="{{ isEvents }}" hint-placeholder-val="{{ true }}">
         <div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px 4px;">
           <div style="display: flex; flex: none; border: 1px solid var(--line-2); border-radius: {{ segR }}; overflow: hidden;">
@@ -255,6 +266,19 @@
               </ul>
             </section>
           </sc-for>
+          <section>
+            <h2 class="m-more-heading">Notifications</h2>
+            <ul class="m-more-list">
+              <li>
+                <button type="button" class="m-more-row" onClick="{{ onNotifOpen }}">
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="bell" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+                  <span>Push notifications</span>
+                  <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: {{ nRowColor }};">{{ nRowState }}</span>
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import>
+                </button>
+              </li>
+            </ul>
+          </section>
           <section>
             <h2 class="m-more-heading">Lighting</h2>
             <div style="display: flex; border: 1px solid var(--line-2); border-radius: var(--radius); overflow: hidden;">
@@ -486,6 +510,100 @@
           </div>
         </main>
       </sc-if>
+      <sc-if value="{{ isNotif }}" hint-placeholder-val="{{ false }}">
+        <main class="m-main m-more" data-screen-label="Notifications" style="padding-top: 12px;">
+          <sc-if value="{{ nOffline }}" hint-placeholder-val="{{ false }}">
+            <div style="margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg-1); display: flex; gap: 8px; align-items: flex-start;">
+              <span style="width: 6px; height: 6px; flex: none; margin-top: 6px; border-radius: 50%; background: hsl(var(--warn-h) var(--warn-s) 52%);"></span>
+              <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                <div style="font-size: var(--fs-meta); font-weight: 600; color: var(--ink-1);">Offline</div>
+                <div style="font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5; text-wrap: pretty;">Changing these needs a connection. You are looking at the last saved settings.</div>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ nLoading }}" hint-placeholder-val="{{ false }}">
+            <sc-for list="{{ nSkel }}" as="sk" hint-placeholder-count="3">
+              <section aria-hidden="true">
+                <div style="height: 9px; width: {{ sk.hw }}; margin: 2px 0 9px; border-radius: 3px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite;"></div>
+                <ul class="m-more-list" style="pointer-events: none;">
+                  <sc-for list="{{ sk.rows }}" as="r" hint-placeholder-count="2">
+                    <li style="display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 16px;">
+                      <div style="flex: 1; min-width: 0;"><div style="height: 10px; width: {{ r.w }}; border-radius: 3px; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite;"></div></div>
+                      <div style="width: 40px; height: 24px; flex: none; border-radius: {{ nPillR }}; background: var(--bg-3); animation: m-pulse 1.4s ease-in-out infinite;"></div>
+                    </li>
+                  </sc-for>
+                </ul>
+              </section>
+            </sc-for>
+          </sc-if>
+          <sc-if value="{{ nLoaded }}" hint-placeholder-val="{{ true }}">
+            <section>
+              <h2 class="m-more-heading">This phone</h2>
+              <ul class="m-more-list">
+                <li>
+                  <button type="button" class="m-more-row" role="switch" aria-checked="{{ nPhoneChecked }}" aria-busy="{{ nPrompting }}" disabled="{{ nPhoneDisabled }}" onClick="{{ onPhoneToggle }}" style="min-height: 56px; padding-top: 8px; padding-bottom: 8px; cursor: {{ nPhoneCursor }};">
+                    <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="bell" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+                    <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                      <div style="font-size: var(--fs-body); color: var(--ink-1);">Notifications on this phone</div>
+                      <div style="font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.4;">{{ nPhoneSub }}</div>
+                    </span>
+                    <span class="m-switch-track"><span class="m-switch-thumb"></span></span>
+                  </button>
+                </li>
+                <sc-if value="{{ nBlocked }}" hint-placeholder-val="{{ false }}">
+                  <li style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 16px 12px; background: var(--bg-1);">
+                    <span style="flex: none; display: flex; margin-top: 1px; color: {{ nWarnInk }};"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="alert" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+                    <div style="font-size: var(--fs-meta); color: var(--ink-2); line-height: 1.5; text-wrap: pretty;">Android has blocked notifications for DrB OS. Allow them for DrB OS in Android settings, then come back here.</div>
+                  </li>
+                </sc-if>
+                <li>
+                  <sc-if value="{{ nTestFailed }}" hint-placeholder-val="{{ false }}">
+                    <div class="m-more-row" style="min-height: 44px; cursor: default; padding-right: 8px;">
+                      <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="chat" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+                      <span>Send a test notification</span>
+                      <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: {{ nDangerInk }};">Didn&#8217;t send</span>
+                      <button type="button" onClick="{{ onTest }}" style="flex: none; min-height: 44px; padding: 0 8px; border: none; background: transparent; color: {{ linkColor }}; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; cursor: pointer;">Retry</button>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ nTestNotFailed }}" hint-placeholder-val="{{ true }}">
+                    <button type="button" class="m-more-row" onClick="{{ onTest }}" disabled="{{ nTestDisabled }}" style="min-height: 44px; color: {{ nTestInk }}; cursor: {{ nTestCursor }};">
+                      <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="chat" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+                      <span>Send a test notification</span>
+                      <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: {{ nTestStatusColor }};">{{ nTestStatus }}</span>
+                    </button>
+                  </sc-if>
+                </li>
+              </ul>
+            </section>
+            <section>
+              <h2 class="m-more-heading">What buzzes</h2>
+              <div style="margin: 0 2px 12px; font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5; text-wrap: pretty;">{{ nCatsIntro }}</div>
+              <sc-for list="{{ nGroups }}" as="g" hint-placeholder-count="3">
+                <div style="margin: 0 0 14px;">
+                  <div style="display: flex; flex-direction: column; gap: 2px; padding: 0 2px 7px;">
+                    <div style="font-size: 12.5px; font-weight: 600; color: var(--ink-1);">{{ g.label }}</div>
+                    <div style="font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.45; text-wrap: pretty;">{{ g.help }}</div>
+                  </div>
+                  <ul class="m-more-list">
+                    <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="2">
+                      <li>
+                        <button type="button" class="m-more-row" role="switch" aria-checked="{{ r.on }}" aria-label="{{ r.label }}" disabled="{{ r.disabled }}" onClick="{{ r.onTap }}" style="min-height: 44px; cursor: {{ r.cursor }};">
+                          <span>{{ r.label }}</span>
+                          <span class="m-switch-track"><span class="m-switch-thumb"></span></span>
+                        </button>
+                      </li>
+                    </sc-for>
+                  </ul>
+                </div>
+              </sc-for>
+            </section>
+            <div style="display: flex; flex-direction: column; gap: 6px; padding: 0 2px 10px; font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.55; text-wrap: pretty;">
+              <div>Texts and emails keep coming as they do today. This only adds the phone banner.</div>
+              <div>Managers see this same page for their own account.</div>
+            </div>
+          </sc-if>
+        </main>
+      </sc-if>
       <sc-if value="{{ isSearch }}" hint-placeholder-val="{{ false }}">
         <header class="m-header" style="gap: 6px; padding: 8px 10px 8px 2px;">
           <button type="button" class="m-iconbtn" aria-label="Close search" onClick="{{ onSearchClose }}">
@@ -574,7 +692,7 @@
         <main class="m-main" data-screen-label="Desktop escape" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center;">
           <span style="color: var(--ink-4);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n28 }}" hint-size="28px,28px"></x-import></span>
           <div style="font-size: var(--fs-body); font-weight: 600; color: var(--ink-2);">Desktop chrome takes over</div>
-          <div style="font-size: var(--fs-meta); color: var(--ink-3); max-width: 240px; line-height: 1.55;">Full tables, filters and the &#8984;K palette at phone width &#8212; pinch and squint. The pill stays in reach; it is the way back.</div>
+          <div style="font-size: var(--fs-meta); color: var(--ink-3); max-width: 240px; line-height: 1.55;">Full tables, filters and the &#8984;K palette at phone width. Pinch and squint. The pill stays in reach; it is the way back.</div>
         </main>
         <button type="button" class="m-return-pill" onClick="{{ onReturn }}" style="display: flex; align-items: center; gap: 8px;">
           <span style="color: var(--accent);">&#8478;</span> Phone view
@@ -809,21 +927,32 @@
   <div style="font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-3); text-align: center; max-width: 420px; line-height: 1.6;">admin.drbartender.com &#183; installed PWA &#183; Upcoming / Past + Needs staff &#183; manual shifts open the sheet directly</div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 460, &quot;height&quot;: 960}, &quot;skin&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;dark&quot;, &quot;light&quot;], &quot;default&quot;: &quot;dark&quot;, &quot;tsType&quot;: &quot;'dark' | 'light'&quot;, &quot;section&quot;: &quot;Skin&quot;}, &quot;offline&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Data&quot;}, &quot;eventsData&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;typical&quot;, &quot;all staffed&quot;, &quot;empty upcoming&quot;, &quot;cold load&quot;], &quot;default&quot;: &quot;typical&quot;, &quot;tsType&quot;: &quot;'typical' | 'all staffed' | 'empty upcoming' | 'cold load'&quot;, &quot;section&quot;: &quot;Data&quot;}, &quot;proposalsData&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;typical&quot;, &quot;all viewed&quot;, &quot;empty active&quot;, &quot;cold load&quot;], &quot;default&quot;: &quot;typical&quot;, &quot;tsType&quot;: &quot;'typical' | 'all viewed' | 'empty active' | 'cold load'&quot;, &quot;section&quot;: &quot;Data&quot;}, &quot;searchState&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;live typing&quot;, &quot;empty field&quot;, &quot;type more&quot;, &quot;in flight&quot;, &quot;results&quot;, &quot;nothing matched&quot;], &quot;default&quot;: &quot;live typing&quot;, &quot;tsType&quot;: &quot;'live typing' | 'empty field' | 'type more' | 'in flight' | 'results' | 'nothing matched'&quot;, &quot;section&quot;: &quot;Search&quot;}, &quot;keyboard&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Search&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 460, &quot;height&quot;: 960}, &quot;skin&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;dark&quot;, &quot;light&quot;], &quot;default&quot;: &quot;dark&quot;, &quot;tsType&quot;: &quot;'dark' | 'light'&quot;, &quot;section&quot;: &quot;Skin&quot;}, &quot;offline&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Data&quot;}, &quot;eventsData&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;typical&quot;, &quot;all staffed&quot;, &quot;empty upcoming&quot;, &quot;cold load&quot;], &quot;default&quot;: &quot;typical&quot;, &quot;tsType&quot;: &quot;'typical' | 'all staffed' | 'empty upcoming' | 'cold load'&quot;, &quot;section&quot;: &quot;Data&quot;}, &quot;proposalsData&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;typical&quot;, &quot;all viewed&quot;, &quot;empty active&quot;, &quot;cold load&quot;], &quot;default&quot;: &quot;typical&quot;, &quot;tsType&quot;: &quot;'typical' | 'all viewed' | 'empty active' | 'cold load'&quot;, &quot;section&quot;: &quot;Data&quot;}, &quot;searchState&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;live typing&quot;, &quot;empty field&quot;, &quot;type more&quot;, &quot;in flight&quot;, &quot;results&quot;, &quot;nothing matched&quot;], &quot;default&quot;: &quot;live typing&quot;, &quot;tsType&quot;: &quot;'live typing' | 'empty field' | 'type more' | 'in flight' | 'results' | 'nothing matched'&quot;, &quot;section&quot;: &quot;Search&quot;}, &quot;keyboard&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Search&quot;}, &quot;notifPhone&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;off&quot;, &quot;on&quot;, &quot;blocked&quot;], &quot;default&quot;: &quot;on&quot;, &quot;tsType&quot;: &quot;'off' | 'on' | 'blocked'&quot;, &quot;section&quot;: &quot;Notifications&quot;}, &quot;notifTest&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;idle&quot;, &quot;sent&quot;, &quot;failed&quot;], &quot;default&quot;: &quot;idle&quot;, &quot;tsType&quot;: &quot;'idle' | 'sent' | 'failed'&quot;, &quot;section&quot;: &quot;Notifications&quot;}, &quot;notifLoading&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Notifications&quot;}}">
 class Component extends DCLogic {
   state = { tab: 'events', sheetSid: null, sheetFocus: null, sheetQuery: '', rolePick: null, saveFailed: false, confirmAct: null, sheetShown: false,
     assignments: {}, removedKeys: [], deniedKeys: [], desktop: false, skinOverride: null,
     scope: 'upcoming', needsStaff: false, upPages: 1, pastPages: 1,
     pSort: 'lead', pUnviewed: false, pPages: 1,
     editTarget: null, editVals: null, propEdits: {}, evEdits: {}, archId: null,
-    detailId: null, propId: null, searchOpen: false, sq: '', sFlight: false, sResultsFor: null, sTouched: false,
+    detailId: null, propId: null, notifOpen: false, nPhone: 'on', nTest: 'idle', nCats: {}, nPrompting: false, searchOpen: false, sq: '', sFlight: false, sResultsFor: null, sTouched: false,
     panes: { staffing: true, pkg: false, pay: false, contact: false } };
 
   componentDidMount() {
+    this.syncNotif(false);
     this._pop = () => { if (this.state.searchOpen) this.setState({ searchOpen: false, sFlight: false }); };
     this._key = e => { if (e.key === 'Escape' && this.state.searchOpen) this.closeSearch(); };
     window.addEventListener('popstate', this._pop);
     window.addEventListener('keydown', this._key);
+  }
+  componentDidUpdate(prev) {
+    const p = this.props;
+    if (prev.notifPhone !== p.notifPhone || prev.notifTest !== p.notifTest || prev.notifLoading !== p.notifLoading) this.syncNotif(true);
+  }
+  syncNotif(open) {
+    const p = this.props;
+    clearTimeout(this._nt); clearTimeout(this._np);
+    this.setState({ nPhone: p.notifPhone || 'on', nTest: p.notifTest || 'idle', nPrompting: false,
+      ...(open ? { notifOpen: true, tab: 'more', desktop: false, searchOpen: false, detailId: null, propId: null } : {}) });
   }
   openSearch() {
     try { window.history.pushState({ dcSearch: 1 }, ''); } catch (e) {}
@@ -1143,7 +1272,7 @@ class Component extends DCLogic {
         : (light ? 'var(--ms-bordeaux)' : 'hsl(var(--danger-h) var(--danger-s) 70%)');
       const countWeight = isPast ? 400 : full ? 600 : 700;
       return { ...e, slots, done, open: cancelled ? 0 : open, openShifts, pills,
-        count: cancelled ? '\u2014' : done + '/' + slots,
+        count: cancelled ? '\u2013' : done + '/' + slots,
         countColor, countWeight,
         hasRequest: !isPast && !cancelled && pend > 0,
         requestLabel: pend + (pend === 1 ? ' request' : ' requests'),
@@ -1227,7 +1356,7 @@ class Component extends DCLogic {
 
     const de = st.detailId ? all.find(e => e.id === st.detailId) || null : null;
     const fmt = n => '$' + n.toLocaleString('en-US');
-    let dv = { isDetail: false, listHeader: !st.desktop && !srch };
+    let dv = { isDetail: false, listHeader: !st.desktop && !srch && !(st.notifOpen && st.tab === 'more') };
     if (de) {
       const d = this.detail()[de.id] || this.stubDetail(de);
       const light = skin === 'light';
@@ -1245,7 +1374,7 @@ class Component extends DCLogic {
         ...sh, showHead: arr.length > 1,
         countWeight: dClosed ? 400 : sh.open > 0 ? 700 : 600,
         countColor: dClosed ? 'var(--ink-3)' : sh.open > 0 ? (light ? 'var(--ms-bordeaux)' : 'hsl(var(--danger-h) var(--danger-s) 70%)') : okC,
-        count: de.cancelled ? '\u2014' : sh.count,
+        count: de.cancelled ? '\u2013' : sh.count,
         hasOpen: !dClosed && sh.open > 0,
         assignLabel: 'Assign staff \u00b7 ' + sh.open + ' open',
         onAssign: () => this.openSheet(sh.sid),
@@ -1356,7 +1485,7 @@ class Component extends DCLogic {
         hasSheet: true,
         sClient: sEv.client, sKind: sEv.kind, sManual: !!sEv.manual, sVenue: sEv.venue,
         sWhen: sEv.dow + ' ' + sEv.mon + ' ' + sEv.day + ' \u00b7 ' + sEv.time,
-        sPills: sSh.pills, sCount: sEv.cancelled ? '\u2014' : sSh.count,
+        sPills: sSh.pills, sCount: sEv.cancelled ? '\u2013' : sSh.count,
         sMix: sClosed ? (sEv.cancelled ? 'Cancelled \u00b7 roster is read-only' : 'Past event \u00b7 roster is read-only') : sSh.mix,
         sRoster, sHasRoster: sRoster.length > 0,
         sHasOpen: !sClosed && sSh.open > 0,
@@ -1383,7 +1512,7 @@ class Component extends DCLogic {
     ].map(t => ({ ...t,
       active: st.tab === t.id, activeCls: st.tab === t.id ? 'active' : '',
       hasDanger: !t.neutral && t.badge > 0, hasNeutral: t.neutral && t.badge > 0,
-      onTap: () => this.setState({ tab: t.id, desktop: false, detailId: null, propId: null }) }));
+      onTap: () => this.setState({ tab: t.id, desktop: false, detailId: null, propId: null, notifOpen: false }) }));
 
     const pMode = this.props.proposalsData || 'typical';
     const pColdLoad = pMode === 'cold load';
@@ -1564,9 +1693,9 @@ class Component extends DCLogic {
     const sTooLong = sTrim.length > 100;
     const sGroups = offline || sTooLong || !sFor ? [] : this.searchGroups(sFor);
     let sNote = null;
-    if (offline) sNote = { icon: 'search', title: 'Search needs the server', body: 'Global search runs a live query \u2014 nothing is cached on the phone. Reconnect to search.', micro: 'offline \u00b7 field kept, results off' };
+    if (offline) sNote = { icon: 'search', title: 'Search needs the server', body: 'Global search runs a live query. Nothing is cached on the phone. Reconnect to search.', micro: 'offline \u00b7 field kept, results off' };
     else if (sTooLong) sNote = { icon: 'x', title: 'Too long to search', body: 'The server stops at 100 characters. Trim the term down.', micro: sTrim.length + ' characters' };
-    else if (sTrim.length === 0) sNote = { icon: 'search', title: 'Search every record', body: 'Clients, proposals, events and staff \u2014 by name, email, or phone number.', micro: 'phone match needs 3+ digits' };
+    else if (sTrim.length === 0) sNote = { icon: 'search', title: 'Search every record', body: 'Clients, proposals, events and staff, by name, email, or phone number.', micro: 'phone match needs 3+ digits' };
     else if (sTrim.length === 1) sNote = { icon: 'search', title: 'Keep typing', body: 'Nothing is searched until two characters.', micro: '' };
     else if (!sFlight && sFor && sGroups.length === 0) sNote = { icon: 'search', title: 'No matches for \u201c' + sFor + '\u201d', body: 'Try a last name, an email address, or the last four digits of a phone.', micro: '' };
     const kbKeys = s => s.split('').map(c => ({ c, flex: '1', bg: 'var(--bg-3)', ink: 'var(--ink-1)' }));
@@ -1586,6 +1715,56 @@ class Component extends DCLogic {
       this._st = setTimeout(() => this.setState({ sFlight: false, sResultsFor: t }), 420);
     };
 
+    const nOpen = st.notifOpen && st.tab === 'more' && !st.desktop && !srch;
+    const nLoadingV = this.props.notifLoading ?? false;
+    const nPh = st.nPhone;
+    const nWarnInk = lightSkin ? 'hsl(var(--warn-h) var(--warn-s) 34%)' : 'hsl(var(--warn-h) var(--warn-s) 62%)';
+    const nOkInk = lightSkin ? 'var(--ms-emerald)' : 'hsl(var(--ok-h) var(--ok-s) 52%)';
+    const nDangerInk = lightSkin ? 'var(--ms-bordeaux)' : 'hsl(var(--danger-h) var(--danger-s) 70%)';
+    const testOff = offline || nPh !== 'on';
+    const onTest = () => {
+      if (testOff || st.nTest === 'sending') return;
+      clearTimeout(this._nt);
+      this.setState({ nTest: 'sending' });
+      this._nt = setTimeout(() => { this.setState({ nTest: 'sent' }); this._nt = setTimeout(() => this.setState({ nTest: 'idle' }), 2400); }, 800);
+    };
+    const onPhoneToggle = () => {
+      if (offline || nPh === 'blocked' || st.nPrompting) return;
+      if (nPh === 'on') { clearTimeout(this._nt); this.setState({ nPhone: 'off', nTest: 'idle' }); return; }
+      this.setState({ nPrompting: true });
+      this._np = setTimeout(() => this.setState({ nPrompting: false, nPhone: 'on' }), 1200);
+    };
+    const nCatDefs = [
+      { label: 'Bookings and payments', help: 'A client signs and pays, or a last-minute booking comes in.',
+        rows: [['signed', 'Client signed'], ['signed_paid', 'Signed and paid'], ['payment', 'Payment landed'], ['last_minute', 'Last-minute booking']] },
+      { label: 'Drink plans', help: 'A client submits their drink plan. Your cue to start the shopping list and the menu.',
+        rows: [['plan', 'Plan submitted']] },
+      { label: 'Staffing', help: 'A staff member drops a shift, or asks for cover or a swap.',
+        rows: [['drop', 'Shift drops'], ['cover', 'Cover and swaps']] },
+    ];
+    const nGroups = nCatDefs.map(g => ({ label: g.label, help: g.help, rows: g.rows.map(([k, label]) => ({
+      label, on: st.nCats[k] !== false, disabled: offline, cursor: offline ? 'default' : 'pointer',
+      onTap: () => { if (!offline) this.setState(s => ({ nCats: { ...s.nCats, [k]: s.nCats[k] === false } })); } })) }));
+    const nTestStatus = offline ? 'Offline' : nPh !== 'on' ? 'Phone is off' : st.nTest === 'sending' ? 'Sending' : st.nTest === 'sent' ? 'Sent' : '';
+    const nv = {
+      isNotif: nOpen, nOffline: offline, nLoading: nLoadingV, nLoaded: !nLoadingV,
+      nSkel: [{ hw: '70px', rows: [{ w: '64%' }, { w: '52%' }] }, { hw: '84px', rows: [{ w: '46%' }, { w: '40%' }, { w: '52%' }, { w: '44%' }] }, { hw: '60px', rows: [{ w: '38%' }, { w: '48%' }] }],
+      nPillR: lightSkin ? '0' : '999px',
+      nPhoneChecked: nPh === 'on', nPrompting: st.nPrompting, nPhoneDisabled: offline || nPh === 'blocked',
+      nPhoneCursor: offline || nPh === 'blocked' ? 'default' : 'pointer',
+      nPhoneSub: st.nPrompting ? 'Android is asking for permission\u2026' : nPh === 'on' ? 'Banners for what you pick below' : nPh === 'blocked' ? 'Blocked in Android settings' : 'Android asks for permission when you turn this on',
+      nBlocked: nPh === 'blocked', nWarnInk, nDangerInk,
+      nTestFailed: !testOff && st.nTest === 'failed', nTestNotFailed: testOff || st.nTest !== 'failed',
+      nTestDisabled: testOff, nTestInk: testOff ? 'var(--ink-4)' : 'var(--ink-1)', nTestCursor: testOff ? 'default' : 'pointer',
+      nTestStatus, nTestStatusColor: st.nTest === 'sent' && !testOff ? nOkInk : 'var(--ink-4)',
+      onTest, onPhoneToggle, nGroups,
+      nCatsIntro: nPh === 'on' ? 'Saved to your account, so every phone you turn on follows these.' : 'Saved to your account. Nothing reaches this phone until it is on above.',
+      nRowState: nPh === 'on' ? 'On' : nPh === 'blocked' ? 'Blocked' : 'Off',
+      nRowColor: nPh === 'on' ? 'var(--ink-2)' : nPh === 'blocked' ? nWarnInk : 'var(--ink-4)',
+      onNotifOpen: () => this.setState({ notifOpen: true }),
+      onNotifBack: () => this.setState({ notifOpen: false }),
+    };
+
     const ap = st.archId ? this.propBase().find(p => p.id === st.archId) || null : null;
     const archReasons = ap ? ['Client went quiet', 'Booked elsewhere', 'Date changed or cancelled', 'Duplicate or test'].map(r => ({ label: r, onTap: closeSheet })) : [];
 
@@ -1595,7 +1774,8 @@ class Component extends DCLogic {
       desktop: st.desktop, notDesktop: !st.desktop, notDesktop2: !st.desktop && !srch,
       isEvents: !st.desktop && !srch && st.tab === 'events' && !de,
       isProposals: !st.desktop && !srch && st.tab === 'proposals' && !pd,
-      isMore: !st.desktop && !srch && st.tab === 'more',
+      isMore: !st.desktop && !srch && st.tab === 'more' && !st.notifOpen,
+      ...nv,
       isSearch: srch,
       sQ, sHasQ: sTrim.length > 0, sFlight, sGroups,
       sFlightLabel: sFor ? 'searching \u00b7 showing \u201c' + sFor + '\u201d' : 'searching\u2026',

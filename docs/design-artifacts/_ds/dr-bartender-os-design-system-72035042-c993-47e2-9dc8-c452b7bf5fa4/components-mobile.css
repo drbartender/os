@@ -324,3 +324,66 @@
   border-radius: 0;
   border-color: var(--ink-1);
 }
+
+/* ---- Switch ------------------------------------------------------------------
+   Mobile on/off, admin tokens. Same idea as the staff portal's .sp-toggle
+   (track + thumb), sized for a thumb. Two uses:
+   - standalone: <button class="m-switch" role="switch" aria-checked> with the
+     track inside; the button is the 44px target.
+   - in a row: <button class="m-more-row" role="switch" aria-checked> with the
+     track as the last child; the whole 44px row is the target.
+   State is read from aria-checked / :disabled / aria-busy on the parent. */
+[data-app="admin-os"] .m-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+[data-app="admin-os"] span.m-switch-track {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 24px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-3);
+  transition: background 160ms ease, border-color 160ms ease, opacity 160ms ease;
+}
+[data-app="admin-os"] span.m-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), background 160ms ease;
+}
+[data-app="admin-os"] [aria-checked="true"] > span.m-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+[data-app="admin-os"] [aria-checked="true"] > span.m-switch-track > span.m-switch-thumb {
+  transform: translateX(16px);
+  background: #fff;
+}
+[data-app="admin-os"] :disabled > span.m-switch-track,
+[data-app="admin-os"] [aria-disabled="true"] > span.m-switch-track { opacity: 0.4; }
+[data-app="admin-os"] [aria-busy="true"] > span.m-switch-track > span.m-switch-thumb {
+  transform: translateX(8px);
+  animation: m-pulse 1.2s ease-in-out infinite;
+}
+[data-app="admin-os"] :focus-visible > span.m-switch-track {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+[data-app="admin-os"][data-skin="light"] span.m-switch-track,
+[data-app="admin-os"][data-skin="light"] span.m-switch-thumb { border-radius: 0; }
+[data-app="admin-os"][data-skin="light"] [aria-checked="true"] > span.m-switch-track > span.m-switch-thumb { background: var(--bg-0); }

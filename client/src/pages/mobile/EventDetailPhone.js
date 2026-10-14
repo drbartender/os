@@ -18,7 +18,7 @@ import {
 import { Caret, ContactsSection, MoneySection, EditRow, NoteRow } from './EventDetailSections';
 
 // Phone event detail (spec 2026-08-13-mobile-admin section 4 Detail; benchmark
-// docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Event detail).
+// docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html, Event detail).
 // Renders INSIDE AdminLayout's scrolling .m-main. The rich header is the
 // chrome's: this screen hands it the data through the outlet context.
 //

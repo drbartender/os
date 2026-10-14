@@ -11,7 +11,7 @@ import {
 import useSheetWrites from './useSheetWrites';
 
 // The phone ShiftDrawer for ONE shift (spec 2026-08-13-mobile-admin section 4
-// Detail; benchmark docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html,
+// Detail; benchmark docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html,
 // Assignment sheet). This file reads and draws; every write, and the rules a
 // write must pass, live in useSheetWrites.js.
 //
