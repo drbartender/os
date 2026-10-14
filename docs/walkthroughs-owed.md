@@ -2004,7 +2004,7 @@ prod check of `message_log` after the next real sends:
 ### Inbox: the waiting-on-you list (lanes inbox-engine, inbox-ai `dcb3c471` and inbox-page `39cdc98c`). Merged by 2026-10-13; pushed 2026-10-14 (`0aa87c76..c1167d96`).
 
 Live; checked 2026-10-14 with `git merge-base --is-ancestor 39cdc98c origin/main`. The page is live on both
-shells; the AI read inside it ships dark (last bullet).
+shells; the AI read inside it went live 2026-10-14 (last bullet).
 
 The engine, the routes and the badge have no screen of their own until lane inbox-page lands, so they
 are walked with the page. Verified by the lane's suites on the dev DB and a read-only rules run over
@@ -2036,13 +2036,19 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   AI reads yet; the thank-yous and the acknowledgments close once lane inbox-ai reads them.
 - The first prod picture message: its link opens from the thread. If Twilio asks for credentials, the
   link needs a proxy (spec amendment 17); file it on the fix list.
-- The AI read ships DARK (`RUN_INBOX_READ_SCHEDULER=false` in Render since 2026-10-09; the key is set).
-  Switching it on is Dallas's call together with the Neon transfer decision (fix list, Comms and
-  marketing, "Lane inbox-ai review leftovers"): the idle tick recomputes the inbox every third minute,
-  about 0.25 to 0.5 GB a day. When he flips it: within the first hour the feed line reads "on", the
-  `inbox_ai_read` row in `scheduler_health` is ok, `inbox_reads` gains ok rows for the waiting
-  thank-yous and acknowledgments (and they move to Recently handled with an AI reason), no row holds
-  `error` text beyond a class and status, and Sentry shows no `inbox_ai_read` warning. The ceiling is
+- The AI read went LIVE on 2026-10-14. Dallas set `RUN_INBOX_READ_SCHEDULER=true` in Render about
+  06:52 UTC without waiting on the Neon transfer call (fix list, Comms and marketing, "Lane inbox-ai
+  review leftovers"; the idle tick recomputes the inbox every third minute, about 0.25 to 0.5 GB a
+  day, now measured for real). The first two hours were lost: every call a content-free 400, because the
+  Render key was an unscoped personal key (fix list, "Inbox AI read switch-on 2026-10-14"). A
+  service-account key scoped to the Default Workspace replaced it about 08:44 UTC and the 59 error
+  rows were deleted. Checked from prod within five minutes of the delete: the `inbox_ai_read` row in
+  `scheduler_health` ok on its 60-second tick, `inbox_reads` 60 ok rows (45 inbound, 15 outbound),
+  one attempt each, 0 errors, 17 marked needs-reply and 1 holding, no run of 7 or more digits in any
+  summary or reason, Sentry's `inbox AI read failed` warning last seen at the 06:52 failure.
+  Walk left: the feed line reads "on" on the phone and the desktop; sanity-check every Recently
+  handled AI reason against its real thread over the first day; any key change gets the real-call
+  smoke first (the probe on the box; promoting it to `scripts/` is on the fix list). The ceiling is
   about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
