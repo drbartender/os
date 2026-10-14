@@ -2059,10 +2059,33 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**As of 2026-10-14 this tier is EMPTY again.** Inbox, the one occupant since 2026-10-09, moved to the end
+**As of 2026-10-14 (later) this tier holds ONE item, below.** Before it was added, it was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
 of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
 by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
 to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
+
+### Admin push (lane ma-c-push, built 2026-10-14; moves to Tier 3b when its squash is an ancestor of `origin/main`)
+
+Before the push lands, or right after it: Dallas generates the VAPID pair (`npx web-push generate-vapid-keys`,
+anywhere Node runs) and sets `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in Render. Nothing goes in
+Vercel: the phone reads the public key from the API. Until the keys exist the screen says push is
+not set up on the server, which is true, and nothing else is affected.
+
+The walk, on the Pixel, in the installed app:
+1. More shows a Notifications row reading Off. Open it.
+2. The switch asks Android for permission and turns on; the sub-line reads "Banners for what you pick below".
+3. Send a test notification: the row reads Sending, then Sent, and a banner lands within seconds.
+   Tap the banner: the app opens on the Notifications screen (through the lock, if it is up).
+4. Turn Shift drops off and back on; reopen the screen: it remembers.
+5. The next real event (a client signing, a payment, a drink plan submit) lands a banner that
+   opens the event (or the proposal, for a signature). Say which kind it was.
+6. Airplane mode, open the screen from More: the offline banner with the time, every switch grey.
+7. Sign out and ask the desk to send a test (or revoke the passkey on desktop): no banner lands.
+8. Zul repeats steps 1 to 3 on his phone when he wants it; the switches are per account, the phone
+   switch per device.
+
+What the headless gate could not prove (2026-10-14): the banner landing. Headless Chrome subscribes
+at FCM but FCM answers 410 to the send, so step 3 is the one piece of proof only the phone gives.
 
 **NO LONGER EMPTY as of 2026-08-26: one occupant, the consult call SURFACING lane, listed at the end of this tier.** Before that it read EMPTY AGAIN, because the consult call bridge sat here from the 2026-08-25 merge
 until its launch call passed on 2026-08-26, and it is the one occupant that did NOT graduate on

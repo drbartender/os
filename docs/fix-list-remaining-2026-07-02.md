@@ -2067,6 +2067,51 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 
 ## Admin UI and the two skins
 
+- **Push follow-ups (lane ma-c-push, built 2026-10-14; not yet merged at the time of writing, the
+  close record in docs/superpowers/plans/2026-10-14-mobile-admin-push.md says when).** Parked by
+  the plan fleet, Checkpoint A, the task reviews and the gate; none blocks the lane.
+  - **OWNER DECISION: website quote requests on the phone.** The public quote form's "New Website
+    Quote" email reuses the client-signed template, so the plan first mapped it to the Client
+    signed banner; a quote is a lead, not a signature, so that site does NOT push. If Dallas wants
+    quote requests to buzz, they are a kind of their own ("New website quote"), never the Client
+    signed switch.
+  - **OWNER DECISION, later: replace the 312's texts with push for a category.** SMS is decided
+    per call site today, not per preference, so that is its own scope once push has proven itself
+    on the Pixel.
+  - Inbox pings stay out (the Inbox spec's "no pings. Maybe we'll want that later.").
+  - `.m-switch` lives in the admin shell design project's vendored CSS and in index.css, not yet
+    in the design-system project `72035042`; upstream it there through DesignSync (Dallas sees
+    the permission prompt) at the next fit pass if the lane close did not.
+  - `staff-sw.js` still focuses a window by substring (the 8/14 finding) and never navigates an
+    open window; the admin worker's two fixes (exact path, same-origin navigate with the await
+    on the navigate) are its pattern.
+  - `server/routes/staffShiftActions.js` ends the lane near 970 lines, under 40 from the 1000
+    ratchet: the next lane that touches it splits it first (the per-concern composition router
+    pattern of `server/routes/proposals/`).
+  - Stored push endpoints are not scheme or host validated at `POST /api/me/push-subscriptions`
+    (a string up to 1000 chars), and `POST /api/me/push-test` is the first on-demand server fetch
+    of one: SSRF-shaped, Low (an admin or manager JWT is needed, TLS only, a coarse oracle).
+    Require `https:` and refuse loopback, private and link-local hosts, or allowlist the browser
+    push-service hosts. Checkpoint A security review.
+  - `pushDispatch.js`'s read-failed branch has no committed test (it destructures
+    `sendPushToUser` at require time); a small DI seam would pin it. Its header comment still
+    describes the pre-lane shape.
+  - `push_subscription_count` in the recipient SELECT counts raw array entries while the send
+    counts valid ones, so `pushQueued` can exceed deliverable devices by malformed entries.
+    Harmless; comment it where it is read.
+  - `adminNotifications.test.js` inserts fixed fixture emails without a nonce, so a crashed run
+    blocks the next on the unique index (pre-existing).
+  - A WindowClient without `navigate` is focused and the deep link dropped (not a live path:
+    Chrome on the Pixel has it).
+  - Two SMS bullets sit under ARCHITECTURE's Web Push heading (pre-existing); the `SEND_NOTIFICATIONS`
+    docs were updated to name push by the lane.
+  - On a dev server with `SEND_NOTIFICATIONS` unset a dispatcher push row reads `failed /
+    push_send_failed` where a skipped email reads sent; the local walkthrough sets
+    `SEND_NOTIFICATIONS=true` on the lane API.
+  - Fit pass items from the screen's review: the nine 44px rows use an inline style where a
+    `.m-row-44` class would do; the failed-read note has no drawing; `MorePage.test.js` waits on
+    the row's text rather than its state label.
+
 - **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, pushed
   2026-10-07).** Parked by its review fleet, fold re-reviews and the push review; none changes money
   or a message.
