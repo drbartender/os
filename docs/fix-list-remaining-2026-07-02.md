@@ -2067,9 +2067,8 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 
 ## Admin UI and the two skins
 
-- **Push follow-ups (lane ma-c-push, built 2026-10-14; not yet merged at the time of writing, the
-- Notifications screen, deferred by the final design seat (2026-10-14): the "Didn't save" and failed test-send status spans mount with their text already set, so some screen readers skip the polite announcement (a permanently mounted status slot fixes it); the failed-load strip's chrome; px insets against the shell's rem; House Lights ink-3 meta text misses AA (design-system token, not the screen).
-  close record in docs/superpowers/plans/2026-10-14-mobile-admin-push.md says when).** Parked by
+- **Push follow-ups (lane ma-c-push, built and merged 2026-10-14 as `f6d0b1a6`, not pushed; the
+  close record in docs/superpowers/plans/2026-10-14-mobile-admin-push.md has the detail).** Parked by
   the plan fleet, Checkpoint A, the task reviews and the gate; none blocks the lane.
   - **OWNER DECISION: website quote requests on the phone.** The public quote form's "New Website
     Quote" email reuses the client-signed template, so the plan first mapped it to the Client
@@ -2112,6 +2111,11 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   - Fit pass items from the screen's review: the nine 44px rows use an inline style where a
     `.m-row-44` class would do; the failed-read note has no drawing; `MorePage.test.js` waits on
     the row's text rather than its state label.
+  - Notifications screen, deferred by the final design seat (2026-10-14): the "Didn't save" and
+    failed test-send status spans mount with their text already set, so some screen readers skip
+    the polite announcement (a permanently mounted status slot fixes it); the failed-load strip's
+    chrome; px insets against the shell's rem; House Lights ink-3 meta text misses AA (a
+    design-system token, not the screen).
 
 - **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, pushed
   2026-10-07).** Parked by its review fleet, fold re-reviews and the push review; none changes money
