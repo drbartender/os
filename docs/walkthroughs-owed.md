@@ -2175,7 +2175,7 @@ to rot. Do that again for the next thing that sits here.
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
 
-### Proposals list on the phone (lane ma-f1-proposals-list, built 2026-10-14; moves to Tier 3b when its squash is an ancestor of `origin/main`)
+### Proposals list on the phone (lane ma-f1-proposals-list, built and merged 2026-10-14 as `9f2c1f1c`; moves to Tier 3b when that squash is an ancestor of `origin/main`)
 
 The walk, on the Pixel, in the installed app:
 1. Proposals tab: cards newest lead first, each with the date rail, the client, the kind on its own line, guests, the stage line, the total and the stage chip.

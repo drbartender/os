@@ -3018,7 +3018,7 @@ re-grep before surgery.
   `EventsDashboard` reads `useMobileView()` and renders `EventsListPhone`); the Proposals tab still
   routes to the ORDINARY DESKTOP ADMIN PAGE with no phone branch, the "CSS retrofit" shape the
   spec's decision log rejects, until `ma-f1` lands.
-  **AMENDED 2026-10-14: the Proposals LIST is built by lane `ma-f1-proposals-list`
+  **AMENDED 2026-10-14: the Proposals LIST is built by lane `ma-f1-proposals-list` (merged 2026-10-14 as `9f2c1f1c`, not pushed)
   (`docs/superpowers/plans/2026-10-14-mobile-admin-proposals-list.md`); `/proposals` forks to the
   phone list at phone width. Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.**
   **AMENDED 2026-09-29: the event DETAIL and the ASSIGNMENT SHEET are built, by lane
