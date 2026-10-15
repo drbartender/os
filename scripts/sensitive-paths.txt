@@ -155,6 +155,10 @@ server/utils/inbox/**
 # The one module that requires @anthropic-ai/sdk (lane inbox-ai): a paid API
 # that receives client message text from the read job in the folder above.
 server/utils/anthropicClient.js
+# The Gmail feed's credentialed client (spec 2026-10-14): a key that can read
+# every Workspace mailbox. The probe is the only dev-box call allowed.
+server/utils/gmailClient.js
+scripts/gmail-probe.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes

@@ -15,6 +15,7 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 | Email | Resend |
 | SMS | Twilio |
 | AI read (Inbox) | Anthropic via `@anthropic-ai/sdk` + `zod`, reached only through `server/utils/anthropicClient.js` |
+| Email feed (Inbox) | The Gmail API, read-only, raw fetch under a service account with domain-wide delegation, reached only through `server/utils/gmailClient.js`; reads the business mailbox, never sends |
 | VA calling (Zul) | Telegram Bot API (raw HTTPS trigger) + Twilio Programmable Voice callback bridge |
 | Web Push | `web-push` (VAPID) for staff-portal notifications and the admin phone's per-kind banners |
 | WebAuthn | `@simplewebauthn/server` + `@simplewebauthn/browser` for phone-admin passkey unlock (12h device session) |
@@ -119,6 +120,9 @@ Copy `.env.example` and fill in values. This table is the fullest list, but it i
 | `INBOX_AI_MODEL` | Optional | AI read model: `claude-opus-5-5` (default; low effort, server-side refusal fallback) or `claude-haiku-4-5` (cheaper; the request then leaves out effort and the fallback). Any other value falls back to the default, with one warning at boot. |
 | `INBOX_AI_DAILY_CAP` | Optional | Max AI read attempts per rolling 24 hours, counted from `inbox_reads`. Default 300; `0`, blank or nonsense falls back to 300. A typical read is about 2 to 3 cents and the ceiling about 10 cents (`max_tokens` 4096 spent on output), so the cap's worst day is about $30. At the cap reads pause, with a Sentry warning at most once an hour. |
 | `RUN_INBOX_READ_SCHEDULER` | Optional | `false` disables the 60-second Inbox AI read (`inbox_ai_read`). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. Render had it at `false` from 2026-10-09; `true` since 2026-10-14, the read is live. |
+| `GMAIL_SERVICE_ACCOUNT_KEY` | For the Inbox email feed | Base64 of the service account's JSON key. Server-only, read only by `server/utils/gmailClient.js`. Unset means the Gmail feed is off. Smoke it with `scripts/gmail-probe.js` before Render. BLAST RADIUS: under domain-wide delegation the key can read every mailbox in the Workspace, not only the business one. Leak response: delete the key in Google Cloud and remove the delegation row in the Workspace admin console. Keep the downloaded JSON in `~/.secrets/` (chmod 600) and delete it once the value is in Render. |
+| `INBOX_OWN_EMAILS` | Optional | Comma list of extra addresses that are "us" and never form an item (the older Gmail address of the business). The mailbox, its aliases and every admin's and manager's address are ours without being listed. |
+| `RUN_GMAIL_SYNC_SCHEDULER` | Optional | `false` disables the 60-second Gmail sync. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `SENTRY_DSN_SERVER` | For error tracking | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | For error tracking | Client-side Sentry DSN (optional in dev; required in prod) |
 | `VAPID_PUBLIC_KEY` | For push | Web Push (VAPID) public key. Generate with `npx web-push generate-vapid-keys`. The admin phone reads it from `GET /api/me/notification-preferences` (`push.public_key`, served only when the private key is also set), so admin push needs nothing in Vercel. |
@@ -433,6 +437,7 @@ dr-bartender/
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
+│   │   ├── gmailClient.js      # The ONLY module that talks to Google for the Inbox email feed: raw fetch, a service-account JWT signed with node:crypto, read-only scope, hosts pinned, the mailbox a code constant; cached per key so the token is reused; errors carry class, status and stage (token or api), never a body; refuses a real client under NODE_ENV=test
 │   │   ├── googlePlaces.js     # Google Places venue-search proxy
 │   │   ├── drinkPlanExtras.js  # Shared pay-now extras amount helper (computeExtrasBreakdown; mirrors create-intent math)
 │   │   ├── inbox/              # Inbox (spec 2026-10-06): one list of everyone waiting on DRB, DERIVED live from the source tables; flat on purpose (the sensitive-path glob server/utils/inbox/** never crosses '/')
@@ -738,6 +743,8 @@ dr-bartender/
 │   │                           #   cc-transfer-events.js           : future CC events -> native proposals (manifest-driven, born-confirmed, comms-guarded, --resume)
 │   │                           # other one-off operator scripts (dry-run default, --apply to write):
 │   │                           #   reset-unpaid-gratuity.js (+ .test.js) : strip pre-election self-elected gratuity from UNPAID proposals (column- OR snapshot-carried); refuses any paid row
+│   │                           # read-only operator probes (no flags, write nothing):
+│   │                           #   gmail-probe.js                  : one-shot smoke of the Inbox Gmail feed key before it goes into Render (the only Gmail call allowed from the dev box; key in that command's environment only, loads no .env; exit 0 only when the key reads the business mailbox and the Primary label exists)
 ├── docs/                       # Project docs. The three the workflow actually runs on:
 │                               #   fix-list-remaining-2026-07-02.md : THE rolling backlog, the one list (tech-debt.md, open-threads.md
 │                               #                                     and the staff-ops backlog were folded in and DELETED 2026-08-13)
