@@ -74,7 +74,7 @@ Each one was settled with Dallas on 2026-10-14 unless marked as a design call.
 3. **Read-only.** The one scope is `https://www.googleapis.com/auth/gmail.readonly`. Inbox never sends, labels or deletes mail.
 4. **No Google SDK.** The client signs the service-account JWT with Node's own crypto, exchanges it at Google's token endpoint "as contact@", and calls the Gmail REST API with `fetch`, the Telegram precedent. Hosts are pinned; the key is never logged.
 5. **Unknown senders count.** A human writing from an address nobody knows forms an item, behind the bulk filter of section 5.2. Known clients and staff are exempt from the filter. The alternative, a closed list, would hide a brand-new lead who emails directly.
-6. **The dallas@ alias stays in.** Mail addressed only to dallas@ counts like mail to contact@. Dallas chose this knowing it includes personal correspondence, which is then stored and read by the AI like any other human mail. The fleet named one more consequence: through the Inbox routes that mail is readable by every admin and manager account, not only his. Recorded 2026-10-14 as part of the same acceptance, pending his word if that changes it.
+6. **The dallas@ alias stays in, with a personal check.** Mail addressed only to dallas@ counts like mail to contact@. After the fleet named that such mail would be readable by every admin and manager, Dallas asked for "a flag or check" (2026-10-14). A mail is **personal** when it was addressed only to dallas@ (contact@ and the other aliases absent from To and Cc) and its sender resolves to nobody we know (not a client, not staff, not a marketing lead). Personal mail is stored like any other, but it carries a "dallas@" tag on the row, the AI never reads it (its text never leaves the OS), and it is shown only to Dallas's own account in the list, the badge and the opened item; every other admin or manager never sees it. The check is a read-time predicate over the stored sender and recipients, so a sender who later becomes a client stops being personal and their earlier mail joins the client's item like any alias move. Mail to dallas@ from a known client, staffer or lead is business and shows to everyone.
 7. **Notification mail is never an item.** Thumbtack's notices (the webhook already delivers those messages), the OS's own alerts, Cal.com, Stripe, Twilio and every other machine sender are dropped before storage, so no message ever shows twice.
 8. **Email identity resolves at read time, like phones.** Zola's vendor address is parsed by template before anything else; then our own addresses (never an item); then clients; then the send-eligible staff set; else an unknown-address person keyed by a hash of the address.
 9. **A Gmail reply carries no author.** It ends a claim and closes or holds the item; the handled line reads "Replied by email". No clock-offset or signature inference. "If we do [care] we can look at the signature."
@@ -97,6 +97,8 @@ Each one was settled with Dallas on 2026-10-14 unless marked as a design call.
 An email or Zola item is a row like any other: the person's name, the need line, the wait, the channel icons (`mail` for email, `book` for Zola, from `inboxFormat.js`). The need line is the AI's summary once it lands, before that the first 200 characters of the person's own words (`classify.eventNeedText`), and for an attachment-only mail "Sent an attachment".
 
 **The Pitch tag.** A waiting row whose newest inbound read says `solicitation` carries a small "Pitch" chip after the channel icons, in the muted chip style of the shipped `StatusChip` (`client/src/components/adminos/StatusChip.js`). The need line is then the AI's line on what they are selling ("Selling bar stools for events"). Done closes it like any item.
+
+**The dallas@ tag.** A waiting row whose person is personal (decision 6) carries a small "dallas@" chip after the channel icons, in the Pitch chip's style, and appears only when the viewer is Dallas's admin account (`PERSONAL_MAILBOX_OWNER_USER_ID`, user 1, the id `CALL_ANSWERED_BY_USER.admin` already names). The need line is the first 200 characters of their words, since the AI never reads them.
 
 **Names.** A client's item shows the client's name. A staffer's shows theirs. A Zola couple's item shows the couple's label exactly as Zola wrote it. An unknown-address person shows the display name from their From header, else the marketing lead's name when the address is in `email_leads`, else the address itself (the unknown-number precedent, which shows the number).
 
@@ -175,6 +177,8 @@ The parent's normalizer runs unchanged: no gm row ever pairs with an sms, ml or 
 2. **Clients** by `clients.email`, newest client first. The unique index is case-sensitive, so two case spellings of one address can coexist; the newest-first rule decides.
 3. **Staff**: the same send-eligible set the text route reaches (role staff or manager, onboarding submitted, reviewed or approved, agreement on file), by `users.email`, newest profile first.
 4. **Anyone else** is `e-<16 hex>`: the first 16 hex characters of the SHA-256 of the lowercased address. The key carries no address, so page URLs and Sentry events never do (the parent's amendment 42 needs no extension); the address lives in the event's `meta.address` and is shown only on the opened item's card. The hash is unsalted: with a candidate address in hand, anyone holding a Sentry event can confirm the match, the same exposure the row ids already in URLs carry, accepted.
+
+**Personal mail** (decision 6): an inbound gm row is personal when its `to_addresses` hold the owner alias (code constant `PERSONAL_ALIAS`, the dallas@ address) and no other own address, and its From resolves to an `e-` key whose address is not in `email_leads`. A person is personal when every counted inbound of theirs is personal. The predicate is pure (`classify.isPersonal`), decided at read time, and never stored.
 
 The index also keeps `keyByEmailHash`, the `e-` hash of every client and staff address mapped to that person's key, so alias folding and `resolveKey` can move an `e-` key that only ever knew its hash (fleet).
 
@@ -292,6 +296,7 @@ The parent's read (sections 6.1 to 6.6) runs on email with these differences.
 - **Channel labels** already read `email` and `Zola` (`aiRead.js:136-137`).
 - **The solicitation flag** (decision 12). The inbound schema gains `solicitation: boolean`. The system prompt adds, before the "No reply is needed" list: "A solicitation is someone selling to us or asking us for something that is not a booking: a vendor pitch, a sponsorship or partnership ask, recruiting, a survey, a request to list or feature the business. For a solicitation set solicitation true and needs_reply true, and make what_they_need say what they are offering or asking for." The read job stores the flag in `inbox_reads.solicitation` and, when it is true, stores `needs_reply` as true whatever the model said, so the rules need no new branch: the item waits. The row carries `pitch: true` in the list payload when the newest counted inbound's read has the flag.
 - **The Zola closed notice** is a close by rule (decision 19) and is never read.
+- **Personal mail is never read** (decision 6): `buildSubjects` skips a personal person entirely, inbound and outbound, the legal-hold precedent; their text never leaves the OS.
 - **Redaction** is unchanged: addresses become `[email]`, digit runs `[number]`, links `[link]`, the surname rule applies to the display name. The redactor already handles every rule email needs; the lane adds fixtures for a signature block and a quoted-address line.
 - **Cost.** The mailbox adds a few subjects a day. The daily cap and the pricing note stand.
 
@@ -380,7 +385,9 @@ No new routes. The existing Inbox routes (`server/routes/admin/inbox.js`) carry 
 - `POST /api/admin/inbox/:personKey/text`: unchanged. An `e-` or `z-` person has no number to text; `resolveTextTarget` answers "Inbox only texts a number that has texted us first." for them, as it does for a `t-` key today, which the page never offers because the reply block's mode is `open`.
 - `POST …/seen` and `…/actions` accept the two new key types through `parsePersonKey`.
 
-The badge count includes email and Zola items like any other.
+The badge count includes email and Zola items like any other, except personal ones (decision 6), which count only for the owner's account.
+
+**Viewer filtering** (decision 6): `GET /api/admin/inbox` leaves a personal person out of `waiting`, `snoozed` and `handled` for every viewer but the owner; `GET /api/admin/inbox/:personKey` answers 404 for a personal person to any other viewer (the page shows its "gone" state); the seen, actions and text routes refuse the same way. The owner's account is `PERSONAL_MAILBOX_OWNER_USER_ID`, user 1.
 
 ## 9. Changes to existing code
 
@@ -392,7 +399,8 @@ Every file is in `server/utils/inbox/` unless given.
 - `engine.js`: two more header queries in `computeSnapshot`, the two mappers, the warning count; `directoryFor` names `e-` and `z-` keys (from `meta.fromName`, the marketing lead's name, or the address); `resolveKey` for the item route accepts them and moves an `e-` key through `keyByEmailHash`.
 - `details.js`: the gm details loader (subject, text), keyed by `meta.id`.
 - `classify.js`: `case 'gm'` in `countsAsReply`; `readOf` honors `meta.readRef`; `isCountedInbound` and `aiCannotClose` learn `zola_unread`; `eventNeedText` learns the attachment-only and unread copy; `sliceText` learns the subject prefix and `[attachment]`.
-- `rules.js`: a `zola_closed` row joins the anchor set (step 1) as a close by the person; `pitch` on the waiting row (read from the newest counted inbound's read); nothing else.
+- `rules.js`: a `zola_closed` row joins the anchor set (step 1) as a close by the person; `pitch` on the waiting row (read from the newest counted inbound's read); `personal` on every person state (decision 6); nothing else.
+- `engine.js` (list, badge and item paths) and `server/routes/admin/inbox.js`: the viewer filter for personal persons (section 8).
 - `reasons.js`: `case 'gm'` with the email and Zola wording; the `zola_closed` closer.
 - `thread.js`: subject and attachments on gm rows, the system lines for auto-replies, bounces and closed notices, "by email" captions, "Not delivered" with "Email bounced".
 - `replyRules.js`: `latestConversationChannel` learns `email` and `zola`.
@@ -402,8 +410,8 @@ Every file is in `server/utils/inbox/` unless given.
 - `subjects.js`: `zola_unread` in the slice list; one outbound subject per `meta.readRef`.
 - `aiRead.js`: the schema field, the prompt paragraph, the per-channel line caps, the subject prefix.
 - `readJob.js`: stores `solicitation`, forces `needs_reply` when it is true; the legal-hold key lookup with `e-` and `z-` keys; the sibling hold flag.
-- `payload.js`: `pitch`, `attachments`, `app.caption`.
-- `constants.js`: `ZOLA_UNREAD_TEXT`, `EMAIL_LINE_MAX`, `GMAIL_SYNC_MAX_PER_TICK`, `GMAIL_SYNC_TICK_MS`, `ZOLA_CLIENT_DAILY_CAP`, the dropped-domain, no-reply and auto-reply-subject constants, `zolaLeadUrl()`, `gmailThreadUrl()`.
+- `payload.js`: `pitch`, `personal`, `attachments`, `app.caption`.
+- `constants.js`: `PERSONAL_ALIAS`, `PERSONAL_MAILBOX_OWNER_USER_ID`, `ZOLA_UNREAD_TEXT`, `EMAIL_LINE_MAX`, `GMAIL_SYNC_MAX_PER_TICK`, `GMAIL_SYNC_TICK_MS`, `ZOLA_CLIENT_DAILY_CAP`, the dropped-domain, no-reply and auto-reply-subject constants, `zolaLeadUrl()`, `gmailThreadUrl()`.
 - New: `readGmail.js`, `readZola.js`, `mailText.js`, `zolaMail.js`, `zolaLeads.js`, `gmailSync.js`, `server/utils/gmailClient.js` (the credentialed client, outside the inbox folder like `anthropicClient.js`), `server/utils/zolaProposalDraft.js`, `scripts/gmail-probe.js`.
 - `server/index.js`: the `gmail_sync` scheduler.
 - `server/db/schema.sql`: section 7 and the proposal source block.
@@ -477,9 +485,9 @@ One suite at a time on the shared dev DB; no TEMP tables; read the pass count. T
 - `personKey.test.js` and `inboxFormat.test.js`: the two new patterns, leading zeros and int4 limits on `z-`.
 - `aliases.test.js`: rules 6 and 7.
 - `readers.test.js`: the two mappers over header rows, the recipient suffix with a shared `readRef`, outbound resolution by the answered inbound before recipients, Bcc, the read-time Zola join in both storage orders, auto-reply and bounce as system, `failed` from a bounce, the sibling hold flag.
-- `classify` and `rules` suites: a Gmail reply closes, holds when read as holding, ends a claim; a bounced reply does not close; two staff recipients answer no staffer; `zola_unread` waits and the AI cannot close it; a `zola_closed` row anchors and closes with its reason; an attachment-only mail waits; a pitch read keeps the item waiting with `pitch: true`.
+- `classify` and `rules` suites: `isPersonal` (dallas@ only and unknown sender is personal; contact@ in copy, a client sender, a staff sender or a marketing-lead sender is not; a person with one business mail is not); the viewer filter in the engine and route tests (owner sees the row and the item, another admin gets neither, the badge differs by viewer); a Gmail reply closes, holds when read as holding, ends a claim; a bounced reply does not close; two staff recipients answer no staffer; `zola_unread` waits and the AI cannot close it; a `zola_closed` row anchors and closes with its reason; an attachment-only mail waits; a pitch read keeps the item waiting with `pitch: true`.
 - `reasons.test.js`, `thread.test.js`, `payload.test.js`, `reply` and `replyRules` tests: the wording, the subject and attachment lines, the captions for all three apps, latest-channel mode for email and Zola, the Zola URL fallback.
-- `aiRead.test.js`: the schema accepts `solicitation`, the line caps by channel, the subject prefix, `[attachment]`; `readJob.test.js`: `needs_reply` forced true on a solicitation, one read per `readRef`, the legal-hold keys include `e-` and `z-` and the sibling flag; `subjects.test.js`: `zola_unread` in the slice, `auto_reply` and `bounce` out.
+- `subjects.test.js`: a personal person yields no subject. `aiRead.test.js`: the schema accepts `solicitation`, the line caps by channel, the subject prefix, `[attachment]`; `readJob.test.js`: `needs_reply` forced true on a solicitation, one read per `readRef`, the legal-hold keys include `e-` and `z-` and the sibling flag; `subjects.test.js`: `zola_unread` in the slice, `auto_reply` and `bounce` out.
 - `gmailSync.test.js`: the lease (claimed, held by another, expired), the history id read before the first page, first sync pages oldest-first and stores the id, steady state with `messageAdded` and `labelAdded`, 404 triggers the dated resync, the counting rules in order (Zola before own), the bulk filter, idempotent re-processing, side effects gated on the insert, a failing message recorded and skipped on the third attempt while the window advances, the wall-time and count bounds, one cache invalidation per tick, the summary line and the error class stored without content.
 - `gmailClient.test.js`: refuses to build under test without a stub, null when unconfigured, the fixed parse-failure message, the token request's shape (sub, scope, aud) against a stubbed fetch, pinned hosts, error classes by status, no key material in any error.
 - `zolaLeads.test.js`: find by UUID, by label, create; UUID filled on a label match; a second couple with the same label gets a second row; client created only for post-switch-on inquiries and under the daily cap; closed stamps the row; an unparsed notice with no label gets its own row.
@@ -541,5 +549,8 @@ Switch-on, after the push that carries lanes 1 to 4 at least:
 27. The privacy page's Google line is amended (grounding).
 28. One cache invalidation per tick, a wall-time bound, a Sentry capture on draft failure, the parse-failure message fixed, the unsalted hash named as accepted, a positive acceptance case, a day-one Done pass, a thirty-day Sent check, the probe checks the Primary label, the Zola lead foreign key is `RESTRICT` (gaps, risk).
 29. A Zola closed notice closes by rule, not through the AI (gaps).
+
+**From Dallas after the fleet, 2026-10-14:**
+30. Personal mail at dallas@ (unknown sender, no other alias in copy) is tagged, never AI-read, and visible only to his own account (decision 6, sections 4.1, 5.2, 6, 8, 9, 14).
 
 **From planning:** none yet. The plan adds them here, numbered, as the parent spec does.
