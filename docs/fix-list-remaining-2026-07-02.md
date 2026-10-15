@@ -1972,7 +1972,7 @@ Push-time sweep of the nine docs commits that followed the morning push. The one
 - **Comments still cite the old design-artifact file name** after the 2026-09-15 to 2026-10-14 rename: two comments in `client/src/index.css`, and the closed-lane notes `docs/design-artifacts/2026-10-06-edit-sheet-layout/github.md` and `docs/design-artifacts/2026-10-06-inbox/github.md`. Closed plans keep the old name on purpose.
 - **A run-on sentence in `ARCHITECTURE.md`**, the AI read paragraph ("stored as ParseError instead of throwing before stop_reason can be read with output_config"); the claims themselves match `aiRead.js`.
 
-### Lane email-feed review leftovers (2026-10-15; lane not merged, nothing live)
+### Lane email-feed review leftovers (2026-10-15; merged d88d5089, not pushed, nothing live)
 
 Parked by the lane's review fleet on `bb916025..0bdc2bfb` (spec 2026-10-14 section 17 item 50). None blocked the lane, and none shows mail to the wrong viewer. Nothing here runs in prod until the Gmail key is in Render, which waits on the plan's push gate.
 - **Performance, each on a trigger:**
@@ -1984,6 +1984,13 @@ Parked by the lane's review fleet on `bb916025..0bdc2bfb` (spec 2026-10-14 secti
 - **Spoofed client mail reads as the client's.** An inbound mail resolves by its From address alone, so a forged From of a client's address joins that client's item unless Gmail files it in Spam (which the sync drops). Fix: store the topmost DMARC result on the row and flag a failing one on the thread.
 - **The Gmail feed status has no staleness rule** (`feeds.js`, `gmailStatus`): it reads `on` from the key, the switch, the backfill flag and the failure streak, so a sync that stops ticking altogether keeps reading on, with only the 48-hour quiet dot to show it. Fix: a stale reading once `last_ok_at` is older than a few ticks.
 - **`--ink-3` on House Lights** carries the Inbox's muted lines, the lane's new attachment count among them. Not owed here: it is the shared token's existing owner call under Admin UI and the two skins (the edit sheet's `--ink-3` entry), recorded so the finding is not raised again.
+- **Parked by the last review rounds on `0bdc2bfb..d3689ccd` (all accepted at merge):**
+  - **The personal judgment dates a record by its creation, not by when its email was set** (`personalMail.js`, `SQL.knownAt`). An existing client, lead or user whose email is edited to a sender's address before the sync judges that sender's mail makes the mail business: a manager's client edit, or the quote wizard or SMS opt-in stamping an email onto an email-less client matched by name and phone. It bites only on mail not yet judged: the first backfill after switch-on (about five weeks judged in the first hour), a backlog after an outage, the minute after arrival. Fix: an `email_set_at` on `clients` and `email_leads` kept by a trigger, compared as `COALESCE(email_set_at, created_at)`. Spec 17 item 49 names it.
+  - **A first-sync contact@ reply to a personal mail, stored before it, whose copied stranger later becomes a client** moves that copy to the client's business item (`readGmail.js`, `sentPeople` reads "unknown now"). Fix: store the unknown-then recipients on every Sent row at sync time.
+  - **No From display name, a signature after a bare "--":** a short capitalized line then counts as the sender's name, so a name and phone, a venue and street, or a lot and gate code after a bare "--" is cut from the stored text (`mailText.js`, `isSignatureTail` through `isNameLine`; the old code cut it too). Fix: require a sign-off when the name is unknown, or take name words from the From local part.
+  - **"Lowest id" is not "earliest" on the first sync** (`personalMail.SQL.answeredInbound`, `readGmail.byMessageId`): a forged reused Message-ID dated between a personal mail and its reply, stored with a lower id across a backfill page, takes the reply over. Impractical. Fix: order by `at, id`.
+  - **A marketing lead copied on a reply to a personal mail reads personal** (the reader's override covers every `e-` recipient, leads included, though the sync counted the lead as known). Errs private. Fix: apply the override only to rows the sync judged before their inbound existed.
+  - **A deterministic database error outside class 22 or 23 on one message fails every tick** (`gmailSync.js`, `isDbOutage`): it shows as "Gmail failing" plus Sentry from the third tick, with no per-message escape. Fix if it is ever seen: a per-id outage counter.
 
 ### Push 2026-10-08 review leftovers
 
