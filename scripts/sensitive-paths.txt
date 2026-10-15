@@ -473,9 +473,11 @@ server/routes/shifts.js
 server/utils/staffingRoles.js
 server/utils/adminAuditLog.js
 # offlineGet is the gate on what the admin service worker may store on a
-# device and serve as a stale copy; staffingMeta reads home coordinates and
-# seniority and decides how precisely a distance leaves the server.
+# device and serve as a stale copy (ProposalsListPhone.js is listed here for
+# its offlineGet reads); staffingMeta reads home coordinates and seniority and
+# decides how precisely a distance leaves the server.
 client/src/utils/offlineRead.js
+client/src/pages/mobile/ProposalsListPhone.js
 server/utils/staffingMeta.js
 
 # The mailability predicate + suppression helpers (2026-08-14, push-gate

@@ -25,10 +25,12 @@ const COHORTS = {
   lost:   { dateCol: 'p.sent_at',     where: "p.sent_at IS NOT NULL AND p.status = 'archived'" },
 };
 // Whitelisted sort columns for the admin list. A client's ?sort= value is a KEY
-// here and nothing else — each maps to a fixed SQL expression, so no user text
+// here and nothing else: each maps to a fixed SQL expression, so no user text
 // reaches SQL (same contract as axis/cohort above). ?dir is asc|desc (default
 // desc). An unknown/absent ?sort falls back to created_at DESC. The keys mirror
-// ProposalsDashboard's SortableTh sortKeys exactly.
+// ProposalsDashboard's SortableTh sortKeys exactly, plus `created_at`: the phone
+// list's "Newest lead" order (lane ma-f1) names the fallback explicitly so it
+// can sit beside event_date in one apparatus. Desktop columns are unchanged.
 const SORT_COLUMNS = {
   client: 'LOWER(c.name)',
   event: "LOWER(COALESCE(NULLIF(TRIM(p.event_type_custom), ''), p.event_type, ''))",
@@ -38,6 +40,7 @@ const SORT_COLUMNS = {
   sent: 'p.sent_at',
   last_viewed: 'p.last_viewed_at',
   total: 'p.total_price',
+  created_at: 'p.created_at',
 };
 
 /** GET /api/proposals — list all proposals. Explicit column list — do NOT ship
@@ -45,7 +48,8 @@ const SORT_COLUMNS = {
  *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, view = 'active', search, source, page = 1, limit = 50,
-    axis, event_type: eventType, balance, cohort, from, to, sort, dir } = req.query;
+    axis, event_type: eventType, balance, cohort, from, to, sort, dir,
+    unviewed, envelope } = req.query;
   // Bound pagination: a non-numeric limit (?limit=abc) otherwise casts to NaN and
   // 22P02-500s; ?page=0 yields a negative OFFSET. Clamp to [1, 200], default 50;
   // page floors at 1 (matches clients.js).
@@ -145,6 +149,17 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     whereClause += ` AND p.accepted_at IS NOT NULL AND p.${NOT_DEAD} AND (p.total_price - COALESCE(p.amount_paid,0)) > 0`;
   }
 
+  // (6) Phone apparatus (spec 2026-08-13-mobile-admin section 5, lane ma-f1).
+  // ?unviewed=1 keeps the sent proposals the client has never opened. It is a
+  // server-side predicate on purpose: a client-side filter over one 50-row page
+  // would return a wrong subset. `modified` implies viewed, so status = 'sent'
+  // is the whole test, and it adds no parameters. `bucketWhere` is the same set
+  // WITHOUT the predicate, so the envelope's bucket_total and unviewed_total
+  // describe the bucket whether or not the chip is on.
+  const UNVIEWED_SQL = " AND p.last_viewed_at IS NULL AND p.status = 'sent'";
+  const bucketWhere = whereClause;
+  if (unviewed === '1') whereClause += UNVIEWED_SQL;
+
   // Whitelisted ORDER BY. sortExpr comes from the fixed SORT_COLUMNS map and
   // sortDir from a literal branch — no user text is interpolated into SQL.
   // NULLS LAST keeps blank dates/prices at the bottom in BOTH directions; the
@@ -181,9 +196,13 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 
   // Data + total run in parallel; COUNT(*) reuses the identical FROM/WHERE and
   // whereParams (no LIMIT/OFFSET) so the count matches the full filtered set.
-  const [result, countResult] = await Promise.all([
+  // The envelope's two bucket counts reuse bucketWhere with the same params.
+  const wantEnvelope = envelope === '1';
+  const [result, countResult, bucketResult, unviewedResult] = await Promise.all([
     pool.query(query, params),
     pool.query(`SELECT COUNT(*) ${fromWhere}${whereClause}`, whereParams),
+    wantEnvelope ? pool.query(`SELECT COUNT(*) ${fromWhere}${bucketWhere}`, whereParams) : null,
+    wantEnvelope ? pool.query(`SELECT COUNT(*) ${fromWhere}${bucketWhere}${UNVIEWED_SQL}`, whereParams) : null,
   ]);
   const total = Number(countResult.rows[0]?.count) || 0;
   // Non-breaking pagination signal: total in a header, body stays a bare array
@@ -191,7 +210,19 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   // Access-Control-Expose-Headers, so expose this header per-route.
   res.set('X-Total-Count', String(total));
   res.set('Access-Control-Expose-Headers', 'X-Total-Count');
-  res.json(result.rows);
+  if (!wantEnvelope) return res.json(result.rows);
+  // ?envelope=1 (the phone list, lane ma-f1) answers an object: the service
+  // worker's stored copy is read by body, so the phone's totals travel in the
+  // body, never in the header. Nothing that does not send it sees a change.
+  res.json({
+    rows: result.rows,
+    total,
+    bucket_total: Number(bucketResult.rows[0]?.count) || 0,
+    unviewed_total: Number(unviewedResult.rows[0]?.count) || 0,
+    page: pg,
+    limit: lim,
+    has_more: pg * lim < total,
+  });
 }));
 
 module.exports = router;

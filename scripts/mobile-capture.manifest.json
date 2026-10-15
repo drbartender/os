@@ -79,7 +79,12 @@
     { "name": "admin-event-sheet", "host": "localhost", "path": "/events?drawer=shift&drawerId=:token", "auth": "admin", "settleMs": 2600,
       "authAssert": ".m-sheet",
       "tokenQuery": "SELECT s.id::text AS token FROM shifts s WHERE s.status <> 'cancelled' ORDER BY s.event_date DESC LIMIT 1" },
-    { "name": "admin-proposals", "host": "localhost", "path": "/proposals", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell", "reportOnly": true },
+    { "name": "admin-proposals", "host": "localhost", "path": "/proposals", "auth": "admin", "settleMs": 2600,
+      "authAssert": ".m-listbar" },
+    { "name": "admin-proposals-date", "host": "localhost", "path": "/proposals?order=date", "auth": "admin", "settleMs": 2600,
+      "authAssert": ".m-listbar" },
+    { "name": "admin-proposals-unviewed", "host": "localhost", "path": "/proposals?unviewed=1", "auth": "admin", "settleMs": 2600,
+      "authAssert": ".m-listbar" },
     { "name": "admin-messages", "host": "localhost", "path": "/messages", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell", "reportOnly": true },
 
     { "name": "apply", "host": "hiring.localhost", "path": "/apply", "auth": "applicant", "authAssert": ".file-upload-area" },

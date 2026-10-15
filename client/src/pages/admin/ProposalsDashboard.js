@@ -5,6 +5,8 @@ import { getEventTypeLabel, EVENT_TYPES } from '../../utils/eventTypes';
 import { presetRange } from '../../hooks/useMetricsFilter';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
+import { useMobileView } from '../../context/MobileViewContext';
+import ProposalsListPhone from '../mobile/ProposalsListPhone';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
@@ -59,7 +61,7 @@ const PAGE_SIZE = 50;
 // page you were on rather than snapping to the top of the list.
 const LIST_DEFAULTS = { tab: 'active', q: '', source: '', from: '', to: '', axis: 'event', status: '', event_type: '', balance: '', cohort: '', page: '1' };
 
-export default function ProposalsDashboard() {
+function ProposalsDashboardDesktop() {
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -600,4 +602,14 @@ export default function ProposalsDashboard() {
       )}
     </div>
   );
+}
+
+// Route-level fork (spec 2026-08-13-mobile-admin section 3): same URL, same
+// route table; the phone list renders at phone width unless this screen's
+// Desktop-view override is on. Decided when the page opens (MobileViewContext
+// latches isPhone per pathname), so a rotation mid-page does not swap screens.
+export default function ProposalsDashboard() {
+  const { isPhone, desktopView } = useMobileView();
+  if (isPhone && !desktopView('proposals-list')) return <ProposalsListPhone />;
+  return <ProposalsDashboardDesktop />;
 }

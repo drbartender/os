@@ -24,6 +24,8 @@ const crypto = require('node:crypto');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
+if (process.env.NODE_ENV === 'production') throw new Error('refusing to run route tests against production');
+
 const { pool } = require('../../db');
 const listRouter = require('./list');
 
@@ -167,4 +169,12 @@ test('?sort=event_date → NULL event_date sorts LAST in both directions', async
   const descIds = desc.body.map((r) => r.id);
   assert.equal(descIds[descIds.length - 1], C, `desc: null-date row (C) must still be last; got ${JSON.stringify(descIds)}`);
   assert.deepEqual(descIds, [B, D, A, C], `desc order by date should be B,D,A,C; got ${JSON.stringify(descIds)}`);
+});
+
+test('?sort=created_at (phone "Newest lead") is in the whitelist and behaves like the fallback', async () => {
+  const desc = await request(`/api/proposals?search=${TAG}&sort=created_at`);
+  assert.equal(desc.status, 200, `expected 200, got ${desc.status}: ${desc.raw}`);
+  assert.deepEqual(desc.body.map((r) => r.id), [D, C, B, A], 'created_at defaults to DESC like every key');
+  const asc = await request(`/api/proposals?search=${TAG}&sort=created_at&dir=asc`);
+  assert.deepEqual(asc.body.map((r) => r.id), [A, B, C, D]);
 });

@@ -13,6 +13,7 @@ const SOURCES = [
   'pages/mobile/EventDetailSections.js',
   'pages/mobile/InboxPhone.js',
   'pages/mobile/NotificationsPhone.js',
+  'pages/mobile/ProposalsListPhone.js',
   'pages/mobile/MorePage.js',
   'components/inbox/WaitingRows.js',
   'components/inbox/HandledList.js',
@@ -34,6 +35,17 @@ function classesIn(source) {
 test.each(SOURCES)('%s uses only classes the stylesheet defines', (rel) => {
   const missing = classesIn(read(rel)).filter((name) => !new RegExp(`\\.${name}(?![a-z0-9-])`).test(css));
   expect(missing).toEqual([]);
+});
+
+// At 320px the Proposals chip ("Unviewed 30") no longer fits beside the
+// segmented control; without the wrap the page scrolls sideways.
+test('the list bar wraps rather than overflows at narrow widths', () => {
+  const head = 'html[data-app="admin-os"] .m-listbar {';
+  const start = css.indexOf(head);
+  expect(start).toBeGreaterThan(-1);
+  // Comments stripped, so only a real declaration counts.
+  const body = css.slice(start + head.length, css.indexOf('}', start)).replace(/\/\*[\s\S]*?\*\//g, '');
+  expect(body).toContain('flex-wrap: wrap');
 });
 
 test('no file under pages/mobile or components/mobile imports the desktop ShiftDrawer', () => {

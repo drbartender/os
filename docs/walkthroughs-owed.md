@@ -2085,7 +2085,7 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**As of 2026-10-14 (later) this tier holds ONE item, below.** Before it was added, it was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
+**As of 2026-10-14 (later) this tier holds TWO items, below: the consult call record, and at the end of the tier the phone Proposals list (lane ma-f1-proposals-list, added 2026-10-14).** Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
 of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
 by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
 to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
@@ -2174,6 +2174,16 @@ to rot. Do that again for the next thing that sits here.
       press is lost. It is inherited from the shipped lead router AND from spec 4.5, so it is a
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
+
+### Proposals list on the phone (lane ma-f1-proposals-list, built 2026-10-14; moves to Tier 3b when its squash is an ancestor of `origin/main`)
+
+The walk, on the Pixel, in the installed app:
+1. Proposals tab: cards newest lead first, each with the date rail, the client, the kind on its own line, guests, the stage line, the total and the stage chip.
+2. Tap Event date: earliest event date first (a past-dated proposal still in the bucket sits at the top); a draft with no date sits at the end with a dash in its rail.
+3. Tap Unviewed: only sent-and-never-opened proposals; the number on the chip matches before and after the tap; "Everything opened" when there are none but the bucket is not empty.
+4. Scroll to the end: "End of active · N proposals" with the chip off; Show more when there are more than fifty.
+5. Tap a card: the desktop proposal page opens inside the phone chrome (until the phone detail lane lands); Back returns to the list where you left it.
+6. Load the list online once since launch (switch the order and back), then airplane mode, reopen the tab: the stored copy with "offline copy · as of".
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

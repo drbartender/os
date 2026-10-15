@@ -2139,6 +2139,34 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     chrome; px insets against the shell's rem; House Lights ink-3 meta text misses AA (a
     design-system token, not the screen).
 
+- **Phone lists share their load and scroll mechanics by hand:** EventsListPhone and
+  ProposalsListPhone carry the same superseded-response guard, append-keeps-staleness rule and
+  restore clamp. Extract a shared hook when a third paged phone list arrives (ma-f3 search is
+  grouped, not paged, so not that one). Lane ma-f1, 2026-10-14.
+
+- **EventsListPhone.js may carry the unmount clamp race ProposalsListPhone fixed in lane ma-f1.**
+  The clamp happens against the detail's first paint (the one-line "Loading the event" at
+  `EventDetailPhone.js:287`, or the Suspense fallback when the chunk is cold), not against the
+  detail's height, so a tall detail does not hide it. `EventsListPhone.js` has no root ref yet.
+  ma-e1's C9 (scroll restore on Back) passed before the phone detail existed and has not been
+  re-run since. Action: run the P9 recipe (plan `2026-10-14-mobile-admin-proposals-list.md`:
+  scroll to 1200, open a card, Back) against `/events`; if it loses the offset, add a root ref
+  and the `isConnected` guard on the scroll save as ProposalsListPhone did in ma-f1. Lane ma-f1,
+  2026-10-14.
+
+- **Both phone lists page by position (Events by offset, Proposals by page number), so a row
+  that sorts ahead of the page boundary and arrives between page 1 and Show more (a new lead
+  under Newest lead, a new event on the Events list) repeats page 1's last row at the top of
+  page 2.** On Events the symptom is a doubled staffing count on the boundary event:
+  `groupShiftRows` merges rows by event key, so 2/3 reads 4/6. Fix: dedupe shift rows by id when
+  appending (`EventsListPhone.js:80`). ProposalsListPhone dedupes appended rows by id since lane
+  ma-f1. Lane ma-f1, 2026-10-14.
+
+- **Back after Show more lands at the top on both phone lists:** `canRestore` skips the restore
+  when the saved offset exceeds page 1's height (the lists reload page 1 only). Fix both
+  together: remember how many pages were open and reload them before restoring, or clamp to the
+  bottom instead of skipping. Found by the ma-f1 second opinion (codex), 2026-10-14.
+
 - **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, pushed
   2026-10-07).** Parked by its review fleet, fold re-reviews and the push review; none changes money
   or a message.
@@ -2990,6 +3018,9 @@ re-grep before surgery.
   `EventsDashboard` reads `useMobileView()` and renders `EventsListPhone`); the Proposals tab still
   routes to the ORDINARY DESKTOP ADMIN PAGE with no phone branch, the "CSS retrofit" shape the
   spec's decision log rejects, until `ma-f1` lands.
+  **AMENDED 2026-10-14: the Proposals LIST is built by lane `ma-f1-proposals-list`
+  (`docs/superpowers/plans/2026-10-14-mobile-admin-proposals-list.md`); `/proposals` forks to the
+  phone list at phone width. Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.**
   **AMENDED 2026-09-29: the event DETAIL and the ASSIGNMENT SHEET are built, by lane
   `ma-e2-event-detail` (`91dcfab8`) of
   `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`.** `/events/:id` forks to the

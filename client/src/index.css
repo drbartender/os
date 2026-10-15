@@ -21405,6 +21405,10 @@ html[data-app="admin-os"] .m-seg-btn.active {
   background: var(--accent);
   color: #fff;
 }
+/* .m-seg clips overflow, so the global +2px focus ring never showed: draw it inside. */
+html[data-app="admin-os"] .m-seg-btn:focus-visible { outline-offset: -2px; }
+/* Inside, an accent ring vanishes on the accent-filled active segment: use the label's color there. */
+html[data-app="admin-os"] .m-seg-btn.active:focus-visible { outline-color: currentColor; }
 html[data-app="admin-os"] .m-seg-note {
   margin-top: 6px;
   font-size: 10.5px;
@@ -21505,7 +21509,10 @@ html[data-app="admin-os"] .m-listbar {
      .m-main's 0.75rem padding, so sticking it at the scroller's content edge
      left a 0.75rem band above it where the cards scrolled through. */
   position: sticky; top: -0.75rem; z-index: 2;
-  display: flex; align-items: center; gap: 8px;
+  /* wrap: at 320px the Proposals chip ("Unviewed 30") no longer fits beside
+     the segmented control, so it drops under it (gap gives the 8px row gap)
+     instead of scrolling the page sideways. 360 and up stay on one line. */
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   margin: -0.75rem -0.75rem 0.5rem; padding: 10px 12px 6px;
   background: var(--bg-0);
 }
@@ -21566,6 +21573,10 @@ html[data-app="admin-os"] .m-card-foot { display: flex; flex-wrap: wrap; align-i
 html[data-app="admin-os"] .m-frac { font-family: var(--font-numeric); font-size: 12.5px; font-weight: 700; color: #ff4d4d; }
 html[data-app="admin-os"] .m-frac.full { font-weight: 600; color: hsl(var(--ok-h) var(--ok-s) 52%); }
 html[data-app="admin-os"] .m-frac.past { font-weight: 400; color: var(--ink-3); }
+/* Proposals list card (lane ma-f1, benchmark Proposals tab): the total sits at
+   the foot's left in the numeric face, the pipeline chip at the right edge. */
+html[data-app="admin-os"] .m-card-total { font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .m-chip-end { margin-left: auto; display: inline-flex; }
 /* An unpaid balance sits on the card's right edge, centred on the body, so it
    falls midway between the guest count above and the tags below; no label, one
    step smaller than the fraction and a softer red, so it informs without
