@@ -94,7 +94,7 @@ lanes:
       - server/utils/inbox/zolaLeads.test.js
       - server/utils/inbox/zolaMail.js
       - server/utils/inbox/zolaMail.test.js
-    blockedBy: [email-feed]
+    blockedBy: [email-feed, zola-pipeline-spec]   # Dallas 2026-10-14: the Zola lead pipeline (box agent scrape, client with contacts, real draft, automated first reply) is its OWN spec, brainstormed first; this lane shrinks to consuming its lead rows
     review: full-fleet   # creates client rows from parsed third-party mail; the Send guard touches the proposal lifecycle
   - id: email-ai
     footprint:
@@ -132,7 +132,7 @@ lanes:
       - server/utils/inbox/zolaLeads.js
       - server/utils/zolaProposalDraft.js
       - server/utils/zolaProposalDraft.test.js
-    blockedBy: [zola-leads]
+    blockedBy: [zola-leads, zola-pipeline-spec]   # the draft takes the pipeline's real fields, not the notice's
     review: full-fleet   # proposal rows
 pushGate: lanes email-feed, zola-leads and email-ai merge before any push that carries email-feed, and the key is not set in Render before that push (spec 16; plan review 2026-10-14)
 ---
@@ -875,6 +875,10 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 - **Placeholders:** none.
 - **Type consistency:** `createGmailClient`, `makeGmailSyncTick`, `ensureStateRow`, `claimLease`, `zolaAuthPasses`, `zolaTemplateOf`, `labelKey`, `fallbackLabel`, `findOrCreateLead`, `applyNotice`, `parseZola`, `extractText`, `resolveEmail`, `keyByEmailHash`, `zolaKey`, `appLinkFor(personKey, index, events)`, `readRef`, `toAddresses`, `isPersonal(events, index)`, `isPersonalPerson`, `preclipFor`, `entryMaxFor` are named once and reused.
 - **Review Focus:** the five lines each name their task and test (Tasks 9, 9, 7, 8a, 10a).
+
+## Zola restructure (Dallas, 2026-10-14, after the plan fleet)
+
+Dallas: the Zola part must follow the Thumbtack path in full, and that path is "the first element of the Zola part". Zola has no webhook, so a box agent (the Thumbtack harvester's shape: a logged-in vendor profile under systemd on the box, a server surface behind a shared secret) opens each new lead's page, pulls the couple's contact and event data, and the existing path runs from there: client with real contacts, a draft with real fields, and an automated first reply sent through the Zola site by the agent ("automated the way thumbtack does"). That is a separate spec, brainstormed before lanes 3 and 5 here are cut; those two lanes then shrink to consuming the pipeline's lead rows and fields. Lanes 1, 2 and 4 proceed unchanged. First step of that spec: a throwaway spike on the box, one real lead page, read-only, to learn which fields Zola renders and whether the couple's email and phone show before booking.
 
 ## Execution
 
