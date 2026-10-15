@@ -1972,6 +1972,19 @@ Push-time sweep of the nine docs commits that followed the morning push. The one
 - **Comments still cite the old design-artifact file name** after the 2026-09-15 to 2026-10-14 rename: two comments in `client/src/index.css`, and the closed-lane notes `docs/design-artifacts/2026-10-06-edit-sheet-layout/github.md` and `docs/design-artifacts/2026-10-06-inbox/github.md`. Closed plans keep the old name on purpose.
 - **A run-on sentence in `ARCHITECTURE.md`**, the AI read paragraph ("stored as ParseError instead of throwing before stop_reason can be read with output_config"); the claims themselves match `aiRead.js`.
 
+### Lane email-feed review leftovers (2026-10-15; lane not merged, nothing live)
+
+Parked by the lane's review fleet on `bb916025..0bdc2bfb` (spec 2026-10-14 section 17 item 50). None blocked the lane, and none shows mail to the wrong viewer. Nothing here runs in prod until the Gmail key is in Render, which waits on the plan's push gate.
+- **Performance, each on a trigger:**
+  - **The full people index reads all of `email_leads` on every recompute** (`people.js`, `PEOPLE_EMAIL_LEADS_SQL`) only to name an unknown sender (`leadNameOf`). Fix: a targeted lookup by the addresses of the `e-` people the snapshot keeps. Trigger: `email_leads` past a few thousand rows, or the compute time shows it.
+  - **Pass 2 loads the subject and words of every stored mail of each person it keeps** (`details.js` into `readGmail.loadGmailDetails`), back to the history floor, while the thread shows 30 days (`THREAD_DAYS`) and the AI read its slice. Fix: bound the mail text to the thread window plus the slice. Trigger: a long correspondence makes an item slow to open, or the Neon transfer meter shows it.
+  - **Every message is stored inside its own transaction** (`gmailSync.js`, `storeMessage`), side effects or not. A plain mail with no bounce mark and no Zola lead needs only its insert; skipping BEGIN and COMMIT for it saves two round trips a message, which matters only during the backfill.
+- **Two `gmail_messages` indexes no query reads yet** (`idx_gmail_messages_from`, `idx_gmail_messages_in_reply_to` in `schema.sql`): the sync and the personal judgment look up by `message_id_header` and `thread_id`, and the readers scan by `at`. Drop them, or keep them for a named query, before the table grows.
+- **A delivery report is believed on its From alone** (`gmailRules.js`, `isGoogleReport`: Google's mailer-daemon or postmaster), never on Google's own authentication of it. A forged report could mark one of our replies not delivered, which only keeps an item waiting (the safe direction). Fix: require an Authentication-Results pass for Google on a report, with the Zola gate's linear line reader.
+- **Spoofed client mail reads as the client's.** An inbound mail resolves by its From address alone, so a forged From of a client's address joins that client's item unless Gmail files it in Spam (which the sync drops). Fix: store the topmost DMARC result on the row and flag a failing one on the thread.
+- **The Gmail feed status has no staleness rule** (`feeds.js`, `gmailStatus`): it reads `on` from the key, the switch, the backfill flag and the failure streak, so a sync that stops ticking altogether keeps reading on, with only the 48-hour quiet dot to show it. Fix: a stale reading once `last_ok_at` is older than a few ticks.
+- **`--ink-3` on House Lights** carries the Inbox's muted lines, the lane's new attachment count among them. Not owed here: it is the shared token's existing owner call under Admin UI and the two skins (the edit sheet's `--ink-3` entry), recorded so the finding is not raised again.
+
 ### Push 2026-10-08 review leftovers
 
 Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the push.

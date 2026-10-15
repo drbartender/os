@@ -14,7 +14,8 @@ lanes:
     blockedBy: []
     review: full-fleet   # a credential that can read every Workspace mailbox
   - id: email-feed
-    footprint:
+    footprint:   # widened 2026-10-15 to every file the lane touched (spec 17 items 48 and 49)
+      - .claude/CLAUDE.md
       - ARCHITECTURE.md
       - README.md
       - client/src/components/inbox/ContextViews.js
@@ -23,13 +24,18 @@ lanes:
       - client/src/components/inbox/ReplyBar.test.js
       - client/src/components/inbox/Thread.js
       - client/src/components/inbox/WaitingRows.js
+      - client/src/components/inbox/inboxContext.js
+      - client/src/components/inbox/inboxContext.test.js
       - client/src/components/inbox/inboxFormat.js
       - client/src/components/inbox/inboxFormat.test.js
       - client/src/components/inbox/inboxItemViews.test.js
       - client/src/components/inbox/inboxListViews.test.js
       - client/src/components/inbox/inboxThread.js
       - client/src/components/inbox/inboxThread.test.js
+      - client/src/index.css
       - client/src/pages/website/legal/PrivacyPage.js
+      - client/src/pages/website/legal/PrivacyPage.test.js
+      - server/db/index.js
       - server/db/schema.sql
       - server/index.js
       - docs/walkthroughs-owed.md
@@ -49,6 +55,9 @@ lanes:
       - server/utils/inbox/engine.js
       - server/utils/inbox/engine.test.js
       - server/utils/inbox/feeds.js
+      - server/utils/inbox/gmailRules.js
+      - server/utils/inbox/gmailRules.test.js
+      - server/utils/inbox/gmailSync.db.test.js
       - server/utils/inbox/gmailSync.js
       - server/utils/inbox/gmailSync.test.js
       - server/utils/inbox/mailText.js
@@ -59,6 +68,8 @@ lanes:
       - server/utils/inbox/people.test.js
       - server/utils/inbox/personKey.js
       - server/utils/inbox/personKey.test.js
+      - server/utils/inbox/personalMail.js
+      - server/utils/inbox/personalMail.test.js
       - server/utils/inbox/readGmail.js
       - server/utils/inbox/readZola.js
       - server/utils/inbox/readers.test.js
@@ -899,3 +910,5 @@ The Tasks 9 to 10c consistency check named four things Task 18 owns (inside the 
 ## Execution
 
 Dallas's standing method: Claude cuts each lane, builds it (one pass for a coherent lane, parallel subagents for independent pieces, stated at the time), runs the mid-lane checkpoints named above and the per-lane fleet, merges by squash from `os`. Order: gmail-client; email-feed; then zola-leads and email-ai in parallel; then zola-draft. **Push gate:** no push carries email-feed until zola-leads and email-ai are merged too, and the key is not set in Render before that push; the live probe run is Dallas's, after the push, with the key in that command's environment only. No push without his own imperative cue.
+
+**Switch-on check (lane email-feed's fleet, 2026-10-15):** before the Gmail key goes into Render, confirm `INBOX_OWN_EMAILS` in Render holds the business's older Gmail address. A Zola notice addressed only to that address passes the replay gate (spec 17 item 48) only through that setting; without it such a notice is dropped as a gate failure.
