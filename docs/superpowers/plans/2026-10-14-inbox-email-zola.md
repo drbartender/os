@@ -888,6 +888,14 @@ The gmail-client fleet (security, code, consistency) found three things the Task
 3. **Suites always inject the client.** With no key, `createGmailClient()` returns null before its `NODE_ENV=test` refusal, so a tick test that forgets `deps.client` reads as "feed off" and an assertion like "nothing stored" passes vacuously. Every positive tick test asserts a non-zero `stored` count.
 Noted, not changed: Gmail answers some per-user rate limits with 403, which the client classes as `GmailAuthError` (spec section 10). The sequential tick at 50 gets a minute is far under the per-user quota, so a "Gmail failing" auth streak with a working key would point here first. Errors also carry `stage` (`token` or `api`); `recordTickError` stores the class, and may store the stage, never more.
 
+## Carry-forward from lane email-feed's checkpoint (2026-10-15), for lane email-ai
+
+The Tasks 9 to 10c consistency check named four things Task 18 owns (inside the push gate, not regressions):
+1. `subjects.inSlice` does not include `zola_unread` yet (spec 17 item 25).
+2. `HELD_KEYS_SQL` carries no `e-` or `z-` keys; the engine's sibling flag (`meta.legalHold`, set in `computeSnapshot` by `markHeldSiblings`) is the email path's hold, and `aiRead.isReadable` must refuse an event that carries it.
+3. **The readRef trap.** Outbound gm subjects still use the suffixed ref (`gm:<id>:n`, one event per recipient). When Task 18 moves `subjectRef` to `meta.readRef` (one read per mail), every lookup that compares a slice line's ref to the subject ref must compare on `readRef` too: `readJob.js` (the `slice.find(e.ref === subjectRef)` near line 81), `aiRead.subjectEntry` and `subjects.resolved`. Miss one and every multi-recipient mail becomes unreadable. Test: a Sent mail to a client and a planner is read once and both events carry the verdict.
+4. The personal skip already ships in `subjects.buildSubjects` and `getReadSubjects` (lane email-feed); Task 18 keeps both.
+
 ## Execution
 
 Dallas's standing method: Claude cuts each lane, builds it (one pass for a coherent lane, parallel subagents for independent pieces, stated at the time), runs the mid-lane checkpoints named above and the per-lane fleet, merges by squash from `os`. Order: gmail-client; email-feed; then zola-leads and email-ai in parallel; then zola-draft. **Push gate:** no push carries email-feed until zola-leads and email-ai are merged too, and the key is not set in Render before that push; the live probe run is Dallas's, after the push, with the key in that command's environment only. No push without his own imperative cue.
