@@ -2139,6 +2139,14 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     chrome; px insets against the shell's rem; House Lights ink-3 meta text misses AA (a
     design-system token, not the screen).
 
+- **The phone Proposals list widens an accepted at-rest limit** (push sweep, 2026-10-15).
+  `GET /proposals?envelope=1` returns the desktop's full column list, so every page the phone
+  loads (50 rows) stores each row's public proposal token and the client's email and phone in
+  the worker's cache, though the card reads none of them. Spec section 7 accepts unused tokens
+  at rest ("Accepted limits at rest", 2026-09-29), but that was one proposal at a time on the
+  detail screen. Fix with lane ma-f2 or before: in envelope mode, leave out `token`,
+  `client_email` and `client_phone`, the way the drink plan is stored only as its
+  day-of-contact projection. Logout, a user switch and a revoke-coded read still purge the cache.
 - **Phone lists share their load and scroll mechanics by hand:** EventsListPhone and
   ProposalsListPhone carry the same superseded-response guard, append-keeps-staleness rule and
   restore clamp. Extract a shared hook when a third paged phone list arrives (ma-f3 search is
