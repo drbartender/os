@@ -8,7 +8,9 @@
 
 **Tech Stack:** Express + pg on the server (`node:test` against the shared dev DB); React 18, react-router v6, axios through `utils/api`, React Testing Library; the mobile CSS block in `client/src/index.css`.
 
-**Spec:** `docs/superpowers/specs/2026-08-13-mobile-admin-design.md`, section 6 Global Search (`:178-181`), section 3 Visual contract (the 2026-09-15 Global search line, `:53`, and the copy law), section 2 endpoint rule (`:23`), section 7 Offline (the opt-in storage rule), section 9 (resume where I left off). Benchmark: `docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html`, the Global search screen (markup `:607-690`, script `searchGroups` `:1023-1061` and the note logic `:1683-1716`, `:1779-1790`; data props `searchState` in `live typing`, `empty field`, `type more`, `in flight`, `results`, `nothing matched`, plus `keyboard` and `offline`). Declared as lane `ma-f3-search` in `docs/superpowers/plans/2026-09-15-mobile-admin-events-list.md:137-145` (depends on `ma-e1-events-list`, which is built; review fleet code-review, consistency-check, ui-ux-review).
+**Spec:** `docs/superpowers/specs/2026-08-13-mobile-admin-design.md`, section 6 Global Search (`:178-181`), section 3 Visual contract (the 2026-09-15 Global search line, `:53`, the copy law, and the "Plan decisions of 2026-10-15 (lane ma-f3)" block this plan's fold added), section 2 endpoint rule (`:25`, which names this lane's field extension since the fold), section 7 Offline (the opt-in storage rule; the allowlist sentence at `:219`), section 9 (resume where I left off; "Never persisted" at `:251`), section 10 (error surfacing, `:259`).
+
+**Dispatch rule:** every task's implementer and reviewer receive, with the task text, this plan's Plan decisions, Global Constraints and Review Focus. The decisions are the sanctioned departures from the benchmark; a reviewer holding the benchmark needs them to tell a departure from a defect. Benchmark: `docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html`, the Global search screen (markup `:607-690`, script `searchGroups` `:1023-1061` and the note logic `:1683-1716`, `:1779-1790`; data props `searchState` in `live typing`, `empty field`, `type more`, `in flight`, `results`, `nothing matched`, plus `keyboard` and `offline`). Declared as lane `ma-f3-search` in `docs/superpowers/plans/2026-09-15-mobile-admin-events-list.md:137-145` (depends on `ma-e1-events-list`, which is built; review fleet code-review, consistency-check, ui-ux-review).
 
 ## Proven context (read on main at `b3ad570a`, 2026-10-15; anchors are line numbers that day)
 
@@ -23,7 +25,7 @@
 - `client/src/utils/screenKey.js:7-15`: `routeScreenKey` falls through to `segs[0]`, so `/search` already maps to `'search'`, `/clients/:id` to `'clients'`, `/staffing/users/:id` and `/staffing` to `'staffing'`, `/events` to `'events-list'`, `/proposals` to `'proposals-list'`. No change needed there; `screenKey.test.js` gains the `/search` row as a pin.
 - `client/src/utils/routeRestore.js:22-31` `recordRoute(pathname, search)` writes `{ pathname, search }` to localStorage key `adminLastRoute`; `client/src/utils/routeRestore.test.js` is its suite.
 - `client/src/App.js` (708 lines, over the 700 soft cap, so the two added lines draw the size hook's warning, never a block): the phone pages are `lazy` (`:141-142` `MorePage`, `NotificationsPhone`); the admin block's phone routes at `:612-613` (`/more`, `/more/notifications`).
-- `client/src/context/MobileViewContext.js:59-98`: `useMobileView()` gives `{ isPhone, desktopView(screenKey), setDesktopView(screenKey, on) }`; an override persists in storage until the "Phone view" pill clears it (`AdminLayout.js:303-311`).
+- `client/src/context/MobileViewContext.js` (58 lines; `setDesktopView` at `:35-45`, `useMobileView` at `:57`): `useMobileView()` gives `{ isPhone, desktopView(screenKey), setDesktopView(screenKey, on) }`; an override persists in storage until the "Phone view" pill clears it (`AdminLayout.js:303-311`).
 - `client/public/admin-sw.js:186-201`: `/api/admin/search` is in `API_EXACT`, but `asksForOffline` (`:230-231`) stores and stale-serves only requests that carry `X-Offline-Ok: 1` (and `/api/auth/me`); every other request on an allowlisted path goes to the network untouched and is never stored. `client/src/utils/offlineRead.js` `offlineGet` is the only caller that adds the header.
 - `client/src/utils/api.js:28-40`: a request with no response (offline, refused, timeout) rejects with `{ message, code: 'NETWORK_ERROR', status: 0 }`; a server answer rejects with its `status` (429 from `adminSearchLimiter`, `server/middleware/rateLimiters.js:160-167`, 60 a minute keyed on the user). `api` sets no timeout.
 - Desktop destinations for a More row (no desktop list has a free-text filter except Proposals; `Toolbar.js:4-7` says list pages route find-one-thing through global search): `ProposalsDashboard.js:62` `LIST_DEFAULTS` includes `q`, sent as the API's `search` (`:127`, matched on the client's name and email, `server/routes/proposals/list.js`), and counted by `anyFilterActive` (`:285-288`); `EventsDashboard.js:27-28` `tab` takes `upcoming | unstaffed | past | all`; `StaffDashboard.js:16` `tab` takes `active | deactivated | all` (`:118-120`); `ClientsDashboard.js:38` has only `sort`.
@@ -32,24 +34,25 @@
 - `client/src/index.css` mobile block: `.m-shell` (`:21108`, flex column, 100dvh), `.m-header` (`:21114`, `gap: 0.25rem; min-height: 52px; padding: 0 0.5rem 0 1rem`), `.m-iconbtn` (`:21135`, 44 by 44), `.m-main` (`:21173`, `padding: 0.75rem`), `.m-card` (`:21538`, `padding: 10px 14px 10px 10px; margin: 0 0 0.5rem; gap: 8px`), `.m-rail` 44px with a 7px right inset (Dallas 2026-09-24), `.m-card-kind` (block, ellipsised), `.m-card-meta` (numeric face, fs-meta, ink-3), `.m-retry-btn`, `.m-empty`/`.m-empty-title`/`.m-empty-body` (`:21629-21632`, padding `70px 24px 40px`, body max 230px), `@keyframes m-pulse` (`:21638`), House Lights card rules (`:21641-21652`, last line `html[data-app="admin-os"][data-skin="light"] .m-empty.ok { color: var(--ms-emerald); }`). The assignment sheet's search field already carries the two field rules this screen needs: iOS-only 16px (`:22103-22105`) and the hidden browser clear button (`:22107`). The global `.tag` (`:13185`, House Lights twin `:11826`) is the benchmark's Desktop tag. `.sr-only` exists (`:9325`).
 - `client/src/utils/mobileClassContract.test.js:7-26` `SOURCES` (a phone file's every `m-*` string token must be a defined class; `css` is `index.css` read at `:6`).
 - `scripts/mobile-capture.js:68` counts tap targets under 36px (report), `:72` text under 12px (report). `scripts/mobile-capture.manifest.json:82-87` the proposals entries (the new entry goes after them).
-- Docs anchors: `README.md:650` (the `proposalCards.js` utils line; `searchView.js` goes right after it), `README.md:707` (the `pages/mobile/` line; `SearchPhone` goes after the `ProposalsListPhone` clause); `ARCHITECTURE.md:225` (the admin `GET /search` row), `ARCHITECTURE.md:2136` ("Phone Proposals list" bullet; the new bullet follows it); `scripts/sensitive-paths.txt:476-481` (the `offlineGet` block listing `ProposalsListPhone.js`); `docs/walkthroughs-owed.md` Tier 6 (`:2093`, ends before `## Tier 4` at `:2191`); `docs/fix-list-remaining-2026-07-02.md:3042-3044` (the 2026-10-14 AMENDED sentence ending "Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.").
+- Docs anchors: `README.md:650` (the `proposalCards.js` utils line; `searchView.js` goes right after it), `README.md:707` (the `pages/mobile/` line; `SearchPhone` goes after the `ProposalsListPhone` clause); `ARCHITECTURE.md:225` (the admin `GET /search` row), `ARCHITECTURE.md:2136` ("Phone Proposals list" bullet; the new bullet follows it); `scripts/sensitive-paths.txt:475-481` (the `offlineGet` block listing `ProposalsListPhone.js`); `README.md:813-820` (the "Phone Admin PWA" Key Features section, one bullet per lane, the last one ma-c-push's); `docs/walkthroughs-owed.md` Tier 6 (`:2093`, its item-count sentence at `:2115` reading "As of 2026-10-15 this tier holds ONE item, below: the consult call record.", the tier ending before `## Tier 4` at `:2191`); `docs/fix-list-remaining-2026-07-02.md:3042-3044` (the 2026-10-14 AMENDED sentence ending "Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.").
 - Benchmark Global search (2026-10-14 snapshot): header `gap: 6px; padding: 8px 10px 8px 2px` with a 44px back button (`aria-label="Close search"`, icon `left`) and the field (`min-height: 40px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: segR; background: var(--bg-3); gap: 8px`; segR is `var(--radius)` in After Hours and `0` in House Lights) holding a 16px search icon in ink-3, the input (`type="search"`, 13.5px UI face, ink-1, `opacity: 0.55` when disabled offline, placeholder "Search clients, proposals, events, staff…", `aria-label="Global search"`), and a 30px Clear button (`aria-label="Clear search"`, icon `x`) shown while the trimmed term is non-empty; NO tab bar during search (`notDesktop2`); `main` with `padding-top: 4px`; the in-flight line (`padding: 8px 4px 4px`, centred, mono 10px, 0.1em, uppercase, ink-3, `m-pulse 1.2s`) reading "searching…" or "searching · showing “ma”" (the term the rows on screen answer); group head (`padding: 12px 4px 6px; gap: 8px`, baseline) with the label (mono 10px, 0.12em, uppercase, ink-3) and the count (numeric 10.5px, ink-4; `6+` for a full group); rows are `.m-card` with `flex-direction: row; align-items: center; gap: 12px; padding: 10px 14px 10px 10px; min-height: 56px`: clients a 34px icon tile (`users`, radius-sm, bg-3, ink-3) + name + `.m-card-meta` email-or-phone + Desktop tag; proposals a `clipboard` tile + "name · kind" (kind in ink-3, 400) + `.m-card-meta` date + status chip; events a 46px date rail (`align-self: stretch`, right rule, padding-right 10, dow and mon ink-4, day 20px 600 ink-2) + "name · kind", no meta, no chip; staff a 34px initials tile (mono 11px 600, ink-2, bg-3) + name + `.m-card-meta` role + Desktop tag; the More row (`.m-card`, `padding: 12px 14px; min-height: 48px; gap: 10px`) with a 16px `external` icon and "More clients on desktop" (fs-meta 600) in the link colour (After Hours `hsl(var(--accent-h) var(--accent-s) 62%)`, House Lights `var(--accent)`) and "6 shown" (mono 9px, 0.1em, uppercase, ink-4); the note (`padding: 58px 24px 40px`, gap 8, a 28px icon in ink-4, title fs-body 600 ink-2, body fs-meta ink-3 max 240px line-height 1.55, an optional micro line mono 9.5px 0.1em uppercase ink-4 with 2px above). Copy, verbatim: offline "Search needs the server" / "Global search runs a live query. Nothing is cached on the phone. Reconnect to search." / "offline · field kept, results off"; too long (icon `x`) "Too long to search" / "The server stops at 100 characters. Trim the term down." / "<N> characters"; empty "Search every record" / "Clients, proposals, events and staff, by name, email, or phone number." / "phone match needs 3+ digits"; one character "Keep typing" / "Nothing is searched until two characters."; no match "No matches for “<term>”" / "Try a last name, an email address, or the last four digits of a phone.". Escape closes; Back (popstate) closes; opening focuses the field; Clear refocuses it. The drawn keyboard (`keyboard` prop) is a mockup of the device's own.
 
 ## Plan decisions (stated here so the contract is whole)
 
-1. **Search is a route, `/search`, phone only.** Android Back closes it through history, as the benchmark's `pushState` does, and the screen key is `search`. `AdminLayout` renders it as a takeover: the `.m-shell` holds only the screen, which draws its own header (Back and the field) and its own `<main id="main-content">`; no phone header, no passkey nudge, no tab bar (the benchmark hides the tab bar during search). At desktop width `/search` redirects to `/dashboard` (the desktop has the ⌘K palette). Cost if wrong: none; the palette is untouched.
+1. **Search is a route, `/search`, phone only.** Android Back closes it through history, as the benchmark's `pushState` does, and the screen key is `search`. `AdminLayout` renders it as a takeover: the `.m-shell` holds only the screen, which draws its own header (Back and the field) and its own `<main id="main-content">`; no phone header, no passkey nudge, no tab bar (the benchmark hides the tab bar during search). At desktop width `/search` redirects to `/dashboard` (the desktop has the ⌘K palette). The search header carries no Desktop-view toggle (the benchmark draws none; spec section 3 asks every screen for one): the desktop twin of this screen is the ⌘K palette, and every row that leaves the phone goes through the escape itself (decisions 7 and 8). Cost if wrong: none; the palette is untouched.
 2. **The term survives Back from a result.** Once a search answers, the term is written into the `/search` history entry's state (`navigate('/search', { replace: true, state: { q } })`), so Back from a row lands on the screen with the term in the field and runs it again (one fresh query; results are never kept anywhere). The term never enters the URL, so neither the route restore nor the browser's URL history keeps search words; `routeRestore` never records `/search` at all, so a cold launch resumes the screen before it (a cold launch has no history state, and an empty field with the keyboard up is not "where I left off"). The field takes focus only when the screen opens empty; a restored term opens with the keyboard down so the results show.
 3. **Nothing is stored on the phone.** The read is `api.get('/admin/search', { params: { q }, timeout: 10000 })`, never `offlineGet`, so the worker passes it to the network untouched (search rows carry client emails and phones). The worker's allowlist entry for `/api/admin/search` stays: under the opt-in rule it stores nothing, and the worker is not otherwise in this lane's footprint; a fix-list line records the dead entry for the next worker change. Offline means `navigator.onLine === false`, tracked through the `online` and `offline` events: the field keeps its text and is disabled, results are dropped (an answer in flight is discarded), the offline note shows, and coming back online runs the kept term.
-4. **Failed searches are drawn here; the benchmark draws none.** A 429 reads "Too many searches" / "Wait a minute, then try again." (icon `clock`); anything else, including the 10-second timeout and a refused connection while the phone believes it is online, reads "Search didn’t answer" / "Check the signal, then try again." (icon `alert`). Both carry the existing `.m-retry-btn` "Retry", which runs the same term. A failed search drops the rows that were on screen. Cost if wrong: copy.
-5. **The kind sits under the name, not beside it.** Dallas ruled this for the card family on 2026-09-24 ("beside the name it was ellipsised on nearly every card"); the search rows are narrower still (a tile, a chip or a tag share the line). Proposal rows: line 2 is "kind · date", which is exactly the endpoint's existing `detail` (the palette's own second line). Event rows: line 2 is the kind, in `.m-card-kind`, because the rail carries the date. The benchmark draws "name · kind" inline with the date as the proposal's meta.
-6. **Event rail:** the family's 44px rail with the 7px inset (the 2026-09-24 ruling; the benchmark draws 46/10), stretched to the row's height, with the benchmark's quieter search inks (dow and month ink-4, day ink-2) and no TODAY accent (the search drawing has none). A booked event with no date shows the en-dash rail and a spoken "no date", as the Proposals list does.
+4. **Failed searches are drawn here; the benchmark draws none.** Three notes, each with the existing `.m-retry-btn` "Retry", which runs the same term. No answer at all (`err.status` 0: offline while the phone believes it is online, a refused connection, the 10-second timeout) reads "Search didn’t answer" / "Check the signal, then try again." (icon `alert`). A 429 reads "Too many searches" / "Wait a minute, then try again." (icon `clock`). Any other server answer reads "Search failed" / "The server couldn’t run this search. Try again in a moment." (icon `alert`). The screen reads `err.status` (spec section 10's normalized shape) but writes its own copy rather than `err.message`: the limiter's message says what the 429 note says, and a 500's message is the generic server line. A failed search drops the rows that were on screen. Cost if wrong: copy.
+5. **The kind sits under the name, not beside it.** Dallas ruled this for the card family on 2026-09-24 ("beside the name it was ellipsised on nearly every card"); the search rows are narrower still (a tile, a chip or a tag share the line). So a proposal row has three lines, as the family's card does: the name, the kind on its own line in `.m-card-kind` (the UI face), and the date in `.m-card-meta` ("Oct 24, 2026", formatted from `event_date`; no line when there is no date). An event row has two: the name and the kind, the rail carrying the date. The benchmark draws "name · kind" inline with the date as the proposal's meta. Until the server ships the new fields (Vercel can serve the client first), a proposal or event row with no `kind` shows the endpoint's `detail` ("kind · date") as its one meta line.
+6. **Event rail:** the family's 44px rail with the 7px inset (the 2026-09-24 ruling; the benchmark draws 46/10), stretched to the row's height, with the benchmark's quieter search inks (dow and month ink-4, day ink-2) and no TODAY accent (the search drawing has none). The row's gap stays the benchmark's 12px: one gap for every row kind in the list, tile and rail alike; the ruling's 8px card gap answered the list card's cramped body, which a search row does not have. A booked event with no date shows the en-dash rail and a spoken "no date", as the Proposals list does.
 7. **Where rows lead.** Client and staff rows go through the Desktop-view escape (they have no phone screen; the benchmark's `goDesktop`): the override for the target's screen key (`clients`, `staffing`) is armed, then `/clients/:id` or `/staffing/users/:id` opens in the desktop chrome with the Phone view pill. Event rows open `/events/:id`, the phone event detail. Proposal rows open `/proposals/:id`, which renders the desktop proposal page inside the phone chrome until lane ma-f2 draws the phone detail (the same interim the Proposals list ships).
 8. **Where More rows lead.** A full group (6 rows; the endpoint's cap, so "full" means "there may be more") ends in "More <group> on desktop · 6 shown", which arms the Desktop-view escape for the group's desktop list and opens it: Clients `/clients`; Proposals `/proposals?q=<term>` (the one desktop list with a text filter; it matches the client's name and email, so a digits-only term opens an empty filtered list there); Events `/events?tab=all` and Staff `/staffing?tab=all` (the search spans past events and every staff state). **Known cost:** the override sticks the way the header's own escape does, so after "More events on desktop" the Events tab stays in desktop view until the Phone view pill is tapped. That is the spec's escape contract (section 3); a one-shot override would be a new mechanism and is not in this lane.
-9. **Tap targets:** the field is 44px tall (drawn 40) and its Clear button 44px wide by the field's full inner height, 42px (drawn 30 by 30): the phone's 44px floor, the same height as the assignment sheet's search field. The browser's own clear button is suppressed (spec), the iOS-only 16px rule is copied from the sheet field.
+9. **Tap targets:** the field is 44px tall (drawn 40), the phone's 44px floor and the assignment sheet's search field's height. Its Clear button is 44px wide by the field's full inner height, 42px (drawn 30 by 30): the one stated exception to the floor, since a 44px-tall button would make the field 46. A tap on the field's 1px border lands on the field, which is harmless. The browser's own clear button is suppressed (spec), the iOS-only 16px rule is copied from the sheet field.
 10. **The in-flight line runs from the keystroke to the answer** (debounce plus request), as the benchmark's mock does, so the no-match note never flashes between a keystroke and its answer. While a new term runs, the rows of the last answered term stay on screen under "searching · showing “ma”". Typing below two characters, or past a hundred, drops the rows at once (the benchmark's `onSQ`).
-11. **Keys:** Enter (the keyboard's Search key) puts the keyboard away so the rows show; it does not navigate (there is no top hit on the phone). Escape closes the screen.
-12. **Accessibility the benchmark does not draw:** a visually hidden `h1` "Search" (the takeover has no other heading of rank one), one polite status line that is mounted empty and then reads "Searching", the note's title, or "N results" (`N+` when a group is full), a focus ring on the field (its border takes the accent colour while the input has focus; the input itself has `outline: none`, as drawn), group heads as `h2` with a real space between the label and the count (the "Needs staff30" lesson), real spaces between a row's pieces so its accessible name reads in words. The rows are buttons, as every phone list's cards are.
+11. **Keys:** Enter (the keyboard's Search key) puts the keyboard away so the rows show; it does not navigate (there is no top hit on the phone). Escape closes the screen, heard on the window as the benchmark listens, so it works offline too, when the field is disabled.
+12. **Accessibility the benchmark does not draw:** a visually hidden `h1` "Search" (the takeover has no other heading of rank one), one polite status line that mounts with the screen and always reads its current state: "Searching", the note's title, or "N results" (`N+` when a group is full). Its first reading is not announced (it mounts with the screen; the visible note says the same), every later change is. Because it repeats the note's title, tests find a note by `{ selector: '.m-empty-title' }`; a focus ring on the field (its border takes the accent colour while the input has focus; the input itself has `outline: none`, as drawn), group heads as `h2` with a real space between the label and the count (the "Needs staff30" lesson), real spaces between a row's pieces so its accessible name reads in words. The rows are buttons, as every phone list's cards are.
 13. **The mock keyboard is not built** (it stands for Android's own), and the debounce is the palette's 200 ms, as spec section 6 asks.
+14. **Staff initials stop at two letters.** The benchmark joins every word's first letter ("Mary Ann Lee" draws MAL); two letters always fit the 34px tile, whatever the name.
 
 ## Global Constraints
 
@@ -57,13 +60,13 @@
 - **One fork, one breakpoint:** the phone branch comes from `useMobileView()` only. No new media queries; every new rule lives in the mobile block of `index.css`, scoped `html[data-app="admin-os"]`; a modifier is its own `m-*` class, never a bare word beside one.
 - **The palette's contract is frozen:** every search row keeps `type, id, name, detail` (and the `cc_id` keys) exactly as today; the new keys are additive. A test pins `detail` for the proposal and event fixtures.
 - **Nothing from search is stored at rest:** `SearchPhone.js` calls `api.get` and never `offlineGet`; no request it sends carries `X-Offline-Ok`. A test pins the request config. The term never enters a URL the phone records (`/proposals?q=` on the desktop is the desktop page's own contract, reached only through a More row).
-- **Copy from the benchmark, verbatim** (the list in Proven context), plus this plan's two failed-search notes (decision 4), "Retry", "Desktop", "More <group> on desktop", "6 shown".
+- **Copy from the benchmark, verbatim** (the list in Proven context), plus this plan's three failed-search notes (decision 4), "Retry", "Desktop", "More <group> on desktop", "6 shown".
 - **Writes: none in this lane.**
-- **44px minimum tap targets;** the whole row is the target.
+- **44px minimum tap targets;** the whole row is the target. The one stated exception is the Clear button's 42px height (decision 9).
 - **Server tests:** `node --test server/utils/globalSearch.test.js` from the lane root, one suite at a time; `require('dotenv').config()` on the first line; a `NODE_ENV === 'production'` guard; every fixture row deleted in `after`; read the pass count.
-- **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/`; no `act()` warnings in the suites this lane adds or touches. CRA jest runs `resetMocks: true`: a `jest.fn` implementation set in a mock factory is wiped before each test, so set return values inside the test or `beforeEach`.
+- **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/`. It prints "Compiled with warnings." today for one known, pre-existing reason (a missing source map inside `html2pdf.js` in `node_modules`, "Failed to parse source map"), which CRA leaves out of the CI warnings-as-errors check; any OTHER warning is a failure. The build lints only modules the bundle imports, so a new file not yet imported is linted directly: `cd client && npx eslint --max-warnings=0 <file>`. No "not wrapped in act(...)" warnings in the suites this lane adds or touches; the baseline "`ReactDOMTestUtils.act` is deprecated" console error and the React Router v7 future-flag warnings print across the existing suites and are known noise. CRA jest runs `resetMocks: true`: a `jest.fn` implementation set in a mock factory is wiped before each test, so set return values inside the test or `beforeEach`.
 - **The class contract:** `mobileClassContract.test.js` reads every `m-*` token in a listed source as a class, so no id, storage key or test id in `SearchPhone.js` may start with `m-`.
-- **File sizes:** `globalSearch.js` stays under 220 lines; `SearchPhone.js` under 300; `searchView.js` under 200; `AdminLayout.js` grows by under 20.
+- **File sizes:** `globalSearch.js` stays under 220 lines; `SearchPhone.js` under 300; `searchView.js` under 240; `AdminLayout.js` grows by under 20.
 - **Explicit staging only;** commit messages carry NO backticks (bash runs them); `git commit -F - <<'MSG'` heredocs with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **Docs law (CLAUDE.md):** README folder tree (the new util and the new page), ARCHITECTURE (the route row and the phone surfaces), the sensitive list, the capture manifest, the walk, the fix list, all in the lane; the board line at lane close through `scripts/board-write.sh`.
 - **Never `npm install` in the lane** (the symlinked `node_modules` would be clobbered); nothing here needs a package.
@@ -85,11 +88,14 @@ lanes:
   - id: ma-f3-search
     plan: docs/superpowers/plans/2026-10-15-mobile-admin-search.md
     scope: >
-      Full-screen phone global search at /search over GET /admin/search (groups
-      with counts, More on desktop rows, Desktop tag on client and staff rows,
-      empty, keep-typing, in-flight, no-match, too-long, failed and offline
-      states; nothing stored); the proposal and event search rows gain status,
-      event_date and kind; MobileHeader's magnifier stops opening the palette.
+      Full-screen phone global search at /search over GET /admin/search,
+      matching the 2026-10-14 benchmark's Global search screen (declared input:
+      docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html) apart from
+      this plan's stated decisions: groups with counts, More on desktop rows,
+      Desktop tag on client and staff rows, empty, keep-typing, in-flight,
+      no-match, too-long, failed and offline states, nothing stored; the
+      proposal and event search rows gain status, event_date and kind;
+      MobileHeader's magnifier stops opening the palette.
     footprint:
       - server/utils/globalSearch.js
       - server/utils/globalSearch.test.js
@@ -113,11 +119,13 @@ lanes:
       - ARCHITECTURE.md
       - docs/walkthroughs-owed.md
       - docs/fix-list-remaining-2026-07-02.md
-    depends_on: [ma-e1-events-list]
-    review_fleet: [code-review, consistency-check, ui-ux-review]
+    depends_on: [ma-e1-events-list, ma-f1-proposals-list]
+    review_fleet: [code-review, consistency-check, ui-ux-review, second-opinion]
 ```
 
-Cut: from `os` on `main`, `npm run worktree:new -- ma-f3-search`, then work only in `../worktrees/ma-f3-search`. The ledger lives at `.superpowers/sdd/2026-10-15-mobile-admin-search/progress.md` in the lane (git-ignored).
+Cut: from `os` on `main`, `npm run worktree:new -- ma-f3-search`, then work only in `../worktrees/ma-f3-search`. The ledger lives at `.superpowers/sdd/2026-10-15-mobile-admin-search/progress.md` in the lane (git-ignored). `ma-f1-proposals-list` is a dependency because this plan's anchors (the class contract's SOURCES, the capture manifest, the README, ARCHITECTURE, sensitive-list and fix-list lines) and the no-date rail sit on that lane's work; it is merged and pushed (`9f2c1f1c`).
+
+**Review level, and why.** Read-only, no money, no auth, no schema: the lane map's three seats plus `/second-opinion` (cheap, decorrelated), reviewers on Opus. Cadence: a task reviewer after every task (code-review lens on Task 1's SQL projection; Tasks 3 and 4 together carry Review Focus 1 to 3, so their reviewer gets those lines), the ui-ux seat at Task 5, consistency-check after Task 6, then the whole-branch fleet in Task 7. Heads-up for the push: Task 6 puts `SearchPhone.js` on the sensitive list, so the push that carries this squash runs the sensitive-path re-review (full fleet plus `/second-opinion`) over it. That is expected, not a surprise.
 
 ## File structure
 
@@ -297,7 +305,7 @@ Update the file's header comment's last line to: `// events, and staff by partia
 - [ ] **Step 4: Run the suite**
 
 Run: `node --test server/utils/globalSearch.test.js`
-Expected: `# pass 13`, `# fail 0`. Quote the counts. Then confirm the fixtures are gone: `node -e "require('dotenv').config(); const {pool}=require('./server/db'); pool.query(\"SELECT count(*) FROM clients WHERE name LIKE 'zz_searchtest_%'\").then(r=>{console.log(r.rows[0].count); return pool.end();})"` prints `0`.
+Expected: pass 13, fail 0 (Node's spec reporter prints them as `ℹ pass 13` and `ℹ fail 0`). Quote the counts. Then confirm the fixtures are gone: `node -e "require('dotenv').config(); const {pool}=require('./server/db'); pool.query(\"SELECT count(*) FROM clients WHERE name LIKE 'zz_searchtest_%'\").then(r=>{console.log(r.rows[0].count); return pool.end();})"` prints `0`.
 
 - [ ] **Step 5: Commit**
 
@@ -327,11 +335,13 @@ MSG
   - `initialsOf(name) -> string`
   - `rowTarget(groupKey, id) -> { path: string, screenKey: string | null }`
   - `moreTarget(groupKey, term) -> { path: string, screenKey: string } | null`
-  - `searchRow(groupKey, item) -> Row | null` where `Row = { key, title, line2, line2Kind: 'meta' | 'kind', lead, chip: { label, kind } | null, desktop: boolean, target }` and `lead` is `{ kind: 'icon', icon }`, `{ kind: 'initials', initials }` or `{ kind: 'rail', rail: { dow, day, mon }, noDate: boolean }`
+  - `searchRow(groupKey, item) -> Row | null` where `Row = { key, title, kind, meta, lead, chip: { label, kind } | null, desktop: boolean, target }`: `kind` is the event-type label for its own line (`''` for none) and `meta` the line under it (`''` for none); `lead` is `{ kind: 'icon', icon }`, `{ kind: 'initials', initials }` or `{ kind: 'rail', rail: { dow, day, mon }, noDate: boolean }`
   - `searchGroups(results, term) -> Group[]` where `Group = { key, label, rows: Row[], full: boolean, count: string, moreLabel: string, more: target | null }`, in the order Clients, Proposals, Events, Staff, empty groups left out
-  - `searchNote({ raw, offline, error, pending, resultsFor, groups }) -> Note | null` where `Note = { icon, title, body, micro, retry: boolean }` and `error` is `null` or `{ term, kind: 'rate' | 'failed' }`
+  - `searchNote({ raw, offline, error, pending, resultsFor, groups }) -> Note | null` where `Note = { icon, title, body, micro, retry: boolean }` and `error` is `null` or `{ term, kind: 'network' | 'rate' | 'server' }`
+  - `errorKind(err) -> 'network' | 'rate' | 'server'` (from the normalized `err.status`: 0 or none is `network`, 429 is `rate`, anything else `server`)
   - `flightLabel(resultsFor) -> string`
   - `liveSummary({ pending, note, groups }) -> string`
+- Decisions implemented here: 4 (three failed-search notes, `errorKind`), 5 (the kind on its own line, the proposal's date under it, the `detail` fallback), 6 (the no-date rail), 7 (row targets), 8 (More targets), 10 (the in-flight label), 12 (the status line's words), 14 (two-letter initials).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -340,7 +350,7 @@ Create `client/src/utils/searchView.test.js`:
 ```js
 import {
   MIN_TERM, MAX_TERM, GROUP_LIMIT, termState, initialsOf, rowTarget, moreTarget,
-  searchRow, searchGroups, searchNote, flightLabel, liveSummary,
+  searchRow, searchGroups, searchNote, errorKind, flightLabel, liveSummary,
 } from './searchView';
 import { routeScreenKey } from './screenKey';
 
@@ -395,43 +405,53 @@ test('More targets: the group desktop lists; only Proposals carries the term', (
 
 test('a client row: icon tile, name, email or phone as meta, Desktop', () => {
   expect(searchRow('clients', client())).toEqual({
-    key: 'clients-3', title: 'Marcus Keller', line2: 'mkeller@example.test', line2Kind: 'meta',
+    key: 'clients-3', title: 'Marcus Keller', kind: '', meta: 'mkeller@example.test',
     lead: { kind: 'icon', icon: 'users' }, chip: null, desktop: true,
     target: { path: '/clients/3', screenKey: 'clients' },
   });
-  expect(searchRow('clients', client({ detail: '' })).line2).toBe('');
+  expect(searchRow('clients', client({ detail: '' })).meta).toBe('');
 });
 
-test('a proposal row: the kind and the date under the name, the stage chip, no Desktop', () => {
+test('a proposal row: the kind on its own line, the date under it, the stage chip, no Desktop', () => {
   const row = searchRow('proposals', proposal());
   expect(row.lead).toEqual({ kind: 'icon', icon: 'clipboard' });
   expect(row.title).toBe('Alexis Henderson');
-  expect(row.line2).toBe('Wedding Reception · Oct 24, 2026');
-  expect(row.line2Kind).toBe('meta');
+  expect(row.kind).toBe('Wedding Reception');
+  expect(row.meta).toBe('Oct 24, 2026');
   expect(row.chip).toEqual({ label: 'Sent', kind: 'info' });
   expect(row.desktop).toBe(false);
-  // A server that has not deployed the new fields yet: no chip, no crash.
-  expect(searchRow('proposals', proposal({ status: undefined })).chip).toBeNull();
+  // No date: no date line; a date that does not parse is no date either.
+  expect(searchRow('proposals', proposal({ event_date: null })).meta).toBe('');
+  expect(searchRow('proposals', proposal({ event_date: 'garbage' })).meta).toBe('');
+  // A server that has not deployed the new fields yet: no chip, the detail
+  // as the one meta line, no crash.
+  const old = searchRow('proposals', proposal({ status: undefined, kind: undefined, event_date: undefined }));
+  expect(old.chip).toBeNull();
+  expect(old.kind).toBe('');
+  expect(old.meta).toBe('Wedding Reception · Oct 24, 2026');
 });
 
-test('an event row: the date rail, the kind on its own line, no chip', () => {
+test('an event row: the date rail, the kind on its own line, no meta, no chip', () => {
   const row = searchRow('events', event());
   expect(row.lead).toEqual({ kind: 'rail', rail: { dow: 'SAT', day: '03', mon: 'OCT' }, noDate: false });
   expect(row.title).toBe('Nautilus Group');
-  expect(row.line2).toBe('Corporate Event');
-  expect(row.line2Kind).toBe('kind');
+  expect(row.kind).toBe('Corporate Event');
+  expect(row.meta).toBe('');
   expect(row.chip).toBeNull();
   expect(row.desktop).toBe(false);
   expect(searchRow('events', event({ event_date: null })).lead).toEqual({ kind: 'rail', rail: { dow: '', day: '–', mon: '' }, noDate: true });
   expect(searchRow('events', event({ event_date: 'garbage' })).lead.noDate).toBe(true);
-  // Before the server ships kind, the palette's detail stands in.
-  expect(searchRow('events', event({ kind: undefined })).line2).toBe('Corporate Event · Oct 3, 2026');
+  // Before the server ships kind, the palette's detail stands in as the meta.
+  const old = searchRow('events', event({ kind: undefined }));
+  expect(old.kind).toBe('');
+  expect(old.meta).toBe('Corporate Event · Oct 3, 2026');
 });
 
 test('a staff row: initials, the status as meta, Desktop', () => {
   const row = searchRow('staff', staff());
   expect(row.lead).toEqual({ kind: 'initials', initials: 'JL' });
-  expect(row.line2).toBe('Active bartender');
+  expect(row.kind).toBe('');
+  expect(row.meta).toBe('Active bartender');
   expect(row.desktop).toBe(true);
   expect(row.target).toEqual({ path: '/staffing/users/12', screenKey: 'staffing' });
   expect(searchRow('nope', staff())).toBeNull();
@@ -483,10 +503,22 @@ test('a failed search for the term on screen offers Retry; one for an older term
   expect(searchNote({ ...none, raw: 'ma', error: { term: 'ma', kind: 'rate' } })).toEqual({
     icon: 'clock', title: 'Too many searches', body: 'Wait a minute, then try again.', micro: '', retry: true,
   });
-  expect(searchNote({ ...none, raw: 'ma', error: { term: 'ma', kind: 'failed' } })).toEqual({
+  expect(searchNote({ ...none, raw: 'ma', error: { term: 'ma', kind: 'network' } })).toEqual({
     icon: 'alert', title: 'Search didn’t answer', body: 'Check the signal, then try again.', micro: '', retry: true,
   });
-  expect(searchNote({ ...none, raw: 'mar', pending: true, error: { term: 'ma', kind: 'failed' } })).toBeNull();
+  expect(searchNote({ ...none, raw: 'ma', error: { term: 'ma', kind: 'server' } })).toEqual({
+    icon: 'alert', title: 'Search failed', body: 'The server couldn’t run this search. Try again in a moment.', micro: '', retry: true,
+  });
+  expect(searchNote({ ...none, raw: 'mar', pending: true, error: { term: 'ma', kind: 'network' } })).toBeNull();
+});
+
+test('errorKind reads the normalized status: none at all, the limiter, the server', () => {
+  expect(errorKind({ status: 0, code: 'NETWORK_ERROR' })).toBe('network');
+  expect(errorKind({})).toBe('network');
+  expect(errorKind(undefined)).toBe('network');
+  expect(errorKind({ status: 429 })).toBe('rate');
+  expect(errorKind({ status: 500 })).toBe('server');
+  expect(errorKind({ status: 403 })).toBe('server');
 });
 
 test('nothing matched quotes the term verbatim; pending or results say nothing', () => {
@@ -548,6 +580,8 @@ export function termState(raw) {
   return 'ok';
 }
 
+// Two letters at most, so any name fits the 34px tile (the benchmark joins
+// every word's first letter).
 export function initialsOf(name) {
   return String(name ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 2)
     .map((w) => Array.from(w)[0]).join('').toUpperCase();
@@ -601,9 +635,20 @@ function railLead(eventDate) {
   return { kind: 'rail', rail: { dow: '', day: '–', mon: '' }, noDate: true };
 }
 
-// One row. The kind sits under the name (Dallas, 2026-09-24, on the card
-// family), so a proposal's second line is "kind · date", the endpoint's own
-// detail, and an event's is the kind, its date being on the rail.
+// "Oct 24, 2026" from a YYYY-MM-DD, noon-anchored like railParts; '' for no
+// date or one that does not parse.
+function dateLabel(eventDate) {
+  const ymd = eventDate ? String(eventDate).slice(0, 10) : '';
+  const d = ymd ? new Date(`${ymd}T12:00:00`) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// One row. The kind sits on its own line under the name (Dallas, 2026-09-24,
+// on the card family): a proposal shows the kind, then its date; an event
+// shows the kind, its date being on the rail. A server that has not shipped
+// the kind yet sends only the palette's detail ("kind · date"), which then
+// stands in as the one meta line.
 export function searchRow(groupKey, item) {
   const target = rowTarget(groupKey, item.id);
   if (!target) return null;
@@ -613,24 +658,30 @@ export function searchRow(groupKey, item) {
     target,
     desktop: Boolean(target.screenKey),
     chip: null,
+    kind: '',
   };
   if (groupKey === 'clients') {
-    return { ...base, lead: { kind: 'icon', icon: 'users' }, line2: item.detail || '', line2Kind: 'meta' };
+    return { ...base, lead: { kind: 'icon', icon: 'users' }, meta: item.detail || '' };
   }
   if (groupKey === 'proposals') {
-    const meta = item.status ? proposalStatusMeta(item.status) : null;
+    const status = item.status ? proposalStatusMeta(item.status) : null;
     return {
       ...base,
       lead: { kind: 'icon', icon: 'clipboard' },
-      line2: item.detail || '',
-      line2Kind: 'meta',
-      chip: meta ? { label: meta.label, kind: meta.kind } : null,
+      kind: item.kind || '',
+      meta: item.kind ? dateLabel(item.event_date) : item.detail || '',
+      chip: status ? { label: status.label, kind: status.kind } : null,
     };
   }
   if (groupKey === 'events') {
-    return { ...base, lead: railLead(item.event_date), line2: item.kind || item.detail || '', line2Kind: 'kind' };
+    return {
+      ...base,
+      lead: railLead(item.event_date),
+      kind: item.kind || '',
+      meta: item.kind ? '' : item.detail || '',
+    };
   }
-  return { ...base, lead: { kind: 'initials', initials: initialsOf(item.name) }, line2: item.detail || '', line2Kind: 'meta' };
+  return { ...base, lead: { kind: 'initials', initials: initialsOf(item.name) }, meta: item.detail || '' };
 }
 
 export function searchGroups(results, term) {
@@ -651,9 +702,19 @@ export function searchGroups(results, term) {
   }).filter((g) => g.rows.length > 0);
 }
 
+// What went wrong, from the normalized error (utils/api.js): no response at
+// all (offline, refused, the timeout) is status 0; the limiter answers 429.
+export function errorKind(err) {
+  const status = err && err.status;
+  if (!status) return 'network';
+  return status === 429 ? 'rate' : 'server';
+}
+
 // The one note under the field, in the benchmark's order. The copy is the
-// benchmark's, word for word, except the two failed-search notes, which it
-// does not draw (plan decision 4).
+// benchmark's, word for word, except the failed-search notes, which the
+// benchmark does not draw. They use the screen's own words rather than the
+// server's message: the limiter's message says what the rate note says, and
+// a 500's is the generic server line.
 export function searchNote({ raw, offline, error, pending, resultsFor, groups }) {
   const t = String(raw ?? '').trim();
   const state = termState(t);
@@ -681,9 +742,13 @@ export function searchNote({ raw, offline, error, pending, resultsFor, groups })
     return { icon: 'search', title: 'Keep typing', body: 'Nothing is searched until two characters.', micro: '', retry: false };
   }
   if (error && error.term === t) {
-    return error.kind === 'rate'
-      ? { icon: 'clock', title: 'Too many searches', body: 'Wait a minute, then try again.', micro: '', retry: true }
-      : { icon: 'alert', title: 'Search didn’t answer', body: 'Check the signal, then try again.', micro: '', retry: true };
+    if (error.kind === 'rate') {
+      return { icon: 'clock', title: 'Too many searches', body: 'Wait a minute, then try again.', micro: '', retry: true };
+    }
+    if (error.kind === 'server') {
+      return { icon: 'alert', title: 'Search failed', body: 'The server couldn’t run this search. Try again in a moment.', micro: '', retry: true };
+    }
+    return { icon: 'alert', title: 'Search didn’t answer', body: 'Check the signal, then try again.', micro: '', retry: true };
   }
   if (!pending && resultsFor === t && (!groups || groups.length === 0)) {
     return {
@@ -709,10 +774,11 @@ export function liveSummary({ pending, note, groups }) {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: Run the tests and lint the new module**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/searchView.test.js`
 Expected: PASS, every test. Quote the count.
+Then: `cd client && npx eslint --max-warnings=0 src/utils/searchView.js` (the build cannot lint it yet: nothing the bundle imports reaches it until Task 4). Expected: no output, exit 0.
 
 - [ ] **Step 5: Commit**
 
@@ -735,7 +801,8 @@ MSG
 - Modify: `client/src/utils/mobileClassContract.test.js:7-26` (`SOURCES`) and one new test at the end
 
 **Interfaces:**
-- Consumes: Task 2's exports (names exactly as listed there); `useMobileView()` (`isPhone`, `setDesktopView`); `useDebounce(callback, delay, deps)`; `api.get`; `Icon`, `StatusChip`.
+- Consumes, from the committed `client/src/utils/searchView.js` (Task 2; read it, it is the source of truth): `GROUP_LIMIT` (6); `termState(raw)` (`'empty' | 'short' | 'long' | 'ok'`); `searchGroups(results, term)` returning groups `{ key, label, rows, full, count, moreLabel, more }`, each row `{ key, title, kind, meta, lead, chip, desktop, target }` with `lead` one of `{ kind: 'icon', icon }`, `{ kind: 'initials', initials }`, `{ kind: 'rail', rail: { dow, day, mon }, noDate }`, `chip` `{ label, kind }` or null, `target` and `more` `{ path, screenKey }` (`screenKey` null when no override is armed); `searchNote({ raw, offline, error, pending, resultsFor, groups })` returning `{ icon, title, body, micro, retry }` or null; `errorKind(err)` (`'network' | 'rate' | 'server'`); `flightLabel(resultsFor)`; `liveSummary({ pending, note, groups })`. Also `useMobileView()` (`isPhone`, `setDesktopView`); `useDebounce(callback, delay, deps)`; `api.get`; `Icon`, `StatusChip`.
+- Decisions implemented here: 1 (the takeover's own header, no toggle), 2 (the term in history state, focus only on an empty open), 3 (api.get only; offline from `navigator.onLine`), 4 (three failed-search notes), 5 (the kind on its own line), 6 (the quiet rail), 9 (the 44px field), 10 (the in-flight line), 11 (Enter and a window Escape), 12 (the status line and the scoped note queries), and Review Focus 1, 2, 3 and 5.
 - Produces: `export default function SearchPhone()`, the screen for the route `/search`. It renders a `<header className="m-header m-search-head">` and a `<main className="m-main m-search-main" id="main-content">` as siblings, so its parent must be the `.m-shell` with nothing else in it (Task 4).
 
 - [ ] **Step 1: Write the failing tests**
@@ -785,6 +852,9 @@ function mount(entry = '/search') {
 }
 const field = () => screen.getByRole('searchbox', { name: 'Global search' });
 const type = (v) => fireEvent.change(field(), { target: { value: v } });
+// The polite status line repeats the note's title (plan decision 12), so a
+// note is found by its visible title element.
+const NOTE = { selector: '.m-empty-title' };
 const wait = (ms) => act(() => new Promise((r) => setTimeout(r, ms)));
 const loc = () => screen.getByTestId('loc');
 function setOnline(v) {
@@ -806,7 +876,8 @@ test('opens on the empty field: focused, the note, no request, no Clear', async 
   expect(field()).toHaveFocus();
   expect(field()).toHaveAttribute('placeholder', 'Search clients, proposals, events, staff…');
   expect(screen.getByRole('heading', { level: 1, name: 'Search' })).toBeInTheDocument();
-  expect(screen.getByText('Search every record')).toHaveClass('m-empty-title');
+  expect(screen.getByText('Search every record', NOTE)).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Search every record');
   expect(screen.getByText('Clients, proposals, events and staff, by name, email, or phone number.')).toBeInTheDocument();
   expect(screen.getByText('phone match needs 3+ digits')).toHaveClass('m-snote-micro');
   expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull();
@@ -817,7 +888,7 @@ test('opens on the empty field: focused, the note, no request, no Clear', async 
 test('one character keeps typing and searches nothing', async () => {
   mount();
   type('k');
-  expect(screen.getByText('Keep typing')).toBeInTheDocument();
+  expect(screen.getByText('Keep typing', NOTE)).toBeInTheDocument();
   expect(screen.getByText('Nothing is searched until two characters.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Clear search' })).toBeInTheDocument();
   await wait(300);
@@ -848,7 +919,8 @@ test('each group draws its row anatomy', async () => {
   // No email or phone: no blank second line.
   expect(screen.getByText('Marrow Gallery').closest('button').querySelector('.m-card-meta')).toBeNull();
   const p = screen.getByText('Alexis Henderson').closest('button');
-  expect(within(p).getByText('Wedding Reception · Oct 24, 2026')).toHaveClass('m-card-meta');
+  expect(within(p).getByText('Wedding Reception')).toHaveClass('m-card-kind');
+  expect(within(p).getByText('Oct 24, 2026')).toHaveClass('m-card-meta');
   expect(within(p).getByText('Sent').closest('.chip')).toHaveClass('info');
   expect(within(p).queryByText('Desktop')).toBeNull();
   const e = screen.getByText('Nautilus Group').closest('button');
@@ -904,14 +976,14 @@ test('nothing matched quotes the term', async () => {
   api.get.mockResolvedValue(answer(NONE));
   mount();
   type('zephyr');
-  expect(await screen.findByText('No matches for “zephyr”')).toBeInTheDocument();
+  expect(await screen.findByText('No matches for “zephyr”', NOTE)).toBeInTheDocument();
   expect(screen.getByText('Try a last name, an email address, or the last four digits of a phone.')).toBeInTheDocument();
 });
 
 test('past a hundred characters: no request, the note counts them', async () => {
   mount();
   type('x'.repeat(101));
-  expect(screen.getByText('Too long to search')).toBeInTheDocument();
+  expect(screen.getByText('Too long to search', NOTE)).toBeInTheDocument();
   expect(screen.getByText('101 characters')).toBeInTheDocument();
   await wait(300);
   expect(api.get).not.toHaveBeenCalled();
@@ -972,7 +1044,7 @@ test('offline: the field keeps its text, disabled, the rows go, the note; back o
   act(() => { window.dispatchEvent(new Event('offline')); });
   expect(field()).toBeDisabled();
   expect(field()).toHaveValue('ma');
-  expect(screen.getByText('Search needs the server')).toBeInTheDocument();
+  expect(screen.getByText('Search needs the server', NOTE)).toBeInTheDocument();
   expect(screen.getByText('offline · field kept, results off')).toBeInTheDocument();
   expect(screen.queryByText('Marcus Keller')).toBeNull();
   setOnline(true);
@@ -986,7 +1058,7 @@ test('offline at open sends nothing', async () => {
   setOnline(false);
   mount({ pathname: '/search', state: { q: 'ma' } });
   expect(field()).toBeDisabled();
-  expect(screen.getByText('Search needs the server')).toBeInTheDocument();
+  expect(screen.getByText('Search needs the server', NOTE)).toBeInTheDocument();
   await wait(300);
   expect(api.get).not.toHaveBeenCalled();
 });
@@ -1002,23 +1074,28 @@ test('going offline mid-search drops the answer', async () => {
   await act(async () => { late.resolve(answer(RESULTS)); });
   await wait(50);
   expect(screen.queryByText('Marcus Keller')).toBeNull();
-  expect(screen.getByText('Search needs the server')).toBeInTheDocument();
+  expect(screen.getByText('Search needs the server', NOTE)).toBeInTheDocument();
 });
 
-test('a failed search offers Retry; a 429 says too many', async () => {
+test('a failed search offers Retry; a 429 says too many; any other server answer says it failed', async () => {
   api.get.mockRejectedValueOnce({ status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' });
   mount();
   type('ma');
-  expect(await screen.findByText('Search didn’t answer')).toBeInTheDocument();
+  expect(await screen.findByText('Search didn’t answer', NOTE)).toBeInTheDocument();
   expect(screen.getByText('Check the signal, then try again.')).toBeInTheDocument();
   api.get.mockResolvedValueOnce(answer(RESULTS));
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText('Marcus Keller')).toBeInTheDocument();
   api.get.mockRejectedValueOnce({ status: 429, message: 'Too many searches. Please slow down.' });
   type('mar');
-  expect(await screen.findByText('Too many searches')).toBeInTheDocument();
+  expect(await screen.findByText('Too many searches', NOTE)).toBeInTheDocument();
   expect(screen.getByText('Wait a minute, then try again.')).toBeInTheDocument();
   expect(screen.queryByText('Marcus Keller')).toBeNull();
+  api.get.mockRejectedValueOnce({ status: 500, message: 'Something went wrong.' });
+  type('mars');
+  expect(await screen.findByText('Search failed', NOTE)).toBeInTheDocument();
+  expect(screen.getByText('The server couldn’t run this search. Try again in a moment.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
 });
 
 test('Back from a result: the term returns with the keyboard down and runs again', async () => {
@@ -1040,16 +1117,24 @@ test('Clear empties the field, drops the rows and puts focus back', async () => 
   expect(field()).toHaveValue('');
   expect(field()).toHaveFocus();
   expect(screen.queryByText('Marcus Keller')).toBeNull();
-  expect(screen.getByText('Search every record')).toBeInTheDocument();
+  expect(screen.getByText('Search every record', NOTE)).toBeInTheDocument();
 });
 
-test('the back arrow and Escape leave the screen', () => {
+// Under MemoryRouter window.history.state is null, so these exercise the
+// fallback to /events; the navigate(-1) branch is browser check S2.
+test('the back arrow and Escape leave the screen; Escape works offline too', () => {
   const { unmount } = mount();
   fireEvent.click(screen.getByRole('button', { name: 'Close search' }));
   expect(loc()).toHaveTextContent('/events');
   unmount();
-  mount();
-  fireEvent.keyDown(field(), { key: 'Escape' });
+  const second = mount();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(loc()).toHaveTextContent('/events');
+  second.unmount();
+  setOnline(false);
+  mount({ pathname: '/search', state: { q: 'ma' } });
+  expect(field()).toBeDisabled();
+  fireEvent.keyDown(window, { key: 'Escape' });
   expect(loc()).toHaveTextContent('/events');
 });
 
@@ -1097,7 +1182,7 @@ import { useMobileView } from '../../context/MobileViewContext';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import {
-  GROUP_LIMIT, termState, searchGroups, searchNote, flightLabel, liveSummary,
+  GROUP_LIMIT, termState, searchGroups, searchNote, errorKind, flightLabel, liveSummary,
 } from '../../utils/searchView';
 
 // Phone global search (spec 2026-08-13-mobile-admin section 6; benchmark
@@ -1120,7 +1205,6 @@ import {
 const DEBOUNCE_MS = 200;
 // api.js sets no timeout; without one a search on a dead link pulses forever.
 const TIMEOUT_MS = 10000;
-const LINE2_CLASS = { meta: 'm-card-meta', kind: 'm-card-kind' };
 
 const isOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false;
 
@@ -1145,14 +1229,16 @@ function Lead({ lead }) {
 }
 
 // The spaces between pieces are for the button's accessible name; inside the
-// flex row they render as nothing.
+// flex row they render as nothing. The kind has its own line in the UI face
+// (.m-card-kind, the card family's), the meta its own in the numeric face.
 function SearchRow({ row, onOpen }) {
   return (
     <button type="button" className="m-card m-srow" onClick={() => onOpen(row.target)}>
       <Lead lead={row.lead} />{' '}
       <span className="m-srow-body">
         <span className="m-srow-title">{row.title}</span>
-        {row.line2 ? <>{' '}<span className={LINE2_CLASS[row.line2Kind]}>{row.line2}</span></> : null}
+        {row.kind ? <>{' '}<span className="m-card-kind">{row.kind}</span></> : null}
+        {row.meta ? <>{' '}<span className="m-card-meta">{row.meta}</span></> : null}
       </span>
       {row.chip ? <>{' '}<StatusChip kind={row.chip.kind}>{row.chip.label}</StatusChip></> : null}
       {row.desktop ? <>{' '}<span className="tag">Desktop</span></> : null}
@@ -1201,7 +1287,7 @@ export default function SearchPhone() {
         if (id !== reqId.current) return;
         setResults(null);
         setResultsFor(null);
-        setError({ term: t, kind: err && err.status === 429 ? 'rate' : 'failed' });
+        setError({ term: t, kind: errorKind(err) });
       });
   }, [navigate]);
 
@@ -1210,27 +1296,37 @@ export default function SearchPhone() {
     run(term);
   }, DEBOUNCE_MS, [term, offline]);
 
-  useEffect(() => {
-    const goOffline = () => { forget(); setOffline(true); };
-    const goOnline = () => setOffline(false);
-    window.addEventListener('offline', goOffline);
-    window.addEventListener('online', goOnline);
-    return () => {
-      window.removeEventListener('offline', goOffline);
-      window.removeEventListener('online', goOnline);
-      // Leaving: an answer that lands later must not write this screen's
-      // history entry over the page the user went to.
-      cancel();
-    };
-  }, [forget, cancel]);
-
-  if (!isPhone) return <Navigate to="/dashboard" replace />;
-
-  const close = () => {
+  const close = useCallback(() => {
     cancel();
     if (window.history.state && window.history.state.idx > 0) navigate(-1);
     else navigate('/events', { replace: true });
-  };
+  }, [cancel, navigate]);
+
+  // Leaving: an answer that lands later must not write this screen's history
+  // entry over the page the user went to. Its own effect, so re-subscribing
+  // the listeners below can never drop a search in flight.
+  useEffect(() => cancel, [cancel]);
+
+  useEffect(() => {
+    const goOffline = () => { forget(); setOffline(true); };
+    const goOnline = () => setOffline(false);
+    // Escape closes from anywhere on the screen, as the benchmark listens,
+    // including offline, when the field is disabled.
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    };
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [forget, close]);
+
+  if (!isPhone) return <Navigate to="/dashboard" replace />;
+
   const open = (target) => {
     if (!target) return;
     cancel();
@@ -1250,9 +1346,6 @@ export default function SearchPhone() {
     if (inputRef.current) inputRef.current.focus();
   };
   const retry = () => { if (state === 'ok' && !offline) run(term); };
-  const onKeyDown = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-  };
   // The keyboard's Search key: put the keyboard away so the rows show.
   const onSubmit = (e) => {
     e.preventDefault();
@@ -1277,7 +1370,6 @@ export default function SearchPhone() {
             className="m-search-input"
             value={q}
             onChange={onChange}
-            onKeyDown={onKeyDown}
             disabled={offline}
             autoFocus={!initialTerm}
             enterKeyHint="search"
@@ -1427,11 +1519,13 @@ test('the search field hides the browser clear button', () => {
 - [ ] **Step 6: Run the tests and the build**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/SearchPhone.test.js src/utils/searchView.test.js src/utils/mobileClassContract.test.js`
-Expected: PASS, every test, no `act()` warnings in the output. Quote the counts.
-Then: `cd client && CI=true npx react-scripts build`
-Expected: `Compiled successfully` (an ESLint warning fails a CI build; fix it at its root, never with a disable comment, and report what it was).
+Expected: PASS, every test (25 in `SearchPhone.test.js`), no "not wrapped in act(...)" warnings in the output. Quote the counts.
+Then lint the new page directly, because the build cannot reach it until Task 4 imports it: `cd client && npx eslint --max-warnings=0 src/pages/mobile/SearchPhone.js src/utils/searchView.js`. Expected: no output, exit 0. A warning here is fixed at its root, never with a disable comment; report what it was.
+Then: `cd client && CI=true npx react-scripts build`. Expected: exit 0; the only warning in the banner is the known `html2pdf.js` source map (Global Constraints).
 
 - [ ] **Step 7: Commit**
+
+The commit hook's `check-docs-drift.sh` warns about a new file under `client/src/pages/`. That is expected: the README and ARCHITECTURE lines land in Task 6. Do not edit them here.
 
 ```bash
 git add client/src/pages/mobile/SearchPhone.js client/src/pages/mobile/SearchPhone.test.js client/src/index.css client/src/utils/mobileClassContract.test.js && git commit -F - <<'MSG'
@@ -1461,6 +1555,7 @@ MSG
 **Interfaces:**
 - Consumes: Task 3's `SearchPhone` default export; `routeScreenKey('/search') === 'search'` (already true).
 - Produces: `/search` is a live admin route; on the phone it renders inside `<div className="m-shell">` alone; the phone header's magnifier calls `navigate('/search')`; `recordRoute('/search', ...)` is a no-op.
+- Decisions implemented here: 1 (the takeover: no phone header, no passkey nudge, no tab bar; the palette stays mounted) and 2 (the restore never records `/search`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1530,7 +1625,7 @@ test('every other phone route keeps the phone header and the tab bar', async () 
 });
 ```
 
-In `client/src/components/mobile/MobileHeader.test.js`, replace lines 6-7 (the `mockPalette` const and the `PaletteContext` mock) with:
+In `client/src/components/mobile/MobileHeader.test.js`, KEEP lines 6-7 (the `mockPalette` const and the `PaletteContext` mock) for now: the header still calls `usePalette()` until Step 3, and without the mock every test in the file would fail for that reason instead of the one this step is about. After line 7 add:
 
 ```js
 const mockNavigate = jest.fn();
@@ -1562,7 +1657,7 @@ In `client/src/utils/screenKey.test.js`, add `['/search', 'search'],` to the `te
 - [ ] **Step 2: Run them to see the right ones fail**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/AdminLayout.search.test.js src/components/mobile/MobileHeader.test.js src/utils/routeRestore.test.js src/utils/screenKey.test.js`
-Expected: the takeover test FAILS (a `.m-header` and a `.m-tabbar` are present on `/search`); the magnifier test FAILS (`mockNavigate` not called); the restore test FAILS (it restores `/search`); the `/search` screen-key row PASSES already (it is a pin, not new behaviour). Every other test passes.
+Expected: exactly three failures. The takeover test FAILS (a `.m-header` and a `.m-tabbar` are present on `/search`); the magnifier test FAILS (`mockNavigate` was not called: the button still opens the palette); the restore test FAILS (it restores `/search`). The `/search` screen-key row PASSES already (it is a pin, not new behaviour), and every other test passes, the ten existing MobileHeader tests included.
 
 - [ ] **Step 3: Implement**
 
@@ -1583,6 +1678,7 @@ and make the first line of `recordRoute`'s body `if (NEVER_RECORDED.has(pathname
 - In the header comment, replace the words `global search (opens the existing command palette until the full-screen search screen lands),` with `global search (the full-screen search screen at /search, lane ma-f3),` and rewrap the comment.
 - Replace `const { openPalette } = usePalette();` with `const navigate = useNavigate();`.
 - In the magnifier button, replace `onClick={openPalette}` with `onClick={() => navigate('/search')}`.
+- In `MobileHeader.test.js`, now delete lines 6-7 (the `mockPalette` const and the `PaletteContext` mock): the header no longer imports the context.
 
 `client/src/components/AdminLayout.js`: immediately before `if (mobileChrome) {`, insert:
 
@@ -1642,16 +1738,16 @@ After the `admin-proposals-unviewed` entry add:
 
 - [ ] **Step 2: Run the capture**
 
-With the lane's API and client dev servers up: `npm run mobile:check` (it hardcodes port 3000; run it against a client on 3000 or read the page lines it prints). Expected: `admin-search` passes the overflow probe; report its `taps<36` and `tiny<12` counts beside the proposals pages' (the 10px labels are drawn, so tiny text is expected).
+`mobile:check` hardcodes port 3000 (`scripts/mobile-capture.js:103`), so for this step the LANE's client runs on 3000 (stop main's dev client if one holds the port, and restore it after), with the lane's API up: `npm run mobile:check`. Expected: `admin-search` passes the overflow probe; report its `taps<36` and `tiny<12` counts beside the proposals pages' (the 10px labels are drawn, so tiny text is expected).
 
 - [ ] **Step 3: Render the benchmark's Global search per state**
 
-Copy `docs/design-artifacts/` (the snapshot, `support.js`, `_ds/`) into a scratch folder. For each variant, rewrite the HTML-escaped `data-props` defaults in the copy: `searchState` (`&quot;default&quot;: &quot;live typing&quot;` becomes the variant), `keyboard` (`&quot;default&quot;: true` in the `keyboard` entry becomes `false`, so the drawn keyboard does not cover the rows), `offline`, `skin`. Variants: `empty field`, `type more`, `in flight`, `results`, `nothing matched`, and `results` with `offline` true; each in `dark` and `light`. Serve with `python3 -m http.server` from the copy, load in headless Chromium (`~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome`, network on: the runtime loads React from unpkg) at 460x960, click `[aria-label="Search"]` in the header, wait 1.5 s, screenshot. Twelve shots beside the lane's ledger.
+Copy `docs/design-artifacts/` (the snapshot, `support.js`, `_ds/`) into a folder in the session scratchpad (never inside `os` or the lane). For each variant, rewrite the HTML-escaped `data-props` defaults in the copy: `searchState` (`&quot;default&quot;: &quot;live typing&quot;` becomes the variant), `keyboard` (`&quot;default&quot;: true` in the `keyboard` entry becomes `false`, so the drawn keyboard does not cover the rows), `offline`, `skin`. Variants: `empty field`, `type more`, `in flight`, `results`, `nothing matched`, and `results` with `offline` true; each in `dark` and `light`. Serve with `python3 -m http.server` from the copy, load in headless Chromium (`~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome`, network on: the runtime loads React from unpkg) at 460x960, click `[aria-label="Search"]` in the header, wait 1.5 s, screenshot. Twelve shots beside the lane's ledger.
 
 - [ ] **Step 4: Ad hoc browser checks (record S1 to S12 in this plan's "Browser checks" table, on main, before the merge)**
 
 Chromium 390x844 (then 360 and 320 for S10), a dev admin session, the lane's client:
-- S1: the magnifier on Events, Proposals and More each opens `/search` full screen: no `.m-tabbar`, no `.m-brandmark`, `document.activeElement` is the field, `history.length` grew by one.
+- S1: the magnifier on every tab (Inbox, Events, Proposals and More) opens `/search` full screen: no `.m-tabbar`, no `.m-brandmark`, `document.activeElement` is the field, `history.length` grew by one.
 - S2: `page.goBack()` from `/search` lands on the tab it came from; the in-app Back arrow does the same; Escape with the field focused does the same.
 - S3: typing one character makes no request (network log); typing a surname present in the dev DB quickly (five characters within 150 ms) makes ONE `GET /api/admin/search` request, and its request headers carry no `x-offline-ok`; the groups render in the order Clients, Proposals, Events, Staff with their counts.
 - S4: a client row opens `/clients/<id>` in the desktop chrome with the Phone view pill; Back lands on `/search` with the term in the field, the rows back, and the field NOT focused.
@@ -1660,11 +1756,11 @@ Chromium 390x844 (then 360 and 320 for S10), a dev admin session, the lane's cli
 - S7: offline: `context.setOffline(true)` (this flips `navigator.onLine` and fires `offline`; the screen does not depend on the worker): the field keeps its text, disabled, at 0.55 opacity; the note reads "Search needs the server"; `setOffline(false)` runs the term again.
 - S8: nothing stored: after S3 to S5, `caches.keys()` then each cache's `keys()` hold no URL containing `/api/admin/search`.
 - S9: a failed search: stop the lane's API by its LISTENER pid (`ss -ltnp`, not `$!`), type a new term: "Search didn’t answer" with Retry; restart the API, Retry: the rows render.
-- S10: both skins at 390, 360 and 320 beside the Step 3 renders: header (Back, field radius, icon, Clear), the in-flight line, group heads and counts, each row kind (icon tile, initials tile, quieter rail, the kind line, chip, Desktop tag), the More row in the link colour, every note with its icon and micro line; no horizontal scroll at 320 with a long name and a chip on one row.
+- S10: both skins at 390, 360 and 320 beside the Step 3 renders: header (Back, field radius, icon, Clear), the in-flight line, group heads and counts, each row kind (icon tile, initials tile, quieter rail, the kind line in the UI face and the date line in the numeric face, chip, Desktop tag), the More row in the link colour, every note with its icon and micro line; no horizontal scroll at 320 with a long name and a chip on one row.
 - S11: `getComputedStyle(field, '::-webkit-search-cancel-button').display` is `none`; the Clear button measures 44 by at least 42 and `document.elementFromPoint` at its centre is the button; every row measures at least 56 tall and the More row at least 48.
 - S12: at desktop width `/search` lands on `/dashboard`, and ⌘K still opens the desktop palette with its groups; after visiting `/search` on the phone, `localStorage.adminLastRoute` names the screen before it, not `/search`.
 
-Then dispatch the ui-ux-review seat against the benchmark's Global search (the twelve renders, plus the lane shots, DOM and computed CSS the controller captured); adherence to the artifact is its primary benchmark. Brief it with the sanctioned departures so it does not re-flag them: decision 1 (no tab bar, the takeover), 5 (the kind under the name; "kind · date" on proposals), 6 (the 44px rail with the quieter inks), 8 (More row destinations), 9 (the 44px field and Clear), 12 (the accessibility additions), 13 (no mock keyboard), and decision 4's two failed-search notes.
+Then dispatch the ui-ux-review seat against the benchmark's Global search (the twelve renders, plus the lane shots, DOM and computed CSS the controller captured); adherence to the artifact is its primary benchmark. Brief it with the sanctioned departures so it does not re-flag them: decision 1 (no tab bar, no toggle, the takeover), 5 (the kind on its own line; a proposal's date under it), 6 (the 44px rail with the quieter inks, the 12px row gap), 8 (More row destinations), 9 (the 44px field; the 44 by 42 Clear), 11 (Escape on the window), 12 (the accessibility additions), 13 (no mock keyboard), 14 (two-letter initials), and decision 4's three failed-search notes.
 
 - [ ] **Step 5: Commit**
 
@@ -1681,9 +1777,13 @@ MSG
 ### Task 6: Docs and ledgers
 
 **Files:**
-- Modify: `README.md:650` and `:707`, `ARCHITECTURE.md:225` and after `:2136`, `scripts/sensitive-paths.txt:476-481`, `docs/walkthroughs-owed.md` (end of Tier 6, before `## Tier 4`), `docs/fix-list-remaining-2026-07-02.md:3042-3044` and the Admin UI follow-ups
+- Modify: `README.md:650`, `:707` and after `:820`, `ARCHITECTURE.md:225` and after `:2136`, `scripts/sensitive-paths.txt:475-481`, `docs/walkthroughs-owed.md` (the Tier 6 count sentence at `:2115`, and the end of Tier 6, before `## Tier 4`), `docs/fix-list-remaining-2026-07-02.md:3042-3044` and the Admin UI follow-ups
 
 - [ ] **Step 1: README**
+
+In Key Features, "Phone Admin PWA", after the `**Admin push per kind (lane ma-c-push).**` bullet (`:820`), add:
+
+`- **Phone global search (lane ma-f3).** The magnifier on every phone tab opens a full-screen search over clients, proposals, events and staff (by name, email, or three or more phone digits), grouped with counts like the ⌘K palette. Events open the phone event detail, proposals the proposal page, clients and staff their desktop pages; a group of six ends in a row that opens the full desktop list. It runs live only: nothing from search is stored on the phone, and offline the field waits for the connection. Back from a result returns to the search and its term.`
 
 After the `proposalCards.js` line (`:650`) add, aligned like its neighbours:
 
@@ -1705,13 +1805,13 @@ After the "Phone Proposals list" bullet (`:2136`), add:
 
 `scripts/sensitive-paths.txt`: in the `offlineGet` block (`:476-481`), extend the comment by one sentence, `SearchPhone.js is listed because it must never opt in: its rows carry client emails and phones, and the phone stores nothing from search.`, and add `client/src/pages/mobile/SearchPhone.js` on its own line after `client/src/pages/mobile/ProposalsListPhone.js`.
 
-`docs/walkthroughs-owed.md`: append at the END of Tier 6, right before `## Tier 4`:
+`docs/walkthroughs-owed.md`: in the Tier 6 count sentence (`:2115`), change "As of 2026-10-15 this tier holds ONE item, below: the consult call record." to "As of 2026-10-XX this tier holds TWO items, below: the consult call record and the phone global search (lane ma-f3-search)." Then append at the END of Tier 6, right before `## Tier 4`:
 
 ```markdown
 ### Global search on the phone (lane ma-f3-search, built 2026-10-XX; moves to Tier 3b when its squash is an ancestor of `origin/main`)
 
 The walk, on the Pixel, in the installed app:
-1. On Events, tap the magnifier: the search fills the screen, the keyboard comes up, the tab bar is gone.
+1. On Events, tap the magnifier (it is on every tab): the search fills the screen, the keyboard comes up, the tab bar is gone.
 2. Type one letter: "Keep typing". Type a client's surname: the groups appear in the order Clients, Proposals, Events, Staff, each with its count; the keyboard's Search key puts the keyboard away.
 3. Tap an event: its phone detail opens. Press Back: the search is there with the term and the rows, keyboard down.
 4. Tap a client (it carries "Desktop"): the desktop client page opens with the Phone view pill. Back returns to the search.
@@ -1722,7 +1822,11 @@ The walk, on the Pixel, in the installed app:
 
 `docs/fix-list-remaining-2026-07-02.md`: right after the sentence ending "Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.**" (`:3044`), add: **AMENDED 2026-10-XX: full-screen SEARCH is built by lane `ma-f3-search` (`docs/superpowers/plans/2026-10-15-mobile-admin-search.md`); the phone header's magnifier opens `/search` instead of the palette. Still declared and unbuilt: `ma-f2-proposal-detail`.** And under Admin UI, beside the phone-list follow-ups, one new bullet: `- The admin worker still allowlists /api/admin/search, but nothing opts in: the phone search reads through api.get and stores nothing (lane ma-f3). Drop the entry at the next admin-sw change, with its allowlist test. Lane ma-f3, 2026-10-XX.`
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Check the docs took**
+
+`node -e "console.log(require('./scripts/sensitive-match.js').matchSensitive(['client/src/pages/mobile/SearchPhone.js']))"` prints the path (the list matches it). `grep -n "holds TWO items" docs/walkthroughs-owed.md` finds the amended sentence. `grep -cP "\x{2014}" README.md ARCHITECTURE.md docs/walkthroughs-owed.md docs/fix-list-remaining-2026-07-02.md` (the em dash by code point) shows no count higher than on main (`git show main:<file> | grep -cP "\x{2014}"` per file): this task adds no em dash.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add README.md ARCHITECTURE.md scripts/sensitive-paths.txt docs/walkthroughs-owed.md docs/fix-list-remaining-2026-07-02.md && git commit -F - <<'MSG'
@@ -1750,15 +1854,35 @@ Desktop viewport: ⌘K opens the palette with the same four groups and rows as o
 
 - [ ] **Step 4: Review fleet, per the lane map**
 
-code-review, consistency-check, ui-ux-review (Task 5 Step 4 covers the seat's benchmark), plus `/second-opinion` over the lane diff (cheap, decorrelated). Reviewers run on Opus. Fix rounds as needed; record the as-built deltas in this plan's "Lane review round" section before the merge.
+code-review, consistency-check, `/second-opinion` over the whole lane diff, and the ui-ux seat (it ran in Task 5 Step 4 against the benchmark; it runs again on any fix delta below). Reviewers run on Opus. Fix rounds as needed; record the as-built deltas in this plan's "Lane review round" section.
 
-- [ ] **Step 5: Merge**
+After the LAST fix round: re-run Steps 1 and 2 on the lane HEAD and quote the counts; if a fix touched a client UI file (`SearchPhone.js`, `index.css`, `AdminLayout.js`, `MobileHeader.js`), re-run the browser checks it can move (S10 and S11 at least for CSS, the S check that covers any behaviour changed) and send the ui-ux seat the fix delta; update the Browser checks table.
 
-Rebase the lane onto `main` first if main moved. Squash-merge through `os` on `main` via `scripts/merge-lane.sh ma-f3-search docs/superpowers/plans/2026-10-15-mobile-admin-search.md ma-f3-search`; client build on merged main; `npm run worktree:rm -- ma-f3-search --force` after the three checks; the board line via `scripts/board-write.sh "Recently shipped" ...`; the close record in this plan; the `2026-10-XX` dates in Task 6's docs filled in.
+- [ ] **Step 5: Plan sections on main, then merge**
+
+The "Browser checks" table and the "Lane review round" section are written into this plan on main; commit them there (explicit pathspec, this plan file only) BEFORE the merge, because `scripts/merge-lane.sh` refuses a dirty tree.
+
+If main moved since the cut, rebase the lane onto `main`; then re-run Steps 1 and 2 on the rebased HEAD and have the code-review seat re-confirm any rebased hunk inside the footprint (the merge model's "re-confirmed against main's new HEAD"). Squash-merge through `os` on `main` via `scripts/merge-lane.sh ma-f3-search docs/superpowers/plans/2026-10-15-mobile-admin-search.md ma-f3-search`. On merged main: `node --test server/utils/globalSearch.test.js` and `cd client && CI=true npx react-scripts build`; quote both. Then `npm run worktree:rm -- ma-f3-search --force` after the three checks; the board line via `scripts/board-write.sh "Recently shipped" ...`; the close record in this plan; the `2026-10-XX` dates in Task 6's docs filled in. No push: that waits for Dallas's cue, and the push that carries this squash runs the sensitive-path re-review over `SearchPhone.js` (see "Review level").
 
 ## Self-Review (2026-10-15)
 
-1. **Spec coverage.** Section 6: the magnifier on every tab (Task 4; the detail variant keeps dropping it, as drawn), the same `/admin/search` endpoint (Task 3), a full-screen takeover (Tasks 3, 4), grouped as the palette groups them (Task 2), large tap rows (Task 3 CSS, S11); grounding: max 6 per group with the More row (Task 2, Task 3), empty under 2 and over 100 (Task 2 `termState`, Task 3 no request), the 60/min limit surfaced as its own note (Task 2, Task 3), the palette's debounce (Task 3), "type more" distinct from "nothing matched" (Task 2, Task 3). Section 3's Global search line: back arrow, groups with counts, "More clients on desktop · 6 shown", the Desktop tag on client and staff rows, the empty, keep-typing, in-flight, no-match and offline states with their copy, the field disabled offline, `type="search"` with the browser clear button suppressed (Tasks 2, 3, 5). Section 7: nothing cached for search (Task 3, S8). Section 9: the restore never lands on the takeover (Task 4). Section 2: the field extension (Task 1; the spec's endpoint list is amended with this plan). Docs law (Task 6). Gaps: none found.
+1. **Spec coverage.** Section 6: the magnifier on every tab (Task 4; the detail variant keeps dropping it, as drawn), the same `/admin/search` endpoint (Task 3), a full-screen takeover (Tasks 3, 4), grouped as the palette groups them (Task 2), large tap rows (Task 3 CSS, S11); grounding: max 6 per group with the More row (Task 2, Task 3), empty under 2 and over 100 (Task 2 `termState`, Task 3 no request), the 60/min limit surfaced as its own note (Task 2, Task 3), the palette's debounce (Task 3), "type more" distinct from "nothing matched" (Task 2, Task 3). Section 3's Global search line: back arrow, groups with counts, "More clients on desktop · 6 shown", the Desktop tag on client and staff rows, the empty, keep-typing, in-flight, no-match and offline states with their copy, the field disabled offline, `type="search"` with the browser clear button suppressed (Tasks 2, 3, 5). Section 7: nothing cached for search (Task 3, S8). Section 9: the restore never lands on the takeover (Task 4). Section 10: failed reads surface through the normalized `err.status` (Tasks 2, 3). Section 2: the field extension (Task 1; the spec names it since the plan fold, which amended sections 2, 3, 7 and 9 on main). Docs law (Task 6). Gaps: none found.
 2. **Placeholder scan.** The `2026-10-XX` dates in Task 6 are filled at lane close (Task 7 Step 5). No TBDs.
-3. **Type consistency.** Task 1's `status`, `event_date`, `kind` are what Task 2's `searchRow` reads. Task 2's export names (`GROUP_LIMIT, termState, searchGroups, searchNote, flightLabel, liveSummary`) are Task 3's imports; the `Row`, `Group` and `Note` shapes match the page's reads (`row.lead.kind`, `row.line2Kind`, `row.target`, `g.more`, `note.retry`). Every screen key a target arms matches `routeScreenKey` (pinned in Task 2). `/search` is the route in Task 4, the path the magnifier navigates to, the path `routeRestore` skips, and the manifest path in Task 5.
+3. **Type consistency.** Task 1's `status`, `event_date`, `kind` are what Task 2's `searchRow` reads. Task 2's export names (`GROUP_LIMIT, termState, searchGroups, searchNote, errorKind, flightLabel, liveSummary`) are Task 3's imports; the `Row`, `Group` and `Note` shapes match the page's reads (`row.lead.kind`, `row.kind`, `row.meta`, `row.target`, `g.more`, `note.retry`); the error kinds `network | rate | server` match between `errorKind`, `searchNote` and the tests. Every screen key a target arms matches `routeScreenKey` (pinned in Task 2). `/search` is the route in Task 4, the path the magnifier navigates to, the path `routeRestore` skips, and the manifest path in Task 5.
 4. **Review Focus.** Each of the five lines names the task and test that pins it; the tests exist in the task bodies above.
+
+## Plan fleet fold (2026-10-15)
+
+Three seats on Opus over `d2b11c58`: fidelity PASS, decomposition PASS, feasibility FAIL on one blocker. Feasibility ran the plan's code in a scratch mirror: Task 1's server suite 10 pass / 3 fail red, then 13 / 0 green with the fixtures cleaned up (the proposals table's NOT NULL columns all default, its CHECKs pass, no insert trigger); the model 29 / 29; the class contract 24 / 24; the CI build clean of ESLint warnings; the CSS specificity and the palette-scope check clean. Folded:
+
+- **Blocker (feasibility, fidelity):** 9 of the 25 screen tests failed with "Found multiple elements", because the polite status line repeats the note's title. Note queries now take `{ selector: '.m-empty-title' }` (25 / 25 in the mirror with that change); decision 12 now says the status line reads its state from mount.
+- **The spec amendment had no owner (all three seats).** Done on main with this fold: section 2 names the search row fields, section 3 carries "Plan decisions of 2026-10-15 (lane ma-f3)", section 7's allowlist sentence says search stores nothing, section 9's "Never persisted" names `/search`.
+- **The proposal row's kind was in the numeric face (fidelity).** A proposal row is now three lines, the family's: name, kind (`.m-card-kind`), date (`.m-card-meta`, formatted from `event_date`); `Row` carries `kind` and `meta` instead of `line2`. Decision 5 rewritten.
+- **A server error read as a signal problem (fidelity, section 10).** `errorKind` maps status 0 to "Search didn’t answer", 429 to "Too many searches", anything else to "Search failed". Decision 4 rewritten.
+- **Task 4's red run was mispredicted (feasibility).** The palette mock now stays until Step 3, so exactly three tests fail for the right reasons.
+- **Lint could not reach the new modules before Task 4 (decomposition).** Tasks 2 and 3 lint them directly with `npx eslint --max-warnings=0`.
+- **No re-verification after fix rounds or a rebase, plan sections not committed before the merge, the post-merge server suite missing (decomposition).** Task 7 Steps 4 and 5.
+- **Decision context missing from per-task dispatches (decomposition).** The header's dispatch rule, and a "Decisions implemented here" line on Tasks 2, 3 and 4.
+- **Stated now:** no Desktop-view toggle on the takeover (decision 1), the 12px row gap (decision 6), the Clear button's 42px height (decision 9), Escape on the window so it works offline (decision 11), two-letter initials (decision 14), the review level and the push-time sensitive re-review (lane map).
+- **Smaller:** the Tier 6 count sentence, the README Key Features bullet and a docs check (Task 6), the Inbox tab in S1, the lane client on port 3000 for `mobile:check`, the scratchpad for the renders, `ma-f1-proposals-list` in `depends_on`, the "match the artifact" scope wording, the known build banner and test noise (Global Constraints), Node's `ℹ pass` reporter wording, anchor drift (`MobileViewContext.js`, the spec's `:25`, the sensitive block's `:475`), the back-arrow test's fallback-only coverage noted.
+- Disclosed by feasibility: its mirror build wrote through the symlinked `node_modules` into `os/client/node_modules/.cache` (gitignored babel and ESLint caches; no tracked file). The next build there re-lints cold.
