@@ -80,3 +80,31 @@ test('media links are https only: a javascript:, data: or http: URL is dropped',
   ], NOW);
   expect(items[1].media.map((m) => m.url)).toEqual(['HTTPS://example.test/m/4']);
 });
+
+// Spec 2026-10-14 section 4.2: an email row shows its subject and its
+// attachment count; our Gmail reply has no author and says "by email" where
+// an author would (never "Auto"); a Zola inquiry's subject reads "Zola
+// inquiry"; the mail system lines are the server's copy.
+test('mail rows: subject, attachment count, by email on our reply, the Zola inquiry, and the mail system lines', () => {
+  const items = threadModel([
+    row({ ref: 'gm:1', channel: 'email', line: null, subject: 'Adding to our package', text: 'Could we add a mocktail station?', attachments: 2, by_email: false }),
+    row({ ref: 'gm:2', direction: 'out', channel: 'email', line: null, text: 'Yes to both.', attachments: 0, by_email: true, at: '2026-10-06T15:10:00.000Z' }),
+    row({ ref: 'gm:3', channel: 'email', line: null, text: null, attachments: 1, at: '2026-10-06T15:20:00.000Z' }),
+    row({ ref: 'gm:4', channel: 'zola', line: null, subject: 'Zola inquiry', text: 'Do you bring ice?', attachments: 0, at: '2026-10-06T15:30:00.000Z' }),
+    row({ ref: 'gm:5', direction: 'out', channel: 'zola', line: null, text: 'We do.', by_email: true, failed: true, failure_reason: 'Email bounced', at: '2026-10-06T15:40:00.000Z' }),
+    row({ ref: 'gm:6', direction: 'system', channel: 'email', line: null, text: 'Auto-reply received', at: '2026-10-06T15:50:00.000Z' }),
+    row({ ref: 'gm:7', direction: 'system', channel: 'email', line: null, text: 'Email bounced', at: '2026-10-06T15:51:00.000Z' }),
+    row({ ref: 'gm:8', direction: 'system', channel: 'zola', line: null, text: 'Closed their inquiry on Zola. We found another bar.', at: '2026-10-06T15:52:00.000Z' }),
+  ], NOW);
+  expect(items[1]).toMatchObject({ tag: 'Email', subject: 'Adding to our package', attachments: '2 attachments', meta: '10:00 AM' });
+  expect(items[2]).toMatchObject({ out: true, tag: 'Email', meta: 'by email · 10:10 AM', attachments: null });
+  // Attachment-only: no "(no text)", the count says what came.
+  expect(items[3]).toMatchObject({ body: '', attachments: '1 attachment' });
+  expect(items[4]).toMatchObject({ tag: 'Zola', subject: 'Zola inquiry', body: 'Do you bring ice?' });
+  expect(items[5]).toMatchObject({ tag: 'Zola', meta: 'by email · 10:40 AM', failure: 'Not delivered: Email bounced' });
+  expect(items.slice(6).map((i) => [i.type, i.text])).toEqual([
+    ['sys', 'Auto-reply received'], ['sys', 'Email bounced'], ['sys', 'Closed their inquiry on Zola. We found another bar.'],
+  ]);
+  // A row with an author keeps it; by_email never says "Auto".
+  expect(threadModel([row({ ref: 'gm:9', direction: 'out', channel: 'email', author_name: 'Zul', by_email: true })], NOW)[1].meta).toBe('Zul · 10:00 AM');
+});

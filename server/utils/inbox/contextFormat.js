@@ -118,10 +118,24 @@ function ttLeadContext(lead, negotiationId) {
   };
 }
 
-function unknownContext(phone) {
-  return { kind: 'unknown', phone_display: phoneDisplay(phone) };
+// An unknown number shows the number; an unknown sender shows the address
+// (spec 2026-10-14 section 4.3), on the opened item's card only.
+function unknownContext(phone, address = null) {
+  return { kind: 'unknown', phone_display: phoneDisplay(phone), address: address || null };
+}
+
+// A Zola couple with no client yet (spec 2026-10-14 section 4.3). The page
+// writes "Zola lead" and "No client record yet". wedding_date is 'YYYY-MM-DD'
+// (people.js reads it with to_char), a calendar date, never an instant.
+function zolaLeadContext(lead) {
+  return {
+    kind: 'zola_lead',
+    couple_label: (lead && lead.couple_label) || null,
+    wedding_date: (lead && lead.wedding_date) || null,
+    client_id: lead && lead.client_id ? Number(lead.client_id) : null,
+  };
 }
 
 module.exports = {
-  phoneDisplay, formatWhen, chooseProposal, clientContext, staffContext, ttLeadContext, unknownContext,
+  phoneDisplay, formatWhen, chooseProposal, clientContext, staffContext, ttLeadContext, unknownContext, zolaLeadContext,
 };

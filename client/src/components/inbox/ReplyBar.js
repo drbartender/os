@@ -12,7 +12,8 @@ import { lateNote, optOutText } from './inboxFormat';
 //         "they last texted 1922", the design's copy) when the switch is on
 //         it, a warning when it is not, nothing when they never texted us.
 //         Staff get no switch, just the staff-line caption.
-//   open  "Open in Thumbtack" (later: Gmail, Zola, Google Voice) and a caption.
+//   open  "Open in Thumbtack", "Open in Gmail" or "Open in Zola" and the
+//         caption the server writes for that app (`app.caption`).
 //   none  nothing.
 // Opted out replaces the box with the notice (keeping another channel's Open
 // button); a bad number says it cannot receive texts.
@@ -52,9 +53,21 @@ function firstName(name) {
   return String(name || '').trim().split(/\s+/)[0] || 'them';
 }
 
+// The server words each app's caption (spec 2026-10-14 section 4.4); a
+// payload from before that change falls back to the Thumbtack wording.
+function captionOf(app) {
+  const caption = typeof app.caption === 'string' ? app.caption.trim() : '';
+  return caption || `Closes here on its own once you reply in ${app.name}.`;
+}
+
+// https only (as the thread's media links): an app link that is not an
+// https string (a javascript: or data: URL) is never rendered.
+const HTTPS = /^https:\/\//i;
+const linkable = (app) => Boolean(app) && typeof app.url === 'string' && HTTPS.test(app.url);
+
 function OpenApp({ app, desk }) {
-  if (!app || !app.url) return null;
-  const caption = `Closes here on its own once you reply in ${app.name}.`;
+  if (!linkable(app)) return null;
+  const caption = captionOf(app);
   if (desk) {
     return (
       <div className="ib-dopen">
@@ -81,7 +94,7 @@ function Notice({ lead, text, app, desk }) {
       <div className="ib-doptout">
         <span className="ib-feed-dot" aria-hidden="true" />
         <span className="ib-doptout-text">{lead && <strong>{lead} </strong>}{text}</span>
-        {app && app.url && (
+        {linkable(app) && (
           <a className="btn btn-primary" href={app.url} target="_blank" rel="noopener noreferrer">
             Open in {app.name}<Icon name="external" />
           </a>
@@ -95,7 +108,7 @@ function Notice({ lead, text, app, desk }) {
         <span className="m-sheet-note-dot" aria-hidden="true" />
         <span className="m-sheet-note-text">{lead && <strong>{lead} </strong>}{text}</span>
       </div>
-      {app && app.url && (
+      {linkable(app) && (
         <a className="ib-open-btn" href={app.url} target="_blank" rel="noopener noreferrer">
           Open in {app.name}<Icon name="external" size={16} />
         </a>

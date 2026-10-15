@@ -31,9 +31,13 @@ function listPayload({ result, directory, feeds, aiStatus, generatedAt }) {
   return {
     generated_at: iso(generatedAt),
     ai: { status: aiStatus },
+    // personal: personal mail, judged once per mail by the sync
+    // (personalMail.js, spec 2026-10-14 decision 6), the row's "dallas@"
+    // chip; only the owner's list ever holds one.
     waiting: result.waiting.map((p) => ({
       person_key: p.personKey, name: directory.nameOf(p.personKey), kind: directory.kindOf(p.personKey),
       need: p.need, waiting_since: iso(p.waitingSince), hot: p.hot, channels: p.channels, state: stateJson(p.state),
+      personal: Boolean(p.personal),
     })),
     snoozed: result.snoozed.map((p) => ({
       person_key: p.personKey, name: directory.nameOf(p.personKey), until: iso(p.snooze.until),

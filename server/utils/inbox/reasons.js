@@ -37,6 +37,11 @@ function replyReason(e, ctx) {
       return { reasonCode: 'proposal', reasonText: sendReason('the proposal', id, ctx), by };
     case 'tt':
       return { reasonCode: 'thumbtack', reasonText: 'Replied in Thumbtack', by: null };
+    case 'gm':
+      // A Gmail reply carries no author (spec 2026-10-14 decision 9).
+      return e.channel === 'zola'
+        ? { reasonCode: 'zola', reasonText: 'Replied to Zola by email', by: null }
+        : { reasonCode: 'email', reasonText: 'Replied by email', by: null };
     case 'lc':
     case 'cc': {
       const minutes = Math.max(1, Math.round(Number(e.meta.durationSec || 0) / 60));
@@ -47,8 +52,8 @@ function replyReason(e, ctx) {
   }
 }
 
-// c: { type: 'ai'|'event'|'done'|'reply', at, read?, eventYmd?, action?, event?,
-//      stretchInbound, needOf }
+// c: { type: 'ai'|'event'|'done'|'reply'|'zola_closed', at, read?, eventYmd?,
+//      action?, event?, stretchInbound, needOf }
 function describeCloser(c, ctx) {
   const source = c.stretchInbound || c.event || null;
   const base = { at: new Date(c.at), need: c.needOf(c.stretchInbound), channel: source ? C.channelTag(source) : null };
@@ -58,6 +63,10 @@ function describeCloser(c, ctx) {
   }
   if (c.type === 'event') {
     return { ...base, reasonCode: 'event', reasonText: `Event happened ${monthDay(c.eventYmd)}`, detail: monthDay(c.eventYmd), by: 'AI' };
+  }
+  if (c.type === 'zola_closed') {
+    // The couple closed it on Zola: a close by rule (spec 2026-10-14 decision 19).
+    return { ...base, reasonCode: 'zola_closed', reasonText: 'Closed their inquiry on Zola', detail: null, by: null };
   }
   if (c.type === 'done') {
     const id = Number(c.action.user_id) || null;

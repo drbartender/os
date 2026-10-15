@@ -79,3 +79,36 @@ test('a picture-only message is never a subject; the legal-hold client is flagge
   const subs = subjectsFor(run({ events: [ask], proposals: [hold] }), 'c-508');
   assert.deepEqual(subs.map((x) => x.legalHold), [true]);
 });
+
+test('a personal person (their mail stored personal by the sync) is never a subject, inbound or outbound', () => {
+  const ask = k.gmIn('e-1212121212121212', ago(3 * HOUR), 'Dinner on Sunday?', { personal: true });
+  assert.deepEqual(subjectsFor(run({ events: [ask] }), 'e-1212121212121212'), []);
+  const reply = k.gmOut('e-1212121212121212', ago(2 * HOUR), 'Let me check and get back to you', { personal: true });
+  assert.deepEqual(subjectsFor(run({ events: [ask, reply] }), 'e-1212121212121212'), []);
+  const business = k.gmIn('e-3434343434343434', ago(3 * HOUR), 'Do you do corporate events?');
+  assert.deepEqual(subjectsFor(run({ events: [business] }), 'e-3434343434343434').map((x) => x.kind), ['inbound']);
+});
+
+// Test 3 of the 2026-10-15 brief, at the rules: one sender's personal mail
+// and business mail are two people, and no subject or slice line of either
+// ever holds the personal mail's words.
+test('one sender, a personal mail and a business mail: only the business one is read, and its slice holds none of the personal words', () => {
+  const personal = k.gmIn('e-5656565656565656', ago(5 * HOUR), 'Private words about Sunday dinner', { personal: true, address: 'friend.r@example.com' });
+  const business = k.gmIn('e-7878787878787878', ago(3 * HOUR), 'Do you do corporate events?', { address: 'friend.r@example.com' });
+  const ourReply = k.gmOut('e-7878787878787878', ago(2 * HOUR), 'We do, let me check the date', { address: 'friend.r@example.com' });
+  const ownerReply = k.gmOut('e-5656565656565656', ago(4 * HOUR), 'Private reply about dinner', { personal: true, address: 'friend.r@example.com' });
+  const all = run({ events: [personal, ownerReply, business, ourReply] }).subjects;
+  assert.ok(all.length > 0, 'the business person is read');
+  assert.deepEqual([...new Set(all.map((x) => x.personKey))], ['e-7878787878787878']);
+  const words = JSON.stringify(all);
+  assert.equal(words.includes('Private'), false, 'no subject or slice line holds the personal words');
+});
+
+test('a Zola closed notice anchors the outbound slice: a Gmail reply after it reads the inquiry as context', () => {
+  const inquiry = k.zolaEvent('z-61', ago(5 * HOUR), 'We love your menu', { leadId: 61, template: 'inquiry' });
+  const closed = k.zolaEvent('z-61', ago(4 * HOUR), 'We found another vendor', { leadId: 61, template: 'closed' });
+  const reply = k.zolaEvent('z-61', ago(3 * HOUR), 'Thanks for letting us know', { leadId: 61, template: 'out' });
+  const [subj] = subjectsFor(run({ events: [inquiry, closed, reply] }), 'z-61');
+  assert.equal(subj.kind, 'outbound');
+  assert.deepEqual(subj.slice.map((x) => [x.ref, x.context]), [[inquiry.ref, true], [reply.ref, false]]);
+});

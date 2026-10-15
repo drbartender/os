@@ -30,7 +30,7 @@ function setup(reply = TEXT_REPLY, { onSent = () => {}, nowMs = NOW, variant = '
   const { result: drafts } = renderHook(() => useInboxDrafts());
   const view = render(<ReplyBar personKey="c-7" name="Avery Example" reply={reply} drafts={drafts.current} nowMs={nowMs} onSent={onSent} variant={variant} />);
   const rerender = () => view.rerender(<ReplyBar personKey="c-7" name="Avery Example" reply={reply} drafts={drafts.current} nowMs={nowMs} onSent={onSent} variant={variant} />);
-  return { drafts, rerender };
+  return { drafts, rerender, unmount: view.unmount };
 }
 const box = () => screen.getByRole('textbox', { name: 'Reply' });
 const type = (text, rerender) => { fireEvent.change(box(), { target: { value: text } }); rerender(); };
@@ -316,6 +316,51 @@ test('an app channel: Open in Thumbtack and its caption', () => {
   setup({ mode: 'open', app: { name: 'Thumbtack', url: 'https://www.thumbtack.com/pro-inbox/messages/555' } });
   expect(screen.getByRole('link', { name: /Open in Thumbtack/ })).toHaveAttribute('target', '_blank');
   expect(screen.getByText('Closes here on its own once you reply in Thumbtack.')).toBeInTheDocument();
+});
+
+// Spec 2026-10-14 section 4.4: the server words each app's caption; the page
+// shows app.caption as it comes, on both shells.
+test('Open in Gmail and Open in Zola show the caption the server sent (app.caption)', () => {
+  const gmail = {
+    name: 'Gmail', url: 'https://mail.google.com/mail/?authuser=x#all/abc123',
+    caption: 'Closes here on its own once you reply from Gmail.',
+  };
+  setup({ mode: 'open', app: gmail });
+  expect(screen.getByRole('link', { name: /Open in Gmail/ })).toHaveAttribute('href', gmail.url);
+  expect(screen.getByText('Closes here on its own once you reply from Gmail.')).toHaveClass('ib-caption');
+  expect(screen.queryByText('Closes here on its own once you reply in Gmail.')).toBeNull();
+  const zola = {
+    name: 'Zola', url: 'https://www.zola.com/inspire/vendors/dashboard',
+    caption: "Reply to Zola's email from Gmail and it closes here on its own. A reply typed inside Zola needs Done.",
+  };
+  setup({ mode: 'open', app: zola }, { variant: 'desktop' });
+  expect(screen.getByRole('link', { name: /Open in Zola/ })).toHaveClass('btn', 'btn-primary');
+  expect(screen.getByText(zola.caption)).toHaveClass('ib-dopen-hint');
+});
+
+// https only: an app link that is not https (a javascript: or data: URL, or
+// not a string) is never an Open link, as the thread's media links already are.
+test('an app whose url is not https renders no Open link, on the open bar and the opted-out notice, both shells', () => {
+  const bad = [
+    { name: 'Gmail', url: 'javascript:alert(1)' }, // eslint-disable-line no-script-url
+    { name: 'Gmail', url: 'data:text/html,hi' },
+    { name: 'Gmail', url: 'http://mail.google.com/mail/' },
+    { name: 'Gmail', url: { toString: () => 'https://mail.google.com/' } },
+  ];
+  for (const app of bad) {
+    for (const variant of ['phone', 'desktop']) {
+      const open = setup({ mode: 'open', app }, { variant });
+      expect(screen.queryByRole('link')).toBeNull();
+      open.unmount();
+      const notice = setup({ ...TEXT_REPLY, opted_out: { since: '2026-09-28T15:04:00.000Z' }, app }, { variant });
+      expect(screen.getByText('Opted out of texts.')).toBeInTheDocument();
+      expect(screen.queryByRole('link')).toBeNull();
+      notice.unmount();
+    }
+  }
+  const good = setup({ mode: 'open', app: { name: 'Gmail', url: 'HTTPS://mail.google.com/mail/' } });
+  expect(screen.getByRole('link', { name: /Open in Gmail/ })).toHaveAttribute('href', 'HTTPS://mail.google.com/mail/');
+  good.unmount();
 });
 
 test('the first text from a 224 line shows its prefix; late hours warn in Chicago time', () => {

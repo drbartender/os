@@ -128,3 +128,60 @@ test('automated sends never count: a text with no sender, a log with no sent_by,
   const siteEmail = k.mlSend('c-110', plus(ago(7 * HOUR), 30 * 1000), { messageType: 'proposal_sent', proposalId: 610, sentBy: null });
   assert.equal(stateOf(run({ events: [ask, autoText, autoLog, sitePal, siteEmail] }), 'c-110').status, 'waiting');
 });
+
+// ─── Email and Zola (spec 2026-10-14 sections 5.4 and 4.5) ───
+
+test('email: a Gmail reply closes a waiting email item, "Replied by email", by no one, and ends a claim', () => {
+  const ask = k.gmIn('c-121', ago(5 * HOUR), 'Can we add a mocktail station?');
+  const claim = k.act('c-121', 'claim', ago(210 * MIN), { userId: ZUL });
+  assert.equal(stateOf(run({ events: [ask], actions: [claim] }), 'c-121').state.type, 'claim');
+  const reply = k.gmOut('c-121', ago(3 * HOUR), 'Yes, we can add one.');
+  const s = stateOf(run({ events: [ask, reply], actions: [claim] }), 'c-121');
+  assert.deepEqual([s.status, s.closed.reasonCode, s.closed.reasonText, s.closed.by, s.closed.channel],
+    ['handled', 'email', 'Replied by email', null, 'email']);
+  const again = k.gmIn('c-121', ago(2 * HOUR), 'Great, and a second bar?');
+  const reopened = stateOf(run({ events: [ask, reply, again], actions: [claim] }), 'c-121');
+  assert.deepEqual([reopened.status, reopened.state.type], ['waiting', 'unseen'], 'the reply ended the claim');
+});
+
+test('email: a bounced Gmail reply does not close; a reply holds when its outbound read says holding', () => {
+  const ask = k.gmIn('c-122', ago(5 * HOUR), 'What time do you arrive?');
+  const bounced = k.gmOut('c-122', ago(4 * HOUR), 'We arrive at 4', { failed: true });
+  assert.equal(stateOf(run({ events: [ask, bounced] }), 'c-122').status, 'waiting');
+  const hold = k.gmOut('c-122', ago(3 * HOUR), 'Let me check with the team and get back to you');
+  const s = stateOf(run({ events: [ask, hold], reads: [k.readRow('outbound', hold, { holding: true, promised_by: 'Monday' })] }), 'c-122');
+  assert.deepEqual([s.status, s.state.type, s.state.byUserId, s.state.promisedBy], ['waiting', 'promise', null, 'Monday']);
+});
+
+test('email: a Sent mail to several people is read once, under its readRef, and every sibling honors that read', () => {
+  const a = k.gmIn('c-123', ago(5 * HOUR), 'Is the 12th open?');
+  const b = k.gmIn('c-124', ago(5 * HOUR), 'Same question from the planner');
+  const toA = k.gmOut('c-123', ago(4 * HOUR), 'Let me check and get back to you both', { gmailId: 'gShared', n: 1 });
+  const toB = k.gmOut('c-124', ago(4 * HOUR), 'Let me check and get back to you both', { gmailId: 'gShared', n: 2 });
+  const read = { ...k.readRow('outbound', toA, { holding: true }), subject_ref: 'gm:gShared' };
+  const r = run({ events: [a, b, toA, toB], reads: [read] });
+  assert.deepEqual([stateOf(r, 'c-123').state.type, stateOf(r, 'c-124').state.type], ['promise', 'promise']);
+});
+
+test('email: two staff recipients answer no staffer; a client and their planner on one mail both close', () => {
+  const q1 = k.gmIn('s-221', ago(5 * HOUR), 'Can I swap Saturday?', { address: 'kai@example.com' });
+  const q2 = k.gmIn('s-222', ago(5 * HOUR), 'Is parking covered?', { address: 'rae@example.com' });
+  const g1 = k.gmOut('s-221', ago(4 * HOUR), 'Uniforms are black', { gmailId: 'gStaff', n: 1, staffGroup: true });
+  const g2 = k.gmOut('s-222', ago(4 * HOUR), 'Uniforms are black', { gmailId: 'gStaff', n: 2, staffGroup: true });
+  const staff = run({ events: [q1, q2, g1, g2] });
+  assert.deepEqual([stateOf(staff, 's-221').status, stateOf(staff, 's-222').status], ['waiting', 'waiting']);
+  const c = k.gmIn('c-125', ago(5 * HOUR), 'Can we see the menu?');
+  const p = k.gmIn('c-126', ago(5 * HOUR), 'Planner here, same question');
+  const r1 = k.gmOut('c-125', ago(4 * HOUR), 'Here is the menu', { gmailId: 'gBoth', n: 1 });
+  const r2 = k.gmOut('c-126', ago(4 * HOUR), 'Here is the menu', { gmailId: 'gBoth', n: 2 });
+  const both = run({ events: [c, p, r1, r2] });
+  assert.deepEqual([stateOf(both, 'c-125').status, stateOf(both, 'c-126').status], ['handled', 'handled']);
+});
+
+test('zola: a Gmail reply to a Zola notice closes it, "Replied to Zola by email"', () => {
+  const ask = k.zolaEvent('z-31', ago(5 * HOUR), 'Is June 6 open?', { leadId: 31 });
+  const reply = k.zolaEvent('z-31', ago(4 * HOUR), 'June 6 is open', { leadId: 31, template: 'out' });
+  const s = stateOf(run({ events: [ask, reply] }), 'z-31');
+  assert.deepEqual([s.status, s.closed.reasonCode, s.closed.reasonText, s.closed.by, s.closed.channel],
+    ['handled', 'zola', 'Replied to Zola by email', null, 'zola']);
+});

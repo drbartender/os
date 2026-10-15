@@ -159,6 +159,10 @@ server/utils/anthropicClient.js
 # every Workspace mailbox. The probe is the only dev-box call allowed.
 server/utils/gmailClient.js
 scripts/gmail-probe.js
+# The Zola lead writer (spec 2026-10-14 section 5.6): writes lead and, in lane
+# zola-leads, client rows from parsed third-party mail. The folder glob above
+# already matches it; this line carries the reason.
+server/utils/inbox/zolaLeads.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes

@@ -128,3 +128,49 @@ test('an unknown number asks the live people index before an event alias', () =>
   const folded = foldTaps({ actions: [claim], seen: [], events: [old], index: handedOn });
   assert.equal(folded.actions[0].person_key, 'c-78');
 });
+
+test('an e- key moves to the client its address now names; a z- key follows its lead to the client; a key with events stays', () => {
+  const mailIndex = buildPeopleIndex({
+    env: {},
+    clients: [{ id: 80, name: 'Alex B & Sam C', phone: null, email: 'Alex.Sam@Example.com', created_at: T('2026-11-01T00:00:00Z') }],
+    zolaLeads: [
+      { id: 9, lead_uuid: null, couple_label: 'Alex B & Sam C', wedding_date: null, client_id: 80, closed_at: null },
+      { id: 10, lead_uuid: null, couple_label: 'Lee D & Max E', wedding_date: null, client_id: null, closed_at: null },
+    ],
+  });
+  const becameClient = `e-${mailIndex.emailHash('alex.sam@example.com')}`;
+  const stillUnknown = `e-${mailIndex.emailHash('nobody@example.com')}`;
+  const taps = [
+    k.act(becameClient, 'claim', ago(HOUR), { userId: ZUL }),
+    k.act(stillUnknown, 'claim', ago(HOUR), { userId: ZUL }),
+    k.act('z-9', 'done', ago(HOUR), { userId: DALLAS }),
+    k.act('z-10', 'done', ago(HOUR), { userId: DALLAS }),
+  ];
+  const moved = foldTaps({ actions: taps, seen: [], events: [], index: mailIndex });
+  assert.deepEqual(moved.actions.map((a) => a.person_key), ['c-80', stillUnknown, 'c-80', 'z-10']);
+  const live = [{ personKey: becameClient, meta: { source: 'gm' } }, { personKey: 'z-9', meta: { source: 'gm' } }];
+  const kept = foldTaps({ actions: taps, seen: [], events: live, index: mailIndex });
+  assert.deepEqual(kept.actions.map((a) => a.person_key), [becameClient, stillUnknown, 'z-9', 'z-10'], 'a key that still has events keeps its taps');
+});
+
+// Personal mail (spec 2026-10-14 decision 6, as decided 2026-10-15): a
+// personal person's key is never a key the index maps, so its taps and seen
+// marks stay on it, with mail or without, after its sender's address names a
+// client. Only the business e- key of that address moves.
+test('a personal key never moves: its sender became a client, and its taps stay on it while the business key moves', () => {
+  const { personalEmailKey, emailHash } = require('./people');
+  const mailIndex = buildPeopleIndex({
+    env: {},
+    clients: [{ id: 81, name: 'Robin Friend', phone: null, email: 'Friend.R@Example.com', created_at: T('2026-11-10T00:00:00Z') }],
+  });
+  const personal = personalEmailKey('friend.r@example.com');
+  const business = `e-${emailHash('friend.r@example.com')}`;
+  assert.equal(mailIndex.keyByEmailHash.has(personal), false);
+  const taps = [k.act(personal, 'claim', ago(HOUR), { userId: DALLAS }), k.act(business, 'claim', ago(HOUR), { userId: DALLAS })];
+  const seen = [k.seenRow(personal, ago(HOUR))];
+  for (const events of [[], [{ personKey: personal, meta: { source: 'gm', personal: true } }]]) {
+    const folded = foldTaps({ actions: taps, seen, events, index: mailIndex });
+    assert.deepEqual(folded.actions.map((a) => a.person_key), [personal, 'c-81'], `${events.length} events`);
+    assert.deepEqual(folded.seen.map((s) => s.person_key), [personal]);
+  }
+});

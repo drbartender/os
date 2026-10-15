@@ -847,6 +847,19 @@ async function start() {
         clearHealthRow('inbox_ai_read');
       }
 
+      // Inbox email feed (spec 2026-10-14 section 5.5): every 60 s, reads the
+      // business mailbox through the Gmail API and stores what counts. Leases
+      // its state row so two instances never overlap. With
+      // GMAIL_SERVICE_ACCOUNT_KEY unset every tick does nothing.
+      if (enabled('RUN_GMAIL_SYNC_SCHEDULER')) {
+        const { makeGmailSyncTick } = require('./utils/inbox/gmailSync');
+        const wrapped = wrapScheduler('gmail_sync', 60, makeGmailSyncTick());
+        setTimeout(wrapped, 20000); // 20s is off every sibling's boot slot
+        setInterval(wrapped, 60000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('gmail_sync');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();

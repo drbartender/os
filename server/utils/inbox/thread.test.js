@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const k = require('./rules.testkit');
 const { normalizeEvents } = require('./normalize');
 const { buildThread, outboundThreadRow } = require('./thread');
+const { ZOLA_UNREAD_TEXT } = require('./constants');
 
 const { DALLAS, ZUL, NOW, HOUR, MIN, DAY, ago, plus, run } = k;
 
@@ -130,6 +131,7 @@ test('failures, relay leads, photos and email subjects ride their rows; outbound
   assert.deepEqual(row, {
     ref: 'sms:77', direction: 'out', channel: 'text', line: '1922', at: NOW.toISOString(), text: 'Sent from Inbox',
     subject: null, author_name: 'You', auto: false, failed: false, failure_reason: null, media: [], relay_lead_name: null,
+    attachments: 0, by_email: false,
   });
 });
 
@@ -142,4 +144,66 @@ test('outboundThreadRow: a failed row (an early failure folded in) carries the r
     [true, 'Unknown or inactive number (Twilio 30005)']);
   assert.equal(failed('Twilio error (undelivered)').failure_reason, null, 'no code: the page writes its own "Not delivered"');
   assert.equal(failed(null).failure_reason, null);
+});
+
+// ─── Email and Zola (spec 2026-10-14 section 4.2) ───
+
+test('email rows: the subject and the attachment count; our reply has no author, no subject and reads "by email"; a bounce is "Email bounced"', () => {
+  const rows = threadOf({ key: 'c-621', events: [
+    k.gmIn('c-621', ago(6 * HOUR), 'Can we add a mocktail station?', { subject: 'Mocktails', attachments: 2 }),
+    k.gmOut('c-621', ago(5 * HOUR), 'Yes, we can', { subject: 'Re: Mocktails' }),
+    k.gmOut('c-621', ago(4 * HOUR), 'Following up', { subject: 'Re: Mocktails', failed: true }),
+    k.gmIn('c-621', ago(3 * HOUR), 'Away until Monday', { kind: 'auto_reply' }),
+    k.gmIn('c-621', ago(2 * HOUR), null, { kind: 'bounce' }),
+  ] });
+  assert.deepEqual(rows.map((r) => [r.direction, r.channel, r.subject, r.text, r.attachments, r.author_name, r.auto, r.by_email]), [
+    ['in', 'email', 'Mocktails', 'Can we add a mocktail station?', 2, null, false, false],
+    ['out', 'email', null, 'Yes, we can', 0, null, false, true],
+    ['out', 'email', null, 'Following up', 0, null, false, true],
+    ['system', 'email', null, 'Auto-reply received', 0, null, false, false],
+    ['system', 'email', null, 'Email bounced', 0, null, false, false],
+  ]);
+  assert.deepEqual([rows[1].failed, rows[1].failure_reason], [false, null]);
+  assert.deepEqual([rows[2].failed, rows[2].failure_reason], [true, 'Email bounced']);
+});
+
+test('an outbound email row has no subject, an inbound one keeps its own', () => {
+  const rows = threadOf({ key: 'c-623', events: [
+    k.gmIn('c-623', ago(3 * HOUR), 'Is the 12th open?', { subject: 'Date question' }),
+    k.gmOut('c-623', ago(2 * HOUR), 'It is', { subject: 'Re: Date question', attachments: 1 }),
+  ] });
+  assert.deepEqual(rows.map((r) => [r.direction, r.subject, r.attachments, r.by_email]), [
+    ['in', 'Date question', 0, false],
+    ['out', null, 1, true],
+  ]);
+});
+
+test('an auto-reply line: "Auto-reply sent" for our own (meta.sent), "Auto-reply received" otherwise', () => {
+  const theirs = k.gmIn('c-622', ago(3 * HOUR), 'Away until Monday', { kind: 'auto_reply' });
+  const base = k.gmIn('c-622', ago(2 * HOUR), 'Thanks for writing, we will reply soon', { kind: 'auto_reply' });
+  const ours = { ...base, meta: { ...base.meta, sent: true } };
+  const rows = threadOf({ key: 'c-622', events: [theirs, ours] });
+  assert.deepEqual(rows.map((r) => [r.direction, r.text]), [
+    ['system', 'Auto-reply received'],
+    ['system', 'Auto-reply sent'],
+  ]);
+});
+
+test('zola rows: the inquiry reads "Zola inquiry" over their words, a later message has no subject, the lines for closed and unread', () => {
+  const rows = threadOf({ key: 'z-51', events: [
+    k.zolaEvent('z-51', ago(6 * HOUR), 'We love your menu', { leadId: 51, template: 'inquiry', subject: 'New Zola inquiry for you' }),
+    k.zolaEvent('z-51', ago(5 * HOUR), 'Is June open?', { leadId: 51, subject: 'New message from Alex B & Sam C for you' }),
+    k.zolaEvent('z-51', ago(4 * HOUR), 'June is open', { leadId: 51, template: 'out' }),
+    k.zolaEvent('z-51', ago(3 * HOUR), null, { leadId: 51, template: 'unparsed' }),
+    k.zolaEvent('z-51', ago(2 * HOUR), 'We found another vendor', { leadId: 51, template: 'closed' }),
+    k.zolaEvent('z-51', ago(1 * HOUR), null, { leadId: 51, template: 'closed' }),
+  ] });
+  assert.deepEqual(rows.map((r) => [r.direction, r.channel, r.subject, r.text, r.by_email]), [
+    ['in', 'zola', 'Zola inquiry', 'We love your menu', false],
+    ['in', 'zola', null, 'Is June open?', false],
+    ['out', 'zola', null, 'June is open', true],
+    ['in', 'zola', null, ZOLA_UNREAD_TEXT, false],
+    ['system', 'zola', null, 'Closed their inquiry on Zola. We found another vendor', false],
+    ['system', 'zola', null, 'Closed their inquiry on Zola.', false],
+  ]);
 });

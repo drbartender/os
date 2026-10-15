@@ -9,7 +9,7 @@
 //   pass 2: full rows (bodies, media, subjects) for those people only.
 // Pass 1 is a header scan, not SQL aggregates, so its cost grows with all the
 // traffic since the floor: a few thousand rows today. Past HEADER_WARN_ROWS
-// (every pass-1 row: the five readers' headers, the AI reads and the taps) it
+// (every pass-1 row: the seven readers' headers, the AI reads and the taps) it
 // warns once per process, in the log and in Sentry, the signal to move pass 1
 // to aggregates. A source query that fails fails the whole load: a partial
 // list that looks complete is the one thing Inbox must never show (spec 12).
@@ -20,7 +20,10 @@ const { chicagoYmdOf } = require('../businessTime');
 const { isBooked } = require('../proposalStatus');
 const { LEGAL_HOLD_PROPOSAL_IDS } = require('../staleProposalSweep');
 const cache = require('./cache');
-const { INBOX_HISTORY_START, BADGE_TIMEOUT_MS, BADGE_MAX_AGE_MS, HEADER_WARN_ROWS } = require('./constants');
+const {
+  INBOX_HISTORY_START, BADGE_TIMEOUT_MS, BADGE_MAX_AGE_MS, HEADER_WARN_ROWS, PERSONAL_MAILBOX_OWNER_USER_ID,
+} = require('./constants');
+const { isPersonal } = require('./classify');
 const { parsePersonKey } = require('./personKey');
 const { loadPeopleIndex, latestPhoneOf } = require('./people');
 const { SMS_HEADERS_SQL, mapSmsHeader } = require('./readSms');
@@ -28,6 +31,8 @@ const { TT_HEADERS_SQL, mapThumbtackHeader } = require('./readThumbtack');
 const { ML_HEADERS_SQL, mapMessageLogHeader } = require('./readMessageLog');
 const { PAL_HEADERS_SQL, mapProposalSendHeader } = require('./readProposalSends');
 const { CALL_HEADERS_SQL, mapCallHeader } = require('./readCalls');
+const { MAIL_HEADERS_SQL } = require('./readGmail');
+const { mapMailHeaders } = require('./readZola');
 const { loadDetails, mergeDetails } = require('./details');
 const { foldTaps } = require('./aliases');
 const { normalizeEvents } = require('./normalize');
@@ -56,6 +61,8 @@ const PROPOSALS_SQL = `
    WHERE client_id = ANY($1::int[])`;
 
 const CLIENT_EXISTS_SQL = 'SELECT 1 FROM clients WHERE id = $1';
+// The one answer for a key that names no one this viewer may see.
+const NOT_IN_INBOX = 'That conversation is not in the inbox.';
 
 class InboxMovedError extends NotFoundError {
   constructor(movedTo) {
@@ -65,7 +72,11 @@ class InboxMovedError extends NotFoundError {
   }
 }
 
-const defaultDeps = () => ({ computeSnapshot: null, legalHoldIds: LEGAL_HOLD_PROPOSAL_IDS });
+// personalOwnerId is a test seam like the others: production never sets it,
+// so the owner of personal mail is PERSONAL_MAILBOX_OWNER_USER_ID.
+const defaultDeps = () => ({
+  computeSnapshot: null, legalHoldIds: LEGAL_HOLD_PROPOSAL_IDS, personalOwnerId: PERSONAL_MAILBOX_OWNER_USER_ID,
+});
 let _deps = defaultDeps();
 function __setEngineDeps(d) { _deps = { ..._deps, ...d }; cache.invalidate(); }
 function __resetEngine() { _deps = defaultDeps(); cache.invalidate(); }
@@ -106,28 +117,46 @@ function assembleSnapshot({ now, index, events, actions, seen, reads, proposals,
   };
 }
 
+// The sibling hold flag (spec 2026-10-14 section 6): a Sent mail that reached
+// a held person marks every event of that mail (one readRef) legalHold, so
+// the words written to the held client are never read under a third party's
+// key. The rules and the read job read the flag.
+function markHeldSiblings(events, heldKeys) {
+  if (!heldKeys.size) return;
+  const held = new Set();
+  for (const e of events) {
+    if (e.meta && e.meta.source === 'gm' && e.meta.readRef && heldKeys.has(e.personKey)) held.add(e.meta.readRef);
+  }
+  for (const e of events) {
+    if (e.meta && e.meta.source === 'gm' && held.has(e.meta.readRef)) e.meta.legalHold = true;
+  }
+}
+
 async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const floor = INBOX_HISTORY_START;
-  const [index, sms, tt, ml, pal, calls, actions, seen, reads, feeds] = await Promise.all([
+  const [index, sms, tt, ml, pal, calls, mail, actions, seen, reads, feeds] = await Promise.all([
     loadPeopleIndex(db),
     db.query(SMS_HEADERS_SQL, [floor]),
     db.query(TT_HEADERS_SQL, [floor]),
     db.query(ML_HEADERS_SQL, [floor]),
     db.query(PAL_HEADERS_SQL, [floor]),
     db.query(CALL_HEADERS_SQL, [floor]),
+    // One scan of gmail_messages feeds both the email and the Zola reader.
+    db.query(MAIL_HEADERS_SQL, [floor]),
     db.query(ACTIONS_SQL, [floor]),
     db.query(SEEN_SQL),
     db.query(READS_SQL, [floor]),
     loadFeeds({ now }, db),
   ]);
   warnHeaderRows(sms.rows.length + tt.rows.length + ml.rows.length + pal.rows.length + calls.rows.length
-    + reads.rows.length + actions.rows.length);
+    + mail.rows.length + reads.rows.length + actions.rows.length);
   const headers = normalizeEvents([
     ...sms.rows.map((r) => mapSmsHeader(r, index)),
     ...tt.rows.map((r) => mapThumbtackHeader(r, index)),
     ...ml.rows.map((r) => mapMessageLogHeader(r)),
     ...pal.rows.map((r) => mapProposalSendHeader(r)),
     ...calls.rows.map((r) => mapCallHeader(r, index)),
+    ...mapMailHeaders(mail.rows, index),
   ].filter(Boolean));
   // Taps stored under a person's alias keys fold onto their current key.
   const taps = foldTaps({ actions: actions.rows, seen: seen.rows, events: headers, index });
@@ -136,6 +165,7 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const proposalRows = clientIds.length ? (await db.query(PROPOSALS_SQL, [clientIds])).rows : [];
   const holds = new Set((_deps.legalHoldIds || []).map(Number));
   const proposals = proposalRows.map((p) => ({ ...p, person_key: `c-${p.client_id}`, legal_hold: holds.has(Number(p.id)) }));
+  markHeldSiblings(headers, new Set(proposals.filter((p) => p.legal_hold).map((p) => p.person_key)));
   // Pass 1: the rules over light headers say whose rows are worth loading in full.
   const first = computeInbox({
     events: headers, actions: taps.actions, seen: taps.seen, reads: reads.rows, proposals, users: index.users, now, viewerId: null,
@@ -159,27 +189,77 @@ function runRules(snap, viewerId, nameOf = null) {
   return computeInbox({ events, ...snap.sInputs, now: snap.now, viewerId, nameOf });
 }
 
+// ─── Personal mail (spec 2026-10-14 decision 6 and section 8) ───
+// A personal mail (judged once by the sync and stored, personalMail.js) lives
+// on its own person, which exists for its owner alone: every other viewer's
+// list and badge leave the person out, and the item, seen, actions and text
+// routes answer them the plain 404 a key that names no one gets. No viewer
+// (null or undefined) is not the owner, so a caller that forgets to pass one
+// fails closed. The AI never reads them (subjects.js).
+function seesPersonal(viewerId) {
+  if (viewerId === null || viewerId === undefined) return false;
+  return Number(viewerId) === Number(_deps.personalOwnerId);
+}
+
+function hiddenFrom(snap, personKey, viewerId) {
+  return !seesPersonal(viewerId) && isPersonal(snap.eventsByPerson.get(personKey) || []);
+}
+
+function forViewer(result, viewerId) {
+  if (seesPersonal(viewerId)) return result;
+  const shown = (s) => !s.personal;
+  return { ...result, waiting: result.waiting.filter(shown), snoozed: result.snoozed.filter(shown), handled: result.handled.filter(shown) };
+}
+
+// An e- person's display name and address off their newest mail (spec
+// 2026-10-14 section 4.1): the From header's name, read in pass 1.
+function mailIdentityOf(events) {
+  let name = null;
+  let address = null;
+  for (let i = events.length - 1; i >= 0 && !(name && address); i -= 1) {
+    const m = events.at(i).meta;
+    if (!m || m.source !== 'gm') continue;
+    if (!name && m.fromName) name = m.fromName;
+    if (!address && m.address) address = m.address;
+  }
+  return { name, address };
+}
+
 function directoryFor(snap) {
   const today = chicagoYmdOf(snap.now);
   const props = groupBy(snap.inputs.proposals, (p) => p.person_key);
+  const ix = snap.index;
+  const mailNameOf = (personKey) => {
+    const { name, address } = mailIdentityOf(snap.eventsByPerson.get(personKey) || []);
+    return { name: name || (address && ix.leadNameOf ? ix.leadNameOf(address) : null) || null, address };
+  };
+  const coupleOf = (key) => ((ix.zolaLeadsById && ix.zolaLeadsById.get(Number(key.id))) || {}).couple_label || null;
   return {
-    // The person's real display name, or null: never a fallback label or a
-    // phone number. This is the name lane inbox-ai's subjects carry.
+    // The person's real display name, or null: never a fallback label, a
+    // phone number or an address. This is the name lane inbox-ai's subjects
+    // carry. A Zola couple's label names two people, so it is none.
     realNameOf(personKey) {
       const key = parsePersonKey(personKey);
       if (!key) return null;
-      if (key.type === 'c') return (snap.index.clients.get(Number(key.id)) || {}).name || null;
-      if (key.type === 's') return (snap.index.staff.get(Number(key.id)) || {}).name || null;
-      if (key.type === 't') return (snap.index.leadsByNegotiation.get(key.id) || {}).customer_name || null;
+      if (key.type === 'c') return (ix.clients.get(Number(key.id)) || {}).name || null;
+      if (key.type === 's') return (ix.staff.get(Number(key.id)) || {}).name || null;
+      if (key.type === 't') return (ix.leadsByNegotiation.get(key.id) || {}).customer_name || null;
+      if (key.type === 'e') return mailNameOf(personKey).name;
       return null;
     },
-    // What the page shows: the real name, else a label or the number.
+    // What the page shows: the real name, else a label, the number or the
+    // address (spec 2026-10-14 section 4.1).
     nameOf(personKey) {
       const key = parsePersonKey(personKey);
       if (!key) return 'Unknown';
-      if (key.type === 'c') return (snap.index.clients.get(Number(key.id)) || {}).name || 'Client';
-      if (key.type === 's') return (snap.index.staff.get(Number(key.id)) || {}).name || 'Staff';
-      if (key.type === 't') return (snap.index.leadsByNegotiation.get(key.id) || {}).customer_name || 'Thumbtack lead';
+      if (key.type === 'c') return (ix.clients.get(Number(key.id)) || {}).name || 'Client';
+      if (key.type === 's') return (ix.staff.get(Number(key.id)) || {}).name || 'Staff';
+      if (key.type === 't') return (ix.leadsByNegotiation.get(key.id) || {}).customer_name || 'Thumbtack lead';
+      if (key.type === 'e') {
+        const { name, address } = mailNameOf(personKey);
+        return name || address || 'Unknown sender';
+      }
+      if (key.type === 'z') return coupleOf(key) || 'Zola lead';
       return phoneDisplay(latestPhoneOf(snap.eventsByPerson.get(personKey) || [])) || 'Unknown number';
     },
     kindOf(personKey) {
@@ -191,6 +271,7 @@ function directoryFor(snap) {
       }
       if (key.type === 's') return 'staff';
       if (key.type === 't') return 'tt_lead';
+      if (key.type === 'z') return 'zola_lead';
       return 'unknown';
     },
   };
@@ -200,7 +281,9 @@ async function getInbox({ viewerId }) {
   // Side by side: the status reads inbox_reads on every request and never
   // rejects (a failed read answers 'failing'), so it cannot fail the list.
   const [snap, aiStatus] = await Promise.all([getSnapshot(), aiReadStatus()]);
-  return listPayload({ result: runRules(snap, viewerId), directory: directoryFor(snap), feeds: snap.feeds, aiStatus, generatedAt: snap.now });
+  return listPayload({
+    result: forViewer(runRules(snap, viewerId), viewerId), directory: directoryFor(snap), feeds: snap.feeds, aiStatus, generatedAt: snap.now,
+  });
 }
 
 async function fullEventsFor(snap, personKey, db = pool) {
@@ -247,6 +330,20 @@ async function resolveKey(personKey, snap, db = pool) {
     if (now !== personKey) return { movedTo: now }; // e.g. an unknown number became a client
     return { missing: true };
   }
+  if (key.type === 'e') {
+    // Like p-: a key with events stays. With none, its address may name a
+    // client or staffer now (an unknown sender became a client). A personal
+    // mail's key is never in keyByEmailHash (people.personalEmailKey), so it
+    // never answers moved_to: with no mail it is missing, like any unused key.
+    if (hasEvents) return {};
+    const now = ix.keyByEmailHash ? ix.keyByEmailHash.get(personKey) : null;
+    return now ? { movedTo: now } : { missing: true };
+  }
+  if (key.type === 'z') {
+    const zola = ix.zolaLeadsById ? ix.zolaLeadsById.get(Number(key.id)) : null;
+    if (zola && zola.client_id) return { movedTo: `c-${Number(zola.client_id)}` };
+    return zola || hasEvents ? {} : { missing: true };
+  }
   const lead = ix.leadsByNegotiation.get(key.id);
   if (lead && lead.client_id) return { movedTo: `c-${lead.client_id}` };
   return lead || hasEvents ? {} : { missing: true };
@@ -254,9 +351,11 @@ async function resolveKey(personKey, snap, db = pool) {
 
 async function getItem({ personKey, viewerId }) {
   const snap = await getSnapshot();
+  // Before anything is loaded or resolved: to this viewer they do not exist.
+  if (hiddenFrom(snap, personKey, viewerId)) throw new NotFoundError(NOT_IN_INBOX);
   const where = await resolveKey(personKey, snap);
   if (where.movedTo) throw new InboxMovedError(where.movedTo);
-  if (where.missing) throw new NotFoundError('That conversation is not in the inbox.');
+  if (where.missing) throw new NotFoundError(NOT_IN_INBOX);
   const events = await fullEventsFor(snap, personKey);
   const inputs = inputsFor(snap, personKey);
   const state = computeInbox({ events, ...inputs, now: snap.now, viewerId }).people.get(personKey) || null;
@@ -274,11 +373,12 @@ async function getItem({ personKey, viewerId }) {
 // a snapshot up to BADGE_MAX_AGE_MS old (two 60-second polls; any write still
 // clears it), so one open tab does not recompute the inbox on every poll, and
 // a slow load keeps running and fills the cache for the next poll.
-async function getWaitingCount({ timeoutMs = BADGE_TIMEOUT_MS } = {}) {
+// viewerId: personal mail counts only for its owner (spec 2026-10-14 section 8).
+async function getWaitingCount({ timeoutMs = BADGE_TIMEOUT_MS, viewerId } = {}) {
   let timer = null;
   const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
   const work = getSnapshot({ maxAgeMs: BADGE_MAX_AGE_MS })
-    .then((snap) => runRules(snap, null).waiting.length)
+    .then((snap) => forViewer(runRules(snap, null), viewerId).waiting.length)
     .catch((err) => {
       console.warn('[inbox] badge count unavailable:', err && err.message);
       return null;
@@ -300,7 +400,33 @@ async function getWaitingCount({ timeoutMs = BADGE_TIMEOUT_MS } = {}) {
 async function getReadSubjects({ fresh = false, maxAgeMs } = {}) {
   if (fresh) cache.invalidate();
   const snap = await getSnapshot({ maxAgeMs });
-  return runRules(snap, null, directoryFor(snap).realNameOf).subjects.filter((s) => !s.legalHold);
+  // buildSubjects already skips a personal person; the second check keeps
+  // their words from the AI even if that ever changes. A subject whose slice
+  // holds a sibling of a Sent mail that reached the held client (its own
+  // event or a line of context, meta.legalHold, markHeldSiblings) is never
+  // read either: the words written to the held client stay in the OS under
+  // any key, whatever the read job's own checks know.
+  const heldMail = (s) => {
+    const held = new Set((snap.eventsByPerson.get(s.personKey) || []).filter((e) => e.meta && e.meta.legalHold).map((e) => e.ref));
+    return held.has(s.subjectRef) || (Array.isArray(s.slice) && s.slice.some((line) => held.has(line.ref)));
+  };
+  return runRules(snap, null, directoryFor(snap).realNameOf).subjects
+    .filter((s) => !s.legalHold && !heldMail(s) && !isPersonal(snap.eventsByPerson.get(s.personKey) || []));
+}
+
+// The seen, actions and text routes' check (spec 2026-10-14 section 8): true
+// when the key must be answered as a key that names no one. An e- key is the
+// hash of an address anyone can guess, so these routes may not tell a
+// personal person (hidden from this viewer) from an address that never wrote
+// or one whose key moved to a client: an e- key with no mail in the snapshot
+// is refused to every viewer, alike. Other key types hide no one and answer at
+// once, with no snapshot read ahead of the route's own.
+async function isHiddenKey(personKey, viewerId) {
+  const key = parsePersonKey(personKey);
+  if (!key || key.type !== 'e') return false;
+  const snap = await getSnapshot();
+  if (!(snap.eventsByPerson.get(personKey) || []).length) return true;
+  return hiddenFrom(snap, personKey, viewerId);
 }
 
 // For the text route: the person's full events and the index, optionally after
@@ -312,19 +438,24 @@ async function getPersonEvents(personKey, { fresh = false } = {}) {
 }
 
 // Test seam: a snapshot built from invented, already-full events, no DB.
-function __fakeSnapshot({ now = new Date(), events = [] } = {}) {
+// index overrides any part of the empty people index.
+function __fakeSnapshot({ now = new Date(), events = [], index: overrides = {}, actions = [] } = {}) {
   const normalized = normalizeEvents(events);
   const index = {
     users: [], clients: new Map(), staff: new Map(), staffEligible: new Set(), leadsByNegotiation: new Map(),
     latestLeadByClient: new Map(), profilePhones: new Map(), resolvePhone: () => null, isProxyPhone: () => false,
+    ownEmails: new Set(), resolveEmail: () => null, keyByEmailHash: new Map(), zolaLeadsById: new Map(),
+    zolaKey: () => null, leadNameOf: () => null,
+    ...overrides,
   };
   return assembleSnapshot({
-    now, index, events: normalized, actions: [], seen: [], reads: [], proposals: [], feeds: [],
+    now, index, events: normalized, actions, seen: [], reads: [], proposals: [], feeds: [],
     fullKeys: new Set(normalized.map((e) => e.personKey)),
   });
 }
 
 module.exports = {
-  getInbox, getItem, getWaitingCount, getReadSubjects, getPersonEvents, computeSnapshot,
-  invalidate: () => cache.invalidate(), InboxMovedError, __setEngineDeps, __resetEngine, __fakeSnapshot,
+  getInbox, getItem, getWaitingCount, getReadSubjects, getPersonEvents, isHiddenKey, computeSnapshot, resolveKey,
+  directoryFor,
+  invalidate: () => cache.invalidate(), InboxMovedError, NOT_IN_INBOX, __setEngineDeps, __resetEngine, __fakeSnapshot,
 };

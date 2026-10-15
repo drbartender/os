@@ -61,10 +61,11 @@ function theirLineOf(events) {
   return latest ? (latest.line || '888') : null;
 }
 
-// The channel of their latest message, which decides the reply area (4.3).
+// The channel of their latest message, which decides the reply area (4.3;
+// spec 2026-10-14 section 4.4 adds email and Zola).
+const CONVERSATION_CHANNELS = new Set(['thumbtack', 'text', 'staff_text', 'email', 'zola']);
 function latestConversationChannel(events) {
-  const latest = events.findLast((e) => e.direction === 'in' && !e.meta.skip
-    && ['thumbtack', 'text', 'staff_text'].includes(e.channel));
+  const latest = events.findLast((e) => e.direction === 'in' && !e.meta.skip && CONVERSATION_CHANNELS.has(e.channel));
   return latest ? latest.channel : null;
 }
 

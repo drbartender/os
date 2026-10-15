@@ -4,12 +4,19 @@
 // Every route is auth + requireAdminOrManager + asyncHandler, and every person
 // key is checked against spec 8's patterns before anything reads it. The
 // rules, the readers and the text route live in server/utils/inbox/.
+// Personal mail, judged once per mail by the sync (personalMail.js; spec
+// 2026-10-14 decision 6 and section 8), is its owner's alone: the list and
+// the item filter it in the engine, and
+// seen, actions and text refuse it to anyone else with the item's own 404,
+// before they write anything. Those three refuse an e- key with no mail the
+// same way, so they never tell a personal person from an address that never
+// wrote (an e- key is a hash of an address anyone can guess).
 
 const express = require('express');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { adminWriteLimiter, inboxTextLimiter } = require('../../middleware/rateLimiters');
-const { ValidationError } = require('../../utils/errors');
+const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { parsePersonKey } = require('../../utils/inbox/personKey');
 const engine = require('../../utils/inbox/engine');
 const { recordAction, undoAction, markSeen } = require('../../utils/inbox/actions');
@@ -22,6 +29,14 @@ const NOT_A_PERSON = 'That is not an Inbox person.';
 function checkKey(raw) {
   if (!parsePersonKey(raw)) throw new ValidationError({ personKey: NOT_A_PERSON }, NOT_A_PERSON);
   return raw;
+}
+
+// A checked key that names someone this viewer may see, else the 404 a key
+// that names no one gets.
+async function visibleKey(raw, user) {
+  const personKey = checkKey(raw);
+  if (await engine.isHiddenKey(personKey, user.id)) throw new NotFoundError(engine.NOT_IN_INBOX);
+  return personKey;
 }
 
 router.get('/inbox', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
@@ -43,12 +58,12 @@ router.get('/inbox/:personKey', auth, requireAdminOrManager, asyncHandler(async 
 }));
 
 router.post('/inbox/:personKey/seen', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  await markSeen({ personKey: checkKey(req.params.personKey), userId: req.user.id });
+  await markSeen({ personKey: await visibleKey(req.params.personKey, req.user), userId: req.user.id });
   res.status(204).end();
 }));
 
 router.post('/inbox/:personKey/actions', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const personKey = checkKey(req.params.personKey);
+  const personKey = await visibleKey(req.params.personKey, req.user);
   const { action, until } = req.body || {};
   res.status(201).json(await recordAction({ personKey, action, until, userId: req.user.id }));
 }));
@@ -59,7 +74,7 @@ router.delete('/inbox/actions/:id', auth, requireAdminOrManager, asyncHandler(as
 }));
 
 router.post('/inbox/:personKey/text', auth, requireAdminOrManager, adminWriteLimiter, inboxTextLimiter, asyncHandler(async (req, res) => {
-  const personKey = checkKey(req.params.personKey);
+  const personKey = await visibleKey(req.params.personKey, req.user);
   const out = await sendInboxText({ personKey, body: req.body || {}, user: req.user });
   res.status(out.status).json(out.body);
 }));

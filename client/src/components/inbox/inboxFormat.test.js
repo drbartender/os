@@ -10,11 +10,13 @@ const NOW = Date.parse('2026-10-06T19:40:00.000Z');
 const ago = (mins) => new Date(NOW - mins * 60000).toISOString();
 
 test('person keys: what the server parses, nothing else', () => {
-  ['c-12', 's-2', 'c-2147483647', 'p-3125550100', 'p-0012345678', 't-neg_123-AB', 't-123456789012345678']
+  ['c-12', 's-2', 'c-2147483647', 'p-3125550100', 'p-0012345678', 't-neg_123-AB', 't-123456789012345678',
+    'e-0123456789abcdef', 'e-ffffffffffffffff', 'z-7', 'z-2147483647']
     .forEach((k) => expect(isPersonKey(k)).toBe(true));
-  // A second spelling of one row, past int4, a p- that is not 10 digits, and
-  // everything the server's patterns refuse.
+  // A second spelling of one row, past int4, a p- that is not 10 digits, an e-
+  // that is not 16 lowercase hex, and everything the server's patterns refuse.
   ['c-007', 's-01', 'c-2147483648', `c-${'1'.repeat(21)}`, 'p-312555010', 'p-31255501000',
+    'e-ABCDEF0123456789', 'e-0123456789abcde', 'e-0123456789abcdef0', 'z-07', 'z-2147483648',
     '', 'c-', 'x-1', 'c-1a', 'C-1', ' c-1', 'c-1 ', 't-', 't-bad key', 't-a.b', `t-${'a'.repeat(101)}`, null, 12]
     .forEach((k) => expect(isPersonKey(k)).toBe(false));
 });
@@ -114,6 +116,28 @@ test('feed items: each source, never, the quiet flag, and the AI status when not
   expect(feedItems([], { status: 'on' }, NOW)).toEqual([]);
   expect(feedItems([], { status: 'paused' }, NOW)[0].text).toBe('AI read paused at its daily cap');
   expect(feedItems([], { status: 'failing' }, NOW)[0].text).toBe('AI read failing');
+});
+
+// Spec 2026-10-14 sections 4.6 and 12: "Gmail 1 min ago" and "Zola 3 days
+// ago"; a Gmail status other than on replaces the time, in the AI line's
+// quiet style, and its title keeps the last good sync.
+test('feed items: Gmail and Zola by name, and the Gmail statuses off, failing and catching up', () => {
+  const gmail = (o) => ({ source: 'gmail', last_at: ago(1), quiet: false, status: 'on', ...o });
+  const zola = { source: 'zola', last_at: ago(60 * 72), quiet: true };
+  const on = feedItems([gmail(), zola], { status: 'on' }, NOW);
+  expect(on.map((i) => [i.key, i.text, i.quiet])).toEqual([
+    ['feed-gmail', 'Gmail 1 min ago', false], ['feed-zola', 'Zola 3 days ago', true],
+  ]);
+  expect(on[0].title).toBe('Gmail last synced Tue Oct 6, 2:39 PM CT');
+  expect(on[1].title).toBe('Zola last delivered Sat Oct 3, 2:40 PM CT');
+  const words = ['off', 'failing', 'catching_up'].map((status) => feedItems([gmail({ status })], null, NOW)[0]);
+  expect(words.map((i) => [i.text, i.quiet])).toEqual([
+    ['Gmail off', true], ['Gmail failing', true], ['Gmail catching up', true],
+  ]);
+  expect(words[1].title).toBe('Gmail failing; last good sync Tue Oct 6, 2:39 PM CT');
+  // Off with no sync ever, and a Zola feed that never delivered.
+  const never = feedItems([gmail({ status: 'off', last_at: null }), { source: 'zola', last_at: null, quiet: true }], null, NOW);
+  expect(never.map((i) => [i.text, i.title])).toEqual([['Gmail off', 'Gmail off'], ['Zola never', 'Zola has delivered nothing yet']]);
 });
 
 test('handled groups by Chicago day, newest first, with the who badge', () => {

@@ -4,6 +4,7 @@ const k = require('./rules.testkit');
 const { normalizeEvents } = require('./normalize');
 const { listPayload, itemPayload, stateJson } = require('./payload');
 const F = require('./contextFormat');
+const { loadFeeds, gmailSchedulerEnabled } = require('./feeds');
 
 const { DALLAS, ZUL, NOW, HOUR, MIN, DAY, ago, plus, run } = k;
 const directory = { nameOf: (key) => `Name of ${key}`, kindOf: (key) => (key.startsWith('s-') ? 'staff' : 'lead') };
@@ -22,6 +23,7 @@ test('list payload: snake_case rows, a state object on every waiting row, ISO ti
   assert.deepEqual(body.waiting, [{
     person_key: 'c-701', name: 'Name of c-701', kind: 'lead', need: 'Is Friday open?', waiting_since: ask.at.toISOString(),
     hot: true, channels: ['text_1922'], state: { type: 'unseen', by_user_id: null, by_name: null, mine: false, promised_by: null, since: null },
+    personal: false,
   }]);
   assert.deepEqual(body.snoozed, [{ person_key: 'c-702', name: 'Name of c-702', until: plus(NOW, 3 * HOUR).toISOString(), by_name: 'Zul', mine: false }]);
   assert.deepEqual(body.handled, [{
@@ -94,7 +96,58 @@ test('when, phone, staff, Thumbtack and unknown shapes', () => {
   assert.deepEqual(F.ttLeadContext(lead, '987'), {
     kind: 'tt_lead', name: 'Pat Q.', event_date: '2026-12-12T18:00:00.000Z', location: 'Evanston, IL', negotiation_id: '987',
   });
-  assert.deepEqual(F.unknownContext('+13125550100'), { kind: 'unknown', phone_display: '(312) 555-0100' });
+  assert.deepEqual(F.unknownContext('+13125550100'), { kind: 'unknown', phone_display: '(312) 555-0100', address: null });
+  assert.deepEqual(F.unknownContext(null, 'jamie@example.com'), { kind: 'unknown', phone_display: null, address: 'jamie@example.com' });
+});
+
+test('the Zola lead card: the couple, the wedding date when known, the client when linked', () => {
+  assert.deepEqual(F.zolaLeadContext({ id: 31, couple_label: 'Alex B & Sam C', wedding_date: '2027-06-05', client_id: null }), {
+    kind: 'zola_lead', couple_label: 'Alex B & Sam C', wedding_date: '2027-06-05', client_id: null,
+  });
+  assert.deepEqual(F.zolaLeadContext({ id: 32, couple_label: 'Lee D & Max E', wedding_date: null, client_id: '44' }), {
+    kind: 'zola_lead', couple_label: 'Lee D & Max E', wedding_date: null, client_id: 44,
+  });
+  assert.deepEqual(F.zolaLeadContext(null), { kind: 'zola_lead', couple_label: null, wedding_date: null, client_id: null });
+});
+
+test('email in the payload: a personal person\'s row says so; a Gmail reply row carries by_email and the attachment count', () => {
+  const personal = k.gmIn('e-5555555555555555', ago(2 * HOUR), 'Dinner on Sunday?', { personal: true });
+  const business = k.gmIn('c-731', ago(2 * HOUR), 'Is the 12th open?', { attachments: 1 });
+  const result = run({ events: [personal, business] });
+  const body = listPayload({ result, directory, feeds: [], aiStatus: 'on', generatedAt: NOW });
+  assert.deepEqual(body.waiting.map((r) => [r.person_key, r.personal]), [['c-731', false], ['e-5555555555555555', true]]);
+  const reply = k.gmOut('c-731', ago(1 * HOUR), 'Yes it is', { subject: 'Re: The 12th' });
+  const item = itemPayload({
+    personKey: 'c-731', state: run({ events: [business, reply] }).people.get('c-731'), events: normalizeEvents([business, reply]),
+    actions: [], reads: [], now: NOW, viewerId: DALLAS, users: k.USERS, directory, context: { kind: 'lead' }, legalHold: false,
+    reply: { mode: 'open', app: { name: 'Gmail', url: 'https://mail.google.com/x', caption: 'Closes here on its own once you reply from Gmail.' } },
+  });
+  assert.deepEqual(item.thread.map((r) => [r.direction, r.attachments, r.by_email, r.author_name]), [['in', 1, false, null], ['out', 0, true, null]]);
+  assert.equal(item.reply.app.caption, 'Closes here on its own once you reply from Gmail.');
+});
+
+test('feeds: Gmail is off, failing, catching up or on, timed by its last good sync; Zola by its last notice; both take the quiet dot', async () => {
+  const row = {
+    thumbtack: null, line_888: null, line_1922: null, line_0082: null, zola: ago(3 * DAY),
+    gmail_last_ok_at: ago(MIN), gmail_backfill_done: true, gmail_errors: 0,
+  };
+  const feedsFor = (over, gmailConfigured = true, gmailSyncOn = true) => loadFeeds(
+    { now: NOW, gmailConfigured, gmailSyncOn }, { query: () => Promise.resolve({ rows: [{ ...row, ...over }] }) }
+  );
+  const on = await feedsFor({});
+  assert.deepEqual(on.map((f) => f.source), ['thumbtack', '888', '1922', '0082', 'gmail', 'zola']);
+  assert.deepEqual(on.slice(4), [
+    { source: 'gmail', last_at: ago(MIN).toISOString(), quiet: false, status: 'on' },
+    { source: 'zola', last_at: ago(3 * DAY).toISOString(), quiet: true },
+  ]);
+  const gmail = async (over, configured) => (await feedsFor(over, configured)).find((f) => f.source === 'gmail').status;
+  assert.equal(await gmail({}, false), 'off');
+  assert.equal((await feedsFor({}, true, false)).find((f) => f.source === 'gmail').status, 'off', 'the key set, the sync switched off');
+  assert.equal(await gmail({ gmail_errors: 3, gmail_backfill_done: false }), 'failing');
+  assert.equal(await gmail({ gmail_errors: 2, gmail_backfill_done: false }), 'catching_up');
+  assert.equal(await gmail({ gmail_last_ok_at: null, gmail_backfill_done: null, gmail_errors: null }), 'catching_up', 'no state row yet');
+  const stale = (await feedsFor({ gmail_last_ok_at: ago(2 * DAY), zola: null })).slice(4);
+  assert.deepEqual(stale.map((f) => f.quiet), [true, true]);
 });
 
 function itemOf(key, events, actions = []) {
@@ -130,4 +183,13 @@ test('item payload: a claim carries since; a handled item carries closed; a quie
   const oldReply = k.smsOut('c-723', ago(9 * DAY), 'Old answer', { sender: ZUL });
   const quiet = itemOf('c-723', [oldAsk, oldReply]);
   assert.deepEqual([quiet.status, quiet.closed], ['quiet', null]);
+});
+
+test('the Gmail sync switch reads like the scheduler\'s: production or RUN_SCHEDULERS=true, never RUN_SCHEDULERS=false, nor its own flag at false', () => {
+  assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'production' }), true);
+  assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'production', RUN_GMAIL_SYNC_SCHEDULER: 'false' }), false);
+  assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'production', RUN_SCHEDULERS: 'false' }), false);
+  assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'development' }), false, 'a dev box runs no schedulers by default');
+  assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'development', RUN_SCHEDULERS: 'true' }), true);
+  assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'development', RUN_SCHEDULERS: 'true', RUN_GMAIL_SYNC_SCHEDULER: 'false' }), false);
 });

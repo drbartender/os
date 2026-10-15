@@ -6,7 +6,7 @@
 // close the thread could not otherwise explain. Times stay ISO; the page
 // renders them in Chicago time. Clock words inside a line are Chicago time.
 
-const { THREAD_DAYS, TT_MISSED_TEXT } = require('./constants');
+const { THREAD_DAYS, TT_MISSED_TEXT, ZOLA_UNREAD_TEXT } = require('./constants');
 const C = require('./classify');
 const { failureReasonFor } = require('./readSms');
 const { LINE_KEYS } = require('../smsLines');
@@ -22,23 +22,56 @@ const chicago = (opts) => {
 const clock = chicago({ hour: 'numeric', minute: '2-digit' });
 const dayClock = chicago({ weekday: 'short', hour: 'numeric', minute: '2-digit' });
 
+// attachments and by_email belong to mail (spec 2026-10-14 section 4.2): the
+// count of a mail's attachments (never a name or a link), and "by email" in
+// place of the line on our Gmail replies. The subject line is INBOUND only:
+// our reply shows our words, never a bold "Re: ..." over each bubble.
 function blankRow(ref, at) {
   return {
     ref, direction: 'system', channel: null, line: null, at: iso(at), text: null, subject: null,
     author_name: null, auto: false, failed: false, failure_reason: null, media: [], relay_lead_name: null,
+    attachments: 0, by_email: false,
   };
 }
 
+// A mail row's subject: the email's own; on Zola, "Zola inquiry" over the
+// inquiry and nothing over a later message (their thread is the subject).
+function mailSubject(e) {
+  if (e.channel === 'zola') return e.direction === 'in' && e.meta.template === 'inquiry' ? 'Zola inquiry' : null;
+  return e.meta.subject || null;
+}
+const mailFields = (e) => ({ subject: mailSubject(e), attachments: Math.max(0, Number(e.meta.attachments) || 0) });
+
+function inboundText(e) {
+  if (e.kind === 'tt_missed') return TT_MISSED_TEXT;
+  if (e.kind === 'zola_unread') return ZOLA_UNREAD_TEXT;
+  return e.text === undefined ? null : e.text;
+}
+
+// The system lines mail adds: a machine auto-reply (ours when the reader
+// marked it meta.sent, a Sent auto-reply, else theirs), a bounce, and a couple
+// closing their inquiry on Zola (with their reason when the notice gave one).
+function mailSystemText(e) {
+  if (e.kind === 'auto_reply') return e.meta.sent === true ? 'Auto-reply sent' : 'Auto-reply received';
+  if (e.kind === 'bounce') return 'Email bounced';
+  const reason = String(e.text || '').trim();
+  return reason ? `Closed their inquiry on Zola. ${reason}` : 'Closed their inquiry on Zola.';
+}
+const MAIL_SYSTEM_KINDS = new Set(['auto_reply', 'bounce', 'zola_closed']);
+
 function eventRow(e, h) {
   const row = { ...blankRow(e.ref, e.at), channel: e.channel || null, line: e.line || null };
+  const mail = e.meta.source === 'gm';
   if (e.direction === 'in') {
     return {
-      ...row, direction: 'in', text: e.kind === 'tt_missed' ? TT_MISSED_TEXT : (e.text === undefined ? null : e.text),
+      ...row, direction: 'in', text: inboundText(e),
       media: Array.isArray(e.meta.media) ? e.meta.media : [], relay_lead_name: e.meta.relayLeadName || null,
+      ...(mail ? mailFields(e) : {}),
     };
   }
   if (e.kind === 'opt_out') return { ...row, text: 'Opted out of texts' };
   if (e.kind === 'opt_in') return { ...row, text: 'Opted back in to texts' };
+  if (mail && MAIL_SYSTEM_KINDS.has(e.kind)) return { ...row, text: mailSystemText(e) };
   const id = C.authorOf(e);
   const authorName = id ? h.who(id) : (e.author === 'auto' ? 'Auto' : null);
   if (e.kind === 'proposal_sent') {
@@ -54,12 +87,14 @@ function eventRow(e, h) {
   const ledger = e.meta.source === 'ml';
   let text = e.text === undefined ? null : e.text;
   if (ledger) text = e.channel === 'text' ? (e.meta.subject || e.text || null) : null;
+  const bounced = mail || e.meta.bounced; // a Sent mail is failed only by a bounce
   return {
     ...row, direction: 'out', author_name: authorName, auto: !id && e.author === 'auto', text,
     subject: ledger && e.channel === 'email' ? (e.meta.subject || null) : null,
+    ...(mail ? { ...mailFields(e), subject: null, by_email: true } : {}),
     failed: Boolean(e.meta.failed),
     // Null when the reason is unknown: the page says "Not delivered" itself.
-    failure_reason: e.meta.failed ? (e.meta.failureReason || (e.meta.bounced ? 'Email bounced' : null)) : null,
+    failure_reason: e.meta.failed ? (e.meta.failureReason || (bounced ? 'Email bounced' : null)) : null,
   };
 }
 
@@ -113,7 +148,9 @@ function buildThread({ state = null, events = [], actions = [], reads = [], now 
   for (const e of events) {
     if (ms(e.at) < fromMs && !open.has(e.ref)) continue;
     rows.push(eventRow(e, h));
-    if (C.countsAsReply(e) && C.isHolding(e, readsByKey, legalHold)) rows.push(promiseRow(e, C.readOf(readsByKey, 'outbound', e.ref), h));
+    if (C.countsAsReply(e) && C.isHolding(e, readsByKey, legalHold)) {
+      rows.push(promiseRow(e, C.readOf(readsByKey, 'outbound', e.ref, e.meta.readRef), h));
+    }
   }
   for (const a of actions) if (!a.undone_at && ms(a.created_at) >= fromMs) rows.push(actionRow(a, h));
   // An AI or event close covers the open set (U and P), whose rows show however

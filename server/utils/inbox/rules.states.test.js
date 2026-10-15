@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const k = require('./rules.testkit');
 const { normalizeEvents } = require('./normalize');
 const { buildThread } = require('./thread');
+const { isPersonal } = require('./classify');
+const { ZOLA_UNREAD_TEXT } = require('./constants');
 
 const { DALLAS, ZUL, NOW, HOUR, MIN, DAY, ago, plus, run, stateOf } = k;
 
@@ -311,4 +313,80 @@ test('a snooze whose until is exactly now has ended: waiting', () => {
   const snooze = k.act('c-347', 'snooze', ago(2 * HOUR), { until: NOW, userId: ZUL });
   const s = stateOf(run({ events: [ask], actions: [snooze] }), 'c-347');
   assert.deepEqual([s.status, s.snooze], ['waiting', null]);
+});
+
+// ─── Email and Zola (spec 2026-10-14 sections 5.3, 5.4 and decision 6) ───
+
+test('zola: an unreadable notice waits with its fixed line, and the AI cannot close it', () => {
+  const notice = k.zolaEvent('z-41', ago(3 * HOUR), null, { leadId: 41, template: 'unparsed' });
+  const s = stateOf(run({ events: [notice], reads: [k.readRow('inbound', notice, { needs_reply: false })] }), 'z-41');
+  assert.deepEqual([s.status, s.need, s.channels], ['waiting', ZOLA_UNREAD_TEXT, ['zola']]);
+});
+
+test('an attachment-only mail waits, says so, and the AI cannot close it', () => {
+  const mail = k.gmIn('c-421', ago(3 * HOUR), null, { attachments: 2 });
+  assert.equal(mail.kind, 'media');
+  const s = stateOf(run({ events: [mail], reads: [k.readRow('inbound', mail, { needs_reply: false })] }), 'c-421');
+  assert.deepEqual([s.status, s.need, s.channels], ['waiting', 'Sent an attachment', ['email']]);
+});
+
+test('zola: a closed notice anchors like a Done by the couple and closes with its own reason; a later message reopens', () => {
+  const inquiry = k.zolaEvent('z-42', ago(6 * HOUR), 'We love your menu', { leadId: 42, template: 'inquiry' });
+  const closed = k.zolaEvent('z-42', ago(2 * HOUR), 'We found another vendor', { leadId: 42, template: 'closed' });
+  const s = stateOf(run({ events: [inquiry, closed] }), 'z-42');
+  assert.deepEqual([s.status, s.closed.reasonCode, s.closed.reasonText, s.closed.by, s.closed.need],
+    ['handled', 'zola_closed', 'Closed their inquiry on Zola', null, 'We love your menu']);
+  assert.equal(s.closed.at.getTime(), closed.at.getTime());
+  const again = k.zolaEvent('z-42', ago(1 * HOUR), 'Actually, are you free?', { leadId: 42 });
+  assert.equal(stateOf(run({ events: [inquiry, closed, again] }), 'z-42').status, 'waiting');
+});
+
+// Personal mail (spec 2026-10-14 decision 6, as the owner decided it on
+// 2026-10-15): the sync judges each mail once and stores it (personalMail.js,
+// whose suite holds the shape and sender rules), and the reader marks every
+// event of a personal mail's own person. The rules only read that flag.
+test('personal mail: a person is personal when their events carry the flag the sync stored, and only then', () => {
+  const mail = (key, opts) => k.gmIn(key, ago(2 * HOUR), 'Dinner on Sunday?', opts);
+  assert.equal(isPersonal([mail('e-1111111111111111', { personal: true })]), true, 'a personal mail');
+  assert.equal(isPersonal([mail('e-1111111111111111')]), false, 'a business mail from the same kind of sender');
+  assert.equal(isPersonal([mail('e-1111111111111111'), k.gmOut('e-1111111111111111', ago(HOUR), 'Yes, Sunday works', { personal: true })]), true,
+    'one flagged event hides the person: a stray flag fails closed');
+  assert.equal(isPersonal([k.smsIn('c-431', ago(HOUR), 'Hi'), k.zolaEvent('z-9', ago(HOUR), 'Is June open?', { leadId: 9 })]), false,
+    'a text and a Zola notice never are');
+  assert.deepEqual([isPersonal([]), isPersonal(null), isPersonal(undefined)], [false, false, false], 'no one');
+});
+
+// The old rule judged at read time from the index and the recipients: no
+// index, or an index without its sets, hid every e- person, and a change to
+// clients or email_leads moved their mail. Nothing reads either now.
+test('personal is never judged from the index or the recipients: an index passed in changes nothing', () => {
+  const business = [k.gmIn('e-1111111111111111', ago(2 * HOUR), 'Hello')];
+  const personal = [k.gmIn('e-2222222222222222', ago(2 * HOUR), 'Hello', { personal: true })];
+  for (const index of [null, { ownEmails: [] }, { ownEmails: new Set(), isEmailLead: () => true }]) {
+    assert.deepEqual([isPersonal(business, index), isPersonal(personal, index)], [false, true], JSON.stringify(index));
+  }
+});
+
+test('personal: every person state carries it, from the flag on their events', () => {
+  const events = [
+    k.gmIn('e-4444444444444444', ago(2 * HOUR), 'Dinner on Sunday?', { personal: true }),
+    k.gmIn('e-5555555555555555', ago(2 * HOUR), 'Do you do corporate events?'),
+    k.gmIn('c-441', ago(2 * HOUR), 'Is the 12th open?'),
+  ];
+  const r = run({ events });
+  assert.deepEqual(['e-4444444444444444', 'e-5555555555555555', 'c-441'].map((key) => stateOf(r, key).personal), [true, false, false]);
+});
+
+// Replaces the old "one business mail makes the person business" pin: one
+// sender's personal mail and their business mail are two people now, judged
+// mail by mail (the engine, route and readers suites take it end to end).
+test('one sender, a personal mail and a business mail: two people, each waiting, only the personal one flagged', () => {
+  const personalKey = 'e-6666666666666666';
+  const businessKey = 'e-7777777777777777';
+  const r = run({ events: [
+    k.gmIn(personalKey, ago(3 * HOUR), 'Dinner on Sunday?', { personal: true, address: 'friend.r@example.com' }),
+    k.gmIn(businessKey, ago(2 * HOUR), 'Also, a quote for a party?', { address: 'friend.r@example.com' }),
+  ] });
+  assert.deepEqual([personalKey, businessKey].map((key) => [stateOf(r, key).status, stateOf(r, key).personal, stateOf(r, key).need]),
+    [['waiting', true, 'Dinner on Sunday?'], ['waiting', false, 'Also, a quote for a party?']]);
 });

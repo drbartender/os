@@ -5,6 +5,8 @@
 // runs it on its own. Every name, number and message here is made up (the repo
 // is public), and phone numbers sit in the 555 range.
 
+const { ZOLA_UNREAD_TEXT } = require('./constants');
+
 const NOW = new Date('2026-11-20T18:00:00.000Z'); // Fri Nov 20 2026, 12:00 PM Chicago (CST)
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -147,6 +149,60 @@ function relayNotice(personKey, at, opts = {}) {
   };
 }
 
+// A gmail_messages row as readGmail.js emits it (spec 2026-10-14 section
+// 5.1), already full (text loaded). opts.n suffixes the ref of one sibling of
+// a Sent mail to several people; every sibling shares readRef. opts.personal
+// marks a personal mail's event (meta.personal), as the reader marks every
+// event of a mail the sync stored personal.
+function gmEvent(personKey, at, text, direction, opts = {}) {
+  const id = opts.id || nextId();
+  const gmailId = opts.gmailId || `g${id}`;
+  const attachments = opts.attachments || 0;
+  const words = Boolean(String(text || '').trim());
+  const out = direction === 'out';
+  let kind = opts.kind || 'message';
+  if (!opts.kind && !out && !words && attachments) kind = 'media';
+  const system = kind === 'auto_reply' || kind === 'bounce';
+  return {
+    ref: opts.n ? `gm:${gmailId}:${opts.n}` : `gm:${gmailId}`, personKey, channel: 'email', line: null,
+    direction: system ? 'system' : direction, at: new Date(at), author: null, kind, text,
+    meta: {
+      source: 'gm', id, gmailId, threadId: opts.threadId || `th${id}`, address: opts.address || 'pat@example.com',
+      fromName: opts.fromName || null, attachments,
+      textBearing: out && words, empty: !out && !words && !attachments, failed: Boolean(opts.failed),
+      readRef: `gm:${gmailId}`, legalHold: Boolean(opts.legalHold), personal: Boolean(opts.personal),
+      subject: opts.subject === undefined ? null : opts.subject,
+      ...(opts.staffGroup ? { staffGroup: true } : {}),
+    },
+  };
+}
+const gmIn = (personKey, at, text, opts) => gmEvent(personKey, at, text, 'in', opts);
+const gmOut = (personKey, at, text, opts) => gmEvent(personKey, at, text, 'out', opts);
+
+// A Zola row as readZola.js emits it: template inquiry or message (their
+// words), unparsed (zola_unread), closed (a system line), or out (our Gmail
+// reply through Zola's relay).
+function zolaEvent(personKey, at, text, opts = {}) {
+  const id = opts.id || nextId();
+  const gmailId = opts.gmailId || `z${id}`;
+  const template = opts.template || 'message';
+  const out = template === 'out';
+  let kind = 'message';
+  let direction = out ? 'out' : 'in';
+  if (template === 'unparsed') kind = 'zola_unread';
+  if (template === 'closed') { kind = 'zola_closed'; direction = 'system'; }
+  return {
+    ref: `gm:${gmailId}`, personKey, channel: 'zola', line: null, direction, at: new Date(at), author: null, kind,
+    text: kind === 'zola_unread' ? ZOLA_UNREAD_TEXT : text,
+    meta: {
+      source: 'gm', id, gmailId, threadId: opts.threadId || `tz${id}`, address: null, fromName: null,
+      attachments: 0, textBearing: out && Boolean(String(text || '').trim()),
+      empty: false, failed: Boolean(opts.failed), readRef: `gm:${gmailId}`, legalHold: false, personal: false, subject: opts.subject || null,
+      zolaLeadId: opts.leadId || 7, template: out ? 'message' : template, leadUuid: opts.leadUuid || null,
+    },
+  };
+}
+
 function act(personKey, action, at, opts = {}) {
   return {
     id: opts.id || nextId(), person_key: personKey, action, until_at: opts.until ? new Date(opts.until) : null,
@@ -188,6 +244,6 @@ const stateOf = (result, personKey) => result.people.get(personKey);
 
 module.exports = {
   NOW, SEC, MIN, HOUR, DAY, ago, plus, DALLAS, ZUL, USERS,
-  smsIn, optLine, smsOut, ttIn, ttOut, mlSend, palSend, call, relayNotice,
+  smsIn, optLine, smsOut, ttIn, ttOut, mlSend, palSend, call, relayNotice, gmIn, gmOut, zolaEvent,
   act, readRow, seenRow, proposalRow, run, stateOf,
 };

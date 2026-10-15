@@ -7,8 +7,18 @@ import { channelIcon, channelLabel, stampLabel, stateChip, waitParts } from './i
 // with its rail as the wait (big number over a unit, red at 24 hours); the
 // desktop row follows the Needs-attention queue (queue-icon, toned by the
 // wait). Each is one tap target that opens the person deliberately.
+//
+// A personal row (personal mail, judged once per mail by the sync,
+// server/utils/inbox/personalMail.js, spec 2026-10-14 decision 6; only the
+// owner's list ever holds one) carries a "dallas@" chip after the
+// channel tags, in the muted StatusChip, inside the tags group so a narrow
+// card wraps them together (right-aligned) rather than the chip alone.
 
 const NO_WAIT = { n: '', unit: '', short: '', hot: false, tone: 'info' };
+
+function PersonalChip() {
+  return <StatusChip kind="neutral">dallas@</StatusChip>;
+}
 
 export function WaitingCard({ row, nowMs, onOpen }) {
   const wait = waitParts(row.waiting_since, nowMs) || NO_WAIT;
@@ -28,6 +38,7 @@ export function WaitingCard({ row, nowMs, onOpen }) {
           {chip && <StatusChip kind={chip.kind}>{chip.label}</StatusChip>}
           <span className="m-tags">
             {(row.channels || []).map((c) => <span key={c} className="m-tag">{channelLabel(c)}</span>)}
+            {row.personal && <PersonalChip />}
           </span>
         </span>
       </span>
@@ -63,6 +74,7 @@ export function WaitingRow({ row, nowMs, selected, onOpen }) {
           {chip && <StatusChip kind={chip.kind}>{chip.label}</StatusChip>}
           <span className="ib-tags">
             {channels.map((c) => <span key={c} className="ib-tag">{channelLabel(c)}</span>)}
+            {row.personal && <PersonalChip />}
           </span>
         </div>
       </div>

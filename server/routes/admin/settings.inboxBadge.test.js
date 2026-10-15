@@ -21,6 +21,7 @@ const EMAIL = 'inbox-badge-test@example.com';
 let server;
 let baseUrl;
 let token;
+let userId;
 
 function get(path) {
   return new Promise((resolve, reject) => {
@@ -41,7 +42,8 @@ before(async () => {
     "INSERT INTO users (email, password_hash, role, onboarding_status, token_version) VALUES ($1, 'x', 'admin', 'approved', 0) RETURNING id, token_version",
     [EMAIL]
   );
-  token = jwt.sign({ userId: u.rows[0].id, tokenVersion: u.rows[0].token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  userId = u.rows[0].id;
+  token = jwt.sign({ userId, tokenVersion: u.rows[0].token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
   const app = express();
   app.use(express.json());
   app.use('/api/admin', settingsRouter);
@@ -91,4 +93,25 @@ test('a failing engine gives null and never fails the request', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.inbox_waiting, null);
   assert.equal(typeof res.body.pending_reviews, 'number');
+});
+
+// The personal person's events carry the flag the sync stored on its mail
+// (spec 2026-10-14 decision 6, as decided 2026-10-15); the same sender's
+// business mail is a person of its own and counts for everyone.
+test('the badge counts personal mail for its owner only (spec 2026-10-14 decision 6)', async () => {
+  const now = new Date();
+  const events = [
+    k.smsIn('c-903', new Date(now.getTime() - 3600e3), 'A business question'),
+    k.gmIn('e-6565656565656565', new Date(now.getTime() - 3600e3), 'Dinner on Sunday?', { personal: true }),
+  ];
+  engine.__setEngineDeps({ computeSnapshot: () => Promise.resolve(engine.__fakeSnapshot({ now, events })) });
+  try {
+    assert.equal((await get('/api/admin/badge-counts')).body.inbox_waiting, 1, 'this admin is not the owner');
+    // The owner is users.id 1 in production; this suite's admin stands in.
+    engine.__setEngineDeps({ personalOwnerId: userId });
+    engine.invalidate();
+    assert.equal((await get('/api/admin/badge-counts')).body.inbox_waiting, 2, 'the owner counts it');
+  } finally {
+    engine.__resetEngine();
+  }
 });

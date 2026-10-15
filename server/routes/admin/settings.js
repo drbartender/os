@@ -134,7 +134,9 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
   // Started first and awaited last, so the Inbox count runs beside the counts
   // query instead of after it. It never rejects, so it can never fail this
   // route or leave an unhandled rejection behind if the query below throws.
-  const inboxWaiting = getWaitingCount({ timeoutMs: BADGE_TIMEOUT_MS });
+  // Personal mail, judged once per mail by the sync (personalMail.js), counts
+  // for its owner only (spec 2026-10-14 section 8), so the count is per viewer.
+  const inboxWaiting = getWaitingCount({ timeoutMs: BADGE_TIMEOUT_MS, viewerId: req.user.id });
   const result = await pool.query(`
     SELECT
       (SELECT COUNT(*) FROM proposals WHERE status IN ('sent', 'viewed', 'modified'))::int AS pending_proposals,

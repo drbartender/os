@@ -2050,6 +2050,20 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   handled AI reason against its real thread over the first day; any key change gets the real-call
   smoke first (the probe on the box; promoting it to `scripts/` is on the fix list). The ceiling is
   about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
+- Email and Zola (spec 2026-10-14; lanes email-feed, zola-leads and email-ai). NOT LIVE YET: none of
+  the three has merged, they push together, and `GMAIL_SERVICE_ACCOUNT_KEY` goes into Render only after
+  that push. Owed after switch-on (spec 16): the feed line reads "Gmail catching up", then "Gmail" with
+  a time, on the phone and the desktop; a client email shows on that client's item with its subject and
+  no quoted history; a reply from Gmail closes it as "Replied by email" and "Open in Gmail" opens the
+  thread on the phone (the Gmail app) and the desktop; a Zola thread shows as a lead item and "Open in
+  Zola" opens the lead page; a pitch carries the Pitch chip; a personal mail at dallas@ (unknown sender,
+  no other alias in copy) shows with the "dallas@" chip on Dallas's account and nowhere on Zul's, list,
+  badge or item; a reply from contact@ to that personal mail stays on the personal item; a reply from
+  dallas@ to a business mail lands on the business item and closes it; a personal sender who later
+  becomes a client stays personal (the personal item stays where it is, the client item never shows
+  it); a mail to dallas@ that also copies another admin's or manager's own address is business, while
+  one that copies only Dallas's own account address stays personal; and the
+  day-one Done pass clears the backfilled Zola threads answered inside Zola.
 
 ### Admin push (lane ma-c-push; merged 2026-10-14 as `f6d0b1a6`, PUSHED 2026-10-14 22:07 UTC in 3b2762ca..6e8f5c95; moved here from Tier 6 the same day)
 

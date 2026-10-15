@@ -1,8 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const k = require('./rules.testkit');
+const C = require('./classify');
 const { normalizeEvents } = require('./normalize');
-const { INBOX_HISTORY_START, TT_MISSED_TEXT } = require('./constants');
+const { INBOX_HISTORY_START, TT_MISSED_TEXT, ZOLA_UNREAD_TEXT } = require('./constants');
 
 const { DALLAS, ZUL, HOUR, MIN, DAY, ago, plus, run, stateOf } = k;
 
@@ -147,4 +148,35 @@ test('event happened: an upcoming archived proposal does not block it', () => {
   const archived = k.proposalRow('c-419', { status: 'archived', eventDate: '2026-12-05' });
   const s = stateOf(run({ events: [ask], proposals: [booked, archived] }), 'c-419');
   assert.deepEqual([s.status, s.closed.reasonCode, s.closed.reasonText], ['handled', 'event', 'Event happened Nov 17']);
+});
+
+// ─── Email and Zola (spec 2026-10-14 sections 4.1 and 6) ───
+
+test('sliceText: the subject rides ahead of an email, never a Zola row; one [attachment] per attachment', () => {
+  const mail = k.gmIn('c-131', ago(HOUR), 'Can we add a mocktail station?', { subject: 'Mocktails', attachments: 2 });
+  assert.equal(C.sliceText(mail), 'Subject: Mocktails. Can we add a mocktail station? [attachment] [attachment]');
+  const reply = k.gmOut('c-131', ago(HOUR), 'Yes we can', { subject: 'Re: Mocktails' });
+  assert.equal(C.sliceText(reply), 'Subject: Re: Mocktails. Yes we can');
+  assert.equal(C.sliceText(k.gmIn('c-131', ago(HOUR), 'No subject here')), 'No subject here');
+  assert.equal(C.sliceText(k.gmIn('c-131', ago(HOUR), null, { attachments: 1 })), '[attachment]');
+  const zola = k.zolaEvent('z-31', ago(HOUR), 'Is June open?', { subject: 'New message from Alex B & Sam C for you' });
+  assert.equal(C.sliceText(zola), 'Is June open?');
+  assert.equal(C.sliceText(k.zolaEvent('z-31', ago(HOUR), null, { template: 'unparsed' })), ZOLA_UNREAD_TEXT);
+});
+
+test('the need line: "Sent an attachment" for an email with no words; the fixed line for an unreadable Zola notice', () => {
+  assert.equal(C.eventNeedText(k.gmIn('c-132', ago(HOUR), null, { attachments: 1 })), 'Sent an attachment');
+  assert.equal(C.eventNeedText(k.gmIn('c-132', ago(HOUR), 'Here is the floor plan', { attachments: 1 })), 'Here is the floor plan');
+  assert.equal(C.eventNeedText(k.zolaEvent('z-32', ago(HOUR), null, { template: 'unparsed' })), ZOLA_UNREAD_TEXT);
+  assert.deepEqual([C.isCountedInbound(k.zolaEvent('z-32', ago(HOUR), null, { template: 'unparsed' })),
+    C.isCountedInbound(k.zolaEvent('z-32', ago(HOUR), 'Bye', { template: 'closed' })),
+    C.isCountedInbound(k.gmIn('c-132', ago(HOUR), 'Away until Monday', { kind: 'auto_reply' }))], [true, false, false]);
+});
+
+test('readOf: a read under the mail\'s readRef answers every suffixed sibling; with no readRef, the ref', () => {
+  const sibling = k.gmOut('c-133', ago(HOUR), 'Hi both', { gmailId: 'gRead', n: 2 });
+  const reads = new Map([['outbound:gm:gRead', { status: 'ok', holding: true }]]);
+  assert.equal(C.readOf(reads, 'outbound', sibling.ref, sibling.meta.readRef).holding, true);
+  assert.equal(C.readOf(reads, 'outbound', sibling.ref), null);
+  assert.equal(C.readOf(new Map([['inbound:sms:9', { status: 'ok' }]]), 'inbound', 'sms:9', undefined).status, 'ok');
 });

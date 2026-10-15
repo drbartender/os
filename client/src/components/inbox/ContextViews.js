@@ -7,6 +7,25 @@ import { NO_QUOTE_TEXT } from './inboxContext';
 // The context card (spec 4.2) from contextModel(): the phone card (label and
 // value rows, a three-column money grid, equal link buttons) and the desktop
 // Context pane (stacked rows, money as a ledger, small secondary buttons).
+// A model's `note` is a muted line in the no-quote line's place (a Zola
+// lead's "No client record yet").
+
+// The card's type, with an address given break points at its seams: a <wbr>
+// after the @ and before each dot, so a narrow card breaks "@example.com"
+// whole before it splits a word (the CSS overflow-wrap: anywhere stays the
+// fallback for a part still too long). Any other type renders as it is.
+function TypeText({ text }) {
+  if (typeof text !== 'string' || !text.includes('@')) return text;
+  const parts = [];
+  let run = '';
+  for (const ch of text) {
+    if (ch === '.' && run) { parts.push(run); run = ''; }
+    run += ch;
+    if (ch === '@') { parts.push(run); run = ''; }
+  }
+  if (run) parts.push(run);
+  return parts.map((p, i) => <React.Fragment key={`${i}:${p}`}>{i > 0 && <wbr />}{p}</React.Fragment>);
+}
 
 function PhoneLink({ link }) {
   if (link.href) {
@@ -31,7 +50,7 @@ export function ContextCard({ model }) {
       {model.hold && <div className="ib-hold" role="note">{model.hold}</div>}
       <div className="ib-ctx-head">
         <StatusChip kind={model.chip.kind}>{model.chip.label}</StatusChip>
-        <span className="ib-ctx-type">{model.type}</span>
+        <span className="ib-ctx-type"><TypeText text={model.type} /></span>
       </div>
       {model.rows.map((r) => (
         <div key={r.key} className="ib-ctx-row">
@@ -58,6 +77,7 @@ export function ContextCard({ model }) {
         </div>
       )}
       {model.showNoQuote && <div className="ib-ctx-none">{NO_QUOTE_TEXT}</div>}
+      {model.note && <div className="ib-ctx-none">{model.note}</div>}
       {model.links.length > 0 && (
         <div className="ib-ctx-links">
           {model.links.map((l) => <PhoneLink key={l.key} link={l} />)}
@@ -91,7 +111,7 @@ export function ContextPane({ model }) {
         <>
           {model.hold && <div className="ib-hold ib-hold-pane" role="note">{model.hold}</div>}
           <div className="ib-cp-type">
-            {model.type}
+            <TypeText text={model.type} />
             {model.guests !== null && <span className="ib-cp-guests">{` · ${model.guests} guests`}</span>}
           </div>
           {model.rows.map((r) => (
@@ -114,6 +134,7 @@ export function ContextPane({ model }) {
             </div>
           )}
           {model.showNoQuote && <div className="ib-cp-none">{NO_QUOTE_TEXT}</div>}
+          {model.note && <div className="ib-cp-none">{model.note}</div>}
           {model.links.length > 0 && (
             <div className="ib-cp-links">
               {model.links.map((l) => <PaneLink key={l.key} link={l} />)}

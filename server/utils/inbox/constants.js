@@ -4,6 +4,8 @@
 // sections 4, 5.7 and 8). Code, not env vars: moving a window changes what the
 // rules decide, so it goes through review like any other rules change.
 
+const { GMAIL_MAILBOX } = require('../gmailClient');
+
 // Read-only collections. Object.freeze() does not stop a Set's add() or a
 // Map's set(), and these lists are shared process-wide: a caller that add()ed
 // to OPT_WORDS would quietly change what every AI slice leaves out. The
@@ -145,6 +147,88 @@ const HEADER_WARN_ROWS = 10000;
 // INBOX_SEND_UNRECORDED, so a crashed request never blocks a draft for good.
 const SEND_STALE_SECONDS = 120;
 
+// ─── Email and Zola (spec docs/superpowers/specs/2026-10-14-inbox-email-zola-design.md) ───
+
+// Decision 6: mail addressed only to this alias, from a sender nobody knows,
+// is personal: tagged, never read by the AI, and shown only to its owner's
+// account (users.id 1, Dallas).
+const PERSONAL_ALIAS = 'dallas@drbartender.com';
+const PERSONAL_MAILBOX_OWNER_USER_ID = 1;
+
+// Zola's system sender and the relay domain its per-message Reply-To uses
+// (spec section 2). Mail from the vendor address goes to the Zola branch
+// before any own-address rule (5.2 rule 2).
+const ZOLA_VENDOR_ADDRESS = 'weddingvendors@zola.com';
+const ZOLA_RELAY_DOMAIN = 'vmkt-message.zola.com';
+// Decision 14: a notice from Zola that matches no template.
+const ZOLA_UNREAD_TEXT = "Zola sent something the OS couldn't read. Open Zola.";
+
+// Spec 6: an email line is pre-clipped at 8,000 characters before redaction
+// and capped at 4,000 after (texts keep 3,000 and 1,500).
+const EMAIL_LINE_MAX = 4000;
+const EMAIL_PRECLIP_MAX = 8000;
+
+// Spec 5.5: one tick handles at most this many messages and this much wall
+// time, inside a lease of GMAIL_LEASE_SECONDS on the state row; a message
+// that fails GMAIL_SKIP_ATTEMPTS times is skipped for good. The lease is
+// 180 s, not the spec's 120: a tick can run about 100 s at worst (a fetch
+// and a list call, 20 s timeouts each, started just inside the 40 s bound,
+// on a cold Neon), and a lease that lapses mid-tick lets a second instance in.
+const GMAIL_SYNC_MAX_PER_TICK = 50;
+const GMAIL_SYNC_TICK_MS = 40000;
+const GMAIL_LEASE_SECONDS = 180;
+const GMAIL_SKIP_ATTEMPTS = 3;
+// Spec 4.6: the feed line reads "Gmail failing" from this many failed ticks
+// in a row, the count at which gmailSync.js starts its hourly Sentry warning.
+const GMAIL_FAILING_TICKS = 3;
+
+// Spec 5.6: lead-driven clients per rolling 24 hours.
+const ZOLA_CLIENT_DAILY_CAP = 20;
+
+// Spec 5.2 rules 3 and 5: senders the OS already hears from another way
+// (Thumbtack's webhook) or that only ever notify. Code, not env, so a change
+// goes through review.
+const DROPPED_SENDER_DOMAINS = new ReadonlySet([
+  'thumbtack.com', 'cal.com', 'stripe.com', 'twilio.com', 'sentry.io',
+  'render.com', 'vercel.com', 'google.com', 'accounts.google.com',
+]);
+
+// Spec 5.2 rule 10: a sender's local part that is a machine, with or without
+// dashes and dots, case-insensitive, the whole local part.
+const NO_REPLY_LOCAL_RE = /^(no[-.]?reply|do[-.]?not[-.]?reply|notifications?|mailer[-.]?daemon|postmaster|alerts|newsletter)$/i;
+// Spec 5.2 rule 7: an auto-reply subject, at the start or after "Re:".
+// "Automatic reply", "auto-reply" and "auto response" open nothing else, so
+// whatever follows them counts. "Out of office" opens client subjects too
+// ("Out of Office party - final headcount", "Out of Office - team offsite bar
+// quote", "Out of office/holiday party"), and a false positive drops a
+// client's mail for good while a false negative only opens an item (code
+// review 2026-10-15). So it counts only as a responder writes it: before ":"
+// or "(", alone (a closing "." or "!" allowed), before "until", "reply",
+// "autoreply" or "notice", or before a hyphen, a dash, ",", "|" or "/" and
+// then "back", "returning", "until" or "away" ("Out of office - back
+// Monday"). A real responder nearly always carries Auto-Submitted or
+// X-Autoreply, which isAutoReply reads before the subject. Anchored, one
+// optional character between the two spaces runs, no nested repeats: linear
+// on the 1000-character subject.
+const AUTO_REPLY_SUBJECT_RE = /^(?:re:\s*)?(?:(?:automatic reply|auto[- ]?reply|auto[- ]?response)\b|out of (?:the )?office(?:\s*[:(]|\s*(?:[.!]\s*)?$|\s+(?:until|reply|auto[- ]?reply|notice)\b|\s*[-\u2013\u2014,|/]\s*(?:back|returning|until|away)\b))/i;
+
+// Spec 4.4: the Zola lead page when the lead's UUID is known, else the vendor
+// dashboard. Anything but a strict lowercase UUID opens the dashboard, so a
+// bad value can never shape the path. zolaMail.js re-exports the pattern as
+// UUID_RE, the one check a lead UUID passes before it reaches a row (5.6).
+const ZOLA_DASHBOARD_URL = 'https://www.zola.com/inspire/vendors/dashboard';
+const ZOLA_LEAD_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function zolaLeadUrl(uuid) {
+  if (typeof uuid !== 'string' || !ZOLA_LEAD_UUID_RE.test(uuid)) return ZOLA_DASHBOARD_URL;
+  return `https://www.zola.com/inspire/vendors/leads/ready/${uuid}`;
+}
+
+// Spec 4.4: the Gmail thread in the business account. The mailbox is the
+// client's code constant, never restated here.
+function gmailThreadUrl(threadId) {
+  return `https://mail.google.com/mail/?authuser=${encodeURIComponent(GMAIL_MAILBOX)}#all/${encodeURIComponent(String(threadId))}`;
+}
+
 module.exports = {
   INBOX_HISTORY_START, CLAIM_HOURS, HOT_HOURS, HANDLED_DAYS, THREAD_DAYS, QUIET_HOURS,
   TT_MISSED_MINUTES, CALL_MIN_SECONDS, UNDO_SECONDS, CACHE_MS, BADGE_TIMEOUT_MS, BADGE_MAX_AGE_MS,
@@ -154,4 +238,8 @@ module.exports = {
   CALL_ANSWERED_BY_USER, SEND_LABELS, FIRST_TEXT_PREFIX, TEXT_BODY_MAX,
   SNOOZE_MIN_SECONDS, SNOOZE_MAX_DAYS, INBOX_TEXT_MESSAGE_TYPE,
   FAILED_TWIN_SECONDS, HEADER_WARN_ROWS, SEND_STALE_SECONDS,
+  PERSONAL_ALIAS, PERSONAL_MAILBOX_OWNER_USER_ID, ZOLA_VENDOR_ADDRESS, ZOLA_RELAY_DOMAIN, ZOLA_UNREAD_TEXT,
+  EMAIL_LINE_MAX, EMAIL_PRECLIP_MAX, GMAIL_SYNC_MAX_PER_TICK, GMAIL_SYNC_TICK_MS, GMAIL_LEASE_SECONDS,
+  GMAIL_SKIP_ATTEMPTS, GMAIL_FAILING_TICKS, ZOLA_CLIENT_DAILY_CAP, DROPPED_SENDER_DOMAINS, NO_REPLY_LOCAL_RE, AUTO_REPLY_SUBJECT_RE,
+  ZOLA_DASHBOARD_URL, ZOLA_LEAD_UUID_RE, zolaLeadUrl, gmailThreadUrl,
 };

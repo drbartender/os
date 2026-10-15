@@ -3,6 +3,8 @@ import React, { useLayoutEffect, useRef } from 'react';
 // The messages (spec 4.2), from threadModel(): day separators, centered system
 // lines, and bubbles (inbound left, outbound right and tinted) that follow the
 // Messages page's .sms-bubble, each with its channel tag, time and author.
+// A mail bubble shows its subject above the words and its attachment count
+// in a muted line under them.
 // The desktop pane scrolls itself and keeps the newest message in view, like
 // ClientConversation; the phone thread flows in the page.
 export default function Thread({ items, variant = 'phone' }) {
@@ -45,6 +47,7 @@ export default function Thread({ items, variant = 'phone' }) {
                 ))}
               </div>
             )}
+            {m.attachments && <div className="ib-bubble-attach">{m.attachments}</div>}
             {m.failure && <div className="ib-bubble-fail">{m.failure}</div>}
           </div>
         );

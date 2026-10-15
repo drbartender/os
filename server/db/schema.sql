@@ -5382,6 +5382,9 @@ DO $$ BEGIN
   ALTER TABLE inbox_reads ADD CONSTRAINT inbox_reads_status_check
     CHECK (status IN ('pending','ok','error','refused'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+-- The inbound read's pitch flag (spec 2026-10-14, decision 12). NULL on every
+-- read made before the flag existed and on outbound reads.
+ALTER TABLE inbox_reads ADD COLUMN IF NOT EXISTS solicitation BOOLEAN;
 
 -- Inbox text idempotency (spec 8, hardened by lane sms-lines): the text route
 -- reserves the client-generated send_id HERE before it calls Twilio, so a
@@ -5397,4 +5400,122 @@ CREATE TABLE IF NOT EXISTS inbox_sends (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   result JSONB
 );
+
+-- Inbox email and Zola (spec docs/superpowers/specs/2026-10-14-inbox-email-zola-design.md,
+-- section 7). The Gmail sync stores one gmail_messages row per mail it keeps:
+-- the sender, the recipients (To, Cc and Bcc, lowercased), the subject and the
+-- person's own words with quoted history and signature cut. Never the raw mail,
+-- never an attachment. zola_leads is one row per Zola couple; a lead resolves
+-- to c-<client_id> when linked, else z-<id>. gmail_sync_state is the single
+-- lease and cursor row, inserted by the first tick, never by this file.
+CREATE TABLE IF NOT EXISTS zola_leads (
+  id SERIAL PRIMARY KEY,
+  lead_uuid TEXT UNIQUE,
+  couple_label TEXT NOT NULL,
+  couple_label_key TEXT NOT NULL,
+  wedding_date DATE,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+  closed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_zola_leads_label ON zola_leads(couple_label_key) WHERE closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_zola_leads_client ON zola_leads(client_id);
+
+CREATE TABLE IF NOT EXISTS gmail_messages (
+  id SERIAL PRIMARY KEY,
+  gmail_id TEXT NOT NULL UNIQUE,
+  thread_id TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+  kind TEXT NOT NULL CHECK (kind IN ('message','auto_reply','bounce','zola_inquiry','zola_message','zola_closed','zola_unparsed')),
+  from_address TEXT NOT NULL,
+  from_name TEXT,
+  to_addresses TEXT[] NOT NULL DEFAULT '{}',
+  subject TEXT,
+  text TEXT,
+  attachments INTEGER NOT NULL DEFAULT 0,
+  message_id_header TEXT,
+  in_reply_to TEXT,
+  failed BOOLEAN NOT NULL DEFAULT false,
+  zola_lead_id INTEGER REFERENCES zola_leads(id) ON DELETE RESTRICT,
+  at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_at ON gmail_messages(at);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_thread ON gmail_messages(thread_id);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_from ON gmail_messages(from_address);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_message_id ON gmail_messages(message_id_header);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_in_reply_to ON gmail_messages(in_reply_to);
+
+CREATE TABLE IF NOT EXISTS gmail_sync_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  history_id TEXT,
+  backfill_page TEXT,
+  backfill_done BOOLEAN NOT NULL DEFAULT false,
+  lease_owner TEXT,
+  lease_until TIMESTAMPTZ,
+  last_ok_at TIMESTAMPTZ,
+  last_error TEXT,
+  consecutive_errors INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS gmail_sync_skips (
+  gmail_id TEXT PRIMARY KEY,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  last_error TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- bounced_to: the recipients a delivery report says failed, lowercased, on
+-- the bounce row and merged onto the Sent row it names. NULL (or empty) on a
+-- failed Sent row means the report named no recipient: every person of that
+-- mail reads as not delivered. A report that names one bad Cc leaves the
+-- other recipients delivered.
+ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS bounced_to TEXT[];
+-- personal and personal_to: the personal-mail judgment (spec 2026-10-14
+-- decision 6, as the owner decided it on 2026-10-15), made once by the sync
+-- when it stores the row (server/utils/inbox/personalMail.js) and never
+-- changed after: a sender who later becomes a client, a lead or a staffer
+-- never moves it. On an inbound row, personal says the mail is personal (its
+-- To and Cc name none of the business's addresses, and its sender was nobody
+-- we knew when it arrived). On a Sent row, personal_to lists the recipients
+-- it is personal for (lowercased, from to_addresses), and personal is true
+-- when that list holds anyone. The readers put a personal mail on its own
+-- person (people.personalEmailKey), shown only to the owner's account and
+-- never read by the AI. No backfill: production held no stored mail when
+-- these columns were added (lane email-feed was unpushed), and a row stored
+-- before them reads false and NULL.
+ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS personal BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE gmail_messages ADD COLUMN IF NOT EXISTS personal_to TEXT[];
+-- The personal judgment's known-at lookup (personalMail.SQL.knownAt) compares
+-- each table's address as lower(btrim(email)); these are that exact
+-- expression, so the lookup is an index probe per address, not a scan.
+CREATE INDEX IF NOT EXISTS idx_clients_email_norm ON clients (lower(btrim(email)));
+CREATE INDEX IF NOT EXISTS idx_email_leads_email_norm ON email_leads (lower(btrim(email)));
+CREATE INDEX IF NOT EXISTS idx_users_email_norm ON users (lower(btrim(email)));
+-- The Zola feed's last-notice time and the RESTRICT foreign key's delete
+-- check: only a Zola notice carries a lead.
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_zola_at ON gmail_messages(at) WHERE zola_lead_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_zola_lead ON gmail_messages(zola_lead_id) WHERE zola_lead_id IS NOT NULL;
+-- unavailable: the ticks in which Gmail answered other calls but not this
+-- message (a body that is not JSON, a timeout on one huge mail). Counted
+-- apart from attempts: at GMAIL_UNAVAILABLE_SKIP_TICKS (gmailSync.js) the
+-- message is skipped for good, so one message never holds the window forever.
+ALTER TABLE gmail_sync_skips ADD COLUMN IF NOT EXISTS unavailable INTEGER NOT NULL DEFAULT 0;
+
+-- The inline CHECKs above reach only a fresh database; dev and prod get these.
+-- A widening goes in BOTH sites (the inbox_reads pattern above), and
+-- server/db/index.js CONSTRAINT_CONTRACT asserts every value at boot.
+DO $$ BEGIN
+  ALTER TABLE gmail_messages DROP CONSTRAINT IF EXISTS gmail_messages_direction_check;
+  ALTER TABLE gmail_messages ADD CONSTRAINT gmail_messages_direction_check
+    CHECK (direction IN ('in','out'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE gmail_messages DROP CONSTRAINT IF EXISTS gmail_messages_kind_check;
+  ALTER TABLE gmail_messages ADD CONSTRAINT gmail_messages_kind_check
+    CHECK (kind IN ('message','auto_reply','bounce','zola_inquiry','zola_message','zola_closed','zola_unparsed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- ─── end Inbox ───

@@ -11,7 +11,7 @@ const { normalizePhone } = require('../sms');
 const smsLines = require('../smsLines');
 const smsOptOut = require('../smsOptOut');
 const staffText = require('../staffText');
-const { thumbtackInboxUrl } = require('./constants');
+const { thumbtackInboxUrl, gmailThreadUrl, zolaLeadUrl } = require('./constants');
 const { parsePersonKey } = require('./personKey');
 const { phoneDisplay } = require('./contextFormat');
 const { firstTextPrefixFor } = require('./firstText');
@@ -84,7 +84,16 @@ function textabilityFor(target, db = pool) {
   return _deps.textability({ kind: 'unknown', phone: target.recipient }, db);
 }
 
-function appLinkFor(personKey, index) {
+// The apps a reply can open (spec 4.3; spec 2026-10-14 section 4.4), each
+// with the caption the page shows beside it.
+const APP_CHANNELS = new Set(['thumbtack', 'email', 'zola']);
+const CAPTIONS = Object.freeze({
+  thumbtack: 'Closes here on its own once you reply in Thumbtack.',
+  email: 'Closes here on its own once you reply from Gmail.',
+  zola: "Reply to Zola's email from Gmail and it closes here on its own. A reply typed inside Zola needs Done.",
+});
+
+function thumbtackApp(personKey, index) {
   const key = parsePersonKey(personKey);
   let negotiationId = null;
   if (key && key.type === 't') negotiationId = key.id;
@@ -92,7 +101,41 @@ function appLinkFor(personKey, index) {
     const lead = index.latestLeadByClient.get(Number(key.id));
     negotiationId = lead ? String(lead.negotiation_id) : null;
   }
-  return negotiationId ? { name: 'Thumbtack', url: thumbtackInboxUrl(negotiationId) } : null;
+  return negotiationId ? { name: 'Thumbtack', url: thumbtackInboxUrl(negotiationId), caption: CAPTIONS.thumbtack } : null;
+}
+
+// The Gmail thread of their newest email.
+function gmailApp(events) {
+  const latest = events.findLast((e) => e.meta && e.meta.source === 'gm' && e.channel === 'email' && e.meta.threadId);
+  return latest ? { name: 'Gmail', url: gmailThreadUrl(latest.meta.threadId), caption: CAPTIONS.email } : null;
+}
+
+// The lead page when the lead's UUID is known, else Zola's dashboard.
+function zolaApp(events, index) {
+  const latest = events.findLast((e) => e.channel === 'zola' && e.meta && e.meta.zolaLeadId);
+  if (!latest) return null;
+  const lead = index.zolaLeadsById ? index.zolaLeadsById.get(Number(latest.meta.zolaLeadId)) : null;
+  const uuid = latest.meta.leadUuid || (lead && lead.lead_uuid) || null;
+  return { name: 'Zola', url: zolaLeadUrl(uuid), caption: CAPTIONS.zola };
+}
+
+function appFor(channel, personKey, index, events) {
+  if (channel === 'email') return gmailApp(events);
+  if (channel === 'zola') return zolaApp(events, index);
+  if (channel === 'thumbtack') return thumbtackApp(personKey, index);
+  return null;
+}
+
+// One app slot (spec 2026-10-14 section 4.4): the app of their latest
+// conversation channel. When that is a text (or they never wrote), the app is
+// still what the opt-out and bad-number notices show beside them: the newest
+// app channel they used, else ours on that channel, else their Thumbtack lead.
+function appLinkFor(personKey, index, events = []) {
+  const latest = latestConversationChannel(events);
+  if (APP_CHANNELS.has(latest)) return appFor(latest, personKey, index, events);
+  const used = events.findLast((e) => e.direction === 'in' && !e.meta.skip && APP_CHANNELS.has(e.channel))
+    || events.findLast((e) => e.direction === 'out' && APP_CHANNELS.has(e.channel));
+  return (used && appFor(used.channel, personKey, index, events)) || thumbtackApp(personKey, index);
 }
 
 // Only the lines whose next text gets the prefix: { "1922": "Dr. Bartender: " },
@@ -104,7 +147,7 @@ async function firstTextPrefixes(target, db) {
 
 async function buildReplyBlock({ personKey, events, index, viewerId }, db = pool) {
   const target = await resolveTextTarget(personKey, { events, index }, db);
-  const app = appLinkFor(personKey, index);
+  const app = appLinkFor(personKey, index, events);
   const theirLine = theirLineOf(events);
   const closed = {
     lines: [], default_line: null, last_line: null, their_line: theirLine, recipient_display: null, opted_out: null,
@@ -120,7 +163,9 @@ async function buildReplyBlock({ personKey, events, index, viewerId }, db = pool
   const history = target.type === 'c' ? await lastHumanRowsForClient(target.clientId, db) : [];
   const lastLine = smsLines.lastHumanLineFromRows([...smsRowsOf(events), ...history]);
   return {
-    mode: latestConversationChannel(events) === 'thumbtack' && app ? 'open' : 'text',
+    // Their newest message on Thumbtack, by email or on Zola opens that app,
+    // even for a person we could text (spec 2026-10-14 decision 17).
+    mode: APP_CHANNELS.has(latestConversationChannel(events)) && app ? 'open' : 'text',
     lines: target.lines,
     default_line: smsLines.defaultLine({ lastHumanLine: lastLine, senderUserId: viewerId, isStaff: target.isStaff, isProxy: target.isProxy }),
     last_line: lastLine,

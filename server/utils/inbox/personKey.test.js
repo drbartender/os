@@ -32,6 +32,74 @@ test('personKey builds only keys that parse', () => {
   assert.equal(personKey('c', null), null);
 });
 
+// Spec 2026-10-14 section 5.2: an unknown address is e-<16 hex of its
+// SHA-256>, a Zola couple with no client is z-<zola_leads.id>.
+test('parsePersonKey: e- is exactly 16 lowercase hex, z- a canonical int4', () => {
+  const hex = '0123456789abcdef';
+  assert.deepEqual(parsePersonKey(`e-${hex}`), { type: 'e', id: hex });
+  assert.deepEqual(parsePersonKey('e-ffffffffffffffff'), { type: 'e', id: 'ffffffffffffffff' });
+  assert.deepEqual(parsePersonKey('z-7'), { type: 'z', id: '7' });
+  assert.deepEqual(parsePersonKey('z-2147483647'), { type: 'z', id: '2147483647' });
+  const bad = [`e-${hex.slice(1)}`, `e-${hex}0`, 'e-0123456789ABCDEF', 'e-0123456789abcdeg', 'e-', 'E-0123456789abcdef',
+    `e-${hex} `, 'z-07', 'z-2147483648', 'z-', 'z-1a', `z-${'1'.repeat(11)}`];
+  for (const key of bad) assert.equal(parsePersonKey(key), null, `${key} must not parse`);
+});
+
+test('personKey builds e- and z- keys and round-trips them', () => {
+  const hex = 'a1b2c3d4e5f60718';
+  assert.equal(personKey('e', hex), `e-${hex}`);
+  assert.deepEqual(parsePersonKey(personKey('e', hex)), { type: 'e', id: hex });
+  assert.equal(personKey('z', 7), 'z-7');
+  assert.deepEqual(parsePersonKey(personKey('z', 7)), { type: 'z', id: '7' });
+  assert.equal(personKey('e', 'A1B2C3D4E5F60718'), null);
+  assert.equal(personKey('z', '07'), null);
+});
+
+test('constants: the email and Zola feed values (spec 2026-10-14 sections 5 and 9)', () => {
+  assert.equal(C.PERSONAL_ALIAS, 'dallas@drbartender.com');
+  assert.equal(C.PERSONAL_MAILBOX_OWNER_USER_ID, 1);
+  assert.equal(C.ZOLA_VENDOR_ADDRESS, 'weddingvendors@zola.com');
+  assert.equal(C.ZOLA_RELAY_DOMAIN, 'vmkt-message.zola.com');
+  assert.equal(C.ZOLA_UNREAD_TEXT, "Zola sent something the OS couldn't read. Open Zola.");
+  assert.deepEqual(
+    [C.EMAIL_LINE_MAX, C.EMAIL_PRECLIP_MAX, C.GMAIL_SYNC_MAX_PER_TICK, C.GMAIL_SYNC_TICK_MS, C.GMAIL_LEASE_SECONDS,
+      C.GMAIL_SKIP_ATTEMPTS, C.ZOLA_CLIENT_DAILY_CAP],
+    [4000, 8000, 50, 40000, 180, 3, 20]
+  );
+  assert.deepEqual([...C.DROPPED_SENDER_DOMAINS].sort(), ['accounts.google.com', 'cal.com', 'google.com', 'render.com',
+    'sentry.io', 'stripe.com', 'thumbtack.com', 'twilio.com', 'vercel.com']);
+  assert.throws(() => C.DROPPED_SENDER_DOMAINS.add('example.com'), TypeError);
+});
+
+test('constants: the no-reply and auto-reply patterns', () => {
+  for (const local of ['no-reply', 'noreply', 'No.Reply', 'do-not-reply', 'donotreply', 'do.not.reply', 'notification',
+    'notifications', 'mailer-daemon', 'MAILER-DAEMON', 'postmaster', 'alerts', 'newsletter']) {
+    assert.ok(C.NO_REPLY_LOCAL_RE.test(local), `${local} is a machine sender`);
+  }
+  for (const local of ['pat', 'noreplyplease', 'alex.b', 'alert', 'news', 'info', 'reply']) {
+    assert.ok(!C.NO_REPLY_LOCAL_RE.test(local), `${local} is not`);
+  }
+  for (const subject of ['Automatic reply: Your quote', 'Re: Auto-Reply', 'autoreply', 'Auto Response', 'auto-response',
+    'Out of Office', 'Out of the office until Monday', 'RE: out of office']) {
+    assert.ok(C.AUTO_REPLY_SUBJECT_RE.test(subject), `${subject} is an auto-reply`);
+  }
+  for (const subject of ['Re: Your quote', 'We will be out of office on the 6th, can you still come?', 'Fwd: Automatic reply',
+    'Out offices']) {
+    assert.ok(!C.AUTO_REPLY_SUBJECT_RE.test(subject), `${subject} is not`);
+  }
+});
+
+test('constants: the Gmail and Zola links', () => {
+  assert.equal(C.gmailThreadUrl('18c2f0a1b2c3d4e5'),
+    'https://mail.google.com/mail/?authuser=contact%40drbartender.com#all/18c2f0a1b2c3d4e5');
+  const uuid = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+  assert.equal(C.zolaLeadUrl(uuid), `https://www.zola.com/inspire/vendors/leads/ready/${uuid}`);
+  assert.equal(C.ZOLA_DASHBOARD_URL, 'https://www.zola.com/inspire/vendors/dashboard');
+  for (const bad of [null, undefined, '', uuid.toUpperCase(), `${uuid}/../x`, 'not-a-uuid']) {
+    assert.equal(C.zolaLeadUrl(bad), C.ZOLA_DASHBOARD_URL, `${String(bad)} opens the dashboard`);
+  }
+});
+
 test('constants: the pinned windows and a parseable fixed floor', () => {
   assert.deepEqual(
     [C.CLAIM_HOURS, C.HOT_HOURS, C.HANDLED_DAYS, C.THREAD_DAYS, C.QUIET_HOURS, C.TT_MISSED_MINUTES,

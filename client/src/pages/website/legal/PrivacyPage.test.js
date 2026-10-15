@@ -16,7 +16,14 @@ test('names Anthropic among the providers, and what it never receives', () => {
   expect(item.closest('ul')).toHaveTextContent('Twilio, to send and receive text messages and calls');
 });
 
+// Spec 2026-10-14 section 9: the Google line names the mailbox reading.
+test('names Google for venue lookup and for reading the business mailbox', () => {
+  mount();
+  const item = screen.getByText('Google, for venue address lookup and to read our business mailbox so client email reaches our inbox');
+  expect(item.tagName).toBe('LI');
+});
+
 test('the date at the top moved with the change', () => {
   mount();
-  expect(screen.getByText('Last updated: October 9, 2026')).toBeInTheDocument();
+  expect(screen.getByText('Last updated: October 15, 2026')).toBeInTheDocument();
 });

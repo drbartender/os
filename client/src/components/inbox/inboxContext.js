@@ -8,10 +8,12 @@ import { fmt$, fmtDate } from '../adminos/format';
 // column: its first ten characters ARE the day (node-pg serialises a DATE as
 // the server's local midnight, so a Chicago reading of it would slip a day on
 // a UTC server). event_date on a Thumbtack lead is a real instant, so it reads
-// on the Chicago calendar.
+// on the Chicago calendar; wedding_date on a Zola lead is a calendar date
+// ('YYYY-MM-DD'), so it reads as that day.
 
 export const LEGAL_HOLD_TEXT = 'Legal hold: check with Dallas before contacting';
 export const NO_QUOTE_TEXT = 'No quote yet. Totals show here once a proposal goes out.';
+export const NO_CLIENT_TEXT = 'No client record yet';
 
 const PROPOSAL_CHIP_KIND = { Signed: 'ok', Unsigned: 'warn', None: 'neutral' };
 
@@ -24,6 +26,7 @@ export function kindLine(context) {
   }
   if (c.kind === 'staff') return c.role ? `Staff · ${c.role}` : 'Staff';
   if (c.kind === 'tt_lead') return 'Thumbtack lead';
+  if (c.kind === 'zola_lead') return 'Zola lead';
   if (c.kind === 'unknown') return 'Not a client yet';
   return '';
 }
@@ -105,10 +108,54 @@ function thumbtackModel(c) {
   return { chip: { kind: 'info', label: 'Lead' }, type: 'Thumbtack', guests: null, rows, money: null, showNoQuote: true, links };
 }
 
+// A calendar date ('YYYY-MM-DD') as the artifact writes it, "Sat May 22,
+// 2027": built at UTC midnight and read in UTC, so no zone moves the day.
+// Anything that is not a real day is '' (no row): the date must read back as
+// the same year, month and day (Date.UTC rolls month 0 or 13, or Feb 30, into
+// a neighbour, and reads a two-digit year as 19xx), in the years 1900 to 2999.
+const UTC_WEEKDAY = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' });
+const UTC_MON_DAY_YEAR = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
+function calendarDateText(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return '';
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (y < 1900 || y > 2999) return '';
+  const d = new Date(Date.UTC(y, mo - 1, day));
+  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== mo - 1 || d.getUTCDate() !== day) return '';
+  return `${UTC_WEEKDAY.format(d)} ${UTC_MON_DAY_YEAR.format(d)}`;
+}
+
+// A Zola couple with no client yet (spec 2026-10-14 section 4.3): type
+// "Zola" (as the Thumbtack card's is "Thumbtack"; the chip says Lead and the
+// header line "Zola lead"), the couple's label as Zola wrote it, the wedding
+// date under When when known, and "No client record yet". A lead that gained
+// a client links to it.
+function zolaLeadModel(c) {
+  const rows = [];
+  if (c.couple_label) rows.push({ key: 'couple', label: 'Couple', value: c.couple_label });
+  const wedding = c.wedding_date ? calendarDateText(String(c.wedding_date).slice(0, 10)) : '';
+  if (wedding) rows.push({ key: 'when', label: 'When', value: wedding });
+  const clientId = c.client_id || null;
+  return {
+    chip: { kind: 'info', label: 'Lead' },
+    type: 'Zola',
+    guests: null,
+    rows,
+    money: null,
+    showNoQuote: false,
+    note: clientId ? null : NO_CLIENT_TEXT,
+    links: clientId
+      ? [{ key: 'client', label: 'Client', to: `/clients/${clientId}` }]
+      : [{ key: 'new', label: 'New proposal', to: '/proposals/new' }],
+  };
+}
+
+// An unknown number shows the number; an unknown sender shows the address
+// (spec 2026-10-14 section 4.3).
 function unknownModel(c) {
   return {
     chip: { kind: 'neutral', label: 'Not a client yet' },
-    type: c.phone_display || '',
+    type: c.phone_display || c.address || '',
     guests: null,
     rows: [],
     money: null,
@@ -124,6 +171,7 @@ export function contextModel(context, { legalHold = false } = {}) {
   if (c.kind === 'client' || c.kind === 'lead') model = clientModel(c);
   else if (c.kind === 'staff') model = staffModel(c);
   else if (c.kind === 'tt_lead') model = thumbtackModel(c);
+  else if (c.kind === 'zola_lead') model = zolaLeadModel(c);
   else if (c.kind === 'unknown') model = unknownModel(c);
   if (!model) return null;
   return { ...model, hold: legalHold ? LEGAL_HOLD_TEXT : null };

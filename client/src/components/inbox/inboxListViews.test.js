@@ -35,6 +35,31 @@ test('phone card: the wait rail in red past 24 hours, need, chip, channel tags; 
   expect(onOpen).toHaveBeenCalledWith('c-1');
 });
 
+// Spec 2026-10-14 section 4.1: a personal row (mail to the owner alias only)
+// carries a muted "dallas@" chip after the channel tags; no other row does.
+// The chip sits INSIDE the tags group, so a narrow card wraps them together,
+// right-aligned, instead of dropping the chip to a left-aligned line alone.
+test('a personal row carries the muted dallas@ chip after the channel tags, on the phone card and the desktop row', () => {
+  const personal = row({ person_key: 'e-0123456789abcdef', name: 'Pat Example', channels: ['email'], personal: true });
+  const { rerender } = render(<WaitingCard row={personal} nowMs={NOW} onOpen={() => {}} />);
+  const chip = screen.getByText('dallas@');
+  expect(chip).toHaveClass('chip', 'neutral');
+  expect(chip.parentElement).toHaveClass('m-tags');
+  expect(chip.previousElementSibling).toHaveClass('m-tag');
+  expect(chip.previousElementSibling).toHaveTextContent('Email');
+  expect(chip.nextElementSibling).toBeNull();
+  rerender(<WaitingRow row={personal} nowMs={NOW} selected={false} onOpen={() => {}} />);
+  const desk = screen.getByText('dallas@');
+  expect(desk).toHaveClass('chip', 'neutral');
+  expect(desk.parentElement).toHaveClass('ib-tags');
+  expect(desk.previousElementSibling).toHaveClass('ib-tag');
+  expect(desk.nextElementSibling).toBeNull();
+  rerender(<WaitingCard row={row({ personal: false })} nowMs={NOW} onOpen={() => {}} />);
+  expect(screen.queryByText('dallas@')).toBeNull();
+  rerender(<WaitingRow row={row()} nowMs={NOW} selected={false} onOpen={() => {}} />);
+  expect(screen.queryByText('dallas@')).toBeNull();
+});
+
 test('phone card under 24 hours keeps the ink rail', () => {
   render(<WaitingCard row={row({ waiting_since: hoursAgo(7) })} nowMs={NOW} onOpen={() => {}} />);
   expect(screen.getByRole('button').querySelector('.m-rail')).not.toHaveClass('ib-rail-hot');
@@ -108,6 +133,23 @@ test('feeds line: each source, quiet dots, and an unknown line while the list fa
   expect(screen.getByText('AI read off')).toBeInTheDocument();
   rerender(<FeedsLine nowMs={NOW} failed />);
   expect(screen.getByText('Feed status unknown until the inbox loads')).toBeInTheDocument();
+});
+
+test('feeds line: Gmail and Zola by name, and a Gmail status in place of its time with the quiet dot', () => {
+  const { rerender } = render(<FeedsLine nowMs={NOW} ai={{ status: 'on' }} feeds={[
+    { source: 'gmail', last_at: hoursAgo(1 / 60), quiet: false, status: 'on' },
+    { source: 'zola', last_at: hoursAgo(72), quiet: true },
+  ]} />);
+  expect(screen.getByText('Gmail 1 min ago').closest('.ib-feed')).not.toHaveClass('ib-feed-quiet');
+  expect(screen.getByText('Zola 3 days ago').closest('.ib-feed')).toHaveClass('ib-feed-quiet');
+  rerender(<FeedsLine nowMs={NOW} ai={{ status: 'on' }} feeds={[{ source: 'gmail', last_at: hoursAgo(2), quiet: false, status: 'catching_up' }]} />);
+  const catching = screen.getByText('Gmail catching up').closest('.ib-feed');
+  expect(catching).toHaveClass('ib-feed-quiet');
+  expect(catching.querySelector('.ib-feed-dot')).not.toBeNull();
+  rerender(<FeedsLine nowMs={NOW} ai={{ status: 'on' }} feeds={[{ source: 'gmail', last_at: null, quiet: true, status: 'off' }]} />);
+  expect(screen.getByText('Gmail off')).toBeInTheDocument();
+  rerender(<FeedsLine nowMs={NOW} ai={{ status: 'on' }} feeds={[{ source: 'gmail', last_at: hoursAgo(3), quiet: false, status: 'failing' }]} />);
+  expect(screen.getByText('Gmail failing').closest('.ib-feed')).toHaveClass('ib-feed-quiet');
 });
 
 test('the error card is never the empty state, and shows the last good load in CT', () => {

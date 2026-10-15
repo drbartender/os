@@ -11,7 +11,7 @@ const { openSlotsSql, parsePositionsNeeded } = require('../positionsNeeded');
 const { canonicalizeRole } = require('../staffingRoles');
 const { parsePersonKey } = require('./personKey');
 const { latestPhoneOf } = require('./people');
-const { clientContext, staffContext, ttLeadContext, unknownContext } = require('./contextFormat');
+const { clientContext, staffContext, ttLeadContext, unknownContext, zolaLeadContext } = require('./contextFormat');
 
 const CLIENT_PROPOSALS_SQL = `
   SELECT id, status, to_char(event_date, 'YYYY-MM-DD') AS event_date, event_start_time, event_type, event_type_custom,
@@ -36,6 +36,12 @@ const NEXT_SHIFT_SQL = `
    LIMIT 1`;
 
 const USER_ROLE_SQL = 'SELECT role FROM users WHERE id = $1';
+
+// The other party's address on a person's newest mail (an e- person's card).
+function latestAddressOf(events) {
+  const latest = events.findLast((e) => e.meta && e.meta.source === 'gm' && e.meta.address);
+  return latest ? latest.meta.address : null;
+}
 
 // A key parsePersonKey rejects has no card (the route checks first; this is
 // for any other caller).
@@ -62,7 +68,11 @@ async function loadContext({ personKey, index, events, todayYmd, legalHoldIds = 
     return { context: staffContext({ userId: Number(key.id), role, shift: card, todayYmd }), legalHold: false };
   }
   if (key.type === 't') return { context: ttLeadContext(index.leadsByNegotiation.get(key.id) || null, key.id), legalHold: false };
-  return { context: unknownContext(latestPhoneOf(events)), legalHold: false };
+  if (key.type === 'z') {
+    const lead = index.zolaLeadsById ? index.zolaLeadsById.get(Number(key.id)) || null : null;
+    return { context: zolaLeadContext(lead), legalHold: false };
+  }
+  return { context: unknownContext(latestPhoneOf(events), latestAddressOf(events)), legalHold: false };
 }
 
 module.exports = { loadContext, CLIENT_PROPOSALS_SQL, NEXT_SHIFT_SQL };

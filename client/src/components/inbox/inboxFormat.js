@@ -17,14 +17,15 @@ export const UNDO_TOAST_MS = 4200;
 
 // Person keys at least as strict as lane inbox-engine's parsePersonKey, so a
 // key the server would refuse reads as gone here, never as a Retry that
-// cannot succeed. c- and s- are row ids written one way (no leading zeros, at
-// most int4) and t- a Thumbtack thread id, exactly as the server parses them.
-// p- is stricter: the server parses 1 to 20 digits, this takes exactly ten,
-// the last 10 digits of a number and the only shape the engine builds (its
-// last10 returns null under ten digits), so any other p- key reads as gone
-// with no request.
-const ROW_KEY = /^[cs]-(0|[1-9]\d{0,9})$/;
-const OTHER_KEY = /^(?:p-\d{10}|t-[0-9A-Za-z_-]{1,100})$/;
+// cannot succeed. c-, s- and z- are row ids written one way (no leading
+// zeros, at most int4), t- a Thumbtack thread id and e- 16 lowercase hex (an
+// email address's hash), exactly as the server parses them. p- is stricter:
+// the server parses 1 to 20 digits, this takes exactly ten, the last 10
+// digits of a number and the only shape the engine builds (its last10
+// returns null under ten digits), so any other p- key reads as gone with no
+// request.
+const ROW_KEY = /^[csz]-(0|[1-9]\d{0,9})$/;
+const OTHER_KEY = /^(?:p-\d{10}|t-[0-9A-Za-z_-]{1,100}|e-[0-9a-f]{16})$/;
 export function isPersonKey(key) {
   if (typeof key !== 'string') return false;
   const row = ROW_KEY.exec(key);
@@ -189,21 +190,46 @@ const AI_LINES = {
   failing: 'AI read failing',
 };
 
+// Display names for the sources that are not a line number (the design's
+// feed row: "Gmail 4 min ago", "Zola 1 hr ago").
+const FEED_NAMES = { thumbtack: 'Thumbtack', gmail: 'Gmail', zola: 'Zola' };
+// The Gmail feed's status when it is not on (spec 2026-10-14 sections 4.6
+// and 12), in the AI status line's style: the words replace the time.
+const GMAIL_LINES = {
+  off: 'Gmail off',
+  failing: 'Gmail failing',
+  catching_up: 'Gmail catching up',
+};
+
 /**
  * The feeds line (spec 4.6): each source and when it last delivered, a quiet
  * dot at 48 hours (the server's `quiet`), and the AI read's status when it is
- * not on. The hover title carries the Chicago clock time with "CT".
+ * not on. The hover title carries the Chicago clock time with "CT". Gmail's
+ * time is its last good sync, not its last mail, and a Gmail status other
+ * than on says so in place of the time.
  */
 export function feedItems(feeds, ai, nowMs) {
   const items = (feeds || []).map((f) => {
-    const name = f.source === 'thumbtack' ? 'Thumbtack' : String(f.source || '');
+    const name = FEED_NAMES[f.source] || String(f.source || '');
+    const gmail = f.source === 'gmail';
+    const when = f.last_at ? `${chicagoWeekdayDate(f.last_at)}, ${chicagoTime(f.last_at)} CT` : null;
+    const statusLine = gmail ? GMAIL_LINES[f.status] : null;
+    if (statusLine) {
+      return {
+        key: `feed-${f.source}`,
+        text: statusLine,
+        quiet: true,
+        title: when ? `${statusLine}; last good sync ${when}` : statusLine,
+      };
+    }
+    let title = `${name} has delivered nothing yet`;
+    if (when) title = gmail ? `${name} last synced ${when}` : `${name} last delivered ${when}`;
+    else if (gmail) title = `${name} has not synced yet`;
     return {
       key: `feed-${f.source}`,
       text: `${name} ${f.last_at ? agoLabel(f.last_at, nowMs) : 'never'}`,
       quiet: !!f.quiet,
-      title: f.last_at
-        ? `${name} last delivered ${chicagoWeekdayDate(f.last_at)}, ${chicagoTime(f.last_at)} CT`
-        : `${name} has delivered nothing yet`,
+      title,
     };
   });
   const status = ai && ai.status;

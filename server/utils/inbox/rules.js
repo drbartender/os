@@ -19,7 +19,9 @@ const DAY = 24 * HOUR;
 const ms = (d) => new Date(d).getTime();
 const last = (arr) => (arr.length ? arr[arr.length - 1] : null);
 
-function makeContext({ reads = [], actions = [], seen = [], proposals = [], now = new Date(), viewerId = null, users = [], nameOf = null }) {
+function makeContext({
+  reads = [], actions = [], seen = [], proposals = [], now = new Date(), viewerId = null, users = [], nameOf = null,
+}) {
   const readsByKey = new Map(reads.map((r) => [`${r.kind}:${r.subject_ref}`, r]));
   const actionsByPerson = new Map();
   const live = actions.filter((a) => !a.undone_at)
@@ -103,7 +105,7 @@ function chipFor({ claim, P, reopen, reopenWaits, U, seen, reads, ctx }) {
   if (P.length) {
     const p = last(P);
     const author = C.authorOf(p);
-    const r = C.readOf(reads, 'outbound', p.ref);
+    const r = C.readOf(reads, 'outbound', p.ref, p.meta.readRef);
     return {
       type: 'promise', byUserId: author, byName: author ? ctx.firstName(author) : null, mine: mine(author),
       promisedBy: (r && r.promised_by) || null, since: null,
@@ -120,11 +122,12 @@ function chipFor({ claim, P, reopen, reopenWaits, U, seen, reads, ctx }) {
 }
 
 // 5.6: the event that closed the latest waiting stretch, the earliest of the
-// real reply, the Done, and the AI's no-reply read. The read closes only a
+// real reply, the Done, a Zola closed notice (the couple's own Done, spec
+// 2026-10-14 decision 19), and the AI's no-reply read. The read closes only a
 // stretch nothing else held open as it landed: a promise of ours or a Reopen
 // between the previous close and their newest message kept them waiting
 // (decision 23), so the person who then answered closed it.
-function findCloser({ U, newestU, subjectRead, inbound, holding, real, dones, acts, anchorMs, inboundRead }) {
+function findCloser({ U, newestU, subjectRead, inbound, holding, real, dones, zolaClosed, acts, anchorMs, inboundRead }) {
   if (U.length) {
     // Every unanswered message is covered by a no-reply read: the AI closed it.
     const at = Math.max(ms(subjectRead.updated_at || subjectRead.created_at || newestU.at), ms(newestU.at));
@@ -137,13 +140,14 @@ function findCloser({ U, newestU, subjectRead, inbound, holding, real, dones, ac
   ].filter((o) => o.at <= anchorMs).sort((a, b) => a.at - b.at);
   const start = last(openers);
   if (!start) return null; // never waited
-  const closerTimes = [...real.map((e) => ms(e.at)), ...dones.map((a) => ms(a.created_at))];
+  const closerTimes = [...real.map((e) => ms(e.at)), ...dones.map((a) => ms(a.created_at)), ...zolaClosed.map((e) => ms(e.at))];
   const prevMs = Math.max(-Infinity, ...closerTimes.filter((x) => x < start.at));
   const stretchInbound = inbound.filter((e) => ms(e.at) > prevMs && ms(e.at) <= start.at);
   const newest = last(stretchInbound);
   const candidates = [
     ...real.filter((e) => ms(e.at) > start.at).map((e) => ({ type: 'reply', at: new Date(e.at), event: e })),
     ...dones.filter((a) => ms(a.created_at) > start.at).map((a) => ({ type: 'done', at: new Date(a.created_at), action: a })),
+    ...zolaClosed.filter((e) => ms(e.at) > start.at).map((e) => ({ type: 'zola_closed', at: new Date(e.at), event: e })),
   ];
   const heldOpen = holding.some((h) => ms(h.at) > prevMs && ms(h.at) < start.at)
     || acts.some((a) => a.action === 'reopen' && ms(a.created_at) > prevMs && ms(a.created_at) < start.at);
@@ -166,7 +170,7 @@ function computePersonState(personKey, events, ctx) {
   const reads = ctx.readsByKey;
   const acts = ctx.actionsByPerson.get(personKey) || [];
   const legalHold = ctx.legalHoldPersons.has(personKey);
-  const inboundRead = (e) => (e && !legalHold ? C.readOf(reads, 'inbound', e.ref) : null);
+  const inboundRead = (e) => (e && !legalHold ? C.readOf(reads, 'inbound', e.ref, e.meta.readRef) : null);
   const needOf = (e) => {
     if (!e) return null;
     const r = inboundRead(e);
@@ -179,11 +183,15 @@ function computePersonState(personKey, events, ctx) {
   const holdingRefs = new Set(holding.map((e) => e.ref));
   const real = replies.filter((e) => !holdingRefs.has(e.ref));
   const dones = acts.filter((a) => a.action === 'done');
+  // A Zola closed notice is a Done by the couple (spec 2026-10-14 decision 19).
+  const zolaClosed = events.filter((e) => e.kind === 'zola_closed');
 
-  // 1. anchor = max(latest real reply, latest Done)
+  // 1. anchor = max(latest real reply, latest Done, latest Zola closed notice)
   const lastReal = last(real);
   const lastDone = last(dones);
-  const anchorMs = Math.max(lastReal ? ms(lastReal.at) : -Infinity, lastDone ? ms(lastDone.created_at) : -Infinity);
+  const lastClosed = last(zolaClosed);
+  const anchorMs = Math.max(lastReal ? ms(lastReal.at) : -Infinity, lastDone ? ms(lastDone.created_at) : -Infinity,
+    lastClosed ? ms(lastClosed.at) : -Infinity);
 
   // 2. U: counted inbound at or after the anchor (a message at the anchor's
   // instant is unanswered: ties resolve toward waiting); P: holding replies
@@ -229,7 +237,7 @@ function computePersonState(personKey, events, ctx) {
       status = snooze ? 'snoozed' : 'waiting';
     }
   } else {
-    const closer = findCloser({ U, newestU, subjectRead, inbound, holding, real, dones, acts, anchorMs, inboundRead });
+    const closer = findCloser({ U, newestU, subjectRead, inbound, holding, real, dones, zolaClosed, acts, anchorMs, inboundRead });
     if (closer) {
       closed = describeCloser({ ...closer, needOf }, ctx);
       status = 'handled';
@@ -268,11 +276,15 @@ function computePersonState(personKey, events, ctx) {
 
   return {
     personKey, status, legalHold, seen, channels,
+    // Personal mail (spec 2026-10-14 decision 6), from the flag the sync
+    // stored on each mail: only the owner sees this person, and the AI never
+    // reads them.
+    personal: C.isPersonal(events),
     waitingSince: open ? waitingSince : null,
     hot: status === 'waiting' && ctx.nowMs - waitingSince.getTime() >= HOT_HOURS * HOUR,
     need: open ? waitingNeed : (closed ? closed.need : null),
     state, snooze, closed,
-    internals: { U, P, real, holding, dones, anchorMs, newestInbound },
+    internals: { U, P, real, holding, dones, zolaClosed, anchorMs, newestInbound },
   };
 }
 

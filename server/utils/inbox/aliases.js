@@ -15,7 +15,12 @@
 //      name ONE person (a phone on two people's texts never aliases);
 //   4. an s- key of a staffer who is no longer send-eligible follows their
 //      profile phone to the key the index names, when that key has events;
-//   5. a t- key follows its lead to the client the lead now belongs to.
+//   5. a t- key follows its lead to the client the lead now belongs to;
+//   6. an e- key asks the index's keyByEmailHash (no time in it) and moves
+//      when its address now names a client or staffer (spec 2026-10-14 5.2).
+//      A personal mail's key (people.personalEmailKey) is never in that map,
+//      so it never moves, whoever its sender becomes;
+//   7. a z- key follows its Zola lead to the client the lead now belongs to.
 // Reads need nothing here: the rules match a read by subject_ref alone,
 // whatever person_key it was written under.
 
@@ -63,6 +68,14 @@ function currentKeyOf(key, { index, aliases, at, eventKeys = new Set() }) {
   }
   if (k.type === 't') {
     const lead = index.leadsByNegotiation.get(k.id);
+    return lead && lead.client_id ? `c-${Number(lead.client_id)}` : key;
+  }
+  if (k.type === 'e') {
+    const now = index.keyByEmailHash ? index.keyByEmailHash.get(key) : null;
+    return now || key;
+  }
+  if (k.type === 'z') {
+    const lead = index.zolaLeadsById ? index.zolaLeadsById.get(Number(k.id)) : null;
     return lead && lead.client_id ? `c-${Number(lead.client_id)}` : key;
   }
   return key;

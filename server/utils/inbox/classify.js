@@ -1,11 +1,12 @@
 'use strict';
 
-// What counts, for the Inbox rules (spec 2026-10-06, sections 5.3 and 5.4).
-// PURE: every judgment reads facts the readers copied off the source rows, so
-// each one is a unit test over invented fixtures.
+// What counts, for the Inbox rules (spec 2026-10-06, sections 5.3 and 5.4,
+// and spec 2026-10-14 for email and Zola). PURE: every judgment reads facts
+// the readers copied off the source rows, so each one is a unit test over
+// invented fixtures.
 
 const { ANSWERING_MESSAGE_TYPES } = require('../answeringMessageTypes');
-const { CALL_MIN_SECONDS, TT_MISSED_TEXT } = require('./constants');
+const { CALL_MIN_SECONDS, TT_MISSED_TEXT, ZOLA_UNREAD_TEXT } = require('./constants');
 const { firstNameOf } = require('../firstName');
 
 const isUserId = (a) => Number.isInteger(a) && a > 0;
@@ -22,16 +23,19 @@ function authorOf(e) {
 
 // Them writing (5.3). The SMS reader marks a handled shift command with
 // meta.skip and turns an unambiguous opt word into a system event, so neither
-// counts here. A never-received Thumbtack message does.
+// counts here. A never-received Thumbtack message does, and so does a Zola
+// notice the OS could not read. Auto-replies, bounces and a Zola closed
+// notice are system lines and never count.
 function isCountedInbound(e) {
   return e.direction === 'in' && !e.meta.skip
-    && (e.kind === 'message' || e.kind === 'media' || e.kind === 'tt_missed');
+    && (e.kind === 'message' || e.kind === 'media' || e.kind === 'tt_missed' || e.kind === 'zola_unread');
 }
 
-// The AI may never close these (5.5 step 3): a picture, an empty text, or a
-// Thumbtack message the OS never received. There is nothing in them to read.
+// The AI may never close these (5.5 step 3): a picture or an attachment, an
+// empty message, or a Thumbtack or Zola message the OS never read. There is
+// nothing in them to read.
 function aiCannotClose(e) {
-  return Boolean(e) && (e.kind === 'media' || e.kind === 'tt_missed'
+  return Boolean(e) && (e.kind === 'media' || e.kind === 'tt_missed' || e.kind === 'zola_unread'
     || (e.kind === 'message' && Boolean(e.meta.empty)));
 }
 
@@ -56,6 +60,12 @@ function countsAsReply(e) {
         && Array.isArray(e.meta.deliveries) && e.meta.deliveries.some((d) => !d.failed);
     case 'tt':
       return true;
+    case 'gm':
+      // A Sent mail a human wrote (spec 2026-10-14 5.4): the OS never sends
+      // through Gmail and the sync stores Gmail's own sends as auto-replies.
+      // A bounced one is no reply, and a mail that reached two or more
+      // staffers answers none of them, the group-text rule.
+      return !e.meta.failed && !e.meta.staffGroup;
     case 'lc':
     case 'cc':
       return Number(e.meta.durationSec || 0) >= CALL_MIN_SECONDS && !e.meta.clientNoAnswer;
@@ -76,19 +86,22 @@ function isTextBearingReply(e) {
 }
 
 // A finished AI read, or null. Pending, error and refused reads decide nothing
-// (6.5: an unread inbound waits; an unread outbound counts as real).
-function readOf(reads, kind, ref) {
-  const r = reads.get(`${kind}:${ref}`);
+// (6.5: an unread inbound waits; an unread outbound counts as real). A Sent
+// mail to several people is read once, under its readRef ('gm:<id>'), which
+// every suffixed sibling passes (spec 2026-10-14 section 6).
+function readOf(reads, kind, ref, readRef) {
+  const r = (readRef && reads.get(`${kind}:${readRef}`)) || reads.get(`${kind}:${ref}`);
   return r && r.status === 'ok' ? r : null;
 }
 
 // A holding reply (5.4): the Thumbtack auto first reply by rule, or a text the
 // AI read as "let me check and get back to you". The legal-hold client is never
-// read (decision 31), so for them only the rule applies.
+// read (decision 31), so for them only the rule applies; nor is any sibling of
+// a Sent mail that reached them (meta.legalHold, spec 2026-10-14 section 6).
 function isHolding(e, reads, legalHold) {
   if (e.meta.autoFirstReply) return true;
-  if (legalHold || !isTextBearingReply(e)) return false;
-  const r = readOf(reads, 'outbound', e.ref);
+  if (legalHold || e.meta.legalHold || !isTextBearingReply(e)) return false;
+  const r = readOf(reads, 'outbound', e.ref, e.meta.readRef);
   return Boolean(r && r.holding === true);
 }
 
@@ -96,8 +109,9 @@ function isHolding(e, reads, legalHold) {
 function eventNeedText(e) {
   if (!e) return null;
   if (e.kind === 'tt_missed') return TT_MISSED_TEXT;
+  if (e.kind === 'zola_unread') return ZOLA_UNREAD_TEXT;
   const text = String(e.text || '').replace(/\s+/g, ' ').trim();
-  if (e.kind === 'media') return text || 'Sent a photo';
+  if (e.kind === 'media') return text || (e.meta.source === 'gm' ? 'Sent an attachment' : 'Sent a photo');
   if (!text) return e.meta.empty ? 'Sent a message with no text' : null;
   return text.length > 200 ? `${text.slice(0, 199)}…` : text;
 }
@@ -107,8 +121,22 @@ function durationText(sec) {
   return s < 60 ? `${s} sec` : `${Math.round(s / 60)} min`;
 }
 
+// An email line (spec 2026-10-14 section 6): the subject ahead of the words
+// on an email row, never on a Zola row, and "[attachment]" once per
+// attachment, never a filename. At most ATTACHMENT_TAGS of them: the line is
+// capped long before that matters.
+const ATTACHMENT_TAGS = 20;
+function mailSliceText(e) {
+  const subject = e.channel === 'email' && e.meta.subject ? `Subject: ${e.meta.subject}.` : null;
+  const words = String(e.text || '').trim() || null;
+  const n = Math.min(ATTACHMENT_TAGS, Math.max(0, Number(e.meta.attachments) || 0));
+  return [subject, words, ...Array.from({ length: n }, () => '[attachment]')].filter(Boolean).join(' ');
+}
+
 function sliceText(e) {
   if (e.kind === 'tt_missed') return TT_MISSED_TEXT;
+  if (e.kind === 'zola_unread') return ZOLA_UNREAD_TEXT;
+  if (e.meta.source === 'gm') return mailSliceText(e);
   if (e.kind === 'media') return `[photo]${e.text && String(e.text).trim() ? ` ${String(e.text).trim()}` : ''}`;
   if (e.kind === 'proposal_sent') return 'Sent the proposal';
   if (e.kind === 'call') return `Phone call, ${durationText(e.meta.durationSec)}`;
@@ -125,6 +153,18 @@ function channelTag(e) {
   return e.channel;
 }
 
+// Personal mail (spec 2026-10-14 decision 6, as the owner decided it on
+// 2026-10-15): the sync judged each mail once, when it stored the row
+// (personalMail.js), and the readers put a personal mail on its own person,
+// every event of which carries meta.personal (readGmail.js). A person is
+// personal when any event of theirs carries it: a personal person's events
+// all do, and a business person's never do, so one stray flag hides the
+// person rather than shows them. Nothing here reads the people index, so no
+// later change to who a sender is moves a stored personal mail either way.
+function isPersonal(events) {
+  return (events || []).some((e) => Boolean(e && e.meta && e.meta.personal === true));
+}
+
 // users: [{ id, name }] (the admins and managers). Unknown ids read "Someone".
 function makeNamer(users) {
   const names = new Map((users || []).map((u) => [Number(u.id), u.name]));
@@ -133,5 +173,5 @@ function makeNamer(users) {
 
 module.exports = {
   isUserId, authorOf, isCountedInbound, aiCannotClose, countsAsReply, isTextBearingReply,
-  readOf, isHolding, eventNeedText, durationText, sliceText, channelTag, makeNamer,
+  readOf, isHolding, eventNeedText, durationText, sliceText, channelTag, makeNamer, isPersonal,
 };

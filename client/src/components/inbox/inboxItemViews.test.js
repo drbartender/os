@@ -29,6 +29,73 @@ test('thread: day separators, system lines, authors, Not delivered and a Photo l
   expect(screen.getByRole('link', { name: 'Photo' })).toHaveAttribute('href', 'https://example.test/m/1');
 });
 
+// Spec 2026-10-14 section 4.2: the subject above the words, the attachment
+// count in a muted line under them, "by email" on our Gmail reply.
+test('thread: an email bubble with its subject, "2 attachments" under the words, and our reply by email', () => {
+  render(<Thread items={threadModel([
+    { ref: 'gm:1', direction: 'in', channel: 'email', line: null, at: '2026-10-06T15:12:00.000Z', subject: 'Adding to our package', text: 'Plan attached.', attachments: 2, media: [] },
+    { ref: 'gm:2', direction: 'out', channel: 'email', line: null, at: '2026-10-06T15:30:00.000Z', text: 'Got it, thanks.', author_name: null, by_email: true, attachments: 0, media: [] },
+    { ref: 'gm:3', direction: 'system', channel: 'email', line: null, at: '2026-10-06T15:40:00.000Z', text: 'Auto-reply received' },
+  ], NOW)} />);
+  const bubble = screen.getByText('Plan attached.').closest('.sms-bubble');
+  expect(within(bubble).getByText('Adding to our package')).toHaveClass('ib-bubble-subject');
+  const attach = within(bubble).getByText('2 attachments');
+  expect(attach).toHaveClass('ib-bubble-attach');
+  expect(attach.previousElementSibling).toHaveClass('ib-bubble-body');
+  expect(screen.getByText('by email · 10:30 AM')).toHaveClass('ib-bubble-time');
+  expect(screen.getByText('Got it, thanks.').closest('.sms-bubble').querySelector('.ib-bubble-attach')).toBeNull();
+  expect(screen.getByText('Auto-reply received')).toHaveClass('ib-sys');
+});
+
+// Spec 2026-10-14 section 4.3: a Zola couple with no client gets a lead card;
+// an unknown sender's card shows the address where a number would be.
+test('context: the Zola lead card on both shells, and the unknown card with an address', () => {
+  const zola = contextModel({ kind: 'zola_lead', couple_label: 'Alex B & Sam C', wedding_date: '2027-05-22', client_id: null });
+  const { rerender } = render(<MemoryRouter><ContextCard model={zola} /></MemoryRouter>);
+  expect(screen.getByText('Lead')).toBeInTheDocument();
+  expect(screen.getByText('Zola')).toHaveClass('ib-ctx-type');
+  expect(screen.getByText('Couple')).toHaveClass('ib-ctx-label');
+  expect(screen.getByText('Alex B & Sam C')).toHaveClass('ib-ctx-value');
+  expect(screen.getByText('When')).toHaveClass('ib-ctx-label');
+  expect(screen.getByText('Sat May 22, 2027')).toHaveClass('ib-ctx-value');
+  expect(screen.getByText('No client record yet')).toHaveClass('ib-ctx-none');
+  expect(screen.getByRole('link', { name: /New proposal/ })).toHaveAttribute('href', '/proposals/new');
+  rerender(<MemoryRouter><ContextPane model={zola} /></MemoryRouter>);
+  expect(screen.getByText('No client record yet')).toHaveClass('ib-cp-none');
+  // A lead with no date shows no date row; one that gained a client links it.
+  const linked = contextModel({ kind: 'zola_lead', couple_label: 'Alex B & Sam C', wedding_date: null, client_id: 12 });
+  rerender(<MemoryRouter><ContextCard model={linked} /></MemoryRouter>);
+  expect(screen.queryByText('No client record yet')).toBeNull();
+  expect(screen.queryByText('When')).toBeNull();
+  expect(screen.getByRole('link', { name: /Client/ })).toHaveAttribute('href', '/clients/12');
+  const unknown = contextModel({ kind: 'unknown', phone_display: null, address: 'pat@example.com' });
+  rerender(<MemoryRouter><ContextCard model={unknown} /></MemoryRouter>);
+  expect(screen.getByText('Not a client yet')).toBeInTheDocument();
+  expect(screen.getByText('pat@example.com')).toHaveClass('ib-ctx-type');
+});
+
+// An address breaks at its seams before mid-word: a <wbr> after the @ and
+// before each dot, the text still the whole address (overflow-wrap stays the
+// fallback). Any other type renders as it is.
+test('context: an unknown sender\'s address carries break points on both shells; other types do not', () => {
+  const unknown = contextModel({ kind: 'unknown', phone_display: null, address: 'jordan.lee@mail.example.com' });
+  const { container, rerender } = render(<MemoryRouter><ContextCard model={unknown} /></MemoryRouter>);
+  const card = container.querySelector('.ib-ctx-type');
+  expect(card.textContent).toBe('jordan.lee@mail.example.com');
+  expect(card.querySelectorAll('wbr')).toHaveLength(4);
+  expect(card.innerHTML).toBe('jordan<wbr>.lee@<wbr>mail<wbr>.example<wbr>.com');
+  rerender(<MemoryRouter><ContextPane model={unknown} /></MemoryRouter>);
+  const pane = container.querySelector('.ib-cp-type');
+  expect(pane.textContent).toBe('jordan.lee@mail.example.com');
+  expect(pane.querySelectorAll('wbr')).toHaveLength(4);
+  const phone = contextModel({ kind: 'unknown', phone_display: '(312) 555-0142', address: null });
+  rerender(<MemoryRouter><ContextCard model={phone} /></MemoryRouter>);
+  expect(container.querySelector('.ib-ctx-type').innerHTML).toBe('(312) 555-0142');
+  const staff = contextModel({ kind: 'staff', role: 'Bartender', shift: null, links: {} });
+  rerender(<MemoryRouter><ContextPane model={staff} /></MemoryRouter>);
+  expect(container.querySelector('.ib-cp-type').querySelectorAll('wbr')).toHaveLength(0);
+});
+
 test('context card: the legal-hold banner, rows with chips, the money grid and links', () => {
   const model = contextModel({
     kind: 'client', status_chip: 'Booked', event_type_label: 'Wedding', guests: 160,

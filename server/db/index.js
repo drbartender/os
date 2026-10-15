@@ -295,6 +295,18 @@ const CONSTRAINT_CONTRACT = [
     mustContain: ['pending', 'calling_admin', 'calling_va', 'connected', 'missed',
       'failed', 'skipped_cancelled', 'skipped_invalid_phone', 'skipped_unconfigured',
       'skipped_disabled', 'skipped_cap', 'skipped_missed_window'] },
+  // The Gmail feed's two enumerated CHECKs (spec 2026-10-14 section 7), the
+  // same double-definition shape: an inline CHECK in CREATE TABLE gmail_messages
+  // for a fresh database and a DO-block DROP + ADD for dev and prod. The sync
+  // writes every kind, and a narrowed list raises 23514 inside a message's own
+  // transaction, which the tick records as a failure and, on the third, skips
+  // that mail for good: a narrowed constraint loses mail without a word. Every
+  // value is asserted, the consult_call_attempts reasoning above.
+  { table: 'gmail_messages', constraint: 'gmail_messages_direction_check',
+    mustContain: ['in', 'out'] },
+  { table: 'gmail_messages', constraint: 'gmail_messages_kind_check',
+    mustContain: ['message', 'auto_reply', 'bounce', 'zola_inquiry', 'zola_message',
+      'zola_closed', 'zola_unparsed'] },
   //
   // DELIBERATELY NOT HERE: email_sends_recipient_check (schema.sql:1673, the
   // lead_id/client_id XOR). It is the same bare DROP-then-ADD shape and its

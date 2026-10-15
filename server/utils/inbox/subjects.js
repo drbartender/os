@@ -56,8 +56,12 @@ function sliceFor(events, subject, anchorMs, ctx) {
 function buildSubjects(states, byPerson, ctx) {
   const out = [];
   for (const st of states) {
+    // Personal mail, judged once per mail by the sync (personalMail.js), is
+    // never read, inbound or outbound (spec 2026-10-14 decision 6): its words
+    // never leave the OS.
+    if (st.personal) continue;
     const events = byPerson.get(st.personKey) || [];
-    const { U, real, dones, anchorMs, newestInbound } = st.internals;
+    const { U, real, dones, zolaClosed = [], anchorMs, newestInbound } = st.internals;
     const name = ctx.nameOf ? ctx.nameOf(st.personKey) : null;
     const push = (kind, subject, sliceAnchorMs) => out.push({
       kind, subjectRef: subject.ref, personKey: st.personKey, name: name || null, at: new Date(subject.at),
@@ -75,7 +79,10 @@ function buildSubjects(states, byPerson, ctx) {
       const after = real.filter((e) => ms(e.at) > ms(newestInbound.at) && C.isTextBearingReply(e) && !e.meta.autoFirstReply);
       const subject = after[after.length - 1];
       if (subject && !resolved(ctx, 'outbound', subject.ref)) {
-        const prior = [...real.map((e) => ms(e.at)), ...dones.map((a) => ms(a.created_at))].filter((x) => x < ms(subject.at));
+        // Every close before it anchors the slice: a real reply, a Done, or a
+        // Zola closed notice (the couple's own Done, spec 2026-10-14 decision 19).
+        const prior = [...real.map((e) => ms(e.at)), ...dones.map((a) => ms(a.created_at)), ...zolaClosed.map((e) => ms(e.at))]
+          .filter((x) => x < ms(subject.at));
         push('outbound', subject, Math.max(-Infinity, ...prior));
       }
     }

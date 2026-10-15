@@ -8,6 +8,7 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
@@ -16,6 +17,10 @@ if (process.env.NODE_ENV === 'production') throw new Error('inbox.test.js refuse
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
 const cache = require('../../utils/inbox/cache');
+const engine = require('../../utils/inbox/engine');
+const { emailHash, personalEmailKey } = require('../../utils/inbox/people');
+const { PERSONAL_ALIAS } = require('../../utils/inbox/constants');
+const { GMAIL_MAILBOX } = require('../../utils/gmailClient');
 const inboxRouter = require('./inbox');
 
 // Fixed identifiers, not per run, so before() also clears whatever a crashed
@@ -24,6 +29,19 @@ const TAG = 'inbox-routes-test';
 const phone = (i) => `+1773555${String(100 + i).padStart(4, '0')}`;
 const PHONES = [0, 1, 2, 3, 4].map((i) => phone(i).slice(-10));
 const ids = { users: [], clients: [], sms: [] };
+// Personal mail (spec 2026-10-14 decision 6, as decided 2026-10-15): a
+// friend wrote to the owner alias only and the sync stored that mail
+// personal, on the friend's personal person; the same friend also wrote to
+// the business mailbox, a business person. Every gmail id and address here
+// starts with GM.
+const GM = 'zz-test-inbox-routes';
+const FRIEND = `${GM}-friend@example.com`;
+const PERSONAL = personalEmailKey(FRIEND);
+const FRIEND_BUSINESS = `e-${emailHash(FRIEND)}`;
+// An address that never wrote, and one that is now a client's (its e- key
+// moved): to a non-owner both must answer exactly as the personal key does.
+const UNUSED = `e-${emailHash(`${GM}-nobody@example.com`)}`;
+const MOVED = `e-${emailHash(`${GM}-done@example.com`)}`;
 const U = {};
 const C = {};
 let server;
@@ -88,9 +106,11 @@ const undo = (id, who = U.admin) => call('DELETE', `/api/admin/inbox/actions/${i
 async function clean() {
   const users = (await pool.query('SELECT id FROM users WHERE email LIKE $1', [`${TAG}-%`])).rows.map((r) => r.id);
   const clients = (await pool.query('SELECT id FROM clients WHERE name LIKE $1', [`%${TAG}`])).rows.map((r) => r.id);
-  const keys = [...clients.map(key), ...PHONES.map((t) => `p-${t}`)];
+  const keys = [...clients.map(key), ...PHONES.map((t) => `p-${t}`), PERSONAL, FRIEND_BUSINESS, UNUSED, MOVED];
+  await pool.query('DELETE FROM gmail_messages WHERE gmail_id LIKE $1', [`${GM}-%`]);
   await pool.query('DELETE FROM inbox_actions WHERE person_key = ANY($1::text[]) OR user_id = ANY($2::int[])', [keys, users]);
   await pool.query('DELETE FROM inbox_seen WHERE person_key = ANY($1::text[]) OR seen_by = ANY($2::int[])', [keys, users]);
+  await pool.query('DELETE FROM inbox_sends WHERE person_key = ANY($1::text[]) OR user_id = ANY($2::int[])', [keys, users]);
   await pool.query(
     `DELETE FROM sms_messages
       WHERE RIGHT(REGEXP_REPLACE(recipient_phone, '\\D', '', 'g'), 10) = ANY($1::text[])
@@ -110,6 +130,7 @@ before(async () => {
   C.ask = await addClient('Ask', phone(0));
   C.askSms = await addSms({ direction: 'inbound', clientId: C.ask, ph: phone(0), body: `When can we talk? ${TAG}`, ago: '2 hours' });
   C.done = await addClient('Done', phone(1));
+  await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [`${GM}-done@example.com`, C.done]);
   await addSms({ direction: 'inbound', clientId: C.done, ph: phone(1), body: 'Is there parking?', ago: '3 hours' });
   await addSms({ direction: 'outbound', clientId: C.done, senderId: U.admin.id, ph: phone(1), body: 'Yes, by the side door', ago: '1 hour' });
   await addSms({ direction: 'inbound', ph: phone(2), body: 'Hi, who is this?', ago: '1 hour' }); // an unknown number...
@@ -118,6 +139,13 @@ before(async () => {
   await addSms({ direction: 'inbound', clientId: C.undo, ph: phone(3), body: 'Do you bring ice?', ago: '1 hour' });
   C.snooze = await addClient('Snooze', phone(4));
   await addSms({ direction: 'inbound', clientId: C.snooze, ph: phone(4), body: 'Can we decide next week?', ago: '1 hour' });
+  const mailIn = (gmailId, to, personal, text, ago) => pool.query(
+    `INSERT INTO gmail_messages (gmail_id, thread_id, direction, kind, from_address, to_addresses, text, at, personal)
+     VALUES ($1, $1, 'in', 'message', $2, $3::text[], $4, NOW() - $5::interval, $6)`,
+    [gmailId, FRIEND, to, text, ago, personal]
+  );
+  await mailIn(`${GM}-personal`, [PERSONAL_ALIAS], true, 'Dinner on Sunday?', '1 hour');
+  await mailIn(`${GM}-business`, [GMAIL_MAILBOX], false, 'Do you do corporate events?', '30 minutes');
 
   const app = express();
   app.use(express.json());
@@ -135,6 +163,7 @@ before(async () => {
 });
 
 after(async () => {
+  engine.__resetEngine();
   if (server) await new Promise((resolve) => server.close(resolve));
   await clean();
   await pool.end();
@@ -257,4 +286,108 @@ test('every write clears the cache: seen, an action and an Undo each move the ge
   await undo(a.body.id);
   const g3 = cache.generationNow();
   assert.ok(g0 < g1 && g1 < g2 && g2 < g3, JSON.stringify([g0, g1, g2, g3]));
+});
+
+test('personal mail is invisible to everyone but its owner: the list, the item, seen, the taps and the text route answer as if it were not there', async () => {
+  cache.invalidate();
+  assert.equal(rowOf(await list(), PERSONAL), undefined, 'not on a non-owner\'s list');
+  const gone = await call('GET', '/api/admin/inbox/c-2147483000', { token: U.admin.token });
+  const hidden = await call('GET', `/api/admin/inbox/${PERSONAL}`, { token: U.admin.token });
+  assert.deepEqual([hidden.status, hidden.body], [gone.status, gone.body], 'the same 404 as a key that names no one');
+  const refused = [
+    await call('POST', `/api/admin/inbox/${PERSONAL}/seen`, { token: U.admin.token }),
+    await act(PERSONAL, { action: 'done' }),
+    await call('POST', `/api/admin/inbox/${PERSONAL}/text`, { token: U.admin.token, body: {} }),
+  ];
+  assert.deepEqual(refused.map((r) => [r.status, r.body && r.body.code]), [[404, 'NOT_FOUND'], [404, 'NOT_FOUND'], [404, 'NOT_FOUND']]);
+  const written = await pool.query('SELECT (SELECT COUNT(*) FROM inbox_seen WHERE person_key = $1)::int AS seen, (SELECT COUNT(*) FROM inbox_actions WHERE person_key = $1)::int AS acts', [PERSONAL]);
+  assert.deepEqual(written.rows[0], { seen: 0, acts: 0 }, 'nothing was written for a refused viewer');
+});
+
+// An e- key is a hash of an address anyone can guess: the write routes must
+// not tell a personal person from an address that never wrote, or from one
+// whose key moved to a client.
+test('personal mail: seen, the taps and the text route answer a personal key, an unused e- key and a moved one identically, and write nothing', async () => {
+  cache.invalidate();
+  const answers = async (personKey) => [
+    await call('POST', `/api/admin/inbox/${personKey}/seen`, { token: U.admin.token }),
+    await act(personKey, { action: 'claim' }),
+    await call('POST', `/api/admin/inbox/${personKey}/text`, { token: U.admin.token, body: { body: 'Hi', line: '888', send_id: crypto.randomUUID() } }),
+  ].map((r) => [r.status, r.body]);
+  const personal = await answers(PERSONAL);
+  assert.deepEqual(personal.map(([status, body]) => [status, body.code]), [[404, 'NOT_FOUND'], [404, 'NOT_FOUND'], [404, 'NOT_FOUND']]);
+  assert.deepEqual(await answers(UNUSED), personal, 'an address that never wrote');
+  assert.deepEqual(await answers(MOVED), personal, 'an address that is now a client\'s');
+  const written = await pool.query(
+    `SELECT (SELECT COUNT(*) FROM inbox_seen WHERE person_key = ANY($1::text[]))::int AS seen,
+            (SELECT COUNT(*) FROM inbox_actions WHERE person_key = ANY($1::text[]))::int AS acts,
+            (SELECT COUNT(*) FROM inbox_sends WHERE person_key = ANY($1::text[]))::int AS sends`,
+    [[PERSONAL, UNUSED, MOVED]]
+  );
+  assert.deepEqual(written.rows[0], { seen: 0, acts: 0, sends: 0 }, 'nothing is written for any of them');
+});
+
+test('personal mail: its owner sees the row with personal set, opens it, marks it seen and taps it', async () => {
+  // The owner is users.id 1 in production; this suite's manager stands in.
+  engine.__setEngineDeps({ personalOwnerId: U.manager.id });
+  try {
+    cache.invalidate();
+    const row = rowOf(await list(U.manager), PERSONAL);
+    assert.deepEqual([row.personal, row.need, row.channels], [true, 'Dinner on Sunday?', ['email']]);
+    assert.equal(rowOf(await list(U.admin), PERSONAL), undefined, 'still hidden from everyone else');
+    const opened = await call('GET', `/api/admin/inbox/${PERSONAL}`, { token: U.manager.token });
+    assert.deepEqual([opened.status, opened.body.status, opened.body.reply.mode], [200, 'waiting', 'open']);
+    assert.equal((await call('POST', `/api/admin/inbox/${PERSONAL}/seen`, { token: U.manager.token })).status, 204);
+    assert.equal((await act(PERSONAL, { action: 'claim' }, U.manager)).status, 201);
+    const text = await call('POST', `/api/admin/inbox/${PERSONAL}/text`, { token: U.manager.token, body: {} });
+    assert.deepEqual([text.status, text.body.code], [400, 'VALIDATION_ERROR'], 'past the personal check, the route\'s own refusal');
+    const unused = await call('POST', `/api/admin/inbox/${UNUSED}/seen`, { token: U.manager.token });
+    assert.deepEqual([unused.status, unused.body.code], [404, 'NOT_FOUND'], 'an e- key with no mail is no one, to the owner too');
+  } finally {
+    engine.__resetEngine();
+  }
+});
+
+// Test 3 of the 2026-10-15 brief over the routes: one friend, two items. The
+// business one is everyone's; the personal one is the owner's alone.
+test('one sender, a personal mail and a business mail: another admin lists and opens the business one only; the owner sees both', async () => {
+  engine.__setEngineDeps({ personalOwnerId: U.manager.id });
+  try {
+    cache.invalidate();
+    const admin = await list(U.admin);
+    assert.deepEqual([rowOf(admin, PERSONAL), rowOf(admin, FRIEND_BUSINESS).personal], [undefined, false]);
+    const opened = await call('GET', `/api/admin/inbox/${FRIEND_BUSINESS}`, { token: U.admin.token });
+    assert.deepEqual([opened.status, opened.body.thread.map((r) => r.text)], [200, ['Do you do corporate events?']]);
+    const owner = await list(U.manager);
+    assert.deepEqual([rowOf(owner, PERSONAL).personal, rowOf(owner, FRIEND_BUSINESS).personal], [true, false]);
+    assert.notEqual(PERSONAL, FRIEND_BUSINESS);
+  } finally {
+    engine.__resetEngine();
+  }
+});
+
+// Test 7 over the routes, last in the file because it makes the friend a
+// client: the personal key never moves, so another admin still gets the
+// plain 404 with no moved_to, and the owner still opens it; the friend's
+// business key now has no mail of its own and moves to the client.
+test('the personal key never moves: the friend became a client, the personal key is still the plain 404 with no moved_to, and the owner opens it', async () => {
+  const friendClient = await addClient('Friend', null);
+  await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [FRIEND, friendClient]);
+  engine.__setEngineDeps({ personalOwnerId: U.manager.id });
+  try {
+    cache.invalidate();
+    const gone = await call('GET', '/api/admin/inbox/c-2147483000', { token: U.admin.token });
+    const hidden = await call('GET', `/api/admin/inbox/${PERSONAL}`, { token: U.admin.token });
+    assert.deepEqual([hidden.status, hidden.body], [gone.status, gone.body], 'the plain 404, with no moved_to');
+    assert.equal(rowOf(await list(U.admin), PERSONAL), undefined);
+    const owner = await call('GET', `/api/admin/inbox/${PERSONAL}`, { token: U.manager.token });
+    const mailRows = (body) => body.thread.filter((r) => String(r.ref || '').startsWith('gm:')).map((r) => r.text);
+    assert.deepEqual([owner.status, mailRows(owner.body)], [200, ['Dinner on Sunday?']]);
+    const moved = await call('GET', `/api/admin/inbox/${FRIEND_BUSINESS}`, { token: U.admin.token });
+    assert.deepEqual([moved.status, moved.body.code, moved.body.moved_to], [404, 'INBOX_MOVED', `c-${friendClient}`]);
+    const theirItem = await call('GET', `/api/admin/inbox/c-${friendClient}`, { token: U.admin.token });
+    assert.deepEqual(mailRows(theirItem.body), ['Do you do corporate events?'], 'the client item never holds the personal mail');
+  } finally {
+    engine.__resetEngine();
+  }
 });
