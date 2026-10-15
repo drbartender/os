@@ -553,4 +553,10 @@ Switch-on, after the push that carries lanes 1 to 4 at least:
 **From Dallas after the fleet, 2026-10-14:**
 30. Personal mail at dallas@ (unknown sender, no other alias in copy) is tagged, never AI-read, and visible only to his own account (decision 6, sections 4.1, 5.2, 6, 8, 9, 14).
 
-**From planning:** none yet. The plan adds them here, numbered, as the parent spec does.
+**From planning (`docs/superpowers/plans/2026-10-14-inbox-email-zola.md`, 2026-10-14):**
+31. **Lane 2 stores gated Zola notices as `zola_unparsed`** with a minimal `zolaLeads.findOrCreateLead` (by uuid, open label, or a "Zola notice <date>" row), so the Zola reader always has a lead; lane 3 adds the body parser, the client creation and the cap (sections 5.6, 16).
+32. **Constants named by the plan** beyond section 9: `EMAIL_PRECLIP_MAX` (8,000), `GMAIL_LEASE_SECONDS` (120), `GMAIL_SKIP_ATTEMPTS` (3), `ZOLA_VENDOR_ADDRESS`, `ZOLA_RELAY_DOMAIN`, `ZOLA_DASHBOARD_URL`, `NO_REPLY_LOCAL_RE`, `AUTO_REPLY_SUBJECT_RE`.
+33. **The Gmail client** exports `configurationError()` (the fixed parse message) and `GMAIL_MAILBOX`; `listHistory` sends `historyTypes` as a repeated query parameter, one per type (section 10).
+34. **Readers resolve a multi-recipient Sent row as a set:** `mapGmailHeaders(rows, index)` takes every header row, because resolving "the inbound this answers" needs the stored inbound rows beside the Sent row (section 5.1).
+35. **The page's file names:** the list row is `WaitingRows.js`, the thread `Thread.js` and `inboxThread.js`, the card `ContextViews.js`, the feed line `FeedsLine.js` (section 9).
+36. **The Send guard's suite** is a new `server/routes/proposals/lifecycle.sendGuard.test.js`; there is no `lifecycle.test.js` today (section 14).
