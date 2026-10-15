@@ -560,3 +560,13 @@ Switch-on, after the push that carries lanes 1 to 4 at least:
 34. **Readers resolve a multi-recipient Sent row as a set:** `mapGmailHeaders(rows, index)` takes every header row, because resolving "the inbound this answers" needs the stored inbound rows beside the Sent row (section 5.1).
 35. **The page's file names:** the list row is `WaitingRows.js`, the thread `Thread.js` and `inboxThread.js`, the card `ContextViews.js`, the feed line `FeedsLine.js` (section 9).
 36. **The Send guard's suite** is a new `server/routes/proposals/lifecycle.sendGuard.test.js`; there is no `lifecycle.test.js` today (section 14).
+
+**From the plan fleet (plan-fidelity, plan-decomposition, plan-feasibility, 2026-10-14; every finding verified, folded into the plan):**
+37. **The Zola gate and subject match live in `zolaMail.js` from lane 2** with their tests (gate pass, DKIM fail, DMARC fail; the templates; the fallback label); lane 3 adds the body parser to the same module and never redefines the gate (sections 5.6, 16).
+38. **The personal skip in `subjects.buildSubjects` ships with lane 2,** not lane 4, so the existing read job never reads personal mail in the state between merges; and a **push gate** is written into the plan: no push carries email-feed until zola-leads and email-ai are merged, and the key is not set in Render before that push (sections 6, 16).
+39. **The personal filter reaches the seen, actions and text routes and the badge,** which lives in `server/routes/admin/settings.js`, not the Inbox route; the gm event meta carries `toAddresses` so `isPersonal` has its input (sections 5.1, 8).
+40. **The Send guard moves to lane zola-leads,** next to the client creation it protects, and reads the client through the one transaction connection before the status update (section 5.6).
+41. **The sibling legal-hold flag is set by the engine in lane 2** (it already knows the held keys) and refused by `isReadable` in lane 4 (section 6).
+42. **Schema is applied to dev through `initDb()`,** never a single `pool.query` of the file; `proposals_source_check` also gains its `CONSTRAINT_CONTRACT` entry in `server/db/index.js` (section 7).
+43. **The first tick inserts the `gmail_sync_state` row** before claiming the lease; the "Gmail failing" Sentry warning is hourly, not per streak (section 5.5).
+44. **The feed status words come from `feedItems` in `inboxFormat.js`**, which today special-cases only Thumbtack; the own-address set extracts the bare address from the display-form `FROM_EMAIL` (sections 4.6, 5.2).
