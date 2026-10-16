@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-staff.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pinyon+Script&amp;family=Cormorant+Garamond:wght@500;600;700&amp;family=Rye&amp;family=Alegreya+SC:wght@700&amp;family=Alegreya:wght@400;500&amp;family=Josefin+Sans:wght@300;600&amp;family=Karla:wght@400;500&amp;family=Shrikhand&amp;family=Righteous&amp;family=Work+Sans:wght@400;500&amp;family=Creepster&amp;family=IM+Fell+English+SC&amp;family=IM+Fell+English&amp;family=Pacifico&amp;family=Fredoka:wght@500;600&amp;family=Nunito+Sans:wght@400;600&amp;display=swap">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <style>html,body{margin:0;height:100%}a{color:var(--ink-2)}a:hover{color:var(--ink-1)}@keyframes mdsh{from{background-position:120% 0}to{background-position:-120% 0}}</style>
+</helmet>
+<div data-app="admin-os" data-skin="{{ skin }}" data-density="comfy" data-sidebar="{{ sbMode }}" style="height:100vh;font-family:var(--font-ui, Inter, sans-serif)">
+  <div class="shell" style="height:100%;position:relative">
+    <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Sidebar" prefs="{{ prefs }}" on-pref="{{ noop }}" active-path="/events" user="{{ user }}" hint-size="240px,100%"></x-import>
+    <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Header" title="Events" unread="{{ unread }}" hint-size="100%,48px"></x-import>
+    <main class="main" style="display:flex;flex-direction:column">
+      <sc-if value="{{ notOpen }}" hint-placeholder-val="{{ true }}">
+      <div class="page" style="max-width:1180px">
+        <div class="page-header">
+          <div>
+            <div style="font-size:12px;color:var(--ink-3);margin-bottom:4px">Events › Roscoe &amp; Phoebe Wedding</div>
+            <div class="page-title">Roscoe &amp; Phoebe Wedding</div>
+            <div class="page-subtitle">Sat, Oct 18 · 4:00 – 10:00 PM · Willow Glen Gardens · 140 guests</div>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary">Message client</button>
+            <button class="btn btn-primary">Assign staff</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+            <div class="card">
+              <div class="card-head"><h3>Details</h3><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="ok" hint-size="80px,20px">Confirmed</x-import></div>
+              <div class="card-body" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 20px">
+                <div class="meta-item"><span class="meta-k">Client</span><span class="meta-v">Phoebe Lane</span></div>
+                <div class="meta-item"><span class="meta-k">Package</span><span class="meta-v">Full bar · Signature</span></div>
+                <div class="meta-item"><span class="meta-k">Total</span><span class="meta-v num">$4,860</span></div>
+                <div class="meta-item"><span class="meta-k">Venue</span><span class="meta-v">Willow Glen Gardens</span></div>
+                <div class="meta-item"><span class="meta-k">Guests</span><span class="meta-v num">140</span></div>
+                <div class="meta-item"><span class="meta-k">Balance</span><span class="meta-v num">$2,430</span></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Staffing</h3><span class="k">3 of 4</span></div>
+              <div class="card-body"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StaffPills" positions="{{ staff }}" hint-size="120px,20px"></x-import></div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+            <div class="card">
+              <div class="card-head"><h3>Drink plan</h3><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="ok" hint-size="80px,20px">Submitted</x-import></div>
+              <div class="card-body" style="display:flex;flex-direction:column;gap:6px">
+                <sc-for list="{{ planDrinks }}" as="d" hint-placeholder-count="5">
+                  <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-1)">
+                    <span style="flex:1;min-width:0">{{ d.name }}</span>
+                    <sc-if value="{{ d.isNew }}" hint-placeholder-val="{{ false }}"><span class="tag" style="color:hsl(var(--info-h) var(--info-s) 62%)">New</span></sc-if>
+                    <sc-if value="{{ d.mock }}" hint-placeholder-val="{{ false }}"><span class="tag">Mocktail</span></sc-if>
+                  </div>
+                </sc-for>
+                <div style="font-size:12px;color:var(--ink-3)">+ 5 beer &amp; wine, 3 spirits, 2 NA</div>
+              </div>
+            </div>
+            <a href="#" style="font-size:12.5px;padding:0 4px">View event details</a>
+
+            <div class="card" style="overflow:hidden">
+              <div class="card-head"><h3>Bar menu</h3><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ c.kind }}" hint-size="80px,20px">{{ c.chip }}</x-import></div>
+              <div class="card-body" style="display:flex;gap:12px;align-items:flex-start">
+                <div style="flex:none;width:96px;height:120px">
+                  <sc-if value="{{ hasThumb }}" hint-placeholder-val="{{ true }}">{{ thumbEl }}</sc-if>
+                  <sc-if value="{{ noThumb }}" hint-placeholder-val="{{ false }}">
+                    <div style="width:96px;height:120px;box-sizing:border-box;border:1.5px dashed var(--line-3);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--ink-4);text-align:center;padding:8px">8 × 10</div>
+                  </sc-if>
+                </div>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                  <div style="font-size:13px;font-weight:500;color:var(--ink-1);text-wrap:pretty">{{ c.msg }}</div>
+                  <div style="font-size:12px;color:var(--ink-3);text-wrap:pretty">{{ c.sub }}</div>
+                  <sc-if value="{{ c.showProg }}" hint-placeholder-val="{{ false }}">
+                    <div style="height:4px;border-radius:2px;background:var(--bg-3);overflow:hidden;margin-top:4px"><div style="height:100%;background:var(--accent);transition:width .4s;width:{{ progPct }}"></div></div>
+                  </sc-if>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+                    <sc-if value="{{ c.hasP }}" hint-placeholder-val="{{ true }}"><button class="{{ c.pCls }}" onClick="{{ c.onP }}">{{ c.p }}</button></sc-if>
+                    <sc-if value="{{ c.hasS }}" hint-placeholder-val="{{ false }}"><button class="btn btn-ghost btn-sm" onClick="{{ c.onS }}">{{ c.s }}</button></sc-if>
+                  </div>
+                </div>
+              </div>
+              <sc-if value="{{ fold }}" hint-placeholder-val="{{ true }}">
+                <div style="border-top:1px solid var(--line-1)">
+                  <div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line-1)">
+                    <div style="flex:1;min-width:0"><div class="meta-k">Print file</div><div style="font-size:12.5px;color:var(--ink-1);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ pf.name }}</div></div>
+                    <sc-if value="{{ pf.has }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">PDF</button><button class="btn btn-secondary btn-sm">PNG</button></div></sc-if>
+                    <sc-if value="{{ pf.none }}" hint-placeholder-val="{{ true }}"><button class="btn btn-ghost btn-sm">Upload</button></sc-if>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;padding:9px 16px">
+                    <div style="width:28px;height:28px;flex:none;border-radius:4px;background:#fbf8f3;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font:600 10px 'Cormorant Garamond',serif;color:#5b3566">R&amp;P</div>
+                    <div style="flex:1;min-width:0"><div class="meta-k">Client image</div><div style="font-size:12.5px;color:var(--ink-1);margin-top:2px">monogram.png · {{ imgUseLabel }}</div></div>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      </sc-if>
+      <sc-if value="{{ open }}" hint-placeholder-val="{{ false }}">
+      <div aria-label="Bar menu editor" style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;color:var(--ink-1)">
+        <div style="height:56px;flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid var(--line-1)">
+          <button class="btn btn-ghost btn-sm" onClick="{{ closeEd }}" style="gap:6px"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="13" hint-size="13px,13px"></x-import>Roscoe &amp; Phoebe Wedding</button>
+          <div style="width:1px;height:18px;background:var(--line-2)"></div>
+          <div style="font-size:15px;font-weight:600;color:var(--ink-1)">Bar menu</div>
+          <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ c.kind }}" hint-size="80px,20px">{{ c.chip }}</x-import>
+          <div style="flex:1"></div>
+          <div style="font-family:var(--font-numeric, 'JetBrains Mono', monospace);font-size:11.5px;color:{{ saveColor }}">{{ saveText }}</div>
+          <sc-if value="{{ saveFailed }}" hint-placeholder-val="{{ false }}"><button class="btn btn-secondary btn-sm" onClick="{{ retrySave }}">Retry</button></sc-if>
+          <div style="width:1px;height:20px;background:var(--line-2)"></div>
+          <button class="btn btn-primary" disabled="{{ approveDisabled }}" title="{{ approveWhy }}" onClick="{{ approve }}">{{ approveLabel }}</button>
+        </div>
+
+        <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 340px">
+          <div style="display:flex;flex-direction:column;min-width:0;min-height:0">
+            <sc-if value="{{ bn.show }}" hint-placeholder-val="{{ false }}">
+              <div style="margin:14px 24px 0;display:flex;align-items:center;gap:12px;padding:9px 10px 9px 14px;border-radius:6px;border:1px solid {{ bn.line }};background:{{ bn.bg }};font-size:12.5px">
+                <span style="width:7px;height:7px;border-radius:50%;flex:none;background:{{ bn.dot }}"></span>
+                <div style="flex:1;min-width:0;text-wrap:pretty"><strong style="font-weight:600;color:var(--ink-1)">{{ bn.title }}</strong> <span style="color:var(--ink-2)">{{ bn.text }}</span></div>
+                <sc-if value="{{ bn.hasA2 }}" hint-placeholder-val="{{ false }}"><button class="btn btn-ghost btn-sm" onClick="{{ bn.a2fn }}">{{ bn.a2 }}</button></sc-if>
+                <sc-if value="{{ bn.hasA1 }}" hint-placeholder-val="{{ false }}"><button class="btn btn-secondary btn-sm" onClick="{{ bn.a1fn }}">{{ bn.a1 }}</button></sc-if>
+              </div>
+            </sc-if>
+            <div class="scroll-thin" style="flex:1;min-height:0;overflow:auto;display:flex;justify-content:center;padding:14px 24px 28px">
+              <div style="display:flex;flex-direction:column;gap:8px;width:{{ pvW }}">
+                <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 12px;font-family:var(--font-numeric, monospace);font-size:11px;color:var(--ink-3)">
+                  <span>{{ metaL }}</span><span>{{ metaR }}</span>
+                </div>
+                <sc-if value="{{ genActive }}" hint-placeholder-val="{{ false }}">
+                  <div style="height:3px;border-radius:2px;background:var(--bg-3);overflow:hidden"><div style="height:100%;background:var(--accent);transition:width .4s;width:{{ progPct }}"></div></div>
+                </sc-if>
+                <sc-if value="{{ hasCanvas }}" hint-placeholder-val="{{ false }}">{{ menuEl }}</sc-if>
+                <sc-if value="{{ em.show }}" hint-placeholder-val="{{ true }}">
+                  <div style="height:{{ pvH }};box-sizing:border-box;border:1.5px dashed var(--line-3);border-radius:4px;background:var(--bg-1);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:36px;text-align:center">
+                    <div style="font-size:16px;font-weight:600;color:var(--ink-1)">{{ em.title }}</div>
+                    <div style="font-size:12.5px;color:var(--ink-3);max-width:36ch;text-wrap:pretty;line-height:1.5">{{ em.text }}</div>
+                    <sc-if value="{{ em.hasBtn }}" hint-placeholder-val="{{ true }}"><button class="{{ em.cls }}" onClick="{{ em.fn }}">{{ em.btn }}</button></sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+
+          <div style="border-left:1px solid var(--line-1);background:var(--bg-1);display:flex;flex-direction:column;min-height:0">
+            <div style="flex:none;display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--line-1)">
+              <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3"><button onClick="{{ t.on }}" style="background:none;border:0;border-bottom:2px solid {{ t.line }};margin-bottom:-1px;padding:12px 10px 10px;font:inherit;font-size:12.5px;font-weight:600;color:{{ t.color }};cursor:pointer">{{ t.label }}</button></sc-for>
+            </div>
+            <div class="scroll-thin" style="flex:1;min-height:0;overflow:auto;padding:16px">
+              <sc-if value="{{ tabDesign }}" hint-placeholder-val="{{ true }}"><div style="display:flex;flex-direction:column;gap:22px;opacity:{{ rightOpacity }};pointer-events:{{ rightPE }}">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Font pairing</span>
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <sc-for list="{{ pairs }}" as="p" hint-placeholder-count="6">
+                  <button onClick="{{ p.on }}" style="display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;border:1px solid {{ p.border }};background:{{ p.bg }};color:var(--ink-1);cursor:pointer;text-align:left;font:inherit">
+                    <span style="flex:1;min-width:0;font-family:{{ p.font }};font-size:{{ p.size }};font-weight:{{ p.weight }};text-transform:{{ p.tt }};letter-spacing:{{ p.tk }};line-height:1.25;white-space:nowrap;overflow:hidden">Bar Menu</span>
+                    <span style="font-family:var(--font-numeric, monospace);font-size:10.5px;color:var(--ink-3)">{{ p.id }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Colors</span>
+              <div style="display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center;font-size:12px;color:var(--ink-3)">
+                <span>Ink</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ inkSw }}" as="s" hint-placeholder-count="4"><button title="{{ s.title }}" onClick="{{ s.on }}" style="width:22px;height:22px;border-radius:50%;border:0;cursor:pointer;background:{{ s.hex }};box-shadow:{{ s.ring }}"></button></sc-for></div>
+                <span>Accent</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ accSw }}" as="s" hint-placeholder-count="6"><button title="{{ s.title }}" onClick="{{ s.on }}" style="width:22px;height:22px;border-radius:50%;border:0;cursor:pointer;background:{{ s.hex }};box-shadow:{{ s.ring }}"></button></sc-for></div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Text backing</span>
+              <div class="seg" style="align-self:flex-start"><sc-for list="{{ bkSeg }}" as="o" hint-placeholder-count="3"><button class="{{ o.cls }}" onClick="{{ o.on }}">{{ o.label }}</button></sc-for></div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Background</span>
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line-1);border-radius:6px;background:var(--bg-2)">
+                <div style="flex:1;min-width:0;font-size:12.5px">Pastel garden<span style="display:block;font-size:11px;color:var(--ink-3)">{{ bgSub }}</span></div>
+                <button class="btn btn-secondary btn-sm" disabled="{{ rollDisabled }}" onClick="{{ rerollBg }}">Re-roll</button>
+              </div>
+            </div>
+
+            
+            <button role="switch" aria-checked="{{ markStr }}" onClick="{{ toggleMark }}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:none;border:0;padding:0;color:var(--ink-1);font:inherit;font-size:12.5px;cursor:pointer;text-align:left">
+                <span>Dr. Bartender mark<span style="display:block;font-size:11.5px;color:var(--ink-3)">Small, bottom right</span></span>
+                <span style="width:30px;height:18px;border-radius:9px;background:{{ markTrack }};position:relative;flex:none;transition:background .12s"><span style="position:absolute;top:2px;left:{{ markKnob }};width:14px;height:14px;border-radius:50%;background:#fff;transition:left .12s"></span></span>
+              </button>
+            <sc-if value="{{ markOn }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink-3);margin-top:-10px">
+                <span>Wordmark color</span>
+                <div class="seg"><sc-for list="{{ markColSeg }}" as="o" hint-placeholder-count="3"><button class="{{ o.cls }}" onClick="{{ o.on }}">{{ o.label }}</button></sc-for></div>
+              </div>
+            </sc-if>
+</div></sc-if>
+              <sc-if value="{{ tabDrinks }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:20px;opacity:{{ rightOpacity }};pointer-events:{{ rightPE }}"><div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Drinks</span><span style="font-family:var(--font-numeric, monospace);font-size:11px;color:var(--ink-3)">{{ drinkCount }}</span></div>
+              <div style="border:1px solid var(--line-1);border-radius:6px;overflow:hidden">
+                <sc-for list="{{ drinkRows }}" as="d" hint-placeholder-count="5">
+                  <div style="border-bottom:1px solid var(--line-1);background:{{ d.bg }}">
+                    <button onClick="{{ d.sel }}" style="width:100%;display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 10px;background:none;border:0;color:var(--ink-1);font:inherit;cursor:pointer;text-align:left">
+                      <span style="font-family:var(--font-numeric, monospace);font-size:10.5px;color:var(--ink-4)">{{ d.n }}</span>
+                      <span style="min-width:0;font-size:12.5px;line-height:1.3;opacity:{{ d.op }};text-decoration:{{ d.strike }}">{{ d.name }}<span style="display:block;font-size:11px;color:var(--ink-3)">{{ d.sub }}</span></span>
+                      <span style="font-size:10.5px;font-weight:600;letter-spacing:.02em;color:{{ d.stColor }}">{{ d.st }}</span>
+                    </button>
+                    <sc-if value="{{ d.open }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding:0 10px 10px 34px;display:flex;flex-direction:column;gap:6px">
+                        <input class="input" placeholder="Note for the re-roll, e.g. add a salt rim" value="{{ note }}" onChange="{{ setNote }}" style="width:100%;box-sizing:border-box">
+                        <div style="display:flex;gap:6px">
+                          <button class="btn btn-secondary btn-sm" disabled="{{ rollDisabled }}" onClick="{{ d.reroll }}">Re-roll art</button>
+                          <button class="btn btn-ghost btn-sm" onClick="{{ d.hide }}">{{ d.hideLabel }}</button>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="font-size:11.5px;color:var(--ink-3);line-height:1.45">Up to 8 are illustrated. Drinks 9–12 list as text under “More from the bar”.</div>
+            </div>
+          </div></sc-if>
+              <sc-if value="{{ tabBrief }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:22px">
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Client brief</span><span style="font-size:11px;color:var(--ink-4)">Potion Planner · read-only</span></div>
+                <div style="background:var(--bg-2);border:1px solid var(--line-1);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:10px;font-size:12.5px;line-height:1.45">
+                  <div><div class="meta-k">Theme &amp; colors</div><div style="margin-top:2px;color:var(--ink-1)">Garden wedding, soft and romantic.</div>
+                    <div style="display:flex;gap:5px;margin-top:6px"><sc-for list="{{ clientSw }}" as="s" hint-placeholder-count="5"><span title="{{ s.name }}" style="width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);background:{{ s.hex }}"></span></sc-for></div>
+                    <div style="font-size:11.5px;color:var(--ink-3);margin-top:4px">Periwinkle, lilac, coral, plum, mustard</div></div>
+                  <div><div class="meta-k">Drink naming</div><div style="margin-top:2px;color:var(--ink-1)">Name two after us, Roscoe and Phoebe. Keep the rest classic.</div></div>
+                  <div><div class="meta-k">Design notes</div><div style="margin-top:2px;color:var(--ink-1);border-radius:3px;padding:{{ notesPad }};background:{{ notesHl }}">{{ designNotes }}</div>
+                    <sc-if value="{{ notesEdited }}" hint-placeholder-val="{{ false }}"><div style="font-size:11.5px;color:hsl(var(--info-h) var(--info-s) 66%);margin-top:4px">Edited by client · Oct 8, 9:14 PM</div></sc-if></div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Client image</span>
+                <div style="display:grid;grid-template-columns:64px minmax(0,1fr);gap:12px;align-items:start">
+                  <div style="width:64px;height:64px;border-radius:6px;border:1px solid var(--line-2);background:#fbf8f3;display:flex;align-items:center;justify-content:center"><div style="width:48px;height:48px;border-radius:50%;border:1.4px solid #5b3566;display:flex;align-items:center;justify-content:center;font:600 15px 'Cormorant Garamond',serif;color:#5b3566">R&amp;P</div></div>
+                  <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+                    <div style="font-family:var(--font-numeric, monospace);font-size:11.5px;color:var(--ink-2)">monogram.png</div>
+                    <div class="seg"><sc-for list="{{ useSeg }}" as="o" hint-placeholder-count="3"><button class="{{ o.cls }}" onClick="{{ o.on }}">{{ o.label }}</button></sc-for></div>
+                  </div>
+                </div>
+                <sc-if value="{{ isLogo }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px 10px;align-items:center;font-size:12px;color:var(--ink-3);margin-top:2px">
+                    <span>Placement</span><div class="seg" style="justify-self:start"><sc-for list="{{ placeSeg }}" as="o" hint-placeholder-count="2"><button class="{{ o.cls }}" onClick="{{ o.on }}">{{ o.label }}</button></sc-for></div>
+                    <span>Backing</span><div class="seg" style="justify-self:start"><sc-for list="{{ backSeg }}" as="o" hint-placeholder-count="2"><button class="{{ o.cls }}" onClick="{{ o.on }}">{{ o.label }}</button></sc-for></div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ isStyleRef }}" hint-placeholder-val="{{ false }}"><div style="font-size:12px;color:var(--ink-3)">Used as the style reference below. Not printed.</div></sc-if>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Style reference</span><span style="font-size:11px;color:var(--ink-4)">Optional · never printed</span></div>
+                <sc-if value="{{ hasRef }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--bg-2)">
+                    <span style="flex:1;font-family:var(--font-numeric, monospace);font-size:11.5px;color:var(--ink-2)">{{ refName }}</span>
+                    <button class="btn btn-ghost btn-sm" onClick="{{ clearRef }}">Remove</button>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ noRef }}" hint-placeholder-val="{{ true }}">
+                  <div style="border:1.5px dashed var(--line-3);border-radius:6px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);text-align:center">
+                    <span>Drop an image to steer the style</span>
+                    <div style="display:flex;gap:6px"><button class="btn btn-secondary btn-sm" onClick="{{ uploadRef }}">Upload</button></div>
+                  </div>
+                </sc-if>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <span style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:600">Art direction</span>
+                <textarea class="input" rows="3" value="{{ dir }}" onChange="{{ setDir }}" placeholder="e.g. watercolor, moody, gold accents" style="height:auto;min-height:64px;padding:8px 10px;resize:vertical;font-family:inherit;line-height:1.45;width:100%;box-sizing:border-box"></textarea>
+              </div>
+
+              
+            </div></sc-if>
+            </div>
+            <div style="flex:none;padding:12px 16px;border-top:1px solid var(--line-1);display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink-3)">
+                <span>Image model</span>
+                <div class="seg"><sc-for list="{{ modelSeg }}" as="o" hint-placeholder-count="2"><button class="{{ o.cls }}" onClick="{{ o.on }}">{{ o.label }}</button></sc-for></div>
+              </div>
+              <button class="{{ genCls }}" disabled="{{ genDisabled }}" onClick="{{ genClick }}" style="justify-content:center;width:100%"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="sparkles" size="13" hint-size="13px,13px"></x-import>{{ genLabel }}</button>
+              <div style="font-size:11.5px;color:var(--ink-3);text-align:center">{{ genHint }}</div>
+            </div>
+          </div>
+        </div>
+
+                <sc-if value="{{ cf.show }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:5">
+            <div style="width:400px;background:var(--bg-elev);border:1px solid var(--line-2);border-radius:10px;box-shadow:var(--shadow-pop);padding:18px 20px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-size:15px;font-weight:600;color:var(--ink-1)">{{ cf.title }}</div>
+              <div style="font-size:12.5px;color:var(--ink-2);line-height:1.5;text-wrap:pretty">{{ cf.text }}</div>
+              <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px">
+                <button class="btn btn-ghost" onClick="{{ cancelCf }}">Cancel</button>
+                <button class="{{ cf.cls }}" onClick="{{ cf.fn }}">{{ cf.btn }}</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+      </sc-if>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;skin&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;After Hours&quot;,&quot;House Lights&quot;],&quot;default&quot;:&quot;After Hours&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;state&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Not set up&quot;,&quot;No drinks&quot;,&quot;Never generated&quot;,&quot;Generating&quot;,&quot;Draft ready&quot;,&quot;Drawing failed&quot;,&quot;Words failed&quot;,&quot;Image limit&quot;,&quot;Plan changed&quot;,&quot;Notes edited&quot;,&quot;Saving&quot;,&quot;Save failed&quot;,&quot;Text too long&quot;,&quot;Approving&quot;,&quot;Approved&quot;,&quot;Edited since approval&quot;,&quot;Replaced by upload&quot;,&quot;Print file removed&quot;,&quot;No menu needed&quot;],&quot;default&quot;:&quot;Draft ready&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;view&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Event page&quot;,&quot;Editor&quot;],&quot;default&quot;:&quot;Event page&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const PAIR={
+'elegant-script':{name:'Garden Script',t:["'Pinyon Script',cursive",88,400,'none','0'],h:["'Cormorant Garamond',Georgia,serif",25,700,'0'],b:["'Cormorant Garamond',Georgia,serif",17.5,500],ink:'#2c2238',acc:'#8a6a2f'},
+'rustic':{name:'Barn & Ledger',t:["'Rye',Georgia,serif",60,400,'none','.02em'],h:["'Alegreya SC',Georgia,serif",22,700,'.02em'],b:["'Alegreya',Georgia,serif",16,400],ink:'#33251a',acc:'#8e3b1c'},
+'modern-clean':{name:'Gallery',t:["'Josefin Sans',sans-serif",54,300,'uppercase','.32em'],h:["'Josefin Sans',sans-serif",18,600,'.1em'],b:["'Karla',sans-serif",15,400],ink:'#1d232b',acc:'#3d5c8c'},
+'retro':{name:'Mirror Ball',t:["'Shrikhand',Georgia,serif",68,400,'none','0'],h:["'Righteous',sans-serif",21,400,'.01em'],b:["'Work Sans',sans-serif",15,400],ink:'#2a1838',acc:'#c8336f'},
+'spooky':{name:'Hollow',t:["'Creepster',fantasy",84,400,'none','.03em'],h:["'IM Fell English SC',Georgia,serif",23,400,'.02em'],b:["'IM Fell English',Georgia,serif",16,400],ink:'#1f1a15',acc:'#8d2f10'},
+'tropical':{name:'Tiki Hour',t:["'Pacifico',cursive",64,400,'none','0'],h:["'Fredoka',sans-serif",22,600,'0'],b:["'Nunito Sans',sans-serif",15,400],ink:'#173a38',acc:'#cf4f37'}};
+const CLIENT=[['Periwinkle','#8f9ee6'],['Lilac','#b9a2d8'],['Coral','#ee8a72'],['Plum','#6b3a6e'],['Mustard','#d9a93a']];
+const DR=[
+{id:'g1',name:'Roscoe’s Paloma',desc:'Tequila, grapefruit, lime, and soda. Bright and a little tart.',glass:'highball',liq:'#f6b0a6',gar:'grapefruit'},
+{id:'g2',name:'The Groom’s Old Fashioned',desc:'Bourbon, bitters, orange, and a touch of sugar. Smooth and classic.',glass:'rocks',liq:'#c98a3a',gar:'orangepeel'},
+{id:'g3',name:'Lavender Lemon Drop',desc:'Vodka, lemon, and lavender syrup. Floral and crisp.',glass:'martini',liq:'#efe2a0',gar:'lavender'},
+{id:'g4',name:'Phoebe’s Garden Spritz',desc:'Aperol, prosecco, and soda. Light and sunny.',glass:'wine',liq:'#f39a4a',gar:'orange'},
+{id:'g5',name:'Coral Crush',desc:'Strawberry, lime, mint, and sparkling water.',glass:'highball',liq:'#f58a78',gar:'strawberry',mock:true,ai:true}];
+const CUKE={id:'g6',name:'Cucumber Mule',desc:'Vodka, cucumber, lime, and ginger beer.',glass:'rocks',liq:'#d6e8b0',gar:'lime'};
+const ALSO=[['Beer and Wine','Pinot Grigio, Cabernet, Prosecco, Miller Lite, Corona.'],['Spirits','Vodka, Tequila, Bourbon.'],['Non-Alcoholic','Athletic Brewing NA, sparkling water.']];
+const LONG='Bourbon, demerara, Angostura and orange bitters, stirred long over one clear cube and finished with an expressed orange peel and a Luxardo cherry, the way the groom’s grandfather made it every Sunday.';
+const SCEN={'Not set up':'nokey','No drinks':'nodrinks','Never generated':'never','Generating':'generating','Draft ready':'draft','Drawing failed':'artfail','Words failed':'words','Image limit':'limit','Plan changed':'plan','Notes edited':'notes','Saving':'saving','Save failed':'savefail','Text too long':'toolong','Approving':'approving','Approved':'approved','Edited since approval':'edited','Replaced by upload':'replaced','Print file removed':'removed','No menu needed':'nomenu'};
+const NODRAFT=['nokey','nodrinks','never','words','nomenu'];
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const SK='stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"';
+function garnish(g,x,y){switch(g){
+case 'grapefruit':return `<path d="M${x-11} ${y} A11 11 0 0 1 ${x+11} ${y}Z" fill="#f59a8f" ${SK}/><path d="M${x} ${y} L${x-6} ${y-8} M${x} ${y} L${x+6} ${y-8} M${x} ${y} L${x} ${y-10}" stroke="#fff3ef" stroke-width="1.2"/>`;
+case 'orangepeel':return `<path d="M${x-4} ${y-16} q12 6 4 16 q-7 10 5 19" fill="none" stroke="#e8892f" stroke-width="3.6" stroke-linecap="round"/>`;
+case 'lavender':return `<path d="M${x} ${y+6} L${x+8} ${y-24}" stroke="#6f8f5a" stroke-width="1.6"/>`+[0,1,2,3,4].map(i=>`<ellipse cx="${x+2+i*1.6}" cy="${y-6-i*4.5}" rx="2.6" ry="1.7" fill="#9b7fc7" transform="rotate(-60 ${x+2+i*1.6} ${y-6-i*4.5})"/>`).join('');
+case 'orange':return `<circle cx="${x}" cy="${y}" r="10" fill="#f2a03b" ${SK}/>`+[0,60,120].map(a=>`<path d="M${x} ${y-8} L${x} ${y+8}" stroke="#fff1d6" stroke-width="1" transform="rotate(${a} ${x} ${y})"/>`).join('');
+case 'strawberry':return `<path d="M${x} ${y+10} C${x-11} ${y+2} ${x-9} ${y-8} ${x} ${y-6} C${x+9} ${y-8} ${x+11} ${y+2} ${x} ${y+10}Z" fill="#e2433f" ${SK}/><path d="M${x-5} ${y-7} L${x} ${y-12} L${x+5} ${y-7}" fill="#6ea35a" stroke="#6ea35a" stroke-width="2"/>`;
+case 'lime':return `<circle cx="${x}" cy="${y}" r="9" fill="#a8d05a" ${SK}/><circle cx="${x}" cy="${y}" r="5.5" fill="none" stroke="#e9f6cf" stroke-width="1"/>`;
+default:return '';}}
+function glass(d){const L=d.liq,g=d.gar;const base=`<path d="M50 72 L50 122" ${SK}/><ellipse cx="50" cy="124" rx="20" ry="4" fill="none" ${SK}/>`;let s='';
+switch(d.glass){
+case 'highball':s=`<path d="M31 34 L34.5 125 Q50 128 65.5 125 L69 34Z" fill="${L}"/><rect x="38" y="46" width="13" height="13" rx="2" transform="rotate(12 44 52)" fill="rgba(255,255,255,.35)" stroke="currentColor" stroke-width="1.3"/><rect x="47" y="66" width="13" height="13" rx="2" transform="rotate(-10 53 72)" fill="rgba(255,255,255,.3)" stroke="currentColor" stroke-width="1.3"/><path d="M58 3 L52 112" ${SK}/><path d="M30 18 L34 127 Q50 131 66 127 L70 18" fill="none" ${SK}/><ellipse cx="50" cy="18" rx="20" ry="3.2" fill="none" ${SK}/>`+garnish(g,69,20);break;
+case 'rocks':s=`<path d="M26.5 76 L29 123 Q50 127 71 123 L73.5 76Z" fill="${L}"/><rect x="37" y="78" width="25" height="25" rx="3" transform="rotate(-8 49 90)" fill="rgba(255,255,255,.32)" stroke="currentColor" stroke-width="1.4"/><path d="M24 52 L28.5 125 Q50 130 71.5 125 L76 52" fill="none" ${SK}/><ellipse cx="50" cy="52" rx="26" ry="4.2" fill="none" ${SK}/>`+garnish(g,70,60);break;
+case 'martini':s=`<path d="M21 31 L79 31 L50 65Z" fill="${L}"/><path d="M12 24 L50 70 L88 24" fill="none" ${SK}/><ellipse cx="50" cy="24" rx="38" ry="3.6" fill="none" ${SK}/>${base}`+garnish(g,80,26);break;
+case 'wine':s=`<path d="M28.5 44 Q28 72 50 75 Q72 72 71.5 44Z" fill="${L}"/><path d="M30 14 Q22 70 50 77 Q78 70 70 14" fill="none" ${SK}/><ellipse cx="50" cy="14" rx="20" ry="3" fill="none" ${SK}/><path d="M50 77 L50 122" ${SK}/><ellipse cx="50" cy="124" rx="20" ry="4" fill="none" ${SK}/>`+garnish(g,48,52);break;}
+return `<svg viewBox="0 0 100 140" style="width:100%;height:100%;overflow:visible;display:block" aria-hidden="true">${s}</svg>`;}
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function edgePt(r,band){const side=Math.floor(r()*4),along=r()<.62?(r()<.5?r()*.3:1-r()*.3):r(),dep=r()*band;if(side===0)return[along*800,dep];if(side===1)return[800-dep,along*1000];if(side===2)return[along*800,1000-dep];return[dep,along*1000];}
+const BGC={};
+function bgHTML(v){if(BGC[v])return BGC[v];const r=rng(17+v*97);const pal=['#c9b6e4','#f4a48e','#9fb0e8','#e7c25a','#8e5a8f','#f2b9c9'];let lv='',fl='';
+for(let i=0;i<46;i++){const[x,y]=edgePt(r,95);const a=r()*360;lv+=`<ellipse cx="${x}" cy="${y}" rx="${18+r()*14}" ry="${6+r()*4}" fill="${r()<.5?'#9db88f':'#7fa07a'}" opacity=".6" transform="rotate(${a} ${x} ${y})"/>`;}
+for(let i=0;i<34;i++){const[x,y]=edgePt(r,80);const rad=14+r()*22;const c=pal[Math.floor(r()*pal.length)];const n=5+Math.floor(r()*2);const rot=r()*72;for(let k=0;k<n;k++){const a=rot+k*360/n;fl+=`<ellipse cx="${x+rad*.48}" cy="${y}" rx="${rad*.56}" ry="${rad*.33}" fill="${c}" opacity=".78" transform="rotate(${a} ${x} ${y})"/>`;}fl+=`<circle cx="${x}" cy="${y}" r="${rad*.2}" fill="${r()<.5?'#e7c25a':'#8e5a8f'}" opacity=".9"/>`;}
+const h=`<div style="position:absolute;inset:0;background:radial-gradient(circle at 0% 0%,rgba(201,182,228,.85),transparent 32%),radial-gradient(circle at 100% 6%,rgba(244,164,142,.65),transparent 28%),radial-gradient(circle at 0% 100%,rgba(159,176,232,.75),transparent 32%),radial-gradient(circle at 100% 100%,rgba(201,182,228,.8),transparent 30%),#faf6f8"><svg viewBox="0 0 800 1000" style="position:absolute;inset:0;width:800px;height:1000px"><defs><filter id="wcG${v}" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="2" seed="${3+v}"/><feDisplacementMap in="SourceGraphic" scale="7"/></filter></defs><g filter="url(#wcG${v})">${lv}${fl}</g></svg></div>`;
+BGC[v]=h;return h;}
+const SHIM='<div style="position:absolute;inset:0;background:linear-gradient(100deg,transparent 32%,rgba(255,255,255,.6) 50%,transparent 68%);background-size:240% 100%;animation:mdsh 1.4s linear infinite"></div>';
+const ORN='<svg viewBox="0 0 230 14" style="width:230px;height:14px" aria-hidden="true"><path d="M0 7 H96 M134 7 H230" stroke="currentColor" stroke-width="1"/><path d="M115 1 L121 7 L115 13 L109 7Z" fill="currentColor"/><circle cx="101" cy="7" r="1.6" fill="currentColor"/><circle cx="129" cy="7" r="1.6" fill="currentColor"/></svg>';
+const ROWS={1:[1],2:[2],3:[3],4:[4],5:[3,2],6:[3,3],7:[4,3],8:[4,4]};
+const SLOTW={1:300,2:250,3:200,4:146};
+const chunk=l=>{const o=[];let i=0;for(const c of(ROWS[l.length]||[])){o.push(l.slice(i,i+c));i+=c;}return o;};
+const TONE={
+ ok:{bg:'hsl(var(--ok-h) var(--ok-s) 45% / .10)',line:'hsl(var(--ok-h) var(--ok-s) 45% / .32)',dot:'hsl(var(--ok-h) var(--ok-s) 52%)'},
+ warn:{bg:'hsl(var(--warn-h) var(--warn-s) 50% / .10)',line:'hsl(var(--warn-h) var(--warn-s) 50% / .34)',dot:'hsl(var(--warn-h) var(--warn-s) 55%)'},
+ danger:{bg:'hsl(var(--danger-h) var(--danger-s) 55% / .10)',line:'hsl(var(--danger-h) var(--danger-s) 55% / .36)',dot:'hsl(var(--danger-h) var(--danger-s) 62%)'},
+ info:{bg:'hsl(var(--info-h) var(--info-s) 55% / .10)',line:'hsl(var(--info-h) var(--info-s) 55% / .34)',dot:'hsl(var(--info-h) var(--info-s) 62%)'},
+ neutral:{bg:'var(--bg-2)',line:'var(--line-2)',dot:'var(--ink-3)'}};
+
+class Component extends DCLogic {
+  state = Object.assign(this.fresh(SCEN[this.props.state] || 'draft'), {open:(this.props.view ?? 'Editor')==='Editor', vh: typeof window!=='undefined'?window.innerHeight:900, vw: typeof window!=='undefined'?window.innerWidth:1440,
+    pairing:'elegant-script', ink:null, accent:null, backing:'Soft', imgUse:'logo', logoPlace:'above', logoBack:'none', refName:null, dir:'Watercolor, soft florals, airy center', mark:true});
+  timers=[];
+  fresh(code){const t={title:'Bar Menu','h.sig':'Signature Cocktails','h.mock':'Mocktails'};
+    [...DR,CUKE].forEach(d=>{t[d.id+'.n']=d.name;t[d.id+'.d']=d.desc;});ALSO.forEach((a,i)=>{t['a'+i+'.l']=a[0];t['a'+i+'.t']=a[1];});
+    if(code==='toolong')t['g2.d']=LONG;
+    return {scen:code,gen:null,texts:t,hidden:{},rer:{},bgRer:false,bgV:0,sel:null,note:'',cf:null,extra:false,
+      saveSt:code==='saving'?'saving':code==='savefail'?'failed':'saved'};}
+  componentDidMount(){this.onR=()=>this.setState({vh:window.innerHeight,vw:window.innerWidth});window.addEventListener('resize',this.onR);this.kick(this.state.scen);
+    this.fit();if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{this.lastKey=null;this.fit();});}
+  layoutKey(){const S=this.state;return [S.pairing,S.imgUse,S.logoPlace,S.logoBack,S.extra,JSON.stringify(S.hidden),JSON.stringify(S.texts)].join('|');}
+  fit(){const key=this.layoutKey();if(key!==this.lastKey){this.lastKey=key;if(this.state.ilCut){this.setState({ilCut:0});return;}}
+    const pg=document.querySelector('[data-md-page]');if(!pg)return;
+    const last=pg.lastElementChild;if(!last)return;const bottom=last.offsetTop+last.offsetHeight;
+    const art=pg.querySelector('[data-art]');const atFloor=!art||art.offsetHeight<=65;
+    if(bottom>915&&!atFloor)this.setState(s=>({ilCut:(s.ilCut||0)+6}));
+    else if(bottom>915&&atFloor&&['draft','edited','notes','plan'].includes(this.state.scen))this.setState({scen:'toolong'});}
+  componentWillUnmount(){window.removeEventListener('resize',this.onR);this.clear();}
+  componentDidUpdate(p){this.fit();
+    if(p.state!==this.props.state){const c=SCEN[this.props.state]||'draft';this.clear();this.setState(this.fresh(c),()=>this.kick(c));}
+    if(p.view!==this.props.view)this.setState({open:this.props.view==='Editor'});}
+  clear(){this.timers.forEach(clearTimeout);this.timers=[];}
+  later(fn,ms){this.timers.push(setTimeout(fn,ms));}
+  kick(c){if(c==='generating')this.startGen();if(c==='approving')this.later(()=>this.setState({scen:'approved'}),1600);}
+  drinks(){const sig=DR.filter(d=>!d.mock);if(this.state.extra)sig.push(CUKE);return [...sig,...DR.filter(d=>d.mock)];}
+  startGen(){this.clear();const n=this.drinks().length;
+    this.setState({scen:'generating',gen:0,hidden:{},rer:{},bgRer:false,cf:null,sel:null});
+    const step=k=>{if(k>n+1){this.setState({scen:'draft',gen:null,saveSt:'saved'});return;}this.setState({gen:k});this.later(()=>step(k+1),1100);};
+    this.later(()=>step(1),1400);}
+  touch(){const s=this.state.scen;const nx=(s==='approved')?'edited':s;
+    this.setState({scen:nx,saveSt:'saving'});this.later(()=>this.setState({saveSt:'saved'}),800);}
+  slotSt(d,i){const S=this.state;
+    if(S.scen==='generating'&&S.gen!=null){if(S.gen===0)return 'wait';if(i<S.gen-1)return 'ok';if(i===S.gen-1)return 'run';return 'wait';}
+    if(S.rer[d.id])return 'run';if(S.scen==='artfail'&&d.id==='g3')return 'bad';return 'ok';}
+  reroll(id){if(this.state.scen==='limit')return;this.setState(s=>({rer:{...s.rer,[id]:true},note:''}));
+    this.later(()=>{this.setState(s=>{const r={...s.rer};delete r[id];return {rer:r,scen:(s.scen==='artfail'&&id==='g3')?'draft':s.scen};});this.touch();},2200);}
+  hide(id){this.setState(s=>({hidden:{...s.hidden,[id]:!s.hidden[id]}}));this.touch();}
+  rerollBg(){if(this.state.scen==='limit')return;this.setState({bgRer:true});this.later(()=>{this.setState(s=>({bgRer:false,bgV:s.bgV+1}));this.touch();},2000);}
+  updateDraft(){this.setState(s=>({extra:true,scen:'draft',rer:{...s.rer,g6:true}}));this.later(()=>this.setState(s=>{const r={...s.rer};delete r.g6;return {rer:r};}),2200);this.touch();}
+  doApprove(){this.setState({cf:null,scen:'approving'});this.later(()=>this.setState({scen:'approved',saveSt:'saved'}),1600);}
+
+  menuHTML(edit){
+    const S=this.state,P=PAIR[S.pairing],ink=S.ink||P.ink,acc=S.accent||P.acc,T=k=>esc(S.texts[k]);
+    const E=k=>edit?` contenteditable="true" spellcheck="false" data-k="${k}"`:'';
+    const ec=edit?'cursor:text;outline-offset:4px;border-radius:3px;':'';
+    const all=this.drinks();const vis=all.filter(d=>!S.hidden[d.id]);
+    const sig=vis.filter(d=>!d.mock),mk=vis.filter(d=>d.mock);
+    const rows=chunk(sig).length+chunk(mk).length;
+    const logo=S.imgUse==='logo';
+    const il=Math.max(65,(({1:260,2:210,3:160,4:120})[rows]||160)-(S.ilCut||0));
+    const bgPend=(S.scen==='generating'&&S.gen===0)||S.bgRer;
+    const bg=bgPend?`<div style="position:absolute;inset:0;background:#ebe7ec">${SHIM}<span style="position:absolute;left:50%;bottom:44px;transform:translateX(-50%);font:600 18px Inter,sans-serif;color:rgba(40,40,50,.5);white-space:nowrap">Painting the background…</span></div>`:bgHTML(S.bgV);
+    const scrim='252,248,250';
+    const bk=S.backing==='Soft'?`<div style="position:absolute;inset:0;background:radial-gradient(ellipse 50% 50% at 50% 50%,rgba(${scrim},.9),rgba(${scrim},.72) 62%,rgba(${scrim},0) 100%)"></div>`
+      :S.backing==='Panel'?`<div style="position:absolute;inset:44px 50px;background:rgba(${scrim},.86);border:1px solid ${acc};backdrop-filter:blur(2px)"></div>`:'';
+    let logoH='';
+    if(logo){const sz=S.logoPlace==='replace'?150:92;let m=`<div style="width:${sz}px;height:${sz}px;border-radius:50%;border:1.6px solid #5b3566;box-shadow:inset 0 0 0 5px transparent,inset 0 0 0 6px #5b3566;display:flex;align-items:center;justify-content:center;font:600 ${Math.round(sz*.3)}px 'Cormorant Garamond',serif;color:#5b3566">R&amp;P</div>`;
+      if(S.logoBack==='badge')m=`<div style="background:#fbf8f2;border-radius:20px;padding:10px 14px;box-shadow:0 3px 14px rgba(0,0,0,.28)">${m}</div>`;logoH=m;}
+    const title=(logo&&S.logoPlace==='replace')?'':`<h1${E('title')} style="${ec}margin:0;padding:0 .1em;font-family:${P.t[0]};font-size:${P.t[1]}px;font-weight:${P.t[2]};text-transform:${P.t[3]};letter-spacing:${P.t[4]};color:${acc};line-height:1.2">${T('title')}</h1>`;
+    const gh=k=>`<div style="display:flex;align-items:center;gap:14px;font-family:${P.h[0]};font-weight:${P.h[2]};font-size:15px;line-height:1.2;letter-spacing:.22em;text-transform:uppercase;color:${acc}"><i style="width:46px;height:1px;background:currentColor;opacity:.7"></i><span${E(k)} style="${ec}">${T(k)}</span><i style="width:46px;height:1px;background:currentColor;opacity:.7"></i></div>`;
+    let idx=0;
+    const slot=(d,w)=>{const i=idx++;const st=this.slotSt(d,i);const sel=edit&&S.sel===d.id;
+      const box='position:absolute;inset:0;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;font:600 16px/1.2 Inter,sans-serif;text-align:center;padding:8px;overflow:hidden;';
+      let art=st==='ok'?glass(d):st==='run'?`<div style="${box}border:2.5px dashed rgba(90,90,100,.5);background:rgba(255,255,255,.4);color:rgba(40,40,50,.7)">${SHIM}<span style="position:relative">Painting…</span></div>`
+        :st==='bad'?`<div style="${box}border:2.5px dashed rgba(190,50,30,.85);background:rgba(255,236,232,.92);color:#8c2414"><span>Couldn’t draw this one</span>${edit?`<button data-act="reroll" data-id="${d.id}" style="font:600 16px Inter,sans-serif;padding:8px 14px;border-radius:7px;border:0;background:#8c2414;color:#fff;cursor:pointer">Re-roll</button>`:''}</div>`
+        :`<div style="${box}border:2.5px dashed rgba(90,90,100,.42);background:rgba(255,255,255,.3);color:rgba(40,40,50,.5)">Waiting</div>`;
+      const tools=sel&&st!=='run'?`<div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:3">${S.scen==='limit'?'':`<button data-act="reroll" data-id="${d.id}" style="font:600 16px Inter,sans-serif;padding:8px 12px;border-radius:7px;border:0;background:rgba(18,22,30,.9);color:#fff;cursor:pointer;white-space:nowrap">Re-roll art</button>`}<button data-act="hide" data-id="${d.id}" style="font:600 16px Inter,sans-serif;padding:8px 12px;border-radius:7px;border:0;background:rgba(18,22,30,.9);color:#fff;cursor:pointer">Hide</button></div>`:'';
+      const long=S.scen==='toolong'&&d.id==='g2';
+      const descSt=(d.ai&&edit?'text-decoration:underline dotted 2px rgba(43,120,214,.9);text-underline-offset:5px;':'')+(long&&edit?'outline:2.5px dashed #c0392b;outline-offset:5px;':'');
+      return `<div style="flex:0 0 ${w}px;display:flex;flex-direction:column;align-items:center;gap:6px;position:relative;${sel?'outline:2.5px solid #2b78d6;outline-offset:10px;border-radius:8px;':''}">${tools}<div data-art="1" ${edit?`data-act="sel" data-id="${d.id}"`:''} style="height:${il}px;width:${Math.round(il*.72)}px;color:${acc};position:relative;${edit?'cursor:pointer;':''}">${art}</div><h3${E(d.id+'.n')} style="${ec}margin:0;font-family:${P.h[0]};font-weight:${P.h[2]};font-size:${P.h[1]}px;line-height:1.12;letter-spacing:${P.h[3]};color:${ink};text-wrap:balance">${T(d.id+'.n')}</h3><p${E(d.id+'.d')} style="${ec}${descSt}margin:0;font-family:${P.b[0]};font-weight:${P.b[2]};font-size:${P.b[1]}px;line-height:1.32;color:${ink};text-wrap:balance">${T(d.id+'.d')}</p></div>`;};
+    const group=(list,k)=>list.length?`<div style="display:flex;flex-direction:column;align-items:center;gap:14px;width:100%">${gh(k)}${chunk(list).map(r=>`<div style="display:flex;justify-content:center;gap:16px 26px;width:100%">${r.map(d=>slot(d,SLOTW[r.length])).join('')}</div>`).join('')}</div>`:'';
+    const also=`<div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px;max-width:560px">${ALSO.map((a,i)=>`<p style="margin:0;font-family:${P.b[0]};font-weight:${P.b[2]};font-size:${P.b[1]}px;line-height:1.35;color:${ink}"><span${E('a'+i+'.l')} style="${ec}font-family:${P.h[0]};font-weight:${P.h[2]};color:${acc};letter-spacing:.08em;text-transform:uppercase;font-size:.78em;margin-right:.55em">${T('a'+i+'.l')}</span><span${E('a'+i+'.t')} style="${ec}">${T('a'+i+'.t')}</span></p>`).join('')}</div>`;
+    const mc=S.markColor==='accent'?acc:S.markColor==='gold'?'#d9b77e':ink;
+    const mark=S.mark?`<div style="position:absolute;right:40px;bottom:34px;display:flex;align-items:center;gap:8px"><img src="assets/dr-bartender-avatar.png" alt="" style="height:40px;width:auto;display:block"><div role="img" aria-label="Dr. Bartender" style="height:18px;width:159px;background:${mc};-webkit-mask:url(assets/dr-bartender-wordmark.png) center/contain no-repeat;mask:url(assets/dr-bartender-wordmark.png) center/contain no-repeat"></div></div>`:'';
+    return `<div style="position:absolute;inset:0;overflow:hidden;-webkit-font-smoothing:antialiased">${bg}${bk}<div data-md-page="1" style="position:relative;height:1000px;box-sizing:border-box;padding:58px 66px 86px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center"><header style="display:flex;flex-direction:column;align-items:center;gap:4px">${logoH}${title}<span style="color:${acc};display:flex">${ORN}</span></header>${group(sig,'h.sig')}${group(mk,'h.mock')}${also}</div>${mark}</div>`;}
+
+  canvas(scale,edit,extra){
+    const inner=React.createElement('div',{style:{width:800,height:1000,position:'relative',transform:`scale(${scale})`,transformOrigin:'0 0',pointerEvents:edit?'auto':'none'},dangerouslySetInnerHTML:{__html:this.menuHTML(edit)}});
+    return React.createElement('div',Object.assign({style:{width:Math.round(800*scale),height:Math.round(1000*scale),position:'relative',overflow:edit?'visible':'hidden',flex:'none',background:'#ddd',boxShadow:edit?'0 1px 2px rgba(0,0,0,.2),0 14px 34px rgba(0,0,0,.28)':'0 1px 3px rgba(0,0,0,.3)',borderRadius:edit?0:2}},extra),inner);}
+
+  renderVals(){
+    const S=this.state,P=PAIR[S.pairing],sc=S.scen,open=()=>this.setState({open:true});
+    const hasDraft=!NODRAFT.includes(sc),gen=sc==='generating',limit=sc==='limit';
+    const all=this.drinks(),n=all.length;
+    const k=gen&&S.gen!=null?Math.max(0,Math.min(n,S.gen-1)):0;
+    const pct=gen?Math.round(((S.gen||0)/(n+1))*100):0;
+    const file=(sc==='approved'||sc==='edited')?'bar-menu-roscoe-phoebe.pdf · Oct 9':sc==='replaced'?'menu-final.pdf · manual upload':sc==='removed'?'Removed Oct 7':'None yet';
+    const hasFile=['approved','edited','replaced'].includes(sc);
+    const C=(kind,chip,msg,sub,p,s,pCls)=>({kind,chip,msg,sub,p:p?p[0]:'',onP:p?p[1]:null,hasP:!!p,s:s?s[0]:'',onS:s?s[1]:null,hasS:!!s,pCls:pCls||'btn btn-primary btn-sm',showProg:gen});
+    const card=({
+      nokey:C('neutral','Not set up','Image AI isn’t connected.','Add a key in Settings to draft menus.',null,['Open settings',()=>{}]),
+      nodrinks:C('neutral','No drinks','Nothing to put on a menu yet.','Drafts are built from the drink plan.',null,null),
+      never:C('neutral','Not started','Draft a custom 8×10 menu.','From the drink plan and the client’s menu notes.',['Generate',()=>this.startGen()],null),
+      generating:C('info','Drafting',S.gen===0?'Writing the words…':`Painting ${Math.min(k+1,n)} of ${n}`,'About 2 min. Keep working.',null,['Watch',open]),
+      draft:C('warn','Draft','Ready to review.','Saved just now',['View',open],null),
+      artfail:C('danger','1 drawing failed','Lavender Lemon Drop didn’t draw.','Re-roll it in the editor.',['Fix',open],null),
+      words:C('danger','Words failed','Couldn’t write the menu text.','No images were used.',['Retry',()=>this.startGen()],null),
+      limit:C('warn','Image limit','Daily image limit reached.','Re-rolls resume at midnight. Text edits still work.',['View',open],null),
+      plan:C('info','Plan changed','Cucumber Mule was added to the plan.','Update the draft to include it.',['Update draft',()=>this.updateDraft()],['Dismiss',()=>this.setState({scen:'draft'})]),
+      notes:C('info','Notes edited','Client edited menu notes Oct 8.','Review before approving.',['Review',open],null),
+      saving:C('warn','Draft','Ready to review.','Saving…',['View',open],null),
+      savefail:C('danger','Not saved','Last change didn’t save.','Edits are kept until you retry.',['Retry',()=>{this.setState({saveSt:'saving',scen:'draft'});this.later(()=>this.setState({saveSt:'saved'}),900);}],null),
+      toolong:C('danger','Too long','One description doesn’t fit.','Shorten it to approve.',['Fix',open],null),
+      approving:C('info','Approving','Saving the print file…','',null,null),
+      approved:C('ok','Approved','Print file ready for staff.','Approved Oct 9 by Dallas',['View',open],null,'btn btn-secondary btn-sm'),
+      edited:C('warn','Edited since approval','Staff still get the Oct 9 version.','Approve again to update it.',['Review & approve',open],null),
+      replaced:C('neutral','Not in use','Print file is a manual upload.','This draft isn’t what staff print.',['View',open],null,'btn btn-secondary btn-sm'),
+      removed:C('warn','No print file','Print file was removed Oct 7.','Staff have nothing to print.',['Review & approve',open],null),
+      nomenu:C('neutral','No menu needed','Marked no menu needed.','Dallas · Oct 2',null,['Undo',()=>this.setState({scen:'never'})])})[sc];
+
+    if(hasDraft&&card.p!=='View'&&!card.hasS&&sc!=='approving')Object.assign(card,{hasS:true,s:'View',onS:open});
+    const B=(tone,title,text,a1,a2)=>Object.assign({show:true,title,text,hasA1:!!a1,a1:a1?a1[0]:'',a1fn:a1?a1[1]:null,hasA2:!!a2,a2:a2?a2[0]:'',a2fn:a2?a2[1]:null},TONE[tone]);
+    const bn=({
+      generating:B('info',S.gen===0?'Words are in.':`Painting ${all[Math.min(k,n-1)].name}…`,S.gen===0?'Painting the background next.':`${k} of ${n} drinks done. Text is editable now.`),
+      artfail:B('danger','One drawing failed.','Lavender Lemon Drop came back empty. Re-roll it or hide it.',['Re-roll',()=>this.reroll('g3')]),
+      limit:B('warn','Daily image limit reached.','40 of 40 images used today. Re-rolls and Generate resume at midnight. Text, type and color still work.'),
+      plan:B('info','Plan changed since this draft.','Cucumber Mule was added. Updating paints only the new drink.',['Update draft',()=>this.updateDraft()],['Dismiss',()=>this.setState({scen:'draft'})]),
+      notes:B('info','Client edited their menu notes.','Design notes changed Oct 8. The draft hasn’t been updated.',['Mark reviewed',()=>this.setState({scen:'draft'})]),
+      savefail:B('danger','Last change didn’t save.','Your edits are kept in this tab.',['Retry',()=>{this.setState({saveSt:'saving',scen:'draft'});this.later(()=>this.setState({saveSt:'saved'}),900);}]),
+      toolong:B('danger','Text too long to fit.','The Groom’s Old Fashioned description runs past the page. Shorten it to approve.'),
+      approved:B('ok','Approved Oct 9.','This is the print file staff download. Edits make a new draft until you approve again.',['Download PDF',()=>{}]),
+      edited:B('warn','Edited since approval.','Staff still get the Oct 9 version until you approve again.'),
+      replaced:B('neutral','Print file is a manual upload.','menu-final.pdf, uploaded Oct 6. Approving replaces it with this draft.'),
+      removed:B('warn','Print file was removed Oct 7.','Staff have nothing to print. Approve to restore it.'),
+      nomenu:B('neutral','Marked no menu needed.','Dallas, Oct 2.',['Undo',()=>this.setState({scen:'never'})])})[sc]||{show:false};
+
+    const em=({
+      nokey:{title:'Image AI isn’t set up',text:'Add an image AI key in Settings › Integrations to draft menus.',btn:'Open settings',cls:'btn btn-secondary',fn:()=>{}},
+      nodrinks:{title:'No drinks on the plan',text:'Menus are built from the drink plan. Add drinks there, then come back.',btn:'Open drink plan',cls:'btn btn-secondary',fn:()=>{}},
+      never:{title:'No draft yet',text:'Generate drafts the words in seconds, then paints the background and each drink. About 2 minutes.',btn:'Generate',cls:'btn btn-primary',fn:()=>this.startGen()},
+      words:{title:'Couldn’t write the menu text',text:'The words step failed, so no images were used. Try again.',btn:'Retry',cls:'btn btn-primary',fn:()=>this.startGen()},
+      nomenu:{title:'No menu for this event',text:'Undo to draft one.',btn:'Undo',cls:'btn btn-secondary',fn:()=>this.setState({scen:'never'})}})[sc];
+
+    const s=Math.max(.3,Math.min(.8,(S.vh-48-56-(bn.show?60:14)-60)/1000,(S.vw-56-340-64)/800));
+    const tab=S.tab||(hasDraft?'design':'brief');
+    const editorMenu=hasDraft?this.canvas(s,true,{
+      onClick:e=>{const a=e.target.closest('[data-act]');if(!a){if(!e.target.closest('[data-k]'))this.setState({sel:null});return;}const id=a.getAttribute('data-id'),act=a.getAttribute('data-act');
+        if(act==='sel')this.setState(st=>({sel:st.sel===id?null:id,note:'',tab:'drinks'}));if(act==='reroll')this.reroll(id);if(act==='hide'){this.hide(id);this.setState({sel:null});}},
+      onBlur:e=>{const el=e.target.closest&&e.target.closest('[data-k]');if(!el)return;const key=el.getAttribute('data-k'),v=el.innerText.trim();if(v===S.texts[key])return;
+        this.setState(st=>({texts:{...st.texts,[key]:v},scen:(st.scen==='toolong'&&key==='g2.d'&&v.length<110)?'draft':st.scen}));this.touch();}}):null;
+
+    const seg=(opts,cur,fn)=>opts.map(([v,l])=>({label:l,cls:cur===v?'active':'',on:()=>{fn(v);}}));
+    const set=(k)=>v=>{this.setState({[k]:v});if(hasDraft&&!gen)this.touch();};
+    const ring=on=>on?'0 0 0 2px var(--bg-1), 0 0 0 4px var(--accent)':'inset 0 0 0 1px rgba(0,0,0,.2)';
+    const curInk=S.ink||P.ink,curAcc=S.accent||P.acc;
+    const inkOpts=[[P.ink,'Pairing default'],['#6b3a6e','Plum'],['#1f2a44','Navy'],['#2a2a2a','Charcoal']];
+    const accOpts=[[P.acc,'Pairing default'],...CLIENT.map(([nm,h])=>[h,nm])];
+    const saveText=gen?'Drafting…':!hasDraft?'':S.saveSt==='saving'?'Saving…':S.saveSt==='failed'?'Not saved':sc==='approving'?'Approving…':'Saved';
+    const blocked=!hasDraft||gen||['toolong','artfail','approving','approved'].includes(sc);
+    const approveLabel=sc==='approved'?'Approved':sc==='approving'?'Approving…':['edited','removed'].includes(sc)?'Approve again':sc==='replaced'?'Use as print file':'Approve';
+    const approveWhy=sc==='toolong'?'Shorten the long description first':sc==='artfail'?'Fix the failed drawing first':'';
+    const cfs={
+      startover:{title:'Start over?',text:'This discards the draft, its drawings and your text edits, then drafts again from the plan. Uses about 6 images.',btn:'Start over',cls:'btn btn-danger',fn:()=>this.startGen()},
+      approve:{title:'Replace the print file?',text:sc==='replaced'?'Staff currently download menu-final.pdf, a manual upload. Approving makes this draft the print file instead.':'Staff will download this version instead of the one approved Oct 9.',btn:'Replace and approve',cls:'btn btn-primary',fn:()=>this.doApprove()}};
+    const cf=S.cf?Object.assign({show:true},cfs[S.cf]):{show:false};
+    const noKey=sc==='nokey'||sc==='nodrinks'||sc==='nomenu';
+    const vis=all.filter(d=>!S.hidden[d.id]);
+
+    return {
+      skin:this.props.skin==='House Lights'?'light':'dark',
+      prefs:{sidebar:S.open?'rail':'full',skin:this.props.skin==='House Lights'?'light':'dark',density:'comfy'},
+      noop:()=>{},user:{name:'Dallas',role:'Admin'},unread:2,
+      staff:[{role:'Lead',status:'approved'},{role:'Bartender',status:'approved'},{role:'Bartender',status:'approved'},{role:'Barback',status:'open'}],
+      planDrinks:[...DR.filter(d=>!d.mock).map(d=>({name:d.name})),...((S.extra||sc==='plan')?[{name:'Cucumber Mule',isNew:sc==='plan'}]:[]),...DR.filter(d=>d.mock).map(d=>({name:d.name,mock:true}))],
+      c:card,progPct:pct+'%',
+      hasThumb:hasDraft,noThumb:!hasDraft,
+      thumbEl:hasDraft?this.canvas(.12,false,{onClick:open}):null,
+      fold:true,
+      pf:{name:file,has:hasFile,none:!hasFile},
+      imgUseLabel:({logo:'Logo on top',style:'Style reference',ignore:'Ignored'})[S.imgUse],
+      notOpen:!S.open,sbMode:S.open?'rail':'full',
+      tabs:[['design','Design'],['drinks','Drinks'],['brief','Brief']].map(([v,l])=>({label:l,on:()=>this.setState({tab:v}),line:tab===v?'var(--accent)':'transparent',color:tab===v?'var(--ink-1)':'var(--ink-3)'})),
+      tabDesign:tab==='design',tabDrinks:tab==='drinks',tabBrief:tab==='brief',
+      open:S.open,closeEd:()=>this.setState({open:false,sel:null}),
+      saveText,saveColor:S.saveSt==='failed'?'hsl(var(--danger-h) var(--danger-s) 70%)':'var(--ink-3)',saveFailed:S.saveSt==='failed'&&hasDraft,
+      retrySave:()=>{this.setState({saveSt:'saving',scen:sc==='savefail'?'draft':sc});this.later(()=>this.setState({saveSt:'saved'}),900);},
+      approveDisabled:blocked,approveWhy,approveLabel,
+      approve:()=>{if(['edited','replaced'].includes(sc))this.setState({cf:'approve'});else this.doApprove();},
+      clientSw:CLIENT.map(([name,hex])=>({name,hex})),
+      designNotes:sc==='notes'?'Watercolor florals in our colors. Please add our dog Biscuit somewhere small!':'Watercolor florals in our colors. Nothing too busy.',
+      notesEdited:sc==='notes',notesHl:sc==='notes'?'hsl(var(--info-h) var(--info-s) 55% / .14)':'transparent',notesPad:sc==='notes'?'2px 4px':'0',
+      useSeg:seg([['logo','Logo'],['style','Style ref'],['ignore','Ignore']],S.imgUse,v=>{this.setState({imgUse:v,refName:v==='style'?'monogram.png (client)':(S.refName==='monogram.png (client)'?null:S.refName)});if(hasDraft&&!gen)this.touch();}),
+      isLogo:S.imgUse==='logo',isStyleRef:S.imgUse==='style',
+      placeSeg:seg([['above','Above title'],['replace','Replace title']],S.logoPlace,set('logoPlace')),
+      backSeg:seg([['none','None'],['badge','Badge']],S.logoBack,set('logoBack')),
+      hasRef:!!S.refName,noRef:!S.refName,refName:S.refName||'',
+      clearRef:()=>this.setState({refName:null,imgUse:S.imgUse==='style'?'ignore':S.imgUse}),uploadRef:()=>this.setState({refName:'garden-moodboard.jpg'}),
+      dir:S.dir,setDir:e=>this.setState({dir:e.target.value}),
+      markStr:S.mark?'true':'false',markTrack:S.mark?'var(--accent)':'var(--line-3)',markKnob:S.mark?'14px':'2px',
+      toggleMark:()=>{this.setState({mark:!S.mark});if(hasDraft&&!gen)this.touch();},
+      genLabel:hasDraft?'Start over':'Generate',genCls:hasDraft?'btn btn-secondary':'btn btn-primary',
+      genDisabled:noKey||limit||gen||sc==='approving',
+      genClick:()=>{if(hasDraft)this.setState({cf:'startover'});else this.startGen();},
+      markOn:S.mark,
+      markColSeg:[['ink','Theme ink'],['accent','Accent'],['gold','Gold']].map(([v,l])=>({label:l,cls:(S.markColor||'ink')===v?'active':'',on:()=>{this.setState({markColor:v});if(hasDraft&&!gen)this.touch();}})),
+      modelSeg:[['gemini','Gemini'],['gpt','GPT Image']].map(([v,l])=>({label:l,cls:(S.model||'gemini')===v?'active':'',on:()=>this.setState({model:v})})),
+      genHint:noKey?'Generate needs an AI key and drinks on the plan.':limit?'Resumes at midnight.':(hasDraft?'Re-drafts words and art from scratch. ':'About 2 minutes, about 6 images. ')+((S.model||'gemini')==='gpt'?'GPT Image: best at clean text and type.':'Gemini: best at painterly art, faster.'),
+      bn,
+      pvW:Math.round(800*s)+'px',pvH:Math.round(1000*s)+'px',
+      metaL:`8 × 10 in · ${P.name} · ${vis.length} drinks`,metaR:hasDraft?'Click text to edit · dotted = AI-written':'',
+      genActive:gen,hasCanvas:hasDraft,menuEl:editorMenu,
+      em:em?Object.assign({show:true,hasBtn:true},em):{show:false},
+      rightOpacity:hasDraft?1:.45,rightPE:hasDraft?'auto':'none',
+      pairs:Object.keys(PAIR).map(id=>{const p=PAIR[id],on=id===S.pairing;return {id,font:p.t[0],size:Math.round(Math.min(26,p.t[1]*.3))+'px',weight:p.t[2],tt:p.t[3],tk:p.t[3]==='uppercase'?'.18em':'0',
+        border:on?'var(--accent)':'var(--line-1)',bg:on?'var(--accent-soft)':'var(--bg-2)',on:()=>{this.setState({pairing:id,ink:null,accent:null});if(hasDraft&&!gen)this.touch();}};}),
+      inkSw:inkOpts.map(([hex,title])=>({hex,title,ring:ring(hex===curInk),on:()=>set('ink')(hex)})),
+      accSw:accOpts.map(([hex,title])=>({hex,title,ring:ring(hex===curAcc),on:()=>set('accent')(hex)})),
+      bkSeg:seg([['Off','Off'],['Soft','Soft'],['Panel','Panel']],S.backing,set('backing')),
+      bgSub:S.bgRer?'Painting…':`Version ${S.bgV+1}`,rollDisabled:limit||gen,rerollBg:()=>this.rerollBg(),
+      drinkCount:`${Math.min(8,vis.length)} of 8 illustrated`,
+      note:S.note,setNote:e=>this.setState({note:e.target.value}),
+      drinkRows:all.map((d,i)=>{const hid=!!S.hidden[d.id];const st=hid?'hide':this.slotSt(d,vis.indexOf(d));
+        const lab={ok:'',run:'PAINTING',wait:'WAITING',bad:'FAILED',hide:'HIDDEN'}[st];
+        const col={run:'hsl(var(--info-h) var(--info-s) 66%)',bad:'hsl(var(--danger-h) var(--danger-s) 70%)'}[st]||'var(--ink-3)';
+        return {n:String(i+1).padStart(2,'0'),name:S.texts[d.id+'.n'],sub:d.mock?'Mocktail':(d.id==='g6'?'New from plan':'Signature'),st:lab,stColor:col,
+          op:hid?.5:1,strike:hid?'line-through':'none',bg:S.sel===d.id?'var(--row-active)':'transparent',open:S.sel===d.id,
+          sel:()=>this.setState(x=>({sel:x.sel===d.id?null:d.id,note:'',tab:'drinks'})),reroll:()=>this.reroll(d.id),hide:()=>this.hide(d.id),hideLabel:hid?'Show':'Hide'};}),
+      cancelCf:()=>this.setState({cf:null}),cf
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+/* ==========================================================================
+   Dr. Bartender OS — Typography tokens
+   UI sans stack (Inter) — explicitly NOT the apothecary IM Fell serif.
+   House Lights swaps display + numeric to Libre Caslon Text for editorial feel.
+   Type scale pulled verbatim from the live [data-app="admin-os"] rules.
+   ========================================================================== */
+
+[data-app="admin-os"],
+[data-app="staff"] {
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-numeric: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  /* Type scale (px — the OS is dense and uses explicit sizes, not rem) */
+  --fs-display: 26px;   /* metric value */
+  --fs-title: 22px;     /* page / drawer title */
+  --fs-h3: 13px;        /* card head */
+  --fs-body: 13px;      /* nav, rows, list body */
+  --fs-ui: 12.5px;      /* controls, header title, table cells */
+  --fs-meta: 11.5px;    /* secondary meta */
+  --fs-label: 11px;     /* uppercase eyebrows, chips */
+  --fs-micro: 10.5px;   /* section kickers, tags */
+
+  --lh-tight: 1.1;   /* @kind other */
+  --lh-ui: 1.45;     /* @kind other */
+  --tracking-label: 0.1em;   /* uppercase eyebrows */
+  --tracking-tight: -0.02em; /* large display numerals + titles */
+}
+
+/* House Lights — serif display + serif numerics (Libre Caslon Text) */
+[data-app="admin-os"][data-skin="light"],
+[data-app="staff"][data-skin="light"] {
+  --font-display: 'Libre Caslon Text', 'Caslon', Georgia, serif;
+  --font-numeric: 'Libre Caslon Text', 'Caslon', Georgia, serif;
+}
+[data-app="staff"] {
+  --sp-font-ui: var(--font-ui);
+  --sp-font-display: var(--font-display);
+  --sp-font-mono: var(--font-mono);
+  --sp-font-numeric: var(--font-numeric);
+}

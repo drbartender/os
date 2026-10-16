@@ -1,0 +1,5 @@
+/* Dr. Bartender OS — webfonts.
+   UI sans stack is Inter (explicitly NOT the apothecary IM Fell serif).
+   Numerics + code: JetBrains Mono. House Lights display: Libre Caslon Text.
+   Loaded from Google Fonts; consumers may self-host by replacing this file. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap');

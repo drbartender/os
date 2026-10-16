@@ -1,0 +1,177 @@
+/* ==========================================================================
+   Dr. Bartender OS — Color tokens
+   --------------------------------------------------------------------------
+   HSL semantic hues + literal neutral surface/line/ink scales, scoped under
+   [data-app="admin-os"] and split by [data-skin]. Semantic hues follow the
+   "rainbow" palette (per brief); neutral surfaces + ink are pulled verbatim
+   from the live index.css [data-app="admin-os"] blocks.
+
+   Selectors use the bare attribute (not html[...]) so a card/kit can scope a
+   wrapper element — put data-app + data-skin on <html> in a real app, or on
+   any container in a specimen.
+   ========================================================================== */
+
+/* ---- Accent + semantic hues (skin-independent structure) ----------------- */
+[data-app="admin-os"] {
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.12);
+  --accent-line: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.32);
+  --accent-ink: hsl(var(--accent-h) calc(var(--accent-s) * 0.6) 20%);
+}
+
+/* ==========================================================================
+   AFTER HOURS — dark (default)
+   ========================================================================== */
+[data-app="admin-os"][data-skin="dark"] {
+  /* Accent — cobalt blue. HSL parts: /* @kind color */
+  --accent-h: 212; /* @kind color */
+  --accent-s: 78%; /* @kind color */
+  --accent-l: 44%; /* @kind color */
+
+  /* Semantic hues — rainbow palette */
+  --ok-h: 168;     /* @kind color */
+  --ok-s: 62%;     /* @kind color */
+  --warn-h: 192;   /* @kind color */
+  --warn-s: 72%;   /* @kind color */
+  --danger-h: 262; /* @kind color */
+  --danger-s: 62%; /* @kind color */
+  --info-h: 224;   /* @kind color */
+  --info-s: 72%;   /* @kind color */
+  --violet-h: 280; /* @kind color */
+  --violet-s: 68%; /* @kind color */
+
+  /* Surfaces */
+  --bg-0: #0b0d10;   /* page */
+  --bg-1: #111418;   /* panels */
+  --bg-2: #171b21;   /* cards / row hover */
+  --bg-3: #1f242b;   /* input, toolbar */
+  --bg-elev: #1b2028; /* floating (modal / palette) */
+
+  /* Lines */
+  --line-1: #232932; /* subtle divider */
+  --line-2: #2c333d; /* table border */
+  --line-3: #3a424d; /* strong */
+
+  /* Ink */
+  --ink-1: #eef1f4;  /* primary */
+  --ink-2: #b8c0cc;  /* secondary */
+  --ink-3: #7c8593;  /* tertiary / muted */
+  --ink-4: #565d69;  /* placeholder / disabled */
+
+  --shadow-pop: 0 18px 40px -12px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.02), 0 2px 8px rgba(0,0,0,0.2);
+  --shadow-soft: 0 4px 14px rgba(0,0,0,0.35);
+  --glow: 0 0 0 1px var(--accent-line), 0 0 20px -4px hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.3);
+
+  --row-stripe: rgba(255,255,255,0.015);
+  --row-hover: rgba(255,255,255,0.035);
+  --row-active: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.08);
+
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+   HOUSE LIGHTS — light
+   ========================================================================== */
+[data-app="admin-os"][data-skin="light"] {
+  /* Accent — deep muted green */
+  --accent-h: 120; /* @kind color */
+  --accent-s: 16%; /* @kind color */
+  --accent-l: 20%; /* @kind color */
+
+  /* Semantic hues — rainbow palette (light variant) */
+  --ok-h: 120;     /* @kind color */
+  --ok-s: 16%;     /* @kind color */
+  --warn-h: 36;    /* @kind color */
+  --warn-s: 62%;   /* @kind color */
+  --danger-h: 10;  /* @kind color */
+  --danger-s: 58%; /* @kind color */
+  --info-h: 208;   /* @kind color */
+  --info-s: 36%;   /* @kind color */
+  --violet-h: 280; /* @kind color */
+  --violet-s: 40%; /* @kind color */
+
+  /* Support jewel-tones (literal — used where an hsl ramp would wash out) */
+  --ms-navy: #3a5d7a;
+  --ms-bordeaux: #9e3a2a;
+  --ms-emerald: #2a3a2a;
+  --ms-camel: #b8832a;
+  --ms-ink: #1a1a1a;
+
+  /* Surfaces — warm paper */
+  --bg-0: #f7f4ec;
+  --bg-1: #fcfaf4;
+  --bg-2: #efeae0;
+  --bg-3: #e7e3d6;
+  --bg-elev: #fcfaf4;
+
+  /* Lines */
+  --line-1: #ece6d4;
+  --line-2: #e1dbcc;
+  --line-3: #1a1a1a;
+
+  /* Ink */
+  --ink-1: #1a1a1a;
+  --ink-2: #3d3a33;
+  --ink-3: #7a7468;
+  --ink-4: #b4ac9b;
+
+  --shadow-pop: 0 40px 80px -32px rgba(26,26,26,0.18), 0 2px 8px rgba(26,26,26,0.04);
+  --shadow-card: none;
+  --shadow-soft: 0 8px 24px -16px rgba(26,26,26,0.2);
+  --glow: 0 0 0 1px var(--ink-1);
+
+  --row-stripe: transparent;
+  --row-hover: #f1ede3;
+  --row-active: #d6dfd0;
+
+  color-scheme: light;
+}
+
+/* ==========================================================================
+   STAFF PORTAL — mobile variant. Same light/dark model, --sp-* namespace.
+   ========================================================================== */
+[data-app="staff"] {
+  --sp-accent: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l));
+  --sp-accent-soft: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12);
+  --sp-accent-line: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.32);
+}
+[data-app="staff"][data-skin="dark"] {
+  --sp-accent-h: 212; /* @kind color */
+  --sp-accent-s: 78%; /* @kind color */
+  --sp-accent-l: 46%; /* @kind color */
+  --sp-ok-h: 168; /* @kind color */
+  --sp-ok-s: 62%; /* @kind color */
+  --sp-warn-h: 192; /* @kind color */
+  --sp-warn-s: 72%; /* @kind color */
+  --sp-danger-h: 262; /* @kind color */
+  --sp-danger-s: 62%; /* @kind color */
+  --sp-info-h: 224; /* @kind color */
+  --sp-info-s: 72%; /* @kind color */
+  --sp-bg-0: #0b0d10; --sp-bg-1: #111418; --sp-bg-2: #171b21; --sp-bg-3: #1f242b; --sp-bg-elev: #1b2028;
+  --sp-line-1: #232932; --sp-line-2: #2c333d; --sp-line-3: #3a424d;
+  --sp-ink-1: #eef1f4; --sp-ink-2: #b8c0cc; --sp-ink-3: #7c8593; --sp-ink-4: #565d69;
+  --sp-row-hover: rgba(255,255,255,0.035);
+  --sp-shadow-pop: 0 18px 40px -12px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4);
+  color-scheme: dark;
+}
+[data-app="staff"][data-skin="light"] {
+  --sp-accent-h: 120; /* @kind color */
+  --sp-accent-s: 16%; /* @kind color */
+  --sp-accent-l: 20%; /* @kind color */
+  --sp-ok-h: 120; /* @kind color */
+  --sp-ok-s: 16%; /* @kind color */
+  --sp-warn-h: 36; /* @kind color */
+  --sp-warn-s: 62%; /* @kind color */
+  --sp-danger-h: 10; /* @kind color */
+  --sp-danger-s: 58%; /* @kind color */
+  --sp-info-h: 208; /* @kind color */
+  --sp-info-s: 36%; /* @kind color */
+  --sp-ms-navy: #3a5d7a; --sp-ms-bordeaux: #9e3a2a; --sp-ms-emerald: #2a3a2a; --sp-ms-camel: #b8832a; --sp-ms-ink: #1a1a1a;
+  --sp-bg-0: #f7f4ec; --sp-bg-1: #fcfaf4; --sp-bg-2: #efeae0; --sp-bg-3: #e7e3d6; --sp-bg-elev: #fcfaf4;
+  --sp-line-1: #ece6d4; --sp-line-2: #e1dbcc; --sp-line-3: #1a1a1a;
+  --sp-ink-1: #1a1a1a; --sp-ink-2: #3d3a33; --sp-ink-3: #7a7468; --sp-ink-4: #b4ac9b;
+  --sp-row-hover: #f1ede3;
+  --sp-shadow-pop: 0 40px 80px -32px rgba(26,26,26,0.18), 0 2px 8px rgba(26,26,26,0.04);
+  color-scheme: light;
+}

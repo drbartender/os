@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pinyon+Script&amp;family=Cormorant+Garamond:wght@500;600;700&amp;family=Rye&amp;family=Alegreya+SC:wght@700&amp;family=Alegreya:wght@400;500&amp;family=Josefin+Sans:wght@300;600&amp;family=Karla:wght@400;500&amp;family=Shrikhand&amp;family=Righteous&amp;family=Work+Sans:wght@400;500&amp;family=Creepster&amp;family=IM+Fell+English+SC&amp;family=IM+Fell+English&amp;family=Pacifico&amp;family=Fredoka:wght@500;600&amp;family=Nunito+Sans:wght@400;600&amp;display=swap">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <script src="menu-art.js"></script>
+  <style>html,body{margin:0}a{color:var(--ink-2)}a:hover{color:var(--ink-1)}@keyframes mdsh{from{background-position:120% 0}to{background-position:-120% 0}}</style>
+</helmet>
+<div data-app="admin-os" data-skin="{{ skin }}" ref="{{ rootRef }}" style="width:390px;height:844px;position:relative;overflow:hidden;display:flex;flex-direction:column;background:var(--bg-0);color:var(--ink-1);font-family:var(--font-ui, Inter, sans-serif);border-radius:32px;box-shadow:0 0 0 1px var(--line-3), 0 24px 60px rgba(0,0,0,.35)">
+  <div style="height:34px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-family:var(--font-numeric, monospace);font-size:12px;color:var(--ink-2);background:var(--bg-1)"><span>9:41</span><span>●●● 5G</span></div>
+  <header style="height:52px;flex:none;display:flex;align-items:center;gap:4px;padding:0 6px;background:var(--bg-1);border-bottom:1px solid var(--line-1)">
+    <sc-if value="{{ isMenu }}" hint-placeholder-val="{{ false }}">
+      <button aria-label="Back" onClick="{{ goEvent }}" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--ink-1);cursor:pointer"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="20" hint-size="20px,20px"></x-import></button>
+    </sc-if>
+    <sc-if value="{{ isEvent }}" hint-placeholder-val="{{ true }}"><div style="width:10px"></div></sc-if>
+    <h1 style="flex:1;margin:0;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ headTitle }}</h1>
+    <button aria-label="Search" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--ink-2);cursor:pointer"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" size="20" hint-size="20px,20px"></x-import></button>
+    <button aria-label="Switch to desktop view" title="Desktop view" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--ink-2);cursor:pointer"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="20" hint-size="20px,20px"></x-import></button>
+  </header>
+
+  <sc-if value="{{ isEvent }}" hint-placeholder-val="{{ true }}">
+    <main style="flex:1;min-height:0;overflow:auto;padding:16px;display:grid;grid-auto-rows:max-content;gap:12px">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:20px;font-weight:600;line-height:1.25">Roscoe &amp; Phoebe Wedding</div>
+        <div style="font-family:var(--font-numeric, monospace);font-size:12px;color:var(--ink-2)">Sat Oct 18 · 4:00–10:00 PM</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Willow Glen Gardens · 140 guests</div>
+        <div style="display:flex;gap:6px;margin-top:2px"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="ok" hint-size="80px,20px">Confirmed</x-import></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Drink plan</h3><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="ok" hint-size="80px,20px">Submitted</x-import></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+          <sc-for list="{{ planDrinks }}" as="d" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-1)">
+              <span style="flex:1;min-width:0">{{ d.name }}</span>
+              <sc-if value="{{ d.mock }}" hint-placeholder-val="{{ false }}"><span class="tag">Mocktail</span></sc-if>
+            </div>
+          </sc-for>
+          <div style="font-size:12px;color:var(--ink-3)">+ 5 beer &amp; wine, 3 spirits, 2 NA</div>
+        </div>
+      </div>
+
+      <div class="card" style="overflow:hidden">
+        <div class="card-head"><h3>Bar menu</h3><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.StatusChip" kind="{{ chipKind }}" hint-size="80px,20px">{{ chipText }}</x-import></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div style="flex:none;width:84px;height:105px">{{ thumbEl }}</div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+              <div style="font-size:13.5px;font-weight:500;text-wrap:pretty">{{ cardMsg }}</div>
+              <div style="font-size:12px;color:var(--ink-3);text-wrap:pretty">{{ cardSub }}</div>
+            </div>
+          </div>
+          <button class="btn btn-primary" onClick="{{ goMenu }}" style="height:44px;justify-content:center;width:100%;font-size:14px">View</button>
+        </div>
+        <div style="border-top:1px solid var(--line-1)">
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;min-height:44px;border-bottom:1px solid var(--line-1)">
+            <div style="flex:1;min-width:0"><div class="meta-k">Print file</div><div style="font-size:13px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ fileName }}</div></div>
+            <sc-if value="{{ approved }}" hint-placeholder-val="{{ false }}"><button class="btn btn-secondary" style="height:44px;min-width:64px;justify-content:center">PDF</button></sc-if>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;min-height:44px">
+            <div style="width:32px;height:32px;flex:none;border-radius:4px;background:#fbf8f3;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font:600 11px 'Cormorant Garamond',serif;color:#5b3566">R&amp;P</div>
+            <div style="flex:1;min-width:0"><div class="meta-k">Client image</div><div style="font-size:13px;margin-top:2px">monogram.png · Logo on top</div></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </sc-if>
+
+  <sc-if value="{{ isMenu }}" hint-placeholder-val="{{ false }}">
+    <main style="flex:1;min-height:0;overflow:auto;padding:12px 16px 16px;display:grid;grid-auto-rows:max-content;gap:10px">
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;border:1px solid {{ bn.line }};background:{{ bn.bg }};font-size:12.5px;line-height:1.45">
+        <span style="width:7px;height:7px;border-radius:50%;flex:none;margin-top:6px;background:{{ bn.dot }}"></span>
+        <div style="flex:1;min-width:0;text-wrap:pretty"><strong style="font-weight:600">{{ bn.title }}</strong> <span style="color:var(--ink-2)">{{ bn.text }}</span></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-family:var(--font-numeric, monospace);font-size:11px;color:var(--ink-3)"><span>{{ metaL }}</span><span>{{ saveText }}</span></div>
+      {{ previewEl }}
+      <div style="font-size:12px;color:var(--ink-3);text-align:center;text-wrap:pretty">Tap a drink to re-roll or hide it. Text edits are on desktop.</div>
+    </main>
+    <div style="flex:none;display:flex;gap:8px;padding:10px 16px;background:var(--bg-1);border-top:1px solid var(--line-1)">
+      <button class="btn btn-secondary" onClick="{{ openEdit }}" style="flex:1;height:48px;justify-content:center;font-size:14px">Edit</button>
+      <button class="btn btn-primary" disabled="{{ approved }}" onClick="{{ openApprove }}" style="flex:1;height:48px;justify-content:center;font-size:14px">{{ approveLabel }}</button>
+    </div>
+  </sc-if>
+
+  <nav aria-label="Primary" style="flex:none;display:flex;background:var(--bg-1);border-top:1px solid var(--line-1);padding-bottom:14px">
+    <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+      <button aria-current="{{ t.cur }}" style="flex:1;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:0;cursor:pointer;color:{{ t.color }}">
+        <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ t.icon }}" size="20" hint-size="20px,20px"></x-import>
+        <span style="font-size:10.5px;font-weight:600">{{ t.label }}</span>
+      </button>
+    </sc-for>
+  </nav>
+
+  <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+    <div aria-hidden="true" onClick="{{ closeSheet }}" style="position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:10"></div>
+    <div role="dialog" aria-modal="true" aria-label="{{ sheetTitle }}" style="position:absolute;left:0;right:0;bottom:0;z-index:11;background:var(--bg-elev);border-top:1px solid var(--line-2);border-radius:16px 16px 0 0;padding:8px 0 24px;box-shadow:var(--shadow-pop);max-height:78%;display:flex;flex-direction:column">
+      <div style="width:36px;height:4px;border-radius:2px;background:var(--line-3);margin:0 auto 6px"></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 8px 8px 20px">
+        <div style="flex:1;font-size:15px;font-weight:600">{{ sheetTitle }}</div>
+        <sc-if value="{{ sheetBack }}" hint-placeholder-val="{{ false }}"><button class="btn btn-ghost" onClick="{{ openEdit }}" style="height:44px">Back</button></sc-if>
+      </div>
+      <div style="overflow:auto;min-height:0">
+
+        <sc-if value="{{ shEdit }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ openFonts }}" style="width:100%;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-1);font:inherit;font-size:14px;cursor:pointer;text-align:left">
+            <span style="flex:1">Font pairing</span><span style="color:var(--ink-3);font-size:13px">{{ pairName }}</span><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="16" hint-size="16px,16px"></x-import>
+          </button>
+          <div style="display:flex;flex-direction:column;gap:8px;padding:12px 20px;border-top:1px solid var(--line-1)">
+            <span style="font-size:14px">Accent color</span>
+            <div style="display:flex;gap:2px;flex-wrap:wrap">
+              <sc-for list="{{ accSw }}" as="s" hint-placeholder-count="6">
+                <button aria-label="{{ s.title }}" onClick="{{ s.on }}" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:0;cursor:pointer"><span style="width:28px;height:28px;border-radius:50%;background:{{ s.hex }};box-shadow:{{ s.ring }}"></span></button>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;padding:12px 20px;border-top:1px solid var(--line-1)">
+            <span style="font-size:14px">Text backing</span>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px">
+              <sc-for list="{{ bkSeg }}" as="o" hint-placeholder-count="3">
+                <button onClick="{{ o.on }}" style="height:44px;border-radius:6px;border:1px solid {{ o.line }};background:{{ o.bg }};color:var(--ink-1);font:inherit;font-size:13.5px;cursor:pointer">{{ o.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+          <sc-if value="{{ hasHidden }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ openHidden }}" style="width:100%;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-1);font:inherit;font-size:14px;cursor:pointer;text-align:left">
+              <span style="flex:1">Hidden drinks</span><span style="color:var(--ink-3);font-size:13px">{{ hiddenCount }}</span><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="16" hint-size="16px,16px"></x-import>
+            </button>
+          </sc-if>
+          <button onClick="{{ rerollBg }}" style="width:100%;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-1);font:inherit;font-size:14px;cursor:pointer;text-align:left">
+            <span style="flex:1">Re-roll background</span><span style="color:var(--ink-3);font-size:13px">{{ bgSub }}</span>
+          </button>
+          <button style="width:100%;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-2);font:inherit;font-size:14px;cursor:pointer;text-align:left">
+            <span style="flex:1">Edit text and brief on desktop</span><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="16" hint-size="16px,16px"></x-import>
+          </button>
+        </sc-if>
+
+        <sc-if value="{{ shFonts }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ pairs }}" as="p" hint-placeholder-count="6">
+            <button onClick="{{ p.on }}" style="width:100%;min-height:56px;display:flex;align-items:center;gap:12px;padding:0 20px;background:{{ p.bg }};border:0;border-top:1px solid var(--line-1);color:var(--ink-1);cursor:pointer;text-align:left">
+              <span style="flex:1;min-width:0;font-family:{{ p.font }};font-size:{{ p.size }};font-weight:{{ p.weight }};text-transform:{{ p.tt }};letter-spacing:{{ p.tk }};white-space:nowrap;overflow:hidden">Bar Menu</span>
+              <span style="font-size:12px;color:var(--ink-3)">{{ p.name }}</span>
+              <span style="width:16px;color:var(--accent);font-size:14px">{{ p.check }}</span>
+            </button>
+          </sc-for>
+        </sc-if>
+
+        <sc-if value="{{ shDrink }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:0 20px 10px;font-size:12.5px;color:var(--ink-3);text-wrap:pretty">{{ selDesc }}</div>
+          <button onClick="{{ rerollSel }}" style="width:100%;min-height:52px;display:flex;align-items:center;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-1);font:inherit;font-size:14px;cursor:pointer;text-align:left">Re-roll art</button>
+          <button onClick="{{ hideSel }}" style="width:100%;min-height:52px;display:flex;align-items:center;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-1);font:inherit;font-size:14px;cursor:pointer;text-align:left">Hide from menu</button>
+          <button style="width:100%;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-2);font:inherit;font-size:14px;cursor:pointer;text-align:left"><span style="flex:1">Edit name and description on desktop</span><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="16" hint-size="16px,16px"></x-import></button>
+        </sc-if>
+
+        <sc-if value="{{ shApprove }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:0 20px 16px;font-size:13px;color:var(--ink-2);line-height:1.5;text-wrap:pretty">This becomes the print file staff download for Roscoe &amp; Phoebe Wedding. You can still edit after; edits make a new draft.</div>
+          <div style="display:flex;flex-direction:column;gap:8px;padding:0 20px">
+            <button class="btn btn-primary" onClick="{{ doApprove }}" style="height:48px;justify-content:center;font-size:14px">Approve print file</button>
+            <button class="btn btn-ghost" onClick="{{ closeSheet }}" style="height:48px;justify-content:center;font-size:14px">Cancel</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ shHidden }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ hiddenRows }}" as="h" hint-placeholder-count="1">
+            <button onClick="{{ h.on }}" style="width:100%;min-height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;background:none;border:0;border-top:1px solid var(--line-1);color:var(--ink-1);font:inherit;font-size:14px;cursor:pointer;text-align:left"><span style="flex:1">{{ h.name }}</span><span style="color:var(--accent);font-size:13px;font-weight:600">Show</span></button>
+          </sc-for>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:420,&quot;height&quot;:880},&quot;skin&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;After Hours&quot;,&quot;House Lights&quot;],&quot;default&quot;:&quot;After Hours&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;event&quot;,&quot;menu&quot;],&quot;default&quot;:&quot;event&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;startSheet&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;&quot;,&quot;edit&quot;,&quot;fonts&quot;,&quot;drink&quot;,&quot;approve&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;approved&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+const TONE={
+ ok:{bg:'hsl(var(--ok-h) var(--ok-s) 45% / .10)',line:'hsl(var(--ok-h) var(--ok-s) 45% / .32)',dot:'hsl(var(--ok-h) var(--ok-s) 52%)'},
+ warn:{bg:'hsl(var(--warn-h) var(--warn-s) 50% / .10)',line:'hsl(var(--warn-h) var(--warn-s) 50% / .34)',dot:'hsl(var(--warn-h) var(--warn-s) 55%)'}};
+class Component extends DCLogic {
+  rootRef = React.createRef();
+  timers = [];
+  state = { screen: this.props.startScreen || 'event', sheet: this.props.startSheet || null, sel: this.props.startSheet === 'drink' ? 'g2' : null,
+    pairing: 'elegant-script', accent: null, backing: 'Soft', hidden: {}, bgV: 0, bgRer: false, rer: {}, approved: this.props.approved === true, ilCut: 0, saving: false, ready: !!window.MenuArt };
+  componentDidMount(){
+    if(!window.MenuArt){const t=setInterval(()=>{if(window.MenuArt){clearInterval(t);this.setState({ready:true});}},50);this.timers.push(t);}
+    this.fit();if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{this.lastKey=null;this.fit();});}
+  componentDidUpdate(p){this.fit();if(p.approved!==this.props.approved)this.setState({approved:this.props.approved===true});}
+  componentWillUnmount(){this.timers.forEach(t=>{clearTimeout(t);clearInterval(t);});}
+  later(fn,ms){this.timers.push(setTimeout(fn,ms));}
+  fit(){const S=this.state;const key=[S.pairing,JSON.stringify(S.hidden),S.ready].join('|');
+    if(key!==this.lastKey){this.lastKey=key;if(S.ilCut){this.setState({ilCut:0});return;}}
+    const root=this.rootRef.current;if(!root)return;const pg=root.querySelector('[data-md-page]');if(!pg)return;
+    const last=pg.lastElementChild;const art=pg.querySelector('[data-art]');
+    if(last&&last.offsetTop+last.offsetHeight>915&&art&&art.offsetHeight>60)this.setState(s=>({ilCut:s.ilCut+6}));}
+  touch(){this.setState({approved:false,saving:true});this.later(()=>this.setState({saving:false}),800);}
+  canvas(scale,tap){const M=window.MenuArt,S=this.state;
+    if(!M)return React.createElement('div',{style:{width:800*scale,height:1000*scale,background:'var(--bg-2)'}});
+    const html=M.menuHTML({pairing:S.pairing,accent:S.accent,backing:S.backing,hidden:S.hidden,bgV:S.bgV,bgRer:S.bgRer,rer:S.rer,ilCut:S.ilCut,sel:tap?S.sel:null});
+    return React.createElement('div',{onClick:tap?(e=>{const el=e.target.closest('[data-id]');if(el)this.setState({sel:el.getAttribute('data-id'),sheet:'drink'});}):(()=>this.setState({screen:'menu'})),
+      style:{width:Math.round(800*scale),height:Math.round(1000*scale),position:'relative',overflow:'hidden',flex:'none',cursor:'pointer',borderRadius:2,boxShadow:'0 1px 2px rgba(0,0,0,.25),0 10px 28px rgba(0,0,0,.28)'}},
+      React.createElement('div',{style:{width:800,height:1000,position:'relative',transform:`scale(${scale})`,transformOrigin:'0 0'},dangerouslySetInnerHTML:{__html:html}}));}
+  renderVals(){
+    const S=this.state,M=window.MenuArt;const P=M?M.PAIR[S.pairing]:{name:'',acc:'#8a6a2f'};
+    const DR=M?M.DR:[];const vis=DR.filter(d=>!S.hidden[d.id]);const sel=DR.find(d=>d.id===S.sel);
+    const curAcc=S.accent||P.acc;const hiddenList=DR.filter(d=>S.hidden[d.id]);
+    const sh=S.sheet;
+    const titles={edit:'Edit menu',fonts:'Font pairing',drink:sel?sel.name:'Drink',approve:'Approve this menu?',hidden:'Hidden drinks'};
+    return {
+      skin:this.props.skin==='House Lights'?'light':'dark',rootRef:this.rootRef,
+      isEvent:S.screen==='event',isMenu:S.screen==='menu',
+      headTitle:S.screen==='event'?'Event':'Bar menu',
+      goEvent:()=>this.setState({screen:'event',sheet:null,sel:null}),goMenu:()=>this.setState({screen:'menu'}),
+      planDrinks:DR.map(d=>({name:d.name,mock:!!d.mock})),
+      chipKind:S.approved?'ok':'warn',chipText:S.approved?'Approved':'Draft',
+      cardMsg:S.approved?'Print file ready for staff.':'Ready to review.',cardSub:S.approved?'Approved today by Dallas':'Saved just now',
+      thumbEl:this.canvas(.105,false),
+      fileName:S.approved?'bar-menu-roscoe-phoebe.pdf':'None yet',approved:S.approved,
+      bn:Object.assign({title:S.approved?'Approved.':'Draft.',text:S.approved?'This is the print file staff download. Edits make a new draft.':'Staff can’t print it until you approve.'},TONE[S.approved?'ok':'warn']),
+      metaL:`8 × 10 · ${P.name} · ${vis.length} drinks`,saveText:S.saving?'Saving…':'Saved',
+      previewEl:this.canvas(358/800,true),
+      approveLabel:S.approved?'Approved':'Approve',
+      openEdit:()=>this.setState({sheet:'edit'}),openApprove:()=>this.setState({sheet:'approve'}),openFonts:()=>this.setState({sheet:'fonts'}),
+      closeSheet:()=>this.setState({sheet:null,sel:null}),
+      tabs:[['events','Events','calendar'],['proposals','Proposals','clipboard'],['more','More','menu']].map(([id,label,icon])=>({label,icon,cur:id==='events'?'page':'false',color:id==='events'?(this.props.skin==='House Lights'?'var(--accent)':'hsl(var(--accent-h) var(--accent-s) 62%)'):'var(--ink-3)'})),
+      sheetOpen:!!sh,sheetTitle:titles[sh]||'',sheetBack:sh==='fonts'||sh==='hidden',
+      shEdit:sh==='edit',shFonts:sh==='fonts',shDrink:sh==='drink',shApprove:sh==='approve',shHidden:sh==='hidden',
+      pairName:P.name,
+      accSw:M?[[P.acc,'Pairing default'],...M.CLIENT.map(([n,h])=>[h,n])].map(([hex,title])=>({hex,title,ring:hex===curAcc?'0 0 0 2px var(--bg-elev), 0 0 0 4px var(--accent)':'inset 0 0 0 1px rgba(0,0,0,.2)',on:()=>{this.setState({accent:hex});this.touch();}})):[],
+      bkSeg:['Off','Soft','Panel'].map(v=>({label:v,line:S.backing===v?'var(--accent)':'var(--line-2)',bg:S.backing===v?'var(--accent-soft)':'var(--bg-2)',on:()=>{this.setState({backing:v});this.touch();}})),
+      bgSub:S.bgRer?'Painting…':`Version ${S.bgV+1}`,
+      rerollBg:()=>{if(S.bgRer)return;this.setState({bgRer:true});this.later(()=>{this.setState(s=>({bgRer:false,bgV:s.bgV+1}));this.touch();},2000);},
+      pairs:M?Object.keys(M.PAIR).map(id=>{const p=M.PAIR[id],on=id===S.pairing;return {name:p.name,font:p.t[0],size:Math.round(Math.min(26,p.t[1]*.3))+'px',weight:p.t[2],tt:p.t[3],tk:p.t[3]==='uppercase'?'.18em':'0',
+        bg:on?'var(--accent-soft)':'transparent',check:on?'✓':'',on:()=>{this.setState({pairing:id,accent:null,sheet:'edit'});this.touch();}};}):[],
+      selDesc:sel?sel.desc:'',
+      rerollSel:()=>{const id=S.sel;this.setState(s=>({rer:{...s.rer,[id]:true},sheet:null,sel:null}));this.later(()=>{this.setState(s=>{const r={...s.rer};delete r[id];return {rer:r};});this.touch();},2200);},
+      hideSel:()=>{const id=S.sel;this.setState(s=>({hidden:{...s.hidden,[id]:true},sheet:hiddenList.length?null:null,sel:null}));this.touch();},
+      hiddenRows:hiddenList.map(d=>({name:d.name,on:()=>{this.setState(s=>{const h={...s.hidden};delete h[d.id];return {hidden:h};});this.touch();}})),
+      hasHidden:hiddenList.length>0,hiddenCount:String(hiddenList.length),openHidden:()=>this.setState({sheet:'hidden'}),
+      doApprove:()=>this.setState({sheet:null,approved:true,saving:false})
+    };
+  }
+}
+</script>
+</body>
+</html>
