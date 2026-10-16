@@ -16,6 +16,7 @@ lanes:
       - server/utils/menuKeyOut.test.js
       - server/utils/envInt.js                       # new: readEnvInt, shared by the wrappers and the cap (spec 5.5)
       - server/utils/envInt.test.js
+      - scripts/sensitive-paths.txt                  # added in the build: openaiClient.js and geminiClient.js listed in the lane that creates them
       - server/utils/storage.js                      # readFile, additive (spec 5.4)
       - server/utils/storage.readFile.test.js        # new
       - server/utils/r2Proxy.js                      # new (spec 7)
@@ -460,6 +461,23 @@ loadCatalogMaps(db)
 ---
 
 ## Lane 2: menu-art-engine
+
+**Notes from the foundation build and its review fleet (2026-10-16). Read before cutting this lane; they override the task text below where they differ.**
+- **Lock order.** `lockCalls` is the FIRST statement of every reserving transaction, before any row lock: in re-roll it comes before locking the piece row (otherwise re-roll holding the piece while Generate holds the table lock and deletes pieces deadlocks), and sync's main transaction takes it too. `reserveImages` and `reserveText` assert the lock is held (`pg_locks`, `ExclusiveLock` on `menu_art_calls` for `pg_backend_pid()`), so a caller that forgets cannot pass the cap concurrently.
+- **Stranded reservations.** Re-roll and sync reservations carry a piece `run_id`, so Generate's `releaseReserved(old run)` misses them after a restart. Inside the locked Generate transaction, also release `WHERE proposal_id = $1 AND status = 'reserved'`. Sync's words reservation needs a `run_id` that `authorizeCall` can match (a NULL never authorizes).
+- **The ledger stamps `updated_at` by trigger** (`update_menu_art_calls_updated_at`); writers need not set it. The open-run index `idx_menu_art_calls_open_run (run_id) WHERE status IN ('reserved','sent')` serves the release and sweep queries.
+- **`validatePatch` contract** (spec 7.1, as built): `{ changed, content?, inputs? }`. Write only the columns present; on `changed: false` skip the write and the version bump and return the current version. `validateGenerateInputs(body, { hasFile, storedInputs })` takes that second argument; without it every Generate with a kept reference fails.
+- **Stored drinks carry exactly spec 6's thirteen fields.** `normalizePlan`'s drinks also carry `name`, `typed_name` and `ingredients`; build the stored entries explicitly (fixed extra fields would round-trip, but keep the stored shape to spec).
+- **Image shapes differ between the wrappers.** `openaiClient.editImage` takes `[{ buffer, filename, contentType }]` (never a client's original filename); `geminiClient.generateImage` takes `[{ buffer, mimeType }]`. `storage.readFile` returns `{ buffer, contentType }`. `menuImageProvider` converts.
+- **Refusals.** `OpenAIRefusal`, `GeminiRefusal` and `MenuKeyOutFailed` all carry `.reason` (a fixed readable sentence, never provider text) and a code; fold them into `MenuArtRefusal`. Send only `err.descriptor` to Sentry.
+- **The words schema must be strict-mode compatible** (`draftMenuCopy` sends `strict: true`): `additionalProperties: false` and every property required.
+- **Drink prompt.** Ask for opaque glassware (magenta seen through a glass or a handle gap is enclosed, so the key-out cannot remove it) and for the drink to fill no more than about 70% of the frame (the key-out refuses an image with under 25% background).
+- **Per-run work, once.** Read and downscale the background once per run, not per drink; downscale an uploaded reference before base64-ing it for Gemini.
+- **Polling cost.** `loadCatalogMaps` is two catalog queries; do not run it on every 2-second poll (skip the plan diff on poll requests, or cache the maps per process for about 60 seconds). Inside a transaction pass the client to `loadEventPlan` and `loadCatalogMaps`. Use `fingerprintHash(fp)` for `dismissed_plan_hash` (it is stable across JSONB key reordering).
+- **`sendR2Object` requires `prefix`** (it runs `assertKeyUnder` itself) and accepts `width` 240 or 480 (or the strings); images over 50 MP answer 422 `IMAGE_TOO_LARGE`, unreadable ones 422 `IMAGE_UNREADABLE`, neither paging Sentry.
+- **The R2 signer moved** (`@smithy/*` minors, forced by openai's optional peers). E7's live smoke must include a real R2 upload and signed read.
+- **Approve-lane tests** delete their draft before any temp user (`approved_by` has no ON DELETE action, by spec).
+
 
 Cut after Lane 1 is on main.
 
