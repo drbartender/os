@@ -4,7 +4,7 @@
 
 **Goal:** The phone header's magnifier stops opening the desktop command palette and opens the full-screen Global search from the 2026-10-14 benchmark: a back arrow and a search field in place of the header, results grouped Clients, Proposals, Events, Staff with counts, a "More clients on desktop · 6 shown" row ending every full group, a Desktop tag on client and staff rows, and the empty-field, keep-typing, in-flight, no-match, too-long, failed and offline states.
 
-**Architecture:** One additive field extension on the existing search (`server/utils/globalSearch.js`: proposal and event rows also carry `status`, `event_date` and `kind`; every key the palette reads is unchanged). One pure model (`client/src/utils/searchView.js`) turning the endpoint's groups into what the screen draws and where each row leads. One phone page (`client/src/pages/mobile/SearchPhone.js`) at a new phone-only route `/search`, which `AdminLayout` renders as a takeover with no phone header and no tab bar. The read is `api.get`, never `offlineGet`, so the admin service worker never stores a result. Three small shell edits: the magnifier navigates to `/search`, `routeRestore` never records `/search`, and the route joins `App.js`.
+**Architecture:** One additive field extension on the existing search (`server/utils/globalSearch.js`: proposal and event rows also carry `status`, `event_date` and `kind`; every key the palette reads is unchanged). One pure model (`client/src/utils/searchView.js`) turning the endpoint's groups into what the screen draws and where each row leads. One phone page (`client/src/pages/mobile/SearchPhone.js`) at a new phone-only route `/search`, which `AdminLayout` renders as a takeover with no phone header and no tab bar. The read is `api.get`, never `offlineGet`, so the admin service worker never stores a result. A second kind of Desktop-view override in `MobileViewContext` (`setDesktopForVisit`: one visit, in memory, never stored) opens the desktop pages search leads to without changing the phone afterwards. Three small shell edits: the magnifier navigates to `/search`, `routeRestore` never records `/search`, and the route joins `App.js`.
 
 **Tech Stack:** Express + pg on the server (`node:test` against the shared dev DB); React 18, react-router v6, axios through `utils/api`, React Testing Library; the mobile CSS block in `client/src/index.css`.
 
@@ -39,14 +39,14 @@
 
 ## Plan decisions (stated here so the contract is whole)
 
-1. **Search is a route, `/search`, phone only.** Android Back closes it through history, as the benchmark's `pushState` does, and the screen key is `search`. `AdminLayout` renders it as a takeover: the `.m-shell` holds only the screen, which draws its own header (Back and the field) and its own `<main id="main-content">`; no phone header, no passkey nudge, no tab bar (the benchmark hides the tab bar during search). At desktop width `/search` redirects to `/dashboard` (the desktop has the ⌘K palette). The search header carries no Desktop-view toggle (the benchmark draws none; spec section 3 asks every screen for one): the desktop twin of this screen is the ⌘K palette, and every row that leaves the phone goes through the escape itself (decisions 7 and 8). Cost if wrong: none; the palette is untouched.
+1. **Search is a route, `/search`, phone only.** Android Back closes it through history, as the benchmark's `pushState` does, and the screen key is `search`. `AdminLayout` renders it as a takeover: the `.m-shell` holds only the screen, which draws its own header (Back and the field) and its own `<main id="main-content">`; no phone header, no passkey nudge, no tab bar (the benchmark hides the tab bar during search). At desktop width `/search` redirects to `/dashboard` (the desktop has the ⌘K palette). The search header carries no Desktop-view toggle (the benchmark draws none; spec section 3 asks every screen for one): the desktop twin of this screen is the ⌘K palette, and every row that leaves the phone opens its desktop page for that visit (decisions 7 and 8). Cost if wrong: none; the palette is untouched.
 2. **The term survives Back from a result.** Once a search answers, the term is written into the `/search` history entry's state (`navigate('/search', { replace: true, state: { q } })`), so Back from a row lands on the screen with the term in the field and runs it again (one fresh query; results are never kept anywhere). The term never enters the URL, so neither the route restore nor the browser's URL history keeps search words; `routeRestore` never records `/search` at all, so a cold launch resumes the screen before it (a cold launch has no history state, and an empty field with the keyboard up is not "where I left off"). The field takes focus only when the screen opens empty; a restored term opens with the keyboard down so the results show.
 3. **Nothing is stored on the phone.** The read is `api.get('/admin/search', { params: { q }, timeout: 10000 })`, never `offlineGet`, so the worker passes it to the network untouched (search rows carry client emails and phones). The worker's allowlist entry for `/api/admin/search` stays: under the opt-in rule it stores nothing, and the worker is not otherwise in this lane's footprint; a fix-list line records the dead entry for the next worker change. Offline means `navigator.onLine === false`, tracked through the `online` and `offline` events: the field keeps its text and is disabled, results are dropped (an answer in flight is discarded), the offline note shows, and coming back online runs the kept term.
 4. **Failed searches are drawn here; the benchmark draws none.** Three notes, each with the existing `.m-retry-btn` "Retry", which runs the same term. No answer at all (`err.status` 0: offline while the phone believes it is online, a refused connection, the 10-second timeout) reads "Search didn’t answer" / "Check the signal, then try again." (icon `alert`). A 429 reads "Too many searches" / "Wait a minute, then try again." (icon `clock`). Any other server answer reads "Search failed" / "The server couldn’t run this search. Try again in a moment." (icon `alert`). The screen reads `err.status` (spec section 10's normalized shape) but writes its own copy rather than `err.message`: the limiter's message says what the 429 note says, and a 500's message is the generic server line. A failed search drops the rows that were on screen. Cost if wrong: copy.
 5. **The kind sits under the name, not beside it.** Dallas ruled this for the card family on 2026-09-24 ("beside the name it was ellipsised on nearly every card"); the search rows are narrower still (a tile, a chip or a tag share the line). So a proposal row has three lines, as the family's card does: the name, the kind on its own line in `.m-card-kind` (the UI face), and the date in `.m-card-meta` ("Oct 24, 2026", formatted from `event_date`; no line when there is no date). An event row has two: the name and the kind, the rail carrying the date. The benchmark draws "name · kind" inline with the date as the proposal's meta. Until the server ships the new fields (Vercel can serve the client first), a proposal or event row with no `kind` shows the endpoint's `detail` ("kind · date") as its one meta line.
 6. **Event rail:** the family's 44px rail with the 7px inset (the 2026-09-24 ruling; the benchmark draws 46/10), stretched to the row's height, with the benchmark's quieter search inks (dow and month ink-4, day ink-2) and no TODAY accent (the search drawing has none). The row's gap stays the benchmark's 12px: one gap for every row kind in the list, tile and rail alike; the ruling's 8px card gap answered the list card's cramped body, which a search row does not have. A booked event with no date shows the en-dash rail and a spoken "no date", as the Proposals list does.
-7. **Where rows lead.** Client and staff rows go through the Desktop-view escape (they have no phone screen; the benchmark's `goDesktop`): the override for the target's screen key (`clients`, `staffing`) is armed, then `/clients/:id` or `/staffing/users/:id` opens in the desktop chrome with the Phone view pill. Event rows open `/events/:id`, the phone event detail. Proposal rows open `/proposals/:id`, which renders the desktop proposal page inside the phone chrome until lane ma-f2 draws the phone detail (the same interim the Proposals list ships).
-8. **Where More rows lead.** A full group (6 rows; the endpoint's cap, so "full" means "there may be more") ends in "More <group> on desktop · 6 shown", which arms the Desktop-view escape for the group's desktop list and opens it: Clients `/clients`; Proposals `/proposals?q=<term>` (the one desktop list with a text filter; it matches the client's name and email, so a digits-only term opens an empty filtered list there); Events `/events?tab=all` and Staff `/staffing?tab=all` (the search spans past events and every staff state). **Known cost:** the override sticks the way the header's own escape does, so after "More events on desktop" the Events tab stays in desktop view until the Phone view pill is tapped. That is the spec's escape contract (section 3); a one-shot override would be a new mechanism and is not in this lane.
+7. **Where rows lead.** Client and staff rows open in desktop view (they have no phone screen; the benchmark's `goDesktop`), for this visit only (decision 8's rule): `/clients/:id` or `/staffing/users/:id` opens in the desktop chrome with the Phone view pill. Event rows open `/events/:id`, the phone event detail. Proposal rows open `/proposals/:id`, which renders the desktop proposal page inside the phone chrome until lane ma-f2 draws the phone detail (the same interim the Proposals list ships).
+8. **Where More rows lead, and nothing sticks.** A full group (6 rows; the endpoint's cap, so "full" means "there may be more") ends in "More <group> on desktop · 6 shown", which opens the group's desktop list: Clients `/clients`; Proposals `/proposals?q=<term>` (the one desktop list with a text filter; it matches the client's name and email, so a digits-only term opens an empty filtered list there); Events `/events?tab=all` and Staff `/staffing?tab=all` (the search spans past events and every staff state). Every desktop page search opens, More rows and decision 7's client and staff rows alike, is desktop for THAT VISIT ONLY (Dallas, 2026-10-16: "I'd rather it not stick"): a new one-visit override in `MobileViewContext` (`setDesktopForVisit`, Task 3), held in memory and never stored, that keeps the page's own tabs, filters, drawers and paging in desktop view and ends the moment the user leaves that screen, Back included, or taps the Phone view pill. So after "More events on desktop", Back to the search and Back to Events shows the phone list. The header's own escape (`setDesktopView`) stays sticky, as spec section 3 has it; search never calls it.
 9. **Tap targets:** the field is 44px tall (drawn 40), the phone's 44px floor and the assignment sheet's search field's height. Its Clear button is 44px wide by the field's full inner height, 42px (drawn 30 by 30): the one stated exception to the floor, since a 44px-tall button would make the field 46. A tap on the field's 1px border lands on the field, which is harmless. The browser's own clear button is suppressed (spec), the iOS-only 16px rule is copied from the sheet field.
 10. **The in-flight line runs from the keystroke to the answer** (debounce plus request), as the benchmark's mock does, so the no-match note never flashes between a keystroke and its answer. While a new term runs, the rows of the last answered term stay on screen under "searching · showing “ma”". Typing below two characters, or past a hundred, drops the rows at once (the benchmark's `onSQ`).
 11. **Keys:** Enter (the keyboard's Search key) puts the keyboard away so the rows show; it does not navigate (there is no top hit on the phone). Escape closes the screen, heard on the window as the benchmark listens, so it works offline too, when the field is disabled.
@@ -62,6 +62,7 @@
 - **Nothing from search is stored at rest:** `SearchPhone.js` calls `api.get` and never `offlineGet`; no request it sends carries `X-Offline-Ok`. A test pins the request config. The term never enters a URL the phone records (`/proposals?q=` on the desktop is the desktop page's own contract, reached only through a More row).
 - **Copy from the benchmark, verbatim** (the list in Proven context), plus this plan's three failed-search notes (decision 4), "Retry", "Desktop", "More <group> on desktop", "6 shown".
 - **Writes: none in this lane.**
+- **Nothing search opens sticks** (Dallas, 2026-10-16): `SearchPhone.js` opens desktop pages only through `setDesktopForVisit`; it never calls the sticky `setDesktopView`. A test pins it.
 - **44px minimum tap targets;** the whole row is the target. The one stated exception is the Clear button's 42px height (decision 9).
 - **Server tests:** `node --test server/utils/globalSearch.test.js` from the lane root, one suite at a time; `require('dotenv').config()` on the first line; a `NODE_ENV === 'production'` guard; every fixture row deleted in `after`; read the pass count.
 - **Client gate:** `cd client && CI=true npx react-scripts build` before any commit touching `client/`. It prints "Compiled with warnings." today for one known, pre-existing reason (a missing source map inside `html2pdf.js` in `node_modules`, "Failed to parse source map"), which CRA leaves out of the CI warnings-as-errors check; any OTHER warning is a failure. The build lints only modules the bundle imports, so a new file not yet imported is linted directly: `cd client && npx eslint --max-warnings=0 <file>`. No "not wrapped in act(...)" warnings in the suites this lane adds or touches; the baseline "`ReactDOMTestUtils.act` is deprecated" console error and the React Router v7 future-flag warnings print across the existing suites and are known noise. CRA jest runs `resetMocks: true`: a `jest.fn` implementation set in a mock factory is wiped before each test, so set return values inside the test or `beforeEach`.
@@ -73,11 +74,11 @@
 
 ## Review Focus
 
-1. **A late answer after leaving the screen.** A search still in flight when the user taps a row (or Back) must never pull them back: the success handler writes the term into the `/search` history entry, so an answer landing after a tap would replace the page they went to. Pinned in Task 3 (tap a row while a newer search is in flight, resolve it, the location stays on the row's page).
-2. **A superseded answer.** "ma" answering after "mar" must never paint over "mar". Pinned in Task 3.
-3. **Losing and regaining the connection mid-search.** Going offline with a search in flight drops its answer; coming back online runs the kept term; offline at open sends nothing. Pinned in Task 3.
-4. **Rows with missing fields:** a client with neither email nor phone (no blank second line), a booked event with no date (dash rail, spoken "no date"), a proposal or event from a server that has not deployed the new fields yet (Vercel can serve the client before Render serves the route: no chip, the event's line 2 falls back to `detail`, no crash). Pinned in Task 2 and Task 3.
-5. **Hostile or odd terms:** a term with LIKE wildcards or quotes (`50%`, `o'brien`) is sent raw (the server already escapes LIKE, `globalSearch.test.js`) and quoted verbatim in the no-match note; a 101-character paste sends nothing and says "Too long to search"; spaces alone are the empty field. Pinned in Task 2 (`termState`, the note's quoting) and Task 3 (no request past 100).
+1. **A late answer after leaving the screen.** A search still in flight when the user taps a row (or Back) must never pull them back: the success handler writes the term into the `/search` history entry, so an answer landing after a tap would replace the page they went to. Pinned in Task 4 (tap a row while a newer search is in flight, resolve it, the location stays on the row's page).
+2. **A superseded answer.** "ma" answering after "mar" must never paint over "mar". Pinned in Task 4.
+3. **Losing and regaining the connection mid-search.** Going offline with a search in flight drops its answer; coming back online runs the kept term; offline at open sends nothing. Pinned in Task 4.
+4. **Rows with missing fields:** a client with neither email nor phone (no blank second line), a booked event with no date (dash rail, spoken "no date"), a proposal or event from a server that has not deployed the new fields yet (Vercel can serve the client before Render serves the route: no chip, the event's line 2 falls back to `detail`, no crash). Pinned in Task 2 and Task 4.
+5. **Hostile or odd terms:** a term with LIKE wildcards or quotes (`50%`, `o'brien`) is sent raw (the server already escapes LIKE, `globalSearch.test.js`) and quoted verbatim in the no-match note; a 101-character paste sends nothing and says "Too long to search"; spaces alone are the empty field. Pinned in Task 2 (`termState`, the note's quoting) and Task 4 (no request past 100).
 
 ---
 
@@ -95,12 +96,16 @@ lanes:
       Desktop tag on client and staff rows, empty, keep-typing, in-flight,
       no-match, too-long, failed and offline states, nothing stored; the
       proposal and event search rows gain status, event_date and kind;
-      MobileHeader's magnifier stops opening the palette.
+      MobileHeader's magnifier stops opening the palette; desktop pages opened
+      from search are desktop for that visit only (a one-visit override in
+      MobileViewContext).
     footprint:
       - server/utils/globalSearch.js
       - server/utils/globalSearch.test.js
       - client/src/utils/searchView.js
       - client/src/utils/searchView.test.js
+      - client/src/context/MobileViewContext.js
+      - client/src/context/MobileViewContext.test.js
       - client/src/pages/mobile/SearchPhone.js
       - client/src/pages/mobile/SearchPhone.test.js
       - client/src/index.css
@@ -125,12 +130,13 @@ lanes:
 
 Cut: from `os` on `main`, `npm run worktree:new -- ma-f3-search`, then work only in `../worktrees/ma-f3-search`. The ledger lives at `.superpowers/sdd/2026-10-15-mobile-admin-search/progress.md` in the lane (git-ignored). `ma-f1-proposals-list` is a dependency because this plan's anchors (the class contract's SOURCES, the capture manifest, the README, ARCHITECTURE, sensitive-list and fix-list lines) and the no-date rail sit on that lane's work; it is merged and pushed (`9f2c1f1c`).
 
-**Review level, and why.** Read-only, no money, no auth, no schema: the lane map's three seats plus `/second-opinion` (cheap, decorrelated), reviewers on Opus. Cadence: a task reviewer after every task (code-review lens on Task 1's SQL projection; Tasks 3 and 4 together carry Review Focus 1 to 3, so their reviewer gets those lines), the ui-ux seat at Task 5, consistency-check after Task 6, then the whole-branch fleet in Task 7. Heads-up for the push: Task 6 puts `SearchPhone.js` on the sensitive list, so the push that carries this squash runs the sensitive-path re-review (full fleet plus `/second-opinion`) over it. That is expected, not a surprise.
+**Review level, and why.** Read-only, no money, no auth, no schema: the lane map's three seats plus `/second-opinion` (cheap, decorrelated), reviewers on Opus. Cadence: a task reviewer after every task (code-review lens on Task 1's SQL projection; Task 3 changes the context every phone fork reads, so its reviewer checks every `desktopView` caller, `AdminLayout.js`, `EventsDashboard.js`, `ProposalsDashboard.js`, `EventDetailPage.js`, `Inbox.js`, `NotificationsPhone.js`, `EventDetailPhone.js`, `MobileHeader.js`, against the new rule; Tasks 4 and 5 together carry Review Focus 1 to 3, so their reviewer gets those lines), the ui-ux seat at Task 6, consistency-check after Task 7, then the whole-branch fleet in Task 8. Heads-up for the push: Task 7 puts `SearchPhone.js` on the sensitive list, so the push that carries this squash runs the sensitive-path re-review (full fleet plus `/second-opinion`) over it. That is expected, not a surprise.
 
 ## File structure
 
 - `server/utils/globalSearch.js` (modify): `phoneFields(row)` and two projection columns; nothing else moves.
 - `server/utils/globalSearch.test.js` (modify): the production guard, three proposal fixtures, three tests.
+- `client/src/context/MobileViewContext.js` (modify): `setDesktopForVisit`, the one-visit override; `desktopView` honours it.
 - `client/src/utils/searchView.js` (create): `MIN_TERM`, `MAX_TERM`, `GROUP_LIMIT`, `termState`, `initialsOf`, `rowTarget`, `moreTarget`, `searchRow`, `searchGroups`, `searchNote`, `flightLabel`, `liveSummary`. Pure; no class names (the class contract reads the page, not this file).
 - `client/src/pages/mobile/SearchPhone.js` (create): the screen, `Lead` and `SearchRow`.
 - `client/src/index.css` (modify): the search block after the House Lights list rules.
@@ -329,7 +335,7 @@ MSG
 
 **Interfaces:**
 - Consumes: Task 1's row fields (`status`, `event_date`, `kind`) plus `name`, `detail`, `id`; `railParts` from `./eventCards`; `proposalStatusMeta` from `./proposalStatusMap`.
-- Produces (Task 3 imports these names exactly):
+- Produces (Task 4 imports these names exactly):
   - `MIN_TERM = 2`, `MAX_TERM = 100`, `GROUP_LIMIT = 6`
   - `termState(raw) -> 'empty' | 'short' | 'long' | 'ok'` (on the trimmed term)
   - `initialsOf(name) -> string`
@@ -595,12 +601,13 @@ const GROUPS = [
   { key: 'staff', label: 'Staff' },
 ];
 
-// Where a row leads, and the Desktop-view override it arms first (spec
-// section 3: the override is per screen key, the key routeScreenKey gives the
-// path). Clients and staff have no phone screen, so the benchmark's Desktop
-// tag opens their page in the desktop chrome. An event opens the phone event
-// detail; a proposal opens the desktop proposal page inside the phone chrome
-// until lane ma-f2 draws the phone detail.
+// Where a row leads, and the screen key it opens in desktop view for that
+// visit only (MobileViewContext's setDesktopForVisit; the key is the one
+// routeScreenKey gives the path; null opens in the phone chrome). Clients and
+// staff have no phone screen, so the benchmark's Desktop tag opens their page
+// in the desktop chrome. An event opens the phone event detail; a proposal
+// opens the desktop proposal page inside the phone chrome until lane ma-f2
+// draws the phone detail.
 export function rowTarget(groupKey, id) {
   switch (groupKey) {
     case 'clients': return { path: `/clients/${id}`, screenKey: 'clients' };
@@ -611,8 +618,8 @@ export function rowTarget(groupKey, id) {
   }
 }
 
-// A full group's More row opens the group's desktop list behind the
-// Desktop-view escape (spec section 6). Only the desktop Proposals list takes
+// A full group's More row opens the group's desktop list in desktop view,
+// for that visit only (spec section 6). Only the desktop Proposals list takes
 // a text filter (?q=, matched on the client's name and email); Events and
 // Staff open on All because the search spans past events and every staff
 // state.
@@ -778,7 +785,7 @@ export function liveSummary({ pending, note, groups }) {
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/searchView.test.js`
 Expected: PASS, every test. Quote the count.
-Then: `cd client && npx eslint --max-warnings=0 src/utils/searchView.js` (the build cannot lint it yet: nothing the bundle imports reaches it until Task 4). Expected: no output, exit 0.
+Then: `cd client && npx eslint --max-warnings=0 src/utils/searchView.js` (the build cannot lint it yet: nothing the bundle imports reaches it until Task 5). Expected: no output, exit 0.
 
 - [ ] **Step 5: Commit**
 
@@ -792,7 +799,183 @@ MSG
 
 ---
 
-### Task 3: `SearchPhone`, its CSS, and the class contract
+### Task 3: A desktop view for one visit (`MobileViewContext`)
+
+Dallas, 2026-10-16, on the More rows' sticky override: "I'd rather it not stick." Search therefore opens a desktop page for that visit only. This task adds that second kind of override to the one context every phone fork reads; Task 4's page is its only caller.
+
+**Files:**
+- Modify: `client/src/context/MobileViewContext.js` (58 lines: imports `:1-6`, the default value `:10-14`, the overrides and their setter `:30-49`)
+- Modify: `client/src/context/MobileViewContext.test.js` (62 lines; three tests appended)
+
+**Interfaces:**
+- Consumes: `routeScreenKey(pathname)` from `client/src/utils/screenKey.js` (`/events?tab=all` is `events-list`, `/clients/3` is `clients`, `/search` is `search`).
+- Produces: `useMobileView()` also returns `setDesktopForVisit(screenKey)`. It arms a desktop view for `screenKey` that is held in memory only (never written to `adminDesktopViewOverrides`), applies while the routed screen key equals `screenKey`, and ends when the routed screen key changes (Back included) or when `setDesktopView(screenKey, false)` runs (the Phone view pill). It is armed BEFORE the navigation: until the next route lands the visit waits, and a landing on any other screen drops it. `desktopView(screenKey)` is true for a sticky override OR a live visit. `setDesktopView` (the sticky kind, the header's escape) is unchanged.
+- Decisions implemented here: 7 and 8 (search's desktop pages are for the visit only).
+
+- [ ] **Step 1: Write the failing tests**
+
+In `client/src/context/MobileViewContext.test.js`, after the `wrapper` const (`:15`) add:
+
+```js
+const wrapperAt = (path) => ({ children }) => (
+  <MemoryRouter initialEntries={[path]}>
+    <MobileViewProvider>{children}</MobileViewProvider>
+  </MemoryRouter>
+);
+const stored = () => JSON.parse(window.localStorage.getItem('adminDesktopViewOverrides') || '{}');
+```
+
+and append at the end of the file:
+
+```js
+// Global search opens a desktop page for ONE visit (lane ma-f3; Dallas,
+// 2026-10-16: "I'd rather it not stick").
+test('a visit shows its screen in desktop view, survives navigation within the page, and ends when the user leaves', () => {
+  const { result } = renderHook(
+    () => ({ view: useMobileView(), navigate: useNavigate() }),
+    { wrapper: wrapperAt('/search') },
+  );
+  act(() => {
+    result.current.view.setDesktopForVisit('events-list');
+    result.current.navigate('/events?tab=all');
+  });
+  expect(result.current.view.desktopView('events-list')).toBe(true);
+  expect(result.current.view.desktopView('event-detail')).toBe(false);
+  expect(stored()).toEqual({});
+  // The page's own tabs, filters and drawers are the same visit.
+  act(() => result.current.navigate('/events?tab=upcoming', { replace: true }));
+  act(() => result.current.navigate('/events?tab=upcoming&drawer=shift:12'));
+  expect(result.current.view.desktopView('events-list')).toBe(true);
+  // Leaving ends it, and Back does not bring it back.
+  act(() => result.current.navigate('/search'));
+  expect(result.current.view.desktopView('events-list')).toBe(false);
+  act(() => result.current.navigate(-1));
+  expect(result.current.view.desktopView('events-list')).toBe(false);
+  expect(stored()).toEqual({});
+});
+
+test('a visit armed in one step and navigated in the next still lands; one that lands elsewhere is dropped', () => {
+  const { result } = renderHook(
+    () => ({ view: useMobileView(), navigate: useNavigate() }),
+    { wrapper: wrapperAt('/search') },
+  );
+  act(() => result.current.view.setDesktopForVisit('clients'));
+  expect(result.current.view.desktopView('clients')).toBe(false); // waiting, still on /search
+  act(() => result.current.navigate('/clients/3'));
+  expect(result.current.view.desktopView('clients')).toBe(true);
+  act(() => result.current.navigate('/search'));
+  act(() => result.current.view.setDesktopForVisit('staffing'));
+  act(() => result.current.navigate('/events'));
+  act(() => result.current.navigate('/staffing/users/12'));
+  expect(result.current.view.desktopView('staffing')).toBe(false); // dropped, not lying in wait
+});
+
+test('the Phone view pill ends a visit; a sticky override is untouched by visits', () => {
+  const { result } = renderHook(
+    () => ({ view: useMobileView(), navigate: useNavigate() }),
+    { wrapper: wrapperAt('/search') },
+  );
+  act(() => result.current.view.setDesktopView('inbox', true));
+  act(() => {
+    result.current.view.setDesktopForVisit('clients');
+    result.current.navigate('/clients/3');
+  });
+  expect(result.current.view.desktopView('clients')).toBe(true);
+  act(() => result.current.view.setDesktopView('clients', false));
+  expect(result.current.view.desktopView('clients')).toBe(false);
+  expect(result.current.view.desktopView('inbox')).toBe(true);
+  expect(stored()).toEqual({ inbox: true });
+});
+```
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/context/MobileViewContext.test.js`
+Expected: the two existing tests pass; the three new ones FAIL with `result.current.view.setDesktopForVisit is not a function`.
+
+- [ ] **Step 3: Implement**
+
+In `client/src/context/MobileViewContext.js`:
+- After `import { readOverrides, persistOverrides } from '../utils/desktopViewStore';` add `import { routeScreenKey } from '../utils/screenKey';`.
+- In the default value, after `setDesktopView: () => {},` add `setDesktopForVisit: () => {},`.
+- Replace everything from `const [overrides, setOverrides] = useState(readOverrides);` through the end of the `value` memo with:
+
+```js
+  const [overrides, setOverrides] = useState(readOverrides);
+  // A desktop view for ONE visit (lane ma-f3; Dallas, 2026-10-16: "I'd rather
+  // it not stick"). Global search opens a desktop page this way. It lives in
+  // memory only, never in the store. It holds while the routed screen is the
+  // one it was armed for, so that page's own tabs, filters, drawers and paging
+  // keep it, and it ends the moment the user leaves that screen, Back
+  // included. It is armed before the navigation: on `from`, the path it was
+  // armed on, it waits; a landing on any other screen drops it.
+  const [visit, setVisit] = useState(null);
+  const routed = routeScreenKey(pathname);
+  let liveVisit = visit;
+  if (visit) {
+    if (routed === visit.screenKey) {
+      if (!visit.entered) {
+        liveVisit = { ...visit, entered: true };
+        setVisit(liveVisit);
+      }
+    } else if (visit.entered || pathname !== visit.from) {
+      liveVisit = null;
+      setVisit(null);
+    }
+  }
+  // A visit still waiting for its navigation applies to nothing yet.
+  const visitKey = liveVisit && liveVisit.entered ? liveVisit.screenKey : null;
+  const desktopView = useCallback(
+    (screenKey) => !!overrides[screenKey] || screenKey === visitKey,
+    [overrides, visitKey]
+  );
+  const setDesktopView = useCallback((screenKey, on) => {
+    // The Phone view pill calls this with false; it ends a visit too.
+    if (!on) setVisit((v) => (v && v.screenKey === screenKey ? null : v));
+    // The context owns the merge; the store only persists. Storage failures
+    // therefore never drop other screens' overrides from live state.
+    setOverrides((prev) => {
+      const next = { ...prev };
+      if (on) next[screenKey] = true;
+      else delete next[screenKey];
+      persistOverrides(next);
+      return next;
+    });
+  }, []);
+  const setDesktopForVisit = useCallback((screenKey) => {
+    setVisit({ screenKey, from: pathname, entered: false });
+  }, [pathname]);
+  const value = useMemo(
+    () => ({ isPhone, desktopView, setDesktopView, setDesktopForVisit }),
+    [isPhone, desktopView, setDesktopView, setDesktopForVisit]
+  );
+```
+
+Also extend the comment at `:8-9` to: `// isPhone plus the per-screen Desktop-view overrides (spec section 3): the sticky kind the header's escape sets, and the one-visit kind global search uses.`
+
+The render-time `setVisit` follows the `latch` pattern a few lines above it (React re-renders at once and the guard makes the second pass a no-op).
+
+- [ ] **Step 4: Run the context suite and every suite that reads the context**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/context/MobileViewContext.test.js src/components/AdminLayout.badges.test.js src/components/mobile src/pages/mobile src/pages/admin/EventsDashboard.fork.test.js src/pages/admin/ProposalsDashboard.fork.test.js src/pages/admin/EventDetailPage.fork.test.js src/pages/admin/Inbox.test.js`
+Expected: PASS, every test (five in the context suite). Quote the counts. Then `cd client && CI=true npx react-scripts build` (the context is already in the bundle, so the build lints it): exit 0, only the known banner warning.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add client/src/context/MobileViewContext.js client/src/context/MobileViewContext.test.js && git commit -F - <<'MSG'
+feat(mobile): a desktop view for one visit, held in memory, ending when the user leaves the screen
+
+Global search opens its desktop pages this way so nothing sticks
+(Dallas, 2026-10-16). The sticky header escape is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+MSG
+```
+
+---
+
+### Task 4: `SearchPhone`, its CSS, and the class contract
 
 **Files:**
 - Create: `client/src/pages/mobile/SearchPhone.js`
@@ -801,9 +984,9 @@ MSG
 - Modify: `client/src/utils/mobileClassContract.test.js:7-26` (`SOURCES`) and one new test at the end
 
 **Interfaces:**
-- Consumes, from the committed `client/src/utils/searchView.js` (Task 2; read it, it is the source of truth): `GROUP_LIMIT` (6); `termState(raw)` (`'empty' | 'short' | 'long' | 'ok'`); `searchGroups(results, term)` returning groups `{ key, label, rows, full, count, moreLabel, more }`, each row `{ key, title, kind, meta, lead, chip, desktop, target }` with `lead` one of `{ kind: 'icon', icon }`, `{ kind: 'initials', initials }`, `{ kind: 'rail', rail: { dow, day, mon }, noDate }`, `chip` `{ label, kind }` or null, `target` and `more` `{ path, screenKey }` (`screenKey` null when no override is armed); `searchNote({ raw, offline, error, pending, resultsFor, groups })` returning `{ icon, title, body, micro, retry }` or null; `errorKind(err)` (`'network' | 'rate' | 'server'`); `flightLabel(resultsFor)`; `liveSummary({ pending, note, groups })`. Also `useMobileView()` (`isPhone`, `setDesktopView`); `useDebounce(callback, delay, deps)`; `api.get`; `Icon`, `StatusChip`.
-- Decisions implemented here: 1 (the takeover's own header, no toggle), 2 (the term in history state, focus only on an empty open), 3 (api.get only; offline from `navigator.onLine`), 4 (three failed-search notes), 5 (the kind on its own line), 6 (the quiet rail), 9 (the 44px field), 10 (the in-flight line), 11 (Enter and a window Escape), 12 (the status line and the scoped note queries), and Review Focus 1, 2, 3 and 5.
-- Produces: `export default function SearchPhone()`, the screen for the route `/search`. It renders a `<header className="m-header m-search-head">` and a `<main className="m-main m-search-main" id="main-content">` as siblings, so its parent must be the `.m-shell` with nothing else in it (Task 4).
+- Consumes, from the committed `client/src/utils/searchView.js` (Task 2; read it, it is the source of truth): `GROUP_LIMIT` (6); `termState(raw)` (`'empty' | 'short' | 'long' | 'ok'`); `searchGroups(results, term)` returning groups `{ key, label, rows, full, count, moreLabel, more }`, each row `{ key, title, kind, meta, lead, chip, desktop, target }` with `lead` one of `{ kind: 'icon', icon }`, `{ kind: 'initials', initials }`, `{ kind: 'rail', rail: { dow, day, mon }, noDate }`, `chip` `{ label, kind }` or null, `target` and `more` `{ path, screenKey }` (`screenKey` null when no override is armed); `searchNote({ raw, offline, error, pending, resultsFor, groups })` returning `{ icon, title, body, micro, retry }` or null; `errorKind(err)` (`'network' | 'rate' | 'server'`); `flightLabel(resultsFor)`; `liveSummary({ pending, note, groups })`. Also `useMobileView()` (`isPhone`, and `setDesktopForVisit(screenKey)` from Task 3, the one-visit desktop view; never the sticky `setDesktopView`); `useDebounce(callback, delay, deps)`; `api.get`; `Icon`, `StatusChip`.
+- Decisions implemented here: 1 (the takeover's own header, no toggle), 2 (the term in history state, focus only on an empty open), 3 (api.get only; offline from `navigator.onLine`), 4 (three failed-search notes), 5 (the kind on its own line), 6 (the quiet rail), 7 and 8 (rows and More rows open desktop for the visit only), 9 (the 44px field), 10 (the in-flight line), 11 (Enter and a window Escape), 12 (the status line and the scoped note queries), and Review Focus 1, 2, 3 and 5.
+- Produces: `export default function SearchPhone()`, the screen for the route `/search`. It renders a `<header className="m-header m-search-head">` and a `<main className="m-main m-search-main" id="main-content">` as siblings, so its parent must be the `.m-shell` with nothing else in it (Task 5).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -818,7 +1001,7 @@ import SearchPhone from './SearchPhone';
 import api from '../../utils/api';
 
 jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
-const mockMobileView = { isPhone: true, setDesktopView: jest.fn() };
+const mockMobileView = { isPhone: true, setDesktopView: jest.fn(), setDesktopForVisit: jest.fn() };
 jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockMobileView }));
 
 const client = (over = {}) => ({ type: 'client', id: 3, name: 'Marcus Keller', detail: 'mkeller@example.test', cc_id: null, ...over });
@@ -956,8 +1139,10 @@ test.each([
   type('ma');
   fireEvent.click((await screen.findByText(name)).closest('button'));
   expect(loc()).toHaveTextContent(path);
-  if (screenKey) expect(mockMobileView.setDesktopView).toHaveBeenCalledWith(screenKey, true);
-  else expect(mockMobileView.setDesktopView).not.toHaveBeenCalled();
+  // Desktop for this visit only; search never arms the sticky override.
+  if (screenKey) expect(mockMobileView.setDesktopForVisit).toHaveBeenCalledWith(screenKey);
+  else expect(mockMobileView.setDesktopForVisit).not.toHaveBeenCalled();
+  expect(mockMobileView.setDesktopView).not.toHaveBeenCalled();
 });
 
 test('a full group says 6+ and ends in its More row, which opens the desktop list', async () => {
@@ -968,7 +1153,8 @@ test('a full group says 6+ and ends in its More row, which opens the desktop lis
   expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Clients 6+', 'Proposals 6+']);
   expect(screen.getAllByText('6 shown')).toHaveLength(2);
   fireEvent.click(screen.getByText('More proposals on desktop').closest('button'));
-  expect(mockMobileView.setDesktopView).toHaveBeenCalledWith('proposals-list', true);
+  expect(mockMobileView.setDesktopForVisit).toHaveBeenCalledWith('proposals-list');
+  expect(mockMobileView.setDesktopView).not.toHaveBeenCalled();
   expect(loc()).toHaveTextContent('/proposals?q=ma');
 });
 
@@ -1247,7 +1433,7 @@ function SearchRow({ row, onOpen }) {
 }
 
 export default function SearchPhone() {
-  const { isPhone, setDesktopView } = useMobileView();
+  const { isPhone, setDesktopForVisit } = useMobileView();
   const navigate = useNavigate();
   const location = useLocation();
   const [initialTerm] = useState(() => {
@@ -1327,10 +1513,13 @@ export default function SearchPhone() {
 
   if (!isPhone) return <Navigate to="/dashboard" replace />;
 
+  // A desktop page from search is for this visit only (MobileViewContext's
+  // setDesktopForVisit): leaving it, Back included, returns the phone to how
+  // it was. Search never arms the sticky override.
   const open = (target) => {
     if (!target) return;
     cancel();
-    if (target.screenKey) setDesktopView(target.screenKey, true);
+    if (target.screenKey) setDesktopForVisit(target.screenKey);
     navigate(target.path);
   };
   const onChange = (e) => {
@@ -1520,20 +1709,20 @@ test('the search field hides the browser clear button', () => {
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/mobile/SearchPhone.test.js src/utils/searchView.test.js src/utils/mobileClassContract.test.js`
 Expected: PASS, every test (25 in `SearchPhone.test.js`), no "not wrapped in act(...)" warnings in the output. Quote the counts.
-Then lint the new page directly, because the build cannot reach it until Task 4 imports it: `cd client && npx eslint --max-warnings=0 src/pages/mobile/SearchPhone.js src/utils/searchView.js`. Expected: no output, exit 0. A warning here is fixed at its root, never with a disable comment; report what it was.
+Then lint the new page directly, because the build cannot reach it until Task 5 imports it: `cd client && npx eslint --max-warnings=0 src/pages/mobile/SearchPhone.js src/utils/searchView.js`. Expected: no output, exit 0. A warning here is fixed at its root, never with a disable comment; report what it was.
 Then: `cd client && CI=true npx react-scripts build`. Expected: exit 0; the only warning in the banner is the known `html2pdf.js` source map (Global Constraints).
 
 - [ ] **Step 7: Commit**
 
-The commit hook's `check-docs-drift.sh` warns about a new file under `client/src/pages/`. That is expected: the README and ARCHITECTURE lines land in Task 6. Do not edit them here.
+The commit hook's `check-docs-drift.sh` warns about a new file under `client/src/pages/`. That is expected: the README and ARCHITECTURE lines land in Task 7. Do not edit them here.
 
 ```bash
 git add client/src/pages/mobile/SearchPhone.js client/src/pages/mobile/SearchPhone.test.js client/src/index.css client/src/utils/mobileClassContract.test.js && git commit -F - <<'MSG'
 feat(mobile): the full-screen phone search screen, its states and its CSS
 
 Live reads only (nothing stored on the phone), the term kept in history
-state for Back, rows and More rows through the Desktop-view escape where
-the benchmark sends them.
+state for Back, rows and More rows opening desktop pages for that visit
+only, where the benchmark sends them.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 MSG
@@ -1541,7 +1730,7 @@ MSG
 
 ---
 
-### Task 4: Wire it in: the route, the takeover, the magnifier, the restore
+### Task 5: Wire it in: the route, the takeover, the magnifier, the restore
 
 **Files:**
 - Modify: `client/src/App.js:142` (one lazy import after `NotificationsPhone`), `:613` (one route after `/more/notifications`)
@@ -1553,7 +1742,7 @@ MSG
 - Modify: `client/src/utils/screenKey.test.js:3-15` (one table row)
 
 **Interfaces:**
-- Consumes: Task 3's `SearchPhone` default export; `routeScreenKey('/search') === 'search'` (already true).
+- Consumes: Task 4's `SearchPhone` default export; `routeScreenKey('/search') === 'search'` (already true).
 - Produces: `/search` is a live admin route; on the phone it renders inside `<div className="m-shell">` alone; the phone header's magnifier calls `navigate('/search')`; `recordRoute('/search', ...)` is a no-op.
 - Decisions implemented here: 1 (the takeover: no phone header, no passkey nudge, no tab bar; the palette stays mounted) and 2 (the restore never records `/search`).
 
@@ -1720,7 +1909,7 @@ MSG
 
 ---
 
-### Task 5: Phone-viewport gate and the benchmark comparison (controller-run)
+### Task 6: Phone-viewport gate and the benchmark comparison (controller-run)
 
 Subagents cannot mint dev tokens (`reference-subagent-dev-token-refused`), so the controller runs this task and hands the ui-ux seat the shots plus the DOM and computed CSS. Harness traps: `reference-phone-browser-gate-traps` (dev-signin plants the token only on ports 3000 and 3001, so the lane's client runs on 3001 with its API on a scoped port; a fresh context's first loads are not controlled by the worker; a locator click on an off-screen element scrolls first).
 
@@ -1750,9 +1939,9 @@ Chromium 390x844 (then 360 and 320 for S10), a dev admin session, the lane's cli
 - S1: the magnifier on every tab (Inbox, Events, Proposals and More) opens `/search` full screen: no `.m-tabbar`, no `.m-brandmark`, `document.activeElement` is the field, `history.length` grew by one.
 - S2: `page.goBack()` from `/search` lands on the tab it came from; the in-app Back arrow does the same; Escape with the field focused does the same.
 - S3: typing one character makes no request (network log); typing a surname present in the dev DB quickly (five characters within 150 ms) makes ONE `GET /api/admin/search` request, and its request headers carry no `x-offline-ok`; the groups render in the order Clients, Proposals, Events, Staff with their counts.
-- S4: a client row opens `/clients/<id>` in the desktop chrome with the Phone view pill; Back lands on `/search` with the term in the field, the rows back, and the field NOT focused.
+- S4: a client row opens `/clients/<id>` in the desktop chrome with the Phone view pill; Back lands on `/search` with the term in the field, the rows back, and the field NOT focused; `localStorage.adminDesktopViewOverrides` is byte-identical to before the tap; Back again to the tab, then More > Clients (or `/clients` by URL) shows the phone chrome, not the desktop chrome.
 - S5: an event row opens the phone event detail (`/events/<id>`); Back returns to the search with its term.
-- S6: a term that fills a group (try two-letter terms until one gives `6+`): the More row opens that group's desktop list in the desktop chrome (Clients `/clients`; Proposals `/proposals?q=<term>` with the filter applied); tap the Phone view pill afterwards and confirm the override is cleared (`localStorage` overrides no longer hold that key).
+- S6: a term that fills a group (try two-letter terms until one gives `6+`, preferring an Events group): the More row opens that group's desktop list in the desktop chrome (Events `/events?tab=all`; Proposals `/proposals?q=<term>` with the filter applied); on that page switch its tab and open a shift drawer: it stays in the desktop chrome. Back to the search, Back to the Events tab: the PHONE Events list, and `localStorage.adminDesktopViewOverrides` byte-identical to before (Dallas, 2026-10-16: nothing sticks). Then on a second More row, the Phone view pill returns that same page to the phone chrome at once.
 - S7: offline: `context.setOffline(true)` (this flips `navigator.onLine` and fires `offline`; the screen does not depend on the worker): the field keeps its text, disabled, at 0.55 opacity; the note reads "Search needs the server"; `setOffline(false)` runs the term again.
 - S8: nothing stored: after S3 to S5, `caches.keys()` then each cache's `keys()` hold no URL containing `/api/admin/search`.
 - S9: a failed search: stop the lane's API by its LISTENER pid (`ss -ltnp`, not `$!`), type a new term: "Search didn’t answer" with Retry; restart the API, Retry: the rows render.
@@ -1774,16 +1963,18 @@ MSG
 
 ---
 
-### Task 6: Docs and ledgers
+### Task 7: Docs and ledgers
 
 **Files:**
-- Modify: `README.md:650`, `:707` and after `:820`, `ARCHITECTURE.md:225` and after `:2136`, `scripts/sensitive-paths.txt:475-481`, `docs/walkthroughs-owed.md` (the Tier 6 count sentence at `:2115`, and the end of Tier 6, before `## Tier 4`), `docs/fix-list-remaining-2026-07-02.md:3042-3044` and the Admin UI follow-ups
+- Modify: `README.md:610`, `:650`, `:707` and after `:820`, `ARCHITECTURE.md:225` and after `:2136`, `scripts/sensitive-paths.txt:475-481`, `docs/walkthroughs-owed.md` (the Tier 6 count sentence at `:2115`, and the end of Tier 6, before `## Tier 4`), `docs/fix-list-remaining-2026-07-02.md:3042-3044` and the Admin UI follow-ups
 
 - [ ] **Step 1: README**
 
+In the `MobileViewContext.js` tree line (`:610`), after `per-screen Desktop-view overrides` add ` (sticky, from the header's escape) and a one-visit override (setDesktopForVisit, held in memory, ending when the user leaves the screen; global search opens its desktop pages with it)`.
+
 In Key Features, "Phone Admin PWA", after the `**Admin push per kind (lane ma-c-push).**` bullet (`:820`), add:
 
-`- **Phone global search (lane ma-f3).** The magnifier on every phone tab opens a full-screen search over clients, proposals, events and staff (by name, email, or three or more phone digits), grouped with counts like the ⌘K palette. Events open the phone event detail, proposals the proposal page, clients and staff their desktop pages; a group of six ends in a row that opens the full desktop list. It runs live only: nothing from search is stored on the phone, and offline the field waits for the connection. Back from a result returns to the search and its term.`
+`- **Phone global search (lane ma-f3).** The magnifier on every phone tab opens a full-screen search over clients, proposals, events and staff (by name, email, or three or more phone digits), grouped with counts like the ⌘K palette. Events open the phone event detail, proposals the proposal page, clients and staff their desktop pages; a group of six ends in a row that opens the full desktop list. A desktop page opened from search is desktop for that visit only: leave it and the phone is as it was. It runs live only: nothing from search is stored on the phone, and offline the field waits for the connection. Back from a result returns to the search and its term.`
 
 After the `proposalCards.js` line (`:650`) add, aligned like its neighbours:
 
@@ -1799,7 +1990,7 @@ In the admin `GET /search` row (`:225`), before the closing `|`, append: ` Propo
 
 After the "Phone Proposals list" bullet (`:2136`), add:
 
-`- **Phone search**: \`client/src/pages/mobile/SearchPhone.js\` at \`/search\` (phone only; desktop width redirects to \`/dashboard\`), opened by the phone header's magnifier; \`AdminLayout\` renders it alone in the shell, with no phone header and no tab bar. Reads \`GET /admin/search\` through \`api.get\`, never \`offlineGet\`, so the worker stores no result (its allowlist entry for the path is inert under the opt-in rule); the palette's 200 ms debounce, a 10 s timeout, a superseded-answer guard. The model is the pure \`client/src/utils/searchView.js\`. The term rides in the \`/search\` history entry's state so Back from a result returns to it, and \`utils/routeRestore.js\` never records \`/search\`. Client and staff rows and every full group's More row open through the Desktop-view escape (spec section 3).`
+`- **Phone search**: \`client/src/pages/mobile/SearchPhone.js\` at \`/search\` (phone only; desktop width redirects to \`/dashboard\`), opened by the phone header's magnifier; \`AdminLayout\` renders it alone in the shell, with no phone header and no tab bar. Reads \`GET /admin/search\` through \`api.get\`, never \`offlineGet\`, so the worker stores no result (its allowlist entry for the path is inert under the opt-in rule); the palette's 200 ms debounce, a 10 s timeout, a superseded-answer guard. The model is the pure \`client/src/utils/searchView.js\`. The term rides in the \`/search\` history entry's state so Back from a result returns to it, and \`utils/routeRestore.js\` never records \`/search\`. Client and staff rows and every full group's More row open their desktop page for that visit only (`setDesktopForVisit` in `client/src/context/MobileViewContext.js`: held in memory, never stored, kept through the page's own tabs, filters and drawers, ended when the user leaves the screen or taps Phone view); the header's own escape stays sticky.`
 
 - [ ] **Step 3: Sensitive paths, walkthroughs, fix list**
 
@@ -1815,7 +2006,7 @@ The walk, on the Pixel, in the installed app:
 2. Type one letter: "Keep typing". Type a client's surname: the groups appear in the order Clients, Proposals, Events, Staff, each with its count; the keyboard's Search key puts the keyboard away.
 3. Tap an event: its phone detail opens. Press Back: the search is there with the term and the rows, keyboard down.
 4. Tap a client (it carries "Desktop"): the desktop client page opens with the Phone view pill. Back returns to the search.
-5. Find a term that fills a group ("6+"): the "More ... on desktop · 6 shown" row opens that list on desktop. Tap Phone view afterwards.
+5. Find a term that fills a group ("6+"): the "More ... on desktop · 6 shown" row opens that list on desktop. Back to the search, Back to the tab: the phone screen, as it was (nothing sticks).
 6. Airplane mode: the field keeps its text, greyed; "Search needs the server". Airplane off: the search runs again.
 7. Back from the search returns to the tab you opened it from.
 ```
@@ -1838,7 +2029,7 @@ MSG
 
 ---
 
-### Task 7: Lane close: suites reached, gate, review fleet, merge
+### Task 8: Lane close: suites reached, gate, review fleet, merge
 
 - [ ] **Step 1: Server suite, from the lane root**
 
@@ -1846,7 +2037,7 @@ MSG
 
 - [ ] **Step 2: Client suites and build**
 
-`cd client && CI=true npx react-scripts test --watchAll=false src/utils/searchView.test.js src/pages/mobile src/components/mobile src/components/AdminLayout.search.test.js src/components/AdminLayout.badges.test.js src/utils/routeRestore.test.js src/utils/screenKey.test.js src/utils/mobileClassContract.test.js src/components/adminos` then `CI=true npx react-scripts build`. Zero `act()` warnings in the suites this lane added. Quote the counts.
+`cd client && CI=true npx react-scripts test --watchAll=false src/utils/searchView.test.js src/context/MobileViewContext.test.js src/pages/mobile src/components/mobile src/components/AdminLayout.search.test.js src/components/AdminLayout.badges.test.js src/pages/admin/EventsDashboard.fork.test.js src/pages/admin/ProposalsDashboard.fork.test.js src/pages/admin/EventDetailPage.fork.test.js src/pages/admin/Inbox.test.js src/utils/routeRestore.test.js src/utils/screenKey.test.js src/utils/mobileClassContract.test.js src/components/adminos` then `CI=true npx react-scripts build`. Zero `act()` warnings in the suites this lane added. Quote the counts.
 
 - [ ] **Step 3: Desktop regression by eye**
 
@@ -1854,7 +2045,7 @@ Desktop viewport: ⌘K opens the palette with the same four groups and rows as o
 
 - [ ] **Step 4: Review fleet, per the lane map**
 
-code-review, consistency-check, `/second-opinion` over the whole lane diff, and the ui-ux seat (it ran in Task 5 Step 4 against the benchmark; it runs again on any fix delta below). Reviewers run on Opus. Fix rounds as needed; record the as-built deltas in this plan's "Lane review round" section.
+code-review, consistency-check, `/second-opinion` over the whole lane diff, and the ui-ux seat (it ran in Task 6 Step 4 against the benchmark; it runs again on any fix delta below). Reviewers run on Opus. Fix rounds as needed; record the as-built deltas in this plan's "Lane review round" section.
 
 After the LAST fix round: re-run Steps 1 and 2 on the lane HEAD and quote the counts; if a fix touched a client UI file (`SearchPhone.js`, `index.css`, `AdminLayout.js`, `MobileHeader.js`), re-run the browser checks it can move (S10 and S11 at least for CSS, the S check that covers any behaviour changed) and send the ui-ux seat the fix delta; update the Browser checks table.
 
@@ -1862,13 +2053,13 @@ After the LAST fix round: re-run Steps 1 and 2 on the lane HEAD and quote the co
 
 The "Browser checks" table and the "Lane review round" section are written into this plan on main; commit them there (explicit pathspec, this plan file only) BEFORE the merge, because `scripts/merge-lane.sh` refuses a dirty tree.
 
-If main moved since the cut, rebase the lane onto `main`; then re-run Steps 1 and 2 on the rebased HEAD and have the code-review seat re-confirm any rebased hunk inside the footprint (the merge model's "re-confirmed against main's new HEAD"). Squash-merge through `os` on `main` via `scripts/merge-lane.sh ma-f3-search docs/superpowers/plans/2026-10-15-mobile-admin-search.md ma-f3-search`. On merged main: `node --test server/utils/globalSearch.test.js` and `cd client && CI=true npx react-scripts build`; quote both. Then `npm run worktree:rm -- ma-f3-search --force` after the three checks; the board line via `scripts/board-write.sh "Recently shipped" ...`; the close record in this plan; the `2026-10-XX` dates in Task 6's docs filled in. No push: that waits for Dallas's cue, and the push that carries this squash runs the sensitive-path re-review over `SearchPhone.js` (see "Review level").
+If main moved since the cut, rebase the lane onto `main`; then re-run Steps 1 and 2 on the rebased HEAD and have the code-review seat re-confirm any rebased hunk inside the footprint (the merge model's "re-confirmed against main's new HEAD"). Squash-merge through `os` on `main` via `scripts/merge-lane.sh ma-f3-search docs/superpowers/plans/2026-10-15-mobile-admin-search.md ma-f3-search`. On merged main: `node --test server/utils/globalSearch.test.js` and `cd client && CI=true npx react-scripts build`; quote both. Then `npm run worktree:rm -- ma-f3-search --force` after the three checks; the board line via `scripts/board-write.sh "Recently shipped" ...`; the close record in this plan; the `2026-10-XX` dates in Task 7's docs filled in. No push: that waits for Dallas's cue, and the push that carries this squash runs the sensitive-path re-review over `SearchPhone.js` (see "Review level").
 
 ## Self-Review (2026-10-15)
 
-1. **Spec coverage.** Section 6: the magnifier on every tab (Task 4; the detail variant keeps dropping it, as drawn), the same `/admin/search` endpoint (Task 3), a full-screen takeover (Tasks 3, 4), grouped as the palette groups them (Task 2), large tap rows (Task 3 CSS, S11); grounding: max 6 per group with the More row (Task 2, Task 3), empty under 2 and over 100 (Task 2 `termState`, Task 3 no request), the 60/min limit surfaced as its own note (Task 2, Task 3), the palette's debounce (Task 3), "type more" distinct from "nothing matched" (Task 2, Task 3). Section 3's Global search line: back arrow, groups with counts, "More clients on desktop · 6 shown", the Desktop tag on client and staff rows, the empty, keep-typing, in-flight, no-match and offline states with their copy, the field disabled offline, `type="search"` with the browser clear button suppressed (Tasks 2, 3, 5). Section 7: nothing cached for search (Task 3, S8). Section 9: the restore never lands on the takeover (Task 4). Section 10: failed reads surface through the normalized `err.status` (Tasks 2, 3). Section 2: the field extension (Task 1; the spec names it since the plan fold, which amended sections 2, 3, 7 and 9 on main). Docs law (Task 6). Gaps: none found.
-2. **Placeholder scan.** The `2026-10-XX` dates in Task 6 are filled at lane close (Task 7 Step 5). No TBDs.
-3. **Type consistency.** Task 1's `status`, `event_date`, `kind` are what Task 2's `searchRow` reads. Task 2's export names (`GROUP_LIMIT, termState, searchGroups, searchNote, errorKind, flightLabel, liveSummary`) are Task 3's imports; the `Row`, `Group` and `Note` shapes match the page's reads (`row.lead.kind`, `row.kind`, `row.meta`, `row.target`, `g.more`, `note.retry`); the error kinds `network | rate | server` match between `errorKind`, `searchNote` and the tests. Every screen key a target arms matches `routeScreenKey` (pinned in Task 2). `/search` is the route in Task 4, the path the magnifier navigates to, the path `routeRestore` skips, and the manifest path in Task 5.
+1. **Spec coverage.** Section 6: the magnifier on every tab (Task 5; the detail variant keeps dropping it, as drawn), the same `/admin/search` endpoint (Task 4), a full-screen takeover (Tasks 4, 5), grouped as the palette groups them (Task 2), large tap rows (Task 4 CSS, S11); grounding: max 6 per group with the More row (Task 2, Task 4), empty under 2 and over 100 (Task 2 `termState`, Task 4 no request), the 60/min limit surfaced as its own note (Task 2, Task 4), the palette's debounce (Task 4), "type more" distinct from "nothing matched" (Task 2, Task 4). Section 3's Global search line: back arrow, groups with counts, "More clients on desktop · 6 shown", the Desktop tag on client and staff rows, the empty, keep-typing, in-flight, no-match and offline states with their copy, the field disabled offline, `type="search"` with the browser clear button suppressed (Tasks 2, 4, 6). Section 7: nothing cached for search (Task 4, S8). Section 9: the restore never lands on the takeover (Task 5). Section 10: failed reads surface through the normalized `err.status` (Tasks 2, 4). Section 2: the field extension (Task 1; the spec names it since the plan fold, which amended sections 2, 3, 7 and 9 on main). Docs law (Task 7). Gaps: none found.
+2. **Placeholder scan.** The `2026-10-XX` dates in Task 7 are filled at lane close (Task 8 Step 5). No TBDs.
+3. **Type consistency.** Task 1's `status`, `event_date`, `kind` are what Task 2's `searchRow` reads. Task 2's export names (`GROUP_LIMIT, termState, searchGroups, searchNote, errorKind, flightLabel, liveSummary`) are Task 4's imports; the `Row`, `Group` and `Note` shapes match the page's reads (`row.lead.kind`, `row.kind`, `row.meta`, `row.target`, `g.more`, `note.retry`); the error kinds `network | rate | server` match between `errorKind`, `searchNote` and the tests. `setDesktopForVisit(screenKey)` is Task 3's export and Task 4's only call; the screen keys it receives are Task 2's `rowTarget` and `moreTarget` keys, pinned against `routeScreenKey` in Task 2. Every screen key a target arms matches `routeScreenKey` (pinned in Task 2). `/search` is the route in Task 5, the path the magnifier navigates to, the path `routeRestore` skips, and the manifest path in Task 6.
 4. **Review Focus.** Each of the five lines names the task and test that pins it; the tests exist in the task bodies above.
 
 ## Plan fleet fold (2026-10-15)
@@ -1879,10 +2070,12 @@ Three seats on Opus over `d2b11c58`: fidelity PASS, decomposition PASS, feasibil
 - **The spec amendment had no owner (all three seats).** Done on main with this fold: section 2 names the search row fields, section 3 carries "Plan decisions of 2026-10-15 (lane ma-f3)", section 7's allowlist sentence says search stores nothing, section 9's "Never persisted" names `/search`.
 - **The proposal row's kind was in the numeric face (fidelity).** A proposal row is now three lines, the family's: name, kind (`.m-card-kind`), date (`.m-card-meta`, formatted from `event_date`); `Row` carries `kind` and `meta` instead of `line2`. Decision 5 rewritten.
 - **A server error read as a signal problem (fidelity, section 10).** `errorKind` maps status 0 to "Search didn’t answer", 429 to "Too many searches", anything else to "Search failed". Decision 4 rewritten.
-- **Task 4's red run was mispredicted (feasibility).** The palette mock now stays until Step 3, so exactly three tests fail for the right reasons.
-- **Lint could not reach the new modules before Task 4 (decomposition).** Tasks 2 and 3 lint them directly with `npx eslint --max-warnings=0`.
-- **No re-verification after fix rounds or a rebase, plan sections not committed before the merge, the post-merge server suite missing (decomposition).** Task 7 Steps 4 and 5.
-- **Decision context missing from per-task dispatches (decomposition).** The header's dispatch rule, and a "Decisions implemented here" line on Tasks 2, 3 and 4.
+- **Task 5's red run was mispredicted (feasibility).** The palette mock now stays until Step 3, so exactly three tests fail for the right reasons.
+- **Lint could not reach the new modules before Task 5 (decomposition).** Tasks 2 and 4 lint them directly with `npx eslint --max-warnings=0`.
+- **No re-verification after fix rounds or a rebase, plan sections not committed before the merge, the post-merge server suite missing (decomposition).** Task 8 Steps 4 and 5.
+- **Decision context missing from per-task dispatches (decomposition).** The header's dispatch rule, and a "Decisions implemented here" line on Tasks 2, 4 and 5.
 - **Stated now:** no Desktop-view toggle on the takeover (decision 1), the 12px row gap (decision 6), the Clear button's 42px height (decision 9), Escape on the window so it works offline (decision 11), two-letter initials (decision 14), the review level and the push-time sensitive re-review (lane map).
-- **Smaller:** the Tier 6 count sentence, the README Key Features bullet and a docs check (Task 6), the Inbox tab in S1, the lane client on port 3000 for `mobile:check`, the scratchpad for the renders, `ma-f1-proposals-list` in `depends_on`, the "match the artifact" scope wording, the known build banner and test noise (Global Constraints), Node's `ℹ pass` reporter wording, anchor drift (`MobileViewContext.js`, the spec's `:25`, the sensitive block's `:475`), the back-arrow test's fallback-only coverage noted.
+- **Smaller:** the Tier 6 count sentence, the README Key Features bullet and a docs check (Task 7), the Inbox tab in S1, the lane client on port 3000 for `mobile:check`, the scratchpad for the renders, `ma-f1-proposals-list` in `depends_on`, the "match the artifact" scope wording, the known build banner and test noise (Global Constraints), Node's `ℹ pass` reporter wording, anchor drift (`MobileViewContext.js`, the spec's `:25`, the sensitive block's `:475`), the back-arrow test's fallback-only coverage noted.
 - Disclosed by feasibility: its mirror build wrote through the symlinked `node_modules` into `os/client/node_modules/.cache` (gitignored babel and ESLint caches; no tracked file). The next build there re-lints cold.
+
+**Amended 2026-10-16 (Dallas, on the More rows' sticky override: "I'd rather it not stick").** A new Task 3 gives `MobileViewContext` a one-visit override (`setDesktopForVisit`: in memory, never stored, kept through the page's own tabs, filters and drawers, ended when the user leaves the screen or taps Phone view); the old Tasks 3 to 7 are now 4 to 8. Search's client and staff rows and every More row use it, never the sticky `setDesktopView`, so decision 8's "Known cost" is gone. Decisions 7 and 8, the Global Constraints, the footprint (the context and its test), S4 and S6, the README and ARCHITECTURE lines, the walk, the lane-close suite list and the spec's section 3 block follow.
