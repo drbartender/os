@@ -4955,6 +4955,131 @@ CREATE INDEX IF NOT EXISTS idx_sms_consent_log_client
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_print_key TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- ─── Menu art generator (spec 2026-10-01-menu-art-generator) ───────────────
+-- Spec: docs/superpowers/specs/2026-10-01-menu-art-generator-design.md, section 6.
+-- menu_drafts: one per event. The inputs and content JSONB shapes are listed in
+-- spec 6. version is bumped by every content or inputs write (the requests'
+-- optimistic check); art_version is bumped by the job when a piece reaches done.
+-- approved_planner_image_key is the planner image key the approved file was
+-- rendered with, when its role was logo.
+CREATE TABLE IF NOT EXISTS menu_drafts (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER NOT NULL UNIQUE REFERENCES proposals(id) ON DELETE CASCADE,
+  drink_plan_id INTEGER REFERENCES drink_plans(id) ON DELETE SET NULL,
+  run_id UUID NOT NULL,
+  inputs JSONB NOT NULL,
+  content JSONB NOT NULL,
+  plan_fingerprint JSONB NOT NULL,
+  dismissed_plan_hash TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  art_version INTEGER NOT NULL DEFAULT 0,
+  approved_version INTEGER,
+  approved_art_version INTEGER,
+  approved_print_key TEXT,
+  approved_planner_image_key TEXT,
+  approved_at TIMESTAMPTZ,
+  approved_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- Created IF ABSENT, not DROP then CREATE: that shape re-runs on every boot replay
+-- and leaves a window in which the trigger does not exist (the consult_call_attempts
+-- precedent).
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_menu_drafts_updated_at'
+      AND tgrelid = 'menu_drafts'::regclass
+  ) THEN
+    CREATE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
+
+-- menu_draft_pieces: one per image, piece_key 'background' or a drink key.
+-- provider and model are stamped when the piece is asked for and the job draws
+-- with them. tone and ground_rgb are set on the background piece only.
+-- drawn_count is bumped each time the piece reaches done.
+CREATE TABLE IF NOT EXISTS menu_draft_pieces (
+  id SERIAL PRIMARY KEY,
+  draft_id INTEGER NOT NULL REFERENCES menu_drafts(id) ON DELETE CASCADE,
+  piece_key TEXT NOT NULL,
+  run_id UUID NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','working','done','failed')),
+  r2_key TEXT,
+  error TEXT,
+  reroll_note TEXT,
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  tone TEXT CHECK (tone IS NULL OR tone IN ('light','dark')),
+  ground_rgb TEXT,
+  provider TEXT NOT NULL CHECK (provider IN ('openai','gemini')),
+  model TEXT NOT NULL,
+  drawn_count INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (draft_id, piece_key)
+);
+
+-- menu_art_calls: the cap's ledger, the cost record and the audit trail.
+-- provider has no default, so a call can never be mislabeled. proposal_id goes
+-- NULL rather than taking the row with it, so a deleted event's spend still
+-- counts against the cap. error is sanitized before it is written (spec 5.1).
+CREATE TABLE IF NOT EXISTS menu_art_calls (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+  piece_key TEXT,
+  run_id UUID,
+  kind TEXT NOT NULL CHECK (kind IN ('image','text')),
+  status TEXT NOT NULL CHECK (status IN ('reserved','sent','ok','failed','released')),
+  provider TEXT NOT NULL CHECK (provider IN ('openai','gemini')),
+  model TEXT,
+  size TEXT,
+  error TEXT,
+  provider_request_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_menu_art_calls_created_at ON menu_art_calls (created_at);
+-- The engine settles reservations by run (release the old run's reserved rows
+-- inside Generate's table lock; the job's end-of-run sweep). Only open rows are
+-- ever looked up that way, so the index holds only those and stays tiny.
+CREATE INDEX IF NOT EXISTS idx_menu_art_calls_open_run ON menu_art_calls (run_id)
+  WHERE status IN ('reserved','sent');
+
+-- Every status change on the ledger stamps updated_at, so the audit trail keeps
+-- when each reservation moved even if a writer forgets to set it. Created IF
+-- ABSENT, for the same reason as the menu_drafts trigger above.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_menu_art_calls_updated_at'
+      AND tgrelid = 'menu_art_calls'::regclass
+  ) THEN
+    CREATE TRIGGER update_menu_art_calls_updated_at BEFORE UPDATE ON menu_art_calls
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
+
+-- NOT NULL does not stop a JSON null or an array, and content || patch on either
+-- silently yields an array, after which every PATCH for that event fails. So the
+-- three JSONB columns must hold objects, refused at the write that would break
+-- them. Added only IF ABSENT (never dropped and re-added), so there is no boot
+-- window and a database that already has the table gains it too.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'menu_drafts_json_shape_check'
+      AND conrelid = 'menu_drafts'::regclass
+  ) THEN
+    ALTER TABLE menu_drafts ADD CONSTRAINT menu_drafts_json_shape_check CHECK (
+      jsonb_typeof(inputs) = 'object'
+      AND jsonb_typeof(content) = 'object'
+      AND jsonb_typeof(plan_fingerprint) = 'object'
+    );
+  END IF;
+END $$;
+-- ─── end Menu art generator ───
+
 -- ─── Service extensions (on-site added bar time) ──────────────────────────
 -- One row per staff request for more bar time. Spec:
 -- docs/superpowers/specs/2026-07-25-service-extension-design.md

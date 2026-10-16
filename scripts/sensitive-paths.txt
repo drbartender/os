@@ -519,3 +519,12 @@ client/src/pages/admin/proposalEditor/repriceSummary.js
 # server/utils/sentryScrub.js above; index.js wires the hooks.
 client/src/utils/sentryScrub.js
 client/src/index.js
+
+# Menu art generator provider wrappers (spec 2026-10-01-menu-art-generator,
+# sections 5.1 and 13; lane menu-art-foundation). The only modules that reach
+# the two paid image providers: they pin the host and the key, refuse to run
+# under env settings that would leak the key or change billing, and keep
+# provider text out of Sentry and stored errors. Listed in the lane that
+# creates them so a quick fix before the engine lane lands still gets the fleet.
+server/utils/openaiClient.js
+server/utils/geminiClient.js

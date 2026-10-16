@@ -109,8 +109,13 @@ async function resolveCocktailIds(cocktailIds, dbClient) {
 // Match client free-text custom-drink requests against drinks that HAVE
 // recipes (normalized EXACT equality only — a fuzzy server-side match could
 // put the wrong bottles on a list). Pure; exported for tests.
-// @returns { matched: [rows carrying {name, ingredients, request_aliases?}],
-//            needsRecipe: [{name}] }
+// @returns { matched: [{name, ingredients, row}], needsRecipe: [{name}] }
+// `row` is the candidate row the name resolved to (the menu art generator
+// reads its id, description and kind). It is NON-enumerable on purpose: the
+// planner path feeds matched entries into generateShoppingList, whose
+// `_signatureCocktails` rides the persisted shopping_list blob and the
+// regenerate response, so an enumerable row would change both. Hidden, it is
+// invisible to JSON.stringify, spread and deepStrictEqual.
 // Match keys additionally strip apostrophes BEFORE normalizing ("jennys" must
 // hit "Jenny's": the shared normalizer maps punctuation to a space, which
 // would keep them distinct). Straight, curly (both), and backtick, since phone
@@ -141,8 +146,13 @@ function matchCustomNames(customStrings, candidateRows) {
     const name = String(raw || '').trim();
     if (!name) continue;
     const hit = byNorm.get(matchKey(name));
-    if (hit) matched.push({ name: hit.name, ingredients: hit.ingredients || [] });
-    else needsRecipe.push({ name });
+    if (hit) {
+      const entry = { name: hit.name, ingredients: hit.ingredients || [] };
+      Object.defineProperty(entry, 'row', { value: hit, enumerable: false });
+      matched.push(entry);
+    } else {
+      needsRecipe.push({ name });
+    }
   }
   return { matched, needsRecipe };
 }
@@ -152,14 +162,16 @@ function matchCustomNames(customStrings, candidateRows) {
 // point: a one-off drink added via "Add recipe" stays matchable forever.
 // Deterministic candidate order (spec §1): collisions resolve stably, active
 // beats draft, oldest wins among peers; matchCustomNames is first-wins so
-// this ORDER BY is the tiebreak contract.
+// this ORDER BY is the tiebreak contract. id, description and kind
+// ('cocktail' | 'mocktail', the src table) are for the menu art generator;
+// the shopping-list callers read only name, ingredients and request_aliases.
 async function loadRecipeCandidates(dbClient) {
   const result = await dbClient.query(
-    `SELECT name, ingredients, request_aliases FROM (
-       SELECT name, ingredients, request_aliases, is_active, created_at, 1 AS src FROM cocktails
+    `SELECT id, name, description, ingredients, request_aliases, kind FROM (
+       SELECT id, name, description, ingredients, request_aliases, is_active, created_at, 1 AS src, 'cocktail' AS kind FROM cocktails
         WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
        UNION ALL
-       SELECT name, ingredients, request_aliases, is_active, created_at, 2 AS src FROM mocktails
+       SELECT id, name, description, ingredients, request_aliases, is_active, created_at, 2 AS src, 'mocktail' AS kind FROM mocktails
         WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
      ) candidates
      ORDER BY is_active DESC NULLS LAST, created_at ASC, name ASC, src ASC`
