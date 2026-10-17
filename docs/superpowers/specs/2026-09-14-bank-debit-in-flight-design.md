@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-14
 **Status:** approved section by section in the brainstorm (Dallas, 2026-09-14)
-**Incident:** proposal 784, Thekla Eftychiadou, paid the $400 Balance invoice INV-0363 twice by bank debit (9/5 and 9/7). Both settled 9/11. Refunded by hand 9/14.
+**Incident:** the client on proposal 784 paid the $400 Balance invoice INV-0363 twice by bank debit (9/5 and 9/7). Both settled 9/11. Refunded by hand 9/14.
 
 ## 1. Problem
 

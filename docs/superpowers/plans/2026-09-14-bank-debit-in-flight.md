@@ -728,7 +728,7 @@ after(async () => {
 
 test('bankPaymentProcessingClient > subject, dollars, noun, the clearing line, no em dash', () => {
   const t = bankPaymentProcessingClient({
-    clientName: 'Thekla Eftychiadou', amountCents: 40000, paymentType: 'invoice',
+    clientName: 'Test Client', amountCents: 40000, paymentType: 'invoice',
     eventTypeLabel: 'Cocktail Party', eventDate: 'Saturday, September 19', proposalUrl: 'https://drbartender.com/proposal/x',
   });
   assert.equal(t.subject, 'We received your bank payment');
@@ -2439,7 +2439,7 @@ import InvoicePage from './InvoicePage';
 const baseInvoice = {
   id: 363, token: 'tok-1', proposal_id: 784, invoice_number: 'INV-0363', label: 'Balance',
   amount_due: 40000, amount_paid: 0, status: 'sent', due_date: '2026-09-05', created_at: '2026-09-03T12:45:52Z',
-  event_date: '2026-09-19', event_type: 'Cocktail Party', client_name: 'Thekla Eftychiadou',
+  event_date: '2026-09-19', event_type: 'Cocktail Party', client_name: 'Test Client',
   line_items: [], payments: [], refunds: [], extension: null,
   pending_payment: null, pending_payment_for_this_invoice: false,
 };

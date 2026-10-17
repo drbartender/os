@@ -44,7 +44,7 @@ after(async () => {
 
 test('bankPaymentProcessingClient > subject, dollars, noun, the clearing line, no em dash', () => {
   const t = bankPaymentProcessingClient({
-    clientName: 'Thekla Eftychiadou', amountCents: 40000, paymentType: 'invoice',
+    clientName: 'Test Client', amountCents: 40000, paymentType: 'invoice',
     eventTypeLabel: 'Cocktail Party', eventDate: 'Saturday, September 19', proposalUrl: 'https://drbartender.com/proposal/x',
   });
   assert.equal(t.subject, 'We received your bank payment');
