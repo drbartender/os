@@ -118,7 +118,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
 | 3 | Automated texts never check the per-phone opt-out record | not today (the two STOPs on prod from numbers with no client row are both staffers, 10/06); it opens with the first STOP to a 224 line from a number no client or staffer has yet |
 | 3 | A text Twilio reports undeliverable never marks the phone bad | yes, once a client's number goes dead (0 clients flagged on prod, 10/06) |
-| 3 | Thumbtack customers cannot find the proposal: the proposal text goes to the relay and never shows in the Thumbtack app | **yes: 162 of 162 in 60 days (to 10/16) reached the relay, 0 landed in a thread**; designed 10/17, spike next |
+| 3 | Thumbtack customers cannot find the proposal: the proposal text goes to the relay and never shows in the Thumbtack app | **yes: 162 of 162 in 60 days (to 10/16) reached the relay, 0 landed in a thread**; designed 10/17; spike PASSED 10/17, plan next |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 4 | The staff shift page's shopping-list card never renders | yes, for every staffer |
 | 4 | Cover swaps have no working admin path | one claim ever (request 529, still pending) |
@@ -769,8 +769,8 @@ Since 2026-06-08 a Thumbtack client's phone is the per-lead relay, so the propos
 888 reaches Thumbtack but never shows in the app thread (0 of 162 in the 60 days to 10/16), and
 someone pasted the link by hand 23 times. Designed 2026-10-17: post it through a logged-in Google
 Voice session on the box (spec `docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md`,
-rev 3, fleet-reviewed). NEXT: the spike in its section 7, which needs Dallas twice (sign GV into a
-fresh profile on the box; pick the lead who gets the first real message). Then the plan.
+rev 3, fleet-reviewed). Spike PASSED 2026-10-17 (spec section 10): one GV post to a new conversation
+landed in the Thumbtack thread byte-exact, 3 s to Thumbtack, 13 s to our webhook. NEXT: the plan.
 
 ### A signed-but-unpaid client keeps getting the unsigned-proposal drip, and Stop cannot reach it
 

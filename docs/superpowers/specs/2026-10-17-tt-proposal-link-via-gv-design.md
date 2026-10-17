@@ -187,3 +187,25 @@ If (2) fails, stop and come back to Dallas; the design rests on it. If (3) fails
 - CLAUDE.md: env table (`GV_PROPOSAL_POST_ENABLED`, `GV_AGENT_SECRET` with blast radius and leak response, the sweep flag, the caps and windows) and Tech Stack (Google Voice web automation).
 - README: env table, tech stack, folder tree, key features. ARCHITECTURE: route table, schema, third-party integrations. `.env.example`.
 - Box, outside the repo: the systemd unit, `~/.config/restic/excludes.txt` (the whole GV profile), the profile directory at mode 700.
+
+## 10. Spike results (2026-10-17): GO
+
+One approved post, to lead 471 / proposal 943. The customer had never opened the proposal and had no GV conversation, so it was the new-conversation case. Sent from the box's GV profile under Xvfb (the `thumbtack-agent` launch recipe: `channel: 'chrome'`, env scrub, `OZONE_PLATFORM=x11`).
+
+| Check | Result |
+|---|---|
+| 1. GV web send on a persisted session, no window | Pass. Verified in the GV conversation 1 s after the click. |
+| 2. Lands in the Thumbtack thread | Pass. A `thumbtack_messages` row, `from_type` Business, exact body. |
+| 3. A new conversation to a relay number | Pass. There was no prior GV thread. |
+| 4. Timing | Thumbtack `sent_at` was 3 s after the click; our webhook stored it at 13 s. |
+| 5. Body intact (248 chars, link across a segment boundary) | Pass. One message, byte-exact. |
+| 6. No access-code challenge | Pass. It went straight into the thread. |
+| 7. Repeat customer / recycled relay | Not exercised; no case available. Law 1 covers it. |
+
+What the build must carry (the GV web UI as of 2026-10-17):
+- **Sign-in.** A manual stock-Chrome launch on the desktop, not Playwright: `google-chrome --user-data-dir=<profile> --password-store=basic --use-mock-keychain`. Sign into the GV site and decline Chrome sync. The cookies land as `v10`, readable by the automated launch.
+- **The call-dialer trap.** `input` "Enter a name or number" lives in the **Call panel** region, the dialer. The first spike run typed the number there and pressed Enter. GV's call log showed no call placed, and the send stayed disabled, so it aborted. The sender must never touch the Call panel, and it asserts that the panel's input is empty before Send.
+- **Recipient.** Click "Send new message". Then, in the region "Select recipients", use the `input` "Type a name or phone number". A one-go fill does NOT trigger suggestions; type key by key. GV then shows a `gv-contact-list` entry, "Send to (number)", plus a screen-reader-only twin, so filter by a rendered size above 4 px. Click exactly one such entry. Verify exactly one `button[aria-label^="Remove"]` chip carrying the number, with the input emptied. Enter in the recipient field does not add the number.
+- **Body.** `textarea` "Type a message", filled in one go. Send is `button[aria-label="Send message"]`, which stays disabled until a recipient exists.
+- **Verify.** The token visible in a message bubble and the textarea emptied.
+- **Claude's own permission gate.** Claude Code's auto-mode safety check refused to let a Claude session send a real message. Dallas ran the send himself. Production is a standalone service and doesn't go through that gate, but any future live test from a Claude session needs Dallas to run it.
