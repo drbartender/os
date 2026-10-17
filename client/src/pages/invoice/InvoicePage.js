@@ -279,6 +279,11 @@ export default function InvoicePage() {
   // Server-derived: an extension invoice cannot reach the payment element
   // before terms acceptance. Always false for ordinary invoices.
   const paymentBlockedByTerms = Boolean(extension?.is_extension && extension.requires_acceptance);
+  // Server-derived (spec 2026-10-16 section 7): set only on a Deposit, Balance
+  // or Full Payment invoice whose lines sum to the contract, so the totals can
+  // step from the Contract Total down to the Invoice Total. Null, or absent
+  // from an older server, leaves the totals block exactly as it was.
+  const contractStep = invoice.contract_step || null;
 
   return (
     <div className="invoice-page">
@@ -361,7 +366,19 @@ export default function InvoicePage() {
           </div>
 
           <div className="invoice-totals">
-            <div className="invoice-totals-row">
+            {contractStep && (
+              <>
+                <div className="invoice-totals-row">
+                  <span>Contract Total</span>
+                  <span>{formatCurrency(contractStep.contract_total_cents)}</span>
+                </div>
+                <div className="invoice-totals-row invoice-totals-step">
+                  <span>{contractStep.step_label}</span>
+                  <span>−{formatCurrency(contractStep.step_cents)}</span>
+                </div>
+              </>
+            )}
+            <div className={contractStep ? 'invoice-totals-row invoice-totals-subtotal' : 'invoice-totals-row'}>
               <span>Invoice Total</span>
               <span>{formatCurrency(invoice.amount_due)}</span>
             </div>

@@ -2216,6 +2216,17 @@ The walk, on the Pixel, in the installed app:
 
 What the headless gate could not prove (2026-10-16): the shift drawer in step 5, which it did not script, and the hardware Back and the keyboard, which only the phone has. Everything else passed there.
 
+### Deposit and Balance invoices step from the contract to the Invoice Total (lane invoice-step, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+
+Display only (spec 2026-10-16 section 7): nothing is charged or stored, so any booking will do. The walk, on the client invoice page (`/invoice/<token>`), on screen and in Save as PDF:
+1. A Deposit invoice whose lines add up to the contract: under the line table, Contract Total (the sum of the lines), "Balance, billed later" as a negative, a hairline, Invoice Total (the deposit), then Amount Paid and Balance Due as before.
+2. A Balance invoice on a booking whose deposit is paid: Contract Total, "Less deposit and earlier payments" (the deposit) as a negative, Invoice Total (the balance).
+3. Save as PDF on both: the same rows. Then the browser's Print, Save as PDF: black on white, and the hairline prints like the Balance Due rule.
+4. On a phone: the step label and its amount sit on one line (or wrap cleanly), with no sideways scroll.
+5. An invoice the rule leaves out reads exactly as before: an Additional Services invoice, a native Full Payment invoice (nothing to step), any invoice that lists a refund, and a locked invoice whose booking was re-priced after it locked. Prod invoice 211 is the refund case to check: a Check Cherry Balance with a less-deposit line and a later refund the same size, so its old lines happen to equal the new total. It must show no step (otherwise the deposit would be subtracted twice).
+
+Verified so far by the suites (`invoiceStep.test.js`, `invoices.contractStep.test.js` with the public key set pinned, `InvoicePage.test.js`) and a headless render of the totals block at 1280 and 390 pixels in screen and print media; nobody has seen it on a real booking.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

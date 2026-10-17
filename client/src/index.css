@@ -9722,6 +9722,17 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .invoice-totals-balance.is-due > span:last-child { color: var(--rust); }
 .invoice-totals-balance.is-paid > span:last-child { color: var(--accent-sage, var(--sage)); }
+/* Contract-to-invoice step (spec 2026-10-16 section 7): Contract Total, the
+   step row, then the Invoice Total under a hairline, so the subtraction reads.
+   Only a Deposit, Balance or Full Payment invoice whose lines are the current
+   contract carries these classes; every other invoice renders as before. */
+.invoice-totals-step { gap: 12px; }
+.invoice-totals-step > span:last-child { white-space: nowrap; }
+.invoice-totals-subtotal {
+  border-top: 1px solid var(--deep-brown);
+  margin-top: 4px;
+  padding-top: 10px;
+}
 
 /* ── Payment record (paid only) ──────────────────────── */
 .invoice-payment-details {
@@ -10605,7 +10616,8 @@ html[data-app="admin-os"] .location-suggest-item.active {
   .invoice-table td {
     border-bottom-color: #ddd !important;
   }
-  .invoice-totals-balance {
+  .invoice-totals-balance,
+  .invoice-totals-subtotal {
     border-top-color: #111 !important;
   }
   .invoice-totals-paid,

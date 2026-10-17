@@ -30,7 +30,7 @@ beforeAll(() => { Element.prototype.scrollIntoView = jest.fn(); });
 const baseInvoice = {
   id: 363, token: 'tok-1', proposal_id: 784, invoice_number: 'INV-0363', label: 'Balance',
   amount_due: 40000, amount_paid: 0, status: 'sent', due_date: '2026-09-05', created_at: '2026-09-03T12:45:52Z',
-  event_date: '2026-09-19', event_type: 'Cocktail Party', client_name: 'Thekla Eftychiadou',
+  event_date: '2026-09-19', event_type: 'Cocktail Party', client_name: 'Test Client',
   line_items: [], payments: [], refunds: [], extension: null,
   pending_payment: null, pending_payment_for_this_invoice: false,
 };
@@ -150,4 +150,72 @@ test('a confirm that resolves with neither error nor intent (a redirect underway
   expect(container.textContent).not.toMatch(/Payment successful|bank payment is processing/);
   expect(container.querySelector('.invoice-paid-stamp')).toBeNull();
   expect(mockToastSuccess).not.toHaveBeenCalled();
+});
+
+// Contract-to-invoice step (spec 2026-10-16 section 7). The server sends
+// contract_step only when the lines sum to the contract; the page draws
+// Contract Total, the step, then Invoice Total. Every negative in the totals
+// block is a MINUS SIGN (U+2212) before the amount, as Amount Paid has always been.
+function totalsRows(container) {
+  return [...container.querySelectorAll('.invoice-totals .invoice-totals-row')]
+    .map((row) => [...row.children].map((cell) => cell.textContent));
+}
+const MINUS = String.fromCharCode(0x2212);
+const contractLines = [
+  { id: 1, description: 'Test Package', quantity: 1, unit_price: 80000, line_total: 80000 },
+  { id: 2, description: 'Test Add-on', quantity: 1, unit_price: 20000, line_total: 20000 },
+];
+const TODAYS_TOTALS = '<div class="invoice-totals">'
+  + '<div class="invoice-totals-row"><span>Invoice Total</span><span>$400.00</span></div>'
+  + '<div class="invoice-totals-row invoice-totals-balance is-due"><span>Balance Due</span><span>$400.00</span></div>'
+  + '</div>';
+
+test('contract_step null renders exactly today\'s totals block', async () => {
+  apiGet({ ...baseInvoice, line_items: contractLines, contract_step: null });
+  const { container } = render(<InvoicePage />);
+  await screen.findByText('Invoice Total');
+  expect(container.querySelector('.invoice-totals').outerHTML).toBe(TODAYS_TOTALS);
+});
+
+test('a payload without contract_step (an older server) renders exactly today\'s totals block', async () => {
+  apiGet({ ...baseInvoice, line_items: contractLines });
+  const { container } = render(<InvoicePage />);
+  await screen.findByText('Invoice Total');
+  expect(container.querySelector('.invoice-totals').outerHTML).toBe(TODAYS_TOTALS);
+});
+
+test('a paid Deposit with a step reads Contract Total, the step as a negative, Invoice Total, Amount Paid, Balance Due', async () => {
+  apiGet({
+    ...baseInvoice, label: 'Deposit', amount_due: 10000, amount_paid: 10000, status: 'paid',
+    line_items: contractLines,
+    contract_step: { contract_total_cents: 100000, step_cents: 90000, step_label: 'Balance, billed later' },
+  });
+  const { container } = render(<InvoicePage />);
+  await screen.findByText('Contract Total');
+  expect(totalsRows(container)).toEqual([
+    ['Contract Total', '$1,000.00'],
+    ['Balance, billed later', `${MINUS}$900.00`],
+    ['Invoice Total', '$100.00'],
+    ['Amount Paid', `${MINUS}$100.00`],
+    ['Balance Due', '$0.00'],
+  ]);
+  // The Invoice Total sits under a rule: the result of the step above it.
+  expect(container.querySelector('.invoice-totals-subtotal').textContent).toBe('Invoice Total$100.00');
+});
+
+test('an unpaid Balance with a step bills the Invoice Total, never the Contract Total', async () => {
+  apiGet({
+    ...baseInvoice, label: 'Balance', amount_due: 90000, amount_paid: 0,
+    line_items: contractLines,
+    contract_step: { contract_total_cents: 100000, step_cents: 10000, step_label: 'Less deposit and earlier payments' },
+  });
+  const { container } = render(<InvoicePage />);
+  await screen.findByText('Contract Total');
+  expect(totalsRows(container)).toEqual([
+    ['Contract Total', '$1,000.00'],
+    ['Less deposit and earlier payments', `${MINUS}$100.00`],
+    ['Invoice Total', '$900.00'],
+    ['Balance Due', '$900.00'],
+  ]);
+  expect(screen.getByRole('button', { name: /^Pay \$900\.00/ })).toBeTruthy();
 });

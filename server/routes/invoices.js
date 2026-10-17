@@ -6,12 +6,14 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager, clientAuth } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
 const { createInvoice, writeLineItems, voidExtrasInvoiceWithReconcile } = require('../utils/invoiceHelpers');
+const { toCents } = require('../utils/invoiceShared');
 const { cancelOpenInvoiceIntents } = require('../utils/invoiceVoid');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { OFF_LEDGER_INVOICE_LABELS } = require('../utils/proposalMoneyShared');
 const { renderExtensionTerms } = require('../data/extensionTermsCopy');
 const { findInFlightPayments, toPublicPending } = require('../utils/paymentInFlight');
+const { contractStep } = require('../utils/invoiceStep');
 
 const router = express.Router();
 
@@ -35,6 +37,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
        i.locked, i.locked_at, i.created_at, i.updated_at,
        p.event_date, p.event_start_time, p.event_location,
        p.event_type, p.event_type_custom, p.guest_count,
+       p.total_price AS proposal_total_price,
        c.name AS client_name, c.email AS client_email
      FROM invoices i
      JOIN proposals p ON p.id = i.proposal_id
@@ -48,7 +51,10 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     throw new NotFoundError('This invoice is no longer available');
   }
 
-  const invoice = result.rows[0];
+  // The proposal total only decides contract_step below; it never leaves this
+  // public route. Split off here, so the row spread into the response never
+  // carries it.
+  const { proposal_total_price: proposalTotalPrice, ...invoice } = result.rows[0];
 
   // Parallel fetch line items and payments
   const [lineItemsRes, paymentsRes, refundsRes, extRes, inFlight] = await Promise.all([
@@ -166,6 +172,23 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     };
   }
 
+  // The step from the contract to this invoice's total (spec 2026-10-16
+  // section 7), display only. Null unless this is a Deposit, Balance or Full
+  // Payment invoice whose lines sum to total_price to the cent and that lists
+  // no refund (the refunds fetched above: a refund moves amount_due, never the
+  // lines). The conversion is the shared toCents, the same rounding the line
+  // fold applies to total_price; a NULL total_price stays null rather than
+  // reading as a $0 contract.
+  const step = contractStep({
+    label: invoice.label,
+    lineTotalsCents: lineItemsRes.rows.map((r) => Number(r.line_total)),
+    amountDueCents: Number(invoice.amount_due),
+    contractTotalCents: proposalTotalPrice === null || proposalTotalPrice === undefined
+      ? null
+      : toCents(proposalTotalPrice),
+    refunded: refundsRes.rows.length > 0,
+  });
+
   // `extension` lives INSIDE the invoice object: InvoicePage stores data.invoice
   // and nothing else, so a top-level sibling would never render (the exact
   // server/client shape mismatch Task 8 pins with a regression test).
@@ -178,6 +201,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
       extension,
       pending_payment: toPublicPending(inFlight),
       pending_payment_for_this_invoice: !!(inFlight[0] && inFlight[0].invoice_id === invoice.id),
+      contract_step: step,
     },
   });
 }));
