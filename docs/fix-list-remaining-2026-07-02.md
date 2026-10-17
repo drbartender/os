@@ -2303,6 +2303,14 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
     the drawer's X only (the desktop drawer replaces history, `useDrawerParam.js:81, :98`, so
     hardware Back leaves for the search), and "open one of its events" should say a booked event
     (a manual shift's row opens the drawer).
+  - Left by the fix wave's re-review (merged as `c0d7d98d`): a skip-link history entry has null
+    state, so `SearchPhone.js`'s late-answer guard (:37-40) fails open there and a late answer
+    can still rewrite that entry; two narrow returns to the screen's entry (:121) can leave the
+    searching line up until the next keystroke.
+  - The comment above the search rail in `client/src/index.css` (:21658-21659) still names the
+    quieter ink-4; the lane review moved the rail to the family's ink-3 (plan decision 6).
+  - This block hangs under the service-worker allowlist bullet; it belongs at the top level of
+    the Admin UI phone entries. Move it at the next edit here.
 
 - **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, pushed
   2026-10-07).** Parked by its review fleet, fold re-reviews and the push review; none changes money
@@ -3165,7 +3173,7 @@ re-grep before surgery.
   **AMENDED 2026-10-14: the Proposals LIST is built by lane `ma-f1-proposals-list` (merged 2026-10-14 as `9f2c1f1c`, not pushed)
   (`docs/superpowers/plans/2026-10-14-mobile-admin-proposals-list.md`); `/proposals` forks to the
   phone list at phone width. Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.**
-  **AMENDED 2026-10-16: full-screen SEARCH is built by lane `ma-f3-search`
+  **AMENDED 2026-10-16: full-screen SEARCH is built by lane `ma-f3-search` (merged 2026-10-16 as `c0d7d98d`, not pushed)
   (`docs/superpowers/plans/2026-10-15-mobile-admin-search.md`); the phone header's magnifier opens
   `/search` instead of the palette. Still declared and unbuilt: `ma-f2-proposal-detail`.**
   **AMENDED 2026-09-29: the event DETAIL and the ASSIGNMENT SHEET are built, by lane

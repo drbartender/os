@@ -2175,3 +2175,7 @@ One fix wave, `7bb1dfd2` and `b0a4c78b`: the screen writes its history entry onl
 Parked with rulings (the fix list carries them): a skip-link history entry with null state lets the guard fail open; two narrow returns can leave the searching line up; the parked block's placement under the allowlist bullet; the CSS comment above the rail still naming ink-4; and the review's other Minors (the fix list's "What the lane review left" block). The route file `server/routes/admin/search.js` joined the footprint (a header comment).
 
 Suites on the fixed HEAD: server `globalSearch` 13 / 13; client lane-close list 37 suites 704 / 704 (the only act() warnings are ShiftDrawer's 13, a file this lane does not touch); build clean but for the known html2pdf.js source-map warning.
+
+## Close record (2026-10-16)
+
+Merged by squash as `c0d7d98d` (the lane rebased onto `ded44f60` first; every changed line was identical before and after the rebase). Merged main's tree equals the reviewed lane HEAD `8814a933` byte for byte. On merged main: `globalSearch` 13 / 13; the client build exits 0 with only the html2pdf.js source-map warning. Lane worktree and branch removed. Not pushed: it waits for Dallas's cue, and the push that carries it runs the sensitive-path re-review over `SearchPhone.js`. Owed: the Pixel walk (walkthroughs-owed, "Global search on the phone"). What the review left is on the fix list (Admin UI, the ma-f3 block). Next in phase 1: `ma-f2-proposal-detail`, then `ma-g-design-fit`.

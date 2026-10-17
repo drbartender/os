@@ -2202,7 +2202,7 @@ to rot. Do that again for the next thing that sits here.
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
 
-### Global search on the phone (lane ma-f3-search, built 2026-10-16; moves to Tier 3b when its squash is an ancestor of `origin/main`)
+### Global search on the phone (lane ma-f3-search, merged 2026-10-16 as `c0d7d98d`, not pushed; moves to Tier 3b when `c0d7d98d` is an ancestor of `origin/main`)
 
 The walk, on the Pixel, in the installed app:
 1. On Events, tap the magnifier (it is on every tab): the search fills the screen, the keyboard comes up, the tab bar is gone.
