@@ -112,7 +112,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | A caller can hit silence, or "an application error has occurred" | yes |
 | 3 | Nobody has listened to the nine voice mp3s | unknown — that is the point |
 | 3 | A placed-but-carrier-failed lead call is a quiet miss | yes |
-| 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436 (9/24, 10/1, 10/4)** |
+| 3 | Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is quiet | **yes: leads 417, 431, 436, 476 (9/24, 10/1, 10/4, 10/15); 10/15 stopped leads for 44+ h, still walled 10/17** |
 | 3 | Thumbtack repeat-lead dedup: fixed on main (`4a3b382c`); the second-auto-draft product call remains | no: a product call, nothing bites today |
 | 3 | A corrected email address stays marked bounced, so the client's emails keep vanishing | no (5 bounced clients on prod, none with an upcoming booking, 10/06) |
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
@@ -846,7 +846,9 @@ nothing says so. Option: treat agent-leg 'failed' as fault-class, or include
 
 ### Thumbtack's card-declined wall reads as `lead_not_found`, so a lead stop is a quiet miss
 
-Happened three times: 2026-09-24 (lead 417), 2026-10-01 (lead 431), 2026-10-04 (lead 436). The
+Happened four times: 2026-09-24 (lead 417), 2026-10-01 (lead 431), 2026-10-04 (lead 436), 2026-10-15
+(lead 476). The 10/15 one cost leads: none arrived from 10/15 20:52 UTC through at least 10/17 16:48 UTC
+(against about three a day), and a logged-in probe on 10/17 still landed on the wall. Nothing alerted. The
 card worked again in between each time (leads 432-435 replied fine on 10/4 before 436 hit it), so
 it keeps declining rather than being dead. When it declines, Thumbtack redirects pro pages to
 `/fullscreen-takeover`: "You're not getting new leads. You've stopped showing up in customer
