@@ -68,7 +68,7 @@ Ordered by how close each one is to actually costing money or a client.
 | # | what breaks | reachable today? |
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
-| 1 | A contract refund on a booking with no override is billed again by the next editor save | **yes: 847 (event 10/29)**; five completed and one archived carry the same gap |
+| 1 | A contract refund on a booking with no override is billed again by the next editor save | no: 847 archived 10/15 (cancelled); it, five completed and one archived carry the gap; designed 2026-10-16 (override-removal spec, backfill) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -197,6 +197,10 @@ re-prices to the pre-refund total, even a save that only fixes the start time. T
 confirm shows the increase; with every balance invoice locked, `createAdditionalInvoiceIfNeeded`
 then mints an Additional Services invoice for exactly the refund. Override'd bookings were fixed
 2026-08-25 (the override moves with the refund); bookings without one never were.
+
+**Designed 2026-10-16:** `docs/superpowers/specs/2026-10-16-price-override-removal-design.md` section 6 (a contract refund writes a
+visible Refund discount line and syncs the snapshot) and the section 8 backfill (847, 500, 54,
+439, 595, 633, 784). Not built.
 
 **Live on 847** (event 10/29, `balance_paid`, a $285 contract refund on 10/14, its Full Payment
 invoice locked): any save there re-bills $285. Completed 54, 439, 595, 633 and 784 and archived
@@ -517,8 +521,8 @@ and move the override by it, the way `foldExtrasIntoProposal` already does for e
 Dallas's call on automatic versus one click.
 
 **Superseded 2026-10-14: Dallas is removing the override entirely.** Every override converts to
-a discount or surcharge line and the editor loses the Override total field; the design is in
-progress. That closes this entry by construction, since added hours then price at catalog.
+a discount or surcharge line and the editor loses the Override total field; spec
+`docs/superpowers/specs/2026-10-16-price-override-removal-design.md` (2026-10-16), not built. That closes this entry by construction, since added hours then price at catalog.
 
 ### An editor tab left open across an on-site settle writes the old hours back
 
@@ -2618,7 +2622,14 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   route prints only visible adjustments since lane invoice-lines). Fix: send a sanitized copy of
   the snapshot (adjustments filtered to visible, `total_price_override` dropped, `breakdown`
   checked for hidden labels), after confirming what ProposalView reads so the totals it shows do
-  not move. Raised by the invoice-lines security review, 2026-10-08.
+  not move. Raised by the invoice-lines security review, 2026-10-08. Designed 2026-10-16:
+  `docs/superpowers/specs/2026-10-16-price-override-removal-design.md` section 4.3 (one sanitizer on every token route, leak test). Not built.
+- **The manual-invoice route accepts the contract labels Deposit, Balance and Full Payment.**
+  `POST /api/invoices` (`server/routes/invoices.js`, about L258-266) rejects only off-ledger labels, so an
+  admin can mint a manual "Balance"; the lifecycle refresh (`invoiceLifecycle.js`, about L144-153) then
+  treats any unlocked invoice carrying one of those labels as its own and rewrites its `amount_due`. Fix:
+  reserve the three labels for system-minted invoices, like the off-ledger ones. Raised by the
+  override-removal spec review, 2026-10-16.
 - **An adjustment label over 255 characters overflows `invoice_line_items.description`**
   (VARCHAR(255)). Nothing bounds the label: the editor input has no `maxLength` and the admin PATCH
   stores `adjustments` from the body as is. A visible label that long makes `writeLineItems`
