@@ -2808,6 +2808,31 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 - **Duplicate index `idx_invoices_token`, and `schema.sql` rebuilds the invoices foreign key on every boot**
   (about L2450-2467). Harmless today: noise and a needless lock on every deploy. Raised by the invoice-step
   lane database review, 2026-10-17.
+- **Cancel-line adjustment targets are positional on the server.** `lineItemCancel.js` (about L245-249
+  and L583-595) finds an adjustment by its index. The editor lane made both admin pages reload targets
+  after every save, which closes the one-tab path, but two open tabs can still race: a tab that deleted a
+  middle line shifts every index, and the other tab's confirm removes, and may refund, a different line.
+  Fix: the execute request carries the line's identity (label and cents, or the adjustments token) and the
+  server refuses a mismatch with 409. Raised by the line-protection and editor lane reviews, 2026-10-17.
+- **The client portal's change-request route holds two pooled connections.**
+  `server/routes/clientPortal/changeRequests.js` keeps its `dbClient` while `notifyAdminOfChangeRequest`
+  runs a bare `pool.query` (since 2026-06-05): the one-connection-per-request invariant, the pool-deadlock
+  pattern behind SERVER-17. Raised by the portal-rows lane database review, 2026-10-17.
+- **`invoiceLifecycle.js` overlaps queries on one pg client** (about L103-129): deprecated in pg 8.20,
+  removed in pg 9, so the driver upgrade breaks it. Raised by the client-rows lane database review,
+  2026-10-17.
+- **An adjustment labeled "Gratuity" collides with the gratuity row.** Payroll pools it as gratuity and a
+  gratuity re-quote drops it, because both match on the label. Refuse that label in `validateAdjustments`
+  or match gratuity by key, not label. Raised by the line-protection implementer, 2026-10-17.
+- **The adjustment amount cap is checked before the cent tolerance.** `999999.99999999` passes the
+  $1,000,000 cap and reads as $1,000,000.00. Compare the cap after rounding. Admin input only. Raised by
+  the adj-rules lane security re-check, 2026-10-17.
+- **`publicToken.signTotal`'s sign_failed case races** (failed 2 of 9 runs on main's code). It is not on
+  the money gate. Raised by the client-rows implementer, 2026-10-17.
+- **Small leftovers from the override removal build (2026-10-17):** the portal detail response still
+  returns `addons`, which nothing reads; the client-rows test fixtures use snapshot `_version` 3, which
+  `readSnapshot` refuses; the admin cancel dialog does not say that a hidden line's client notice reads
+  "Pricing adjustment".
 - **An adjustment label over 255 characters overflows `invoice_line_items.description`**
   (VARCHAR(255)). Nothing bounds the label: the editor input has no `maxLength` and the admin PATCH
   stores `adjustments` from the body as is. A visible label that long makes `writeLineItems`
