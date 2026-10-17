@@ -68,7 +68,7 @@ Ordered by how close each one is to actually costing money or a client.
 | # | what breaks | reachable today? |
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
-| 1 | A contract refund on a booking with no override is billed again by the next editor save | no: 847 archived 10/15 (cancelled); it, five completed and one archived carry the gap; designed 2026-10-16 (override-removal spec, backfill); new refunds built in lane refund-line (not merged yet), existing bookings close with step 2 |
+| 1 | A contract refund on a booking with no override is billed again by the next editor save | no: 847 archived 10/15 (cancelled); it, five completed and one archived carry the gap; designed 2026-10-16 (override-removal spec, backfill); new refunds built in lane refund-line (merged 8c3b7051, not pushed), existing bookings close with step 2 |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -210,7 +210,7 @@ then mints an Additional Services invoice for exactly the refund. Override'd boo
 visible Refund discount line and syncs the snapshot) and the section 8 backfill (847, 500, 54,
 439, 595, 633, 784).
 
-**Built in lane refund-line (not merged yet: add the merge sha here at merge); existing bookings
+**Built in lane refund-line (merged 8c3b7051, not pushed); existing bookings
 close with step 2.** Every contract refund from then on writes its line (`server/utils/refundLine.js`,
 called by `applyRefundReconciliation`); the seven bookings above get theirs from the conversion's
 backfill (spec 8.4), and any booking Dallas's dry-run list holds back stays open here by id.
