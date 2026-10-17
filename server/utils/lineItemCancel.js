@@ -24,10 +24,16 @@ const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons, priced
 const { rosterCounts } = require('./positionsNeeded');
 const { toCents } = require('./invoiceShared');
 const { isProtectedAdjustment, adjAmount, adjLabel } = require('./adjustmentRules');
+const { isLegalHold } = require('./legalHold');
 
 // Archived proposals are settled history; completed events have run payroll.
 // Changes there are deliberate manual territory, never one-click.
 const CANCEL_BLOCKED_STATUSES = ['archived', 'completed'];
+
+// Legal hold (spec 2026-10-16 section 5.3): a held booking keeps every line
+// and its price. Cancel-line is admin-only, so its refusal names the hold
+// (plan decision 4); the extras fold's client-facing guard stays behind it.
+const LEGAL_HOLD_MSG = 'This booking is on legal hold and its lines cannot be removed.';
 
 const KINDS = new Set(['addon', 'bar', 'syrup', 'extra-bartender', 'adjustment', 'gratuity', 'package']);
 const KEYED = new Set(['addon', 'syrup', 'adjustment']);
@@ -100,6 +106,9 @@ async function computeCancelTargets(dbClient, proposalId) {
   const pRes = await dbClient.query('SELECT * FROM proposals WHERE id = $1', [proposalId]);
   const proposal = pRes.rows[0];
   if (!proposal) throw new NotFoundError('Proposal not found');
+  // Not eligible, so the admin breakdown draws no remove button (the pages
+  // keep targets only when eligible). Read off the loaded row's id.
+  if (isLegalHold(proposal.id)) return { eligible: false, targets: [], reason: 'legal_hold' };
   if (CANCEL_BLOCKED_STATUSES.includes(proposal.status)) return { eligible: false, targets: [] };
 
   const pkg = proposal.package_id
@@ -442,6 +451,9 @@ async function applyLineItemCancel(client, {
   const pRes = await client.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [proposalId]);
   const proposal = pRes.rows[0];
   if (!proposal) throw new NotFoundError('Proposal not found');
+  // Right after the lock, before any per-kind write, on the locked row's id
+  // (never the raw :id).
+  if (isLegalHold(proposal.id)) throw new ConflictError(LEGAL_HOLD_MSG, 'LEGAL_HOLD');
   if (CANCEL_BLOCKED_STATUSES.includes(proposal.status)) {
     throw new ConflictError('Line items cannot be removed from an archived or completed proposal.', 'NOT_CANCELLABLE');
   }

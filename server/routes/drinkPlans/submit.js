@@ -14,7 +14,7 @@ const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/propo
 const { calculateAddonCost } = require('../../utils/pricingEngine');
 const { contractDurationHours } = require('../../utils/contractDuration');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
-const { NotFoundError, ConflictError } = require('../../utils/errors');
+const { AppError, NotFoundError, ConflictError } = require('../../utils/errors');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
 const { loadHostedCoverageContext, mocktailAddonFor } = require('./coverageContext');
 const { sanitizeSelections } = require('./submitSanitize');
@@ -25,6 +25,20 @@ const {
 } = require('./submitNotify');
 
 const PARKING_FEE_SLUG = 'parking-fee'; // per_staff catalog slug (spec §4.3)
+
+// Sentry for a failed submit transaction. An expected refusal (an AppError
+// below 500, such as the legal-hold NOT_CHANGEABLE from the extras fold) is
+// the client's answer, not an incident, so it is not reported. The drink-plan
+// token is a bearer credential: a payload carries only its last six
+// characters (the publicSwitch.js precedent).
+function reportSubmitTxError(txErr, req, proposalId, op) {
+  if (!process.env.SENTRY_DSN_SERVER) return;
+  if (txErr instanceof AppError && txErr.statusCode < 500) return;
+  Sentry.captureException(txErr, {
+    tags: { route: 'drinkPlans/putToken', op },
+    extra: { tokenTail: String(req.params.token).slice(-6), proposalId },
+  });
+}
 
 // How every UPDATE below writes `selections`.
 //
@@ -603,12 +617,7 @@ async function handleSubmit(req, res) {
       await client.query('COMMIT');
     } catch (txErr) {
       try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(txErr, {
-          tags: { route: 'drinkPlans/putToken', op: 'submit_with_addons' },
-          extra: { token: req.params.token, proposalId: existing.rows[0].proposal_id },
-        });
-      }
+      reportSubmitTxError(txErr, req, existing.rows[0].proposal_id, 'submit_with_addons');
       console.error('Drink-plan submit transaction failed:', txErr);
       throw txErr; // surface as 5xx so client can retry instead of seeing a phantom success
     } finally {
@@ -682,12 +691,7 @@ async function handleSubmit(req, res) {
       await client.query('COMMIT');
     } catch (txErr) {
       try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(txErr, {
-          tags: { route: 'drinkPlans/putToken', op: 'submit_extras_invoice' },
-          extra: { token: req.params.token, proposalId: existing.rows[0].proposal_id },
-        });
-      }
+      reportSubmitTxError(txErr, req, existing.rows[0].proposal_id, 'submit_extras_invoice');
       console.error('Drink-plan submit (extras invoice) transaction failed:', txErr);
       throw txErr; // surface as 5xx so client can retry instead of seeing a phantom success
     } finally {

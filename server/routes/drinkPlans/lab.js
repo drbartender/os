@@ -45,8 +45,19 @@ const {
   sanitizeLabSyrups,
 } = require('./labHelpers');
 const { refreshListAfterLabChange } = require('./labListRefresh');
+const { isLegalHold } = require('../../utils/legalHold');
 
 const router = express.Router();
+
+// Legal hold (spec 2026-10-16 section 5.3): a held booking's lab is closed.
+// The copy a refused save carries never names the hold (plan decision 4).
+const HELD_MSG = "This booking can't be changed online right now.";
+
+/** True when the plan row's booking is on legal hold, read off its stored
+ *  proposal_id (a plan with no booking has none). */
+function heldBooking(plan) {
+  return plan.proposal_id !== null && plan.proposal_id !== undefined && isLegalHold(plan.proposal_id);
+}
 
 /** GET /api/drink-plans/t/:token/lab — the shelves. */
 router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
@@ -54,7 +65,12 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
   const plan = result.rows[0];
   if (!plan) throw new NotFoundError('This drink plan link is no longer valid');
 
-  const state = labState(plan);
+  // A held booking's open lab reads as locked, so the page offers no
+  // addition and so can never show one the hold refused as saved. A plan not
+  // yet filed stays not_ready: the locked bar would call unfiled formulas
+  // "locked in as filed".
+  const windowState = labState(plan);
+  const state = windowState === 'open' && heldBooking(plan) ? 'locked' : windowState;
   const sel = plan.selections || {};
   const sigIds = Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : [];
   const mocIds = Array.isArray(sel.mocktails) ? sel.mocktails : [];
@@ -159,6 +175,15 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
     if (state === 'locked') {
       await client.query('ROLLBACK');
       throw new ConflictError('The lab is closed for your event. Reach out and we will help.');
+    }
+    // A held booking's lab is closed (the GET reports it locked). A PUT that
+    // arrives anyway, from a page opened before the hold, is refused here
+    // before any write as a 400 save error, never the window's 409: the page
+    // turns any 409 into its locked bar, which would call the refused
+    // additions "locked in". The extras fold's guard stays behind this.
+    if (heldBooking(plan)) {
+      await client.query('ROLLBACK');
+      throw new ValidationError({ addOns: HELD_MSG }, HELD_MSG);
     }
     planId = plan.id;
 

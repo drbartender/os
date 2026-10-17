@@ -34,6 +34,7 @@ const { getStripe } = require('../../utils/stripeClient');
 const { priceProposedState } = require('../../utils/changeRequests');
 const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { refreshUnlockedInvoices } = require('../../utils/invoiceLifecycle');
+const { isLegalHold } = require('../../utils/legalHold');
 const { BYOB_BUNDLE_SLUGS, visibleAddonsFor } = require('../../utils/proposalRules');
 const {
   PROPOSAL_SELECT, fitsPackage, computeOwnHidden, overrideOnlyBartenders,
@@ -173,11 +174,16 @@ router.post(
       // Status whitelist, deliberately narrower than the quote's blacklist:
       // draft/modified may browse a quote but never write. options_available
       // (publicToken.js) uses the same predicate so the entry link and this
-      // guard cannot disagree.
+      // guard cannot disagree. A legal hold (spec 2026-10-16 section 5.3) is
+      // refused here too, on the locked row's id and with the same answer (a
+      // client-facing refusal never names the hold); options_available does
+      // not read it, which agrees today because no held booking is sent or
+      // viewed (the spec's held booking is confirmed).
       if (!['sent', 'viewed'].includes(p.status)
           || (p.total_price_override !== null && p.total_price_override !== undefined)
           || p.client_signed_at
-          || Number(p.amount_paid) > 0) {
+          || Number(p.amount_paid) > 0
+          || isLegalHold(p.id)) {
         throw new ConflictError(UNAVAILABLE_MSG, 'SWITCH_NOT_AVAILABLE');
       }
       if (p.group_id !== null) {
