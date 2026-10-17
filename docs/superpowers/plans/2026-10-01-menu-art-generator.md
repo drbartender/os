@@ -699,6 +699,8 @@ runWordsForDrinks({ normalizedDrinks, brief, eventTypeLabel })
 - **The image route serves `done` pieces only** (404 "That image is not ready." otherwise). A piece pending a re-roll reads `has_image: false`.
 - **New error codes** (`menuDrafts.js`, `menuDraftSync.js`), each `{ error, code }` through the global handler:
   - 409 `MENU_WORDS_PENDING`, "The menu words are still being written. Try again once they land.": Update draft, and re-roll, while the words have not landed;
+  - 409 `MENU_WORDS_NOT_WRITTEN`, "The menu words were not written. Start over to write them.": Update draft and re-roll when the words step failed, reads interrupted (stuck) or never started; its remedy is Start over, not waiting (`requireWords` in `menuDraftShared.js`); re-roll with no plan on the event is 422 `MENU_NO_DRINKS`;
+  - `inputs.has_reference` is true only when `reference_source` is `upload` and a reference is stored, and `GET .../menu-draft/reference` 404s otherwise; the planner image as style reference is `reference_source: planner` and streams from the planner-image route;
   - re-roll is also refused on a draft whose words step failed and on a draft with no plan (the read-only draft); read the guard in `menuDrafts.js` for its code and message before mapping it;
   - 502 `MENU_WORDS_FAILED`: Update draft's words call for added client-typed drinks failed; the message is one of the job's fixed sentences ("OpenAI is busy right now. Try again in a minute.", "OpenAI could not write the menu words. Try again." or "The menu words could not be written. Try again."), never provider text;
   - 429 `MENU_ART_TEXT_CAP_REACHED`, "Daily menu text limit reached.": Generate and Update draft at the text cap;
