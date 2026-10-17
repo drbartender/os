@@ -12,6 +12,7 @@
 
 const { pool } = require('../db');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
+const { appendRefundLine } = require('./refundLine');
 const {
   CONTRACT_LABELS,
   OFF_LEDGER_INVOICE_LABELS,
@@ -288,9 +289,9 @@ function planRefund({
  * Then, exactly once: reverse linked invoice(s) (net-aggregated so repeated
  * partial refunds never over-reverse); amount_paid −= full refund;
  * total_price −= the CONTRACT portion only (refund cents not linked to a
- * non-contract-labeled invoice); finalize total_price_after; activity-log
- * line. Extra-scope (e.g. Additional Services) refunds drop amount_paid +
- * that invoice but leave total_price intact.
+ * non-contract-labeled invoice), written as a Refund line too (refundLine.js);
+ * finalize total_price_after; activity-log line. Extra-scope (e.g. Additional
+ * Services) refunds drop amount_paid + that invoice but leave total_price intact.
  *
  * @param {object} a
  * @param {boolean} [a.allowPendingHeuristic=true]  when no pendingRowId is given,
@@ -604,6 +605,12 @@ async function applyRefundReconciliation(
       RETURNING total_price, amount_paid, total_price_override`,
     [contractCents, paidDropCents, proposalId]
   );
+  // The same contract cents as a visible Refund line, in this transaction under
+  // this lock, so the next re-price nets the refund instead of billing it again
+  // (spec 2026-10-16 section 6). Skipped for legal-hold bookings.
+  if (contractCents > 0) {
+    await appendRefundLine(dbClient, { proposalId, refundId: refundRowId, contractCents });
+  }
 
   // Keep status ⟷ money consistent. A refund is the sole money-OUT path;
   // every money-IN path (record-payment crud.js:652-654, the stripe webhook

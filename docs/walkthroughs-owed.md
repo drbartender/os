@@ -2227,7 +2227,7 @@ Display only (spec 2026-10-16 section 7): nothing is charged or stored, so any b
 
 Verified so far by the suites (`invoiceStep.test.js`, `invoices.contractStep.test.js` with the public key set pinned, `InvoicePage.test.js`) and a headless render of the totals block at 1280 and 390 pixels in screen and print media; nobody has seen it on a real booking.
 
-### Admin breakdown tags hidden lines; refund and agreed-price lines have no remove button (lane line-protection, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### Admin breakdown tags hidden lines; refund and agreed-price lines have no remove button (lane line-protection, merged 57608086; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Display only (spec 2026-10-16 sections 4.5 and 6): no amount moves, and the server already refuses to cancel a protected line (409 `PROTECTED_LINE`, lane adj-rules). The walk, on a dev booking:
 1. In the editor, add a discount, untick "Client sees" and watch the live preview: the line carries a small "hidden from client" tag beside its label; tick it again and the tag goes. Save.
@@ -2238,6 +2238,16 @@ Display only (spec 2026-10-16 sections 4.5 and 6): no amount moves, and the serv
 6. Both skins: a quiet hairline chip on After Hours, an uppercase hairline tag on House Lights.
 
 Verified so far by the suites (`hiddenRows.test.js`, `PricingBreakdown.test.js`, `eventDetailView.test.js`, `EventDetailPhone.test.js`, and the engine suite for the row mark) and a headless render of the real markup with `index.css` at 560 and 390 pixels in both skins (2026-10-17); nobody has seen it on a real booking.
+
+### A contract refund writes a visible Refund line (lane refund-line, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+
+Money path (spec 2026-10-16 section 6). Dev talks to LIVE Stripe, so a refund on a dev booking is a real refund: use the smallest real amount on a booking Dallas names, or skip this walk and rely on the suites. The walk:
+1. From the payment panel, issue a contract refund (the overpayment box left unchecked).
+2. Proposal Detail: the pricing breakdown shows a "Refund" line for exactly the refunded amount, after any other discount and before the Gratuity line, and the total dropped by the same amount.
+3. Open the editor and save a change that does not touch price (the start time). The pass condition is no increase equal to the refunded amount and no Additional Services invoice for it. A booked booking re-prices at the live catalog on any save, so a catalog price that moved since the booking was priced can show its own difference in the reprice confirm; that one is not the refund.
+4. A refund made as an overpayment return writes no line.
+
+Verified so far by the suites (`refundLine.test.js`, `refundHelpers.line.test.js`, driving `applyRefundReconciliation` with fixture rows, no Stripe); nobody has seen it on a real booking.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
