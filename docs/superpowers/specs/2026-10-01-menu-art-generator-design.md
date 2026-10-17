@@ -350,6 +350,7 @@ A PATCH replaces only the top-level `content` and `inputs` keys it sends; anythi
   5. **approved** when `menu_print_key = approved_print_key` and nothing moved;
   6. otherwise none (never approved). A draft may still exist and be edited; approving it posts a print file, and `setMenuPrintKey` clears the flag, as a manual upload does today.
 - **Confirm before replacing.** The client asks first whenever `menu_print_key` is set, whether it is an earlier approval or a manual upload (the v3 design confirms in both cases; staff would download the new file instead).
+- **The rendered logo is checked (amended 2026-10-16 in the print-approve lane).** The GET carries `brief.planner_image_rev`, an opaque digest of the planner image key (null when the plan has none). When the role is `logo`, Approve requires `expected_planner_image_rev` (the rev the client rendered with; empty means no logo) and answers 409 `MENU_DRAFT_CHANGED` with nothing written when it differs from the digest of the key it would stamp, so a client logo replaced while the editor is open can never read as approved. The server also fully decodes the JPEG (bounded, truncated files refused) after the 2400x3000 header check, and answers a words step that is not done with `MENU_WORDS_PENDING` or `MENU_WORDS_NOT_WRITTEN`.
 
 ## 9. Plan changed
 
