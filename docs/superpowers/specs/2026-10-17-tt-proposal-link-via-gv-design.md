@@ -1,8 +1,8 @@
 # Proposal link into the Thumbtack thread, sent through Google Voice
 
-- **Date:** 2026-10-17
+- **Date:** 2026-10-17 (rev 2: the builder check and the three-agent spec fleet are folded in)
 - **Status:** Design approved in conversation (Dallas, "looks good"). Spike first, then plan.
-- **Surface:** server proposal sends + a new box-side Google Voice sender
+- **Surface:** server proposal sends, the proposal page, and a new box-side Google Voice sender
 
 ## 1. Why
 
@@ -13,69 +13,153 @@ Measured on prod over the 60 days before 2026-10-16:
 - 163 Thumbtack proposals sent. Email delivered 157 of 160 (3 bounced). The proposal text (`message_log` sms `initial_proposal`, 162 sends) was `delivered` per Twilio, 162 of 162.
 - Since 2026-06-08 the phone we store for every Thumbtack lead is a per-lead Thumbtack relay number (`server/utils/smsInbound.js` `THUMBTACK_PROXY_ROLLOUT`, `findThumbtackProxyLead`; spec `2026-06-11-thumbtack-comms-noise-design.md`). Twilio "delivered" only means the relay accepted it.
 - None of those 162 texts appear in the Thumbtack thread (`thumbtack_messages`). The only copy of our wording there arrived over an hour later and looks hand-pasted.
-- A proposal link was pasted into a thread by hand 23 times. In 19 of those our email and text had already gone out, and 7 came within the first hour.
+- A proposal link was pasted into a thread by hand 23 times. In 19 of those our email and text had already gone out, and 7 came within the first hour. The other 4 came before our send or with no automated text.
 - Dallas's Google Voice replies DO land in the thread. Thumbtack routes pro texts through the primary business number, which is the GV line. The toll-free 888 is only a registered number. Our working theory is that this is why 888 texts never show in the app. It is not verified.
 
 Mapping, verified on lead 475 / proposal 948. The GV notice "replied to you on Thumbtack ... use this number to communicate with them directly" links `/request/{request}/bids/{bid}/messages`. Here `bid` equals `thumbtack_leads.negotiation_id`, and `request` is in the lead's `raw_payload`. Our 888 got the identical notice from the number stored on that lead. So each customer is one GV conversation under the Thumbtack number we already store as `clients.phone`.
 
 ## 2. What it does
 
-When a proposal link goes out to a client whose phone is a Thumbtack relay number, the box sends that link through Google Voice into that customer's conversation. It lands in the Thumbtack thread and on the customer's phone, the same way Dallas's own GV replies do. It also shows in Dallas's GV history.
+When an admin sends or resends a proposal to a client who passes the identity rule (law 1), the box sends the proposal text through Google Voice into that customer's conversation instead of the 888. It lands in the Thumbtack thread and on the customer's phone, the same way Dallas's own GV replies do. It also shows in Dallas's GV history. If the GV post definitely did not happen, today's 888 text goes out instead, so a dead sender is never worse than today.
 
 ## 3. Goals, non-goals, anti-goals
 
 **Goals**
-- Every proposal link for a Thumbtack-relay client reaches the Thumbtack thread within about a minute of the send, with no human step.
+- Every admin-sent proposal for a relay client reaches the Thumbtack thread within about a minute, with no human step.
 - Proof of landing comes from Thumbtack's own message feed, not the box's word.
+- When the sender is down, relay clients still get today's 888 text, and Dallas hears about the outage once.
 
 **Non-goals**
 - Moving first replies off Thumbtack UI automation. The sender is built so they can move later. Not now.
-- The other automated texts that also go 888 to relay: drips, sign+pay confirmation, nudges, event-eve, balance reminders. Same unknown delivery, known gap, out of scope.
+- The options (group) send. It has no text channel today, and it accounted for 1 of the 163 sends. Known gap.
+- The website quote wizard (`routes/proposals/public.js` also calls `sendProposalSentEmail`, with the phone the client typed). It never queues a GV post and keeps today's behavior.
+- The other automated texts that also go 888 to relay: drips (touches 3 and 5 carry the link too), sign+pay confirmation, nudges, event-eve, balance reminders, payment reminders, the payment-failure SMS. Same unknown delivery, known gap, out of scope.
 - Reading GV for the Inbox. The session is shared later; this build only sends.
 
 **Anti-goals (a failure even if it technically works)**
 - Any new automation of Thumbtack's own site for this. Dallas: "I don't want to get busted for using automation on TT."
-- A double post after a human already pasted the link. Dallas: "If the automation is slow or we see an error we just do it and then deal with the automation later." The automation must notice and stand down.
-- A post landing in the wrong customer's conversation.
+- A proposal link landing in another customer's thread. A token link is bearer access to the client's details and to sign-and-pay.
+- A double post: after a human paste ("If the automation is slow or we see an error we just do it and then deal with the automation later"), on the box's own retry, or from stacked sends.
+- Volume that puts Dallas's personal Google account at risk.
 - A failure that blocks or delays the email, or breaks the proposal send.
 
 ## 4. Decisions
 
 Dallas's:
 - Post through a logged-in Google Voice session, not the Thumbtack API or UI. The Thumbtack partner API needs approval Thumbtack has not given, and webhooks are receive-only.
-- No elaborate fallback. On failure the team pastes the link by hand.
-- The playback below was approved as a whole ("looks good").
+- No elaborate human fallback. When a post fails, the team pastes the link by hand.
+- The playback was approved as a whole ("looks good").
 
-My calls, in the approved playback:
-- **Wording:** same as today's proposal text (`smsTemplates.initialProposalSms`): "Hi, Dallas here. Just sent your proposal for the ... Review the details and check out here: (link) ..."
-- **It replaces the 888 proposal text for relay clients.** Everyone else keeps the 888 text. Email is unchanged for everyone.
-- **Triggers:** every path that sends a proposal link today: initial send, resend, and the options (group) send. The group send is email-only today; for relay clients it gains the GV post with the options link, in the same voice.
-- **Freshness:** a post that hasn't gone out within a few minutes of the send is dropped as stale.
-- **Failure visibility:** shown on the proposal's existing message history. No email or SMS alert per failure.
-- **Accepted risk:** the GV line lives on Dallas's personal Google account (it must never move; memory `reference-gv-312-lives-on-personal`) and carries admin alerts and call forwarding. Google discourages automated use. One-to-one posts at our volume are low risk. Raised 2026-10-16; Dallas chose GV.
+My calls (the approved playback plus the review folds):
+- **Wording:** the proposal text as it stands, so `smsTemplates.initialProposalSms` or the admin's edited SMS body from the SendModal.
+- **It replaces the 888 proposal text for relay clients.** Everyone else keeps the 888 text, and email is unchanged for everyone. When the GV post definitely did not happen (law 5), the 888 text goes out instead.
+- **Triggers:** admin initial send (`routes/proposals/lifecycle.js`, `crud.js`, both through `sendProposalSentEmail`) and send/resend from the SendModal (`comms/actions/proposalResend.js` dispatch, also used by `proposalSend.js`).
+- **The SendModal's Text box controls it.** Unticked means no post, same as today's text.
+- **No message_log rows for GV posts.** Their states don't fit its CHECKs. The queue row is the ledger, and the proposal page shows it (section 6).
+- **Failure visibility:** a status row on the proposal page. No alert per failure. One email per sender outage.
+- **If spike check 3 fails** (a new GV conversation to a relay number doesn't land), GV posts go only where a thread exists. The box reports `no_thread` and the 888 text goes out (law 5). There is no second round trip.
+- **Accepted risk:** the GV line lives on Dallas's personal Google account, dallasraby@ (it must never move; memory `reference-gv-312-lives-on-personal`). Admin alerts and call forwarding run through it, and that account also holds the box's nightly restic backups (`gdrive:`). Google discourages automated use. One-to-one posts under hard caps (law 7) at our volume are low risk. Raised 2026-10-16; Dallas chose GV.
 
-## 5. Laws (constraints)
+## 5. Laws
 
-1. **"Relay client" means the phone is a Thumbtack relay number** (`findThumbtackProxyLead` matches), not `source = 'thumbtack'`. Pre-2026-06-08 leads hold real numbers and keep the 888 text. So does a client who later gave a real number.
-2. **Flag off means exactly today's behavior.** A dark kill switch (default OFF). With it off, relay clients get the 888 text as now. Rollback is flipping it off.
-3. **Fail closed, never guess.** When the box can't positively identify the conversation for the number, or can't verify the send, it reports failure. Same law as the first-reply agent (memory `project-tt-auto-first-reply`).
-4. **Never double-post.** Before sending, check `thumbtack_messages` for a Business message on that lead's `negotiation_id` that contains the proposal link, posted after the send. If one exists, skip. A residual race of seconds is acceptable; minutes are not.
-5. **A failure never touches the email or the proposal's state.** The GV post is post-commit and best-effort.
-6. **No phone numbers in logs, UI, or diag file names** beyond last-4. Diag screenshots stay out of the restic backup, like `~/.thumbtack-profile/diag`.
-7. **Ledger every attempt** in `message_log` (sent, failed, skipped-as-already-posted, stale), so it shows on the proposal's message history.
-8. **No client PII in repo docs or commits.**
+1. **Identity rule (no wrong customer).** A GV post is queued only when all of these hold:
+   - It is an admin send at one of the triggers above.
+   - The target number is the proposal client's stored `clients.phone`, never a request value.
+   - That number matches (last 10 digits) at least one post-rollout `thumbtack_leads.customer_phone`, and EVERY such lead belongs to the proposal's client (`thumbtack_leads.client_id`).
+   - The negotiation is the lead linked to the proposal (`thumbtack_leads.proposal_id`). Otherwise it is that client's newest lead on the number, and only when exactly one such lead exists.
+
+   Any mismatch or ambiguity means no GV post and today's 888 text. The lease re-checks the rule. Reuse the rollout constant (import `THUMBTACK_PROXY_ROLLOUT`; `inbox/personKey.test.js` allows exactly one declaration). Changing `findThumbtackProxyLead`'s return shape touches `routes/sms.js`, `routes/proposals/publicToken.js` and its tests, so prefer a sibling helper.
+2. **Kill switch.** `GV_PROPOSAL_POST_ENABLED`, parsed as `=== 'true'` and dark by default. Off means no enqueue (today's 888 text) AND the lease endpoint returns `[]`, so the box idles on its next poll. The server sweep is NOT gated: rows already queued drain to the 888 fallback. Off restores exactly today's behavior.
+3. **Notifications gate.** The enqueue honors `SEND_NOTIFICATIONS` like `sendSMS` (log and skip when off), so a lane, dev server or test suite on the shared dev DB never creates a real post.
+4. **At most once.**
+   - The box journals the row id before clicking Send and never sends a journaled id. This is the first-reply agent's never-send-twice guard (`thumbtack-agent/src/index.js` `loadSentJournal`/`journalSend`).
+   - The server never re-offers a row once it has been leased. A lease that passes its window unreported becomes `unknown`.
+   - One open row per proposal (a partial unique index over the open states). A second send while one is open merges into it. A resend after the row is terminal makes a new row, because a resend is intentional.
+5. **Fallback only when it definitely didn't happen.** The 888 text goes out for:
+   - `stale`: never leased in time.
+   - `failed_preclick`, with a whitelisted reason: no_thread, wrong_thread, invalid_body, invalid_number, session_expired, challenge, cap, ui_error_before_send.
+   - An enqueue or relay-detection error at send time, which fails open to today's text and goes to Sentry.
+
+   It NEVER goes out for `sent`, `clicked_unverified`, `unknown` or `skipped_already_posted`, since any of those may mean the link is already in the thread.
+6. **No double post with a human.** The lease skips a row (`skipped_already_posted`) when `thumbtack_messages` on ANY negotiation whose lead carries that number holds the proposal token, from 30 minutes before the send onward, which covers a paste made just before the send. The box re-checks the open GV thread for the token before typing. Match on the token, not the full URL, to survive `www.`, slashes, the trailing period and other URL forms. Don't require `from_type='Business'`: the legacy parse branch stores NULL. A residual race of seconds is acceptable; minutes are not.
+7. **Volume caps.** A server rolling-24h cap on posts (default 25, parsed through `envInt.js` so 0, blank or nonsense fall back), a box-side daily cap, and no two posts to the same number within 10 minutes. At the cap, the post fails as `cap` (the 888 text goes out) with one throttled Sentry warning.
+8. **Suppression.** A GV post needs:
+   - a proposal still in a sendable status (re-checked at lease: not archived, still in the send/RESENDABLE set);
+   - `communication_preferences.sms_enabled !== false`;
+   - no per-number `sms_optouts` record.
+
+   `phone_status = 'bad'` is a fact about the 888 path and does not block GV. The swap sits after the existing suppression and inside the `wantSms` branch, so the Text box and opt-outs carry over.
+9. **Box validation before typing:**
+   - the body holds exactly one `/proposal/<uuid>` link on the public host and is at most 320 characters;
+   - the number is US E.164;
+   - the thread is one-to-one with exactly that number (no group MMS, no contact autocomplete);
+   - an existing thread whose Thumbtack notice names a different bid fails as `wrong_thread`.
+
+   Any of these failing counts as `failed_preclick`.
+10. **A failure never touches the email or the proposal's state.** The GV post is post-commit and best-effort.
+11. **Privacy.**
+    - No phone numbers in logs, UI or diag file names beyond last-4.
+    - Queue rows store client, lead and negotiation ids; the number is resolved at lease. Rows and diag captures are pruned on a schedule (30 days).
+    - The GV profile is a credential for Dallas's whole personal Google account: Playwright's defaults store cookies under a fixed key, not the keyring. Its directory is mode 700, the WHOLE profile stays out of restic (costing one re-login after a restore), and diag captures are excluded too.
+    - A separate agent secret (`GV_AGENT_SECRET`), not `THUMBTACK_AGENT_SECRET`, with its own blast-radius and leak-response line. A leaked secret reads pending post bodies (proposal tokens) and can mark rows.
+12. **No client PII in repo docs or commits.**
 
 ## 6. How it works
 
-**Server**
-- At each proposal-text choke point, a relay client with the flag on gets a queued GV post instead of the Twilio send. The choke points are the SMS leg of `server/utils/sendProposalSentEmail.js` (called from `routes/proposals/lifecycle.js` and `routes/proposals/crud.js`; this path wrote all 162 `initial_proposal` texts), the SMS leg of `server/utils/comms/actions/proposalResend.js` dispatch (also used by `proposalSend.js`), and `proposalSendGroup.js`.
-- A queue of pending GV posts: proposal, lead/negotiation, number, body, status, attempts, timestamps. Agent endpoints lease and report, authenticated like the existing box agent (`server/routes/thumbtackAgent.js`: lease with `FOR UPDATE SKIP LOCKED`, fail-closed agent secret). The lease refuses stale or already-posted rows (law 4).
-- Confirmation: the Thumbtack messages webhook (`server/routes/thumbtack.js`) already stores thread messages. When a Business message on the lead's `negotiation_id` contains the posted link, mark the post confirmed. Sent but never echoed within a window means unconfirmed, shown as such.
+**Queue and states (server).**
+- A queue table of GV posts.
+- The states: `queued`, `leased`, `sent`, `clicked_unverified`, `failed_preclick` (plus reason), `skipped_already_posted`, `stale`, `unknown`.
+- Terminal states never change after they are set. A late or duplicate report for a row not in `leased` is ignored and logged. Report reasons are whitelisted, the same way `FIRST_REPLY_FAIL_REASONS` is.
+- **Confirmation is derived at read time**, not written by the webhook. A row is "in the thread" when a `thumbtack_messages` row on its negotiation contains its token and matches the posted body (normalized). A link-only match without the body is a human paste. That reads as "already posted by hand", never as confirmation, so a hand paste can't hide a broken sender. Deriving at read time also avoids a confirm step inside the `/messages` webhook, where a throw would 500 a stored message and Thumbtack's retry would answer "duplicate".
 
-**Box**
-- A Google Voice sender with its own persistent browser profile, logged in once by Dallas. It runs headful under Xvfb like `thumbtack-agent` (memory `reference-tt-agent-chrome-env`: the OZONE_PLATFORM=x11 trap applies). It polls the lease endpoint, opens the conversation for the number, types the body, sends, verifies the message shows as sent in that GV conversation, and reports. On a definitive failure it saves a diag capture (screenshot plus control dump), the same pattern that made each Thumbtack UI break a 10-minute diagnosis.
-- **A conversation may not exist yet.** GV only has a thread with the relay number once Thumbtack has relayed something to GV. The proposal often goes out before the customer has replied, so the sender must start a new conversation to the number when none exists.
-- An expired session reports `session_expired` once and stops (one email to admin, like the harvester). It never attempts an automated login.
+**Sweep (server, 60 s).** `RUN_GV_POST_SWEEP_SCHEDULER`, honored only with `RUN_SCHEDULERS`, not gated by the kill switch.
+- `queued` past the stale window (default 5 minutes) becomes `stale` and the 888 fallback sends.
+- `leased` past the lease window (default 3 minutes) unreported becomes `unknown`.
+- Liveness: when rows go stale with no successful lease in the last 30 minutes, one admin email per outage episode says the GV sender is down and Thumbtack customers are getting the toll-free text. The episode resets on the next successful send.
+- Prunes old rows.
+
+**Agent endpoints (server).** In a new route file with its own rate limiter. `thumbtackAgent.js` is 772 lines, and its per-IP limiter of 40 per minute is shared with the first-reply poll from the same box. Auth is `GV_AGENT_SECRET`, timing-safe and fail-closed.
+- **lease**: returns `[]` when the flag is off. Re-validates law 1, law 6, law 7 and law 8. Returns the row id, number and body.
+- **report**: takes `sent`, `clicked_unverified`, `failed_preclick` (reason) or `skipped_already_posted`.
+- **status**: takes `session_expired` or `challenge` and sends one admin email per episode under a single dedupe key, email only. "Like the harvester" does not hold: its dedupe is per negotiation and lasts 10 minutes.
+
+**Proposal page.**
+- A "Thumbtack message" status row on `ProposalDetail` (precedent: the `first_reply` row, `ProposalDetail.js:565`, built in `routes/proposals/getOne.js`), as its own component, since ProposalDetail is 971 lines against the 1000 cap. Copy for each state:
+  - queued
+  - sent
+  - in the thread
+  - sent but not in the thread yet
+  - "clicked Send but couldn't confirm: check the thread before pasting"
+  - skipped because the link was already in the thread
+  - "didn't go out: the toll-free text went instead" (with the reason)
+- Last-4 only. It polls while the row is not terminal.
+
+**SendModal.** For a relay client the Text row reads "Text via Thumbtack (GV)" with last-4. If an edited body drops the proposal link, the modal blocks with "The text must include the proposal link." The result shows "queued for Thumbtack": `describeSendResult` (`client/src/components/SendModal/sendResult.js`) gains a queued branch, so a text-only send no longer toasts "Done. No message was sent."
+
+**Consumers (accepted or handled).**
+- Inbox (`server/utils/inbox/**`, a sensitive path): mark the GV echo the way `markAutoFirstReplies` marks the auto first reply, so `classify.js` never counts it as a separate human reply. The Inbox treats the post as part of the proposal send, whose email row still lands in `message_log` at send time and stays inside the absorb window.
+- No new writer of `initial_proposal` or `proposal_sent_sms`, so the `answeringMessageTypes` pin is untouched.
+- Accepted: the admin Messages thread (`sms_messages`, ClientConversation) won't show the GV post. Contact history and "last contacted" won't count it, though the email row still counts.
+- The 888 fallback writes `message_log` and `sms_messages` exactly as today.
+
+**Box.**
+- A new systemd user service with its own persistent profile, separate from `thumbtack-agent`, so a GV hang never blocks first replies or the harvest. It runs headful under Xvfb (memory `reference-tt-agent-chrome-env`: the OZONE_PLATFORM=x11 trap).
+- Per job:
+  1. Validate (law 9).
+  2. Open the one-to-one thread for the number, existing or new.
+  3. Check it for the token (law 6).
+  4. Journal the row id.
+  5. Type the body and click Send.
+  6. Verify the message shows as sent in that thread.
+  7. Report, retrying the report as needed (the journal means it never re-sends).
+- Clicked but not verified reports `clicked_unverified`, never a plain failure.
+- Any Google interstitial idles the sender without attempting a login: sign-in, verify-it's-you, captcha, unusual activity, the account chooser. It reports `session_expired` or `challenge` once, then resumes when the next poll finds it logged in after Dallas signs in by hand.
+- It saves a diag capture (screenshot plus control dump) on definitive failures, the same pattern that made each Thumbtack UI break a 10-minute diagnosis. Captures are pruned, use fs-safe names, and are excluded from restic.
+- Human pacing, with a box daily cap.
+
+**Observability.**
+- Sentry: stale, clicked_unverified, unknown, session/challenge, cap reached, and enqueue errors that fell open.
+- Server log lines for enqueue, lease, report and sweep, with numbers at last-4.
 
 ## 7. Step 0: spike (go/no-go before the plan)
 
@@ -83,17 +167,23 @@ Throwaway. It needs Dallas twice: to sign GV into a fresh profile on the box, an
 
 It proves:
 1. The box can send from GV's web UI under Xvfb on a persisted session.
-2. The message lands in the Thumbtack thread, both as a `thumbtack_messages` Business row via the webhook and on the customer side.
-3. Starting a new conversation to a relay number with no GV thread works and lands too.
-4. Timing from enqueue to thread.
+2. The message lands in the Thumbtack thread, both as a `thumbtack_messages` row via the webhook and on the customer side.
+3. A new conversation to a relay number with no GV thread lands too.
+4. Timing from enqueue to thread, including how fast the webhook delivers our message.
+5. The body of about 250 characters arrives as one message with the link intact (it straddles a segment boundary).
+6. A first GV text to a relay draws no access-code challenge.
+7. Where possible, which negotiation a repeat customer's post lands in, and what texting a relay number that no longer maps to us does.
 
-If (2) fails, stop and come back to Dallas. The design rests on it.
+If (2) fails, stop and come back to Dallas; the design rests on it. If (3) fails, take section 4's no_thread path.
 
 ## 8. Left to the builder
 
-- Whether the sender is an arm of `thumbtack-agent` or its own service. Recommendation: its own systemd service and profile, so a GV hang never blocks first replies or the harvest.
-- The queue's shape: a new table vs columns, the env names, and the stale/confirm windows (defaults around 10 minutes).
-- Agent auth: reuse `THUMBTACK_AGENT_SECRET` or a new secret.
-- How the GV post shows in the SendModal result: "queued" is enough, with the real status on the message history.
-- How the ledger rows map onto `message_log` channel and status values within the existing CHECK constraints.
-- Wording for the options (group) post.
+- Table, column and env names. Default windows: stale 5 min, lease 3 min, cap 25/day, spacing 10 min, paste-before window 30 min, prune 30 days.
+- Exact status copy within the states above, and the report-reason list beyond the named ones.
+- The new box directory's name and its systemd unit.
+
+## 9. Docs and box-side changes the plan must carry
+
+- CLAUDE.md: env table (`GV_PROPOSAL_POST_ENABLED`, `GV_AGENT_SECRET` with blast radius and leak response, the sweep flag, the caps and windows) and Tech Stack (Google Voice web automation).
+- README: env table, tech stack, folder tree, key features. ARCHITECTURE: route table, schema, third-party integrations. `.env.example`.
+- Box, outside the repo: the systemd unit, `~/.config/restic/excludes.txt` (the whole GV profile), the profile directory at mode 700.
