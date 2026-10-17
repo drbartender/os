@@ -71,8 +71,8 @@ async function logClientMessage(entry) {
       }
     }
     // A recipient that matches no client is still ledgered when the caller
-    // supplied a proposalId (client_id stays NULL). This is the 7/16 Brandon
-    // Martin fix: his approve email went to a stale address that no longer
+    // supplied a proposalId (client_id stays NULL). This is the 2026-07-16
+    // fix: a client's approve email went to a stale address that no longer
     // matched any client, and this early return swallowed the only record of
     // the send. The return now applies only to true non-client mail (admin
     // notifications, marketing) that also carries no proposal.
