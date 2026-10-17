@@ -1,6 +1,7 @@
 // Global record search. Powers GET /api/admin/search and the Cmd/Ctrl+K
 // command palette: one query string matched against clients, proposals,
-// events, and staff by partial name, email, or phone number.
+// events, and staff by partial name, email, or phone number. Proposal and
+// event rows also carry the fields the phone search draws (phoneFields).
 
 const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
@@ -54,6 +55,21 @@ function eventDetail(row) {
   return [label, row.event_date_label].filter(Boolean).join(' · ');
 }
 
+// The phone search (lane ma-f3) draws a proposal's status chip and an event's
+// date rail and kind line, so those rows also carry the raw status, the date
+// as YYYY-MM-DD (null when unset) and the kind label. The palette reads only
+// type, id, name and detail; nothing it reads changes.
+function phoneFields(row) {
+  return {
+    status: row.status,
+    event_date: row.event_ymd || null,
+    kind: getEventTypeLabel({
+      event_type: row.event_type,
+      event_type_custom: row.event_type_custom,
+    }),
+  };
+}
+
 // Run the global search. `rawQuery` is the user's typed string. Returns four
 // capped, most-recent-first result groups. A query shorter than 2 characters
 // or longer than 100 short-circuits to empty groups without touching the
@@ -82,6 +98,7 @@ async function runGlobalSearch(rawQuery) {
 
   const proposalsSql = `
     SELECT p.id, c.name AS client_name, p.event_type, p.event_type_custom,
+           p.status, to_char(p.event_date, 'YYYY-MM-DD') AS event_ymd,
            to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label,
            p.cc_id AS proposal_cc_id, c.cc_id AS client_cc_id
     FROM proposals p
@@ -98,6 +115,7 @@ async function runGlobalSearch(rawQuery) {
 
   const eventsSql = `
     SELECT p.id, c.name AS client_name, p.event_type, p.event_type_custom,
+           p.status, to_char(p.event_date, 'YYYY-MM-DD') AS event_ymd,
            to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label,
            p.cc_id AS proposal_cc_id, c.cc_id AS client_cc_id
     FROM proposals p
@@ -155,6 +173,7 @@ async function runGlobalSearch(rawQuery) {
       detail: eventDetail(r),
       proposal_cc_id: r.proposal_cc_id,
       client_cc_id: r.client_cc_id,
+      ...phoneFields(r),
     })),
     events: events.rows.map((r) => ({
       type: 'event',
@@ -163,6 +182,7 @@ async function runGlobalSearch(rawQuery) {
       detail: eventDetail(r),
       proposal_cc_id: r.proposal_cc_id,
       client_cc_id: r.client_cc_id,
+      ...phoneFields(r),
     })),
     staff: staff.rows.map((r) => ({
       type: 'staff',

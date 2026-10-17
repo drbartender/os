@@ -1,7 +1,8 @@
-// GET /api/admin/search — global record search powering the Cmd/Ctrl+K
-// command palette. Read-only; matches clients, proposals, events, and staff
-// by partial name, email, or phone. Search logic lives in
-// server/utils/globalSearch.js so it can be unit-tested directly.
+// GET /api/admin/search: global record search powering the Cmd/Ctrl+K
+// command palette and the phone's full-screen search (lane ma-f3,
+// client/src/pages/mobile/SearchPhone.js). Read-only; matches clients,
+// proposals, events, and staff by partial name, email, or phone. Search logic
+// lives in server/utils/globalSearch.js so it can be unit-tested directly.
 
 const express = require('express');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');

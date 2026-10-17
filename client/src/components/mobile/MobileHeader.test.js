@@ -3,8 +3,8 @@ import '@testing-library/jest-dom';
 import { render, screen, fireEvent } from '@testing-library/react';
 import MobileHeader from './MobileHeader';
 
-const mockPalette = { openPalette: jest.fn() };
-jest.mock('../../context/PaletteContext', () => ({ usePalette: () => mockPalette }));
+const mockNavigate = jest.fn();
+jest.mock('react-router-dom', () => ({ ...jest.requireActual('react-router-dom'), useNavigate: () => mockNavigate }));
 const mockMobileView = { setDesktopView: jest.fn() };
 jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockMobileView }));
 
@@ -100,4 +100,10 @@ test('the Desktop-view escape still switches this screen', () => {
   render(<MobileHeader title="Event" screenKey="event-detail" onBack={() => {}} detail={DETAIL} />);
   fireEvent.click(screen.getByRole('button', { name: 'Switch to desktop view' }));
   expect(mockMobileView.setDesktopView).toHaveBeenCalledWith('event-detail', true);
+});
+
+test('the magnifier opens the full-screen search, not the palette', () => {
+  render(<MobileHeader title="Proposals" screenKey="proposals-list" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  expect(mockNavigate).toHaveBeenCalledWith('/search');
 });

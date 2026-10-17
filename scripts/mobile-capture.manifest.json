@@ -85,6 +85,8 @@
       "authAssert": ".m-listbar" },
     { "name": "admin-proposals-unviewed", "host": "localhost", "path": "/proposals?unviewed=1", "auth": "admin", "settleMs": 2600,
       "authAssert": ".m-listbar" },
+    { "name": "admin-search", "host": "localhost", "path": "/search", "auth": "admin", "settleMs": 2600,
+      "authAssert": ".m-search-head" },
     { "name": "admin-messages", "host": "localhost", "path": "/messages", "auth": "admin", "settleMs": 2600, "authAssert": ".m-shell", "reportOnly": true },
 
     { "name": "apply", "host": "hiring.localhost", "path": "/apply", "auth": "applicant", "authAssert": ".file-upload-area" },

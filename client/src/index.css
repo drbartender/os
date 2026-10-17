@@ -21651,6 +21651,81 @@ html[data-app="admin-os"][data-skin="light"] .m-tag-supplies { background: hsl(v
 html[data-app="admin-os"][data-skin="light"] .m-card-more .m-showmore { color: var(--accent); }
 html[data-app="admin-os"][data-skin="light"] .m-empty.ok { color: var(--ms-emerald); }
 
+/* ---- Mobile admin: global search (lane ma-f3; spec section 6, benchmark
+   docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html, Global
+   search). A takeover: this header replaces the phone header and the tab bar
+   is gone. The field is 44px tall and its Clear button 44px wide (drawn 40
+   and 30), the phone's tap-target floor; the event rail keeps the family's
+   44px width with the search's quieter inks. ---- */
+html[data-app="admin-os"] .m-header.m-search-head { gap: 6px; padding: 8px 10px 8px 2px; }
+html[data-app="admin-os"] .m-search-field {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  min-height: 44px; margin: 0; padding: 0 10px;
+  border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg-3);
+}
+/* The input draws no outline (as drawn); the field's border carries focus. */
+html[data-app="admin-os"] .m-search-field:focus-within { border-color: var(--accent); }
+html[data-app="admin-os"] .m-search-icon { flex: none; display: flex; color: var(--ink-3); }
+html[data-app="admin-os"] .m-search-input {
+  flex: 1; min-width: 0; height: 42px; padding: 0; border: none; outline: none; background: transparent;
+  color: var(--ink-1); font-family: var(--font-ui); font-size: 13.5px; -webkit-appearance: none; appearance: none;
+}
+/* type="search" draws its own clear button; the screen draws one of its own. */
+html[data-app="admin-os"] .m-search-input::-webkit-search-cancel-button,
+html[data-app="admin-os"] .m-search-input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+html[data-app="admin-os"] .m-search-input:disabled { opacity: 0.55; }
+/* iOS Safari zooms the page when a field under 16px takes focus (the
+   assignment sheet's field carries the same rule). */
+@supports (-webkit-touch-callout: none) {
+  html[data-app="admin-os"] .m-search-input { font-size: 16px; }
+}
+html[data-app="admin-os"] .m-search-clear {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 42px; margin-right: -10px; padding: 0;
+  border: none; background: transparent; color: var(--ink-3); cursor: pointer;
+}
+html[data-app="admin-os"] .m-main.m-search-main { padding-top: 4px; }
+html[data-app="admin-os"] .m-sflight {
+  padding: 8px 4px 4px; text-align: center; font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); animation: m-pulse 1.2s ease-in-out infinite;
+}
+html[data-app="admin-os"] .m-sgroup-head {
+  display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 12px 4px 6px;
+  font-size: inherit; font-weight: 400; line-height: normal;
+}
+html[data-app="admin-os"] .m-sgroup-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .m-sgroup-count { font-family: var(--font-numeric); font-size: 10.5px; color: var(--ink-4); }
+html[data-app="admin-os"] .m-card.m-srow { align-items: center; gap: 12px; min-height: 56px; }
+html[data-app="admin-os"] .m-srow .m-rail { align-self: stretch; }
+html[data-app="admin-os"] .m-srow .m-rail-day { color: var(--ink-2); }
+html[data-app="admin-os"] .m-srow-tile {
+  width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); background: var(--bg-3); color: var(--ink-3);
+}
+html[data-app="admin-os"] .m-srow-tile.m-srow-initials { color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
+html[data-app="admin-os"] .m-srow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+html[data-app="admin-os"] .m-srow-title {
+  min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html[data-app="admin-os"] .m-srow .m-card-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-app="admin-os"] .m-srow .chip,
+html[data-app="admin-os"] .m-srow .tag { flex: none; }
+html[data-app="admin-os"] .m-card.m-srow-more { align-items: center; gap: 10px; padding: 12px 14px; min-height: 48px; }
+html[data-app="admin-os"] .m-srow-more-icon { flex: none; display: flex; color: hsl(var(--accent-h) var(--accent-s) 62%); }
+html[data-app="admin-os"] .m-srow-more-label { flex: 1; min-width: 0; font-size: var(--fs-meta); font-weight: 600; color: hsl(var(--accent-h) var(--accent-s) 62%); }
+html[data-app="admin-os"] .m-srow-more-count { flex: none; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-4); }
+html[data-app="admin-os"] .m-empty.m-snote { padding-top: 58px; color: var(--ink-4); }
+html[data-app="admin-os"] .m-snote .m-empty-body { max-width: 240px; }
+html[data-app="admin-os"] .m-snote-micro { margin-top: 2px; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-4); }
+html[data-app="admin-os"][data-skin="light"] .m-search-field { border-radius: 0; }
+/* House Lights draws the tag as a left-rule label; the base tag's 3px radius
+   bent that lone rule into a bracket. Whether House Lights tags fill is an
+   open owner call (fix list), so only the radius goes here. */
+html[data-app="admin-os"][data-skin="light"] .m-srow .tag { border-radius: 0; }
+html[data-app="admin-os"][data-skin="light"] .m-srow-more-icon,
+html[data-app="admin-os"][data-skin="light"] .m-srow-more-label { color: var(--accent); }
+
 /* ---- Mobile admin: event detail and assignment sheet (spec 2026-08-13
    section 4 Detail, benchmark
    docs/design-artifacts/2026-09-15-mobile-admin-shell.dc.html, Event detail

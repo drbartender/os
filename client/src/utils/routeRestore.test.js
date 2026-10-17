@@ -49,3 +49,9 @@ test('rejects non-path and protocol-relative junk', () => {
   );
   expect(consumeRestoredRoute('/events')).toBe(null);
 });
+
+test('the search screen is never recorded: the screen before it stays the resume target', () => {
+  recordRoute('/proposals/42', '');
+  recordRoute('/search', '');
+  expect(consumeRestoredRoute('/events')).toBe('/proposals/42');
+});

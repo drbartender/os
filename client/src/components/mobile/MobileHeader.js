@@ -1,12 +1,12 @@
 import React from 'react';
 import Icon from '../adminos/Icon';
-import { usePalette } from '../../context/PaletteContext';
+import { useNavigate } from 'react-router-dom';
 import { useMobileView } from '../../context/MobileViewContext';
 
 // Top bar of the phone chrome (benchmark composition): the brand chip on list
-// screens, a back arrow instead on detail screens, title, global search
-// (opens the existing command palette until the full-screen search screen
-// lands), and the per-screen Desktop-view escape hatch (spec section 3).
+// screens, a back arrow instead on detail screens, title, global search (the
+// full-screen search screen at /search, lane ma-f3), and the per-screen
+// Desktop-view escape hatch (spec section 3).
 // Benchmark details honored: the detail variant drops the search button, and
 // the More screen drops the Desktop-view escape (More has no desktop
 // counterpart; the toggle would just wrap this same list in the sidebar).
@@ -51,7 +51,7 @@ function VenueLines({ detail }) {
 }
 
 export default function MobileHeader({ title, screenKey, onBack = null, detail = null }) {
-  const { openPalette } = usePalette();
+  const navigate = useNavigate();
   const { setDesktopView } = useMobileView();
   return (
     <header className={`m-header${detail ? ' m-header-detail' : ''}`}>
@@ -89,7 +89,7 @@ export default function MobileHeader({ title, screenKey, onBack = null, detail =
         <button
           type="button"
           className="m-iconbtn"
-          onClick={openPalette}
+          onClick={() => navigate('/search')}
           aria-label="Search"
         >
           <Icon name="search" size={20} />

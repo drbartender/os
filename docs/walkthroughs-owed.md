@@ -2112,7 +2112,7 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**As of 2026-10-15 this tier holds ONE item, below: the consult call record.** The phone Proposals list (lane ma-f1-proposals-list) sat here from its 2026-10-14 merge until the 2026-10-15 push and moved to Tier 3b. Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
+**As of 2026-10-16 this tier holds TWO items, below: the consult call record and the phone global search (lane ma-f3-search).** The phone Proposals list (lane ma-f1-proposals-list) sat here from its 2026-10-14 merge until the 2026-10-15 push and moved to Tier 3b. Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
 of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
 by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
 to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
@@ -2201,6 +2201,19 @@ to rot. Do that again for the next thing that sits here.
       press is lost. It is inherited from the shipped lead router AND from spec 4.5, so it is a
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
+
+### Global search on the phone (lane ma-f3-search, built 2026-10-16; moves to Tier 3b when its squash is an ancestor of `origin/main`)
+
+The walk, on the Pixel, in the installed app:
+1. On Events, tap the magnifier (it is on every tab): the search fills the screen, the keyboard comes up, the tab bar is gone.
+2. Type one letter: "Keep typing". Type a client's surname: the groups appear in the order Clients, Proposals, Events, Staff, each with its count; the keyboard's Search key puts the keyboard away.
+3. Tap an event: its phone detail opens. Press Back: the search is there with the term and the rows, keyboard down.
+4. Tap a client (it carries "Desktop"): the desktop client page opens with the Phone view pill. Back returns to the search.
+5. Find a term that fills the Events group ("6+"): its "More events on desktop" row (it ends "6 shown") opens the desktop Events list on its All tab. On a row's More actions menu, Assign Staff opens the shift drawer over the list; close it: still the desktop list. Open one of its events (the phone detail), then Back: the desktop list again. Back to the search, Back to the tab: the phone screen, as it was (nothing sticks).
+6. Airplane mode: the field keeps its text, greyed; "Search needs the server". Airplane off: the search runs again.
+7. Back from the search returns to the tab you opened it from.
+
+What the headless gate could not prove (2026-10-16): the shift drawer in step 5, which it did not script, and the hardware Back and the keyboard, which only the phone has. Everything else passed there.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

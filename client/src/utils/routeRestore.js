@@ -19,7 +19,14 @@ export function resetRestoreCaptureForTests() {
   capturedThisLoad = undefined;
 }
 
+// The search screen is never a resume target: its term lives in history
+// state, which a cold launch does not have, and an empty field with the
+// keyboard up is not "where I left off" (lane ma-f3). The screen before it
+// stays recorded.
+const NEVER_RECORDED = new Set(['/search']);
+
 export function recordRoute(pathname, search) {
+  if (NEVER_RECORDED.has(pathname)) return;
   try {
     window.localStorage.setItem(
       LAST_ROUTE_KEY,

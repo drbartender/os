@@ -12,6 +12,7 @@ test.each([
   ['/inbox', 'inbox'],
   ['/inbox/c-12', 'inbox-item'],
   ['/inbox/t-neg_123', 'inbox-item'],
+  ['/search', 'search'],
 ])('routeScreenKey(%s) -> %s', (path, key) => {
   expect(routeScreenKey(path)).toBe(key);
 });

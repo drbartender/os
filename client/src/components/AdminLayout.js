@@ -250,6 +250,21 @@ function AdminLayoutInner() {
     return () => Sentry.setTag('surface', undefined);
   }, [mobileChrome]);
 
+  // Full-screen search (spec section 6, lane ma-f3): the screen draws its own
+  // header (Back and the field) and its own <main id="main-content">, so the
+  // shell holds it alone; no phone header, no passkey nudge, no tab bar, as
+  // the benchmark draws the takeover. The palette stays mounted for a
+  // hardware ⌘K.
+  if (mobileChrome && screenKey === 'search') {
+    return (
+      <PaletteContext.Provider value={paletteCtx}>
+        <a href="#main-content" className="skip-nav">Skip to main content</a>
+        <div className="m-shell"><Outlet context={outletCtx} /></div>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </PaletteContext.Provider>
+    );
+  }
+
   if (mobileChrome) {
     // Detail screens get Back and the rich header; each falls back to its own
     // list. On a restored cold launch history has no in-app entry behind the

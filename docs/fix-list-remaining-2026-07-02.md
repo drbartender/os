@@ -2199,6 +2199,111 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   together: remember how many pages were open and reload them before restoring, or clamp to the
   bottom instead of skipping. Found by the ma-f1 second opinion (codex), 2026-10-14.
 
+- **The admin worker still allowlists `/api/admin/search`, but nothing opts in:** the phone
+  search reads through `api.get` and stores nothing (lane ma-f3). Drop the entry at the next
+  `admin-sw.js` change, with its allowlist test. Lane ma-f3, 2026-10-16.
+  What the lane review left (lane ma-f3-search: task reviews, lane fleet and second opinion,
+  2026-10-16; none changes money or a message):
+  - **First offline magnifier tap before the lazy chunk is cached lands on the root
+    ErrorBoundary,** not the screen's offline note. The stale-chunk reload (`App.js:43-64`) fails
+    again offline and the boundary sits outside the router (`App.js:695-707`), so Back does not
+    clear it; `admin-sw.js` caches a chunk only after an online fetch. Every lazy phone screen
+    shares it: fix once, with an idle `import()` warm-up of every lazy phone chunk when the phone
+    chrome mounts. The walk's offline step runs after an online search, so the Pixel walk will
+    not catch it.
+  - With the palette open over `/search` (a hardware ⌘K), one Escape closes the palette and the
+    search: `AdminLayout.js` `onKey` and `SearchPhone.js`'s window listener both hear it. The
+    screen should skip Escape while the palette is open.
+  - The Proposals More row puts the term in the resume store: `searchView.js` opens
+    `/proposals?q=<term>`, and `AdminLayout.js` `recordRoute` keeps it in `adminLastRoute` until
+    the next navigation or sign-out, so a cold launch can resume it (the phone list ignores `q`).
+    The plan's constraints allow it, but `SearchPhone.js:24-27`, `README.md:822` and
+    `scripts/sensitive-paths.txt:484` say the term never enters a URL or nothing is stored: name
+    the carve-out there.
+  - Sentry's XHR breadcrumb records `/api/admin/search?q=<term>`, and `utils/sentryScrub.js`
+    redacts phone shapes only (an encoded `(nnn)%20nnn-nnnn` slips past `DISPLAY_PHONE`).
+    Pre-existing through the palette; the phone sends one read per settled term. Redact the `q`
+    value on `/admin/search` URLs there.
+  - Superseded reads are dropped, never aborted (`SearchPhone.js` `run`, `cancel`): each runs to
+    its answer or the 10 s timeout. Bandwidth only, since the limiter counts a read on arrival;
+    an `AbortController` aborted in `cancel()` would spare the download.
+  - Focus falls to the body when the search closes (`close()`; the palette put it back on its
+    opener, `AdminLayout.js:50-59`) and after Retry, which unmounts the note and its button.
+    Same as the phone lists' Retry: one a11y pass (focus `main` with `tabIndex -1`, since the
+    field would raise the keyboard).
+  - Small text left at `--ink-4` as drawn: the group count, "6 shown" and the note's micro line
+    (1.9 to 2.2:1 in House Lights; the micro line carries the phone-digits hint and the offline
+    caveat), and the decorative note icon (`index.css` search block). Owner call; the 2026-09-30
+    reasoning that lifted the rail month to ink-3 would lift at least the micro line.
+  - A long unbroken term (a long email address) pushes the "No matches" title and the flight
+    line past the screen edge, and `main` scrolls sideways. Fix: `overflow-wrap: anywhere` on
+    `.m-snote .m-empty-title` and `.m-sflight`.
+  - The takeover has no bottom safe-area inset: with no tab bar, the last row ends under the
+    gesture handle. Fix: `padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px))` on
+    `.m-main.m-search-main`; confirm on the Pixel.
+  - `.m-sflight` pulses with no reduced-motion opt-out, and the skeleton pulses `.m-skel-rail`
+    and `.m-skel-bar` miss the same list: add all three to the phone block's
+    `prefers-reduced-motion` rule (`index.css:22223`), no new media query.
+  - Back from a result lands at the top of the list: the screen remounts and re-runs, so
+    `main`'s scroll is lost. Save it with the term in `open()` and restore it when that term's
+    answer lands (`SearchPhone.js`).
+  - A client phone stored with its country code shows unformatted: `formatPhoneDisplay`
+    (`server/utils/globalSearch.js:37`) formats ten digits only. The palette's `detail` is frozen,
+    so format on the phone (`searchView.js:107` through `utils/formatPhone.js`, guarding its
+    empty-input dash) or fix the shared formatter.
+  - Two searches on one phone screen: on the desktop list pages with no phone fork (clients,
+    staff, drink plans, payroll) inside the phone chrome, the header magnifier opens `/search`
+    while the Toolbar launcher (`components/adminos/Toolbar.js`, `GlobalSearchButton.js`) opens
+    the palette. Accepted by the plan; owner or ui-ux call.
+  - House Lights draws the Desktop tag as a left-rule label (its radius squared in this lane) and
+    status chips as hairline uppercase chips with no dot, where the benchmark draws a filled tag
+    and tinted pills. App-wide skin-level owner call, for lane ma-g. The ma-f1 close record named
+    the chip half, but it never reached this list.
+  - `globalSearch.js` `kind` repeats `eventDetail`'s `getEventTypeLabel` call (:51-54, :66-69);
+    one `rowKind(row)` helper would tie it to `detail` by construction.
+  - `globalSearch.js` spreads `phoneFields` last (:176, :185), so a future colliding key would
+    override a frozen palette key; the test pins the `cc_id` keys by presence only.
+  - No `globalSearch.test.js` fixture sets `event_type_custom`, so its plumbing into `kind` is
+    unpinned.
+  - The row key `kind` shares its name with `CommandPalette.js`'s `flatItems` discriminator
+    (:194-206); safe while `flatItems` never spreads a row.
+  - The server test prints the pg `sslmode` SECURITY WARNING (pre-existing): `sslmode=verify-full`
+    in `DATABASE_URL`.
+  - `searchView.js:27-30` `initialsOf` is a second export of that name in `client/src/utils`
+    (beside `staffingSheet.js:23-26`, which answers "?" on empty); fold into one.
+  - `searchView.js:83-88` `dateLabel` restates `fmtDateOnly` (`components/adminos/format.js:47`)
+    with an empty string where that one draws an em dash; note only.
+  - `searchView.test.js` leaves three branches unpinned: an error beating no-match for the same
+    term (`searchView.js:187`), pending beating a note in `liveSummary` (:211), the non-array
+    group guard (:133).
+  - `MobileViewContext.js:94-96`: `setDesktopForVisit` depends on `key`, so the context value
+    re-identifies on every navigation. Harmless today; a key ref would hold it stable.
+  - `MobileViewContext.js:95` holds one visit: a second `setDesktopForVisit` replaces a live
+    one, so a long chain (search, a desktop list, another tab, search, a client row) backs out
+    onto the first visit's desktop entry in phone view. Fails toward not sticking; a visit stack
+    fixes it.
+  - `NotificationsPhone.js:80-86` turns a desktop reading of `notifications` into a sticky
+    `setDesktopView('settings', true)`, so a visit there would stick. Unreachable (no search
+    target maps there); fix before one does.
+  - `MobileViewContext.test.js` leaves two states unpinned: the Phone view pill on another screen
+    keeping a live visit, and `desktopView(null)` while a visit is armed or on an undrawn entry.
+  - `AdminLayout.search.test.js` mocks the palette and the passkey nudge to null and checks
+    containment only, so the palette staying mounted on `/search`, no nudge and the shell
+    holding the screen alone are unpinned.
+  - `routeRestore.js` skips the exact path `/search`, so a typed `/search/` would be recorded
+    (the PWA has no URL bar).
+  - `AdminLayout.js:258-266` is the third copy of the Provider, skip link and palette frame
+    (beside :280-294 and :299-327): a prop added to one `CommandPalette` drifts silently. A local
+    frame component would hold all three.
+  - `ARCHITECTURE.md:2151`'s visit parenthetical omits that only entries on the visit's own
+    screen draw desktop (an event opened from the desktop Events list draws the phone detail).
+  - `ARCHITECTURE.md:2145`'s Service worker bullet names only the palette among the reads of
+    `/api/admin/search` that never opt in; the phone search is the other.
+  - `docs/walkthroughs-owed.md:2212`, walk step 5: "close it: still the desktop list" holds for
+    the drawer's X only (the desktop drawer replaces history, `useDrawerParam.js:81, :98`, so
+    hardware Back leaves for the search), and "open one of its events" should say a booked event
+    (a manual shift's row opens the drawer).
+
 - **Phone edit sheet follow-ups (lane ma-e3-edit-sheet, merged 2026-10-06 as `589092fc`, pushed
   2026-10-07).** Parked by its review fleet, fold re-reviews and the push review; none changes money
   or a message.
@@ -3060,6 +3165,9 @@ re-grep before surgery.
   **AMENDED 2026-10-14: the Proposals LIST is built by lane `ma-f1-proposals-list` (merged 2026-10-14 as `9f2c1f1c`, not pushed)
   (`docs/superpowers/plans/2026-10-14-mobile-admin-proposals-list.md`); `/proposals` forks to the
   phone list at phone width. Still declared and unbuilt: `ma-f2-proposal-detail`, `ma-f3-search`.**
+  **AMENDED 2026-10-16: full-screen SEARCH is built by lane `ma-f3-search`
+  (`docs/superpowers/plans/2026-10-15-mobile-admin-search.md`); the phone header's magnifier opens
+  `/search` instead of the palette. Still declared and unbuilt: `ma-f2-proposal-detail`.**
   **AMENDED 2026-09-29: the event DETAIL and the ASSIGNMENT SHEET are built, by lane
   `ma-e2-event-detail` (`91dcfab8`) of
   `docs/superpowers/plans/2026-09-29-mobile-admin-event-detail.md`.** `/events/:id` forks to the

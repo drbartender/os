@@ -14,6 +14,7 @@ const SOURCES = [
   'pages/mobile/InboxPhone.js',
   'pages/mobile/NotificationsPhone.js',
   'pages/mobile/ProposalsListPhone.js',
+  'pages/mobile/SearchPhone.js',
   'pages/mobile/MorePage.js',
   'components/inbox/WaitingRows.js',
   'components/inbox/HandledList.js',
@@ -82,4 +83,10 @@ test('only phone screens import offlineRead', () => {
 // The likeliest way round the gate above is to send the header by hand.
 test('the offline header is written in exactly one source file', () => {
   expect(holders(/x-offline-ok/i)).toEqual(['utils/offlineRead.js']);
+});
+
+// Spec section 3 (Global search): the field is type="search", so the build
+// hides the browser's own clear button; the screen draws its own.
+test('the search field hides the browser clear button', () => {
+  expect(css).toMatch(/\.m-search-input::-webkit-search-cancel-button[^{]*\{[^}]*display:\s*none/);
 });
