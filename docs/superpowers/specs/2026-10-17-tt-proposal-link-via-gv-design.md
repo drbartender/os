@@ -1,6 +1,6 @@
 # Proposal link into the Thumbtack thread, sent through Google Voice
 
-- **Date:** 2026-10-17 (rev 2: the builder check and the three-agent spec fleet are folded in)
+- **Date:** 2026-10-17 (rev 3: the builder check, the three-agent spec fleet and the rev 2 re-verify are folded in)
 - **Status:** Design approved in conversation (Dallas, "looks good"). Spike first, then plan.
 - **Surface:** server proposal sends, the proposal page, and a new box-side Google Voice sender
 
@@ -66,9 +66,9 @@ My calls (the approved playback plus the review folds):
    - It is an admin send at one of the triggers above.
    - The target number is the proposal client's stored `clients.phone`, never a request value.
    - That number matches (last 10 digits) at least one post-rollout `thumbtack_leads.customer_phone`, and EVERY such lead belongs to the proposal's client (`thumbtack_leads.client_id`).
-   - The negotiation is the lead linked to the proposal (`thumbtack_leads.proposal_id`). Otherwise it is that client's newest lead on the number, and only when exactly one such lead exists.
+   - The negotiation is the lead linked to the proposal (`thumbtack_leads.proposal_id`). Otherwise it is that client's newest lead on the number, and only when exactly one such lead exists. Either way the chosen lead must itself carry `clients.phone` and be under 180 days old, a backstop against a recycled relay number.
 
-   Any mismatch or ambiguity means no GV post and today's 888 text. The lease re-checks the rule. Reuse the rollout constant (import `THUMBTACK_PROXY_ROLLOUT`; `inbox/personKey.test.js` allows exactly one declaration). Changing `findThumbtackProxyLead`'s return shape touches `routes/sms.js`, `routes/proposals/publicToken.js` and its tests, so prefer a sibling helper.
+   Any mismatch or ambiguity means no GV post and today's 888 text. The lease re-checks the rule. Reuse the rollout constant: import `THUMBTACK_PROXY_ROLLOUT` from `server/utils/inbox/constants.js`, since `smsInbound.js` does not export it and `inbox/personKey.test.js` allows only one top-level declaration. Changing `findThumbtackProxyLead`'s return shape touches `routes/sms.js`, `routes/proposals/publicToken.js`, its internal caller in `smsInbound.js` and `smsInbound.test.js`, so use a sibling helper.
 2. **Kill switch.** `GV_PROPOSAL_POST_ENABLED`, parsed as `=== 'true'` and dark by default. Off means no enqueue (today's 888 text) AND the lease endpoint returns `[]`, so the box idles on its next poll. The server sweep is NOT gated: rows already queued drain to the 888 fallback. Off restores exactly today's behavior.
 3. **Notifications gate.** The enqueue honors `SEND_NOTIFICATIONS` like `sendSMS` (log and skip when off), so a lane, dev server or test suite on the shared dev DB never creates a real post.
 4. **At most once.**
@@ -77,10 +77,10 @@ My calls (the approved playback plus the review folds):
    - One open row per proposal (a partial unique index over the open states). A second send while one is open merges into it. A resend after the row is terminal makes a new row, because a resend is intentional.
 5. **Fallback only when it definitely didn't happen.** The 888 text goes out for:
    - `stale`: never leased in time.
-   - `failed_preclick`, with a whitelisted reason: no_thread, wrong_thread, invalid_body, invalid_number, session_expired, challenge, cap, ui_error_before_send.
+   - `failed_preclick`, with a whitelisted reason: no_thread, wrong_thread, invalid_body, invalid_number, session_expired, challenge, cap, identity_mismatch (law 1 failed at lease), timeout (the box abandoned the job before Send inside the lease window), ui_error_before_send.
    - An enqueue or relay-detection error at send time, which fails open to today's text and goes to Sentry.
 
-   It NEVER goes out for `sent`, `clicked_unverified`, `unknown` or `skipped_already_posted`, since any of those may mean the link is already in the thread.
+   It NEVER goes out for `sent`, `clicked_unverified`, `unknown` or `skipped_already_posted`, since any of those may mean the link is already in the thread. The fallback re-checks law 8 at the moment it sends, since it can fire minutes after the original send. A law 8 rejection at lease (archived proposal, opted-out client) ends the row as `cancelled`, with no fallback.
 6. **No double post with a human.** The lease skips a row (`skipped_already_posted`) when `thumbtack_messages` on ANY negotiation whose lead carries that number holds the proposal token, from 30 minutes before the send onward, which covers a paste made just before the send. The box re-checks the open GV thread for the token before typing. Match on the token, not the full URL, to survive `www.`, slashes, the trailing period and other URL forms. Don't require `from_type='Business'`: the legacy parse branch stores NULL. A residual race of seconds is acceptable; minutes are not.
 7. **Volume caps.** A server rolling-24h cap on posts (default 25, parsed through `envInt.js` so 0, blank or nonsense fall back), a box-side daily cap, and no two posts to the same number within 10 minutes. At the cap, the post fails as `cap` (the 888 text goes out) with one throttled Sentry warning.
 8. **Suppression.** A GV post needs:
@@ -88,9 +88,9 @@ My calls (the approved playback plus the review folds):
    - `communication_preferences.sms_enabled !== false`;
    - no per-number `sms_optouts` record.
 
-   `phone_status = 'bad'` is a fact about the 888 path and does not block GV. The swap sits after the existing suppression and inside the `wantSms` branch, so the Text box and opt-outs carry over.
+   The swap sits after the existing suppression (`shouldSendImmediate`, `smsAllowed`) and inside the `wantSms` branch. So the Text box, the opt-outs and today's `phone_status = 'bad'` block all carry over unchanged (0 of the 163 relay clients had a bad phone). The lease re-checks the same rules.
 9. **Box validation before typing:**
-   - the body holds exactly one `/proposal/<uuid>` link on the public host and is at most 320 characters;
+   - the body holds exactly one `/proposal/<uuid>` link on the public host, is one line, and is at most 320 characters. The server collapses line breaks to spaces at enqueue, and the box inserts the text in one go, never key by key, because Enter sends in GV. The SendModal enforces the same 320 limit for relay clients;
    - the number is US E.164;
    - the thread is one-to-one with exactly that number (no group MMS, no contact autocomplete);
    - an existing thread whose Thumbtack notice names a different bid fails as `wrong_thread`.
@@ -108,18 +108,18 @@ My calls (the approved playback plus the review folds):
 
 **Queue and states (server).**
 - A queue table of GV posts.
-- The states: `queued`, `leased`, `sent`, `clicked_unverified`, `failed_preclick` (plus reason), `skipped_already_posted`, `stale`, `unknown`.
+- The states: `queued`, `leased`, `sent`, `clicked_unverified`, `failed_preclick` (plus reason), `skipped_already_posted`, `stale`, `unknown`, `cancelled`.
 - Terminal states never change after they are set. A late or duplicate report for a row not in `leased` is ignored and logged. Report reasons are whitelisted, the same way `FIRST_REPLY_FAIL_REASONS` is.
 - **Confirmation is derived at read time**, not written by the webhook. A row is "in the thread" when a `thumbtack_messages` row on its negotiation contains its token and matches the posted body (normalized). A link-only match without the body is a human paste. That reads as "already posted by hand", never as confirmation, so a hand paste can't hide a broken sender. Deriving at read time also avoids a confirm step inside the `/messages` webhook, where a throw would 500 a stored message and Thumbtack's retry would answer "duplicate".
 
 **Sweep (server, 60 s).** `RUN_GV_POST_SWEEP_SCHEDULER`, honored only with `RUN_SCHEDULERS`, not gated by the kill switch.
 - `queued` past the stale window (default 5 minutes) becomes `stale` and the 888 fallback sends.
 - `leased` past the lease window (default 3 minutes) unreported becomes `unknown`.
-- Liveness: when rows go stale with no successful lease in the last 30 minutes, one admin email per outage episode says the GV sender is down and Thumbtack customers are getting the toll-free text. The episode resets on the next successful send.
+- Liveness trips when rows go stale with no successful lease in the last 30 minutes, OR three jobs in a row end `failed_preclick` (other than `cap` or `no_thread`). Either way one admin email per outage episode says the GV sender is down and Thumbtack customers are getting the toll-free text. The status endpoint's session/challenge email shares the same episode key, so an outage sends one email, not two. The episode resets on the next successful send.
 - Prunes old rows.
 
-**Agent endpoints (server).** In a new route file with its own rate limiter. `thumbtackAgent.js` is 772 lines, and its per-IP limiter of 40 per minute is shared with the first-reply poll from the same box. Auth is `GV_AGENT_SECRET`, timing-safe and fail-closed.
-- **lease**: returns `[]` when the flag is off. Re-validates law 1, law 6, law 7 and law 8. Returns the row id, number and body.
+**Agent endpoints (server).** In a new route file with its own rate limiter, mounted under its own prefix. Not under `/api/admin/thumbtack`, where `thumbtackAgent.js`'s `router.use(agentLimiter)` would still apply. `thumbtackAgent.js` is 772 lines, and its per-IP limiter of 40 per minute is shared with the first-reply poll from the same box. Auth is `GV_AGENT_SECRET`, timing-safe and fail-closed.
+- **lease**: returns `[]` when the flag is off. Re-validates law 1, law 6, law 7 and law 8, with outcomes identity_mismatch (fallback), skipped_already_posted, cap (fallback) and cancelled. Returns the row id, number, body, and the expected negotiation and request ids for the `wrong_thread` check. The lease window must exceed the box's per-job budget. A job the box can't finish in time is abandoned before Send and reported as `timeout`.
 - **report**: takes `sent`, `clicked_unverified`, `failed_preclick` (reason) or `skipped_already_posted`.
 - **status**: takes `session_expired` or `challenge` and sends one admin email per episode under a single dedupe key, email only. "Like the harvester" does not hold: its dedupe is per negotiation and lasts 10 minutes.
 
@@ -134,11 +134,11 @@ My calls (the approved playback plus the review folds):
   - "didn't go out: the toll-free text went instead" (with the reason)
 - Last-4 only. It polls while the row is not terminal.
 
-**SendModal.** For a relay client the Text row reads "Text via Thumbtack (GV)" with last-4. If an edited body drops the proposal link, the modal blocks with "The text must include the proposal link." The result shows "queued for Thumbtack": `describeSendResult` (`client/src/components/SendModal/sendResult.js`) gains a queued branch, so a text-only send no longer toasts "Done. No message was sent."
+**SendModal.** For a relay client the Text row reads "Text via Thumbtack (GV)" with last-4. If an edited body drops the proposal link, the modal blocks with "The text must include the proposal link." The result shows "queued for Thumbtack": `describeSendResult` (`client/src/components/SendModal/sendResult.js`) gains a queued branch, so a text-only send no longer toasts "Done. No message was sent." `renderChannelResult` in `SendModal.jsx` gets the same queued branch, since it shows anything that isn't sent or failed as "Text skipped". `resolveFromRow` carries a relay flag, the label follows the kill switch, and the modal caps a relay client's text at 320 characters to match law 9.
 
 **Consumers (accepted or handled).**
-- Inbox (`server/utils/inbox/**`, a sensitive path): mark the GV echo the way `markAutoFirstReplies` marks the auto first reply, so `classify.js` never counts it as a separate human reply. The Inbox treats the post as part of the proposal send, whose email row still lands in `message_log` at send time and stays inside the absorb window.
-- No new writer of `initial_proposal` or `proposal_sent_sms`, so the `answeringMessageTypes` pin is untouched.
+- Inbox (`server/utils/inbox/**`, a sensitive path): the GV echo gets its own flag. Not `autoFirstReply`, which would make it a holding reply labeled "Auto first reply". A matched echo counts as delivery of its proposal send, so a text-only send or a client with no email still reads as sent, never "No email or text went out" (`thread.js`). The 888 fallback row and the GV post count toward their send by proposal id, whatever the 5-minute absorb window says (`PROPOSAL_ABSORB_MINUTES`). The echo never counts as a separate human reply.
+- No new writer of `initial_proposal` or `proposal_sent_sms`. The 888 fallback reuses the existing pinned send sites; `answeringMessageTypes.test.js` counts call sites, so even a second literal in the same file breaks it. The queue row stores `sent_by` and which send path made it.
 - Accepted: the admin Messages thread (`sms_messages`, ClientConversation) won't show the GV post. Contact history and "last contacted" won't count it, though the email row still counts.
 - The 888 fallback writes `message_log` and `sms_messages` exactly as today.
 
@@ -158,7 +158,7 @@ My calls (the approved playback plus the review folds):
 - Human pacing, with a box daily cap.
 
 **Observability.**
-- Sentry: stale, clicked_unverified, unknown, session/challenge, cap reached, and enqueue errors that fell open.
+- Sentry: stale, clicked_unverified, unknown, failed_preclick, session/challenge, cap reached, and enqueue errors that fell open.
 - Server log lines for enqueue, lease, report and sweep, with numbers at last-4.
 
 ## 7. Step 0: spike (go/no-go before the plan)
