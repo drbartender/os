@@ -2665,6 +2665,14 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   decide about `margin-bottom`) at `:12795`, walk every admin surface in both skins for cards whose
   only inset was the leaked one, and retire `.card-flush`, `.mkt-card-flush` and `.mkt-moment`'s
   padding reset in the same pass.
+- **On the event page in After Hours, the Bar menu card's right-column neighbours are inset twice
+  and it is not** (lane menu-designer-card ui-ux review, 2026-10-17). The payment panel, the drink
+  plan card and the other right-column cards still take the legacy `.card` padding on top of their
+  `.card-head` and `.card-body` inset (the entry above), so their text sits about 27 px further in
+  than the new Bar menu card's, which is `card-flush` and matches the design. The card is right and
+  its neighbours are not; not the card lane's to fix. The global fix above closes it. A
+  page-scoped `card-flush` on the neighbours would break House Lights, where `.card-body` has no
+  side padding and the leaked inset is the only one (menu art spec, table D item 12).
 - **The revenue chart shows a WHOLE MONTH under any sub-month filter.** `qRevenue`
   (`metricsQueries.js:344`) has no granularity concept — month is hardcoded in the range bounds, the
   `generate_series`, all ~8 value subqueries, and the CC-era legs. A sub-month range collapses `lo`
