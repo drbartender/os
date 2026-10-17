@@ -12,6 +12,7 @@ const crypto = require('node:crypto');
 
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
+const { PRICING_ADJUSTMENT_LABEL } = require('./foldDecision');
 const {
   parseCancelTarget,
   computeCancelTargets,
@@ -439,6 +440,44 @@ test('adjustment removal of a discount RAISES the total', async () => {
     assert.equal(result.overpaymentCents, 0);
     const row = (await client.query('SELECT adjustments FROM proposals WHERE id = $1', [proposalId])).rows[0];
     assert.deepEqual(row.adjustments, []);
+  });
+});
+
+test('the result carries a client-facing label: a hidden line is the shared fold label, the admin keeps the real one', async () => {
+  // A hidden line is never named to the client (spec 2026-10-16 section 4.3).
+  // removedLabel feeds the admin preview, toast and audit row; clientLabel is
+  // the only label a client notice may use.
+  const { proposalId } = await seedProposal({
+    numBars: 2,
+    adjustments: [
+      { type: 'discount', label: 'Test hidden line', amount: 40, visible: false },
+      { type: 'discount', label: 'Test shown line', amount: 25, visible: true },
+      { type: 'surcharge', label: 'Test legacy line', amount: 10 }, // no visible key: hidden, the engine's reading
+      { type: 'discount', label: '   ', amount: 5, visible: true }, // shown, but its label is only spaces
+      { type: 'surcharge', label: ' ', amount: 5, visible: true },
+    ],
+  });
+  await applyCancel(proposalId, { target: 'adjustment:0' }, (result) => {
+    assert.equal(result.removedLabel, 'Test hidden line', 'admin surfaces keep the real label');
+    assert.equal(result.clientLabel, PRICING_ADJUSTMENT_LABEL);
+  });
+  await applyCancel(proposalId, { target: 'adjustment:1' }, (result) => {
+    assert.equal(result.removedLabel, 'Test shown line');
+    assert.equal(result.clientLabel, 'Test shown line', 'a shown line keeps its own label');
+  });
+  await applyCancel(proposalId, { target: 'adjustment:2' }, (result) => {
+    assert.equal(result.removedLabel, 'Test legacy line');
+    assert.equal(result.clientLabel, PRICING_ADJUSTMENT_LABEL, 'no visible key reads as hidden (fail closed)');
+  });
+  await applyCancel(proposalId, { target: 'adjustment:3' }, (result) => {
+    assert.equal(result.clientLabel, 'Discount', 'a blank shown label takes the engine type name, so a notice still goes out');
+  });
+  await applyCancel(proposalId, { target: 'adjustment:4' }, (result) => {
+    assert.equal(result.clientLabel, 'Surcharge');
+  });
+  await applyCancel(proposalId, { target: 'bar', quantity: 1 }, (result) => {
+    assert.equal(result.removedLabel, 'Bar Rental');
+    assert.equal(result.clientLabel, 'Bar Rental', "no other kind's label is hidden data");
   });
 });
 

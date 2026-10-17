@@ -23,7 +23,8 @@ const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems
 const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons, pricedHoursFor } = require('./eventCreation');
 const { rosterCounts } = require('./positionsNeeded');
 const { toCents } = require('./invoiceShared');
-const { isProtectedAdjustment, adjAmount, adjLabel } = require('./adjustmentRules');
+const { isProtectedAdjustment, adjAmount, adjLabel, adjVisible } = require('./adjustmentRules');
+const { PRICING_ADJUSTMENT_LABEL } = require('./foldDecision');
 const { isLegalHold } = require('./legalHold');
 
 // Archived proposals are settled history; completed events have run payroll.
@@ -495,8 +496,11 @@ async function applyLineItemCancel(client, {
   let bartendersAfter = bartendersBefore;
   let adjustmentsAfter = adjustmentsBefore;
 
-  // 3. Per-kind mutation.
+  // 3. Per-kind mutation. removedLabel names the line for the ADMIN surfaces
+  // (preview, toast, audit row); clientLabel is the only label a client notice
+  // may use (set below where a line can be hidden; see the result).
   let removedLabel = null;
+  let clientLabel = null;
   let labCleanup = { labCleaned: false, labPlanId: null };
   let gratuity = null;
   let partialAddonId = null;
@@ -601,6 +605,15 @@ async function applyLineItemCancel(client, {
       throw new ConflictError('This line records a refund or an agreed price and cannot be removed here.', 'PROTECTED_LINE');
     }
     removedLabel = adjLabel(adj);
+    // A line the client never sees is never named to them (spec 2026-10-16
+    // section 4.3): read from the locked row, it goes out under the generic
+    // fold label (foldDecision.js). The client's own rows show that label only
+    // when a fallback row is drawn; a hidden amount usually folds into the
+    // package row. A shown line keeps its own label, and one stored as only
+    // spaces takes the engine's type name (adjLabel's fallback), so a
+    // requested notice still goes out.
+    const shownName = String(removedLabel).trim() ? String(removedLabel) : adjLabel({ type: adj.type });
+    clientLabel = adjVisible(adj) ? shownName : PRICING_ADJUSTMENT_LABEL;
     adjustmentsAfter = adjustmentsBefore.filter((_, i) => i !== t.key);
     await client.query('UPDATE proposals SET adjustments = $1::jsonb WHERE id = $2',
       [JSON.stringify(adjustmentsAfter), proposalId]);
@@ -749,6 +762,10 @@ async function applyLineItemCancel(client, {
       fingerprint.amount_paid, snapshot.total, offContractPaidCents
     ),
     removedLabel,
+    // What a client may read. Only an adjustment can be hidden; no other
+    // kind's label is hidden data (add-on names, bars, syrups, bartenders and
+    // the gratuity are never hidden lines), so it goes out as the admin sees it.
+    clientLabel: clientLabel ?? removedLabel,
     lockedInvoices,
     deltaInvoicesAdjusted,
     staffingWarning,

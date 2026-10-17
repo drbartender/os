@@ -8,6 +8,12 @@
  * prefs/hard-bounce suppression, best-effort, Sentry on failure, __setDeps
  * test seam. The template lives in-module (emailTemplates.js is over the
  * file-size soft cap by standing decision).
+ *
+ * The line is named by its CLIENT-facing label only (applyLineItemCancel's
+ * result.clientLabel; spec 2026-10-16 section 4.3): a hidden adjustment
+ * arrives as the shared "Pricing adjustment", never its own label. A call
+ * with no client label (or the admin's label under the old removedLabel
+ * name) sends nothing rather than guess.
  */
 
 'use strict';
@@ -28,20 +34,20 @@ function fmtUsd(n) {
 }
 
 // HTML-escape interpolated fields (emailTemplates.js esc() convention;
-// clientName/removedLabel are stored user/admin input).
+// clientName/clientLabel are stored user/admin input).
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function lineItemRemovedNotice({ clientName, removedLabel, newTotal, newBalance, manualReturnCents }) {
+function lineItemRemovedNotice({ clientName, clientLabel, newTotal, newBalance, manualReturnCents }) {
   const balanceLine = manualReturnCents > 0
     ? `We owe you ${fmtUsd(manualReturnCents / 100)} back and will return it to you separately.`
     : newBalance > 0
       ? `Your remaining balance is ${fmtUsd(newBalance)}.`
       : 'Your account is fully settled.';
   const text = `Hi ${firstNameOf(clientName)},\n\n`
-    + `We removed ${removedLabel} from your event at your request. `
+    + `We removed ${clientLabel} from your event at your request. `
     + `Your updated total is ${fmtUsd(newTotal)}. ${balanceLine}\n\n`
     + 'Reply to this email with any questions.\n\n'
     + 'Dr. Bartender';
@@ -55,14 +61,22 @@ function lineItemRemovedNotice({ clientName, removedLabel, newTotal, newBalance,
 /**
  * @param {object} a
  * @param {number|string} a.proposalId
- * @param {string} a.removedLabel
+ * @param {string} a.clientLabel  the removed line's client-facing label (applyLineItemCancel's
+ *   result.clientLabel), never the admin's removedLabel
  * @param {number} a.newTotal  dollars
  * @param {number} [a.manualReturnCents]  external/CC overpayment returned by hand
  * @param {number|null} [a.sentBy]  the admin who executed the removal, a value from the route (message_log.sent_by)
  * @returns {Promise<{email:'sent'|'failed'|'skipped', skip_reasons:object, email_error?:string}>}
  */
-async function sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal, manualReturnCents = 0, sentBy = null }) {
+async function sendLineItemRemovedNotice({ proposalId, clientLabel, newTotal, manualReturnCents = 0, sentBy = null }) {
   try {
+    // Fail closed: no client-facing label means no email, so a caller can
+    // never send the admin's label (a hidden line's own name) by accident.
+    // The message reaches the admin's toast ("the client notice failed to
+    // send: ..."), so it is plain words, not a code identifier.
+    if (typeof clientLabel !== 'string' || clientLabel.trim() === '') {
+      throw new Error('the removed line has no name to show the client. Tell the client directly.');
+    }
     const { rows } = await pool.query(
       `SELECT p.total_price, p.amount_paid,
               c.id AS client_id, c.name AS client_name, c.email AS client_email,
@@ -89,7 +103,7 @@ async function sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal, m
     }
     const tpl = lineItemRemovedNotice({
       clientName: a.client_name,
-      removedLabel,
+      clientLabel,
       newTotal: Number(newTotal),
       newBalance: Math.max(0, Number(newTotal) - Number(a.amount_paid)),
       manualReturnCents: Number(manualReturnCents) || 0,

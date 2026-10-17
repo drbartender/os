@@ -125,6 +125,7 @@ async function seedProposal(opts = {}) {
     tipJar = true,
     payments = [100000],
     withLockedInvoice = false, // locked contract invoice (due == paid) linked to payment 1
+    adjustments = [], // stored price lines, on the row and through the engine
   } = opts;
 
   const engineAddons = [];
@@ -136,7 +137,7 @@ async function seedProposal(opts = {}) {
   }
   const snapshot = calculateProposal({
     pkg, guestCount: 80, durationHours: 4, numBars: 0, numBartenders: null,
-    addons: engineAddons, syrupSelections: [], adjustments: [],
+    addons: engineAddons, syrupSelections: [], adjustments,
     totalPriceOverride: override, gratuityRate, tipJar,
   });
   const p = await pool.query(
@@ -145,11 +146,12 @@ async function seedProposal(opts = {}) {
         status, event_type, guest_count, num_bars, num_bartenders, adjustments,
         total_price, total_price_override, amount_paid, external_paid, gratuity_rate, tip_jar, pricing_snapshot)
      VALUES ($1, $2, CURRENT_DATE + 30, '18:00', 4, 'America/Chicago',
-             $3, 'birthday-party', 80, 0, $4, '[]'::jsonb,
+             $3, 'birthday-party', 80, 0, $4, $12::jsonb,
              $5, $6, $7, $8, $9, $10, $11::jsonb)
      RETURNING id`,
     [clientId, pkg.id, status, snapshot.inputs.numBartenders,
-     snapshot.total, override, amountPaid, externalPaid, gratuityRate, tipJar, JSON.stringify(snapshot)]
+     snapshot.total, override, amountPaid, externalPaid, gratuityRate, tipJar, JSON.stringify(snapshot),
+     JSON.stringify(adjustments)]
   );
   const proposalId = p.rows[0].id;
   seededProposals.push(proposalId);
@@ -582,6 +584,74 @@ test('all-external overpayment: removal notice names the manual return, no Strip
   } finally {
     removalNotify.__setDeps({ sendEmail: require('../../utils/email').sendEmail });
   }
+});
+
+// A hidden line is never named to the client (spec 2026-10-16 section 4.3).
+// The removal notice is the one client email that names a removed line, so it
+// takes applyLineItemCancel's clientLabel: a hidden adjustment reads as the
+// shared "Pricing adjustment", the amount as before, while the admin preview
+// and toast keep the real label (admin surfaces may name hidden lines).
+const HIDDEN_NOTICE_LABEL = 'Test hidden notice line';
+const SHOWN_NOTICE_LABEL = 'Test shown notice line';
+const fmt2 = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Seed a native booking with a hidden, a shown and a blank-labeled shown discount, then remove `target` with Send notice. */
+async function removeLineWithNotice(target) {
+  const removalNotify = require('../../utils/lineItemRemovedNotify');
+  const sends = [];
+  removalNotify.__setDeps({ sendEmail: (args) => { sends.push(args); return Promise.resolve({ id: 'stub' }); } });
+  try {
+    const o = await seedProposal({
+      override: null, withAddon: false, status: 'deposit_paid', amountPaid: 100, payments: [10000],
+      adjustments: [
+        { type: 'discount', label: HIDDEN_NOTICE_LABEL, amount: 40, visible: false },
+        { type: 'discount', label: SHOWN_NOTICE_LABEL, amount: 25, visible: true },
+        { type: 'discount', label: '   ', amount: 10, visible: true },
+      ],
+    });
+    const { prev, exec } = await previewThenExecute(o, {
+      previewBody: { target }, execBody: { target, notify_client: true },
+    });
+    return { prev, exec, sends };
+  } finally {
+    removalNotify.__setDeps({ sendEmail: require('../../utils/email').sendEmail });
+  }
+}
+
+test('a hidden line removed with Send notice: nothing the client receives names it; the admin still sees it', async () => {
+  const { prev, exec, sends } = await removeLineWithNotice('adjustment:0');
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.equal(prev.body.refund.splits, 0, 'premise: removing a discount owes no refund, so the removal notice is the one sent');
+  assert.equal(prev.body.removed_label, HIDDEN_NOTICE_LABEL, 'the admin preview names the line');
+  assert.equal(exec.status, 200, JSON.stringify(exec.body));
+  assert.equal(exec.body.removed_label, HIDDEN_NOTICE_LABEL, 'the admin toast names the line');
+  assert.ok(exec.body.notifications.some((n) => n.type === 'line_item_removed_notice' && n.email === 'sent'));
+  assert.equal(sends.length, 1);
+  assert.ok(!JSON.stringify(sends[0]).toLowerCase().includes('hidden notice line'),
+    'no trace of the hidden label in the subject, body, html or meta');
+  assert.match(sends[0].text, /We removed Pricing adjustment from your event at your request\./);
+  assert.match(sends[0].html, /We removed Pricing adjustment from your event at your request\./);
+  assert.ok(sends[0].text.includes(`Your updated total is $${fmt2(exec.body.new_total)}.`), 'the amount as before');
+});
+
+test("a shown line's removal notice is unchanged: it names the line", async () => {
+  const { exec, sends } = await removeLineWithNotice('adjustment:1');
+  assert.equal(exec.status, 200, JSON.stringify(exec.body));
+  assert.equal(exec.body.removed_label, SHOWN_NOTICE_LABEL);
+  assert.equal(sends.length, 1);
+  assert.match(sends[0].text, /We removed Test shown notice line from your event at your request\./);
+  assert.ok(sends[0].text.includes(`Your updated total is $${fmt2(exec.body.new_total)}.`));
+  assert.ok(!JSON.stringify(sends[0]).toLowerCase().includes('hidden notice line'), 'the hidden line stays unnamed');
+  assert.ok(!sends[0].text.includes('Pricing adjustment'));
+});
+
+test('a shown line whose label is only spaces still gets its notice, named by the engine type name', async () => {
+  const { exec, sends } = await removeLineWithNotice('adjustment:2');
+  assert.equal(exec.status, 200, JSON.stringify(exec.body));
+  assert.ok(exec.body.notifications.some((n) => n.type === 'line_item_removed_notice' && n.email === 'sent'),
+    `the requested notice is not dropped: ${JSON.stringify(exec.body.notifications)}`);
+  assert.equal(sends.length, 1);
+  assert.match(sends[0].text, /We removed Discount from your event at your request\./);
 });
 
 test('a non-string target is rejected before anything commits', async () => {
