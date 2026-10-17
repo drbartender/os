@@ -609,3 +609,12 @@ server/utils/menuPrintFile.js
 server/routes/proposals/menuPrint.js
 # Approve: posts the rendered menu into the print slot inside one transaction and fires duty reaccrual only after COMMIT.
 server/routes/proposals/menuDraftApprove.js
+
+# The override conversion (plan 2026-10-16-price-override-removal, lane
+# conversion-tooling): it renders the one guarded DO block that rewrites the
+# price lines of every override booking on prod, and the reverse block that
+# would restore them. A bug here moves contract money on dozens of bookings at
+# once, or reaches a booking on legal hold. The runbook directs that write
+# (which file goes to MCP, on which branch, what counts as clean).
+scripts/override-conversion/*
+docs/runbooks/override-conversion.md

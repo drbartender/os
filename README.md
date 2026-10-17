@@ -806,12 +806,23 @@ dr-bartender/
 │   │                           #   reset-unpaid-gratuity.js (+ .test.js) : strip pre-election self-elected gratuity from UNPAID proposals (column- OR snapshot-carried); refuses any paid row
 │   │                           # read-only operator probes (no flags, write nothing):
 │   │                           #   gmail-probe.js                  : one-shot smoke of the Inbox Gmail feed key before it goes into Render (the only Gmail call allowed from the dev box; key in that command's environment only, loads no .env; exit 0 only when the key reads the business mailbox and the Primary label exists)
+│   │                           # override-conversion/ : the one-time price override conversion (plan 2026-10-16-price-override-removal, step 2;
+│   │                           #   runbook docs/runbooks/override-conversion.md). Reads a Neon BRANCH over pg; its JSON, report and blocks stay in the scratchpad:
+│   │                           #   branch.js (+ .test.js)         : cut / delete an override-conversion-* branch (URI to a chmod-600 file; delete refuses any other branch)
+│   │                           #   export.sql, export.js (+ .test.js) : read-only export; the legal-hold seam drops held ids before any row is read
+│   │                           #   freshCompute.js                : live rows priced whole at today's catalog (computeCatalogSnapshot) in a child bound to the branch, rolled back
+│   │                           #   transform.js (+ .test.js)      : pure change set, dry-run report and Dallas's lists (live, terminal, refund backfill)
+│   │                           #   doBlock.js (+ .test.js)        : the guarded forward and reverse DO blocks (md5 guards, in-block arithmetic, activity-log before-state); the suite cuts and deletes its own branch of dev
+│   │                           #   reverse.js                     : a reverse block for part of a run (the rows that did not move), under the run's own tag
+│   │                           #   run.js (+ .test.js)            : renders change set, report and both blocks into a new dir; --compare (read first, outside the out-dir) for the pre-run re-derive
+│   │                           #   confirm.js                     : the read-only post-run confirmation (tested in doBlock.test.js)
+│   │                           #   shared.js, fixtures.js, rehearsal-seed.js, applyBlock.js : helpers, synthetic shapes, and the dev rehearsal's seed and block runner
 ├── docs/                       # Project docs. The three the workflow actually runs on:
 │                               #   fix-list-remaining-2026-07-02.md : THE rolling backlog, the one list (tech-debt.md, open-threads.md
 │                               #                                     and the staff-ops backlog were folded in and DELETED 2026-08-13)
 │                               #   walkthroughs-owed.md             : the one file tracking owed walkthroughs; never scatter "owed X" fragments
 │                               #   build-board.md                   : Claude-maintained ready/in-flight/shipped lane index (write via scripts/board-write.sh)
-│                               # plus runbooks (ops-runbook.md, va-calling-runbook.md), project docs (client-portal-v2-project.md,
+│                               # plus runbooks (ops-runbook.md, va-calling-runbook.md, runbooks/override-conversion.md), project docs (client-portal-v2-project.md,
 │                               # staff-portal-beo-project.md, client-portal-design-reference.md), the per-surface *-design-prompt.md set,
 │                               # design-artifacts/, audit-2026-07-13/, and superpowers/{specs,plans}/
 ├── .claude/agents/             # Claude Code agents (12): six code-review (code-review, consistency-check, database-review, performance-review, security-review, ui-ux-review) + six design-stage (spec-grounding/gaps/risk for /review-spec, plan-fidelity/decomposition/feasibility for /review-plan)
