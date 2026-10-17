@@ -154,3 +154,27 @@ server/utils/contractDuration.extension.test.js
 # sites change, which would silently change what closes an Inbox item.
 # Pure, under a second.
 server/utils/answeringMessageTypes.test.js
+# Price override removal, push 1 (2026-10-17; plan 2026-10-16-price-override-removal, decision 12)
+server/utils/invoiceStep.test.js
+server/routes/invoices.contractStep.test.js
+server/utils/adjustmentRules.test.js
+server/utils/legalHold.test.js
+server/routes/proposals/cancelLineItem.protected.test.js
+server/utils/refundLine.test.js
+server/utils/refundHelpers.line.test.js
+server/utils/proposalExtrasFold.legalHold.test.js
+server/routes/proposals/cancelLineItem.legalHold.test.js
+server/routes/proposals/publicSwitch.legalHold.test.js
+server/utils/proposalExtrasFold.catalog.test.js
+server/routes/drinkPlans.legalHold.test.js
+server/utils/foldDecision.test.js
+server/utils/clientPriceLines.test.js
+server/utils/publicSnapshot.test.js
+server/routes/proposals/publicLeak.test.js
+server/routes/proposals/publicToken.priceRows.test.js
+server/routes/proposals/patchGuards.test.js
+server/routes/proposals/crud.guards.test.js
+server/routes/clientPortal.test.js
+server/utils/lineItemRemovedNotify.test.js
+scripts/override-conversion/transform.test.js
+scripts/override-conversion/run.test.js
