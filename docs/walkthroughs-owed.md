@@ -2113,7 +2113,7 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**As of 2026-10-16 this tier holds TWO items, below: the consult call record and the phone global search (lane ma-f3-search).** The phone Proposals list (lane ma-f1-proposals-list) sat here from its 2026-10-14 merge until the 2026-10-15 push and moved to Tier 3b. Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
+**As of 2026-10-17 this tier holds the consult call record, the phone global search (lane ma-f3-search; it shipped in the 2026-10-17 push, so its walk is owed now and belongs in Tier 3b) and seven walks from the price override removal (lanes invoice-step, line-protection, refund-line, client-rows, editor, portal-rows and notice-label), queued until push 1.** The phone Proposals list (lane ma-f1-proposals-list) sat here from its 2026-10-14 merge until the 2026-10-15 push and moved to Tier 3b. Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
 of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
 by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
 to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
