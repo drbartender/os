@@ -24,6 +24,9 @@ const { resolvePatchHours } = require('./patchContractHours');
 const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
+const { parseProposalId, assertNotLegalHold, assertLinesFresh, assertOverrideUnchanged, overrideToWrite,
+  normalizeAdjustmentsOrThrow, assertRefundMarkersBound, linesToWrite, adjustmentsColumn,
+  adjustmentsAudit } = require('./patchGuards');
 
 const router = express.Router();
 
@@ -320,6 +323,9 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
 
 /** PATCH /api/proposals/:id — update event details and recalculate */
 router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Parsed once; every query and the post-commit tail use this integer (patchGuards.js).
+  const id = parseProposalId(req.params.id);
+  assertNotLegalHold(id); // early refusal; the binding check runs on the locked row below
   const {
     event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
@@ -356,11 +362,17 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // a Stripe webhook promoting to balance_paid) can't lose-update
     // gratuity_rate/tip_jar/status, and so the reconcile + overpayment checks below
     // read a consistent old.status / old.amount_paid (spec 6.3).
-    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const existing = await dbClient.query(
+      `SELECT *, md5(COALESCE(adjustments, '[]'::jsonb)::text) AS adjustments_token FROM proposals WHERE id = $1 FOR UPDATE`, [id]);
     if (!existing.rows[0]) {
       throw new NotFoundError('Proposal not found');
     }
     const old = existing.rows[0];
+    assertNotLegalHold(old.id); // the binding check: the locked row's own id
+    // Lines a save may not write (patchGuards.js): stale lines first (409 with Reload), then an unbound refund marker, a new override.
+    assertLinesFresh(req.body, old, old.adjustments_token);
+    assertRefundMarkersBound(adjustments, old);
+    assertOverrideUnchanged(req.body, old);
 
     // Hoisted so the post-COMMIT reschedule-email block (outside this inner
     // try) can read whether the in-tx re-anchor decided an email is warranted.
@@ -415,11 +427,11 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const gc = guest_count ?? old.guest_count;
     // workedHours is stored; contractHours is priced (patchContractHours.js).
     const { workedHours, contractHours } = await resolvePatchHours(dbClient, {
-      proposalId: req.params.id, old, bodyDuration: event_duration_hours,
+      proposalId: id, old, bodyDuration: event_duration_hours,
     });
     const nb = num_bars ?? old.num_bars;
-    const adj = adjustments ?? (old.adjustments || []);
-    const tpo = total_price_override !== undefined ? total_price_override : old.total_price_override;
+    const adj = linesToWrite(normalizeAdjustmentsOrThrow(adjustments), old);
+    const tpo = overrideToWrite(req.body, old); // the stored value (guarded above), or null to clear
 
     // 2:00 AM insurance curfew (serviceCurfew.js). Checked against the times
     // this save will LAND, not the stored ones, so moving the start time into
@@ -557,7 +569,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         event_type = COALESCE($12, event_type),
         event_type_category = COALESCE($13, event_type_category),
         event_type_custom = COALESCE($14, event_type_custom),
-        adjustments = $15, total_price_override = $16,
+        adjustments = COALESCE($15::jsonb, adjustments), total_price_override = $16,
         venue_name  = COALESCE($18, venue_name),
         venue_street = COALESCE($19, venue_street),
         venue_city  = COALESCE($20, venue_city),
@@ -571,13 +583,13 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         gratuity_rate_change_origin = $28,
         gratuity_floor_rate = $29
       WHERE id = $11
-      RETURNING *
+      RETURNING *, md5(COALESCE(adjustments, '[]'::jsonb)::text) AS adjustments_token
     `, [
       event_date, event_start_time, workedHours, event_location, gc,
       pkgId, nb, snapshot.staffing.actual,
-      JSON.stringify(snapshot), snapshot.total, req.params.id,
+      JSON.stringify(snapshot), snapshot.total, id,
       event_type || null, event_type_category || null, event_type_custom || null,
-      JSON.stringify(adj), tpo ?? null,
+      adjustmentsColumn(adj, old), tpo ?? null,
       recomposedLocation,
       venue_name ?? null, venue_street ?? null, venue_city ?? null,
       // Canonicalize on the way in so a legacy 'IL' row heals on its next save.
@@ -613,15 +625,15 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         rec.autopayDisarmed
           ? `UPDATE proposals SET status = $1, autopay_enrolled = false, autopay_status = NULL WHERE id = $2 RETURNING *`
           : `UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *`,
-        [rec.status, req.params.id]
+        [rec.status, id]
       );
       // Keep the row we return (and hand to the reschedule hooks) in sync with the
       // status move, so the PATCH response doesn't report a stale status.
-      updatedRow.rows[0] = reconciled.rows[0];
+      updatedRow.rows[0] = { ...reconciled.rows[0], adjustments_token: updatedRow.rows[0].adjustments_token };
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'status_changed', 'admin', $2, $3)`,
-        [req.params.id, req.user.id, JSON.stringify({
+        [id, req.user.id, JSON.stringify({
           from: old.status, to: rec.status,
           reason: 'price change reconciled', new_total: snapshot.total,
         })]
@@ -636,13 +648,13 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       // holding too much" claim needs the netting, and it is the same figure
       // the panel chip and the cancel-line preview report (spec 2026-09-15).
       const { offContractPaidCents } = require('../../utils/refundHelpers');
-      const offContract = await offContractPaidCents(req.params.id, dbClient);
+      const offContract = await offContractPaidCents(id, dbClient);
       const nettedOverpaidCents = Math.max(0, rec.overpaidCents - offContract);
       if (nettedOverpaidCents > 0) {
         await dbClient.query(
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
            VALUES ($1, 'overpayment_detected', 'admin', $2, $3)`,
-          [req.params.id, req.user.id, JSON.stringify({
+          [id, req.user.id, JSON.stringify({
             amount_paid: Number(old.amount_paid), total_price: snapshot.total,
             overpaid_cents: nettedOverpaidCents,
             off_contract_paid_cents: offContract,
@@ -651,14 +663,14 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       }
     }
     // Replace proposal add-ons — single bulk INSERT
-    await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [req.params.id]);
+    await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [id]);
     if (snapshot.addons.length) {
       const placeholders = snapshot.addons.map((_, i) => {
         const b = i * 8;
         return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
       }).join(',');
       const values = snapshot.addons.flatMap(a =>
-        [req.params.id, a.id, a.name, a.billing_type, a.rate, a.quantity, a.line_total, a.variant || null]
+        [id, a.id, a.name, a.billing_type, a.rate, a.quantity, a.line_total, a.variant || null]
       );
       await dbClient.query(
         `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant) VALUES ${placeholders}`,
@@ -668,14 +680,14 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
 
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'updated', 'admin', $2, $3)`,
-      [req.params.id, req.user.id, JSON.stringify({ new_total: snapshot.total })]
+      [id, req.user.id, JSON.stringify({ new_total: snapshot.total, ...adjustmentsAudit(old, adj) })]
     );
 
     // Keep the converted event's shift in lockstep with its proposal — date,
     // time, location, client, and event type. No-op until the proposal is
     // converted (0 shifts) and skipped for hand-built multi-shift events.
     // Runs in this transaction so the shift never commits out of sync.
-    await syncShiftsFromProposal(req.params.id, dbClient);
+    await syncShiftsFromProposal(id, dbClient);
 
     // Gemini Finding 2: reschedule re-anchor runs INSIDE the same tx as the
     // proposal UPDATE so DB state is atomic (proposal row + scheduled_messages
@@ -684,7 +696,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // stays consistent — re-throw to land in the existing catch block.
     try {
       const rescheduleResult = await rescheduleProposalInTx(dbClient, {
-        proposalId: parseInt(req.params.id, 10),
+        proposalId: id,
         old,                          // pre-UPDATE row
         updated: updatedRow.rows[0],  // post-UPDATE row
       });
@@ -713,16 +725,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         `UPDATE proposal_change_requests
             SET status = 'approved', decided_by = $1, decided_at = NOW(), updated_at = NOW()
           WHERE id = $2 AND proposal_id = $3 AND status = 'pending' RETURNING id`,
-        [req.user.id, change_request_id, req.params.id]
+        [req.user.id, change_request_id, id]
       );
       if (crUpd.rows[0]) {
         await dbClient.query(
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
            VALUES ($1, 'change_approved', 'admin', $2, $3)`,
-          [req.params.id, req.user.id, JSON.stringify({ change_request_id })]
+          [id, req.user.id, JSON.stringify({ change_request_id })]
         );
       } else {
-        console.warn(`PATCH change_request_id ${change_request_id} not pending/owned by proposal ${req.params.id}; skipping stamp`);
+        console.warn(`PATCH change_request_id ${change_request_id} not pending/owned by proposal ${id}; skipping stamp`);
       }
     }
 
@@ -738,13 +750,13 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           SET status = 'cancelled', cancelled_by = 'system',
               decision_note = 'superseded by direct admin edit', updated_at = NOW()
         WHERE proposal_id = $1 AND status = 'pending' RETURNING id`,
-      [req.params.id]
+      [id]
     );
     for (const row of sup.rows) {
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'change_cancelled', 'admin', $2, $3)`,
-        [req.params.id, req.user.id, JSON.stringify({ change_request_id: row.id, reason: 'superseded_by_direct_edit' })]
+        [id, req.user.id, JSON.stringify({ change_request_id: row.id, reason: 'superseded_by_direct_edit' })]
       );
     }
 
@@ -764,7 +776,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           targetUserId: null,
           action: 'proposal_booked_past_service_curfew',
           metadata: {
-            proposal_id: Number(req.params.id),
+            proposal_id: id,
             curfew: pastCurfewAcknowledged.curfewDisplay,
             duration_hours: pastCurfewAcknowledged.durationHours,
             note: 'Admin acknowledged that this booking runs past the liquor-liability service curfew.',
@@ -783,8 +795,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const invClient = await pool.connect();
     try {
       await invClient.query('BEGIN');
-      await refreshUnlockedInvoices(parseInt(req.params.id, 10), invClient);
-      await createAdditionalInvoiceIfNeeded(parseInt(req.params.id, 10), oldTotalCents, invClient);
+      await refreshUnlockedInvoices(id, invClient);
+      await createAdditionalInvoiceIfNeeded(id, oldTotalCents, invClient);
       await invClient.query('COMMIT');
     } catch (invErr) {
       try { await invClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
@@ -805,7 +817,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     if (eventNotice && shouldSendRescheduleEmail && !change_request_id) {
       try {
         const r = await _deps.sendRescheduleEmail({
-          proposalId: parseInt(req.params.id, 10),
+          proposalId: id,
           channels: eventNotice.channels,
           message: { email: eventNotice.email, sms: eventNotice.sms },
           sentBy: req.user.id,
@@ -815,7 +827,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(emailErr, {
             tags: { route: 'proposals/update', issue: 'event-details-notice' },
-            extra: { proposalId: req.params.id },
+            extra: { proposalId: id },
           });
         }
         console.error('Event-details notice failed (non-blocking, DB already committed):', emailErr);
@@ -839,7 +851,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // gates and their reasons moved with the code to gratuityDisclosureNotify.js
     // (file-size ratchet); the helper never throws into this committed PATCH.
     if (notifyStaffingGratuity) {
-      await sendGratuityStaffingDisclosure({ proposalId: parseInt(req.params.id, 10), sentBy: req.user.id });
+      await sendGratuityStaffingDisclosure({ proposalId: id, sentBy: req.user.id });
     }
 
     // Plan 2d / W2: re-anchor the New Year touch after a reschedule.
@@ -852,12 +864,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     if (shouldSendRescheduleEmail) {
       try {
         const { recomputeNewYearHelloForProposal } = require('../../utils/marketingHandlers');
-        await recomputeNewYearHelloForProposal(parseInt(req.params.id, 10));
+        await recomputeNewYearHelloForProposal(id);
       } catch (recomputeErr) {
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(recomputeErr, {
             tags: { route: 'proposals/update', issue: 'new-year-recompute' },
-            extra: { proposalId: req.params.id },
+            extra: { proposalId: id },
           });
         }
         console.error('new_year_hello recompute failed (non-blocking):', recomputeErr);
@@ -871,7 +883,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       try {
         const { runRescheduleStaffHooks } = require('../../utils/staffShiftHandlers');
         await runRescheduleStaffHooks({
-          proposalId: parseInt(req.params.id, 10),
+          proposalId: id,
           updated: updatedRow.rows[0],
           notifyStaff: notify_assigned_staff === true,
           notifyStaffSms: notify_staff_sms === true,
@@ -881,7 +893,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(staffHookErr, {
             tags: { route: 'proposals/update', issue: 'staff-reschedule-hooks' },
-            extra: { proposalId: req.params.id },
+            extra: { proposalId: id },
           });
         }
         console.error('Staff reschedule hooks failed (non-blocking):', staffHookErr);
@@ -897,14 +909,14 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');
         const crRow = await pool.query('SELECT * FROM proposal_change_requests WHERE id = $1', [change_request_id]);
         if (crRow.rows[0] && crRow.rows[0].status === 'approved') {
-          const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+          const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [id]);
           if (freshP.rows[0]) await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved', { sentBy: req.user.id });
         }
       } catch (notifyErr) {
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(notifyErr, {
             tags: { route: 'proposals/update', issue: 'change-request-approved-email' },
-            extra: { proposalId: req.params.id },
+            extra: { proposalId: id },
           });
         }
         console.error('change-request approved email failed (non-blocking):', notifyErr.message);

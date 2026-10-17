@@ -2,9 +2,9 @@ import '@testing-library/jest-dom';
 import {
   stepHours, stepGuests, canStep, fmtHours, clampStart, startInputValue, nextStartValue, nextDateValue,
   sheetDateText, setupMinutesText, extensionHint, multiShiftNote, editableEvent, editLockedReason,
-  sheetValuesOf, fieldsChanged, changedSinceOpen, confirmView, saveErrorText, curfewReason, noteFirstLine,
+  sheetValuesOf, fieldsChanged, sheetBasis, basisMoved, confirmView, saveErrorText, curfewReason, noteFirstLine,
   confirmViewNow, curfewRidesLine, NO_CONNECTION, SAVE_UNCONFIRMED, LOCKED_NOTE, READ_TIMEOUT_MS,
-  readoutView, wasLine, startSubLine, PENDING_FIGURE,
+  readoutView, wasLine, startSubLine, PENDING_FIGURE, LEGAL_HOLD_NOTE, STALE_EVENT,
 } from './editSheetView';
 import { buildRepriceSummary } from '../pages/admin/proposalEditor/repriceSummary';
 
@@ -137,6 +137,13 @@ describe('which events the phone edits', () => {
     expect(editLockedReason({ status: 'completed' })).toBe(LOCKED_NOTE);
     expect(editLockedReason({ status: 'balance_paid' })).toBeNull();
   });
+  // Spec 2026-10-16 section 5.3: a held booking opens read-only with a note.
+  test('editLockedReason: a legal hold, whatever the status', () => {
+    expect(LEGAL_HOLD_NOTE).toBe("This booking is on legal hold and can't be edited here.");
+    expect(editLockedReason({ status: 'deposit_paid', legal_hold: true })).toBe(LEGAL_HOLD_NOTE);
+    expect(editLockedReason({ status: 'completed', legal_hold: true })).toBe(LEGAL_HOLD_NOTE);
+    expect(editLockedReason({ status: 'deposit_paid', legal_hold: false })).toBeNull();
+  });
 });
 
 test('sheetValuesOf and fieldsChanged compare what the sheet edits', () => {
@@ -150,19 +157,64 @@ test('sheetValuesOf and fieldsChanged compare what the sheet edits', () => {
   expect(fieldsChanged(v, { ...v, event_date: '2026-10-11' })).toBe(true);
 });
 
-test('changedSinceOpen compares updated_at as stored', () => {
-  expect(changedSinceOpen('2026-10-01T10:00:00.000Z', { updated_at: '2026-10-01T10:00:00.000Z' })).toBe(false);
-  expect(changedSinceOpen('2026-10-01T10:00:00.000Z', { updated_at: '2026-10-01T10:05:00.000Z' })).toBe(true);
-});
+// What the sheet's save rests on (fix round 1, consistency MINOR-1). updated_at
+// moves on every UPDATE of the row, a client page view included, so it refused
+// the sheet at random (spec 2026-10-16 decision 8). The basis is what the save
+// writes back from its read, what the readout priced, and the lock.
+describe('sheetBasis and basisMoved', () => {
+  const read = {
+    status: 'sent', total_price: '3650.00', amount_paid: '0.00', guest_count: 140, event_duration_hours: '4.0', package_id: 1,
+    off_contract_paid_cents: 0, overpayment_cents: 0, gratuity_floor_rate: null, gratuity_rate_change_origin: null,
+    settled_extension_hours: 0, contract_floor_hours: null, legal_hold: false,
+    pricing_snapshot: { gratuity: { total: 120, rate: 10, tip_jar: true } },
+    updated_at: '2999-07-01T10:00:00.000Z', view_count: 1, last_viewed_at: null,
+  };
+  const payload = {
+    event_date: '2999-08-15', event_start_time: '7:00 PM', event_duration_hours: 4, guest_count: 140, package_id: 1,
+    addon_ids: [7], addon_quantities: { 7: 2 }, adjustments: [], adjustments_token: 'tok-1',
+  };
+  const opened = sheetBasis(read, payload);
 
-// S-M2: a read that lacks updated_at on either side cannot prove nothing moved.
-test('changedSinceOpen fails closed when either side has no updated_at', () => {
-  expect(changedSinceOpen(undefined, {})).toBe(true);
-  expect(changedSinceOpen(null, { updated_at: null })).toBe(true);
-  expect(changedSinceOpen('', { updated_at: '' })).toBe(true);
-  expect(changedSinceOpen('2026-10-01T10:00:00.000Z', {})).toBe(true);
-  expect(changedSinceOpen('2026-10-01T10:00:00.000Z', null)).toBe(true);
-  expect(changedSinceOpen(undefined, { updated_at: '2026-10-01T10:00:00.000Z' })).toBe(true);
+  test('a client page view, an admin note or the autopay claim moves none of it', () => {
+    const viewed = { ...read, status: 'viewed', updated_at: '2999-07-01T10:05:00.000Z', view_count: 2, last_viewed_at: '2999-07-01T10:05:00.000Z' };
+    expect(basisMoved(opened, sheetBasis(viewed, payload))).toBe(false);
+    expect(basisMoved(opened, sheetBasis({ ...read, admin_notes: 'Test note', autopay_status: 'claimed' }, payload))).toBe(false);
+    expect(basisMoved(opened, sheetBasis({ ...read, total_price: 3650, amount_paid: 0 }, payload))).toBe(false);
+  });
+
+  test('anything the save writes back moves it: a field, the add-on rows, the lines\' token', () => {
+    for (const p of [
+      { ...payload, guest_count: 150 }, { ...payload, event_date: '2999-08-16' }, { ...payload, addon_ids: [7, 9] },
+      { ...payload, addon_quantities: { 7: 3 } }, { ...payload, adjustments_token: 'tok-2' },
+    ]) {
+      expect(basisMoved(opened, sheetBasis(read, p))).toBe(true);
+    }
+  });
+
+  test('what the readout priced against, or the lock, moves it', () => {
+    for (const r of [
+      { ...read, total_price: '3700.00' }, { ...read, amount_paid: '100.00' }, { ...read, status: 'deposit_paid' },
+      { ...read, status: 'archived' }, { ...read, legal_hold: true }, { ...read, settled_extension_hours: 1 },
+      { ...read, overpayment_cents: 500 }, { ...read, gratuity_floor_rate: 12 },
+      { ...read, pricing_snapshot: { gratuity: { total: 150, rate: 10, tip_jar: true } } },
+    ]) {
+      expect(basisMoved(opened, sheetBasis(r, payload))).toBe(true);
+    }
+  });
+
+  test('fails closed: a read missing what every admin GET carries, or no payload, counts as moved', () => {
+    for (const k of ['status', 'total_price', 'amount_paid', 'guest_count', 'event_duration_hours', 'package_id']) {
+      const bare = { ...read };
+      delete bare[k];
+      expect(sheetBasis(bare, payload)).toBeNull();
+    }
+    expect(sheetBasis(read, null)).toBeNull();
+    expect(sheetBasis(null, payload)).toBeNull();
+    expect(basisMoved(null, null)).toBe(true);
+    expect(basisMoved(opened, null)).toBe(true);
+    expect(basisMoved(null, opened)).toBe(true);
+    expect(basisMoved(opened, opened)).toBe(false);
+  });
 });
 
 describe('confirmView', () => {
@@ -375,6 +427,14 @@ describe('errors', () => {
   test('anything else shows the server message', () => {
     expect(saveErrorText({ status: 500, message: 'Something broke' })).toBe('Something broke');
     expect(saveErrorText({ status: 500 })).toBe('Something went wrong. Try again.');
+  });
+  // Spec 2026-10-16 section 5.1: the server refused lines that moved since the
+  // sheet loaded; the sheet's own stale line says it, beside Reload.
+  test('a stale-lines refusal reads as the stale line, a legal hold as the hold', () => {
+    expect(saveErrorText({ status: 409, code: 'STALE_EDIT', message: 'This booking changed since you opened it. Reload to see the latest.' }, true))
+      .toBe(STALE_EVENT);
+    expect(saveErrorText({ status: 409, code: 'LEGAL_HOLD', message: 'This booking is on legal hold and cannot be edited.' }, true))
+      .toBe(LEGAL_HOLD_NOTE);
   });
   test('curfewReason reads the past_curfew refusal, and nothing else', () => {
     expect(curfewReason({ fieldErrors: { past_curfew: 'true', event_duration_hours: 'Ends at 2:30 AM, past curfew.' } })).toBe('Ends at 2:30 AM, past curfew.');

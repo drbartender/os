@@ -16,6 +16,7 @@ const {
   contractInvoiceSlackCents,
 } = require('../../utils/refundHelpers');
 const { latestConsultCallForProposal } = require('../../utils/consultCallLookups');
+const { isLegalHold } = require('../../utils/legalHold');
 
 const router = express.Router();
 
@@ -26,7 +27,10 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
            c.cc_id AS client_cc_id,
            sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
            u.email AS created_by_email, u.cc_id AS user_cc_id,
-           tb.budget_min, tb.budget_max, tb.budget_raw
+           tb.budget_min, tb.budget_max, tb.budget_raw,
+           -- The editor's staleness token (spec 2026-10-16 section 5.1): the PATCH
+           -- computes the same expression on its locked row (crud.js, patchGuards.js).
+           md5(COALESCE(p.adjustments, '[]'::jsonb)::text) AS adjustments_token
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     LEFT JOIN service_packages sp ON sp.id = p.package_id
@@ -107,6 +111,9 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   res.json({
     ...row,
     setup_time_display: setupTimeDisplay(row),
+    // Legal hold (spec 2026-10-16 section 5.3): the editor and the phone sheet
+    // open read-only. Bound on the loaded row's id, never the raw param.
+    legal_hold: isLegalHold(row.id),
     // Hours a settled on-site extension added to the row, ALWAYS a number (0
     // when none). The editor subtracts it to invert stored add-on quantities
     // at the contract's hours (contractDuration.js); a missing field would

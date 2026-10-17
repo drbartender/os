@@ -137,3 +137,33 @@ describe('staffNotifyFlags', () => {
       .toMatchObject({ notify_assigned_staff: true, notify_staff_sms: false, notify_staff_email: true });
   });
 });
+
+// Spec 2026-10-16 section 5.1: the save carries the token the GET returned
+// with the lines the form loaded, and never the retired override (absent, the
+// server carries the stored value forward).
+describe('the lines token and the retired override', () => {
+  it('sends adjustments_token from the form', () => {
+    expect(buildProposalPatchBody({ ...form, adjustments_token: 'tok-abc' }, {}).adjustments_token).toBe('tok-abc');
+  });
+
+  it('sends a null token when the form has none, so a line change is refused rather than written blind', () => {
+    const body = buildProposalPatchBody(form, {});
+    expect(Object.prototype.hasOwnProperty.call(body, 'adjustments_token')).toBe(true);
+    expect(body.adjustments_token).toBeNull();
+  });
+
+  it('never sends total_price_override, on any mount', () => {
+    for (const opts of [{}, { includeVenue: false }, { changeRequestId: 4, includeGratuityMandate: true }]) {
+      const body = buildProposalPatchBody({ ...form, total_price_override: 3373 }, opts);
+      expect(Object.prototype.hasOwnProperty.call(body, 'total_price_override')).toBe(false);
+    }
+  });
+
+  it('sends the lines as the form holds them, markers included', () => {
+    const lines = [
+      { type: 'discount', label: 'Agreed price adjustment', amount: 162, visible: false, source: 'agreed_price' },
+      { type: 'discount', label: 'Refund', amount: 20, visible: true, source: 'refund', refund_id: 14 },
+    ];
+    expect(buildProposalPatchBody({ ...form, adjustments: lines }, {}).adjustments).toEqual(lines);
+  });
+});

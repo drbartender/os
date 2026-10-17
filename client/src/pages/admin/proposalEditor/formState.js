@@ -37,6 +37,12 @@ export function initialFormFromProposal(p) {
     addon_quantities: {},
     syrup_selections: snapshot.syrups?.selections || [],
     adjustments: p.adjustments || [],
+    // The GET's md5 of the stored lines (spec 2026-10-16 section 5.1). The save
+    // sends it back, so a save that changes the lines is refused when they
+    // moved since this form loaded (a refund line, another tab).
+    adjustments_token: p.adjustments_token || null,
+    // Read-only since 2026-10-16: the preview prices a standing override (the
+    // server carries it forward) and the form notes it; the save never sends it.
     total_price_override: p.total_price_override ?? null,
     // No tip_jar / gratuity_total seeds (election-at-payment, spec 2026-08-03):
     // the editor cannot write a gratuity, so nothing reads them. The preview
@@ -61,6 +67,15 @@ export function initialFormFromProposal(p) {
     // 60 else). A number is an explicit override. Used by both editor mounts.
     setup_minutes_before: p.setup_minutes_before ?? '',
   };
+}
+
+// True when the editor's client contact fields differ from the proposal it
+// loaded. The save PUTs the contact before the event PATCH, so a refused event
+// save says the contact went through only when it changed (fix round 1).
+const CONTACT_FIELDS = ['client_name', 'client_email', 'client_phone', 'client_source'];
+export function contactEdited(form, proposal) {
+  const seed = initialFormFromProposal(proposal || {});
+  return CONTACT_FIELDS.some((k) => (form || {})[k] !== seed[k]);
 }
 
 // Recover the raw 1–10 stepper count for each quantity-capable add-on on a

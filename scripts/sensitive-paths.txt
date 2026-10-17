@@ -525,8 +525,27 @@ client/src/pages/admin/proposalEditor/patchBody.js
 client/src/pages/admin/proposalEditor/editorCore.js
 client/src/components/comms/notifyDrafts.js
 
+# Price override removal, the editor (spec 2026-10-16 sections 5 and 5.1): the
+# money PATCH's guards (the strict id parse, the legal hold, the stale-lines
+# token, the retired override, line validation, refund markers), the agreed-
+# price math and its control (they compute and gate a money line), and the
+# rows that confirm before a refund line is removed or lowered. A wrong guard
+# writes over a refund line or re-prices a held booking; a wrong line bills
+# the wrong price.
+server/routes/proposals/patchGuards.js
+client/src/pages/admin/proposalEditor/agreedPrice.js
+client/src/pages/admin/proposalEditor/AgreedPriceControl.js
+client/src/pages/admin/proposalEditor/AdjustmentsSection.js
+# Fix round 1: the Remote Staffing Fee prompt writes a money line through the
+# same PATCH with a full editor body, and useCancelTargets decides which line a
+# breakdown remove button removes (and may refund): a stale positional set
+# removed the wrong line.
+client/src/pages/admin/RemoteStaffingFeePrompt.js
+client/src/pages/admin/proposalEditor/useCancelTargets.js
+
 # Phone edit sheet (lane ma-e3): the money write surface
-# useEditSheet.js writes; editSheetView.js holds the updated_at guard's comparator,
+# useEditSheet.js writes; editSheetView.js holds the stale-save guard's basis (sheetBasis:
+# what the save rests on, never updated_at alone),
 # the curfew acknowledgement trigger and which reprice lines show; EditSheet.js holds
 # Confirm's priced-preview gate and the client-send buttons with their arm delay;
 # repriceSummary.js writes the confirm's money lines and the one disclosure of the

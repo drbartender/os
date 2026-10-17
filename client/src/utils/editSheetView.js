@@ -22,10 +22,13 @@ export const NO_CONNECTION = "No connection, didn't save.";
 // write was sent is a definite "didn't save".
 export const SAVE_UNCONFIRMED = 'No connection. It may not have saved; reopen the event to check.';
 export const LOCKED_NOTE = 'This event can no longer be edited here. Use desktop view.';
+// Spec 2026-10-16 section 5.3: a held booking opens read-only, on both editors.
+export const LEGAL_HOLD_NOTE = "This booking is on legal hold and can't be edited here.";
 // Every read the two sheets make, and the read-only preview and preflight,
 // give up after this long. On weak signal a request hangs rather than fails,
 // and a hung read would show nothing at all. The writes have no timeout: a
-// timed-out write can still commit (the updated_at re-read catches a retry).
+// timed-out write can still commit (the pre-save re-read catches a retry: the
+// first write moved what the save rests on, sheetBasis below).
 export const READ_TIMEOUT_MS = 10000;
 const GENERIC = 'Something went wrong. Try again.';
 const CURFEW_DEFAULT = 'This booking runs past our 2:00 AM service curfew.';
@@ -146,8 +149,10 @@ export function editableEvent(proposal, shifts, todayYmd) {
   return /^\d{4}-\d{2}-\d{2}$/.test(ymd) && ymd >= todayYmd;
 }
 
-// The sheet's fresh read can find the event closed since the row was drawn.
+// The sheet's fresh read can find the event closed since the row was drawn,
+// or on legal hold (the admin GET's legal_hold flag).
 export function editLockedReason(proposal) {
+  if (proposal && proposal.legal_hold === true) return LEGAL_HOLD_NOTE;
   const s = proposal && proposal.status;
   return s === 'archived' || s === 'completed' ? LOCKED_NOTE : null;
 }
@@ -170,14 +175,44 @@ export function fieldsChanged(a, b) {
     || Number(a.guest_count) !== Number(b.guest_count);
 }
 
-// updated_at moves on every UPDATE of the row (schema.sql trigger
-// update_proposals_updated_at), so any write since the sheet opened shows here.
-// Fails closed: a read that lacks updated_at (on either side) counts as moved,
-// so a narrowed GET can never switch the guard off.
-export function changedSinceOpen(openedAt, fresh) {
-  const now = fresh && fresh.updated_at;
-  if (!openedAt || !now) return true;
-  return String(now) !== String(openedAt);
+// What the sheet's save rests on, from one read. The sheet re-reads before every
+// save and refuses when this moved since it opened. Never updated_at: every
+// UPDATE of the row moves it, a client page view included, so it refused the
+// sheet at random (spec 2026-10-16 decision 8, fix round 1). Instead:
+//  - `payload`, the PATCH body a sheet opened on this read would send
+//    (useEditSheet builds it with the desktop's builders): the event fields,
+//    the package, the add-on rows (a Lab session rewrites them), the syrups,
+//    the lines and their token, glassware, class options and setup, all of
+//    which the save writes back from its open read;
+//  - what the readout priced against: total, paid, the netted overpayment and
+//    off-contract money, the stored gratuity, the mandate, booked or not;
+//  - the extension hours and the lock (archived, completed, legal hold).
+// A page view, an admin note, the autopay claim and the like move none of it.
+// Fails closed: a read missing what every admin GET carries is null.
+const BASIS_REQUIRED = ['status', 'total_price', 'amount_paid', 'guest_count', 'event_duration_hours', 'package_id'];
+const basisCents = (n) => (n === null || n === undefined || n === '' ? null : Math.round(Number(n) * 100));
+export function sheetBasis(proposal, payload) {
+  if (!proposal || !payload || BASIS_REQUIRED.some((k) => proposal[k] === undefined)) return null;
+  const p = proposal;
+  const g = (p.pricing_snapshot && p.pricing_snapshot.gratuity) || {};
+  return JSON.stringify({
+    payload,
+    booked: BOOKED_STATUSES.includes(p.status),
+    locked: editLockedReason(p),
+    total: basisCents(p.total_price),
+    paid: basisCents(p.amount_paid),
+    overpaid: p.overpayment_cents ?? null,
+    offContract: p.off_contract_paid_cents ?? null,
+    gratuity: [basisCents(g.total), g.rate ?? null, g.tip_jar ?? null],
+    floor: p.gratuity_floor_rate ?? null,
+    origin: p.gratuity_rate_change_origin ?? null,
+    extension: [p.settled_extension_hours ?? null, p.contract_floor_hours ?? null],
+  });
+}
+
+// True when the save cannot prove nothing it rests on moved.
+export function basisMoved(opened, fresh) {
+  return !opened || !fresh || opened !== fresh;
 }
 
 // What the sheet shows under the steppers. Nothing until a field changed: an
@@ -303,8 +338,12 @@ export function curfewRidesLine(notify, staff) {
 // A refusal's reason lives in fieldErrors; the message of a ValidationError
 // is the generic "Please fix the errors below". sent: the write itself went
 // out, so no answer means it may have landed.
+// The server's two refusals of the lines (spec 2026-10-16 sections 5.1 and
+// 5.3) read in the sheet's own words.
 export function saveErrorText(err, sent = false) {
   if (!err || err.status === 0 || err.code === 'NETWORK_ERROR') return sent ? SAVE_UNCONFIRMED : NO_CONNECTION;
+  if (err.code === 'STALE_EDIT') return STALE_EVENT;
+  if (err.code === 'LEGAL_HOLD') return LEGAL_HOLD_NOTE;
   const texts = Object.entries(err.fieldErrors || {})
     .filter(([k, v]) => k !== 'past_curfew' && typeof v === 'string' && v.trim())
     .map(([, v]) => v);

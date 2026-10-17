@@ -25,9 +25,14 @@ const PROPOSAL = {
   adjustments: [], total_price_override: null, client_provides_glassware: false, class_options: null,
   addons: [{ addon_id: 7, quantity: 8, rate: 25, line_total: 200, variant: null }],
   pricing_snapshot: { total: 3650, gratuity: { rate: 10, tip_jar: true, total: 120 }, syrups: { selections: [] } },
-  gratuity_rate_change_origin: null, updated_at: '2999-07-01T10:00:00.000Z',
+  gratuity_rate_change_origin: null, updated_at: '2999-07-01T10:00:00.000Z', adjustments_token: 'tok-13',
 };
 const NETWORK = { status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' };
+// Fix round 1: what moves the sheet's basis. A server-written line (a refund
+// line) moves the lines' token; a client page view moves only updated_at,
+// view_count, last_viewed_at and sent to viewed, which no longer refuses.
+const LINES_MOVED = { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z', adjustments_token: 'tok-moved' };
+const PAGE_VIEWED = { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z', view_count: 7, last_viewed_at: '2999-07-01T10:05:00.000Z' };
 
 function serve({ proposal = PROPOSAL, reread = null, calculate = { total: 3650, gratuity: { total: 120 } }, notices = [], patch } = {}) {
   let proposalReads = 0;
@@ -223,10 +228,12 @@ test('the save sends the desktop\'s complete payload, without the venue keys', a
   expect(body).toMatchObject({
     event_date: '2999-08-15', event_start_time: '7:00 PM', event_duration_hours: 4.5, guest_count: 145,
     package_id: 1, num_bars: 0, num_bartenders: 3, addon_ids: [7], addon_quantities: { 7: 2 },
-    syrup_selections: [], adjustments: [], total_price_override: null, setup_minutes_before: null,
+    syrup_selections: [], adjustments: [], adjustments_token: 'tok-13', setup_minutes_before: null,
     class_options: null, client_provides_glassware: false, notify: [],
   });
-  for (const k of ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip', 'gratuity_mandate_total', 'notify_assigned_staff']) {
+  // The retired override is never sent (spec 2026-10-16 section 5.1): absent,
+  // the server carries the stored value forward.
+  for (const k of ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip', 'gratuity_mandate_total', 'notify_assigned_staff', 'total_price_override']) {
     expect(body).not.toHaveProperty(k);
   }
   await waitFor(() => expect(onSaved).toHaveBeenCalled());
@@ -458,6 +465,64 @@ test('an event closed since the row was drawn is not editable here', async () =>
   expect(screen.queryByText('Duration')).toBeNull();
 });
 
+// Fix round 1 (consistency MINOR-1): a client page view between open and save
+// moves updated_at and nothing the save rests on, so the save goes through.
+test('a client page view between open and save does not refuse it', async () => {
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), reread: PAGE_VIEWED });
+  const { onSaved } = mount();
+  await ready();
+  more('More guests');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  expect(api.patch).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('This event changed since you opened it.')).toBeNull();
+});
+
+// A Lab session rewrote the add-on rows between open and save: the save would
+// put the open-time rows back, so it is refused.
+test('add-on rows that moved between open and save refuse it', async () => {
+  serve({
+    calculate: () => ({ total: 3800, gratuity: { total: 120 } }),
+    reread: { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z', addons: [{ addon_id: 7, quantity: 12, rate: 25, line_total: 300, variant: null }] },
+  });
+  mount();
+  await ready();
+  more('More guests');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  expect(await screen.findByText('This event changed since you opened it.')).toBeInTheDocument();
+  expect(api.patch).not.toHaveBeenCalled();
+});
+
+// Spec 2026-10-16 section 5.3: a held booking opens read-only with a note
+// rather than failing at save.
+test('a booking on legal hold opens locked, with the hold note', async () => {
+  serve({ proposal: { ...PROPOSAL, legal_hold: true } });
+  mount();
+  expect(await screen.findByText("This booking is on legal hold and can't be edited here.")).toBeInTheDocument();
+  expect(screen.queryByText('Duration')).toBeNull();
+  expect(api.patch).not.toHaveBeenCalled();
+});
+
+// Spec 2026-10-16 section 5.1: the server refuses a save whose lines moved
+// since the sheet read them (a refund line written between the re-read and
+// the PATCH). The sheet says it with Reload and sends nothing again.
+test('a stale-lines refusal from the save shows the stale notice with Reload, and nothing is sent twice', async () => {
+  serve({ patch: () => Promise.reject({ status: 409, code: 'STALE_EDIT', message: 'This booking changed since you opened it. Reload to see the latest.' }) });
+  const { onSaved } = mount();
+  await ready();
+  more('Fewer guests');
+  await waitFor(() => expect(confirmBtn()).toBeEnabled());
+  fireEvent.click(confirmBtn());
+  expect(await screen.findByText('This event changed since you opened it.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+  expect(api.patch).toHaveBeenCalledTimes(1);
+  expect(api.patch.mock.calls[0][1].adjustments_token).toBe('tok-13');
+  expect(confirmBtn()).toBeDisabled();
+  expect(onSaved).not.toHaveBeenCalled();
+});
+
 test('the extension hint and the multi-shift note', async () => {
   serve({ proposal: { ...PROPOSAL, settled_extension_hours: 1, contract_floor_hours: 3 } });
   mount({ shiftCount: 2 });
@@ -598,7 +663,7 @@ test('the outcome toasts the desktop shows', async () => {
 });
 
 test('the event moving while the notify step was open is caught at the send', async () => {
-  await toNotifyStep({ reread: { ...PROPOSAL, updated_at: '2999-07-01T10:09:00.000Z' } });
+  await toNotifyStep({ reread: LINES_MOVED });
   fireEvent.click(screen.getByRole('button', { name: "Don't send" }));
   expect(await screen.findByText('This event changed since you opened it.')).toBeInTheDocument();
   expect(api.patch).not.toHaveBeenCalled();
@@ -818,7 +883,7 @@ test('the curfew confirm\'s button row is brought into view, its safe button tak
 });
 
 test('the stale notice is brought into view, and Reload takes focus', async () => {
-  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), reread: { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z' } });
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), reread: LINES_MOVED });
   mount();
   await ready();
   more('More guests');
@@ -957,9 +1022,9 @@ test('a curfew refusal after Don\'t send with the staff ticked says the staff up
 });
 
 // Item 6 (S-M2): the changed-meanwhile guard fails closed.
-test('an event read that carries no updated_at is treated as moved: nothing is saved', async () => {
+test('an event read that lacks what every admin GET carries is treated as moved: nothing is saved', async () => {
   const bare = { ...PROPOSAL };
-  delete bare.updated_at;
+  delete bare.total_price;
   serve({ proposal: bare, calculate: () => ({ total: 3800, gratuity: { total: 120 } }) });
   mount();
   await ready();
@@ -1046,7 +1111,7 @@ const MOVED = { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z', guest_count
 // and Escape) wait armDelayMs, because the second tap of a double tap lands on
 // whatever replaced the first tap's target.
 test('a double tap on Reload: the reloaded form holds its controls, so the second tap changes nothing', async () => {
-  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), reread: { ...PROPOSAL, updated_at: '2999-07-01T10:05:00.000Z' } });
+  serve({ calculate: () => ({ total: 3800, gratuity: { total: 120 } }), reread: LINES_MOVED });
   mount({ armDelayMs: 300 });
   await ready();
   await waitFor(() => expect(screen.getByRole('button', { name: 'More guests' })).toBeEnabled());
@@ -1150,7 +1215,7 @@ test('after a curfew refusal from the notify step, the confirm\'s button row is 
 });
 
 test('after the event moved while the notify step was open, Reload is held, the notice is scrolled into view once, and Reload takes focus once armed', async () => {
-  await toNotifyStep({ reread: { ...PROPOSAL, updated_at: '2999-07-01T10:09:00.000Z' } }, { armDelayMs: 300 });
+  await toNotifyStep({ reread: LINES_MOVED }, { armDelayMs: 300 });
   await waitFor(() => expect(screen.getByRole('button', { name: "Don't send" })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: "Don't send" }));
   const reload = await screen.findByRole('button', { name: 'Reload' });

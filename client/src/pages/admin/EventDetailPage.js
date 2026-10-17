@@ -27,6 +27,7 @@ import { parsePositionsCount, approvedCount, remainingByRole, rowRoleFill } from
 import { parsePositionsNeeded, rosterCounts } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
+import useCancelTargets from './proposalEditor/useCancelTargets';
 import CancelEventDialog from './CancelEventDialog';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
@@ -57,7 +58,6 @@ function EventDetailPageDesktop() {
   const [sendModal, setSendModal] = useState(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   // Cancel-line: per-line removal targets + the open dialog's target entry.
-  const [cancelTargets, setCancelTargets] = useState(null);
   const [cancelLineEntry, setCancelLineEntry] = useState(null);
   // The Bar menu card's draft hook and the editor's ?menu=1 state, at page level (menu art spec 10.1).
   const menuDraft = useMenuDraft(id);
@@ -100,21 +100,14 @@ function EventDetailPageDesktop() {
   // ineligible status; the breakdown just renders without the affordance.
   // Admin-gated in the UI too: preview/execute are adminOnly server-side, so a
   // manager must never see a remove button they cannot use.
-  const proposalStatus = proposal?.status;
   const isAdmin = viewer?.role === 'admin';
   // Mirrors the server's requireStaffing guard on PATCH /shifts/:id/out-of-area:
   // admins plus can_staff managers (Dallas decision 2026-08-06).
   const canStaffShifts = isAdmin || (viewer?.role === 'manager' && !!viewer?.can_staff);
-  const loadCancelTargets = useCallback(() => {
-    if (!isAdmin || !proposalStatus || ['archived', 'completed'].includes(proposalStatus)) {
-      setCancelTargets(null);
-      return;
-    }
-    api.get(`/proposals/${id}/cancel-line/targets`)
-      .then(r => setCancelTargets(r.data.eligible ? r.data.targets : null))
-      .catch(() => setCancelTargets(null));
-  }, [id, proposalStatus, isAdmin]);
-  useEffect(() => { loadCancelTargets(); }, [loadCancelTargets]);
+  // Shown only for the read they were fetched after: adjustment targets are
+  // positional, so a stale set binds a remove button to the wrong line
+  // (useCancelTargets.js).
+  const { targets: cancelTargets, reload: loadCancelTargets } = useCancelTargets({ proposalId: id, proposal, isAdmin });
 
   // Package row hands off to the existing cancel-event flow; every other
   // target opens the cancel-line dialog.
@@ -363,10 +356,15 @@ function EventDetailPageDesktop() {
               showStaffNotifyToggles
               title="Edit event"
               onSaved={() => {
+                // The lines may have moved: drop the remove buttons' set first.
+                loadCancelTargets();
                 setEditing(false);
                 setLoading(true);
                 reload().finally(() => setLoading(false));
               }}
+              // A stale save (409 STALE_EDIT): refetch with the editor still
+              // open, so it remounts on the latest lines and their token.
+              onReload={() => { loadCancelTargets(); setLoading(true); reload().finally(() => setLoading(false)); }}
               onCancel={() => setEditing(false)}
             />
           ) : (

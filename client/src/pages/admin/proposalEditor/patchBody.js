@@ -42,7 +42,11 @@ export function buildProposalPatchBody(form, {
     addon_quantities: form.addon_quantities || {},
     syrup_selections: form.syrup_selections || [],
     adjustments: form.adjustments || [],
-    total_price_override: form.total_price_override,
+    // The token the GET returned with the lines this form loaded (spec
+    // 2026-10-16 section 5.1): a save that changes the lines must carry the
+    // current one or it is refused (409 STALE_EDIT). Never the retired
+    // override: absent, the server carries the stored value forward.
+    adjustments_token: form.adjustments_token ?? null,
     client_provides_glassware: !!form.client_provides_glassware,
     // Top Shelf is class-only. Only send class_options for a class package so
     // switching to a non-class package cannot trip the server-side guard.

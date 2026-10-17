@@ -2216,7 +2216,7 @@ The walk, on the Pixel, in the installed app:
 
 What the headless gate could not prove (2026-10-16): the shift drawer in step 5, which it did not script, and the hardware Back and the keyboard, which only the phone has. Everything else passed there.
 
-### Deposit and Balance invoices step from the contract to the Invoice Total (lane invoice-step, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### Deposit and Balance invoices step from the contract to the Invoice Total (lane invoice-step, merged ff1adfc2; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Display only (spec 2026-10-16 section 7): nothing is charged or stored, so any booking will do. The walk, on the client invoice page (`/invoice/<token>`), on screen and in Save as PDF:
 1. A Deposit invoice whose lines add up to the contract: under the line table, Contract Total (the sum of the lines), "Balance, billed later" as a negative, a hairline, Invoice Total (the deposit), then Amount Paid and Balance Due as before.
@@ -2249,7 +2249,7 @@ Money path (spec 2026-10-16 section 6). Dev talks to LIVE Stripe, so a refund on
 
 Verified so far by the suites (`refundLine.test.js`, `refundHelpers.line.test.js`, driving `applyRefundReconciliation` with fixture rows, no Stripe); nobody has seen it on a real booking.
 
-### The proposal page draws the server's rows, and a hidden line's label never leaves the server (lane client-rows, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### The proposal page draws the server's rows, and a hidden line's label never leaves the server (lane client-rows, merged 8e6b1ecb; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Display and payload only (spec 2026-10-16 sections 4.2 and 4.3): nothing is charged or stored. On a dev booking, add a discount in the editor with "Client sees" off, save, then open "Preview as client":
 1. The Pricing table: no row for the hidden discount, the package row is lower by exactly its amount, and the rows plus Gratuity add up to the Total. A booking with no hidden line reads exactly as before (same rows, labels and amounts).
@@ -2261,6 +2261,18 @@ Display and payload only (spec 2026-10-16 sections 4.2 and 4.3): nothing is char
 7. A booking under legal hold that is still `sent` or `viewed`: no "See other packages" entry card, and nothing on the page names the hold (dev only: add the id to the hold list for the walk, then take it off).
 
 Verified so far by the suites (`clientPriceLines.test.js` against a characterization copy of the old page rows, `publicSnapshot.test.js`, `publicLeak.test.js` on the raw response bodies of all three token routes, `publicToken.priceRows.test.js`, the legal-hold entry link in `publicToken.test.js`, `pageRows.test.js`); nobody has seen it on a real booking.
+
+### Editor: Set agreed price, stale saves, the Remote Staffing Fee (lane editor, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+
+Spec 2026-10-16 sections 5, 5.1 and 5.3. An editor save charges nothing, so any dev booking with nothing paid will do (dev talks to live Stripe; nothing here calls it). Never use 600.
+1. **Set agreed price on a dev booking (lower, higher, again, zero).** Edit, then Price adjustments, Set agreed price. Under the input: "Before gratuity. Gratuity is added on top." (a hosted booking with over-ratio bartenders adds "Includes staffing gratuity."). Type a price below the Live preview's total less gratuity and Apply: a hidden "Agreed price adjustment" discount row appears and the Live preview lands on that price plus gratuity. Save, reopen, set a higher price: the same row turns into a surcharge in place, and "Client sees" stays as you left it. Set another price: still one row. Set the price the booking had before step 1: the row goes. Set $0: a discount to $0; then Set agreed price again at the $0 preview refuses with "Remove the agreed price line, then set the price again." Blank, letters, a minus sign or $1,000,000 keep Apply off with "Enter a price of $0 or more".
+2. **Open the editor, add a line from another tab, then save the first: refused with Reload; a client page view in between does not refuse.** Open the booking's editor in tab A and tab B. In B add a discount and save. In A change any line and Save: "This booking changed since you opened it. Reload to see the latest." with Reload, and Save stays shut. Reload reopens the editor on B's lines. Then, with A open, load the booking's public proposal page in a private window (a client view), change a line in A and Save: it saves.
+3. **Remote staffing fee prompt adds its surcharge.** Send a dev proposal whose venue is past 40 miles from active staff (dev sends no client mail unless SEND_NOTIFICATIONS is on): Add the suggested fee and send. The proposal shows one "Remote Staffing Fee" surcharge and sends, in one save.
+4. A booking that still carries an override: the editor shows "Price override: $X. It converts to an Agreed price adjustment line soon.", Set agreed price is disabled, and a date or guest edit still saves with the override unchanged.
+5. **Remove buttons after an editor save (fix round 1).** On a dev booking with three ordinary discounts, open the editor, delete the middle one, save. The breakdown's remove buttons come back only once the page has reloaded them; remove the line that was last: the dialog and the result name that line, and the total moves by its amount.
+6. **The phone sheet and a client view (fix round 1).** Open the edit sheet on the Pixel, change the guests, then load the booking's public proposal page in a private window, then Confirm: it saves. A desktop edit to the add-ons or the lines in between still refuses with Reload.
+
+Verified so far by the suites (`patchGuards.test.js`, `crud.guards.test.js`, `agreedPrice.test.js`, `AgreedPriceControl.test.js`, `AdjustmentsSection.test.js`, `ProposalEditorForm.guards.test.js`, `EditSheet.test.js`, `RemoteStaffingFeePrompt.test.js`); nobody has used it in a browser. The refund-line confirm needs a booking with a Refund line, which only a real refund writes (lane refund-line), so it is covered by the suites alone until one exists.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

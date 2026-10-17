@@ -10791,6 +10791,32 @@ html[data-app="admin-os"][data-skin="light"] .field-error {
   color: hsl(var(--danger-h) var(--danger-s) 35%);
 }
 
+/* Proposal editor price lines (spec 2026-10-16 section 5): the warning-tinted
+   note (legal hold, a stale save with Reload, the refund-line confirm), the
+   read-only override note, and the Set agreed price panel. The notes take the
+   tint the notify step's autopay notice uses. The panel and the override note
+   take a full row in the wrapping buttons row they sit in. */
+html[data-app="admin-os"] .adj-note,
+html[data-app="admin-os"] .adj-confirm {
+  margin: 8px 0; padding: 8px 10px; border: 1px solid hsl(var(--warn-h) var(--warn-s) 52% / 0.45); border-radius: var(--radius);
+  background: hsl(var(--warn-h) var(--warn-s) 52% / 0.10); font-size: 12px; color: var(--ink-1); line-height: 1.5;
+}
+html[data-app="admin-os"][data-skin="light"] .adj-note,
+html[data-app="admin-os"][data-skin="light"] .adj-confirm {
+  border-color: hsl(var(--warn-h) var(--warn-s) 40% / 0.55); background: hsl(var(--warn-h) var(--warn-s) 52% / 0.12);
+}
+html[data-app="admin-os"] .adj-stale,
+html[data-app="admin-os"] .adj-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+html[data-app="admin-os"] .agreed-price-note { flex-basis: 100%; margin: 4px 0 0; color: var(--ink-2); }
+html[data-app="admin-os"] .agreed-price-panel { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+html[data-app="admin-os"] .agreed-price-input { position: relative; }
+html[data-app="admin-os"] .agreed-price-input > span {
+  position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--ink-3); font-size: 12px; pointer-events: none;
+}
+html[data-app="admin-os"] .agreed-price-input > .input { width: 140px; padding-left: 18px; }
+html[data-app="admin-os"] .agreed-price-msg { color: hsl(var(--danger-h) var(--danger-s) 65%); }
+html[data-app="admin-os"][data-skin="light"] .agreed-price-msg { color: hsl(var(--danger-h) var(--danger-s) 35%); }
+
 /* Same shape, same fix: .form-error (near the top of this file) and
    .em-import-errors (the email-marketing block) both paint the legacy --error
    (#8B2020), which is 2.15:1 on the After Hours page — dark red on near-black.

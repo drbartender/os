@@ -17,6 +17,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { ctDay, fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
 import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
+import useCancelTargets from './proposalEditor/useCancelTargets';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
 import PackageDetails from './PackageDetails';
@@ -106,7 +107,6 @@ export default function ProposalDetail() {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   // Cancel-line: per-line removal targets + the open dialog's target entry.
-  const [cancelTargets, setCancelTargets] = useState(null);
   const [cancelLineEntry, setCancelLineEntry] = useState(null);
 
   // Change-request review state. openCr = any pending request (drives the
@@ -134,22 +134,14 @@ export default function ProposalDetail() {
 
   useEffect(() => { loadProposal(); }, [loadProposal]);
 
-  // Cancellable-line targets (server-enumerated). Silently absent on error or
-  // ineligible status; the breakdown just renders without the affordance.
-  // Admin-gated in the UI too: preview/execute are adminOnly server-side, so a
-  // manager must never see a remove button they cannot use.
-  const proposalStatus = proposal?.status;
+  // Cancellable-line targets (server-enumerated), shown only for the read they
+  // were fetched after: adjustment targets are positional, so a stale set binds
+  // a remove button to the wrong line (useCancelTargets.js). Silently absent on
+  // error or ineligible status. Admin-gated in the UI too: preview/execute are
+  // adminOnly server-side, so a manager must never see a remove button they
+  // cannot use.
   const isAdmin = viewer?.role === 'admin';
-  const loadCancelTargets = useCallback(() => {
-    if (!isAdmin || !proposalStatus || ['archived', 'completed'].includes(proposalStatus)) {
-      setCancelTargets(null);
-      return;
-    }
-    api.get(`/proposals/${id}/cancel-line/targets`)
-      .then(r => setCancelTargets(r.data.eligible ? r.data.targets : null))
-      .catch(() => setCancelTargets(null));
-  }, [id, proposalStatus, isAdmin]);
-  useEffect(() => { loadCancelTargets(); }, [loadCancelTargets]);
+  const { targets: cancelTargets, reload: loadCancelTargets } = useCancelTargets({ proposalId: id, proposal, isAdmin });
 
   // Package row hands off to the existing cancel-event flow; every other
   // target opens the cancel-line dialog.
@@ -513,11 +505,16 @@ export default function ProposalDetail() {
                 proposal={proposal}
                 changeRequest={pendingCr}
                 onSaved={() => {
+                  // The lines may have moved: drop the remove buttons' set first.
+                  loadCancelTargets();
                   setEditing(false);
                   setPendingCr(null);
                   setLoading(true);
                   loadProposal();
                 }}
+                // A stale save (409 STALE_EDIT): refetch with the editor still
+                // open, so it remounts on the latest lines and their token.
+                onReload={() => { loadCancelTargets(); setLoading(true); loadProposal(); }}
                 onCancel={() => setEditing(false)}
               />
             </>

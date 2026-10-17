@@ -858,9 +858,16 @@ test('Case 20: PATCH dropping total below amount_paid keeps paid status + logs o
   const token = await makeFreshAdmin();
   const proposalId = await insertDraftProposal({ status: 'draft', total_price: 2000 });
   await pool.query("UPDATE proposals SET status = 'balance_paid', amount_paid = 2000 WHERE id = $1", [proposalId]);
+  // A save that changes the lines carries the token its GET returned (the
+  // stale-lines guard, spec 2026-10-16 section 5.1), as the editor does.
+  const got = await request('GET', `/api/proposals/${proposalId}`, { token });
+  assert.equal(got.status, 200, got.raw);
   // A large discount drives the recomputed total far below the $2000 already paid.
   const res = await request('PATCH', `/api/proposals/${proposalId}`, {
-    token, body: { adjustments: [{ type: 'discount', label: 'Goodwill', amount: 100000, visible: true }] },
+    token, body: {
+      adjustments: [{ type: 'discount', label: 'Goodwill', amount: 100000, visible: true }],
+      adjustments_token: got.body.adjustments_token,
+    },
   });
   assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
   const row = (await pool.query('SELECT status, total_price, amount_paid FROM proposals WHERE id = $1', [proposalId])).rows[0];

@@ -1,4 +1,4 @@
-import { recoverAddonQuantities, pricedDurationHours } from './formState';
+import { recoverAddonQuantities, pricedDurationHours, initialFormFromProposal, contactEdited } from './formState';
 
 // recoverAddonQuantities inverts pricingEngine's count→quantity transforms to
 // recover the raw 1–10 stepper count for a loaded proposal's add-ons. These
@@ -244,5 +244,32 @@ describe('pricedDurationHours', () => {
     expect(recoverAddonQuantities(rows, catalog, { durationHours: pricedDurationHours(extended) })).toEqual({ 100: 3 });
     // The bug this guards: inverting at the worked hours.
     expect(recoverAddonQuantities(rows, catalog, { durationHours: extended.event_duration_hours })).toEqual({ 100: 2 });
+  });
+});
+
+// --- the lines' staleness token (spec 2026-10-16 section 5.1) ---------------
+// The admin GET returns adjustments_token with the lines; the form keeps it so
+// the save can prove it saw the lines it is changing.
+
+describe('initialFormFromProposal: the lines token', () => {
+  it('keeps the GET\'s adjustments_token beside the lines it describes', () => {
+    const lines = [{ type: 'discount', label: 'Test A', amount: 5, visible: true }];
+    const f = initialFormFromProposal({ adjustments: lines, adjustments_token: 'tok-1' });
+    expect(f.adjustments_token).toBe('tok-1');
+    expect(f.adjustments).toEqual(lines);
+  });
+  it('is null when the proposal carries none', () => {
+    expect(initialFormFromProposal({}).adjustments_token).toBeNull();
+  });
+});
+
+describe('contactEdited', () => {
+  const p = { client_name: 'Test Client', client_email: 'client@example.test', client_phone: '5555550100', client_source: 'direct' };
+  it('is false for the contact as loaded, true for any changed field', () => {
+    const f = initialFormFromProposal(p);
+    expect(contactEdited(f, p)).toBe(false);
+    for (const k of ['client_name', 'client_email', 'client_phone', 'client_source']) {
+      expect(contactEdited({ ...f, [k]: 'Test changed' }, p)).toBe(true);
+    }
   });
 });

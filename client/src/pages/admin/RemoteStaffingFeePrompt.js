@@ -33,7 +33,10 @@ const OVERLAY = {
  * The fee itself is written as an ordinary `{type:'surcharge'}` row in
  * `proposals.adjustments` through the EXISTING editor PATCH payload builder.
  * There is deliberately no second money path: the same builder, the same
- * endpoint, the same recalculation the editor uses.
+ * endpoint, the same recalculation the editor uses. The form is seeded from
+ * this prompt's own fresh GET, so the save carries that GET's
+ * adjustments_token and the stale-lines guard accepts it (spec 2026-10-16
+ * section 5.1).
  */
 export default function RemoteStaffingFeePrompt({ proposalId, onProceed }) {
   const toast = useToast();
@@ -138,7 +141,13 @@ export default function RemoteStaffingFeePrompt({ proposalId, onProceed }) {
       await answerAndProceed();
     } catch (e) {
       setMode('ask');
-      setErr(e?.message || 'Could not add the fee. Try again, or send without it.');
+      // A refused line says why on its field (the server validates every line,
+      // spec 2026-10-16 section 3); the bare message is "Please fix the errors below".
+      // A stale refusal (the lines moved between this try's read and its save)
+      // says try again: there is no Reload here, and the next try re-reads.
+      setErr(e?.code === 'STALE_EDIT'
+        ? 'This booking changed a moment ago. Try again.'
+        : (e?.fieldErrors?.adjustments || e?.message || 'Could not add the fee. Try again, or send without it.'));
     }
   };
 

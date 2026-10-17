@@ -8,7 +8,7 @@ import {
 } from '../../pages/admin/proposalEditor/editorCore';
 import { initialDrafts, buildNotifyEntries, draftsOverCap, noticeOutcomes } from '../comms/notifyDrafts';
 import {
-  readoutView, fieldsChanged, changedSinceOpen, saveErrorText, curfewReason, sheetValuesOf, editLockedReason,
+  readoutView, fieldsChanged, sheetBasis, basisMoved, saveErrorText, curfewReason, sheetValuesOf, editLockedReason,
   READ_TIMEOUT_MS,
 } from '../../utils/editSheetView';
 
@@ -26,18 +26,38 @@ import {
 // The save sends the desktop editor's complete payload (buildProposalPatchBody)
 // on the desktop editor's own form state (initialFormFromProposal,
 // recoverAddonQuantities, the override detection), with the four sheet fields
-// replaced: the PATCH treats a missing add-on list as "delete every add-on"
-// and a missing override as "drop it". It leaves out the venue keys (the sheet
-// never edits location), never sends the gratuity mandate, never writes the
-// client contact.
+// replaced: the PATCH treats a missing add-on list as "delete every add-on".
+// It sends the lines as read with the read's adjustments_token, and never the
+// retired price override (absent, the server keeps it; spec 2026-10-16). It
+// leaves out the venue keys (the sheet never edits location), never sends the
+// gratuity mandate, never writes the client contact.
 //
 // One write at a time (a ref: a double tap sends one request). Every PATCH
-// re-reads the event first and refuses when its updated_at moved since the
-// sheet opened (the on-site-extension overwrite).
+// re-reads the event first and refuses when what the save rests on moved since
+// the sheet opened (sheetBasis: the payload it writes back, the add-on rows
+// included, the readout's money and the lock; the on-site-extension overwrite
+// moves the hours). A client page view moves updated_at and none of that, so
+// it no longer refuses. The server refuses lines that moved between that
+// re-read and the PATCH (409 STALE_EDIT); the sheet says so the same way, with
+// Reload.
 export const LOAD_FAILED = "Couldn't load this event. Editing needs a connection.";
 export const CURFEW_DECLINED = 'Not saved. The end time is past our 2:00 AM service curfew.';
 const NO_STAFF = { enabled: false, sms: false, email: false };
 const READ = { timeout: READ_TIMEOUT_MS };
+
+// The PATCH body a sheet opened on this read would send, unedited: the desktop
+// editor's form, add-on recovery and override detection, as the save builds it.
+function payloadOf(proposal, packages, addons) {
+  const form = initialFormFromProposal(proposal);
+  form.addon_quantities = recoverAddonQuantities(proposal.addons, addons, { durationHours: pricedDurationHours(proposal) });
+  const selectedPkg = packages.find((p) => p.id === Number(form.package_id));
+  return buildProposalPatchBody(form, {
+    isClassPackage: isClassPackageFor(selectedPkg, proposal),
+    numBartendersOverride: detectNumBartendersOverride(proposal, packages),
+    includeGratuityMandate: false,
+    includeVenue: false,
+  });
+}
 
 export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400, inFlight = false }) {
   const toast = useToast();
@@ -84,7 +104,9 @@ export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400
         override: detectNumBartendersOverride(proposal, packages),
         isClass: isClassPackageFor(selectedPkg, proposal),
         gratuity: storedGratuityOf(proposal),
-        openedAt: proposal.updated_at,
+        packages,
+        addons,
+        basis: sheetBasis(proposal, payloadOf(proposal, packages, addons)),
       };
       setValues(base.initial);
       setLoad({ phase: 'ready', base });
@@ -145,7 +167,9 @@ export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400
   // a write that got no answer may have landed.
   const saveChecked = useCallback(async (body, notify, staffChoice) => {
     const fresh = await api.get(`/proposals/${base.proposal.id}`, READ);
-    if (changedSinceOpen(base.openedAt, fresh.data)) { setStale(true); setPending(null); return; }
+    const read = fresh && fresh.data;
+    const nowBasis = read ? sheetBasis(read, payloadOf(read, base.packages, base.addons)) : null;
+    if (basisMoved(base.basis, nowBasis)) { setStale(true); setPending(null); return; }
     const payload = { ...body, ...(staffChoice ? staffNotifyFlags(staffChoice) : {}), notify };
     let res;
     try {
@@ -157,6 +181,7 @@ export default function useEditSheet({ proposalId, onSaved, previewDelayMs = 400
         setCurfew({ reason, body, notify, staff: staffChoice });
         return;
       }
+      if (err && err.code === 'STALE_EDIT') { setStale(true); setPending(null); return; }
       setError(saveErrorText(err, true));
       return;
     }

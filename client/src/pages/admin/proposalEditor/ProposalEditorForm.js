@@ -10,11 +10,10 @@ import FieldError from '../../../components/FieldError';
 import TimePicker from '../../../components/TimePicker';
 import NumberStepper from '../../../components/NumberStepper';
 import PricingBreakdown from '../../../components/PricingBreakdown';
-import Icon from '../../../components/adminos/Icon';
 import { clampAddonQty } from '../../../components/AddonControls';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../../data/addonCategories';
 import { formatSetupTime } from '../../../utils/setupTime';
-import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours } from './formState';
+import { initialFormFromProposal, recoverAddonQuantities, pricedDurationHours, contactEdited } from './formState';
 import { buildProposalPatchBody } from './patchBody';
 import { buildRepriceSummary } from './repriceSummary';
 import {
@@ -24,6 +23,7 @@ import { noticeOutcomes } from '../../../components/comms/notifyDrafts';
 import RepriceConfirmModal from './RepriceConfirmModal';
 import NotifyConfirmModal from '../../../components/comms/NotifyConfirmModal';
 import PackageSection from './PackageSection';
+import AdjustmentsSection from './AdjustmentsSection';
 
 // The ONE proposal/event editor, mounted by ProposalDetail (title "Edit
 // proposal", changeRequest support) and EventDetailPage (title "Edit event",
@@ -37,10 +37,13 @@ import PackageSection from './PackageSection';
 // surfaces cannot drift (the old EventEditForm drifted: it omitted
 // addon_quantities and the server reset quantities to 1 on save).
 // Parent passes the current proposal and callbacks. After a successful save
-// onSaved() is fired so the parent can reload and exit edit mode.
+// onSaved() is fired so the parent can reload and exit edit mode. A save the
+// server refuses as stale (409 STALE_EDIT: the lines moved since this form
+// loaded, spec 2026-10-16 section 5.1) offers Reload, which calls onReload()
+// so the parent refetches and reopens the editor on the latest lines.
 export default function ProposalEditorForm({
   proposal, changeRequest, showStaffNotifyToggles = false,
-  title = 'Edit proposal', onSaved, onCancel,
+  title = 'Edit proposal', onSaved, onCancel, onReload,
 }) {
   const toast = useToast();
   const [packages, setPackages] = useState([]);
@@ -58,6 +61,8 @@ export default function ProposalEditorForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
+  // The server's stale-lines refusal; while set, Save is shut and Reload offered.
+  const [staleEdit, setStaleEdit] = useState('');
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const initialRef = useRef(JSON.stringify(initialFormFromProposal(proposal)));
   // Booked-event reprice confirmation. Non-null = modal open, holding the
@@ -293,22 +298,8 @@ export default function ProposalEditorForm({
     addon_quantities: { ...f.addon_quantities, [id]: clampAddonQty(n) },
   }));
 
-  const addAdjustment = (type) => {
-    setEditForm(f => ({
-      ...f,
-      adjustments: [...(f.adjustments || []), { type, label: '', amount: '', visible: true }],
-    }));
-  };
-  const updateAdjustment = (i, field, value) => {
-    setEditForm(f => {
-      const next = [...f.adjustments];
-      next[i] = { ...next[i], [field]: value };
-      return { ...f, adjustments: next };
-    });
-  };
-  const removeAdjustment = (i) => {
-    setEditForm(f => ({ ...f, adjustments: f.adjustments.filter((_, idx) => idx !== i) }));
-  };
+  // AdjustmentsSection hands over an updater for the current lines.
+  const updateAdjustments = (op) => setEditForm(f => ({ ...f, adjustments: op(f.adjustments || []) }));
 
   // Derived state. Declared ABOVE doSave so the save payload can read
   // selectedPkg (class-options gating).
@@ -350,6 +341,7 @@ export default function ProposalEditorForm({
     setError('');
     setFieldErrors({});
     setSaving(true);
+    let contactSaved = false;
     try {
       // Update client record if linked
       if (proposal.client_id) {
@@ -359,6 +351,7 @@ export default function ProposalEditorForm({
           phone: editForm.client_phone,
           source: editForm.client_source,
         });
+        contactSaved = contactEdited(editForm, proposal);
       }
       const res = await api.patch(`/proposals/${proposal.id}`, { ...patchBody, notify });
       toast.success(showStaffNotifyToggles ? 'Event updated.' : 'Proposal updated.');
@@ -367,6 +360,16 @@ export default function ProposalEditorForm({
       onSaved?.(res.data);
       return true;
     } catch (err) {
+      // The contact PUT ran first (so a notice reaches a corrected address):
+      // a refused event save must not read as nothing saved.
+      const contactNote = contactSaved ? ' Contact details were saved; the event changes were not.' : '';
+      // The lines moved since this form loaded (a refund line, another tab):
+      // nothing this form holds can save, so no retry; Reload brings the
+      // latest lines and a fresh token. 'stale' also closes the notify popup.
+      if (err.code === 'STALE_EDIT') {
+        setStaleEdit(`${err.message || 'This booking changed since you opened it. Reload to see the latest.'}${contactNote}`);
+        return 'stale';
+      }
       // The notify-contract 400s key their real reason on fields this form
       // never renders (notify / subject / body_text / sms_body), and
       // ValidationError's message is the generic banner line — append those
@@ -387,14 +390,14 @@ export default function ProposalEditorForm({
           // invites a duplicate save (and duplicate client notify).
           return await doSave({ ...patchBody, acknowledge_past_curfew: true }, notify);
         }
-        setError('Not saved. The end time is past our 2:00 AM service curfew.');
+        setError(`Not saved. The end time is past our 2:00 AM service curfew.${contactNote}`);
         setFieldErrors(fe);
         return false;
       }
 
       const unrendered = ['notify', 'subject', 'body_text', 'sms_body']
         .map((k) => fe[k]).filter(Boolean);
-      setError([err.message || 'Failed to save changes.', ...unrendered].join(' '));
+      setError([err.message || 'Failed to save changes.', ...unrendered].join(' ') + contactNote);
       setFieldErrors(fe);
       return false;
     } finally {
@@ -433,7 +436,8 @@ export default function ProposalEditorForm({
       const ok = await doSave(pendingBody, notify);
       // Close ONLY on success: a failed save keeps the popup (and the admin's
       // composed text) alive, with the error banner explaining why. Cancel
-      // remains the deliberate way out.
+      // remains the deliberate way out. A stale refusal ('stale') closes it too:
+      // nothing can save until Reload, which is offered under the form.
       if (ok) {
         setPendingNotices([]);
         setPendingBody(null);
@@ -489,6 +493,25 @@ export default function ProposalEditorForm({
     if (isDirty) setShowLeaveConfirm(true);
     else onCancel?.();
   };
+
+  // Legal hold (spec 2026-10-16 section 5.3): the admin GET flags it and the
+  // PATCH refuses it, so the editor opens read-only rather than failing at save.
+  if (proposal?.legal_hold) {
+    return (
+      <div className="card">
+        <div className="card-head">
+          <h3>{title}</h3>
+          <span className="k">Internal</span>
+        </div>
+        <div className="card-body">
+          <p className="adj-note" role="status">This booking is on legal hold and can't be edited here.</p>
+          <div className="hstack" style={{ gap: 8, marginTop: 12 }}>
+            <button type="button" className="btn btn-ghost" onClick={() => onCancel?.()}>Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
@@ -645,44 +668,11 @@ export default function ProposalEditorForm({
           }))}
         />
 
-        {/* Adjustments */}
-        <div className="meta-k" style={{ marginBottom: 8 }}>Price adjustments</div>
-        <div style={{ marginBottom: 12 }}>
-          {(editForm.adjustments || []).map((adj, i) => (
-            <div key={i} className="hstack" style={{ gap: 6, marginBottom: 6 }}>
-              <span className={`chip ${adj.type === 'discount' ? 'ok' : 'danger'}`} style={{ flexShrink: 0 }}>
-                {adj.type === 'discount' ? 'Discount' : 'Surcharge'}
-              </span>
-              <input className="input" placeholder="Label (e.g. Returning client)"
-                value={adj.label}
-                onChange={e => updateAdjustment(i, 'label', e.target.value)}
-                style={{ flex: 1 }} />
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontSize: 12, pointerEvents: 'none' }}>$</span>
-                <input className="input" type="number" min="0" step="0.01" placeholder="0.00"
-                  value={adj.amount}
-                  onChange={e => updateAdjustment(i, 'amount', e.target.value)}
-                  style={{ width: 110, paddingLeft: 18 }} />
-              </div>
-              <label className="hstack" style={{ gap: 4, fontSize: 11.5, cursor: 'pointer', flexShrink: 0 }}>
-                <input type="checkbox" checked={adj.visible}
-                  onChange={e => updateAdjustment(i, 'visible', e.target.checked)} />
-                Client sees
-              </label>
-              <button type="button" className="icon-btn" onClick={() => removeAdjustment(i)} title="Remove">
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          ))}
-          <div className="hstack" style={{ gap: 6, marginTop: 4 }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => addAdjustment('discount')}>
-              <Icon name="plus" size={11} />Discount
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => addAdjustment('surcharge')}>
-              <Icon name="plus" size={11} />Surcharge
-            </button>
-          </div>
-        </div>
+        {/* Adjustments, with Set agreed price and the refund-line confirm. The
+            retired override shows read-only inside it (spec 2026-10-16 section 5). */}
+        <AdjustmentsSection adjustments={editForm.adjustments} loadedAdjustments={proposal.adjustments} onChange={updateAdjustments}
+          preview={editPreview} previewStale={previewStale} override={editForm.total_price_override} />
+        <FieldError error={fieldErrors?.adjustments} />
 
         {/* Client ELECTION stays out of this form (election-at-payment, spec
             2026-08-03): tip_jar / gratuity_total are never sent. The one
@@ -730,31 +720,6 @@ export default function ProposalEditorForm({
             </div>
           )}
           <FieldError error={fieldErrors?.gratuity_mandate_total} />
-        </div>
-
-        {/* Total override */}
-        <div style={{ paddingTop: 12, borderTop: '1px solid var(--line-1)', marginBottom: 12 }}>
-          <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
-            <input type="checkbox"
-              checked={editForm.total_price_override != null}
-              onChange={e => update(
-                'total_price_override',
-                e.target.checked ? (editPreview?.subtotal || editPreview?.total || 0) : null
-              )} />
-            Override total
-          </label>
-          {editForm.total_price_override != null && (
-            <div className="hstack" style={{ gap: 8, marginTop: 6 }}>
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontSize: 12, pointerEvents: 'none' }}>$</span>
-                <input className="input" type="number" min="0" step="0.01"
-                  value={editForm.total_price_override}
-                  onChange={e => update('total_price_override', e.target.value !== '' ? Number(e.target.value) : null)}
-                  style={{ width: 140, paddingLeft: 18 }} />
-              </div>
-              <span className="tiny muted">Overrides calculated total</span>
-            </div>
-          )}
         </div>
 
         {/* Live preview */}
@@ -817,8 +782,14 @@ export default function ProposalEditorForm({
         )}
 
         <FormBanner error={error} fieldErrors={fieldErrors} />
+        {staleEdit && (
+          <div className="adj-note adj-stale" role="alert">
+            <span>{staleEdit}</span>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => (onReload || onCancel)?.()}>Reload</button>
+          </div>
+        )}
         <div className="hstack" style={{ gap: 8, marginTop: 12 }}>
-          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !catalogReady || pendingNotices.length > 0} title={catalogReady ? undefined : 'Loading pricing catalog...'}>
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !catalogReady || !!staleEdit || pendingNotices.length > 0} title={catalogReady ? undefined : 'Loading pricing catalog...'}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={handleCancel}>Cancel</button>
