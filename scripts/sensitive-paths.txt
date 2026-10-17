@@ -353,6 +353,16 @@ server/utils/proposalMoneyShared.js
 server/utils/lineItemCancel.js
 server/routes/proposals/cancelLineItem.js
 server/utils/cancellationMath.js
+# Price adjustment lines (spec 2026-10-16, price override removal): the one
+# definition of a money line, its source/refund_id markers and the validation
+# bound, plus the client twin the admin views read to tell a protected line
+# (a refund or an agreed price) from an ordinary one. A wrong coercion here
+# moves what every client view and invoice shows.
+server/utils/adjustmentRules.js
+client/src/utils/adjustmentRules.js
+# The legal-hold seam every re-pricing and line-writing guard asks (spec
+# 2026-10-16 section 5.3). A wrong answer re-prices a booking under legal hold.
+server/utils/legalHold.js
 # Same contract as refundClientNotify above (the money side emails someone):
 # the cancel-line notices announce a money change to a client and carry the
 # MANDATORY staff tip-jar notice. Missed in the first pass of this same block
