@@ -849,6 +849,8 @@ Cut after Lane 2 is on main. Runs in parallel with Lane 3 (disjoint footprints e
 
 Cut after Lanes 3 and 4 are on main. **Owns the visual fidelity of the editor.** The working input is `Menu Designer v2.dc.html` in its **Editor** view (tables B, E and D).
 
+**Decided 2026-10-17 (Dallas): keep the spec 11.2 fit rule as written.** Art shrinks to 65 px, then the one type step, then the overflowing text is flagged "Too long" and Approve is blocked; never clip, never shrink further. The 2026-10-01 boards C (5-drink garden, 13 px over) and F (12 drinks, 131 px over) therefore read Too long until their copy is shortened; that is expected, not a defect. Revisit only if real generations trip it often.
+
 ### Task D1: the shell, the open state and the sidebar override
 
 **Spec:** 4.2, 10.1 (Closing and leaving, The rail is a temporary override), 11.1 (The editor, Top bar, Confirm dialog), Review Focus 7.
