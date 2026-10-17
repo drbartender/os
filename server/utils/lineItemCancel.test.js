@@ -12,7 +12,6 @@ const crypto = require('node:crypto');
 
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
-const { PRICING_ADJUSTMENT_LABEL } = require('./foldDecision');
 const {
   parseCancelTarget,
   computeCancelTargets,
@@ -443,10 +442,10 @@ test('adjustment removal of a discount RAISES the total', async () => {
   });
 });
 
-test('the result carries a client-facing label: a hidden line is the shared fold label, the admin keeps the real one', async () => {
+test('the result decides the client notice: a hidden line is the change in the total, every other line is named', async () => {
   // A hidden line is never named to the client (spec 2026-10-16 section 4.3).
-  // removedLabel feeds the admin preview, toast and audit row; clientLabel is
-  // the only label a client notice may use.
+  // removedLabel feeds the admin preview, toast and audit row; clientNotice is
+  // all a client notice may use, decided here from the locked row.
   const { proposalId } = await seedProposal({
     numBars: 2,
     adjustments: [
@@ -455,29 +454,52 @@ test('the result carries a client-facing label: a hidden line is the shared fold
       { type: 'surcharge', label: 'Test legacy line', amount: 10 }, // no visible key: hidden, the engine's reading
       { type: 'discount', label: '   ', amount: 5, visible: true }, // shown, but its label is only spaces
       { type: 'surcharge', label: ' ', amount: 5, visible: true },
+      { type: 'surcharge', label: 'Test hidden surcharge', amount: 15, visible: false },
     ],
   });
+  const changeCents = (r) => Math.abs(Math.round(r.newTotal * 100) - Math.round(r.oldTotal * 100));
   await applyCancel(proposalId, { target: 'adjustment:0' }, (result) => {
     assert.equal(result.removedLabel, 'Test hidden line', 'admin surfaces keep the real label');
-    assert.equal(result.clientLabel, PRICING_ADJUSTMENT_LABEL);
+    assert.deepEqual(result.clientNotice, { kind: 'package_adjusted', amountCents: 4000 });
+    assert.equal(result.clientNotice.amountCents, changeCents(result), 'the amount is the change in the total');
+    assert.ok(!('clientLabel' in result), 'no label path to a client remains');
   });
-  await applyCancel(proposalId, { target: 'adjustment:1' }, (result) => {
-    assert.equal(result.removedLabel, 'Test shown line');
-    assert.equal(result.clientLabel, 'Test shown line', 'a shown line keeps its own label');
+  await applyCancel(proposalId, { target: 'adjustment:5' }, (result) => {
+    assert.deepEqual(result.clientNotice, { kind: 'package_adjusted', amountCents: 1500 }, 'a hidden surcharge too');
+    assert.equal(result.clientNotice.amountCents, changeCents(result));
   });
   await applyCancel(proposalId, { target: 'adjustment:2' }, (result) => {
     assert.equal(result.removedLabel, 'Test legacy line');
-    assert.equal(result.clientLabel, PRICING_ADJUSTMENT_LABEL, 'no visible key reads as hidden (fail closed)');
+    assert.deepEqual(result.clientNotice, { kind: 'package_adjusted', amountCents: 1000 }, 'no visible key reads as hidden');
+  });
+  await applyCancel(proposalId, { target: 'adjustment:1' }, (result) => {
+    assert.deepEqual(result.clientNotice, { kind: 'removed', label: 'Test shown line' }, 'a shown line keeps its own label');
   });
   await applyCancel(proposalId, { target: 'adjustment:3' }, (result) => {
-    assert.equal(result.clientLabel, 'Discount', 'a blank shown label takes the engine type name, so a notice still goes out');
+    assert.deepEqual(result.clientNotice, { kind: 'removed', label: 'Discount' },
+      'a blank shown label takes the engine type name, so a notice still goes out');
   });
   await applyCancel(proposalId, { target: 'adjustment:4' }, (result) => {
-    assert.equal(result.clientLabel, 'Surcharge');
+    assert.deepEqual(result.clientNotice, { kind: 'removed', label: 'Surcharge' });
   });
   await applyCancel(proposalId, { target: 'bar', quantity: 1 }, (result) => {
     assert.equal(result.removedLabel, 'Bar Rental');
-    assert.equal(result.clientLabel, 'Bar Rental', "no other kind's label is hidden data");
+    assert.deepEqual(result.clientNotice, { kind: 'removed', label: 'Bar Rental' }, "no other kind's label is hidden data");
+  });
+});
+
+test('a hidden discount under the zero clamp: the notice amount is the change in the total, not the line amount', async () => {
+  // The engine clamps the service total at $0, so a hidden discount larger
+  // than the subtotal moved the total by less than its own amount.
+  const { proposalId, snapshot } = await seedProposal({
+    adjustments: [{ type: 'discount', label: 'Test clamped hidden line', amount: 99999, visible: false }],
+  });
+  assert.equal(Number(snapshot.total), 0, 'premise: the engine clamped the total at $0');
+  await applyCancel(proposalId, { target: 'adjustment:0' }, (result) => {
+    assert.equal(result.oldTotal, 0);
+    assert.ok(result.newTotal > 0, 'premise: the booking has a positive subtotal');
+    assert.deepEqual(result.clientNotice, { kind: 'package_adjusted', amountCents: Math.round(result.newTotal * 100) });
+    assert.notEqual(result.clientNotice.amountCents, 9999900, 'never the line amount');
   });
 });
 

@@ -587,15 +587,26 @@ test('all-external overpayment: removal notice names the manual return, no Strip
 });
 
 // A hidden line is never named to the client (spec 2026-10-16 section 4.3).
-// The removal notice is the one client email that names a removed line, so it
-// takes applyLineItemCancel's clientLabel: a hidden adjustment reads as the
-// shared "Pricing adjustment", the amount as before, while the admin preview
-// and toast keep the real label (admin surfaces may name hidden lines).
+// The removal notice is the one client email that names a removed line, so
+// applyLineItemCancel decides it from the locked row: a hidden adjustment
+// reads "We adjusted your package price by $X at your request." (X the change
+// in the total, wording approved by Dallas 2026-10-17), a shown line is named
+// as before, and the admin preview and toast keep the real label (admin
+// surfaces may name hidden lines).
 const HIDDEN_NOTICE_LABEL = 'Test hidden notice line';
+const HIDDEN_SURCHARGE_LABEL = 'Test hidden notice surcharge';
 const SHOWN_NOTICE_LABEL = 'Test shown notice line';
 const fmt2 = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** Seed a native booking with a hidden, a shown and a blank-labeled shown discount, then remove `target` with Send notice. */
+/** No hidden label anywhere in the email (subject, text, html, meta). */
+function assertNoHiddenLabel(email) {
+  const json = JSON.stringify(email).toLowerCase();
+  for (const label of [HIDDEN_NOTICE_LABEL, HIDDEN_SURCHARGE_LABEL]) {
+    assert.ok(!json.includes(label.toLowerCase()), `the email carries the hidden label "${label}"`);
+  }
+}
+
+/** Seed a native booking with hidden, shown and blank-labeled lines, then remove `target` with Send notice. */
 async function removeLineWithNotice(target) {
   const removalNotify = require('../../utils/lineItemRemovedNotify');
   const sends = [];
@@ -607,6 +618,7 @@ async function removeLineWithNotice(target) {
         { type: 'discount', label: HIDDEN_NOTICE_LABEL, amount: 40, visible: false },
         { type: 'discount', label: SHOWN_NOTICE_LABEL, amount: 25, visible: true },
         { type: 'discount', label: '   ', amount: 10, visible: true },
+        { type: 'surcharge', label: HIDDEN_SURCHARGE_LABEL, amount: 15, visible: false },
       ],
     });
     const { prev, exec } = await previewThenExecute(o, {
@@ -618,7 +630,7 @@ async function removeLineWithNotice(target) {
   }
 }
 
-test('a hidden line removed with Send notice: nothing the client receives names it; the admin still sees it', async () => {
+test('a hidden discount removed with Send notice: the email gives the price change, never the label; the admin still sees it', async () => {
   const { prev, exec, sends } = await removeLineWithNotice('adjustment:0');
   assert.equal(prev.status, 200, JSON.stringify(prev.body));
   assert.equal(prev.body.refund.splits, 0, 'premise: removing a discount owes no refund, so the removal notice is the one sent');
@@ -627,11 +639,26 @@ test('a hidden line removed with Send notice: nothing the client receives names 
   assert.equal(exec.body.removed_label, HIDDEN_NOTICE_LABEL, 'the admin toast names the line');
   assert.ok(exec.body.notifications.some((n) => n.type === 'line_item_removed_notice' && n.email === 'sent'));
   assert.equal(sends.length, 1);
-  assert.ok(!JSON.stringify(sends[0]).toLowerCase().includes('hidden notice line'),
-    'no trace of the hidden label in the subject, body, html or meta');
-  assert.match(sends[0].text, /We removed Pricing adjustment from your event at your request\./);
-  assert.match(sends[0].html, /We removed Pricing adjustment from your event at your request\./);
-  assert.ok(sends[0].text.includes(`Your updated total is $${fmt2(exec.body.new_total)}.`), 'the amount as before');
+  assertNoHiddenLabel(sends[0]);
+  assert.equal(Math.abs(prev.body.delta), 40, 'premise: the total moved by the hidden line');
+  const opening = `We adjusted your package price by $${fmt2(Math.abs(prev.body.delta))} at your request.`;
+  assert.ok(sends[0].text.includes(opening), sends[0].text);
+  assert.ok(sends[0].html.includes(opening));
+  assert.ok(sends[0].text.includes(`Your updated total is $${fmt2(exec.body.new_total)}.`), 'the total as before');
+  assert.equal(sends[0].subject, 'Your event total was updated', 'the subject is unchanged');
+  assert.ok(!/We removed/.test(sends[0].text));
+});
+
+test('a hidden surcharge removed with Send notice: the same sentence with the drop in the total', async () => {
+  const { prev, exec, sends } = await removeLineWithNotice('adjustment:3');
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.equal(prev.body.refund.splits, 0, 'premise: still no refund owed');
+  assert.equal(prev.body.delta, -15, 'premise: removing the surcharge lowers the total');
+  assert.equal(exec.status, 200, JSON.stringify(exec.body));
+  assert.equal(sends.length, 1);
+  assertNoHiddenLabel(sends[0]);
+  assert.ok(sends[0].text.includes('We adjusted your package price by $15.00 at your request.'), sends[0].text);
+  assert.ok(sends[0].text.includes(`Your updated total is $${fmt2(exec.body.new_total)}.`));
 });
 
 test("a shown line's removal notice is unchanged: it names the line", async () => {
@@ -641,8 +668,8 @@ test("a shown line's removal notice is unchanged: it names the line", async () =
   assert.equal(sends.length, 1);
   assert.match(sends[0].text, /We removed Test shown notice line from your event at your request\./);
   assert.ok(sends[0].text.includes(`Your updated total is $${fmt2(exec.body.new_total)}.`));
-  assert.ok(!JSON.stringify(sends[0]).toLowerCase().includes('hidden notice line'), 'the hidden line stays unnamed');
-  assert.ok(!sends[0].text.includes('Pricing adjustment'));
+  assertNoHiddenLabel(sends[0]);
+  assert.ok(!/adjusted your package price/.test(sends[0].text));
 });
 
 test('a shown line whose label is only spaces still gets its notice, named by the engine type name', async () => {

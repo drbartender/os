@@ -227,10 +227,11 @@ router.post('/:id/cancel-line', auth, adminOnly, adminWriteLimiter, asyncHandler
     } else if (notify_client === true && plan.splits.length === 0) {
       // No Stripe splits: either nothing is owed back, or the overpayment is
       // all external/CC money returned by hand, and the notice says so. It
-      // names the line by clientLabel only: a hidden line reads "Pricing
-      // adjustment" (removedLabel stays on the admin preview, toast and audit row).
+      // renders only the core's clientNotice: a hidden line reads as a package
+      // price adjustment by the change in the total, never its label
+      // (removedLabel stays on the admin preview, toast and audit row).
       const n = await sendLineItemRemovedNotice({
-        proposalId, clientLabel: result.clientLabel, newTotal: result.newTotal,
+        proposalId, clientNotice: result.clientNotice, newTotal: result.newTotal,
         manualReturnCents: plan.manualReturnCents, sentBy: req.user.id,
       });
       notifications.push({ type: 'line_item_removed_notice', ...n });

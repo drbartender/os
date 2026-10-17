@@ -9,11 +9,15 @@
  * test seam. The template lives in-module (emailTemplates.js is over the
  * file-size soft cap by standing decision).
  *
- * The line is named by its CLIENT-facing label only (applyLineItemCancel's
- * result.clientLabel; spec 2026-10-16 section 4.3): a hidden adjustment
- * arrives as the shared "Pricing adjustment", never its own label. A call
- * with no client label (or the admin's label under the old removedLabel
- * name) sends nothing rather than guess.
+ * It renders only the descriptor applyLineItemCancel decided from the locked
+ * row (result.clientNotice; spec 2026-10-16 section 4.3): { kind: 'removed',
+ * label } names a shown line ("We removed <label> from your event at your
+ * request."), and { kind: 'package_adjusted', amountCents } describes a
+ * hidden one by the change in the total ("We adjusted your package price by
+ * $X at your request.", wording approved by Dallas 2026-10-17), never by its
+ * label. Anything else (no descriptor, an unknown kind, a bad amount, a blank
+ * label, or a bare label under an old parameter name) sends nothing rather
+ * than guess.
  */
 
 'use strict';
@@ -34,20 +38,39 @@ function fmtUsd(n) {
 }
 
 // HTML-escape interpolated fields (emailTemplates.js esc() convention;
-// clientName/clientLabel are stored user/admin input).
+// clientName and a removed line's label are stored user/admin input).
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function lineItemRemovedNotice({ clientName, clientLabel, newTotal, newBalance, manualReturnCents }) {
+// The notice's opening sentence for a well-formed descriptor, else null (the
+// caller then sends nothing).
+function noticeOpening(clientNotice) {
+  if (!clientNotice || typeof clientNotice !== 'object') return null;
+  if (clientNotice.kind === 'removed') {
+    const { label } = clientNotice;
+    return typeof label === 'string' && label.trim() !== ''
+      ? `We removed ${label} from your event at your request.`
+      : null;
+  }
+  if (clientNotice.kind === 'package_adjusted') {
+    const { amountCents } = clientNotice;
+    return Number.isSafeInteger(amountCents) && amountCents >= 0
+      ? `We adjusted your package price by ${fmtUsd(amountCents / 100)} at your request.`
+      : null;
+  }
+  return null;
+}
+
+function lineItemRemovedNotice({ clientName, opening, newTotal, newBalance, manualReturnCents }) {
   const balanceLine = manualReturnCents > 0
     ? `We owe you ${fmtUsd(manualReturnCents / 100)} back and will return it to you separately.`
     : newBalance > 0
       ? `Your remaining balance is ${fmtUsd(newBalance)}.`
       : 'Your account is fully settled.';
   const text = `Hi ${firstNameOf(clientName)},\n\n`
-    + `We removed ${clientLabel} from your event at your request. `
+    + `${opening} `
     + `Your updated total is ${fmtUsd(newTotal)}. ${balanceLine}\n\n`
     + 'Reply to this email with any questions.\n\n'
     + 'Dr. Bartender';
@@ -61,21 +84,22 @@ function lineItemRemovedNotice({ clientName, clientLabel, newTotal, newBalance, 
 /**
  * @param {object} a
  * @param {number|string} a.proposalId
- * @param {string} a.clientLabel  the removed line's client-facing label (applyLineItemCancel's
- *   result.clientLabel), never the admin's removedLabel
+ * @param {{kind:'removed', label:string}|{kind:'package_adjusted', amountCents:number}} a.clientNotice
+ *   applyLineItemCancel's result.clientNotice, never the admin's removedLabel
  * @param {number} a.newTotal  dollars
  * @param {number} [a.manualReturnCents]  external/CC overpayment returned by hand
  * @param {number|null} [a.sentBy]  the admin who executed the removal, a value from the route (message_log.sent_by)
  * @returns {Promise<{email:'sent'|'failed'|'skipped', skip_reasons:object, email_error?:string}>}
  */
-async function sendLineItemRemovedNotice({ proposalId, clientLabel, newTotal, manualReturnCents = 0, sentBy = null }) {
+async function sendLineItemRemovedNotice({ proposalId, clientNotice, newTotal, manualReturnCents = 0, sentBy = null }) {
   try {
-    // Fail closed: no client-facing label means no email, so a caller can
+    // Fail closed: no well-formed descriptor means no email, so a caller can
     // never send the admin's label (a hidden line's own name) by accident.
     // The message reaches the admin's toast ("the client notice failed to
     // send: ..."), so it is plain words, not a code identifier.
-    if (typeof clientLabel !== 'string' || clientLabel.trim() === '') {
-      throw new Error('the removed line has no name to show the client. Tell the client directly.');
+    const opening = noticeOpening(clientNotice);
+    if (!opening) {
+      throw new Error('the notice for this line could not be written. Tell the client directly.');
     }
     const { rows } = await pool.query(
       `SELECT p.total_price, p.amount_paid,
@@ -103,7 +127,7 @@ async function sendLineItemRemovedNotice({ proposalId, clientLabel, newTotal, ma
     }
     const tpl = lineItemRemovedNotice({
       clientName: a.client_name,
-      clientLabel,
+      opening,
       newTotal: Number(newTotal),
       newBalance: Math.max(0, Number(newTotal) - Number(a.amount_paid)),
       manualReturnCents: Number(manualReturnCents) || 0,

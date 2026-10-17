@@ -2287,14 +2287,15 @@ Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or st
 
 Verified so far by the suites (`clientPortal.test.js` on the raw response bodies of every portal route, `clientPortal/summary.test.js`, `changeRequestNotifications.test.js`, `PrescriptionTab.test.js`); nobody has seen it on a real booking.
 
-### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; its wording from lane notice-copy, not merged yet: add the merge sha here at merge; it moves to Tier 3b when both shas are ancestors of `origin/main`)
 
 Client email only (spec 2026-10-16 section 4.3): the removal itself is unchanged. On a dev booking whose client address you can read (run the dev server with `SEND_NOTIFICATIONS=true`), add a discount with "Client sees" off and save. Then:
 1. Remove the hidden discount from the pricing breakdown and choose "Send notice". The dialog and the success toast still name the line.
-2. The client's "Your event total was updated" email reads "We removed Pricing adjustment from your event at your request.", with the updated total and balance as before, and the hidden line's own label appears nowhere in it.
-3. Remove a shown discount the same way: its email names the line exactly as before.
+2. The client's "Your event total was updated" email reads "We adjusted your package price by $X at your request.", where X is how much the total moved (the dialog's change), then the updated total and balance as before; the hidden line's own label appears nowhere in it.
+3. A hidden surcharge removed the same way: the same sentence, with the total down by X.
+4. Remove a shown discount the same way: its email names the line exactly as before ("We removed <label> from your event at your request.").
 
-Verified so far by the suites (`cancelLineItem.test.js` on the captured email, `lineItemCancel.test.js` on the result's `clientLabel`, `lineItemRemovedNotify.test.js`); nobody has seen the email on a real booking.
+Verified so far by the suites (`cancelLineItem.test.js` on the captured email, `lineItemCancel.test.js` on the result's `clientNotice`, the zero clamp included, `lineItemRemovedNotify.test.js`); nobody has seen the email on a real booking.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
