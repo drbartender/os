@@ -2777,10 +2777,14 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   not move. Raised by the invoice-lines security review, 2026-10-08. Designed 2026-10-16:
   `docs/superpowers/specs/2026-10-16-price-override-removal-design.md` section 4.3 (one sanitizer on every token route, leak test). Not built.
 - **The manual-invoice route accepts the contract labels Deposit, Balance and Full Payment.**
-  `POST /api/invoices` (`server/routes/invoices.js`, about L258-266) rejects only off-ledger labels, so an
-  admin can mint a manual "Balance"; the lifecycle refresh (`invoiceLifecycle.js`, about L144-153) then
-  treats any unlocked invoice carrying one of those labels as its own and rewrites its `amount_due`. Fix:
-  reserve the three labels for system-minted invoices, like the off-ledger ones. Raised by the
+  `POST /api/invoices/proposal/:proposalId` (`server/routes/invoices.js`, about L258-266) rejects only
+  off-ledger labels, so an admin can mint a manual "Balance", and `PATCH /api/invoices/:id` (about
+  L370-398) accepts the same labels on any unlocked invoice, so an Additional Services or manual invoice
+  can be relabeled into one. The lifecycle refresh (`invoiceLifecycle.js`, about L144-153) then treats any
+  unlocked invoice carrying one of those labels as its own and rewrites its `amount_due`, and the invoice
+  page's contract step reads it as a contract invoice. Fix: reserve the three labels for system-minted
+  invoices on both routes, like the off-ledger ones. The PATCH path was added by the invoice-step lane
+  review, 2026-10-17. Raised by the
   override-removal spec review, 2026-10-16.
 - **An adjustment label over 255 characters overflows `invoice_line_items.description`**
   (VARCHAR(255)). Nothing bounds the label: the editor input has no `maxLength` and the admin PATCH
