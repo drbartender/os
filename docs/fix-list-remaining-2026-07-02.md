@@ -2783,9 +2783,19 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   can be relabeled into one. The lifecycle refresh (`invoiceLifecycle.js`, about L144-153) then treats any
   unlocked invoice carrying one of those labels as its own and rewrites its `amount_due`, and the invoice
   page's contract step reads it as a contract invoice. Fix: reserve the three labels for system-minted
-  invoices on both routes, like the off-ledger ones. The PATCH path was added by the invoice-step lane
-  review, 2026-10-17. Raised by the
-  override-removal spec review, 2026-10-16.
+  invoices on both routes, like the off-ledger ones. Raised by the override-removal spec review,
+  2026-10-16; the PATCH path added by the invoice-step lane review, 2026-10-17.
+- **Proposal `/:id` routes read the id raw while some tails `parseInt` it.** Postgres reads `'1_23'` and
+  `'+0x7b'` as 123 (int4 input, PG 17); `parseInt('1_23', 10)` is 1 and `Number('1_23')` is NaN. In the
+  editor PATCH (`server/routes/proposals/crud.js`: the FOR UPDATE about L359 and the UPDATE about L578 use
+  the raw string, the post-commit invoice tail about L786-787 uses `parseInt`), a crafted
+  `PATCH /api/proposals/1_23` by an admin or manager re-prices 123 and can mint an Additional Services
+  invoice on proposal 1. The PATCH gets a strict id parse in lane editor (override-removal plan, Task E2).
+  Fix for the rest: one `router.param('id')` in `server/routes/proposals/index.js` that refuses anything
+  but plain decimal digits within int4. Raised by the adj-rules lane security review, 2026-10-17.
+- **Duplicate index `idx_invoices_token`, and `schema.sql` rebuilds the invoices foreign key on every boot**
+  (about L2450-2467). Harmless today: noise and a needless lock on every deploy. Raised by the invoice-step
+  lane database review, 2026-10-17.
 - **An adjustment label over 255 characters overflows `invoice_line_items.description`**
   (VARCHAR(255)). Nothing bounds the label: the editor input has no `maxLength` and the admin PATCH
   stores `adjustments` from the body as is. A visible label that long makes `writeLineItems`
