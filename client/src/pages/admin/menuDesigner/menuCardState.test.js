@@ -278,6 +278,17 @@ describe('table B, the editor banners', () => {
     expect(banner(run(P((p) => { p.draft.content = { words_status: 'working' }; })), 'generating')).toBeUndefined();
   });
 
+  test('a single drawing (a re-roll, or one drink Update draft added) is worded for one piece', () => {
+    let s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'working'); }), { activityKeys: ['cocktail:2'] });
+    expect(banner(s, 'generating')).toMatchObject({ tone: 'info', title: 'Painting Old Fashioned...', text: 'One drawing under way. Text is editable now.' });
+    s = run(P((p) => { p.pieces[0] = piece('background', 'working'); }), { activityKeys: ['background'] });
+    expect(banner(s, 'generating')).toMatchObject({ title: 'Painting the background...', text: 'One drawing under way. Text is editable now.' });
+    // A job of several keeps the counts.
+    s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'working'); p.pieces[3] = piece('mocktail:3', 'pending'); }),
+      { activityKeys: ['cocktail:2', 'mocktail:3'] });
+    expect(banner(s, 'generating')).toMatchObject({ title: 'Painting Old Fashioned...', text: '0 of 2 drinks done. Text is editable now.' });
+  });
+
   test('drawing failed: one with its reason and Re-roll, or several', () => {
     let s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'failed', { error: 'Gemini did not answer.' }); }));
     expect(banner(s, 'drawing-failed')).toEqual({

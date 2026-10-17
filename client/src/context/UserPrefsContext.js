@@ -49,6 +49,11 @@ export function UserPrefsProvider({ children }) {
   // user object identity churns each render; key off user.id everywhere.
   const userId = user?.id || null;
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
+  // A temporary sidebar layout (null or 'rail'), its own state and never a key
+  // inside prefs, so nothing that sets it can reach localStorage: the bar menu
+  // editor collapses the sidebar to its rail while it is open (menu art spec
+  // 2026-10-01 section 10.1) without touching the saved layout.
+  const [sidebarOverride, setSidebarOverride] = useState(null);
 
   useEffect(() => {
     setPrefs(load(user));
@@ -90,7 +95,7 @@ export function UserPrefsProvider({ children }) {
 
     root.dataset.skin = prefs.skin;
     root.dataset.density = prefs.density;
-    root.dataset.sidebar = prefs.sidebar;
+    root.dataset.sidebar = sidebarOverride || prefs.sidebar;
     root.dataset.palette = 'rainbow';
 
     const p = PALETTES[prefs.skin] || PALETTES.dark;
@@ -109,13 +114,16 @@ export function UserPrefsProvider({ children }) {
     root.style.setProperty('--violet-s', p.violet.s + '%');
 
     return stripAll;
-  }, [prefs, userId]);
+  }, [prefs, userId, sidebarOverride]);
 
   const setPref = useCallback((key, value) => {
     setPrefs(p => ({ ...p, [key]: value }));
   }, []);
 
-  const value = useMemo(() => ({ prefs, setPref }), [prefs, setPref]);
+  const value = useMemo(
+    () => ({ prefs, setPref, sidebarOverride, setSidebarOverride }),
+    [prefs, setPref, sidebarOverride],
+  );
   return <UserPrefsContext.Provider value={value}>{children}</UserPrefsContext.Provider>;
 }
 

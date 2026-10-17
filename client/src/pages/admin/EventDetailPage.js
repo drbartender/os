@@ -15,7 +15,9 @@ import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import MessageLogCard from './eventDetail/MessageLogCard';
 import MenuDesignerCard from './menuDesigner/MenuDesignerCard';
+import MenuEditor from './menuDesigner/MenuEditor';
 import useMenuDraft from './menuDesigner/useMenuDraft';
+import useMenuEditorOpen from './menuDesigner/useMenuEditorOpen';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ServiceExtensionPanel from '../../components/adminos/ServiceExtensionPanel';
@@ -57,8 +59,9 @@ function EventDetailPageDesktop() {
   // Cancel-line: per-line removal targets + the open dialog's target entry.
   const [cancelTargets, setCancelTargets] = useState(null);
   const [cancelLineEntry, setCancelLineEntry] = useState(null);
-  // The Bar menu card's draft hook, at page level (menu art spec 10.1).
+  // The Bar menu card's draft hook and the editor's ?menu=1 state, at page level (menu art spec 10.1).
   const menuDraft = useMenuDraft(id);
+  const menuEditor = useMenuEditorOpen(id);
 
   // Proposal + shifts refetch — passed to the payment panel `onUpdate` and run
   // after an event edit (date/time/location/contact changes re-sync the linked
@@ -192,6 +195,8 @@ function EventDetailPageDesktop() {
     eventTypeLabel, snapshot,
     includes, packageStructured, timeRange, contactBits,
   } = derived;
+  const eventLabel = `${proposal.client_name || 'Event'} · ${eventTypeLabel}`;
+  if (menuEditor.open) return <MenuEditor editor={menuEditor} menu={menuDraft} proposal={proposal} eventLabel={eventLabel} drinkPlan={drinkPlan} loadProposal={loadProposal} />;
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
@@ -587,6 +592,7 @@ function EventDetailPageDesktop() {
             setDrinkPlan={setDrinkPlan}
             loadProposal={loadProposal}
             menu={menuDraft}
+            onOpenEditor={menuEditor.openEditor}
           />
           {drinkPlan?.selections?.menuStyle === 'house' && (
             <Suspense fallback={<button className="btn btn-primary" disabled>Loading...</button>}>

@@ -22821,6 +22821,13 @@ html[data-app="admin-os"] .ib-cp-links { display: flex; flex-wrap: wrap; gap: 6p
 .mc-menu .mc-mark { position: absolute; right: 40px; bottom: 40px; display: flex; align-items: center; gap: 8px; }
 .mc-menu .mc-avatar { display: block; height: 40px; width: auto; max-width: none; }
 .mc-menu .mc-wordmark { display: block; width: 159px; height: 18px; max-width: none; }
+/* Panel backing: the mark sits inside the panel's line (inset 50 / 54, then
+   the 7 px ring and the 1 px hairline), 6 px clear of it as 40 / 40 is of the
+   trim, and the page's bottom padding grows by the same 24 px so the Also
+   lines stay 6 px clear of the mark (review 2026-10-17: at 40 / 40 the
+   panel's line ran through the wordmark). Off and Soft are unchanged. */
+.mc-menu .mc-page.mc-page-panel { padding-bottom: 110px; }
+.mc-menu .mc-mark.mc-mark-panel { right: 68px; bottom: 64px; }
 /* Drawing states (spec 11.1, On-canvas editing). They draw over the menu, not
    the OS, so their colors stay literal; never on the export. */
 .mc-menu .mc-slot-st {
@@ -22911,4 +22918,274 @@ html[data-app="admin-os"] .md-skel-line.md-skel-short { width: 55%; }
 @keyframes md-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
   html[data-app="admin-os"] .md-skel { animation: none; }
+}
+
+/* ==========================================================================
+   Menu art generator: the bar menu editor SHELL (md-ed-, md-banner, md-cf-,
+   md-export). Spec 2026-10-01-menu-art-generator-design.md section 11.1 (The
+   editor, Top bar, Body, Banner, the right panel's frame and tab strip, the
+   Confirm dialog) and 11.4. Benchmark: docs/design-artifacts/
+   2026-10-01-menu-designer/Menu Designer v2.dc.html, Editor view; its inline
+   styles carried over with the same numbers, on the OS tokens (both skins).
+   Banner tones use StatusChip's fixed hues, not the palette's (table D, item
+   8). The tabs' contents and the panel footer's controls are the md- PANEL
+   block (Task D2).
+   ========================================================================== */
+html[data-app="admin-os"] .md-editor {
+  position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column;
+  color: var(--ink-1); overflow: hidden;
+}
+html[data-app="admin-os"] .md-ed-top {
+  height: 56px; flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; border-bottom: 1px solid var(--line-1); min-width: 0;
+}
+html[data-app="admin-os"] .md-ed-back { gap: 6px; min-width: 0; flex: 0 1 auto; }
+html[data-app="admin-os"] .md-ed-back-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-app="admin-os"] .md-ed-div { width: 1px; height: 18px; flex: none; background: var(--line-2); }
+html[data-app="admin-os"] .md-ed-div-tall { height: 20px; }
+html[data-app="admin-os"] .md-ed-title { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.2; color: var(--ink-1); white-space: nowrap; }
+html[data-app="admin-os"] .md-ed-spacer { flex: 1; }
+html[data-app="admin-os"] .md-ed-save { font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+html[data-app="admin-os"] .md-ed-save.is-failed { color: hsl(358 72% 65%); }
+html[data-app="admin-os"][data-skin="light"] .md-ed-save.is-failed { color: hsl(358 72% 40%); }
+html[data-app="admin-os"] .md-ed-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+html[data-app="admin-os"] .md-ed-preview { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Table B: one or more banners above the canvas, stacked 8 px apart. */
+html[data-app="admin-os"] .md-ed-banners { flex: none; margin: 14px 24px 0; display: flex; flex-direction: column; gap: 8px; }
+html[data-app="admin-os"] .md-banner {
+  display: flex; align-items: center; gap: 12px; padding: 9px 10px 9px 14px;
+  border-radius: 6px; border: 1px solid var(--line-2); background: var(--bg-2); font-size: 12.5px; line-height: 1.4;
+}
+html[data-app="admin-os"] .md-banner-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); }
+html[data-app="admin-os"] .md-banner-body { flex: 1; min-width: 0; text-wrap: pretty; }
+html[data-app="admin-os"] .md-banner-title { font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .md-banner-text { color: var(--ink-2); }
+html[data-app="admin-os"] .md-banner .btn { flex: none; }
+html[data-app="admin-os"] .md-banner-ok { background: hsl(145 55% 45% / 0.10); border-color: hsl(145 55% 45% / 0.32); }
+html[data-app="admin-os"] .md-banner-ok .md-banner-dot { background: hsl(145 55% 52%); }
+html[data-app="admin-os"] .md-banner-warn { background: hsl(38 92% 50% / 0.10); border-color: hsl(38 92% 50% / 0.34); }
+html[data-app="admin-os"] .md-banner-warn .md-banner-dot { background: hsl(38 92% 55%); }
+html[data-app="admin-os"] .md-banner-danger { background: hsl(358 72% 55% / 0.10); border-color: hsl(358 72% 55% / 0.36); }
+html[data-app="admin-os"] .md-banner-danger .md-banner-dot { background: hsl(358 72% 62%); }
+html[data-app="admin-os"] .md-banner-info { background: hsl(208 72% 55% / 0.10); border-color: hsl(208 72% 55% / 0.34); }
+html[data-app="admin-os"] .md-banner-info .md-banner-dot { background: hsl(208 72% 62%); }
+/* The preview column: a scrolling area centering a column as wide as the canvas. */
+html[data-app="admin-os"] .md-ed-scroll {
+  flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center; padding: 14px 24px 28px;
+}
+html[data-app="admin-os"] .md-ed-col { flex: none; display: flex; flex-direction: column; gap: 8px; }
+html[data-app="admin-os"] .md-ed-meta {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px;
+  font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);
+}
+html[data-app="admin-os"] .md-ed-prog { height: 3px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
+html[data-app="admin-os"] .md-ed-prog > div { height: 100%; background: var(--accent); transition: width 0.4s; }
+html[data-app="admin-os"] .mc-frame.md-ed-canvas { background: #ddd; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 14px 34px rgba(0, 0, 0, 0.28); }
+html[data-app="admin-os"] .md-ed-skel { width: 100%; border-radius: 4px; }
+/* Table E: the empty card in the canvas's place. */
+html[data-app="admin-os"] .md-ed-empty {
+  box-sizing: border-box; border: 1.5px dashed var(--line-3); border-radius: 4px; background: var(--bg-1);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 36px; text-align: center;
+}
+html[data-app="admin-os"] .md-ed-empty-title { font-size: 16px; font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .md-ed-empty-text { font-size: 12.5px; color: var(--ink-3); max-width: 36ch; line-height: 1.5; text-wrap: pretty; }
+/* The right panel's frame: the tab strip and the scrolling body (PanelFooter
+   draws the footer, in the md- panel block). */
+html[data-app="admin-os"] .md-ed-panel {
+  border-left: 1px solid var(--line-1); background: var(--bg-1);
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+}
+html[data-app="admin-os"] .md-ed-tabs { flex: none; display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line-1); }
+html[data-app="admin-os"] .md-ed-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 12px 10px 10px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-3); cursor: pointer;
+}
+html[data-app="admin-os"] .md-ed-tab.is-active { color: var(--ink-1); border-bottom-color: var(--accent); }
+html[data-app="admin-os"] .md-ed-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+html[data-app="admin-os"] .md-ed-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+/* The confirm dialog, over the editor. */
+html[data-app="admin-os"] .md-cf-scrim {
+  position: absolute; inset: 0; z-index: 5; background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+html[data-app="admin-os"] .md-cf {
+  box-sizing: border-box; width: 400px; max-width: calc(100% - 32px); padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--bg-elev); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow-pop);
+}
+html[data-app="admin-os"] .md-cf-title { font-size: 15px; font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .md-cf-text { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
+html[data-app="admin-os"] .md-cf-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+/* The export's hidden, unscaled canvas (11.3; the MenuPNG off-screen precedent). */
+.md-export { position: absolute; left: -99999px; top: 0; width: 800px; height: 1000px; pointer-events: none; }
+
+/* ==========================================================================
+   Menu art generator: the editor's panel and on-canvas editing (md- panel,
+   mc- editor layer; Task D2). Spec 2026-10-01-menu-art-generator-design.md
+   section 11.1 (Right panel; Design, Drinks and Brief tabs; Panel footer;
+   On-canvas editing) and 11.4. Benchmark: docs/design-artifacts/
+   2026-10-01-menu-designer/Menu Designer v2.dc.html, Editor view; its inline
+   styles carried over with the same numbers, on the OS tokens (both skins).
+   Status text (PAINTING, FAILED, Edited by client) uses StatusChip's fixed
+   hues, as the banners do (table D, item 8). The panel frame and tab strip are
+   the md- editor block. The mc- rules draw over the menu in the editor's
+   preview only, never on the export: their colors stay literal (11.4).
+   ========================================================================== */
+html[data-app="admin-os"] .md-tabpane { display: flex; flex-direction: column; gap: 22px; line-height: normal; }
+html[data-app="admin-os"] .md-tabpane.is-off { opacity: 0.45; }
+html[data-app="admin-os"] .md-tabpane-drinks { gap: 20px; }
+html[data-app="admin-os"] .md-sec { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+html[data-app="admin-os"] .md-sec-colors { gap: 10px; }
+html[data-app="admin-os"] .md-sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+html[data-app="admin-os"] .md-sec-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+html[data-app="admin-os"] .md-sec-note { font-size: 11px; color: var(--ink-4); }
+html[data-app="admin-os"] .md-num { font-family: var(--font-numeric, monospace); }
+html[data-app="admin-os"] .md-sec-note.md-num { color: var(--ink-3); }
+html[data-app="admin-os"] .md-seg-start { align-self: flex-start; justify-self: start; }
+html[data-app="admin-os"] .md-sec .md-alert { margin: 0; }
+/* Design tab */
+html[data-app="admin-os"] .md-pairs { display: flex; flex-direction: column; gap: 4px; }
+html[data-app="admin-os"] .md-pair {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--line-1); background: var(--bg-2); color: var(--ink-1); text-align: left; cursor: pointer;
+}
+html[data-app="admin-os"] .md-pair.is-on { border-color: var(--accent); background: var(--accent-soft); }
+html[data-app="admin-os"] .md-pair-sample { flex: 1; min-width: 0; line-height: 1.25; white-space: nowrap; overflow: hidden; }
+html[data-app="admin-os"] .md-pair-id { font-size: 10.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-colors {
+  display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12px; color: var(--ink-3);
+}
+html[data-app="admin-os"] .md-swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+html[data-app="admin-os"] .md-swatch {
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+html[data-app="admin-os"] .md-swatch.is-on { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--accent); }
+html[data-app="admin-os"] .md-bg-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--line-1); border-radius: 6px; background: var(--bg-2);
+}
+html[data-app="admin-os"] .md-bg-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink-1); }
+html[data-app="admin-os"] .md-bg-sub { display: block; font-size: 11px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-mark { display: flex; flex-direction: column; gap: 12px; }
+html[data-app="admin-os"] .md-switch {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 0;
+  background: none; border: 0; color: var(--ink-1); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+html[data-app="admin-os"] .md-switch-sub { display: block; font-size: 11.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-switch-track {
+  position: relative; flex: none; width: 30px; height: 18px; border-radius: 9px; background: var(--line-3); transition: background 0.12s;
+}
+html[data-app="admin-os"] .md-switch-track.is-on { background: var(--accent); }
+html[data-app="admin-os"] .md-switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left 0.12s;
+}
+html[data-app="admin-os"] .md-switch-track.is-on .md-switch-knob { left: 14px; }
+html[data-app="admin-os"] .md-mark-color {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink-3);
+}
+html[data-app="admin-os"] .md-pair:focus-visible,
+html[data-app="admin-os"] .md-swatch:focus-visible,
+html[data-app="admin-os"] .md-switch:focus-visible,
+html[data-app="admin-os"] .md-drink-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The panel's pickers never wrap a label; House Lights' uppercase .seg is
+   tightened here so the Wordmark color row fits the 340 px panel. */
+html[data-app="admin-os"] .md-tabpane .seg button,
+html[data-app="admin-os"] .md-panel-foot .seg button { white-space: nowrap; }
+html[data-app="admin-os"] .md-tabpane .seg button:disabled,
+html[data-app="admin-os"] .md-panel-foot .seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+html[data-app="admin-os"] .md-mark-color > span,
+html[data-app="admin-os"] .md-foot-model > span { white-space: nowrap; }
+html[data-app="admin-os"][data-skin="light"] .md-tabpane .seg button,
+html[data-app="admin-os"][data-skin="light"] .md-panel-foot .seg button { padding: 0 0.55rem; letter-spacing: 0.08em; }
+/* Drinks tab */
+html[data-app="admin-os"] .md-drinks { border: 1px solid var(--line-1); border-radius: 6px; overflow: hidden; }
+html[data-app="admin-os"] .md-drink { border-bottom: 1px solid var(--line-1); }
+html[data-app="admin-os"] .md-drink:last-child { border-bottom: 0; }
+html[data-app="admin-os"] .md-drink.is-sel { background: var(--row-active); }
+html[data-app="admin-os"] .md-drink-btn {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%;
+  padding: 8px 10px; background: none; border: 0; color: var(--ink-1); text-align: left; cursor: pointer;
+}
+html[data-app="admin-os"] .md-drink-btn:focus-visible { outline-offset: -2px; }
+html[data-app="admin-os"] .md-drink-n { font-size: 10.5px; color: var(--ink-4); }
+html[data-app="admin-os"] .md-drink-name { min-width: 0; font-size: 12.5px; line-height: 1.3; }
+html[data-app="admin-os"] .md-drink-name.is-hidden { opacity: 0.5; text-decoration: line-through; }
+html[data-app="admin-os"] .md-drink-sub { display: block; font-size: 11px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-drink-st { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--ink-3); }
+html[data-app="admin-os"] .md-drink-open { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px 34px; }
+html[data-app="admin-os"] .md-drink-open .input { width: 100%; box-sizing: border-box; }
+html[data-app="admin-os"] .md-drink-acts { display: flex; gap: 6px; }
+html[data-app="admin-os"] .md-drinks-note { font-size: 11.5px; line-height: 1.45; color: var(--ink-3); }
+html[data-app="admin-os"] .md-st-info { color: hsl(208 72% 62%); }
+html[data-app="admin-os"] .md-st-danger { color: hsl(358 72% 65%); }
+html[data-app="admin-os"][data-skin="light"] .md-st-info { color: hsl(208 72% 36%); }
+html[data-app="admin-os"][data-skin="light"] .md-st-danger { color: hsl(358 72% 40%); }
+/* Brief tab */
+html[data-app="admin-os"] .md-brief-box {
+  display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45;
+  border: 1px solid var(--line-1); border-radius: 6px; background: var(--bg-2);
+}
+html[data-app="admin-os"] .md-brief-v { margin-top: 2px; color: var(--ink-1); border-radius: 3px; overflow-wrap: anywhere; }
+html[data-app="admin-os"] .md-brief-v.is-edited { padding: 2px 4px; background: hsl(208 72% 55% / 0.14); }
+html[data-app="admin-os"] .md-brief-none { color: var(--ink-4); }
+html[data-app="admin-os"] .md-brief-edited { margin-top: 4px; font-size: 11.5px; color: hsl(208 72% 62%); }
+html[data-app="admin-os"][data-skin="light"] .md-brief-edited { color: hsl(208 72% 36%); }
+html[data-app="admin-os"] .md-dots { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+html[data-app="admin-os"] .md-dot { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18); }
+html[data-app="admin-os"] .md-dots-names { margin-top: 4px; font-size: 11.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-brief-img-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; }
+html[data-app="admin-os"] .md-brief-img {
+  display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; box-sizing: border-box;
+  overflow: hidden; border: 1px solid var(--line-2); border-radius: 6px; background: #fbf8f3;
+}
+html[data-app="admin-os"] .md-brief-img img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+html[data-app="admin-os"] .md-brief-img-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+html[data-app="admin-os"] .md-brief-img-label { font-size: 11.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .md-brief-logo {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px 10px; align-items: center;
+  margin-top: 2px; font-size: 12px; color: var(--ink-3);
+}
+html[data-app="admin-os"] .md-brief-hint { font-size: 12px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-ref-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  border: 1px solid var(--line-2); border-radius: 6px; background: var(--bg-2);
+}
+html[data-app="admin-os"] .md-ref-name { flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+html[data-app="admin-os"] .md-ref-held { display: block; font-family: var(--font-ui); font-size: 11px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-drop {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px; text-align: center;
+  border: 1.5px dashed var(--line-3); border-radius: 6px; font-size: 12px; color: var(--ink-3);
+}
+html[data-app="admin-os"] .md-drop.is-over { border-color: var(--accent); background: var(--accent-soft); }
+html[data-app="admin-os"] .md-brief-dir {
+  width: 100%; height: auto; min-height: 64px; box-sizing: border-box; padding: 8px 10px;
+  resize: vertical; font-family: inherit; line-height: 1.45;
+}
+/* Panel footer */
+html[data-app="admin-os"] .md-panel-foot {
+  flex: none; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line-1); line-height: normal;
+}
+html[data-app="admin-os"] .md-foot-model { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink-3); }
+html[data-app="admin-os"] .md-foot-gen { justify-content: center; width: 100%; }
+html[data-app="admin-os"] .md-foot-hint { font-size: 11.5px; color: var(--ink-3); text-align: center; text-wrap: pretty; }
+/* On-canvas editing (canvas px, so it scales with the preview). */
+.mc-menu.mc-edit .mc-ed { cursor: text; border-radius: 3px; outline-offset: 4px; }
+.mc-menu.mc-edit .mc-ai { text-decoration: underline dotted 2px rgba(43, 120, 214, 0.9); text-underline-offset: 5px; }
+.mc-menu.mc-edit .mc-long,
+.mc-menu.mc-edit .mc-over { outline: 2.5px dashed #c0392b; outline-offset: 5px; }
+.mc-menu.mc-edit .mc-art { cursor: pointer; }
+.mc-menu.mc-edit .mc-slot.mc-sel { outline: 2.5px solid #2b78d6; outline-offset: 10px; border-radius: 8px; }
+.mc-menu .mc-tools { position: absolute; top: -10px; left: 50%; z-index: 3; display: flex; gap: 6px; transform: translateX(-50%); }
+.mc-menu .mc-pill,
+.mc-menu .mc-st-btn {
+  position: relative; border: 0; border-radius: 7px; color: #fff; cursor: pointer; white-space: nowrap;
+  font: 600 16px/1.2 Inter, system-ui, sans-serif; letter-spacing: 0; text-transform: none;
+}
+.mc-menu .mc-pill { padding: 8px 12px; background: rgba(18, 22, 30, 0.9); }
+.mc-menu .mc-st-btn { padding: 8px 14px; background: #8c2414; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-app="admin-os"] .md-switch-track,
+  html[data-app="admin-os"] .md-switch-knob { transition: none; }
 }

@@ -88,25 +88,58 @@ describe('the fit', () => {
     expect(menuVar(container, '--mc-hs')).toBe('25px');
   });
 
-  test('at 65 px the type steps down once, then what runs past is flagged too long', () => {
+  // Element heights in canvas px by data-mc-k (the page is 1060, 60 over); a
+  // heading row or an Also line measures as its text; anything else is 5 px.
+  // Garden Script after the step: names 22.5, descriptions 15.75, so a
+  // description's share is 3 x 15.75 x 1.32 = 62.37 and an Also line's 21.26.
+  const fakeBoxes = (heights) => jest.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function box() {
+    let k = this.getAttribute && this.getAttribute('data-mc-k');
+    if (this.classList && (this.classList.contains('mc-also-line') || this.classList.contains('mc-gh'))) {
+      k = [...this.querySelectorAll('[data-mc-k]')].map((el) => el.getAttribute('data-mc-k')).find((x) => !x.endsWith('.label'));
+    }
+    const height = this.classList && this.classList.contains('mc-page') ? 1060 : (k && heights[k]) || 5;
+    return { top: 0, left: 0, right: 0, width: 0, bottom: height, height, x: 0, y: 0 };
+  });
+
+  test('at 65 px the type steps down once, then the text furthest over its share is flagged', () => {
     fakePage(() => true);
-    jest.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function box() {
-      const k = this.getAttribute && this.getAttribute('data-mc-k');
-      const isPage = this.classList && this.classList.contains('mc-page');
-      const bottom = isPage ? 1060 : (k && k.startsWith('also_at_bar.')) ? 1040 : 400;
-      return { top: 0, left: 0, right: 0, width: 0, bottom, height: bottom, x: 0, y: 0 };
-    });
+    fakeBoxes({ 'drinks.cocktail:7.description': 150, 'also_at_bar.0.label': 900, 'also_at_bar.0.text': 21 });
     const onFit = jest.fn();
     const { container } = renderCanvas({ onFit });
     expect(container.querySelector('.mc-art').style.height).toBe('65px');
     // Cormorant 25 -> 22.5 for names, 17.5 -> 15.75 for descriptions.
     expect(menuVar(container, '--mc-hs')).toBe('22.5px');
     expect(menuVar(container, '--mc-bs')).toBe('15.75px');
-    expect(onFit).toHaveBeenLastCalledWith({
-      artHeight: 65,
-      typeStep: true,
-      tooLong: ['also_at_bar.0.label', 'also_at_bar.0.text', 'also_at_bar.1.label', 'also_at_bar.1.text'],
+    // Only what grew, never the bottom-most lines that it pushed down.
+    expect(onFit).toHaveBeenLastCalledWith({ artHeight: 65, typeStep: true, tooLong: ['drinks.cocktail:7.description'] });
+  });
+
+  test('Too long names the most over first, and as many as it takes to cover the overflow', () => {
+    fakePage(() => true);
+    fakeBoxes({
+      'drinks.custom:paloma.description': 62.37 + 30, 'drinks.cocktail:7.description': 62.37 + 45,
+      'drinks.cocktail:9.description': 62.37 + 10, 'also_at_bar.1.text': 42.6,
     });
+    const onFit = jest.fn();
+    renderCanvas({ onFit });
+    expect(onFit.mock.calls[onFit.mock.calls.length - 1][0].tooLong)
+      .toEqual(['drinks.cocktail:7.description', 'drinks.custom:paloma.description']);
+  });
+
+  test('a title that grew comes first; the fixed Also labels never do', () => {
+    fakePage(() => true);
+    fakeBoxes({ title: 211.2, 'drinks.cocktail:7.description': 62.37 + 20, 'also_at_bar.0.label': 900 });
+    const onFit = jest.fn();
+    renderCanvas({ onFit });
+    expect(onFit.mock.calls[onFit.mock.calls.length - 1][0].tooLong).toEqual(['title']);
+  });
+
+  test('with nothing over its share, the tallest description is named', () => {
+    fakePage(() => true);
+    fakeBoxes({ 'drinks.cocktail:9.description': 60, 'drinks.custom:paloma.description': 40, 'also_at_bar.0.label': 900, title: 106 });
+    const onFit = jest.fn();
+    renderCanvas({ onFit });
+    expect(onFit.mock.calls[onFit.mock.calls.length - 1][0].tooLong).toEqual(['drinks.cocktail:9.description']);
   });
 
   test('the type step never goes below the floors', () => {

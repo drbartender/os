@@ -131,6 +131,11 @@ export default function useMenuDraft(proposalId) {
         // Keys edited again while this save flew stay in the overlay.
         setOverlay((prev) => ({ content: pick(prev.content, (k, v) => rec.content[k] !== v), inputs: pick(prev.inputs, (k, v) => rec.inputs[k] !== v) }));
         setSave({ state: pending.current ? 'saving' : 'saved', savedAt: Date.now(), conflict: false });
+        // The print state is derived on the server: a save that moved an approved
+        // draft's version makes it edited since approval, so ask now rather
+        // than leave Approved (and a disabled Approve) on screen.
+        const cur = latest.current.payload;
+        if (cur && cur.print && cur.print.state === 'approved') fetchDraft();
       }, (err) => {
         if (live.current !== rec.id) throw err;
         if (err && err.status === 409) {

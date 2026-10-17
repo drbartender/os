@@ -1,4 +1,6 @@
 import React from 'react';
+import fs from 'fs';
+import path from 'path';
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent } from '@testing-library/react';
 import MenuCanvas, { AVATAR_SRC } from './MenuCanvas';
@@ -172,6 +174,27 @@ describe('backing', () => {
     const { container } = renderCanvas({ content: { ...GARDEN(), text_backing: 'off' } });
     expect(container.querySelector('.mc-panel')).toBeNull();
     expect(container.querySelector('[data-mc-layer="backing"]')).toBeNull();
+  });
+
+  // Review 2026-10-17: at 40 / 40 the panel's line ran through the wordmark.
+  test('Panel: the mark sits inside the panel line and the page leaves it room; Off and Soft are unchanged', () => {
+    const panel = renderCanvas({ content: { ...GARDEN(), text_backing: 'panel' } });
+    expect(panel.container.querySelector('.mc-mark')).toHaveClass('mc-mark-panel');
+    expect(panel.container.querySelector('.mc-page')).toHaveClass('mc-page-panel');
+    panel.unmount();
+    ['off', 'soft'].forEach((kind) => {
+      const { container, unmount } = renderCanvas({ content: { ...GARDEN(), text_backing: kind } });
+      expect(container.querySelector('.mc-mark').className).toBe('mc-mark');
+      expect(container.querySelector('.mc-page').className).toBe('mc-page');
+      unmount();
+    });
+    // The numbers: the line ends 58 px from the bottom (50 + the 7 px ring and
+    // the 1 px hairline) and 62 from the right; the mark (40 tall) sits 6 clear
+    // of it, and the page's bottom padding keeps the Also lines 6 clear of the mark.
+    const css = fs.readFileSync(path.join(__dirname, '../../../index.css'), 'utf8');
+    expect(css).toContain('.mc-menu .mc-mark.mc-mark-panel { right: 68px; bottom: 64px; }');
+    expect(css).toContain('.mc-menu .mc-page.mc-page-panel { padding-bottom: 110px; }');
+    expect(css).toContain('.mc-menu .mc-panel { position: absolute; top: 50px; right: 54px; bottom: 50px; left: 54px; border: 7px solid transparent; }');
   });
 });
 

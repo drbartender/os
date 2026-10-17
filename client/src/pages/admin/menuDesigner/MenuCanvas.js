@@ -1,18 +1,20 @@
 import React, { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   layoutDrinks, slotWidth, artGeometry, stepSize, logoSize, ART_FLOOR, ART_STEP,
-  CANVAS_W, CANVAS_H, PAGE_PAD_BOTTOM, NAME_FLOOR, DESC_FLOOR, BADGE_PAD,
+  CANVAS_W, CANVAS_H, NAME_FLOOR, DESC_FLOOR, BADGE_PAD,
 } from './layouts';
 import { pairingFor, useFontsRevision } from './fontPairings';
 import { resolveColors, groundRgb, rgba, overlay } from './menuColors';
-import Ornament, { GroupHeading as Heading } from './ornament';
+import Ornament from './ornament';
 import { drawSoftBacking, drawBadgeShadow, BADGE } from './softBacking';
 import { useTintedWordmark } from './tintedWordmark';
+import { EditCtx, Text, Heading, DrinkText, Slot, useCanvasEdit, clearOnClick, tooLongKeys } from './MenuCanvasEdit';
 
 // The printed menu (spec 2026-10-01 sections 11.2, 11.3; plan Task C2): 800 x
 // 1000 canvas px, 100 px = 1 in, ported from the 2026-10-01 snapshot
-// (menu-designer.html, menuHTML and fit) with the v3 mark. Read-only here (the
-// card thumbnail, the export's hidden instance); the editor lane adds editing.
+// (menu-designer.html, menuHTML and fit) with the v3 mark. Read-only by default
+// (the card thumbnail, the export's hidden instance); editable in the editor's
+// preview (MenuCanvasEdit.js), whose read-only output is unchanged.
 // Props:
 //   content       draft.content (title, headings, drinks, also_at_bar,
 //                 font_pairing, ink_color, accent_color, text_backing,
@@ -29,6 +31,11 @@ import { useTintedWordmark } from './tintedWordmark';
 //                 background-painting ground (never on the export).
 //   onFit         called once the fit settles: { artHeight, typeStep, tooLong }
 //                 (tooLong: the data-mc-k keys of text past the page).
+//   editable      the editor's preview: the drawing states, and once the words
+//                 land, click-to-edit text (onPatch({ content })), drink
+//                 selection (selectedDrink, onSelectDrink(key | null)), the
+//                 pills (onReroll(key); Re-roll only while canReroll) and the
+//                 Too long outline.
 // The ref is the 800 x 1000 .mc-menu node (what html2canvas renders). Every
 // layer image carries data-mc-layer; a layer the print needs and does not have
 // yet is a placeholder carrying data-mc-pending instead.
@@ -37,7 +44,6 @@ export const AVATAR_SRC = `${process.env.PUBLIC_URL || ''}/images/menu-mark-avat
 const FIT_SLACK = 1;
 const DEFAULT_TITLE = 'Bar Menu';
 const DEFAULT_HEADINGS = { sig: 'Signature Cocktails', mock: 'Mocktails', more: 'More from the bar', also: 'Also at the bar' };
-const STATUS = { working: ['mc-run', 'Painting...'], pending: ['mc-wait', 'Waiting'], failed: ['mc-bad', "Couldn't draw this one"] };
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const text = (v) => (typeof v === 'string' ? v : '');
@@ -50,47 +56,6 @@ function paintArt(root, il) {
   const set = (sel, style) => root.querySelectorAll(sel).forEach((el) => Object.assign(el.style, style));
   set('.mc-art', { height: px(il), width: px(aw) });
   set('.mc-art-img', { width: px(aw), height: px(aw), top: px(top) });
-}
-
-// Text whose bottom runs past the page box (1000 less the bottom padding), in
-// canvas px whatever the frame's scale.
-function overflowingKeys(page) {
-  const box = page.getBoundingClientRect();
-  const k = page.offsetHeight > 0 && box.height > 0 ? box.height / page.offsetHeight : 1;
-  const limit = CANVAS_H - PAGE_PAD_BOTTOM + FIT_SLACK;
-  return [...page.querySelectorAll('[data-mc-k]')]
-    .filter((el) => (el.getBoundingClientRect().bottom - box.top) / k > limit)
-    .map((el) => el.getAttribute('data-mc-k'));
-}
-
-// A drink's name and description (the description only when it has one).
-function DrinkText({ d }) {
-  return (
-    <>
-      <div className="mc-name" data-mc-k={`drinks.${d.key}.display_name`}>{text(d.display_name)}</div>
-      {text(d.description) && <div className="mc-desc" data-mc-k={`drinks.${d.key}.description`}>{d.description}</div>}
-    </>
-  );
-}
-
-function Slot({ drink, width, il, url, status, showStatus }) {
-  const { aw, top } = artGeometry(il);
-  // A flex basis, not a width (the snapshot's flex: 0 0 var(--sw)): at 280 px
-  // art three to a row, the 202 px art box widens its 200 px slot as it did.
-  return (
-    <div className="mc-slot" style={{ flex: `0 0 ${width}px` }}>
-      <div className="mc-art" style={{ width: aw, height: il }} data-mc-pending={url ? undefined : drink.key}>
-        {url && <img className="mc-art-img" src={url} alt="" data-mc-layer={drink.key} style={{ width: aw, height: aw, top }} />}
-        {!url && showStatus && STATUS[status] && (
-          <div className={`mc-slot-st ${STATUS[status][0]}`}>
-            {status === 'working' && <span className="mc-sheen" />}
-            <span className="mc-slot-st-text">{STATUS[status][1]}</span>
-          </div>
-        )}
-      </div>
-      <DrinkText d={drink} />
-    </div>
-  );
 }
 
 function Logo({ url, mode, badge, ratio, onLoad }) {
@@ -129,10 +94,12 @@ function Backing({ kind, ground, accent }) {
   return soft ? <img className="mc-layer" src={soft} alt="" data-mc-layer="backing" /> : null;
 }
 
-function Mark({ color }) {
+// With the Panel backing the mark sits inside the panel's line (review
+// 2026-10-17: at 40 / 40 the line ran through the wordmark).
+function Mark({ color, inPanel }) {
   const wordmark = useTintedWordmark(color);
   return (
-    <div className="mc-mark">
+    <div className={inPanel ? 'mc-mark mc-mark-panel' : 'mc-mark'}>
       <img className="mc-avatar" src={AVATAR_SRC} alt="" data-mc-layer="avatar" />
       {wordmark
         ? <img className="mc-wordmark" src={wordmark} alt="Dr. Bartender" data-mc-layer="wordmark" />
@@ -142,8 +109,8 @@ function Mark({ color }) {
 }
 
 const MenuCanvas = forwardRef(function MenuCanvas({
-  content, inputs, pieces, layers, plannerImage = null, scale = 1, showStatus = false,
-  onFit, className, editable: _editable, ...rest
+  content, inputs, pieces, layers, plannerImage = null, scale = 1, showStatus = false, onFit, className,
+  editable = false, selectedDrink = null, onSelectDrink, onPatch, onReroll, canReroll = false, ...rest
 }, ref) {
   const c = isObject(content) ? content : {};
   const inp = isObject(inputs) ? inputs : {};
@@ -186,7 +153,7 @@ const MenuCanvas = forwardRef(function MenuCanvas({
   // while the page is taller than 1000, never below 65; then names and
   // descriptions step down once; then whatever still runs past is too long.
   const layoutKey = JSON.stringify([pairing.id, title, headings, layout.sig, layout.mock, layout.more, also,
-    showLogo, logoMode, c.logo_badge === true, logoRatio, fontsRev]);
+    showLogo, logoMode, c.logo_badge === true, logoRatio, fontsRev, backing === 'panel']);
   const [fit, setFit] = useState({ key: null });
   const cur = fit.key === layoutKey ? fit : { key: layoutKey, il: layout.artStart, step: false, tooLong: [], settled: false };
   const menuRef = useRef(null);
@@ -199,6 +166,7 @@ const MenuCanvas = forwardRef(function MenuCanvas({
 
   const hs = pairing.heading.size;
   const bs = pairing.body.size;
+  const ts = pairing.title.size;
   useLayoutEffect(() => {
     const page = pageRef.current;
     const root = menuRef.current;
@@ -215,19 +183,30 @@ const MenuCanvas = forwardRef(function MenuCanvas({
       root.style.setProperty('--mc-hs', px(stepSize(hs, NAME_FLOOR)));
       root.style.setProperty('--mc-bs', px(stepSize(bs, DESC_FLOOR)));
     }
-    setFit({ key: cur.key, il, step, tooLong: over() ? overflowingKeys(page) : [], settled: true });
-  }, [cur.key, cur.settled, cur.il, cur.step, layout.rows, hs, bs]);
+    const sizes = { over: page.scrollHeight - CANVAS_H, title: ts,
+      name: step ? stepSize(hs, NAME_FLOOR) : hs, body: step ? stepSize(bs, DESC_FLOOR) : bs };
+    setFit({ key: cur.key, il, step, tooLong: over() ? tooLongKeys(page, sizes) : [], settled: true });
+  }, [cur.key, cur.settled, cur.il, cur.step, layout.rows, hs, bs, ts]);
 
+  const ed = useCanvasEdit({
+    on: editable && c.words_status !== 'pending' && c.words_status !== 'working',
+    content: c, selectedDrink, onSelectDrink, onPatch, onReroll, canReroll, tooLong: cur.tooLong,
+  });
+
+  // tooLong also carries any unsaved edit still past its 7.1 limit (editor
+  // only), so Approve holds while the preview shows text the print would not.
   const onFitRef = useRef(onFit);
   onFitRef.current = onFit;
   const reported = useRef(null);
   useEffect(() => {
     if (!cur.settled || typeof onFitRef.current !== 'function') return;
-    const sig = JSON.stringify([cur.key, cur.il, cur.step, cur.tooLong]);
+    const tooLong = [...cur.tooLong, ...(ed ? ed.overList : []).filter((k) => !cur.tooLong.includes(k))];
+    const sig = JSON.stringify([cur.key, cur.il, cur.step, tooLong]);
     if (reported.current === sig) return;
     reported.current = sig;
-    onFitRef.current({ artHeight: cur.il, typeStep: cur.step, tooLong: cur.tooLong });
+    onFitRef.current({ artHeight: cur.il, typeStep: cur.step, tooLong });
   });
+  const states = showStatus || editable;
 
   const { title: t, heading: h, body: b } = pairing;
   const vars = {
@@ -243,7 +222,7 @@ const MenuCanvas = forwardRef(function MenuCanvas({
     const done = status === null || status === 'done';
     return (
       <Slot key={d.key} drink={d} width={slotWidth(rowLen)} il={cur.il}
-        url={done ? L[d.key] || null : null} status={status} showStatus={showStatus} />
+        url={done ? L[d.key] || null : null} status={status} showStatus={states} />
     );
   };
   const group = (rows, k) => rows.length > 0 && (
@@ -255,42 +234,44 @@ const MenuCanvas = forwardRef(function MenuCanvas({
 
   return (
     <div className={`mc-frame${className ? ` ${className}` : ''}`} style={{ width: CANVAS_W * scale, height: CANVAS_H * scale }} {...rest}>
-      <div ref={setMenuRef} className="mc-menu mc-static" style={vars}>
-        <div className="mc-layer mc-ground" data-mc-pending={bgUrl ? undefined : 'background'}>
-          {bgUrl && <img className="mc-layer" src={bgUrl} alt="" data-mc-layer="background" />}
-          {!bgUrl && showStatus && bgOpen && <><span className="mc-sheen" /><span className="mc-ground-text">Painting the background...</span></>}
-        </div>
-        {bgDone && backing !== 'off' && <Backing kind={backing} ground={ground} accent={colors.accent} />}
-        <div className="mc-page" ref={pageRef}>
-          <div className="mc-head">
-            {showLogo && <Logo url={logoUrl} mode={logoMode} badge={c.logo_badge === true} ratio={logoRatio} onLoad={onLogoLoad} />}
-            {!(showLogo && logoMode === 'replaces_title') && <div className="mc-title" data-mc-k="title">{title}</div>}
-            <Ornament color={colors.accent} />
+      <EditCtx.Provider value={ed}>
+        <div ref={setMenuRef} className={editable ? 'mc-menu mc-edit' : 'mc-menu mc-static'} style={vars} onClick={clearOnClick(ed)}>
+          <div className="mc-layer mc-ground" data-mc-pending={bgUrl ? undefined : 'background'}>
+            {bgUrl && <img className="mc-layer" src={bgUrl} alt="" data-mc-layer="background" />}
+            {!bgUrl && states && bgOpen && <><span className="mc-sheen" /><span className="mc-ground-text">Painting the background...</span></>}
           </div>
-          {group(layout.sigRows, 'sig')}
-          {group(layout.mockRows, 'mock')}
-          {layout.more.length > 0 && (
-            <div className="mc-group">
-              <Heading k="headings.more">{headings.more}</Heading>
-              <div className="mc-more">
-                {layout.more.map((d) => <div className="mc-more-item" key={d.key}><DrinkText d={d} /></div>)}
-              </div>
+          {bgDone && backing !== 'off' && <Backing kind={backing} ground={ground} accent={colors.accent} />}
+          <div className={backing === 'panel' ? 'mc-page mc-page-panel' : 'mc-page'} ref={pageRef}>
+            <div className="mc-head">
+              {showLogo && <Logo url={logoUrl} mode={logoMode} badge={c.logo_badge === true} ratio={logoRatio} onLoad={onLogoLoad} />}
+              {!(showLogo && logoMode === 'replaces_title') && <Text k="title" className="mc-title" value={title} />}
+              <Ornament color={colors.accent} />
             </div>
-          )}
-          {also.length > 0 && (
-            <div className="mc-also">
-              <Heading k="headings.also">{headings.also}</Heading>
-              {also.map((a) => (
-                <div className="mc-also-line" key={a.i}>
-                  <span className="mc-also-label" data-mc-k={`also_at_bar.${a.i}.label`}>{a.label}</span>
-                  <span data-mc-k={`also_at_bar.${a.i}.text`}>{a.text}</span>
+            {group(layout.sigRows, 'sig')}
+            {group(layout.mockRows, 'mock')}
+            {layout.more.length > 0 && (
+              <div className="mc-group">
+                <Heading k="headings.more">{headings.more}</Heading>
+                <div className="mc-more">
+                  {layout.more.map((d) => <div className="mc-more-item" key={d.key}><DrinkText d={d} /></div>)}
                 </div>
-              ))}
-            </div>
-          )}
+              </div>
+            )}
+            {also.length > 0 && (
+              <div className="mc-also">
+                <Heading k="headings.also">{headings.also}</Heading>
+                {also.map((a) => (
+                  <div className="mc-also-line" key={a.i}>
+                    <Text as="span" k={`also_at_bar.${a.i}.label`} className="mc-also-label" value={a.label} />
+                    <Text as="span" k={`also_at_bar.${a.i}.text`} value={a.text} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {inp.drb_mark !== false && <Mark color={colors.mark} inPanel={backing === 'panel'} />}
         </div>
-        {inp.drb_mark !== false && <Mark color={colors.mark} />}
-      </div>
+      </EditCtx.Provider>
     </div>
   );
 });

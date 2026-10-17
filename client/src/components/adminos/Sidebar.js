@@ -25,10 +25,12 @@ export default function Sidebar({ badges = {}, presence, onPresenceChange, onClo
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { user, logout } = useAuth();
-  const { prefs, setPref } = useUserPrefs();
+  const { prefs, setPref, sidebarOverride } = useUserPrefs();
 
   const [tip, setTip] = useState(null); // { label, top, left } | null
-  const rail = prefs.sidebar === 'rail';
+  // A temporary override (the bar menu editor's rail) wins over the saved
+  // layout, and hides the collapse toggle below so nothing can save it.
+  const rail = (sidebarOverride || prefs.sidebar) === 'rail';
 
   const showTip = (e, label) => {
     if (!rail) return;
@@ -101,14 +103,16 @@ export default function Sidebar({ badges = {}, presence, onPresenceChange, onClo
       </nav>
 
       <div className="sidebar-footer sidebar-footer-controls">
-        <button
-          type="button"
-          className="sidebar-footer-action"
-          title={prefs.sidebar === 'rail' ? 'Expand sidebar' : 'Collapse to rail'}
-          onClick={() => setPref('sidebar', prefs.sidebar === 'rail' ? 'full' : 'rail')}
-        >
-          <Icon name={prefs.sidebar === 'rail' ? 'right' : 'left'} size={13} />
-        </button>
+        {!sidebarOverride && (
+          <button
+            type="button"
+            className="sidebar-footer-action"
+            title={prefs.sidebar === 'rail' ? 'Expand sidebar' : 'Collapse to rail'}
+            onClick={() => setPref('sidebar', prefs.sidebar === 'rail' ? 'full' : 'rail')}
+          >
+            <Icon name={prefs.sidebar === 'rail' ? 'right' : 'left'} size={13} />
+          </button>
+        )}
         <div className="mode-toggle" role="radiogroup" aria-label="Visual mode">
           <button
             type="button"

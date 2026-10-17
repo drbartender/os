@@ -127,6 +127,31 @@ describe('autosave', () => {
     expect(result.current.draft.version).toBe(4);
   });
 
+  test('a save on an approved draft refetches at once, so the print state reads edited since approval', async () => {
+    const approved = payload();
+    approved.print = { state: 'approved', approved_at: '2026-10-09T17:00:00Z', print_key: 'k', approved_file_in_use: true };
+    const edited = payload({ version: 4 });
+    edited.print = { ...approved.print, state: 'edited_since_approval' };
+    edited.draft.content.title = 'Fall Menu';
+    draftAnswers = [approved, edited];
+    const { result } = await mount();
+    expect(draftGets()).toHaveLength(1);
+    act(() => { result.current.edit({ content: { title: 'Fall Menu' } }); });
+    await advance(SAVE_DEBOUNCE_MS);
+    expect(api.patch).toHaveBeenCalledTimes(1);
+    expect(draftGets()).toHaveLength(2);
+    expect(result.current.payload.print.state).toBe('edited_since_approval');
+    expect(result.current.draft.content.title).toBe('Fall Menu');
+  });
+
+  test('a save on a draft that is not approved does not refetch', async () => {
+    const { result } = await mount();
+    act(() => { result.current.edit({ content: { title: 'Fall Menu' } }); });
+    await advance(SAVE_DEBOUNCE_MS);
+    expect(api.patch).toHaveBeenCalledTimes(1);
+    expect(draftGets()).toHaveLength(1);
+  });
+
   test('a 409 refetches, drops the unsaved edits and reports a conflict', async () => {
     api.patch.mockRejectedValue({ status: 409, code: 'MENU_DRAFT_CHANGED', message: 'The draft changed. Try again.' });
     draftAnswers = [payload(), payload({ version: 5 })];

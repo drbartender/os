@@ -217,7 +217,12 @@ function bannerList(f, L, tooLong) {
     const bg = f.pieces.find((pc) => pc.piece_key === 'background');
     const drink = f.open.find((pc) => pc.piece_key !== 'background');
     const a = activity(f, L);
-    if (bg && OPEN.has(bg.status)) B('generating', 'info', 'Words are in.', 'Painting the background next.');
+    // One piece under way (a re-roll, or the one drink Update draft added): no counts.
+    const one = a.n === 1 ? f.open[0] : null;
+    if (one) {
+      B('generating', 'info', one.piece_key === 'background' ? 'Painting the background...' : `Painting ${pieceName(f, one.piece_key)}...`,
+        'One drawing under way. Text is editable now.');
+    } else if (bg && OPEN.has(bg.status)) B('generating', 'info', 'Words are in.', 'Painting the background next.');
     else if (drink) B('generating', 'info', `Painting ${pieceName(f, drink.piece_key)}...`, `${a.drinksDone} of ${a.drinks} drinks done. Text is editable now.`);
   }
   if (f.failed.length === 1) {
