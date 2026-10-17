@@ -2274,7 +2274,7 @@ Spec 2026-10-16 sections 5, 5.1 and 5.3. An editor save charges nothing, so any 
 
 Verified so far by the suites (`patchGuards.test.js`, `crud.guards.test.js`, `agreedPrice.test.js`, `AgreedPriceControl.test.js`, `AdjustmentsSection.test.js`, `ProposalEditorForm.guards.test.js`, `EditSheet.test.js`, `RemoteStaffingFeePrompt.test.js`); nobody has used it in a browser. The refund-line confirm needs a booking with a Refund line, which only a real refund writes (lane refund-line), so it is covered by the suites alone until one exists.
 
-### The portal Prescription tab draws folded rows that add up, and portal totals include the gratuity (lane portal-rows, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### The portal Prescription tab draws folded rows that add up, and portal totals include the gratuity (lane portal-rows, merged f5b95eb7; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or stored. Use a dev booking with a hidden discount (editor, "Client sees" off) and a client gratuity (an admin mandate from the editor puts one on an unpaid booking). Sign in to the client portal as that booking's client: the login code is emailed, so use a booking whose client address you can read and run the dev server with `SEND_NOTIFICATIONS=true`. The walk:
 1. The Prescription tab: a Pricing card lists the package, bar rental, add-ons, syrups and any shown discount, then Gratuity. There is no row for the hidden discount (the package row is lower by exactly its amount), and the rows add up to the Total under them.
@@ -2287,7 +2287,7 @@ Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or st
 
 Verified so far by the suites (`clientPortal.test.js` on the raw response bodies of every portal route, `clientPortal/summary.test.js`, `changeRequestNotifications.test.js`, `PrescriptionTab.test.js`); nobody has seen it on a real booking.
 
-### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Client email only (spec 2026-10-16 section 4.3): the removal itself is unchanged. On a dev booking whose client address you can read (run the dev server with `SEND_NOTIFICATIONS=true`), add a discount with "Client sees" off and save. Then:
 1. Remove the hidden discount from the pricing breakdown and choose "Send notice". The dialog and the success toast still name the line.
