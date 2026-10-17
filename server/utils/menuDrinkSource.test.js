@@ -10,7 +10,7 @@ const { performance } = require('node:perf_hooks');
 
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash,
-  drinkKey, slugifyTyped,
+  drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev,
 } = require('./menuDrinkSource');
 const { buildAlsoAtBar } = require('./menuAlsoAtBar');
 
@@ -660,4 +660,28 @@ test('fingerprintHash is stable across a JSONB round trip and moves with any par
   assert.match(fingerprintHash(fp), /^[0-9a-f]{64}$/);
   assert.notEqual(fingerprintHash({ ...fp, drink_keys: [...fp.drink_keys, 'custom:new'] }), fingerprintHash(fp));
   assert.notEqual(fingerprintHash({ ...fp, brief_hash: 'other' }), fingerprintHash(fp));
+});
+
+// The ONE planner image key rule (normalizePlan, Approve's stamp, the planner
+// image GET and the brief's planner_image_rev all read it), and its rev.
+test('plannerImageKeyOf: the plan row\'s _logoFilename when it is a non-empty string, else null; normalizePlan uses it', () => {
+  const key = 'drink-plan-logos/7-1700000000000.png';
+  assert.equal(plannerImageKeyOf({ selections: { _logoFilename: key } }), key);
+  for (const v of [undefined, null, '', 5, { a: 1 }, [key]]) {
+    assert.equal(plannerImageKeyOf({ selections: { _logoFilename: v } }), null, JSON.stringify(v));
+  }
+  assert.equal(plannerImageKeyOf({ selections: null }), null);
+  assert.equal(plannerImageKeyOf({ selections: [] }), null);
+  assert.equal(plannerImageKeyOf(null), null);
+  assert.equal(normalizePlan({ selections: { _logoFilename: key } }).plannerImageKey, key);
+  assert.equal(normalizePlan({ selections: { _logoFilename: 5 } }).plannerImageKey, null);
+});
+
+test('plannerImageRev: 16 hex of sha256 over planner:<key>; null without a key', () => {
+  const key = 'drink-plan-logos/7-1700000000000.png';
+  const expected = crypto.createHash('sha256').update(`planner:${key}`, 'utf8').digest('hex').slice(0, 16);
+  assert.equal(plannerImageRev(key), expected);
+  assert.match(plannerImageRev(key), /^[0-9a-f]{16}$/);
+  assert.notEqual(plannerImageRev(`${key}x`), plannerImageRev(key));
+  for (const v of [null, undefined, '', 5]) assert.equal(plannerImageRev(v), null, String(v));
 });

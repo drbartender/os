@@ -16,6 +16,7 @@ const { menuDraftReadLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { sendR2Object } = require('../../utils/r2Proxy');
+const { loadEventPlan, plannerImageKeyOf } = require('../../utils/menuDrinkSource');
 const { parseId, parsePieceKey, requireProposal } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -54,17 +55,16 @@ router.get('/:id/menu-draft/reference', ...guard, asyncHandler(async (req, res) 
   await sendR2Object(res, key, { prefix: `menu-art/${id}/ref-` });
 }));
 
-// The event's plan is the lowest-id plan (loadEventPlan's rule).
+// The event's plan is the lowest-id plan (loadEventPlan), and its key comes
+// from plannerImageKeyOf, the rule Approve and the brief's rev read too.
 router.get('/:id/menu-draft/planner-image', ...guard, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   const width = parseWidth(req.query.w);
   await requireProposal(id);
-  const { rows } = await pool.query(
-    `SELECT id, selections->>'_logoFilename' AS key FROM drink_plans
-      WHERE proposal_id = $1 ORDER BY id LIMIT 1`, [id]);
-  const plan = rows[0];
-  if (!plan || !plan.key) throw new NotFoundError('The drink plan has no client image.');
-  await sendR2Object(res, plan.key, { prefix: `drink-plan-logos/${plan.id}-`, width });
+  const plan = await loadEventPlan(id, pool);
+  const key = plannerImageKeyOf(plan);
+  if (!key) throw new NotFoundError('The drink plan has no client image.');
+  await sendR2Object(res, key, { prefix: `drink-plan-logos/${plan.id}-`, width });
 }));
 
 module.exports = router;

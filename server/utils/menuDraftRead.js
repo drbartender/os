@@ -7,7 +7,7 @@
 //     created_at, updated_at },
 //   pieces: [{ piece_key, status, error, reroll_note, has_image, image_rev, tone,
 //     ground_rgb, provider, model, drawn_count, started_at, finished_at }],
-//   brief: null | { theme, naming, notes, has_planner_image },
+//   brief: null | { theme, naming, notes, has_planner_image, planner_image_rev },
 //   diff: null | { added: [{ key, name }], dropped: [{ key, name }],
 //     brief_edited: ['theme' | 'naming' | 'notes'], image_changed, dismissed },
 //   print: { state, approved_at, approved_by_name, print_key, approved_file_in_use },
@@ -18,7 +18,10 @@
 // Throws NotFoundError when the proposal does not exist.
 //
 // - No R2 key leaves here. A piece says has_image (done and stored) and the client
-//   reads the layer from GET .../pieces/:pieceKey/image; image_rev is an opaque
+//   reads the layer from GET .../pieces/:pieceKey/image; the planner image is
+//   likewise only brief.planner_image_rev (plannerImageRev, null with no image),
+//   which the client posts back as Approve's expected_planner_image_rev for a
+//   logo draft. image_rev is an opaque
 //   16-hex digest of the stored key, non-null exactly when has_image is true and
 //   new with every drawing (each one is a new uuid key), so the client can cache
 //   layers by it. has_reference: the source is upload and a key is stored (GET
@@ -47,7 +50,7 @@ const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
 const { readEnvInt } = require('./envInt');
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, plannerImageRev,
 } = require('./menuDrinkSource');
 const { capUsage } = require('./menuArtCap');
 const { derivePrintState, PRINT_STATES } = require('./menuPrintState');
@@ -243,7 +246,11 @@ async function readDraftPayload(proposalId) {
       updated_at: row.updated_at,
     } : null,
     pieces: asArray(row.pieces).filter(isObject).map((p) => publicPiece(p, now, staleMs)),
-    brief: normalized ? { ...normalized.brief, has_planner_image: Boolean(normalized.plannerImageKey) } : null,
+    brief: normalized ? {
+      ...normalized.brief,
+      has_planner_image: Boolean(normalized.plannerImageKey),
+      planner_image_rev: plannerImageRev(normalized.plannerImageKey),
+    } : null,
     diff: computeDiff(draftRow, normalized),
     print: {
       state: derivePrintState({

@@ -217,7 +217,10 @@ test('the plan payload: drinks with the mock flag, the bar summary, a house menu
     bar_summary: { beer_wine: 4, spirits: 2, na: 1 },
   });
   assert.equal(out.draft.read_only, false);
-  assert.deepEqual(out.brief, { theme: 'Garden party', naming: 'Name them after flowers', notes: 'Pastels', has_planner_image: true });
+  assert.deepEqual(out.brief, {
+    theme: 'Garden party', naming: 'Name them after flowers', notes: 'Pastels', has_planner_image: true,
+    planner_image_rev: crypto.createHash('sha256').update(`planner:${logoKey}`, 'utf8').digest('hex').slice(0, 16),
+  });
   await setPlan({ menuStyle: 'house' });
   out = await payload();
   assert.equal(out.plan.menu_style, 'house');

@@ -205,6 +205,24 @@ function consultBar(consult) {
   };
 }
 
+// The planner image key of a plan row: selections._logoFilename when it is a
+// non-empty string (the R2 key drink-plan-logos/<planId>-<ts>.<ext>), else
+// null. The ONE rule: normalizePlan, Approve's stamp, the planner image GET and
+// the brief's planner_image_rev all read the key through it, so they agree.
+function plannerImageKeyOf(plan) {
+  const sel = plan && isObject(plan.selections) ? plan.selections : {};
+  const key = sel._logoFilename;
+  return typeof key === 'string' && key ? key : null;
+}
+
+// The planner image's opaque rev (the piece image_rev scheme): 16 hex of
+// sha256 over 'planner:' + key, or null with no key. The GET hands it out as
+// brief.planner_image_rev and Approve compares the posted one with it, so the
+// key itself never leaves the server.
+function plannerImageRev(key) {
+  return typeof key === 'string' && key ? sha256(`planner:${key}`).slice(0, 16) : null;
+}
+
 function normalizePlan(plan, { catalogById = new Map(), candidates = [] } = {}) {
   if (!plan) return null;
   const sel = isObject(plan.selections) ? plan.selections : {};
@@ -278,7 +296,6 @@ function normalizePlan(plan, { catalogById = new Map(), candidates = [] } = {}) 
     drinks.push(entry);
   }
 
-  const logoKey = sel._logoFilename;
   return {
     side,
     drinks,
@@ -288,7 +305,7 @@ function normalizePlan(plan, { catalogById = new Map(), candidates = [] } = {}) 
       naming: asText(sel.drinkNaming).trim(),
       notes: asText(sel.menuDesignNotes).trim(),
     },
-    plannerImageKey: typeof logoKey === 'string' && logoKey ? logoKey : null,
+    plannerImageKey: plannerImageKeyOf(plan),
   };
 }
 
@@ -334,4 +351,6 @@ module.exports = {
   fingerprintHash,
   drinkKey,
   slugifyTyped,
+  plannerImageKeyOf,
+  plannerImageRev,
 };

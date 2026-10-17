@@ -1,5 +1,7 @@
-// Helpers shared by the menu art draft routes (menuDrafts.js, menuDraftSync.js,
-// menuDraftImages.js; spec 2026-10-01 sections 5.5 and 7). Not a router.
+// Helpers shared by the four menu art draft route files (menuDrafts.js,
+// menuDraftSync.js, menuDraftImages.js and menuDraftApprove.js; spec 2026-10-01
+// sections 5.5, 7 and 8). Not a router. Approve uses the parses, the 404s, the
+// 409 builders and requireWords, never inLockedTx (it reserves nothing).
 //
 // inLockedTx(fn) is the ONE way these routes open a reserving transaction:
 // BEGIN, then lockCalls (LOCK TABLE menu_art_calls IN EXCLUSIVE MODE) as the
@@ -14,7 +16,8 @@
 //
 // parseVersion bounds a posted draft version (a positive int4, else 400), and
 // every writer compares it with the stored version in JS (409) before SQL sees
-// it. requireWords and noPlan are the refusals re-roll and Update draft share.
+// it. requireWords and noPlan are the refusals re-roll and Update draft share;
+// Approve uses requireWords too.
 
 const { pool } = require('../../db');
 const { AppError, ConflictError, ValidationError, NotFoundError } = require('../../utils/errors');

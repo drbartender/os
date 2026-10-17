@@ -552,3 +552,11 @@ server/utils/menuArtJobSteps.js
 server/utils/menuArtJobWords.js
 # The 429 retry loop that re-sends a paid call (at most twice) and the sanitizer behind every Sentry report.
 server/utils/menuArtJobErrors.js
+
+# Menu art Approve and the print slot (same spec, sections 8 and 13; lane menu-print-approve).
+# The one way the print key is set (setMenuPrintKey) and the $5 menu_print duty-pay trigger (reaccrueDuty), beside the staff and admin downloads.
+server/utils/menuPrintFile.js
+# The manual print-file upload, flag and remove: each sets or clears the key the duty line keys on, then re-accrues.
+server/routes/proposals/menuPrint.js
+# Approve: posts the rendered menu into the print slot inside one transaction and fires duty reaccrual only after COMMIT.
+server/routes/proposals/menuDraftApprove.js

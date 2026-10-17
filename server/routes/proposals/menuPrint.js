@@ -5,6 +5,8 @@
 // no printed menu, and downloads it back (GET below). Staff download it through
 // the authed proxy at GET /api/shifts/:shiftId/menu-print
 // (server/routes/eventDetails.js); both stream through utils/menuPrintFile.js.
+// The key itself is set only through menuPrintFile.setMenuPrintKey, here and in
+// the menu art Approve (menuDraftApprove.js), and reaccrueDuty fires after it.
 //
 // Storage: R2 under menu-print/<proposalId>/<uuid>.<ext>. Replacing or removing
 // a file ORPHANS the old object — storage.js exposes no delete, and this
@@ -21,25 +23,12 @@ const { adminWriteLimiter, beoReadLimiter } = require('../../middleware/rateLimi
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError, ConflictError } = require('../../utils/errors');
 const { uploadFile } = require('../../utils/storage');
-const { sendMenuPrintFile } = require('../../utils/menuPrintFile');
+// reaccrueDuty is the duty-pay hook (spec 2026-08-06 §3.2): the $5 menu_print
+// line keys on menu_print_key, so posting or unposting the file re-reconciles
+// it. Both writes below fire it only after their UPDATE has landed.
+const { sendMenuPrintFile, setMenuPrintKey, reaccrueDuty } = require('../../utils/menuPrintFile');
 
 const router = express.Router();
-
-// Duty-pay reversal/derivation hook (spec 2026-08-06 §3.2): the $5 menu_print
-// line keys on menu_print_key, so posting or unposting the file on a COMPLETED
-// event must re-reconcile duty lines. Accrual is the reconciler and no-ops on
-// non-completed proposals. Best-effort, off the response path, own connection.
-function reaccrueDuty(proposalId) {
-  setImmediate(() => {
-    require('../../utils/payrollAccrual').maybeReaccrueForDuty(Number(proposalId))
-      .catch((e) => {
-        if (process.env.SENTRY_DSN_SERVER) {
-          const Sentry = require('@sentry/node');
-          Sentry.captureException(e, { tags: { route: 'menuPrint', step: 'duty_reaccrual' } });
-        }
-      });
-  });
-}
 
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
@@ -99,15 +88,11 @@ router.post('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, a
 
   const key = `menu-print/${id}/${crypto.randomUUID()}.${ext}`;
   await uploadFile(file.data, key);
-  // Uploading a file necessarily means a menu IS needed: clear the flag so the
-  // tri-state cannot land in a contradictory place. Guard rowCount like DELETE
-  // does: a proposal deleted between getProposalRow and here must not report
-  // 'ready' while orphaning the R2 object.
-  const upd = await pool.query(
-    'UPDATE proposals SET menu_print_key = $1, menu_not_required = false WHERE id = $2',
-    [key, id]
-  );
-  if (!upd.rowCount) throw new NotFoundError('Proposal not found.');
+  // The order is R2, then the key (an autocommit UPDATE on the pool that also
+  // clears menu_not_required, with the rowCount guard: a proposal deleted
+  // between getProposalRow and here is a 404, never 'ready' over an orphaned
+  // object), then duty reaccrual, which reads the committed key.
+  await setMenuPrintKey(pool, id, key);
   reaccrueDuty(id);
   res.json({ menu_print: { status: 'ready' } });
 }));
