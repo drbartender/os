@@ -456,7 +456,7 @@ async function handleSubmit(req, res) {
           const syrupsAfterSafe = clientSentSyrups ? syrupSels : preSyrupsPriced;
 
           // Contract-safe reprice + payment-status re-eval. The override-delta
-          // math (Jack Van Dyke lesson), snapshot recompute, total/override
+          // math (proposal 600 lesson), snapshot recompute, total/override
           // write, and F2 payment-status reconcile (demote or restore) moved VERBATIM to
           // utils/proposalExtrasFold.js so the Enhancement Lab folds through
           // the exact same sequence (one money path, two callers). Mutates

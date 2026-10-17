@@ -3,7 +3,7 @@ require('dotenv').config();
 // Regression: a client-submitted drink plan carrying a financial extra must NOT
 // destroy a negotiated price (proposals.total_price_override).
 //
-// Origin: Jack Van Dyke (prod proposal 600, 2026-07-16). CC contract $3,273.
+// Origin: prod proposal 600 (2026-07-16). CC contract $3,273.
 // He added a second portable bar in the planner; submit re-priced him at full
 // catalog ($4,000), left the override column stranded at 3273, and emailed him
 // a $3,900 balance. See docs/superpowers/specs/2026-07-16-drink-plan-override-
@@ -207,7 +207,7 @@ test('overridden proposal: a second bar adds exactly additional_bar_fee and the 
   assert.strictEqual(Number(row.total_price), catalogAt(2) - DISCOUNT,
     'the discount must survive intact on top of the new bar');
   assert.notStrictEqual(Number(row.total_price), catalogAt(2),
-    'must NOT be re-priced at catalog (this is the Jack Van Dyke regression)');
+    'must NOT be re-priced at catalog (this is the proposal 600 regression)');
 
   // The opposite bug: preserving the override naively makes the extra free.
   assert.ok(Number(row.total_price) > CONTRACT,

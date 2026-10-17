@@ -65,7 +65,7 @@ async function buildOptionsQuote(token, body = {}) {
     if (!proposal) throw new NotFoundError('This proposal is no longer available');
 
     // A negotiated price is a number Dallas agreed by hand. Re-pricing it
-    // against the catalog is exactly the Jack Van Dyke failure, so these
+    // against the catalog is exactly the proposal 600 failure, so these
     // proposals are not offered the comparison at all rather than being offered
     // it and rejected at the end.
     if (proposal.total_price_override !== null && proposal.total_price_override !== undefined) {

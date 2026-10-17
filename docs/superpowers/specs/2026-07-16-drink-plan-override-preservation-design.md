@@ -2,7 +2,7 @@
 
 Date: 2026-07-16
 Status: approved (Dallas, section-by-section)
-Origin: Jack Van Dyke (proposal 600) invoice investigation
+Origin: proposal 600 invoice investigation
 
 ## Problem
 
@@ -19,7 +19,7 @@ The client does this to themselves. No admin action is involved.
 
 ### Confirmed damage
 
-- **Jack Van Dyke (600), 2026-07-16.** Added a second bar via the planner. Contract
+- **Proposal 600, 2026-07-16.** Added a second bar via the planner. Contract
   $3,273 re-priced to $4,000. He was emailed "Extras Added $727, Updated Event Total
   $4,000.00, Remaining Balance $3,900.00". A balance invoice created at that moment
   would have overbilled him by $627. Corrected by hand in prod; invoice INV-0193 minted

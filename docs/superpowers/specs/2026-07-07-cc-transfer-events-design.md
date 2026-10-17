@@ -74,24 +74,9 @@ ALLOW (the point of transferring):
   untouched — transfers use the new column precisely so the guard and the
   metrics tri-state (which key on cc_id) keep their meaning.
 
-## The 13 (from the quiz; guest counts confirmed in order after skipping Luva)
+## The 13 (from the quiz)
 
-Sid Khaitan 7/23 Core Reaction 3.5h g100 $350 paid$100 other/"Launch Party";
-Cody Hillesheim 7/31 Core 7h +1btd g125 $930 paid$100 wedding;
-Eliana Stoyanoff 8/1 Primary Culture 4h +softdrink g50 $750 paid$100 default 'event';
-Emiline Mccoy 8/1 Core 2h g75 $300 paid$100 other/"Cocktail Party";
-Jack Van Dyke 8/1 Midrange Reaction 4h g175 $3,273 paid$100 wedding;
-Jayme Corcoran 8/9 Core 5h g100 $450 paid$0 other/"Vow Renewal" (confirmed
-with no deposit — transfer as-is, Dallas investigates separately);
-James Stewart 8/22 Core 5h g100 $450 paid$100 wedding, venue 16015 W Baker
-Rd, Manhattan IL 60442;
-Emily Zschernitz 9/5 Core 5h g100 $450 paid$100 wedding;
-Amy Martinez 9/26 Core 5h +ice g100 $550 paid$550 (PAID IN FULL) wedding;
-Shazana Nadeem 10/16 Core 4h +1btd g150 $510 paid$100 wedding;
-Madelyn Marie 10/17 Cultivated Complex 6h +softdrink g60 $1,493 paid$100
-wedding (CC "Additional Hours" add-ons fold into duration, not add-ons);
-Julia Neave 10/22 Carbon Suspension 5h +softdrink g100 $2,425 paid$100 wedding;
-Cecilia & Ryan 8/21/2027 Core 8h +1btd g160 $1,070 paid$100 wedding.
+Thirteen Check Cherry bookings, confirmed in the quiz. The list of clients, dates, amounts and one venue address is removed from this public doc (client PII, 2026-10-17); the transferred events are identifiable in the database by their transfer column.
 
 All clients already exist (phase-1 import, linked by transferred ledger
 rows). Package names match DRB exactly (verified against service_packages).

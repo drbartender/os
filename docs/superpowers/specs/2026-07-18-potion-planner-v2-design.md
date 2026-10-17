@@ -11,7 +11,7 @@
 The live planner audit and the client feedback file converge on four root problems:
 
 1. **Selling is tangled into planning.** Upsell radios that look required (Sid Khaitan), payment fused into the confirmation step (Anna Simpson, Julia Frye), and the extras_plus_balance scenario that blocks drink submission behind balance payment.
-2. **Hosted clients can order outside their package silently.** Mocktails carry no package-gap logic at all (the Jack Van Dyke case), forcing after-the-fact no/free/pay compromises.
+2. **Hosted clients can order outside their package silently.** Mocktails carry no package-gap logic at all (the proposal 600 case), forcing after-the-fact no/free/pay compromises.
 3. **The planner collects ambiguous or dead data.** "Not sure" stored as null (indistinguishable from unanswered), the balance question never consumed by the shopping-list generator, custom drinks captured as bare strings with no ingredients.
 4. **Package contents are prose, not data.** Four disagreeing sources of truth (cost sheet, marketing page, DB seed, owner's head). Formula No. 5 shipped without citrus and nothing noticed.
 

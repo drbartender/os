@@ -46,7 +46,7 @@ Expected: clean tree (the `.env` is gitignored). If `git status` shows noise, st
 
 ---
 
-### Task 2: The failing regression test (Jack Van Dyke)
+### Task 2: The failing regression test (proposal 600)
 
 **Files:**
 - Create: `server/routes/drinkPlans/submitOverride.test.js`
@@ -66,7 +66,7 @@ require('dotenv').config();
 // Regression: a client-submitted drink plan carrying a financial extra must NOT
 // destroy a negotiated price (proposals.total_price_override).
 //
-// Origin: Jack Van Dyke (prod proposal 600, 2026-07-16). CC contract $3,273.
+// Origin: prod proposal 600 (2026-07-16). CC contract $3,273.
 // He added a second portable bar in the planner; submit re-priced him at full
 // catalog ($4,000), left the override column stranded at 3273, and emailed him
 // a $3,900 balance. See docs/superpowers/specs/2026-07-16-drink-plan-override-
@@ -242,7 +242,7 @@ test('overridden proposal: a second bar adds exactly additional_bar_fee and the 
   // The bug: catalog for 175 guests is far above the negotiated contract.
   const catalogish = Number(pkg.base_rate_4hr) * 175;
   assert.ok(Number(row.total_price) < catalogish,
-    'must NOT be re-priced at catalog (this is the Jack Van Dyke regression)');
+    'must NOT be re-priced at catalog (this is the proposal 600 regression)');
 
   // The opposite bug: preserving the override naively makes the extra free.
   assert.ok(Number(row.total_price) > CONTRACT,
@@ -323,7 +323,7 @@ Expected: the first test FAILS. `total_price_override` is still `3273` while `to
 git add server/routes/drinkPlans/submitOverride.test.js
 git commit -m "test(drink-plans): failing regression for override destroyed by submit
 
-Reproduces Jack Van Dyke (prod 600): a client-added bar re-prices a CC
+Reproduces prod 600: a client-added bar re-prices a CC
 contract at catalog and strands total_price_override."
 ```
 
@@ -397,7 +397,7 @@ Replace it with:
           // the engine's serviceTotal REPLACES the whole calculated total with
           // it. So we can neither drop it (the client's negotiated price
           // evaporates and they get billed at catalog, which overbilled Jack
-          // Van Dyke by $627) nor pass it through untouched (the extras they
+          // the proposal 600 client by $627) nor pass it through untouched (the extras they
           // just bought become free). Price the delta at catalog with the
           // override OFF and move the contract by it. Anything this submit did
           // not change sits on both sides and cancels, including the CC-era
@@ -484,7 +484,7 @@ git commit -m "fix(drink-plans): preserve negotiated price across a drink-plan s
 
 A client-submitted plan with a financial extra re-priced the proposal from
 catalog, destroying total_price_override and stranding the column. Jack Van
-Dyke's \$3,273 CC contract became \$4,000 and he was emailed a \$3,900 balance.
+The proposal 600 client's \$3,273 CC contract became \$4,000 and they were emailed a \$3,900 balance.
 
 Passing the override through naively is NOT the fix: serviceTotal replaces the
 calculated total, so every extra would become free. Instead price the delta at
@@ -540,7 +540,7 @@ Expected: no new errors in `server/routes/drinkPlans/submit.js`.
  *   node scripts/cc-balance-invoice.js --only 597    # dry-run one
  *   node scripts/cc-balance-invoice.js --only 597 --apply
  *
- * Produces the INV-0193 shape (Jack Van Dyke, minted by hand 2026-07-16):
+ * Produces the INV-0193 shape (proposal 600, minted by hand 2026-07-16):
  *   label 'Balance'   -> a real CONTRACT_LABELS member, so refundHelpers does
  *                        not classify the payment as extra-scope
  *   status 'sent'     -> the draft-pay trap: the public invoice page renders a

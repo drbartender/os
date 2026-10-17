@@ -13,8 +13,8 @@
 // line (spec 2026-10-08), but it has no idea that a CC contract's deposit sits in
 // external_paid, so it cannot draw the "Less deposit already paid" credit line a
 // CC balance invoice needs. Rather than teach that generator about a retired
-// pricing model, this script mints the shape by hand, the one INV-0193 (Jack Van
-// Dyke) ended up with:
+// pricing model, this script mints the shape by hand, the one INV-0193 (proposal
+// 600) ended up with:
 //
 //   label 'Balance'  - a real CONTRACT_LABELS member, so refundHelpers does not
 //                      classify a later refund as extra-scope and refuse to

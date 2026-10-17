@@ -132,7 +132,7 @@ re-prices through `priceProposedState()` using the proposal's own stored
 `guest_count`, `event_duration_hours`, and `num_bars`, read under the row lock.
 Event parameters are never taken from the request body. The client picks what,
 the server decides how much. This is the exact failure that overbilled Jack Van
-Dyke $627 and put `drinkPlans/submit.js` on the sensitive-paths list, and the new
+the proposal 600 client $627 and put `drinkPlans/submit.js` on the sensitive-paths list, and the new
 write is the same species: a public token-gated handler writing `total_price` off
 client-supplied selections.
 
