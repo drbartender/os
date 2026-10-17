@@ -2050,9 +2050,10 @@ prod (Task 18 of the 2026-10-06 Inbox plan). Spec 16 is the order.
   handled AI reason against its real thread over the first day; any key change gets the real-call
   smoke first (the probe on the box; promoting it to `scripts/` is on the fix list). The ceiling is
   about 10 cents a read and about $30 a day at the default cap of 300; a normal day is 20 to 33 reads.
-- Email and Zola (spec 2026-10-14; lanes email-feed, zola-leads and email-ai). NOT LIVE YET: none of
-  the three has merged, they push together, and `GMAIL_SERVICE_ACCOUNT_KEY` goes into Render only after
-  that push. Owed after switch-on (spec 16): the feed line reads "Gmail catching up", then "Gmail" with
+- Email and Zola (spec 2026-10-14; lanes email-feed, zola-leads and email-ai). NOT LIVE YET: email-feed
+  and email-ai are in prod dark since 2026-10-17 (`dfa1a64d..35b61596`); zola-leads is not built, and
+  `GMAIL_SERVICE_ACCOUNT_KEY` goes into Render only once zola-leads is in prod, so the walk waits on the
+  key. Owed after switch-on (spec 16): the feed line reads "Gmail catching up", then "Gmail" with
   a time, on the phone and the desktop; a client email shows on that client's item with its subject and
   no quoted history; a reply from Gmail closes it as "Replied by email" and "Open in Gmail" opens the
   thread on the phone (the Gmail app) and the desktop; a Zola thread shows as a lead item and "Open in

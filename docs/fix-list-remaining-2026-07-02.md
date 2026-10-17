@@ -1986,7 +1986,7 @@ Push-time sweep of the nine docs commits that followed the morning push. The one
 - **Comments still cite the old design-artifact file name** after the 2026-09-15 to 2026-10-14 rename: two comments in `client/src/index.css`, and the closed-lane notes `docs/design-artifacts/2026-10-06-edit-sheet-layout/github.md` and `docs/design-artifacts/2026-10-06-inbox/github.md`. Closed plans keep the old name on purpose.
 - **A run-on sentence in `ARCHITECTURE.md`**, the AI read paragraph ("stored as ParseError instead of throwing before stop_reason can be read with output_config"); the claims themselves match `aiRead.js`.
 
-### Lane email-feed review leftovers (2026-10-15; merged d88d5089, not pushed, nothing live)
+### Lane email-feed review leftovers (2026-10-15; merged d88d5089, pushed dark 2026-10-17 in dfa1a64d..35b61596, nothing live)
 
 Parked by the lane's review fleet on `bb916025..0bdc2bfb` (spec 2026-10-14 section 17 item 50). None blocked the lane, and none shows mail to the wrong viewer. Nothing here runs in prod until the Gmail key is in Render, which waits on the plan's push gate.
 - **Performance, each on a trigger:**
@@ -2005,6 +2005,25 @@ Parked by the lane's review fleet on `bb916025..0bdc2bfb` (spec 2026-10-14 secti
   - **"Lowest id" is not "earliest" on the first sync** (`personalMail.SQL.answeredInbound`, `readGmail.byMessageId`): a forged reused Message-ID dated between a personal mail and its reply, stored with a lower id across a backfill page, takes the reply over. Impractical. Fix: order by `at, id`.
   - **A marketing lead copied on a reply to a personal mail reads personal** (the reader's override covers every `e-` recipient, leads included, though the sync counted the lead as known). Errs private. Fix: apply the override only to rows the sync judged before their inbound existed.
   - **A deterministic database error outside class 22 or 23 on one message fails every tick** (`gmailSync.js`, `isDbOutage`): it shows as "Gmail failing" plus Sentry from the third tick, with no per-message escape. Fix if it is ever seen: a per-id outage counter.
+
+### Lane email-ai review leftovers (2026-10-17; merged 35b61596, pushed dark in dfa1a64d..35b61596)
+
+Parked by the lane's review fleet and the 2026-10-17 codex second opinion (spec 2026-10-14 section 17 item 51). None blocked the lane. The email side runs in prod only once `GMAIL_SERVICE_ACCOUNT_KEY` is in Render, which waits on lane zola-leads. The menu art lines rode the same push and are filed here with it.
+- **Reply-To is not stored,** so a relay that names the held client only in Reply-To is not held.
+- **Bcc-only copies, pasted words and group or list addresses are not held.**
+- **No whole-thread hold:** only the mail that names a held address or reached a held key is flagged, never the rest of its thread.
+- **A link whose host follows an underscore is never redacted** (`aiRedact.js`, pre-existing; the linear rewrite kept the old matches).
+- **Two client rows sharing the held email route to the newest row's `c-` key** (phones too).
+- **A held client who is also staff under another address is read under the staff key.** Owner call.
+- **The shared light `.chip.neutral` rule is `--ink-3` and fails AA across the admin** (`client/src/index.css` ~11815: Clients, Events, payroll and more). The Inbox is overridden to `--ink-2`; the shared rule waits on the `--ink-3` owner call.
+- **The "Not read yet" accent chip text in After Hours is about 3:1.**
+- **`zola_leads.proposal_id` and `email_leads.client_id` have no index** (the hold joins on both; small tables).
+- **The SMS ledger arm holds a staffer's phone from a staff-notice SMS** (`engine.js`, `HELD_KEYS_SQL`: the email arm drops staff notices by provenance, the SMS arm does not). Fail closed.
+- **`server/utils/messageLog.js` has a comment near line 74 that names a real client** in the public repo. Quick fix: remove the name; check `git log -S` for where it came from.
+- **The menu art draft fingerprint ignores bar picks** (`server/utils/menuDrinkSource.js` ~319, `buildFingerprint`), so a wine changed after Generate shows no plan-changed banner and an approved menu prints the old pick. A spec 5.2 gap, from the 2026-10-17 codex second opinion.
+- **`server/routes/proposals/menuDraftSync.js` ~144 runs a `Promise.all` on one pg client** (through `loadCatalogMaps`): a DeprecationWarning today, a break on pg 9.
+- **`server/utils/r2Proxy.js` holds the R2 key-prefix guard and is not on the sensitive list** (`scripts/sensitive-paths.txt`).
+- **`menu_drafts.approved_by` has no ON DELETE rule** (`schema.sql`), so deleting that user fails while a draft names them.
 
 ### Push 2026-10-08 review leftovers
 

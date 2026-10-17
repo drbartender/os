@@ -108,14 +108,20 @@ lanes:
     blockedBy: [email-feed, zola-pipeline-spec]   # Dallas 2026-10-14: the Zola lead pipeline (box agent scrape, client with contacts, real draft, automated first reply) is its OWN spec, brainstormed first; this lane shrinks to consuming its lead rows
     review: full-fleet   # creates client rows from parsed third-party mail; the Send guard touches the proposal lifecycle
   - id: email-ai
-    footprint:
+    footprint:   # widened 2026-10-17 to every file the lane touched (spec 17 item 51)
       - .claude/CLAUDE.md
+      - ARCHITECTURE.md
+      - README.md
       - client/src/components/inbox/WaitingRows.js
       - client/src/components/inbox/inboxListViews.test.js
+      - client/src/index.css
       - server/utils/inbox/aiRead.js
       - server/utils/inbox/aiRead.test.js
+      - server/utils/inbox/aiRedact.js
       - server/utils/inbox/aiRedact.test.js
-      - server/utils/inbox/classify.js
+      - server/utils/inbox/classify.js   # declared, needed no change
+      - server/utils/inbox/engine.js
+      - server/utils/inbox/engine.test.js
       - server/utils/inbox/payload.js
       - server/utils/inbox/payload.test.js
       - server/utils/inbox/readJob.js
@@ -145,7 +151,7 @@ lanes:
       - server/utils/zolaProposalDraft.test.js
     blockedBy: [zola-leads, zola-pipeline-spec]   # the draft takes the pipeline's real fields, not the notice's
     review: full-fleet   # proposal rows
-pushGate: lanes email-feed, zola-leads and email-ai merge before any push that carries email-feed, and the key is not set in Render before that push (spec 16; plan review 2026-10-14)
+pushGate: GMAIL_SERVICE_ACCOUNT_KEY is not set in Render until lane zola-leads is in prod; then the live probe and the switch-on check as written under Execution (spec 16; plan review 2026-10-14). The old lane-order gate (email-feed, zola-leads and email-ai merge before any push that carries email-feed) was waived by Dallas on 2026-10-17 ("lets push, I have not added gmail keys"); email-feed and email-ai shipped dark in dfa1a64d..35b61596
 ---
 
 # Inbox piece 3: email and Zola, implementation plan
@@ -834,6 +840,8 @@ This task protects exactly the state Task 15 creates (a client with neither emai
 
 - [ ] **Step 1: Tests:** forced `needs_reply`; the held keys include `e-` and `z-`; a sibling with `meta.legalHold` is not readable; two suffixed siblings yield one subject and one `inbox_reads` row; a pitch read leaves the item waiting with `pitch: true`; the chip renders for a `pitch` row. **Step 2: fail. Step 3: Implement. Step 4: green; the client build; a phone and desktop screenshot of a Pitch row for the lane's `ui-ux-review`. Step 5: Commit** `feat(inbox-ai): pitch stays waiting, one read per mail, held email keys`. **Checkpoint:** `security-review` and `code-review` (the paid path).
 
+**Built 2026-10-17 (spec 17 item 51):** subjects keep their suffixed ref and gain `readRef`, which reads are reserved, stored and looked up by, so the outbound subject is never re-keyed; the held key set moved out of `readJob.js` (`HELD_KEYS_SQL` with it) into `engine.loadLegalHold`, shared by the snapshot and the read job (through `legalHoldPersonKeys`), with the `e-` keys hashed in JS.
+
 **Lane gate (email-ai):** full fleet; the inbox suites; the client build. Merge from `os`; the push gate holds until this lane is in.
 
 ---
@@ -903,12 +911,12 @@ Noted, not changed: Gmail answers some per-user rate limits with 403, which the 
 
 The Tasks 9 to 10c consistency check named four things Task 18 owns (inside the push gate, not regressions):
 1. `subjects.inSlice` does not include `zola_unread` yet (spec 17 item 25).
-2. `HELD_KEYS_SQL` carries no `e-` or `z-` keys; the engine's sibling flag (`meta.legalHold`, set in `computeSnapshot` by `markHeldSiblings`) is the email path's hold, and `aiRead.isReadable` must refuse an event that carries it.
-3. **The readRef trap.** Outbound gm subjects still use the suffixed ref (`gm:<id>:n`, one event per recipient). When Task 18 moves `subjectRef` to `meta.readRef` (one read per mail), every lookup that compares a slice line's ref to the subject ref must compare on `readRef` too: `readJob.js` (the `slice.find(e.ref === subjectRef)` near line 81), `aiRead.subjectEntry` and `subjects.resolved`. Miss one and every multi-recipient mail becomes unreadable. Test: a Sent mail to a client and a planner is read once and both events carry the verdict.
+2. `HELD_KEYS_SQL` carries no `e-` or `z-` keys; the engine's sibling flag (`meta.legalHold`, set in `computeSnapshot` by `markHeldSiblings`) is the email path's hold, and `aiRead.isReadable` must refuse an event that carries it. **Built 2026-10-17** (spec 17 item 51): the held key set moved to `engine.loadLegalHold`, hashed in JS, used by the snapshot and the read job.
+3. **The readRef trap.** Outbound gm subjects still use the suffixed ref (`gm:<id>:n`, one event per recipient). When Task 18 moves `subjectRef` to `meta.readRef` (one read per mail), every lookup that compares a slice line's ref to the subject ref must compare on `readRef` too: `readJob.js` (the `slice.find(e.ref === subjectRef)` near line 81), `aiRead.subjectEntry` and `subjects.resolved`. Miss one and every multi-recipient mail becomes unreadable. Test: a Sent mail to a client and a planner is read once and both events carry the verdict. **Built 2026-10-17** (spec 17 item 51): `subjectRef` was not moved; subjects keep their suffixed ref and gain `readRef`, and reads are reserved, stored and looked up by `readRef`.
 4. The personal skip already ships in `subjects.buildSubjects` and `getReadSubjects` (lane email-feed); Task 18 keeps both.
 
 ## Execution
 
-Dallas's standing method: Claude cuts each lane, builds it (one pass for a coherent lane, parallel subagents for independent pieces, stated at the time), runs the mid-lane checkpoints named above and the per-lane fleet, merges by squash from `os`. Order: gmail-client; email-feed; then zola-leads and email-ai in parallel; then zola-draft. **Push gate:** no push carries email-feed until zola-leads and email-ai are merged too, and the key is not set in Render before that push; the live probe run is Dallas's, after the push, with the key in that command's environment only. No push without his own imperative cue.
+Dallas's standing method: Claude cuts each lane, builds it (one pass for a coherent lane, parallel subagents for independent pieces, stated at the time), runs the mid-lane checkpoints named above and the per-lane fleet, merges by squash from `os`. Order: gmail-client; email-feed; then zola-leads and email-ai in parallel; then zola-draft. **Push gate:** the lane-order gate (no push carries email-feed until zola-leads and email-ai are merged too) was waived by Dallas on 2026-10-17 ("lets push, I have not added gmail keys"), and email-feed and email-ai shipped dark in `dfa1a64d..35b61596`. The binding gate now: `GMAIL_SERVICE_ACCOUNT_KEY` is not set in Render until lane zola-leads is in prod; the live probe run is Dallas's, after that push, with the key in that command's environment only. No push without his own imperative cue.
 
 **Switch-on check (lane email-feed's fleet, 2026-10-15):** before the Gmail key goes into Render, confirm `INBOX_OWN_EMAILS` in Render holds the business's older Gmail address. A Zola notice addressed only to that address passes the replay gate (spec 17 item 48) only through that setting; without it such a notice is dropped as a gate failure.
