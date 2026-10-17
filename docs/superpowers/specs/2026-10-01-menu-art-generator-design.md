@@ -548,6 +548,7 @@ Fix, Review, Review & approve, Watch and Open editor open the editor; Generate, 
 10. **Image limit and Too long are not card states** (table C's precedence): the cap is global, and overflow is measured only in the editor. They stay editor banners.
 11. **Navigation details the files leave out:** the `?menu=1` open state, flushing on close, Escape, focus return, and the 900 px narrow-window note (sections 4.2, 10.1).
 12. **The card in House Lights** (added 2026-10-17 from the menu-designer-card review): the design-system snapshot the files are built on predates the app's House Lights restyle of `.card` (no box, a hairline top rule, head and body with no side padding), so in House Lights the card follows the app, not the files. It keeps the `clamp(20px, 2vw, 28px)` inset its neighbours have, and its fold rows are padded 9 / 0 instead of 9 / 16 (11.1, Fold). After Hours keeps the files' framed card.
+13. **The editor in House Lights** (added 2026-10-17 from the menu-designer-editor walk): the same call as item 12. The editor uses the app's House Lights restyle of buttons, segmented pickers, chips and the serif title rather than the design-system snapshot's rounded controls; the pickers are tightened so "Wordmark color" stays on one line. After Hours matches the design.
 
 ### 11.2 Part 2: the printed menu (800 x 1000 canvas, 100 px = 1 in; not the OS skin)
 
