@@ -11194,8 +11194,7 @@ html[data-app="admin-os"][data-skin="dark"] .btn-primary:hover {
    .file-upload-area) get NOTHING — the remap's light text is correct there.
    Verified needs-nothing: .rte-* (its text token --dark-ink is not remapped),
    .checkbox-label (transparent on the dark page, remap correct),
-   .admin-plan-logo-thumb (image content, no text), .tip-tablet (public
-   Sign&Pay surface, out of scope). */
+   .tip-tablet (public Sign&Pay surface, out of scope). */
 
 /* Dashboard tables stay light (parchment th / card-bg td read fine in the
    dark shell today). Restore cell text; the .text-muted #5C3319 !important
@@ -14894,56 +14893,6 @@ html[data-app="admin-os"] .field-block {
 }
 .potion-app .logo-upload-error {
   margin-top: 0.6rem;
-  color: var(--rust);
-  font-size: 0.88rem;
-}
-
-/* Admin: drink plan Logo subsection on EventDetailPage */
-.admin-plan-logo {
-  padding: 0.75rem 0;
-  border-top: 1px solid var(--border-light, rgba(184,146,74,0.32));
-  margin-top: 0.5rem;
-}
-.admin-plan-logo-title {
-  font-family: var(--font-display);
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  color: var(--text-muted);
-  margin: 0 0 0.6rem;
-}
-.admin-plan-logo-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.admin-plan-logo-thumb {
-  width: 80px;
-  height: 80px;
-  object-fit: contain;
-  background: var(--paper);
-  border: 1px solid rgba(28,22,16,0.18);
-  border-radius: 6px;
-  padding: 4px;
-}
-.admin-plan-logo-actions {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.admin-plan-logo-empty {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-.admin-plan-logo-empty-text {
-  color: var(--text-muted);
-  font-style: italic;
-  font-size: 0.9rem;
-}
-.admin-plan-logo-error {
-  margin-top: 0.5rem;
   color: var(--rust);
   font-size: 0.88rem;
 }
@@ -22792,4 +22741,174 @@ html[data-app="admin-os"] .ib-cp-links { display: flex; flex-wrap: wrap; gap: 6p
 @media (prefers-reduced-motion: reduce) {
   html[data-app="admin-os"] .ib-dskel-icon,
   html[data-app="admin-os"] .ib-dskel-bar { animation: none; }
+}
+
+/* ==========================================================================
+   Menu art generator: the printed menu canvas (mc-). Spec
+   2026-10-01-menu-art-generator-design.md sections 11.2 and 11.3. Benchmark:
+   docs/design-artifacts/2026-10-01-menu-designer/menu-designer.html (the
+   2026-10-01 snapshot), amended by 11.2 for the mark. 800 x 1000 canvas px,
+   100 px = 1 in. Not the OS skin: every color and face comes from the
+   variables MenuCanvas sets from table P (--mc-ink, --mc-accent, --mc-tf/ts/
+   tw/tt/tk title, --mc-hf/hs/hw/hk names, --mc-bf/bs/bw body), never an OS
+   token. Nothing here may use a CSS mask, filter, backdrop-filter, blend mode
+   or object-fit, which html2canvas 1.4.1 does not draw, nor a box-shadow,
+   which it draws wrong (a blurred one over the box, layered inset ones
+   inverted; checked in Chromium on 2026-10-16). Text elements are divs and
+   spans, so the app's p and heading rules never reach into the menu.
+   ========================================================================== */
+.mc-frame { position: relative; overflow: hidden; flex: none; }
+.mc-menu {
+  position: absolute; left: 0; top: 0; width: 800px; height: 1000px; overflow: hidden;
+  transform-origin: 0 0; color: var(--mc-ink); text-align: center; font-style: normal;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+}
+.mc-menu.mc-static { pointer-events: none; user-select: none; }
+.mc-menu .mc-layer { position: absolute; left: 0; top: 0; width: 800px; height: 1000px; display: block; max-width: none; }
+.mc-menu .mc-ground { background: #ebe7ec; overflow: hidden; }
+.mc-menu .mc-panel { position: absolute; top: 50px; right: 54px; bottom: 50px; left: 54px; border: 7px solid transparent; }
+.mc-menu .mc-panel-line { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border: 1px solid transparent; }
+.mc-menu .mc-page {
+  position: relative; min-height: 1000px; padding: 58px 66px 86px;
+  display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center;
+}
+.mc-menu .mc-head { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mc-menu .mc-logo-box { display: flex; align-items: center; justify-content: center; }
+.mc-menu .mc-logo-badge { position: relative; }
+/* The badge's soft shadow is an image (softBacking.js drawBadgeShadow), never a
+   box-shadow: html2canvas 1.4.1 paints a blurred outer shadow over the badge. */
+.mc-menu .mc-badge-shadow { position: absolute; display: block; max-width: none; }
+.mc-menu .mc-logo-face { position: relative; background: #fbf8f2; border-radius: 20px; padding: 10px 14px; }
+.mc-menu .mc-logo { display: block; max-width: none; }
+.mc-menu .mc-title {
+  margin: 0; padding: 0 0.1em; line-height: 1.2; color: var(--mc-accent);
+  font-family: var(--mc-tf); font-size: var(--mc-ts); font-weight: var(--mc-tw);
+  text-transform: var(--mc-tt); letter-spacing: var(--mc-tk);
+}
+.mc-menu .mc-orn { display: block; flex: none; }
+.mc-menu .mc-group { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
+.mc-menu .mc-gh {
+  display: flex; align-items: center; gap: 14px; margin: 0; color: var(--mc-accent);
+  font-family: var(--mc-hf); font-weight: var(--mc-hw); font-size: 15px; line-height: 1.2;
+  letter-spacing: 0.22em; text-transform: uppercase;
+}
+.mc-menu .mc-hair { display: block; flex: none; width: 46px; height: 1px; background: currentColor; opacity: 0.7; }
+.mc-menu .mc-row { display: flex; justify-content: center; gap: 16px 26px; width: 100%; }
+.mc-menu .mc-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; }
+.mc-menu .mc-art { position: relative; flex: none; }
+.mc-menu .mc-art-img { position: absolute; left: 0; display: block; max-width: none; }
+.mc-menu .mc-name {
+  margin: 0; color: var(--mc-ink); line-height: 1.12; text-wrap: balance; text-transform: none;
+  font-family: var(--mc-hf); font-weight: var(--mc-hw); font-size: var(--mc-hs); letter-spacing: var(--mc-hk);
+}
+.mc-menu .mc-desc {
+  margin: 0; color: var(--mc-ink); line-height: 1.32; text-wrap: balance; letter-spacing: 0; text-transform: none;
+  font-family: var(--mc-bf); font-weight: var(--mc-bw); font-size: var(--mc-bs);
+}
+.mc-menu .mc-more { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 40px; width: 620px; }
+.mc-menu .mc-more-item { display: flex; flex-direction: column; gap: 2px; }
+.mc-menu .mc-more .mc-name { font-size: calc(var(--mc-hs) * 0.82); }
+.mc-menu .mc-more .mc-desc { font-size: calc(var(--mc-bs) * 0.93); }
+.mc-menu .mc-also { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 5px; max-width: 560px; }
+.mc-menu .mc-also-line {
+  margin: 0; color: var(--mc-ink); line-height: 1.35; letter-spacing: 0;
+  font-family: var(--mc-bf); font-weight: var(--mc-bw); font-size: var(--mc-bs);
+}
+.mc-menu .mc-also-label {
+  margin-right: 0.55em; color: var(--mc-accent); letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.78em;
+  font-family: var(--mc-hf); font-weight: var(--mc-hw);
+}
+.mc-menu .mc-mark { position: absolute; right: 40px; bottom: 40px; display: flex; align-items: center; gap: 8px; }
+.mc-menu .mc-avatar { display: block; height: 40px; width: auto; max-width: none; }
+.mc-menu .mc-wordmark { display: block; width: 159px; height: 18px; max-width: none; }
+/* Drawing states (spec 11.1, On-canvas editing). They draw over the menu, not
+   the OS, so their colors stay literal; never on the export. */
+.mc-menu .mc-slot-st {
+  position: absolute; inset: 0; border-radius: 12px; padding: 8px; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  font: 600 16px/1.2 Inter, system-ui, sans-serif; letter-spacing: 0; text-align: center;
+}
+.mc-menu .mc-slot-st-text { position: relative; }
+.mc-menu .mc-slot-st.mc-run { border: 2.5px dashed rgba(90, 90, 100, 0.5); background: rgba(255, 255, 255, 0.4); color: rgba(40, 40, 50, 0.7); }
+.mc-menu .mc-slot-st.mc-wait { border: 2.5px dashed rgba(90, 90, 100, 0.42); background: rgba(255, 255, 255, 0.3); color: rgba(40, 40, 50, 0.5); }
+.mc-menu .mc-slot-st.mc-bad { border: 2.5px dashed rgba(190, 50, 30, 0.85); background: rgba(255, 236, 232, 0.92); color: #8c2414; }
+.mc-menu .mc-sheen {
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 32%, rgba(255, 255, 255, 0.6) 50%, transparent 68%);
+  background-size: 240% 100%; animation: mc-sheen 1.4s linear infinite;
+}
+.mc-menu .mc-ground-text {
+  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); white-space: nowrap;
+  font: 600 18px Inter, system-ui, sans-serif; color: rgba(40, 40, 50, 0.5);
+}
+@keyframes mc-sheen { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .mc-menu .mc-sheen { animation: none; }
+}
+
+/* ==========================================================================
+   Menu art generator: the Bar menu card on the event page (md-). Spec
+   2026-10-01-menu-art-generator-design.md section 11.1 (the card, table C)
+   and 11.4. Benchmark: docs/design-artifacts/2026-10-01-menu-designer/
+   Menu Designer v2.dc.html, Event page view; its inline styles carried over
+   with the same numbers, on the OS tokens (both skins). The thumbnail is the
+   mc- canvas at scale 0.12.
+   ========================================================================== */
+html[data-app="admin-os"] .md-card { overflow: hidden; }
+html[data-app="admin-os"] .md-card-body { display: flex; gap: 12px; align-items: flex-start; }
+html[data-app="admin-os"] .md-thumb { flex: none; width: 96px; height: 120px; }
+html[data-app="admin-os"] .md-thumb-canvas {
+  display: block; width: 96px; height: 120px; padding: 0; margin: 0; border: 0; border-radius: 2px;
+  overflow: hidden; background: #ddd; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+html[data-app="admin-os"] button.md-thumb-canvas { cursor: pointer; }
+html[data-app="admin-os"] button.md-thumb-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html[data-app="admin-os"] .md-thumb-empty {
+  box-sizing: border-box; width: 96px; height: 120px; padding: 8px;
+  border: 1.5px dashed var(--line-3); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  font-size: 10.5px; color: var(--ink-4);
+}
+html[data-app="admin-os"] .md-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; line-height: 1.25; }
+html[data-app="admin-os"] .md-card-msg { font-size: 13px; font-weight: 500; color: var(--ink-1); text-wrap: pretty; }
+html[data-app="admin-os"] .md-card-sub { font-size: 12px; color: var(--ink-3); text-wrap: pretty; }
+html[data-app="admin-os"] .md-card-prog { height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; margin-top: 4px; }
+html[data-app="admin-os"] .md-card-prog > div { height: 100%; background: var(--accent); transition: width 0.4s; }
+html[data-app="admin-os"] .md-card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+html[data-app="admin-os"] .md-card-note { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+/* The role="alert" error lines, in the old cards' chip style, wrapping. */
+html[data-app="admin-os"] .md-alert { height: auto; white-space: normal; margin: 8px 0 0; padding: 3px 7px; }
+html[data-app="admin-os"] .md-fold { border-top: 1px solid var(--line-1); }
+html[data-app="admin-os"] .md-fold-row { display: flex; align-items: center; gap: 10px; padding: 9px 1rem; }
+html[data-app="admin-os"] .md-fold-sec + .md-fold-sec { border-top: 1px solid var(--line-1); }
+html[data-app="admin-os"] .md-fold .md-alert { margin: 0 1rem 9px; }
+html[data-app="admin-os"] .md-fold-main { flex: 1; min-width: 0; line-height: 1.25; }
+/* The kebab's slot, also left empty on a row without one, so the rows' Upload
+   buttons line up. */
+html[data-app="admin-os"] .md-fold-kebab { display: inline-flex; flex: none; width: 28px; }
+@media (pointer: coarse) {
+  html[data-app="admin-os"] .md-fold-kebab { width: 44px; }
+}
+html[data-app="admin-os"] .md-fold-v {
+  font-size: 12.5px; color: var(--ink-1); margin-top: 2px; min-height: 1.4em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+html[data-app="admin-os"] .md-fold-img {
+  width: 28px; height: 28px; flex: none; box-sizing: border-box; overflow: hidden;
+  border-radius: 4px; background: #fbf8f3; border: 1px solid var(--line-2);
+}
+html[data-app="admin-os"] .md-fold-img img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* House Lights cards are flat page sections inset by the legacy card padding
+   (card-flush drops it in After Hours only); the fold rows then have no side
+   padding, so they line up with the card body. */
+html[data-app="admin-os"][data-skin="light"] .md-card.card-flush { padding: clamp(20px, 2vw, 28px); }
+html[data-app="admin-os"][data-skin="light"] .md-fold-row { padding: 9px 0; }
+html[data-app="admin-os"][data-skin="light"] .md-fold .md-alert { margin: 0 0 9px; }
+/* Loading: a skeleton of the top half. */
+html[data-app="admin-os"] .md-skel { background: var(--bg-3); border-radius: 3px; animation: md-pulse 1.4s ease-in-out infinite; }
+html[data-app="admin-os"] .md-skel-line { height: 12px; width: 80%; }
+html[data-app="admin-os"] .md-skel-line.md-skel-short { width: 55%; }
+@keyframes md-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-app="admin-os"] .md-skel { animation: none; }
 }

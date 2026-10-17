@@ -13,9 +13,9 @@ import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown, { matchCancelTargets } from '../../components/PricingBreakdown';
 import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
-import AdminMenuPrintBlock from '../../components/AdminMenuPrintBlock';
 import MessageLogCard from './eventDetail/MessageLogCard';
-import EventDetailPlanLogo from './EventDetailPlanLogo';
+import MenuDesignerCard from './menuDesigner/MenuDesignerCard';
+import useMenuDraft from './menuDesigner/useMenuDraft';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ServiceExtensionPanel from '../../components/adminos/ServiceExtensionPanel';
@@ -57,6 +57,8 @@ function EventDetailPageDesktop() {
   // Cancel-line: per-line removal targets + the open dialog's target entry.
   const [cancelTargets, setCancelTargets] = useState(null);
   const [cancelLineEntry, setCancelLineEntry] = useState(null);
+  // The Bar menu card's draft hook, at page level (menu art spec 10.1).
+  const menuDraft = useMenuDraft(id);
 
   // Proposal + shifts refetch — passed to the payment panel `onUpdate` and run
   // after an event edit (date/time/location/contact changes re-sync the linked
@@ -578,24 +580,14 @@ function EventDetailPageDesktop() {
               <Icon name="external" size={11} />View event details
             </a>
           )}
-          <AdminMenuPrintBlock
-            proposalId={proposal.id}
-            menuPrintKey={proposal.menu_print_key}
-            menuNotRequired={proposal.menu_not_required}
-            onChange={loadProposal}
+          <MenuDesignerCard
+            proposal={proposal}
+            drinkPlan={drinkPlan}
+            planLoading={drinkPlanLoading}
+            setDrinkPlan={setDrinkPlan}
+            loadProposal={loadProposal}
+            menu={menuDraft}
           />
-          {drinkPlan && (
-            <EventDetailPlanLogo
-              planId={drinkPlan.id}
-              companyLogo={drinkPlan.selections?.companyLogo || ''}
-              onChange={(updatedSelections) => {
-                // Local update of the in-memory drinkPlan so the thumbnail reflects
-                // the new state immediately. The server has already persisted via the
-                // admin upload/delete route (atomic JSONB merge, no race).
-                setDrinkPlan((prev) => prev ? { ...prev, selections: updatedSelections } : prev);
-              }}
-            />
-          )}
           {drinkPlan?.selections?.menuStyle === 'house' && (
             <Suspense fallback={<button className="btn btn-primary" disabled>Loading...</button>}>
               <MenuPNG plan={drinkPlan} />

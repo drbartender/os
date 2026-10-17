@@ -13,7 +13,7 @@ export default function PrivacyPage() {
       eyebrow="No. 08 · The Fine Print"
       title="Privacy Policy"
       intro="What we collect, why we collect it, and what we never do with it."
-      lastUpdated="October 15, 2026"
+      lastUpdated="October 16, 2026"
     >
       <p>
         Dr. Bartender LLC ("Dr. Bartender," "we," "us") provides bartending services
@@ -120,6 +120,7 @@ export default function PrivacyPage() {
         <li>Resend, to send email</li>
         <li>Anthropic, to sort and summarize messages you send us (without your phone number, email address, or card and account numbers)</li>
         <li>Google, for venue address lookup and to read our business mailbox so client email reaches our inbox</li>
+        <li>OpenAI and Google (Gemini), to generate artwork for custom bar menus from the drink plan's menu notes and any image uploaded to it</li>
         <li>Sentry, for error diagnostics</li>
         <li>Cloudflare and Neon, for file storage and our database</li>
         <li>Our hosting providers, to run the site</li>
