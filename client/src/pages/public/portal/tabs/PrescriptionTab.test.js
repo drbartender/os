@@ -1,13 +1,14 @@
 import '@testing-library/jest-dom';
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import PrescriptionTab from './PrescriptionTab';
+import { mapDetailToFocus } from '../constants';
 import api from '../../../../utils/api';
 
 // PrescriptionTab can reuse a detail fetched by PortalHome (passed as
 // proposalDetail) OR fetch its own. The load-bearing guard: it must reuse the
 // prop ONLY when proposalDetail.token === focus.token, else it would render a
-// previously-viewed event's add-ons / payments / signature under this event's
+// previously-viewed event's price rows / payments / signature under this event's
 // totals (the stale-detail bug Codex flagged).
 jest.mock('../../../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
 jest.mock('@sentry/react', () => ({ captureException: jest.fn() }));
@@ -99,4 +100,87 @@ test('a LIVE unbooked proposal still offers Review & book and Share', async () =
   expect(screen.getByRole('link', { name: /Review & book/i })).toBeInTheDocument();
   expect(screen.getByTestId('share-button')).toBeInTheDocument();
   expect(screen.queryByText(/This event has passed/i)).not.toBeInTheDocument();
+});
+
+// The tab's money (spec 2026-10-16 section 4.4): the server's rows (the portal
+// detail route builds them with server/utils/clientPriceLines.js, hidden lines
+// already folded), then one Gratuity row, so rows plus gratuity equal the
+// Total. The Total stays focus.total_price, which reads total_price only.
+const priceRows = [
+  { key: 'package', label: 'Package R', amount: 476.55 },
+  { key: 'bar-rental', label: 'Bar Rental', amount: 50 },
+  { key: 'addon-0', label: 'Add-on R', amount: 99.77 },
+  { key: 'adjustment-0', label: 'Shown discount R', amount: -25 },
+];
+// 476.55 + 50 + 99.77 - 25 = 601.32 of service, plus an 80 gratuity = 681.32.
+const detailRows = {
+  token: 'tok-R', status: 'deposit_paid', package_name: 'Package R', package_includes: [],
+  price_rows: priceRows, gratuity_amount: 80, total_price: '681.32', amount_paid: '100.00',
+  addons: [{ id: 1, addon_name: 'Stale add-on R', line_total: 999 }], payments: [], client_signed_at: null,
+};
+const focusRows = { token: 'tok-R', status: 'deposit_paid', total_price: 681.32, amount_paid: 100, balance_due: 581.32, booked: true };
+
+const toCents = (text) => Math.round(Number(text.replace(/[$,]/g, '')) * 100);
+const pricingAmounts = () => within(screen.getByRole('region', { name: 'Pricing' }))
+  .getAllByText(/\$/).map((el) => el.textContent);
+
+test('draws the server rows then a Gratuity row, and they add up to the Total', async () => {
+  render(<PrescriptionTab focus={focusRows} proposalDetail={detailRows} />);
+  const pricing = await screen.findByRole('region', { name: 'Pricing' });
+  for (const label of ['Package R', 'Bar Rental', 'Add-on R', 'Shown discount R', 'Gratuity']) {
+    expect(within(pricing).getByText(label)).toBeInTheDocument();
+  }
+  const amounts = pricingAmounts();
+  expect(amounts).toEqual(['$476.55', '$50.00', '$99.77', '-$25.00', '$80.00']);
+  expect(screen.getByText('Total')).toBeInTheDocument();
+  expect(screen.getByText('$681.32')).toBeInTheDocument();
+  expect(amounts.reduce((s, a) => s + toCents(a), 0)).toBe(toCents('$681.32'));
+  // The add-ons-only list is gone: the server rows replace it.
+  expect(screen.queryByRole('heading', { name: 'Add-ons' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Stale add-on R')).not.toBeInTheDocument();
+});
+
+test('no Gratuity row when there is no gratuity; the rows alone equal the Total', async () => {
+  const detail = { ...detailRows, gratuity_amount: 0, total_price: '601.32' };
+  const focus = { ...focusRows, total_price: 601.32, balance_due: 501.32 };
+  render(<PrescriptionTab focus={focus} proposalDetail={detail} />);
+  const pricing = await screen.findByRole('region', { name: 'Pricing' });
+  expect(within(pricing).queryByText('Gratuity')).not.toBeInTheDocument();
+  expect(pricingAmounts().reduce((s, a) => s + toCents(a), 0)).toBe(toCents('$601.32'));
+  expect(screen.getByText('$601.32')).toBeInTheDocument();
+});
+
+test('no rows (no priced snapshot): no Pricing block and no lone Gratuity row; the Total still shows', async () => {
+  const detail = { ...detailRows, price_rows: [], gratuity_amount: 80, total_price: '500.00' };
+  const focus = { ...focusRows, total_price: 500, balance_due: 400 };
+  render(<PrescriptionTab focus={focus} proposalDetail={detail} />);
+  expect(await screen.findByText('Package R')).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Pricing' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Gratuity')).not.toBeInTheDocument();
+  expect(screen.getByText('$500.00')).toBeInTheDocument();
+});
+
+test('a drill-down focus reads total_price, never an override, so the rows add up to its Total', async () => {
+  // A detail from a server mid-deploy can still carry the override (the
+  // service figure, gratuity left out). The tab's Total must be total_price.
+  const detail = { ...detailRows, total_price_override: '601.32' };
+  const focus = mapDetailToFocus(detail);
+  expect(focus.total_price).toBe(681.32);
+  expect(focus.balance_due).toBeCloseTo(581.32, 2);
+  render(<PrescriptionTab focus={focus} proposalDetail={detail} />);
+  await screen.findByRole('region', { name: 'Pricing' });
+  expect(screen.getByText('$681.32')).toBeInTheDocument();
+  expect(screen.getByText('$581.32')).toBeInTheDocument();
+  expect(pricingAmounts().reduce((s, a) => s + toCents(a), 0)).toBe(toCents('$681.32'));
+});
+
+test('row labels read as the proposal page reads them: a canonical gratuity label resolves', async () => {
+  // The page passes every row label through resolveGratuityDisplayLabel; a
+  // visible line named exactly "Shared Gratuity" reads "Staffing Gratuity".
+  const detail = { ...detailRows, price_rows: [...priceRows.slice(0, 3), { key: 'adjustment-0', label: 'Shared Gratuity', amount: 25 }] };
+  render(<PrescriptionTab focus={focusRows} proposalDetail={detail} />);
+  const pricing = await screen.findByRole('region', { name: 'Pricing' });
+  expect(within(pricing).getByText('Staffing Gratuity')).toBeInTheDocument();
+  expect(within(pricing).queryByText('Shared Gratuity')).not.toBeInTheDocument();
+  expect(within(pricing).getByText('Package R')).toBeInTheDocument();
 });

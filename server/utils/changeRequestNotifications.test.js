@@ -59,6 +59,21 @@ test('an approval ledgers change_request_decision on its proposal with the decid
   });
 });
 
+test('an approval quotes total_price and its balance, never the override (spec 2026-10-16 section 4.4)', async () => {
+  stubSend();
+  // A $1,211.23 override with an $80 gratuity on top: total_price is 1291.23.
+  // The override alone left the gratuity out of the new total and the balance.
+  const overridden = { ...proposal, total_price: '1291.23', total_price_override: '1211.23', amount_paid: '300.00' };
+  await notify.notifyClientOfDecision({ decision_note: null }, overridden, 'approved', { sentBy: 4242 });
+  assert.equal(sends.length, 1);
+  assert.match(sends[0].text, /New total \$1291\.23\./);
+  assert.match(sends[0].text, /Balance remaining \$991\.23\./);
+  assert.match(sends[0].html, /\$1291\.23/);
+  for (const part of [sends[0].subject, sends[0].html, sends[0].text]) {
+    assert.ok(!part.includes('1211.23'), 'no part of the email carries the override');
+  }
+});
+
 test('a decline ledgers the same type, and with no sentBy the admin is NULL', async () => {
   stubSend();
   await notify.notifyClientOfDecision({ decision_note: 'That date is already taken.' }, proposal, 'declined');

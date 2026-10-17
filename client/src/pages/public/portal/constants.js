@@ -12,7 +12,9 @@ function venueLabel(p) {
   return 'Location TBD';
 }
 export function mapDetailToFocus(p) {
-  const total = Number(p.total_price_override ?? p.total_price ?? 0);
+  // total_price only, as the server's shapeFocus reads it (spec 2026-10-16
+  // section 4.4): the Prescription tab's rows add up to it, gratuity included.
+  const total = Number(p.total_price ?? 0);
   const paid = Number(p.amount_paid ?? 0);
   return {
     token: p.token, status: p.status, booked: BOOKED.has(p.status), past: PAST.has(p.status),

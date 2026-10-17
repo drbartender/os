@@ -42,7 +42,9 @@ async function notifyClientOfDecision(cr, proposal, outcome, { sentBy = null } =
   const portalUrl = `${PUBLIC_SITE_URL}/my-proposals`;
   let tpl;
   if (outcome === 'approved') {
-    const total = Number(proposal.total_price_override ?? proposal.total_price ?? 0);
+    // total_price, the Total the portal shows (spec 2026-10-16 section 4.4):
+    // an override leaves the gratuity out of the new total and the balance.
+    const total = Number(proposal.total_price ?? 0);
     const balance = total - Number(proposal.amount_paid ?? 0);
     tpl = templates.changeRequestApproved({ clientName: c.name, eventLabel: labelFor(proposal), newTotal: total, balanceDue: balance, portalUrl });
   } else {

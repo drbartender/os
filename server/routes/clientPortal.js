@@ -6,6 +6,8 @@ const { NotFoundError } = require('../utils/errors');
 const { PROPOSAL_SUMMARY_COLUMNS, shapeFocus } = require('./clientPortal/summary');
 const { requireUuidToken } = require('../utils/tokens');
 const { chicagoTodayYmd } = require('../utils/businessTime');
+const { buildClientPriceRows, moneyToCents } = require('../utils/clientPriceLines');
+const { reportPriceRowsFold } = require('./proposals/publicToken');
 
 // Injection seam for the business day — see staffPortal.js. The UTC and
 // Chicago days agree for about 19 hours a day, so without this a boundary
@@ -80,8 +82,7 @@ router.get('/home', asyncHandler(async (req, res) => {
     // Archive is bounded (LIMIT 50) so the landing payload can't grow without
     // limit for a repeat client; if one ever exceeds it, back the dedicated
     // /my-proposals/archive route with a paged endpoint.
-    pool.query(`SELECT p.token, p.event_type, p.event_type_custom, p.event_date,
-                       COALESCE(p.total_price_override, p.total_price) AS total_price, p.status
+    pool.query(`SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.status
                 FROM proposals p WHERE p.client_id = $1 AND (
                   p.status = 'completed'
                   OR (p.status = 'archived' AND p.archive_reason = 'event_completed')
@@ -98,10 +99,31 @@ router.get('/home', asyncHandler(async (req, res) => {
   });
 }));
 
+// The Prescription tab's price rows (spec 2026-10-16 section 4.4): the rows the
+// proposal page draws, hidden lines folded on the server by the same builder,
+// against the booking's total_price less its client gratuity. The portal's
+// Total is total_price (invoices fold to it too), so whenever there are rows,
+// rows plus gratuity_amount equal that Total, and a total that drifted off its
+// snapshot folds into the rows and reaches Sentry as an unexplained gap. A
+// NULL total_price is no target at all, never a $0 one, which would fold every
+// row away: no rows, and the tab shows its Total alone. Only the rows and the
+// gratuity figure leave here; the fold report never does (plan decision 6).
+function portalPriceRows(snapshot, totalPrice, packageName) {
+  const gratuity = snapshot && typeof snapshot === 'object' && snapshot.gratuity ? snapshot.gratuity.total : 0;
+  const gratuityCents = Math.max(0, moneyToCents(gratuity));
+  const total = totalPrice === null || totalPrice === undefined || totalPrice === '' ? NaN : Number(totalPrice);
+  const targetCents = Number.isFinite(total) ? Math.round(total * 100) - gratuityCents : NaN;
+  const { rows, fold } = buildClientPriceRows(snapshot, { targetCents, packageName });
+  return { rows, fold, gratuityAmount: gratuityCents / 100 };
+}
+
 // GET /api/client-portal/proposals/:token — full proposal detail
 router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.'), asyncHandler(async (req, res) => {
   // Public-safe column allowlist — even the client themselves should not see
   // admin_notes, stripe_customer_id, stripe_payment_method_id, or signature IP/UA.
+  // Nor total_price_override or adjustments: the response spreads this row, so
+  // every column selected here reaches the client, except pricing_snapshot,
+  // which comes off the row below before anything spreads it.
   const result = await pool.query(`
     SELECT
       p.id, p.token, p.client_id,
@@ -114,7 +136,7 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
       p.client_signature_document_version,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
-      p.venue_name, p.venue_city, p.venue_state, p.total_price_override,
+      p.venue_name, p.venue_city, p.venue_state, p.pricing_snapshot,
       dp.token AS drink_plan_token, COALESCE(dp.submitted_at, dp.finalized_at) AS drink_plan_submitted_at,
       oi.open_invoice_token, oi.open_invoice_label,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
@@ -138,10 +160,15 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
 
   if (!result.rows[0]) throw new NotFoundError('Proposal not found.');
 
-  const proposal = result.rows[0];
+  // The snapshot comes off the row before anything spreads it, so only the
+  // rows built from it leave. It is read in the SAME statement as total_price
+  // and the package: two reads could straddle a write that moves the total and
+  // the snapshot together (the payment webhook's gratuity apply, an editor
+  // save) and fold the rows against a stale total.
+  const { pricing_snapshot: storedSnapshot, ...proposal } = result.rows[0];
 
-  // Fetch add-ons + payments in parallel — both depend only on proposal.id
-  // (explicit columns — no SELECT *)
+  // Fetch add-ons + payments in parallel: both depend only on proposal.id
+  // (explicit columns, no SELECT *).
   // The proposal row above is already client-scoped (WHERE client_id = $2), so
   // proposal.id is owned. The extra `proposal_id IN (... WHERE client_id)` filter
   // is belt-and-suspenders against IDOR surviving a future refactor of the lookup.
@@ -164,8 +191,14 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
     ),
   ]);
 
+  const priceView = portalPriceRows(storedSnapshot, proposal.total_price, proposal.package_name);
+  reportPriceRowsFold(proposal.id, priceView.fold, priceView.rows.length, { route: 'client-portal' });
+
   res.json({
-    proposal: { ...proposal, addons: addons.rows, payments: payments.rows },
+    proposal: {
+      ...proposal, addons: addons.rows, payments: payments.rows,
+      price_rows: priceView.rows, gratuity_amount: priceView.gratuityAmount,
+    },
   });
 }));
 

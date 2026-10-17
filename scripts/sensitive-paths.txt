@@ -433,6 +433,15 @@ server/utils/foldDecision.js
 server/utils/clientPriceLines.js
 server/utils/publicSnapshot.js
 server/routes/drinkPlans.js
+# The client portal (spec 2026-10-16 section 4.4, lane portal-rows): the detail
+# route builds the Prescription tab's money rows (the same builder, against
+# total_price less the gratuity) and keeps the snapshot, its adjustments and the
+# override out of a response that spreads its row; /home and summary.js set the
+# Total and balance a client sees; changeRequests.js quotes the prices a client
+# consents to. A wrong column here hands a client a hidden line, or a Total that
+# does not add up. A folder needs dir/* (a '*' never crosses '/').
+server/routes/clientPortal.js
+server/routes/clientPortal/*
 
 # The GATE MACHINERY itself (2026-08-14). These decide WHETHER the money suites
 # run, so a bug here does not weaken one money path, it silently removes the

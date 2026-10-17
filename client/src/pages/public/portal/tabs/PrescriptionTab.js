@@ -1,17 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useId } from 'react';
 import * as Sentry from '@sentry/react';
 import api from '../../../../utils/api';
 import { interpolatePackageIncludes } from '../../../../utils/packageIncludes';
+import { GRATUITY_DISPLAY, resolveGratuityDisplayLabel } from '../../../../utils/gratuityLabels';
 import { formatDollars, formatCents } from '../money';
 import ShareButton from '../ShareButton';
 import ChangeRequestForm from '../ChangeRequestForm';
 import ChangeRequestBanner from './ChangeRequestBanner';
 
 export default function PrescriptionTab({ focus, proposalDetail }) {
+  const pricingId = useId();
   // Reuse a parent-fetched detail ONLY when it is THIS event's detail. After an
   // archive fallback PortalHome can still be holding a previously-viewed event's
   // detail; reusing it by truthiness alone would render the wrong proposal's
-  // add-ons / payments / signature under this event's totals.
+  // price rows / payments / signature under this event's totals.
   const reusable = proposalDetail && proposalDetail.token === focus.token ? proposalDetail : null;
   const [p, setP] = useState(reusable);
   const [state, setState] = useState(reusable ? 'ready' : 'loading');
@@ -58,12 +60,26 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
     bartenders: p.num_bartenders ?? undefined,
     durationHours: p.event_duration_hours ?? undefined,
   });
+  // The rows a client sees (spec 2026-10-16 section 4.4), built on the server
+  // with hidden lines already folded (the portal detail route, through
+  // server/utils/clientPriceLines.js), then the gratuity row, so rows plus
+  // gratuity equal the Total below (focus.total_price, which is total_price).
+  // No rows (a booking with no priced snapshot) draws no breakdown at all,
+  // never a partial list beside the Total. Labels resolve the way the proposal
+  // page resolves them (ProposalPricingBreakdown.js), so a line named with a
+  // canonical gratuity label reads the same on both.
+  const priceRows = Array.isArray(p.price_rows) ? p.price_rows : [];
+  const gratuity = Number(p.gratuity_amount) || 0;
   return (<div className="cp-rx">
     <ChangeRequestBanner request={openRequest || lastDecided} onWithdraw={withdraw} />
     <div className="cp-rx-pkg"><h3>{p.package_name || 'Your package'}</h3>
       <ul className="cp-rx-includes">{includes.map((it, i) => <li key={i}>{it}</li>)}</ul></div>
-    {p.addons?.length > 0 && (<div className="cp-rx-addons"><h4>Add-ons</h4>
-      {p.addons.map(a => <div key={a.id} className="cp-leader"><span>{a.addon_name}</span><span>{formatDollars(a.line_total)}</span></div>)}</div>)}
+    {priceRows.length > 0 && (<section className="cp-rx-addons" aria-labelledby={pricingId}><h4 id={pricingId}>Pricing</h4>
+      {priceRows.map(r => <div key={r.key} className="cp-leader">
+        <span>{resolveGratuityDisplayLabel(r.label, null) ?? (r.key === 'package' ? 'Your package' : '')}</span>
+        <span>{formatDollars(r.amount)}</span></div>)}
+      {gratuity > 0 && <div className="cp-leader"><span>{GRATUITY_DISPLAY}</span><span>{formatDollars(gratuity)}</span></div>}
+    </section>)}
     <div className="cp-rx-totals">
       <div className="cp-leader"><span>Total</span><span>{formatDollars(focus.total_price)}</span></div>
       <div className="cp-leader"><span>Paid</span><span>{formatDollars(focus.amount_paid)}</span></div>

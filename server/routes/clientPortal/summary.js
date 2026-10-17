@@ -9,7 +9,7 @@ const PROPOSAL_SUMMARY_COLUMNS = [
   'p.token', 'p.status', 'p.archive_reason', 'p.event_type', 'p.event_type_custom',
   'p.event_date', 'p.event_start_time', 'p.guest_count',
   'p.venue_name', 'p.venue_city', 'p.venue_state',
-  'p.total_price', 'p.total_price_override', 'p.amount_paid', 'p.balance_due_date',
+  'p.total_price', 'p.amount_paid', 'p.balance_due_date',
 ].join(', ');
 function venueLabel(r) {
   if (r.venue_name) return String(r.venue_name);
@@ -17,7 +17,10 @@ function venueLabel(r) {
   return 'Location TBD';
 }
 function shapeFocus(r) {
-  const total = Number(r.total_price_override ?? r.total_price ?? 0);
+  // total_price only (spec 2026-10-16 section 4.4): the override is a
+  // service-level figure with the gratuity on top of it, so reading it left
+  // the gratuity out of the portal's Total and balance.
+  const total = Number(r.total_price ?? 0);
   const paid = Number(r.amount_paid ?? 0);
   return {
     token: r.token, status: r.status, booked: BOOKED.has(r.status),

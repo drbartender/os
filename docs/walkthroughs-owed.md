@@ -2262,7 +2262,7 @@ Display and payload only (spec 2026-10-16 sections 4.2 and 4.3): nothing is char
 
 Verified so far by the suites (`clientPriceLines.test.js` against a characterization copy of the old page rows, `publicSnapshot.test.js`, `publicLeak.test.js` on the raw response bodies of all three token routes, `publicToken.priceRows.test.js`, the legal-hold entry link in `publicToken.test.js`, `pageRows.test.js`); nobody has seen it on a real booking.
 
-### Editor: Set agreed price, stale saves, the Remote Staffing Fee (lane editor, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### Editor: Set agreed price, stale saves, the Remote Staffing Fee (lane editor, merged 581966c7; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Spec 2026-10-16 sections 5, 5.1 and 5.3. An editor save charges nothing, so any dev booking with nothing paid will do (dev talks to live Stripe; nothing here calls it). Never use 600.
 1. **Set agreed price on a dev booking (lower, higher, again, zero).** Edit, then Price adjustments, Set agreed price. Under the input: "Before gratuity. Gratuity is added on top." (a hosted booking with over-ratio bartenders adds "Includes staffing gratuity."). Type a price below the Live preview's total less gratuity and Apply: a hidden "Agreed price adjustment" discount row appears and the Live preview lands on that price plus gratuity. Save, reopen, set a higher price: the same row turns into a surcharge in place, and "Client sees" stays as you left it. Set another price: still one row. Set the price the booking had before step 1: the row goes. Set $0: a discount to $0; then Set agreed price again at the $0 preview refuses with "Remove the agreed price line, then set the price again." Blank, letters, a minus sign or $1,000,000 keep Apply off with "Enter a price of $0 or more".
@@ -2273,6 +2273,19 @@ Spec 2026-10-16 sections 5, 5.1 and 5.3. An editor save charges nothing, so any 
 6. **The phone sheet and a client view (fix round 1).** Open the edit sheet on the Pixel, change the guests, then load the booking's public proposal page in a private window, then Confirm: it saves. A desktop edit to the add-ons or the lines in between still refuses with Reload.
 
 Verified so far by the suites (`patchGuards.test.js`, `crud.guards.test.js`, `agreedPrice.test.js`, `AgreedPriceControl.test.js`, `AdjustmentsSection.test.js`, `ProposalEditorForm.guards.test.js`, `EditSheet.test.js`, `RemoteStaffingFeePrompt.test.js`); nobody has used it in a browser. The refund-line confirm needs a booking with a Refund line, which only a real refund writes (lane refund-line), so it is covered by the suites alone until one exists.
+
+### The portal Prescription tab draws folded rows that add up, and portal totals include the gratuity (lane portal-rows, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+
+Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or stored. Use a dev booking with a hidden discount (editor, "Client sees" off) and a client gratuity (an admin mandate from the editor puts one on an unpaid booking). Sign in to the client portal as that booking's client: the login code is emailed, so use a booking whose client address you can read and run the dev server with `SEND_NOTIFICATIONS=true`. The walk:
+1. The Prescription tab: a Pricing card lists the package, bar rental, add-ons, syrups and any shown discount, then Gratuity. There is no row for the hidden discount (the package row is lower by exactly its amount), and the rows add up to the Total under them.
+2. The network tab, the `GET /api/client-portal/proposals/<token>` response: `price_rows` and `gratuity_amount` are there, and nowhere in the body is the hidden line's label or (for a discount smaller than the package row) its amount, a `pricing_snapshot`, `adjustments` or a `total_price_override`.
+3. A booking with an override and a gratuity (any time before the conversion runs): the tab's Total, the Overview total and the Balance due include the gratuity and match the proposal page's Total.
+4. The archive list and a past event's drill-down: each total is the booking's total, gratuity included.
+5. Request a change from the portal on a booking with a gratuity and approve it in the admin: the "Your changes are confirmed" email quotes the same new total and balance the portal shows.
+6. A booking with no priced snapshot (an old draft): no Pricing card and no lone Gratuity line, the Total alone.
+7. On a phone: each Pricing line keeps its label and amount on one line (or wraps cleanly), with no sideways scroll.
+
+Verified so far by the suites (`clientPortal.test.js` on the raw response bodies of every portal route, `clientPortal/summary.test.js`, `changeRequestNotifications.test.js`, `PrescriptionTab.test.js`); nobody has seen it on a real booking.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
