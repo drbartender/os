@@ -187,7 +187,14 @@ Same shape as the bank-debit-in-flight problem closed 2026-09-14: an event nobod
 a state nobody could see. The fix is a `refund.failed` subscription plus a reverse reconciliation,
 which does not exist in any form today. Exposure is low and bounded (bank refunds are rare here,
 and a returned one is visible in the Stripe dashboard), but it is silent, which is what makes it
-worth writing down.
+worth writing down. Since the override removal (lane refund-line), a contract refund also writes a
+Refund adjustment line (`source: 'refund'`, `refund_id`); the reverse reconciliation must remove that
+line too, or the booking keeps a discount for money that never left (refund-line security review,
+2026-10-17).
+- **The refund line writer can store a line past the adjustment cap.** `appendRefundLine` appends
+  without checking `validateAdjustments`' line-count cap, so a booking already at the cap ends with one
+  line more than the editor accepts, and every later editor save is refused until a line is removed.
+  No prod booking is near the cap. Raised by the refund-line security review, 2026-10-17.
 
 ### A contract refund on a booking with no override is billed again by the next editor save
 
