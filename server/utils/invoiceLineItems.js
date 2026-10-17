@@ -5,6 +5,7 @@
 
 const Sentry = require('@sentry/node');
 const { toCents, db } = require('./invoiceShared');
+const { decideFold, PRICING_ADJUSTMENT_LABEL } = require('./foldDecision');
 
 // ─── 2. buildInvoiceLineItems / generateLineItemsFromProposal ────────────────
 
@@ -47,14 +48,15 @@ function foldToContract(items, packageItem, snap, { totalPriceCents, visibleAdjN
   // snapshot's own rounded subtotal; past that it is a real disagreement.
   fold.drift = Math.abs(fold.unexplainedCents) > items.length;
 
-  if (gap === 0) return fold;
-  if (packageItem.line_total + gap >= 0) {
+  const verdict = decideFold({ hasPackage: true, packageCents: packageItem.line_total, gapCents: gap });
+  if (verdict === 'none') return fold;
+  if (verdict === 'package') {
     packageItem.line_total += gap;
     packageItem.unit_price = packageItem.line_total;
     fold.applied = 'package';
   } else {
     items.push({
-      description: 'Pricing adjustment',
+      description: PRICING_ADJUSTMENT_LABEL,
       quantity: 1,
       unit_price: gap,
       line_total: gap,

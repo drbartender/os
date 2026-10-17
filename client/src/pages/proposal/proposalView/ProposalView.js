@@ -14,6 +14,7 @@ import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
 import { applyIntentQuote } from './intentQuote';
+import { pageRows } from './pageRows';
 import { paidState, readRedirect } from './paidState';
 import { useSettle } from './useSettle';
 import { checkoutVisibility } from './checkoutVisibility';
@@ -572,52 +573,17 @@ export default function ProposalView() {
     }
   };
 
-  // Line-item rows for the pricing breakdown. Rebuilt only when the pricing
-  // snapshot object or the package name changes — the snapshot reference is
-  // swapped wholesale by the payment-intent effect when total/gratuity update,
-  // so keying on it also catches those refreshes. Declared above the early
-  // returns to keep hook order stable; guards null proposal/snapshot itself.
-  const lineItems = useMemo(() => {
-    const snap = proposal?.pricing_snapshot;
-    const items = [];
-    if (snap && snap.package) {
-      const packageTotal = (snap.package.base_cost || 0) + (snap.staffing?.total || 0);
-      items.push({ label: proposal.package_name, amount: packageTotal });
-      if (snap.bar_rental?.total > 0) {
-        items.push({ label: 'Bar Rental', amount: snap.bar_rental.total });
-      }
-      (snap.addons || []).forEach(a => {
-        items.push({ label: a.name, amount: a.line_total });
-      });
-      if (snap.syrups?.total > 0) {
-        let syrupLabel = 'Handcrafted Syrups';
-        const sc = snap.syrups;
-        if (sc.packs > 0 && sc.singles > 0) {
-          syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''} + ${sc.singles} single${sc.singles !== 1 ? 's' : ''})`;
-        } else if (sc.packs > 0) {
-          syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''})`;
-        } else {
-          syrupLabel += ` (${sc.singles} bottle${sc.singles !== 1 ? 's' : ''})`;
-        }
-        items.push({ label: syrupLabel, amount: sc.total });
-      }
-      (snap.adjustments || []).forEach(adj => {
-        if (!adj.visible) return;
-        const amt = Math.abs(Number(adj.amount) || 0);
-        items.push({
-          label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
-          amount: adj.type === 'discount' ? -amt : amt,
-        });
-      });
-      if (snap.gratuity && snap.gratuity.total > 0) {
-        // Flagged: the one line the payment webhook rewrites (election at
-        // payment recomputes snapshot.gratuity), so the breakdown hides it
-        // while the redirect is still settling.
-        items.push({ label: 'Gratuity', amount: snap.gratuity.total, gratuity: true });
-      }
-    }
-    return items;
-  }, [proposal?.pricing_snapshot, proposal?.package_name]);
+  // Line-item rows for the pricing breakdown: the server's rows, hidden lines
+  // already folded (spec 2026-10-16 section 4.2), plus the gratuity row from
+  // the snapshot (pageRows.js). Rebuilt when the rows or the snapshot object
+  // change; the snapshot reference is swapped wholesale by the payment-intent
+  // effect when total/gratuity update, so keying on it also catches those
+  // refreshes. Declared above the early returns to keep hook order stable;
+  // pageRows guards a null proposal/snapshot itself.
+  const lineItems = useMemo(
+    () => pageRows(proposal?.price_rows, proposal?.pricing_snapshot),
+    [proposal?.price_rows, proposal?.pricing_snapshot]
+  );
 
   if (loading) {
     return (

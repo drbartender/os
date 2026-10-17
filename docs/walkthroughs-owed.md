@@ -2239,7 +2239,7 @@ Display only (spec 2026-10-16 sections 4.5 and 6): no amount moves, and the serv
 
 Verified so far by the suites (`hiddenRows.test.js`, `PricingBreakdown.test.js`, `eventDetailView.test.js`, `EventDetailPhone.test.js`, and the engine suite for the row mark) and a headless render of the real markup with `index.css` at 560 and 390 pixels in both skins (2026-10-17); nobody has seen it on a real booking.
 
-### A contract refund writes a visible Refund line (lane refund-line, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+### A contract refund writes a visible Refund line (lane refund-line, merged 8c3b7051; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
 
 Money path (spec 2026-10-16 section 6). Dev talks to LIVE Stripe, so a refund on a dev booking is a real refund: use the smallest real amount on a booking Dallas names, or skip this walk and rely on the suites. The walk:
 1. From the payment panel, issue a contract refund (the overpayment box left unchecked).
@@ -2248,6 +2248,19 @@ Money path (spec 2026-10-16 section 6). Dev talks to LIVE Stripe, so a refund on
 4. A refund made as an overpayment return writes no line.
 
 Verified so far by the suites (`refundLine.test.js`, `refundHelpers.line.test.js`, driving `applyRefundReconciliation` with fixture rows, no Stripe); nobody has seen it on a real booking.
+
+### The proposal page draws the server's rows, and a hidden line's label never leaves the server (lane client-rows, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+
+Display and payload only (spec 2026-10-16 sections 4.2 and 4.3): nothing is charged or stored. On a dev booking, add a discount in the editor with "Client sees" off, save, then open "Preview as client":
+1. The Pricing table: no row for the hidden discount, the package row is lower by exactly its amount, and the rows plus Gratuity add up to the Total. A booking with no hidden line reads exactly as before (same rows, labels and amounts).
+2. The network tab, the `GET /api/proposals/t/<token>` response: `price_rows` is there, and nowhere in the body is the hidden line's label or (for a discount smaller than the package row) its amount, a `breakdown`, a `subtotal` or a `total_price_override`.
+3. A hidden discount bigger than the package row: the package keeps its price and one "Pricing adjustment" row carries the amount (by design, spec D3; its label never shows); the rows still add up to the Total.
+4. Choose a gratuity at checkout (the create-intent re-quote): the Gratuity row and the Total move together and the rows still add up (plan Review Focus 2).
+5. "See other packages", then switch: the page after the switch shows folded rows, and the switch response carries no hidden label either.
+6. On a booked booking with a hidden discount, the drink plan page: the `GET /api/drink-plans/t/<token>` response carries no hidden label, `breakdown`, `subtotal` or override, and the bar rental and syrups steps read as before.
+7. A booking under legal hold that is still `sent` or `viewed`: no "See other packages" entry card, and nothing on the page names the hold (dev only: add the id to the hold list for the walk, then take it off).
+
+Verified so far by the suites (`clientPriceLines.test.js` against a characterization copy of the old page rows, `publicSnapshot.test.js`, `publicLeak.test.js` on the raw response bodies of all three token routes, `publicToken.priceRows.test.js`, the legal-hold entry link in `publicToken.test.js`, `pageRows.test.js`); nobody has seen it on a real booking.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

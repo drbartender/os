@@ -10,6 +10,7 @@ const { ValidationError, ConflictError, NotFoundError, PermissionError, External
 const { API_URL } = require('../utils/urls');
 const { ensureNotFinalized, registerFinalizeRoute, registerUnfinalizeRoute } = require('../utils/beoFinalize');
 const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
+const { publicPriceView } = require('../utils/publicSnapshot');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
 const { handleSubmit } = require('./drinkPlans/submit');
@@ -73,6 +74,12 @@ router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer 
   );
   if (!result.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
   const plan = result.rows[0];
+  // The public copy of the booking's snapshot (spec 2026-10-16 section 4.3),
+  // swapped in before anything else touches the row: no hidden line, no
+  // override, no pre-fold subtotal reaches a token holder, and the package
+  // price is the folded row the proposal page shows. The planner reads
+  // bar_rental and syrups.selections, which it keeps.
+  plan.pricing_snapshot = publicPriceView(plan.pricing_snapshot, { packageName: plan.package_name }).snapshot;
   // The drink plan only opens after the client books (deposit paid).
   // Outstanding proposal-sent emails may still carry a /plan/:token link for a
   // pre-deposit proposal — never drop an unbooked client into the wizard (it

@@ -2787,7 +2787,7 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   the snapshot (adjustments filtered to visible, `total_price_override` dropped, `breakdown`
   checked for hidden labels), after confirming what ProposalView reads so the totals it shows do
   not move. Raised by the invoice-lines security review, 2026-10-08. Designed 2026-10-16:
-  `docs/superpowers/specs/2026-10-16-price-override-removal-design.md` section 4.3 (one sanitizer on every token route, leak test). Not built.
+  `docs/superpowers/specs/2026-10-16-price-override-removal-design.md` section 4.3 (one sanitizer on every token route, leak test). Built in lane client-rows (merge sha: TBD at merge): `GET /api/proposals/t/:token`, the switch's response and `GET /api/drink-plans/t/:token` send a sanitized snapshot (`server/utils/publicSnapshot.js`) and the page draws server-folded `price_rows`; `publicLeak.test.js` asserts the raw bodies. A token holder can still recover the hidden NET by arithmetic (the catalog calculator, the options drawer), which the spec accepts.
 - **The manual-invoice route accepts the contract labels Deposit, Balance and Full Payment.**
   `POST /api/invoices/proposal/:proposalId` (`server/routes/invoices.js`, about L258-266) rejects only
   off-ledger labels, so an admin can mint a manual "Balance", and `PATCH /api/invoices/:id` (about

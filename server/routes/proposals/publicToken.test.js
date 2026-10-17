@@ -21,6 +21,7 @@ const {
   LEGACY_AGREEMENT_VERSION,
 } = require('../../utils/agreementVersions');
 const publicTokenRouter = require('./publicToken');
+const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
 
 let server;
 let baseUrl;
@@ -266,6 +267,25 @@ test('options_available: false once money is on the row, matching the switch gua
     'money on the row closes the entry point');
   await pool.query(`UPDATE proposals SET amount_paid = 0 WHERE id = $1`, [p.id]);
   assert.equal((await getPayload(p.token)).options_available, true, 'and reopens when cleared');
+});
+
+test('options_available: false for a booking under legal hold, matching the switch guard', async () => {
+  // The switch refuses a held booking (publicSwitch.js), so a flag that stayed
+  // true would render the entry card into a guaranteed refusal. The hold binds
+  // on the loaded row's id (a pg integer), never a request value, and the page
+  // is never told why: no copy in the payload names the hold.
+  const p = await insertSignableProposal();
+  assert.equal((await getPayload(p.token)).options_available, true, 'baseline: not held');
+  __setLegalHoldIdsForTest([p.id]);
+  try {
+    const res = await request('GET', `/api/proposals/t/${p.token}`);
+    assert.equal(res.status, 200, res.raw);
+    assert.equal(res.body.options_available, false, 'a held booking offers no switch');
+    assert.ok(!/legal/i.test(res.raw), 'the payload never names the hold');
+  } finally {
+    __setLegalHoldIdsForTest(null);
+  }
+  assert.equal((await getPayload(p.token)).options_available, true, 'and reopens once unheld');
 });
 
 test('options_available: grouped-undecided is false, grouped-decided is true', async () => {

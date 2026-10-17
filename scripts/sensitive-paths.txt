@@ -422,6 +422,17 @@ server/utils/changeRequests.js
 server/routes/proposals/publicSwitch.js
 server/routes/proposals/optionsPricingShared.js
 server/routes/proposals/publicToken.js
+# Client rows (spec 2026-10-16 section 4, price override removal): the fold
+# decision invoices and the proposal page share, the builder of the rows a
+# client sees (hidden lines folded on the server), and the sanitizer that strips
+# hidden lines, the override and the pre-fold subtotal from every snapshot a
+# token holder receives. drinkPlans.js hands that sanitized snapshot to the
+# drink plan's token holder. A wrong answer here shows a client a price that
+# does not add up, or hands a hidden discount's label and amount to a token.
+server/utils/foldDecision.js
+server/utils/clientPriceLines.js
+server/utils/publicSnapshot.js
+server/routes/drinkPlans.js
 
 # The GATE MACHINERY itself (2026-08-14). These decide WHETHER the money suites
 # run, so a bug here does not weaken one money path, it silently removes the

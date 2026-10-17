@@ -18,6 +18,8 @@ const { additionalTimeRate } = require('../../utils/additionalTimeRate');
 const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
+const { publicPriceView } = require('../../utils/publicSnapshot');
+const { isLegalHold } = require('../../utils/legalHold');
 
 const router = express.Router();
 
@@ -88,13 +90,49 @@ router.get('/t/:token/payment-state', requireUuidToken, publicTokenIpLimiter, pr
   });
 }));
 
+// The price rows' report (spec 2026-10-16 section 4.1, observability), one
+// copy for every route that draws clientPriceLines rows (the proposal page
+// here; the client portal imports it with its own route tag), so the rule
+// cannot drift between routes. Sentry hears when the rows fall back to a
+// "Pricing adjustment" row, when a snapshot with a total has no package row to
+// fold into, or when the folded gap is more than the snapshot explains
+// (fold.unexplainedCents: its own arithmetic covers the hidden lines, an
+// override and the engine's zero clamp, as invoiceLineItems.foldToContract
+// reads it). The proposal id only, never an amount, and at most once per
+// proposal per route per process (the reportFold precedent): a page refreshed
+// in a loop must not page once per view.
+const reportedPriceRowsFolds = new Set();
+function reportPriceRowsFold(proposalId, fold, rowCount, { route = 'proposals/public' } = {}) {
+  let kind = null;
+  if (fold.applied === 'fallback') kind = 'public_rows_fold_fallback';
+  else if (fold.applied === 'skipped') kind = 'public_rows_no_package';
+  // Each row can carry up to a cent of rounding against the snapshot's subtotal.
+  else if (Math.abs(fold.unexplainedCents) > rowCount) kind = 'public_rows_unexplained_gap';
+  const key = `${route}:${proposalId}`;
+  if (!kind || reportedPriceRowsFolds.has(key)) return;
+  reportedPriceRowsFolds.add(key);
+  console.warn(`[${route}] proposal ${proposalId} price rows: ${kind}`);
+  if (!process.env.SENTRY_DSN_SERVER) return;
+  try {
+    Sentry.captureMessage(kind, {
+      level: 'warning',
+      tags: { route, step: 'price_rows' },
+      extra: { proposalId },
+    });
+  } catch (err) {
+    console.error(`[${route}] price rows Sentry report failed:`, err && err.message);
+  }
+}
+
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
 /** The COMPLETE public payload for one proposal, shared by the GET below and
  *  the switch endpoint's 200 response (publicSwitch.js) so the two can never
  *  drift: everything ProposalView renders from is built here, and ONLY the
- *  public-safe shape ever leaves this function. Side effects (the view-count
- *  bump, activity logging) deliberately live with the GET, not here.
- *  Returns null when the token matches nothing. */
+ *  public-safe shape ever leaves this function. Pricing leaves as price_rows
+ *  (the page's rows, hidden lines folded on the server) and a sanitized
+ *  pricing_snapshot (utils/publicSnapshot.js), never the stored snapshot.
+ *  Side effects (the view-count bump, activity logging) deliberately live with
+ *  the GET, not here. Returns null when the token matches nothing. */
 async function buildPublicProposalPayload(token, db = pool) {
   // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
   // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
@@ -237,6 +275,10 @@ async function buildPublicProposalPayload(token, db = pool) {
   // (the compare page owns that client; a switch would corrupt the set).
   const optionsAvailable = ['sent', 'viewed'].includes(proposal.status)
     && proposal.total_price_override === null
+    // A booking under legal hold: the switch refuses it (publicSwitch.js), so
+    // the link must not open into that refusal. Binds on the loaded row's id
+    // (a pg integer), never a request value; the page is never told why.
+    && !isLegalHold(proposal.id)
     && !proposal.client_signed_at
     // Grouped-and-undecided belongs to the compare page; a decided group
     // behaves like any other proposal. A group_id pointing at nothing fails
@@ -264,6 +306,16 @@ async function buildPublicProposalPayload(token, db = pool) {
     if (key.startsWith('pkg_')) delete publicProposal[key];
   }
 
+  // The rows the page draws, folded on the server, and the public copy of the
+  // snapshot (spec 2026-10-16 sections 4.2 and 4.3). No hidden line's label,
+  // no override and no pre-fold subtotal leaves here, and neither does the
+  // fold report. A hidden amount leaves only inside the rows: folded into the
+  // package row, or, when it is larger than the package row, as one visible
+  // "Pricing adjustment" row carrying the gap (spec D3, the invoice rule).
+  const priceView = publicPriceView(proposal.pricing_snapshot, { packageName: proposal.package_name });
+  publicProposal.pricing_snapshot = priceView.snapshot;
+  reportPriceRowsFold(proposal.id, priceView.fold, priceView.rows.length);
+
   // What one added hour costs on this booking's package line. Section 8.1 of
   // the agreement points the client at this number, so it is computed by the
   // function the on-site extension bills with, from the live catalog row.
@@ -288,6 +340,7 @@ async function buildPublicProposalPayload(token, db = pool) {
   return {
     options_available: optionsAvailable,
     ...publicProposal,
+    price_rows: priceView.rows,
     additional_time: additionalTime,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
@@ -626,3 +679,6 @@ module.exports = router;
 // The switch endpoint reuses the builder so its 200 response is shape-identical
 // to the GET by construction, never a hand-rebuilt (or raw-row) payload.
 module.exports.buildPublicProposalPayload = buildPublicProposalPayload;
+// The price rows' Sentry report, for any route that draws clientPriceLines
+// rows (the client portal passes { route: 'client-portal' }).
+module.exports.reportPriceRowsFold = reportPriceRowsFold;
