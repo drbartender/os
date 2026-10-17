@@ -82,7 +82,7 @@ Today the public proposal payload carries every hidden adjustment's label and am
 `client/src/components/PricingBreakdown.js` (desktop) and `financialsOf` in `client/src/utils/eventDetailView.js` about L240 (drawn on the admin phone by `client/src/pages/mobile/EventDetailSections.js` L95-100) render `snapshot.breakdown`, which lists every adjustment with no visibility marker. Hidden adjustment rows get a small "hidden from client" tag in both.
 
 - New snapshots: the engine adds `visible` (coerced) to each adjustment row it pushes into `breakdown` (`pricingEngine.js` about L574-580).
-- Existing snapshots lack that key on breakdown rows. The tag is decided per row: adjustment rows are matched to `snapshot.adjustments` in engine order (same label fallback, same signed amount) and use the row's own `visible` when present, else the adjustment's. A missing `visible` on the adjustment means hidden, so every existing hidden line (551's four included) stays tagged with no backfill, including on an old snapshot that later gains a server-written row carrying the key (a Refund line, a converted line).
+- Existing snapshots lack that key on breakdown rows. The tag is decided per row: adjustment rows are matched to `snapshot.adjustments` in engine order (same label fallback, same signed amount) and use the row's own `visible` when present, else the adjustment's. A missing `visible` on the adjustment means hidden, so every existing hidden line (on prod, 18 bookings carry exactly one, 888 and 838 among them) stays tagged with no backfill, including on an old snapshot that later gains a server-written row carrying the key (a Refund line, a converted line).
 
 "Preview as client" (`ProposalDetail.js`) opens the real public page and needs no change.
 
