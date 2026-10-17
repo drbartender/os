@@ -2227,6 +2227,18 @@ Display only (spec 2026-10-16 section 7): nothing is charged or stored, so any b
 
 Verified so far by the suites (`invoiceStep.test.js`, `invoices.contractStep.test.js` with the public key set pinned, `InvoicePage.test.js`) and a headless render of the totals block at 1280 and 390 pixels in screen and print media; nobody has seen it on a real booking.
 
+### Admin breakdown tags hidden lines; refund and agreed-price lines have no remove button (lane line-protection, not merged yet: add the merge sha here at merge; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
+
+Display only (spec 2026-10-16 sections 4.5 and 6): no amount moves, and the server already refuses to cancel a protected line (409 `PROTECTED_LINE`, lane adj-rules). The walk, on a dev booking:
+1. In the editor, add a discount, untick "Client sees" and watch the live preview: the line carries a small "hidden from client" tag beside its label; tick it again and the tag goes. Save.
+2. The booking's ProposalDetail (and EventDetailPage once it is an event): the same tag on the hidden line in the Pricing card, none on a shown line, the Total unchanged.
+3. The phone event detail, Financials: the tag under the hidden line's label, nothing on the other lines, no sideways scroll.
+4. A booking whose hidden line was saved before this change, tagged with no re-save: prod 888 (balance_paid: the event page and the phone Financials) and prod 838 (viewed: ProposalDetail), each with exactly one hidden line.
+5. Once a refund line or an agreed-price line exists (the refund-line and editor lanes write them), reload the page after the line is written, then check (the page loads its remove targets once per visit, and an archived or completed booking shows none at all): its row in the Pricing card has no remove button and it is not under "Other removable items"; an ordinary line beside it keeps its button, and the package row still opens the cancel-event flow.
+6. Both skins: a quiet hairline chip on After Hours, an uppercase hairline tag on House Lights.
+
+Verified so far by the suites (`hiddenRows.test.js`, `PricingBreakdown.test.js`, `eventDetailView.test.js`, `EventDetailPhone.test.js`, and the engine suite for the row mark) and a headless render of the real markup with `index.css` at 560 and 390 pixels in both skins (2026-10-17); nobody has seen it on a real booking.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [x] **DONE 2026-10-01, before the push that carried `580a194b`: two read-only checks.** The prod probe returned 0 rows to flip and 0 non-strict targets. The post-deploy boot log (Render, 2026-10-01, read by Dallas) showed no `[phone config]` and no caller-ID warning, and the consult sweep wired. All done. Original note:

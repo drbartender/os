@@ -357,3 +357,63 @@ test('calculateProposal stamps gratuity.floor_rate; non-positive coerces to null
     assert.strictEqual(plain.gratuity.floor_rate, null);
   }
 });
+
+// Breakdown visibility (spec 2026-10-16 section 4.5): every adjustment row
+// carries the line's own coerced `visible`, so the admin views can tag a
+// hidden line from the row alone. Nothing else in the breakdown carries the
+// key, and the mark never moves money.
+const hasVisible = (row) => Object.prototype.hasOwnProperty.call(row, 'visible');
+
+test('breakdown adjustment rows carry visible; no other row carries the key', () => {
+  const snap = calculateProposal(base({
+    guestCount: 60, numBartenders: 2, gratuityRate: 25, tipJar: true,
+    adjustments: [
+      { type: 'discount', label: 'Test discount A', amount: '100.25', visible: true },
+      { type: 'surcharge', label: '', amount: 40, visible: false },
+    ],
+  }));
+  assert.deepStrictEqual(snap.breakdown.filter(hasVisible), [
+    { label: 'Test discount A', amount: -100.25, visible: true },
+    { label: 'Surcharge', amount: 40, visible: false },
+  ]);
+  // The package, bar rental, staffing (its Shared Gratuity row included) and
+  // the client Gratuity row stay exactly { label, amount }.
+  const others = snap.breakdown.filter((row) => !hasVisible(row));
+  assert.deepStrictEqual(others.map((row) => row.label), [
+    'BYOB Bar (4hrs, 60 guests)', 'Bar Rental (1 bar)', 'Additional Bartender (1)', 'Shared Gratuity', 'Gratuity',
+  ]);
+  for (const row of others) assert.deepStrictEqual(Object.keys(row), ['label', 'amount']);
+  // The adjustment rows still sit just before the client Gratuity row.
+  assert.deepStrictEqual(snap.breakdown.slice(-3).map((row) => row.label), ['Test discount A', 'Surcharge', 'Gratuity']);
+});
+
+test('breakdown visible is coerced the engine way: a missing visible reads hidden', () => {
+  const snap = calculateProposal(base({ adjustments: [
+    { type: 'discount', label: 'Test discount B', amount: 5 },
+    { type: 'surcharge', label: 'Test surcharge C', amount: 1, visible: 'yes' },
+    { type: 'discount', label: 'Test discount D', amount: 2, visible: 0 },
+  ] }));
+  const rows = snap.breakdown.filter(hasVisible);
+  assert.deepStrictEqual(rows.map((row) => row.visible), [false, true, false]);
+  // The stored lines are untouched: the snapshot keeps them as given.
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(snap.adjustments[0], 'visible'), false);
+  assert.strictEqual(snap.adjustments[1].visible, 'yes');
+});
+
+test('the visible mark moves no money: hidden and shown lines price the same', () => {
+  const lines = [
+    { type: 'discount', label: 'Test discount A', amount: '100.25' },
+    { type: 'surcharge', label: 'Test surcharge B', amount: 40 },
+    { type: 'discount', label: '', amount: 'not a number' },
+  ];
+  const inputs = { guestCount: 60, numBartenders: 2, gratuityRate: 25, tipJar: true };
+  const shown = calculateProposal(base({ ...inputs, adjustments: lines.map((l) => ({ ...l, visible: true })) }));
+  const hidden = calculateProposal(base({ ...inputs, adjustments: lines.map((l) => ({ ...l, visible: false })) }));
+  assert.strictEqual(hidden.total, shown.total);
+  assert.strictEqual(hidden.subtotal, shown.subtotal);
+  assert.strictEqual(hidden.gratuity.total, shown.gratuity.total);
+  const money = (snap) => snap.breakdown.map((row) => [row.label, row.amount]);
+  assert.deepStrictEqual(money(hidden), money(shown));
+  assert.deepStrictEqual(shown.breakdown.filter(hasVisible).map((row) => row.visible), [true, true, true]);
+  assert.deepStrictEqual(hidden.breakdown.filter(hasVisible).map((row) => row.visible), [false, false, false]);
+});

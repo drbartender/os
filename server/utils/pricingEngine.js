@@ -571,11 +571,15 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     }
     breakdown.push({ label: syrupLabel, amount: syrupCost.total });
   }
+  // Each adjustment row carries the line's coerced `visible` (a missing one
+  // reads hidden), so the admin views tag a hidden line from the row alone
+  // (spec 2026-10-16 section 4.5). Display only: no amount reads it.
   for (const adj of safeAdjustments) {
     const amt = Math.abs(Number(adj.amount) || 0);
     breakdown.push({
       label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
-      amount: adj.type === 'discount' ? -amt : amt
+      amount: adj.type === 'discount' ? -amt : amt,
+      visible: !!adj.visible
     });
   }
   if (clientGratuityAmount > 0) {

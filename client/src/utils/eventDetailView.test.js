@@ -331,6 +331,37 @@ describe('financialsOf', () => {
     expect(f.lines).toEqual([{ label: 'Classic bar', amount: '$1,600.00' }]);
   });
 
+  test('a line hidden from the client carries hidden: true; every other line carries no flag', () => {
+    const minus = String.fromCharCode(0x2212);
+    // A new snapshot: the adjustment rows carry their own visible.
+    const fresh = financialsOf(proposal({ pricing_snapshot: { total: 3610, gratuity: { total: 0 },
+      adjustments: [
+        { type: 'discount', label: 'Test shown discount', amount: 50, visible: true },
+        { type: 'discount', label: 'Test hidden discount', amount: 40, visible: false },
+      ],
+      breakdown: [
+        { label: 'Signature bar', amount: 3250 },
+        { label: 'Shared Gratuity', amount: 450 },
+        { label: 'Test shown discount', amount: -50, visible: true },
+        { label: 'Test hidden discount', amount: -40, visible: false },
+      ] } }), invoices([]));
+    expect(fresh.lines).toEqual([
+      { label: 'Signature bar', amount: '$3,250.00' },
+      { label: 'Staffing Gratuity', amount: '$450.00' },
+      { label: 'Test shown discount', amount: `${minus}$50.00` },
+      { label: 'Test hidden discount', amount: `${minus}$40.00`, hidden: true },
+    ]);
+    // An old snapshot, as a JSON string: no row carries visible, so the rows
+    // are read from the stored lines, where a missing visible means hidden.
+    const old = financialsOf(proposal({ pricing_snapshot: JSON.stringify({ total: 3600,
+      adjustments: [{ type: 'discount', label: 'Loyalty discount', amount: '50.00' }],
+      breakdown: [{ label: 'Signature bar', amount: 3650 }, { label: 'Loyalty discount', amount: -50 }] }) }), invoices([]));
+    expect(old.lines).toEqual([
+      { label: 'Signature bar', amount: '$3,650.00' },
+      { label: 'Loyalty discount', amount: `${minus}$50.00`, hidden: true },
+    ]);
+  });
+
   test('payments are the invoices that took money, in cents, void ones skipped', () => {
     const f = financialsOf(proposal(), invoices([
       inv(1),

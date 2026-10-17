@@ -94,7 +94,10 @@ export function MoneySection({ open, onToggle, fin, moneyState }) {
           <div className="m-section-label">Package &amp; extras</div>
           {fin.lines.map((line, i) => (
             <div className="m-money-row" key={`${line.label}-${i}`}>
-              <span className="m-money-main"><span className="m-money-label">{line.label}</span></span>
+              <span className="m-money-main">
+                <span className="m-money-label">{line.label}</span>
+                {line.hidden && <span className="chip muted m-money-tag">hidden from client</span>}
+              </span>
               <span className="m-money-amt">{line.amount}</span>
             </div>
           ))}

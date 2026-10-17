@@ -13191,6 +13191,14 @@ html[data-app="admin-os"] .chip.violet { background: hsl(var(--violet-h) var(--v
 html[data-app="admin-os"] .chip.violet .chip-dot { background: hsl(var(--violet-h) var(--violet-s) 65%); }
 html[data-app="admin-os"] .chip.accent { background: var(--accent-soft); color: var(--accent); }
 html[data-app="admin-os"] .chip.accent .chip-dot { background: var(--accent); }
+/* Muted: a quiet hairline tag, quieter than .neutral. The .muted utility
+   already sets the ink (--ink-3) on both skins; the light skin keeps its
+   currentColor hairline. First use: "hidden from client" on an admin pricing
+   line (spec 2026-10-16 section 4.5), beside the label on the desktop
+   breakdown and under it on the phone (.m-money-tag). */
+html[data-app="admin-os"] .chip.muted { background: transparent; border: 1px solid var(--line-2); font-weight: 500; }
+html[data-app="admin-os"][data-skin="light"] .chip.muted { border-color: currentColor; }
+html[data-app="admin-os"] .chip.line-hidden-tag { margin-left: 8px; vertical-align: middle; }
 
 /* tiny tag */
 html[data-app="admin-os"] .tag {
@@ -21856,6 +21864,7 @@ html[data-app="admin-os"] .m-money-row { padding: 7px 16px; display: flex; align
 html[data-app="admin-os"] .m-money-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 html[data-app="admin-os"] .m-money-label { font-size: var(--fs-body); line-height: 16px; color: var(--ink-2); }
 html[data-app="admin-os"] .m-money-sub { font-family: var(--font-numeric); font-size: 11px; line-height: 14px; color: var(--ink-3); }
+html[data-app="admin-os"] .m-money-main .m-money-tag { align-self: flex-start; margin-top: 2px; }
 html[data-app="admin-os"] .m-money-amt { flex: none; font-family: var(--font-numeric); font-size: 12.5px; line-height: 17px; color: var(--ink-1); }
 html[data-app="admin-os"] .m-money-row.m-money-pay { padding: 6px 16px; }
 html[data-app="admin-os"] .m-money-row.m-money-total { border-top: 1px solid var(--line-2); padding: 9px 16px; }

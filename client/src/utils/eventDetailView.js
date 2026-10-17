@@ -12,6 +12,7 @@
 import { railParts, placeOf } from './eventCards';
 import { getEventTypeLabel } from './eventTypes';
 import { resolveGratuityDisplayLabel } from './gratuityLabels';
+import { hiddenRowFlags } from './hiddenRows';
 import { formatPhone } from './formatPhone';
 import { buildShiftView } from './staffingSheet';
 import { venueMapQuery } from '../components/VenueAddressFields';
@@ -238,8 +239,15 @@ export function financialsOf(proposal, invoicesPayload) {
 
   const snapshot = readJson(p.pricing_snapshot);
   const breakdown = snapshot && Array.isArray(snapshot.breakdown) ? snapshot.breakdown : [];
+  // A line the client does not see carries hidden: true (spec 2026-10-16
+  // section 4.5); the screen tags it. Every other line carries no flag.
+  const hidden = hiddenRowFlags(snapshot);
   const lines = breakdown.length
-    ? breakdown.map((b) => ({ label: resolveGratuityDisplayLabel(b.label, snapshot), amount: dollars(b.amount) }))
+    ? breakdown.map((b, i) => ({
+      label: resolveGratuityDisplayLabel(b.label, snapshot),
+      amount: dollars(b.amount),
+      ...(hidden[i] ? { hidden: true } : {}),
+    }))
     : [{ label: text(p.package_name) || 'Package', amount: dollars(total) }];
 
   const payload = invoicesPayload && typeof invoicesPayload === 'object' ? invoicesPayload : null;

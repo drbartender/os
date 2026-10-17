@@ -259,6 +259,34 @@ test('Financials: lines, total, payments and the balance', async () => {
   expect(screen.getByText('due AUG 8')).toBeInTheDocument();
 });
 
+test('Financials: a line hidden from the client carries the tag, and only that line', async () => {
+  const snapshot = {
+    total: 3610, gratuity: { total: 0 },
+    adjustments: [
+      { type: 'discount', label: 'Test shown discount', amount: 50, visible: true },
+      { type: 'discount', label: 'Test hidden discount', amount: 40, visible: false },
+    ],
+    breakdown: [
+      { label: 'Signature bar', amount: 3250 },
+      { label: 'Mobile bar rental', amount: 450 },
+      { label: 'Test shown discount', amount: -50, visible: true },
+      { label: 'Test hidden discount', amount: -40, visible: false },
+    ],
+  };
+  serve({ '/proposals/13': { data: { ...PROPOSAL, total_price: '3610.00', pricing_snapshot: snapshot } } });
+  mount();
+  await screen.findByText('Person 1');
+  tap(section('Financials'));
+  const tags = screen.getAllByText('hidden from client');
+  expect(tags).toHaveLength(1);
+  expect(tags[0]).toHaveClass('chip', 'muted', 'm-money-tag');
+  // The tag sits in the hidden line's own row, under its label.
+  // eslint-disable-next-line testing-library/no-node-access
+  const row = tags[0].closest('.m-money-row');
+  expect(within(row).getByText('Test hidden discount')).toBeInTheDocument();
+  expect(within(row).getByText(`${String.fromCharCode(0x2212)}$40.00`)).toBeInTheDocument();
+});
+
 test('a bank payment in flight shows on the chip, as a row, and on the balance', async () => {
   serve({ '/invoices/proposal/13': { data: { ...INVOICES, pending_payments: [{ amount_cents: 175000, started_at: '2999-08-05T15:00:00.000Z', invoice_id: 2, invoice_number: 'INV-0363' }] } } });
   mount();

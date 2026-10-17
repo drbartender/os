@@ -1,5 +1,6 @@
 import React from 'react';
 import { resolveGratuityDisplayLabel } from '../utils/gratuityLabels';
+import { hiddenRowFlags } from '../utils/hiddenRows';
 
 // Match cancel targets (GET /:id/cancel-line/targets entries) to breakdown
 // rows by label: exact first, then prefix for parameterized labels like
@@ -79,9 +80,15 @@ export default function PricingBreakdown({ snapshot, compact = false, cancelTarg
   // other mount renders exactly as before.
   const actions = Boolean(cancelTargets && onCancelLine);
   const { byRow } = actions ? matchCancelTargets(snapshot, cancelTargets) : { byRow: new Map() };
+  // Lines the client does not see carry a tag (spec 2026-10-16 section 4.5).
+  const hidden = hiddenRowFlags(snapshot);
 
   const renderAction = (entry) => {
     if (!entry) return null;
+    // A refund or agreed-price line (spec 2026-10-16 section 6) is never
+    // removed here: the server refuses it (409 PROTECTED_LINE) and the editor
+    // changes it. No control at all, keyed on the server's mark, never a label.
+    if (!entry.cancellable && entry.reason === 'protected_line') return null;
     if (!entry.cancellable && entry.reason === 'orphaned_addon') {
       return (
         <button type="button" className="btn btn-ghost btn-sm" disabled
@@ -109,6 +116,7 @@ export default function PricingBreakdown({ snapshot, compact = false, cancelTarg
             <tr key={i} style={{ borderBottom: '1px solid var(--line-1)' }}>
               <td style={{ padding: compact ? '0.4rem 0' : '0.6rem 0', color: 'var(--ink-1)' }}>
                 {resolveGratuityDisplayLabel(item.label, snapshot)}
+                {hidden[i] && <span className="chip muted line-hidden-tag">hidden from client</span>}
               </td>
               <td style={{
                 padding: compact ? '0.4rem 0' : '0.6rem 0',
