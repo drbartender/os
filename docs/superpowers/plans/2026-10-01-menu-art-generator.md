@@ -305,10 +305,11 @@ generateImage({ prompt, images: [{ buffer, mimeType }], aspectRatio, imageSize, 
   //   input: [{ type: 'text', text: prompt },
   //           ...images.map(i => ({ type: 'image', data: <base64>, mime_type: i.mimeType }))],
   //   store: false,
-  //   response_format: { type: 'image', aspect_ratio, image_size, delivery: 'inline' } },
+  //   response_format: { type: 'image', aspect_ratio, image_size } },   // no delivery key: the live API 400s on any value (spec 5.1, amended 2026-10-16)
   //   { timeout: MENU_ART_IMAGE_TIMEOUT_MS, maxRetries: 0 })   // per-call options
   // image_size uses an uppercase K ('1K', '4K'); a lowercase value is rejected by the API
-  // returns { buffer, mimeType, responseId, usage }; exactly one output_image is accepted
+  // returns { buffer, mimeType, responseId, usage }; exactly one output_image is accepted;
+  // responseId is null in practice (store: false returns no response id)
 __setTestStub(stub)               // test-only injection; null clears
 class GeminiRefusal extends Error     // .reason, readable ("Gemini blocked this image for safety.")
 class GeminiRateLimited extends Error // .retryAfterSec (err.headers.get('retry-after') when sent, else 20; capped 60)
@@ -680,7 +681,7 @@ runWordsForDrinks({ normalizedDrinks, brief, eventTypeLabel })
 
 - [ ] Write the docs, including `MENU_ART_DAILY_TEXT_CAP` and the `GEMINI_API_KEY` blast-radius and leak-response note (spec 13). Run `node scripts/sensitive-match.js server/utils/openaiClient.js server/utils/geminiClient.js server/utils/menuImageProvider.js server/utils/menuArtCap.js server/routes/proposals/menuDrafts.js` and confirm all five match.
 - [ ] **Live smoke on dev** (run by the controlling session, not a subagent: a subagent cannot mint the admin dev JWT):
-  1. Put the box keys in the repo-root `.env` (the file every lane symlinks; there is no `server/.env`): `OPENAI_API_KEY` from `~/.secrets/openai_api_key` and `GEMINI_API_KEY` from `~/.gemini/.env`. Confirm in AI Studio that the Gemini key's project is on the paid tier. Start a lane-scoped server from the lane on a spare port (the managed :5000 server runs main, which has neither these routes nor this schema), and point the steps below at it.
+  1. Pass the box keys in the lane server's process environment only, never the repo-root `.env` (the file every lane symlinks; spec 13): `OPENAI_API_KEY` from `~/.secrets/openai_api_key` and `GEMINI_API_KEY` from `~/.gemini/.env`. Confirm in AI Studio that the Gemini key's project is on the paid tier. Start that lane-scoped server from the lane on a spare port with the two keys set in its environment (the managed :5000 server runs main, which has neither these routes nor this schema), and point the steps below at it.
   2. With curl and an admin dev JWT, `POST /api/proposals/<a dev proposal with a custom-menu plan>/menu-draft/generate`.
   3. Poll `GET` until nothing is pending.
   4. Record the wall-clock time, every piece's status, the background's `tone`, and whether any drink PNG shows a light fringe when composited on a dark ground (Review Focus 5: composite one with `sharp` onto `#121b35` and look at it).
@@ -690,6 +691,29 @@ runWordsForDrinks({ normalizedDrinks, brief, eventTypeLabel })
 - [ ] Commit the docs.
 
 **Lane 2 exit:** every Lane 2 suite plus the Lane 1 suites green. Then the full fleet, then merge.
+
+**Notes from the engine build (2026-10-16). Read before cutting Lanes 3 and 4; they override task text where they differ.**
+- **The GET payload as built** (`menuDraftRead.js`). Print states are the strings `not_required`, `replaced`, `removed`, `edited_since_approval`, `approved` and `none`. `replaced` also covers a never-approved draft whose print file is a manual upload (spec 8 rule 2 read literally: the print key is set and differs from a null `approved_print_key`). Beyond spec 7 the payload carries `draft.read_only` (no plan on the event), `inputs.has_reference` (never `reference_key`), each piece's `has_image` and `image_rev` (never `r2_key`), `brief.has_planner_image`, `print.print_key` (the proposal's `menu_print_key`, posted back as Approve's `expected_print_key`), `print.approved_file_in_use` (spec 11.1's `menu_print_key = approved_print_key`, for the "Staff still get the <date> version." sub) and `plan.bar_summary` as counts `{ beer_wine, spirits, na }`. `diff` is null with no draft or no plan.
+- **Cache layers by `image_rev`, never `art_version`.** `art_version` moves every time any piece lands, so keying on it would refetch every layer; the read limiter is one 120-per-minute bucket shared by the 2-second poll and every image GET. `drawn_count` restarts at 0 on Start over, so it is not a key either (spec 10.2).
+- **`draft.updated_at` is not "Saved <time>".** It also moves on job heartbeats and art bumps; track the PATCH response for the save time.
+- **The image route serves `done` pieces only** (404 "That image is not ready." otherwise). A piece pending a re-roll reads `has_image: false`.
+- **New error codes** (`menuDrafts.js`, `menuDraftSync.js`), each `{ error, code }` through the global handler:
+  - 409 `MENU_WORDS_PENDING`, "The menu words are still being written. Try again once they land.": Update draft, and re-roll, while the words have not landed;
+  - re-roll is also refused on a draft whose words step failed and on a draft with no plan (the read-only draft); read the guard in `menuDrafts.js` for its code and message before mapping it;
+  - 502 `MENU_WORDS_FAILED`: Update draft's words call for added client-typed drinks failed; the message is one of the job's fixed sentences ("OpenAI is busy right now. Try again in a minute.", "OpenAI could not write the menu words. Try again." or "The menu words could not be written. Try again."), never provider text;
+  - 429 `MENU_ART_TEXT_CAP_REACHED`, "Daily menu text limit reached.": Generate and Update draft at the text cap;
+  - as in the spec: 429 `MENU_ART_CAP_REACHED` "Daily menu art limit reached."; 503 `MENU_ART_NOT_CONFIGURED` "Menu art is not set up."; 503 `MENU_ART_GEMINI_NOT_CONFIGURED` "Gemini is not set up."; 409 `MENU_ART_PIECE_BUSY` "This piece is still being drawn."; 409 `MENU_DRAFT_CHANGED` "The draft changed. Try again." (Update draft can also say "The drink plan changed. Try Update draft again."); 422 `MENU_NO_DRINKS`, "The drink plan has no drinks to put on a menu." from Generate and "This event has no drink plan." from Update draft and Dismiss.
+- **Dismiss keeps the version** (spec 6): it writes only `dismissed_plan_hash` under the version check and returns the unchanged `version`, so Mark reviewed never moves an approved menu to edited since approval.
+- **Gemini rows carry a null `provider_request_id`** (with `store: false` the Interactions API returns no response id; spec 5.1).
+- **Update draft queues the added drinks' art sequentially**: one queued task draws them one piece at a time, never side by side.
+- **OpenAI drinks are drawn at quality medium** (spec 13's per-drink estimate); backgrounds at high.
+- **Live smoke results** (2026-10-16, dev proposal 1, plan 7, four signature drinks):
+  - OpenAI: the run took 109 s; the background read dark-toned; four transparent drinks; no light fringe on `#121b35` at 2x.
+  - Gemini: the run took 98 s after the wrapper fix (no `delivery` key); the background read light-toned; four keyed-out drinks; no magenta fringe on navy at 2x; raspberries kept their color beside the key.
+  - A drink re-rolled under OpenAI on the Gemini draft changed only that piece.
+  - A real R2 upload and signed read are proven by the image GETs.
+  - The dev cap used 16 of 60 (five Gemini calls rejected with 400 counted as failed, by design).
+  - Cost on the usage pages was not readable from the box; Dallas glances at the OpenAI and AI Studio usage pages.
 
 ---
 
@@ -786,13 +810,13 @@ Cut after Lane 2 is on main. Runs in parallel with Lane 3 (disjoint footprints e
 
 **Spec:** 10.1 (The draft hook lives at page level), 10.2, 11.1 (table C and its precedence, tables B and E), 8 (Derived print state), 9.
 **Files:** `useMenuDraft.js` and `menuCardState.js`, with tests.
-- `useMenuDraft(proposalId)`: the GET, polling, autosave, `flush()`, the layer cache keyed by `r2_key` and size (`?w=240` for the card), the pre-draft brief inputs and a staged reference file (held in memory for the page visit), and the image-model choice (starting at `openai` on every mount, never persisted; decision 11) sent on Generate, re-roll and Update draft. The card's in-place actions always send `openai`.
+- `useMenuDraft(proposalId)`: the GET, polling, autosave, `flush()`, the layer cache keyed by each piece's `image_rev` and size (`?w=240` for the card; the GET never carries `r2_key`, spec 10.2), the pre-draft brief inputs and a staged reference file (held in memory for the page visit), and the image-model choice (starting at `openai` on every mount, never persisted; decision 11) sent on Generate, re-roll and Update draft. The card's in-place actions always send `openai`.
 - `menuCardState({ payload, local })` (pure) returns `{ chip: { kind, text }, message, sub, primary, secondary, banners, empty, approve: { label, disabled, why }, generate: { disabled, hint } }`, applying table C's precedence, where `local` carries the client-only facts (saving, save failed, too long, approving, the editor's toggle).
 
 - [ ] Tests (mock `api`):
   - polling runs only while something is pending, working or the words step is pending; a 429 backs off to 10 s;
   - the autosave debounce is 800 ms; a 409 refetches and reports a conflict; `flush()` resolves after an in-flight save and rejects when the save fails;
-  - image blobs are cached by `r2_key` and size, only a changed piece is fetched, and object URLs are revoked on replacement and unmount;
+  - image blobs are cached by `image_rev` and size, only a piece whose `image_rev` changed is fetched, a piece with `has_image` false is never fetched, and object URLs are revoked on replacement and unmount;
   - the pre-draft inputs survive a simulated editor close and reopen;
   - a `proposalId` change flushes the pending save to the OLD id (the PATCH carries the old id), then resets the draft, the brief inputs, the held reference, the model choice and the layer cache;
   - the model choice resets to `openai` on remount and rides each image request;
@@ -866,7 +890,7 @@ Cut after Lanes 3 and 4 are on main. **Owns the visual fidelity of the editor.**
 ### Task D4: the end-to-end walk and review
 
 **Spec:** 14 (Visual, Live smoke). Run by the controlling session (it needs the admin dev JWT).
-- [ ] On a lane-scoped dev server with both box keys:
+- [ ] On a lane-scoped dev server with both box keys in its process environment (spec 13; never the root `.env`):
   1. From the event page, open the editor from the card; set a role and an art direction on the Brief tab; close and reopen it (the inputs survive); Generate with GPT Image.
   2. Edit a name; re-roll one drink under Gemini; hide one; switch the pairing, the backing and the wordmark color.
   3. Approve, through the replace confirm when a print file exists.
@@ -876,7 +900,7 @@ Cut after Lanes 3 and 4 are on main. **Owns the visual fidelity of the editor.**
   7. Check the JPEG is 2400 x 3000 and under 10 MB, the wordmark printed in its color, and the drinks are not stretched.
   8. Use browser Back while the editor is open, and switch events through the header search while it is open.
 - [ ] Run `ui-ux-review` against `Menu Designer v2.dc.html`'s Editor view: both skins, tables B and E, table D applied.
-- [ ] Remove `GEMINI_API_KEY` from the repo-root `.env` (spec 13: the dev box keeps it only for the smoke and this walk).
+- [ ] Confirm neither box key is in the repo-root `.env` (spec 13: they ride only the lane server's process environment).
 - [ ] Update README's Key Features. Commit.
 
 **Lane 5 exit:** the client suites green, plus `MorePage.test.js`, `AdminLayout.badges.test.js`, `adminos/nav.test.js`, `EventDetailPage.fork.test.js` and `UserPrefsContext.test.js` (the shell change reaches them), and `CI=true npm run build` in `client/` clean. Then one reviewer plus `ui-ux-review`, then merge.
