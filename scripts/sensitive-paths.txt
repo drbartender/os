@@ -531,3 +531,24 @@ client/src/index.js
 # creates them so a quick fix before the engine lane lands still gets the fleet.
 server/utils/openaiClient.js
 server/utils/geminiClient.js
+
+# Menu art engine (same spec, sections 5.5, 7 and 13; lane menu-art-engine).
+# The one place the job asks either paid provider for an image, by each piece's stamped provider and model.
+server/utils/menuImageProvider.js
+# The daily image and text caps and the reservation ledger: the app-side bound on spend across both providers.
+server/utils/menuArtCap.js
+# The admin routes that reserve and start paid generation, and serve stored R2 keys behind their prefix guards.
+server/routes/proposals/menuDrafts.js
+# Its siblings: Update draft reserves paid words and image calls; the image GETs serve R2 keys behind their prefixes;
+# the shared helpers hold the reserving transaction (lockCalls first, then the draft row) and the 503 key checks.
+server/routes/proposals/menuDraftSync.js
+server/routes/proposals/menuDraftImages.js
+server/routes/proposals/menuDraftShared.js
+# The job: authorizeCall on each reservation is the actual spend gate before every paid call.
+server/utils/menuArtJob.js
+# Its piece writes and reservation reads: every write conditional on the run; the reservations the gate authorizes.
+server/utils/menuArtJobSteps.js
+# Both paid words calls (Generate's words step and Update draft's), each authorized on its own text reservation.
+server/utils/menuArtJobWords.js
+# The 429 retry loop that re-sends a paid call (at most twice) and the sanitizer behind every Sentry report.
+server/utils/menuArtJobErrors.js

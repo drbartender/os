@@ -34,6 +34,12 @@ const RESIZE_PIXEL_LIMIT = 50_000_000;
 const RESIZE_BYTE_LIMIT = 200 * 1024 * 1024;
 const BYTES_PER_SAMPLE = { uchar: 1, char: 1, ushort: 2, short: 2, uint: 4, int: 4, float: 4, complex: 8, double: 8, dpcomplex: 16 };
 
+// The decoded size, from a sharp metadata() header, that RESIZE_BYTE_LIMIT
+// budgets. Also used by menuImageProvider for the references it re-encodes.
+function decodedBytes({ width, height, channels, depth } = {}) {
+  return (width || 0) * (height || 0) * (channels || 4) * (BYTES_PER_SAMPLE[depth] || 4);
+}
+
 // Re-encoders for a resized copy, chosen by the DECODED format, never the key's
 // extension or R2's stored type. PNG stays PNG so a drink layer keeps its alpha;
 // a format with no entry here also comes out as PNG (lossless, alpha-safe).
@@ -94,9 +100,9 @@ function imageError(err) {
 async function resizeTo(buffer, width) {
   try {
     const img = sharp(buffer, { limitInputPixels: RESIZE_PIXEL_LIMIT });
-    const { format, width: w, height: h, channels, depth } = await img.metadata();
-    const decoded = (w || 0) * (h || 0) * (channels || 4) * (BYTES_PER_SAMPLE[depth] || 4);
-    if (decoded > RESIZE_BYTE_LIMIT) {
+    const meta = await img.metadata();
+    const { format } = meta;
+    if (decodedBytes(meta) > RESIZE_BYTE_LIMIT) {
       throw new Error('decoded size over the pixel limit budget');
     }
     const encoder = ENCODERS.get(format) || ENCODERS.get('png');
@@ -166,4 +172,4 @@ async function sendR2Object(res, key, { prefix, filename, disposition = 'inline'
   res.send(body.buffer);
 }
 
-module.exports = { sendR2Object, assertKeyUnder, RESIZE_WIDTHS, RESIZE_PIXEL_LIMIT, RESIZE_BYTE_LIMIT };
+module.exports = { sendR2Object, assertKeyUnder, decodedBytes, RESIZE_WIDTHS, RESIZE_PIXEL_LIMIT, RESIZE_BYTE_LIMIT };

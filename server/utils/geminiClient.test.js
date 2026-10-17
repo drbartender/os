@@ -238,7 +238,10 @@ test('outside test mode GOOGLE_GENAI_USER_PROJECT (which bills the call to anoth
 
 // ---- forwarding with a plain stub ----
 
-test('a stub receives store false, inline delivery, the explicit ratio and size, maxRetries 0 and the timeout', async () => {
+// No delivery key: the live API answers any image delivery value ('inline'
+// or 'uri') with 400 invalid_request "Image delivery mode is not supported."
+// (2026-10-16 smoke), and without it the image comes back inline as base64.
+test('a stub receives store false, no delivery, the explicit ratio and size, maxRetries 0 and the timeout', async () => {
   process.env.MENU_ART_IMAGE_TIMEOUT_MS = '99000';
   const seen = [];
   __setTestStub(stubReturning(completed([{ type: 'image', data: JPEG_BYTES.toString('base64'), mime_type: 'image/jpeg' }]), seen));
@@ -264,7 +267,7 @@ test('a stub receives store false, inline delivery, the explicit ratio and size,
       { type: 'image', data: PNG_BYTES.toString('base64'), mime_type: 'image/png' },
     ],
     store: false,
-    response_format: { type: 'image', aspect_ratio: '4:5', image_size: '4K', delivery: 'inline' },
+    response_format: { type: 'image', aspect_ratio: '4:5', image_size: '4K' },
   });
 });
 
@@ -393,7 +396,8 @@ test('real SDK: the request goes to the pinned host with the explicit key, store
   const body = JSON.parse(call.body);
   assert.equal(body.store, false);
   assert.equal(body.model, 'gemini-3-pro-image');
-  assert.deepEqual(body.response_format, { type: 'image', aspect_ratio: '1:1', image_size: '1K', delivery: 'inline' });
+  assert.deepEqual(body.response_format, { type: 'image', aspect_ratio: '1:1', image_size: '1K' });
+  assert.equal('delivery' in body.response_format, false, 'the live API 400s on any image delivery value');
   assert.deepEqual(body.input[1], { type: 'image', data: PNG_BYTES.toString('base64'), mime_type: 'image/png' });
 });
 

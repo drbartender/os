@@ -1,21 +1,14 @@
 // The ONLY module that requires @google/genai (spec 2026-10-01 section 5.1,
-// decision 11). Menu art asks Gemini for images only through generateImage,
-// on the Interactions API, so these options hold for every call: the key
-// passed explicitly (the SDK would otherwise fall back to GOOGLE_API_KEY),
-// the Gemini API host pinned and the Vertex backend off (so
-// GOOGLE_GEMINI_BASE_URL or GOOGLE_GENAI_USE_VERTEXAI cannot move the call;
-// GOOGLE_GENAI_DEBUG and GOOGLE_GENAI_USER_PROJECT refuse the call outright),
-// store false (Google keeps requests 55 days otherwise), inline delivery, and
-// per call maxRetries 0 with an explicit timeout (the SDK default is 4
-// retries and no timeout). The menu art job owns retries.
-//
-// Under NODE_ENV=test every call rejects unless a test injected a stub
-// (__setTestStub), so a missed mock can never spend money.
-//
-// What may be stored or sent to Sentry about a failure is the sanitized
-// descriptor (describeError): provider, error class, HTTP status, request id
-// and the mapped error code, never the SDK message, which can quote the
-// request. The prompt and the images are never logged.
+// decision 11). Menu art asks Gemini for images only through generateImage on
+// the Interactions API, and every call holds: the key passed explicitly (no
+// GOOGLE_API_KEY fallback), the Gemini host pinned and Vertex off
+// (GOOGLE_GENAI_DEBUG and GOOGLE_GENAI_USER_PROJECT refuse the call), store
+// false (Google keeps requests 55 days otherwise), no delivery key (the API
+// rejects one; the image comes back inline), maxRetries 0 and an explicit
+// timeout per call. The menu art job owns retries. Under NODE_ENV=test every
+// call rejects unless a test injected a stub (__setTestStub).
+// Only the sanitized descriptor (describeError) may be stored or sent to Sentry,
+// never the SDK message, which can quote the request; prompts and images never.
 
 const { GoogleGenAI } = require('@google/genai');
 const { AppError, ExternalServiceError } = require('./errors');
@@ -280,7 +273,10 @@ async function generateImage({ prompt, images = [], aspectRatio, imageSize, mode
         ...images.map((i) => ({ type: 'image', data: i.buffer.toString('base64'), mime_type: i.mimeType })),
       ],
       store: false,
-      response_format: { type: 'image', aspect_ratio: aspectRatio, image_size: size, delivery: 'inline' },
+      // No delivery key, though the SDK types one: the API answers any image
+      // delivery value with 400 "Image delivery mode is not supported." and
+      // returns the image inline (base64 data) when it is left out.
+      response_format: { type: 'image', aspect_ratio: aspectRatio, image_size: size },
     }, callOptions());
   } catch (err) {
     throw mapError(err);

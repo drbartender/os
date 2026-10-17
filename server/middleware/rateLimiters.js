@@ -291,6 +291,30 @@ const inboxTextLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The menu art draft routes (spec 2026-10-01 section 7), keyed by user id, each
+// its own bucket. Reads: the editor polls the draft GET every 2 seconds while a
+// run draws (30 a minute) and loads up to a dozen layer images per open, so
+// 120/min covers a working session. Edits: the editor autosaves on a debounce,
+// so 30/min is far above typing and still bounds a stuck save loop. The routes
+// that spend money (generate, re-roll, sync) use adminWriteLimiter instead.
+const menuDraftReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => (req.user && req.user.id ? `menudraft-r-${req.user.id}` : req.ip),
+  message: { error: 'Too many requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const menuDraftEditLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => (req.user && req.user.id ? `menudraft-e-${req.user.id}` : req.ip),
+  message: { error: 'Too many saves in a minute. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -314,4 +338,6 @@ module.exports = {
   serviceExtensionLimiter,
   webauthnLimiter,
   inboxTextLimiter,
+  menuDraftReadLimiter,
+  menuDraftEditLimiter,
 };

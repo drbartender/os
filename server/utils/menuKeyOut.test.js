@@ -10,6 +10,8 @@ process.env.NODE_ENV = 'test';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const zlib = require('node:zlib');
 const { performance } = require('node:perf_hooks');
 const sharp = require('sharp');
@@ -292,6 +294,29 @@ test('minKeyFraction sets the refusal line', async () => {
   assert.equal(alphaAt(out, 10, 10), 0);
   assert.equal(alphaAt(out, 512, 512), 255);
   await assert.rejects(keyOutMagenta(glass, { minKeyFraction: 'x' }), TypeError);
+});
+
+// E7 regression: a real Gemini 1:1 1K drink on magenta, captured in the live
+// smoke (an old fashioned with an orange twist, JPEG straight from the API).
+test('a real Gemini drink keys out: transparent corners, an opaque drink, no magenta fringe on its edge', async () => {
+  const raw = fs.readFileSync(path.join(__dirname, '__fixtures__', 'gemini-drink-raw.jpg'));
+  const meta = await sharp(raw).metadata();
+  assert.deepEqual([meta.format, meta.width, meta.height], ['jpeg', SIZE, SIZE], 'the fixture is what Gemini returns');
+  const png = await keyOutMagenta(raw);
+  const { format, width, height, hasAlpha } = await sharp(png).metadata();
+  assert.deepEqual({ format, width, height, hasAlpha }, { format: 'png', width: SIZE, height: SIZE, hasAlpha: true });
+  const out = await rawRGBA(png);
+  for (const [x, y] of [[0, 0], [SIZE - 1, 0], [0, SIZE - 1], [SIZE - 1, SIZE - 1], [60, 512], [960, 512]]) {
+    assert.equal(alphaAt(out, x, y), 0, `background at ${x},${y} is transparent`);
+  }
+  for (const [x, y] of [[512, 512], [512, 600], [400, 500]]) assert.equal(alphaAt(out, x, y), 255, `the drink at ${x},${y} is opaque`);
+  let partial = 0;
+  for (let i = 0; i < SIZE * SIZE; i++) {
+    const a = out[i * 4 + 3];
+    if (a > 0 && a < 255) partial++;
+  }
+  assert.ok(partial > 300, `the outline keeps a partial-alpha band (${partial} px)`);
+  await assertNoMagentaCast(png, out, 'real Gemini JPEG', CAST_TOLERANCE_JPEG);
 });
 
 test('a 1000x1000 input comes out 1024x1024 with alpha', async () => {

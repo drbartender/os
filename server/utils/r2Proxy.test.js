@@ -24,7 +24,7 @@ const realReadFile = storage.readFile;
 const readCalls = [];
 storage.readFile = (key, opts) => { readCalls.push(key); return realReadFile(key, opts); };
 
-const { sendR2Object, assertKeyUnder, RESIZE_PIXEL_LIMIT, RESIZE_BYTE_LIMIT } = require('./r2Proxy');
+const { sendR2Object, assertKeyUnder, decodedBytes, RESIZE_PIXEL_LIMIT, RESIZE_BYTE_LIMIT } = require('./r2Proxy');
 const { AppError, NotFoundError, ExternalServiceError } = require('./errors');
 
 let server;
@@ -351,6 +351,14 @@ test('resize: a 16-bit image under the pixel limit but over the decoded-size bud
     assert.strictEqual(JSON.parse(res.body).code, 'IMAGE_TOO_LARGE');
     assert.ok(lastError instanceof AppError && !(lastError instanceof ExternalServiceError));
   });
+});
+
+test('decodedBytes: width x height x channels x bytes per sample, unknown parts read as the worst case', () => {
+  assert.equal(decodedBytes({ width: 10, height: 20, channels: 3, depth: 'uchar' }), 600);
+  assert.equal(decodedBytes({ width: 10, height: 20, channels: 4, depth: 'ushort' }), 1600);
+  assert.equal(decodedBytes({ width: 10, height: 20 }), 3200, 'no channels or depth: 4 channels of 4 bytes');
+  assert.equal(decodedBytes({ width: 10, height: 20, channels: 2, depth: 'double' }), 3200);
+  assert.equal(decodedBytes(), 0);
 });
 
 test('resize: an image over the pixel limit is a 422 IMAGE_TOO_LARGE that does not page Sentry', async () => {
