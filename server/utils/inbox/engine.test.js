@@ -11,6 +11,7 @@ const {
 const { loadContext } = require('./context');
 const { loadFeeds } = require('./feeds');
 const { personalEmailKey, emailHash } = require('./people');
+const { PERSONAL_ALIAS } = require('./constants');
 const k = require('./rules.testkit');
 
 if (process.env.NODE_ENV === 'production') throw new Error('engine.test.js refuses to run against production');
@@ -30,15 +31,19 @@ const GM = 'zz-test-engine';
 
 // Everything this suite seeds, found by its tag, its client names and its phone block.
 async function clean() {
-  const users = (await pool.query('SELECT id FROM users WHERE email LIKE $1', [`${TAG}-%`])).rows.map((r) => r.id);
+  const users = (await pool.query('SELECT id FROM users WHERE email LIKE $1 OR email LIKE $2', [`${TAG}-%`, `${GM}-%`])).rows.map((r) => r.id);
   const clients = (await pool.query('SELECT id FROM clients WHERE name LIKE $1', [`%${TAG}`])).rows.map((r) => r.id);
   await pool.query('DELETE FROM gmail_messages WHERE gmail_id LIKE $1', [`${GM}-%`]);
+  await pool.query('DELETE FROM inbox_reads WHERE subject_ref LIKE $1', [`gm:${GM}-%`]);
   await pool.query(
     `DELETE FROM sms_messages
       WHERE RIGHT(REGEXP_REPLACE(recipient_phone, '\\D', '', 'g'), 10) = ANY($1::text[])
          OR client_id = ANY($2::int[]) OR sender_id = ANY($3::int[])`,
     [PHONES, clients, users]
   );
+  // A consult keeps its row when its proposal goes (ON DELETE SET NULL); the
+  // held client's email ledger rows go with their proposal (ON DELETE CASCADE).
+  await pool.query('DELETE FROM consults WHERE booker_email LIKE $1', [`${TAG}-%`]);
   await pool.query('DELETE FROM proposals WHERE client_id = ANY($1::int[])', [clients]);
   await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [clients]);
   await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [users]);
@@ -96,6 +101,134 @@ before(async () => {
   );
   await sent(`${GM}-held`, [`${GM}-h@example.com`, `${GM}-planner@example.com`]);
   await sent(`${GM}-free`, [`${GM}-m@example.com`]);
+  // The held client's second address, known only from the email ledger: the
+  // people index makes it an e- person, and only the full held key set ties it
+  // to the hold. A planner writes first; one Sent mail answers both.
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, $2, 'email', 'other', $3, 'sent')`,
+    [hold.rows[0].id, ids.h, `${GM}-ledger@example.com`]
+  );
+  const theyWrote = (gmailId, from, text, ago) => pool.query(
+    `INSERT INTO gmail_messages (gmail_id, thread_id, direction, kind, from_address, to_addresses, text, at)
+     VALUES ($1, $1, 'in', 'message', $2, ARRAY['contact@drbartender.com'], $3, NOW() - $4::interval)`,
+    [gmailId, from, text, ago]
+  );
+  await theyWrote(`${GM}-p2ask`, `${GM}-planner2@example.com`, 'Who is bringing the ice?', '5 hours');
+  // The email ledger keeps a send to an address that matches no client under
+  // its proposal alone (client_id NULL, messageLog.js): that address is held
+  // too, and its owner writes in.
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'other', $2, 'sent')`,
+    [hold.rows[0].id, `${GM}-stale@example.com`]
+  );
+  await theyWrote(`${GM}-stale-in`, `${GM}-stale@example.com`, 'Is the date still on?', '3 hours');
+  // A held address at Gmail, known from the ledger. Every form Gmail
+  // delivers to it, and a +tag of the held client's own address, is held:
+  // as the sender (From) and as a copied recipient (To or Cc). The local
+  // part is invented and holds a hyphen, which Gmail usernames never do, so
+  // it can never be a real person's; a real domain is needed for the Gmail
+  // folding.
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'other', $2, 'sent')`,
+    [hold.rows[0].id, 'zz-fixture.held@gmail.com']
+  );
+  const mailTo = (gmailId, from, to, text) => pool.query(
+    `INSERT INTO gmail_messages (gmail_id, thread_id, direction, kind, from_address, to_addresses, text, at)
+     VALUES ($1, $1, 'in', 'message', $2, $3::text[], $4, NOW() - INTERVAL '2 hours')`,
+    [gmailId, from, to, text]
+  );
+  await mailTo(`${GM}-v-from-tag`, `${GM}-h+law@example.com`, ['contact@drbartender.com'], 'From a tagged address');
+  await mailTo(`${GM}-v-from-gmail`, 'ZZ-FixtureHeld+x@googlemail.com', ['contact@drbartender.com'], 'From a Gmail form');
+  await mailTo(`${GM}-v-cc-gmail`, `${GM}-planner3@example.com`, ['contact@drbartender.com', 'z.z-fixture.held+cc@gmail.com'], 'Copying a Gmail form');
+  await mailTo(`${GM}-v-cc-tag`, `${GM}-planner4@example.com`, ['contact@drbartender.com', `${GM}-h+cc@example.com`], 'Copying a tagged address');
+  await mailTo(`${GM}-v-free`, `${GM}-hx@example.com`, ['contact@drbartender.com', `${GM}-hx+cc@example.com`], 'A different address');
+  // The ledger also logs a staff notice under a proposal (client_id NULL), and
+  // a ledger row can name an address that is ours: neither is a held address.
+  // A staffer (a users row) and the personal alias, each on a row under the
+  // held proposal; their mail, and a client's mail to the alias, stay
+  // unheld, while a mail copying both the held client and the staffer is held.
+  const staffer = await pool.query(
+    "INSERT INTO users (email, password_hash, role, onboarding_status, token_version) VALUES ($1, 'x', 'staff', 'approved', 0) RETURNING id",
+    [`${TAG}-staffer@example.com`]
+  );
+  ids.users.push(staffer.rows[0].id);
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'gratuity_removed_staff_notice', $2, 'sent'), ($1, NULL, 'email', 'other', $3, 'sent')`,
+    [hold.rows[0].id, `${TAG}-Staffer+notice@example.com`, PERSONAL_ALIAS]
+  );
+  // Provenance, not a matching users row, decides a drop (the fleet's fourth
+  // round): anyone can register an address, so an in_progress and an applied
+  // account naming held ledger addresses leave them held; a consult booked
+  // with an approved staffer's address stays held too.
+  const registered = (email, status) => pool.query(
+    "INSERT INTO users (email, password_hash, role, onboarding_status, token_version) VALUES ($1, 'x', 'staff', $2, 0) RETURNING id",
+    [email, status]
+  );
+  ids.users.push((await registered(`${GM}-ledger@example.com`, 'in_progress')).rows[0].id);
+  ids.users.push((await registered(`${GM}-stale@example.com`, 'applied')).rows[0].id);
+  ids.users.push((await registered(`${TAG}-staffer2@example.com`, 'approved')).rows[0].id);
+  // A submitted bartender (set only by an admin, the status route) on a
+  // staff notice under the held proposal is a real staffer: not held. A
+  // service_extension_request row is the client's copy, never a staff
+  // notice, so even an approved staffer's address on one stays held.
+  ids.users.push((await registered(`${TAG}-staffer3@example.com`, 'submitted')).rows[0].id);
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'service_extension_declined', $2, 'sent')`,
+    [hold.rows[0].id, `${TAG}-staffer3@example.com`]
+  );
+  ids.users.push((await registered(`${TAG}-staffer4@example.com`, 'approved')).rows[0].id);
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'service_extension_request', $2, 'sent')`,
+    [hold.rows[0].id, `${TAG}-staffer4@example.com`]
+  );
+  await pool.query(
+    "INSERT INTO consults (proposal_id, scheduled_at, status, booker_email) VALUES ($1, NOW() - INTERVAL '30 days', 'cancelled', $2)",
+    [hold.rows[0].id, `${TAG}-staffer2@example.com`]
+  );
+  // The client-row exemption: a second held client whose own address is an
+  // admin's (dropped from every other source) is still held.
+  const op = await pool.query(
+    "INSERT INTO users (email, password_hash, role, onboarding_status, token_version) VALUES ($1, 'x', 'admin', 'approved', 0) RETURNING id",
+    [`${TAG}-op2@example.com`]
+  );
+  ids.users.push(op.rows[0].id);
+  ids.opClient = await addClient(`Op Example ${TAG}`, null);
+  await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [`${TAG}-op2@example.com`, ids.opClient]);
+  ids.opHold = (await pool.query("INSERT INTO proposals (client_id, status) VALUES ($1, 'draft') RETURNING id", [ids.opClient])).rows[0].id;
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'other', $2, 'sent')`,
+    [ids.opHold, `${TAG}-admin@example.com`]
+  );
+  await mailTo(`${GM}-o-staffer`, `${TAG}-staffer@example.com`, ['contact@drbartender.com'], 'Running ten minutes late');
+  await mailTo(`${GM}-o-alias`, `${GM}-m@example.com`, [PERSONAL_ALIAS], 'A note for the owner');
+  await mailTo(`${GM}-o-both`, `${GM}-planner6@example.com`, ['contact@drbartender.com', `${GM}-h@example.com`, `${TAG}-staffer@example.com`], 'Copying the client and the bartender');
+  // Counsel writes with the held client's ledger address copied, then again
+  // in the same thread without it.
+  await pool.query(
+    `INSERT INTO gmail_messages (gmail_id, thread_id, direction, kind, from_address, to_addresses, text, at)
+     VALUES ($1, $2, 'in', 'message', $3, $4::text[], $5, NOW() - $6::interval)`,
+    [`${GM}-cc1`, `${GM}-th-counsel`, `${GM}-counsel@example.com`, ['contact@drbartender.com', `${GM}-ledger@example.com`], 'Copying my client on the schedule', '3 hours']
+  );
+  await pool.query(
+    `INSERT INTO gmail_messages (gmail_id, thread_id, direction, kind, from_address, to_addresses, text, at)
+     VALUES ($1, $2, 'in', 'message', $3, ARRAY['contact@drbartender.com'], $4, NOW() - $5::interval)`,
+    [`${GM}-cc2`, `${GM}-th-counsel`, `${GM}-counsel@example.com`, 'A question of my own', '1 hour']
+  );
+  await sent(`${GM}-ledger`, [`${GM}-ledger@example.com`, `${GM}-planner2@example.com`]);
+  // A vendor pitch, already read as a solicitation (stored needs_reply true).
+  await theyWrote(`${GM}-pitch`, `${GM}-vendor@example.com`, 'We make bar stools for events', '2 hours');
+  await pool.query(
+    `INSERT INTO inbox_reads (kind, subject_ref, person_key, status, needs_reply, summary, reason, solicitation, model, attempts)
+     VALUES ('inbound', $1, $2, 'ok', true, 'Selling bar stools for events', 'A vendor pitch', true, 'claude-opus-5-5', 1)`,
+    [`gm:${GM}-pitch`, `e-${emailHash(`${GM}-vendor@example.com`)}`]
+  );
   // Personal mail end to end (test 1 of the 2026-10-15 brief): the sync stored
   // a dallas@-only mail personal while its sender was nobody we knew; the
   // sender is a client now, and wrote to the business mailbox since.
@@ -672,4 +805,184 @@ test('getReadSubjects never hands over a sibling of a Sent mail that reached the
   } finally {
     engine.__setEngineDeps({ computeSnapshot: null });
   }
+});
+
+// ─── lane email-ai, the coordinator's round (2026-10-16) ───
+
+test('a pitch: the newest inbound read as a solicitation reaches the list through the snapshot, waiting with pitch true', async () => {
+  engine.invalidate();
+  const body = await engine.getInbox({ viewerId: ids.admin });
+  const vendor = body.waiting.find((r) => r.person_key === `e-${emailHash(`${GM}-vendor@example.com`)}`);
+  assert.ok(vendor, 'the pitch waits');
+  assert.deepEqual([vendor.pitch, vendor.need, vendor.channels], [true, 'Selling bar stools for events', ['email']]);
+  assert.equal(body.waiting.find((r) => r.person_key === `c-${ids.w}`).pitch, false);
+});
+
+// The full held key set (spec 2026-10-14 section 6): the address the email
+// ledger alone knows is an e- person to the people index, and only the held
+// key set ties it to the hold. Every sibling of the Sent mail that reached it
+// is flagged, so the planner's copy is never read under the planner's key.
+test('a Sent mail to the held client at a ledger-only address and to a planner flags the planner\'s sibling, and the read job refuses it', async () => {
+  const { computeInbox } = require('./rules');
+  const { isReadable } = require('./aiRead');
+  const { runInboxReads } = require('./readJob');
+  engine.invalidate();
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const ledger = `e-${emailHash(`${GM}-ledger@example.com`)}`;
+  const planner = `e-${emailHash(`${GM}-planner2@example.com`)}`;
+  const mail = [...snap.eventsByPerson.values()].flat().filter((e) => e.meta.readRef === `gm:${GM}-ledger`);
+  assert.deepEqual(mail.map((e) => [e.personKey, e.meta.legalHold]).sort(), [[ledger, true], [planner, true]].sort());
+  const [subject] = computeInbox({ events: snap.eventsByPerson.get(planner), now: snap.now, users: snap.index.users }).subjects;
+  assert.deepEqual([subject.kind, subject.readRef], ['outbound', `gm:${GM}-ledger`], 'the planner has a subject to refuse');
+  assert.equal(isReadable(subject), false);
+  engine.__setEngineDeps({ computeSnapshot: () => Promise.resolve(snap) });
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-real';
+  try {
+    assert.equal((await engine.getReadSubjects()).some((s) => s.personKey === planner || s.personKey === ledger), false);
+    const calls = [];
+    const client = { beta: { messages: { create: (r) => { calls.push(r); return Promise.reject(new Error('never called')); } } } };
+    const fake = { getReadSubjects: () => Promise.resolve([subject]), invalidate: () => {} };
+    const counts = await runInboxReads({ client, engine: fake, legalHoldProposalIds: ids.proposals });
+    assert.deepEqual([calls.length, counts.read], [0, 0]);
+    const { rows } = await pool.query('SELECT 1 FROM inbox_reads WHERE subject_ref = $1', [`gm:${GM}-ledger`]);
+    assert.equal(rows.length, 0, 'nothing reserved');
+  } finally {
+    if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedKey;
+    engine.__setEngineDeps({ computeSnapshot: null });
+  }
+});
+
+// ─── the fleet's fix round (2026-10-16) ───
+
+test('an address the email ledger kept under the held proposal alone (no client) is held: its owner\'s mail is never offered', async () => {
+  engine.invalidate();
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const stale = `e-${emailHash(`${GM}-stale@example.com`)}`;
+  assert.ok(snap.heldKeys.has(stale), 'in the held key set');
+  assert.ok(snap.heldKeys.has(personalEmailKey(`${GM}-stale@example.com`)));
+  assert.equal((snap.eventsByPerson.get(stale) || []).length, 1, 'their mail is a person of its own');
+  engine.__setEngineDeps({ computeSnapshot: () => Promise.resolve(snap) });
+  try {
+    const subjects = await engine.getReadSubjects();
+    assert.equal(subjects.some((s) => s.personKey === stale), false);
+    assert.ok(subjects.some((s) => s.personKey === `c-${ids.w}`), 'others are still offered');
+  } finally {
+    engine.__setEngineDeps({ computeSnapshot: null });
+  }
+});
+
+test('an inbound mail that copied the held client is held, that mail only, never the rest of its thread; the sender is not read while it is in the slice', async () => {
+  const { isReadable } = require('./aiRead');
+  const { computeInbox } = require('./rules');
+  engine.invalidate();
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const counsel = `e-${emailHash(`${GM}-counsel@example.com`)}`;
+  const flags = (snap.eventsByPerson.get(counsel) || []).map((e) => [e.meta.gmailId, Boolean(e.meta.legalHold)]);
+  assert.deepEqual(flags, [[`${GM}-cc1`, true], [`${GM}-cc2`, false]]);
+  const [subject] = computeInbox({ events: snap.eventsByPerson.get(counsel), now: snap.now, users: snap.index.users }).subjects;
+  assert.deepEqual([subject.kind, subject.subjectRef], ['inbound', `gm:${GM}-cc2`]);
+  assert.equal(isReadable(subject), false, 'the copied mail rides in its slice');
+  engine.__setEngineDeps({ computeSnapshot: () => Promise.resolve(snap) });
+  try {
+    assert.equal((await engine.getReadSubjects()).some((s) => s.personKey === counsel), false);
+  } finally {
+    engine.__setEngineDeps({ computeSnapshot: null });
+  }
+});
+
+// The fleet's second round (2026-10-16): the hold compares canonical
+// addresses (a +tag dropped; for Gmail, dots dropped and googlemail.com read
+// as gmail.com), on the From path and the copy path, with plain string
+// compares.
+test('canonicalAddress: a +tag goes; Gmail drops dots and reads googlemail.com as gmail.com; other domains keep their dots', () => {
+  assert.equal(engine.canonicalAddress(' Pat.Q+events@Example.com '), 'pat.q@example.com');
+  assert.equal(engine.canonicalAddress('Pat.Q-x+events@GoogleMail.com'), 'patq-x@gmail.com');
+  assert.equal(engine.canonicalAddress('p.a.t.q-x@gmail.com'), 'patq-x@gmail.com');
+  assert.equal(engine.canonicalAddress(''), null);
+  assert.equal(engine.canonicalAddress(null), null);
+});
+
+test('a held address in any form Gmail delivers to it holds that mail, as the sender or a copied recipient; a different address does not', async () => {
+  const { isReadable } = require('./aiRead');
+  const { computeInbox } = require('./rules');
+  const { runInboxReads } = require('./readJob');
+  engine.invalidate();
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const flagOf = (gmailId) => [...snap.eventsByPerson.values()].flat().filter((e) => e.meta.gmailId === gmailId).map((e) => Boolean(e.meta.legalHold));
+  for (const v of ['from-tag', 'from-gmail', 'cc-gmail', 'cc-tag']) assert.deepEqual(flagOf(`${GM}-v-${v}`), [true], v);
+  assert.deepEqual(flagOf(`${GM}-v-free`), [false]);
+  const variant = `e-${emailHash('ZZ-FixtureHeld+x@googlemail.com')}`;
+  assert.equal(snap.heldKeys.has(variant), false, 'the variant forms its own person, outside the held keys');
+  const [subject] = computeInbox({ events: snap.eventsByPerson.get(variant), now: snap.now, users: snap.index.users }).subjects;
+  assert.equal(isReadable(subject), false, 'its own message is held');
+  engine.__setEngineDeps({ computeSnapshot: () => Promise.resolve(snap) });
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-real';
+  try {
+    const offered = new Set((await engine.getReadSubjects()).map((s) => s.personKey));
+    for (const from of [`${GM}-h+law@example.com`, 'ZZ-FixtureHeld+x@googlemail.com', `${GM}-planner3@example.com`, `${GM}-planner4@example.com`]) {
+      assert.equal(offered.has(`e-${emailHash(from)}`), false, from);
+    }
+    assert.equal(offered.has(`e-${emailHash(`${GM}-hx@example.com`)}`), true, 'the different address is offered');
+    const calls = [];
+    const client = { beta: { messages: { create: (r) => { calls.push(r); return Promise.reject(new Error('never called')); } } } };
+    await runInboxReads({ client, engine: { getReadSubjects: () => Promise.resolve([subject]), invalidate: () => {} }, legalHoldProposalIds: ids.proposals });
+    assert.equal(calls.length, 0, 'the read job refuses it too');
+  } finally {
+    if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedKey;
+    engine.__setEngineDeps({ computeSnapshot: null });
+  }
+});
+
+// The fleet's third round (2026-10-16): an address that is ours (a staffer's
+// users.email, the personal alias) is never a held address, even when a row
+// under a held proposal names it; the held client's own address still is.
+test('our own addresses are never held: a staffer and the personal alias on ledger rows hold nothing; a mail copying the held client still is', async () => {
+  engine.invalidate();
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const flagOf = (gmailId) => [...snap.eventsByPerson.values()].flat().filter((e) => e.meta.gmailId === gmailId).map((e) => Boolean(e.meta.legalHold));
+  assert.deepEqual(flagOf(`${GM}-o-staffer`), [false], "the staffer's own mail");
+  assert.deepEqual(flagOf(`${GM}-o-alias`), [false], 'a client mail to the personal alias');
+  assert.deepEqual(flagOf(`${GM}-o-both`), [true], 'a mail copying the held client and the staffer');
+  // The forms the ledger rows actually carry.
+  for (const a of [`${TAG}-Staffer+notice@example.com`, PERSONAL_ALIAS]) {
+    assert.equal(snap.heldKeys.has(`e-${emailHash(a)}`), false, a);
+    assert.equal(snap.heldKeys.has(personalEmailKey(a)), false, a);
+  }
+  assert.ok(snap.heldKeys.has(`e-${emailHash(`${GM}-h@example.com`)}`), "the held client's own address stays held");
+  const { addresses } = await engine.loadLegalHold(pool, ids.proposals);
+  assert.equal(addresses.has(engine.canonicalAddress(`${TAG}-staffer@example.com`)), false);
+  assert.equal(addresses.has(engine.canonicalAddress(PERSONAL_ALIAS)), false);
+  assert.equal(addresses.has(engine.canonicalAddress(`${GM}-h@example.com`)), true);
+});
+
+// The fleet's fourth round (2026-10-16): a drop is decided by where the
+// address came from, never by a users row that matches it.
+test('a registered account naming a held address leaves it held; a consult booked with a staffer\'s address stays held', async () => {
+  const { keys, addresses } = await engine.loadLegalHold(pool, ids.proposals);
+  for (const a of [`${GM}-ledger@example.com`, `${GM}-stale@example.com`]) {
+    assert.ok(addresses.has(engine.canonicalAddress(a)), `${a} (an in_progress or applied account) stays held`);
+    assert.ok(keys.has(`e-${emailHash(a)}`), a);
+  }
+  assert.ok(addresses.has(engine.canonicalAddress(`${TAG}-staffer2@example.com`)), 'a consult booker is never a staff notice');
+  assert.equal(addresses.has(engine.canonicalAddress(`${TAG}-staffer@example.com`)), false, 'the staff notice to an approved staffer is dropped');
+  assert.equal(addresses.has(engine.canonicalAddress(`${TAG}-staffer3@example.com`)), false, 'the staff notice to a submitted staffer is dropped');
+  assert.equal(keys.has(`e-${emailHash(`${TAG}-staffer3@example.com`)}`), false);
+  assert.ok(addresses.has(engine.canonicalAddress(`${TAG}-staffer4@example.com`)), 'a service_extension_request row is never a staff notice: held');
+  assert.ok(keys.has(`e-${emailHash(`${TAG}-staffer4@example.com`)}`));
+  engine.invalidate();
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const cc = [...snap.eventsByPerson.values()].flat().filter((e) => e.meta.gmailId === `${GM}-cc1`);
+  assert.deepEqual(cc.map((e) => e.meta.legalHold), [true], 'mail copying the registered ledger address is still held');
+});
+
+test('the client-row exemption: a held client whose own address is an admin\'s is still held; that admin on a ledger row is not', async () => {
+  const { keys, addresses } = await engine.loadLegalHold(pool, [ids.opHold]);
+  assert.ok(addresses.has(engine.canonicalAddress(`${TAG}-op2@example.com`)), "the client row's address");
+  assert.ok(keys.has(`e-${emailHash(`${TAG}-op2@example.com`)}`));
+  assert.equal(addresses.has(engine.canonicalAddress(`${TAG}-admin@example.com`)), false, "an admin's address on a ledger row");
+  assert.equal(keys.has(`e-${emailHash(`${TAG}-admin@example.com`)}`), false);
 });

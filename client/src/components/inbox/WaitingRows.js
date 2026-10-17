@@ -12,12 +12,18 @@ import { channelIcon, channelLabel, stampLabel, stateChip, waitParts } from './i
 // server/utils/inbox/personalMail.js, spec 2026-10-14 decision 6; only the
 // owner's list ever holds one) carries a "dallas@" chip after the
 // channel tags, in the muted StatusChip, inside the tags group so a narrow
-// card wraps them together (right-aligned) rather than the chip alone.
+// card wraps them together (right-aligned) rather than the chip alone. A
+// pitch row (the AI read the newest inbound as a solicitation, decision 12)
+// carries a "Pitch" chip there in the same style.
 
 const NO_WAIT = { n: '', unit: '', short: '', hot: false, tone: 'info' };
 
 function PersonalChip() {
   return <StatusChip kind="neutral">dallas@</StatusChip>;
+}
+
+function PitchChip() {
+  return <StatusChip kind="neutral">Pitch</StatusChip>;
 }
 
 export function WaitingCard({ row, nowMs, onOpen }) {
@@ -38,6 +44,7 @@ export function WaitingCard({ row, nowMs, onOpen }) {
           {chip && <StatusChip kind={chip.kind}>{chip.label}</StatusChip>}
           <span className="m-tags">
             {(row.channels || []).map((c) => <span key={c} className="m-tag">{channelLabel(c)}</span>)}
+            {row.pitch && <PitchChip />}
             {row.personal && <PersonalChip />}
           </span>
         </span>
@@ -74,6 +81,7 @@ export function WaitingRow({ row, nowMs, selected, onOpen }) {
           {chip && <StatusChip kind={chip.kind}>{chip.label}</StatusChip>}
           <span className="ib-tags">
             {channels.map((c) => <span key={c} className="ib-tag">{channelLabel(c)}</span>)}
+            {row.pitch && <PitchChip />}
             {row.personal && <PersonalChip />}
           </span>
         </div>

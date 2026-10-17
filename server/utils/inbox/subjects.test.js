@@ -112,3 +112,53 @@ test('a Zola closed notice anchors the outbound slice: a Gmail reply after it re
   assert.equal(subj.kind, 'outbound');
   assert.deepEqual(subj.slice.map((x) => [x.ref, x.context]), [[inquiry.ref, true], [reply.ref, false]]);
 });
+
+// ─── Email (spec 2026-10-14 section 6 and section 17 item 25) ───
+
+test('a Zola notice the OS could not read joins the slice with its fixed line; auto-replies and bounces stay out', () => {
+  const { ZOLA_UNREAD_TEXT } = require('./constants');
+  const unread = k.zolaEvent('z-62', ago(6 * HOUR), null, { leadId: 62, template: 'unparsed' });
+  const ask = k.zolaEvent('z-62', ago(5 * HOUR), 'Is June 12 open?', { leadId: 62, template: 'message' });
+  const [subj] = subjectsFor(run({ events: [unread, ask] }), 'z-62');
+  assert.deepEqual([subj.kind, subj.subjectRef], ['inbound', ask.ref]);
+  assert.deepEqual(subj.slice.map((x) => [x.ref, x.who, x.text]), [[unread.ref, 'THEM', ZOLA_UNREAD_TEXT], [ask.ref, 'THEM', 'Is June 12 open?']]);
+  const mail = k.gmIn('c-520', ago(5 * HOUR), 'Can we add a mocktail station?');
+  const auto = k.gmIn('c-520', ago(4 * HOUR), 'I am out of the office', { kind: 'auto_reply' });
+  const later = k.gmIn('c-520', ago(3 * HOUR), 'Also, two bars?');
+  const [m] = subjectsFor(run({ events: [mail, auto, later] }), 'c-520');
+  assert.deepEqual(m.slice.map((x) => x.ref), [mail.ref, later.ref]);
+});
+
+// The readRef trap (lane email-feed's carry-forward, item 3): one Sent mail
+// to two people is two events, gm:<id>:1 and gm:<id>:2, sharing readRef
+// gm:<id>. Each person's subject keeps its own event's ref (its slice lines
+// carry the same refs, so every match inside one subject stays exact) and
+// names the mail's readRef, the key the read is stored and found under.
+test('a Sent mail to two people: each subject keeps its own ref and names the readRef; a read under the readRef resolves both', () => {
+  const askC = k.gmIn('c-521', ago(5 * HOUR), 'Who brings the ice?');
+  const askP = k.gmIn('e-5210000000000521', ago(5 * HOUR), 'Same question on the ice');
+  const toC = k.gmOut('c-521', ago(4 * HOUR), 'Let me check and get back to you', { gmailId: 'g521', n: 1 });
+  const toP = k.gmOut('e-5210000000000521', ago(4 * HOUR), 'Let me check and get back to you', { gmailId: 'g521', n: 2 });
+  const events = [askC, askP, toC, toP];
+  const out = run({ events }).subjects.filter((x) => x.kind === 'outbound');
+  assert.deepEqual(out.map((x) => [x.personKey, x.subjectRef, x.readRef]), [
+    ['c-521', 'gm:g521:1', 'gm:g521'],
+    ['e-5210000000000521', 'gm:g521:2', 'gm:g521'],
+  ]);
+  for (const s of out) assert.equal(s.slice[s.slice.length - 1].ref, s.subjectRef, 'the subject line is in its slice under the same ref');
+  const read = { ...k.readRow('outbound', toC, { holding: false }), subject_ref: 'gm:g521' };
+  assert.deepEqual(run({ events, reads: [read] }).subjects.filter((x) => x.kind === 'outbound'), [], 'one read resolves every sibling');
+  const old = k.readRow('outbound', toC, { holding: false });
+  assert.deepEqual(run({ events, reads: [old] }).subjects.filter((x) => x.kind === 'outbound').map((x) => x.subjectRef), ['gm:g521:2'],
+    'a read stored under a suffixed ref still resolves its own event');
+  const sms = k.smsIn('c-522', ago(2 * HOUR), 'Is Friday open?');
+  assert.equal(subjectsFor(run({ events: [sms] }), 'c-522')[0].readRef, sms.ref, 'with no readRef, the ref');
+});
+
+test('a slice line carries legalHold from its event: a sibling of a Sent mail that reached the held client', () => {
+  const ask = k.gmIn('e-5230000000000523', ago(5 * HOUR), 'Who brings the ice?');
+  const sent = k.gmOut('e-5230000000000523', ago(4 * HOUR), 'Words written to the held client too', { gmailId: 'g523', n: 2, legalHold: true });
+  const follow = k.gmIn('e-5230000000000523', ago(3 * HOUR), 'Following up on the ice');
+  const [subj] = subjectsFor(run({ events: [ask, sent, follow] }), 'e-5230000000000523');
+  assert.deepEqual(subj.slice.map((x) => [x.ref, x.legalHold]), [[ask.ref, false], [sent.ref, true], [follow.ref, false]]);
+});

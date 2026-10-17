@@ -32,16 +32,40 @@ function isKeywordRow(text) {
 // A bare host with no path ("drbartender.com") carries no token and stays.
 const SCHEME_URL = /\bhttps?:\/\/[^\s<>"]+/gi;
 const WWW_URL = /\bwww\.[^\s<>"]+/gi;
-// The old form backtracked super-linearly on a long run with no slash. Same matches: the
-// run before the slash must end in two letters, and the lookbehind cannot reach past the dot.
-const BARE_URL = /\b[A-Za-z0-9-]+\.[A-Za-z0-9.-]*(?<=[A-Za-z]{2})\/[^\s<>"]*/g;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const LINK_TAIL = /[.,!?;:)\]}'"]+$/;
+// Addresses and bare hosts are matched so that every pass is linear (the
+// fleet, 2026-10-16: an email line keeps 8,000 characters, and a long
+// unbroken run cost a quadratic rescan from every position inside it). Each
+// pattern is the old one as its first, captured alternative, and a later
+// alternative consumes the rest of the run whenever the first fails, so the
+// scan never restarts inside a run it already judged. The matches are the
+// old ones exactly: a match could only start mid-run where an earlier start
+// in the same run would have matched too, or right where the previous match
+// ended, and the scan still tries that position first.
+//   EMAIL: a local part starts anywhere in a run of local-part characters and
+//   runs to its end, so if the run's start fails every later start fails;
+//   the run is consumed whole.
+//   BARE_URL: a host starts at a word boundary on a letter, digit or hyphen
+//   and runs to the slash after the run; whether it matches depends only on
+//   a dot after the start, the slash after the run and the two letters before
+//   it, so if the first such start in the run fails every later one does,
+//   and the run is consumed from there. A character no host can start at (a
+//   dot, a hyphen with no word boundary) is consumed alone, so a host that
+//   starts after it is still found.
+const BARE_URL_SCAN = /(\b[A-Za-z0-9-]+\.[A-Za-z0-9.-]*(?<=[A-Za-z]{2})\/[^\s<>"]*)|\b[A-Za-z0-9-][A-Za-z0-9.-]*|[A-Za-z0-9.-]/g;
+const EMAIL_SCAN = /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})|[A-Za-z0-9._%+-]+/g;
+// Punctuation that ends a sentence, not a link: it stays after [link]. Found
+// by walking back from the end of the match (the fleet's second round,
+// 2026-10-16: a $-anchored pattern retried from every position of a long
+// run of these, quadratic); the same characters, the same longest tail.
+const LINK_TAIL_CHARS = new Set(['.', ',', '!', '?', ';', ':', ')', ']', '}', "'", '"']);
 
 function linkReplacer(match) {
-  const tail = match.match(LINK_TAIL);
-  return tail ? `[link]${tail[0]}` : '[link]';
+  let start = match.length;
+  while (start > 0 && LINK_TAIL_CHARS.has(match.charAt(start - 1))) start -= 1;
+  return start < match.length ? `[link]${match.slice(start)}` : '[link]';
 }
+const bareUrlReplacer = (match, link) => (link ? linkReplacer(link) : match);
+const emailReplacer = (match, address) => (address ? '[email]' : match);
 
 // Every run of 7 or more digits, with spaces, dots, dashes or parentheses
 // between them, becomes [number]: phone numbers in any format, card, bank and
@@ -175,9 +199,9 @@ function redact(text, { personName } = {}) {
   // a www. host loses its local part too (the merge review, 2026-10-13).
   const placeheld = text.normalize('NFKC')
     .replace(SCHEME_URL, linkReplacer)
-    .replace(EMAIL, '[email]')
+    .replace(EMAIL_SCAN, emailReplacer)
     .replace(WWW_URL, linkReplacer)
-    .replace(BARE_URL, linkReplacer)
+    .replace(BARE_URL_SCAN, bareUrlReplacer)
     .replace(DIGIT_RUN, digitReplacer);
   return tidy(dropSurnames(placeheld, nameParts(personName)));
 }

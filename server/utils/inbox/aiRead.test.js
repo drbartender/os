@@ -8,10 +8,11 @@ const assert = require('node:assert/strict');
 const { Anthropic } = require('@anthropic-ai/sdk');
 const {
   DEFAULT_MODEL, ALLOWED_MODELS, MAX_TOKENS, PRECLIP_CHARS, MAX_ENTRY_CHARS, MAX_PROMPT_CHARS, CALL_DEADLINE_MS,
-  INBOUND_SYSTEM_PROMPT, OUTBOUND_SYSTEM_PROMPT,
-  isReadable, buildInboundUserText, buildOutboundUserText, buildRequest, readModel,
+  EMAIL_PRECLIP_MAX, EMAIL_LINE_MAX, INBOUND_SYSTEM_PROMPT, OUTBOUND_SYSTEM_PROMPT, InboundRead,
+  isReadable, buildInboundUserText, buildOutboundUserText, buildRequest, readModel, preclipFor, entryMaxFor,
   cleanLine, classifyInbound, classifyOutbound, _resetModelWarningForTest,
 } = require('./aiRead');
+const k = require('./rules.testkit');
 
 let savedModel;
 beforeEach(() => {
@@ -225,7 +226,7 @@ test('the request: default model, 4096 tokens, low effort, the fallback beta, a 
   assert.equal(r.fallbacks, 'default');
   assert.equal(r.output_config.format.type, 'json_schema');
   assert.equal(typeof r.output_config.format.parse, 'function');
-  assert.deepEqual(r.output_config.format.schema.required, ['needs_reply', 'what_they_need', 'reason']);
+  assert.deepEqual(r.output_config.format.schema.required, ['needs_reply', 'what_they_need', 'reason', 'solicitation']);
   assert.equal('thinking' in r, false);
   assert.equal('temperature' in r, false);
   const o = buildRequest({ kind: 'outbound', model: DEFAULT_MODEL, userText: 'U' });
@@ -243,7 +244,7 @@ test('the schemas set no length limits', () => {
 
 test('INBOX_AI_MODEL switches the model; claude-haiku-4-5 gets no effort and no fallback', async () => {
   process.env.INBOX_AI_MODEL = 'claude-haiku-4-5';
-  const client = stubClient(() => message({ needs_reply: true, what_they_need: 'Asking about Oct 20', reason: 'open question' }, { model: 'claude-haiku-4-5' }));
+  const client = stubClient(() => message({ needs_reply: true, what_they_need: 'Asking about Oct 20', reason: 'open question', solicitation: false }, { model: 'claude-haiku-4-5' }));
   await classifyInbound(inbound(), client);
   const r = client.calls[0];
   assert.equal(r.model, 'claude-haiku-4-5');
@@ -269,6 +270,7 @@ test('classifyInbound ok: what reaches the model is redacted, and the answer is 
     needs_reply: true,
     what_they_need: `Asking whether Oct 20 works \u2014 ${'and more detail '.repeat(10)}`,
     reason: 'An open question about a date sits before the thank-you, so a reply is still owed by us here.',
+    solicitation: false,
   }, { model: 'claude-opus-5' }));
   const result = await classifyInbound(inbound(), client);
   assert.equal(client.calls.length, 1);
@@ -296,7 +298,7 @@ test('classifyOutbound ok: holding with promised_by trimmed to 30; not holding d
 
 test('a person with no name (an unknown number) is still read, and nothing is dropped as a surname', async () => {
   const unknown = { ...inbound(), personKey: 'p-3125550100', name: null };
-  const client = stubClient(() => message({ needs_reply: true, what_they_need: 'Asking about Oct 20', reason: 'Open question' }));
+  const client = stubClient(() => message({ needs_reply: true, what_they_need: 'Asking about Oct 20', reason: 'Open question', solicitation: false }));
   const result = await classifyInbound(unknown, client);
   assert.equal(result.status, 'ok');
   const sent = client.calls[0].messages[0].content;
@@ -331,7 +333,7 @@ test('an SDK error or a schema-violating answer becomes an error that holds no m
 
 test('every call carries one deadline, which also bounds the SDK\'s retry waits', async () => {
   assert.equal(CALL_DEADLINE_MS, 120000);
-  const client = stubClient(() => message({ needs_reply: true, what_they_need: 'x', reason: 'y' }));
+  const client = stubClient(() => message({ needs_reply: true, what_they_need: 'x', reason: 'y', solicitation: false }));
   await classifyInbound(inbound(), client);
   const { signal } = client.options[0];
   assert.ok(signal instanceof AbortSignal);
@@ -341,7 +343,7 @@ test('every call carries one deadline, which also bounds the SDK\'s retry waits'
 });
 
 test('a legal-hold subject throws before any call', async () => {
-  const client = stubClient(() => message({ needs_reply: false, what_they_need: 'x', reason: 'y' }));
+  const client = stubClient(() => message({ needs_reply: false, what_they_need: 'x', reason: 'y', solicitation: false }));
   await assert.rejects(classifyInbound({ ...inbound(), legalHold: true }, client), /legal-hold/);
   await assert.rejects(classifyOutbound({ ...outbound(), legalHold: true }, client), /legal-hold/);
   assert.equal(client.calls.length, 0);
@@ -354,7 +356,7 @@ test('a legal-hold subject throws before any call', async () => {
 test('through the real SDK: the beta header, fallbacks and effort are sent, and both schemas parse', async () => {
   const sent = [];
   const answers = [
-    { needs_reply: true, what_they_need: 'Asking whether Oct 20 works', reason: 'Open question' },
+    { needs_reply: true, what_they_need: 'Asking whether Oct 20 works', reason: 'Open question', solicitation: false },
     { holding: false, promised_by: null, reason: 'Answers the question' },
   ];
   const fetch = (url, init) => {
@@ -369,7 +371,9 @@ test('through the real SDK: the beta header, fallbacks and effort are sent, and 
   const client = new Anthropic({ apiKey: 'sk-ant-test-not-real', maxRetries: 0, fetch });
   const inResult = await classifyInbound(inbound(), client);
   const outResult = await classifyOutbound(outbound(), client);
-  assert.deepEqual(inResult, { status: 'ok', model: 'claude-opus-5-5', needsReply: true, summary: 'Asking whether Oct 20 works', reason: 'Open question' });
+  assert.deepEqual(inResult, {
+    status: 'ok', model: 'claude-opus-5-5', needsReply: true, summary: 'Asking whether Oct 20 works', reason: 'Open question', solicitation: false,
+  });
   assert.deepEqual(outResult, { status: 'ok', model: 'claude-opus-5-5', holding: false, promisedBy: null, reason: 'Answers the question' });
   const first = sent[0];
   assert.equal(first.url, 'https://api.anthropic.com/v1/messages?beta=true');
@@ -463,4 +467,137 @@ test('every line terminator inside their message is joined, not only a newline (
   const lines = buildInboundUserText(s).split(/\r\n|[\n\r\x0b\x0c\x85\p{Zl}\p{Zp}]/u);
   assert.equal(lines.filter((l) => l.startsWith('[9:05 AM] US (Zul)')).length, 0);
   assert.equal(lines.filter((l) => l.includes('Can you do Oct 20?')).length, 1);
+});
+
+// ─── Email (spec 2026-10-14 section 6) ───
+
+const SOLICITATION_PARAGRAPH = 'A solicitation is someone selling to us or asking us for something that is not a booking: a vendor pitch, a sponsorship or partnership ask, recruiting, a survey, a request to list or feature the business. For a solicitation set solicitation true and needs_reply true, and make what_they_need say what they are offering or asking for.';
+
+test('the inbound schema accepts and requires solicitation; the outbound schema has none', () => {
+  const answer = { needs_reply: true, what_they_need: 'Selling bar stools for events', reason: 'A vendor pitch' };
+  assert.deepEqual(InboundRead.parse({ ...answer, solicitation: true }), { ...answer, solicitation: true });
+  assert.throws(() => InboundRead.parse(answer), 'solicitation is required');
+  assert.throws(() => InboundRead.parse({ ...answer, solicitation: 'yes' }));
+  const r = buildRequest({ kind: 'inbound', model: DEFAULT_MODEL, userText: 'U' });
+  assert.deepEqual(r.output_config.format.schema.properties.solicitation.type, 'boolean');
+  const o = buildRequest({ kind: 'outbound', model: DEFAULT_MODEL, userText: 'U' });
+  assert.equal('solicitation' in o.output_config.format.schema.properties, false);
+});
+
+test('the inbound prompt carries the solicitation paragraph, word for word, before the no-reply list, and a fourth Fill in line', () => {
+  const at = INBOUND_SYSTEM_PROMPT.indexOf(SOLICITATION_PARAGRAPH);
+  assert.ok(at > 0, 'the paragraph from spec section 6, verbatim');
+  assert.ok(at > INBOUND_SYSTEM_PROMPT.indexOf('A reply is needed for:'));
+  assert.ok(at < INBOUND_SYSTEM_PROMPT.indexOf('No reply is needed for:'));
+  const fill = INBOUND_SYSTEM_PROMPT.slice(INBOUND_SYSTEM_PROMPT.indexOf('Fill in:')).split('\n');
+  assert.deepEqual(fill.map((l) => l.split(':')[0]), ['Fill in', '- needs_reply', '- what_they_need', '- reason', '- solicitation']);
+  assert.equal(fill[4], '- solicitation: true when the person is selling to us or asking us for something that is not a booking; otherwise false.');
+  assert.doesNotMatch(INBOUND_SYSTEM_PROMPT, /—/);
+  assert.doesNotMatch(OUTBOUND_SYSTEM_PROMPT, /solicitation/);
+});
+
+test('per-channel caps: email and Zola lines pre-clip at 8,000 and keep 4,000; every other line 3,000 and 1,500', () => {
+  assert.deepEqual([EMAIL_PRECLIP_MAX, EMAIL_LINE_MAX, PRECLIP_CHARS, MAX_ENTRY_CHARS], [8000, 4000, 3000, 1500]);
+  for (const c of ['email', 'zola']) assert.deepEqual([preclipFor(c), entryMaxFor(c)], [8000, 4000], c);
+  for (const c of ['text_888', 'text_1922', 'staff_text', 'thumbtack', 'voice', null, undefined]) {
+    assert.deepEqual([preclipFor(c), entryMaxFor(c)], [3000, 1500], String(c));
+  }
+  const bodyOf = (channel) => {
+    const line = buildInboundUserText({ ...inbound(), slice: [{ ...them('sms:9003', 65, `Thanks! ${'word '.repeat(1000)}`), channel }] })
+      .split('\n').find((l) => l.includes('Thanks!'));
+    return Array.from(line.slice(line.indexOf(': ') + 2));
+  };
+  assert.equal(bodyOf('email').length, 4000, 'a 5,000-character email keeps 4,000');
+  assert.equal(bodyOf('zola').length, 4000, 'a Zola line is an email line');
+  assert.equal(bodyOf('text_888').length, 1500, 'a text keeps 1,500');
+  assert.equal(bodyOf('email').at(-1), '…');
+});
+
+test('an email line pre-clips past the text cut: words between 3,000 and 8,000 reach the model, a number split at 8,000 does not', () => {
+  const links = Array.from({ length: 80 }, (_, i) => `https://example.com/plan/${String(i).padStart(4, '0')}${'a'.repeat(60)}`).join(' ');
+  const pad = 'x'.repeat(EMAIL_PRECLIP_MAX - links.length - ' kept call 312-55'.length);
+  const text = `${links}${pad} kept call 312-555-0100 tonight`;
+  assert.ok(links.length > PRECLIP_CHARS, 'the words sit past the text cut');
+  const sent = buildInboundUserText({ ...inbound(), slice: [{ ...them('sms:9003', 65, text), channel: 'email' }] });
+  assert.match(sent, / kept call/);
+  assert.doesNotMatch(sent, /312|555|0100/);
+  assert.doesNotMatch(sent, /tonight/, 'nothing past the cut');
+});
+
+// The fleet, 2026-10-16: the address and bare-host scans were quadratic on a
+// long unbroken run, and a 23-line slice of crafted 8,000-character email
+// lines blocked the event loop for about 3.5 seconds. Both scans are linear
+// now, and the budget formats newest first, so the lines that cannot fit are
+// never redacted at all.
+test('a slice of 23 crafted 8,000-character email runs formats fast, and the budget keeps the newest lines and the subject', () => {
+  // Each line is exactly EMAIL_PRECLIP_MAX: a two-digit number, a space, and
+  // one unbroken run that both scans walk (dots, hyphens, underscores, plus
+  // and percent signs, no @ and no slash).
+  const run = 'ab.cd-ef_gh+ij%k'.repeat(500).slice(0, EMAIL_PRECLIP_MAX - 3);
+  const slice = Array.from({ length: 23 }, (_, i) => ({ ...them(`gm:r${i}`, i, `${String(i).padStart(2, '0')} ${run}`), channel: 'email' }));
+  assert.ok(slice.every((l) => l.text.length === EMAIL_PRECLIP_MAX));
+  const started = process.hrtime.bigint();
+  const sent = buildInboundUserText({ ...inbound(), subjectRef: 'gm:r22', slice });
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(ms < 250, `took ${ms.toFixed(0)} ms`);
+  const kept = sent.split('\n').filter((l) => / THEM, email: \d+ /.test(l)).map((l) => Number(/ email: (\d+) /.exec(l)[1]));
+  assert.deepEqual(kept, [21, 22], 'the newest lines that fit beside the subject, oldest first, the subject last');
+  assert.match(sent, /^\(21 earlier messages not shown\)\n/);
+  assert.ok(sent.length <= MAX_PROMPT_CHARS + 300, 'the budget holds');
+});
+
+// The newest-first budget on its own (the fleet's second round, 2026-10-16):
+// with every pass linear, formatting all 400 lines of a long slice still
+// costs hundreds of milliseconds, while the budget formats only the few that
+// fit and drops the rest unformatted.
+test('a 400-line slice formats only what fits: well under the cost of formatting every line', () => {
+  const words = `${'Can we add a mocktail station and a second bar for the patio? '.repeat(120)}`.slice(0, EMAIL_PRECLIP_MAX - 4);
+  const slice = Array.from({ length: 400 }, (_, i) => ({ ...them(`gm:b${i}`, i, `${String(i).padStart(3, '0')} ${words}`), channel: 'email' }));
+  const started = process.hrtime.bigint();
+  const sent = buildInboundUserText({ ...inbound(), subjectRef: 'gm:b399', slice });
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(ms < 100, `took ${ms.toFixed(0)} ms`);
+  assert.match(sent, /^\(398 earlier messages not shown\)\n/);
+  assert.ok(sent.includes('] THEM, email: 398 ') && sent.includes('] THEM, email: 399 '));
+});
+
+test('the subject and [attachment] ride in the email line through sliceText; a Zola line carries no subject', () => {
+  const mail = k.gmIn('c-140', k.ago(2 * k.HOUR), 'Can we add a mocktail station?', { subject: 'Mocktails', attachments: 2 });
+  const [subject] = k.run({ events: [mail] }).subjects;
+  assert.equal(subject.subjectRef, mail.ref);
+  const line = buildInboundUserText(subject).split('\n').find((l) => l.includes('mocktail'));
+  assert.match(line, /\] THEM, email: Subject: Mocktails\. Can we add a mocktail station\? \[attachment\] \[attachment\]$/);
+  const zola = k.zolaEvent('z-140', k.ago(2 * k.HOUR), 'Is June open?', { leadId: 140, template: 'inquiry', subject: 'New inquiry' });
+  const [z] = k.run({ events: [zola] }).subjects;
+  assert.match(buildInboundUserText(z), /\] THEM, Zola: Is June open\?\n/);
+});
+
+test('classifyInbound returns the solicitation flag, false unless the model said true', async () => {
+  const pitch = await classifyInbound(inbound(), stubClient(() => message({
+    needs_reply: false, what_they_need: 'Selling bar stools for events', reason: 'A vendor pitch', solicitation: true,
+  })));
+  assert.deepEqual([pitch.status, pitch.solicitation, pitch.needsReply], ['ok', true, false], 'the store, not the read, forces needs_reply');
+  const plain = await classifyInbound(inbound(), stubClient(() => message({
+    needs_reply: true, what_they_need: 'Asking about Oct 20', reason: 'Open question', solicitation: false,
+  })));
+  assert.equal(plain.solicitation, false);
+  const outbound2 = await classifyOutbound(outbound(), stubClient(() => message({ holding: false, promised_by: null, reason: 'Answers it' })));
+  assert.equal('solicitation' in outbound2, false);
+});
+
+// Spec 2026-10-14 section 6 and section 17 item 48: a Sent mail that reached
+// the held client marks every sibling event legalHold (the engine's
+// markHeldSiblings), and the slice line carries it. The words written to the
+// held client are never read under another person's key, as the subject or
+// as a line of context.
+test('isReadable refuses a subject whose message or any line of context is a held sibling; the call throws for one', async () => {
+  const held = (s, i) => ({ ...s, slice: s.slice.map((line, j) => (j === i ? { ...line, legalHold: true } : line)) });
+  assert.equal(isReadable(held(outbound(), 1)), false, 'the subject itself');
+  assert.equal(isReadable(held(outbound(), 0)), false, 'a line of context before it');
+  assert.equal(isReadable(held(inbound(), 1)), false, 'context on an inbound subject');
+  assert.equal(isReadable({ ...outbound(), slice: outbound().slice.map((l) => ({ ...l, legalHold: false })) }), true);
+  const client = stubClient(() => message({ holding: false, promised_by: null, reason: 'y' }));
+  await assert.rejects(classifyOutbound(held(outbound(), 0), client), /legal-hold/);
+  await assert.rejects(classifyInbound(held(inbound(), 1), client), /legal-hold/);
+  assert.equal(client.calls.length, 0);
 });

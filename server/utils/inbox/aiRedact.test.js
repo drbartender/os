@@ -174,3 +174,100 @@ test('a display name stored with a decomposed accent still matches the normalize
   assert.equal(redact(`Hi, ${nfc} here about the 20th`, { personName: nfd }), 'Hi, Jordan here about the 20th');
   assert.equal(redact(`Hi, ${nfd} here about the 20th`, { personName: nfc }), 'Hi, Jordan here about the 20th');
 });
+
+// Email fixtures (spec 2026-10-14 section 6): the redactor needs no new rule
+// for mail, and these pin it on the two shapes mail adds.
+test('an email signature block: every phone, the address and every link go, and the surname with them', () => {
+  const signature = [
+    'Thanks so much!',
+    '--',
+    'Jordan Testerton',
+    'Event Planner, Example Events LLC',
+    'Mobile: (312) 555-0100 | Office: 312.555.0101 ext 22',
+    'jordan.testerton@example.com',
+    'www.example.com/events | https://example.com/book?ref=abc123',
+  ].join('\n');
+  const out = redact(signature, { personName: 'Jordan Testerton' });
+  assert.equal(out, [
+    'Thanks so much!',
+    '--',
+    'Jordan',
+    'Event Planner, Example Events LLC',
+    'Mobile: [number] | Office: [number] ext 22',
+    '[email]',
+    '[link] | [link]',
+  ].join('\n'));
+  assert.doesNotMatch(out, /555|0100|0101|@|example\.com|abc123|Testerton/);
+});
+
+test('a quoted-address line: the attribution line and a quoted header block keep no address and no surname', () => {
+  const attribution = 'On Mon, Oct 5, 2026 at 9:00 AM Jordan Testerton <jordan.testerton@example.com> wrote:';
+  assert.equal(redact(attribution, { personName: 'Jordan Testerton' }), 'On Mon, Oct 5, 2026 at 9:00 AM Jordan <[email]> wrote:');
+  const header = [
+    '> From: Jordan Testerton [mailto:jordan.testerton@example.com]',
+    '> Sent: Monday, October 5, 2026 9:00 AM',
+    '> To: events@example.com; <planner.p@example.org>',
+  ].join('\n');
+  const out = redact(header, { personName: 'Jordan Testerton' });
+  assert.equal(out, [
+    '> From: Jordan [mailto:[email]]',
+    '> Sent: Monday, October 5, 2026 9:00 AM',
+    '> To: [email]; <[email]>',
+  ].join('\n'));
+  assert.doesNotMatch(out, /@|example\.(com|org)|Testerton/);
+});
+
+// The fleet, 2026-10-16: the address and bare-host scans are linear (each
+// consumes a run it judged rather than restarting inside it), and redact no
+// less than before.
+test('a 70-character local part, a long link and a long host are redacted whole', () => {
+  const local = `${'j'.repeat(70)}.testerton`;
+  assert.equal(redact(`write to ${local}@example.com today`), 'write to [email] today');
+  assert.equal(redact(`see example.com/plan/${'a1'.repeat(1500)} now`), 'see [link] now');
+  assert.equal(redact(`at ${'sub.'.repeat(500)}example.com/p/${'z'.repeat(200)}.`), 'at [link].');
+  const out = redact(`${local}@example.com ${'sub-'.repeat(300)}example.co.uk/x`);
+  assert.equal(out, '[email] [link]');
+  assert.doesNotMatch(out, /j{2}|testerton|sub|example/);
+});
+
+test('addresses and hosts that start where a run already began still go: back to back, after a dot, after a hyphen', () => {
+  assert.equal(redact('a@b.com.x@c.org'), '[email][email]');
+  assert.equal(redact('a@b.com1x@c.org'), '[email][email]');
+  assert.equal(redact('_jo@example.com'), '[email]');
+  assert.equal(redact('.example.com/path'), '.[link]');
+  assert.equal(redact('-example.com/path'), '-[link]');
+  assert.equal(redact('.-.-.a.com/p'), '.-.-.[link]');
+  assert.equal(redact('see a.b.example.co.uk/plan/abc123.'), 'see [link].');
+  for (const kept of ['3.5/5 stars', 'v1.2/3', 'a.b/c', 'jo@ex.c', 'x@y']) assert.equal(redact(kept), kept);
+});
+
+test('an 8,000-character unbroken run that walks both scans redacts in a few milliseconds', () => {
+  const runs = [
+    'ab.cd-ef_gh+ij%k'.repeat(500),
+    'a.'.repeat(4000),
+    'a-'.repeat(4000),
+    'x'.repeat(8000),
+    `${'q'.repeat(7980)}@example.c`,
+  ];
+  for (const run of runs) {
+    assert.equal(run.length >= 7990, true);
+    const started = process.hrtime.bigint();
+    redact(run, { personName: 'Jordan Testerton' });
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(ms < 50, `${run.slice(0, 12)}... took ${ms.toFixed(1)} ms`);
+  }
+});
+
+// The fleet's second round (2026-10-16): the sentence punctuation kept after
+// [link] is found by walking back from the end of the link; a $-anchored
+// pattern retried from every position of a long run of it.
+test('a link followed by 8,000 characters of sentence punctuation and a letter redacts in a few milliseconds, its tail kept', () => {
+  const tail = ".,)'".repeat(2000);
+  const started = process.hrtime.bigint();
+  const out = redact(`https://a${tail}b`);
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(ms < 25, `took ${ms.toFixed(1)} ms`);
+  assert.equal(out, '[link]');
+  assert.equal(redact(`see https://example.com/x${tail}`), `see [link]${tail}`);
+  assert.equal(redact('(see https://example.com/plan/abc).'), '(see [link]).');
+});

@@ -16,10 +16,19 @@
 // warning carry the error class, HTTP status and request id only. The
 // legal-hold person is never read (decision 31), three ways: the engine never
 // returns their subjects (and folds the phone and lead keys they own into
-// their client key), this job skips any subject whose legalHold flag is set,
-// and it refuses every key the hold covers itself (the client's c- key, every
-// number on record for them as a p- key, their Thumbtack leads as t- keys),
-// so one missed flag is not enough to send their messages out.
+// their client key), this job skips any subject whose legalHold flag is set
+// or whose slice holds a held mail (aiRead.isReadable; the engine flags a
+// Sent mail that reached a held key, markHeldSiblings, and any mail whose
+// From, To or Cc names a held address, markHeldAddresses), and it refuses
+// every key the hold covers itself (engine.legalHoldPersonKeys: the client's
+// c- key, every number on record for them as a p- key, their Thumbtack leads
+// as t- keys, every address on record for them as e- keys, their Zola leads
+// as z- keys), so one missed flag is not enough to send their messages out.
+//
+// One read per mail (spec 2026-10-14 section 6): a subject's read is keyed by
+// its readRef (a Sent mail's gm:<id>, shared by the event of every person it
+// reached), else its subjectRef, so siblings of one mail are read once, under
+// one inbox_reads row.
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
@@ -28,6 +37,8 @@ const { LEGAL_HOLD_PROPOSAL_IDS } = require('../staleProposalSweep');
 const { isReadable, classifyInbound, classifyOutbound, readModel } = require('./aiRead');
 const { dailyCap, readStats } = require('./aiStatus');
 const { BADGE_MAX_AGE_MS } = require('./constants');
+// The one held key set (engine.js builds it for the sibling flag too).
+const { legalHoldPersonKeys } = require('./engine');
 
 const TICK_LIMIT = 20;
 const MAX_ATTEMPTS = 3;
@@ -57,13 +68,13 @@ const RESERVE = `
 
 const STORE_OK_INBOUND = `
   UPDATE inbox_reads
-     SET status = 'ok', needs_reply = $2, summary = $3, reason = $4, model = $5,
+     SET status = 'ok', needs_reply = $2, summary = $3, reason = $4, model = $5, solicitation = $6,
          holding = NULL, promised_by = NULL, error = NULL, updated_at = NOW()
    WHERE id = $1 AND status = 'pending'`;
 const STORE_OK_OUTBOUND = `
   UPDATE inbox_reads
      SET status = 'ok', holding = $2, promised_by = $3, reason = $4, model = $5,
-         needs_reply = NULL, summary = NULL, error = NULL, updated_at = NOW()
+         needs_reply = NULL, summary = NULL, solicitation = NULL, error = NULL, updated_at = NOW()
    WHERE id = $1 AND status = 'pending'`;
 const STORE_REFUSED = `
   UPDATE inbox_reads
@@ -74,7 +85,10 @@ const STORE_ERROR = `
      SET status = 'error', model = $2, error = $3, updated_at = NOW()
    WHERE id = $1 AND status = 'pending'`;
 
-const keyOf = (s) => `${s.kind}|${s.subjectRef}`;
+// The key a subject's read is stored and found under: the mail's readRef
+// (subjects.js), else the subject's own ref.
+const readKeyOf = (s) => s.readRef || s.subjectRef;
+const keyOf = (s) => `${s.kind}|${readKeyOf(s)}`;
 
 /** The subject message's time, for oldest-first; unknown sorts last. */
 function subjectTime(subject) {
@@ -91,45 +105,6 @@ function oldestFirst(a, b) {
   return a.subjectRef < b.subjectRef ? -1 : 1;
 }
 
-// Every person key the legal hold covers (decision 31): the held proposals'
-// clients as c- keys, every phone on record for those clients or proposals as
-// a p- key (the last ten digits, as the engine keys an unknown number), and
-// their Thumbtack leads as t- keys. The engine folds a client's own phone and
-// leads into their c- key, but a number they used that is on none of the
-// people index's rows would otherwise form an unheld p- person. A failed
-// lookup throws, so the tick reads nothing (fail closed).
-const HELD_KEYS_SQL = `
-  WITH held AS (
-    SELECT DISTINCT client_id AS id FROM proposals
-     WHERE id = ANY($1::int[]) AND client_id IS NOT NULL
-  ),
-  phones AS (
-    SELECT c.phone AS phone FROM clients c JOIN held ON held.id = c.id
-    UNION ALL SELECT m.recipient_phone FROM sms_messages m JOIN held ON held.id = m.client_id
-    UNION ALL SELECT t.customer_phone FROM thumbtack_leads t
-               WHERE t.client_id IN (SELECT id FROM held) OR t.proposal_id = ANY($1::int[])
-    UNION ALL SELECT k.booker_phone FROM consults k JOIN held ON held.id = k.client_id
-    UNION ALL SELECT s.client_phone FROM shifts s JOIN proposals p ON p.id = s.proposal_id
-               WHERE p.id = ANY($1::int[]) OR p.client_id IN (SELECT id FROM held)
-    UNION ALL SELECT l.recipient FROM message_log l JOIN held ON held.id = l.client_id
-               WHERE l.channel = 'sms'
-  ),
-  digits AS (
-    SELECT regexp_replace(phone, '[^0-9]', '', 'g') AS d FROM phones WHERE phone IS NOT NULL
-  )
-  SELECT 'c-' || id AS key FROM held
-  UNION SELECT 'p-' || RIGHT(d, 10) FROM digits WHERE LENGTH(d) >= 10
-  UNION SELECT 't-' || t.negotiation_id FROM thumbtack_leads t
-         WHERE (t.client_id IN (SELECT id FROM held) OR t.proposal_id = ANY($1::int[]))
-           AND t.negotiation_id IS NOT NULL`;
-
-async function legalHoldPersonKeys(db, proposalIds) {
-  const ids = (Array.isArray(proposalIds) ? proposalIds : []).map(Number).filter(Number.isInteger);
-  if (ids.length === 0) return new Set();
-  const { rows } = await db.query(HELD_KEYS_SQL, [ids]);
-  return new Set(rows.map((r) => r.key));
-}
-
 async function existingReads(db, subjects) {
   if (subjects.length === 0) return new Map();
   const { rows } = await db.query(
@@ -137,7 +112,7 @@ async function existingReads(db, subjects) {
        FROM inbox_reads r
        JOIN unnest($1::text[], $2::text[]) AS s(kind, subject_ref)
          ON r.kind = s.kind AND r.subject_ref = s.subject_ref`,
-    [subjects.map((s) => s.kind), subjects.map((s) => s.subjectRef)]
+    [subjects.map((s) => s.kind), subjects.map(readKeyOf)]
   );
   return new Map(rows.map((r) => [`${r.kind}|${r.subject_ref}`, r]));
 }
@@ -146,9 +121,12 @@ function needsRead(row) {
   return !row || (row.status === 'error' && row.attempts < MAX_ATTEMPTS);
 }
 
+// A solicitation is stored as needing a reply whatever the model said (spec
+// 2026-10-14 decision 12), so a pitch waits under the rules as they are.
 async function store(db, id, kind, result) {
   if (result.status === 'ok' && kind === 'inbound') {
-    await db.query(STORE_OK_INBOUND, [id, result.needsReply, result.summary, result.reason, result.model]);
+    const solicitation = result.solicitation === true;
+    await db.query(STORE_OK_INBOUND, [id, result.needsReply || solicitation, result.summary, result.reason, result.model, solicitation]);
   } else if (result.status === 'ok') {
     await db.query(STORE_OK_OUTBOUND, [id, result.holding, result.promisedBy, result.reason, result.model]);
   } else if (result.status === 'refused') {
@@ -224,13 +202,21 @@ async function runInboxReads({
   const readable = (Array.isArray(subjects) ? subjects : [])
     .filter((s) => isReadable(s) && !held.has(s.personKey));
   const existing = await existingReads(db, readable);
-  const due = readable.filter((s) => needsRead(existing.get(keyOf(s)))).sort(oldestFirst);
+  // Siblings of one Sent mail share a read key: the first in oldest-first
+  // order is read, under its readRef, and the rest read that row.
+  const due = [];
+  const taken = new Set();
+  for (const s of readable.filter((x) => needsRead(existing.get(keyOf(x)))).sort(oldestFirst)) {
+    if (taken.has(keyOf(s))) continue;
+    taken.add(keyOf(s));
+    due.push(s);
+  }
   const budget = Math.min(TICK_LIMIT, cap - attempts24h);
 
   const counts = { read: 0, ok: 0, refused: 0, error: 0, raced: 0 };
   for (const subject of due) {
     if (counts.read >= budget) break;
-    const { rows } = await db.query(RESERVE, [subject.kind, subject.subjectRef, subject.personKey, readModel(), MAX_ATTEMPTS]);
+    const { rows } = await db.query(RESERVE, [subject.kind, readKeyOf(subject), subject.personKey, readModel(), MAX_ATTEMPTS]);
     if (rows.length === 0) { counts.raced += 1; continue; }
     counts.read += 1;
     const result = subject.kind === 'inbound'

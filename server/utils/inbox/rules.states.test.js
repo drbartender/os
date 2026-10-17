@@ -390,3 +390,31 @@ test('one sender, a personal mail and a business mail: two people, each waiting,
   assert.deepEqual([personalKey, businessKey].map((key) => [stateOf(r, key).status, stateOf(r, key).personal, stateOf(r, key).need]),
     [['waiting', true, 'Dinner on Sunday?'], ['waiting', false, 'Also, a quote for a party?']]);
 });
+
+// Spec 2026-10-14 decision 12 and section 6: a pitch never closes on its own.
+// The read job stores needs_reply true with the flag, so the rules need no new
+// branch; the waiting state says pitch when the newest counted inbound's read
+// carries solicitation.
+test('a pitch read leaves the item waiting, with pitch and the AI line on what they sell', () => {
+  const mail = k.gmIn('e-4300000000000430', ago(3 * HOUR), 'We make bar stools for events. Can we send a catalog?');
+  const pitch = { ...k.readRow('inbound', mail, { needs_reply: true, summary: 'Selling bar stools for events' }), solicitation: true };
+  const s = stateOf(run({ events: [mail], reads: [pitch] }), 'e-4300000000000430');
+  assert.deepEqual([s.status, s.pitch, s.need], ['waiting', true, 'Selling bar stools for events']);
+  const plain = { ...k.readRow('inbound', mail, { needs_reply: true, summary: 'Asking to send a catalog' }), solicitation: false };
+  assert.equal(stateOf(run({ events: [mail], reads: [plain] }), 'e-4300000000000430').pitch, false);
+  assert.equal(stateOf(run({ events: [mail] }), 'e-4300000000000430').pitch, false, 'unread: no tag');
+});
+
+test('pitch reads the newest counted inbound only, never a handled item, and never the legal-hold client', () => {
+  const first = k.gmIn('c-431', ago(5 * HOUR), 'We sponsor wedding expos, want a booth?');
+  const second = k.gmIn('c-431', ago(3 * HOUR), 'Also, are you free on June 12?');
+  const flag = (e) => ({ ...k.readRow('inbound', e, { needs_reply: true }), solicitation: true });
+  const plain = (e) => ({ ...k.readRow('inbound', e, { needs_reply: true }), solicitation: false });
+  assert.equal(stateOf(run({ events: [first, second], reads: [flag(first), plain(second)] }), 'c-431').pitch, false);
+  assert.equal(stateOf(run({ events: [first, second], reads: [plain(first), flag(second)] }), 'c-431').pitch, true);
+  const done = k.act('c-431', 'done', ago(2 * HOUR));
+  const handled = stateOf(run({ events: [first, second], reads: [flag(second)], actions: [done] }), 'c-431');
+  assert.deepEqual([handled.status, handled.pitch], ['handled', false], 'Done closes a pitch like any item');
+  const hold = k.proposalRow('c-431', { status: 'confirmed', eventDate: '2026-12-12', legalHold: true });
+  assert.equal(stateOf(run({ events: [first, second], reads: [flag(second)], proposals: [hold] }), 'c-431').pitch, false);
+});

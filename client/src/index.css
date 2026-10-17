@@ -22380,6 +22380,12 @@ html[data-app="admin-os"] .ib-tag {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;
 }
 html[data-app="admin-os"][data-skin="light"] .ib-tag { border-radius: 0; }
+/* Inside the Inbox the neutral chip (Pitch, dallas@, the context card's muted
+   chips) reads at --ink-2 in House Lights, as the design draws it: the shared
+   light rule's --ink-3 is 3.61:1 on paper, under AA. That shared rule serves
+   neutral chips across the admin OS, so it stays and this overrides it here. */
+html[data-app="admin-os"][data-skin="light"] .ib-page .chip.neutral,
+html[data-app="admin-os"][data-skin="light"] .ib-phone .chip.neutral { color: var(--ink-2); }
 html[data-app="admin-os"] .ib-dsnz {
   display: flex; align-items: center; gap: 8px; padding: 0.55rem 1rem;
   border-bottom: 1px solid var(--line-1); font-size: 11.5px; color: var(--ink-3);

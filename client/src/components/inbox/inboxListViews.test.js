@@ -60,6 +60,29 @@ test('a personal row carries the muted dallas@ chip after the channel tags, on t
   expect(screen.queryByText('dallas@')).toBeNull();
 });
 
+// Spec 2026-10-14 section 4.1: a waiting row whose newest inbound the AI read
+// as a solicitation carries a muted "Pitch" chip after the channel tags, in
+// the tags group as the dallas@ chip is; the need line is the AI's line.
+test('a pitch row carries the muted Pitch chip after the channel tags, on the phone card and the desktop row', () => {
+  const pitch = row({ person_key: 'e-0123456789abcdef', name: 'Pat Vendor', need: 'Selling bar stools for events', channels: ['email'], pitch: true });
+  const { rerender } = render(<WaitingCard row={pitch} nowMs={NOW} onOpen={() => {}} />);
+  const chip = screen.getByText('Pitch');
+  expect(chip).toHaveClass('chip', 'neutral');
+  expect(chip.parentElement).toHaveClass('m-tags');
+  expect(chip.previousElementSibling).toHaveClass('m-tag');
+  expect(chip.previousElementSibling).toHaveTextContent('Email');
+  expect(screen.getByText('Selling bar stools for events')).toHaveClass('ib-need');
+  rerender(<WaitingRow row={pitch} nowMs={NOW} selected={false} onOpen={() => {}} />);
+  const desk = screen.getByText('Pitch');
+  expect(desk).toHaveClass('chip', 'neutral');
+  expect(desk.parentElement).toHaveClass('ib-tags');
+  expect(desk.previousElementSibling).toHaveClass('ib-tag');
+  rerender(<WaitingCard row={row({ pitch: false })} nowMs={NOW} onOpen={() => {}} />);
+  expect(screen.queryByText('Pitch')).toBeNull();
+  rerender(<WaitingRow row={row()} nowMs={NOW} selected={false} onOpen={() => {}} />);
+  expect(screen.queryByText('Pitch')).toBeNull();
+});
+
 test('phone card under 24 hours keeps the ink rail', () => {
   render(<WaitingCard row={row({ waiting_since: hoursAgo(7) })} nowMs={NOW} onOpen={() => {}} />);
   expect(screen.getByRole('button').querySelector('.m-rail')).not.toHaveClass('ib-rail-hot');

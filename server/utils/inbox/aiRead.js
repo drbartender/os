@@ -35,9 +35,17 @@ const PROMISED_BY_MAX = 30;
 // as its own subject, and a needs-reply ruling sticks (decision 27). With these
 // bounds a typical read is about 2 to 3 cents and the ceiling, with max_tokens
 // spent on output, about 10 cents, so the daily cap's worst day is about $30.
+// An email line (channel email or zola) is longer, EMAIL_PRECLIP_MAX before
+// redaction and EMAIL_LINE_MAX after (spec 2026-10-14 section 6), so a long
+// thread shows its newest mails whole inside the same prompt cap.
 const PRECLIP_CHARS = 3000;
 const MAX_ENTRY_CHARS = 1500;
+const EMAIL_PRECLIP_MAX = 8000;
+const EMAIL_LINE_MAX = 4000;
 const MAX_PROMPT_CHARS = 12000;
+const EMAIL_CHANNELS = new Set(['email', 'zola']);
+const preclipFor = (channel) => (EMAIL_CHANNELS.has(channel) ? EMAIL_PRECLIP_MAX : PRECLIP_CHARS);
+const entryMaxFor = (channel) => (EMAIL_CHANNELS.has(channel) ? EMAIL_LINE_MAX : MAX_ENTRY_CHARS);
 // One deadline for the whole call, retries and their waits included. The SDK
 // honors any retry-after a 429 carries with no ceiling, so a timeout per try
 // alone does not bound a call; this does, and it keeps a reservation in flight
@@ -46,10 +54,13 @@ const CALL_DEADLINE_MS = 120000;
 
 // No length limits in the schemas (spec 6.1): a long answer must never fail a
 // read. The server trims instead (cleanLine).
+// solicitation (spec 2026-10-14 decision 12): a pitch never closes on its own;
+// the read job stores needs_reply true whenever it is set.
 const InboundRead = z.object({
   needs_reply: z.boolean(),
   what_they_need: z.string(),
   reason: z.string(),
+  solicitation: z.boolean(),
 });
 const OutboundRead = z.object({
   holding: z.boolean(),
@@ -82,6 +93,7 @@ const INBOUND_SYSTEM_PROMPT = [
     '- details they sent that we still have to act on, such as a venue change or a new guest count;',
     '- anything we promised them and still owe.',
   ].join('\n'),
+  'A solicitation is someone selling to us or asking us for something that is not a booking: a vendor pitch, a sponsorship or partnership ask, recruiting, a survey, a request to list or feature the business. For a solicitation set solicitation true and needs_reply true, and make what_they_need say what they are offering or asking for.',
   [
     'No reply is needed for:',
     '- thanks;',
@@ -99,6 +111,7 @@ const INBOUND_SYSTEM_PROMPT = [
     '- needs_reply: true if the person needs a reply, false if not.',
     '- what_they_need: one short line, under 80 characters, saying what the person is asking for or telling us, written as their request, never as a fact about what we did or decided. Write "Asking whether the refund went through", never "The refund was approved". When no reply is needed, say what they wrote, such as "Said thanks for the shopping list".',
     '- reason: one short line, under 80 characters, saying why a reply is or is not needed.',
+    '- solicitation: true when the person is selling to us or asking us for something that is not a booking; otherwise false.',
   ].join('\n'),
 ].join('\n\n');
 
@@ -157,14 +170,14 @@ function dropCutTail(s) {
   return s.slice(0, end);
 }
 
-function preclip(text) {
+function preclip(text, max) {
   const chars = Array.from(text);
-  return chars.length <= PRECLIP_CHARS ? text : dropCutTail(chars.slice(0, PRECLIP_CHARS).join(''));
+  return chars.length <= max ? text : dropCutTail(chars.slice(0, max).join(''));
 }
 
-function clip(text) {
+function clip(text, max) {
   const chars = Array.from(text);
-  return chars.length <= MAX_ENTRY_CHARS ? text : `${chars.slice(0, MAX_ENTRY_CHARS - 1).join('')}\u2026`;
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}\u2026`;
 }
 
 // Every line terminator JavaScript knows plus VT and FF: CR LF, LF, CR, NEL, and the line
@@ -177,27 +190,34 @@ function formatEntry(entry, personName) {
   // NFKC before the cut: one composite character can become four ASCII ones,
   // and the cut bounds the quadratic scans only if it runs on the text they
   // see (and its digit rule knows ASCII digits only).
-  const raw = typeof entry.text === 'string' ? preclip(entry.text.normalize('NFKC')) : '';
+  const raw = typeof entry.text === 'string' ? preclip(entry.text.normalize('NFKC'), preclipFor(entry.channel)) : '';
   // One prompt line per message: a newline inside their text could otherwise
   // start a line that reads like one of ours (the merge review, 2026-10-13).
-  const text = clip(redact(raw, { personName }).trim().replace(LINE_BREAKS, ' / ')) || '(no text)';
+  const text = clip(redact(raw, { personName }).trim().replace(LINE_BREAKS, ' / '), entryMaxFor(entry.channel)) || '(no text)';
   return `[${ctLabel(entry.at)}] ${speaker(entry)}, ${channelLabel(entry.channel)}: ${text}`;
 }
 
-// Formats the entries, then drops the oldest non-subject lines until the
-// whole conversation fits MAX_PROMPT_CHARS.
+// The newest lines that fit MAX_PROMPT_CHARS beside the subject's own line,
+// which always stays: formatted newest first, and the first line that does
+// not fit ends the walk, so every older one is dropped unformatted. Only
+// about as many lines as the budget holds are ever redacted (the fleet,
+// 2026-10-16: formatting a long slice in full, then trimming it, redacted
+// every 8,000-character email line of it). The lines kept are the ones
+// dropping the oldest until the rest fit would keep.
 function budgeted(entries, subject) {
-  const lines = entries.map((e) => ({ e, text: formatEntry(e, subject.name) }));
-  let total = lines.reduce((n, l) => n + l.text.length + 1, 0);
-  let dropped = 0;
-  while (total > MAX_PROMPT_CHARS) {
-    const i = lines.findIndex((l) => l.e.ref !== subject.subjectRef);
-    if (i < 0) break;
-    const [removed] = lines.splice(i, 1);
-    total -= removed.text.length + 1;
-    dropped += 1;
+  const own = entries.find((e) => e.ref === subject.subjectRef) || null;
+  const kept = new Map();
+  let total = 0;
+  const keep = (e, text) => { kept.set(e, text); total += text.length + 1; };
+  if (own) keep(own, formatEntry(own, subject.name));
+  for (const e of [...entries].reverse()) {
+    if (e === own) continue;
+    const text = formatEntry(e, subject.name);
+    if (total + text.length + 1 > MAX_PROMPT_CHARS) break;
+    keep(e, text);
   }
-  return { lines, dropped };
+  const lines = entries.filter((e) => kept.has(e)).map((e) => ({ e, text: kept.get(e) }));
+  return { lines, dropped: entries.length - lines.length };
 }
 
 const droppedNote = (n) => `(${n} earlier message${n === 1 ? '' : 's'} not shown)`;
@@ -213,15 +233,25 @@ function subjectEntry(subject) {
   return usableSlice(subject).find((e) => e.ref === subject.subjectRef) || null;
 }
 
+// The legal hold, both ways (decision 31): the held person's own subject, and
+// any subject whose slice holds a sibling of a Sent mail that also reached the
+// held client (spec 2026-10-14 section 6; the engine flags every sibling and
+// subjects.js copies the flag onto the line), as its message or as context.
+function isHeld(subject) {
+  if (!subject || subject.legalHold === true) return true;
+  return Array.isArray(subject.slice) && subject.slice.some((e) => e && e.legalHold === true);
+}
+
 /**
  * True when a subject may be sent to the AI read. Never: the legal-hold person
- * (decision 31); a picture-only or empty inbound (spec 6.1, it stays waiting;
- * lane inbox-engine renders a picture as "[photo]" plus any caption); a
- * subject whose own message is missing from its slice, is a keyword row, or
- * sits on the wrong side for its kind.
+ * (decision 31) or a held sibling in the slice (isHeld); a picture-only or
+ * empty inbound (spec 6.1, it stays waiting; lane inbox-engine renders a
+ * picture as "[photo]" plus any caption); a subject whose own message is
+ * missing from its slice, is a keyword row, or sits on the wrong side for its
+ * kind.
  */
 function isReadable(subject) {
-  if (!subject || subject.legalHold === true) return false;
+  if (isHeld(subject)) return false;
   if (subject.kind !== 'inbound' && subject.kind !== 'outbound') return false;
   const entry = subjectEntry(subject);
   if (!entry) return false;
@@ -248,13 +278,14 @@ function buildOutboundUserText(subject) {
   const reply = entries.find((e) => e.ref === subject.subjectRef);
   const { lines, dropped } = budgeted(entries.slice(0, entries.indexOf(reply) + 1), subject);
   const before = lines.filter((l) => l.e !== reply).map((l) => l.text);
+  const own = lines.find((l) => l.e === reply);
   return [
     ...(dropped ? [droppedNote(dropped), ''] : []),
     'CONVERSATION BEFORE THE REPLY:',
     ...(before.length ? before : ['(none)']),
     '',
     'REPLY TO JUDGE:',
-    formatEntry(reply, subject.name),
+    own ? own.text : formatEntry(reply, subject.name),
     '',
     'Question: is the reply under REPLY TO JUDGE a holding reply?',
   ].join('\n');
@@ -319,7 +350,7 @@ function failure(errorClass, model) {
 }
 
 async function classify(kind, subject, client) {
-  if (!subject || subject.legalHold === true) {
+  if (isHeld(subject)) {
     throw new Error('aiRead: a legal-hold subject is never sent to the AI read');
   }
   const model = readModel();
@@ -363,6 +394,7 @@ async function classify(kind, subject, client) {
       needsReply: out.needs_reply === true,
       summary: cleanLine(out.what_they_need, SUMMARY_MAX),
       reason: cleanLine(out.reason, REASON_MAX),
+      solicitation: out.solicitation === true,
     };
   }
   const holding = out.holding === true;
@@ -389,6 +421,8 @@ module.exports = {
   FALLBACK_BETA,
   PRECLIP_CHARS,
   MAX_ENTRY_CHARS,
+  EMAIL_PRECLIP_MAX,
+  EMAIL_LINE_MAX,
   MAX_PROMPT_CHARS,
   CALL_DEADLINE_MS,
   INBOUND_SYSTEM_PROMPT,
@@ -397,6 +431,8 @@ module.exports = {
   OutboundRead,
   redact,
   isReadable,
+  preclipFor,
+  entryMaxFor,
   buildInboundUserText,
   buildOutboundUserText,
   buildRequest,

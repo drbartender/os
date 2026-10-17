@@ -23,7 +23,7 @@ test('list payload: snake_case rows, a state object on every waiting row, ISO ti
   assert.deepEqual(body.waiting, [{
     person_key: 'c-701', name: 'Name of c-701', kind: 'lead', need: 'Is Friday open?', waiting_since: ask.at.toISOString(),
     hot: true, channels: ['text_1922'], state: { type: 'unseen', by_user_id: null, by_name: null, mine: false, promised_by: null, since: null },
-    personal: false,
+    personal: false, pitch: false,
   }]);
   assert.deepEqual(body.snoozed, [{ person_key: 'c-702', name: 'Name of c-702', until: plus(NOW, 3 * HOUR).toISOString(), by_name: 'Zul', mine: false }]);
   assert.deepEqual(body.handled, [{
@@ -124,6 +124,17 @@ test('email in the payload: a personal person\'s row says so; a Gmail reply row 
   });
   assert.deepEqual(item.thread.map((r) => [r.direction, r.attachments, r.by_email, r.author_name]), [['in', 1, false, null], ['out', 0, true, null]]);
   assert.equal(item.reply.app.caption, 'Closes here on its own once you reply from Gmail.');
+});
+
+test('a pitch row carries pitch: true and the AI line on what they sell; every other row pitch: false', () => {
+  const mail = k.gmIn('e-7400000000000740', ago(2 * HOUR), 'We make bar stools for events');
+  const ask = k.gmIn('c-741', ago(2 * HOUR), 'Is the 12th open?');
+  const reads = [{ ...k.readRow('inbound', mail, { needs_reply: true, summary: 'Selling bar stools for events' }), solicitation: true }];
+  const body = listPayload({ result: run({ events: [mail, ask], reads }), directory, feeds: [], aiStatus: 'on', generatedAt: NOW });
+  assert.deepEqual(body.waiting.map((r) => [r.person_key, r.pitch, r.need]), [
+    ['c-741', false, 'Is the 12th open?'],
+    ['e-7400000000000740', true, 'Selling bar stools for events'],
+  ]);
 });
 
 test('feeds: Gmail is off, failing, catching up or on, timed by its last good sync; Zola by its last notice; both take the quiet dot', async () => {

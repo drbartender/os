@@ -1,11 +1,12 @@
 // runInboxReads against the dev DB's inbox_reads, with a fake engine (fixture
 // subjects) and a stub Anthropic client: nothing here can reach Anthropic.
-// Every subject_ref carries a 'sms:aitest-' prefix and is removed in before(),
-// afterEach() and after(); the one client and proposal (the legal-hold checks)
-// carry an 'aitest-' email and are removed the same way, and the client's one
-// outbound text (to the history number) is removed by cleanPeople() before
-// the client is. Names and numbers are invented. The dev DB is shared, so cap
-// math is relative to a baseline.
+// Every subject_ref carries a 'sms:aitest-' or 'gm:aitest-' prefix and is
+// removed in before(), afterEach() and after(); the one client and proposal
+// (the legal-hold checks) carry an 'aitest-' email and are removed the same
+// way, and the client's outbound text (to the history number), consult and
+// Zola leads are removed by cleanPeople() before the client is (its email
+// ledger row goes with the proposal). Names, numbers and addresses are
+// invented. The dev DB is shared, so cap math is relative to a baseline.
 const launchedEnv = process.env.NODE_ENV;
 process.env.NODE_ENV = 'test';
 require('dotenv').config();
@@ -22,6 +23,8 @@ const {
   __setReadJobDeps, _resetReadJobWarningsForTest,
 } = require('./readJob');
 const { BADGE_MAX_AGE_MS } = require('./constants');
+const { emailHash, personalEmailKey } = require('./people');
+const k = require('./rules.testkit');
 
 if (launchedEnv === 'production') {
   throw new Error('readJob.test.js refuses to run against production');
@@ -35,18 +38,57 @@ const at = (min) => new Date(T0 + min * 60000).toISOString();
 const HELD_PHONE = '3315550161'; // the held client's own number
 const HISTORY_PHONE = '3315550162'; // a number we once texted that client
 const OTHER_PHONE = '3315550163'; // a stranger
+const HELD_EMAIL = `aitest-${NONCE}@example.com`;
+// An address we once emailed the held client at, as the ledger stored it
+// (case and a tab the people index's normalization folds away), and the one
+// they booked a consult with.
+const LEDGER_EMAIL = ` AItest-${NONCE}-Old@Example.com\t`;
+const BOOKER_EMAIL = `aitest-${NONCE}-booker@example.com`;
+// On record under the held proposal alone, with no client on the row: a
+// ledger send to an address and a number matching no client, a consult, a
+// shift contact and a drink plan.
+const STALE_EMAIL = `aitest-${NONCE}-stale@example.com`;
+const STALE_PHONE = '3315550164';
+const PROPOSAL_BOOKER_EMAIL = `aitest-${NONCE}-pbooker@example.com`;
+const PROPOSAL_BOOKER_PHONE = '3315550165';
+const SHIFT_EMAIL = `aitest-${NONCE}-shift@example.com`;
+const PLAN_EMAIL = `aitest-${NONCE}-plan@example.com`;
+// Under another proposal of the held client (not itself held), with no client
+// on the row; and the records tied to the client alone: the SMS consent log,
+// a marketing lead row, a legacy Check Cherry proposal.
+const OTHER_PROPOSAL_EMAIL = `aitest-${NONCE}-other@example.com`;
+const OTHER_PROPOSAL_PHONE = '3315550166';
+const CONSENT_PHONE = '3315550167';
+const LEAD_EMAIL = `aitest-${NONCE}-lead@example.com`;
+const LEGACY_EMAIL = `aitest-${NONCE}-legacy@example.com`;
+let otherProposalId;
+let otherZolaLeadId;
+const eKey = (address) => `e-${emailHash(address)}`;
 const ENV_KEYS = ['ANTHROPIC_API_KEY', 'INBOX_AI_DAILY_CAP', 'INBOX_AI_MODEL'];
 let saved = {};
 let clientId;
 let proposalId;
+let zolaLeadId;
+let zolaProposalLeadId;
 const sentryCalls = [];
 
 async function cleanReads() {
-  await pool.query("DELETE FROM inbox_reads WHERE subject_ref LIKE 'sms:aitest-%'");
+  await pool.query("DELETE FROM inbox_reads WHERE subject_ref LIKE 'sms:aitest-%' OR subject_ref LIKE 'gm:aitest-%'");
 }
+const AITEST_CLIENTS = "SELECT id FROM clients WHERE email LIKE 'aitest-%@example.com'";
+const AITEST_PROPOSALS = `SELECT id FROM proposals WHERE client_id IN (${AITEST_CLIENTS})`;
 async function cleanPeople() {
-  await pool.query("DELETE FROM sms_messages WHERE client_id IN (SELECT id FROM clients WHERE email LIKE 'aitest-%@example.com')");
-  await pool.query("DELETE FROM proposals WHERE client_id IN (SELECT id FROM clients WHERE email LIKE 'aitest-%@example.com')");
+  await pool.query(`DELETE FROM sms_consent_log WHERE client_id IN (${AITEST_CLIENTS})`);
+  await pool.query("DELETE FROM email_leads WHERE email LIKE 'aitest-%@example.com'");
+  await pool.query("DELETE FROM legacy_cc_proposals WHERE cc_id LIKE 'aitest-%'");
+  await pool.query("DELETE FROM legacy_cc_raw_imports WHERE source_file LIKE 'aitest-%'");
+  await pool.query(`DELETE FROM sms_messages WHERE client_id IN (${AITEST_CLIENTS})`);
+  await pool.query(`DELETE FROM consults WHERE client_id IN (${AITEST_CLIENTS}) OR proposal_id IN (${AITEST_PROPOSALS})`);
+  await pool.query(`DELETE FROM shifts WHERE proposal_id IN (${AITEST_PROPOSALS})`);
+  await pool.query(`DELETE FROM drink_plans WHERE proposal_id IN (${AITEST_PROPOSALS})`);
+  await pool.query(`DELETE FROM zola_leads WHERE client_id IN (${AITEST_CLIENTS}) OR proposal_id IN (${AITEST_PROPOSALS})`);
+  // message_log rows go with their proposal (ON DELETE CASCADE).
+  await pool.query(`DELETE FROM proposals WHERE client_id IN (${AITEST_CLIENTS})`);
   await pool.query("DELETE FROM clients WHERE email LIKE 'aitest-%@example.com'");
 }
 
@@ -56,7 +98,7 @@ before(async () => {
   await cleanPeople();
   const c = await pool.query(
     "INSERT INTO clients (name, email, phone) VALUES ('Holdie Testerton', $1, $2) RETURNING id",
-    [`aitest-${NONCE}@example.com`, `+1${HELD_PHONE}`]
+    [HELD_EMAIL, `+1${HELD_PHONE}`]
   );
   clientId = c.rows[0].id;
   const p = await pool.query("INSERT INTO proposals (client_id, status) VALUES ($1, 'draft') RETURNING id", [clientId]);
@@ -66,6 +108,73 @@ before(async () => {
      VALUES ('outbound', $1, $2, 'Holdie Testerton', 'held fixture', 'general', 'sent')`,
     [clientId, `+1${HISTORY_PHONE}`]
   );
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, $2, 'email', 'other', $3, 'sent')`,
+    [proposalId, clientId, LEDGER_EMAIL]
+  );
+  await pool.query(
+    "INSERT INTO consults (client_id, scheduled_at, status, booker_email) VALUES ($1, NOW() - INTERVAL '30 days', 'cancelled', $2)",
+    [clientId, BOOKER_EMAIL]
+  );
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'other', $2, 'sent'), ($1, NULL, 'sms', 'other', $3, 'sent')`,
+    [proposalId, STALE_EMAIL, `+1${STALE_PHONE}`]
+  );
+  await pool.query(
+    "INSERT INTO consults (proposal_id, scheduled_at, status, booker_email, booker_phone) VALUES ($1, NOW() - INTERVAL '30 days', 'cancelled', $2, $3)",
+    [proposalId, PROPOSAL_BOOKER_EMAIL, `+1${PROPOSAL_BOOKER_PHONE}`]
+  );
+  await pool.query(
+    "INSERT INTO shifts (event_date, status, proposal_id, client_email) VALUES (CURRENT_DATE - 30, 'cancelled', $1, $2)",
+    [proposalId, SHIFT_EMAIL]
+  );
+  await pool.query('INSERT INTO drink_plans (proposal_id, client_email) VALUES ($1, $2)', [proposalId, PLAN_EMAIL]);
+  const other = await pool.query("INSERT INTO proposals (client_id, status) VALUES ($1, 'draft') RETURNING id", [clientId]);
+  otherProposalId = other.rows[0].id;
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, NULL, 'email', 'other', $2, 'sent')`,
+    [otherProposalId, OTHER_PROPOSAL_EMAIL]
+  );
+  await pool.query(
+    "INSERT INTO consults (proposal_id, scheduled_at, status, booker_phone) VALUES ($1, NOW() - INTERVAL '30 days', 'cancelled', $2)",
+    [otherProposalId, `+1${OTHER_PROPOSAL_PHONE}`]
+  );
+  const oz = await pool.query(
+    "INSERT INTO zola_leads (couple_label, couple_label_key, proposal_id) VALUES ('Holdie T & Sam Q', 'holdie t & sam q', $1) RETURNING id",
+    [otherProposalId]
+  );
+  otherZolaLeadId = oz.rows[0].id;
+  await pool.query(
+    `INSERT INTO sms_consent_log (client_id, phone, consented, copy_version, copy_text, source_form)
+     VALUES ($1, $2, true, 'aitest', 'fixture', 'aitest')`,
+    [clientId, `+1${CONSENT_PHONE}`]
+  );
+  await pool.query(
+    "INSERT INTO email_leads (client_id, name, email, status) VALUES ($1, 'Holdie Testerton', $2, 'unsubscribed')",
+    [clientId, LEAD_EMAIL]
+  );
+  const raw = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ($1, 'events', 1, 'aitest', '{}'::jsonb, 'archived') RETURNING id`,
+    [`aitest-${NONCE}.csv`]
+  );
+  await pool.query(
+    "INSERT INTO legacy_cc_proposals (cc_id, status, client_id, client_email_normalized, raw_import_id) VALUES ($1, 'quote_expired', $2, $3, $4)",
+    [`aitest-${NONCE}`, clientId, LEGACY_EMAIL, raw.rows[0].id]
+  );
+  const z = await pool.query(
+    "INSERT INTO zola_leads (couple_label, couple_label_key, client_id) VALUES ('Holdie T & Sam Q', 'holdie t & sam q', $1) RETURNING id",
+    [clientId]
+  );
+  zolaLeadId = z.rows[0].id;
+  const zp = await pool.query(
+    "INSERT INTO zola_leads (couple_label, couple_label_key, proposal_id) VALUES ('Holdie T & Sam Q', 'holdie t & sam q', $1) RETURNING id",
+    [proposalId]
+  );
+  zolaProposalLeadId = zp.rows[0].id;
 });
 after(async () => {
   await cleanReads();
@@ -132,11 +241,12 @@ const said = (parsed, extra = {}) => ({
   content: parsed === null ? [] : [{ type: 'text', text: JSON.stringify(parsed) }],
   ...extra,
 });
-const thanks = () => said({ needs_reply: false, what_they_need: 'Said thanks', reason: 'Only a thank-you' });
-const rowsFor = async () => (await pool.query(
-  `SELECT kind, subject_ref, person_key, status, needs_reply, holding, summary, promised_by, reason, model, attempts, error
+const thanks = () => said({ needs_reply: false, what_they_need: 'Said thanks', reason: 'Only a thank-you', solicitation: false });
+const rowsFor = async (prefix = REF_PREFIX) => (await pool.query(
+  `SELECT kind, subject_ref, person_key, status, needs_reply, holding, summary, promised_by, reason, model, attempts, error,
+          solicitation, created_at, updated_at
      FROM inbox_reads WHERE subject_ref LIKE $1 ORDER BY subject_ref`,
-  [`${REF_PREFIX}%`]
+  [`${prefix}%`]
 )).rows;
 const run = (opts) => runInboxReads({ legalHoldProposalIds: [proposalId], ...opts });
 
@@ -382,4 +492,117 @@ test("subjectTime is the subject's at, else its message's; an unknown time sorts
   assert.equal(subjectTime({ ...noAt, subjectRef: 'sms:missing' }), Number.POSITIVE_INFINITY);
   const odd = { ...inbound(1), at: 'not a date' };
   assert.equal(subjectTime(odd), Number.POSITIVE_INFINITY);
+});
+
+// ─── Email (spec 2026-10-14 section 6) ───
+
+test('a solicitation is stored with needs_reply true whatever the model said; a plain read stores the flag false', async () => {
+  const client = stub((request, n) => said({
+    needs_reply: false, what_they_need: n === 1 ? 'Selling bar stools for events' : 'Said thanks', reason: 'r', solicitation: n === 1,
+  }));
+  await run({ client, engine: fakeEngine([inbound(1, { minute: 1 }), inbound(2, { minute: 2 })]) });
+  assert.deepEqual((await rowsFor()).map((r) => [r.subject_ref, r.status, r.needs_reply, r.solicitation, r.summary]), [
+    [ref(1), 'ok', true, true, 'Selling bar stools for events'],
+    [ref(2), 'ok', false, false, 'Said thanks'],
+  ]);
+});
+
+test('an outbound read stores no solicitation', async () => {
+  const client = stub(() => said({ holding: false, promised_by: null, reason: 'Answers it' }));
+  await run({ client, engine: fakeEngine([outbound(10)]) });
+  const [row] = await rowsFor();
+  assert.deepEqual([row.kind, row.status, row.solicitation], ['outbound', 'ok', null]);
+});
+
+test('the legal hold covers the held client\'s addresses as e- keys (business and personal) and their Zola leads as z- keys', async () => {
+  const stranger = eKey(`aitest-${NONCE}-stranger@example.com`);
+  const client = stub(thanks);
+  await run({
+    client,
+    engine: fakeEngine([
+      inbound(1, { personKey: eKey(HELD_EMAIL) }),
+      inbound(2, { personKey: eKey(LEDGER_EMAIL) }),
+      inbound(3, { personKey: eKey(BOOKER_EMAIL) }),
+      inbound(4, { personKey: personalEmailKey(HELD_EMAIL) }),
+      inbound(5, { personKey: `z-${zolaLeadId}` }),
+      inbound(6, { personKey: `z-${zolaProposalLeadId}` }),
+      inbound(7, { personKey: stranger }),
+    ]),
+  });
+  assert.equal(client.calls.length, 1, 'only the address with no tie to the held client is read');
+  assert.deepEqual((await rowsFor()).map((r) => r.person_key), [stranger]);
+  assert.equal(eKey(LEDGER_EMAIL), eKey(`aitest-${NONCE}-old@example.com`), 'the key the people index gives that address');
+});
+
+test('a subject with a sibling of a Sent mail that reached the held client, as its message or as context, is never read', async () => {
+  const held = (s, i) => ({ ...s, slice: s.slice.map((line, j) => (j === i ? { ...line, legalHold: true } : line)) });
+  const client = stub(thanks);
+  await run({ client, engine: fakeEngine([held(outbound(10), 1), held(outbound(11), 0)]) });
+  assert.equal(client.calls.length, 0);
+  assert.deepEqual(await rowsFor(), []);
+});
+
+// The readRef trap (lane email-feed's carry-forward, item 3): a Sent mail to a
+// client and their planner is two events (gm:<id>:1 and gm:<id>:2) on two
+// people, sharing readRef gm:<id>. The words go out once, inbox_reads holds
+// one row under the readRef, and both people's items carry its verdict.
+test('a Sent mail to a client and a planner is read once, one row under its readRef, and both items carry the verdict', async () => {
+  const gm = `aitest-${NONCE}-s1`;
+  const planner = eKey(`aitest-${NONCE}-planner@example.com`);
+  const events = [
+    k.gmIn('c-900301', k.ago(5 * k.HOUR), 'Who is bringing the ice?', { gmailId: `aitest-${NONCE}-i1` }),
+    k.gmIn(planner, k.ago(5 * k.HOUR), 'Same question on the ice', { gmailId: `aitest-${NONCE}-i2` }),
+    k.gmOut('c-900301', k.ago(4 * k.HOUR), 'Let me check with the venue and get back to you Monday', { gmailId: gm, n: 1 }),
+    k.gmOut(planner, k.ago(4 * k.HOUR), 'Let me check with the venue and get back to you Monday', { gmailId: gm, n: 2 }),
+  ];
+  const subjects = k.run({ events }).subjects;
+  assert.deepEqual(subjects.map((s) => [s.kind, s.subjectRef, s.readRef]), [
+    ['outbound', `gm:${gm}:1`, `gm:${gm}`],
+    ['outbound', `gm:${gm}:2`, `gm:${gm}`],
+  ]);
+  const client = stub(() => said({ holding: true, promised_by: 'Monday', reason: 'Promises to check' }));
+  const counts = await run({ client, engine: fakeEngine(subjects) });
+  assert.equal(client.calls.length, 1, 'the words go to the model once');
+  assert.equal(counts.read, 1);
+  const rows = await rowsFor(`gm:aitest-${NONCE}-`);
+  assert.deepEqual(rows.map((r) => [r.kind, r.subject_ref, r.status, r.holding, r.promised_by]), [['outbound', `gm:${gm}`, 'ok', true, 'Monday']]);
+  const after = k.run({ events, reads: rows });
+  for (const key of ['c-900301', planner]) {
+    const s = after.people.get(key);
+    assert.deepEqual([s.status, s.state.type, s.state.promisedBy], ['waiting', 'promise', 'Monday'], key);
+  }
+  assert.deepEqual(after.subjects.filter((s) => s.kind === 'outbound'), [], 'neither sibling is offered again');
+  await run({ client, engine: fakeEngine(subjects) });
+  assert.equal(client.calls.length, 1, 'a stale snapshot offering both siblings reads nothing: the row is found by the readRef');
+});
+
+// The fleet's fix round (2026-10-16): the ledger keeps a send to an address
+// or number that matches no client under its proposal alone, and consults,
+// shifts and drink plans carry the proposal too. Each is held by the held
+// proposal, with no client on the row, and its mail is never read.
+test('the legal hold covers what is on record under the held proposal alone: the ledger, a consult, a shift contact, a drink plan', async () => {
+  const stranger = eKey(`aitest-${NONCE}-stranger2@example.com`);
+  const keys = [
+    eKey(STALE_EMAIL), personalEmailKey(STALE_EMAIL), `p-${STALE_PHONE}`,
+    eKey(PROPOSAL_BOOKER_EMAIL), `p-${PROPOSAL_BOOKER_PHONE}`, eKey(SHIFT_EMAIL), eKey(PLAN_EMAIL),
+  ];
+  const client = stub(thanks);
+  await run({ client, engine: fakeEngine([...keys.map((personKey, i) => inbound(i + 1, { personKey })), inbound(9, { personKey: stranger })]) });
+  assert.equal(client.calls.length, 1, 'only the address with no tie to the held proposal is read');
+  assert.deepEqual((await rowsFor()).map((r) => r.person_key), [stranger]);
+});
+
+// The fleet's second round (2026-10-16): every arm reads every proposal of
+// the held client, not only the held one; and the SMS consent log, the
+// marketing lead rows and the legacy Check Cherry proposals tie to the client.
+test('the legal hold covers another proposal of the held client, the consent log, a marketing lead row and a legacy proposal', async () => {
+  const stranger = eKey(`aitest-${NONCE}-stranger3@example.com`);
+  const keys = [
+    eKey(OTHER_PROPOSAL_EMAIL), `p-${OTHER_PROPOSAL_PHONE}`, `z-${otherZolaLeadId}`,
+    `p-${CONSENT_PHONE}`, eKey(LEAD_EMAIL), eKey(LEGACY_EMAIL),
+  ];
+  const client = stub(thanks);
+  await run({ client, engine: fakeEngine([...keys.map((personKey, i) => inbound(i + 1, { personKey })), inbound(9, { personKey: stranger })]) });
+  assert.equal(client.calls.length, 1, 'only the address with no tie to the held client is read');
+  assert.deepEqual((await rowsFor()).map((r) => r.person_key), [stranger]);
 });

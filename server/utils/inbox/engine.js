@@ -24,8 +24,8 @@ const {
   INBOX_HISTORY_START, BADGE_TIMEOUT_MS, BADGE_MAX_AGE_MS, HEADER_WARN_ROWS, PERSONAL_MAILBOX_OWNER_USER_ID,
 } = require('./constants');
 const { isPersonal } = require('./classify');
-const { parsePersonKey } = require('./personKey');
-const { loadPeopleIndex, latestPhoneOf } = require('./people');
+const { parsePersonKey, personKey } = require('./personKey');
+const { buildPeopleIndex, loadPeopleIndex, latestPhoneOf, emailHash, personalEmailKey, untagged } = require('./people');
 const { SMS_HEADERS_SQL, mapSmsHeader } = require('./readSms');
 const { TT_HEADERS_SQL, mapThumbtackHeader } = require('./readThumbtack');
 const { ML_HEADERS_SQL, mapMessageLogHeader } = require('./readMessageLog');
@@ -52,7 +52,8 @@ const ACTIONS_SQL = `
    WHERE undone_at IS NULL AND created_at >= $1`;
 const SEEN_SQL = 'SELECT person_key, seen_at, seen_by FROM inbox_seen';
 const READS_SQL = `
-  SELECT kind, subject_ref, person_key, status, needs_reply, holding, summary, promised_by, reason, attempts, created_at, updated_at
+  SELECT kind, subject_ref, person_key, status, needs_reply, holding, summary, promised_by, reason, solicitation, attempts,
+         created_at, updated_at
     FROM inbox_reads
    WHERE created_at >= $1`;
 const PROPOSALS_SQL = `
@@ -107,34 +108,219 @@ function warnHeaderRows(headerRows) {
 
 // Reads are never narrowed by person_key: the rules match a read by its
 // subject_ref, so a read written before a re-key still counts (amendment 22).
-function assembleSnapshot({ now, index, events, actions, seen, reads, proposals, feeds, fullKeys }) {
+function assembleSnapshot({ now, index, events, actions, seen, reads, proposals, feeds, fullKeys, heldKeys = new Set() }) {
   const keep = (rows) => rows.filter((r) => fullKeys.has(r.person_key));
   return {
-    now, index, feeds, fullKeys,
+    now, index, feeds, fullKeys, heldKeys,
     eventsByPerson: groupBy(events, (e) => e.personKey),
     inputs: { actions, seen, reads, proposals, users: index.users },
     sInputs: { actions: keep(actions), seen: keep(seen), reads, proposals: keep(proposals), users: index.users },
   };
 }
 
+// Every person key the legal hold covers (decision 31). held is the held
+// proposals' clients; held_proposals is the held proposals and every other
+// proposal of those clients. Each source is read by client and by proposal as
+// two UNION ALL arms, so each arm can use its own index (zola_leads.proposal_id
+// and email_leads.client_id have none; both tables are small).
+//   c- keys: the held clients.
+//   p- keys (the last ten digits, as the engine keys an unknown number): the
+//     client row; their texts (by client); their Thumbtack leads, consults and
+//     SMS ledger rows (by client or held_proposals; the ledger keeps a send to
+//     a number that matches no client under its proposal alone); the shift
+//     contacts (by held_proposals); their SMS consent log (by client).
+//   t- and z- keys: their Thumbtack and Zola leads, by client or
+//     held_proposals.
+//   addresses: the client row; the email ledger, consult bookings (by client
+//     or held_proposals); the shift contacts and drink plans (by
+//     held_proposals); their marketing lead rows and their legacy Check
+//     Cherry proposals (by client).
+// A recorded address is dropped by its provenance, never because some users
+// row matches it (anyone can register an address, unverified):
+//   - everywhere, an address in the people index's own set (the mailbox, its
+//     aliases, INBOX_OWN_EMAILS, FROM_EMAIL, ADMIN_EMAIL and Zola's vendor
+//     address) or an admin's or manager's users.email (only an admin makes
+//     those accounts);
+//   - a staff notice only (an email ledger row with no client whose type is a
+//     notice the OS sends to the event's staff: gratuity_removed_staff_notice,
+//     service_extension_approved, service_extension_declined), when its
+//     recipient is a real staffer: an admin or manager, or a users row whose
+//     onboarding status is submitted, reviewed, approved, suspended or
+//     deactivated (submitted is set only by an admin, the status route, and
+//     the assignment gate staffs it; approved is also reached by a
+//     completed self-service application, which is why the notice type is
+//     required too: only the OS writes it, to the event's staff).
+// Every other recorded address stays held, a staffer's included (a consult
+// booked or a day-of contact given with it is fail closed). The held client's
+// own address (the client row) is never dropped. Addresses compare in
+// canonical form.
+// loadLegalHold turns each address left into its e- keys with the people index's
+// own functions, its business key (people.emailHash, which trims all
+// whitespace and lowercases in JavaScript, where SQL's trim strips spaces
+// only) and its personal-mail key (people.personalEmailKey, never read
+// anyway), and into its canonical form (canonicalAddress) for the held-mail
+// flag. The engine folds a client's own phone, address and leads into their
+// c- key, but anything on record that is on none of the people index's rows
+// would otherwise form an unheld person. The one source of the held set: the
+// snapshot flags held mail with it and never offers a subject under one of
+// its keys, and the read job refuses every key in it (readJob.js). A failed
+// lookup throws, so the snapshot fails to load and the read tick reads
+// nothing (fail closed).
+const HELD_KEYS_SQL = `
+  WITH held AS (
+    SELECT DISTINCT client_id AS id FROM proposals
+     WHERE id = ANY($1::int[]) AND client_id IS NOT NULL
+  ),
+  held_proposals AS (
+    SELECT id FROM proposals WHERE id = ANY($1::int[])
+    UNION SELECT p.id FROM proposals p JOIN held ON held.id = p.client_id
+  ),
+  phones AS (
+    SELECT c.phone AS phone FROM clients c JOIN held ON held.id = c.id
+    UNION ALL SELECT m.recipient_phone FROM sms_messages m JOIN held ON held.id = m.client_id
+    UNION ALL SELECT t.customer_phone FROM thumbtack_leads t JOIN held ON held.id = t.client_id
+    UNION ALL SELECT t.customer_phone FROM thumbtack_leads t JOIN held_proposals hp ON hp.id = t.proposal_id
+    UNION ALL SELECT k.booker_phone FROM consults k JOIN held ON held.id = k.client_id
+    UNION ALL SELECT k.booker_phone FROM consults k JOIN held_proposals hp ON hp.id = k.proposal_id
+    UNION ALL SELECT s.client_phone FROM shifts s JOIN held_proposals hp ON hp.id = s.proposal_id
+    UNION ALL SELECT l.recipient FROM message_log l JOIN held ON held.id = l.client_id WHERE l.channel = 'sms'
+    UNION ALL SELECT l.recipient FROM message_log l JOIN held_proposals hp ON hp.id = l.proposal_id WHERE l.channel = 'sms'
+    UNION ALL SELECT g.phone FROM sms_consent_log g JOIN held ON held.id = g.client_id
+  ),
+  digits AS (
+    SELECT regexp_replace(phone, '[^0-9]', '', 'g') AS d FROM phones WHERE phone IS NOT NULL
+  ),
+  emails AS (
+    SELECT c.email AS email, 'client' AS source FROM clients c JOIN held ON held.id = c.id
+    UNION ALL SELECT l.recipient, 'record' FROM message_log l JOIN held ON held.id = l.client_id WHERE l.channel = 'email'
+    UNION ALL SELECT l.recipient,
+           CASE WHEN l.client_id IS NULL
+                     AND l.message_type IN ('gratuity_removed_staff_notice', 'service_extension_approved', 'service_extension_declined')
+                THEN 'staff_notice' ELSE 'record' END
+      FROM message_log l JOIN held_proposals hp ON hp.id = l.proposal_id WHERE l.channel = 'email'
+    UNION ALL SELECT k.booker_email, 'record' FROM consults k JOIN held ON held.id = k.client_id
+    UNION ALL SELECT k.booker_email, 'record' FROM consults k JOIN held_proposals hp ON hp.id = k.proposal_id
+    UNION ALL SELECT s.client_email, 'record' FROM shifts s JOIN held_proposals hp ON hp.id = s.proposal_id
+    UNION ALL SELECT d.client_email, 'record' FROM drink_plans d JOIN held_proposals hp ON hp.id = d.proposal_id
+    UNION ALL SELECT e.email, 'record' FROM email_leads e JOIN held ON held.id = e.client_id
+    UNION ALL SELECT x.client_email_normalized, 'record' FROM legacy_cc_proposals x JOIN held ON held.id = x.client_id
+  ),
+  leads AS (
+    SELECT 't-' || t.negotiation_id AS key FROM thumbtack_leads t JOIN held ON held.id = t.client_id
+     WHERE t.negotiation_id IS NOT NULL
+    UNION ALL SELECT 't-' || t.negotiation_id FROM thumbtack_leads t JOIN held_proposals hp ON hp.id = t.proposal_id
+     WHERE t.negotiation_id IS NOT NULL
+    UNION ALL SELECT 'z-' || z.id FROM zola_leads z JOIN held ON held.id = z.client_id
+    UNION ALL SELECT 'z-' || z.id FROM zola_leads z JOIN held_proposals hp ON hp.id = z.proposal_id
+  )
+  SELECT 'c-' || id AS key, NULL::text AS address, NULL::text AS source FROM held
+  UNION SELECT 'p-' || RIGHT(d, 10), NULL, NULL FROM digits WHERE LENGTH(d) >= 10
+  UNION SELECT key, NULL, NULL FROM leads
+  UNION SELECT NULL, email, source FROM emails WHERE email IS NOT NULL
+  UNION SELECT NULL, u.email, CASE WHEN u.role IN ('admin', 'manager') THEN 'operator' ELSE 'staffer' END FROM users u
+         WHERE u.email IS NOT NULL
+           AND (u.role IN ('admin', 'manager') OR u.onboarding_status IN ('submitted', 'reviewed', 'approved', 'suspended', 'deactivated'))`;
+
+// An address as the hold compares it: normalized and without a +tag
+// (people.untagged), and for Gmail (gmail.com, googlemail.com) without the
+// dots in its local part, on gmail.com, since Gmail delivers every such form
+// to one mailbox. Other providers may not ignore a +tag or a dot; folding them
+// anyway holds more mail by a held address, and can match a dropped one (ours,
+// or a real staffer's on a staff notice) only by its provenance, never by a
+// users row anyone could register. Null for no address.
+const GMAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com']);
+function canonicalAddress(address) {
+  const a = untagged(address);
+  if (!a) return null;
+  const at = a.lastIndexOf('@');
+  if (at <= 0) return a;
+  return GMAIL_DOMAINS.has(a.slice(at + 1)) ? `${a.slice(0, at).replace(/\./g, '')}@gmail.com` : a;
+}
+
+// The held set: keys (every person key the hold covers) and addresses (every
+// held address, canonical, for the held-mail flag). A recorded address dropped
+// by its provenance (see HELD_KEYS_SQL) is left out of both; the client row's
+// never is.
+const DROP_ALWAYS = new Set(['operator']);
+const DROP_ON_NOTICE = new Set(['operator', 'staffer']);
+async function loadLegalHold(db, proposalIds, env = process.env) {
+  const ids = (Array.isArray(proposalIds) ? proposalIds : []).map(Number).filter(Number.isInteger);
+  const keys = new Set();
+  const addresses = new Set();
+  if (ids.length === 0) return { keys, addresses };
+  const { rows } = await db.query(HELD_KEYS_SQL, [ids]);
+  // Whose each canonical address is: the people index's own set (built from
+  // no rows: its constants and env) counts as an operator's.
+  const whose = new Map([...buildPeopleIndex({ env }).ownEmails].map((a) => [canonicalAddress(a), 'operator']));
+  for (const r of rows) {
+    if (r.source !== 'operator' && r.source !== 'staffer') continue;
+    const c = canonicalAddress(r.address);
+    if (whose.get(c) !== 'operator') whose.set(c, r.source);
+  }
+  for (const r of rows) {
+    if (r.key) keys.add(r.key);
+    if (r.source === 'operator' || r.source === 'staffer' || !r.address || !String(r.address).trim()) continue;
+    const canonical = canonicalAddress(r.address);
+    const owner = whose.get(canonical);
+    if (r.source !== 'client' && DROP_ALWAYS.has(owner)) continue;
+    if (r.source === 'staff_notice' && DROP_ON_NOTICE.has(owner)) continue;
+    keys.add(personKey('e', emailHash(r.address)));
+    keys.add(personalEmailKey(r.address));
+    addresses.add(canonical);
+  }
+  keys.delete(null);
+  addresses.delete(null);
+  return { keys, addresses };
+}
+
+async function legalHoldPersonKeys(db, proposalIds) {
+  return (await loadLegalHold(db, proposalIds)).keys;
+}
+
 // The sibling hold flag (spec 2026-10-14 section 6): a Sent mail that reached
-// a held person marks every event of that mail (one readRef) legalHold, so
-// the words written to the held client are never read under a third party's
-// key. The rules and the read job read the flag.
+// a held person, under any key the hold covers (an address only the email
+// ledger knows is an e- person, not the client), marks every event of that
+// mail (one readRef) legalHold, so the words written to the held client are
+// never read under a third party's key. The rules and the read job read the
+// flag.
 function markHeldSiblings(events, heldKeys) {
   if (!heldKeys.size) return;
   const held = new Set();
   for (const e of events) {
     if (e.meta && e.meta.source === 'gm' && e.meta.readRef && heldKeys.has(e.personKey)) held.add(e.meta.readRef);
   }
+  markMail(events, held);
+}
+
+// The address hold flag (the coordinator's rulings, 2026-10-16): a mail whose
+// From, To or Cc (the pass-1 row's from_address and to_addresses) names a
+// held address in any form Gmail delivers to it (canonicalAddress: a +tag, a
+// dot, googlemail.com) is legalHold on every event of that mail, under
+// whoever's key it lands: the held client writing from a variant of their
+// address, or a planner or counsel writing with them copied. That mail only,
+// never the rest of its thread. Plain string compares, no hashing per address.
+function markHeldAddresses(events, mailRows, heldAddresses) {
+  if (!heldAddresses.size) return;
+  const isHeld = (a) => heldAddresses.has(canonicalAddress(a));
+  const held = new Set();
+  for (const r of mailRows) {
+    if (!r.gmail_id) continue;
+    const to = Array.isArray(r.to_addresses) ? r.to_addresses : [];
+    if (isHeld(r.from_address) || to.some(isHeld)) held.add(`gm:${r.gmail_id}`);
+  }
+  markMail(events, held);
+}
+
+function markMail(events, readRefs) {
+  if (!readRefs.size) return;
   for (const e of events) {
-    if (e.meta && e.meta.source === 'gm' && held.has(e.meta.readRef)) e.meta.legalHold = true;
+    if (e.meta && e.meta.source === 'gm' && readRefs.has(e.meta.readRef)) e.meta.legalHold = true;
   }
 }
 
 async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const floor = INBOX_HISTORY_START;
-  const [index, sms, tt, ml, pal, calls, mail, actions, seen, reads, feeds] = await Promise.all([
+  const [index, sms, tt, ml, pal, calls, mail, actions, seen, reads, feeds, hold] = await Promise.all([
     loadPeopleIndex(db),
     db.query(SMS_HEADERS_SQL, [floor]),
     db.query(TT_HEADERS_SQL, [floor]),
@@ -147,6 +333,7 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
     db.query(SEEN_SQL),
     db.query(READS_SQL, [floor]),
     loadFeeds({ now }, db),
+    loadLegalHold(db, _deps.legalHoldIds || []),
   ]);
   warnHeaderRows(sms.rows.length + tt.rows.length + ml.rows.length + pal.rows.length + calls.rows.length
     + mail.rows.length + reads.rows.length + actions.rows.length);
@@ -165,7 +352,9 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const proposalRows = clientIds.length ? (await db.query(PROPOSALS_SQL, [clientIds])).rows : [];
   const holds = new Set((_deps.legalHoldIds || []).map(Number));
   const proposals = proposalRows.map((p) => ({ ...p, person_key: `c-${p.client_id}`, legal_hold: holds.has(Number(p.id)) }));
-  markHeldSiblings(headers, new Set(proposals.filter((p) => p.legal_hold).map((p) => p.person_key)));
+  const allHeld = new Set([...hold.keys, ...proposals.filter((p) => p.legal_hold).map((p) => p.person_key)]);
+  markHeldSiblings(headers, allHeld);
+  markHeldAddresses(headers, mail.rows, hold.addresses);
   // Pass 1: the rules over light headers say whose rows are worth loading in full.
   const first = computeInbox({
     events: headers, actions: taps.actions, seen: taps.seen, reads: reads.rows, proposals, users: index.users, now, viewerId: null,
@@ -175,7 +364,9 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const wanted = headers.filter((e) => fullKeys.has(e.personKey));
   const full = mergeDetails(wanted, await loadDetails(wanted, db));
   const events = [...headers.filter((e) => !fullKeys.has(e.personKey)), ...full];
-  return assembleSnapshot({ now, index, events, actions: taps.actions, seen: taps.seen, reads: reads.rows, proposals, feeds, fullKeys });
+  return assembleSnapshot({
+    now, index, events, actions: taps.actions, seen: taps.seen, reads: reads.rows, proposals, feeds, fullKeys, heldKeys: allHeld,
+  });
 }
 
 // maxAgeMs: how old a cached snapshot this caller accepts (CACHE_MS unless given).
@@ -392,7 +583,9 @@ async function getWaitingCount({ timeoutMs = BADGE_TIMEOUT_MS, viewerId } = {}) 
 
 // For lane inbox-ai's read job: subjects with the real name or null, never
 // the legal-hold client (decision 31; computeInbox flags them, and this is
-// where they stop). The same 30-second cached snapshot the page reads
+// where they stop), nor any person under a key in the held key set
+// (legalHoldPersonKeys: an address or number on record that forms its own
+// person). The same 30-second cached snapshot the page reads
 // (amendment 18); only fresh: true bypasses it. maxAgeMs lets the job accept
 // an older one, as the badge does (lane inbox-ai reads at BADGE_MAX_AGE_MS,
 // so an always-on read job does not recompute the inbox every tick). A `now`
@@ -402,16 +595,17 @@ async function getReadSubjects({ fresh = false, maxAgeMs } = {}) {
   const snap = await getSnapshot({ maxAgeMs });
   // buildSubjects already skips a personal person; the second check keeps
   // their words from the AI even if that ever changes. A subject whose slice
-  // holds a sibling of a Sent mail that reached the held client (its own
-  // event or a line of context, meta.legalHold, markHeldSiblings) is never
+  // holds a mail that reached the held client (its own event or a line of
+  // context, meta.legalHold: markHeldSiblings, markHeldAddresses) is never
   // read either: the words written to the held client stay in the OS under
   // any key, whatever the read job's own checks know.
   const heldMail = (s) => {
     const held = new Set((snap.eventsByPerson.get(s.personKey) || []).filter((e) => e.meta && e.meta.legalHold).map((e) => e.ref));
     return held.has(s.subjectRef) || (Array.isArray(s.slice) && s.slice.some((line) => held.has(line.ref)));
   };
+  const heldKeys = snap.heldKeys || new Set();
   return runRules(snap, null, directoryFor(snap).realNameOf).subjects
-    .filter((s) => !s.legalHold && !heldMail(s) && !isPersonal(snap.eventsByPerson.get(s.personKey) || []));
+    .filter((s) => !s.legalHold && !heldKeys.has(s.personKey) && !heldMail(s) && !isPersonal(snap.eventsByPerson.get(s.personKey) || []));
 }
 
 // The seen, actions and text routes' check (spec 2026-10-14 section 8): true
@@ -456,6 +650,6 @@ function __fakeSnapshot({ now = new Date(), events = [], index: overrides = {}, 
 
 module.exports = {
   getInbox, getItem, getWaitingCount, getReadSubjects, getPersonEvents, isHiddenKey, computeSnapshot, resolveKey,
-  directoryFor,
+  directoryFor, legalHoldPersonKeys, loadLegalHold, canonicalAddress,
   invalidate: () => cache.invalidate(), InboxMovedError, NOT_IN_INBOX, __setEngineDeps, __resetEngine, __fakeSnapshot,
 };

@@ -273,6 +273,11 @@ function computePersonState(personKey, events, ctx) {
   const needEvent = needsReply.length ? last(needsReply) : newestU;
   const waitingNeed = needOf(needEvent) || needOf(newestInbound)
     || (P.length ? 'Waiting on our follow-up' : null) || (reopenWaits ? 'Reopened' : null);
+  // The Pitch tag (spec 2026-10-14 decision 12): the newest counted inbound's
+  // read says solicitation. The read job stored needs_reply true with it, so
+  // the item already waits; this only names it.
+  const newestRead = inboundRead(newestInbound);
+  const pitch = open && Boolean(newestRead && newestRead.solicitation === true);
 
   return {
     personKey, status, legalHold, seen, channels,
@@ -280,6 +285,7 @@ function computePersonState(personKey, events, ctx) {
     // stored on each mail: only the owner sees this person, and the AI never
     // reads them.
     personal: C.isPersonal(events),
+    pitch,
     waitingSince: open ? waitingSince : null,
     hot: status === 'waiting' && ctx.nowMs - waitingSince.getTime() >= HOT_HOURS * HOUR,
     need: open ? waitingNeed : (closed ? closed.need : null),
