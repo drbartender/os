@@ -396,7 +396,7 @@ Replace it with:
           // A total_price_override is a CONTRACT, not a catalog computation:
           // the engine's serviceTotal REPLACES the whole calculated total with
           // it. So we can neither drop it (the client's negotiated price
-          // evaporates and they get billed at catalog, which overbilled Jack
+          // evaporates and they get billed at catalog, which overbilled
           // the proposal 600 client by $627) nor pass it through untouched (the extras they
           // just bought become free). Price the delta at catalog with the
           // override OFF and move the contract by it. Anything this submit did
