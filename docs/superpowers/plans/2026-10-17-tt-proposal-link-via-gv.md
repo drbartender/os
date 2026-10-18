@@ -36,6 +36,7 @@ lanes:
       - client/src/components/SendModal/sendResult.js
       - client/src/components/SendModal/sendResult.test.js
       - README.md
+      - ARCHITECTURE.md
     blockedBy: [gv-post-server]
     review: code-review + ui-ux-review
   - id: gv-post-inbox
@@ -61,7 +62,7 @@ lanes:
     review: full-fleet   # drives Dallas's personal Google account; the at-most-once send law
   - id: gv-sender-live
     footprint:
-      - gv-agent/src/gvFlow.js   # only if a dry run pins a selector that moved since the spike
+      - gv-agent/src/*.js   # only if a dry run pins a selector, copy or link format that moved since the spike
       - README.md
       - ARCHITECTURE.md
       - .claude/CLAUDE.md
@@ -208,7 +209,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 
 **Files:**
 - Create: `server/utils/gvPost/rules.js`, `server/utils/gvPost/suppression.js`
-- Modify: `server/utils/comms/actions/proposalResend.js` (add `RESENDABLE` to its exports; nothing else)
+- Modify: `server/utils/comms/actions/proposalResend.js` (add `RESENDABLE` to its exports, for the drift test only; nothing else)
 - Test: `server/utils/gvPost/rules.test.js` (pure), `server/utils/gvPost/suppression.test.js` (DB)
 
 **Interfaces:**
@@ -217,6 +218,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `GV_WINDOWS = { staleMin: 5, leaseMin: 3, spacingMin: 10, pasteBeforeMin: 30, notSeenGraceMin: 2, livenessMin: 30, outageFailures: 3, leadMaxAgeDays: 180, fallbackAbsorbMin: 15 }`
   - `GV_PRECLICK_REASONS`, a Set of `no_thread`, `wrong_thread`, `invalid_body`, `invalid_number`, `session_expired`, `challenge`, `cap`, `timeout`, `ui_error_before_send`
   - `GV_OUTAGE_EXEMPT`, a Set of `cap` and `no_thread`
+  - `GV_SENDABLE_STATUSES = ['sent', 'viewed', 'modified', 'accepted']`, the same values as `proposalResend.js` `RESENDABLE`, pinned by a drift test
   - `function gvPostEnabled()`, which is `process.env.GV_PROPOSAL_POST_ENABLED === 'true'`
   - `function gvDailyCap()`, which is `readEnvInt('GV_POST_DAILY_CAP', 25)`
   - `function normalizeGvBody(body)`: collapse every whitespace run to one space, then trim
@@ -224,14 +226,15 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 - Produces in `suppression.js`: `async function gvSuppression({ proposal, client, phone }, db = pool)`, which returns `{ ok: true }` or `{ ok: false, reason }`.
   - `shouldSendImmediate({ proposal: { id, status }, client: { communication_preferences, email_status, phone_status }, channel: 'sms' })` gives `archived`, `channel_disabled` or `bad_contact` (spec law 8: today's suppression carries over unchanged).
   - Then `activeOptOut(phone, db)` gives `opted_out`.
-  - Then a `proposal.status` outside `RESENDABLE` gives `not_sendable`.
+  - Then a `proposal.status` outside `GV_SENDABLE_STATUSES` gives `not_sendable`.
+  - `suppression.js` never imports `proposalResend.js`. Once Task 5 makes `proposalResend.js` import `queue.js`, that would be a require cycle loading `RESENDABLE` as undefined.
 
 - [ ] **Step 1: Write the failing tests:**
-  - rules: `whitespace runs and line breaks collapse to single spaces`, `a 321-character body is too_long`, `a body without the link is no_link`, `a link with another token is wrong_link`, `two links is multiple_links`, `the template body with its trailing period validates`
+  - rules: `whitespace runs and line breaks collapse to single spaces`, `a 321-character body is too_long`, `a body without the link is no_link`, `a link with another token is wrong_link`, `two links is multiple_links`, `the template body with its trailing period validates`, `GV_SENDABLE_STATUSES matches proposalResend RESENDABLE`
   - suppression: `archived proposal is archived`, `sms_enabled false is channel_disabled`, `phone_status bad is bad_contact`, `active sms_optouts row is opted_out`, `a cleared opt-out passes`, `status draft is not_sendable`
 - [ ] **Step 2: Run both files.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run both.** Expected: 6/6 and 6/6 PASS.
+- [ ] **Step 4: Run both.** Expected: 7/7 and 6/6 PASS.
 - [ ] **Step 5: Commit.**
 
 ### Task 4: The router and queue (`routeProposalText`)
@@ -254,10 +257,11 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   1. flag, giving `disabled`
   2. `deps.notificationsEnabled()`, giving `notifications_off`
   3. `deps.resolveGvTarget`, giving the identity reason
-  4. `validateGvBody`, giving the body reason
-  5. an open row for this proposal (`status IN ('queued','leased')`), giving `merged`
-  6. `checkGvCapacity({ phoneLast10, excludeProposalId: proposalId })`, giving `cap` or `spacing`
-  7. `INSERT ... ON CONFLICT (proposal_id) WHERE status IN ('queued','leased') DO NOTHING RETURNING id`. If the insert loses the race, select the open id and return `merged`.
+  4. `gvSuppression` (Task 3), giving its reason (in practice `opted_out` or `not_sendable`; the choke point already applied the rest)
+  5. `validateGvBody`, giving the body reason
+  6. an open row for this proposal (`status IN ('queued','leased')`), giving `merged`
+  7. `checkGvCapacity({ phoneLast10, excludeProposalId: proposalId })`, giving `cap` or `spacing`
+  8. `INSERT ... ON CONFLICT (proposal_id) WHERE status IN ('queued','leased') DO NOTHING RETURNING id`. If the insert loses the race, select the open id and return `merged`.
 - On a `cap` or `spacing` result: one console line (proposal id, reason) and a Sentry warning, throttled in memory to one per reason per hour (`{ feature: 'gv_post', event: 'cap' | 'spacing' }`).
 - Any throw goes to Sentry (`{ feature: 'gv_post', stage: 'route' }`, no number) and returns `{ route: 'twilio', reason: 'error' }`.
 - Seam: `routeProposalText.__setDeps({ resolveGvTarget, notificationsEnabled })`. The defaults are the real functions.
@@ -272,9 +276,10 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `cap reached routes twilio cap` (`GV_POST_DAILY_CAP=1`, another proposal's open row)
   - `another proposal's post to the same number within 10 minutes routes twilio spacing`
   - `a throwing identity lookup routes twilio error`
+  - `an opted-out number routes twilio opted_out`
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: 9/9 PASS.
+- [ ] **Step 4: Run.** Expected: 10/10 PASS.
 - [ ] **Step 5: Commit.**
 
 ### Task 5: The two choke points and the SendModal's server side
@@ -293,7 +298,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `sendProposalSentEmail` passes its `actorType` through, so the website wizard (`'client'`) never routes.
 - Produces in `proposalResend.js`:
   - export `load`;
-  - export `async function sendResendText({ row, phone, body, ctx = {} })`, holding L211-228 (the entry, with its single `` `${messageType}_sms` `` shape, plus the Twilio leg) and returning `'sent' | 'failed'`;
+  - export `async function sendResendText({ row, phone, body, ctx = {} })`, holding L211-228 (the entry, with its single `` `${messageType}_sms` `` shape, plus the Twilio leg) and returning `{ status: 'sent' | 'failed', error? }`, so `dispatch` keeps `results.sms_error` for the modal's "Text failed" line;
+  - add `__setDeps({ resolveGvTarget, routeProposalText })` to the module, so tests can make the lookup throw;
   - in `dispatch`, inside `wantSms && available`, route first with `sendPath: 'compose'`. A `gv` or `merged` result sets `results.sms = 'queued'` and `results.sms_route = 'thumbtack'`, with no `message_log` row.
 - `resolveRecipient` adds, under `channels.sms` (comms.js passes `channels` through whole): `via: 'thumbtack' | 'twilio'`, `max_chars: 320 | 640`, and `phone_last4` (relay only).
   - It is `'thumbtack'` only when `gvPostEnabled()` and `resolveGvTarget(...).ok`.
@@ -332,7 +338,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   3. Re-check `gvSuppression`; suppressed means `fallback_status = 'suppressed'`.
   4. For `'auto'`, call `sendInitialProposalText(loaded, { sentBy: post.sent_by, via: 'twilio' })`.
   5. For `'compose'`, call `sendResendText({ row: await load(post.proposal_id), phone, body: post.body, ctx: { sentBy: post.sent_by } })`.
-  6. Map the result: `sent` gives `sent`; `suppressed` gives `suppressed`; `skipped` or `failed` give `failed`.
+  6. Map the result (for `'compose'`, `sendResendText`'s `status`): `sent` gives `sent`; `suppressed` gives `suppressed`; `skipped` or `failed` give `failed`.
 - Produces in `outage.js`, all on `gv_sender_state`:
   - `async function noteOutage(reason)`: opens the episode if closed. It emails once per episode through `UPDATE ... SET outage_alerted_at = now() WHERE outage_alerted_at IS NULL RETURNING`, using `notifyAdminCategory({ category: 'routine_thumbtack', subject, emailHtml, emailText })` with no `smsBody`.
   - `async function noteSuccess()`: closes the episode and zeroes the counter.
@@ -457,6 +463,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 - Produces: `async function runGvPostSweep()`, which returns `{ staled, unknowned, alerted }` and rethrows the first arm error after all arms run. Arms:
   1. `UPDATE gv_posts SET status = 'stale' WHERE status = 'queued' AND created_at < now() - interval '5 minutes' RETURNING id`, then `sendGvFallback` for each.
   2. `UPDATE ... SET status = 'unknown' WHERE status = 'leased' AND leased_at < now() - interval '3 minutes'` (no fallback).
+  - Retry arm: rows with `status IN ('stale','failed_preclick') AND fallback_status IS NULL AND updated_at < now() - interval '1 minute'` get `sendGvFallback`. A restart between the status UPDATE and the fallback leaves them unclaimed, and the claim makes the retry safe. Every status UPDATE in Tasks 4, 7 and 9 sets `updated_at = now()`.
   3. ONLY when `gvPostEnabled()`: if arm 1 staled any row and `last_lease_at` is NULL or older than 30 min, call `noteOutage('no_lease')`.
   - Arms 1 and 2 each send one Sentry warning per run that touched rows, with the count, plus a console line.
 - Registration: `if (enabled('RUN_GV_POST_SWEEP_SCHEDULER'))`, using `wrapScheduler('gv_post_sweep', 60, ...)`, `setTimeout(wrapped, 25000)` and `setInterval(wrapped, 60000)`, else `clearHealthRow('gv_post_sweep')`. It is not gated by the flag.
@@ -471,6 +478,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `a leased row older than 3 minutes goes unknown with no fallback`
   - `stale rows with no lease in 30 minutes email once`
   - `flag off still drains queued rows to one fallback each and emails nobody` (Review Focus 4)
+  - `an unclaimed failed_preclick row gets its fallback on the next sweep`
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement, register, write the docs.**
 - [ ] **Step 4: Run the new file, then every file from Tasks 1-8, then Task 5's existing-suite list, one at a time, reading the counts. Then** `npm run check:filesize`. Expected: all PASS, with no new RED.
@@ -486,12 +494,12 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - add `router.get('/:id/gv-post', auth, requireAdminOrManager, ...)` returning `{ gv_post }`, registered BEFORE the greedy `GET /:id` in this file.
 - Create: `client/src/components/GvPostStatus.js`
 - Modify: `client/src/pages/admin/ProposalDetail.js` (one import and one element in the Client card `<dl>` beside `first_reply`, L562-564)
-- Modify: `README.md` (folder tree row for `GvPostStatus.js`)
+- Modify: `README.md` (folder tree row for `GvPostStatus.js`), `ARCHITECTURE.md` (proposal routes: `GET /api/proposals/:id/gv-post`, and the `gv_post` key on `GET /api/proposals/:id`)
 - Test: `server/routes/proposals/getOne.gvPost.test.js`
 
 **Interfaces:**
 - Consumes: `gvPostStatusForProposal` (Task 8).
-- Produces: `export default function GvPostStatus({ proposalId, initial })`. It renders `<><dt>Thumbtack message</dt><dd className="muted">{copy}</dd></>`, or nothing when there is no post.
+- Produces: `export default function GvPostStatus({ proposalId, initial, refreshKey })`. It re-syncs from `initial` when that changes and refetches when `refreshKey` changes. ProposalDetail bumps `refreshKey` in `onSendComplete` (L254-258), so a SendModal resend shows its new post. It renders `<><dt>Thumbtack message</dt><dd className="muted">{copy}</dd></>`, or nothing when there is no post.
   - It polls its OWN endpoint, `GET /proposals/:id/gv-post` through `utils/api.js`, every 15 s while `display` is `queued`, `sending`, `sent` or `sent_not_seen`, for at most 10 minutes.
   - It never calls ProposalDetail's `loadProposal`, which resets the notes and re-fetches cancel targets.
 - Copy by `display`, verbatim (time = Chicago `h:mm a`):
@@ -559,11 +567,17 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 
 **Interfaces:**
 - Consumes: `gv_posts` (Task 1). The match is done in SQL, because the header queries carry no message text.
-  - `TT_HEADERS_SQL` gains a `LEFT JOIN LATERAL` producing `gv_post_proposal_id`: the `gv_posts.proposal_id` whose `negotiation_id` equals the row's and where `regexp_replace(btrim(gp.body), '\s+', ' ', 'g') = regexp_replace(btrim(t.text), '\s+', ' ', 'g')`. `mapThumbtackHeader` sets `e.meta.gvPost = { proposalId }` when it is non-null.
-  - `ML_HEADERS_SQL` gains `gv_fallback_proposal_id`: the `gv_posts.proposal_id` for the row's proposal when `fallback_status = 'sent'` and the row's `created_at` is within 15 minutes after the post's. `mapMessageLogHeader` sets `e.meta.gvFallback = { proposalId }`.
-- Produces in `normalize.js`: `function absorbGvPosts(events)`, called right after the proposal absorb (L119-149).
-  - For each event with `meta.gvPost` or `meta.gvFallback`: when a `pal` proposal-send event for that proposal exists, push `{ channel: 'thumbtack', failed: false }` (echo) or the fallback's delivery onto its `meta.deliveries` and remove the event, whatever `PROPOSAL_ABSORB_MINUTES` says.
-  - With no `pal` (the crud born-sent create and the SendModal resend write none), the event stays as it is. An echo stays an outbound Thumbtack reply that counts, exactly as a Business message counts today. A fallback stays an `ml` row that counts, exactly as today's 888 row.
+  - `TT_HEADERS_SQL` gains a `LEFT JOIN LATERAL` producing `gv_post_proposal_id` and `gv_post_created_at`. It matches only when:
+    - `t.from_type = 'Business'` (a customer quoting the body keeps their message);
+    - `gp.negotiation_id = t.negotiation_id`;
+    - `btrim(regexp_replace(gp.body, '\\s+', ' ', 'g')) = btrim(regexp_replace(t.text, '\\s+', ' ', 'g'))`. Write the backslash doubled inside the JS template literal, the house style of `'\\D'` at `smsInbound.js:122`. The regexp runs first and then btrim, matching `normalizeGvBody`.
+  - `mapThumbtackHeader` sets `e.meta.gvPost = { proposalId, postCreatedAt }`.
+  - `ML_HEADERS_SQL` gains a lateral producing `gv_fallback_proposal_id` and `gv_post_created_at`. It matches only rows with `channel = 'sms'` and `message_type IN ('initial_proposal','proposal_sent_sms')`, against the post for the row's proposal with `fallback_status = 'sent'`, when the row's `created_at` is within 15 minutes after `gp.created_at`.
+  - `mapMessageLogHeader` sets `e.meta.gvFallback = { proposalId, postCreatedAt }`.
+- Produces in `normalize.js`: `function absorbGvPosts(events)`, called right after the proposal absorb (L119-149) and BEFORE the twins filter (L227-228).
+  - It absorbs an event with `meta.gvPost` or `meta.gvFallback` into a `pal` proposal-send event for that proposal ONLY when the pal's time is within 2 minutes of `postCreatedAt`. Lifecycle and proposal_send write their pal seconds before the insert, and the legacy /resend writes it just after.
+  - On absorb it pushes `{ channel: 'thumbtack', failed: false }` (echo), or the fallback's delivery, onto `meta.deliveries` and removes the event. For an absorbed `ml` row it also records the twin ref, so the auto fallback's `sms_messages` twin goes with it.
+  - Otherwise the event stands: an echo stays a counted outbound Thumbtack reply (as a Business message counts today), and a fallback stays a counted `ml` row (as today's 888 row). This covers the SendModal resend and the crud born-sent create, which write no pal, and a resend of an older send.
   - Never `autoFirstReply`, never a holding reply.
 - Produces in `thread.js`: a `proposal_sent` row with a thumbtack delivery reads `You sent the proposal (also posted to Thumbtack)`.
 
@@ -573,12 +587,14 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - `a text-only send with a GV echo reads delivered`
     - `an 888 fallback row 8 minutes after the send is absorbed into it`
     - `an echo with no proposal send stays a counted reply`
+    - `a resend's echo and fallback never attach to an older send`
+    - `an auto fallback with its sms_messages twin reads delivered`
     - `a GV echo is never a holding reply`
   - DB (`readers.test.js`): `TT headers carry gv_post_proposal_id for a matching Business row`, `ML headers carry gv_fallback_proposal_id inside 15 minutes and not after`
   - thread: `a send with a thumbtack delivery reads also posted to Thumbtack`
 - [ ] **Step 2: Run each alone.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run every `server/utils/inbox/*.test.js`, one at a time, reading counts** (all PASS). Then check the dev Inbox with fixture rows for an invented client: a `pal` send, a `gv_posts` row and a matching Business `thumbtack_messages` row should show one proposal send reading "also posted to Thumbtack", and no separate reply item. Delete the fixtures after.
+- [ ] **Step 4: Run every `server/utils/inbox/*.test.js`, then `server/routes/admin/inbox.test.js` (the real engine over the header SQL), one at a time, reading counts** (all PASS). Then check the dev Inbox with fixture rows for an invented client: a `pal` send, a `gv_posts` row and a matching Business `thumbtack_messages` row should show one proposal send reading "also posted to Thumbtack", and no separate reply item. Delete the fixtures after.
 - [ ] **Step 5: Commit.** Then the lane review (full fleet) and merge.
 
 ## Lane gv-sender
@@ -640,12 +656,14 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 **Interfaces:**
 - Consumes: `pageLogic.js` for every judgment. The glue only reads the DOM into plain values.
 - Produces in `gvFlow.js` (selectors exactly as spec section 10):
-  - `async function openCompose(page, phone, negotiationId)` returns `{ ok: true }` or `{ ok: false, reason }`.
-    1. If a `gv-thread-list-item` matches the number, read its latest Thumbtack notice link without opening the thread, from the list preview or aria label where present. When `parseBidId` gives an id other than `negotiationId`, fail `wrong_thread`.
-    2. Click `[aria-label="Send new message"]`.
-    3. In `[role=region][aria-label="Select recipients"]`, use `input[placeholder="Type a name or phone number"]`: click, then `pressSequentially` the 10 digits with a 100 ms delay.
-    4. Pick with `oneSendToEntry`. -1 fails `ui_error_before_send`.
-    5. Require `oneRecipientChip`, else `ui_error_before_send`.
+  - `async function openThreadIfAny(page, phone, negotiationId)` returns `{ ok: true, existed }` or `{ ok: false, reason }`.
+    - If a `gv-thread-list-item` matches the number, open it (the send marks it read anyway; decision 7) and read the newest `a[href*="/bids/"]` in the conversation. When `parseBidId` gives an id other than `negotiationId`, fail `wrong_thread`.
+    - A thread with no notice (one we started) has nothing to check.
+  - `async function composeTo(page, phone)` is the proven new-message flow, used for both a new and an existing conversation (GV appends to the existing one). It returns `{ ok: true }` or `{ ok: false, reason }`.
+    1. Click `[aria-label="Send new message"]`.
+    2. In `[role=region][aria-label="Select recipients"]`, use `input[placeholder="Type a name or phone number"]`: click, then `pressSequentially` the 10 digits with a 100 ms delay.
+    3. Pick with `oneSendToEntry`. -1 fails `ui_error_before_send`.
+    4. Require `oneRecipientChip`, else `ui_error_before_send`.
   - `async function threadHasToken(page, token)` returns a boolean.
   - `async function fillAndCheck(page, body)` uses `textarea[placeholder="Type a message"]`: `fill`, `inputValue() === body`, the Call panel input empty, no visible reCAPTCHA bframe (`challenge`), and `button[aria-label="Send message"]` enabled. Any other failure is `ui_error_before_send`.
   - `async function clickSend(page)`.
@@ -674,24 +692,29 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `function chicagoDayKey(date)`, the `YYYY-MM-DD` in `America/Chicago` via `Intl.DateTimeFormat`, so the daily cap rolls at Chicago midnight.
 - Produces in `runJob.js`: `async function runJob(job, deps)`, which returns `{ outcome, reason? }`. `deps` = `{ page, flow, journal: { has, write }, classify, diag, now, budgetMs }`. The order is fixed and tested:
   1. `classify(page)` non-ok gives `failed_preclick` with that reason.
-  2. `flow.openCompose`.
-  3. `flow.threadHasToken`; true gives `skipped_already_posted`, with no journal and no click.
-  4. `flow.fillAndCheck`.
-  5. `underBudget`; false gives `failed_preclick timeout`.
-  6. `journal.write(job.id)`; a throw gives `failed_preclick ui_error_before_send` and NO click.
-  7. `flow.clickSend`.
-  8. Poll `flow.readVerify` up to 20 s, then `verifyDecision`.
+  2. `flow.openThreadIfAny` (`wrong_thread` fails here).
+  3. When a thread existed, `flow.threadHasToken`; true gives `skipped_already_posted`, with no journal and no click.
+  4. `flow.composeTo`.
+  5. `flow.fillAndCheck`.
+  6. `underBudget`; false gives `failed_preclick timeout`.
+  7. `journal.write(job.id)`; a throw gives `failed_preclick ui_error_before_send` and NO click.
+  8. `flow.clickSend`.
+  9. Poll `flow.readVerify` up to 20 s, then `verifyDecision`.
 
   Any definitive failure calls `diag(page, job.id, reason)`.
 - Produces in `index.js`, the loop:
   - poll `GET /api/gv-agent/pending` (header `x-gv-agent-secret`) every `pollMs`;
+  - `sentToday` comes from `<profileDir>/gv-sent-count.json` (`{ day: chicagoDayKey, count }`). It is incremented on every `sent` or `clicked_unverified` report and read at start, so a restart keeps the box's cap;
   - per job: `decideJob`, then launch the persisted profile (`launchPersistentContext(profileDir, { headless: false, channel: 'chrome' })`), open `https://voice.google.com/u/0/messages`, call `runJob`, close;
   - report through `POST /report`, retried 3 times with only 2xx counted;
   - on `session_expired` or `challenge`: `POST /status`, then `outagePollMs` until a poll's `classify` is ok.
 - `--dry-run` runs three read-only stages and exits:
   1. API: `GET /pending` against the configured server, expecting a 2xx (`[]` with the flag off).
-  2. Compose: `openCompose` and `fillAndCheck` against `CFG.dryRunPhone` with the body `dry run, never sent`, then clear the textarea.
-  3. Thread: given `--thread-phone <E.164>` for an already-read relay thread, read its notice bid id and `threadHasToken` against a dummy token, without opening any unread thread.
+  2. Compose: `composeTo` and `fillAndCheck` against `CFG.dryRunPhone` with the body `dry run, never sent`, then clear the textarea.
+  3. Thread: given `--thread-phone <E.164>` for an already-read relay thread (the one the spike started qualifies) and `--thread-token <uuid>` for a proposal token known to be in it:
+     - `openThreadIfAny` finds the thread;
+     - `threadHasToken(known)` is true, and `threadHasToken('00000000-0000-0000-0000-000000000000')` is false;
+     - the bid id is read (null is fine for a thread we started).
 
   It never calls `clickSend`.
 
@@ -724,9 +747,12 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 
 - [ ] **Step 1: Dry runs on the box.** With main (gv-post-server + gv-sender) on a dev server and `GV_PROPOSAL_POST_ENABLED` unset, write `gv-agent/.env`: the dev API base, a dev-only `GV_AGENT_SECRET` (the same value in the dev server env), and `DRY_RUN_PHONE`. Then run:
 
-  `cd ~/projects/os/gv-agent && npm ci && env -u WAYLAND_DISPLAY -u DISPLAY -u XAUTHORITY -u GNOME_SETUP_DISPLAY -u XDG_SESSION_TYPE OZONE_PLATFORM=x11 xvfb-run -a node src/index.js --dry-run --thread-phone <an already-read relay thread's number, passed by env, never printed>`
+  `cd ~/projects/os/gv-agent && npm ci && env -u WAYLAND_DISPLAY -u DISPLAY -u XAUTHORITY -u GNOME_SETUP_DISPLAY -u XDG_SESSION_TYPE OZONE_PLATFORM=x11 xvfb-run -a node src/index.js --dry-run --thread-phone <the spike thread's relay number> --thread-token <proposal 943's token>`
 
-  Expected stages, in order: API 2xx `[]`; compose opened, recipient exactly one, body ok, Call panel empty, send enabled, cleared; thread bid id read, token check false. Exit 0, and the journal is empty.
+  Both values are passed by env and never printed. Expected stages, in order:
+  - API 2xx `[]`;
+  - compose opened, recipient exactly one, body ok, Call panel empty, send enabled, cleared;
+  - thread found, known token true, dummy token false, bid id read. Exit 0, and the journal is empty.
 - [ ] **Step 2: The backup.** Add `/home/drbartender/.gvoice-profile` to `~/.config/restic/excludes.txt` (spec law 11's explicit guarantee). Check that `~/bin/restic-backup.sh` `HOME_INCLUDES` does not name it, and `stat -c %a ~/.gvoice-profile`. Expected: absent, and `700`.
 - [ ] **Step 3: Write the docs.**
 - [ ] **Step 4:** `cd gv-agent && npm test`. Expected: PASS.
