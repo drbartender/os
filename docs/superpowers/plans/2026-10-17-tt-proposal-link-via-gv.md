@@ -1,5 +1,5 @@
 ---
-spec: docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md   # rev 3 plus section 10 (spike results, GO); plan rev 2 folds the three-agent plan review
+spec: docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md   # rev 3 plus section 10 (spike results, GO); plan rev 4 folds the three-agent plan review and three re-verifies
 lanes:
   - id: gv-post-server
     footprint:
@@ -41,6 +41,7 @@ lanes:
     review: code-review + ui-ux-review
   - id: gv-post-inbox
     footprint:
+      - server/utils/inbox/constants.js
       - server/utils/inbox/readThumbtack.js
       - server/utils/inbox/readMessageLog.js
       - server/utils/inbox/normalize.js
@@ -72,7 +73,7 @@ mergeOrder: gv-post-server first (it carries the sensitive-paths lines and the s
 pushGate: Ships dark. GV_PROPOSAL_POST_ENABLED stays unset in Render until the gv-agent service runs on the box with GV_AGENT_SECRET set on both sides and the gv-sender-live dry runs pass (Rollout below). The flip is Dallas's, at a quiet moment; the first relay proposal after it is the live proof.
 ---
 
-# Proposal link into the Thumbtack thread through Google Voice: implementation plan (rev 2)
+# Proposal link into the Thumbtack thread through Google Voice: implementation plan (rev 4)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -147,6 +148,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `status` TEXT NOT NULL DEFAULT 'queued'
   - `reason` TEXT
   - `fallback_status` TEXT
+  - `fallback_at` TIMESTAMPTZ (stamped by the fallback claim, right before the 888 send)
   - `leased_at`, `reported_at`, `clicked_at` TIMESTAMPTZ
   - `created_at`, `updated_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
 - Produces: CHECKs (one `DO` block each):
@@ -215,7 +217,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 **Interfaces:**
 - Produces in `rules.js`:
   - `GV_BODY_MAX = 320`
-  - `GV_WINDOWS = { staleMin: 5, leaseMin: 3, spacingMin: 10, pasteBeforeMin: 30, notSeenGraceMin: 2, livenessMin: 30, outageFailures: 3, leadMaxAgeDays: 180, fallbackAbsorbMin: 15 }`
+  - `GV_WINDOWS = { staleMin: 5, leaseMin: 3, spacingMin: 10, pasteBeforeMin: 30, notSeenGraceMin: 2, livenessMin: 30, outageFailures: 3, leadMaxAgeDays: 180 }`
   - `GV_PRECLICK_REASONS`, a Set of `no_thread`, `wrong_thread`, `invalid_body`, `invalid_number`, `session_expired`, `challenge`, `cap`, `timeout`, `ui_error_before_send`
   - `GV_OUTAGE_EXEMPT`, a Set of `cap` and `no_thread`
   - `GV_SENDABLE_STATUSES = ['sent', 'viewed', 'modified', 'accepted']`, the same values as `proposalResend.js` `RESENDABLE`, pinned by a drift test
@@ -333,7 +335,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 
 **Interfaces:**
 - Produces in `fallback.js`: `async function sendGvFallback(postId)`, which returns `'sent' | 'suppressed' | 'failed' | 'already'`.
-  1. Claim with `UPDATE gv_posts SET fallback_status = 'claimed' WHERE id = $1 AND fallback_status IS NULL RETURNING *`; no row means `'already'`.
+  1. Claim with `UPDATE gv_posts SET fallback_status = 'claimed', fallback_at = now(), updated_at = now() WHERE id = $1 AND fallback_status IS NULL RETURNING *`; no row means `'already'`.
   2. Load the proposal with its own explicit query: `p.id, p.token, p.status, p.event_type, p.event_type_custom, p.event_date, p.client_id`, and from `clients c`: `c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.communication_preferences, c.email_status, c.phone_status`.
   3. Re-check `gvSuppression`; suppressed means `fallback_status = 'suppressed'`.
   4. For `'auto'`, call `sendInitialProposalText(loaded, { sentBy: post.sent_by, via: 'twilio' })`.
@@ -387,7 +389,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     5. Respond `[{ id, phone, body, negotiation_id }]` or `[]`.
   - `POST /report` takes `{ id, outcome, reason? }`.
     - `outcome` must be one of `sent`, `clicked_unverified`, `failed_preclick`, `skipped_already_posted`, and a `failed_preclick` reason must be in `GV_PRECLICK_REASONS`; anything else is 400.
-    - It runs `UPDATE ... SET status = $2, reason = $3, reported_at = now(), clicked_at = CASE WHEN $2 IN ('sent','clicked_unverified') THEN now() END WHERE id = $1 AND status = 'leased' RETURNING id`. No row means 200 `{ ignored: true }` and a log line.
+    - It runs `UPDATE ... SET status = $2, reason = $3, reported_at = now(), updated_at = now(), clicked_at = CASE WHEN $2 IN ('sent','clicked_unverified') THEN now() END WHERE id = $1 AND status = 'leased' RETURNING id`. No row means 200 `{ ignored: true }` and a log line.
     - `sent` calls `noteSuccess()`. `failed_preclick` calls `notePreclickFailure(reason)`, then `sendGvFallback(id)` after release.
     - `clicked_unverified` and `failed_preclick` send a Sentry warning.
   - `POST /status` takes `{ state }`, which must be `session_expired` or `challenge`, and calls `noteOutage(state)` with a Sentry warning.
@@ -461,8 +463,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 
 **Interfaces:**
 - Produces: `async function runGvPostSweep()`, which returns `{ staled, unknowned, alerted }` and rethrows the first arm error after all arms run. Arms:
-  1. `UPDATE gv_posts SET status = 'stale' WHERE status = 'queued' AND created_at < now() - interval '5 minutes' RETURNING id`, then `sendGvFallback` for each.
-  2. `UPDATE ... SET status = 'unknown' WHERE status = 'leased' AND leased_at < now() - interval '3 minutes'` (no fallback).
+  1. `UPDATE gv_posts SET status = 'stale', updated_at = now() WHERE status = 'queued' AND created_at < now() - interval '5 minutes' RETURNING id`, then `sendGvFallback` for each.
+  2. `UPDATE ... SET status = 'unknown', updated_at = now() WHERE status = 'leased' AND leased_at < now() - interval '3 minutes'` (no fallback).
   - Retry arm: rows with `status IN ('stale','failed_preclick') AND fallback_status IS NULL AND updated_at < now() - interval '1 minute'` get `sendGvFallback`. A restart between the status UPDATE and the fallback leaves them unclaimed, and the claim makes the retry safe. Every status UPDATE in Tasks 4, 7 and 9 sets `updated_at = now()`.
   3. ONLY when `gvPostEnabled()`: if arm 1 staled any row and `last_lease_at` is NULL or older than 30 min, call `noteOutage('no_lease')`.
   - Arms 1 and 2 each send one Sentry warning per run that touched rows, with the count, plus a console line.
@@ -562,7 +564,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 ### Task 12: The GV post counts as the proposal going out
 
 **Files:**
-- Modify: `server/utils/inbox/readThumbtack.js` (`TT_HEADERS_SQL` and `mapThumbtackHeader`), `server/utils/inbox/readMessageLog.js` (`ML_HEADERS_SQL` and `mapMessageLogHeader`), `server/utils/inbox/normalize.js`, `server/utils/inbox/thread.js`
+- Modify: `server/utils/inbox/constants.js` (add `GV_POST_ABSORB_MINUTES = 2` beside `PROPOSAL_ABSORB_MINUTES` and export it), `server/utils/inbox/readThumbtack.js` (`TT_HEADERS_SQL` and `mapThumbtackHeader`), `server/utils/inbox/readMessageLog.js` (`ML_HEADERS_SQL` and `mapMessageLogHeader`), `server/utils/inbox/normalize.js`, `server/utils/inbox/thread.js`
 - Test: `server/utils/inbox/normalize.test.js` (pure cases), `server/utils/inbox/readers.test.js` (DB cases), `server/utils/inbox/thread.test.js`
 
 **Interfaces:**
@@ -571,11 +573,18 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - `t.from_type = 'Business'` (a customer quoting the body keeps their message);
     - `gp.negotiation_id = t.negotiation_id`;
     - `btrim(regexp_replace(gp.body, '\\s+', ' ', 'g')) = btrim(regexp_replace(t.text, '\\s+', ' ', 'g'))`. Write the backslash doubled inside the JS template literal, the house style of `'\\D'` at `smsInbound.js:122`. The regexp runs first and then btrim, matching `normalizeGvBody`.
+    - The pick rule: `gp.status IN ('leased','sent','clicked_unverified','unknown') AND gp.created_at <= COALESCE(t.sent_at, t.created_at) ORDER BY gp.created_at DESC LIMIT 1`. A resend's default text is byte-identical to the first send's, so the echo must take the newest post made before it, and only a post the box actually worked. `LIMIT 1` also keeps `engine.js:342` from duplicating the header row.
   - `mapThumbtackHeader` sets `e.meta.gvPost = { proposalId, postCreatedAt }`.
-  - `ML_HEADERS_SQL` gains a lateral producing `gv_fallback_proposal_id` and `gv_post_created_at`. It matches only rows with `channel = 'sms'` and `message_type IN ('initial_proposal','proposal_sent_sms')`, against the post for the row's proposal with `fallback_status = 'sent'`, when the row's `created_at` is within 15 minutes after `gp.created_at`.
+  - `ML_HEADERS_SQL` gains a lateral producing `gv_fallback_proposal_id` and `gv_post_created_at`. It matches only:
+    - rows with `channel = 'sms'` and `message_type IN ('initial_proposal','proposal_sent_sms')`;
+    - against a post for the row's proposal with `fallback_status = 'sent'`;
+    - where the row's `created_at` is within 2 minutes after `gp.fallback_at`, the claim that came right before that 888 send;
+    - with the pick rule `gp.fallback_at <= l.created_at ORDER BY gp.fallback_at DESC LIMIT 1`.
+
+    An 888 proposal text the router sent directly (rollback, cap, error) has no matching `fallback_at` and is never mistaken for a fallback.
   - `mapMessageLogHeader` sets `e.meta.gvFallback = { proposalId, postCreatedAt }`.
 - Produces in `normalize.js`: `function absorbGvPosts(events)`, called right after the proposal absorb (L119-149) and BEFORE the twins filter (L227-228).
-  - It absorbs an event with `meta.gvPost` or `meta.gvFallback` into a `pal` proposal-send event for that proposal ONLY when the pal's time is within 2 minutes of `postCreatedAt`. Lifecycle and proposal_send write their pal seconds before the insert, and the legacy /resend writes it just after.
+  - It absorbs an event with `meta.gvPost` or `meta.gvFallback` into a `pal` proposal-send event for that proposal ONLY when the pal's time is within `GV_POST_ABSORB_MINUTES` (2) of `postCreatedAt`. Lifecycle and proposal_send write their pal seconds before the insert, and the legacy /resend writes it just after.
   - On absorb it pushes `{ channel: 'thumbtack', failed: false }` (echo), or the fallback's delivery, onto `meta.deliveries` and removes the event. For an absorbed `ml` row it also records the twin ref, so the auto fallback's `sms_messages` twin goes with it.
   - Otherwise the event stands: an echo stays a counted outbound Thumbtack reply (as a Business message counts today), and a fallback stays a counted `ml` row (as today's 888 row). This covers the SendModal resend and the crud born-sent create, which write no pal, and a resend of an older send.
   - Never `autoFirstReply`, never a holding reply.
@@ -590,7 +599,12 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - `a resend's echo and fallback never attach to an older send`
     - `an auto fallback with its sms_messages twin reads delivered`
     - `a GV echo is never a holding reply`
-  - DB (`readers.test.js`): `TT headers carry gv_post_proposal_id for a matching Business row`, `ML headers carry gv_fallback_proposal_id inside 15 minutes and not after`
+  - DB (`readers.test.js`):
+    - `TT headers carry gv_post_proposal_id for a matching Business row`
+    - `with two same-body posts on one proposal the echo takes the newest post made before it`
+    - `a skipped or stale post never claims an echo`
+    - `ML headers carry gv_fallback_proposal_id within 2 minutes of fallback_at and not otherwise`
+    - `a direct 888 proposal text with no fallback claim is not a fallback`
   - thread: `a send with a thumbtack delivery reads also posted to Thumbtack`
 - [ ] **Step 2: Run each alone.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
@@ -656,8 +670,9 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 **Interfaces:**
 - Consumes: `pageLogic.js` for every judgment. The glue only reads the DOM into plain values.
 - Produces in `gvFlow.js` (selectors exactly as spec section 10):
-  - `async function openThreadIfAny(page, phone, negotiationId)` returns `{ ok: true, existed }` or `{ ok: false, reason }`.
-    - If a `gv-thread-list-item` matches the number, open it (the send marks it read anyway; decision 7) and read the newest `a[href*="/bids/"]` in the conversation. When `parseBidId` gives an id other than `negotiationId`, fail `wrong_thread`.
+  - `async function openThreadIfAny(page, phone, negotiationId = null)` returns `{ ok: true, existed, bidId }` or `{ ok: false, reason }`.
+    - If a `gv-thread-list-item` matches the number, open it (the send marks it read anyway; decision 7) and read the newest `a[href*="/bids/"]` in the conversation into `bidId`.
+    - When a `negotiationId` is given and `bidId` is a different id, fail `wrong_thread`. The dry run passes none and only reads.
     - A thread with no notice (one we started) has nothing to check.
   - `async function composeTo(page, phone)` is the proven new-message flow, used for both a new and an existing conversation (GV appends to the existing one). It returns `{ ok: true }` or `{ ok: false, reason }`.
     1. Click `[aria-label="Send new message"]`.
