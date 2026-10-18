@@ -4,7 +4,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { BRANCH_PREFIX } = require('./branch');
+
+const REPO_ROOT = path.join(__dirname, '..', '..');
 const { isLegalHold } = require('../../server/utils/legalHold');
 const { isWholeCents } = require('../../server/utils/adjustmentRules');
 
@@ -67,6 +70,49 @@ function writePrivate(file, text) {
 const writePrivateJson = (file, data) => writePrivate(file, `${JSON.stringify(data, null, 2)}\n`);
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 
+const runGit = (args) => {
+  const r = spawnSync('git', args, { encoding: 'utf8' });
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+};
+
+/**
+ * The deployed-code guard (push-1 security review, MINOR-1 class a). The fresh
+ * compute prices live bookings with the engine code in THIS checkout, so the
+ * conversion refuses unless that code is the code prod runs: server/ equal to
+ * origin/main (no diff, staged or not, and no untracked file), after a fetch.
+ * The conversion tooling must be committed (no uncommitted or untracked file),
+ * but is never compared with origin/main, so an unpushed tooling commit (this
+ * guard's own, before its push) cannot block a run. freshCompute.js and run.js
+ * call it before any work; guard.js runs it alone (runbook steps 1 and 5).
+ * @param {{ git?: Function, root?: string }} [opts]  injectable for tests
+ * @returns {{ originMain: string }} the origin/main sha the checkout matched
+ */
+function assertDeployedCode({ git = runGit, root = REPO_ROOT } = {}) {
+  const run = (...args) => git(['-C', root, ...args]);
+  const fetched = run('fetch', '--quiet', 'origin', 'main');
+  if (fetched.status !== 0) {
+    throw new Error('git fetch origin main failed: fetch by hand (git fetch origin main) and re-run, '
+      + 'so server/ is compared with the code prod runs');
+  }
+  const diff = run('diff', '--quiet', 'origin/main', '--', 'server');
+  if (diff.status === 1) {
+    throw new Error('server/ differs from origin/main: the fresh compute would price with code prod does not run. '
+      + 'Bring this checkout to origin/main (no local server/ changes) and re-run');
+  }
+  if (diff.status !== 0) throw new Error('could not compare server/ with origin/main (git diff failed); refusing');
+  const untracked = run('ls-files', '--others', '--exclude-standard', '--', 'server');
+  if (untracked.status !== 0) throw new Error('could not list untracked files under server/; refusing');
+  const stray = untracked.stdout.split('\n').filter(Boolean);
+  if (stray.length) throw new Error(`server/ holds untracked files prod does not run: ${stray.slice(0, 5).join(', ')}; refusing`);
+  const tooling = run('status', '--porcelain', '--', 'scripts/override-conversion');
+  if (tooling.status !== 0) throw new Error('could not read the conversion tooling status; refusing');
+  if (tooling.stdout.trim()) {
+    throw new Error('scripts/override-conversion has uncommitted or untracked changes: run only committed tooling');
+  }
+  const head = run('rev-parse', 'origin/main');
+  return { originMain: head.stdout.trim() };
+}
+
 function argValue(args, flag) {
   const i = args.indexOf(flag);
   return i >= 0 ? args[i + 1] : undefined;
@@ -74,5 +120,5 @@ function argValue(args, flag) {
 
 module.exports = {
   MONEY_MD5_EXPR, TERMINAL_STATUSES, hasOverride, isLiveOverride, heldCheck, parseIdList, moneyCents,
-  readUriFile, pgConfig, writePrivate, writePrivateJson, readJson, argValue,
+  readUriFile, pgConfig, writePrivate, writePrivateJson, readJson, argValue, assertDeployedCode,
 };

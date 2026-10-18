@@ -816,6 +816,7 @@ dr-bartender/
 │   │                           #   reverse.js                     : a reverse block for part of a run (the rows that did not move), under the run's own tag
 │   │                           #   run.js (+ .test.js)            : renders change set, report and both blocks into a new dir; --compare (read first, outside the out-dir) for the pre-run re-derive
 │   │                           #   confirm.js                     : the read-only post-run confirmation (tested in doBlock.test.js)
+│   │                           #   guard.js (+ .test.js)          : the deployed-code guard (shared.js assertDeployedCode): server/ must equal origin/main and the tooling be committed; freshCompute.js and run.js run it first
 │   │                           #   shared.js, fixtures.js, rehearsal-seed.js, applyBlock.js : helpers, synthetic shapes, and the dev rehearsal's seed and block runner
 ├── docs/                       # Project docs. The three the workflow actually runs on:
 │                               #   fix-list-remaining-2026-07-02.md : THE rolling backlog, the one list (tech-debt.md, open-threads.md

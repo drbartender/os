@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { planConversion, canonical } = require('./transform');
 const { renderForwardBlock, renderReverseBlock, runTag } = require('./doBlock');
-const { parseIdList, readJson, writePrivate, writePrivateJson, argValue } = require('./shared');
+const { parseIdList, readJson, writePrivate, writePrivateJson, argValue, assertDeployedCode } = require('./shared');
 
 function runConversion({ exportData, freshData, extraHeldIds = [] }) {
   const planned = planConversion({ rows: exportData.rows, fresh: freshData.rows, legalHoldIds: extraHeldIds });
@@ -86,7 +86,8 @@ function realPath(p) {
  * and the out-dir must be new or empty: a run never compares with itself and
  * never overwrites the dry run Dallas approved (fix round, code MAJOR-1).
  */
-function runCli(argv, { log = console.log } = {}) {
+function runCli(argv, { log = console.log, guard = assertDeployedCode } = {}) {
+  guard(); // the engine code in this checkout must be the code prod runs, before any read or write
   const positional = argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1] || '').startsWith('--'));
   const [exportFile, freshFile, outDir] = positional;
   if (!exportFile || !freshFile || !outDir) {

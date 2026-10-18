@@ -21,6 +21,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const {
   MONEY_MD5_EXPR, heldCheck, isLiveOverride, parseIdList, readUriFile, readJson, writePrivateJson, argValue,
+  assertDeployedCode,
 } = require('./shared');
 
 const serviceCents = (s) => Math.round(Number(s.total) * 100) - Math.round(Number((s.gratuity && s.gratuity.total) || 0) * 100);
@@ -74,7 +75,9 @@ async function child(exportFile, outFile, extraHeldIds) {
   }
 }
 
-function parent(argv) {
+// The CLI's parent: the deployed-code guard first, before any read or spawn.
+function freshComputeCli(argv, { guard = assertDeployedCode, spawn = spawnSync } = {}) {
+  guard();
   const positional = argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1] || '').startsWith('--'));
   const [uriFile, exportFile, outFile] = positional;
   if (!uriFile || !exportFile || !outFile) {
@@ -82,7 +85,7 @@ function parent(argv) {
   }
   const uri = readUriFile(uriFile);
   const held = argValue(argv, '--also-held');
-  const res = spawnSync(process.execPath,
+  const res = spawn(process.execPath,
     [__filename, '--child', path.resolve(exportFile), path.resolve(outFile), ...(held ? ['--also-held', held] : [])],
     { env: { ...process.env, DATABASE_URL: uri }, stdio: 'inherit', timeout: 600000 });
   if (res.status !== 0) throw new Error(`the compute child failed (exit ${res.status})`);
@@ -92,11 +95,11 @@ if (require.main === module) {
   const argv = process.argv.slice(2);
   const run = argv[0] === '--child'
     ? child(argv[1], argv[2], parseIdList(argValue(argv, '--also-held')))
-    : Promise.resolve().then(() => parent(argv));
+    : Promise.resolve().then(() => freshComputeCli(argv));
   run.catch((err) => {
     console.error(`freshCompute.js: ${shortMessage(err)}`);
     process.exit(1);
   });
 }
 
-module.exports = { computeFresh };
+module.exports = { computeFresh, freshComputeCli };

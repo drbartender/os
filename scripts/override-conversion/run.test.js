@@ -76,7 +76,8 @@ function inputs(dir, override = 2000) {
   fs.writeFileSync(path.join(dir, 'fresh.json'), JSON.stringify(freshOf()));
   return [path.join(dir, 'export.json'), path.join(dir, 'fresh.json')];
 }
-const quiet = { log: () => {} };
+const noGuard = () => {}; // the deployed-code guard has its own suite (guard.test.js)
+const quiet = { log: () => {}, guard: noGuard };
 const snapshotDir = (d) => Object.fromEntries(fs.readdirSync(d).sort().map((f) => [f, fs.readFileSync(path.join(d, f), 'utf8')]));
 
 test('a compare path inside the out-dir is refused before anything is written', () => {
@@ -114,7 +115,7 @@ test('step 5: a different change set exits 2, the same one exits 0, the approved
   fs.mkdirSync(moved);
   const [exp3, fresh3] = inputs(moved, 2001);
   const lines = [];
-  assert.equal(runCli([exp3, fresh3, path.join(dir, 'run3'), ...cmp], { log: (l) => lines.push(l) }), 2);
+  assert.equal(runCli([exp3, fresh3, path.join(dir, 'run3'), ...cmp], { log: (l) => lines.push(l), guard: noGuard }), 2);
   assert.ok(lines.some((l) => /DIFFERS/.test(l) && /5002/.test(l)));
   assert.deepEqual(snapshotDir(run1), approved);
   assert.throws(() => runCli([exp, fresh, path.join(dir, 'run4'), '--compare', exp], quiet), /not a changes\.json/);
