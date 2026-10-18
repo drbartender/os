@@ -493,7 +493,7 @@ async function buildConsultGeneratorInput(plan, dbClient) {
 // it is never OWED work either: the Potions badge count (admin/settings.js)
 // and the client's utils/shoppingListOwed.js apply this same rule, so a
 // hosted list never reads as review work on any admin surface.
-// Keyed on category, the planner domain's idiom (submit.js Jack rule, lab.js,
+// Keyed on category, the planner domain's idiom (submit.js mocktail-gap rule, lab.js,
 // preEventHandlers.barOptionFor), with the one exception pricingEngine's
 // hosted rule also carries: a cocktail CLASS is seeded category 'hosted' but
 // sells an optional supplies add-on, so a self-supplying class client still

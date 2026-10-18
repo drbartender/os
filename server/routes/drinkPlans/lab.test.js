@@ -201,7 +201,7 @@ test('open plan: GET serves drinks with syrup pricing; plan GET lab_enabled=true
   assert.equal(drink.syrup.price, calculateSyrupCost(['jalapeno'], 80).total);
   assert.ok(Array.isArray(g.body.addon_pricing) && g.body.addon_pricing.length > 0, 'addon pricing present');
   assert.ok(!g.body.addon_pricing.some((a) => a.slug === 'pre-batched-mocktail' || a.slug === 'mocktail-bar'),
-    'the Jack pair is never a lab upsell');
+    'the mocktail-gap pair is never a lab upsell');
 
   const plan = await request('GET', `/api/drink-plans/t/${planTokens.open}`);
   assert.equal(plan.body.lab_enabled, true);

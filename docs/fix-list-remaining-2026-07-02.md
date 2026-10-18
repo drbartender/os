@@ -1431,7 +1431,7 @@ the accented spelling) or the two spellings stop matching each other.
 - **`drinkPlans/submit.js` has regrown to 717 lines** (soft cap 700); next touch carries a trim.
 - **Narrow `coverageContext`'s `SELECT * FROM par_items`** (server-side; the two DrinksV2 perf items
   in this family are done).
-- **Jack-rule corner:** on hosted non-mocktail packages, a client submit with zero resolved
+- **Mocktail-gap corner:** on hosted non-mocktail packages, a client submit with zero resolved
   mocktails clears BOTH pair rows, so an admin-seeded Mocktail Bar addon would be removed by a
   client submit. Consistent with picks-are-authoritative design; revisit if admins start seeding
   mocktail addons.

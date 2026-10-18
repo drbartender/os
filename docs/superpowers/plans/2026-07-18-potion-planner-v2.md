@@ -126,7 +126,7 @@ These names are law across lanes; a lane that wants to deviate stops and surface
 
 **Engines (pp2-core):**
 - `coverageEngine.classify(drink, packageContents) -> { status: 'covered'|'fenced'|'unmakeable', gapClasses: [], gapPerGuest: number|null }` (pure; addon pricing passed in).
-- **[rev2]** `coverageEngine.mocktailAddonFor(count) -> null | 'pre-batched-mocktail' | 'mocktail-bar'` (0 → null, 1 → pre-batched, 2+ → mocktail-bar). The Jack rule is MONEY logic and lives here; client applies it via the plan payload, submit re-derives server-side and never trusts the client.
+- **[rev2]** `coverageEngine.mocktailAddonFor(count) -> null | 'pre-batched-mocktail' | 'mocktail-bar'` (0 → null, 1 → pre-batched, 2+ → mocktail-bar). The mocktail-gap rule is MONEY logic and lives here; client applies it via the plan payload, submit re-derives server-side and never trusts the client.
 - **[rev2]** `quantityEngine.computeDemand({guestCount, drinkers, profile, hours, pace, splitDefaults, counts}) -> { pours, split, perDrinkPours }` — profile nudges the **settings default split** (45/30/25), NOT even thirds, by at most ±10 points per category. DoD fixture: `cocktail_forward` on 45/30/25 → 55/25/20 (matches the QR canvas hand-math). `drinkers=null` (not sure) falls back to 75% of guest count.
 
 **Selections keys (pp2-planner adds; allow-list + all consumers):**

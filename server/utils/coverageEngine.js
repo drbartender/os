@@ -103,7 +103,7 @@ function classify(drink, pkg) {
 }
 
 /**
- * The Jack rule (spec §3.2): on a hosted package that does not include
+ * The mocktail-gap rule (spec §3.2): on a hosted package that does not include
  * mocktails, ONE picked flavor rides the pre-batched add-on; two or more
  * flips to the full Mocktail Bar. Money logic — the server re-derives this
  * at submit and never trusts the client's addOns.

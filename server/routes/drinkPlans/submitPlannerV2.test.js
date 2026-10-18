@@ -6,7 +6,7 @@ process.env.SEND_NOTIFICATIONS = 'false';
 //   1. sanitizeSelections normalizes the new v2 keys (crowd / barPlacement /
 //      powerAtBar) and PRESERVES guestPreferences (the 2026-07-18 allow-list
 //      data-loss bugfix).
-//   2. The Jack rule is enforced SERVER-side: on a hosted non-mocktail
+//   2. The mocktail-gap rule is enforced SERVER-side: on a hosted non-mocktail
 //      package, 2+ picked mocktails bill the Mocktail Bar addon and the
 //      client-sent pre-batched addon is discarded; 1 pick bills pre-batched.
 //   3. The version gate (2026-07-18 push review): the flip applies ONLY to
@@ -90,7 +90,7 @@ before(async () => {
   );
   clientId = c.rows[0].id;
 
-  // Hosted full_bar (non-mocktail) package — the Jack-rule trigger context.
+  // Hosted full_bar (non-mocktail) package — the mocktail-gap rule's trigger context.
   const pkg = await pool.query(
     `INSERT INTO service_packages (slug, name, category, pricing_type, base_rate_4hr, base_rate_4hr_small,
         min_guests, guests_per_bartender, bar_type, includes)
@@ -220,7 +220,7 @@ test('v2 keys normalize on save and guestPreferences survives (allow-list bugfix
   assert.deepEqual(row2.rows[0].selections.crowd, { drinkers: 60, unsure: false, profile: 'cocktail_forward' });
 });
 
-test('Jack rule: 2 mocktails on hosted non-mocktail package bill the Mocktail Bar, never the client-sent pre-batched', async () => {
+test('mocktail-gap rule: 2 mocktails on hosted non-mocktail package bill the Mocktail Bar, never the client-sent pre-batched', async () => {
   const res = await request('PUT', `/api/drink-plans/t/${planTokens.flipTwo}`, {
     body: {
       status: 'submitted',
@@ -243,7 +243,7 @@ test('Jack rule: 2 mocktails on hosted non-mocktail package bill the Mocktail Ba
   assert.ok(!slugs.includes('pre-batched-mocktail'), 'pre-batched discarded');
 });
 
-test('Jack rule: exactly 1 mocktail bills pre-batched, never the Mocktail Bar', async () => {
+test('mocktail-gap rule: exactly 1 mocktail bills pre-batched, never the Mocktail Bar', async () => {
   const res = await request('PUT', `/api/drink-plans/t/${planTokens.flipOne}`, {
     body: {
       status: 'submitted',

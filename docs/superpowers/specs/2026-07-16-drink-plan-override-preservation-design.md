@@ -48,7 +48,7 @@ const serviceTotal = totalPriceOverride !== null && totalPriceOverride !== undef
 ```
 
 The override replaces the *entire* calculated total. Preserve it naively and every
-drink-plan extra becomes free. Verified against the real engine with Jack's inputs:
+drink-plan extra becomes free. Verified against the real engine with the proposal 600 inputs:
 adding his second bar moved the total by **$0.00**. That is the same bug pointing the
 other way, and it would leak money silently.
 
@@ -60,7 +60,7 @@ other way, and it would leak money silently.
 value of exactly what the client just added, computed with the override OFF so it cancels
 out of both sides.
 
-For Jack: catalog without the added bar $3,900, catalog with it $4,000, delta $100, so
+For proposal 600: catalog without the added bar $3,900, catalog with it $4,000, delta $100, so
 `3273 + 100 = 3373`. That matches both the "Additional Portable Bar $100" the planner
 quoted him and the figure settled by hand.
 
@@ -151,9 +151,9 @@ The script is a one-time closing-chapter tool and is deletable after 7/21.
 
 ## Testing
 
-TDD. The first test fails against current `main` and reproduces Jack exactly.
+TDD. The first test fails against current `main` and reproduces proposal 600 exactly.
 
-1. **Regression (Jack):** overridden proposal ($3,273, `num_bars=1`), drink plan submitted
+1. **Regression (proposal 600):** overridden proposal ($3,273, `num_bars=1`), drink plan submitted
    with `addBarRental`. Expect `total_price = 3373`, `total_price_override = 3373`, and
    NOT 4000.
 2. **Extras are not free:** same case pins the delta at exactly $100, guarding the naive

@@ -114,7 +114,7 @@ async function handleSubmit(req, res) {
   const rawAddons = selections?.addOns || {};
   const rawAddonSlugs = Object.keys(rawAddons).filter(slug => rawAddons[slug]?.enabled);
   const addBarRental = selections?.logistics?.addBarRental === true;
-  // The Jack rule (planner v2, spec §3.2): on a hosted non-mocktail package,
+  // The mocktail-gap rule (planner v2, spec §3.2): on a hosted non-mocktail package,
   // picked mocktails price via exactly one addon (1 flavor = pre-batched,
   // 2+ = full Mocktail Bar), derived SERVER-side from the picks — the
   // client's addOns are never trusted for this pair. Counted up front so a
@@ -135,7 +135,7 @@ async function handleSubmit(req, res) {
   // answer as TEXT ONLY, so `parking-fee` never attached on the live path — only
   // the retired v1 planner toggled it through `addOns`. Attach it here so it
   // folds through the same extras/invoice-at-submit path those add-ons take.
-  // VERSION GATE, same reason as the Jack rule above: only the v2 day-of step
+  // VERSION GATE, same reason as the mocktail-gap rule above: only the v2 day-of step
   // discloses the per-staff fee, and v1's logistics step also lets the client
   // untick the add-on afterwards, so billing a legacy plan off its stored
   // `parking` text would charge an add-on that client deliberately removed — v1
@@ -229,7 +229,7 @@ async function handleSubmit(req, res) {
         // Enforcement gate: v2 plan AND contents entered (coverageCtx is null
         // until the package has package_items) — exactly the cohort whose UI
         // (HostedDrinksV2 fence badges + rate lines) disclosed the flip price
-        // before submit. Final Jack-rule slug from RESOLVED picks only — an id
+        // before submit. Final mocktail-gap slug from RESOLVED picks only — an id
         // that matches no real mocktail never bills.
         const flipEnforced = isHostedNonMocktail && plannerV2Plan && coverageCtx !== null;
         const resolvedFlipSlug = flipEnforced ? mocktailAddonFor(mocktailRows.length) : null;

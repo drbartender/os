@@ -95,7 +95,7 @@ let pkg;
 const seeded = []; // { proposalId, planToken }
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const CONTRACT = 3273; // Jack's CC contract price, in DOLLARS
+const CONTRACT = 3273; // the proposal 600 CC contract price, in DOLLARS
 
 function request(method, path, { body } = {}) {
   return new Promise((resolve, reject) => {
@@ -448,7 +448,7 @@ Replace it with:
           });
 
           // Write the override alongside the total so the two can never drift
-          // apart again (the stranded-column state that made Jack's row
+          // apart again (the stranded-column state that made the proposal 600 row
           // inconsistent). For a native proposal effectiveOverride is null and
           // the column is already null, so this is a no-op there.
           await client.query(
@@ -483,7 +483,7 @@ git add server/routes/drinkPlans/submit.js
 git commit -m "fix(drink-plans): preserve negotiated price across a drink-plan submit
 
 A client-submitted plan with a financial extra re-priced the proposal from
-catalog, destroying total_price_override and stranding the column. Jack Van
+catalog, destroying total_price_override and stranding the column.
 The proposal 600 client's \$3,273 CC contract became \$4,000 and they were emailed a \$3,900 balance.
 
 Passing the override through naively is NOT the fix: serviceTotal replaces the

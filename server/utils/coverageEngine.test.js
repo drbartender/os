@@ -108,7 +108,7 @@ test('legacy string rows resolve through aliases like structured rows', () => {
   assert.equal(classify(stringMarg, ENHANCED).status, 'covered');
 });
 
-test('mocktailAddonFor: the Jack rule (0 -> null, 1 -> pre-batched, 2+ -> mocktail bar)', () => {
+test('mocktailAddonFor: the mocktail-gap rule (0 -> null, 1 -> pre-batched, 2+ -> mocktail bar)', () => {
   assert.equal(mocktailAddonFor(0), null);
   assert.equal(mocktailAddonFor(1), 'pre-batched-mocktail');
   assert.equal(mocktailAddonFor(2), 'mocktail-bar');

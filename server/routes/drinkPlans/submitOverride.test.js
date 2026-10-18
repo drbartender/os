@@ -34,7 +34,7 @@ let CONTRACT; // a negotiated price genuinely BELOW catalog; derived in before()
 const seeded = []; // { proposalId, planToken }
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const DISCOUNT = 577; // Jack's real CC discount: $3,850 catalog -> $3,273 contract
+const DISCOUNT = 577; // the proposal 600 CC discount: $3,850 catalog -> $3,273 contract
 
 // Price the seeded event at CATALOG (override off) for a given bar count. Used
 // to derive a contract that is a real discount, and to prove the handler did
@@ -123,7 +123,7 @@ before(async () => {
   assert.ok(pk.rows[0], 'need an active per_guest, non-class package with both bar fees');
   pkg = pk.rows[0];
 
-  // Model Jack: a contract genuinely below catalog (his $3,273 sat under $3,850
+  // Model proposal 600: a contract genuinely below catalog (its $3,273 sat under $3,850
   // of catalog). Seeded at num_bars = 1, the bar his CC contract bundles.
   CONTRACT = Math.round((catalogAt(1) - DISCOUNT) * 100) / 100;
   assert.ok(CONTRACT > 0, 'seeded package must be expensive enough to discount');
@@ -319,7 +319,7 @@ test('overridden proposal: self-provided syrups are excluded from the contract d
   // Two catalog syrups, one brought by the client. Co-submitted with a bar
   // rental so the money-recompute path runs (syrups only reach the override
   // delta when another financial extra triggers it). The self-provided flavor
-  // must not move the contract — the same overbill class as the Jack bug.
+  // must not move the contract — the same overbill class as the proposal 600 bug.
   const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
 
   const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
@@ -398,7 +398,7 @@ test('a submit with no financial extras moves no money', async () => {
   const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
 
   // Fixture note (planner v2, 2026-07-18): this test previously submitted a
-  // mocktail pick. Under the Jack rule that is now a BILLED extra on hosted
+  // mocktail pick. Under the mocktail-gap rule that is now a BILLED extra on hosted
   // per_guest packages (1 pick = pre-batched, 2+ = Mocktail Bar; covered in
   // submitPlannerV2.test.js), so the money-free fixture is a menu-card choice.
   const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {

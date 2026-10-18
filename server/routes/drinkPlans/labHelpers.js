@@ -12,7 +12,7 @@ const { SYRUP_NAME_LOOKUP } = require('../../utils/shoppingListGen');
 const { isDrinkPlanPreBooking } = require('../../utils/drinkPlanAccess');
 
 // Event-level shelf slugs (per design canvas): toast + glassware always;
-// NA add-ons join for hosted plans. The Jack-rule pair is EXCLUDED — those
+// NA add-ons join for hosted plans. The mocktail-gap pair is EXCLUDED — those
 // price mocktail PICKS at submit and are never a Lab upsell.
 const EVENT_ADDON_SLUGS = ['champagne-toast', 'champagne-coupe-upgrade', 'real-glassware'];
 const HOSTED_EVENT_ADDON_SLUGS = ['non-alcoholic-beer', 'soft-drink-addon', 'zero-proof-spirits'];

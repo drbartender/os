@@ -562,7 +562,7 @@ dr-bartender/
 │   │   ├── sendProposalSentEmail.js # Post-commit best-effort client email when a proposal enters the 'sent' state (never throws)
 │   │   ├── setupTime.js        # Pure back-of-house setup-time math (parse/subtract, effectiveSetupMinutes); client twin
 │   │   ├── potionCatalog.js    # Pure par-catalog slices + ingredient alias resolution (Potions); parity-gated by potionCatalog.test.js
-│   │   ├── coverageEngine.js   # Pure drink-vs-package coverage: classify (covered/fenced/unmakeable/no_recipe) + mocktailAddonFor (the Jack rule)
+│   │   ├── coverageEngine.js   # Pure drink-vs-package coverage: classify (covered/fenced/unmakeable/no_recipe) + mocktailAddonFor (the mocktail-gap rule)
 │   │   ├── quantityEngine.js   # Pure demand model: computeDemand (drinkers x hours x pace; profile nudges default split max ±10 pts)
 │   │   ├── shoppingList.js     # Shopping-list generator (the ONE generator; consumes potionCatalog slices, legacy-constant fallback); consult-mode branch + buildGeneratorInputFromConsult translator
 │   │   ├── shoppingListAddonCoverage.js # Maps active BYOB-support add-on slugs to the shopping-list items those add-ons cover (computeStripSet); generateShoppingList strips that set

@@ -113,7 +113,7 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
   const isHosted = plan.package_category === 'hosted';
   // Never offer what the package already covers (a covered addon must not be
   // billable, mirroring the submit path's coveredAddonSlugs skip) or the
-  // Jack pair (mocktail PICKS price those at submit, never the lab).
+  // mocktail-gap pair (mocktail PICKS price those at submit, never the lab).
   const covered = coveredSlugsOf(plan);
   const offerable = addonRows.rows.filter((a) => !JACK_PAIR.includes(a.slug) && !covered.has(a.slug));
   const eventSlugs = (isHosted ? [...EVENT_ADDON_SLUGS, ...HOSTED_EVENT_ADDON_SLUGS] : EVENT_ADDON_SLUGS)
