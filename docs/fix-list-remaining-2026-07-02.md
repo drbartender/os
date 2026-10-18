@@ -2833,6 +2833,26 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
   returns `addons`, which nothing reads; the client-rows test fixtures use snapshot `_version` 3, which
   `readSnapshot` refuses; the admin cancel dialog does not say that a hidden line's client notice reads
   "Pricing adjustment".
+- **Price override removal, push 1 follow-ups (push-time review, 2026-10-17; all non-blocking, pushed in 42ef970c).**
+  The `publicSwitch.js` comment (about L179-181) says `options_available` ignores the legal hold; it
+  checks it since lane client-rows. The portal summary suite (`server/routes/clientPortal/summary.test.js`),
+  the Lab suite and two refund entry-point suites pass but are not on the money gate (confirm the refund
+  ones make no Stripe call before gating them). The editor's label input has no 255-character limit (the
+  server refuses with a field error). `crud.js` about L910: the change-request email reads
+  `change_request_id` with no proposal filter (worst case a duplicate email). `crud.js` about L939:
+  proposal DELETE has no legal-hold check (a foreign-key RESTRICT blocks it today). `export.sql` about L31
+  spells the guard md5 outside `MONEY_MD5_EXPR` (a drift fails safe). Removing a hidden line on a booking
+  clamped at $0 would read "We adjusted your package price by $0.00": recommended to send nothing and
+  tell the admin. Kept by Dallas's 2026-10-17 go: the agreed-price control refuses at a $0 preview when
+  other discounts exist (the spec's choice).
+- **Fold into push 2's override removal (lane override-removal, Task X1), from the push-time code review.**
+  The engine's inline adjustment coercion duplicates `adjustmentRules.js`; the staleness-token SQL is
+  hand-copied three times (`crud.js` twice, `getOne.js`); `patchGuards.js`' `amountOf` restates the
+  validator; two id readers (`parseProposalId` and the legal-hold seam's) differ in bounds;
+  `LEGAL_HOLD_NOTE` is duplicated as a literal in `ProposalEditorForm.js`; `useEditSheet.js`' `payloadOf`
+  repeats the open and confirm options; the client rules twin exports five unused names; the override
+  bounds check in `crud.js` is unreachable; `crud.js` is at 970 lines (extract the post-COMMIT tail); and
+  `patchGuards.js`' `toCents` shares a name with `invoiceShared.toCents` but not its semantics.
 - **An adjustment label over 255 characters overflows `invoice_line_items.description`**
   (VARCHAR(255)). Nothing bounds the label: the editor input has no `maxLength` and the admin PATCH
   stores `adjustments` from the body as is. A visible label that long makes `writeLineItems`

@@ -2103,7 +2103,99 @@ The walk, on the Pixel, in the installed app:
 5. Tap a card: the desktop proposal page opens inside the phone chrome (until the phone detail lane lands); Back returns to the list where you left it.
 6. Load the list online once since launch (switch the order and back), then airplane mode, reopen the tab: the stored copy with "offline copy · as of".
 
+### Global search on the phone (lane ma-f3-search, merged 2026-10-16 as `c0d7d98d`, pushed 2026-10-17 in 35b61596)
 
+The walk, on the Pixel, in the installed app:
+1. On Events, tap the magnifier (it is on every tab): the search fills the screen, the keyboard comes up, the tab bar is gone.
+2. Type one letter: "Keep typing". Type a client's surname: the groups appear in the order Clients, Proposals, Events, Staff, each with its count; the keyboard's Search key puts the keyboard away.
+3. Tap an event: its phone detail opens. Press Back: the search is there with the term and the rows, keyboard down.
+4. Tap a client (it carries "Desktop"): the desktop client page opens with the Phone view pill. Back returns to the search.
+5. Find a term that fills the Events group ("6+"): its "More events on desktop" row (it ends "6 shown") opens the desktop Events list on its All tab. On a row's More actions menu, Assign Staff opens the shift drawer over the list; close it: still the desktop list. Open one of its events (the phone detail), then Back: the desktop list again. Back to the search, Back to the tab: the phone screen, as it was (nothing sticks).
+6. Airplane mode: the field keeps its text, greyed; "Search needs the server". Airplane off: the search runs again.
+7. Back from the search returns to the tab you opened it from.
+
+What the headless gate could not prove (2026-10-16): the shift drawer in step 5, which it did not script, and the hardware Back and the keyboard, which only the phone has. Everything else passed there.
+
+### Deposit and Balance invoices step from the contract to the Invoice Total (lane invoice-step, merged ff1adfc2, pushed 2026-10-17 in 42ef970c)
+
+Display only (spec 2026-10-16 section 7): nothing is charged or stored, so any booking will do. The walk, on the client invoice page (`/invoice/<token>`), on screen and in Save as PDF:
+1. A Deposit invoice whose lines add up to the contract: under the line table, Contract Total (the sum of the lines), "Balance, billed later" as a negative, a hairline, Invoice Total (the deposit), then Amount Paid and Balance Due as before.
+2. A Balance invoice on a booking whose deposit is paid: Contract Total, "Less deposit and earlier payments" (the deposit) as a negative, Invoice Total (the balance).
+3. Save as PDF on both: the same rows. Then the browser's Print, Save as PDF: black on white, and the hairline prints like the Balance Due rule.
+4. On a phone: the step label and its amount sit on one line (or wrap cleanly), with no sideways scroll.
+5. An invoice the rule leaves out reads exactly as before: an Additional Services invoice, a native Full Payment invoice (nothing to step), any invoice that lists a refund, and a locked invoice whose booking was re-priced after it locked. Prod invoice 211 is the refund case to check: a Check Cherry Balance with a less-deposit line and a later refund the same size, so its old lines happen to equal the new total. It must show no step (otherwise the deposit would be subtracted twice).
+
+Verified so far by the suites (`invoiceStep.test.js`, `invoices.contractStep.test.js` with the public key set pinned, `InvoicePage.test.js`) and a headless render of the totals block at 1280 and 390 pixels in screen and print media; nobody has seen it on a real booking.
+
+### Admin breakdown tags hidden lines; refund and agreed-price lines have no remove button (lane line-protection, merged 57608086, pushed 2026-10-17 in 42ef970c)
+
+Display only (spec 2026-10-16 sections 4.5 and 6): no amount moves, and the server already refuses to cancel a protected line (409 `PROTECTED_LINE`, lane adj-rules). The walk, on a dev booking:
+1. In the editor, add a discount, untick "Client sees" and watch the live preview: the line carries a small "hidden from client" tag beside its label; tick it again and the tag goes. Save.
+2. The booking's ProposalDetail (and EventDetailPage once it is an event): the same tag on the hidden line in the Pricing card, none on a shown line, the Total unchanged.
+3. The phone event detail, Financials: the tag under the hidden line's label, nothing on the other lines, no sideways scroll.
+4. A booking whose hidden line was saved before this change, tagged with no re-save: prod 888 (balance_paid: the event page and the phone Financials) and prod 838 (viewed: ProposalDetail), each with exactly one hidden line.
+5. Once a refund line or an agreed-price line exists (the refund-line and editor lanes write them), reload the page after the line is written, then check (the page loads its remove targets once per visit, and an archived or completed booking shows none at all): its row in the Pricing card has no remove button and it is not under "Other removable items"; an ordinary line beside it keeps its button, and the package row still opens the cancel-event flow.
+6. Both skins: a quiet hairline chip on After Hours, an uppercase hairline tag on House Lights.
+
+Verified so far by the suites (`hiddenRows.test.js`, `PricingBreakdown.test.js`, `eventDetailView.test.js`, `EventDetailPhone.test.js`, and the engine suite for the row mark) and a headless render of the real markup with `index.css` at 560 and 390 pixels in both skins (2026-10-17); nobody has seen it on a real booking.
+
+### A contract refund writes a visible Refund line (lane refund-line, merged 8c3b7051, pushed 2026-10-17 in 42ef970c)
+
+Money path (spec 2026-10-16 section 6). Dev talks to LIVE Stripe, so a refund on a dev booking is a real refund: use the smallest real amount on a booking Dallas names, or skip this walk and rely on the suites. The walk:
+1. From the payment panel, issue a contract refund (the overpayment box left unchecked).
+2. Proposal Detail: the pricing breakdown shows a "Refund" line for exactly the refunded amount, after any other discount and before the Gratuity line, and the total dropped by the same amount.
+3. Open the editor and save a change that does not touch price (the start time). The pass condition is no increase equal to the refunded amount and no Additional Services invoice for it. A booked booking re-prices at the live catalog on any save, so a catalog price that moved since the booking was priced can show its own difference in the reprice confirm; that one is not the refund.
+4. A refund made as an overpayment return writes no line.
+
+Verified so far by the suites (`refundLine.test.js`, `refundHelpers.line.test.js`, driving `applyRefundReconciliation` with fixture rows, no Stripe); nobody has seen it on a real booking.
+
+### The proposal page draws the server's rows, and a hidden line's label never leaves the server (lane client-rows, merged 8e6b1ecb, pushed 2026-10-17 in 42ef970c)
+
+Display and payload only (spec 2026-10-16 sections 4.2 and 4.3): nothing is charged or stored. On a dev booking, add a discount in the editor with "Client sees" off, save, then open "Preview as client":
+1. The Pricing table: no row for the hidden discount, the package row is lower by exactly its amount, and the rows plus Gratuity add up to the Total. A booking with no hidden line reads exactly as before (same rows, labels and amounts).
+2. The network tab, the `GET /api/proposals/t/<token>` response: `price_rows` is there, and nowhere in the body is the hidden line's label or (for a discount smaller than the package row) its amount, a `breakdown`, a `subtotal` or a `total_price_override`.
+3. A hidden discount bigger than the package row: the package keeps its price and one "Pricing adjustment" row carries the amount (by design, spec D3; its label never shows); the rows still add up to the Total.
+4. Choose a gratuity at checkout (the create-intent re-quote): the Gratuity row and the Total move together and the rows still add up (plan Review Focus 2).
+5. "See other packages", then switch: the page after the switch shows folded rows, and the switch response carries no hidden label either.
+6. On a booked booking with a hidden discount, the drink plan page: the `GET /api/drink-plans/t/<token>` response carries no hidden label, `breakdown`, `subtotal` or override, and the bar rental and syrups steps read as before.
+7. A booking under legal hold that is still `sent` or `viewed`: no "See other packages" entry card, and nothing on the page names the hold (dev only: add the id to the hold list for the walk, then take it off).
+
+Verified so far by the suites (`clientPriceLines.test.js` against a characterization copy of the old page rows, `publicSnapshot.test.js`, `publicLeak.test.js` on the raw response bodies of all three token routes, `publicToken.priceRows.test.js`, the legal-hold entry link in `publicToken.test.js`, `pageRows.test.js`); nobody has seen it on a real booking.
+
+### Editor: Set agreed price, stale saves, the Remote Staffing Fee (lane editor, merged 581966c7, pushed 2026-10-17 in 42ef970c)
+
+Spec 2026-10-16 sections 5, 5.1 and 5.3. An editor save charges nothing, so any dev booking with nothing paid will do (dev talks to live Stripe; nothing here calls it). Never use 600.
+1. **Set agreed price on a dev booking (lower, higher, again, zero).** Edit, then Price adjustments, Set agreed price. Under the input: "Before gratuity. Gratuity is added on top." (a hosted booking with over-ratio bartenders adds "Includes staffing gratuity."). Type a price below the Live preview's total less gratuity and Apply: a hidden "Agreed price adjustment" discount row appears and the Live preview lands on that price plus gratuity. Save, reopen, set a higher price: the same row turns into a surcharge in place, and "Client sees" stays as you left it. Set another price: still one row. Set the price the booking had before step 1: the row goes. Set $0: a discount to $0; then Set agreed price again at the $0 preview refuses with "Remove the agreed price line, then set the price again." Blank, letters, a minus sign or $1,000,000 keep Apply off with "Enter a price of $0 or more".
+2. **Open the editor, add a line from another tab, then save the first: refused with Reload; a client page view in between does not refuse.** Open the booking's editor in tab A and tab B. In B add a discount and save. In A change any line and Save: "This booking changed since you opened it. Reload to see the latest." with Reload, and Save stays shut. Reload reopens the editor on B's lines. Then, with A open, load the booking's public proposal page in a private window (a client view), change a line in A and Save: it saves.
+3. **Remote staffing fee prompt adds its surcharge.** Send a dev proposal whose venue is past 40 miles from active staff (dev sends no client mail unless SEND_NOTIFICATIONS is on): Add the suggested fee and send. The proposal shows one "Remote Staffing Fee" surcharge and sends, in one save.
+4. A booking that still carries an override: the editor shows "Price override: $X. It converts to an Agreed price adjustment line soon.", Set agreed price is disabled, and a date or guest edit still saves with the override unchanged.
+5. **Remove buttons after an editor save (fix round 1).** On a dev booking with three ordinary discounts, open the editor, delete the middle one, save. The breakdown's remove buttons come back only once the page has reloaded them; remove the line that was last: the dialog and the result name that line, and the total moves by its amount.
+6. **The phone sheet and a client view (fix round 1).** Open the edit sheet on the Pixel, change the guests, then load the booking's public proposal page in a private window, then Confirm: it saves. A desktop edit to the add-ons or the lines in between still refuses with Reload.
+
+Verified so far by the suites (`patchGuards.test.js`, `crud.guards.test.js`, `agreedPrice.test.js`, `AgreedPriceControl.test.js`, `AdjustmentsSection.test.js`, `ProposalEditorForm.guards.test.js`, `EditSheet.test.js`, `RemoteStaffingFeePrompt.test.js`); nobody has used it in a browser. The refund-line confirm needs a booking with a Refund line, which only a real refund writes (lane refund-line), so it is covered by the suites alone until one exists.
+
+### The portal Prescription tab draws folded rows that add up, and portal totals include the gratuity (lane portal-rows, merged f5b95eb7, pushed 2026-10-17 in 42ef970c)
+
+Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or stored. Use a dev booking with a hidden discount (editor, "Client sees" off) and a client gratuity (an admin mandate from the editor puts one on an unpaid booking). Sign in to the client portal as that booking's client: the login code is emailed, so use a booking whose client address you can read and run the dev server with `SEND_NOTIFICATIONS=true`. The walk:
+1. The Prescription tab: a Pricing card lists the package, bar rental, add-ons, syrups and any shown discount, then Gratuity. There is no row for the hidden discount (the package row is lower by exactly its amount), and the rows add up to the Total under them.
+2. The network tab, the `GET /api/client-portal/proposals/<token>` response: `price_rows` and `gratuity_amount` are there, and nowhere in the body is the hidden line's label or (for a discount smaller than the package row) its amount, a `pricing_snapshot`, `adjustments` or a `total_price_override`.
+3. A booking with an override and a gratuity (any time before the conversion runs): the tab's Total, the Overview total and the Balance due include the gratuity and match the proposal page's Total.
+4. The archive list and a past event's drill-down: each total is the booking's total, gratuity included.
+5. Request a change from the portal on a booking with a gratuity and approve it in the admin: the "Your changes are confirmed" email quotes the same new total and balance the portal shows.
+6. A booking with no priced snapshot (an old draft): no Pricing card and no lone Gratuity line, the Total alone.
+7. On a phone: each Pricing line keeps its label and amount on one line (or wraps cleanly), with no sideways scroll.
+
+Verified so far by the suites (`clientPortal.test.js` on the raw response bodies of every portal route, `clientPortal/summary.test.js`, `changeRequestNotifications.test.js`, `PrescriptionTab.test.js`); nobody has seen it on a real booking.
+
+### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; its wording from lane notice-copy, merged 7c7833f7)
+
+Client email only (spec 2026-10-16 section 4.3): the removal itself is unchanged. On a dev booking whose client address you can read (run the dev server with `SEND_NOTIFICATIONS=true`), add a discount with "Client sees" off and save. Then:
+1. Remove the hidden discount from the pricing breakdown and choose "Send notice". The dialog and the success toast still name the line.
+2. The client's "Your event total was updated" email reads "We adjusted your package price by $X at your request.", where X is how much the total moved (the dialog's change), then the updated total and balance as before; the hidden line's own label appears nowhere in it.
+3. A hidden surcharge removed the same way: the same sentence, with the total down by X.
+4. Remove a shown discount the same way: its email names the line exactly as before ("We removed <label> from your event at your request.").
+
+Verified so far by the suites (`cancelLineItem.test.js` on the captured email, `lineItemCancel.test.js` on the result's `clientNotice`, the zero clamp included, `lineItemRemovedNotify.test.js`); nobody has seen the email on a real booking.
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
@@ -2113,7 +2205,7 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-**As of 2026-10-17 this tier holds the consult call record, the phone global search (lane ma-f3-search; it shipped in the 2026-10-17 push, so its walk is owed now and belongs in Tier 3b) and seven walks from the price override removal (lanes invoice-step, line-protection, refund-line, client-rows, editor, portal-rows and notice-label), queued until push 1.** The phone Proposals list (lane ma-f1-proposals-list) sat here from its 2026-10-14 merge until the 2026-10-15 push and moved to Tier 3b. Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
+**As of the 2026-10-17 push (42ef970c) this tier holds the consult call record; the phone global search and the seven price override removal walks moved to Tier 3b.** The phone Proposals list (lane ma-f1-proposals-list) sat here from its 2026-10-14 merge until the 2026-10-15 push and moved to Tier 3b. Before the Admin push entry was added (it moved to Tier 3b with the 2026-10-14 push), the tier was EMPTY again: Inbox, the one occupant since 2026-10-09, moved to the end
 of Tier 3b when the 2026-10-14 push (`0aa87c76..c1167d96`) made `39cdc98c` an ancestor of `origin/main`,
 by this tier's own rule. Everything else that sat here with a merge sha was live by 2026-10-09, and moved
 to the end of Tier 3b as the 2026-08-26 to 2026-10-08 cohort.
@@ -2202,100 +2294,6 @@ to rot. Do that again for the next thing that sits here.
       press is lost. It is inherited from the shipped lead router AND from spec 4.5, so it is a
       cross-router change rather than a defect in this lane, but you should hear it once to decide
       whether it is worth fixing for both.
-
-### Global search on the phone (lane ma-f3-search, merged 2026-10-16 as `c0d7d98d`, not pushed; moves to Tier 3b when `c0d7d98d` is an ancestor of `origin/main`)
-
-The walk, on the Pixel, in the installed app:
-1. On Events, tap the magnifier (it is on every tab): the search fills the screen, the keyboard comes up, the tab bar is gone.
-2. Type one letter: "Keep typing". Type a client's surname: the groups appear in the order Clients, Proposals, Events, Staff, each with its count; the keyboard's Search key puts the keyboard away.
-3. Tap an event: its phone detail opens. Press Back: the search is there with the term and the rows, keyboard down.
-4. Tap a client (it carries "Desktop"): the desktop client page opens with the Phone view pill. Back returns to the search.
-5. Find a term that fills the Events group ("6+"): its "More events on desktop" row (it ends "6 shown") opens the desktop Events list on its All tab. On a row's More actions menu, Assign Staff opens the shift drawer over the list; close it: still the desktop list. Open one of its events (the phone detail), then Back: the desktop list again. Back to the search, Back to the tab: the phone screen, as it was (nothing sticks).
-6. Airplane mode: the field keeps its text, greyed; "Search needs the server". Airplane off: the search runs again.
-7. Back from the search returns to the tab you opened it from.
-
-What the headless gate could not prove (2026-10-16): the shift drawer in step 5, which it did not script, and the hardware Back and the keyboard, which only the phone has. Everything else passed there.
-
-### Deposit and Balance invoices step from the contract to the Invoice Total (lane invoice-step, merged ff1adfc2; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
-
-Display only (spec 2026-10-16 section 7): nothing is charged or stored, so any booking will do. The walk, on the client invoice page (`/invoice/<token>`), on screen and in Save as PDF:
-1. A Deposit invoice whose lines add up to the contract: under the line table, Contract Total (the sum of the lines), "Balance, billed later" as a negative, a hairline, Invoice Total (the deposit), then Amount Paid and Balance Due as before.
-2. A Balance invoice on a booking whose deposit is paid: Contract Total, "Less deposit and earlier payments" (the deposit) as a negative, Invoice Total (the balance).
-3. Save as PDF on both: the same rows. Then the browser's Print, Save as PDF: black on white, and the hairline prints like the Balance Due rule.
-4. On a phone: the step label and its amount sit on one line (or wrap cleanly), with no sideways scroll.
-5. An invoice the rule leaves out reads exactly as before: an Additional Services invoice, a native Full Payment invoice (nothing to step), any invoice that lists a refund, and a locked invoice whose booking was re-priced after it locked. Prod invoice 211 is the refund case to check: a Check Cherry Balance with a less-deposit line and a later refund the same size, so its old lines happen to equal the new total. It must show no step (otherwise the deposit would be subtracted twice).
-
-Verified so far by the suites (`invoiceStep.test.js`, `invoices.contractStep.test.js` with the public key set pinned, `InvoicePage.test.js`) and a headless render of the totals block at 1280 and 390 pixels in screen and print media; nobody has seen it on a real booking.
-
-### Admin breakdown tags hidden lines; refund and agreed-price lines have no remove button (lane line-protection, merged 57608086; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
-
-Display only (spec 2026-10-16 sections 4.5 and 6): no amount moves, and the server already refuses to cancel a protected line (409 `PROTECTED_LINE`, lane adj-rules). The walk, on a dev booking:
-1. In the editor, add a discount, untick "Client sees" and watch the live preview: the line carries a small "hidden from client" tag beside its label; tick it again and the tag goes. Save.
-2. The booking's ProposalDetail (and EventDetailPage once it is an event): the same tag on the hidden line in the Pricing card, none on a shown line, the Total unchanged.
-3. The phone event detail, Financials: the tag under the hidden line's label, nothing on the other lines, no sideways scroll.
-4. A booking whose hidden line was saved before this change, tagged with no re-save: prod 888 (balance_paid: the event page and the phone Financials) and prod 838 (viewed: ProposalDetail), each with exactly one hidden line.
-5. Once a refund line or an agreed-price line exists (the refund-line and editor lanes write them), reload the page after the line is written, then check (the page loads its remove targets once per visit, and an archived or completed booking shows none at all): its row in the Pricing card has no remove button and it is not under "Other removable items"; an ordinary line beside it keeps its button, and the package row still opens the cancel-event flow.
-6. Both skins: a quiet hairline chip on After Hours, an uppercase hairline tag on House Lights.
-
-Verified so far by the suites (`hiddenRows.test.js`, `PricingBreakdown.test.js`, `eventDetailView.test.js`, `EventDetailPhone.test.js`, and the engine suite for the row mark) and a headless render of the real markup with `index.css` at 560 and 390 pixels in both skins (2026-10-17); nobody has seen it on a real booking.
-
-### A contract refund writes a visible Refund line (lane refund-line, merged 8c3b7051; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
-
-Money path (spec 2026-10-16 section 6). Dev talks to LIVE Stripe, so a refund on a dev booking is a real refund: use the smallest real amount on a booking Dallas names, or skip this walk and rely on the suites. The walk:
-1. From the payment panel, issue a contract refund (the overpayment box left unchecked).
-2. Proposal Detail: the pricing breakdown shows a "Refund" line for exactly the refunded amount, after any other discount and before the Gratuity line, and the total dropped by the same amount.
-3. Open the editor and save a change that does not touch price (the start time). The pass condition is no increase equal to the refunded amount and no Additional Services invoice for it. A booked booking re-prices at the live catalog on any save, so a catalog price that moved since the booking was priced can show its own difference in the reprice confirm; that one is not the refund.
-4. A refund made as an overpayment return writes no line.
-
-Verified so far by the suites (`refundLine.test.js`, `refundHelpers.line.test.js`, driving `applyRefundReconciliation` with fixture rows, no Stripe); nobody has seen it on a real booking.
-
-### The proposal page draws the server's rows, and a hidden line's label never leaves the server (lane client-rows, merged 8e6b1ecb; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
-
-Display and payload only (spec 2026-10-16 sections 4.2 and 4.3): nothing is charged or stored. On a dev booking, add a discount in the editor with "Client sees" off, save, then open "Preview as client":
-1. The Pricing table: no row for the hidden discount, the package row is lower by exactly its amount, and the rows plus Gratuity add up to the Total. A booking with no hidden line reads exactly as before (same rows, labels and amounts).
-2. The network tab, the `GET /api/proposals/t/<token>` response: `price_rows` is there, and nowhere in the body is the hidden line's label or (for a discount smaller than the package row) its amount, a `breakdown`, a `subtotal` or a `total_price_override`.
-3. A hidden discount bigger than the package row: the package keeps its price and one "Pricing adjustment" row carries the amount (by design, spec D3; its label never shows); the rows still add up to the Total.
-4. Choose a gratuity at checkout (the create-intent re-quote): the Gratuity row and the Total move together and the rows still add up (plan Review Focus 2).
-5. "See other packages", then switch: the page after the switch shows folded rows, and the switch response carries no hidden label either.
-6. On a booked booking with a hidden discount, the drink plan page: the `GET /api/drink-plans/t/<token>` response carries no hidden label, `breakdown`, `subtotal` or override, and the bar rental and syrups steps read as before.
-7. A booking under legal hold that is still `sent` or `viewed`: no "See other packages" entry card, and nothing on the page names the hold (dev only: add the id to the hold list for the walk, then take it off).
-
-Verified so far by the suites (`clientPriceLines.test.js` against a characterization copy of the old page rows, `publicSnapshot.test.js`, `publicLeak.test.js` on the raw response bodies of all three token routes, `publicToken.priceRows.test.js`, the legal-hold entry link in `publicToken.test.js`, `pageRows.test.js`); nobody has seen it on a real booking.
-
-### Editor: Set agreed price, stale saves, the Remote Staffing Fee (lane editor, merged 581966c7; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
-
-Spec 2026-10-16 sections 5, 5.1 and 5.3. An editor save charges nothing, so any dev booking with nothing paid will do (dev talks to live Stripe; nothing here calls it). Never use 600.
-1. **Set agreed price on a dev booking (lower, higher, again, zero).** Edit, then Price adjustments, Set agreed price. Under the input: "Before gratuity. Gratuity is added on top." (a hosted booking with over-ratio bartenders adds "Includes staffing gratuity."). Type a price below the Live preview's total less gratuity and Apply: a hidden "Agreed price adjustment" discount row appears and the Live preview lands on that price plus gratuity. Save, reopen, set a higher price: the same row turns into a surcharge in place, and "Client sees" stays as you left it. Set another price: still one row. Set the price the booking had before step 1: the row goes. Set $0: a discount to $0; then Set agreed price again at the $0 preview refuses with "Remove the agreed price line, then set the price again." Blank, letters, a minus sign or $1,000,000 keep Apply off with "Enter a price of $0 or more".
-2. **Open the editor, add a line from another tab, then save the first: refused with Reload; a client page view in between does not refuse.** Open the booking's editor in tab A and tab B. In B add a discount and save. In A change any line and Save: "This booking changed since you opened it. Reload to see the latest." with Reload, and Save stays shut. Reload reopens the editor on B's lines. Then, with A open, load the booking's public proposal page in a private window (a client view), change a line in A and Save: it saves.
-3. **Remote staffing fee prompt adds its surcharge.** Send a dev proposal whose venue is past 40 miles from active staff (dev sends no client mail unless SEND_NOTIFICATIONS is on): Add the suggested fee and send. The proposal shows one "Remote Staffing Fee" surcharge and sends, in one save.
-4. A booking that still carries an override: the editor shows "Price override: $X. It converts to an Agreed price adjustment line soon.", Set agreed price is disabled, and a date or guest edit still saves with the override unchanged.
-5. **Remove buttons after an editor save (fix round 1).** On a dev booking with three ordinary discounts, open the editor, delete the middle one, save. The breakdown's remove buttons come back only once the page has reloaded them; remove the line that was last: the dialog and the result name that line, and the total moves by its amount.
-6. **The phone sheet and a client view (fix round 1).** Open the edit sheet on the Pixel, change the guests, then load the booking's public proposal page in a private window, then Confirm: it saves. A desktop edit to the add-ons or the lines in between still refuses with Reload.
-
-Verified so far by the suites (`patchGuards.test.js`, `crud.guards.test.js`, `agreedPrice.test.js`, `AgreedPriceControl.test.js`, `AdjustmentsSection.test.js`, `ProposalEditorForm.guards.test.js`, `EditSheet.test.js`, `RemoteStaffingFeePrompt.test.js`); nobody has used it in a browser. The refund-line confirm needs a booking with a Refund line, which only a real refund writes (lane refund-line), so it is covered by the suites alone until one exists.
-
-### The portal Prescription tab draws folded rows that add up, and portal totals include the gratuity (lane portal-rows, merged f5b95eb7; it moves to Tier 3b when that sha is an ancestor of `origin/main`)
-
-Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or stored. Use a dev booking with a hidden discount (editor, "Client sees" off) and a client gratuity (an admin mandate from the editor puts one on an unpaid booking). Sign in to the client portal as that booking's client: the login code is emailed, so use a booking whose client address you can read and run the dev server with `SEND_NOTIFICATIONS=true`. The walk:
-1. The Prescription tab: a Pricing card lists the package, bar rental, add-ons, syrups and any shown discount, then Gratuity. There is no row for the hidden discount (the package row is lower by exactly its amount), and the rows add up to the Total under them.
-2. The network tab, the `GET /api/client-portal/proposals/<token>` response: `price_rows` and `gratuity_amount` are there, and nowhere in the body is the hidden line's label or (for a discount smaller than the package row) its amount, a `pricing_snapshot`, `adjustments` or a `total_price_override`.
-3. A booking with an override and a gratuity (any time before the conversion runs): the tab's Total, the Overview total and the Balance due include the gratuity and match the proposal page's Total.
-4. The archive list and a past event's drill-down: each total is the booking's total, gratuity included.
-5. Request a change from the portal on a booking with a gratuity and approve it in the admin: the "Your changes are confirmed" email quotes the same new total and balance the portal shows.
-6. A booking with no priced snapshot (an old draft): no Pricing card and no lone Gratuity line, the Total alone.
-7. On a phone: each Pricing line keeps its label and amount on one line (or wraps cleanly), with no sideways scroll.
-
-Verified so far by the suites (`clientPortal.test.js` on the raw response bodies of every portal route, `clientPortal/summary.test.js`, `changeRequestNotifications.test.js`, `PrescriptionTab.test.js`); nobody has seen it on a real booking.
-
-### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; its wording from lane notice-copy, merged 7c7833f7)
-
-Client email only (spec 2026-10-16 section 4.3): the removal itself is unchanged. On a dev booking whose client address you can read (run the dev server with `SEND_NOTIFICATIONS=true`), add a discount with "Client sees" off and save. Then:
-1. Remove the hidden discount from the pricing breakdown and choose "Send notice". The dialog and the success toast still name the line.
-2. The client's "Your event total was updated" email reads "We adjusted your package price by $X at your request.", where X is how much the total moved (the dialog's change), then the updated total and balance as before; the hidden line's own label appears nowhere in it.
-3. A hidden surcharge removed the same way: the same sentence, with the total down by X.
-4. Remove a shown discount the same way: its email names the line exactly as before ("We removed <label> from your event at your request.").
-
-Verified so far by the suites (`cancelLineItem.test.js` on the captured email, `lineItemCancel.test.js` on the result's `clientNotice`, the zero clamp included, `lineItemRemovedNotify.test.js`); nobody has seen the email on a real booking.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
