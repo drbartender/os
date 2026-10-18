@@ -2287,7 +2287,7 @@ Display and payload only (spec 2026-10-16 section 4.4): nothing is charged or st
 
 Verified so far by the suites (`clientPortal.test.js` on the raw response bodies of every portal route, `clientPortal/summary.test.js`, `changeRequestNotifications.test.js`, `PrescriptionTab.test.js`); nobody has seen it on a real booking.
 
-### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; its wording from lane notice-copy, not merged yet: add the merge sha here at merge; it moves to Tier 3b when both shas are ancestors of `origin/main`)
+### Removing a hidden line with "Send notice" never names it to the client (lane notice-label, merged 27275c1e; its wording from lane notice-copy, merged 7c7833f7)
 
 Client email only (spec 2026-10-16 section 4.3): the removal itself is unchanged. On a dev booking whose client address you can read (run the dev server with `SEND_NOTIFICATIONS=true`), add a discount with "Client sees" off and save. Then:
 1. Remove the hidden discount from the pricing breakdown and choose "Send notice". The dialog and the success toast still name the line.
