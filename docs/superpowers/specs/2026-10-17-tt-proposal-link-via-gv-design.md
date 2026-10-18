@@ -99,7 +99,7 @@ My calls (the approved playback plus the review folds):
 10. **A failure never touches the email or the proposal's state.** The GV post is post-commit and best-effort.
 11. **Privacy.**
     - No phone numbers in logs, UI or diag file names beyond last-4.
-    - Queue rows store client, lead and negotiation ids; the number is resolved at lease. Rows and diag captures are pruned on a schedule (30 days).
+    - Queue rows store client, lead and negotiation ids; the number is never stored and is resolved at lease. Queue rows are kept: the proposal token in their body already lives in `thumbtack_messages`, and the Inbox needs the rows to read old sends (plan decision 6). Diag captures are pruned by age (30 days) and count (40).
     - The GV profile is a credential for Dallas's whole personal Google account: Playwright's defaults store cookies under a fixed key, not the keyring. Its directory is mode 700, the WHOLE profile stays out of restic (costing one re-login after a restore), and diag captures are excluded too.
     - A separate agent secret (`GV_AGENT_SECRET`), not `THUMBTACK_AGENT_SECRET`, with its own blast-radius and leak-response line. A leaked secret reads pending post bodies (proposal tokens) and can mark rows.
 12. **No client PII in repo docs or commits.**
@@ -116,10 +116,10 @@ My calls (the approved playback plus the review folds):
 - `queued` past the stale window (default 5 minutes) becomes `stale` and the 888 fallback sends.
 - `leased` past the lease window (default 3 minutes) unreported becomes `unknown`.
 - Liveness trips when rows go stale with no successful lease in the last 30 minutes, OR three jobs in a row end `failed_preclick` (other than `cap` or `no_thread`). Either way one admin email per outage episode says the GV sender is down and Thumbtack customers are getting the toll-free text. The status endpoint's session/challenge email shares the same episode key, so an outage sends one email, not two. The episode resets on the next successful send.
-- Prunes old rows.
+- Prunes no queue rows (law 11).
 
 **Agent endpoints (server).** In a new route file with its own rate limiter, mounted under its own prefix. Not under `/api/admin/thumbtack`, where `thumbtackAgent.js`'s `router.use(agentLimiter)` would still apply. `thumbtackAgent.js` is 772 lines, and its per-IP limiter of 40 per minute is shared with the first-reply poll from the same box. Auth is `GV_AGENT_SECRET`, timing-safe and fail-closed.
-- **lease**: returns `[]` when the flag is off. Re-validates law 1, law 6, law 7 and law 8, with outcomes identity_mismatch (fallback), skipped_already_posted, cap (fallback) and cancelled. Returns the row id, number, body, and the expected negotiation and request ids for the `wrong_thread` check. The lease window must exceed the box's per-job budget. A job the box can't finish in time is abandoned before Send and reported as `timeout`.
+- **lease**: returns `[]` when the flag is off. Re-validates law 1, law 6, law 7 and law 8, with outcomes identity_mismatch (fallback), skipped_already_posted, cap (fallback) and cancelled. Returns the row id, number, body, and the expected negotiation id for the `wrong_thread` check. The notice's bid id is the negotiation id, so the request id isn't needed (plan decision 1). The lease window must exceed the box's per-job budget. A job the box can't finish in time is abandoned before Send and reported as `timeout`.
 - **report**: takes `sent`, `clicked_unverified`, `failed_preclick` (reason) or `skipped_already_posted`.
 - **status**: takes `session_expired` or `challenge` and sends one admin email per episode under a single dedupe key, email only. "Like the harvester" does not hold: its dedupe is per negotiation and lasts 10 minutes.
 
@@ -134,7 +134,7 @@ My calls (the approved playback plus the review folds):
   - "didn't go out: the toll-free text went instead" (with the reason)
 - Last-4 only. It polls while the row is not terminal.
 
-**SendModal.** For a relay client the Text row reads "Text via Thumbtack (GV)" with last-4. If an edited body drops the proposal link, the modal blocks with "The text must include the proposal link." The result shows "queued for Thumbtack": `describeSendResult` (`client/src/components/SendModal/sendResult.js`) gains a queued branch, so a text-only send no longer toasts "Done. No message was sent." `renderChannelResult` in `SendModal.jsx` gets the same queued branch, since it shows anything that isn't sent or failed as "Text skipped". `resolveFromRow` carries a relay flag, the label follows the kill switch, and the modal caps a relay client's text at 320 characters to match law 9.
+**SendModal.** For a relay client the Text row reads "Text via Thumbtack (GV)" with last-4. If an edited body drops the proposal link, the modal blocks with "The text must include the proposal link." The result shows "queued for Thumbtack": `describeSendResult` (`client/src/components/SendModal/sendResult.js`) gains a queued branch, so a text-only send no longer toasts "Done. No message was sent." `renderChannelResult` in `SendModal.jsx` gets the same queued branch, since it shows anything that isn't sent or failed as "Text skipped". `resolveRecipient` carries a relay flag (`resolveFromRow` stays sync), the label follows the kill switch, and the modal caps a relay client's text at 320 characters to match law 9.
 
 **Consumers (accepted or handled).**
 - Inbox (`server/utils/inbox/**`, a sensitive path): the GV echo gets its own flag. Not `autoFirstReply`, which would make it a holding reply labeled "Auto first reply". A matched echo counts as delivery of its proposal send, so a text-only send or a client with no email still reads as sent, never "No email or text went out" (`thread.js`). The 888 fallback row and the GV post count toward their send by proposal id, whatever the 5-minute absorb window says (`PROPOSAL_ABSORB_MINUTES`). The echo never counts as a separate human reply.
@@ -178,7 +178,7 @@ If (2) fails, stop and come back to Dallas; the design rests on it. If (3) fails
 
 ## 8. Left to the builder
 
-- Table, column and env names. Default windows: stale 5 min, lease 3 min, cap 25/day, spacing 10 min, paste-before window 30 min, prune 30 days.
+- Table, column and env names. Default windows: stale 5 min, lease 3 min, cap 25/day, spacing 10 min, paste-before window 30 min.
 - Exact status copy within the states above, and the report-reason list beyond the named ones.
 - The new box directory's name and its systemd unit.
 
