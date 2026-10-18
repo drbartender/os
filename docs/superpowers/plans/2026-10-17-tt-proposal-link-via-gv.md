@@ -578,13 +578,14 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `ML_HEADERS_SQL` gains a lateral producing `gv_fallback_proposal_id` and `gv_post_created_at`. It matches only:
     - rows with `channel = 'sms'` and `message_type IN ('initial_proposal','proposal_sent_sms')`;
     - against a post for the row's proposal with `fallback_status = 'sent'`;
-    - where the row's `created_at` is within 2 minutes after `gp.fallback_at`, the claim that came right before that 888 send;
+    - where the row's `created_at` is within 2 minutes after `gp.fallback_at`, the claim that came right before that 888 send. Write it as a literal `interval '2 minutes'`: a bind parameter would need `engine.js`, which is outside this lane;
     - with the pick rule `gp.fallback_at <= l.created_at ORDER BY gp.fallback_at DESC LIMIT 1`.
 
     An 888 proposal text the router sent directly (rollback, cap, error) has no matching `fallback_at` and is never mistaken for a fallback.
   - `mapMessageLogHeader` sets `e.meta.gvFallback = { proposalId, postCreatedAt }`.
 - Produces in `normalize.js`: `function absorbGvPosts(events)`, called right after the proposal absorb (L119-149) and BEFORE the twins filter (L227-228).
   - It absorbs an event with `meta.gvPost` or `meta.gvFallback` into a `pal` proposal-send event for that proposal ONLY when the pal's time is within `GV_POST_ABSORB_MINUTES` (2) of `postCreatedAt`. Lifecycle and proposal_send write their pal seconds before the insert, and the legacy /resend writes it just after.
+  - It skips any ref the proposal absorb (L131-146) already took. A fallback sent at lease time, or one near a legacy /resend pal, falls inside the 5-minute window and must not be delivered twice.
   - On absorb it pushes `{ channel: 'thumbtack', failed: false }` (echo), or the fallback's delivery, onto `meta.deliveries` and removes the event. For an absorbed `ml` row it also records the twin ref, so the auto fallback's `sms_messages` twin goes with it.
   - Otherwise the event stands: an echo stays a counted outbound Thumbtack reply (as a Business message counts today), and a fallback stays a counted `ml` row (as today's 888 row). This covers the SendModal resend and the crud born-sent create, which write no pal, and a resend of an older send.
   - Never `autoFirstReply`, never a holding reply.
@@ -598,6 +599,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - `an echo with no proposal send stays a counted reply`
     - `a resend's echo and fallback never attach to an older send`
     - `an auto fallback with its sms_messages twin reads delivered`
+    - `a fallback the 5-minute absorb already took is not delivered twice`
     - `a GV echo is never a holding reply`
   - DB (`readers.test.js`):
     - `TT headers carry gv_post_proposal_id for a matching Business row`
