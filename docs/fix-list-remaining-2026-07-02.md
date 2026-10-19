@@ -118,7 +118,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 3 | The admin group staff text skips the opt-out record | not via the 888 (Twilio blocks it); yes once a 224 line takes inbound, or for texts turned off without a STOP |
 | 3 | Automated texts never check the per-phone opt-out record | not today (the two STOPs on prod from numbers with no client row are both staffers, 10/06); it opens with the first STOP to a 224 line from a number no client or staffer has yet |
 | 3 | A text Twilio reports undeliverable never marks the phone bad | yes, once a client's number goes dead (0 clients flagged on prod, 10/06) |
-| 3 | Thumbtack customers cannot find the proposal: the proposal text goes to the relay and never shows in the Thumbtack app | **yes: 162 of 162 in 60 days (to 10/16) reached the relay, 0 landed in a thread**; designed 10/17; spike PASSED 10/17; plan reviewed and ready, build on Dallas's go |
+| 3 | Thumbtack customers cannot find the proposal: the proposal text goes to the relay and never shows in the Thumbtack app | **yes: 162 of 162 in 60 days (to 10/16) reached the relay, 0 landed in a thread**; build PAUSED 10/19 mid-build (2 of 5 lanes built, none merged, nothing pushed; flag off) |
 | 4 | The next-shift card and the CANT/CONFIRM text can name different shifts | no (checked 10/06: no live shift runs past midnight) |
 | 4 | The staff shift page's shopping-list card never renders | yes, for every staffer |
 | 4 | Cover swaps have no working admin path | one claim ever (request 529, still pending) |
@@ -775,7 +775,16 @@ rev 3, fleet-reviewed). Spike PASSED 2026-10-17 (spec section 10): one GV post t
 landed in the Thumbtack thread byte-exact, 3 s to Thumbtack, 13 s to our webhook. Plan
 `docs/superpowers/plans/2026-10-17-tt-proposal-link-via-gv.md` (rev 5: three-agent plan review, three
 re-verifies, and the 10/19 Fable adversarial + buildability pass, all folded): five lanes, ships dark.
-NEXT: build on Dallas's go.
+BUILD PAUSED 2026-10-19 by Dallas, mid-build. Lanes are worktrees under `../worktrees/`, not merged, nothing pushed:
+- `gv-post-server`: Tasks 1-9 built and green; mid-lane reviews passed (database, code + consistency, security). HEAD
+  `6383a061` is a WIP checkpoint holding a PARTIAL, UNVERIFIED security fix round on the agent API (its commit message
+  lists the nine fixes). Resume: finish those fixes and run the suites, then the lane-end full fleet (Fable) +
+  `/second-opinion` + an adversarial verify of the send-once and right-customer paths, then merge FIRST.
+- `gv-sender`: built; code, security and consistency reviews PASS; fixes re-verified PASS. HEAD `07b49006`, ready;
+  merges right after `gv-post-server`.
+- Not started: `gv-post-ui` (Tasks 10-11), `gv-post-inbox` (Task 12), `gv-sender-live` (Task 16). Build notes from
+  review are in the plan's "Build notes (2026-10-19)" section.
+- The flag stays off until all five lanes are merged and pushed (plan pushGate).
 
 ### A signed-but-unpaid client keeps getting the unsigned-proposal drip, and Stop cannot reach it
 

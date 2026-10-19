@@ -130,6 +130,15 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 
 ---
 
+## Build notes (2026-10-19, from the build's reviews; read before resuming)
+
+- **Paused mid-build.** State and resume order are in the fix list's entry for this project.
+- **Task 10:** map `reasonLabel` by `reason || status` (a stale row's reason is NULL unless its claim was interrupted). `deriveGvDisplay` returns `{ display, in_thread_at, hand_pasted }`; an exact-body echo stored before the post's `created_at` never makes `in_thread` (a byte-identical resend must not read delivered from the previous post's echo).
+- **Task 11:** mirror the server's four relay-body messages exactly: no link "The text must include the proposal link."; two links "The text can carry only one proposal link."; another proposal's link "The text links a different proposal. Use this proposal's link."; over 320 "Thumbtack texts are capped at 320 characters." The client check must enforce exactly one link, not just presence. Carry `sms_route` through an email-only Retry (SendModal.jsx's retry merge rebuilds only sms, sms_error and the skip reason).
+- **Task 12:** unchanged; the lateral pick rules (rev 4) stand.
+- **Task 16:** the dry run's stage 3 prints the count of bid ids read (gv-sender fix 11).
+- **Rollout:** production links already use exactly `https://drbartender.com` (204 of 204 proposal texts in the 30 days to 10/19), the host the box pins.
+
 ## Lane gv-post-server
 
 ### Task 1: Schema, boot contract, sensitive paths
@@ -712,8 +721,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 - Consumes: `pageLogic.js` for every judgment. The glue only reads the DOM into plain values.
 - Produces in `gvFlow.js` (selectors exactly as spec section 10):
   - `async function openThreadIfAny(page, phone, negotiationId = null)` returns `{ ok: true, existed, bidId }` or `{ ok: false, reason }`.
-    - If a `gv-thread-list-item` matches the number, open it (the send marks it read anyway; decision 7) and read the newest `a[href*="/bids/"]` in the conversation into `bidId`.
-    - When a `negotiationId` is given and `bidId` is a different id, fail `wrong_thread`. The dry run passes none and only reads.
+    - If a `gv-thread-list-item` matches the number, open it (the send marks it read anyway; decision 7) and read EVERY `a[href*="/bids/"]` in the conversation into `bidIds`.
+    - When a `negotiationId` is given: pass if ANY notice names it; fail `wrong_thread` only when notices exist and none names it; a thread with no notice passes. (Built 2026-10-19 as gv-sender fix 11: 7 prod relay numbers carry two or more leads of one customer, whose GV conversation holds notices for several bids. The server's identity rule already guarantees one Thumbtack customer per number.) The dry run passes none and only reads.
     - A thread with no notice (one we started) has nothing to check.
   - `async function composeTo(page, phone)` is the proven new-message flow, used for both a new and an existing conversation (GV appends to the existing one). It returns `{ ok: true }` or `{ ok: false, reason }`.
     1. Click `[aria-label="Send new message"]`.
