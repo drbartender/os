@@ -2782,6 +2782,16 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 
 ## Platform, schema, and test gates
 
+### The shared timing-safe compare throws on a same-length non-ASCII header
+
+`server/utils/secrets.js` `safeEqual` compares string lengths, then calls `crypto.timingSafeEqual` on
+the UTF-8 buffers, so a header of the secret's character length made of non-ASCII bytes throws
+`ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH`: a 500 instead of a 401 (it still fails closed, never a
+bypass), an error-level Sentry event instead of the auth-failure warning, and the 401/500 split
+reveals the secret's length. Found by the 2026-10-19 security review of the GV agent API, which
+hashes locally instead. Callers still exposed: the Thumbtack webhook and the Thumbtack box agent.
+Fix: compare sha256 digests of both values with `timingSafeEqual`.
+
 - **The public proposal route hands the browser hidden adjustments and the override.**
   `server/routes/proposals/publicToken.js` selects `p.pricing_snapshot`, spreads the row into the
   response, and deletes only the top-level `total_price_override`; the snapshot still carries
