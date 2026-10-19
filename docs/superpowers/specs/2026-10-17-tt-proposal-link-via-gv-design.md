@@ -1,6 +1,6 @@
 # Proposal link into the Thumbtack thread, sent through Google Voice
 
-- **Date:** 2026-10-17 (rev 3: the builder check, the three-agent spec fleet and the rev 2 re-verify are folded in)
+- **Date:** 2026-10-17 (rev 4: the builder check, the three-agent spec fleet, the rev 2 re-verify and the 2026-10-19 adversarial pass are folded in)
 - **Status:** Design approved in conversation (Dallas, "looks good"). Spike first, then plan.
 - **Surface:** server proposal sends, the proposal page, and a new box-side Google Voice sender
 
@@ -65,7 +65,7 @@ My calls (the approved playback plus the review folds):
 1. **Identity rule (no wrong customer).** A GV post is queued only when all of these hold:
    - It is an admin send at one of the triggers above.
    - The target number is the proposal client's stored `clients.phone`, never a request value.
-   - That number matches (last 10 digits) at least one post-rollout `thumbtack_leads.customer_phone`, and EVERY such lead belongs to the proposal's client (`thumbtack_leads.client_id`).
+   - That number matches (last 10 digits) at least one post-rollout `thumbtack_leads.customer_phone`, and EVERY such lead belongs to the proposal's client (`thumbtack_leads.client_id`) AND carries the same Thumbtack customer id (`thumbtack_leads.customer_id`). A recycled relay number arrives with a different customer id even when the webhook's name match attached it to the old client row (measured 2026-10-19: 360 post-rollout leads, none null, no number with two customer ids).
    - The negotiation is the lead linked to the proposal (`thumbtack_leads.proposal_id`). Otherwise it is that client's newest lead on the number, and only when exactly one such lead exists. Either way the chosen lead must itself carry `clients.phone` and be under 180 days old, a backstop against a recycled relay number.
 
    Any mismatch or ambiguity means no GV post and today's 888 text. The lease re-checks the rule. Reuse the rollout constant: import `THUMBTACK_PROXY_ROLLOUT` from `server/utils/inbox/constants.js`, since `smsInbound.js` does not export it and `inbox/personKey.test.js` allows only one top-level declaration. Changing `findThumbtackProxyLead`'s return shape touches `routes/sms.js`, `routes/proposals/publicToken.js`, its internal caller in `smsInbound.js` and `smsInbound.test.js`, so use a sibling helper.
@@ -81,7 +81,9 @@ My calls (the approved playback plus the review folds):
    - An enqueue or relay-detection error at send time, which fails open to today's text and goes to Sentry.
 
    It NEVER goes out for `sent`, `clicked_unverified`, `unknown` or `skipped_already_posted`, since any of those may mean the link is already in the thread. The fallback re-checks law 8 at the moment it sends, since it can fire minutes after the original send. A law 8 rejection at lease (archived proposal, opted-out client) ends the row as `cancelled`, with no fallback.
-6. **No double post with a human.** The lease skips a row (`skipped_already_posted`) when `thumbtack_messages` on ANY negotiation whose lead carries that number holds the proposal token, from 30 minutes before the send onward, which covers a paste made just before the send. The box re-checks the open GV thread for the token before typing. Match on the token, not the full URL, to survive `www.`, slashes, the trailing period and other URL forms. Don't require `from_type='Business'`: the legacy parse branch stores NULL. A residual race of seconds is acceptable; minutes are not.
+
+   The box is authoritative about "no click happened": a pre-click report (`failed_preclick` or `skipped_already_posted`) is accepted even after the sweep has moved the row to `unknown`, and a `sent` report upgrades an `unknown` row. A fallback claim that never finishes (a restart mid-send) is never retried, since the text may have gone out; after 2 minutes it reads `failed` and the team pastes by hand. The proposal page shows a claimed-but-unfinished fallback as pending, never as sent.
+6. **No double post with a human.** The lease skips a row (`skipped_already_posted`) when `thumbtack_messages` on ANY negotiation whose lead carries that number holds the proposal token, from 30 minutes before the send onward, which covers a paste made just before the send. The box re-checks the open GV thread for the token before typing, which catches a paste made through GV. A paste made in the Thumbtack app never reaches the GV conversation, only our webhook, so the box ALSO asks the server once more right before it clicks (a pre-click check that re-runs the lease's query). That shrinks the window to the webhook's latency, about 15 seconds. Match on the token, not the full URL, to survive `www.`, slashes, the trailing period and other URL forms. Don't require `from_type='Business'`: the legacy parse branch stores NULL. A residual race of seconds is acceptable; minutes are not.
 7. **Volume caps.** A server rolling-24h cap on posts (default 25, parsed through `envInt.js` so 0, blank or nonsense fall back), a box-side daily cap, and no two posts to the same number within 10 minutes. At the cap, the post fails as `cap` (the 888 text goes out) with one throttled Sentry warning.
 8. **Suppression.** A GV post needs:
    - a proposal still in a sendable status (re-checked at lease: not archived, still in the send/RESENDABLE set);
@@ -115,11 +117,12 @@ My calls (the approved playback plus the review folds):
 **Sweep (server, 60 s).** `RUN_GV_POST_SWEEP_SCHEDULER`, honored only with `RUN_SCHEDULERS`, not gated by the kill switch.
 - `queued` past the stale window (default 5 minutes) becomes `stale` and the 888 fallback sends.
 - `leased` past the lease window (default 3 minutes) unreported becomes `unknown`.
-- Liveness trips when rows go stale with no successful lease in the last 30 minutes, OR three jobs in a row end `failed_preclick` (other than `cap` or `no_thread`). Either way one admin email per outage episode says the GV sender is down and Thumbtack customers are getting the toll-free text. The status endpoint's session/challenge email shares the same episode key, so an outage sends one email, not two. The episode resets on the next successful send.
+- Liveness trips when rows go stale with no successful lease in the last 30 minutes, OR three jobs in a row end `failed_preclick` (other than `cap` or `no_thread`), OR three leased rows in a row go `unknown` (a box that leases and then dies), OR three in a row end `clicked_unverified` (the verify step broke, the way Thumbtack's did three times). Either way one admin email per outage episode says the GV sender is down and Thumbtack customers are getting the toll-free text. The status endpoint's session/challenge email shares the same episode key, so an outage sends one email, not two. The episode resets on the next successful send.
 - Prunes no queue rows (law 11).
 
 **Agent endpoints (server).** In a new route file with its own rate limiter, mounted under its own prefix. Not under `/api/admin/thumbtack`, where `thumbtackAgent.js`'s `router.use(agentLimiter)` would still apply. `thumbtackAgent.js` is 772 lines, and its per-IP limiter of 40 per minute is shared with the first-reply poll from the same box. Auth is `GV_AGENT_SECRET`, timing-safe and fail-closed.
 - **lease**: returns `[]` when the flag is off. Re-validates law 1, law 6, law 7 and law 8, with outcomes identity_mismatch (fallback), skipped_already_posted, cap (fallback) and cancelled. Returns the row id, number, body, and the expected negotiation id for the `wrong_thread` check. The notice's bid id is the negotiation id, so the request id isn't needed (plan decision 1). The lease window must exceed the box's per-job budget. A job the box can't finish in time is abandoned before Send and reported as `timeout`.
+- **precheck**: for a leased row, re-runs law 6 and answers go or no-go. On no-go the server itself moves the row (`skipped_already_posted`), so a lost box report can't strand it.
 - **report**: takes `sent`, `clicked_unverified`, `failed_preclick` (reason) or `skipped_already_posted`.
 - **status**: takes `session_expired` or `challenge` and sends one admin email per episode under a single dedupe key, email only. "Like the harvester" does not hold: its dedupe is per negotiation and lasts 10 minutes.
 
@@ -148,11 +151,12 @@ My calls (the approved playback plus the review folds):
   1. Validate (law 9).
   2. Open the one-to-one thread for the number, existing or new.
   3. Check it for the token (law 6).
-  4. Journal the row id.
-  5. Type the body and click Send.
-  6. Verify the message shows as sent in that thread.
-  7. Report, retrying the report as needed (the journal means it never re-sends).
-- Clicked but not verified reports `clicked_unverified`, never a plain failure.
+  4. Ask the server's pre-click check (law 6).
+  5. Journal the row id.
+  6. Type the body and click Send.
+  7. Verify the message shows as sent in that thread.
+  8. Report, retrying the report as needed (the journal means it never re-sends).
+- Clicked but not verified reports `clicked_unverified`, never a plain failure. The rule for anything unexpected: a throw before the journal (including a browser that fails to launch) reports `failed_preclick`; a throw after the journal reports `clicked_unverified`. The box writes the job id to disk when it takes the lease and reconciles it on startup by the same rule, so a crash between lease and report still ends in a report.
 - Any Google interstitial idles the sender without attempting a login: sign-in, verify-it's-you, captcha, unusual activity, the account chooser. It reports `session_expired` or `challenge` once, then resumes when the next poll finds it logged in after Dallas signs in by hand.
 - It saves a diag capture (screenshot plus control dump) on definitive failures, the same pattern that made each Thumbtack UI break a 10-minute diagnosis. Captures are pruned, use fs-safe names, and are excluded from restic.
 - Human pacing, with a box daily cap.

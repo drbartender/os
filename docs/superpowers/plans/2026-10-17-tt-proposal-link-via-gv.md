@@ -1,5 +1,5 @@
 ---
-spec: docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md   # rev 3 plus section 10 (spike results, GO); plan rev 4 folds the three-agent plan review and three re-verifies
+spec: docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md   # rev 4 (10/19 Fable pass folded); plan rev 5 folds the three-agent plan review, three re-verifies and the 10/19 adversarial + buildability pass
 lanes:
   - id: gv-post-server
     footprint:
@@ -73,7 +73,7 @@ mergeOrder: gv-post-server first (it carries the sensitive-paths lines and the s
 pushGate: Ships dark. GV_PROPOSAL_POST_ENABLED stays unset in Render until the gv-agent service runs on the box with GV_AGENT_SECRET set on both sides and the gv-sender-live dry runs pass (Rollout below). The flip is Dallas's, at a quiet moment; the first relay proposal after it is the live proof.
 ---
 
-# Proposal link into the Thumbtack thread through Google Voice: implementation plan (rev 4)
+# Proposal link into the Thumbtack thread through Google Voice: implementation plan (rev 5)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -113,15 +113,20 @@ pushGate: Ships dark. GV_PROPOSAL_POST_ENABLED stays unset in Render until the g
 6. **`gv_posts` rows are never pruned.** The token in a post body already lives in `thumbtack_messages`, and the Inbox (whose floor is fixed) needs the rows to read old sends. Diag captures are pruned by age and count. The spec is amended to match.
 7. **No unread restore.** The box's send marks that GV conversation read, the same as Dallas opening it. Restoring it would mean clicking a thread menu where Delete and Block sit; dropped as beyond the spec.
 8. **Spike check 3 passed, so `no_thread` names no real outcome.** It stays in the whitelist per the spec, but nothing reports it. Any "Send to" mismatch is `ui_error_before_send`, which counts toward the outage email.
+9. **A merged second send keeps the first body.** The queued row already carries the link; the admin's second edit is dropped and the modal still reads "Queued for Thumbtack". Accepted.
+10. **The box's exception rule.** Any throw before `journal.write` (a browser that fails to launch, a detached element, a navigation) reports `failed_preclick ui_error_before_send`; any throw after it reports `clicked_unverified`. Never a bare failure after the journal.
+11. **A stuck fallback is never retried.** `fallback_status 'claimed'` older than 2 minutes becomes `failed` (reason `interrupted`): the Twilio call may have gone out, and a second text is worse than a hand paste.
 
 ## Review Focus
 
 Inputs the spec implies that no task's tests would otherwise exercise; each line's test is pinned to the task named.
 1. **An admin double-clicks Send or Resend.** One `gv_posts` row, and the second call returns `merged`, with no 888 text, no second post and no spacing trip. Test: Task 4, `concurrent routes for one proposal yield one row and one merged`.
 2. **The proposal is archived, or the client opts out, between enqueue and lease.** The row ends `cancelled` with no fallback text. Test: Task 7, `lease cancels an archived proposal without a fallback`.
-3. **A box report lands after the sweep marked the row `unknown`.** It is ignored and no fallback goes out. Test: Task 7, `report on a non-leased row is ignored`.
+3. **A box report lands after the sweep marked the row `unknown`.** A pre-click report is accepted and sends the fallback, a `sent` report upgrades the row, and a report on a terminal row is ignored. Tests: Task 7, `report failed_preclick on an unknown row is accepted and sends one fallback`, `report on a terminal row is ignored`.
 4. **The flag is flipped off with rows queued.** The lease returns `[]`, the sweep still stales each row and sends exactly one fallback, and no outage email goes out. Test: Task 9, `flag off drains queued rows to one fallback each and emails nobody`.
 5. **The box crashes after clicking Send and restarts.** It reports `clicked_unverified` and never re-sends. Test: Task 15, `a journaled job id is reported clicked_unverified and never re-sent`.
+6. **The team pastes the link in the Thumbtack app while the box holds the lease.** The pre-click check sees the webhook row and the box never clicks. Test: Task 7, `precheck says no-go once the token lands after the lease and flips the row`; Task 15, `a precheck no-go skips without journal or click`.
+7. **The box dies between lease and report.** On restart it reports the job it was holding by the exception rule, and the sweep's unknown streak emails once if that keeps happening. Tests: Task 15, `startup with a marker not in the journal reports ui_error_before_send`; Task 9, `three unknown rows in a row email once`.
 
 ---
 
@@ -160,7 +165,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `idx_gv_posts_queued` (created_at) WHERE status = 'queued'
   - `idx_gv_posts_proposal` (proposal_id, created_at DESC)
   - `idx_gv_posts_negotiation` (negotiation_id)
-- Produces: table `gv_sender_state`, with `id` SMALLINT PK DEFAULT 1 CHECK (id = 1), `outage_since`, `outage_reason`, `outage_alerted_at`, `last_lease_at`, `last_success_at`, `consecutive_preclick_failures` INT NOT NULL DEFAULT 0, and `updated_at`. Seed it with `INSERT INTO gv_sender_state (id) VALUES (1) ON CONFLICT DO NOTHING`.
+- Produces: table `gv_sender_state`, with `id` SMALLINT PK DEFAULT 1 CHECK (id = 1), `outage_since`, `outage_reason`, `outage_alerted_at`, `last_lease_at`, `last_success_at`, `consecutive_preclick_failures`, `consecutive_unknown` and `consecutive_unverified` (each INT NOT NULL DEFAULT 0), and `updated_at`. Seed it with `INSERT INTO gv_sender_state (id) VALUES (1) ON CONFLICT DO NOTHING`.
 - No phone number column.
 
 - [ ] **Step 1: Write the failing tests.** In `constraintContract.test.js`, assert a `gv_posts_status_check` entry whose `mustContain` lists all nine statuses. In `criticalIndexes.test.js`, assert `uq_gv_posts_open_per_proposal` is listed.
@@ -182,6 +187,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `no_phone`
   - `not_relay`
   - `foreign_lead`
+  - `customer_mismatch`
   - `ambiguous_lead`
   - `lead_not_on_phone`
   - `lead_too_old`
@@ -189,9 +195,10 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   1. Read the client's `clients.phone`.
   2. Find the leads whose `customer_phone` last10 matches and whose `created_at >= THUMBTACK_PROXY_ROLLOUT`. None means `not_relay`.
   3. If any such lead's `client_id` IS DISTINCT FROM the proposal's client, return `foreign_lead`. A NULL `client_id` counts as foreign.
-  4. The chosen lead is the one with `proposal_id = proposalId`. Otherwise it is this client's leads on that number; more than one means `ambiguous_lead`.
-  5. The chosen lead's own last10 must equal the client's, else `lead_not_on_phone`.
-  6. Its `created_at` must be within 180 days, else `lead_too_old`.
+  4. If those leads carry more than one distinct `thumbtack_leads.customer_id`, or any of them a NULL one, return `customer_mismatch`. A recycled relay number arrives under a new Thumbtack customer id even when the webhook's name match attached it to the old client row (`clientDedup.js` trustedPhoneMatch). Prod 2026-10-19: 360 post-rollout leads, 0 null, 0 numbers with two ids, so this blocks nothing today.
+  5. The chosen lead is the one with `proposal_id = proposalId`. Otherwise it is this client's leads on that number; more than one means `ambiguous_lead`.
+  6. The chosen lead's own last10 must equal the client's, else `lead_not_on_phone`.
+  7. Its `created_at` must be within 180 days, else `lead_too_old`.
 
 - [ ] **Step 1: Write the failing tests:**
   - `linked lead on the client phone resolves`
@@ -199,12 +206,13 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `two unlinked leads of the same client on one number is ambiguous_lead`
   - `another client's lead on the number is foreign_lead`
   - `a lead with no client on the number is foreign_lead`
+  - `two leads of the same client with different Thumbtack customer ids is customer_mismatch`
   - `only a pre-rollout lead is not_relay`
   - `linked lead on a different number is lead_not_on_phone`
   - `lead older than 180 days is lead_too_old`
 - [ ] **Step 2: Run** `node --test server/utils/gvPost/identity.test.js`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Parameterized reads on the passed `db`; no writes.
-- [ ] **Step 4: Run.** Expected: 8/8 PASS.
+- [ ] **Step 4: Run.** Expected: 9/9 PASS.
 - [ ] **Step 5: Commit.**
 
 ### Task 3: Rules, body validation, suppression
@@ -217,15 +225,17 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 **Interfaces:**
 - Produces in `rules.js`:
   - `GV_BODY_MAX = 320`
-  - `GV_WINDOWS = { staleMin: 5, leaseMin: 3, spacingMin: 10, pasteBeforeMin: 30, notSeenGraceMin: 2, livenessMin: 30, outageFailures: 3, leadMaxAgeDays: 180 }`
-  - `GV_PRECLICK_REASONS`, a Set of `no_thread`, `wrong_thread`, `invalid_body`, `invalid_number`, `session_expired`, `challenge`, `cap`, `timeout`, `ui_error_before_send`
-  - `GV_OUTAGE_EXEMPT`, a Set of `cap` and `no_thread`
+  - `GV_WINDOWS = { staleMin: 5, leaseMin: 3, spacingMin: 10, pasteBeforeMin: 30, notSeenGraceMin: 2, livenessMin: 30, claimStaleMin: 2, outageFailures: 3, leadMaxAgeDays: 180 }`
+  - `GV_PRECLICK_REASONS`, a Set of `no_thread`, `wrong_thread`, `invalid_body`, `invalid_number`, `session_expired`, `challenge`, `cap`, `spacing`, `identity_mismatch`, `timeout`, `ui_error_before_send`
+  - `GV_OUTAGE_EXEMPT`, a Set of `cap`, `spacing` and `no_thread`
   - `GV_SENDABLE_STATUSES = ['sent', 'viewed', 'modified', 'accepted']`, the same values as `proposalResend.js` `RESENDABLE`, pinned by a drift test
   - `function gvPostEnabled()`, which is `process.env.GV_PROPOSAL_POST_ENABLED === 'true'`
   - `function gvDailyCap()`, which is `readEnvInt('GV_POST_DAILY_CAP', 25)`
   - `function normalizeGvBody(body)`: collapse every whitespace run to one space, then trim
   - `function validateGvBody(body, token)`, which returns `{ ok: true, body }` or `{ ok: false, reason }` with reason `too_long`, `no_link`, `wrong_link` or `multiple_links`. It requires exactly one `${PUBLIC_SITE_URL}/proposal/<uuid>` (from `server/utils/urls.js`) whose uuid equals `token`, and a normalized length of at most 320.
-- Produces in `suppression.js`: `async function gvSuppression({ proposal, client, phone }, db = pool)`, which returns `{ ok: true }` or `{ ok: false, reason }`.
+- Produces in `suppression.js`:
+  - `async function loadGvContext(proposalId, db = pool)`, which returns `null` or `{ proposal: { id, status, token }, client: { id, phone, communication_preferences, email_status, phone_status } }` in one query (`proposals p LEFT JOIN clients c`). Tasks 4 and 7 use it to feed `gvSuppression`, since the router and the lease receive only ids.
+  - `async function gvSuppression({ proposal, client, phone }, db = pool)`, which returns `{ ok: true }` or `{ ok: false, reason }`.
   - `shouldSendImmediate({ proposal: { id, status }, client: { communication_preferences, email_status, phone_status }, channel: 'sms' })` gives `archived`, `channel_disabled` or `bad_contact` (spec law 8: today's suppression carries over unchanged).
   - Then `activeOptOut(phone, db)` gives `opted_out`.
   - Then a `proposal.status` outside `GV_SENDABLE_STATUSES` gives `not_sendable`.
@@ -259,12 +269,12 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   1. flag, giving `disabled`
   2. `deps.notificationsEnabled()`, giving `notifications_off`
   3. `deps.resolveGvTarget`, giving the identity reason
-  4. `gvSuppression` (Task 3), giving its reason (in practice `opted_out` or `not_sendable`; the choke point already applied the rest)
+  4. `gvSuppression` over `loadGvContext(proposalId)` (Task 3), giving its reason (in practice `opted_out` or `not_sendable`; the choke point already applied the rest)
   5. `validateGvBody`, giving the body reason
   6. an open row for this proposal (`status IN ('queued','leased')`), giving `merged`
   7. `checkGvCapacity({ phoneLast10, excludeProposalId: proposalId })`, giving `cap` or `spacing`
   8. `INSERT ... ON CONFLICT (proposal_id) WHERE status IN ('queued','leased') DO NOTHING RETURNING id`. If the insert loses the race, select the open id and return `merged`.
-- On a `cap` or `spacing` result: one console line (proposal id, reason) and a Sentry warning, throttled in memory to one per reason per hour (`{ feature: 'gv_post', event: 'cap' | 'spacing' }`).
+- On a `cap` or `spacing` result: one console line (proposal id, reason) and a Sentry warning, throttled in memory to one per reason per hour (`{ feature: 'gv_post', event: 'cap' | 'spacing' }`). Every other `twilio` reason gets the console line only (a long custom event type can push the template body past 320, which is `too_long` and today's text).
 - Any throw goes to Sentry (`{ feature: 'gv_post', stage: 'route' }`, no number) and returns `{ route: 'twilio', reason: 'error' }`.
 - Seam: `routeProposalText.__setDeps({ resolveGvTarget, notificationsEnabled })`. The defaults are the real functions.
 
@@ -298,6 +308,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `via: 'twilio'` skips the router.
   - Returns `'queued' | 'sent' | 'suppressed' | 'skipped' | 'failed'`, where `'failed'` is the caught `sendAndLogSms` throw.
   - `sendProposalSentEmail` passes its `actorType` through, so the website wizard (`'client'`) never routes.
+  - `routeProposalText` joins the module's existing `_deps` (`{ sendEmail, emailTemplates, sendAndLogSms, Sentry }`), so the tests stub the router through `__setDeps`.
 - Produces in `proposalResend.js`:
   - export `load`;
   - export `async function sendResendText({ row, phone, body, ctx = {} })`, holding L211-228 (the entry, with its single `` `${messageType}_sms` `` shape, plus the Twilio leg) and returning `{ status: 'sent' | 'failed', error? }`, so `dispatch` keeps `results.sms_error` for the modal's "Text failed" line;
@@ -344,7 +355,10 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 - Produces in `outage.js`, all on `gv_sender_state`:
   - `async function noteOutage(reason)`: opens the episode if closed. It emails once per episode through `UPDATE ... SET outage_alerted_at = now() WHERE outage_alerted_at IS NULL RETURNING`, using `notifyAdminCategory({ category: 'routine_thumbtack', subject, emailHtml, emailText })` with no `smsBody`.
   - `async function noteSuccess()`: closes the episode and zeroes the counter.
-  - `async function notePreclickFailure(reason)`: skips reasons in `GV_OUTAGE_EXEMPT`; otherwise increments the counter and calls `noteOutage('preclick_failures')` at 3.
+  - `async function notePreclickFailure(reason)`: skips reasons in `GV_OUTAGE_EXEMPT`; otherwise increments `consecutive_preclick_failures` and calls `noteOutage('preclick_failures')` at 3.
+  - `async function noteUnknown()`: increments `consecutive_unknown`; at 3, `noteOutage('unknown_streak')` (a box that leases and then dies never reports, so nothing else would notice).
+  - `async function noteUnverified()`: increments `consecutive_unverified`; at 3, `noteOutage('verify_unconfirmed')` (the verify surface broke; the sends may be fine, a human should look).
+  - `noteSuccess()` zeroes all three counters.
   - Copy, verbatim:
     - Subject: `Google Voice sender is down: Thumbtack customers are getting the toll-free text`
     - Text: `The box's Google Voice sender stopped posting proposal links (reason: {reason}). Thumbtack customers are getting today's toll-free text instead, so nothing is lost. To fix it, sign GV back in on the box (gv-agent/README.md); the sender picks up on its next poll.`
@@ -357,9 +371,11 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `noteOutage emails once per episode with no smsBody`
   - `noteSuccess reopens the episode for a later alert`
   - `three non-exempt pre-click failures email once and cap failures never count`
+  - `three unknowns in a row email once and a success resets the streak`
+  - `three unverified in a row email once`
 - [ ] **Step 2: Run each alone.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run each alone.** Expected: 4/4 and 3/3 PASS.
+- [ ] **Step 4: Run each alone.** Expected: 4/4 and 5/5 PASS.
 - [ ] **Step 5: Commit.**
 
 ### Task 7: The agent API
@@ -380,17 +396,21 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     1. On one client, in a transaction: `SELECT * FROM gv_posts WHERE status = 'queued' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`.
     2. Re-validate:
        - `resolveGvTarget` fails: `failed_preclick`, reason `identity_mismatch` (fallback after release; Sentry warning)
-       - `gvSuppression` fails: `cancelled`, with no fallback
+       - it resolves to a different `negotiationId` or `leadId` than the row holds (the client's phone moved to another relay of the same client): overwrite the row's `negotiation_id` and `lead_id` with the fresh values, so the status row and the Inbox keep matching
+       - `gvSuppression` over `loadGvContext` fails: `cancelled`, with no fallback
        - the token is in `thumbtack_messages.text` (no `from_type` filter) on any proxy-era negotiation carrying that number since `created_at - 30 min`: `skipped_already_posted`
-       - `checkGvCapacity({ phoneLast10, excludePostId: row.id })` fails: `failed_preclick`, reason `cap` (fallback; Sentry warning)
+       - `checkGvCapacity({ phoneLast10, excludeProposalId: row.proposal_id, excludePostId: row.id })` fails: `failed_preclick`, reason `cap` or `spacing` as returned (fallback; Sentry warning). Excluding the proposal's own rows matches the router, so an intentional resend minutes after a landed post is not turned into a toll-free text beside it.
        - otherwise: `leased`, with `leased_at = now()`
     3. Stamp `last_lease_at`, COMMIT, release.
     4. Run any fallback.
     5. Respond `[{ id, phone, body, negotiation_id }]` or `[]`.
+  - `POST /precheck` takes `{ id }` (the box calls it right before the journal and the click; spec law 6).
+    - Row `leased`: re-run the law 6 token query. Found means `UPDATE ... SET status = 'skipped_already_posted', reported_at = now(), updated_at = now() WHERE id = $1 AND status = 'leased'` and `{ go: false, outcome: 'skipped_already_posted' }`; not found means `{ go: true }`.
+    - Row not `leased` (the sweep moved it to `unknown`): `{ go: false, outcome: 'timeout' }`, and the box reports `failed_preclick timeout`.
   - `POST /report` takes `{ id, outcome, reason? }`.
     - `outcome` must be one of `sent`, `clicked_unverified`, `failed_preclick`, `skipped_already_posted`, and a `failed_preclick` reason must be in `GV_PRECLICK_REASONS`; anything else is 400.
-    - It runs `UPDATE ... SET status = $2, reason = $3, reported_at = now(), updated_at = now(), clicked_at = CASE WHEN $2 IN ('sent','clicked_unverified') THEN now() END WHERE id = $1 AND status = 'leased' RETURNING id`. No row means 200 `{ ignored: true }` and a log line.
-    - `sent` calls `noteSuccess()`. `failed_preclick` calls `notePreclickFailure(reason)`, then `sendGvFallback(id)` after release.
+    - It runs `UPDATE ... SET status = $2, reason = $3, reported_at = now(), updated_at = now(), clicked_at = CASE WHEN $2 IN ('sent','clicked_unverified') THEN now() END WHERE id = $1 AND status IN ('leased','unknown') RETURNING id`. The box is authoritative about what happened before the sweep's guess; a report on a terminal row means 200 `{ ignored: true }` and a log line.
+    - `sent` calls `noteSuccess()`. `clicked_unverified` calls `noteUnverified()`. `failed_preclick` calls `notePreclickFailure(reason)`, then `sendGvFallback(id)` after release.
     - `clicked_unverified` and `failed_preclick` send a Sentry warning.
   - `POST /status` takes `{ state }`, which must be `session_expired` or `challenge`, and calls `noteOutage(state)` with a Sentry warning.
 - Logs: one line per lease, report and status (post id, outcome, last-4 at most).
@@ -403,17 +423,23 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - queue:
     - `lease returns one job with phone, body and negotiation_id and marks it leased`
     - `lease does not trip spacing or cap on the row being leased`
+    - `lease does not trip spacing on the proposal's own earlier post`
+    - `lease rewrites a changed negotiation id`
     - `lease cancels an archived proposal without a fallback` (Review Focus 2)
     - `lease skips a row whose token is already in the thread`
     - `lease turns an identity mismatch into failed_preclick and sends one fallback`
+    - `precheck says no-go once the token lands after the lease and flips the row` (Review Focus 6)
+    - `precheck on an unknown row says no-go timeout`
     - `report sent closes the outage episode`
     - `report failed_preclick with a whitelisted reason sends one fallback`
+    - `report failed_preclick on an unknown row is accepted and sends one fallback` (Review Focus 3)
+    - `report sent on an unknown row upgrades it with no fallback`
     - `report with an unknown reason is 400`
-    - `report on a non-leased row is ignored` (Review Focus 3)
+    - `report on a terminal row is ignored` (Review Focus 3)
     - `status session_expired emails once per episode`
 - [ ] **Step 2: Run each alone.** Expected: FAIL.
 - [ ] **Step 3: Implement and mount.**
-- [ ] **Step 4: Run each alone** (3/3 and 10/10 PASS). Then, on the lane server with the flag off: `curl -s -o /dev/null -w '%{http_code}' localhost:<port>/api/gv-agent/pending` gives `401`, and the same call with `-H "x-gv-agent-secret: $GV_AGENT_SECRET"` gives `[]`.
+- [ ] **Step 4: Run each alone** (3/3 and 16/16 PASS). Then, on the lane server with the flag off: `curl -s -o /dev/null -w '%{http_code}' localhost:<port>/api/gv-agent/pending` gives `401`, and the same call with `-H "x-gv-agent-secret: $GV_AGENT_SECRET"` gives `[]`.
 - [ ] **Step 5: Commit.** Run `security-review` on Tasks 6-7 before Task 8.
 
 ### Task 8: Read-time status
@@ -431,9 +457,10 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `in_thread`
   - `check_thread` (clicked_unverified or unknown)
   - `skipped_already_posted`
-  - `fallback` (stale or failed_preclick with fallback `sent` or `claimed`)
+  - `fallback_pending` (stale or failed_preclick with fallback `claimed`, or NULL and under 2 minutes old)
+  - `fallback` (fallback `sent`)
   - `fallback_suppressed`
-  - `fallback_failed`
+  - `fallback_failed` (fallback `failed`, including reason `interrupted`)
   - `cancelled`
 
   `in_thread` means an echo whose `normalizeGvBody(text)` equals `normalizeGvBody(post.body)`; it beats every other state. An echo holding the token without a body match sets `hand_pasted: true`.
@@ -445,12 +472,13 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `sent within 2 minutes is sent`
   - `sent past 2 minutes with no echo is sent_not_seen`
   - `stale with fallback sent is fallback`
+  - `stale with fallback claimed is fallback_pending, never fallback`
   - `failed_preclick with fallback failed is fallback_failed`
   - `unknown is check_thread`
   - (DB) `gvPostStatusForProposal returns null with no post and the latest post otherwise`
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: 8/8 PASS.
+- [ ] **Step 4: Run.** Expected: 9/9 PASS.
 - [ ] **Step 5: Commit.**
 
 ### Task 9: The sweep, its registration, the lane's docs
@@ -464,8 +492,9 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
 **Interfaces:**
 - Produces: `async function runGvPostSweep()`, which returns `{ staled, unknowned, alerted }` and rethrows the first arm error after all arms run. Arms:
   1. `UPDATE gv_posts SET status = 'stale', updated_at = now() WHERE status = 'queued' AND created_at < now() - interval '5 minutes' RETURNING id`, then `sendGvFallback` for each.
-  2. `UPDATE ... SET status = 'unknown', updated_at = now() WHERE status = 'leased' AND leased_at < now() - interval '3 minutes'` (no fallback).
+  2. `UPDATE ... SET status = 'unknown', updated_at = now() WHERE status = 'leased' AND leased_at < now() - interval '3 minutes'` (no fallback), then `noteUnknown()` once per row flipped.
   - Retry arm: rows with `status IN ('stale','failed_preclick') AND fallback_status IS NULL AND updated_at < now() - interval '1 minute'` get `sendGvFallback`. A restart between the status UPDATE and the fallback leaves them unclaimed, and the claim makes the retry safe. Every status UPDATE in Tasks 4, 7 and 9 sets `updated_at = now()`.
+  - Interrupted-claim arm: `UPDATE ... SET fallback_status = 'failed', reason = COALESCE(reason, 'interrupted'), updated_at = now() WHERE fallback_status = 'claimed' AND fallback_at < now() - interval '2 minutes'`, with a Sentry warning per row (`event: 'fallback_interrupted'`). Never re-sent: the Twilio call may have completed before the restart. The status row reads `fallback_failed` and the team pastes.
   3. ONLY when `gvPostEnabled()`: if arm 1 staled any row and `last_lease_at` is NULL or older than 30 min, call `noteOutage('no_lease')`.
   - Arms 1 and 2 each send one Sentry warning per run that touched rows, with the count, plus a console line.
 - Registration: `if (enabled('RUN_GV_POST_SWEEP_SCHEDULER'))`, using `wrapScheduler('gv_post_sweep', 60, ...)`, `setTimeout(wrapped, 25000)` and `setInterval(wrapped, 60000)`, else `clearHealthRow('gv_post_sweep')`. It is not gated by the flag.
@@ -481,6 +510,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `stale rows with no lease in 30 minutes email once`
   - `flag off still drains queued rows to one fallback each and emails nobody` (Review Focus 4)
   - `an unclaimed failed_preclick row gets its fallback on the next sweep`
+  - `a claim older than 2 minutes becomes failed interrupted and is never re-sent`
+  - `three unknown rows in a row email once` (Review Focus 7)
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement, register, write the docs.**
 - [ ] **Step 4: Run the new file, then every file from Tasks 1-8, then Task 5's existing-suite list, one at a time, reading the counts. Then** `npm run check:filesize`. Expected: all PASS, with no new RED.
@@ -512,6 +543,7 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - sent_not_seen: `Sent from GV, not in the Thumbtack thread yet`
   - check_thread: `Clicked Send but couldn't confirm: check the thread before pasting`
   - skipped_already_posted: `Skipped: the link was already in the thread`
+  - fallback_pending: `Didn't go out: sending the toll-free text instead`
   - fallback: `Didn't go out: the toll-free text went instead ({reasonLabel})`
   - fallback_suppressed: `Didn't go out, and no text was sent (client can't be texted)`
   - fallback_failed: `Didn't go out, and the toll-free text failed too ({reasonLabel})`
@@ -522,7 +554,9 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - session_expired: `GV is signed out`
   - challenge: `Google asked for a check`
   - cap: `daily cap reached`
+  - spacing: `another post went to this number minutes ago`
   - identity_mismatch: `the Thumbtack lead didn't match`
+  - interrupted: `the server restarted mid-send`
   - anything else: `the sender hit a problem`
 
 - [ ] **Step 1: Write the failing tests:** `GET /proposals/:id carries gv_post, null without a post`, `GET /proposals/:id/gv-post returns the latest status and 401 without auth`.
@@ -630,22 +664,25 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `pollMs` (10000)
   - `outagePollMs` (60000)
   - `dailyCap` (25)
-  - `jobBudgetMs` (90000)
+  - `jobBudgetMs` (90000, measured from the moment the lease response arrives, so launch and navigation count)
   - `dryRun`
   - `dryRunPhone` (DRY_RUN_PHONE: the company 1922 line from `server/utils/companyPhone.js`, never a client)
 - `validate.js`: `function validateJob({ phone, body, negotiation_id })` returns `{ ok: true }` or `{ ok: false, reason: 'invalid_number' | 'invalid_body' }`. The phone must match `/^\+1\d{10}$/`; the body must be one line of at most 320 characters with exactly one `https://drbartender.com/proposal/<uuid>`.
 - `interstitial.js`: `function classifyPage({ host, texts })` returns `'ok' | 'session_expired' | 'challenge'`.
   - `accounts.google.com`, `Choose an account` or `Sign in` give `session_expired`.
   - `Verify it's you`, `unusual activity` or a reCAPTCHA challenge give `challenge`.
-- `journal.js`: `function loadJournal(file)` returns a Set; `function journalBeforeClick(file, id)` uses `appendFileSync` and throws on failure. The file is `<profileDir>/gv-sent.journal`.
+- `journal.js`:
+  - `function loadJournal(file)` returns a Set; `function journalBeforeClick(file, id)` uses `appendFileSync` and throws on failure. The file is `<profileDir>/gv-sent.journal`.
+  - `function writeCurrentJob(file, id)`, `function readCurrentJob(file)`, `function clearCurrentJob(file)` on `<profileDir>/gv-current-job.json`: written the moment a lease response arrives, cleared once its report is delivered. On startup, a leftover marker is reported by decision 10's rule (in the journal: `clicked_unverified`; not: `failed_preclick ui_error_before_send`), so a crash between lease and report still ends in a report.
+  - `function clearStaleSingletons(profileDir, isProfileInUse)`: when no process holds `--user-data-dir=<profileDir>`, remove `SingletonLock`, `SingletonSocket` and `SingletonCookie` before a launch. A crashed Chrome leaves them behind and the next launch fails (memory `reference-thumbtack-harvester-relogin`, trap 3).
 - `pageLogic.js` (pure):
   - `function parseBidId(noticeHref)` returns the `bids/<id>` id or null
   - `function digitsEqual(text, phone)` compares the last 10 digits
   - `function oneSendToEntry(entries, phone)` takes `[{ ownText, w, h, containsOther }]` and returns the index or -1. The entry must be rendered above 4 px, outermost, start with `Send to`, and have equal digits.
   - `function oneRecipientChip(labels, phone)` is true when exactly one `Remove ...` label carries the number
   - `function verifyDecision({ tokenInBubble, boxEmpty })` returns `'sent' | 'clicked_unverified'`
-- `systemd/gv-agent.service` copies `thumbtack-agent/systemd/thumbtack-agent.service`: `UnsetEnvironment=WAYLAND_DISPLAY DISPLAY XAUTHORITY GNOME_SETUP_DISPLAY XDG_SESSION_TYPE`, `Environment=OZONE_PLATFORM=x11`, `EnvironmentFile=/home/drbartender/projects/os/gv-agent/.env`, `ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.16.0/bin/node src/index.js`, `Restart=on-failure`, `RestartSec=30`.
-- `README.md` carries spec section 10's sign-in recipe and the call-dialer trap.
+- `systemd/gv-agent.service` copies `thumbtack-agent/systemd/thumbtack-agent.service`: `WorkingDirectory=/home/drbartender/projects/os/gv-agent`, `UnsetEnvironment=WAYLAND_DISPLAY DISPLAY XAUTHORITY GNOME_SETUP_DISPLAY XDG_SESSION_TYPE`, `Environment=OZONE_PLATFORM=x11`, `EnvironmentFile=/home/drbartender/projects/os/gv-agent/.env`, `ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.16.0/bin/node src/index.js`, `Restart=on-failure`, `RestartSec=30`, and the precedent's `StartLimitIntervalSec`/`StartLimitBurst`.
+- `README.md` carries spec section 10's sign-in recipe and the call-dialer trap, plus the re-login order: `systemctl --user stop gv-agent`, the manual Chrome sign-in, close the window, `rm` the stale `Singleton*` files, `systemctl --user start gv-agent`. A manual Chrome on the same profile kills the agent's browser (Chrome is one process per profile).
 
 - [ ] **Step 1: Write the failing tests** (one file per module):
   - `a 10-digit E.164 number passes and a short form fails`
@@ -654,6 +691,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - `accounts.google.com is session_expired`
   - `Verify it's you is challenge`
   - `a journaled id is found after reload`
+  - `a current-job marker survives reload and clears`
+  - `stale singletons are removed only when no process holds the profile`
   - `parseBidId reads the bids id from a notice link`
   - `oneSendToEntry ignores the 1px screen-reader twin`
   - `two visible Send-to entries is -1`
@@ -678,8 +717,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - A thread with no notice (one we started) has nothing to check.
   - `async function composeTo(page, phone)` is the proven new-message flow, used for both a new and an existing conversation (GV appends to the existing one). It returns `{ ok: true }` or `{ ok: false, reason }`.
     1. Click `[aria-label="Send new message"]`.
-    2. In `[role=region][aria-label="Select recipients"]`, use `input[placeholder="Type a name or phone number"]`: click, then `pressSequentially` the 10 digits with a 100 ms delay.
-    3. Pick with `oneSendToEntry`. -1 fails `ui_error_before_send`.
+    2. In `[role=region][aria-label="Select recipients"]`, use `input[placeholder="Type a name or phone number"]`: click, then `pressSequentially` the LAST 10 digits of the E.164 number (never the `+1`) with a 100 ms delay.
+    3. Pick with `oneSendToEntry`. -1 fails `ui_error_before_send`. The rule stays strict ("Send to" plus matching digits): relay numbers are never saved contacts, and a saved contact renders as a name card instead.
     4. Require `oneRecipientChip`, else `ui_error_before_send`.
   - `async function threadHasToken(page, token)` returns a boolean.
   - `async function fillAndCheck(page, body)` uses `textarea[placeholder="Type a message"]`: `fill`, `inputValue() === body`, the Call panel input empty, no visible reCAPTCHA bframe (`challenge`), and `button[aria-label="Send message"]` enabled. Any other failure is `ui_error_before_send`.
@@ -707,23 +746,25 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - `validateJob` failing gives `failed_preclick <reason>`.
   - `function underBudget(startMs, nowMs, budgetMs)`.
   - `function chicagoDayKey(date)`, the `YYYY-MM-DD` in `America/Chicago` via `Intl.DateTimeFormat`, so the daily cap rolls at Chicago midnight.
-- Produces in `runJob.js`: `async function runJob(job, deps)`, which returns `{ outcome, reason? }`. `deps` = `{ page, flow, journal: { has, write }, classify, diag, now, budgetMs }`. The order is fixed and tested:
+- Produces in `runJob.js`: `async function runJob(job, deps)`, which returns `{ outcome, reason? }`. `deps` = `{ page, flow, journal: { has, write }, api: { precheck }, classify, diag, startMs, now, budgetMs }`. The order is fixed and tested:
   1. `classify(page)` non-ok gives `failed_preclick` with that reason.
   2. `flow.openThreadIfAny` (`wrong_thread` fails here).
   3. When a thread existed, `flow.threadHasToken`; true gives `skipped_already_posted`, with no journal and no click.
   4. `flow.composeTo`.
   5. `flow.fillAndCheck`.
-  6. `underBudget`; false gives `failed_preclick timeout`.
-  7. `journal.write(job.id)`; a throw gives `failed_preclick ui_error_before_send` and NO click.
-  8. `flow.clickSend`.
-  9. Poll `flow.readVerify` up to 20 s, then `verifyDecision`.
+  6. `underBudget(startMs, now(), budgetMs)`; false gives `failed_preclick timeout`.
+  7. `api.precheck(job.id)`; `{ go: false, outcome }` returns that outcome with no journal and no click (spec law 6: a paste made in the Thumbtack app is visible only to the server).
+  8. `journal.write(job.id)`; a throw gives `failed_preclick ui_error_before_send` and NO click.
+  9. `flow.clickSend`.
+  10. Poll `flow.readVerify` up to 20 s, then `verifyDecision`.
 
-  Any definitive failure calls `diag(page, job.id, reason)`.
+  The exception rule (decision 10) wraps the whole function: a throw before step 8 completes is `failed_preclick ui_error_before_send`; a throw after it is `clicked_unverified`. Any definitive failure calls `diag(page, job.id, reason)`.
 - Produces in `index.js`, the loop:
   - poll `GET /api/gv-agent/pending` (header `x-gv-agent-secret`) every `pollMs`;
   - `sentToday` comes from `<profileDir>/gv-sent-count.json` (`{ day: chicagoDayKey, count }`). It is incremented on every `sent` or `clicked_unverified` report and read at start, so a restart keeps the box's cap;
-  - per job: `decideJob`, then launch the persisted profile (`launchPersistentContext(profileDir, { headless: false, channel: 'chrome' })`), open `https://voice.google.com/u/0/messages`, call `runJob`, close;
-  - report through `POST /report`, retried 3 times with only 2xx counted;
+  - per job: `writeCurrentJob` and `startMs = Date.now()` the moment the lease response arrives; `decideJob`; `clearStaleSingletons`; launch the persisted profile (`launchPersistentContext(profileDir, { headless: false, channel: 'chrome' })`), open `https://voice.google.com/u/0/messages`, call `runJob`, close. The launch and the goto sit inside the same exception rule as `runJob` (a failed launch is pre-journal, so `failed_preclick ui_error_before_send`, and the 888 text goes out);
+  - on startup, a leftover current-job marker is reported by decision 10's rule before the first poll;
+  - report through `POST /report`, retried 3 times with only 2xx counted, then `clearCurrentJob`;
   - on `session_expired` or `challenge`: `POST /status`, then `outagePollMs` until a poll's `classify` is ok.
 - `--dry-run` runs three read-only stages and exits:
   1. API: `GET /pending` against the configured server, expecting a 2xx (`[]` with the flag off).
@@ -746,9 +787,15 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
     - `the journal is written before the click`
     - `a failed journal write means no click`
     - `a token already in the thread skips without journal or click`
+    - `a precheck no-go skips without journal or click` (Review Focus 6)
     - `over budget reports timeout before the journal`
     - `a non-ok page reports its reason and captures diag`
+    - `a throw before the journal reports ui_error_before_send`
+    - `a throw after the journal reports clicked_unverified`
     - `a verified send reports sent`
+  - startup (stubbed api and files):
+    - `startup with a marker not in the journal reports ui_error_before_send` (Review Focus 7)
+    - `startup with a journaled marker reports clicked_unverified`
 - [ ] **Step 2: Run** `cd gv-agent && npm test`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -770,6 +817,8 @@ Inputs the spec implies that no task's tests would otherwise exercise; each line
   - API 2xx `[]`;
   - compose opened, recipient exactly one, body ok, Call panel empty, send enabled, cleared;
   - thread found, known token true, dummy token false, bid id read. Exit 0, and the journal is empty.
+
+  If stage 2 fails on "recipient exactly one" and the diag shows a name card instead of a "Send to" entry, the dry-run number is a saved Google contact on dallasraby@. Use a number that is not (the 0082 line), rather than loosening the production rule.
 - [ ] **Step 2: The backup.** Add `/home/drbartender/.gvoice-profile` to `~/.config/restic/excludes.txt` (spec law 11's explicit guarantee). Check that `~/bin/restic-backup.sh` `HOME_INCLUDES` does not name it, and `stat -c %a ~/.gvoice-profile`. Expected: absent, and `700`.
 - [ ] **Step 3: Write the docs.**
 - [ ] **Step 4:** `cd gv-agent && npm test`. Expected: PASS.

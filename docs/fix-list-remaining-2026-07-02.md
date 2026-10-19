@@ -771,8 +771,9 @@ someone pasted the link by hand 23 times. Designed 2026-10-17: post it through a
 Voice session on the box (spec `docs/superpowers/specs/2026-10-17-tt-proposal-link-via-gv-design.md`,
 rev 3, fleet-reviewed). Spike PASSED 2026-10-17 (spec section 10): one GV post to a new conversation
 landed in the Thumbtack thread byte-exact, 3 s to Thumbtack, 13 s to our webhook. Plan
-`docs/superpowers/plans/2026-10-17-tt-proposal-link-via-gv.md` (rev 4, three-agent plan review plus three
-re-verifies, final PASS): five lanes, ships dark. NEXT: build on Dallas's go.
+`docs/superpowers/plans/2026-10-17-tt-proposal-link-via-gv.md` (rev 5: three-agent plan review, three
+re-verifies, and the 10/19 Fable adversarial + buildability pass, all folded): five lanes, ships dark.
+NEXT: build on Dallas's go.
 
 ### A signed-but-unpaid client keeps getting the unsigned-proposal drip, and Stop cannot reach it
 
