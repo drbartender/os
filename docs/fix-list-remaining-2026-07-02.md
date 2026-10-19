@@ -68,7 +68,7 @@ Ordered by how close each one is to actually costing money or a client.
 | # | what breaks | reachable today? |
 |---|---|---|
 | 1 | A bank refund that fails at the bank leaves a succeeded row (and a docked bartender) | no (no bank refund has failed yet) |
-| 1 | A contract refund on a booking with no override is billed again by the next editor save | no: 847 archived 10/15 (cancelled); it, five completed and one archived carry the gap; designed 2026-10-16 (override-removal spec, backfill); new refunds built in lane refund-line (merged 8c3b7051, not pushed), existing bookings close with step 2 |
+| 1 | ~~A contract refund on a booking with no override is billed again by the next editor save~~ | no: CLOSED 2026-10-19 (refund lines since push 1; the seven existing bookings backfilled by the conversion) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
 | 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
@@ -196,7 +196,9 @@ line too, or the booking keeps a discount for money that never left (refund-line
   line more than the editor accepts, and every later editor save is refused until a line is removed.
   No prod booking is near the cap. Raised by the refund-line security review, 2026-10-17.
 
-### A contract refund on a booking with no override is billed again by the next editor save
+### ~~A contract refund on a booking with no override is billed again by the next editor save~~ — CLOSED 2026-10-19
+
+**Closed 2026-10-19.** Every contract refund writes its Refund line since push 1 (lane refund-line, pushed 2026-10-17 in 42ef970c), and the seven bookings below got theirs from the conversion backfill (run 4e550ebe73fdd3ab on prod, 2026-10-19, confirmation clean: 847, 500, 54, 439, 595, 633 and 784). The dry run held none back.
 
 Found 2026-10-14. A contract-scope refund lowers `total_price` and nothing else
 (`applyRefundReconciliation`, `refundHelpers.js`). The package, hours, add-ons and `adjustments`
