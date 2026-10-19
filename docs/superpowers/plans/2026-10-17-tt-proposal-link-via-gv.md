@@ -70,7 +70,7 @@ lanes:
     blockedBy: [gv-post-server, gv-sender]
     review: code-review   # box dry runs plus docs
 mergeOrder: gv-post-server first (it carries the sensitive-paths lines and the shared docs rows); then gv-sender, gv-post-ui, gv-post-inbox in any order; gv-sender-live last.
-pushGate: Ships dark. GV_PROPOSAL_POST_ENABLED stays unset in Render until the gv-agent service runs on the box with GV_AGENT_SECRET set on both sides and the gv-sender-live dry runs pass (Rollout below). The flip is Dallas's, at a quiet moment; the first relay proposal after it is the live proof.
+pushGate: Ships dark. GV_PROPOSAL_POST_ENABLED stays unset in Render until ALL FIVE lanes are merged and pushed (gv-post-ui and gv-post-inbox included: without them a queued post reads "Text skipped" in the SendModal and "No email or text went out" in the Inbox), the gv-agent service runs on the box with GV_AGENT_SECRET set on both sides, and the gv-sender-live dry runs pass (Rollout below). The flip is Dallas's, at a quiet moment; the first relay proposal after it is the live proof.
 ---
 
 # Proposal link into the Thumbtack thread through Google Voice: implementation plan (rev 5)
