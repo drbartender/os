@@ -80,6 +80,8 @@ Mechanical pre-steps the skill runs before any lens: `scripts/static-checks.js` 
 
 Model tiering stands as decided 2026-07-13 and 2026-08-14: Opus on the lenses, because the main session reads them; Fable on verification, because nothing downstream catches a false pass.
 
+Cost: merge-is-deploy makes lanes smaller and more frequent, and tier A runs six lenses plus the externals and verify on each. Trigger selection is the mitigation (a diff fires only the lenses its content names), and the skill may run a one- or two-file tier A diff's lenses as one agent carrying every applicable checklist rather than six agents; the receipt still records per-lens counts. The externals are metered (codex about six dollars a run, gemini prepaid); that stays a tier A cost by decision.
+
 Two reviews are complete by construction and need no lenses, only the gate: a clean `git revert` of a shipped sha with no hand edits (the emergency path, 4.8), and a comment-only diff that a script proves adds nothing but comment lines (the header migration, 5.1). (fleet)
 
 ### 3.3 The brief
@@ -145,7 +147,7 @@ Runs after every push, every tier, outside the merge lock, per sha, in the windo
 
 ### 3.9 External reviewers
 
-Diffs sent to codex or gemini pass through the board-write denylist shapes first (phone-number runs, emails, bearer-style tokens, the Stripe id family, nine-digit hyphenated routing and EIN shapes), and the brief says so. A token-shaped hit anywhere in the push range blocks the ship outright: a committed key never reaches a public origin. Both reviewers are metered; a 429 or an auth failure is reported and the Claude lenses remain the gate. (Standing since 2026-07-02 and 2026-08-19; the wider mask: fleet.)
+The tier A brief for codex and gemini carries the same money-laws section the money lens reads, and the repo root gains a ten-line `AGENTS.md` pointing a cold external agent at `docs/money-laws.md` and `docs/dev.md` (codex reads it when it opens the repo). Diffs sent to codex or gemini pass through the board-write denylist shapes first (phone-number runs, emails, bearer-style tokens, the Stripe id family, nine-digit hyphenated routing and EIN shapes), and the brief says so. A token-shaped hit anywhere in the push range blocks the ship outright: a committed key never reaches a public origin. Both reviewers are metered; a 429 or an auth failure is reported and the Claude lenses remain the gate. (Standing since 2026-07-02 and 2026-08-19; the wider mask: fleet.)
 
 ## 4. Main is prod
 
@@ -228,7 +230,7 @@ Every rule in either CLAUDE.md, in a skill, in an agent, or in a feedback memory
 
 ### 6.2 `~/.claude/CLAUDE.md` (private, about 35 lines)
 
-Review is standing; never ask; never attribute "no agents" to Dallas. No compaction; handoff only when asked. Brainstorm in prose, one question at a time, no menus; section approvals are the approval; skip the final spec re-review. Latest word beats the spec. Verify behavior, not shape; don't rubber-stamp; say it once; cursing is a signal. Env-var debug discipline: never assert a production variable is unset; ask him to confirm it in Render or Vercel. No client or staff phone numbers in any repo, board line, spec, commit or external diff; the personal cell nowhere. No em dashes in client, staff or spec prose. Dallas is both DRB accounts; never call him Dan. Each line bracketed with its date. This file is the only place outside memory where a rule about working with Dallas lives. It is backed up as `CLAUDE.md.bak-<date>` before each rewrite because `~/.claude` is not in git. Between Phase 3 step 1 and the flip it carries one dated transitional line: pushes are cue-only through `npm run gate` until `merge-lane.sh ship` lands.
+Review is standing; never ask; never attribute "no agents" to Dallas. No compaction; handoff only when asked. Brainstorm in prose, one question at a time, no menus; section approvals are the approval; skip the final spec re-review. Latest word beats the spec. Verify behavior, not shape; don't rubber-stamp; say it once; cursing is a signal. Env-var debug discipline: never assert a production variable is unset; ask him to confirm it in Render or Vercel. The ledger is his to update: report a fix with its sha and the test that failed on the old code, never write "fixed" on a grep, and never close a ledger entry yourself. No client or staff phone numbers in any repo, board line, spec, commit or external diff; the personal cell nowhere. No em dashes in client, staff or spec prose. Dallas is both DRB accounts; never call him Dan. Each line bracketed with its date. This file is the only place outside memory where a rule about working with Dallas lives. It is backed up as `CLAUDE.md.bak-<date>` before each rewrite because `~/.claude` is not in git. Between Phase 3 step 1 and the flip it carries one dated transitional line: pushes are cue-only through `npm run gate` until `merge-lane.sh ship` lands.
 
 ### 6.3 `os/.claude/CLAUDE.md` (public, about 130 lines)
 
@@ -264,7 +266,7 @@ The memory root for a session launched from `os` (`~/.claude/projects/-home-drba
 | `~/.claude/settings.json` | edit or regenerate | the auto-mode environment block says the repo is private with no remotes; it is public with an origin |
 | `~/.claude/commands/handoff.md` | keep | the handoff format |
 | `~/.claude/commands/second-opinion.md` | keep, edit | external review; adds the denylist mask; invoked by the review skill on tier A |
-| `~/.claude/agents/ui-ux-reviewer.md` | cut, merged into `os` `ui-ux-review` | |
+| `~/.claude/agents/ui-ux-reviewer.md` | cut, its capture checks merged into the `client` lens | |
 | `~/.claude/projects/-home-drbartender/memory/` | prune to `_archive`; index rewritten | facts and dated rules |
 | `~/.claude/projects/-home-drbartender-projects-os/memory/` | archive its four files; becomes a symlink to the main memory | |
 | `os/.claude/CLAUDE.md` | rewrite, about 130 lines | invariants, workflow, conventions, pointers |
@@ -280,8 +282,9 @@ The memory root for a session launched from `os` (`~/.claude/projects/-home-drba
 | `os/.claude/agents/spec-*.md`, `plan-fidelity.md`, `plan-decomposition.md` | edit | the Windows line and the "no client tests" line removed; plans without code (D12); references point at the new CLAUDE.md sections by name |
 | `os/.claude/agents/plan-feasibility.md` | cut | its job was checking code in plans against the codebase; plans carry no code |
 | `os/.claude/skills/plan/` | new, after the flip | the lane-map format of D12; replaces writing-plans and subagent-driven-development (D15) |
-| `os/.claude/commands/review-spec.md`, `review-plan.md` | keep | |
-| `os/.claude/commands/full-audit.md` | edit | quarterly; adds the sensitive-list check |
+| `os/.claude/commands/review-spec.md`, `review-plan.md` | edit | review-plan runs fidelity and decomposition only (feasibility retired, D12) |
+| `os/.claude/commands/full-audit.md` | edit | quarterly; adds the sensitive-list check and a re-run of the lens audit's coverage over the defects fixed since the last run (cheap once receipts record per-lens counts), so the lenses stay evidence-based |
+| `AGENTS.md` (repo root) | new, ten lines | points a cold external agent (codex) at `docs/money-laws.md`, `docs/dev.md` and the project CLAUDE.md |
 | `os/.claude/commands/codex-review.md`, `gemini-spec.md`, `review-before-deploy.md` | cut | |
 | `os/.mcp.json` | cut, with the `gemini-cli` entry in `settings.local.json` | its only consumer was `gemini-spec` |
 | `scripts/merge-lane.sh` + `merge-lane.test.js` | rewrite | `check` and `ship` phases per 4.1 |
@@ -321,7 +324,9 @@ Dormancy (fleet): `ship` and the new hook refuse unless a marker file in the com
 
 Before the flip, with evidence: one docs-only push through the old path, after the build filters are in place, showing no deploy on Render or Vercel. In-flight lanes at the flip (today: `beer-picks`) get a receipt by running the review skill by hand before their merge. The first unattended ship after the flip is a trivial commit with Dallas watching; `merge-lane.sh` and `ship` carry a `--no-push` dry run for the rehearsal. (fleet)
 
-Before the flip, by Dallas's hand, in the Render dashboard for the `os` service: the build filter that ignores docs-only paths (4.9), and the Health Check Path set to `/api/health`, which is empty today, so Render cuts a deploy over without checking that the app answers (the post-ship watch in 3.8 needs it too). The Vercel half is committed.
+Before the flip, by Dallas's hand, in the Render dashboard for the `os` service: the build filter that ignores docs-only paths (4.9), and the Health Check Path set to `/api/health`, which is empty today, so Render cuts a deploy over without checking that the app answers (the post-ship watch in 3.8 needs it too). The Vercel half is committed. Also by Dallas's hand before the flip: confirm the client Sentry DSN is set in the Vercel build (the audit found the client project reporting nothing), or the post-ship watch is blind to every client-only ship.
+
+Lanes cut before the flip carry the old `.claude/` files in their worktrees and load the old rules; each is rebased onto main after the flip (standing practice) before its review, so no lane merges under the old model.
 
 Order for Phase 3, each file's plan shown to Dallas before it is written (his instruction):
 
@@ -346,7 +351,7 @@ Order for Phase 3, each file's plan shown to Dallas before it is written (his in
 
 - Whether `full-audit` gets a schedule or stays a manual quarterly.
 - The fate of `docs/walkthroughs-owed.md`.
-- Whether the Node 24/26 mismatch on the box is fixed in Phase 3 (nvm default) or only documented.
+- Whether the Node 24/26 mismatch on the box is fixed in Phase 3 (nvm default) or only documented. Caveat for the fix: the claude, codex and gemini CLIs are installed under the v24 global bin, so switching the nvm default means reinstalling all three; the gate worktree could instead pin 26 through `.node-version` with nvm per invocation.
 - Closing a ledger entry by a commit that names it, so the ledger stops lagging git (the audit found dozens of entries open in the ledger and fixed in git, and the reverse). A later round.
 - A lighter audit of the design-stage agents against their own record (about half their recorded findings were plan hygiene); owed before they are edited beyond D12.
 - The prod findings in section 9 of the lens audit (unsubscribe, payout sync, client Sentry, the unique index, the commit with names in it) are Dallas's to place on the ledger; they are not on the rewrite's path.
