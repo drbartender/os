@@ -71,7 +71,7 @@ Ordered by how close each one is to actually costing money or a client.
 | 1 | ~~A contract refund on a booking with no override is billed again by the next editor save~~ | no: CLOSED 2026-10-19 (refund lines since push 1; the seven existing bookings backfilled by the conversion) |
 | 1 | An additional invoice bills money DRB already holds | yes, on an overpaid proposal |
 | 1 | The full-payment backfill never ran, so paid-in-full receipts still read "Deposit $100" | **yes: 26 rows by shape on 10/08 (INV-0329, INV-0336 still Deposit)**; unblocked 10/09 |
-| 1 | A tip refund has no gratuity scope, so cancel-line can offer it twice | no (0 proposals carry BOTH an override and gratuity) |
+| 1 | A tip refund has no gratuity scope, so cancel-line refunds it twice | **yes** since push 1: any booking with a gratuity whose tip went back as a contract refund (today 633 and 784, both completed); confirming the removal refunds the tip again on live Stripe |
 | 1 | A client drink-plan submit re-prices add-ons at TODAY's catalog rate | **yes** |
 | 1 | A client drink-plan submit resets an admin-negotiated quantity | not via the planner UI |
 | 1 | The client-portal change-request preview under-quotes counts > 1 | **yes** |
@@ -280,6 +280,17 @@ re-prices to override + 0, reads the already-refunded tip as an overpayment, and
 second time. The cancel-line preview shows the figure before anything moves, so it is loud, not
 silent. Surfaced by the refund-override-sync review, 2026-08-25. Before that lane the same
 two-step offered nothing and the next editor save minted the tip back as an invoice instead.
+
+**Widened 2026-10-19 (push 2 consistency review).** Since push 1, a contract refund writes a Refund
+line for its full contract cents, tip included, while `gratuity_rate` stays, so the chain reaches
+every booking with a gratuity, not only override bookings: cancel-line's gratuity removal folds to
+service less the Refund line plus no tip, `nettedOverpaymentCents` equals the tip, and the execute
+route REFUNDS it through Stripe after the commit (`cancelLineItem.js`), not just offers it.
+Lowering the rate refunds the matching share again. Exposed today: 633 ($80 tip) and 784 ($150
+tip), both completed; `proposal_refunds.gratuity_cents` is null on their refunds, so whether those
+refunds were the tip is unknown. Planned fix (lane not started, paused 2026-10-19): on a booking
+carrying a `source: 'refund'` line, cancel-line's gratuity removal or rate change never refunds
+automatically; the amount goes to the manual-return path for the admin to settle by hand.
 
 **NOT reachable today, measured 2026-08-25.** The bug needs one proposal carrying BOTH an
 override and gratuity, and prod has zero: 15 proposals have gratuity, none of them override'd,

@@ -117,7 +117,7 @@ Change-request approval does not re-check the client's `acknowledged_total` (`cr
 Once step 3 lands the engine no longer reads the override, so any re-pricing write on 600 would move it from $3,373 to catalog. 600 is confirmed, so its state does NOT keep it out of re-pricing writers (cancel-line blocks only archived and completed, `lineItemCancel.js` L29). In step 1, before anything can re-price it:
 
 - `foldExtrasIntoProposal` refuses legal-hold ids (one guard covering drink-plan submit, the Lab and cancel-line).
-- Change-request approval, `publicSwitch`, and `PATCH /api/proposals/:id` refuse them (ConflictError, no write).
+- Change-request approval, `publicSwitch`, and `PATCH /api/proposals/:id` refuse them (ConflictError, no write). So do the client portal's change-request preview and create (`changeRequests.js`), which once the override is ignored would price 600 at catalog and show its client a phantom change (amended 2026-10-19 from the push 2 review; client copy never names the hold), and the public options quote.
 - `applyRefundReconciliation` skips the refund LINE for legal-hold ids; the money reconciliation itself runs unchanged.
 - The admin GET carries a legal-hold flag and the editor and phone sheet open read-only with a note, rather than failing at save.
 - The ids come from `LEGAL_HOLD_PROPOSAL_IDS` (`server/utils/staleProposalSweep.js` L47). Step 3 does not ship until every guard here is live and tested.
