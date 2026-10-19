@@ -1,6 +1,6 @@
 # Instruction rewrite: main is prod, review is a receipt, docs come from code
 
-Date: 2026-10-19. Status: design approved section by section in the brainstorm (Dallas, 2026-10-18 to 2026-10-19). Rev 2: the spec fleet (grounding, gaps, risk) and a cold builder check reviewed rev 1 on 2026-10-19; every confirmed finding is folded in below and marked "(fleet)". Phase 3, the rewrite itself, starts only on Dallas's go.
+Date: 2026-10-19. Status: design approved section by section in the brainstorm (Dallas, 2026-10-18 to 2026-10-19). Rev 2: the spec fleet (grounding, gaps, risk) and a cold builder check reviewed rev 1 on 2026-10-19; every confirmed finding is folded in below and marked "(fleet)". Rev 3 (2026-10-19): the review-lens audit (`2026-10-19-lens-audit.md`) and the process decisions that followed it are folded in: nine lenses selected by diff trigger (3.2), plans as lane maps without code (D12), the failing-test receipt field (D13), review once per lane (D14), superpowers kept through the flip (D15). Phase 3, the rewrite itself, starts only on Dallas's go.
 
 This is the contract for rewriting every file that tells Claude how to work in this repo and on this box. It is written for an agent reading it cold. The audit that preceded it ran on 2026-10-17 and is summarized in section 1; the full report is not in the repo.
 
@@ -29,6 +29,10 @@ Each decision names its source. "Dallas" means he said it in the brainstorm. "Cl
 - D9. **Phone numbers, narrowed.** Numbers of real people (clients, staff) never enter the repo, a board line, a spec, a commit message, or a diff sent to an external reviewer; the tooling masks them, and the board denylist's other shapes, before anything goes to codex or gemini. Fixtures and the business lines may be printed. The grep hygiene (file names and counts, not matching lines) stays because it costs nothing. (Dallas: "I'm really just worried about client and staff number." The narrowing is Claude's call.)
 - D10. **Phase 3 has a code half.** The merge path, the gate, the receipt, the doc generators and the post-ship watch are scripts. The new CLAUDE.md lands in the same commit as the tooling it describes, or says plainly what stands until the tooling ships. Never again a rule for tooling that does not exist. (Claude's call; the footprint rule is the cautionary example.)
 - D11. **The files that define "reviewed" and "sensitive" are themselves sensitive.** The review skill, the agents, the sensitive list and its matcher, the hooks, `.claude/settings.json`, the merge, ship, gate, watch and doc scripts, `render.yaml` and `client/vercel.json` are on the sensitive list from the flip commit on. "Docs-only" is a strict allowlist. (fleet)
+- D12. **Plans are lane maps without code.** A plan carries, per lane, the scope, the footprint, what blocks it, the lenses it will get, acceptance checks that can be run, the money laws and seams that apply, and the test plan. Code appears only where the code is the decision (a predicate, a constant). The audit's precision pass found about half of the design fleet's recorded findings were plan hygiene (wrong line anchors, invented harness shapes), review of a copy of the code that drifts before it is built. Phase 3's own step plans follow this format. (Claude's call; Dallas: "If you are saying they shouldn't then that makes sense to me.")
+- D13. **A bug-fix lane's receipt names the test that fails on the old code.** By file and count, read from the runner log. The record holds a fix closed on a grep that matched the wrong shape, nine suites that never connected to the database, tests billed as mutation-verified that stayed green with their condition deleted, and a day-boundary fix provable only by an evening-instant test. (Claude's call, from the audit.)
+- D14. **Review runs once per lane.** The per-task implementer-plus-two-reviewers ritual from subagent-driven-development is retired; the implementer self-reviews, the lane gets its lenses, the receipt records it. (Dallas, 2026-07-22: "you are running reviews too much"; made structural here.)
+- D15. **Superpowers stays through the flip.** Its brainstorming and systematic-debugging skills keep earning their place; its worktrees, per-task review, final spec re-read and menu defaults are overridden once, in the global file. After the flip a project `plan` skill replaces writing-plans and subagent-driven-development. (Claude's call.)
 
 ## 3. Properly reviewed
 
@@ -43,22 +47,36 @@ A change is properly reviewed when all of the following hold, and the receipt re
 5. The tests the change reaches ran on the final reviewed tree, after every fix, and passed, with counts read from the runner's own log, not from a piped exit code: the money smoke for tier A; the suites whose subjects the diff touches for tiers A and B; the client build for anything under `client/`.
 6. The receipt (3.6) is written for the reviewed content and the lens reports and runner logs are captured beside it.
 
-### 3.2 Tiers
+### 3.2 Lenses and tiers
 
-Decided by what the diff touches. `scripts/sensitive-paths.txt` is the one list; the skill computes the tier mechanically, never by judgment.
+The audit (`2026-10-19-lens-audit.md`) replaced the six lenses by discipline with nine by mechanism. Each lens fires on what the diff contains; `scripts/sensitive-paths.txt` is a floor that forces the tier A set, not the selector. The check inventories, about 190 checks each citing the defects behind it, are in `lens-audit/`.
 
-| Tier | Trigger | Lenses | Tests |
+| lens | fires on | replaces |
+|---|---|---|
+| money | an `UPDATE proposals SET` on a money column, a Stripe or refund call, a price, rate, quantity or payout read, any file on the money list; reads `docs/money-laws.md` first | nothing today |
+| lifecycle | a status write, a sweep, a scheduler, a terminal transition, a pay-period predicate, a candidate set | nothing today |
+| concurrency | a status write, `FOR UPDATE`, `pool.connect()`, a provider call that moves money or sends, a retry, a partial update, a tick | nothing today |
+| business-time | `CURRENT_DATE`, `new Date`, a formatter, a period pick, a window, a DATE column, a threshold in days | nothing today |
+| outcomes and providers | a helper returning a status, a catch, a skip branch, a COMMIT followed by work, an SDK options object, a webhook branch, TwiML, an env flag, a DOM agent step | the error-handling halves of code-review and security-review |
+| access and egress | a route or guard, a public form, a log, export or AI send, a limiter, a send, a webhook | security-review, rewritten; its mechanical greps move to `scripts/static-checks.js` |
+| seams | a changed field, response shape, enumeration, entrance, a helper with copies, client-facing copy | consistency-check, rewritten around tracing one value from its writer to every reader |
+| schema and data | `schema.sql`, `db/index.js`, `server/scripts/`, `scripts/`, a seed, a catalog change | database-review, trimmed, plus import, backfill and catalog work no lens read |
+| client | any diff under `client/src`; captures at 320 and 390 wide provided by the main session | ui-ux-review, plus the code-reading half it never had |
+
+performance-review becomes explicit-only, run on request when a public page or a list endpoint changes. code-review dissolves: dead code and naming to lint, duplication and status codes to seams, loading and empty states to client. The verify agent (Fable) stays on tier A.
+
+| tier | trigger | what runs | tests |
 |---|---|---|---|
-| A | any path matched by `sensitive-paths.txt` | security, database, consistency, code (Opus); second opinion (codex plus gemini, Claude-triaged); verify (a Fable adversarial pass on each fix and on the money math) | money smoke plus every suite the change reaches |
-| B | any other server code; any client file whose diff adds or changes a call to `api.post`, `api.put`, `api.patch` or `api.delete` against a money or auth route prefix (the skill carries the prefix list); any new file under `server/routes/` or `server/middleware/` | code, consistency (Opus); security as well for a new route or middleware file (the list cannot name a file that does not exist yet, which is how two money defects shipped unlisted) | every suite the change reaches |
-| C | everything else under `client/`, and scripts not on the sensitive list | one reviewer: `ui-ux-review` when the surface has a file under `docs/design-artifacts/` or a spec with a Visual contract naming it, otherwise code | client build |
+| A | any path on the sensitive list, or a diff that touches a money column, a Stripe call, a price, rate or payout, or a status transition (content rule in `sensitive-match.js`) | money, lifecycle, concurrency, outcomes and providers, access and egress, seams, plus whichever of business-time, schema and data, client its triggers fire; second opinion (codex plus gemini, Claude-triaged); verify | money smoke plus every suite the change reaches; for a bug fix, the test that fails on the old code (D13) |
+| B | any other server code; a new file under `server/routes/` or `server/middleware/` | the lenses its triggers fire, access and egress always for a new route or middleware file | every suite the change reaches |
+| C | everything else under `client/`, and scripts not on the sensitive list | client, seams; copy-truth checks when copy changed | client build |
 | docs | every file in the push range is on the docs allowlist (4.7) | none | the gate skips both checks |
 
-The client money and auth surfaces that are unlisted today are added to the sensitive list in the flip commit, verified with `sensitive-match.js`: the proposal checkout (`client/src/pages/proposal/proposalView/PaymentForm.js`, `intentQuote.js`, `ProposalView.js`), the invoice page, the drink-plan confirmation step, the staff bank-details screens (`client/src/pages/staff/account/AddMethodModal.js`, `PaymentMethodRows.js`, `PaymentMethodsSection.js`), the tip card page and the admin payouts tab. (fleet)
+The sensitive list gains, in the flip commit, the 122 files the audit found carrying money defects while unlisted, by directory and pattern: `server/routes/drinkPlans/`, `server/routes/stripeCreateIntent.js`, `server/utils/serviceExtension*.js`, `server/utils/drinkPlanExtras.js`, `server/utils/proposalGroupCommit.js`, `server/routes/proposals/metadata.js`, `server/utils/metricsQueries.js`, `server/utils/autoAssign.js`, `server/routes/admin/payrollTax.js`, `server/db/index.js`, `server/scripts/**`, `scripts/cc-*.js`, the public Sign and Pay page and its hooks, the proposal editor and `PricingBreakdown.js`, the Money Board cards, the payroll panels, `paystubData.js`, both contract text files, `ServicesPage.js`, and the hinge files of D11.
 
-Performance review becomes explicit-only: run when a public page or a list endpoint changes. In the record it has never produced a confirmed finding on its own.
+Escalation: any lens may return `escalate` in its verdict table when it sees money, auth or PII material outside its tier. That bumps the review to tier A before merge. The list itself gets a standing check at every quarterly full-audit.
 
-Escalation: any lens on a tier B or C review may return `escalate` in its verdict table when it sees money, auth or PII material. That bumps the review to tier A before merge. The sensitive list itself gets a standing check at every quarterly full-audit (it has been wrong before: the staff-home route and the bank-details route both shipped money defects while unlisted).
+Mechanical pre-steps the skill runs before any lens: `scripts/static-checks.js` (the greps that used to be security-review prose: parameterized SQL, command injection, SSRF, secrets in the client bundle, `.env` ignored, `STRIPE_TEST_MODE_UNTIL`, `JWT_SECRET` from env, missing `auth` import, `dangerouslySetInnerHTML`, swallowed catch, `BEGIN` without `ROLLBACK`, `process.env.X || default`, floating versions on security packages, `file:` and `git+` deps); eslint `no-undef` and `no-use-before-define` over changed files; `sensitive-match` over the diff with the content rule; a PII grep over the push range (names, real-format numbers, a name beside a dollar figure).
 
 Model tiering stands as decided 2026-07-13 and 2026-08-14: Opus on the lenses, because the main session reads them; Fable on verification, because nothing downstream catches a false pass.
 
@@ -66,7 +84,7 @@ Two reviews are complete by construction and need no lenses, only the gate: a cl
 
 ### 3.3 The brief
 
-One file per review, generated by the review skill and handed to every lens. It contains: the diff as a file (commit list, stat, `-U10`); the plan and spec links; the tier and the matched paths that set it; the file list the lens must return verdicts for; what is already established (tests run and their counts, build status, questions already settled); for a designed surface, the artifact path and screenshots captured by the main session (a subagent cannot sign in to the dev app, so the lens judges the capture and the static render, never a live admin page); the budget ("finish within roughly N tool calls and end with your verdict table; if you run out, cut breadth and say what you did not reach"); and the standing line "do not print any phone number; refer to numbers by role". The agents' "How to start" sections are replaced by "read the brief at the path in your prompt". A diff too large for one brief is split by area up front, not after a failure.
+One file per review, generated by the review skill and handed to every lens. It contains: the diff as a file (commit list, stat, `-U10`); the plan and spec links; the tier and the matched paths that set it; the file list the lens must return verdicts for; what is already established (tests run and their counts, build status, questions already settled); for a designed surface, the artifact path and screenshots captured by the main session at 320 and 390 wide (a subagent cannot sign in to the dev app, so the lens judges the capture and the static render, never a live admin page); for the money lens, the row-truth rules from `docs/money-laws.md` verbatim; the results of the mechanical pre-steps (3.2) so no lens re-derives them; the budget ("finish within roughly N tool calls and end with your verdict table; if you run out, cut breadth and say what you did not reach"); and the standing line "do not print any phone number; refer to numbers by role". The agents' "How to start" sections are replaced by "read the brief at the path in your prompt". A diff too large for one brief is split by area up front, not after a failure.
 
 ### 3.4 The verdict table
 
@@ -96,7 +114,7 @@ The key is the reviewed content, not a commit sha (fleet):
 - For a quick fix, the tree hash of the staged index (`git write-tree`) at review time. The commit that follows must have exactly that tree (`HEAD^{tree}`), so a hunk another window staged into the shared index after the review, or a `git add` that swept in more than was reviewed, fails the check instead of shipping under the receipt.
 - For a squash commit on main, the patch id of `parent..commit` is compared with the lane receipt's patch id when main did not move; when it did, the stale-base path (3.7) writes a new receipt for the squash.
 
-`receipt.json` records: key, kind, tier and the matched paths, lenses, the per-file verdict summary, findings raised, confirmed, fixed, rejected, tests with counts and the log they were read from, the main sha reviewed against, timestamp. `merge-lane.sh` and `ship` do not trust the summary: they parse the captured verdict tables, check coverage against their own `git diff --name-only`, recompute the tier against the current sensitive list and refuse when the receipt's tier is lower or its file list is short, and read test counts from the runner log. (fleet)
+`receipt.json` records: key, kind, tier and the matched paths, the lenses that ran and why each fired, per lens the findings raised, confirmed, fixed and rejected (the audit could not measure any lens's precision from the record; from the first lane after the flip the receipts can), tests with counts and the log they were read from, for a bug-fix lane the test that fails on the old code by file and count (D13), the main sha reviewed against, timestamp. `merge-lane.sh` and `ship` do not trust the summary: they parse the captured verdict tables, check coverage against their own `git diff --name-only`, recompute the tier against the current sensitive list and refuse when the receipt's tier is lower or its file list is short, and read test counts from the runner log. (fleet)
 
 The squash commit message carries the summary so `git log` is the audit trail:
 
@@ -218,7 +236,7 @@ Four sections, in this order.
 
 **Invariants.** Git safety: `os` stays on main (the guard script); explicit staging; no reset or amend on main; destructive ops need a per-action yes except verified merged-lane cleanup; never scrap unmerged work; code preservation beats shipping speed; a push rejection stops and reports, never auto-resolves. Main is prod: every commit ships after the gate; nothing reaches main without a review receipt, and the hook checks (pointer to the review skill). Money, auth, data, each one line with a pointer: integer cents; pricing in `pricingEngine.js`, pure, no DB; Stripe through `stripeClient.js`, which honors `STRIPE_TEST_MODE_UNTIL` and fails closed without credentials; a price change re-evaluates the paid flag against `amount_paid`; the hosted 1:100 bartender rule with a pointer to `isHostedPackage`; gratuity in three lines with a pointer to `docs/money-laws.md`; parameterized SQL, never concatenation; `asyncHandler` plus `AppError`, and error responses never leak stacks, SQL or paths; auth middleware and role guards on every non-public route, and reads scoped by `req.user.id`; public routes token-gated by UUID; server-side validation of every input; uploads validated by magic bytes through `fileValidation.js`; secrets only from `process.env`; multi-table writes inside `BEGIN`/`COMMIT`/`ROLLBACK`; bank PII through `encryption.js`; one pooled connection per request; `schema.sql` idempotent; event identity never concatenated (`getEventTypeLabel`, the hand-synced `eventTypes.js` pair); the event-side drink plan is canonical; the cross-cutting rule (change X, grep every consumer of X); the dev box talks to live Stripe; the legal-hold proposal (pointer to `legalHold.js`). (The rev 1 outline dropped a dozen of these without a home; fleet.)
 
-**How work flows.** Two tracks: a quick fix on main, a project that thinks on main and builds in a lane. The lane lifecycle: `worktree:new` and `worktree:rm` only; `lane:status` runs at session start (hook) and prints the block marker and the last ship; the stale-lane defaults; the merge path in one paragraph with a pointer to `merge-lane.sh`; the hold rule; the emergency revert. Design artifacts are contracts, in five lines. Plan front-matter: lanes with `id`, `footprint`, `blockedBy`, `review`, stated as the convention the design agents read, with no enforcement claim.
+**How work flows.** Two tracks: a quick fix on main, a project that thinks on main and builds in a lane. The lane lifecycle: `worktree:new` and `worktree:rm` only; `lane:status` runs at session start (hook) and prints the block marker and the last ship; the stale-lane defaults; the merge path in one paragraph with a pointer to `merge-lane.sh`; the hold rule; the emergency revert. Design artifacts are contracts, in five lines. A plan is a lane map without code (D12): per lane `id`, `footprint`, `blockedBy`, the lenses it will get, acceptance checks, the laws and seams that apply, the test plan; stated as the convention the design agents read, with no enforcement claim. Review runs once per lane (D14).
 
 **Conventions.** camelCase JS, snake_case columns and JSON keys. Vanilla CSS; tokens in `client/src/styles/drb-tokens.css`; per-page CSS files allowed. Client API calls through `utils/api.js`; the error shape is `{message, code, fieldErrors, status}`. Header comments feed the generated docs. No ORM.
 
@@ -230,7 +248,7 @@ Gone from this file: the env table, the tech stack list, the reasoning-effort se
 
 ### 6.4 `docs/money-laws.md` (new, public, ids only)
 
-The money rules that today live only in memory glosses, so they load in every session from any launch directory: the retainer survives full payment; `acknowledged_total` is row truth and create-intent's total is a projection; a `?paid=true` load never renders money; the addon quantity column and `storedToInputCount`; off-ledger invoice labels; the stale-proposal sweep never adds `accepted`; the gratuity rules, verbatim from the current CLAUDE.md paragraph; the legal-hold proposal by id. Each with a pointer to the code and a provenance bracket. Tier A briefs on the gratuity files include the gratuity section. (fleet)
+The money rules that today live only in memory glosses, so they load in every session from any launch directory, and the money lens reads them before any verdict: the retainer survives full payment; `acknowledged_total` is row truth and create-intent's total is a projection; a `?paid=true` load never renders money; frozen rates beat the live catalog; the label partition and its five constant sets, and that a label is neither a semantic nor a key; the addon quantity column's shape per billing type and `storedToInputCount`; off-ledger invoice labels; the paid flag is `amount_paid` plus `external_paid` against `total_price`, never status or payment type; refund scope (allowance is headroom plus contract slack); the hosted 1:100 ratio; owner no-draw payouts; which pay period is now is `chicagoTodayYmd()`; the stale-proposal sweep never adds `accepted`; the gratuity rules, verbatim from the current CLAUDE.md paragraph; the legal-hold proposal by id. Each with a pointer to the code and a provenance bracket. (fleet; the table of contents: the lens audit)
 
 ### 6.5 Memory
 
@@ -254,11 +272,14 @@ The memory root for a session launched from `os` (`~/.claude/projects/-home-drba
 | `os/.claude/skills/review/` | new | section 3: computes the tier, generates the brief, dispatches, triages, writes the receipt directory |
 | `docs/dev.md` | new | how the servers and tests actually run (section 9); the Render rollback lever; the win-share clone |
 | `docs/money-laws.md` | new | section 6.4 |
-| `os/.claude/agents/security-review.md`, `database-review.md`, `consistency-check.md`, `code-review.md` | rewrite | brief-driven; verdict table; code-review graded against asyncHandler plus AppError; stale file names fixed; the CLAUDE.md folder-tree check removed |
+| `os/.claude/agents/money.md`, `lifecycle.md`, `concurrency.md`, `business-time.md`, `outcomes-providers.md`, `access-egress.md`, `seams.md`, `schema-data.md`, `client.md` | new, built from `lens-audit/` | the nine lenses of 3.2; brief-driven; verdict table with `escalate`; each check cites the defect ids behind it |
+| `os/.claude/agents/security-review.md`, `database-review.md`, `consistency-check.md`, `code-review.md`, `ui-ux-review.md` | cut, replaced by the nine | their live checks carried into the new files (the audit's keep list) |
 | `os/.claude/agents/verify.md` | new, `model: fable` | the tier A adversarial pass |
-| `os/.claude/agents/performance-review.md` | rewrite, explicit-only | |
-| `os/.claude/agents/ui-ux-review.md` | rewrite, absorbs the global reviewer | design-artifact adherence first, judged from the brief's captures |
-| `os/.claude/agents/spec-*.md`, `plan-*.md` | edit | the Windows line and the "no client tests" line removed; references point at the new CLAUDE.md sections by name |
+| `os/.claude/agents/performance-review.md` | rewrite, explicit-only | run on request when a public page or a list endpoint changes |
+| `scripts/static-checks.js` | new | the mechanical greps of 3.2; run by the review skill and the gate |
+| `os/.claude/agents/spec-*.md`, `plan-fidelity.md`, `plan-decomposition.md` | edit | the Windows line and the "no client tests" line removed; plans without code (D12); references point at the new CLAUDE.md sections by name |
+| `os/.claude/agents/plan-feasibility.md` | cut | its job was checking code in plans against the codebase; plans carry no code |
+| `os/.claude/skills/plan/` | new, after the flip | the lane-map format of D12; replaces writing-plans and subagent-driven-development (D15) |
 | `os/.claude/commands/review-spec.md`, `review-plan.md` | keep | |
 | `os/.claude/commands/full-audit.md` | edit | quarterly; adds the sensitive-list check |
 | `os/.claude/commands/codex-review.md`, `gemini-spec.md`, `review-before-deploy.md` | cut | |
@@ -303,7 +324,7 @@ Before the flip, with evidence: one docs-only push through the old path, after t
 Order for Phase 3, each file's plan shown to Dallas before it is written (his instruction):
 
 1. `~/.claude/CLAUDE.md`; the Windows-era memory prune and the link fixes; `docs/money-laws.md`; `docs/dev.md`; the `claudemd-invariants.txt` edit.
-2. The review skill with the brief template and the verify agent; the six code agents; the design agents; the commands; `testdb-smoke.js` takes its lock.
+2. The review skill with the brief template, `static-checks.js` and the verify agent; the nine lens agents built from `lens-audit/`; the design agents (feasibility retired); the commands; `testdb-smoke.js` takes its lock. The skill is usable by hand before merge-lane enforces it, so every lane from this step on gets the new review. Phase 3's own step plans are lane maps without code (D12).
 3. `push-gate.js` sha mode with the block marker; `post-ship-watch.js`; `ship.js`; the hooks; `board-write.sh` and `lane-status.js`; all dormant.
 4. `gen-docs.js` and `migrate-headers.js`; the `.env.example` port; README and ARCHITECTURE regenerated.
 5. `merge-lane.sh` rewrite; `server/index.js` release; the build filters and the docs-only evidence push; the sensitive-list additions; `os/.claude/CLAUDE.md` rewrite; the flip, then the push-era memory archive and the rehearsal ship.
@@ -325,3 +346,6 @@ Order for Phase 3, each file's plan shown to Dallas before it is written (his in
 - Whether `full-audit` gets a schedule or stays a manual quarterly.
 - The fate of `docs/walkthroughs-owed.md`.
 - Whether the Node 24/26 mismatch on the box is fixed in Phase 3 (nvm default) or only documented.
+- Closing a ledger entry by a commit that names it, so the ledger stops lagging git (the audit found dozens of entries open in the ledger and fixed in git, and the reverse). A later round.
+- A lighter audit of the design-stage agents against their own record (about half their recorded findings were plan hygiene); owed before they are edited beyond D12.
+- The prod findings in section 9 of the lens audit (unsubscribe, payout sync, client Sentry, the unique index, the commit with names in it) are Dallas's to place on the ledger; they are not on the rewrite's path.
