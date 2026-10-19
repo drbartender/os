@@ -28,7 +28,7 @@ Each decision names its source. "Dallas" means he said it in the brainstorm. "Cl
 - D8. **Rules may live in memory**, with the same provenance, and the memory index goes back to being an index. Pruned files move to an archive folder that is never loaded; nothing is deleted. The money laws move into the repo so they load in every session. (Dallas: "I think I'm ok with those things being in the memory." The archive and the money-laws doc are Claude's call; the doc: fleet.)
 - D9. **Phone numbers, narrowed.** Numbers of real people (clients, staff) never enter the repo, a board line, a spec, a commit message, or a diff sent to an external reviewer; the tooling masks them, and the board denylist's other shapes, before anything goes to codex or gemini. Fixtures and the business lines may be printed. The grep hygiene (file names and counts, not matching lines) stays because it costs nothing. (Dallas: "I'm really just worried about client and staff number." The narrowing is Claude's call.)
 - D10. **Phase 3 has a code half.** The merge path, the gate, the receipt, the doc generators and the post-ship watch are scripts. The new CLAUDE.md lands in the same commit as the tooling it describes, or says plainly what stands until the tooling ships. Never again a rule for tooling that does not exist. (Claude's call; the footprint rule is the cautionary example.)
-- D11. **The files that define "reviewed" and "sensitive" are themselves sensitive.** The review skill, the agents, the sensitive list and its matcher, the hooks, `.claude/settings.json`, the merge, ship, gate, watch and doc scripts, `render.yaml` and `client/vercel.json` are on the sensitive list from the flip commit on. "Docs-only" is a strict allowlist. (fleet)
+- D11. **The files that define "reviewed" and "sensitive" are themselves sensitive.** The review skill, the agents, the sensitive list and its matcher, the hooks, `.claude/settings.json`, the merge, ship, gate, watch and doc scripts and `client/vercel.json` are on the sensitive list from the flip commit on. "Docs-only" is a strict allowlist. (fleet)
 - D12. **Plans are lane maps without code.** A plan carries, per lane, the scope, the footprint, what blocks it, the lenses it will get, acceptance checks that can be run, the money laws and seams that apply, and the test plan. Code appears only where the code is the decision (a predicate, a constant). The audit's precision pass found about half of the design fleet's recorded findings were plan hygiene (wrong line anchors, invented harness shapes), review of a copy of the code that drifts before it is built. Phase 3's own step plans follow this format. (Claude's call; Dallas: "If you are saying they shouldn't then that makes sense to me.")
 - D13. **A bug-fix lane's receipt names the test that fails on the old code.** By file and count, read from the runner log. The record holds a fix closed on a grep that matched the wrong shape, nine suites that never connected to the database, tests billed as mutation-verified that stayed green with their condition deleted, and a day-boundary fix provable only by an evening-instant test. (Claude's call, from the audit.)
 - D14. **Review runs once per lane.** The per-task implementer-plus-two-reviewers ritual from subagent-driven-development is retired; the implementer self-reviews, the lane gets its lenses, the receipt records it. (Dallas, 2026-07-22: "you are running reviews too much"; made structural here.)
@@ -199,7 +199,7 @@ The fastest fix after a bad ship is `git revert <sha>`. A clean revert with no h
 
 ### 4.9 Docs-only pushes and build filters
 
-Specs, plans and board lines still commit to main the moment they exist (thinking lives on main) and now push immediately through `ship`; the gate skips both checks. So that a plan revision does not restart prod, `client/vercel.json` gains an `ignoreCommand` that exits 0 when the diff is docs-only (committed in the flip, under D10), and Render gets the same filter: in `render.yaml` as `buildFilter` if the service is Blueprint-managed, otherwise in the dashboard by Dallas's hand (open question, section 10). Before the flip, one docs-only push through the old path must show no deploy on either host; that evidence is a sequencing step (section 8). (fleet)
+Specs, plans and board lines still commit to main the moment they exist (thinking lives on main) and now push immediately through `ship`; the gate skips both checks. So that a plan revision does not restart prod, `client/vercel.json` gains an `ignoreCommand` that exits 0 when the diff is docs-only (committed in the flip, under D10), and Render gets the same filter in the dashboard, by Dallas's hand: the production service (`os`, created in the dashboard 2026-03-16) is not Blueprint-managed. It differs from `render.yaml` in name, start command and health check path, so the yaml was never applied; it is cut (section 7) and the service's real settings are recorded in `docs/dev.md`. (Resolved 2026-10-19 through the Render CLI.) Before the flip, one docs-only push through the old path must show no deploy on either host; that evidence is a sequencing step (section 8). (fleet)
 
 ## 5. Docs from code
 
@@ -301,7 +301,7 @@ The memory root for a session launched from `os` (`~/.claude/projects/-home-drba
 | `.husky/pre-push` | edit | validates the sha receipt and the review receipts over the range; refuses without them; never runs the gate itself |
 | `server/index.js` | edit, sensitive | `/api/health` returns `release`; `Sentry.init` sets `release` |
 | `client/vercel.json` | edit | `ignoreCommand` for docs-only ranges |
-| `render.yaml` | edit if Blueprint-managed | `buildFilter` for docs-only ranges |
+| `render.yaml` | cut | never applied: the live service was created in the dashboard and does not match it; its settings move to `docs/dev.md` |
 | `README.md` | regenerate and trim | generated tree, scripts, env; prose per 5.2 |
 | `ARCHITECTURE.md` | regenerate and trim | generated routes, schema index; prose per 5.2 |
 | `.env.example` | edit | every row of the two deleted tables ported as comments |
@@ -320,6 +320,8 @@ Until `merge-lane.sh ship` is live, the current push rules stand: pushes are cue
 Dormancy (fleet): `ship` and the new hook refuse unless a marker file in the common git dir says the flip has landed, so a tool that exists before step 5 cannot push without a cue. The agents keep their current "How to start" until the skill lands beside them in step 2.
 
 Before the flip, with evidence: one docs-only push through the old path, after the build filters are in place, showing no deploy on Render or Vercel. In-flight lanes at the flip (today: `beer-picks`) get a receipt by running the review skill by hand before their merge. The first unattended ship after the flip is a trivial commit with Dallas watching; `merge-lane.sh` and `ship` carry a `--no-push` dry run for the rehearsal. (fleet)
+
+Before the flip, by Dallas's hand, in the Render dashboard for the `os` service: the build filter that ignores docs-only paths (4.9), and the Health Check Path set to `/api/health`, which is empty today, so Render cuts a deploy over without checking that the app answers (the post-ship watch in 3.8 needs it too). The Vercel half is committed.
 
 Order for Phase 3, each file's plan shown to Dallas before it is written (his instruction):
 
@@ -342,7 +344,6 @@ Order for Phase 3, each file's plan shown to Dallas before it is written (his in
 
 ## 10. Open questions
 
-- Is the Render service managed by the `render.yaml` Blueprint? If yes, `buildFilter` lands in the repo; if not, the filter is a dashboard step by Dallas's hand. (Dallas.)
 - Whether `full-audit` gets a schedule or stays a manual quarterly.
 - The fate of `docs/walkthroughs-owed.md`.
 - Whether the Node 24/26 mismatch on the box is fixed in Phase 3 (nvm default) or only documented.
