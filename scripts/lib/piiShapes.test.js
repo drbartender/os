@@ -659,6 +659,20 @@ test('the business lines come from the registries exports, never their comments'
   assert.deepStrictEqual(readBusinessLines(root).sort(), ['1002003000', '1002003001', '1002003002']);
 });
 
+// A registry that fails to load allowlists nothing, and says so: the failure is
+// recorded, never swallowed, so the CLI can print it and a reviewer can see why
+// a business line masked.
+test('a registry that fails to load is recorded, not swallowed', () => {
+  const { readBusinessLines, registryLoadNotes } = require(MOD);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-registry-missing-'));
+  const before = registryLoadNotes().length;
+  assert.deepStrictEqual(readBusinessLines(root), []);
+  const notes = registryLoadNotes().slice(before);
+  assert.strictEqual(notes.length, 2, notes.join('; '));
+  assert.ok(notes.every((n) => /companyPhone\.js|smsLines\.js/.test(n) && /MODULE_NOT_FOUND|Cannot find/.test(n)), notes.join('; '));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 function scratchRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-find-'));
   const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });

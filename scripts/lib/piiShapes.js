@@ -230,6 +230,13 @@ const BLOCK_WORDS = Object.freeze({
 // smsLines.js's LINE_KEYS. Never scraped from the source text, so a number
 // named in a comment is never allowlisted. A registry that fails to load
 // allowlists nothing (more is masked, never less).
+// Every registry that failed to load, as one line each (file and error code), so
+// the CLI can print why a business line masked instead of swallowing the cause.
+const REGISTRY_NOTES = [];
+function registryLoadNotes() {
+  return REGISTRY_NOTES.slice();
+}
+
 function readBusinessLines(root = REPO_ROOT) {
   const lines = new Set();
   const add = (v) => {
@@ -239,7 +246,8 @@ function readBusinessLines(root = REPO_ROOT) {
   const load = (rel) => {
     try {
       return require(path.join(root, rel));
-    } catch {
+    } catch (err) {
+      REGISTRY_NOTES.push(`${rel} did not load (${(err && err.code) || (err && err.message) || err}); nothing from it is allowlisted`);
       return {};
     }
   };
@@ -251,8 +259,8 @@ function readBusinessLines(root = REPO_ROOT) {
     for (const key of sms.LINE_KEYS) {
       try {
         add(sms.lineE164(key));
-      } catch {
-        // an unreadable line allowlists nothing
+      } catch (err) {
+        REGISTRY_NOTES.push(`smsLines.js line ${key} did not resolve (${(err && err.message) || err}); it is not allowlisted`);
       }
     }
   }
@@ -694,7 +702,7 @@ function findInDiff(diffText) {
   return hits;
 }
 
-module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathAllowed, pathClass, readBusinessLines };
+module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathAllowed, pathClass, readBusinessLines, registryLoadNotes };
 
 // ---- CLI --------------------------------------------------------------------
 // Plain output only: no color codes, no external diff driver, no textconv
@@ -719,6 +727,7 @@ function resolveCommit(ref) {
 //   --find --staged              same over the staged diff
 if (require.main === module) {
   const args = process.argv.slice(2);
+  for (const note of registryLoadNotes()) process.stderr.write(`piiShapes: ${note}\n`);
   const readStdin = () => fs.readFileSync(0, 'utf8');
   if (args[0] === '--check') {
     const hits = findPii(args.slice(1).join(' '), { strict: true });
