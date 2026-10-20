@@ -2,6 +2,7 @@
 spec: docs/superpowers/specs/2026-10-19-instruction-rewrite-design.md   # rev 6; this plan is Phase 3 step 1 of section 8
 format: lane map without code (spec D12)
 revision: 2 (2026-10-20; the plan fleet's fidelity and decomposition findings folded)
+status: approved by Dallas 2026-10-20; execute natively in one session, lanes in the order below, the acceptance checks are the review (no per-task reviewers, spec D14)
 lanes:
   - id: step1-docs
     scope: docs/money-laws.md, docs/dev.md, AGENTS.md, the retire-and-move half of scripts/claudemd-invariants.txt, and the render.yaml cut, on a worktree lane merged through merge-lane.sh under the current (pre-flip) rules
@@ -56,6 +57,8 @@ lanes:
 - Files outside git get a `.bak-20261020` copy before the first edit, with `sha256sum` recorded before the copy and `cmp` run after; nothing under `~/.claude` is deleted; archived memory files move to `memory/_archive/`.
 - Nothing is pushed. Pushes are cue-only until the flip (section 8). The repo lane merges through `scripts/merge-lane.sh` from `os` on main.
 - Thinking on main: this plan commits to main before the lane is cut.
+- Other windows may be live: another session pushed and edited `MEMORY.md` on 2026-10-20 while this plan was written. Before global-rules and memory-prune, check for other running sessions (`pgrep -af 'claude' | grep -v $`, and ask Dallas if unsure) and run those two lanes only when no other session is active; re-read every memory file immediately before editing it and never write from a copy read earlier. step1-docs runs in its own worktree and is safe beside other windows; `merge-lane.sh` refuses a dirty `os` tree, so wait rather than stash.
+- Session launch: this plan's work does not depend on the project's agents being registered (the verify pass inlines the agent file), so the executing session may be launched from the home folder as today or through `drb` once global-rules has landed.
 
 ## Review focus
 
@@ -167,6 +170,10 @@ The email-over-SMS preference stays in memory (D8); it is not in spec 6.2 and is
 7. `MEMORY.md` matches none of `[0-9a-f]{8}`, `unpushed`, `merged`, `pushed`, `\bnext\b`, `\bowed\b` (case-insensitive); the money-law section is one pointer line; the line count is at most 80.
 8. `test -L ~/.claude/projects/-home-drbartender-projects-os/memory` passes with the main memory directory as its target, and `ls _archive/` lists the four `os-launch-` files.
 9. A fresh session launched through `drb` reports the first line of its memory index when asked, and it is the new index's first line.
+
+## Report back
+
+When the three lanes are done, reply to Dallas with one line per lane (what landed, where the report file is) and the paths of the two `.bak` files and the memory backup. Report any check that did not pass as a failure with its output; never as "done with caveats". Nothing is pushed; say so.
 
 ## Test plan
 
