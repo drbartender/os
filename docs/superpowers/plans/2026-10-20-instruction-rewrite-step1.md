@@ -88,7 +88,7 @@ The five ways this step bites if done carelessly, each pinned to an acceptance c
 **Acceptance checks**
 
 1. `~/.claude/CLAUDE.md.bak-20261020` exists and is byte-identical to the file before the edit.
-2. The new file is at most 45 lines; every rule line ends with a `]`; `grep -c '—'` is 0.
+2. The new file is at most 45 lines; every rule line ends with a `]`; the file contains no em dash character.
 3. The memory rule and the rules the rev 1 file carried (review standing, no compaction) survive verbatim in meaning: a reviewer reads old and new side by side and lists any rule dropped; the list must be empty.
 4. `drb --help` prints the claude help from `~/projects/os`; `drb invoice-step --help` prints it from that worktree, and `readlink ~/.claude/projects/-home-drbartender-projects-worktrees-invoice-step/memory` resolves to the main memory directory.
 5. `drb nope` exits non-zero with a one-line message naming the missing worktree.
