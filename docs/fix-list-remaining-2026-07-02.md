@@ -1638,6 +1638,35 @@ the accented spelling) or the two spellings stop matching each other.
   logo, its own selections key, read by the generator as the default reference image. Deferred out
   of the generator's v1 by Dallas to keep client-facing planner changes out of that lane.
 
+- **Menu designer v2, Dallas's notes from first use (2026-10-19).** The desktop designer shipped
+  2026-10-17 (lanes 1 to 5 of `docs/superpowers/plans/2026-10-01-menu-art-generator.md`). His six
+  asks, roughly cheapest first; each needs a short brainstorm before a spec:
+  1. **Mark placement:** left, center or right for the Dr. Bartender mark (today it is fixed bottom
+     right; with the Panel backing it sits at right 68 / bottom 64). A `content.mark_position`
+     field, a three-way picker beside the mark switch on the Design tab, and the layout and export
+     honoring it.
+  2. **More font choices:** keep the words step's suggested pairing, but let him pick fonts beyond
+     the fixed pairings (`menuFontPairings.js` / `fontPairings.js`). Decide: more pairings, or
+     separate heading and body pickers; every face must still load before Approve (Review Focus 4).
+  3. **Planner data on the Brief tab:** the tab shows only theme, naming and design notes, so a
+     client who picked a house menu (event 608, plan 103: menu style house, consult-sourced, all
+     three fields empty) reads "None" though the plan holds their drinks, bar picks and notes. Show
+     the planner's own picks and notes as read-only reference, and say when the menu drinks come
+     from the consult side instead (decision 8).
+  4. **Theme and drinks from a call consult:** a client who gave the brief by phone has nowhere to
+     record it. The consult form carries drinks but no theme, naming or design notes (spec section
+     2). Add the three brief fields to the consult form (consult_selections), or let Dallas type
+     them on the Brief tab as an admin brief that the words step reads before the client's.
+  5. **Event-type templates:** when the brief is thin, start from a per-event-type preset (wedding,
+     corporate, birthday...): a default art direction, pairing, palette and background idea, chosen
+     with `getEventTypeLabel` and editable before Generate.
+  6. **Move and resize elements:** the composition is sometimes unbalanced. Today the layout is
+     computed (`layouts.js`, the spec 11.2 fit rule) and the export must match the preview pixel
+     for pixel (11.3). Free drag and resize means stored per-element offsets and scales in content,
+     the fit rule and Too long reworked around them, and export parity re-proven; the biggest of
+     the six. A cheaper first step: nudge controls (art size, vertical spacing, title size) on the
+     Design tab.
+
 ---
 
 ## Staff, shifts, and the roster
