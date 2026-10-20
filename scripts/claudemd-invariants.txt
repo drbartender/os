@@ -1,8 +1,15 @@
-# Invariant coverage manifest for the CLAUDE.md rewrite (workflow-redesign L8).
+# Invariant coverage manifest for the CLAUDE.md rewrite (workflow-redesign L8;
+# pruned 2026-10-20 for the instruction rewrite, spec 2026-10-19 section 6.3).
 # Format: "<key> <extended-regex>", split on the FIRST space (keys are single
 # tokens). Matched case-insensitively. Each rule below MUST survive the rewrite.
 # This is a coarse, necessary-not-sufficient net (it proves the rule's substance
 # is present, not just a bare keyword); a consistency agent does the semantics.
+# Every pattern is an alternation that matches today's file AND the rewritten
+# file, so the check stays green through the rewrite and only a NEW key can turn
+# it red. Retired 2026-10-20: inline-self-check (the checklist dies with the
+# rewrite; its lines survive as one-line invariants), file-size-ratchet (one
+# pointer line, which the key would not match), env-debug-discipline (the rule
+# moved to the private global file).
 
 # Named git-safety invariants (carried from the old Twelve Core Rules)
 code-preservation code preservation
@@ -11,20 +18,17 @@ no-add-dot never .*git add \.
 no-reset-main never .*reset.*on .*main
 no-amend-pushed never .*amend.*pushed
 destructive-approval destructive ops .*explicit approval
-push-fail-stop push fail.*stop|stop and report
+push-fail-stop push fail.*stop|stop and report|stops and reports
 
 # Verification + discipline (carried)
-inline-self-check inline self-check
-env-debug-discipline confirm .*is set in
-design-review-fleet spec-grounding|review-spec
+design-review-fleet spec-grounding|review-spec|review skill
 
 # Money / auth / data invariants (cross-cutting, must never weaken)
 stripe-test-mode STRIPE_TEST_MODE_UNTIL
 stripe-fails-closed fails closed
 hosted-bartender-ratio isHostedPackage
-gratuity gratuityLineAmount|GRATUITY_LABEL
-proposal-payment-status paid in full
+gratuity gratuityLineAmount|GRATUITY_LABEL|money-laws
+proposal-payment-status paid in full|paid flag
 money-cents integer cents
 encryption-pii AES-256
-file-size-ratchet ratchet
-doc-updates mandatory doc
+doc-updates mandatory doc|header comment

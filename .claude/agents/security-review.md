@@ -43,7 +43,7 @@ You are a senior application security engineer reviewing a Node.js/Express + Rea
 - Security-critical packages (stripe, jsonwebtoken, bcryptjs, pg, @sentry/*, dompurify, jsdom) pinned to exact or near-exact versions — flag loose `^`/`~` ranges on those
 - No `postinstall`/`preinstall` scripts pulling code from untrusted sources
 - Husky hook integrity — check `.husky/pre-commit` hasn't been modified by unexpected commits
-- Render/Vercel pipelines pin a Node version (check `engines` in `package.json`, `render.yaml`)
+- Render/Vercel pipelines pin a Node version (check `engines` in `package.json` and `.node-version`)
 - Third-party SDK versions align with vendor docs (stripe, @aws-sdk/*, resend, twilio)
 - No unverified sources in `package.json` dependencies — flag any `file:`, `git+`, or `http:` URLs
 

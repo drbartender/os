@@ -2315,7 +2315,7 @@ Self-hostable open-source scheduling platform. drb-os receives Cal.com webhooks 
                                        └──────────────────────────┘
 ```
 
-- **Backend**: Render web service, auto-deploys from `main`. `render.yaml` defines the blueprint. Schema auto-runs on startup.
+- **Backend**: Render web service (`os`), auto-deploys from `main`; created in the dashboard, not from a Blueprint (settings in `docs/dev.md`). Schema auto-runs on startup.
 - **Frontend**: Vercel static site. `vercel.json` rewrites all paths to `index.html` for client-side routing. `REACT_APP_API_URL` set at build time.
 - **Database**: Render-managed PostgreSQL. Schema initialization is idempotent — `schema.sql` uses `IF NOT EXISTS` and `ADD COLUMN IF NOT EXISTS` throughout.
 - **No manual deploy step**: push to `main` triggers both Render and Vercel builds automatically.

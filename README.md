@@ -831,7 +831,7 @@ dr-bartender/
 ├── .env.example                # Environment variable template
 ├── eslint.config.mjs           # ESLint flat config + security plugin
 ├── package.json                # Server deps + npm scripts
-└── render.yaml                 # Render deployment blueprint
+└── AGENTS.md                   # Pointers for an external agent: docs/money-laws.md, docs/dev.md, .claude/CLAUDE.md
 ```
 
 ## NPM Scripts
@@ -1082,7 +1082,7 @@ dr-bartender/
 ## Deployment
 
 ### Backend — Render
-The `render.yaml` blueprint defines the web service and PostgreSQL database. Push to `main` auto-deploys.
+The production service (`os`) was created in the Render dashboard and is not Blueprint-managed; its real settings and the rollback lever are recorded in `docs/dev.md`. Push to `main` auto-deploys.
 
 ### Frontend — Vercel
 The React app is deployed separately on Vercel. `client/vercel.json` handles SPA routing. The build-time `REACT_APP_API_URL` points to the Render backend.

@@ -41,7 +41,7 @@ You are a consistency checker for a Node.js/Express + React application with Pos
 
 **If environment variables were added:**
 - Is it in `.env.example`?
-- Is it referenced in deployment config (`render.yaml`)?
+- Is it referenced in deployment config (`.env.example`, the Render settings recorded in `docs/dev.md`)?
 
 **If any new file was added or removed:**
 - Is it listed in the folder structure in `.claude/CLAUDE.md`?

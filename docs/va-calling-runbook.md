@@ -82,7 +82,7 @@ Do it in order; the bootstrap and webhook steps have a required sequence.
 
 - `VA_CELL` is strict E.164 (`+63…`) and is NEVER run through `normalizePhone`.
 - Never commit `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
-  `TELEGRAM_ALLOWED_USER_ID`, or `VA_CELL` — all are `sync: false` in `render.yaml`.
+  `TELEGRAM_ALLOWED_USER_ID`, or `VA_CELL` — all are set by hand in the Render dashboard, never in the repo.
 - Dev testing needs a public HTTPS URL for `setWebhook` (ngrok/cloudflared to
   `:5000`) or test against prod with care. Privileged actions never run on a dev
   signature-skip path.
