@@ -1677,7 +1677,11 @@ the accented spelling) or the two spellings stop matching each other.
      not answer. The client sees a FROZEN PROOF (Dallas, 2026-10-19): Send to client renders the
      draft at that moment to an image (the print export plus a light "PROOF" band) stamped with the
      draft version; later edits never change what the client is reviewing, and the card says when
-     they saw an older version. Still open: what a change request carries and where a reply lands.
+     they saw an older version. Delivery: email through Resend, with the link also copyable from
+     the card. The client answers "Looks great" or "Request changes" with one free-text box. A
+     change request becomes an Inbox item waiting on Dallas (Dallas, 2026-10-19: "so we don't miss
+     any feedback") and also shows on the Bar menu card and in the activity log; "Looks great"
+     updates the card and the log and closes quietly, no Inbox item.
 
 ---
 
