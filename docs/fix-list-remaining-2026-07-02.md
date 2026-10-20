@@ -1674,7 +1674,10 @@ the accented spelling) or the two spellings stop matching each other.
      activity log. Decided (Dallas, 2026-10-19): the client sees the DRAFT, before Dallas's print
      Approve, so staff never print something the client is still reviewing; and the client's answer
      never gates the print slot: Dallas can Approve for print with no reply, since clients often do
-     not answer. Still open: what exactly the client sees and what a change request carries.
+     not answer. The client sees a FROZEN PROOF (Dallas, 2026-10-19): Send to client renders the
+     draft at that moment to an image (the print export plus a light "PROOF" band) stamped with the
+     draft version; later edits never change what the client is reviewing, and the card says when
+     they saw an older version. Still open: what a change request carries and where a reply lands.
 
 ---
 
