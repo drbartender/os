@@ -155,7 +155,9 @@ const FORMS = Object.freeze([
   // UUID: the public-link tokens (proposals, invoices, drink plans, voicemail)
   // are the auth for those pages. The v1-v8 form, either case. Its edges are
   // "no hex digit beside it", not \b, so proposal_<uuid>.pdf masks.
-  { shape: 'UUID', name: 'uuid', re: /(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])/g },
+  // The nil UUID is matched so the digits inside it never read as a phone, and
+  // allowed everywhere as a fixture (literalAllowed).
+  { shape: 'UUID', name: 'uuid', re: /(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|00000000-0000-0000-0000-000000000000)(?![0-9A-Fa-f])/g },
   // STRIPE_ID: the id family, anchored at a word boundary, an optional live or
   // test segment, then 8 or more id characters holding a digit, or 14 or more
   // letters holding an uppercase one. An all-lowercase snake_case word
@@ -188,6 +190,14 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const TEST_PATHS = Object.freeze(['**/*.test.js', 'server/db/seedTestData.js']);
 const REGISTRY_PATHS = Object.freeze(['server/utils/smsLines.js', 'server/utils/companyPhone.js']);
+
+// Every registry that failed to load, as one line each (file and error code), so
+// the CLI can print why a business line masked instead of swallowing the cause. Declared
+// before the allowlist below, which fills it at load.
+const REGISTRY_NOTES = [];
+function registryLoadNotes() {
+  return REGISTRY_NOTES.slice();
+}
 
 const ALLOWLIST = Object.freeze({
   // by path (repo-relative, forward slashes); globs: ** crosses slashes, * does not
@@ -230,13 +240,6 @@ const BLOCK_WORDS = Object.freeze({
 // smsLines.js's LINE_KEYS. Never scraped from the source text, so a number
 // named in a comment is never allowlisted. A registry that fails to load
 // allowlists nothing (more is masked, never less).
-// Every registry that failed to load, as one line each (file and error code), so
-// the CLI can print why a business line masked instead of swallowing the cause.
-const REGISTRY_NOTES = [];
-function registryLoadNotes() {
-  return REGISTRY_NOTES.slice();
-}
-
 function readBusinessLines(root = REPO_ROOT) {
   const lines = new Set();
   const add = (v) => {
@@ -360,8 +363,11 @@ function registryAllowed(hit) {
 function literalAllowed({ shape, match, domain }) {
   if (shape === 'PHONE') return isFixturePhone(match) || isBusinessLine(match);
   if (shape === 'EMAIL') return onDomain(domain, ALLOWLIST.emailDomains);
+  if (shape === 'UUID') return match === NIL_UUID;
   return false;
 }
+
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 // Email hits are found per at sign, so two addresses glued together (a
 // URL-encoded one in front of a business one) each yield their own hit: the

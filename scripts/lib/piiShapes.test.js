@@ -243,6 +243,27 @@ test('a three-part JWT is masked whole, signature included', () => {
   assert.strictEqual(mask(`auth ${jwt}`, { path: 'docs/x.md' }), 'auth <TOKEN>');
 });
 
+// The module must load in a checkout whose registries fail to load (the notes are
+// recorded, never thrown): the notes array is declared before the allowlist that
+// fills it at load. Proven by requiring a copy of the module from a bare tree.
+test('the module loads when the registries are missing, and records the notes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-bare-'));
+  fs.mkdirSync(path.join(root, 'scripts', 'lib'), { recursive: true });
+  fs.copyFileSync(MOD, path.join(root, 'scripts/lib/piiShapes.js'));
+  const r = spawnSync(process.execPath, ['-e', `const m = require(process.argv[1]); process.stdout.write(JSON.stringify(m.registryLoadNotes()));`, path.join(root, 'scripts/lib/piiShapes.js')], { encoding: 'utf8' });
+  fs.rmSync(root, { recursive: true, force: true });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(JSON.parse(r.stdout).length, 2, r.stdout);
+});
+
+// The nil UUID is a fixture, never a token: its all-zero digits are not a phone
+// number either, so a doc that names it reads clean.
+test('the nil UUID is a fixture everywhere', () => {
+  const nil = '00000000-0000-0000-0000-000000000000';
+  assert.deepStrictEqual(findPii(`threadHasToken('${nil}')`, { path: 'docs/x.md' }), []);
+  assert.deepStrictEqual(findPii(`token ${nil}`, { path: ROUTE }), []);
+});
+
 test('a UUID is masked as a public-link token outside test paths', () => {
   const uuid = '3f2a1c9e-8b7d-4e6f-a5b4-c3d2e1f0a9b8';
   assert.strictEqual(mask(`/proposal/${uuid}/pay`, { path: ROUTE }), '/proposal/<UUID>/pay');
