@@ -1671,8 +1671,10 @@ the accented spelling) or the two spellings stop matching each other.
      menu to the client, who approves it or asks for changes. Spec section 1 put "any client-facing
      view of a draft" out of scope, so this is new scope and a client-facing surface: token link
      page, email through Resend (email over SMS), the client's answer back on the card and in the
-     activity log. Open questions for the brainstorm: before or after Dallas's own Approve, what a
-     change request carries, and whether a client approval gates the print slot.
+     activity log. Decided (Dallas, 2026-10-19): the client sees the DRAFT, before Dallas's print
+     Approve, so staff never print something the client is still reviewing; and the client's answer
+     never gates the print slot: Dallas can Approve for print with no reply, since clients often do
+     not answer. Still open: what exactly the client sees and what a change request carries.
 
 ---
 
