@@ -2,7 +2,7 @@
 spec: docs/superpowers/specs/2026-10-19-instruction-rewrite-design.md   # rev 6; this plan is Phase 3 step 2 of section 8
 format: lane map without code (spec D12)
 revision: 2 (2026-10-20; the plan fleet's fidelity and decomposition findings folded, see "What the plan fleet changed")
-status: draft, awaiting Dallas (his instruction: each step's plan is shown before the step is built); execute natively, lanes in the order below, each lane window opened through drb <lane>, the acceptance checks are the review (no per-task reviewers, spec D14)
+status: approved by Dallas 2026-10-20 ("Go"); execute natively, lanes in the order below, each lane window opened through drb <lane>, the acceptance checks are the review (no per-task reviewers, spec D14)
 lanes:
   - id: pii-shapes
     scope: the one shared PII shape module and allowlist (spec 3.3, 3.10); the board writer reads it; the second-opinion mask reads it after the merge
