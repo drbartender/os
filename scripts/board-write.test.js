@@ -108,6 +108,56 @@ test('denylist --check is a discrete step', () => {
   assert.notStrictEqual(dirty.status, 0);
 });
 
+test('denylist blocks a routing or tax id shape (the shared module adds it)', () => {
+  const res = run(process.cwd(), ['--check', 'bank routing 123456789 on file']);
+  assert.notStrictEqual(res.status, 0);
+  assert.match(res.stderr, /BLOCKED/);
+  const ein = run(process.cwd(), ['--check', 'EIN 12-3456789 for the 1099']);
+  assert.notStrictEqual(ein.status, 0);
+});
+
+test('denylist blocks an SSN and a routing number beside its field name', () => {
+  for (const line of ['W9 lane, SSN 123-45-6789 on the form', 'routing_number 123456789 in the payload']) {
+    const res = run(process.cwd(), ['--check', line]);
+    assert.notStrictEqual(res.status, 0, line.slice(0, 10));
+    assert.match(res.stderr, /BLOCKED/);
+  }
+});
+
+test('denylist does not block snake_case identifiers (the Stripe shape is anchored)', () => {
+  for (const line of ['files_in_diff is a receipt field', 'min_total and share_cents in payroll', 'status in_progress']) {
+    assert.strictEqual(run(process.cwd(), ['--check', line]).status, 0, line);
+  }
+});
+
+test('denylist blocks a provider key and a UUID link token (the shared module adds them)', () => {
+  // built from parts so no secret-shaped literal sits in the source
+  const gh = 'gh' + 'p_' + 'Q7xZ'.repeat(9);
+  for (const line of [`rotate ${gh} today`, 'link /proposal/3f2a1c9e-8b7d-4e6f-a5b4-c3d2e1f0a9b8']) {
+    const res = run(process.cwd(), ['--check', line]);
+    assert.notStrictEqual(res.status, 0, line.slice(0, 12));
+    assert.match(res.stderr, /BLOCKED/);
+  }
+});
+
+test('denylist does not block a deep repo path (a slash run is a path, not a token)', () => {
+  const line = 'fix list (docs/superpowers/specs/lens-audit/checks/money2seam/alpha/beta/gamma/delta.md)';
+  const res = run(process.cwd(), ['--check', line]);
+  assert.strictEqual(res.status, 0, res.stderr);
+});
+
+test('denylist does not block identifiers that merely contain sk_', () => {
+  for (const line of ['mask_diff lane (spec, plan)', 'task_list and risk_score fields']) {
+    assert.strictEqual(run(process.cwd(), ['--check', line]).status, 0, line);
+  }
+});
+
+test('denylist is strict: a business line is still noise on the board', () => {
+  const { COMPANY_TEXT_PHONE } = require(path.resolve(__dirname, '../server/utils/companyPhone.js'));
+  const res = run(process.cwd(), ['--check', `text the line ${COMPANY_TEXT_PHONE}`]);
+  assert.notStrictEqual(res.status, 0);
+});
+
 test('a clean board line is accepted and written', () => {
   const { work } = makeRepoWithRemote();
   const line = 'Workflow redesign L3 (docs/.../spec.md, docs/.../plan.md)';
@@ -185,7 +235,7 @@ test('the board IS pushed when its commit is the only thing unpushed', () => {
   const res = run(work, ['Ready to build', line]);
   assert.strictEqual(res.status, 0, res.stderr);
   assert.ok(remoteBoard(remote).includes(line),
-    'with nothing else riding, the board must still reach origin — otherwise the guard has simply disabled pushing');
+    'with nothing else riding, the board must still reach origin, otherwise the guard has simply disabled pushing');
 });
 
 test('an unrelated unpushed commit is NEVER deployed by a board write', () => {
@@ -199,7 +249,7 @@ test('an unrelated unpushed commit is NEVER deployed by a board write', () => {
   const line = 'Guard negative control (spec, plan)';
   const res = run(work, ['In flight', line]);
 
-  // The board write itself SUCCEEDS — the work is done, only the push defers.
+  // The board write itself SUCCEEDS: the work is done, only the push defers.
   assert.strictEqual(res.status, 0, res.stderr);
   assert.ok(boardText(work).includes(line), 'the board is still written locally');
   assert.match(res.stderr, /not pushed/i, 'it must say plainly that it did not push');
@@ -209,5 +259,5 @@ test('an unrelated unpushed commit is NEVER deployed by a board write', () => {
   assert.ok(!pushed.includes(line), 'the board line must NOT have reached origin');
   const remoteFiles = execFileSync('git', ['ls-tree', '--name-only', 'main'], { cwd: remote, encoding: 'utf8' });
   assert.ok(!remoteFiles.includes('shipped-code.js'),
-    'the unrelated commit must NOT have been deployed — this is the bug the guard exists for');
+    'the unrelated commit must NOT have been deployed: this is the bug the guard exists for');
 });

@@ -8,15 +8,15 @@ set -euo pipefail
 # rename write, git commit, then a GUARDED git push. The push is fast-forward
 # only (git rejects a non-fast-forward by default and --force is never passed),
 # and it is SKIPPED ENTIRELY unless the board commit is the only unpushed commit
-# on main — see the guard before it, and why. On a rejected push (another window
+# on main (see the guard before it, and why). On a rejected push (another window
 # won the race) it retries the whole loop a bounded number of times, rebasing
 # each pass so both lines survive, then escalates. It never force-pushes, never
 # pushes anyone else's work, and never loops forever.
 #
 # Before any write it enforces a DENYLIST: the board carries titles and
-# paths only, so a line that looks like an email, a phone number, a
-# bearer-style token, or a Stripe id family member is rejected outright
-# (non-zero, clear message, no write).
+# paths only, so a line that matches any shape in scripts/lib/piiShapes.js
+# (an email, a phone number, a token or key, a UUID, a Stripe id, an SSN, a
+# routing or tax id) is rejected outright (non-zero, clear message, no write).
 #
 # It operates on the current working directory's repo, so tests can run it
 # against a throwaway repo + local bare remote.
@@ -37,32 +37,12 @@ MAX_RETRIES=5
 # Patterns are deliberately broad: the board must never record PII or ids.
 denylist_check() {
   local content="$1"
-
-  # Email addresses.
-  if printf '%s' "$content" | grep -Eqi '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'; then
-    echo "BLOCKED: line looks like it contains an email address. The board carries titles and paths only." >&2
-    return 1
-  fi
-
-  # Phone numbers (US-ish: optional +, 10+ digits with common separators).
-  if printf '%s' "$content" | grep -Eq '(\+?[0-9]{1,3}[ .-]?)?\(?[0-9]{3}\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}'; then
-    echo "BLOCKED: line looks like it contains a phone number. The board carries titles and paths only." >&2
-    return 1
-  fi
-
-  # Bearer-style / long opaque tokens (e.g. JWT-ish or 20+ char secrets).
-  if printf '%s' "$content" | grep -Eq '(Bearer[ ]+[A-Za-z0-9._-]+|[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|sk_[A-Za-z0-9]+|[A-Fa-f0-9]{32,})'; then
-    echo "BLOCKED: line looks like it contains a token or secret. The board carries titles and paths only." >&2
-    return 1
-  fi
-
-  # Stripe id family (generic, matches the spec's regex).
-  if printf '%s' "$content" | grep -Eq '(pi|cus|ch|re|evt|in|sub|cs|seti|pm)_[A-Za-z0-9]+'; then
-    echo "BLOCKED: line looks like it contains a Stripe id. The board carries titles and paths only." >&2
-    return 1
-  fi
-
-  return 0
+  # The shapes live in ONE module shared with the static pre-step and the
+  # second-opinion mask (scripts/lib/piiShapes.js, instruction rewrite step 2).
+  # --check is the strict mode: every shape blocks, the business lines included,
+  # because the board carries titles and paths only. It prints the BLOCKED line
+  # to stderr itself and exits 1 on a hit, 0 when clean.
+  node "$(dirname "$0")/lib/piiShapes.js" --check "$content"
 }
 
 # --- Atomic write -----------------------------------------------------------
@@ -151,7 +131,7 @@ main() {
 
     # REFUSE TO PUSH SOMEBODY ELSE'S WORK. `git push origin main` is a BRANCH
     # push: it ships EVERY unpushed commit on main, not just the board commit we
-    # made a line ago. That is not theoretical — on 2026-08-14 it came within a
+    # made a line ago. That is not theoretical: on 2026-08-14 it came within a
     # keystroke of deploying 49 uncued commits, and on 2026-08-19 it would have
     # shipped five code files from a freshly merged lane, in both cases bypassing
     # the push cue, the gate receipt and the review fleet. A board line is never
@@ -160,7 +140,7 @@ main() {
     # The pull --rebase above just refreshed origin/main, so exactly ONE commit
     # between origin/main and HEAD means ours is the only thing riding. Anything
     # else and we keep the board commit local: it rides the next real push, which
-    # loses nothing. Fail CLOSED — if the count cannot be determined, do not push.
+    # loses nothing. Fail CLOSED: if the count cannot be determined, do not push.
     local riding
     riding=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "")
     if [ -z "$riding" ] || [ "$riding" -ne 1 ]; then
