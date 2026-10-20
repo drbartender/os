@@ -197,7 +197,7 @@ test('tier: per-file tiers, the union of floors, the label order A, hinge, B, C,
 });
 
 test('HINGE_PATHS carries the D11 set', () => {
-  for (const p of ['scripts/merge-lane.sh', 'scripts/ship.js', 'scripts/push-gate.js', 'scripts/lib/receipt.js', '.husky/pre-push', 'package.json', 'client/package-lock.json', '.node-version', 'eslint.config.mjs', '.gitignore', 'docs/money-laws.md', 'docs/runbooks/x.md', 'AGENTS.md', 'client/vercel.json', '.claude/settings.json', 'scripts/sensitive-paths.txt', 'scripts/static-checks.js', '.claude/skills/review/SKILL.md', '.claude/agents/money.md']) {
+  for (const p of ['scripts/merge-lane.sh', 'scripts/ship.js', 'scripts/push-gate.js', 'scripts/lib/receipt.js', '.husky/pre-push', 'package.json', 'client/package-lock.json', '.node-version', 'eslint.config.mjs', '.gitignore', 'docs/money-laws.md', 'docs/runbooks/x.md', 'AGENTS.md', 'client/vercel.json', '.claude/settings.json', 'scripts/sensitive-paths.txt', 'scripts/static-checks.js', '.claude/skills/review/SKILL.md', '.claude/agents/money.md', 'scripts/lib/staticChecks/jsScan.js', 'scripts/lib/flockExec.js']) {
     assert.ok(sm.isHingePath(p), `${p} should be hinge`);
   }
   assert.ok(!sm.isHingePath('server/routes/blog.js'));

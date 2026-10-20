@@ -75,7 +75,7 @@ const HINGE_PATHS = Object.freeze([
   'scripts/gen-docs.js',
   'scripts/lane-status.js',
   'scripts/board-write.sh',
-  'scripts/lib/*',
+  'scripts/lib/**',
   '.husky/*',
   'client/vercel.json',
   'docs/money-laws.md',
