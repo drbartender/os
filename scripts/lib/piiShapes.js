@@ -69,7 +69,21 @@ const EMAIL_DOMAIN = '[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,63}';
 // PHONE: the board writer's shape; a separator is a space or two, a dot, a
 // hyphen, a slash, a no-break space, an en dash or a figure dash.
 const PHONE_SEP = '(?: {1,2}|[.\\-/\\u00A0\\u2012\\u2013])?';
-const PHONE_SRC = `(?:\\+?[0-9]{1,3}${PHONE_SEP})?\\(?[0-9]{3}\\)?${PHONE_SEP}[0-9]{3}${PHONE_SEP}[0-9]{4}`;
+const PHONE_SRC = `(?<![0-9])(?:\\+?[0-9]{1,3}${PHONE_SEP})?\\(?[0-9]{3}\\)?${PHONE_SEP}[0-9]{3}${PHONE_SEP}[0-9]{4}(?![0-9])`;
+// A bare run of digits (no separator, plus or parenthesis) is a phone number only
+// when it reads as one: ten digits with a North American area code and exchange
+// that can be assigned (first digit 2 to 9), or a leading 1 before them. The int4
+// and uint32 maxima are constants in guards, never a subscriber. Anything else
+// bare (an epoch timestamp, a 13-digit id) is a number, so the external reviewer
+// still sees it. A separated or plus-led form masks whatever its digits.
+const PLAUSIBLE_NANP = /^[2-9][0-9]{2}[2-9][0-9]{2}[0-9]{4}$/;
+const INTEGER_MAXIMA = new Set(['2147483647', '4294967295']);
+function phoneKeep(text, start, end, m) {
+  if (/[^0-9]/.test(m)) return true;
+  if (m.length === 10) return PLAUSIBLE_NANP.test(m) && !INTEGER_MAXIMA.has(m);
+  if (m.length === 11) return m[0] === '1' && PLAUSIBLE_NANP.test(m.slice(1));
+  return false;
+}
 
 // Context words for the nine-digit shapes, any case. routing, account, tax,
 // ssn, social security and ss# count anywhere (routing_number, accountNumber,
@@ -78,6 +92,10 @@ const PHONE_SRC = `(?:\\+?[0-9]{1,3}${PHONE_SEP})?\\(?[0-9]{3}\\)?${PHONE_SEP}[0
 const ROUTING_WORDS = Object.freeze([/routing|account|tax|ssn/gi, /(?<![A-Za-z])(?:ein|tin|aba|rtn|acct)(?![A-Za-z])/gi]);
 const SSN_WORDS = Object.freeze([/ssn|tax|social[ _-]?security|ss#/gi, /(?<![A-Za-z])tin(?![A-Za-z])/gi]);
 const CONTEXT = 40;
+// The slice around the window is padded by the longest context word (social
+// security, 15 characters), so a word that overlaps the window only by its tail
+// is still read whole.
+const CONTEXT_PAD = 16;
 
 // True when a context word overlaps the 40 characters either side of the hit.
 // The words are searched in a slice padded past the window, so a word cut by
@@ -87,8 +105,8 @@ function nearWords(words) {
   return (text, start, end) => {
     const lo = start - CONTEXT;
     const hi = end + CONTEXT;
-    const from = Math.max(0, lo - 8);
-    const sub = text.slice(from, Math.min(text.length, hi + 8));
+    const from = Math.max(0, lo - CONTEXT_PAD);
+    const sub = text.slice(from, Math.min(text.length, hi + CONTEXT_PAD));
     for (const re of words) {
       for (const m of sub.matchAll(re)) {
         const ws = from + m.index;
@@ -101,7 +119,7 @@ function nearWords(words) {
 
 const FORMS = Object.freeze([
   { shape: 'EMAIL', name: 'email', re: new RegExp(`${EMAIL_LOCAL}{1,64}${EMAIL_AT}${EMAIL_DOMAIN}`, 'g'), scan: emailHits },
-  { shape: 'PHONE', name: 'phone', re: new RegExp(PHONE_SRC, 'g') },
+  { shape: 'PHONE', name: 'phone', re: new RegExp(PHONE_SRC, 'g'), keep: phoneKeep },
   // TOKEN: bearer-style, the JWT-ish dotted pair, the provider key formats
   // this codebase holds (Stripe, Anthropic, OpenAI, Google, GitHub, Neon,
   // Telegram), 32 or more hex, and a base64 run of 40 or more that holds a digit.
@@ -111,7 +129,8 @@ const FORMS = Object.freeze([
   // only where a run of its characters starts (not at every \b, which a dash
   // makes), so a long run of eyJ- tries one start, not one per dash (L1).
   { shape: 'TOKEN', name: 'jwt', re: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
-  { shape: 'TOKEN', name: 'dotted-pair', re: /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g },
+  // Each side of a JWT-ish pair carries a digit; a long module.function reference carries none.
+  { shape: 'TOKEN', name: 'dotted-pair', re: /(?<![A-Za-z0-9_-])(?=[A-Za-z_-]*[0-9])[A-Za-z0-9_-]{20,}\.(?=[A-Za-z_-]*[0-9])[A-Za-z0-9_-]{20,}/g },
   { shape: 'TOKEN', name: 'stripe-secret', re: /\bsk_(?:live|test)_[A-Za-z0-9]{10,}/g },
   { shape: 'TOKEN', name: 'stripe-restricted', re: /\brk_(?:live|test)_[A-Za-z0-9]{10,}/g },
   { shape: 'TOKEN', name: 'stripe-webhook', re: /\bwhsec_[A-Za-z0-9]{20,}/g },

@@ -37,6 +37,45 @@ test('a real-format phone number is found and masked', () => {
   assert.strictEqual(mask(text, { path: ROUTE }), 'call <PHONE> tomorrow');
 });
 
+// The externals' first run through the mask (2026-10-20): a bare integer of 10
+// to 13 digits is not a phone number unless it reads as one (a plausible North
+// American area code and exchange, or a leading 1 before them); the int4 and
+// uint32 maxima are constants, never a subscriber. A separated or plus-led form
+// masks as before, so a real number written any usual way still masks.
+test('a bare integer masks as a phone only when it reads as one', () => {
+  const int4Max = '2147' + '483647'; // the maxima are built from parts: both read as a plausible shape
+  const uint32Max = '4294' + '967295';
+  for (const kept of [`if (id > ${int4Max}) return;`, `if (n > ${uint32Max}) return;`, 'created: 1729459200', 'at 1729459200000', 'seed 11345678901']) {
+    assert.deepStrictEqual(findPii(kept, { path: ROUTE }), [], kept);
+  }
+  // a plausible shape, built from parts so no assignable literal sits in this file
+  const bare = '773' + '234' + '5678';
+  assert.strictEqual(mask(`call ${bare} now`, { path: ROUTE }), 'call <PHONE> now');
+  assert.strictEqual(mask(`call 1${bare} now`, { path: ROUTE }), 'call <PHONE> now');
+  assert.strictEqual(mask(`call +1${bare} now`, { path: ROUTE }), 'call <PHONE> now');
+  assert.strictEqual(mask(`call ${UNASSIGNABLE} now`, { path: ROUTE }), 'call <PHONE> now', 'a separated form masks whatever its area code');
+});
+
+// A context word that overlaps the window only by its tail used to be cut by the
+// slice padding (8 characters, shorter than "social security"), so the plain
+// nine digits passed. The padding now covers the longest context word.
+test('a context word that overlaps the window by its tail still counts', () => {
+  for (const gap of [34, 39]) {
+    assert.strictEqual(mask(`social security${' '.repeat(gap)}123456789`, { path: ROUTE }), `social security${' '.repeat(gap)}<SSN>`, `gap ${gap}`);
+  }
+  assert.deepStrictEqual(findPii(`social security${' '.repeat(56)}123456789`, { path: ROUTE }), [], 'the word is out of the window');
+});
+
+// A long module.function reference is not a JWT-ish pair: each side of a token
+// pair carries a digit, an identifier pair carries none.
+test('a module.function reference is not a token', () => {
+  const ref = 'extensionSettleContext.contractedEndDisplay';
+  assert.deepStrictEqual(findPii(`const x = ${ref};`, { path: ROUTE }), []);
+  const check = spawnSync(process.execPath, [MOD, '--check', `settle: ${ref} reads the row`], { encoding: 'utf8' });
+  assert.strictEqual(check.status, 0, check.stderr);
+  assert.strictEqual(mask(`t ${rep('Ab1', 8)}.${rep('Zq9', 8)} e`, { path: ROUTE }), 't <TOKEN> e', 'a digit-bearing pair still masks');
+});
+
 test('the two business lines are not PII', () => {
   assert.deepStrictEqual(findPii(`text us at ${COMPANY_TEXT_PHONE} or call ${COMPANY_PHONE}`), []);
   // E.164 and bare-digit spellings of the same lines are allowlisted too.
@@ -319,7 +358,7 @@ test('emails are found; the business domain is not', () => {
 // L3: the allowlist runs over every raw hit first; overlaps are pruned only
 // among the hits that survive, so an allowed span never hides a value inside it.
 test('an allowed span never hides a value inside it', () => {
-  const digits = UNASSIGNABLE.replace(/\D/g, '');
+  const digits = '773' + '234' + '5678'; // a bare run masks only when it reads as a number, so a plausible shape, from parts
   assert.strictEqual(mask(`reply contact+${digits}@drbartender.com`, { path: ROUTE }), 'reply contact+<PHONE>@drbartender.com');
   const glued = mask('to=person' + '%40' + 'home.example.org.contact@drbartender.com', { path: ROUTE });
   assert.ok(!glued.includes('person') && !glued.includes('home.example'), glued);
