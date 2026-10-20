@@ -1655,8 +1655,9 @@ the accented spelling) or the two spellings stop matching each other.
      from the consult side instead (decision 8).
   4. **Theme and drinks from a call consult:** a client who gave the brief by phone has nowhere to
      record it. The consult form carries drinks but no theme, naming or design notes (spec section
-     2). Add the three brief fields to the consult form (consult_selections), or let Dallas type
-     them on the Brief tab as an admin brief that the words step reads before the client's.
+     2). Dallas's call (2026-10-19): he types it himself on the Brief tab, an editable admin brief
+     (theme, naming, design notes) beside the client's read-only text, used whether or not the
+     client filled the planner in; the words step reads the admin brief first, then the client's.
   5. **Event-type templates:** when the brief is thin, start from a per-event-type preset (wedding,
      corporate, birthday...): a default art direction, pairing, palette and background idea, chosen
      with `getEventTypeLabel` and editable before Generate.
@@ -1666,6 +1667,12 @@ the accented spelling) or the two spellings stop matching each other.
      the fit rule and Too long reworked around them, and export parity re-proven; the biggest of
      the six. A cheaper first step: nudge controls (art size, vertical spacing, title size) on the
      Design tab.
+  7. **Send the menu to the client for approval (Dallas, 2026-10-19).** A button that sends the
+     menu to the client, who approves it or asks for changes. Spec section 1 put "any client-facing
+     view of a draft" out of scope, so this is new scope and a client-facing surface: token link
+     page, email through Resend (email over SMS), the client's answer back on the card and in the
+     activity log. Open questions for the brainstorm: before or after Dallas's own Approve, what a
+     change request carries, and whether a client approval gates the print slot.
 
 ---
 
