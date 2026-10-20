@@ -1,5 +1,5 @@
 ---
-description: Design-stage review of an implementation plan via 3 specialized Claude agents (plan-fidelity, plan-decomposition, plan-feasibility) in parallel.
+description: Design-stage review of an implementation plan (a lane map without code) via 2 specialized Claude agents (plan-fidelity, plan-decomposition) in parallel.
 ---
 
 You are coordinating a design-stage review of an implementation plan.
@@ -19,28 +19,27 @@ State the resolved path back in one line: `Reviewing plan: docs/superpowers/plan
 
 ## Step 2: Launch the plan fleet in parallel
 
-Single message, 3 concurrent `Agent` tool calls. Each agent is launched with `subagent_type` matching the agent name and a prompt that includes the resolved target path.
+Single message, 2 concurrent `Agent` tool calls. Each agent is launched with `subagent_type` matching the agent name and a prompt that includes the resolved target path.
 
 1. `plan-fidelity` (subagent_type: `plan-fidelity`)
 2. `plan-decomposition` (subagent_type: `plan-decomposition`)
-3. `plan-feasibility` (subagent_type: `plan-feasibility`)
 
 Prompt template for each (substitute `<target>` with the resolved path and `<agent>` with the agent name):
 
-> Review the implementation plan at `<target>` for `<agent>` concerns. The plan should reference a spec file under `docs/superpowers/specs/`; read both. Apply every check in your standing instructions. Return findings in the output format you were given. Be concise; cite the plan task and step and the codebase location (where relevant) for every finding.
+> Review the implementation plan at `<target>` for `<agent>` concerns. The plan should reference a spec file under `docs/superpowers/specs/`; read both. Apply every check in your standing instructions. Return findings in the output format you were given. Be concise; cite the lane `id` (or the plan section) for every finding, and the spec section where relevant.
 
 ## Step 3: Consolidate
 
-When all 3 agents return:
+When both agents return:
 
 - Merge their findings into one severity-grouped view: **Blockers**, **Warnings**, **Suggestions**.
-- Within each severity, tag each finding with the agent that raised it: `[fidelity]`, `[decomposition]`, `[feasibility]`.
-- If two agents converged on the same underlying issue, mark it as `[cross-confirmed: fidelity + feasibility]` and treat it as one finding at the higher severity.
+- Within each severity, tag each finding with the agent that raised it: `[fidelity]`, `[decomposition]`.
+- If both agents converged on the same underlying issue, mark it as `[cross-confirmed: fidelity + decomposition]` and treat it as one finding at the higher severity.
 - End with a one-line summary: `Plan fleet: N blockers, M warnings, K suggestions.`
 
-If all three agents returned Clean, output a single line:
+If both agents returned Clean, output a single line:
 
-> Design fleet (plan): clean across all three lenses.
+> Design fleet (plan): clean across both lenses.
 
 ## Step 4: No auto-fix
 
