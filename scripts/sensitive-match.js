@@ -742,7 +742,10 @@ function tierCli(args) {
   } catch (e) {
     usage(String((e && e.message) || e).split('\n')[0]);
   }
-  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  // No hit text on the console: a value on a money line stays in the process.
+  const strip = (hits) => (hits || []).map((h) => Object.fromEntries(Object.entries(h).filter(([k]) => k !== 'text')));
+  const printable = { ...result, contentRuleHits: strip(result.contentRuleHits), statusWrites: strip(result.statusWrites) };
+  process.stdout.write(JSON.stringify(printable, null, 2) + '\n');
   process.exit(0);
 }
 

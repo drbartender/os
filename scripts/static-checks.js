@@ -57,7 +57,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { checkFile, maskedText, maskFailure, redactedLine, RULES } = require('./lib/staticChecks/staticRules');
+const { checkFile, maskedText, maskedPath, maskFailure, redactedLine, RULES } = require('./lib/staticChecks/staticRules');
 const { lineStarts } = require('./lib/staticChecks/jsScan');
 const { eslintUndef, abortAll } = require('./lib/staticChecks/eslintUndef');
 
@@ -404,7 +404,8 @@ function finish(state) {
     const key = `${f.rule}\0${f.file}\0${f.line}\0${f.file === null ? f.text : ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(f);
+    // A path that itself carries a shape prints masked in every finding on it.
+    out.push({ ...f, file: maskedPath(f.file) });
   }
   const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
   out.sort((a, b) => cmp(String(a.file ?? ''), String(b.file ?? '')) || (a.line ?? 0) - (b.line ?? 0) || cmp(a.rule, b.rule));

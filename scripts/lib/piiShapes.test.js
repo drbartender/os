@@ -572,8 +572,10 @@ test('a diff --git line that does not parse starts a null-path section that mask
   assert.strictEqual(lines[6], '+text <PHONE> or <EMAIL>', 'no allowlist at all on a null path');
   assert.strictEqual(lines[9], "+const h = '<PHONE>';", 'a quoted path that fails to decode is a null path');
   const hits = findInDiff(diff);
-  assert.strictEqual(hits.length, 4);
+  // Four content hits, plus one PATH hit per header this parser cannot read (two here).
+  assert.strictEqual(hits.length, 6, JSON.stringify(hits));
   assert.ok(hits.every((h) => h.path === null));
+  assert.strictEqual(hits.filter((h) => h.shape === 'PATH').length, 2, 'each unreadable header blocks on its own');
 });
 
 // L8: the static-checks consumer prints hits into a transcript, so a hit
@@ -964,4 +966,70 @@ test('pathHits: the shapes a changed path itself carries, strict, with the UUID 
   assert.deepStrictEqual(pathHits(['docs/notes-', '3125550148', '.md'].join('')).map((h) => h.shape), ['PHONE'], 'a number in a name is a hit, fixtures included (strict)');
   const diff = `diff --git a/${uuidPath} b/${uuidPath}\nnew file mode 100644\n--- /dev/null\n+++ b/${uuidPath}\n@@ -0,0 +1 @@\n+<html></html>\n`;
   assert.deepStrictEqual(findInDiff(diff), [], 'the pre-step does not block a snapshot by its name');
+});
+
+test('pathHits exempts the UUID shape only under docs/design-artifacts/: a public-link token in any other file name is a hit (pii quick-fix security M3)', () => {
+  const { pathHits } = require('./piiShapes');
+  const uuid = ['3f2a9c1e', '7b4d', '4e8a', '9c2b', '1d5e6f7a8b9c'].join('-');
+  assert.deepStrictEqual(pathHits(`docs/design-artifacts/${uuid}.dc.html`), [], 'a design-artifact snapshot');
+  assert.deepStrictEqual(pathHits(`docs/design-artifacts/inbox/${uuid}/index.html`), [], 'a snapshot in a subdirectory');
+  assert.deepStrictEqual(pathHits(`docs/exports/proposal-${uuid}.md`).map((h) => h.shape), ['UUID'], 'a token elsewhere is a hit');
+  assert.deepStrictEqual(pathHits(`server/fixtures/${uuid}.json`).map((h) => h.shape), ['UUID'], 'a token under server/ is a hit');
+});
+
+test('a diff header whose path cannot be read yields a blocking hit with a null path, so a name the parser cannot decode never passes the pre-step (pii quick-fix security M2)', () => {
+  const { findInDiff } = require('./piiShapes');
+  const diff = 'diff --git "a/x "b/y\n--- a/x\n+++ b/y\n@@ -0,0 +1 @@\n+notes\n';
+  const hits = findInDiff(diff);
+  assert.strictEqual(hits.length, 1, JSON.stringify(hits));
+  assert.strictEqual(hits[0].path, null);
+  assert.strictEqual(hits[0].line, null);
+  assert.ok(/cannot read|does not parse/.test(hits[0].text), hits[0].text);
+});
+
+test('a header naming a blank path (spaces or a tab) masks strict, never as the code class (pii quick-fix security L1)', () => {
+  const { maskDiff } = require('./piiShapes');
+  const business = ['888', '555', '0100'].join('-');
+  const nil = '00000000-0000-0000-0000-000000000000';
+  const section = (header) => `${header}\n--- a/x\n+++ b/x\n@@ -0,0 +1 @@\n+const v = '${business} ${nil}';\n`;
+  for (const header of ['diff --git "a/ " "b/ "', 'diff --git "a/\\t" "b/\\t"', 'diff --git a/   b/  ']) {
+    const out = maskDiff(section(header));
+    assert.ok(!out.includes(nil), `the nil UUID masks under strict: ${header}`);
+    assert.ok(!out.includes(business), `a 555 fixture masks under strict: ${header}`);
+  }
+});
+
+test('the --find CLI reads names with a byte outside UTF-8 as git has them, so an address in such a name is still a path hit (pii quick-fix security M2)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-latin1-'));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (args, opts = {}) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env, ...opts });
+    git(['init', '-q', '-b', 'main']);
+    git(['config', 'user.email', ['t', 'example.com'].join('@')]);
+    git(['config', 'user.name', 't']);
+    git(['config', 'commit.gpgsign', 'false']);
+    fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
+    git(['add', 'seed.txt']);
+    git(['commit', '-q', '-m', 'A']);
+    const A = git(['rev-parse', 'HEAD']).trim();
+    // docs/c-<latin-1 e-acute byte>-<address>.md, the byte never valid UTF-8 on its own
+    const nameBytes = Buffer.concat([Buffer.from('docs/c-'), Buffer.from([0xe9]), Buffer.from(['-contact', 'example.com.md'].join('@'))]);
+    fs.mkdirSync(path.join(dir, 'docs'));
+    fs.writeFileSync(Buffer.concat([Buffer.from(dir + '/'), nameBytes]), 'notes\n');
+    git(['add', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: nameBytes, encoding: 'buffer' });
+    git(['commit', '-q', '-m', 'B']);
+    const B = git(['rev-parse', 'HEAD']).trim();
+    const r = spawnSync(process.execPath, [path.join(__dirname, 'piiShapes.js'), '--find', '--added', A, B], { cwd: dir, encoding: 'utf8', env });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const hits = JSON.parse(r.stdout);
+    assert.strictEqual(hits.length, 1, 'the address in the name is one hit: ' + r.stdout);
+    assert.strictEqual(hits[0].shape, 'EMAIL');
+    assert.strictEqual(hits[0].line, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

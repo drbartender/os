@@ -860,3 +860,27 @@ test('a process a suite left in the run\'s session, outside its group, is killed
     killMarked(marker);
   }
 });
+
+test('stagedPaths reads HEAD under an env that ignores replace refs: a replaced HEAD does not fake a staged change (pii quick-fix security L4)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-replace-'));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', ['t', 'example.com'].join('@'));
+    git('config', 'user.name', 't');
+    git('config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(path.join(dir, 'x.js'), 'const a = 1;\n');
+    git('add', 'x.js');
+    git('commit', '-q', '-m', 'A');
+    const A = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'x.js'), 'const a = 2;\n');
+    git('add', 'x.js');
+    git('commit', '-q', '-m', 'B');
+    const B = git('rev-parse', 'HEAD');
+    git('replace', B, A);
+    assert.deepStrictEqual(stagedPaths({ root: dir }), [], 'the index equals the real HEAD; only a replace ref would make x.js look staged');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -105,6 +105,9 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync, execFileSync } = require('child_process');
+// git runs under sensitive-match's env: no replace refs, no diff driver, no
+// diff options from the environment (review-tooling security, run-suites L4).
+const SM = require('./sensitive-match');
 const { parse, logName, outName, suiteArgv, suiteEnv, smokeSummary, didNotRun, claimRunDir, joinRunDir, releaseRunDir } = require('./lib/tapSummary');
 const { underLock, parentGone, looksLikeReexec, exitOnStopSignals, yieldToSignals, sweepSession, gnuTimeout, boundedNodeSync, NO_GNU_TIMEOUT } = require('./lib/flockExec');
 
@@ -212,7 +215,7 @@ function reachedSuites(paths, { root = REPO_ROOT } = {}) {
 }
 
 function gitLines(root, args) {
-  const raw = execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const raw = execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: SM.gitEnv() });
   return raw.split('\0').filter(Boolean);
 }
 
@@ -228,6 +231,7 @@ function gitCommonDir(root) {
   return execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: SM.gitEnv(),
   }).trim();
 }
 
@@ -247,7 +251,7 @@ function splitRange(range) {
 // would read as an option, or one that names no commit, is a usage error.
 function verifyRange(root, range) {
   for (const end of splitRange(range)) {
-    const r = spawnSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${end}^{commit}`], { stdio: 'ignore' });
+    const r = spawnSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${end}^{commit}`], { stdio: 'ignore', env: SM.gitEnv() });
     if (r.status !== 0) throw usage(`--changed: ${JSON.stringify(end)} is not a commit`);
   }
 }

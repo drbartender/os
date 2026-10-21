@@ -574,13 +574,15 @@ test('M1 (review 2): tierFromGit is the git half the CLI runs, exported for revi
   assert.ok(lib.contentRuleHits.some((h) => h.rule === 'update-money-table'));
   const out = cli(r.dir, ['--tier', '--base', c1, '--tip', c2]);
   assert.strictEqual(out.code, 0, out.err);
-  assert.deepStrictEqual(lib, out.json, 'the same result object the CLI prints');
+  // The CLI prints the same result with the hit texts left out (no value on the console).
+  const noText = (res) => ({ ...res, contentRuleHits: res.contentRuleHits.map(({ text, ...h }) => h), statusWrites: res.statusWrites.map(({ text, ...h }) => h) });
+  assert.deepStrictEqual(noText(lib), out.json, 'the same result object the CLI prints, texts aside');
 
   r.write('server/routes/archive.js', fs.readFileSync(path.join(r.dir, 'server/routes/archive.js'), 'utf8') + 'const owed = p.total_price;\n');
   r.g('add', '--', 'server/routes/archive.js');
   const staged = sm.tierFromGit({ staged: true }, { cwd: r.dir });
   assert.strictEqual(staged.tier, 'A');
-  assert.deepStrictEqual(staged, cli(r.dir, ['--tier', '--staged']).json, 'the staged form too');
+  assert.deepStrictEqual(noText(staged), cli(r.dir, ['--tier', '--staged']).json, 'the staged form too');
 
   for (const [label, range] of [
     ['an unknown ref', { base: 'no-such-ref', tip: c2 }],
@@ -829,6 +831,41 @@ test('gitEnv neutralizes replace refs, so tierFromGit reads the real tip (review
     const C = git('rev-parse', 'HEAD');
     git('replace', B, C);
     assert.strictEqual(SM.tierFromGit({ base: A, tip: B }, { cwd: dir }).tier, 'A', 'the real B carries a Stripe call: tier A, not the replacement');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the --tier CLI prints no hit text: a value on a money line never reaches the console (pii quick-fix security L5)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-tier-cli-'));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', ['t', 'example.com'].join('@'));
+    git('config', 'user.name', 't');
+    git('config', 'commit.gpgsign', 'false');
+    fs.mkdirSync(path.join(dir, 'server'));
+    fs.writeFileSync(path.join(dir, 'server/x.js'), 'const a = 1;\n');
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'A');
+    const A = git('rev-parse', 'HEAD');
+    const addr = ['person', 'example.com'].join('@');
+    fs.writeFileSync(path.join(dir, 'server/x.js'), `const a = 1;\nawait stripe.refunds.create({ payment_intent: id, note: '${addr}' });\n`);
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'B');
+    const B = git('rev-parse', 'HEAD');
+    const r = spawnSync(process.execPath, [path.join(__dirname, 'sensitive-match.js'), '--tier', '--base', A, '--tip', B], { cwd: dir, encoding: 'utf8', env });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.strictEqual(out.tier, 'A');
+    assert.ok(out.contentRuleHits.length >= 1, 'the Stripe call is a hit');
+    assert.ok(!r.stdout.includes(addr), 'no value on the console');
+    assert.ok(out.contentRuleHits.every((h) => h.text === undefined), 'hits carry file, line and rule only');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

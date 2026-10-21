@@ -75,6 +75,21 @@ function maskedText(raw, file) {
   return masked.length > TEXT_CAP ? masked.slice(0, TEXT_CAP) + '...' : masked;
 }
 
+// The file field of a finding: git's exact name, except a path that itself
+// carries a shape (piiShapes.pathHits), printed masked strict so no finding on
+// that file prints the address or number the path hit reports.
+function maskedPath(file) {
+  if (file === null || file === undefined) return file;
+  let pii;
+  try {
+    pii = require('../piiShapes');
+  } catch {
+    return WITHHELD;
+  }
+  if (typeof pii.pathHits !== 'function' || typeof pii.mask !== 'function') return WITHHELD;
+  return pii.pathHits(file).length ? pii.mask(String(file), { strict: true }) : file;
+}
+
 function lineRule(re) {
   return ({ added }) => [...added].filter(([, text]) => re.test(text)).map(([line]) => ({ line }));
 }
@@ -527,4 +542,4 @@ function checkFile(file, src, { root, spans: spanMap } = {}) {
   return out;
 }
 
-module.exports = { RULES, ALLOWABLE, allowedBy, checkFile, maskedText, maskFailure, redactedLine, TEXT_CAP };
+module.exports = { RULES, ALLOWABLE, allowedBy, checkFile, maskedText, maskedPath, maskFailure, redactedLine, TEXT_CAP };

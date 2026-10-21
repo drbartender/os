@@ -598,7 +598,8 @@ function parseGitHeader(line) {
     }
   }
   if (a === null || b === null || !a.startsWith('a/') || !b.startsWith('b/') || b.length < 3) return null;
-  return b.slice(2);
+  const name = b.slice(2);
+  return name.trim() ? name : null; // a blank name is no name: the section masks strict
 }
 
 // The mask options for one file. A null path (the preamble, or a header that
@@ -611,9 +612,9 @@ function fileOpts(p) {
 // like a header side when it must be), or null when it does not parse.
 function parseFromPath(rest) {
   if (!rest) return null;
-  if (!rest.startsWith('"')) return rest || null;
+  if (!rest.startsWith('"')) return rest.trim() ? rest : null;
   const p = closingQuote(rest, 0) === rest.length - 1 ? unquoteC(rest) : null;
-  return p || null;
+  return p && p.trim() ? p : null;
 }
 
 // Path classes from the most exempt to the strictest: each one's exempt set
@@ -706,24 +707,34 @@ function maskDiff(diffText) {
 /**
  * The shapes a changed path itself carries, judged strict: a file named with an
  * address, a number, a key or a tax id is a leak however innocent its content,
- * since every brief and receipt prints the path. The UUID shape is exempt here
- * alone, because paths are made of ids and the design-artifact snapshots under
- * docs/design-artifacts/ are named by their design-project id (ruling
- * 2026-10-21, review-tooling fix pass). review-select and review-brief refuse
- * on the same function.
+ * since every brief and receipt prints the path. The UUID shape is exempt under
+ * docs/design-artifacts/ alone, where the snapshots are named by their
+ * design-project id (ruling 2026-10-21, review-tooling fix pass, narrowed by
+ * the quick-fix security pass: a public-link token in any other name is a
+ * hit). review-select and review-brief refuse on the same function. The path
+ * returned in a hit is git's exact name; static-checks prints the file field
+ * of every finding on such a path masked.
  */
+const ARTIFACT_DIR = 'docs/design-artifacts/';
 function pathHits(p) {
-  return findPii(String(p || ''), { strict: true }).filter((h) => h.shape !== 'UUID');
+  const s = String(p || '');
+  return findPii(s, { strict: true }).filter((h) => !(h.shape === 'UUID' && s.startsWith(ARTIFACT_DIR)));
 }
 
 function findInDiff(diffText) {
   const hits = [];
   for (const { line, path: p, kind, lineNo, opts } of walkDiff(diffText)) {
     if (kind === 'header') {
-      if (!p || !line.startsWith('diff --git')) continue;
+      if (!line.startsWith('diff --git')) continue;
+      if (!p) {
+        // A header this parser cannot read never passes: nothing about that
+        // file is judged, so the run blocks until the name is readable.
+        hits.push({ shape: 'PATH', path: null, line: null, text: 'a diff header names a path this check cannot read; nothing about that file is judged' });
+        continue;
+      }
       const inPath = pathHits(p);
       if (inPath.length) {
-        const text = `the path itself: ${mask(p, { strict: true })}`;
+        const text = `the path itself carries a shape: ${mask(p, { strict: true })}; rename the file first, then change or delete it`;
         for (const h of inPath) hits.push({ shape: h.shape, path: p, line: null, text });
       }
       continue;
@@ -814,7 +825,10 @@ if (require.main === module) {
     // The raw diff never reaches the terminal: git's output stays in this
     // process, and a failure prints a fixed line, never git's stdout.
     const gitDiff = (extra) => {
-      const res = spawnSync('git', ['diff', ...DIFF_FLAGS, ...extra], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, env: cliGitEnv() });
+      // core.quotePath off: a name with a byte outside UTF-8 arrives as git
+      // has it (decoded lossily) instead of octal-quoted, which the C decoder
+      // would refuse and so skip the path check.
+      const res = spawnSync('git', ['-c', 'core.quotePath=false', 'diff', ...DIFF_FLAGS, ...extra], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, env: cliGitEnv() });
       if (res.status !== 0 || res.error) {
         process.stderr.write('piiShapes.js: git diff failed\n');
         process.exit(2);

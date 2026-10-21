@@ -659,11 +659,11 @@ test('two changed paths that differ only by a backslash are two files: each pii 
 test('a changed path that itself carries an address is a blocking pii finding with no line and a masked text (review-tooling security H1)', () => {
   const name = ['docs/clients/contact-x', 'example.com.md'].join('@');
   const { r } = runChange(README, { [name]: 'notes\n' });
-  const got = hits(r, 'pii', name);
+  const got = hits(r, 'pii').filter((f) => f.line === null);
   assert.strictEqual(got.length, 1, JSON.stringify(r.json.findings));
-  assert.strictEqual(got[0].line, null);
   assert.ok(got[0].blocking);
   assert.ok(got[0].text.includes('<EMAIL>') && !got[0].text.includes(name), got[0].text);
+  assert.ok(String(got[0].file).includes('<EMAIL>') && !String(got[0].file).includes(name), 'the file field is masked too: ' + got[0].file);
 });
 
 test('no finding text in either run carries a raw secret or address', () => {
@@ -1287,4 +1287,15 @@ test('a replace ref on the tip does not hide a secret default: static-checks rea
   execFileSync('git', ['replace', tip, other], { cwd: dir, encoding: 'utf8' });
   const r = run(dir, ['--base', base, '--tip', tip]);
   assert.deepStrictEqual(hits(r, 'secret-default').map((h) => [h.file, h.line]), [['server/utils/hook.js', 2]], JSON.stringify(r.json && r.json.findings));
+});
+
+test('a finding on a file whose name carries an address prints the file masked, in the path hit and in every other finding on it (pii quick-fix security M1)', () => {
+  const name = ['server/utils/c-contact', 'example.com.js'].join('@');
+  const { r } = runChange(README, { [name]: L("'use strict';", "const hook = process.env.HOOK_SECRET || 'sesame';", 'module.exports = { hook };') });
+  const onIt = r.json.findings.filter((f) => f.rule === 'pii' || f.rule === 'secret-default');
+  assert.ok(onIt.length >= 2, JSON.stringify(r.json.findings));
+  for (const f of onIt) {
+    assert.ok(!String(f.file).includes(name) && !String(f.file).includes('contact@'), `${f.rule} prints the name raw: ${JSON.stringify(f.file)}`);
+    assert.ok(String(f.file).includes('<EMAIL>'), `${f.rule} names the file by its masked form: ${JSON.stringify(f.file)}`);
+  }
 });
