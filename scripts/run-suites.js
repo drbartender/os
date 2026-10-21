@@ -394,8 +394,8 @@ async function cli(argv) {
     if (verdictDir) {
       try {
         writeSummary(verdictDir, didNotRun(why));
-      } catch {
-        /* the line above still says why */
+      } catch (err) {
+        console.error(`run-suites: could not write summary.json (${err.code || err.message}); the line above still says why`);
       }
     }
     process.exit(1);

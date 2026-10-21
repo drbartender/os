@@ -150,15 +150,15 @@ function sessionGroups(sid) {
 function signalRun(sid, sig) {
   try {
     process.kill(-sid, sig);
-  } catch {
-    /* the flock group is already gone */
+  } catch (err) {
+    if (err.code !== 'ESRCH') throw err; // the flock group is already gone; anything else is real
   }
   for (const pgrp of sessionGroups(sid)) {
     if (pgrp === sid) continue;
     try {
       process.kill(-pgrp, sig);
-    } catch {
-      /* gone meanwhile */
+    } catch (err) {
+      if (err.code !== 'ESRCH') throw err; // gone meanwhile; anything else is real
     }
   }
 }
@@ -261,8 +261,8 @@ function fdOn(pid, target) {
     if (!Number.isInteger(fd) || fd <= 2) continue;
     try {
       if (fs.readlinkSync(`/proc/${pid}/fd/${name}`) === target) return fd;
-    } catch {
-      /* closed meanwhile (the directory listing's own descriptor) */
+    } catch (err) {
+      if (err.code !== 'ENOENT' && err.code !== 'ESRCH') throw err; // closed meanwhile (the listing's own descriptor); anything else is real
     }
   }
   return null;
@@ -348,8 +348,8 @@ function lockedFdOn(pid, lockFile) {
       if (via.dev !== st.dev || via.ino !== st.ino) continue;
       const m = FDINFO_LOCK.exec(fs.readFileSync(`/proc/${pid}/fdinfo/${name}`, 'utf8'));
       if (m && m[3] === st.ino.toString()) return { fd, dev: devKey(m[1], m[2]) };
-    } catch {
-      /* closed meanwhile (the directory listing's own descriptor) */
+    } catch (err) {
+      if (err.code !== 'ENOENT' && err.code !== 'ESRCH') throw err; // closed meanwhile (the listing's own descriptor); anything else is real
     }
   }
   return null;
@@ -466,8 +466,8 @@ function sweepSession(sid) {
         process.kill(pid, 'SIGKILL');
         killed.push(pid);
         hit = true;
-      } catch {
-        /* gone meanwhile */
+      } catch (err) {
+        if (err.code !== 'ESRCH') throw err; // gone meanwhile; anything else is real
       }
     }
     if (!hit) break;

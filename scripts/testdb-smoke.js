@@ -121,8 +121,8 @@ function die(msg) {
   if (verdictDir) {
     try {
       writeSummary(verdictDir, didNotRun(mask(msg)));
-    } catch {
-      /* the BLOCKED line below still says why */
+    } catch (err) {
+      console.error(`testdb-smoke: could not write summary.json (${err.code || err.message}); the BLOCKED line below still says why`);
     }
   }
   console.error('');
