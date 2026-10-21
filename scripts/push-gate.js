@@ -78,6 +78,8 @@ const MONEY_PATHS = [
   'server/',
   'scripts/money-smoke-list.txt',
   'scripts/testdb-smoke.js',
+  'scripts/lib/tapSummary.js', // testdb-smoke loads it at startup (its summary parser)
+  'scripts/lib/flockExec.js', // testdb-smoke loads it at startup (the smoke lock)
   'scripts/push-gate.js',
   'package.json',
   'package-lock.json',
@@ -159,9 +161,11 @@ function reexecUnderFlock() {
   process.exit(r.status === null ? 1 : r.status);
 }
 
-// NOT covered by this lock, deliberately: `npm run test:smoke` runs
-// testdb-smoke.js directly and takes none, and no file lock can cover a second
-// clone or machine (that would need a Neon-side lock).
+// testdb-smoke.js takes the smoke lock (drb-smoke.lock) itself, so a gate run
+// holds this lock and then the smoke lock, never the reverse, and a smoke
+// started any other way (npm run test:smoke, a review-time smoke) waits on the
+// smoke lock instead of resetting ci-smoke under a gate. No file lock can
+// cover a second clone or machine (that would need a Neon-side lock).
 
 
 function receiptPath() {

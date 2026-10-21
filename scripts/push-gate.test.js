@@ -164,8 +164,17 @@ test('treeFingerprint hashes file CONTENT, not just the porcelain status line', 
 test('the money trigger covers the gate machinery itself, not just server/', () => {
   // Changing testdb-smoke.js or the suite list changes what the gate DOES, so
   // a pure server/ trigger would let the gate be edited without being run.
-  for (const p of ['server/', 'scripts/money-smoke-list.txt', 'scripts/testdb-smoke.js', 'scripts/push-gate.js']) {
+  // testdb-smoke.js loads tapSummary.js and flockExec.js at startup, so a
+  // change to either alone changes what the gate does.
+  for (const p of ['server/', 'scripts/money-smoke-list.txt', 'scripts/testdb-smoke.js', 'scripts/push-gate.js', 'scripts/lib/tapSummary.js', 'scripts/lib/flockExec.js']) {
     assert.ok(MONEY_PATHS.includes(p), `${p} must trigger the money gate`);
+  }
+});
+
+test('the smoke and suite-runner machinery is on the sensitive list (full review)', () => {
+  const { isSensitive } = require('./sensitive-match');
+  for (const p of ['scripts/lib/tapSummary.js', 'scripts/lib/flockExec.js', 'scripts/run-suites.js']) {
+    assert.ok(isSensitive([p]), `${p} must be sensitive-listed`);
   }
 });
 

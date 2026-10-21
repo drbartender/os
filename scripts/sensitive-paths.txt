@@ -455,9 +455,17 @@ server/routes/clientPortal/*
 # connection), so its "is this receipt valid" logic is now load-bearing for
 # every push. money-smoke-list.txt is the suite list: testdb-smoke.js fails hard
 # on a listed file that is MISSING, but nothing notices a line quietly deleted.
+# tapSummary.js and flockExec.js (2026-10-20) are loaded by testdb-smoke.js at
+# startup: the parser that turns a suite's log into pass or fail, and the lock
+# that keeps two smokes from resetting ci-smoke under each other. run-suites.js
+# runs the ordinary suites behind the dev-suite lock and writes the summary a
+# review receipt reads, so a bug there passes suites that never ran.
 scripts/push-gate.js
 scripts/testdb-smoke.js
 scripts/money-smoke-list.txt
+scripts/lib/tapSummary.js
+scripts/lib/flockExec.js
+scripts/run-suites.js
 .husky/pre-push
 
 # The dev-JWT minters and their shared dev-only gate (2026-10-06). dev-signin.js
