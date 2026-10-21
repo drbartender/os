@@ -718,7 +718,24 @@ function maskDiff(diffText) {
 const ARTIFACT_DIR = 'docs/design-artifacts/';
 function pathHits(p) {
   const s = String(p || '');
-  return findPii(s, { strict: true }).filter((h) => !(h.shape === 'UUID' && s.startsWith(ARTIFACT_DIR)));
+  const seen = new Set();
+  const out = [];
+  const add = (hits) => {
+    for (const h of hits) {
+      if (h.shape === 'UUID' && s.startsWith(ARTIFACT_DIR)) continue;
+      if (seen.has(h.shape)) continue;
+      seen.add(h.shape);
+      out.push(h);
+    }
+  };
+  // The whole path; the path with underscores and backslashes read as
+  // separators (a number joined by them); and each segment on its own, since
+  // the base64 rule keeps a deep path out and a key-like directory name would
+  // otherwise pass (review-tooling security 2, H2 and L5). One hit per shape.
+  add(findPii(s, { strict: true }));
+  add(findPii(s.replace(/[_\\]/g, '-'), { strict: true }));
+  for (const seg of s.split('/')) add(findPii(seg, { strict: true }));
+  return out;
 }
 
 function findInDiff(diffText) {

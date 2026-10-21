@@ -1033,3 +1033,16 @@ test('the --find CLI reads names with a byte outside UTF-8 as git has them, so a
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('pathHits reads underscores and backslashes as separators and each segment on its own: a number joined by underscores or a key-like directory name is a hit (review-tooling security 2, H2 and L5)', () => {
+  const { pathHits } = require('./piiShapes');
+  const digits = ['312', '555', '0148'];
+  assert.deepStrictEqual(pathHits(`docs/clients/call_${digits.join('_')}.md`).map((h) => h.shape), ['PHONE'], 'underscores join a number');
+  assert.deepStrictEqual(pathHits(`docs\\${digits.join('\\')}.md`).map((h) => h.shape), ['PHONE'], 'backslashes join a number');
+  const keyish = `${'A'.repeat(20)}7${'b'.repeat(27)}`;
+  assert.deepStrictEqual(pathHits(keyish).map((h) => h.shape), ['TOKEN'], 'a key-like name at the root');
+  assert.deepStrictEqual(pathHits(`docs/${keyish}/x.md`).map((h) => h.shape), ['TOKEN'], 'a key-like directory under docs/');
+  assert.deepStrictEqual(pathHits(`server/utils/${keyish}.js`).map((h) => h.shape), ['TOKEN'], 'a key-like file name under a directory');
+  assert.deepStrictEqual(pathHits('server/utils/pricing_engine_v2_test_helpers.js'), [], 'ordinary snake_case is no hit');
+  assert.deepStrictEqual(pathHits('docs/superpowers/plans/2026-10-20-instruction-rewrite-step2.md'), [], 'a dated plan name is no hit');
+});
