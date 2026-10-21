@@ -954,3 +954,14 @@ test('the --find CLI reads git under an env that ignores replace refs and extern
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('pathHits: the shapes a changed path itself carries, strict, with the UUID shape exempt because paths are made of ids (the design-artifact snapshots are named by a design-project id)', () => {
+  const { pathHits, findInDiff } = require('./piiShapes');
+  const uuidPath = 'docs/design-artifacts/3f2a9c1e-7b4d-4e8a-9c2b-1d5e6f7a8b9c.dc.html';
+  assert.deepStrictEqual(pathHits(uuidPath), [], 'a design-project id in a name is no hit');
+  const emailPath = ['docs/clients/contact-x', 'example.com.md'].join('@');
+  assert.deepStrictEqual(pathHits(emailPath).map((h) => h.shape), ['EMAIL'], 'an address in a name is a hit');
+  assert.deepStrictEqual(pathHits(['docs/notes-', '3125550148', '.md'].join('')).map((h) => h.shape), ['PHONE'], 'a number in a name is a hit, fixtures included (strict)');
+  const diff = `diff --git a/${uuidPath} b/${uuidPath}\nnew file mode 100644\n--- /dev/null\n+++ b/${uuidPath}\n@@ -0,0 +1 @@\n+<html></html>\n`;
+  assert.deepStrictEqual(findInDiff(diff), [], 'the pre-step does not block a snapshot by its name');
+});

@@ -703,12 +703,25 @@ function maskDiff(diffText) {
  * an email or a number is a leak however innocent its content, since every
  * brief and receipt prints the path (review-tooling security H1).
  */
+/**
+ * The shapes a changed path itself carries, judged strict: a file named with an
+ * address, a number, a key or a tax id is a leak however innocent its content,
+ * since every brief and receipt prints the path. The UUID shape is exempt here
+ * alone, because paths are made of ids and the design-artifact snapshots under
+ * docs/design-artifacts/ are named by their design-project id (ruling
+ * 2026-10-21, review-tooling fix pass). review-select and review-brief refuse
+ * on the same function.
+ */
+function pathHits(p) {
+  return findPii(String(p || ''), { strict: true }).filter((h) => h.shape !== 'UUID');
+}
+
 function findInDiff(diffText) {
   const hits = [];
   for (const { line, path: p, kind, lineNo, opts } of walkDiff(diffText)) {
     if (kind === 'header') {
       if (!p || !line.startsWith('diff --git')) continue;
-      const inPath = findPii(p, { strict: true });
+      const inPath = pathHits(p);
       if (inPath.length) {
         const text = `the path itself: ${mask(p, { strict: true })}`;
         for (const h of inPath) hits.push({ shape: h.shape, path: p, line: null, text });
@@ -725,7 +738,7 @@ function findInDiff(diffText) {
   return hits;
 }
 
-module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathAllowed, pathClass, readBusinessLines, registryLoadNotes };
+module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathHits, pathAllowed, pathClass, readBusinessLines, registryLoadNotes };
 
 // ---- CLI --------------------------------------------------------------------
 // Plain output only: no color codes, no external diff driver, no textconv
