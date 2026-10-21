@@ -68,7 +68,11 @@ const EMAIL_DOMAIN = '[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,63}';
 
 // PHONE: the board writer's shape; a separator is a space or two, a dot, a
 // hyphen, a slash, a no-break space, an en dash or a figure dash.
-const PHONE_SEP = '(?: {1,2}|[.\\-/\\u00A0\\u2012\\u2013])?';
+// One separator between the groups: a space or two, a dot, a dash of any
+// typographic kind, a slash, an underscore, a backslash, a no-break or thin
+// space, or none (review-tooling review 3, H2). Never a comma: a comma list of
+// numbers is not a phone.
+const PHONE_SEP = '(?: {1,2}|[.\\-/_\\\\\\u00A0\\u2009\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212])?';
 const PHONE_SRC = `(?<![0-9])(?:\\+?[0-9]{1,3}${PHONE_SEP})?\\(?[0-9]{3}\\)?${PHONE_SEP}[0-9]{3}${PHONE_SEP}[0-9]{4}(?![0-9])`;
 // A bare run of digits (no separator, plus or parenthesis) is a phone number only
 // when it reads as one: ten digits with a North American area code and exchange
@@ -716,6 +720,25 @@ function maskDiff(diffText) {
  * of every finding on such a path masked.
  */
 const ARTIFACT_DIR = 'docs/design-artifacts/';
+/**
+ * A path masked the way pathHits reads it (review 3, H3): a segment carrying a
+ * shape becomes <SHAPE>; when a shape is found only across segments (digits
+ * split by slashes), the whole path becomes <SHAPE>; a path with no hit is
+ * returned as it is. The pre-step's file field and the path-hit text use it, so
+ * the value a path hit blocks on never prints.
+ */
+function maskPath(p) {
+  const s = String(p || '');
+  const whole = pathHits(s);
+  if (!whole.length) return s;
+  const segs = s.split('/').map((seg) => {
+    const h = pathHits(seg);
+    return h.length ? `<${h[0].shape}>` : seg;
+  });
+  const joined = segs.join('/');
+  return pathHits(joined).length ? `<${whole[0].shape}>` : joined;
+}
+
 function pathHits(p) {
   const s = String(p || '');
   const seen = new Set();
@@ -751,7 +774,7 @@ function findInDiff(diffText) {
       }
       const inPath = pathHits(p);
       if (inPath.length) {
-        const text = `the path itself carries a shape: ${mask(p, { strict: true })}; rename the file first, then change or delete it`;
+        const text = `the path itself carries a shape: ${maskPath(p)}; rename the file first, then change or delete it`;
         for (const h of inPath) hits.push({ shape: h.shape, path: p, line: null, text });
       }
       continue;
@@ -766,7 +789,7 @@ function findInDiff(diffText) {
   return hits;
 }
 
-module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathHits, pathAllowed, pathClass, readBusinessLines, registryLoadNotes };
+module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathHits, maskPath, pathAllowed, pathClass, readBusinessLines, registryLoadNotes };
 
 // ---- CLI --------------------------------------------------------------------
 // Plain output only: no color codes, no external diff driver, no textconv

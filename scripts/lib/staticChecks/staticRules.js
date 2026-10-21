@@ -86,8 +86,8 @@ function maskedPath(file) {
   } catch {
     return WITHHELD;
   }
-  if (typeof pii.pathHits !== 'function' || typeof pii.mask !== 'function') return WITHHELD;
-  return pii.pathHits(file).length ? pii.mask(String(file), { strict: true }) : file;
+  if (typeof pii.pathHits !== 'function' || typeof pii.maskPath !== 'function') return WITHHELD;
+  return pii.pathHits(file).length ? pii.maskPath(String(file)) : file;
 }
 
 function lineRule(re) {

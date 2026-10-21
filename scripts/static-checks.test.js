@@ -1299,3 +1299,14 @@ test('a finding on a file whose name carries an address prints the file masked, 
     assert.ok(String(f.file).includes('<EMAIL>'), `${f.rule} names the file by its masked form: ${JSON.stringify(f.file)}`);
   }
 });
+
+test('a path hit found through separators prints its file masked too, not the number it blocks on (review 3, H3)', () => {
+  const d = ['312', '555', '0148'];
+  const name = `docs/clients/call_${d.join('_')}.md`;
+  const { r } = runChange(README, { [name]: 'notes\n' });
+  const got = hits(r, 'pii').filter((f) => f.line === null);
+  assert.strictEqual(got.length, 1, JSON.stringify(r.json.findings));
+  assert.ok(!String(got[0].file).includes(d[2]) && String(got[0].file).includes('<PHONE>'), 'file: ' + got[0].file);
+  assert.ok(!got[0].text.includes(d[2]), 'text: ' + got[0].text);
+  assert.ok(!r.stdout.includes(d.join('_')), 'the joined number is nowhere on stdout');
+});

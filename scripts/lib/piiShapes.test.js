@@ -1046,3 +1046,39 @@ test('pathHits reads underscores and backslashes as separators and each segment 
   assert.deepStrictEqual(pathHits('server/utils/pricing_engine_v2_test_helpers.js'), [], 'ordinary snake_case is no hit');
   assert.deepStrictEqual(pathHits('docs/superpowers/plans/2026-10-20-instruction-rewrite-step2.md'), [], 'a dated plan name is no hit');
 });
+
+test('a number joined by underscores, backslashes, typographic dashes or a thin space is a phone in text too (review 3, H2)', () => {
+  const { mask } = require('./piiShapes');
+  const d = ['312', '555', '0148'];
+  for (const sep of ['_', '\\', '‐', '‑', '—', '−', ' ']) {
+    const line = `const line = '${d.join(sep)}';`;
+    const out = mask(line, { strict: true });
+    assert.ok(out.includes('<PHONE>') && !out.includes(d[2]), `separator U+${sep.codePointAt(0).toString(16)} masks: ${out}`);
+  }
+  assert.ok(!mask('const v = [312, 555, 148];', { strict: true }).includes('<PHONE>'), 'a comma list of numbers is not a phone');
+  assert.ok(!mask('const pricing_engine_v2 = 1;', { strict: true }).includes('<PHONE>'), 'snake_case without digit groups is not a phone');
+});
+
+test('maskPath masks a path the way pathHits reads it: a segment carrying a shape becomes its shape, a shape split across segments masks the whole path, a clean path is unchanged (review 3, H3)', () => {
+  const { maskPath } = require('./piiShapes');
+  const d = ['312', '555', '0148'];
+  const keyish = `${'A'.repeat(20)}7${'b'.repeat(27)}`;
+  const uuid = ['3f2a9c1e', '7b4d', '4e8a', '9c2b', '1d5e6f7a8b9c'].join('-');
+  assert.strictEqual(maskPath(`docs/clients/call_${d.join('_')}.md`), 'docs/clients/<PHONE>');
+  assert.strictEqual(maskPath(`docs/${keyish}/x.md`), 'docs/<TOKEN>/x.md');
+  assert.strictEqual(maskPath(`docs/${d.join('/')}.md`), '<PHONE>', 'digits split across directories mask the whole path');
+  assert.strictEqual(maskPath('server/utils/pricingEngine.js'), 'server/utils/pricingEngine.js');
+  assert.strictEqual(maskPath(`docs/design-artifacts/${uuid}.dc.html`), `docs/design-artifacts/${uuid}.dc.html`, 'a design-artifact id is kept');
+  for (const out of [maskPath(`docs/clients/call_${d.join('_')}.md`), maskPath(`docs/${d.join('\\')}.md`)]) assert.ok(!out.includes(d[2]), out);
+});
+
+test('the path-hit text never carries the value it blocks on, whichever spelling pathHits read (review 3, H3)', () => {
+  const { findInDiff } = require('./piiShapes');
+  const d = ['312', '555', '0148'];
+  for (const name of [`docs/clients/call_${d.join('_')}.md`, `docs/${d.join('/')}.md`]) {
+    const diff = `diff --git a/${name} b/${name}\nnew file mode 100644\n--- /dev/null\n+++ b/${name}\n@@ -0,0 +1 @@\n+notes\n`;
+    const hits = findInDiff(diff);
+    assert.ok(hits.length >= 1 && hits.every((h) => h.line === null), JSON.stringify(hits));
+    for (const h of hits) assert.ok(!h.text.includes(d[2]) && h.text.includes('<PHONE>'), h.text);
+  }
+});
