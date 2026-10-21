@@ -1050,7 +1050,7 @@ test('pathHits reads underscores and backslashes as separators and each segment 
 test('a number joined by underscores, backslashes, typographic dashes or a thin space is a phone in text too (review 3, H2)', () => {
   const { mask } = require('./piiShapes');
   const d = ['312', '555', '0148'];
-  for (const sep of ['_', '\\', '‐', '‑', '—', '−', ' ']) {
+  for (const sep of ['_', '\\', ...[0x2010, 0x2011, 0x2014, 0x2212, 0x2009].map((c) => String.fromCharCode(c))]) {
     const line = `const line = '${d.join(sep)}';`;
     const out = mask(line, { strict: true });
     assert.ok(out.includes('<PHONE>') && !out.includes(d[2]), `separator U+${sep.codePointAt(0).toString(16)} masks: ${out}`);
