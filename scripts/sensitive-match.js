@@ -649,6 +649,7 @@ function tierFromGit(range, { cwd = REPO_ROOT, listFile = DEFAULT_LIST } = {}) {
 }
 
 module.exports = {
+  STATUS_WRITE,
   isSensitive,
   matchSensitive,
   matchSensitiveDetailed,

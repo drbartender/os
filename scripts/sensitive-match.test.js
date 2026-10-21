@@ -791,3 +791,11 @@ test('S-L6: the calibration leaves diff-unparsed hits out of recall and the docs
   const some = cal.summarize({ ...counts, unparsedFix: 3, unparsedDocs: 1 });
   assert.match(cal.formatReport(some, 'd').join('\n'), /diff-unparsed hits \(left out of both counts\): 3 in the fix commits, 1 in the docs-only commits$/m);
 });
+
+test('STATUS_WRITE is exported for the lens triggers: a parameterized or lowercase status write fires, a WHERE guard does not', () => {
+  const { STATUS_WRITE } = require('./sensitive-match');
+  assert.ok(STATUS_WRITE instanceof RegExp, 'STATUS_WRITE is exported as a RegExp');
+  assert.ok(STATUS_WRITE.test('update leads set note = $1, status = $2'), 'a parameterized lowercase write');
+  assert.ok(STATUS_WRITE.test("UPDATE proposals SET status = 'sent'"), 'the plan form');
+  assert.ok(!STATUS_WRITE.test("SELECT 1 FROM proposals WHERE status = 'sent'"), 'a guard is not a write');
+});
