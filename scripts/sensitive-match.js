@@ -125,6 +125,10 @@ function gitEnv(env = process.env) {
   const out = { ...env };
   delete out.GIT_DIFF_OPTS;
   delete out.GIT_EXTERNAL_DIFF;
+  // A replace ref would make diff, log and cat-file read another object under
+  // the real sha while rev-parse still names the real one; every reader of
+  // this env (the receipt library inherits it) sees the real content.
+  out.GIT_NO_REPLACE_OBJECTS = '1';
   return out;
 }
 

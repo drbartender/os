@@ -646,13 +646,24 @@ test('a pii hit on a line holding a secret literal prints <LITERAL> when git nam
   assert.ok(hits(r, 'pii').every((h) => h.text.includes('<LITERAL>')), JSON.stringify(hits(r, 'pii')));
 });
 
-test('two changed paths that normalize to one pii name, one holding a secret literal: the pii text is withheld, never the literal', () => {
+test('two changed paths that differ only by a backslash are two files: each pii hit names its own path and the literal is redacted from its own blob', () => {
   const { r } = runChange(README, {
     'server/a/b.js': L("'use strict';", 'const n = 1;', "const who = 'person@example.com';", 'module.exports = { n, who };'),
     'server/a\\b.js': L("'use strict';", "const hook = process.env.HOOK_SECRET || 'sesame person@example.com';", 'module.exports = { hook };'),
   });
-  assert.deepStrictEqual(hits(r, 'pii').map((h) => [h.file, h.line, h.blocking]), [['server/a/b.js', 2, true], ['server/a/b.js', 3, true]]);
+  assert.deepStrictEqual(hits(r, 'pii').map((h) => [h.file, h.line, h.blocking]).sort(), [['server/a/b.js', 3, true], ['server/a\\b.js', 2, true]]);
   for (const f of r.json.findings) assert.ok(!f.text.includes('sesame'), `${f.rule} ${JSON.stringify(f.file)}: ${f.text}`);
+  assert.ok(hits(r, 'pii', 'server/a\\b.js')[0].text.includes('<LITERAL>'), JSON.stringify(hits(r, 'pii')));
+});
+
+test('a changed path that itself carries an address is a blocking pii finding with no line and a masked text (review-tooling security H1)', () => {
+  const name = ['docs/clients/contact-x', 'example.com.md'].join('@');
+  const { r } = runChange(README, { [name]: 'notes\n' });
+  const got = hits(r, 'pii', name);
+  assert.strictEqual(got.length, 1, JSON.stringify(r.json.findings));
+  assert.strictEqual(got[0].line, null);
+  assert.ok(got[0].blocking);
+  assert.ok(got[0].text.includes('<EMAIL>') && !got[0].text.includes(name), got[0].text);
 });
 
 test('no finding text in either run carries a raw secret or address', () => {

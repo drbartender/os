@@ -871,3 +871,39 @@ test('the shapes and the allowlist are exported for the static checks and the ma
   assert.ok(ALLOWLIST.paths.includes('**/*.test.js'));
   assert.strictEqual(ALLOWLIST.emailDomains[0], 'drbartender.com');
 });
+
+test('a path is classified exactly as git names it: a backslash or trailing-space spelling of a registry or test path is a code path (review-tooling security H2)', () => {
+  const { pathClass } = require('./piiShapes');
+  assert.strictEqual(pathClass('server/utils/smsLines.js'), 'registry', 'the exact registry path');
+  assert.strictEqual(pathClass('server\\utils\\smsLines.js'), 'code', 'literal backslashes are another file');
+  assert.strictEqual(pathClass('server/utils/smsLines.js '), 'code', 'a trailing space is another file');
+  assert.strictEqual(pathClass('./server/utils/smsLines.js'), 'code', 'a dot-slash spelling is not how git names a file');
+  assert.strictEqual(pathClass('scripts/x.test.js '), 'code', 'a test name with a trailing space');
+});
+
+test('mask-diff judges a section by its exact header path: a backslash or trailing-space spelling of the line registry masks an address (review-tooling security H2)', () => {
+  const { maskDiff } = require('./piiShapes');
+  const addr = ['person', 'example.com'].join('@');
+  const section = (header) => `${header}\n--- a/x\n+++ b/x\n@@ -0,0 +1 @@\n+const line = '${addr}';\n`;
+  const backslash = section('diff --git "a/server\\\\utils\\\\smsLines.js" "b/server\\\\utils\\\\smsLines.js"');
+  const trailing = section('diff --git a/server/utils/smsLines.js  b/server/utils/smsLines.js ');
+  const exact = section('diff --git a/server/utils/smsLines.js b/server/utils/smsLines.js');
+  assert.ok(maskDiff(backslash).includes('<EMAIL>'), 'backslash spelling masks');
+  assert.ok(!maskDiff(backslash).includes(addr), 'backslash spelling leaves no raw address');
+  assert.ok(maskDiff(trailing).includes('<EMAIL>'), 'trailing-space spelling masks');
+  assert.ok(maskDiff(exact).includes(addr), 'the exact registry path keeps its own literal');
+});
+
+test('findInDiff reports a PII shape in a changed path itself, strict, with a masked text and no line (review-tooling security H1 upstream)', () => {
+  const { findInDiff } = require('./piiShapes');
+  const name = ['docs/clients/contact-x', 'example.com.md'].join('@');
+  const diff = `diff --git a/${name} b/${name}\nnew file mode 100644\n--- /dev/null\n+++ b/${name}\n@@ -0,0 +1 @@\n+notes\n`;
+  const hits = findInDiff(diff);
+  assert.strictEqual(hits.length, 1, JSON.stringify(hits));
+  assert.strictEqual(hits[0].shape, 'EMAIL');
+  assert.strictEqual(hits[0].path, name, 'the hit names the file by its exact path');
+  assert.strictEqual(hits[0].line, null, 'the path has no line');
+  assert.ok(hits[0].text.includes('<EMAIL>') && !hits[0].text.includes(name), 'the text is masked');
+  const plain = `diff --git a/docs/clients/c-12.md b/docs/clients/c-12.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/clients/c-12.md\n@@ -0,0 +1 @@\n+notes\n`;
+  assert.deepStrictEqual(findInDiff(plain), [], 'an id-only path is no hit');
+});

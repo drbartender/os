@@ -799,3 +799,37 @@ test('STATUS_WRITE is exported for the lens triggers: a parameterized or lowerca
   assert.ok(STATUS_WRITE.test("UPDATE proposals SET status = 'sent'"), 'the plan form');
   assert.ok(!STATUS_WRITE.test("SELECT 1 FROM proposals WHERE status = 'sent'"), 'a guard is not a write');
 });
+
+test('gitEnv neutralizes replace refs, so tierFromGit reads the real tip (review-tooling security L3)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const SM = require('./sensitive-match');
+  assert.strictEqual(SM.gitEnv({}).GIT_NO_REPLACE_OBJECTS, '1', 'the env var is set');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-replace-'));
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', ['t', 'example.com'].join('@'));
+    git('config', 'user.name', 't');
+    git('config', 'commit.gpgsign', 'false');
+    fs.mkdirSync(path.join(dir, 'server'));
+    fs.writeFileSync(path.join(dir, 'server/x.js'), 'const a = 1;\n');
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'A');
+    const A = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'server/x.js'), "const a = 1;\nawait stripe.refunds.create({ payment_intent: id });\n");
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'B');
+    const B = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'server/x.js'), 'const a = 1;\nconst b = 2;\n');
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'C');
+    const C = git('rev-parse', 'HEAD');
+    git('replace', B, C);
+    assert.strictEqual(SM.tierFromGit({ base: A, tip: B }, { cwd: dir }).tier, 'A', 'the real B carries a Stripe call: tier A, not the replacement');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

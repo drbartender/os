@@ -335,16 +335,12 @@ function envIgnored(root, mode) {
 // (`spans`, from checkFile) takes its text from the tip blob with that
 // literal as <LITERAL>, then masked, so no fragment of it prints.
 //
-// piiShapes names a path as its normalizePath does (backslashes to slashes, a
-// leading ./ dropped, trimmed), while the spans and the blobs are keyed by
-// git's own path, so each hit is mapped back to the changed path it came
-// from. When two changed paths normalize to the same name and one of them
-// holds a secret-rule literal, the hit's text is withheld: it cannot be told
-// which file the line came from.
+// piiShapes names a path exactly as git does (a spelling its normalization
+// would change is another file, review-tooling security H2), so a hit's path
+// keys the spans and the blobs directly. A hit with a null line is the path
+// itself carrying a shape; its text is already masked.
 
-const piiPath = (p) => String(p || '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
-
-function piiRule(root, mode, { spans, content, tipSpec, paths = [] } = {}) {
+function piiRule(root, mode, { spans, content, tipSpec } = {}) {
   const args = mode.staged ? ['--find', '--staged'] : ['--find', '--added', mode.base, mode.tip];
   const res = spawnSync(process.execPath, [path.join(__dirname, 'lib', 'piiShapes.js'), ...args],
     { cwd: root, env: GIT_ENV, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
@@ -355,17 +351,10 @@ function piiRule(root, mode, { spans, content, tipSpec, paths = [] } = {}) {
     hits = null;
   }
   if (!Array.isArray(hits)) return [{ rule: 'pii', file: null, line: null, text: `the pii pre-step did not run (exit ${res.status})`, blocking: true }];
-  // The changed paths under each name piiShapes reports.
-  const byPiiPath = new Map();
-  for (const p of paths) byPiiPath.set(piiPath(p), [...(byPiiPath.get(piiPath(p)) || []), p]);
   // One finding per path and line, masked once (the output keeps one anyway).
   const seen = new Set();
   const textOf = (h) => {
-    const gitPaths = byPiiPath.get(piiPath(h.path)) || [h.path];
-    if (gitPaths.length > 1 && spans && gitPaths.some((p) => spans.has(p))) {
-      return maskedText('text withheld: more than one changed path has this name once normalized, and one holds a secret-rule literal', h.path);
-    }
-    const gitPath = gitPaths[0];
+    const gitPath = h.path;
     const fileSpans = spans && spans.get(gitPath);
     const src = fileSpans && content ? content.get(tipSpec(gitPath)) : undefined;
     if (src === undefined) return maskedText(h.text, h.path);

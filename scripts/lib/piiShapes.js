@@ -303,12 +303,17 @@ function normalizePath(p) {
 }
 
 // 'registry' (phones and emails exempt, the rest as a fixture path), 'test'
-// (fixtures exempt) or 'code' (any other path, and no path at all).
+// (fixtures exempt) or 'code' (any other path, and no path at all). A path is
+// classified exactly as git names it: a spelling normalization would change
+// (literal backslashes, a trailing space, a leading ./) is another file and
+// takes the code class, so no spelling of a registry or fixture path exempts
+// a value (review-tooling security H2).
 function pathClass(p) {
   if (!p) return 'code';
-  const np = normalizePath(p);
-  if (REGISTRY_GLOBS.some((re) => re.test(np))) return 'registry';
-  if (TEST_GLOBS.some((re) => re.test(np))) return 'test';
+  const s = String(p);
+  if (normalizePath(s) !== s) return 'code';
+  if (REGISTRY_GLOBS.some((re) => re.test(s))) return 'registry';
+  if (TEST_GLOBS.some((re) => re.test(s))) return 'test';
   return 'code';
 }
 
@@ -593,7 +598,7 @@ function parseGitHeader(line) {
     }
   }
   if (a === null || b === null || !a.startsWith('a/') || !b.startsWith('b/') || b.length < 3) return null;
-  return normalizePath(b.slice(2));
+  return b.slice(2);
 }
 
 // The mask options for one file. A null path (the preamble, or a header that
@@ -606,9 +611,9 @@ function fileOpts(p) {
 // like a header side when it must be), or null when it does not parse.
 function parseFromPath(rest) {
   if (!rest) return null;
-  if (!rest.startsWith('"')) return normalizePath(rest) || null;
+  if (!rest.startsWith('"')) return rest || null;
   const p = closingQuote(rest, 0) === rest.length - 1 ? unquoteC(rest) : null;
-  return p ? normalizePath(p) : null;
+  return p || null;
 }
 
 // Path classes from the most exempt to the strictest: each one's exempt set
@@ -691,13 +696,25 @@ function maskDiff(diffText) {
 }
 
 /**
- * Hits on ADDED lines only: [{shape, path, line, text}], `line` the new-file
- * line number and `text` the added line MASKED. No raw value leaves here: the
- * consumer prints these into a transcript.
+ * Hits on ADDED lines, and on a changed path itself: [{shape, path, line,
+ * text}], `line` the new-file line number (null for a path hit) and `text`
+ * the added line MASKED (for a path hit, the path masked strict). No raw value
+ * leaves here: the consumer prints these into a transcript. A file named with
+ * an email or a number is a leak however innocent its content, since every
+ * brief and receipt prints the path (review-tooling security H1).
  */
 function findInDiff(diffText) {
   const hits = [];
   for (const { line, path: p, kind, lineNo, opts } of walkDiff(diffText)) {
+    if (kind === 'header') {
+      if (!p || !line.startsWith('diff --git')) continue;
+      const inPath = findPii(p, { strict: true });
+      if (inPath.length) {
+        const text = `the path itself: ${mask(p, { strict: true })}`;
+        for (const h of inPath) hits.push({ shape: h.shape, path: p, line: null, text });
+      }
+      continue;
+    }
     if (kind !== 'content' || !line.startsWith('+')) continue;
     const added = line.slice(1);
     const found = findPii(added, opts);
