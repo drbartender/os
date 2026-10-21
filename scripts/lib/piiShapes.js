@@ -731,6 +731,24 @@ function resolveCommit(ref) {
 //   --mask-diff  < diff          masked diff on stdout
 //   --find --added <base> <tip>  JSON hits on the added lines of every path in the diff
 //   --find --staged              same over the staged diff
+// The CLI's results go out synchronously, in full, before it exits: an async
+// pipe write followed by process.exit drops everything past the pipe buffer
+// (about 64 KB) when the reader lags. A non-blocking descriptor answers EAGAIN,
+// which waits a few milliseconds and retries.
+function writeOut(text) {
+  const buf = Buffer.from(text, 'utf8');
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  let off = 0;
+  while (off < buf.length) {
+    try {
+      off += fs.writeSync(1, buf, off, buf.length - off);
+    } catch (err) {
+      if (err.code !== 'EAGAIN') throw err;
+      Atomics.wait(pause, 0, 0, 5);
+    }
+  }
+}
+
 if (require.main === module) {
   const args = process.argv.slice(2);
   for (const note of registryLoadNotes()) process.stderr.write(`piiShapes: ${note}\n`);
@@ -743,7 +761,7 @@ if (require.main === module) {
     process.exit(1);
   }
   if (args[0] === '--mask-diff') {
-    process.stdout.write(maskDiff(readStdin()));
+    writeOut(maskDiff(readStdin()));
     process.exit(0);
   }
   if (args[0] === '--find') {
@@ -775,7 +793,7 @@ if (require.main === module) {
     } else {
       usage();
     }
-    process.stdout.write(JSON.stringify(findInDiff(diff), null, 2) + '\n');
+    writeOut(JSON.stringify(findInDiff(diff), null, 2) + '\n');
     process.exit(0);
   }
   process.stderr.write('usage: piiShapes.js --check "<line>" | --mask-diff | --find --added <base> <tip> | --find --staged\n');

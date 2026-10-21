@@ -840,6 +840,29 @@ test('a context line of a rename masks under the stricter of the two paths', () 
   assert.ok(maskDiff(plain).includes(` const owner = '${owner}';`), 'the same context line in a test file that was not renamed keeps its fixture');
 });
 
+// A pipe reader that lags must still get the whole output: the CLI writes its
+// result synchronously before it exits (an async pipe write followed by exit
+// drops everything past the pipe buffer, about 64 KB).
+test('--mask-diff and --find deliver their whole output to a slow pipe reader', async () => {
+  const { spawn } = require('node:child_process');
+  const big = ['diff --git a/docs/big.md b/docs/big.md', '--- a/docs/big.md', '+++ b/docs/big.md', '@@ -1 +1,6000 @@']
+    .concat(Array.from({ length: 6000 }, (_, i) => `+line ${i} of a long document with nothing personal in it at all, padded out to make the output large`)).join('\n') + '\n';
+  const slow = (args, input) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [MOD, ...args], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const chunks = [];
+    child.stdout.on('data', (c) => chunks.push(c));
+    child.stdout.pause(); // the lagging reader: nothing is consumed for 700 ms
+    child.on('close', (code) => resolve({ code, out: Buffer.concat(chunks).toString('utf8') }));
+    child.stdin.end(input);
+    setTimeout(() => child.stdout.resume(), 700);
+  });
+  const masked = await slow(['--mask-diff'], big);
+  assert.strictEqual(masked.code, 0);
+  assert.strictEqual(masked.out.length, big.length, 'the masked diff is as long as its clean input');
+  const found = await slow(['--find', '--staged'], '');
+  assert.ok([0, 2].includes(found.code));
+});
+
 test('the shapes and the allowlist are exported for the static checks and the mask', () => {
   for (const name of ['EMAIL', 'PHONE', 'TOKEN', 'STRIPE_ID', 'ROUTING_EIN']) assert.ok(SHAPES[name], name);
   assert.ok(ALLOWLIST.paths.includes('server/utils/companyPhone.js'));
