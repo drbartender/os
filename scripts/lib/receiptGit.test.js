@@ -115,3 +115,36 @@ test('a ref git cannot resolve is a problem; a kind finalize refuses gathers no 
   assert.strictEqual(none.key, null);
   assert.strictEqual(none.tip, null);
 });
+
+test('changedSince leaves out only a position git cannot resolve; any other error from the diff propagates (pre-step, swallowed-catch)', () => {
+  const unresolved = (a) => { throw new Error(`not a commit: ${a}`); };
+  assert.deepStrictEqual(G.changedSince(['p1', 'final'], 'final', unresolved), {}, 'an unresolvable position is left out, so every verdict read there is stale');
+  const broken = () => { throw new TypeError('diff is not a function'); };
+  assert.throws(() => G.changedSince(['p1'], 'final', broken), TypeError, 'a defect in the diff is not a stale position');
+});
+
+test('overlap leaves out only an older base git cannot resolve; any other error propagates (pre-step, swallowed-catch)', (t) => {
+  const repo = makeRepo(t);
+  const m0 = git(repo, 'rev-parse', 'main');
+  git(repo, 'checkout', '-q', '-b', 'lane');
+  const read = commit(repo, 'lane', { 'a.js': 'a v2\n' });
+  git(repo, 'checkout', '-q', 'main');
+  const m1 = commit(repo, 'main moves', { 'c.js': 'c v1\n' });
+  git(repo, 'checkout', '-q', '-B', 'lane', m1);
+  const tip = commit(repo, 'lane, rebased', { 'a.js': 'a v2\n' });
+  const state = { mode: 'lane', name: 'lane', reports: [{ tip: read, main: m0 }, { tip, main: m1 }] };
+  const R = require('./receipt');
+  const real = R.filesBetween;
+  t.after(() => { R.filesBetween = real; });
+  R.filesBetween = (a, b, opts) => {
+    if (a === m0) throw new Error(`not a commit: ${a}`);
+    return real(a, b, opts);
+  };
+  const stale = G.finalizeFacts(state, { base: m1, reviewed: m1 }, true, repo);
+  assert.deepStrictEqual(stale.overlapFiles, {}, 'an older base git cannot resolve is left out, so every verdict read on it is stale');
+  R.filesBetween = (a, b, opts) => {
+    if (a === m0) throw new TypeError('filesBetween broke');
+    return real(a, b, opts);
+  };
+  assert.throws(() => G.finalizeFacts(state, { base: m1, reviewed: m1 }, true, repo), TypeError, 'a defect in filesBetween is not a stale base');
+});

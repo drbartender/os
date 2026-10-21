@@ -75,6 +75,11 @@ function previewFiles(state, cwd) {
   }
 }
 
+// receipt.js names a position git cannot resolve this way (resolveCommit,
+// resolveTree); only that error means stale. Anything else is a defect in the
+// diff and propagates.
+const UNRESOLVED = /^not a (?:commit|tree): /;
+
 // {position: files changed between it and final} for every recorded position
 // but final itself; a position git cannot diff is left out (stale).
 function changedSince(positions, final, diff) {
@@ -82,7 +87,8 @@ function changedSince(positions, final, diff) {
   for (const p of new Set(positions.filter((x) => x && x !== final))) {
     try {
       out[p] = diff(p, final);
-    } catch {
+    } catch (err) {
+      if (!UNRESOLVED.test(err && err.message)) throw err;
       // left out: every verdict read there is stale
     }
   }
@@ -184,7 +190,8 @@ function overlap(g, cwd) {
   for (const b of new Set(Object.values(g.readBase).filter((x) => x && x !== g.base))) {
     try {
       g.overlapFiles[b] = R.filesBetween(b, g.reviewed, { cwd });
-    } catch {
+    } catch (err) {
+      if (!UNRESOLVED.test(err && err.message)) throw err;
       // left out: every verdict read on it is stale
     }
   }

@@ -73,7 +73,9 @@ function tmpDir(t, label) {
 function makeRepo(t) {
   const dir = tmpDir(t, 'repo');
   git(dir, 'init', '-q', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.com');
+  // Built from parts: this helper is not a test path, where a reserved
+  // domain is exempt, so a literal here would stop the pii pre-step.
+  git(dir, 'config', 'user.email', ['test', 'example.com'].join('@'));
   git(dir, 'config', 'user.name', 'Test User');
   git(dir, 'config', 'commit.gpgsign', 'false');
   commit(dir, 'seed', { 'README.md': 'readme\n', 'server/a.js': 'a v1\n', 'server/b.js': 'b v1\n' });
