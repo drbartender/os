@@ -737,9 +737,21 @@ module.exports = { SHAPES, ALLOWLIST, findPii, mask, maskDiff, findInDiff, pathA
 const DIFF_FLAGS = Object.freeze(['--no-color', '--no-ext-diff', '--no-textconv', '--text', '--unified=0',
   '--no-relative', '--src-prefix=a/', '--dst-prefix=b/']);
 
+// The env the CLI's git calls run under: no external diff driver and no diff
+// options from the environment (either would change what the pre-step reads),
+// and no replace refs (a replace ref would swap the content read under the
+// real sha). sensitive-match.gitEnv does the same for the tier.
+function cliGitEnv() {
+  const env = { ...process.env };
+  delete env.GIT_DIFF_OPTS;
+  delete env.GIT_EXTERNAL_DIFF;
+  env.GIT_NO_REPLACE_OBJECTS = '1';
+  return env;
+}
+
 // The full sha of `ref` when it names a commit, else null.
 function resolveCommit(ref) {
-  const res = spawnSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], { encoding: 'utf8' });
+  const res = spawnSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], { encoding: 'utf8', env: cliGitEnv() });
   const sha = res.status === 0 ? String(res.stdout).trim() : '';
   return /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
 }
@@ -789,7 +801,7 @@ if (require.main === module) {
     // The raw diff never reaches the terminal: git's output stays in this
     // process, and a failure prints a fixed line, never git's stdout.
     const gitDiff = (extra) => {
-      const res = spawnSync('git', ['diff', ...DIFF_FLAGS, ...extra], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 });
+      const res = spawnSync('git', ['diff', ...DIFF_FLAGS, ...extra], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, env: cliGitEnv() });
       if (res.status !== 0 || res.error) {
         process.stderr.write('piiShapes.js: git diff failed\n');
         process.exit(2);

@@ -1278,3 +1278,13 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
     assert.strictEqual(alive, false, 'the eslint child was killed');
   });
 }
+
+test('a replace ref on the tip does not hide a secret default: static-checks reads the real tip (gemini on the pii quick fix)', () => {
+  const dir = makeRepo({ eslint: false });
+  const base = commit(dir, README, 'seed');
+  const tip = commit(dir, { 'server/utils/hook.js': L("'use strict';", "const hook = process.env.HOOK_SECRET || 'sesame';", 'module.exports = { hook };') }, 'change');
+  const other = commit(dir, { 'server/utils/hook.js': L("'use strict';", 'const hook = process.env.HOOK_SECRET;', 'module.exports = { hook };') }, 'other');
+  execFileSync('git', ['replace', tip, other], { cwd: dir, encoding: 'utf8' });
+  const r = run(dir, ['--base', base, '--tip', tip]);
+  assert.deepStrictEqual(hits(r, 'secret-default').map((h) => [h.file, h.line]), [['server/utils/hook.js', 2]], JSON.stringify(r.json && r.json.findings));
+});

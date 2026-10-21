@@ -75,6 +75,8 @@ const GIT_ENV = (() => {
   const env = { ...process.env };
   delete env.GIT_DIFF_OPTS;
   delete env.GIT_EXTERNAL_DIFF;
+  // A replace ref would swap the blob and the diff read under the real sha.
+  env.GIT_NO_REPLACE_OBJECTS = '1';
   return env;
 })();
 

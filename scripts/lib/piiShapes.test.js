@@ -890,6 +890,12 @@ test('mask-diff judges a section by its exact header path: a backslash or traili
   const exact = section('diff --git a/server/utils/smsLines.js b/server/utils/smsLines.js');
   assert.ok(maskDiff(backslash).includes('<EMAIL>'), 'backslash spelling masks');
   assert.ok(!maskDiff(backslash).includes(addr), 'backslash spelling leaves no raw address');
+  // The quoted header parsed to a path of the code class, not to null (strict):
+  // a 555 fixture stays raw under the code class and would mask under strict.
+  const fixture = ['312', '555', '0148'].join('-');
+  const both = `diff --git "a/server\\\\utils\\\\smsLines.js" "b/server\\\\utils\\\\smsLines.js"\n--- a/x\n+++ b/x\n@@ -0,0 +1 @@\n+const line = '${addr} ${fixture}';\n`;
+  const out = maskDiff(both);
+  assert.ok(out.includes('<EMAIL>') && out.includes(fixture), 'code class: the address masks, the 555 fixture stays, so the header parsed');
   assert.ok(maskDiff(trailing).includes('<EMAIL>'), 'trailing-space spelling masks');
   assert.ok(maskDiff(exact).includes(addr), 'the exact registry path keeps its own literal');
 });
@@ -906,4 +912,45 @@ test('findInDiff reports a PII shape in a changed path itself, strict, with a ma
   assert.ok(hits[0].text.includes('<EMAIL>') && !hits[0].text.includes(name), 'the text is masked');
   const plain = `diff --git a/docs/clients/c-12.md b/docs/clients/c-12.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/clients/c-12.md\n@@ -0,0 +1 @@\n+notes\n`;
   assert.deepStrictEqual(findInDiff(plain), [], 'an id-only path is no hit');
+});
+
+test('the --find CLI reads git under an env that ignores replace refs and external diff drivers, so a replace ref on the tip cannot hide an added address (gemini on the quick fix)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-replace-'));
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', ['t', 'example.com'].join('@'));
+    git('config', 'user.name', 't');
+    git('config', 'commit.gpgsign', 'false');
+    fs.mkdirSync(path.join(dir, 'server'));
+    fs.writeFileSync(path.join(dir, 'server/x.js'), 'const a = 1;\n');
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'A');
+    const A = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'server/x.js'), `const a = 1;\nconst who = '${['person', 'example.com'].join('@')}';\n`);
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'B');
+    const B = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(dir, 'server/x.js'), 'const a = 1;\nconst b = 2;\n');
+    git('add', 'server/x.js');
+    git('commit', '-q', '-m', 'C');
+    const C = git('rev-parse', 'HEAD');
+    git('replace', B, C);
+    const run = (extraEnv) => spawnSync(process.execPath, [path.join(__dirname, 'piiShapes.js'), '--find', '--added', A, B], { cwd: dir, encoding: 'utf8', env: { ...env, ...extraEnv } });
+    const real = run({});
+    assert.strictEqual(real.status, 0, real.stderr);
+    const hits = JSON.parse(real.stdout);
+    assert.strictEqual(hits.length, 1, 'the real B adds one address: ' + real.stdout);
+    assert.strictEqual(hits[0].shape, 'EMAIL');
+    const driver = run({ GIT_EXTERNAL_DIFF: '/bin/false', GIT_DIFF_OPTS: '-u0' });
+    assert.strictEqual(driver.status, 0, driver.stderr);
+    assert.strictEqual(JSON.parse(driver.stdout).length, 1, 'an external diff driver or diff options in the environment do not change what the pre-step reads');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
