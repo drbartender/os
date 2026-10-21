@@ -38,7 +38,7 @@ Findings only, with no verdict table. Each takes an id of severity letter and nu
 
 - H1 `server/routes/example.js:120` The defect in one sentence. Failure path: the input and the steps that make it bite. Against: the fix for H2, or money math.
 
-When you find nothing, write No findings, then name each fix and each money expression you tried to break, one per line, so the record shows what was checked.
+When you find nothing, write one line that opens with the words No findings and then names, in that same line, each fix and each money expression you tried to break (for example: No findings. Checked the fixes: H1 in `server/a.js`, M2 in `server/b.js`.), so the record shows what was checked; never put an id at the start of a line, a bullet, a number or a heading, because the receipt reads such a line as a finding.
 
 Budget: finish within roughly the N tool calls the brief's Budget section names; if you run out, cut breadth and say which fixes or expressions you did not reach.
 
