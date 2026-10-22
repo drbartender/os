@@ -826,7 +826,7 @@ dr-bartender/
 │                               # plus runbooks (ops-runbook.md, va-calling-runbook.md, runbooks/override-conversion.md), project docs (client-portal-v2-project.md,
 │                               # staff-portal-beo-project.md, client-portal-design-reference.md), the per-surface *-design-prompt.md set,
 │                               # design-artifacts/, audit-2026-07-13/, and superpowers/{specs,plans}/
-├── .claude/agents/             # Claude Code agents (12): six code-review (code-review, consistency-check, database-review, performance-review, security-review, ui-ux-review) + six design-stage (spec-grounding/gaps/risk for /review-spec, plan-fidelity/decomposition/feasibility for /review-plan)
+├── .claude/agents/             # Claude Code agents (16): nine review lenses (access-egress, business-time, client, concurrency, lifecycle, money, outcomes-providers, schema-data, seams) + verify + performance-review (explicit-only) + five design-stage (spec-grounding, spec-gaps, spec-risk for /review-spec; plan-fidelity, plan-decomposition for /review-plan)
 ├── .husky/pre-commit           # Pre-commit hook, five steps: docs-drift check + file-size ratchet + CSS palette-scope check (warn-only, `|| true`) + lint-staged + os-stays-on-main guard (scripts/guard-os-main.sh)
 ├── .env.example                # Environment variable template
 ├── eslint.config.mjs           # ESLint flat config + security plugin

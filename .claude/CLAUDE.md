@@ -5,6 +5,8 @@ CLAUDE.md is the **rules doc**, organized in two tiers:
 - **Invariants** — genuine law that protects money, auth, data, and code. They change only with deliberate care, and the rewrite is coverage-checked so none is ever silently dropped.
 - **Conventions** — how we work now, each carrying its *why*. Conventions are questionable by default: when one gets in your way, say so, change it, and update its *why* right then. The doc stays alive.
 
+> TRANSITIONAL (2026-10-20, instruction rewrite step 2; remove at the flip): from this commit every lane is reviewed before merge, and every quick fix before its commit, by the review skill (`.claude/skills/review/`), which writes a receipt under the git common dir; the old push-time review layer (the seam sweep, the sensitive-path re-review at push, the second opinion at push) is not run; pushes stay cue-only through `npm run gate` and a literal-sha push until the flip marker exists; where the Review model and Push model sections below describe that layer, this block supersedes them. [Claude default 2026-10-20, spec 2026-10-19 section 8]
+
 Structural reference (folder tree, route table) lives in `README.md` and `ARCHITECTURE.md`. Read those when you need to know where a file lives. Reference material (tech stack, env vars) sits at the end of this doc.
 
 > TRANSITIONAL (remove once fully off Windows): primary development is the Linux box now. A few notes still describe Windows-era behavior; each carries a `TRANSITIONAL` marker until the Windows machine is retired.
@@ -126,7 +128,7 @@ When a surface goes through claude.ai/design, the returned design is TWO deliver
 
 - **Spec.** A spec whose surface has a design source carries a **Visual contract** section in its body: it names the artifact (repo snapshot under `docs/design-artifacts/` plus the design-project id) as the build benchmark and states the visual requirements — per-screen layout and composition, the component vocabulary, and the token-translation rule (design-system tokens → `index.css` tokens, or adopt the system's tokens). A bare "Design source:" citation in the header is provenance, not a contract, and does not count.
 - **Plan.** Visual fidelity is an owned scope: some named lane's scope says "match the artifact," with the artifact as its declared input. That lane pulls the real generated screen files from the design project via DesignSync (`list_files` → `get_file`) and folds their CSS in. When the design arrives as an export rather than through DesignSync (the `DesignSync` tool is limited to `/design-sync` flows), the vendored export, byte for byte, is the working input instead, and the spec's Visual contract says so (the 2026-10-06 Inbox is the precedent). Otherwise the vendored `.dc.html` is a for-the-record snapshot, not the working input.
-- **Review.** `ui-ux-review` on any lane of a designed surface is pointed at the artifact and judges adherence to it, not just usability. Usability-clean but off-design is a finding, not a pass.
+- **Review.** The `client` lens on any lane of a designed surface is pointed at the artifact and judges adherence to it, not just usability. Usability-clean but off-design is a finding, not a pass.
 
 *Why:* the 2026-08-14 marketing incident. The approved design was vendored and cited but never made a requirement. Every downstream gate faithfully validated against its immediate upstream artifact (plan vs spec, build vs plan), each lane correctly styled to match the surrounding old CSS, and the section shipped to prod with zero visual fidelity to the design. The pipeline's root of truth is the spec — anything that exists only upstream of the spec effectively doesn't exist.
 
@@ -235,7 +237,7 @@ Run `npm run check:filesize` any time for a full-tree RED / YELLOW report.
 
 ## Design-stage review fleet
 
-Explicit-only Claude agents for reviewing specs and plans BEFORE any code is written. `/review-spec` runs three agents (`spec-grounding`, `spec-gaps`, `spec-risk`) in parallel on a spec doc. `/review-plan` runs three agents (`plan-fidelity`, `plan-decomposition`, `plan-feasibility`) in parallel on an implementation plan. Natural-language triggers ("review the spec", "review the plan", "design review") route to the same commands. Both resolve to the most recent file in `docs/superpowers/specs/` or `docs/superpowers/plans/` unless an explicit path is given. Report-only; no auto-fix. Complements `/gemini-spec`.
+Explicit-only Claude agents for reviewing specs and plans BEFORE any code is written. `/review-spec` runs three agents (`spec-grounding`, `spec-gaps`, `spec-risk`) in parallel on a spec doc. `/review-plan` runs two agents (`plan-fidelity`, `plan-decomposition`) in parallel on an implementation plan. Natural-language triggers ("review the spec", "review the plan", "design review") route to the same commands. Both resolve to the most recent file in `docs/superpowers/specs/` or `docs/superpowers/plans/` unless an explicit path is given. Report-only; no auto-fix.
 
 ---
 
