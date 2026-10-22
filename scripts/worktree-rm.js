@@ -7,16 +7,20 @@
 //
 // Order matters. The symlinks are removed first, so the teardown can never
 // follow a link into the shared node_modules and delete it. Only entries that
-// lstat reports as links are removed; a real directory in a link's place
-// stops the script. Then the worktree is removed, then the branch.
+// lstat reports as links are removed (the list is LINKS in
+// scripts/lib/worktreeLinks.js, the one worktree-new makes); a real directory
+// in a shared link's place stops the script before any link is removed. The
+// lane memory link worktree-new made under ~/.claude/projects/ goes with the
+// links (a real memory directory there is left and reported). Then the
+// worktree is removed, then the branch.
 //
 // The branch is deleted with `git branch -d`, which refuses an unmerged branch,
 // so unmerged work cannot be lost by accident. --force switches to -D to
 // discard a throwaway branch on purpose.
 
 const { execFileSync } = require('node:child_process');
-const fs = require('node:fs');
 const path = require('node:path');
+const { unlinkFrom, unlinkMemory } = require('./lib/worktreeLinks');
 
 function die(msg) {
   console.error(`worktree-rm: ${msg}`);
@@ -31,8 +35,10 @@ function git(args, opts = {}) {
   }).trim();
 }
 
+// Compared as written: Linux paths are case-sensitive, so lowercasing (a
+// Windows-era rule) would take "Lane-x" for an existing "lane-x".
 function samePath(a, b) {
-  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  return path.resolve(a) === path.resolve(b);
 }
 
 // --- arguments --------------------------------------------------------------
@@ -67,33 +73,15 @@ if (git(['status', '--porcelain'], { cwd: target })) {
 }
 
 // --- remove the symlinks BEFORE removing the worktree ----------------------
-// The isSymbolicLink guard below is cross-platform and load-bearing: it stops
-// the script if a shared dir was materialized as a real directory, so teardown
-// never deletes the shared node_modules.
-function unlinkSharedLink(relPath) {
-  const dest = path.join(target, relPath);
-  let st;
-  try { st = fs.lstatSync(dest); } catch { return; }
-  if (!st.isSymbolicLink()) {
-    die(`${relPath} is a real directory, not a symlink, stopping so the shared copy is not deleted`);
-  }
-  try {
-    fs.unlinkSync(dest);
-  } catch {
-    try {
-      // rmdir fallback was for Windows junctions; on Linux a symlink always
-      // unlinks above, so this branch is a no-op now. Kept as a harmless guard.
-      fs.rmdirSync(dest);
-    } catch (e) {
-      die(`could not remove the link ${relPath}: ${e.message}`);
-    }
-  }
-  console.log(`  unlinked ${relPath}`);
+// unlinkFrom's isSymbolicLink guard is load-bearing: it stops the script if a
+// shared dir was materialized as a real directory, so teardown never deletes
+// the shared node_modules.
+try {
+  unlinkFrom(target);
+  unlinkMemory(target);
+} catch (e) {
+  die(e.message);
 }
-
-unlinkSharedLink('node_modules');
-unlinkSharedLink(path.join('client', 'node_modules'));
-unlinkSharedLink(path.join('.husky', '_'));
 
 // --- remove the worktree, then the branch ----------------------------------
 try {
