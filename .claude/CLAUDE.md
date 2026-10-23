@@ -135,7 +135,7 @@ When a surface goes through claude.ai/design, the returned design is TWO deliver
 ## Lane lifecycle and stale lanes
 
 - Claude auto-handles the safe moves: create the lane, merge it when clean, clean it up after merge. No asking. ("Manage it for me.")
-- **Stale detection.** A lane is flagged stale when it is older than 48h with no new commit, OR `main` has advanced 15+ commits since it was cut, OR any sensitive path has landed on `main` since it was cut. The check is `npm run lane:status`, and it is **manual**: nothing runs it automatically. The only `SessionStart` hook is `scripts/show-location.js`, which prints the worktree banner and nothing else. Run `lane:status` deliberately when opening a session that may have lanes outstanding, and again at each push-time sweep.
+- **Stale detection.** A lane is flagged stale when it is older than 48h with no new commit, OR `main` has advanced 15+ commits since it was cut, OR any sensitive path has landed on `main` since it was cut. The check is `npm run lane:status`. It runs at every session start through the `SessionStart` hook, after `scripts/show-location.js` prints the worktree banner: `lane-status.js --session-start` prints the markers, the last ship and the stale lanes and never fails the session. Run `lane:status` on demand for the full report.
 - **Default for a dead lane:** scrap and re-cut fresh from the plan (safe on `main`), salvaging half-written code only if it is substantial and clean.
 - **Never scrap unmerged work.** Before any scrap, `git log main..<lane-branch>` must be empty. If it is non-empty, do NOT scrap without the user's okay. Auto-scrap always uses `git branch -d` (which refuses unmerged), never `-D`. ("Never lose my code.")
 

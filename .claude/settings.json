@@ -8,7 +8,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "node scripts/show-location.js" }
+          { "type": "command", "command": "node scripts/show-location.js && node scripts/lane-status.js --session-start" }
         ]
       }
     ]
