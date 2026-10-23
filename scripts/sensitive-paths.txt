@@ -466,6 +466,10 @@ scripts/money-smoke-list.txt
 scripts/lib/tapSummary.js
 scripts/lib/flockExec.js
 scripts/run-suites.js
+# markers.js (2026-10-22): the gate and watch markers every push path refuses on from the gate-sha and ship lanes on, enforced from the flip marker.
+scripts/lib/markers.js
+# gatePaths.js (2026-10-22): the range classifier the sha gate and ship pick the gates by from those lanes on.
+scripts/lib/gatePaths.js
 .husky/pre-push
 
 # The dev-JWT minters and their shared dev-only gate (2026-10-06). dev-signin.js
