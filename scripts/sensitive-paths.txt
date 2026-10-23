@@ -472,6 +472,10 @@ scripts/lib/markers.js
 scripts/lib/gatePaths.js
 # rangeCheck.js (2026-10-23): the receipt check over the push range that ship and the hook refuse on from those lanes on.
 scripts/lib/rangeCheck.js
+# shaGate.js (2026-10-23): the sha gate's machinery, whose receipt and gate marker decide whether a push happens from the flip on.
+scripts/lib/shaGate.js
+# shaGateWorktree.js (2026-10-23): the gate worktree's removal and sweep, the smoke logs it keeps and the children it runs and stops, for the sha gate above.
+scripts/lib/shaGateWorktree.js
 .husky/pre-push
 
 # The dev-JWT minters and their shared dev-only gate (2026-10-06). dev-signin.js

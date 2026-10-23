@@ -145,12 +145,12 @@ test('setGate writes for a sha on main; the line reads the flip state', (t) => {
   assert.equal(g.on_main, true);
   assert.ok(Number.isFinite(Date.parse(g.at)));
   assert.equal(M.standing({ cwd: r.repo }).gate,
-    `gate marker stands on ${short(r.B)} (money smoke failed); it binds every push path from the flip on; a run of node scripts/push-gate.js sha <a later sha on main> that passes clears it, or remove ${r.gateFile} by hand`);
-  assert.ok(M.standing({ cwd: r.repo }).gate.includes('a later sha on main'));
+    `gate marker stands on ${short(r.B)} (money smoke failed); it binds every push path from the flip on; a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`);
+  assert.ok(M.standing({ cwd: r.repo }).gate.includes('re-runs the checks this marker names (money;'));
   writeFlip(r, r.A);
   const s = M.standing({ cwd: r.repo });
   assert.equal(s.gate,
-    `BLOCKED: gate marker stands on ${short(r.B)} (money smoke failed); fix forward on a descendant and ship again; a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`);
+    `BLOCKED: gate marker stands on ${short(r.B)} (money smoke failed); a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`);
   assert.equal(s.watch, null);
   assert.equal(s.flip, null);
   // Atomic writes leave no temp file and no lock behind.
@@ -1055,4 +1055,39 @@ test('two breakers on one dead lock: exactly one enters, the other waits for it'
   assert.equal(e2[1], x2[1]);
   assert.notEqual(e1[1], e2[1]);
   assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith('.lock')), [], 'no lock and no broken file is left');
+});
+
+// The gate's same-sha re-run (the gate-sha lane's ruling amending decision
+// 16): with self the marker's own sha clears it, without self it never does,
+// and a strict ancestor never clears it either way.
+test('clearGateIfDescendant with self: the marker\'s own sha clears it; without self it does not', (t) => {
+  const r = makeRepo(t);
+  assert.equal(M.setGate({ sha: r.C, reason: 'money smoke: 1 failing', gates: ['money'], cwd: r.repo }).written, true);
+  assert.equal(M.isFixForward(r.C, { cwd: r.repo }), false);
+  assert.equal(M.isFixForward(r.C, { cwd: r.repo, self: true }), true);
+  assert.equal(M.clearGateIfDescendant(r.C, { cwd: r.repo }).cleared, false, 'the failing sha is never its own fix by default');
+  assert.equal(M.gate({ cwd: r.repo }).sha, r.C);
+  assert.equal(M.clearGateIfDescendant(r.C, { cwd: r.repo, self: true }).cleared, true);
+  assert.equal(M.gate({ cwd: r.repo }), null);
+});
+
+test('clearGateIfDescendant with self: a strict ancestor of the marker still never clears it', (t) => {
+  const r = makeRepo(t);
+  assert.equal(M.setGate({ sha: r.C, reason: 'money smoke: 1 failing', gates: ['money'], cwd: r.repo }).written, true);
+  assert.equal(M.isFixForward(r.B, { cwd: r.repo, self: true }), false);
+  assert.equal(M.clearGateIfDescendant(r.B, { cwd: r.repo, self: true }).cleared, false);
+  assert.equal(M.gate({ cwd: r.repo }).sha, r.C);
+});
+
+test('the gate line names every check the marker names and the clearing rule, before and after the flip', (t) => {
+  const r = makeRepo(t);
+  M.setGate({ sha: r.B, reason: 'money smoke: 1 failing', gates: ['money', 'client'], cwd: r.repo });
+  for (const flipped of [false, true]) {
+    if (flipped) writeFlip(r, r.A);
+    const line = M.standing({ cwd: r.repo }).gate;
+    assert.equal(line.startsWith('BLOCKED: '), flipped);
+    assert.ok(line.includes('re-runs the checks this marker names (money, client; all of them once the failing sha is on origin/main, otherwise those its range still needs)'), line);
+    assert.ok(line.includes('passes on this sha again or on a descendant on main'), line);
+    assert.ok(line.endsWith(`last resort: remove ${r.gateFile} by hand`), line);
+  }
 });

@@ -56,6 +56,40 @@
  *   - The receipt is a plain local file. Anything that can write it can also
  *     run `git push --no-verify`, so it is not a privilege boundary and is not
  *     treated as one.
+ *
+ * SHA MODE AND THE FLIP (instruction rewrite step 3, lane gate-sha; spec
+ * 2026-10-19 sections 4.3, 4.4 and 8; plan 2026-10-22 decisions 2, 10, 11, 14
+ * and 16). Dormant until the flip marker (<git-common-dir>/drb-flip.json)
+ * exists; before it nothing above changes, and the flip push itself goes
+ * through the legacy path.
+ *   - `sha <sha>` gates ONE commit in a throwaway worktree of its own
+ *     (<worktrees dir>/.gate-<sha7>, detached), with its own env file and no
+ *     live key, the gates picked from everything in origin/main..sha after a
+ *     fetch, never from the tip alone. It writes a receipt keyed on the sha to
+ *     <git-common-dir>/drb-gate/<sha>.json, sets the gate marker for a verdict
+ *     about the code at a sha on main (never for a failure of the gate
+ *     itself; it names the verdict checks that run did not prove), and on a
+ *     pass clears a standing marker the sha fixes forward or is the sha of,
+ *     when the run re-ran every check it names once the failing sha is on
+ *     origin/main, or the ones the range still needs before that. The
+ *     machinery is scripts/lib/shaGate.js; this file holds the lock and the
+ *     CLI. It takes the push-gate lock non-blocking as `run` does (a second
+ *     gate refuses with the same lines), held by flock -n on a descriptor of
+ *     this process rather than a re-exec, so a stop signal reaches the gate
+ *     itself and its cleanup removes the worktree.
+ *   - `receipt <sha>` prints that receipt, or `none`.
+ *   - `verify`, the hook, branches on markers.flipState. Absent: the legacy
+ *     path above, exactly, its lock included and the markers unread.
+ *     Unreadable: refuse. Present: validate only and take no lock, since the
+ *     hook runs inside git's SSH window and must never wait or run a gate: a
+ *     push to refs/heads/main alone, no standing marker, a sha receipt good
+ *     for each pushed sha against the local origin/main (ship fetched moments
+ *     before; a stale ref can only make git reject the push), and review
+ *     receipts over origin/main..sha (rangeCheck). No receipt means refuse
+ *     with "run npm run ship".
+ *   - MONEY_PATHS and CLIENT_PATHS come from scripts/lib/gatePaths.js, the one
+ *     classifier, so the legacy `run` gates on its wider list too, which only
+ *     adds gating.
  */
 
 const { execFileSync, spawnSync } = require('child_process');
@@ -71,20 +105,14 @@ const RECEIPT_VERSION = 2;
 // review-then-push cycle instant while expiring a receipt from yesterday.
 const MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
-// Paths whose change alters what the MONEY gate does or tests. server/ is the
-// obvious one; the rest are the gate's own machinery and the dependency set it
-// executes under, which a pure server/ trigger would have missed.
-const MONEY_PATHS = [
-  'server/',
-  'scripts/money-smoke-list.txt',
-  'scripts/testdb-smoke.js',
-  'scripts/lib/tapSummary.js', // testdb-smoke loads it at startup (its summary parser)
-  'scripts/lib/flockExec.js', // testdb-smoke loads it at startup (the smoke lock)
-  'scripts/push-gate.js',
-  'package.json',
-  'package-lock.json',
-];
-const CLIENT_PATHS = ['client/'];
+// The gate's path lists live in scripts/lib/gatePaths.js (the one classifier
+// the sha gate, rangeCheck and ship share); they are re-exported below so the
+// tests and neededGates keep their names.
+const { MONEY_PATHS, CLIENT_PATHS } = require('./lib/gatePaths');
+const M = require('./lib/markers');
+const R = require('./lib/receipt');
+const SG = require('./lib/shaGate');
+const { checkRange } = require('./lib/rangeCheck');
 
 function git(args, opts = {}) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts }).trim();
@@ -145,20 +173,51 @@ function reexecUnderFlock() {
     // flock missing or unstartable: fail CLOSED. Running unlocked risks two
     // gates resetting ci-smoke under each other, which can bank a receipt for
     // a gate that never coherently ran.
-    console.error('');
-    console.error(`✗ BLOCKED — could not acquire the gate lock (${r.error.code || r.error.message}).`);
-    console.error('  flock (util-linux) is required so two gate runs cannot reset the shared');
-    console.error('  Neon ci-smoke branch under each other. Emergencies only: git push --no-verify');
+    lockNotStarted(r.error);
     process.exit(1);
   }
-  if (r.status === 1 && !r.signal) {
-    console.error('');
-    console.error('✗ BLOCKED — another push gate is already running.');
-    console.error('  They share one Neon ci-smoke branch, so running both corrupts each other.');
-    console.error(`  Check: fuser ${lockFile}   (lists the holding PID, if any)`);
-    console.error('  Wait for it to finish, then retry. Emergencies only: git push --no-verify');
-  }
+  if (r.status === 1 && !r.signal) lockHeldElsewhere(lockFile);
   process.exit(r.status === null ? 1 : r.status);
+}
+
+// The two lock refusals, shared by the re-exec above and sha mode's lock
+// below, so a second gate refuses with the same lines either way.
+function lockNotStarted(err) {
+  console.error('');
+  console.error(`✗ BLOCKED — could not acquire the gate lock (${err.code || err.message}).`);
+  console.error('  flock (util-linux) is required so two gate runs cannot reset the shared');
+  console.error('  Neon ci-smoke branch under each other. Emergencies only: git push --no-verify');
+}
+
+function lockHeldElsewhere(lockFile) {
+  console.error('');
+  console.error('✗ BLOCKED — another push gate is already running.');
+  console.error('  They share one Neon ci-smoke branch, so running both corrupts each other.');
+  console.error(`  Check: fuser ${lockFile}   (lists the holding PID, if any)`);
+  console.error('  Wait for it to finish, then retry. Emergencies only: git push --no-verify');
+}
+
+// Sha mode's hold on the same lock file, non-blocking like the re-exec, but
+// on a descriptor of this process: `flock -n 3` locks the open file
+// description this process shares with the child, so the lock lasts until
+// this process exits (kill -9 included) and no re-exec stands between a stop
+// signal and the gate's own cleanup. Node opens files close-on-exec, so the
+// gate's children never hold it. DRB_GATE_LOCKED is not honoured here: it is
+// the re-exec's guard, and sha mode never re-execs.
+function holdGateLock() {
+  const lockFile = path.join(
+    git(['rev-parse', '--path-format=absolute', '--git-common-dir']), 'drb-push-gate.lock');
+  const fd = fs.openSync(lockFile, 'a');
+  const r = spawnSync('flock', ['-n', '3'], { stdio: ['ignore', 'inherit', 'inherit', fd] });
+  if (r.error) {
+    lockNotStarted(r.error);
+    process.exit(1);
+  }
+  if (r.status !== 0) {
+    if (r.status === 1 && !r.signal) lockHeldElsewhere(lockFile);
+    process.exit(1);
+  }
+  return fd;
 }
 
 // testdb-smoke.js takes the smoke lock (drb-smoke.lock) itself, so a gate run
@@ -371,7 +430,7 @@ function runClientGate() {
  * a shared checkout can finish against a different tree than it started on, and
  * banking that would vouch for bytes nothing ever gated.
  */
-// Serialization happens in reexecUnderFlock() before main() dispatches, so by
+// Serialization happens in reexecUnderFlock() before legacyMain() dispatches, so by
 // the time anything here runs we already hold the lock for the whole process.
 function runGates(needed, fpBefore) {
   const passed = [];
@@ -442,33 +501,39 @@ function readStdin() {
   }
 }
 
-function main() {
+// The three stdin shapes that end the hook before any receipt is read, the
+// same lines on the legacy path and after the flip; returns for 'shas'.
+function stdinVerdict(parsed) {
+  if (parsed.kind === 'deletes') {
+    console.log('pre-push: deletions only — nothing to gate.');
+    process.exit(0);
+  }
+  if (parsed.kind === 'empty') {
+    console.log('pre-push: git listed no updated refs — nothing ships, nothing to gate.');
+    process.exit(0);
+  }
+  if (parsed.kind === 'unknown') {
+    // We could not read WHAT is being pushed. Gating HEAD and allowing would
+    // be a guess, and if git is pushing anything else that commit reaches
+    // prod ungated — the precise condition this parsing exists to prevent.
+    // Refuse; the push is blocked, never silently allowed.
+    console.error('');
+    console.error('✗ BLOCKED — could not read the refs being pushed from the hook\'s stdin.');
+    console.error('  The gates can only vouch for code they can identify, so this fails closed');
+    console.error('  rather than gating a guess. If you know what you are doing:');
+    console.error('  git push --no-verify');
+    process.exit(1);
+  }
+}
+
+function legacyMain() {
   reexecUnderFlock(); // does not return unless we hold the gate lock
   const mode = process.argv[2] || 'run';
   const fp = treeFingerprint();
 
   if (mode === 'verify') {
     const parsed = readStdin();
-    if (parsed.kind === 'deletes') {
-      console.log('pre-push: deletions only — nothing to gate.');
-      process.exit(0);
-    }
-    if (parsed.kind === 'empty') {
-      console.log('pre-push: git listed no updated refs — nothing ships, nothing to gate.');
-      process.exit(0);
-    }
-    if (parsed.kind === 'unknown') {
-      // We could not read WHAT is being pushed. Gating HEAD and allowing would
-      // be a guess, and if git is pushing anything else that commit reaches
-      // prod ungated — the precise condition this parsing exists to prevent.
-      // Refuse; the push is blocked, never silently allowed.
-      console.error('');
-      console.error('✗ BLOCKED — could not read the refs being pushed from the hook\'s stdin.');
-      console.error('  The gates can only vouch for code they can identify, so this fails closed');
-      console.error('  rather than gating a guess. If you know what you are doing:');
-      console.error('  git push --no-verify');
-      process.exit(1);
-    }
+    stdinVerdict(parsed);
     const pushedShas = parsed.kind === 'shas' ? parsed.shas : [];
     const refs = pushedShas.length ? pushedShas : ['HEAD'];
     const { gates: needed } = neededGates(refs);
@@ -528,9 +593,158 @@ function main() {
   process.exit(ok ? 0 : 1);
 }
 
+// ---- after the flip, and the sha gate's CLI ------------------------------------
+
+/**
+ * Every pushed (not deleted) line of the hook's stdin as {sha, remote}: git's
+ * second field (the local sha) and third (the remote ref). null when any line
+ * has no remote ref or a sha that is not hex, which the caller refuses as
+ * malformed. parsePushedShas stays as it was; this is the parallel reading
+ * the post-flip path needs to see where each sha is going.
+ */
+function parsePushedRefs(input) {
+  if (input === null || input === undefined) return null;
+  const out = [];
+  for (const line of String(input).split('\n').map((l) => l.trim()).filter(Boolean)) {
+    const fields = line.split(/\s+/);
+    if (fields.length < 3 || !/^[0-9a-fA-F]{7,64}$/.test(fields[1])) return null;
+    if (!/^0+$/.test(fields[1])) out.push({ sha: fields[1], remote: fields[2] });
+  }
+  return out;
+}
+
+/** The hook's stdin as text, or null when it is a TTY or cannot be read. */
+function readStdinText() {
+  if (process.stdin.isTTY) return null;
+  try {
+    return fs.readFileSync(0, 'utf8');
+  } catch (err) {
+    if (err && ['EAGAIN', 'EBADF', 'EINVAL', 'EISDIR', 'ENXIO'].includes(err.code)) return null;
+    throw err;
+  }
+}
+
+/** The full sha a ref names as a commit, or null. */
+function commitOrNull(ref) {
+  if (typeof ref !== 'string' || ref === '' || /[\0\n]/.test(ref)) return null;
+  const r = gitQuiet(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
+  return r.ok && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(r.out) ? r.out : null;
+}
+
+function blocked(lines) {
+  console.error('');
+  for (const l of lines) console.error(l);
+  process.exit(1);
+}
+
+/**
+ * The hook after the flip: validate, never gate, never lock. Refuses unless
+ * every pushed line goes to refs/heads/main, no marker stands, and each pushed
+ * sha has a sha receipt good against the local origin/main and review
+ * receipts over origin/main..sha.
+ */
+function verifyAfterFlip() {
+  const cwd = process.cwd();
+  const text = readStdinText();
+  stdinVerdict(parsePushedShas(text));
+  const refs = parsePushedRefs(text);
+  if (!refs) stdinVerdict({ kind: 'unknown' });
+  const elsewhere = refs.filter((r) => r.remote !== 'refs/heads/main');
+  if (elsewhere.length) {
+    blocked([
+      `BLOCKED: this push updates ${elsewhere.map((r) => M.clean(r.remote)).join(', ')}; after the flip the hook passes pushes to refs/heads/main only.`,
+      '  Lanes never push branches. Emergencies only: git push --no-verify',
+    ]);
+  }
+  const base = commitOrNull('refs/remotes/origin/main');
+  if (!base) blocked(['BLOCKED: there is no refs/remotes/origin/main here to check the push against (run: npm run ship).']);
+  // Throwaway tests only: a receipt written with stub gates vouches only when
+  // this is set, and the pass line then names the stubs.
+  const stubbedOk = process.env.DRB_GATE_ALLOW_STUBBED === '1';
+  if (stubbedOk) console.error('pre-push: DRB_GATE_ALLOW_STUBBED=1 is set; a sha receipt written with stub gates is accepted (throwaway tests only)');
+  const st = M.standing({ cwd });
+  const standing = [st.gate, st.watch, st.flip].filter(Boolean);
+  if (standing.length) blocked(standing);
+  const stubs = new Set();
+  for (const { sha } of refs) {
+    const full = commitOrNull(sha);
+    if (!full) blocked([`BLOCKED: the pushed sha ${M.clean(sha)} names no commit here.`]);
+    const s7 = R.short(full);
+    const { needed } = SG.classifyRange(base, full, { cwd });
+    const rec = SG.readShaReceipt(full, { cwd });
+    const why = SG.checkShaReceipt(rec, { sha: full, base, needed, stubbedOk });
+    if (why) blocked([`BLOCKED: ${s7}: ${why}.`, '  The hook validates only and never runs a gate. Emergencies only: git push --no-verify']);
+    for (const s of rec.stubbed) stubs.add(s);
+    const range = checkRange({ base, tip: full, cwd });
+    if (!range.ok) {
+      blocked([
+        `BLOCKED: the review receipts over origin/main..${s7} do not stand (run: npm run ship once they do):`,
+        ...range.problems.map((p) => `  - ${p}`),
+        '  Emergencies only: git push --no-verify',
+      ]);
+    }
+  }
+  const shas = refs.map((r) => R.short(r.sha)).join(', ');
+  const stubbed = stubs.size ? ` (stubbed: ${[...stubs].join(', ')})` : '';
+  console.log(`pre-push: ${shas}: the sha receipt and the review receipts over origin/main are valid${stubbed}; nothing runs here.`);
+  process.exit(0);
+}
+
+/** `sha <sha>`: the gate under the push-gate lock; exit 0 on a pass, 1 otherwise. */
+function shaMode(ref) {
+  if (!ref) {
+    console.error('usage: node scripts/push-gate.js sha <sha>');
+    process.exit(1);
+  }
+  holdGateLock();
+  SG.runShaGate({ sha: ref, cwd: process.cwd() }).then(
+    (res) => process.exit(res.ok ? 0 : 1),
+    (err) => {
+      console.error(`gate: the sha gate stopped on an error: ${M.clean(err && err.message ? err.message : String(err))}`);
+      process.exit(1);
+    },
+  );
+}
+
+/** `receipt <sha>`: the sha receipt as JSON, or `none`; no lock. */
+function receiptMode(ref) {
+  const full = commitOrNull(ref);
+  if (!full) {
+    console.error(`push-gate: ${ref ? M.clean(ref) : '(no sha given)'} names no commit`);
+    process.exit(1);
+  }
+  const rec = SG.readShaReceipt(full, { cwd: process.cwd() });
+  console.log(rec ? JSON.stringify(rec, null, 2) : 'none');
+  process.exit(0);
+}
+
+/**
+ * The mode is read before any lock: `run` (and any other word, as before)
+ * and `verify` with no flip marker take the legacy path with its re-exec under
+ * the lock; `sha` takes the lock on a descriptor; `verify` with the flip
+ * marker present takes none, and with it unreadable refuses; `receipt` takes
+ * none.
+ */
+function main() {
+  const mode = process.argv[2] || 'run';
+  if (mode === 'sha') return shaMode(process.argv[3]);
+  if (mode === 'receipt') return receiptMode(process.argv[3]);
+  if (mode === 'verify') {
+    const flip = M.flipState({ cwd: process.cwd() });
+    if (flip.state === 'unreadable') blocked([M.standing({ cwd: process.cwd() }).flip]);
+    if (flip.state === 'present') return verifyAfterFlip();
+  }
+  return legacyMain();
+}
+
 if (require.main === module) main();
 
 module.exports = {
   checkReceipt, neededGates, treeFingerprint, parsePushedShas,
   RECEIPT_VERSION, MAX_AGE_MS, MONEY_PATHS, CLIENT_PATHS,
+  parsePushedRefs,
+  classifyRange: SG.classifyRange,
+  checkShaReceipt: SG.checkShaReceipt,
+  gateEnvFile: SG.gateEnvFile,
+  gateWorktreePath: SG.gateWorktreePath,
 };

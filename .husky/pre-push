@@ -21,7 +21,22 @@
 # IS HEAD (both gates test the WORKING TREE, so they cannot vouch for
 # `git push origin <other-sha>:main`). Anything else and the full gate runs
 # right here exactly as it always did.
-# Emergencies only: git push --no-verify.
+#
+# TWO PATHS, and the flip marker decides (instruction rewrite step 3; spec
+# 2026-10-19 sections 4.3 and 8). push-gate.js verify reads
+# <git-common-dir>/drb-flip.json first:
+#   - absent (today, and for the flip push itself): the fingerprint receipt
+#     path described above, unchanged, the markers unread.
+#   - present: the hook validates only and never runs a gate, so nothing slow
+#     happens inside git's SSH window. For a push to refs/heads/main only (any
+#     other remote ref is refused), it refuses on a standing gate or watch
+#     marker, then checks each pushed sha's sha receipt
+#     (<git-common-dir>/drb-gate/<sha>.json, written by
+#     push-gate.js sha, which ship calls) against origin/main, then the review
+#     receipts over origin/main..<sha>. No receipt means refuse with
+#     "run npm run ship".
+#   - unreadable: refuse until the file is repaired or removed by hand.
+# Emergencies only, visible and per-push: git push --no-verify, or HUSKY=0.
 set -e
 
 node scripts/push-gate.js verify

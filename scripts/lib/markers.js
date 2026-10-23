@@ -72,8 +72,10 @@
 //   - Fix forward (decision 16): isFixForward(sha) is true when the sha fixes
 //     the marker and every failure under `earlier`: a STRICT descendant of
 //     one on main, any other sha for one 'off' or 'gone'. The failing sha is
-//     never its own fix. clearGateIfDescendant clears only for a sha that is
-//     itself 'on' main and is such a fix: a lane tip never clears one.
+//     never its own fix by default; with `{self: true}` (the gate's, after it
+//     re-ran every check the marker names on that very sha) it is.
+//     clearGateIfDescendant clears only for a sha that is itself 'on' main
+//     and is such a fix: a lane tip never clears one.
 //   - setWatch writes a full sha git cannot resolve with `resolved: false`.
 //   - A watch marker stands until it is acked by its sha (clearWatch). A watch
 //     that finds events while a marker stands on another sha stacks on top of
@@ -573,9 +575,13 @@ function placement(sha, { cwd } = {}) {
 
 // A fix for one failure: another sha that strictly descends from it, or any
 // other sha when the failure's sha left main ('off') or is 'gone'. 'unknown'
-// never counts.
-function fixesEntry(entrySha, full, cwd) {
-  if (!full || full === entrySha) return false;
+// never counts. With `self`, the failure's own sha counts too: a gate that
+// re-ran on that sha every check the marker names (the gate's ruling,
+// amending decision 16, so a transient failure on main's tip cannot wedge
+// main until a new commit lands); it is never the default.
+function fixesEntry(entrySha, full, cwd, self = false) {
+  if (!full) return false;
+  if (full === entrySha) return self === true;
   const where = placement(entrySha, { cwd });
   if (where === 'off' || where === 'gone') return true;
   if (where === 'unknown') return false;
@@ -583,8 +589,8 @@ function fixesEntry(entrySha, full, cwd) {
 }
 
 // A fix for the marker: a fix for it and for every failure under `earlier`.
-function fixesMarker(marker, full, cwd) {
-  return [...(marker.earlier || []), marker].every((e) => fixesEntry(e.sha, full, cwd));
+function fixesMarker(marker, full, cwd, self = false) {
+  return [...(marker.earlier || []), marker].every((e) => fixesEntry(e.sha, full, cwd, self));
 }
 
 // ---- the gate marker -----------------------------------------------------------
@@ -644,24 +650,24 @@ function setGate({ sha, reason = '', gates = [], cwd } = {}) {
 
 // Clears only for a sha that is itself on main and fixes the marker and every
 // failure under it.
-function clearGateIfDescendant(sha, { cwd } = {}) {
+function clearGateIfDescendant(sha, { cwd, self = false } = {}) {
   const p = markerPaths({ cwd });
   if (readMarker(p.gate, stackShape) === null) return { cleared: false, marker: null };
   return withLock(p.lock, () => {
     const marker = readMarker(p.gate, stackShape);
     if (!marker || marker.unreadable) return { cleared: false, marker };
     const full = resolveOrNull(sha, cwd);
-    if (!full || placement(full, { cwd }) !== 'on' || !fixesMarker(marker, full, cwd)) return { cleared: false, marker };
+    if (!full || placement(full, { cwd }) !== 'on' || !fixesMarker(marker, full, cwd, self)) return { cleared: false, marker };
     fs.rmSync(p.gate, { force: true });
     return { cleared: true, marker };
   });
 }
 
-function isFixForward(sha, { cwd } = {}) {
+function isFixForward(sha, { cwd, self = false } = {}) {
   const marker = gate({ cwd });
   if (!marker || marker.unreadable) return false;
   const full = resolveOrNull(sha, cwd);
-  return Boolean(full) && fixesMarker(marker, full, cwd);
+  return Boolean(full) && fixesMarker(marker, full, cwd, self);
 }
 
 // ---- the watch marker ----------------------------------------------------------
@@ -765,9 +771,11 @@ const EARLIER_EXIT = Object.freeze({
 function gateLine(m, file, flipped, cwd) {
   if (m.unreadable) return unreadableLine('gate', m, flipped);
   const what = `gate marker stands on ${R.short(m.sha)} (${clean(m.reason) || 'no reason recorded'})`;
-  const line = flipped
-    ? `BLOCKED: ${what}; fix forward on a descendant and ship again; a marker whose sha left main clears on any gate that passes on main; last resort: remove ${file} by hand`
-    : `${what}; ${BEFORE_FLIP}; a run of node scripts/push-gate.js sha <a later sha on main> that passes clears it, or remove ${file} by hand`;
+  // The gate's clearing rule (shaGate.js clearMarker): a pass on this sha
+  // again or on a descendant on main, re-running the checks named.
+  const named = Array.isArray(m.gates) && m.gates.length ? m.gates.map(clean).join(', ') : 'none recorded';
+  const advice = `a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (${named}; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${file} by hand`;
+  const line = flipped ? `BLOCKED: ${what}; ${advice}` : `${what}; ${BEFORE_FLIP}; ${advice}`;
   const earlier = m.earlier || [];
   if (!earlier.length) return line;
   const one = earlier.length === 1;

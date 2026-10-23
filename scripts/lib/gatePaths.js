@@ -56,6 +56,13 @@ const MONEY_PATHS = Object.freeze([
   'scripts/lib/worktreeLinks.js', // the gate worktree's links: a wrong one runs the smoke on another tree's modules or the box's .env
   'scripts/lib/gatePaths.js', // this list and the classifier: a dropped entry drops the smoke for that path
   'scripts/lib/rangeCheck.js', // the receipt check over the push range, run before every gate
+  'scripts/lib/shaGate.js', // the sha gate's machinery: it spawns the smoke with the scrubbed env and reads its summary, so a change there changes whether and how the smoke runs
+  'scripts/lib/shaGateWorktree.js', // the gate worktree's removal, the smoke logs kept and the children the gate runs and stops
+  'scripts/lib/markers.js', // the gate marker the sha gate sets and clears, and the flip state the hook branches on
+  'scripts/lib/receipt.js', // the common dir, the commit resolve and the atomic writes every gate path reads through
+  'scripts/lib/receiptVerdicts.js', // receipt.js loads it at startup (the verdict tables rangeCheck re-reads)
+  'scripts/lib/piiShapes.js', // markers.js and rangeCheck.js load it at startup (the mask and the push-range scan)
+  'scripts/sensitive-match.js', // the docs-only and tier rules the classifier and rangeCheck decide by
   'scripts/override-conversion/', // two of its suites are on the money smoke list, so a change there changes what the smoke tests
 ]);
 const CLIENT_PATHS = Object.freeze(['client/']);

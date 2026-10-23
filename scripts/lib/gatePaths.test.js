@@ -154,12 +154,37 @@ test('every suite on the money smoke list sits under a MONEY_PATHS entry', () =>
   assert.ok(G.MONEY_PATHS.includes('scripts/override-conversion/'));
 });
 
-test('MONEY_PATHS holds push-gate.js list and the three new lib paths; CLIENT_PATHS matches', () => {
-  for (const p of ['scripts/lib/worktreeLinks.js', 'scripts/lib/gatePaths.js', 'scripts/lib/rangeCheck.js']) {
+test('MONEY_PATHS holds push-gate.js list and the four new lib paths; CLIENT_PATHS matches', () => {
+  for (const p of ['scripts/lib/worktreeLinks.js', 'scripts/lib/gatePaths.js', 'scripts/lib/rangeCheck.js', 'scripts/lib/shaGate.js']) {
     assert.ok(G.MONEY_PATHS.includes(p), `${p} is in MONEY_PATHS`);
   }
   const PG = require('../push-gate');
   for (const p of PG.MONEY_PATHS) assert.ok(G.MONEY_PATHS.includes(p), `push-gate's ${p} is kept`);
   assert.deepEqual([...G.CLIENT_PATHS], [...PG.CLIENT_PATHS]);
   assert.deepEqual([...G.INSTALL_PATHS], ['package.json', 'package-lock.json', 'client/package.json', 'client/package-lock.json']);
+});
+
+// Every module push-gate.js loads under scripts/, found by walking its
+// relative requires, recursively: a new require can never fall outside
+// MONEY_PATHS unnoticed, since the gate's own machinery decides whether and
+// how the smoke runs.
+test('every module in push-gate.js\'s require closure under scripts/ is on MONEY_PATHS', () => {
+  const scripts = path.resolve(__dirname, '..');
+  const repo = path.dirname(scripts);
+  const seen = new Set();
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
+      let p = path.resolve(path.dirname(file), m[1]);
+      if (!p.endsWith('.js')) p += '.js';
+      if (p.startsWith(scripts + path.sep) && fs.existsSync(p)) walk(p);
+    }
+  };
+  walk(path.join(scripts, 'push-gate.js'));
+  const found = [...seen].map((f) => path.relative(repo, f).split(path.sep).join('/')).sort();
+  for (const p of ['scripts/push-gate.js', 'scripts/lib/shaGate.js', 'scripts/lib/shaGateWorktree.js', 'scripts/lib/markers.js', 'scripts/lib/receipt.js', 'scripts/lib/piiShapes.js', 'scripts/sensitive-match.js']) {
+    assert.ok(found.includes(p), `the walk found ${p}`);
+  }
+  assert.deepEqual(found.filter((p) => !G.classifyFiles([p]).money), [], 'a module the gate loads is outside MONEY_PATHS');
 });
