@@ -13,11 +13,12 @@
 //     commit, which reads sensitive-match.isDocsOnly; an empty diff is not
 //     docs-only) needs nothing;
 //   - any other commit needs a receipt: the one under receipt.commitKey of the
-//     commit, else the one under the commit's tree (a quick fix keys its
-//     staged tree). It must be state final, its key field must be the key it
-//     was found under, and its kind must fit where it was found (under the
-//     commit key: lane, commit, squash, revert, comment-only; under the tree:
-//     quick-fix, comment-only).
+//     commit (a revert receipt there whose tip names another commit is that
+//     commit's, a patch-id twin's, and is passed over), else the one under
+//     the commit's tree (a quick fix keys its staged tree). It must be state
+//     final, its key field must be the key it was found under, and its kind
+//     must fit where it was found (under the commit key: lane, commit,
+//     squash, revert, comment-only; under the tree: quick-fix, comment-only).
 // Then by kind:
 //   revert        accepted only on the tree proof of decision 9, recomputed
 //                 here: the message names the reverted commit (This reverts
@@ -27,7 +28,9 @@
 //                 writes exactly the commit's tree. A reverted field in the
 //                 receipt, when present, must name the same commit. A revert
 //                 of a revert re-lands a change and is refused here: it needs
-//                 a lane or quick-fix receipt.
+//                 a lane or quick-fix receipt. The proof is revertProof,
+//                 exported: ship runs the same function before it writes a
+//                 revert receipt, so the two never disagree.
 //   comment-only  accepted on its proof field naming a file in the receipt
 //                 directory (no lens, no tests).
 //   every other   judged from the receipt directory, never from its summary:
@@ -186,6 +189,10 @@ function readJsonInside(dir, rel) {
 // ---- the receipt ---------------------------------------------------------------
 
 // {key, dir, rec, via} or {missing: true, why}; a git or read error throws.
+// A revert receipt under the commit key whose tip is set and names another
+// commit belongs to that commit (a commit key is a patch id, and two reverts
+// of the same lines share one), so the lookup goes on to the tree as if the
+// key held nothing.
 function findReceipt(sha, cwd) {
   let key = null;
   let keyWhy = null;
@@ -194,37 +201,45 @@ function findReceipt(sha, cwd) {
   } catch (err) {
     keyWhy = err && err.message ? err.message : String(err);
   }
+  let twin = null;
   if (key) {
     const dir = R.receiptDir(key, { cwd });
     const rec = R.readReceipt(dir);
-    if (rec) return { key, dir, rec, via: 'commit key' };
+    if (rec && rec.kind === 'revert' && rec.tip !== undefined && rec.tip !== null && rec.tip !== sha) twin = String(rec.tip);
+    else if (rec) return { key, dir, rec, via: 'commit key' };
   }
   const tree = treeOf(sha, cwd);
   const dir = R.receiptDir(tree, { cwd });
   const rec = R.readReceipt(dir);
   if (rec) return { key: tree, dir, rec, via: 'tree' };
+  if (twin !== null) {
+    return { missing: true, why: `no review receipt of its own (its commit key ${S(key)} holds the revert receipt of ${S(twin)}, another commit with the same patch, and its tree ${S(tree)} holds none); it needs its own receipt` };
+  }
   const where = key ? `its commit key ${S(key)}` : `no commit key (${keyWhy})`;
   return { missing: true, why: `no review receipt (looked under ${where} and its tree ${S(tree)})` };
 }
 
 // ---- revert: the tree proof (decision 9) ----------------------------------------
 
-function revertProblems(c, parent, body, rec, cwd, top) {
+// The proof for commit c on its parent, given its message body (revertProof
+// below says what it returns).
+function proveRevert(c, parent, body, cwd, top, afterMessage) {
   const p = [];
   const at = `${S(c)}: `;
   const m = REVERTS.exec(body);
-  if (!m) return [`${at}a revert receipt, but the message names no reverted commit (This reverts commit <sha>)`];
+  if (!m) return { ok: false, reverted: null, problems: [`${at}a revert receipt, but the message names no reverted commit (This reverts commit <sha>)`] };
   const rv = attempt(() => R.resolveCommit(m[1], { cwd }), p, at);
-  if (!rv.ok) return p;
+  if (!rv.ok) return { ok: false, reverted: null, problems: p };
   const reverted = rv.value;
+  const done = () => ({ ok: p.length === 0, reverted, problems: p });
   // A revert of a revert re-lands a change: it is reviewed like one.
   const prior = attempt(() => messageOf(reverted, cwd), p, at);
-  if (!prior.ok) return p;
-  if (REVERTS.test(prior.value.body)) return [...p, `${at}reverts ${S(reverted)}, itself a revert: the commit re-lands a reverted change and needs a lane or quick-fix receipt`];
-  if (rec.reverted !== undefined && rec.reverted !== null) {
-    const named = attempt(() => R.resolveCommit(String(rec.reverted), { cwd }), p, at);
-    if (named.ok && named.value !== reverted) p.push(`${at}the receipt names ${S(named.value)} as reverted; the message names ${S(reverted)}`);
+  if (!prior.ok) return done();
+  if (REVERTS.test(prior.value.body)) {
+    p.push(`${at}reverts ${S(reverted)}, itself a revert: the commit re-lands a reverted change and needs a lane or quick-fix receipt`);
+    return done();
   }
+  if (afterMessage) p.push(...afterMessage(reverted));
   let origin = null;
   try {
     origin = R.resolveCommit('refs/remotes/origin/main', { cwd });
@@ -236,7 +251,7 @@ function revertProblems(c, parent, body, rec, cwd, top) {
     if (anc.ok && !anc.value) p.push(`${at}reverts ${S(reverted)}, which is not on origin/main (a revert receipt is for a shipped commit)`);
   }
   const rp = attempt(() => R.resolveCommit(`${reverted}^`, { cwd }), p, at);
-  if (!rp.ok) return p;
+  if (!rp.ok) return done();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'range-check-index-'));
   try {
     const env = { ...R.gitEnv(), GIT_INDEX_FILE: path.join(tmp, 'index') };
@@ -254,7 +269,41 @@ function revertProblems(c, parent, body, rec, cwd, top) {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-  return p;
+  return done();
+}
+
+// The tree proof of decision 9 for one commit, the one proof ship (before it
+// writes a revert receipt) and checkRange (for every revert receipt it meets)
+// share, so the two never disagree on what a clean revert is: {ok, reverted,
+// problems}. reverted is the full sha the message names, null when it names
+// none or that does not resolve; problems are the lines for the message, a
+// revert of a revert, the origin/main ancestry and the tree; ok is true
+// exactly when problems is empty. afterMessage is revertProblems' own: called
+// with the reverted sha once the message names a commit that is no revert
+// itself, its lines stand there, ahead of the ancestry.
+function revertProof(sha, { cwd = process.cwd(), afterMessage = null } = {}) {
+  const p = [];
+  const c = attempt(() => R.resolveCommit(sha, { cwd }), p, `${S(String(sha))}: `);
+  if (!c.ok) return { ok: false, reverted: null, problems: p };
+  const at = `${S(c.value)}: `;
+  const parent = attempt(() => R.resolveCommit(`${c.value}^`, { cwd }), p, at);
+  const msg = attempt(() => messageOf(c.value, cwd), p, at);
+  const top = attempt(() => git('rev-parse', ['rev-parse', '--show-toplevel'], { cwd }).trim(), p, at);
+  if (!parent.ok || !msg.ok || !top.ok) return { ok: false, reverted: null, problems: p };
+  return proveRevert(c.value, parent.value, msg.value.body, cwd, top.value, afterMessage);
+}
+
+// A revert receipt's problems: the receipt's reverted field, when present,
+// must name the commit the message names; revertProof does the rest.
+function revertProblems(c, rec, cwd) {
+  const afterMessage = (reverted) => {
+    if (rec.reverted === undefined || rec.reverted === null) return [];
+    const p = [];
+    const named = attempt(() => R.resolveCommit(String(rec.reverted), { cwd }), p, `${S(c)}: `);
+    if (named.ok && named.value !== reverted) p.push(`${S(c)}: the receipt names ${S(named.value)} as reverted; the message names ${S(reverted)}`);
+    return p;
+  };
+  return revertProof(c, { cwd, afterMessage }).problems;
 }
 
 // ---- the tables -----------------------------------------------------------------
@@ -492,7 +541,7 @@ function judge(entry, cwd, top) {
     return out;
   }
   if (rec.kind === 'revert') {
-    p.push(...revertProblems(sha, parent, msg.ok ? msg.value.body : '', rec, cwd, top));
+    p.push(...revertProblems(sha, rec, cwd));
     return out;
   }
   if (rec.kind === 'comment-only') {
@@ -545,7 +594,7 @@ function checkRange({ base, tip, cwd = process.cwd() } = {}) {
   return result;
 }
 
-module.exports = { checkRange };
+module.exports = { checkRange, revertProof };
 
 // ---- CLI ---------------------------------------------------------------------------
 

@@ -494,6 +494,91 @@ test('a revert of a revert is refused as a change; the plain revert passes', (t)
   refusedWith(h.check('origin/main'), again, first.slice(0, 7), 'itself a revert', 'lane or quick-fix receipt');
 });
 
+test('revertProof agrees with checkRange on a clean revert, a hand-edited one and a revert of a revert', (t) => {
+  const h = makeRepo(t);
+  const proof = (sha) => require(path.join(h.repo, 'scripts', 'lib', 'rangeCheck.js')).revertProof(sha, { cwd: h.repo });
+  const shipped = landLane(h, { 'server/a.js': 'a v2\n' });
+  git(h.repo, 'push', '-q', 'origin', 'main');
+  git(h.repo, 'fetch', '-q', 'origin');
+  git(h.repo, 'revert', '--no-edit', shipped.sha);
+  const clean = git(h.repo, 'rev-parse', 'HEAD');
+  const key = revertReceipt(h, clean, { reverted: shipped.sha });
+  assert.deepEqual(proof(clean), { ok: true, reverted: shipped.sha, problems: [] });
+  passes(h.check('origin/main'));
+  // The receipt's own reverted field stays the range check's: a receipt that
+  // names another commit is refused though the proof holds.
+  edit(h, h.R.receiptDir(key, { cwd: h.repo }), (r) => { r.reverted = h.seed; });
+  const named = refusedWith(h.check('origin/main'), clean, 'the receipt names', h.seed.slice(0, 7));
+  assert.ok(named.includes(`the message names ${shipped.sha.slice(0, 7)}`), named);
+  assert.equal(proof(clean).ok, true);
+  // A hand edit rides on the revert.
+  git(h.repo, 'reset', '-q', '--hard', 'origin/main');
+  git(h.repo, 'revert', '--no-edit', '--no-commit', shipped.sha);
+  writeFiles(h.repo, { 'server/b.js': 'b by hand\n' });
+  git(h.repo, 'add', '--', 'server/b.js');
+  git(h.repo, 'commit', '-q', '--no-edit');
+  const edited = git(h.repo, 'rev-parse', 'HEAD');
+  revertReceipt(h, edited);
+  const hand = proof(edited);
+  assert.equal(hand.ok, false);
+  assert.equal(hand.reverted, shipped.sha);
+  assert.match(hand.problems[0], /reverted on its parent/);
+  assert.deepEqual(hand.problems, problemsOf(h.check('origin/main'), edited));
+  // A revert of a revert.
+  git(h.repo, 'reset', '-q', '--hard', 'origin/main');
+  git(h.repo, 'revert', '--no-edit', shipped.sha);
+  const first = git(h.repo, 'rev-parse', 'HEAD');
+  revertReceipt(h, first);
+  git(h.repo, 'push', '-q', 'origin', 'main');
+  git(h.repo, 'fetch', '-q', 'origin');
+  git(h.repo, 'revert', '--no-edit', first);
+  const again = git(h.repo, 'rev-parse', 'HEAD');
+  revertReceipt(h, again);
+  const twice = proof(again);
+  assert.equal(twice.ok, false);
+  assert.equal(twice.reverted, first);
+  assert.match(twice.problems[0], /itself a revert/);
+  assert.deepEqual(twice.problems, problemsOf(h.check('origin/main'), again));
+  // A commit whose message names no reverted commit, and a ref that names no commit.
+  const plain = proof(shipped.sha);
+  assert.deepEqual([plain.ok, plain.reverted], [false, null]);
+  assert.match(plain.problems[0], /names no reverted commit/);
+  assert.deepEqual([proof('refs/heads/no-such-branch').ok, proof('refs/heads/no-such-branch').reverted], [false, null]);
+});
+
+test('a revert of a revert whose commit key holds a twin\'s revert receipt is judged by its tree\'s quick-fix receipt; with none there, the problem names the twin', (t) => {
+  const h = makeRepo(t);
+  const a = landLane(h, { 'server/a.js': 'a v2\n' });
+  // X1 reverts A; ship's revert receipt for it names X1 as its tip.
+  git(h.repo, 'revert', '--no-edit', a.sha);
+  const x1 = git(h.repo, 'rev-parse', 'HEAD');
+  revertReceipt(h, x1, { tip: x1, reverted: a.sha });
+  // Y reverts X1 (A's lines again); A, X1 and Y ship.
+  git(h.repo, 'revert', '--no-edit', x1);
+  git(h.repo, 'push', '-q', 'origin', 'main');
+  git(h.repo, 'fetch', '-q', 'origin');
+  const y = git(h.repo, 'rev-parse', 'HEAD');
+  // W reverts Y, a revert of a revert, committed as a quick fix: its review
+  // keys the staged tree, and its patch is X1's.
+  git(h.repo, 'revert', '--no-edit', '--no-commit', y);
+  const name = /name: (\S+)/.exec(cli(h, 'init', '--branch', 'main', '--quick-fix'))[1];
+  review(h, name, ['server/a.js'], { tier: 'B' });
+  const tree = path.basename(receiptAt(cli(h, 'finalize', name, '--kind', 'quick-fix', '--base', y, '--reviewed-against', y, '--tier', 'B',
+    '--not-a-fix', 'a revert of a revert', '--select', selectFile(h, 'B', { staged: true }))));
+  git(h.repo, 'commit', '-q', '--no-edit');
+  const w = git(h.repo, 'rev-parse', 'HEAD');
+  assert.equal(h.R.commitKey(w, { cwd: h.repo }), h.R.commitKey(x1, { cwd: h.repo }), 'W and X1 share a patch id');
+  assert.equal(git(h.repo, 'rev-parse', `${w}^{tree}`), tree);
+  const res = h.check('origin/main');
+  passes(res);
+  assert.deepEqual([res.commits[0].kind, res.commits[0].receipt_key], ['quick-fix', tree]);
+  // With no receipt under the tree, the problem names the twin.
+  const dir = h.R.receiptDir(tree, { cwd: h.repo });
+  fs.renameSync(dir, `${dir}.aside`);
+  const hit = refusedWith(h.check('origin/main'), w, 'no review receipt of its own', `holds the revert receipt of ${x1.slice(0, 7)}`, 'another commit with the same patch');
+  assert.ok(hit.endsWith('it needs its own receipt'), hit);
+});
+
 test('a comment-only receipt with a proof file passes, and one without is a problem', (t) => {
   const h = makeRepo(t);
   const sha = commit(h.repo, 'comments', { 'server/a.js': 'a v1\n// a comment\n' });
