@@ -300,7 +300,7 @@ const occurrences = (text, s) => text.split(s).length - 1;
 const originHead = (h) => fgit(h.origin, 'rev-parse', 'refs/heads/main');
 const UNKNOWN_LINE = (section) => `Board updated under '${section}' and committed; the push outcome is unknown, run npm run ship again to complete it.`;
 const LOCAL_LINE = (section, reason) => `Board updated under '${section}' and committed LOCALLY, not pushed: ${reason}. It rides the next ship.`;
-const MOVED_LINE = (section) => `Board updated under '${section}' and committed LOCALLY, not pushed: origin/main moved since ship's fetch (a push from outside this checkout). Merge origin/main into main by hand, then run npm run ship.`;
+const MOVED_LINE = (section) => `Board updated under '${section}' and committed LOCALLY, not pushed: origin/main moved since ship's fetch (a push from outside this checkout). Stop and ask: main has to be rebased onto origin/main by hand (git pull --rebase origin main while no other window is mid-edit; ship refuses a merge commit, since main holds squashes only), then run npm run ship.`;
 
 function records(file) {
   if (!fs.existsSync(file)) return [];

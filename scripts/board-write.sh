@@ -33,17 +33,19 @@ set -euo pipefail
 #     non-fast-forward, a push from outside this checkout) stops and reports
 #     under the project's git-safety invariant (never auto-pull, auto-rebase
 #     or force-push): nothing is pulled, rebased or shipped again, the board
-#     commit stays local, and the person merges origin/main into main by
-#     hand, then runs npm run ship; an outcome ship cannot vouch for (exit 2,
-#     a ship killed by a signal, or one that ended without its result after
-#     its push began) is reported as committed with the push outcome
-#     unknown; any other refusal or failure leaves the board commit local
-#     with ship's reason. Once the board commit exists, this branch never
-#     ends with git's exit code. Never forced and never detached. A board
-#     write here waits for a whole ship (seconds for a docs-only range, about
-#     ten minutes when other windows' unpushed money commits ride along and
-#     the gate runs the money smoke, longer while another ship holds the ship
-#     lock), so a session runs the writer with a long enough timeout or in the
+#     commit stays local, and the person, asked first, rebases main onto
+#     origin/main by hand (never a merge: ship refuses a merge commit, since
+#     main holds squashes only), then runs npm run ship; an outcome ship
+#     cannot vouch for (exit 2, a ship killed by a signal, or one that
+#     ended without its result after its push began) is reported as
+#     committed with the push outcome unknown; any other refusal or
+#     failure leaves the board commit local with ship's reason. Once the
+#     board commit exists, this branch never ends with git's exit code.
+#     Never forced and never detached. A board write here waits for a
+#     whole ship (seconds for a docs-only range, about ten minutes when
+#     other windows' unpushed money commits ride along and the gate runs
+#     the money smoke, longer while another ship holds the ship lock), so a
+#     session runs the writer with a long enough timeout or in the
 #     background.
 #   unreadable, or a state that cannot be read at all: no push. The flip
 #     marker's BLOCKED line (standing().flip) is printed and the board commit
@@ -241,7 +243,7 @@ ship_board() {
   if [ "$code" -eq 1 ] && [ "$state" = "failed" ]; then
     case "$text" in
       *"(fetch first)"* | *"(non-fast-forward)"*)
-        echo "Board updated under '${section}' and committed LOCALLY, not pushed: origin/main moved since ship's fetch (a push from outside this checkout). Merge origin/main into main by hand, then run npm run ship." >&2
+        echo "Board updated under '${section}' and committed LOCALLY, not pushed: origin/main moved since ship's fetch (a push from outside this checkout). Stop and ask: main has to be rebased onto origin/main by hand (git pull --rebase origin main while no other window is mid-edit; ship refuses a merge commit, since main holds squashes only), then run npm run ship." >&2
         exit 0
         ;;
     esac
