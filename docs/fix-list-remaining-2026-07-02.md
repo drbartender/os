@@ -1306,6 +1306,26 @@ here by default.
   only" empty state are not acknowledged-aware (inert today). The
   `proposal_refunds_total_scope_check` DO block matches `pg_constraint` on `conname` alone rather
   than `(conrelid, conname)`.
+- **Stripe payout mirror, found while teaching it manual payouts (2026-10-27, f74425aa):**
+  - **Some refund lines carry the `payment` label.** A `payment_refund` (and a `refund_failure`)
+    whose source is not an `re_` refund stores no `stripe_refund_id`, so `matchLine` falls to the PI
+    branch and files it as `payment`. Prod holds 3 refund lines and 1 refund failure filed that
+    way; the tab shows them under the payment chip. The amounts are right.
+  - **A failed or cancelled automatic payout never has its lines claimed.** `syncPayout` fetches
+    lines only for `paid`, so the charges it carried stay unclaimed and its returned funds arrive as
+    another unclaimed line: In transit counts that money twice, for good, and an advance pair
+    inside it would leave the card's owed-advance row up. No payout on the account has failed.
+  - **An automatic payout that is not paid yet expands to nothing** and reads Gross and Fees $0.00
+    (the empty state the manual rows had before f74425aa); its lines sit in In transit until it pays.
+  - **During a Stripe test-mode window the payout webhook trusts the body's `livemode`**, so anyone
+    holding the test webhook secret could write a made-up payout row into the live mirror. The
+    mirror is read-only and admin/manager-only, and no money moves.
+  - **Two labels in the split case**, where a bank-debit payout claims an instant payout's advance
+    before its repayment: if the earlier deposit's line sync fails, `advance_owed_cents` goes briefly
+    negative and the card's "advance still being repaid" row reads the wrong way until the next
+    sweep; and the card's line count leaves that row out.
+  - **`fmt$fromCents` renders a negative amount as `$-250.00`** (`client/src/components/adminos/format.js`),
+    app-wide, on every refund, dispute and payout debit line. Cosmetic.
 - **Service extension:** the whole settle tail runs synchronously inside the webhook handler before
   the 200 to Stripe (`paymentIntentSucceeded.js:649-765`), so a slow tail can push delivery past
   Stripe's timeout — retry is harmless but the dashboard shows failures. The heal re-runs accrual
