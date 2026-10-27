@@ -415,3 +415,237 @@ test('sweep refuses to run in test mode without an injected client [finding 1]',
   assert.deepEqual(after, before, 'no rows changed by a test-mode-skipped sweep');
   assert.equal(sync.getLastSweepAt(), lastBefore, 'lastSweepAt untouched');
 });
+
+// ============================================================
+// Manual payouts and instant-payout advances (2026-10-27)
+// ============================================================
+
+// Stripe answers 400 to a balance-transaction listing filtered on a MANUAL
+// payout ("can only be filtered on automatic transfers, not manual"). This fake
+// does the same, and records every listing it was asked for.
+function manualAwareStripe({ payouts = [], txnsByPayout = {} } = {}) {
+  const manual = new Set(payouts.filter((p) => p.automatic === false).map((p) => p.id));
+  const calls = [];
+  return {
+    calls,
+    payouts: { list: async () => ({ data: payouts, has_more: false }) },
+    balanceTransactions: {
+      list: async (params = {}) => {
+        calls.push(params);
+        if (params.payout && manual.has(params.payout)) {
+          throw new Error('Balance transaction history can only be filtered on automatic transfers, not manual.');
+        }
+        return { data: params.payout ? (txnsByPayout[params.payout] || []) : [], has_more: false };
+      },
+    },
+  };
+}
+
+test('syncPayout mirrors a manual payout without asking Stripe for its lines', async () => {
+  const poM = `po_test_${N}_manual`;
+  const manual = payoutObj({ id: poM, automatic: false, method: 'instant' });
+  const stripe = manualAwareStripe({ payouts: [manual] });
+  await sync.syncPayout(manual, { stripe });
+  assert.equal(stripe.calls.filter((p) => p.payout).length, 0, 'no line listing for a manual payout');
+  const row = (await pool.query(
+    'SELECT id, automatic, status FROM stripe_payouts WHERE stripe_payout_id = $1', [poM])).rows[0];
+  assert.ok(row, 'the payout row is still mirrored');
+  assert.equal(row.automatic, false);
+  assert.equal(row.status, 'paid');
+  const lines = await pool.query('SELECT 1 FROM stripe_payout_lines WHERE payout_id = $1', [row.id]);
+  assert.equal(lines.rows.length, 0);
+});
+
+test('sweep raises nothing for a manual payout and still syncs the automatic one', async () => {
+  const poM = `po_test_${N}_manual_sw`;
+  const poA = `po_test_${N}_auto_sw`;
+  const stripe = manualAwareStripe({
+    payouts: [payoutObj({ id: poM, automatic: false, method: 'instant' }), payoutObj({ id: poA })],
+    txnsByPayout: { [poA]: [chargeTxn(`txn_test_${N}_auto_sw`)] },
+  });
+  // Scoped to this payout: the shared dev DB can hold other unbalanced fixtures
+  // the sweep's out-of-window heal reaches, which this fake cannot retrieve.
+  const captured = [];
+  const orig = Sentry.captureException;
+  Sentry.captureException = (err, ctx) => { captured.push(ctx && ctx.tags && ctx.tags.payout); };
+  try {
+    await sync.sweep({ stripe, notify: async () => {}, force: true });
+  } finally { Sentry.captureException = orig; }
+  assert.ok(!captured.includes(poM), 'the sweep reported an error for the manual payout');
+  const auto = (await pool.query(
+    'SELECT lines_synced_at FROM stripe_payouts WHERE stripe_payout_id = $1', [poA])).rows[0];
+  assert.ok(auto && auto.lines_synced_at, 'the automatic payout still synced its lines');
+});
+
+test('matcher: an instant-payout advance, its funding and a payout reversal are adjustments, never unmatched', async () => {
+  for (const [cat, cents] of [['advance', 36465], ['advance_funding', -36465], ['payout_reversal', 25000]]) {
+    const id = await makePendingLine(`txn_test_${N}_${cat}`, {
+      txn_type: cat, reporting_category: cat, amount_cents: cents, net_cents: cents, fee_cents: 0 });
+    await sync.matchLine(id);
+    assert.equal((await lineRow(id)).matched_kind, 'adjustment', cat);
+  }
+});
+
+test('sweep re-matches an advance line stored unmatched before its category was known', async () => {
+  const poV = `po_test_${N}_adv`;
+  const po = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, 1000, 'paid', NOW() - INTERVAL '30 days', NOW()) RETURNING id`, [poV]);
+  // No PI and no refund id: the shape of the twelve live lines behind the
+  // "unmatched for >7 days" pulse.
+  const id = (await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, matched_kind, created_at, updated_at)
+     VALUES ($1,$2,'advance_funding','advance_funding',-36465,0,-36465,'unmatched',
+       NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days')
+     RETURNING id`, [`txn_test_${N}_advheal`, po.rows[0].id])).rows[0].id;
+  await sync.sweep({ stripe: fakeStripe(), notify: async () => {}, force: true });
+  assert.equal((await lineRow(id)).matched_kind, 'adjustment');
+});
+
+// An automatic payout's listing also carries each manual payout settled since
+// the previous automatic one: its debit, with the instant fee on it.
+const manualDebitTxn = (id, manualPoId, over = {}) => ({
+  id, object: 'balance_transaction', type: 'payout', reporting_category: 'payout',
+  amount: -25000, fee: 375, net: -25375, available_on: 1782604800, description: 'STRIPE PAYOUT',
+  source: { id: manualPoId, object: 'payout', automatic: false },
+  ...over,
+});
+
+test('syncPayout keeps a manual payout listed inside an automatic one, so the lines sum to the bank amount', async () => {
+  const poC = `po_test_${N}_carry`;
+  const charge = chargeTxn(`txn_test_${N}_carry_ch`);
+  const debit = manualDebitTxn(`txn_test_${N}_carry_po`, `po_test_${N}_carry_manual`);
+  const amount = charge.net + debit.net;
+  const own = { id: `txn_test_${N}_carry_self`, type: 'payout', reporting_category: 'payout',
+    amount: -amount, fee: 0, net: -amount, source: { id: poC, object: 'payout' } };
+  await sync.syncPayout(payoutObj({ id: poC, amount }),
+    { stripe: fakeStripe({ txnsByPayout: { [poC]: [own, charge, debit] } }) });
+  const rows = (await pool.query(
+    `SELECT l.stripe_balance_txn_id, l.net_cents, l.fee_cents, l.matched_kind
+     FROM stripe_payout_lines l JOIN stripe_payouts p ON p.id = l.payout_id
+     WHERE p.stripe_payout_id = $1`, [poC])).rows;
+  assert.deepEqual(rows.map((r) => r.stripe_balance_txn_id).sort(), [charge.id, debit.id].sort(),
+    'the payout\'s own txn is skipped and the manual payout\'s debit is kept');
+  assert.equal(rows.reduce((s, r) => s + r.net_cents, 0), amount, 'lines sum to the bank amount');
+  const d = rows.find((r) => r.stripe_balance_txn_id === debit.id);
+  assert.equal(d.fee_cents, 375, 'the instant fee is kept');
+  assert.equal(d.matched_kind, 'adjustment');
+});
+
+test('sweep re-fetches an automatic payout whose stored lines miss its bank amount', async () => {
+  const poG = `po_test_${N}_gap`;
+  const charge = chargeTxn(`txn_test_${N}_gap_ch`);
+  const debit = manualDebitTxn(`txn_test_${N}_gap_po`, `po_test_${N}_gap_manual`);
+  const amount = charge.net + debit.net;
+  // The state an older sync left: the charge claimed, the manual payout's debit dropped.
+  const po = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, $2, 'paid', NOW() - INTERVAL '3 days', NOW()) RETURNING id`, [poG, amount]);
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents)
+     VALUES ($1, $2, 'charge', 'charge', $3, $4, $5)`,
+    [charge.id, po.rows[0].id, charge.amount, charge.fee, charge.net]);
+  const stripe = fakeStripe({ payouts: [payoutObj({ id: poG, amount })], txnsByPayout: { [poG]: [charge, debit] } });
+  await sync.sweep({ stripe, notify: async () => {}, force: true });
+  const { rows: [r] } = await pool.query(
+    'SELECT COALESCE(SUM(net_cents), 0)::int AS net FROM stripe_payout_lines WHERE payout_id = $1', [po.rows[0].id]);
+  assert.equal(r.net, amount);
+});
+
+test('sweep leaves alone an automatic payout whose lines already sum to its bank amount', async () => {
+  const poB = `po_test_${N}_bal`;
+  const charge = chargeTxn(`txn_test_${N}_bal_ch`);
+  const po = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, $2, 'paid', NOW() - INTERVAL '3 days', NOW()) RETURNING id`, [poB, charge.net]);
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents)
+     VALUES ($1, $2, 'charge', 'charge', $3, $4, $5)`,
+    [charge.id, po.rows[0].id, charge.amount, charge.fee, charge.net]);
+  const stripe = manualAwareStripe({ payouts: [payoutObj({ id: poB, amount: charge.net })] });
+  await sync.sweep({ stripe, notify: async () => {}, force: true });
+  assert.equal(stripe.calls.filter((p) => p.payout === poB).length, 0, 'a balanced payout is not fetched again');
+});
+
+test('pending path keeps a manual payout\'s debit in transit, and still skips an automatic payout\'s own', async () => {
+  const manual = manualDebitTxn(`txn_test_${N}_pend_po`, `po_test_${N}_pend_manual`);
+  const own = manualDebitTxn(`txn_test_${N}_pend_own`, `po_test_${N}_pend_auto`,
+    { source: { id: `po_test_${N}_pend_auto`, object: 'payout', automatic: true } });
+  await sync.syncPendingTransactions({ stripe: fakeStripe({ recentTxns: [manual, own] }) });
+  const rows = (await pool.query(
+    'SELECT stripe_balance_txn_id, payout_id, matched_kind FROM stripe_payout_lines WHERE stripe_balance_txn_id IN ($1, $2)',
+    [manual.id, own.id])).rows;
+  assert.deepEqual(rows.map((r) => r.stripe_balance_txn_id), [manual.id], 'only the manual payout\'s debit is pending');
+  assert.equal(rows[0].payout_id, null);
+  assert.equal(rows[0].matched_kind, 'adjustment');
+});
+
+test('sweep fetches by id an unbalanced automatic payout older than its listing window', async () => {
+  const poO = `po_test_${N}_old`;
+  const charge = chargeTxn(`txn_test_${N}_old_ch`);
+  const debit = manualDebitTxn(`txn_test_${N}_old_po`, `po_test_${N}_old_manual`);
+  const amount = charge.net + debit.net;
+  const po = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, $2, 'paid', NOW() - INTERVAL '60 days', NOW()) RETURNING id`, [poO, amount]);
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents)
+     VALUES ($1, $2, 'charge', 'charge', $3, $4, $5)`,
+    [charge.id, po.rows[0].id, charge.amount, charge.fee, charge.net]);
+  const retrieved = [];
+  const stripe = {
+    // Outside the 30-day window the listing never returns it.
+    payouts: {
+      list: async () => ({ data: [], has_more: false }),
+      retrieve: async (id) => {
+        retrieved.push(id);
+        if (id !== poO) throw new Error('no such payout in this fake');
+        return payoutObj({ id, amount });
+      },
+    },
+    balanceTransactions: {
+      list: async (params = {}) => ({ data: params.payout === poO ? [charge, debit] : [], has_more: false }),
+    },
+  };
+  await sync.sweep({ stripe, notify: async () => {}, force: true });
+  assert.ok(retrieved.includes(poO), 'the old payout was fetched by id');
+  const { rows: [r] } = await pool.query(
+    'SELECT COALESCE(SUM(net_cents), 0)::int AS net FROM stripe_payout_lines WHERE payout_id = $1', [po.rows[0].id]);
+  assert.equal(r.net, amount);
+});
+
+test('syncPayout keeps the fee on an automatic instant payout\'s own debit, so its lines still balance', async () => {
+  const poI = `po_test_${N}_autoinst`;
+  const charge = chargeTxn(`txn_test_${N}_autoinst_ch`);
+  const fee = 150;
+  const amount = charge.net - fee;
+  const own = { id: `txn_test_${N}_autoinst_self`, object: 'balance_transaction', type: 'payout',
+    reporting_category: 'payout', amount: -amount, fee, net: -(amount + fee), available_on: 1782604800,
+    description: 'STRIPE PAYOUT', source: { id: poI, object: 'payout', automatic: true } };
+  await sync.syncPayout(payoutObj({ id: poI, amount, method: 'instant' }),
+    { stripe: fakeStripe({ txnsByPayout: { [poI]: [own, charge] } }) });
+  const rows = (await pool.query(
+    `SELECT l.stripe_balance_txn_id, l.amount_cents, l.fee_cents, l.net_cents, l.matched_kind
+     FROM stripe_payout_lines l JOIN stripe_payouts p ON p.id = l.payout_id
+     WHERE p.stripe_payout_id = $1`, [poI])).rows;
+  assert.equal(rows.reduce((s, r) => s + r.net_cents, 0), amount, 'lines sum to the bank amount');
+  const f = rows.find((r) => r.stripe_balance_txn_id === own.id);
+  assert.ok(f, 'the own debit\'s fee is kept as a line');
+  assert.deepEqual([f.amount_cents, f.fee_cents, f.net_cents, f.matched_kind], [0, fee, -fee, 'adjustment']);
+});
+
+test('syncPayout still stores nothing for an automatic payout\'s own debit with no fee', async () => {
+  const poS = `po_test_${N}_autostd`;
+  const charge = chargeTxn(`txn_test_${N}_autostd_ch`);
+  const own = { id: `txn_test_${N}_autostd_self`, object: 'balance_transaction', type: 'payout',
+    reporting_category: 'payout', amount: -charge.net, fee: 0, net: -charge.net,
+    source: { id: poS, object: 'payout', automatic: true } };
+  await sync.syncPayout(payoutObj({ id: poS, amount: charge.net }),
+    { stripe: fakeStripe({ txnsByPayout: { [poS]: [own, charge] } }) });
+  const found = await pool.query('SELECT 1 FROM stripe_payout_lines WHERE stripe_balance_txn_id = $1', [own.id]);
+  assert.equal(found.rows.length, 0);
+});

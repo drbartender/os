@@ -28,20 +28,36 @@ const LINE_SELECT = `
   LEFT JOIN users u ON u.id = t.target_user_id
   LEFT JOIN contractor_profiles cp ON cp.user_id = t.target_user_id`;
 
+// In transit: what the coming deposits will carry. A manual payout's debit counts
+// (the only payout-type line the pending path stores), so money already sent is
+// netted out. An instant payout's advance (+) and the funding that repays it out
+// of later charges (-) cancel inside the deposits that claim them, so unclaimed
+// pair lines are left out of the sum and the list. A deposit can claim an advance
+// before its funding exists (a bank-debit payout inside the repayment window), so
+// the net of the pair lines already claimed, the advance still owed, is
+// subtracted; it is zero whenever one deposit claims an advance with all its
+// funding.
+const ADVANCE_PAIR = `COALESCE(l.reporting_category, l.txn_type) IN ('advance', 'advance_funding')`;
+const IN_TRANSIT = `l.payout_id IS NULL AND NOT ${ADVANCE_PAIR}`;
+
 // DB-only: never calls Stripe (fetched on dashboard mount for the unmatched badge).
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const [summary, pending, payouts] = await Promise.all([
     pool.query(`
       SELECT
-        COALESCE(SUM(net_cents) FILTER (WHERE payout_id IS NULL AND txn_type <> 'payout'), 0)::int AS in_transit_cents,
+        (COALESCE(SUM(l.net_cents) FILTER (WHERE ${IN_TRANSIT}), 0)
+          - COALESCE(SUM(l.net_cents) FILTER (WHERE l.payout_id IS NOT NULL AND ${ADVANCE_PAIR}), 0))::int AS in_transit_cents,
+        -- Returned on its own so the tab can list it: the In transit lines less
+        -- this add up to in_transit_cents.
+        COALESCE(SUM(l.net_cents) FILTER (WHERE l.payout_id IS NOT NULL AND ${ADVANCE_PAIR}), 0)::int AS advance_owed_cents,
         COALESCE(SUM(fee_cents) FILTER (WHERE available_on >= date_trunc('month', NOW())), 0)::int AS fees_mtd_cents,
         COALESCE(SUM(fee_cents) FILTER (WHERE available_on >= date_trunc('year', NOW())), 0)::int AS fees_ytd_cents,
         COUNT(*) FILTER (WHERE matched_kind = 'unmatched' AND acknowledged_at IS NULL)::int AS unmatched_count
-      FROM stripe_payout_lines`),
-    pool.query(`${LINE_SELECT} WHERE l.payout_id IS NULL AND l.txn_type <> 'payout' ORDER BY l.available_on ASC NULLS LAST`),
+      FROM stripe_payout_lines l`),
+    pool.query(`${LINE_SELECT} WHERE ${IN_TRANSIT} ORDER BY l.available_on ASC NULLS LAST`),
     pool.query(`
       SELECT p.id, p.stripe_payout_id, p.amount_cents, p.status, p.arrival_date,
-             p.created_at_stripe, p.failure_code, p.failure_message,
+             p.created_at_stripe, p.failure_code, p.failure_message, p.automatic,
              COALESCE(SUM(l.amount_cents), 0)::int AS gross_cents,
              COALESCE(SUM(l.fee_cents), 0)::int AS fee_cents,
              COUNT(l.id)::int AS line_count,

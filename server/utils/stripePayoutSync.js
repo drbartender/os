@@ -65,9 +65,11 @@ async function listAll(listFn, params) {
   return out;
 }
 
+const sourceId = (txn) => (typeof txn.source === 'string' ? txn.source : ((txn.source && txn.source.id) || null));
+
 function lineFieldsFromTxn(txn) {
   const src = (txn.source && typeof txn.source === 'object') ? txn.source : {};
-  const srcId = typeof txn.source === 'string' ? txn.source : (src.id || null);
+  const srcId = sourceId(txn);
   return {
     txn_type: txn.type,
     reporting_category: txn.reporting_category || null,
@@ -133,12 +135,24 @@ async function syncPayout(payoutObj, opts = {}) {
   if (payoutObj.livemode === false) return { skipped: 'livemode' };
   const stripe = client(opts);
   const row = await upsertPayoutRow(payoutObj);
-  if (payoutObj.status === 'paid') {
+  // Stripe lists a payout's balance transactions only for AUTOMATIC payouts; a
+  // manual one (an instant payout, or one sent by hand) answers 400. Its row is
+  // still mirrored, with no line breakdown, and lines_synced_at stays NULL.
+  if (payoutObj.status === 'paid' && payoutObj.automatic !== false) {
     const txns = await listAll(
       (p) => stripe.balanceTransactions.list({ ...p, payout: payoutObj.id, expand: ['data.source'] }), {});
     for (const txn of txns) {
-      if (txn.type === 'payout') continue; // the payout's own negative txn
-      const line = await upsertLineForPayout(row.id, { id: txn.id, ...lineFieldsFromTxn(txn) });
+      // Skip only the payout's own negative txn. The listing also carries each
+      // manual payout settled since the previous automatic one (its debit, the
+      // instant fee on it); those are lines, or the lines fall short of the bank.
+      // An own txn that carries a fee (an automatic payout sent by the instant
+      // method) keeps just that fee as a line, for the same reason.
+      let fields = lineFieldsFromTxn(txn);
+      if (txn.type === 'payout' && sourceId(txn) === payoutObj.id) {
+        if (!txn.fee) continue;
+        fields = { ...fields, amount_cents: 0, net_cents: -txn.fee, description: 'Instant payout fee' };
+      }
+      const line = await upsertLineForPayout(row.id, { id: txn.id, ...fields });
       await matchLine(line.id); // Task 3
     }
     await pool.query('UPDATE stripe_payouts SET lines_synced_at = NOW(), updated_at = NOW() WHERE id = $1', [row.id]);
@@ -156,13 +170,22 @@ async function syncPendingTransactions(opts = {}) {
   const txns = await listAll(
     (p) => stripe.balanceTransactions.list({ ...p, created: { gte: since }, expand: ['data.source'] }), {});
   for (const txn of txns) {
-    if (txn.type === 'payout') continue;
+    // A manual payout's debit is in transit like the charges it drew on, until
+    // the next automatic payout claims both; an automatic payout's own debit is
+    // never a line.
+    if (txn.type === 'payout' && !(txn.source && txn.source.automatic === false)) continue;
     const inserted = await insertPendingLine({ id: txn.id, ...lineFieldsFromTxn(txn) });
     if (inserted) await matchLine(inserted.id);
   }
 }
 
-const ADJUSTMENT_CATS = ['adjustment', 'other_adjustment', 'fee', 'payout_failure', 'stripe_fee'];
+// advance / advance_funding: an instant payout's money fronted by Stripe and
+// taken back out of later charges (the pair nets to zero), never revenue.
+// payout: a manual payout's debit listed inside a later automatic payout.
+// payout_reversal: the reporting category of a failed or cancelled payout's
+// returned funds (payout_failure is only its txn type, read when no category).
+const ADJUSTMENT_CATS = ['adjustment', 'other_adjustment', 'fee', 'payout_failure', 'stripe_fee',
+  'advance', 'advance_funding', 'payout', 'payout_reversal'];
 
 async function matchLine(lineId) {
   const { rows } = await pool.query('SELECT * FROM stripe_payout_lines WHERE id = $1', [lineId]);
@@ -262,23 +285,48 @@ async function sweep(opts = {}) {
       // Per-payout isolation: one payout whose line fetch throws must not abort the
       // rest of the run (pending ingest, re-match, failed-payout alerts, lastSweepAt).
       try {
+        // balanced: an automatic payout's lines sum to what reached the bank. A
+        // gap means a line was dropped (the manual payout debits before
+        // 2026-10-27), so its lines are fetched again.
         const existing = await pool.query(
-          'SELECT status, lines_synced_at FROM stripe_payouts WHERE stripe_payout_id = $1', [p.id]);
-        const needLines = p.status === 'paid' &&
-          (!existing.rows[0] || !existing.rows[0].lines_synced_at || existing.rows[0].status !== p.status);
+          `SELECT p.status, p.lines_synced_at,
+                  (COALESCE(SUM(l.net_cents), 0) = p.amount_cents) AS balanced
+           FROM stripe_payouts p LEFT JOIN stripe_payout_lines l ON l.payout_id = p.id
+           WHERE p.stripe_payout_id = $1 GROUP BY p.id`, [p.id]);
+        const e = existing.rows[0];
+        const needLines = p.status === 'paid' && p.automatic !== false &&
+          (!e || !e.lines_synced_at || e.status !== p.status || !e.balanced);
         if (needLines) await syncPayout(p, { stripe });
         else await upsertPayoutRow(p); // cheap status/arrival refresh, no line fetch
       } catch (err) {
         Sentry.captureException(err, { tags: { sweep: 'stripe_payout', payout: p.id } });
       }
     }
+    // The same gap on an automatic payout older than the listing window: fetch
+    // it by id. Once its lines balance it drops out of this query.
+    const listed = new Set(payouts.map((p) => p.id));
+    const short = await pool.query(
+      `SELECT p.stripe_payout_id FROM stripe_payouts p
+       LEFT JOIN stripe_payout_lines l ON l.payout_id = p.id
+       WHERE p.status = 'paid' AND p.automatic AND p.livemode
+       GROUP BY p.id HAVING COALESCE(SUM(l.net_cents), 0) <> p.amount_cents`);
+    for (const { stripe_payout_id: id } of short.rows) {
+      if (listed.has(id)) continue;
+      try {
+        await syncPayout(await stripe.payouts.retrieve(id), { stripe });
+      } catch (err) {
+        Sentry.captureException(err, { tags: { sweep: 'stripe_payout', payout: id } });
+      }
+    }
     await syncPendingTransactions({ stripe });
-    // Re-match: heals webhook-before-payment-row ordering races. Acknowledged
-    // lines (pre-cutover baseline) can never match — skip regrinding them.
+    // Re-match: heals webhook-before-payment-row ordering races, and a line whose
+    // category joined ADJUSTMENT_CATS after it was stored. Acknowledged lines
+    // (pre-cutover baseline) can never match — skip regrinding them.
     const unmatched = await pool.query(
       `SELECT id FROM stripe_payout_lines WHERE matched_kind = 'unmatched'
        AND acknowledged_at IS NULL
-       AND (stripe_payment_intent_id IS NOT NULL OR stripe_refund_id IS NOT NULL)`);
+       AND (stripe_payment_intent_id IS NOT NULL OR stripe_refund_id IS NOT NULL
+            OR COALESCE(reporting_category, txn_type) = ANY($1::text[]))`, [ADJUSTMENT_CATS]);
     for (const r of unmatched.rows) await matchLine(r.id);
     // Alert any failed payout not yet alerted (belt and braces for a missed webhook).
     const failed = await pool.query(

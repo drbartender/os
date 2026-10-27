@@ -55,16 +55,6 @@ function request(method, path, { token, body } = {}) {
 }
 
 before(async () => {
-  // Baseline of the global summary fields BEFORE we seed, so the assertions
-  // measure only our two seeded lines regardless of pre-existing mirror rows.
-  const base = await pool.query(`
-    SELECT
-      COALESCE(SUM(net_cents) FILTER (WHERE payout_id IS NULL AND txn_type <> 'payout'), 0)::int AS in_transit_cents,
-      COUNT(*) FILTER (WHERE matched_kind = 'unmatched' AND acknowledged_at IS NULL)::int AS unmatched_count
-    FROM stripe_payout_lines`);
-  baseInTransit = base.rows[0].in_transit_cents;
-  baseUnmatched = base.rows[0].unmatched_count;
-
   const passwordHash = await bcrypt.hash('x', 4);
   const admin = await pool.query(
     `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
@@ -76,6 +66,23 @@ before(async () => {
      VALUES ($1,$2,'staff','approved',0) RETURNING id, token_version`,
     [`sp-route-staff-${N}@test.local`, passwordHash]);
   staffToken = jwt.sign({ userId: staff.rows[0].id, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/stripe-payouts', payoutsRouter);
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    return res.status(500).json({ error: 'Internal error', code: 'INTERNAL_ERROR' });
+  });
+  await new Promise((resolve) => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); }); });
+
+  // Baseline of the global summary fields BEFORE we seed, read through the
+  // route itself, so the assertions measure only our seeded lines whatever
+  // mirror rows the shared dev DB already holds and however In transit is figured.
+  const base = (await request('GET', '/api/stripe-payouts', { token: adminToken })).body.summary;
+  baseInTransit = base.in_transit_cents;
+  baseUnmatched = base.unmatched_count;
 
   const c = await pool.query(`INSERT INTO clients (name, email) VALUES ($1,$2) RETURNING id`,
     [`SP Route ${N}`, `sp-route-client-${N}@test.local`]);
@@ -125,16 +132,6 @@ before(async () => {
        amount_cents, fee_cents, net_cents, available_on, matched_kind)
      VALUES ($1,$2,'charge','charge',10000,320,9680,NOW(),'unmatched')`,
     [`txn_test_${N}_u1`, unmatchedPayoutRowId]);
-
-  const app = express();
-  app.use(express.json());
-  app.use('/api/stripe-payouts', payoutsRouter);
-  app.use((err, req, res, next) => {
-    if (res.headersSent) return next(err);
-    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
-    return res.status(500).json({ error: 'Internal error', code: 'INTERNAL_ERROR' });
-  });
-  await new Promise((resolve) => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); }); });
 });
 
 after(async () => {
@@ -182,6 +179,93 @@ test('GET /api/stripe-payouts is DB-only and returns summary + pending + payouts
   const pend = res.body.pending.find((l) => l.id === pendingLineId);
   assert.ok(pend, 'pending line surfaced');
   assert.equal(pend.matched_kind, 'unmatched');
+});
+
+test('GET /api/stripe-payouts says which payouts are manual, so the tab can say they have no breakdown', async () => {
+  await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, automatic, method)
+     VALUES ($1, 25000, 'paid', NOW(), false, 'instant')`, [`po_test_${N}_manual`]);
+  const res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.status, 200);
+  const manual = res.body.payouts.find((p) => p.stripe_payout_id === `po_test_${N}_manual`);
+  assert.ok(manual, 'manual payout present');
+  assert.equal(manual.automatic, false);
+  assert.equal(manual.line_count, 0);
+  assert.equal(res.body.payouts.find((p) => p.id === payoutRowId).automatic, true);
+});
+
+test('GET /api/stripe-payouts nets a pending manual payout debit out of In transit', async () => {
+  const before = (await request('GET', '/api/stripe-payouts', { token: adminToken })).body.summary.in_transit_cents;
+  const { rows: [line] } = await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, matched_kind)
+     VALUES ($1, 'payout', 'payout', -25000, 375, -25375, 'adjustment') RETURNING id`, [`txn_test_${N}_pend_po`]);
+  const res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.summary.in_transit_cents, before - 25375, 'the debit lowers In transit');
+  assert.ok(res.body.pending.find((l) => l.id === line.id), 'the debit is listed as pending');
+});
+
+test('GET /api/stripe-payouts leaves an instant payout\'s advance and its funding out of In transit', async () => {
+  const before = (await request('GET', '/api/stripe-payouts', { token: adminToken })).body.summary.in_transit_cents;
+  // Stripe fronts the instant payout (+) and takes it back out of the charges
+  // as they settle (-); unclaimed, the pair is left out of In transit.
+  const { rows } = await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, matched_kind)
+     VALUES ($1, 'advance', 'advance', 25375, 0, 25375, 'adjustment'),
+            ($2, 'advance_funding', 'advance_funding', -10000, 0, -10000, 'adjustment')
+     RETURNING id`, [`txn_test_${N}_pend_adv`, `txn_test_${N}_pend_advf`]);
+  const res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.summary.in_transit_cents, before, 'the advance pair does not move In transit');
+  for (const r of rows) assert.ok(!res.body.pending.find((l) => l.id === r.id), 'the advance pair is not listed as pending');
+});
+
+test('GET /api/stripe-payouts nets an advance a payout claimed before its funding arrived', async () => {
+  const start = (await request('GET', '/api/stripe-payouts', { token: adminToken })).body.summary;
+  const before = start.in_transit_cents;
+  const owedBefore = start.advance_owed_cents;
+  // A bank-debit payout inside the repayment window claimed the advance and the
+  // instant debit; the charge the advance fronted is still pending, and the
+  // funding that repays the advance out of it does not exist yet.
+  const { rows: [po] } = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, 0, 'paid', NOW(), NOW()) RETURNING id`, [`po_test_${N}_split`]);
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, matched_kind)
+     VALUES ($1, $3, 'advance', 'advance', 25375, 0, 25375, 'adjustment'),
+            ($2, $3, 'payout', 'payout', -25000, 375, -25375, 'adjustment')`,
+    [`txn_test_${N}_split_adv`, `txn_test_${N}_split_po`, po.id]);
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, matched_kind)
+     VALUES ($1, 'charge', 'charge', 26000, 625, 25375, 'payment')`, [`txn_test_${N}_split_ch`]);
+  let res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.body.summary.in_transit_cents, before,
+    'the fronted charge goes to repay the advance, so the next deposit gains nothing');
+  assert.equal(res.body.summary.advance_owed_cents, owedBefore + 25375, 'the advance still owed is returned');
+  const listed = res.body.pending.reduce((s, l) => s + l.net_cents, 0);
+  assert.equal(listed - res.body.summary.advance_owed_cents, res.body.summary.in_transit_cents,
+    'the listed lines less the advance still owed add up to In transit');
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, matched_kind)
+     VALUES ($1, 'advance_funding', 'advance_funding', -25375, 0, -25375, 'adjustment')`, [`txn_test_${N}_split_f`]);
+  res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.body.summary.in_transit_cents, before, 'the funding, once it lands, changes nothing either');
+  assert.equal(res.body.summary.advance_owed_cents, owedBefore + 25375, 'the advance stays owed until a deposit claims its funding');
+  // The next deposit claims the fronted charge with the funding that repays the
+  // advance out of it: nothing is owed and In transit is back where it began.
+  const { rows: [next] } = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, 0, 'paid', NOW(), NOW()) RETURNING id`, [`po_test_${N}_split_next`]);
+  await pool.query('UPDATE stripe_payout_lines SET payout_id = $1 WHERE stripe_balance_txn_id IN ($2, $3)',
+    [next.id, `txn_test_${N}_split_ch`, `txn_test_${N}_split_f`]);
+  res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.body.summary.advance_owed_cents, owedBefore, 'a repaid advance is owed no longer');
+  assert.equal(res.body.summary.in_transit_cents, before, 'In transit is back to its baseline');
 });
 
 test('GET /api/stripe-payouts/:id returns the payout with joined lines', async () => {

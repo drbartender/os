@@ -34,6 +34,9 @@ function lineLabel(l) {
       </>
     );
   }
+  // A manual payout's debit, listed inside the automatic payout that followed
+  // it; or, at amount 0, the fee on an automatic instant payout's own debit.
+  if (l.txn_type === 'payout') return Number(l.amount_cents) === 0 ? 'Instant payout fee' : 'Manual payout sent earlier';
   return l.description || l.stripe_balance_txn_id;
 }
 
@@ -43,8 +46,10 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [expanded, setExpanded] = useState(null); // payout id
-  const [lines, setLines] = useState({});         // payout id -> lines[]
+  const [lines, setLines] = useState({});         // payout id -> { rows, v }, v = linesVersion at fetch
   const [lineError, setLineError] = useState({}); // payout id -> true on detail-fetch failure
+  const [linesVersion, setLinesVersion] = useState(0); // bumped when a sync may have rewritten lines
+  const fetchSeq = useRef(0);                     // only the latest detail request writes
   const syncedOnce = useRef(false);
 
   const load = useCallback(() =>
@@ -56,7 +61,15 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
   const syncNow = useCallback((force) => {
     setSyncing(true);
     return api.post('/stripe-payouts/sync', force ? { force: true } : {})
-      .then(r => { if (r.data?.synced) return load(); })
+      .then(r => {
+        if (!r.data?.synced) return;
+        // A sync can rewrite an already-synced payout's lines (the balance
+        // heal). The open detail is fetched again with its rows kept on screen
+        // until the new ones land, and an answer from before the sync is dropped.
+        fetchSeq.current += 1;
+        setLinesVersion(v => v + 1);
+        return load();
+      })
       .catch(err => toast.error(err.message || 'Sync failed. Try again in a minute.'))
       .finally(() => setSyncing(false));
   }, [load, toast]);
@@ -84,22 +97,39 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
 
   const toggle = (id) => {
     if (expanded === id) return setExpanded(null);
+    setLineError(prev => ({ ...prev, [id]: false })); // re-opening retries a failed fetch
     setExpanded(id);
-    if (!lines[id]) {
-      setLineError(prev => ({ ...prev, [id]: false })); // clear any prior failure on (re)fetch
-      api.get(`/stripe-payouts/${id}`)
-        .then(r => setLines(prev => ({ ...prev, [id]: r.data.lines })))
-        .catch(err => {
-          setLineError(prev => ({ ...prev, [id]: true }));
-          toast.error(err.message || 'Could not load payout detail.');
-        });
-    }
   };
+
+  // Fetches the open payout's lines when none are cached or they predate the
+  // last sync. Only the latest request writes, so a late answer cannot replace
+  // a fresh one. A manual payout has no lines to fetch.
+  useEffect(() => {
+    if (expanded == null || lineError[expanded]) return;
+    if (lines[expanded] && lines[expanded].v === linesVersion) return;
+    const open = (data?.payouts || []).find(x => x.id === expanded);
+    if (!open || open.automatic === false) return;
+    const seq = ++fetchSeq.current;
+    const id = expanded;
+    const v = linesVersion;
+    api.get(`/stripe-payouts/${id}`)
+      .then(r => { if (seq === fetchSeq.current) setLines(prev => ({ ...prev, [id]: { rows: r.data.lines, v } })); })
+      .catch(err => {
+        if (seq !== fetchSeq.current) return;
+        setLineError(prev => ({ ...prev, [id]: true }));
+        toast.error(err.message || 'Could not load payout detail.');
+      });
+  }, [expanded, lines, lineError, linesVersion, data, toast]);
 
   if (loading) return <div className="muted">Loading…</div>;
   if (!data) return <div className="chip danger">Couldn't load Stripe payouts. Try refreshing.</div>;
   const s = data.summary || {};
-  const nearestEta = (data.pending || []).map(l => l.available_on).filter(Boolean).sort()[0] || null;
+  // An instant payout advance a deposit already claimed, still being repaid out
+  // of the charges below; In transit nets it out, so it is listed with them.
+  const advanceOwed = Number(s.advance_owed_cents || 0);
+  // A pending manual payout debit is dated when it left; only the rest land later.
+  const nearestEta = (data.pending || []).filter(l => l.txn_type !== 'payout')
+    .map(l => l.available_on).filter(Boolean).sort()[0] || null;
   const unmatchedOnly = show === 'unmatched';
   const shownPayouts = unmatchedOnly
     ? (data.payouts || []).filter(p => Number(p.unmatched_count || 0) > 0)
@@ -112,7 +142,7 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
           <div className="stat-label">In transit</div>
           <div className="stat-value">{fmt$fromCents(s.in_transit_cents || 0)}</div>
           <div className="stat-sub"><span>
-            {(data.pending || []).length} settled charge{(data.pending || []).length === 1 ? '' : 's'} awaiting payout
+            {(data.pending || []).length} line{(data.pending || []).length === 1 ? '' : 's'} awaiting payout
             {nearestEta ? ` · next lands ~${fmtDate(String(nearestEta).slice(0, 10), { year: 'numeric' })}` : ''}
           </span></div>
         </div>
@@ -137,7 +167,7 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
         </div>
       </div>
 
-      {(data.pending || []).length > 0 && (
+      {((data.pending || []).length > 0 || advanceOwed !== 0) && (
         <div className="card" style={{ marginBottom: 'var(--gap)', overflow: 'hidden' }}>
           <div className="card-head"><h3>In transit</h3><span className="k">{data.pending.length}</span></div>
           <div className="tbl-wrap"><table className="tbl">
@@ -149,9 +179,19 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
                 <td className="num">{fmt$fromCents(l.amount_cents)}</td>
                 <td className="num muted">{fmt$fromCents(l.fee_cents)}</td>
                 <td className="num">{fmt$fromCents(l.net_cents)}</td>
-                <td className="muted">{l.available_on ? fmtDate(String(l.available_on).slice(0, 10), { year: 'numeric' }) : '—'}</td>
+                <td className="muted">{l.available_on && l.txn_type !== 'payout' ? fmtDate(String(l.available_on).slice(0, 10), { year: 'numeric' }) : '—'}</td>
               </tr>
-            ))}</tbody>
+            ))}
+            {advanceOwed !== 0 && (
+              <tr>
+                <td><strong>Instant payout advance still being repaid</strong></td>
+                <td><StatusChip kind={KIND.adjustment}>adjustment</StatusChip></td>
+                <td className="num">{fmt$fromCents(-advanceOwed)}</td>
+                <td className="num muted">{fmt$fromCents(0)}</td>
+                <td className="num">{fmt$fromCents(-advanceOwed)}</td>
+                <td className="muted">—</td>
+              </tr>
+            )}</tbody>
           </table></div>
         </div>
       )}
@@ -177,7 +217,10 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
             {shownPayouts.length === 0 && !unmatchedOnly && (
               <tr><td colSpan={6} className="muted">No payouts synced yet. Hit Sync now.</td></tr>
             )}
-            {shownPayouts.map(p => (
+            {shownPayouts.map(p => {
+              // Instant or sent by hand: Stripe gives no line breakdown for it.
+              const manual = p.automatic === false;
+              return (
               <React.Fragment key={p.id}>
                 <tr
                   onClick={() => toggle(p.id)}
@@ -200,19 +243,23 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
                   <td>
                     <StatusChip kind={PAYOUT_STATUS[p.status] || 'neutral'}>{p.status.replace('_', ' ')}</StatusChip>
                     {p.failure_message && <span className="muted" style={{ display: 'block', fontSize: '0.85em' }}>{p.failure_message}</span>}
+                    {manual && <span className="muted" style={{ display: 'block', fontSize: '0.85em' }}>manual payout</span>}
                   </td>
-                  <td className="num">{fmt$fromCents(p.gross_cents)}</td>
-                  <td className="num muted">{fmt$fromCents(p.fee_cents)}</td>
+                  <td className="num">{manual ? <span className="muted">—</span> : fmt$fromCents(p.gross_cents)}</td>
+                  <td className="num muted">{manual ? '—' : fmt$fromCents(p.fee_cents)}</td>
                   <td className="num"><strong>{fmt$fromCents(p.amount_cents)}</strong></td>
-                  <td className="num muted">{p.line_count}</td>
+                  <td className="num muted">{manual ? '—' : p.line_count}</td>
                 </tr>
-                {expanded === p.id && lineError[p.id] && (
+                {expanded === p.id && manual && (
+                  <tr><td colSpan={6} className="muted">Stripe gives no breakdown for a manual payout. Its amount, and any instant payout fee, show as a line in the next automatic payout.</td></tr>
+                )}
+                {expanded === p.id && !manual && lineError[p.id] && (
                   <tr><td colSpan={6} className="muted">Couldn't load payout detail.</td></tr>
                 )}
-                {expanded === p.id && !lineError[p.id] && !lines[p.id] && (
+                {expanded === p.id && !manual && !lineError[p.id] && !lines[p.id] && (
                   <tr><td colSpan={6} className="muted">Loading…</td></tr>
                 )}
-                {expanded === p.id && !lineError[p.id] && (lines[p.id] || []).map(l => (
+                {expanded === p.id && !manual && !lineError[p.id] && (lines[p.id]?.rows || []).map(l => (
                   <tr key={l.id} style={{ background: 'var(--paper-2, transparent)' }}>
                     <td className="muted" style={{ paddingLeft: '2em' }}>{lineLabel(l)}</td>
                     <td>
@@ -230,7 +277,8 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
                   </tr>
                 ))}
               </React.Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table></div>
       </div>

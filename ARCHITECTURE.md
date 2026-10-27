@@ -1344,13 +1344,13 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 - `livemode` — ingest skips non-live objects; column is the tripwire
 - `failure_code`, `failure_message`
 - `alerted_at` — atomic-claim gate so a failed-payout email fires exactly once across webhook/sweep/tab-open races
-- `lines_synced_at` — NULL until the payout's balance txns are fetched; the sweep heals NULLs
+- `lines_synced_at` — NULL until the payout's balance txns are fetched; the sweep heals NULLs. A manual payout (`automatic` false: an instant payout or one sent by hand) keeps NULL for good, because Stripe lists balance txns by payout only for automatic payouts; its row has no line breakdown. Its debit (instant fee included) is listed inside the next automatic payout and stored there as a line, so an automatic payout's lines sum to its `amount_cents`; the sweep fetches again any automatic payout whose lines do not.
 
 **stripe_payout_lines** — One row per balance transaction (`txn_...`)
-- `stripe_balance_txn_id` UNIQUE (`txn_...`), `payout_id` FK → stripe_payouts (ON DELETE CASCADE); **NULL = in transit** (settled charge not yet paid out). Only `syncPayout` ever sets `payout_id` (ownership rule); the pending path is insert-only.
+- `stripe_balance_txn_id` UNIQUE (`txn_...`), `payout_id` FK → stripe_payouts (ON DELETE CASCADE); **NULL = in transit** (settled charge not yet paid out, or a manual payout's debit not yet claimed by the next automatic payout, so In transit nets out money already sent). Only `syncPayout` ever sets `payout_id` (ownership rule); the pending path is insert-only.
 - `txn_type`, `reporting_category`, `amount_cents` (signed gross), `fee_cents`, `net_cents`, `available_on`, `description`
 - `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_refund_id` — Stripe-side keys used by the matcher
-- `matched_kind` CHECK (payment | tip | refund | dispute | adjustment | unmatched) — the reconciliation verdict
+- `matched_kind` CHECK (payment | tip | refund | dispute | adjustment | unmatched) — the reconciliation verdict. `adjustment` also covers an instant payout's `advance` / `advance_funding` pair, which nets to zero, and a manual payout's debit listed inside an automatic payout (`payout`).
 - `acknowledged_at` — read-side "known dead line" marker. Set once by the schema.sql backfill on the 119 pre-cutover baseline lines (mirrored by the 2026-07-02 backfill with `available_on` before the cutover; they predate payout tracking and can never match). Acknowledged lines are excluded from the stuck-line Sentry alert, the sweep's re-match loop, and the admin unmatched counts/badge, but stay visible in the payout detail (rendered with a "pre-cutover" chip). Matching semantics untouched: `matched_kind` keeps its value and `matchLine` never reads this column.
 - Link FKs (all ON DELETE SET NULL): `proposal_payment_id`, `tip_id`, `proposal_refund_id`, `proposal_id`, `invoice_id`
 - Indexes: `payout_id`, `stripe_payment_intent_id`, partial index on `matched_kind='unmatched'`
