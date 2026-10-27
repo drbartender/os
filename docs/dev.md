@@ -59,7 +59,7 @@ None of this is live until the flip marker exists; until then pushes stay cue-on
 
 ## Node
 
-- The box runs Node v24.16.0 (nvm); `.node-version` pins 26.5.0 and Render runs that. Confirmed 2026-10-20 with `node --version` and `cat .node-version`. Caveat on fixing it: the claude, codex and gemini CLIs are installed under the v24 global bin, so switching the nvm default means reinstalling all three; a per-invocation `nvm use` or `.node-version` pin in a gate worktree is the lighter fix.
+- The box runs Node v24.16.0 (nvm), confirmed 2026-10-20 with `node --version`. `.node-version` pins 26.12.1 since 2026-10-27 (the Node security release of 2026-10-21; it was 26.5.0). Render builds with the pin unless `NODE_VERSION` is set in the Render env, which wins over the file, and a running service keeps its old Node until its next deploy. Caveat on fixing the box: the claude, codex and gemini CLIs are installed under the v24 global bin, so switching the nvm default means reinstalling all three; a per-invocation `nvm use` or `.node-version` pin in a gate worktree is the lighter fix.
 
 ## Neon
 
