@@ -237,9 +237,9 @@ ship_board() {
   # through ship under its lock, so the move came from outside it. Under the
   # project's git-safety invariant a rejected push stops and reports: nothing
   # is pulled, rebased or shipped again (an automatic rebase of the shared
-  # checkout can clobber another window's work), and no ship can carry the
-  # board commit until a person merges, so this line names the merge instead
-  # of saying the commit rides the next ship.
+  # checkout can clobber another window's work), and the board commit stays
+  # local until a person rebases main onto origin/main by hand, so this line
+  # names that rebase instead of saying the commit rides the next ship.
   if [ "$code" -eq 1 ] && [ "$state" = "failed" ]; then
     case "$text" in
       *"(fetch first)"* | *"(non-fast-forward)"*)
