@@ -1,3 +1,7 @@
+// Exports dripTouch2Client, dripTouch4Client, dripTouch5Client, reviewRequestClient,
+// newYearHelloClient, sixMonthsOutClient, retentionNudgeClient, lowRatingAdminNotification. Header
+// generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 const { wrapMarketingEmail, wrapEmail } = require('./emailTemplates');
 const { esc } = require('./htmlEscape');
 const { firstNameOf } = require('./firstName');

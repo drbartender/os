@@ -1,3 +1,7 @@
+// Everything one contact actually received. message_log is primary (automated derived from
+// sent_by); scheduled_messages is anti-joined as a safety net so a dispatcher send is not listed
+// twice; email_sends joined in lane mkt-g
+
 const { pool } = require('../db');
 
 /**

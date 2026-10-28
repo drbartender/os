@@ -1,3 +1,5 @@
+// Public tip-page lookup + post-tip feedback (token-gated)
+
 const express = require('express');
 const path = require('path');
 const rateLimit = require('express-rate-limit');

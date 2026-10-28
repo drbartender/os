@@ -1,3 +1,6 @@
+// Phone lock model (30-min background + expired-JWT decisions, enrolled/nudge flags, 401-claim
+// handler registry; keys purge on logout)
+
 import { PHONE_MEDIA_QUERY } from '../hooks/useIsPhone';
 
 // Phone lock model (mobile-admin spec 2026-08-13 section 8): backgrounded

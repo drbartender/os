@@ -1,3 +1,5 @@
+// Resend webhook receiver (email tracking events)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

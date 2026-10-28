@@ -17,10 +17,14 @@ function requireTracked(req) {
   }
 }
 
+// Presence strip payload: tracked users' states + derived lead-responder pointer (also embedded in
+// `/badge-counts` as `presence`, non-fatal).
 router.get('/presence', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   res.json(await store.getStripPayload());
 }));
 
+// Set own presence state (desk/available/away); applies the taking-leads transition rules (away
+// wipes; re-entry resets on for chain users, OFF for the fallback owner).
 router.post('/presence/state', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   requireTracked(req);
   const { state } = req.body || {};
@@ -35,6 +39,8 @@ router.post('/presence/state', auth, requireAdminOrManager, asyncHandler(async (
   res.json(payload);
 }));
 
+// Set own taking-leads toggle; rejected while away. The fallback owner's toggle is dibs: it
+// overrides the chain, and both edges fire the dibs ping (`presenceNotify.js`).
 router.post('/presence/leads', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   requireTracked(req);
   const { taking } = req.body || {};
@@ -46,6 +52,8 @@ router.post('/presence/leads', auth, requireAdminOrManager, asyncHandler(async (
   res.json(payload);
 }));
 
+// Time-clock history: per-user this-week/this-month desk+available totals (Central time,
+// boundary-split) + the 50 most recent intervals.
 router.get('/presence/log', auth, adminOnly, asyncHandler(async (req, res) => {
   res.json(await store.getLogSummary());
 }));

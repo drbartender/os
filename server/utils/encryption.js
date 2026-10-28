@@ -1,3 +1,5 @@
+// AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
+
 const crypto = require('crypto');
 
 const ALGO = 'aes-256-gcm';

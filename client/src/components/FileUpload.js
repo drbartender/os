@@ -1,3 +1,6 @@
+// FileUpload (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useId, useState } from 'react';
 import { checkFile, acceptFor, DEFAULT_KIND } from '../utils/uploadLimits';
 import downscaleImage from '../utils/downscaleImage';

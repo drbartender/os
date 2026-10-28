@@ -1,3 +1,5 @@
+// admin CRUD (list / create / update / archive)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');

@@ -1,5 +1,7 @@
 'use strict';
 
+// Invoice CRUD, public token view, client portal
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

@@ -1,3 +1,5 @@
+// Onboarding step tracking
+
 const express = require('express');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
@@ -77,6 +79,7 @@ function assertFormKey(formKey) {
   }
 }
 
+// Read the caller's autosaved draft (`{ data: null }` when none)
 router.get('/draft/:formKey', auth, asyncHandler(async (req, res) => {
   assertFormKey(req.params.formKey);
   const result = await pool.query(
@@ -87,6 +90,7 @@ router.get('/draft/:formKey', auth, asyncHandler(async (req, res) => {
   res.json(row ? { data: row.data, updated_at: row.updated_at } : { data: null });
 }));
 
+// Upsert the caller's draft; body `{ data }`, replaces rather than merges
 router.put('/draft/:formKey', auth, asyncHandler(async (req, res) => {
   assertFormKey(req.params.formKey);
   const { data } = req.body;
@@ -109,6 +113,7 @@ router.put('/draft/:formKey', auth, asyncHandler(async (req, res) => {
   res.json({ data: result.rows[0].data, updated_at: result.rows[0].updated_at });
 }));
 
+// Clear the draft, called on successful submit
 router.delete('/draft/:formKey', auth, asyncHandler(async (req, res) => {
   assertFormKey(req.params.formKey);
   await pool.query(

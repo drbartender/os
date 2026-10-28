@@ -1,3 +1,6 @@
+// Zul VA-calling OUTBOUND trigger: POST /api/telegram/:secret (secret path + secret_token header +
+// user_id allowlist), NANP validation, confirm-before-dial (YES), claim-then-call bridge
+
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');

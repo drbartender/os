@@ -254,6 +254,10 @@ function registerFinalizeRoute(router) {
 // the public planner as "already submitted" and lock a client out of a plan
 // they never sent.
 function registerUnfinalizeRoute(router) {
+  // Clear `finalized_at`/`finalized_by`, suppress pending nudges (preserves sent), clear every
+  // `beo_acknowledged_at` on the proposal's shift_requests, write `beo_unfinalized` activity log. A
+  // plan the client never submitted (`submitted_at` NULL, finalized off an admin-built list) goes
+  // back to `draft` so the public planner reopens; a client-submitted plan stays `reviewed`.
   router.post('/:id/unfinalize', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
     const planId = parseInt(req.params.id, 10);
     if (!Number.isFinite(planId)) throw new NotFoundError('Plan not found.');

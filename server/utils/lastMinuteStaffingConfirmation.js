@@ -1,3 +1,6 @@
+// Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger (fires only when every role
+// is filled, roleFill)
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');

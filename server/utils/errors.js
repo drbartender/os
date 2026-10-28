@@ -1,3 +1,6 @@
+// AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError,
+// ExternalServiceError, PaymentError)
+
 class AppError extends Error {
   constructor(message, statusCode, code, fieldErrors) {
     super(message);

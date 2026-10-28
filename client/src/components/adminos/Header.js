@@ -1,3 +1,6 @@
+// Header (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import Icon from './Icon';

@@ -1,3 +1,6 @@
+// BackButton (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Icon from './Icon';

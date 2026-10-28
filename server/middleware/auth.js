@@ -1,3 +1,5 @@
+// JWT verification + role guards (auth, adminOnly)
+
 const jwt = require('jsonwebtoken');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

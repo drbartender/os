@@ -1,3 +1,6 @@
+// Exports DEFAULT_TZ, isValidTimezone, resolveEventTimezone, formatEventLocalTime. Header generated
+// from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 const DEFAULT_TZ = 'America/Chicago';
 
 /**

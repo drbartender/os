@@ -1,3 +1,6 @@
+// 5-minute scheduler: drains pending scheduled_messages rows, applies suppression, invokes
+// per-message-type handlers
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');

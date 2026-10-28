@@ -1,3 +1,6 @@
+// AddressLink (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 
 // Renders an address as a Google Maps search link that opens in a new tab.

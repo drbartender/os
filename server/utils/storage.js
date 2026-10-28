@@ -1,3 +1,6 @@
+// Cloudflare R2 upload + signed URL helpers + readFile (an object's bytes and content type, time
+// and size bounded; the menu art job and r2Proxy.js)
+
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl: createSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { ExternalServiceError, NotFoundError } = require('./errors');

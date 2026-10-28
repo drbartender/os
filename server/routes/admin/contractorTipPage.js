@@ -1,3 +1,7 @@
+// /contractors/:userId/tip-page admin actions
+// (patch/rotate-token/generate-stripe/regenerate-stripe/activate/deactivate) + /tips +
+// /tip-feedback review
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { v4: uuidv4 } = require('uuid');

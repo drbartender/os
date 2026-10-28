@@ -1,3 +1,7 @@
+// Exports computeScheduledFor, shouldScheduleLongLeadRecap, schedulePreEventReminders,
+// SEND_HOUR_LOCAL. Header generated from the file's exports by migrate-headers on 2026-10-27;
+// replace with what it does.
+
 const { pool } = require('../db');
 const { resolveEventTimezone } = require('./eventTimezone');
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');

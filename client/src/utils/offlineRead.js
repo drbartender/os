@@ -1,3 +1,7 @@
+// offlineGet: api.get plus the X-Offline-Ok header. The admin service worker stores and
+// stale-serves a read ONLY for a request that carries it (the identity read /api/auth/me aside); a
+// caller sends it only if it renders the staleness line and takes no action on a cache-served copy
+
 import api from './api';
 
 // A read that may be answered from the phone's cache (spec

@@ -1,3 +1,6 @@
+// ExtrasStep (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 import { BYOB_BUNDLE_SLUGS } from '../../../../utils/proposalRules';
 import BundlePicker from './extras/BundlePicker';

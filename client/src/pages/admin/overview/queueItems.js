@@ -1,3 +1,7 @@
+// Exports queueItemHref, buildStaffingItems, buildClientItems, buildSalesItems, buildLeadCallItems,
+// computeTabs, defaultTabKey. Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { fmt$, fmtDate, dayDiff } from '../../../components/adminos/format';
 import { rowRoleFill } from '../../../components/adminos/shifts';

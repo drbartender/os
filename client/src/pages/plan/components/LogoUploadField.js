@@ -1,3 +1,6 @@
+// LogoUploadField (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../../utils/api';

@@ -1,3 +1,6 @@
+// Exports EditCtx, Text, Heading, DrinkText, Slot, tooLongKeys, useCanvasEdit, clearOnClick. Header
+// generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { artGeometry } from './layouts';
 import { textLimit, textPatch, toggleHidden, cleanText } from './menuEdits';

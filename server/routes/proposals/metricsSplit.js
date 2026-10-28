@@ -1,3 +1,6 @@
+// GET /metrics-split - funnel sent/accepted math split by source or event_type (native-only sibling
+// of dashboard-stats)
+
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');

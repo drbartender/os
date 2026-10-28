@@ -1,3 +1,5 @@
+// Balance-reminder ladder scheduling (extracted from stripe.js); anchors 10am event-local
+
 const { pool } = require('../db');
 const { scheduleMessage } = require('./messageScheduling');
 const { resolveEventTimezone } = require('./eventTimezone');

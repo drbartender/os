@@ -1,3 +1,8 @@
+// Exports rescheduleProposal, rescheduleProposalInTx, hasReschedulableChange,
+// reanchorPendingMessages, computeReanchoredScheduledFor, sendRescheduleEmail,
+// buildEventDetailsDraft, RESCHEDULABLE_FIELDS and 3 more. Header generated from the file's exports
+// by migrate-headers on 2026-10-27; replace with what it does.
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');

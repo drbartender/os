@@ -667,6 +667,8 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
 // RFC-5322-light: same shape used in clientAuth + auth flows.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Start an email change - emails a confirmation link to the NEW address; stores a hashed token in
+// `pending_email_changes` (`staffPortal.js`).
 router.post('/request-email-change', emailChangeRequestLimiter, asyncHandler(async (req, res) => {
   const newEmail = typeof req.body?.new_email === 'string'
     ? req.body.new_email.trim().toLowerCase()
@@ -782,6 +784,7 @@ router.post('/request-email-change', emailChangeRequestLimiter, asyncHandler(asy
   res.json({ ok: true, pending: true });
 }));
 
+// Cancel a pending email change for the current staffer.
 router.post('/cancel-pending-email-change', asyncHandler(async (req, res) => {
   const result = await pool.query(
     `UPDATE pending_email_changes SET consumed_at = NOW()

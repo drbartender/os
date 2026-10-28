@@ -1,3 +1,6 @@
+// PayoutEventRow (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useEffect, useRef } from 'react';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { formatMoney } from '../../utils/formatMoney';

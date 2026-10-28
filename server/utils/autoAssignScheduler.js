@@ -1,3 +1,5 @@
+// Scheduled auto-assign runner (hourly)
+
 const { pool } = require('../db');
 const { autoAssignShift } = require('./autoAssign');
 const { getEventTypeLabel } = require('./eventTypes');

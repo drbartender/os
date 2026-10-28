@@ -1,3 +1,9 @@
+// isPhone (the ONE 700px fork, latched per route so a resize never remounts the open page) +
+// per-screen Desktop-view overrides (sticky, from the header's escape) and a one-visit override
+// (setDesktopForVisit, held in memory, ending when the user backs out of the page and what they
+// opened from it; global search opens its desktop pages with it); provided by AdminLayout
+// (mobile-admin spec section 3)
+
 import React, {
   createContext, useCallback, useContext, useMemo, useState,
 } from 'react';

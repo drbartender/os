@@ -1,3 +1,6 @@
+// RevenueChartCard (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import api from '../../../utils/api';
 import { fmt$ } from '../../../components/adminos/format';

@@ -1,3 +1,6 @@
+// Exports LEGAL_HOLD_TEXT, NO_QUOTE_TEXT, NO_CLIENT_TEXT, kindLine, contextModel. Header generated
+// from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 import { chicagoWeekdayDate } from '../../utils/chicagoDay';
 import { fmt$, fmtDate } from '../adminos/format';
 

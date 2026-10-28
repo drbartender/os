@@ -1,3 +1,6 @@
+// Passkey unlock under /api/auth/webauthn (register/assert/credentials; the ONLY 12h-mint site;
+// SENSITIVE-LISTED)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const jwt = require('jsonwebtoken');
@@ -100,6 +103,8 @@ function createWebauthnRouter(overrides = {}) {
   };
   const router = express.Router();
 
+  // Registration options: resident key required (usernameless unlock), excludeCredentials from the
+  // caller's rows, challenge stored bound to the caller
   router.post('/register-options', webauthnLimiter, auth, asyncHandler(async (req, res) => {
     const creds = await pool.query(
       'SELECT credential_id, transports FROM webauthn_credentials WHERE user_id = $1',
@@ -128,6 +133,7 @@ function createWebauthnRouter(overrides = {}) {
     res.json(options);
   }));
 
+  // Verify attestation, insert `webauthn_credentials` row (label from body, 100 chars)
   router.post('/register-verify', webauthnLimiter, auth, asyncHandler(async (req, res) => {
     const { response, label } = req.body || {};
     if (!response || !response.response) {
@@ -175,6 +181,7 @@ function createWebauthnRouter(overrides = {}) {
     res.status(201).json({ credential: inserted.rows[0] });
   }));
 
+  // Caller's passkeys: id, label, created_at, last_used_at
   router.get('/credentials', webauthnLimiter, auth, asyncHandler(async (req, res) => {
     const r = await pool.query(
       `SELECT id, label, created_at, last_used_at
@@ -184,6 +191,9 @@ function createWebauthnRouter(overrides = {}) {
     res.json({ credentials: r.rows });
   }));
 
+  // Revoke own passkey AND bump `users.token_version`: a deliberate global logout (lost-phone kill
+  // switch). The same transaction empties the user's stored push subscriptions
+  // (`adminPush.deleteAllSubscriptions`), so a lost phone stops buzzing
   router.delete('/credentials/:id', webauthnLimiter, auth, asyncHandler(async (req, res) => {
     // Integer-range guard: an out-of-int4 id raises 22003 in Postgres and
     // 500s (same shape as the repo's 22P02 UUID-token lesson).
@@ -221,6 +231,8 @@ function createWebauthnRouter(overrides = {}) {
     res.json({ ok: true });
   }));
 
+  // Unlock options: empty allowCredentials (authenticator picks the resident passkey), unbound
+  // single-use challenge
   router.post('/assert-options', webauthnLimiter, asyncHandler(async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID: rpId(),
@@ -232,6 +244,8 @@ function createWebauthnRouter(overrides = {}) {
     res.json(options);
   }));
 
+  // Verify assertion (userHandle cross-check, atomic counter-advance claim, login's account-state
+  // gates), then mint the 12h token + login-shaped user payload
   router.post('/assert-verify', webauthnLimiter, asyncHandler(async (req, res) => {
     const { response } = req.body || {};
     if (!response || !response.id || !response.response) {

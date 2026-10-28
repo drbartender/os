@@ -1,3 +1,6 @@
+// Exports deriveNextUp. Header generated from the file's exports by migrate-headers on 2026-10-27;
+// replace with what it does.
+
 export function deriveNextUp(focus) {
   if (!focus) return null;
   // Before the booked check: 'archived' is not in BOOKED, so without this the

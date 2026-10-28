@@ -1,3 +1,6 @@
+// RepriceConfirmModal (React component, default export). Header generated from the file's exports
+// by migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useCallback, useEffect, useRef } from 'react';
 
 // One negative-number convention everywhere in this modal: minus BEFORE the

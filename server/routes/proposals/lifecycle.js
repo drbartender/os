@@ -1,3 +1,5 @@
+// Proposal status state machine (PATCH /:id/status)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');

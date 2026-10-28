@@ -1,3 +1,7 @@
+// Exports VenmoMark, CashAppMark, PaypalMark, ZelleMark, CardNetworkRow, Chevron, StarIcon, Sparkle
+// and 3 more. Header generated from the file's exports by migrate-headers on 2026-10-27; replace
+// with what it does.
+
 import React, { useState, useCallback } from 'react';
 
 // Inline SVG marks (placeholders that read like the real platforms)

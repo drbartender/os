@@ -29,6 +29,9 @@ const {
 
 const router = express.Router();
 
+// Fresh list from the plan's stored inputs + live par catalog; returns `{ list }`, never saves.
+// `shopping_list_source` `'consult'` uses the consult builder; `'planner'`/NULL uses the planner
+// builder. Body `{ guest_count_override?: 1..1000 }`; 400 when no guest count anywhere
 router.post('/:id/shopping-list/regenerate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const planId = parseInt(req.params.id, 10);
   if (!Number.isInteger(planId)) throw new NotFoundError('Plan not found.');

@@ -1,3 +1,8 @@
+// recordSmsConsent(...) - client SMS consent capture (A2P 10DLC): flips
+// clients.communication_preferences.sms_enabled + stamps sms_opt_in/out_at, appends the append-only
+// sms_consent_log proof row. Writes ONLY to a client row the same submit created (public form,
+// unauthenticated); never lifts a prior STOP
+
 const { getConsentCopy } = require('../data/smsConsentCopy');
 const { validatePhone } = require('./phone');
 

@@ -1,3 +1,5 @@
+// Admin alert (new request) + client decision (approved/declined) email + SMS sends
+
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { sendSMS } = require('./sms');

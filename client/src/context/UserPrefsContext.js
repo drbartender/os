@@ -1,3 +1,6 @@
+// Per-user admin OS prefs (skin/density/sidebar) - strips on logout; plus sidebarOverride, a
+// temporary rail (the bar menu editor's) that is its own state, never saved
+
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 

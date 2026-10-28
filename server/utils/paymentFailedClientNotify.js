@@ -1,3 +1,6 @@
+// Exports notifyClientPaymentFailed. Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');

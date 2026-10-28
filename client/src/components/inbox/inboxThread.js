@@ -1,3 +1,6 @@
+// Exports threadModel. Header generated from the file's exports by migrate-headers on 2026-10-27;
+// replace with what it does.
+
 import { chicagoDay, chicagoTime, chicagoDayLabel } from '../../utils/chicagoDay';
 import { channelLabel, threadChannel } from './inboxFormat';
 

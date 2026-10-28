@@ -1,3 +1,6 @@
+// BriefTab (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useRef, useState } from 'react';
 import { ART_DIRECTION_MAX } from './menuEdits';
 import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';

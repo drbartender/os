@@ -1,3 +1,6 @@
+// MenuCanvas (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   layoutDrinks, slotWidth, artGeometry, stepSize, logoSize, ART_FLOOR, ART_STEP,

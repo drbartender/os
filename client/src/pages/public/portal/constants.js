@@ -1,3 +1,6 @@
+// Exports BOOKED, PAST, mapDetailToFocus, mapArchiveRow. Header generated from the file's exports
+// by migrate-headers on 2026-10-27; replace with what it does.
+
 export const BOOKED = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
 
 // Statuses whose proposal is no longer reachable by its own token, so every CTA

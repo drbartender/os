@@ -1,3 +1,7 @@
+// Exports EXPORT_SCALE, PRINT_W, PRINT_H, JPEG_QUALITY, MenuExportError, defaultLayerName,
+// exportMenu, ExportCanvas and 2 more. Header generated from the file's exports by migrate-headers
+// on 2026-10-27; replace with what it does.
+
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import * as Sentry from '@sentry/react';
 import api from '../../../utils/api';

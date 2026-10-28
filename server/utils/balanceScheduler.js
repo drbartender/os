@@ -1,3 +1,5 @@
+// Autopay balance charge scheduler
+
 const Sentry = require('@sentry/node');
 const { getStripe } = require('./stripeClient');
 const { pool } = require('../db');

@@ -1,3 +1,6 @@
+// Exports useWakeLock. Header generated from the file's exports by migrate-headers on 2026-10-27;
+// replace with what it does.
+
 import { useEffect, useRef } from 'react';
 
 // Screen Wake Lock, for a phone or tablet propped on the bar showing a tip sign.

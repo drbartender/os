@@ -1,3 +1,6 @@
+// THE single definition of who may receive marketing: MAILABLE_SQL, HELD_BACK_SQL, the JS
+// predicate, and the seven audience rules (all three legs pinned against each other by test)
+
 const { isPlaceholderEmail } = require('./emailValidation');
 
 /**

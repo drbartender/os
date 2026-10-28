@@ -1,3 +1,5 @@
+// Client auth state
+
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../utils/api';
 

@@ -1,3 +1,7 @@
+// The one consult recap: saved consult selections as readable lines with catalog drink names (the
+// post-consult email, the staff Consult card, the consult GET's `recap`); its name lookup never
+// throws
+
 const { recipeRowLabel } = require('./potionCatalog');
 
 const BAR_TYPE_LABELS = {

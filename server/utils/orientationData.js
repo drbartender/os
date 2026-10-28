@@ -1,3 +1,5 @@
+// Assembles the booking/receipt/planner payload for the orientation email
+
 const { pool } = require('../db');
 const { resolveEventTimezone, formatEventLocalTime, DEFAULT_TZ } = require('./eventTimezone');
 const { effectiveSetupMinutes } = require('./setupTime');

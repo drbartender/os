@@ -1,3 +1,6 @@
+// GET/POST /api/stripe-payouts - DB-only payout mirror list/detail + rate-limited sweep trigger
+// (read-side; admin/manager)
+
 const express = require('express');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
@@ -73,6 +76,8 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   });
 }));
 
+// One payout (`:id` = integer PK) with its reconciled balance-transaction lines
+// (client/invoice/staff joins). 404 via `NotFoundError`.
 router.get('/:id(\\d+)', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const p = await pool.query(`
     SELECT p.*, COALESCE(SUM(l.amount_cents),0)::int AS gross_cents,
@@ -84,6 +89,8 @@ router.get('/:id(\\d+)', auth, requireAdminOrManager, asyncHandler(async (req, r
   res.json({ payout: p.rows[0], lines: lines.rows });
 }));
 
+// Trigger `sweep({ force })` through the module's in-flight guard + 15-min staleness gate.
+// `{ synced: false }` = fresh/skipped.
 router.post('/sync', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   // In-flight guard + 15-min staleness gate live in the module; force bypasses staleness only.
   const r = await payoutSync.sweep({ force: req.body?.force === true });

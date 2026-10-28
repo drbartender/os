@@ -1,3 +1,8 @@
+// Exports RETENTION_ELIGIBLE_EVENT_TYPES, isRetentionEligibleEventType, shouldScheduleNewYearTouch,
+// shouldScheduleSixMonthsTouch, tenAmInTzUtc, chicagoTenAmUtc, computeNewYearSendAt,
+// computeSixMonthsOutSendAt and 3 more. Header generated from the file's exports by migrate-headers
+// on 2026-10-27; replace with what it does.
+
 const { pool } = require('../db');
 const { chicagoTodayYmd } = require('./businessTime');
 

@@ -12,6 +12,10 @@ const { runGlobalSearch } = require('../../utils/globalSearch');
 
 const router = express.Router();
 
+// Global record search across clients, proposals, events, staff (matches partial name / email /
+// phone). Proposal and event rows also carry `status`, `event_date` (YYYY-MM-DD or null) and `kind`
+// (the event-type label) for the phone search (lane ma-f3); the palette reads only
+// `type, id, name, detail`.
 router.get('/search', auth, requireAdminOrManager, adminSearchLimiter, asyncHandler(async (req, res) => {
   const results = await runGlobalSearch(req.query.q);
   res.json({ results });

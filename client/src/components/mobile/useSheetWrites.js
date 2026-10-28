@@ -1,3 +1,6 @@
+// useSheetWrites (default export). Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import { useCallback, useRef, useState } from 'react';
 import api from '../../utils/api';
 import { buildShiftView, roleStep, READ_ONLY_NOTE } from '../../utils/staffingSheet';

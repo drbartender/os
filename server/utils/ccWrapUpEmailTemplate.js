@@ -1,3 +1,6 @@
+// wrap-up email subject + html + text renderer (v1 importer deleted; template retained for the
+// drain-only handler below)
+
 const { wrapEmail } = require('./emailTemplates');
 const { firstNameOf } = require('./firstName');
 

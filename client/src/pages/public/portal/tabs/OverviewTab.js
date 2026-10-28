@@ -1,3 +1,6 @@
+// OverviewTab (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 import { Countdown, SummaryAside, NextUpCard, ProcedureTimeline } from '../OverviewWidgets';
 const isPast = (focus) => focus.event_date && new Date(String(focus.event_date).slice(0, 10) + 'T12:00:00') < new Date();

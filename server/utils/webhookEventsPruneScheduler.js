@@ -1,3 +1,5 @@
+// Hourly prune of `webhook_events` to a 30-day window (gated by RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER)
+
 const { pool } = require('../db');
 
 const RETENTION_DAYS = 30;

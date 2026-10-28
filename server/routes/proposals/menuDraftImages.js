@@ -30,6 +30,9 @@ function parseWidth(w) {
   throw new ValidationError({ w: 'Width must be 240 or 480.' });
 }
 
+// Sends the piece's layer once the piece is `done` (404 otherwise); the key must sit under
+// `menu-art/<id>/`. Optional `?w=240` or `?w=480` returns a `sharp` downscale (PNG keeps alpha) for
+// the card's thumbnail and the phone; any other `w` is 400.
 router.get('/:id/menu-draft/pieces/:pieceKey/image', ...guard, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   const pieceKey = parsePieceKey(req.params.pieceKey);
@@ -43,6 +46,8 @@ router.get('/:id/menu-draft/pieces/:pieceKey/image', ...guard, asyncHandler(asyn
   await sendR2Object(res, rows[0].r2_key, { prefix: `menu-art/${id}/`, width });
 }));
 
+// Sends the uploaded reference; the key must sit under `menu-art/<id>/ref-`. No downscale: any `w`
+// is 400.
 router.get('/:id/menu-draft/reference', ...guard, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   if (req.query.w !== undefined) throw new ValidationError({ w: 'The reference is sent at full size only.' });

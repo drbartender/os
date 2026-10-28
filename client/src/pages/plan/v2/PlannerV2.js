@@ -1,3 +1,6 @@
+// PlannerV2 (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';

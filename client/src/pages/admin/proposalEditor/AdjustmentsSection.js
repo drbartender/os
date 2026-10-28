@@ -1,3 +1,6 @@
+// the editor's price adjustment rows (moved out of ProposalEditorForm), with the inline confirm
+// before a refund line is removed or lowered below its recorded amount (asked once per line)
+
 import React, { useState } from 'react';
 import Icon from '../../../components/adminos/Icon';
 import { adjAmount, adjLabel } from '../../../utils/adjustmentRules';

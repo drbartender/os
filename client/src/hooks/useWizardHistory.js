@@ -1,3 +1,6 @@
+// useWizardHistory (default export). Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import { useEffect, useRef } from 'react';
 
 // Sync wizard step ↔ browser back/forward. Preserves the current URL (including

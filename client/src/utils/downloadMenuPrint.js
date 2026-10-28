@@ -1,3 +1,7 @@
+// Saves the bar menu print file from an authed API path (staff: /shifts/:shiftId/menu-print, admin:
+// /proposals/:id/menu-print): the server's filename, a blob-type fallback, the deferred object-URL
+// revoke
+
 import api from './api';
 
 // The print file's accepted types (server/routes/proposals/menuPrint.js sniffs

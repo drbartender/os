@@ -1,3 +1,5 @@
+// Drip sequence step processor (every 15 min)
+
 const jwt = require('jsonwebtoken');
 const { clientOptedOutByEmail } = require('./marketingAudience');
 const Sentry = require('@sentry/node');

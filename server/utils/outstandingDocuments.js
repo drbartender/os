@@ -1,3 +1,5 @@
+// Which onboarding documents a worker still owes (one predicate, two surfaces)
+
 const { pool } = require('../db');
 // THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
 const { shiftNotFinishedSql } = require('./shiftEndInstant');

@@ -1,3 +1,5 @@
+// Payment method + W-9 upload
+
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const Sentry = require('@sentry/node');

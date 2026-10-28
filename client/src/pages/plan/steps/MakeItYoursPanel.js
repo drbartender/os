@@ -1,3 +1,6 @@
+// MakeItYoursPanel (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useState, useEffect } from 'react';
 import { getUpgradesForDrink, getPitch, isUpgradeSelectedForDrink } from '../data/drinkUpgrades';
 import { DRINK_SYRUP_MAP, SYRUPS, NO_SYRUP_DRINKS, SYRUP_PRICE_SINGLE, SYRUP_PRICE_3PACK, getBottlesPerSyrup, getDrinkSyrupSelections, getAllUniqueSyrups, calculateSyrupCost } from '../../../data/syrups';

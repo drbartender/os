@@ -13,6 +13,10 @@ const adminPush = require('../utils/adminPush');
 
 const router = express.Router();
 
+// One test banner to the caller's subscriptions; answers the counts:
+// `{ subscriptions, sent, failed, gone, reason }`, `reason` one of `vapid_unset` (nothing sent),
+// `no_subscriptions`, `read_failed` (the subscription read failed; the raw error never goes in the
+// response) or `null`. Admin write limiter. (`server/routes/mePush.js`)
 router.post('/push-test', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   if (!adminPush.publicKey()) {
     return res.json({ subscriptions: 0, sent: 0, failed: 0, gone: 0, reason: 'vapid_unset' });

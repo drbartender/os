@@ -1,5 +1,8 @@
 'use strict';
 
+// firstNameOf: the name to greet someone by; single source for every "Hi ..." across all templates
+// (title-aware, couple-aware, idempotent)
+
 const { TITLES } = require('./staffDisplayName');
 
 /**

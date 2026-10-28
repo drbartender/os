@@ -1,3 +1,6 @@
+// ConsultationForm (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';

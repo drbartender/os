@@ -1,3 +1,5 @@
+// Post-event feedback router (5-star sentiment routing)
+
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');

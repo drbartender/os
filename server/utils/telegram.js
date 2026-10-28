@@ -1,3 +1,8 @@
+// Telegram Bot API wrapper (VA calling):
+// sendTelegramMessage/setTelegramWebhook/getTelegramWebhookInfo (raw fetch, no dep),
+// verifyTelegramSecret (constant-time), isNewUpdate (update_id de-dupe), sendTelegramAudio
+// (multipart voicemail mp3 upload, 120s timeout vs 8s for messages)
+
 const crypto = require('crypto');
 const { pool } = require('../db');
 const { notificationsEnabled } = require('./notificationsEnabled');

@@ -1,3 +1,5 @@
+// openPalette() for any admin surface; provided by AdminLayout
+
 import { createContext, useContext } from 'react';
 
 // Lets any admin surface (Header, the shared Toolbar) open the Cmd/Ctrl+K

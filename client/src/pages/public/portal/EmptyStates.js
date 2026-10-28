@@ -1,3 +1,6 @@
+// Exports BrandNewEmpty, NoEvent. Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import React from 'react';
 export function BrandNewEmpty({ name }) {
   return (<div className="cp-empty"><h3>Welcome to the lab{name ? `, ${name}` : ''}.</h3>

@@ -38,6 +38,8 @@ function constantTimeHexEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+// Unauthenticated confirm - the email-link token proves intent, applies the new email, and bumps
+// `token_version` to invalidate old JWTs. Mounted at `/api/me` before `me.js` (`emailChange.js`).
 router.post('/confirm-email-change', emailChangeConfirmLimiter, asyncHandler(async (req, res) => {
   const rawToken = typeof req.body?.token === 'string' ? req.body.token : '';
   if (!rawToken || rawToken.length > 512) {

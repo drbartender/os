@@ -1,3 +1,6 @@
+// Passkey client (@simplewebauthn/browser wrap: registerPasskey, unlockWithPasskey,
+// isPasskeySupported)
+
 import { browserSupportsWebAuthn, startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import api from './api';
 

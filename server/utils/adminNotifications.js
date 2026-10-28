@@ -1,3 +1,8 @@
+// notifyAdminCategory(...) - multi-admin notification fan-out by category (joins
+// users.notification_preferences + contractor_profiles for SMS). An optional push leg starts first,
+// fire-and-forget, behind the category, the kind switch and a stored subscription; pushAdminKind is
+// push-only
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');

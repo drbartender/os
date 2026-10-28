@@ -1,3 +1,5 @@
+// SMS messaging to staff (per-recipient sends through utils/staffText.js)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
@@ -54,6 +56,7 @@ async function checkedShiftId(value) {
 
 // ─── Get eligible SMS recipients (staff with consent + phone) ────
 
+// List eligible staff with SMS consent
 router.get('/recipients', auth, adminOnly, asyncHandler(async (req, res) => {
   const search = req.query.search || '';
   let query = `
@@ -157,6 +160,7 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // ─── Message history (grouped) ───────────────────────────────────
 
+// Paginated grouped message history
 router.get('/history', auth, adminOnly, asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
@@ -225,6 +229,7 @@ router.get('/history', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // ─── Message group detail ────────────────────────────────────────
 
+// Per-recipient detail for a batch send
 router.get('/history/:groupId', auth, adminOnly, requireUuidToken('groupId', 'Conversation not found'), asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT sm.*,
@@ -253,6 +258,7 @@ router.get('/history/:groupId', auth, adminOnly, requireUuidToken('groupId', 'Co
 
 // ─── Message history for a specific user ─────────────────────────
 
+// Message history for a specific staff member
 router.get('/user/:userId', auth, adminOnly, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT sm.*,
@@ -279,6 +285,7 @@ router.get('/user/:userId', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // ─── Available shifts for invitation picker ──────────────────────
 
+// Shifts available for invitation picker
 router.get('/shifts', auth, adminOnly, asyncHandler(async (req, res) => {
   // A shift belongs in the invitation picker until it has FINISHED — the end
   // instant, never a calendar day (server/utils/shiftEndInstant.js). Under the

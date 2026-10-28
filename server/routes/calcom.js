@@ -1,3 +1,6 @@
+// Cal.com webhook receiver (HMAC-SHA256 signed, public); handles booking
+// created/cancelled/rescheduled/no-show events
+
 const express = require('express');
 const { pool } = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -37,6 +40,7 @@ router.__setCalcomDeps = (d) => { _deps = { ..._deps, ...d }; };
 // FIXED fragment: only $1 is ever bound into it.
 const KNOWN_UID_WHERE = 'calcom_event_id = $1 OR $1 = ANY(calcom_prior_event_ids)';
 
+// Cal.com booking event receiver (see Third-Party Integrations)
 router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   // Pre-check 1: secret configured. Fails closed.
   if (!process.env.CAL_WEBHOOK_SECRET) {

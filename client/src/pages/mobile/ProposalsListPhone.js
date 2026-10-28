@@ -1,3 +1,6 @@
+// ProposalsListPhone (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { offlineGet } from '../../utils/offlineRead';

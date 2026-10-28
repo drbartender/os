@@ -1,3 +1,6 @@
+// Exports seedContractorProfileFromApplication, __setDeps. Header generated from the file's exports
+// by migrate-headers on 2026-10-27; replace with what it does.
+
 const { refreshDisplayName } = require('./refreshDisplayName');
 const { chicagoTodayYmd } = require('./businessTime');
 

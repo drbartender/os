@@ -1,3 +1,6 @@
+// Authenticated self endpoints (tip page settings, my-tips listing, notification preferences: the
+// categories, the admin push kind switches and the server's VAPID public key)
+
 const express = require('express');
 const path = require('path');
 const Sentry = require('@sentry/node');
@@ -210,6 +213,8 @@ const ALLOWED_PATCH_FIELDS = new Set([
 ]);
 const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
 
+// Update bartender-editable fields on the tip page (display name override, Venmo/CashApp handles,
+// opt-in flags).
 router.patch('/tip-page', asyncHandler(async (req, res) => {
   // Allowlist filter — silently ignore any field not in ALLOWED_PATCH_FIELDS.
   const updates = {};
@@ -278,6 +283,7 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Paginated list of recent successful tips for the current bartender (amount, source, created_at).
 router.get('/tips', asyncHandler(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
   const cursor = parseInt(req.query.cursor, 10) || null;

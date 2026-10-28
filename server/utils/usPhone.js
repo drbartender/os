@@ -1,3 +1,6 @@
+// US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl
+// + 900/976) - primary VA-calling toll-fraud control
+
 const { normalizePhone } = require('./sms');
 
 // Strict NANP shape: +1, then a 3-digit area code whose first digit is 2-9,

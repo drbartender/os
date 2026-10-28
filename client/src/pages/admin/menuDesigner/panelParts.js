@@ -1,3 +1,6 @@
+// Exports OPEN, isObj, list, Section, Seg, useInert, rerollWhy, READ_ONLY_WHY and 3 more. Header
+// generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useLayoutEffect } from 'react';
 
 // Small parts the editor's right panel shares (spec 2026-10-01 section 11.1,

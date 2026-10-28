@@ -57,22 +57,30 @@ router.get('/inbox/:personKey', auth, requireAdminOrManager, asyncHandler(async 
   }
 }));
 
+// The deliberate open: upserts `inbox_seen` and, for a client, marks their inbound texts read, in
+// one transaction. 204
 router.post('/inbox/:personKey/seen', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   await markSeen({ personKey: await visibleKey(req.params.personKey, req.user), userId: req.user.id });
   res.status(204).end();
 }));
 
+// `{ action, until? }`: `claim`, `release`, `done`, `snooze` (`until` required, 1 minute to 8 days
+// ahead, and accepted on no other action), `wake`, `reopen`. 201 `{ id }` for Undo
 router.post('/inbox/:personKey/actions', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const personKey = await visibleKey(req.params.personKey, req.user);
   const { action, until } = req.body || {};
   res.status(201).json(await recordAction({ personKey, action, until, userId: req.user.id }));
 }));
 
+// Undo: stamps `undone_at` on the caller's own action while it is under 60 seconds old; a repeat is
+// 204 again. Another user's action is 409 `INBOX_UNDO_NOT_YOURS`, an older one 409
+// `INBOX_UNDO_EXPIRED`
 router.delete('/inbox/actions/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   await undoAction({ id: req.params.id, userId: req.user.id });
   res.status(204).end();
 }));
 
+// `{ body, line, send_id }`. 201 `{ message }`, the new thread row. Rules below
 router.post('/inbox/:personKey/text', auth, requireAdminOrManager, adminWriteLimiter, inboxTextLimiter, asyncHandler(async (req, res) => {
   const personKey = await visibleKey(req.params.personKey, req.user);
   const out = await sendInboxText({ personKey, body: req.body || {}, user: req.user });

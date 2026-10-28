@@ -1,3 +1,5 @@
+// Express app setup, middleware, route mounting
+
 require('dotenv').config();
 const Sentry = require('@sentry/node');
 

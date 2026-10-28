@@ -1,3 +1,5 @@
+// Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');

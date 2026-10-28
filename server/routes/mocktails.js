@@ -1,3 +1,5 @@
+// Mocktail menu CRUD
+
 const express = require('express');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');

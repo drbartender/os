@@ -1,3 +1,8 @@
+// Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue
+// (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue
+// (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in
+// thumbtack-agent/ (one loop, 10s reply tick, wall-clock ~5-min harvest pass)
+
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');

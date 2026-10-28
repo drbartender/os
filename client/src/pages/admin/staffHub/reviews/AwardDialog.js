@@ -1,3 +1,6 @@
+// AwardDialog (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useEffect } from 'react';
 import { fmt$fromCents } from '../../../../components/adminos/format';
 

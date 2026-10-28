@@ -1,3 +1,5 @@
+// /public/* - packages, addons, calculate, capture-lead, quote-draft, submit
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');

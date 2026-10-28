@@ -1,3 +1,6 @@
+// PendingPaymentCard (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 
 // Bank debit in flight (spec 2026-09-14 section 8.1). The one card every

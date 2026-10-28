@@ -1,3 +1,6 @@
+// Thumbtack auto-draft builder (createDraftProposalFromLead) + pure field mappers (event-type
+// keyword map, ET date/time split, admin-notes block)
+
 const { EVENT_TYPES } = require('./eventTypes');
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');

@@ -1,3 +1,6 @@
+// Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by
+// `server/routes/calcom.js`
+
 const crypto = require('crypto');
 
 const MAX_NAME_LEN = 255;

@@ -1,3 +1,7 @@
+// Twilio inbound-SMS webhook (line-aware), the message status callback (POST /status), and the
+// admin thread API; the status callback and the Messages reply clear the Inbox cache, and a first
+// reply from a 224 line takes the Inbox first-text prefix
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { processInboundSms, findThumbtackProxyLead } = require('../utils/smsInbound');

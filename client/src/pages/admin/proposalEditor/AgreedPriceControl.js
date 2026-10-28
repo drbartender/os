@@ -1,3 +1,6 @@
+// Set agreed price: one dollar input and Apply beside + Discount / + Surcharge, gated on a fresh
+// preview; a booking that still has an override shows it read-only
+
 import React, { useState } from 'react';
 import { fmt$2dp } from '../../../components/adminos/format';
 import { SHARED_GRATUITY_LABEL } from '../../../utils/gratuityLabels';

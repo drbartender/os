@@ -1,3 +1,6 @@
+// postSwitch (default export). Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 

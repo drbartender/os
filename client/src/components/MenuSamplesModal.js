@@ -1,3 +1,6 @@
+// MenuSamplesModal (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { MENU_SAMPLES } from '../data/menuSamples';
 

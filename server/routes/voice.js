@@ -1,3 +1,13 @@
+// Two-line Twilio Voice webhooks: POST /inbound (forward 0082 → VA_CELL, stamps line=zul),
+// /inbound/primary (forward 1922 → VM_PRIMARY_DIAL_TARGET, stamps line=primary), /bridge (look up
+// target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed
+// (shared <Dial> action, per-line greeting + optional press-1 <Gather> + <Record>, interception
+// canary), /inbound/voicemail (recordingStatusCallback: per-line delivery via utils/voicemail).
+// Static audio moved to voiceAssets.js (2026-08-19). /inbound, /inbound/primary, and both voicemail
+// routes fail CLOSED on signature in every environment; the two FORWARD routes run signature BEFORE
+// the limiter (the voicemail webhooks keep their per-CallSid limiter first, deliberately: junk sids
+// collapse to one bucket no real callback lands in)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { xmlEscape } = require('../utils/xmlEscape');

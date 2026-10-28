@@ -1,3 +1,5 @@
+// Browser-side photo downscaler run before upload
+
 import {
   DOWNSCALE_THRESHOLD_BYTES, MAX_IMAGE_EDGE, IMAGE_QUALITY, isImageName,
 } from './uploadLimits';

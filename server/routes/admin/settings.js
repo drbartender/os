@@ -1,3 +1,5 @@
+// /settings + /test-email + /backfill-geocodes + /badge-counts
+
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
@@ -18,6 +20,7 @@ const router = express.Router();
 
 // ─── Test Email ──────────────────────────────────────────────────
 
+// Send test email via Resend
 router.post('/test-email', auth, adminOnly, asyncHandler(async (req, res) => {
   const { to } = req.body;
   if (!to) throw new ValidationError({ to: 'Recipient email (to) is required.' });
@@ -43,6 +46,7 @@ router.post('/test-email', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // ─── App Settings ────────────────────────────────────────────────
 
+// Get app_settings (auto-assign weights, max distance)
 router.get('/settings', auth, adminOnly, asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT key, value FROM app_settings');
   const settings = {};
@@ -52,6 +56,7 @@ router.get('/settings', auth, adminOnly, asyncHandler(async (req, res) => {
   res.json(settings);
 }));
 
+// Update app_settings key-value pairs
 router.put('/settings', auth, adminOnly, asyncHandler(async (req, res) => {
   const entries = Object.entries(req.body);
   if (entries.length === 0) throw new ValidationError({ _form: 'No settings provided.' });
@@ -72,6 +77,7 @@ router.put('/settings', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // ─── Backfill Geocodes ──────────────────────────────────────────
 
+// Geocode all staff/shift addresses and backfill hire dates
 router.post('/backfill-geocodes', auth, adminOnly, asyncHandler(async (req, res) => {
   // Backfill contractor_profiles
   const profiles = await pool.query(`

@@ -1,3 +1,6 @@
+// useSheetFocus (default export). Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import { useEffect } from 'react';
 
 const STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';

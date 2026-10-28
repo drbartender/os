@@ -1,3 +1,5 @@
+// Thumbtack webhook endpoints (leads, messages, reviews)
+
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');
@@ -374,6 +376,8 @@ async function runPostCommitSteps({ lead, clientId, leadId }) {
 
 // ─── POST /api/thumbtack/leads ─────────────────────────────────────
 
+// Receive new lead from Thumbtack, create/match client, auto-create a Core Reaction draft proposal
+// (best-effort), notify admin
 router.post('/leads', asyncHandler(async (req, res) => {
   const body = req.body;
   console.log('Thumbtack lead webhook received');
@@ -532,6 +536,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
 
 // ─── POST /api/thumbtack/messages ──────────────────────────────────
 
+// Receive customer message from Thumbtack thread
 router.post('/messages', asyncHandler(async (req, res) => {
   const body = req.body;
   console.log('Thumbtack message webhook received');
@@ -578,6 +583,7 @@ router.post('/messages', asyncHandler(async (req, res) => {
 
 // ─── POST /api/thumbtack/reviews ───────────────────────────────────
 
+// Receive new Thumbtack review
 router.post('/reviews', asyncHandler(async (req, res) => {
   const body = req.body;
   console.log('Thumbtack review webhook received');

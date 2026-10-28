@@ -1,3 +1,5 @@
+// /managers CRUD
+
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
@@ -8,6 +10,7 @@ const router = express.Router();
 
 // ─── Managers ─────────────────────────────────────────────────────
 
+// List all managers
 router.get('/managers', auth, adminOnly, asyncHandler(async (req, res) => {
   const result = await pool.query(
     "SELECT id, email, role, can_hire, can_staff, created_at FROM users WHERE role = 'manager' ORDER BY created_at DESC"
@@ -38,6 +41,7 @@ router.post('/managers', auth, adminOnly, asyncHandler(async (req, res) => {
   res.status(200).json(result.rows[0]);
 }));
 
+// Update manager permissions
 router.put('/managers/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const { can_hire, can_staff, email } = req.body;
   const result = await pool.query(

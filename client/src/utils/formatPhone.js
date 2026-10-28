@@ -1,3 +1,5 @@
+// Phone number formatting
+
 export function formatPhone(raw) {
   if (!raw) return '—';
   const digits = raw.replace(/\D/g, '');

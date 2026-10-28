@@ -1,3 +1,5 @@
+// Public cached endpoint for Thumbtack reviews on homepage
+
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
@@ -40,6 +42,8 @@ function truncateText(text, max = 400) {
   return s.length > max ? `${s.slice(0, max).trimEnd()}…` : s;
 }
 
+// Returns curated 4–5 star Thumbtack reviews + count + average rating for the public HomePage.
+// 5-minute in-memory cache, 120 req/min rate limit. Query: `?limit=1..20` (default 9).
 router.get('/', asyncHandler(async (req, res) => {
   const rawLimit = parseInt(req.query.limit, 10);
   const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 9 : rawLimit, 1), 20);

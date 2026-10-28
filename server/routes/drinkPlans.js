@@ -1,3 +1,5 @@
+// Client event planning questionnaire (GET /t/:token sends the sanitized pricing_snapshot)
+
 const express = require('express');
 const path = require('path');
 const { pool } = require('../db');

@@ -1,3 +1,6 @@
+// post_event_wrap_up_email dispatcher handler, registered at boot in server/index.js (enqueue
+// endpoint deleted with v1; retained to drain scheduled rows)
+
 const { registerHandler } = require('./scheduledMessageDispatcher');
 const { sendEmail } = require('./email');
 const { renderCcWrapUpEmail } = require('./ccWrapUpEmailTemplate');

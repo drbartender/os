@@ -1,3 +1,5 @@
+// Blog post endpoints
+
 const express = require('express');
 const path = require('path');
 const { pool } = require('../db');
@@ -10,6 +12,7 @@ const router = express.Router();
 
 // ─── Public: list published posts ────────────────────────────────
 
+// List published posts (includes chapter_number)
 router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
@@ -30,6 +33,7 @@ router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
+// Serve blog images via R2 signed URL
 router.get('/images/:filename', publicReadLimiter, asyncHandler(async (req, res) => {
   const filename = path.basename(req.params.filename);
   let url;
@@ -68,6 +72,7 @@ router.get('/images/:filename', publicReadLimiter, asyncHandler(async (req, res)
 
 // ─── Public: single published post by slug ───────────────────────
 
+// Get single post by slug (includes chapter_number)
 router.get('/:slug', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT bp.*, cn.chapter_number FROM blog_posts bp

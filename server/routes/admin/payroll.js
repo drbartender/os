@@ -361,6 +361,10 @@ async function recaptureNullTipFeesForPeriod(periodId) {
   };
 }
 
+// Flip `open`/`reopened` → `processing`: runs the fee-recapture healing pass, freezes line edits.
+// 409s while the period's week is still in progress unless body `{ force: true }` (early-process
+// wage guard). Finalizes immediately when no pending payouts remain; response carries
+// `period_status` (`'paid'` or `'processing'`) plus the `fee_recapture` summary.
 router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new NotFoundError('Period not found');
@@ -453,6 +457,10 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
   });
 }));
 
+// The "I fucked up" path: flip `processing` → `reopened` (never back to `open`) so PENDING payouts'
+// lines become editable again while every payroll money writer still refuses the period. Paid
+// payouts stay locked. 409 unless the period is `processing`; audit-logged as
+// `payroll_period_reopen`.
 router.post('/payroll/periods/:id/reopen', auth, adminOnly, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new NotFoundError('Period not found');
@@ -498,6 +506,11 @@ router.post('/payroll/periods/:id/reopen', auth, adminOnly, asyncHandler(async (
   res.json({ period: rows[0] });
 }));
 
+// Record an external payment:
+// `{ payment_method, payment_handle, payment_reference?, expected_total_cents? }`. `zelle` is an
+// allowed method. `expected_total_cents` (non-negative integer) is the drift guard: compared
+// against `total_cents` under the row lock, 409 on mismatch so a stale generated QR/link can never
+// be recorded. 409s a `no_draw` payout (convert to pending first).
 router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new ValidationError(null, 'invalid payout id');
@@ -853,10 +866,14 @@ async function loadDeferredTips() {
   }));
 }
 
+// List tips deferred while the open pay period was frozen (with stuck-reason: `frozen_period`,
+// `stubs`, or `max_attempts`).
 router.get('/payroll/deferred-tips', auth, adminOnly, asyncHandler(async (req, res) => {
   res.json({ tips: await loadDeferredTips() });
 }));
 
+// Manually run the deferred-tip sweep; audit-logged as `payroll_deferred_tips_retry` with the
+// summary in `metadata`.
 router.post('/payroll/deferred-tips/retry', auth, adminOnly, asyncHandler(async (req, res) => {
   const summary = await retryDeferredTips();
   // logAdminAction is best-effort and never throws (it self-routes failures to Sentry).

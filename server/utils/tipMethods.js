@@ -1,3 +1,8 @@
+// Shared tip-method derivation for /api/me/tip-page + /api/public/tip/:token: read-side handle
+// re-validation (drops unnormalizable stored values, Sentry-warns), availability, then saved-order
+// resolution. One derivation so a downloadable printed sign can't advertise a method the post-scan
+// chooser page refuses to render
+
 const Sentry = require('@sentry/node');
 const { normalizePaypalUrl, normalizeZelleHandle } = require('./tipHandleValidation');
 

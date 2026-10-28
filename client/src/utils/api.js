@@ -1,3 +1,5 @@
+// Axios instance with JWT interceptor
+
 import axios from 'axios';
 
 export const API_BASE_URL = process.env.REACT_APP_API_URL

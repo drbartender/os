@@ -1,3 +1,5 @@
+// Payment intents, payment links, webhooks
+
 const express = require('express');
 const { pool } = require('../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');

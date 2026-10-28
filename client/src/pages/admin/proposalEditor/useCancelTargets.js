@@ -1,3 +1,7 @@
+// the cancel-line targets on both editor parents (Proposal Detail, Event Detail): positional
+// adjustment targets shown only for the read they were fetched after, hidden at once on a new read
+// or a save, a late answer dropped
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../../utils/api';
 

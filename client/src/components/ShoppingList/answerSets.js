@@ -1,3 +1,6 @@
+// Exports hasPlannerAnswers, pickAnswerSets, sourceLine, switchLabel, listNote. Header generated
+// from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 import { fmtDate, ctDay } from '../adminos/format';
 
 // Which of a drink plan's two answer sets the shopping-list modal's answers

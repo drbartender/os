@@ -1,3 +1,5 @@
+// scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
+
 const { pool } = require('../db');
 const { pickChannelsForUserAndCategory } = require('./notificationChannelResolver');
 

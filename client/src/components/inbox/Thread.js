@@ -1,3 +1,6 @@
+// Thread (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useLayoutEffect, useRef } from 'react';
 
 // The messages (spec 4.2), from threadModel(): day separators, centered system

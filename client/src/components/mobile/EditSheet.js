@@ -1,3 +1,6 @@
+// EditSheet (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import useSheetFocus from '../../hooks/useSheetFocus';
 import Icon from '../adminos/Icon';

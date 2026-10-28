@@ -1,3 +1,5 @@
+// Admin account seeder script
+
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const bcrypt = require('bcryptjs');

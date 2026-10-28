@@ -1,3 +1,6 @@
+// Exports PhoneActions, DesktopActions, ItemBanner. Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useRef, useState } from 'react';
 import Icon from '../adminos/Icon';
 import { claimButton, stampLabel } from './inboxFormat';

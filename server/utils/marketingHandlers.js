@@ -1,3 +1,8 @@
+// Exports buildUnsubscribeUrl, registerMarketingHandlers, scheduleDripForProposal,
+// scheduleReviewRequest, scheduleNewYearHello, scheduleSixMonthsOut, scheduleRetentionNudge,
+// recomputeNewYearHelloForProposal and 3 more. Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 const jwt = require('jsonwebtoken');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

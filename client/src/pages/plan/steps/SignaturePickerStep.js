@@ -1,3 +1,6 @@
+// SignaturePickerStep (React component, default export). Header generated from the file's exports
+// by migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { SYRUPS, SYRUP_CATEGORIES, getAllUniqueSyrups, getDrinkSyrupSelections, calculateSyrupCost, getBottlesPerSyrup } from '../../../data/syrups';
 import { getUpgradesForDrink, isUpgradeSelectedForDrink } from '../data/drinkUpgrades';

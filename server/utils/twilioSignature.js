@@ -1,3 +1,7 @@
+// Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router
+// (fail-closed everywhere except voice.js's /bridge and /status and sms.js's /inbound and /status,
+// which keep the dev warn-and-allow)
+
 const twilio = require('twilio');
 
 /**

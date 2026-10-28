@@ -1,3 +1,6 @@
+// logAdminAction(...) - durable record of admin actions (rotate-token, regenerate-stripe).
+// Best-effort; failures go to Sentry, never block the underlying op
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 

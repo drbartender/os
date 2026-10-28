@@ -1,3 +1,5 @@
+// All routes, auth guards (ProtectedRoute, RequireHired, etc.)
+
 import React, { Suspense, lazy as lazyBase, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from './utils/api';

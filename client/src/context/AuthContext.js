@@ -1,3 +1,5 @@
+// Staff/admin auth state (login, logout, user)
+
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { purgeMobileAdminState, announceAdminSwUser } from '../utils/adminSw';
 import { disableAdminPush } from '../utils/adminPush';

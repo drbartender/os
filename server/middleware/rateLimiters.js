@@ -1,3 +1,6 @@
+// Shared express-rate-limit instances (publicLimiter, signLimiter, adminWriteLimiter for admin
+// proposal writes, menuDraftReadLimiter and menuDraftEditLimiter for the menu art drafts, etc.)
+
 const rateLimit = require('express-rate-limit');
 
 const publicLimiter = rateLimit({

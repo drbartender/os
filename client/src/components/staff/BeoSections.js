@@ -1,3 +1,7 @@
+// Exports EventMetaGrid, SignatureCocktailsCard, MocktailsCard, GratuityTipsCard, EquipmentCard,
+// RolesCard, BarMenuCard, AddonsCard and 5 more. Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 import { downloadMenuPrint } from '../../utils/downloadMenuPrint';
 import {

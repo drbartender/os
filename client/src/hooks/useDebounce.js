@@ -1,3 +1,6 @@
+// useDebounce (default export). Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 import { useEffect, useRef } from 'react';
 
 export default function useDebounce(callback, delay, deps) {

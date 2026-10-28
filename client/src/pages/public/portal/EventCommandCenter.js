@@ -1,3 +1,6 @@
+// EventCommandCenter (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useEffect, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import OverviewTab from './tabs/OverviewTab';

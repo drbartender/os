@@ -37,6 +37,9 @@ router.get('/:proposalId', auth, requireOnboarded, beoReadLimiter, asyncHandler(
   res.json(await buildEventDetailsPayload(req, proposalId));
 }));
 
+// Staff-authenticated logo proxy. Reads `drink_plans.selections->>'_logoFilename'` (validated to
+// start with `drink-plan-logos/`), fetches the signed URL from R2 with an 8 s timeout, streams the
+// bytes back with `Cache-Control: private, max-age=3600`.
 router.get('/:proposalId/logo', auth, requireOnboarded, beoReadLimiter, asyncHandler(async (req, res) => {
   const proposalId = parseInt(req.params.proposalId, 10);
   if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');

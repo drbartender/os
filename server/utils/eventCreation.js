@@ -1,3 +1,5 @@
+// Auto-create shifts from paid proposals
+
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { composeVenueLocation, composeVenueMapQuery, isVenueComplete } = require('./venueAddress');

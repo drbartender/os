@@ -1,3 +1,6 @@
+// Marketing tags + do-not-contact + the audience/contact read routes (admin ONLY, stricter than
+// emailMarketing/, which allows managers)
+
 const express = require('express');
 const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');

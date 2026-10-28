@@ -1,3 +1,6 @@
+// Exports getSteps, ADDON_TAGLINES, ADDON_QTY_HINTS, formatCurrency, priceLabel. Header generated
+// from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 import { isTimedPerGuestAddon, timedPerGuestRateLabel } from '../../../utils/addonRateLabel';
 
 // Build the dynamic step list based on alcohol choice

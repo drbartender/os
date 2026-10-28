@@ -1,3 +1,6 @@
+// ConfirmDialog (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useLayoutEffect, useRef } from 'react';
 
 // The bar menu editor's confirm dialog (spec 2026-10-01 section 11.1, Confirm

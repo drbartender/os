@@ -1,3 +1,7 @@
+// Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state
+// preview + diff + price preview, and the reaper that auto-cancels pending requests on
+// archive/complete
+
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
 const { loadSettledExtensions, contractHoursFrom } = require('./contractDuration');

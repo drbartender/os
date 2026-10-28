@@ -1,3 +1,5 @@
+// Resend email wrapper (send + batch)
+
 const { Resend } = require('resend');
 const { notificationsEnabled } = require('./notificationsEnabled');
 const { QuotaExceededError } = require('./errors');

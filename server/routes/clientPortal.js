@@ -1,3 +1,5 @@
+// Client portal endpoints
+
 const express = require('express');
 const { pool } = require('../db');
 const { clientAuth } = require('../middleware/auth');

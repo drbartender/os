@@ -1,3 +1,6 @@
+// /t/:token view + sign (the payload sends price_rows and the sanitized pricing_snapshot; exports
+// reportPriceRowsFold, the price rows' Sentry report, for the client portal too)
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');

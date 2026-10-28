@@ -1,3 +1,6 @@
+// ToastProvider + useToast() hook; success/error/info take an optional { action: { label, onClick
+// }, duration } (Inbox's Undo)
+
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import ToastContainer from '../components/Toast';
 

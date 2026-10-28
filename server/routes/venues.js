@@ -1,5 +1,7 @@
 'use strict';
 
+// Google Places venue search proxy
+
 const express = require('express');
 const asyncHandler = require('../middleware/asyncHandler');
 const { venueSearchLimiter, venueSearchGlobalLimiter } = require('../middleware/rateLimiters');

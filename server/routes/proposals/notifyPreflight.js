@@ -22,6 +22,10 @@ const { normalizePhone } = require('../../utils/sms');
 
 const router = express.Router();
 
+// **Read-only.** Which client notices a pending edit would trigger, plus the drafted event-details
+// message (composed old-vs-new while the old values still exist; money-free except the projected
+// balance-due/auto-charge date, computed by the same function the save uses). Zero notices when
+// `change_request_id` is present. Writes nothing.
 router.post('/:id/notify-preflight', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError({ id: 'Invalid proposal id.' });

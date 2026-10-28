@@ -1,3 +1,6 @@
+// Icon (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 
 // Lucide-style inline SVG icons used across Admin OS. Stroke 1.75, 24×24 viewbox.

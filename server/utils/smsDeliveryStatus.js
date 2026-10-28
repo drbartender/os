@@ -1,3 +1,6 @@
+// Twilio delivery-failure handler - flags bad phone numbers (sets clients.phone_status='bad') on
+// hard SMS failures
+
 const { pool } = require('../db');
 
 // Twilio final delivery states that mean the message did not reach the handset.

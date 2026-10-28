@@ -1,3 +1,6 @@
+// Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets
+// clients.automation_suspended_at, cancels pending scheduled_messages)
+
 const { pool } = require('../db');
 
 /**

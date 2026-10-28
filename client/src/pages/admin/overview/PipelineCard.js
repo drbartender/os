@@ -1,3 +1,6 @@
+// PipelineCard (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 import EntityLink from '../../../components/EntityLink';
 import { fmt$ } from '../../../components/adminos/format';

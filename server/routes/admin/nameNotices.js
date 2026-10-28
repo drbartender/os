@@ -15,6 +15,8 @@ const { ValidationError, NotFoundError } = require('../../utils/errors');
 
 const router = express.Router();
 
+// Unreviewed preferred-name changes (display name + legal name per row) for the needs-attention
+// strip. Lives in `server/routes/admin/nameNotices.js`
 router.get('/name-notices', auth, adminOnly, asyncHandler(async (_req, res) => {
   const { rows } = await pool.query(
     `SELECT cp.user_id,
@@ -35,6 +37,8 @@ router.get('/name-notices', auth, adminOnly, asyncHandler(async (_req, res) => {
   res.json({ rows });
 }));
 
+// Stamp `preferred_name_reviewed_at` (integer-guarded `:userId`; 404 on unknown or
+// already-reviewed; scoped `AND preferred_name_reviewed_at IS NULL`)
 router.post('/name-notices/:userId/ack', auth, adminOnly, asyncHandler(async (req, res) => {
   // user_id is an INTEGER column, so a non-numeric segment reaches Postgres as a
   // 22P02 invalid_text_representation and surfaces as a 500 plus Sentry noise.

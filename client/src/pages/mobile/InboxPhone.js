@@ -1,3 +1,6 @@
+// InboxPhone (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import StatusChip from '../../components/adminos/StatusChip';

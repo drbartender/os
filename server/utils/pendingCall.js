@@ -1,3 +1,7 @@
+// VA-calling DB helpers: upsertPending, claimForDial (conditional UPDATE claim-then-call),
+// attachCallSid, lookupTargetByCallSid, countPlacedSince (daily/per-min cap), recordAudit,
+// pruneVaCallingRows
+
 const { pool } = require('../db');
 
 // Retention for the audit + de-dupe tables. call_audit holds dialed-number PII

@@ -1,3 +1,7 @@
+// Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never
+// throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET
+// /proposals/:id
+
 const { pool } = require('../db');
 let Sentry = null;
 try { Sentry = require('@sentry/node'); } catch (_) { /* optional */ }

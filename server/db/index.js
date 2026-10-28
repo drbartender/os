@@ -1,3 +1,5 @@
+// PostgreSQL pool connection + schema initialization
+
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');

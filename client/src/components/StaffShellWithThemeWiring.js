@@ -1,3 +1,6 @@
+// StaffShellWithThemeWiring (React component, default export). Header generated from the file's
+// exports by migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';

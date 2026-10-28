@@ -1,3 +1,6 @@
+// Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only;
+// trustedPhoneMatch for the Thumbtack webhook); the single intake find-or-create
+
 const { validatePhone } = require('./phone');
 
 /**

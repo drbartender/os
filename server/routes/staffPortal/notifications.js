@@ -131,6 +131,7 @@ function register(router) {
     res.json({ prefs: rows[0].staff_notification_preferences });
   }));
 
+  // Register a Web Push (VAPID) subscription for the current staffer (browser/PWA push).
   router.post('/push-subscriptions', asyncHandler(async (req, res) => {
     const body = req.body || {};
     const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
@@ -208,6 +209,7 @@ function register(router) {
     }
   }));
 
+  // Remove a Web Push subscription (logout / unsubscribe).
   router.delete('/push-subscriptions', asyncHandler(async (req, res) => {
     const body = req.body || {};
     const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';

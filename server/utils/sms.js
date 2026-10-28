@@ -1,3 +1,7 @@
+// Twilio SMS wrapper: sendSMS (optional line key from and statusCallback; Twilio 21610 writes
+// sms_optouts), smsStatusCallbackUrl, twilioErrorText (the stored failure text), sendAndLogSms,
+// placeBridgedCall
+
 const twilio = require('twilio');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

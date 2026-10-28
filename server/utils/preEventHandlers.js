@@ -1,3 +1,7 @@
+// Exports registerAll, handleEventWeekReminder, handleLongLeadT30Recap, loadProposalContext,
+// firstNameOf, formatEventDateLong, formatStartTimeShort, formatBalanceDueDate. Header generated
+// from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
 const { sendEmail } = require('./email');

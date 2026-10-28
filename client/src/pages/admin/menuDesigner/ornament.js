@@ -1,3 +1,6 @@
+// Ornament (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React from 'react';
 
 // The printed menu's rules (spec 2026-10-01 section 11.2; 11.3).

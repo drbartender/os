@@ -1,3 +1,5 @@
+// Contractor agreement + digital signature
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

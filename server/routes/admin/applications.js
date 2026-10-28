@@ -1,3 +1,5 @@
+// /applications + /notes + interview scheduling + scorecard + reject/restore/move/reminder
+
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');

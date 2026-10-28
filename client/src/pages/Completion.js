@@ -1,3 +1,6 @@
+// Completion (React component, default export). Header generated from the file's exports by
+// migrate-headers on 2026-10-27; replace with what it does.
+
 import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { WHATSAPP_GROUP_URL, COMPANY_TEXT_PHONE, COMPANY_TEXT_PHONE_TEL } from '../utils/constants';

@@ -1,3 +1,7 @@
+// Exports WORDMARK_SRC, tintWordmark, loadWordmark, useTintedWordmark, _resetWordmarkForTest.
+// Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it
+// does.
+
 import { useEffect, useState } from 'react';
 
 // The Dr. Bartender wordmark, tinted before it is placed (spec 2026-10-01

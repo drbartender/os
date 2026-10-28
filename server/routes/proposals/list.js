@@ -1,3 +1,6 @@
+// router (default export). Header generated from the file's exports by migrate-headers on
+// 2026-10-27; replace with what it does.
+
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');

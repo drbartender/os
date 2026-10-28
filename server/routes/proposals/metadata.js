@@ -1,3 +1,5 @@
+// /packages, /addons, /calculate, /financials, /dashboard-stats
+
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');

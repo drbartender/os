@@ -1,3 +1,5 @@
+// /users CRUD + onboarding state machine + /active-staff + seniority
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
@@ -22,6 +24,7 @@ const router = express.Router();
 
 // ─── Onboarding Users (paginated) ─────────────────────────────────
 
+// Paginated user list, filterable by status
 router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
   const page  = Math.max(1, parseInt(req.query.page)  || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));

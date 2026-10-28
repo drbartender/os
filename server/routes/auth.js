@@ -1,3 +1,5 @@
+// POST /register, POST /login, GET /me
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const rateLimit = require('express-rate-limit');

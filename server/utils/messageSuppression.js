@@ -1,3 +1,5 @@
+// shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
+
 const VALID_CHANNELS = new Set(['email', 'sms']);
 
 /**
