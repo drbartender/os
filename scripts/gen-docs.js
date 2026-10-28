@@ -29,16 +29,18 @@
  * before anything is written (exit 1). With --staged the docs' prose comes
  * from the index and the rendered bytes of both are staged after the write
  * (hash-object and update-index, never a re-read of the disk; retried every
- * 100 ms for up to two seconds while another git holds index.lock); it
- * refuses (exit 1, writing nothing) when either differs between the index and
- * the working tree, so a hand edit is neither swept in nor clobbered, except
- * a file that is exactly what the run renders (a run that wrote it and could
- * not stage it), which is staged as it is. Every
- * doc is read before the render and again before the write (the index blob
- * and the file with --staged, the file otherwise); a doc that moved in between,
- * the render included, refuses the run (exit 1, one line naming it, nothing
- * written). Each doc is written through a temp file in its directory and a
- * rename.
+ * 100 ms while another git holds index.lock, for up to MERGE_LANE_LOCK_WAIT
+ * seconds when it holds whole seconds, digits only (scripts/merge-lane.sh
+ * exports its own budget to its renders), else two seconds, then given up
+ * with one line naming the seconds waited); it refuses (exit 1, writing
+ * nothing) when either differs between the index and the working tree, so a
+ * hand edit is neither swept in nor clobbered, except a file that is exactly
+ * what the run renders (a run that wrote it and could not stage it), which is
+ * staged as it is. Every doc is read before the render and again before the
+ * write (the index blob and the file with --staged, the file otherwise); a
+ * doc that moved in between, the render included, refuses the run (exit 1,
+ * one line naming it, nothing written). Each doc is written through a temp
+ * file in its directory and a rename.
  *
  * Every rendered section passes through the PII masker before it is compared
  * or written (scripts/lib/piiShapes.js, allowlisted mode, one line at a time,
@@ -86,6 +88,13 @@
  * staged file(s) this commit does not carry change the docs; commit or
  * unstage them first` (n counts them all; `may change the docs` and the
  * reason when the render fails). They are never named in the git add clause.
+ * Under scripts/merge-lane.sh's squash commit, whose hooks run on the merge's
+ * private copy of the index and which names that copy in MERGE_LANE_COMMIT
+ * (honored only when it names the same file as GIT_INDEX_FILE), no pathspec
+ * commit is judged: a stale section prints `merge: the squash commit of
+ * scripts/merge-lane.sh, on the merge's own copy of the index, where no
+ * pathspec is judged; the squash stays staged` before the run line, whose
+ * regeneration is the plain `npm run docs -- --staged`.
  *
  * --readme <path>, --arch <path>: read and write these copies instead of the
  * repo's two docs (no `git add` for them); every other input is unchanged. A
@@ -269,14 +278,20 @@ function writeAtomic(file, text) {
   }
 }
 
-const LOCK_WAIT_MS = 2000;
+// The staging's wait for another git's index.lock: MERGE_LANE_LOCK_WAIT
+// whole seconds when set (digits only; merge-lane.sh exports its own budget),
+// else two seconds.
+function lockWaitMs() {
+  const s = process.env.MERGE_LANE_LOCK_WAIT || '';
+  return /^[0-9]+$/.test(s) ? Number(s) * 1000 : 2000;
+}
 const LOCK_STEP_MS = 100;
 
 // Stages the run's own bytes for each doc (never whatever is on disk when the
 // index frees): the rendered text written as a blob with `git hash-object -w
 // --path`, then `git update-index --add --cacheinfo`. While another git holds
-// index.lock, the update tries again every 100 ms for up to two seconds, then
-// gives up with one line.
+// index.lock, the update tries again every 100 ms for up to lockWaitMs(), then
+// gives up with one line naming the seconds waited.
 function stage(top, entries) {
   const docs = entries.map((e) => e.path);
   const infos = entries.flatMap((e) => {
@@ -286,13 +301,14 @@ function stage(top, entries) {
     return ['--cacheinfo', `${mode},${blob},${e.path}`];
   });
   const started = Date.now();
+  const waitMs = lockWaitMs();
   for (;;) {
     const r = spawnSync('git', ['update-index', '--add', ...infos], { cwd: top, encoding: 'utf8' });
     if (r.status === 0) return;
     const why = String(r.stderr || r.error || '').trim().split('\n')[0];
     const locked = /index\.lock/.test(String(r.stderr));
     if (!locked) throw new Error(`could not stage ${docs.join(' and ')}: ${why}`);
-    if (Date.now() - started >= LOCK_WAIT_MS) throw new Error(`could not stage ${docs.join(' and ')} (index.lock held for ${LOCK_WAIT_MS / 1000} s): ${why}`);
+    if (Date.now() - started >= waitMs) throw new Error(`could not stage ${docs.join(' and ')} (index.lock held for ${waitMs / 1000} s): ${why}`);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_STEP_MS);
   }
 }
@@ -345,6 +361,20 @@ function shellWord(p) {
 // temporary index holds HEAD's entry, or none), of any kind, which
 // othersChangeDocs judges; a path of the commit is never among them. Null
 // outside such a commit.
+// scripts/merge-lane.sh's squash commit: its hooks run with GIT_INDEX_FILE set
+// to the merge's private copy of the index, which no pathspec made, and the
+// script names that copy in MERGE_LANE_COMMIT. True when both name one file.
+function mergeLaneCommit(top) {
+  const named = process.env.MERGE_LANE_COMMIT;
+  const used = process.env.GIT_INDEX_FILE;
+  if (!named || !used) return false;
+  const canon = (p) => {
+    const abs = path.resolve(top, p);
+    try { return fs.realpathSync(abs); } catch { return abs; }
+  };
+  return canon(named) === canon(used);
+}
+
 function pathspecCommit(top) {
   const env = process.env.GIT_INDEX_FILE;
   if (!env) return null;
@@ -450,7 +480,8 @@ function check(o, src, io) {
   // The pathspec remedy and the count line below concern only the
   // regeneration, so a refusal with no stale section (a marker, a header or an
   // unparsed route alone) reads neither index again nor renders anything.
-  const pathspec = src.mode === 'staged' && out.stale.length ? pathspecCommit(src.top) : null;
+  const merging = src.mode === 'staged' && out.stale.length > 0 && mergeLaneCommit(src.top);
+  const pathspec = src.mode === 'staged' && out.stale.length && !merging ? pathspecCommit(src.top) : null;
   if (pathspec) {
     if (pathspec.add.length) remedies.push(`git add -- ${pathspec.add.map(shellWord).join(' ')}`);
     remedies.push(docsCommand(o), "name README.md and ARCHITECTURE.md in the commit's pathspec");
@@ -469,7 +500,8 @@ function check(o, src, io) {
     }
   }
   const count = verdict ? [`${others} staged file(s) this commit does not carry ${verdict}; commit or unstage them first`] : [];
-  io.stdout.write(`${[...lines, ...count, `run: ${remedies.join(', then ')}`].join('\n')}\n`);
+  const merge = merging ? ["merge: the squash commit of scripts/merge-lane.sh, on the merge's own copy of the index, where no pathspec is judged; the squash stays staged"] : [];
+  io.stdout.write(`${[...lines, ...count, ...merge, `run: ${remedies.join(', then ')}`].join('\n')}\n`);
   return 1;
 }
 

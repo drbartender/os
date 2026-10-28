@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 for (const k of Object.keys(process.env)) {
-  if (/^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES)$/.test(k)) delete process.env[k];
+  if (/^(GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES)|MERGE_LANE_LOCK_WAIT)$/.test(k)) delete process.env[k];
 }
 process.env.GIT_CONFIG_GLOBAL = '/dev/null';
 process.env.GIT_CONFIG_NOSYSTEM = '1';
@@ -79,6 +79,8 @@ function put(dir, files) {
   }
 }
 
+// Writes files and stages them.
+const stage = (dir, files) => { put(dir, files); git(dir, 'add', '--', ...Object.keys(files)); };
 const read = (dir, rel) => fs.readFileSync(path.join(dir, rel), 'utf8');
 
 function run(dir, ...args) {
@@ -124,8 +126,7 @@ test('--check: exit 0 and silent after a run; exit 1 naming the section after a 
   const dir = current(t);
   const clean = run(dir, '--check');
   assert.deepEqual([clean.code, clean.out, clean.err], [0, '', '']);
-  put(dir, { 'server/added.js': '// Added later.\n' });
-  git(dir, 'add', '--', 'server/added.js');
+  stage(dir, { 'server/added.js': '// Added later.\n' });
   const stale = run(dir, '--check');
   assert.equal(stale.code, 1);
   assert.equal(stale.out, 'stale: README.md gen:tree\nrun: npm run docs\n');
@@ -133,8 +134,7 @@ test('--check: exit 0 and silent after a run; exit 1 naming the section after a 
 
 test('a file added under docs/ and a line shift in a route file leave the docs current', (t) => {
   const dir = current(t);
-  put(dir, { 'docs/first.md': '# First\n' });
-  git(dir, 'add', '--', 'docs/first.md');
+  stage(dir, { 'docs/first.md': '# First\n' });
   assert.equal(run(dir, '--staged').code, 0);
   git(dir, 'commit', '-q', '-m', 'docs dir');
   put(dir, {
@@ -164,8 +164,7 @@ function inProcess(dir, args, beforeWrite) {
 
 test('a doc edited between the render and the write is refused and the edit survives (worktree mode)', (t) => {
   const dir = current(t);
-  put(dir, { 'server/late.js': '// Late.\n' });
-  git(dir, 'add', '--', 'server/late.js');
+  stage(dir, { 'server/late.js': '// Late.\n' });
   const edited = read(dir, 'README.md').replace('Hand prose above.', 'Hand prose, edited mid-run.');
   const r = inProcess(dir, [], () => put(dir, { 'README.md': edited }));
   assert.equal(r.code, 1);
@@ -194,8 +193,7 @@ test('a doc edited between the render and the write is refused and the edit surv
 
 test('a doc edited while the render runs is refused in worktree mode and the edit survives', (t) => {
   const dir = current(t);
-  put(dir, { 'server/late.js': '// Late.\n' });
-  git(dir, 'add', '--', 'server/late.js');
+  stage(dir, { 'server/late.js': '// Late.\n' });
   const edited = read(dir, 'README.md').replace('Hand prose above.', 'Hand prose, edited during the render.');
   const agents = require(path.join(__dirname, 'lib', 'genDocs', 'agents'));
   const original = agents.render;
@@ -216,8 +214,7 @@ test('a doc edited while the render runs is refused in worktree mode and the edi
 test('a write goes through a temp file and a rename, leaving no temp file and the mode kept', (t) => {
   const dir = current(t);
   fs.chmodSync(path.join(dir, 'README.md'), 0o640);
-  put(dir, { 'server/late.js': '// Late.\n' });
-  git(dir, 'add', '--', 'server/late.js');
+  stage(dir, { 'server/late.js': '// Late.\n' });
   const r = inProcess(dir, []);
   assert.equal(r.code, 0, r.err);
   assert.match(read(dir, 'README.md'), /late\.js/);
@@ -227,8 +224,7 @@ test('a write goes through a temp file and a rename, leaving no temp file and th
 
 test("the run line names the mode's own command", (t) => {
   const dir = current(t);
-  put(dir, { 'server/added.js': '// Added later.\n' });
-  git(dir, 'add', '--', 'server/added.js');
+  stage(dir, { 'server/added.js': '// Added later.\n' });
   assert.equal(run(dir, '--check').out, 'stale: README.md gen:tree\nrun: npm run docs\n');
   assert.equal(run(dir, '--check', '--staged').out, 'stale: README.md gen:tree\nrun: npm run docs -- --staged\n');
   git(dir, 'commit', '-q', '-m', 'stale');
@@ -246,8 +242,7 @@ test('an untracked file is outside the default source, named on one stderr line 
 
 test('--staged reads a staged new file the working tree also has, and adds the two docs', (t) => {
   const dir = current(t);
-  put(dir, { 'scripts/new.js': '// Staged and on disk.\n' });
-  git(dir, 'add', '--', 'scripts/new.js');
+  stage(dir, { 'scripts/new.js': '// Staged and on disk.\n' });
   const r = run(dir, '--staged');
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out, 'docs: updated README.md gen:tree\n');
@@ -258,8 +253,7 @@ test('--staged reads a staged new file the working tree also has, and adds the t
 
 test('--staged refuses, writing nothing, when README has an unstaged edit', (t) => {
   const dir = current(t);
-  put(dir, { 'scripts/new.js': '// New.\n' });
-  git(dir, 'add', '--', 'scripts/new.js');
+  stage(dir, { 'scripts/new.js': '// New.\n' });
   const edited = read(dir, 'README.md').replace('Hand prose above.', 'Hand prose, edited.');
   put(dir, { 'README.md': edited });
   const r = run(dir, '--staged');
@@ -271,8 +265,7 @@ test('--staged refuses, writing nothing, when README has an unstaged edit', (t) 
 
 test('--staged adds docs already written on disk that equal the render, with the index behind', (t) => {
   const dir = current(t);
-  put(dir, { 'scripts/new.js': '// New.\n' });
-  git(dir, 'add', '--', 'scripts/new.js');
+  stage(dir, { 'scripts/new.js': '// New.\n' });
   assert.equal(run(dir).code, 0);
   assert.equal(git(dir, 'diff', '--name-only'), 'README.md');
   const r = run(dir, '--staged');
@@ -283,10 +276,9 @@ test('--staged adds docs already written on disk that equal the render, with the
   assert.equal(run(dir, '--check', '--staged').code, 0);
 });
 
-test('--staged retries git add while index.lock is held, then gives up with one line', (t) => {
+test('--staged retries git add while index.lock is held, then gives up with one line after 2 s, or MERGE_LANE_LOCK_WAIT seconds when set', (t) => {
   const dir = current(t);
-  put(dir, { 'scripts/new.js': '// New.\n' });
-  git(dir, 'add', '--', 'scripts/new.js');
+  stage(dir, { 'scripts/new.js': '// New.\n' });
   const lock = path.join(dir, '.git', 'index.lock');
   fs.writeFileSync(lock, '');
   const { spawn } = require('node:child_process');
@@ -294,22 +286,21 @@ test('--staged retries git add while index.lock is held, then gives up with one 
   const r = run(dir, '--staged');
   assert.equal(r.code, 0, r.err);
   assert.match(git(dir, 'show', ':README.md'), /new\.js/);
-  put(dir, { 'scripts/other.js': '// Other.\n' });
-  git(dir, 'add', '--', 'scripts/other.js');
+  stage(dir, { 'scripts/other.js': '// Other.\n' });
   fs.writeFileSync(lock, '');
-  t.after(() => fs.rmSync(lock, { force: true }));
-  const started = Date.now();
-  const stuck = run(dir, '--staged');
-  assert.equal(stuck.code, 1);
-  assert.ok(Date.now() - started >= 2000);
-  assert.match(stuck.err, /^gen-docs: could not stage README\.md and ARCHITECTURE\.md \(index\.lock held for 2 s\): .*index\.lock.*\n$/);
-  assert.equal(stuck.err.split('\n').filter(Boolean).length, 1);
+  t.after(() => { fs.rmSync(lock, { force: true }); delete process.env.MERGE_LANE_LOCK_WAIT; });
+  for (const s of [2, 1]) { // the variable unset, then set to 1 (merge-lane.sh exports its budget)
+    const started = Date.now(), stuck = run(dir, '--staged'), took = Date.now() - started;
+    assert.ok(stuck.code === 1 && took >= s * 1000 && took < s * 1000 + 900, `${s} s: exit ${stuck.code} after ${took} ms`);
+    assert.match(stuck.err, new RegExp(`^gen-docs: could not stage README\\.md and ARCHITECTURE\\.md \\(index\\.lock held for ${s} s\\): .*index\\.lock.*\\n$`));
+    assert.equal(stuck.err.split('\n').filter(Boolean).length, 1);
+    process.env.MERGE_LANE_LOCK_WAIT = '1';
+  }
 });
 
 test('--staged stages the bytes it rendered, not a file edited while it waits on index.lock', (t) => {
   const dir = current(t);
-  put(dir, { 'scripts/new.js': '// New.\n' });
-  git(dir, 'add', '--', 'scripts/new.js');
+  stage(dir, { 'scripts/new.js': '// New.\n' });
   const lock = path.join(dir, '.git', 'index.lock');
   fs.writeFileSync(lock, '');
   t.after(() => fs.rmSync(lock, { force: true }));
@@ -326,8 +317,7 @@ test('--staged stages the bytes it rendered, not a file edited while it waits on
 
 test('--check --staged passes on the index beside an untracked scratch file and another unstaged edit', (t) => {
   const dir = current(t);
-  put(dir, { 'server/routes/more.js': '// More routes.\n' });
-  git(dir, 'add', '--', 'server/routes/more.js');
+  stage(dir, { 'server/routes/more.js': '// More routes.\n' });
   assert.equal(run(dir, '--staged').code, 0);
   put(dir, { 'server/scratch.js': 'no header at all\n', 'server/middleware/auth.js': '// The guard, edited and unstaged.\nmodule.exports = {};\n' });
   const r = run(dir, '--check', '--staged');
@@ -370,8 +360,7 @@ test('--check reports a missing marker and still the header-less files in the sa
 
 test('an unparsed route alone names the registration to rewrite, never the regeneration', (t) => {
   const dir = current(t);
-  put(dir, { 'server/routes/item.js': `${read(dir, 'server/routes/item.js')}router.get(PATH, (req, res) => res.end());\n` });
-  git(dir, 'add', '--', 'server/routes/item.js');
+  stage(dir, { 'server/routes/item.js': `${read(dir, 'server/routes/item.js')}router.get(PATH, (req, res) => res.end());\n` });
   const w = run(dir, '--staged');
   assert.equal(w.code, 0, w.err);
   assert.equal(w.err, 'unparsed: server/routes/item.js:8 route path is not a string literal\n');
@@ -407,12 +396,10 @@ test('writing stops on a missing or doubled marker before anything is written', 
 test('--ref renders that commit alone; it is read-only', (t) => {
   const dir = current(t);
   const good = git(dir, 'rev-parse', 'HEAD');
-  put(dir, { 'scripts/late.js': '// Late.\n' });
-  git(dir, 'add', '--', 'scripts/late.js');
+  stage(dir, { 'scripts/late.js': '// Late.\n' });
   git(dir, 'commit', '-q', '-m', 'stale docs');
   const stale = git(dir, 'rev-parse', 'HEAD');
-  put(dir, { 'scripts/dirty.js': 'no header\n' });
-  git(dir, 'add', '--', 'scripts/dirty.js');
+  stage(dir, { 'scripts/dirty.js': 'no header\n' });
   assert.deepEqual([run(dir, '--check', '--ref', good).code, run(dir, '--check', '--ref', good).out], [0, '']);
   const r = run(dir, '--check', '--ref', stale);
   assert.equal(r.code, 1);
@@ -435,8 +422,6 @@ const commitPaths = (dir, msg, paths) => ((r) => ({ status: r.status, said: r.st
   spawnSync('git', ['commit', '-q', '-m', msg, '--', ...paths], { cwd: dir, encoding: 'utf8' }));
 // The same commit, which the hook must refuse.
 const refuse = (...a) => { const r = commitPaths(...a); assert.notEqual(r.status, 0, 'the hook let the commit through'); return r; };
-// Writes files and stages them.
-const stage = (dir, files) => { put(dir, files); git(dir, 'add', '--', ...Object.keys(files)); };
 
 const ITEM = 'server/routes/item.js';
 const TOOL = 'scripts/tool.js';
@@ -498,6 +483,23 @@ test('under a pathspec commit the remedy names the pathspec, and counts staged f
   stage(dir, { 'server/middleware/auth.js': read(dir, 'server/middleware/auth.js').replace('// The auth guard.', '// The auth guard, edited.') });
   assert.equal(said(), `stale: README.md gen:tree\n2 ${COUNT_TAIL}\nrun: git add -- ${ITEM}, then ${PATHSPEC_TAIL}\n`);
   assert.equal(run(dir, '--check', '--staged').out.includes('pathspec'), false);
+});
+
+// scripts/merge-lane.sh's squash commit runs the hook on its own copy of the
+// index and names that copy in MERGE_LANE_COMMIT: no pathspec is judged there.
+const MERGE_LINE = "merge: the squash commit of scripts/merge-lane.sh, on the merge's own copy of the index, where no pathspec is judged; the squash stays staged";
+test("under merge-lane.sh's squash commit a stale section prints the plain remedy and names the merge, never the pathspec remedy", (t) => {
+  const dir = current(t);
+  const copy = path.join(dir, '.git', 'merge-copy');
+  stage(dir, { 'server/feature.js': '// The feature.\n' });
+  fs.copyFileSync(path.join(dir, '.git', 'index'), copy);
+  stage(dir, { 'server/other.js': '// Other.\n' }); // the real index moves on, as another window's staging
+  const said = (env) => spawnSync(process.execPath, [CLI, '--check', '--staged'], { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_INDEX_FILE: copy, ...env } }).stdout;
+  assert.match(said({}), /pathspec/, 'without the variable the copy reads as a pathspec commit');
+  assert.match(said({ MERGE_LANE_COMMIT: `${copy}-another` }), /pathspec/, 'a variable naming another index is not the merge');
+  assert.equal(said({ MERGE_LANE_COMMIT: copy }), `stale: README.md gen:tree\n${MERGE_LINE}\nrun: npm run docs -- --staged\n`);
+  const text = fs.readFileSync(CLI, 'utf8');
+  assert.ok(text.slice(0, text.indexOf('\n */')).replace(/\n \*\s?/g, ' ').replace(/`/g, '').replace(/\s+/g, ' ').includes(MERGE_LINE), 'the header documents the merge line');
 });
 
 const addScript = (dir) => {
@@ -624,13 +626,11 @@ test("the CLI's header documents the lines a pathspec commit prints", (t) => {
 test('--generated-only: 0 for a lane head that changed only generated sections, 1 for one that changed prose', (t) => {
   const dir = current(t);
   const base = git(dir, 'rev-parse', 'HEAD');
-  put(dir, { 'server/next.js': '// Next.\n' });
-  git(dir, 'add', '--', 'server/next.js');
+  stage(dir, { 'server/next.js': '// Next.\n' });
   run(dir, '--staged');
   git(dir, 'commit', '-q', '-m', 'generated only');
   const genTip = git(dir, 'rev-parse', 'HEAD');
-  put(dir, { 'ARCHITECTURE.md': read(dir, 'ARCHITECTURE.md').replace('## Schema', '## Schema, edited') });
-  git(dir, 'add', '--', 'ARCHITECTURE.md');
+  stage(dir, { 'ARCHITECTURE.md': read(dir, 'ARCHITECTURE.md').replace('## Schema', '## Schema, edited') });
   git(dir, 'commit', '-q', '-m', 'prose');
   const proseTip = git(dir, 'rev-parse', 'HEAD');
   assert.deepEqual([run(dir, '--generated-only', '--base', base, '--tip', genTip).code, run(dir, '--generated-only', '--base', base, '--tip', genTip).out], [0, '']);
