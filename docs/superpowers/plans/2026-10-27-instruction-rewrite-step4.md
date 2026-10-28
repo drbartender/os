@@ -109,13 +109,22 @@ lanes:
     lenses: none (comment-only)
     test plan: the proof over the lane's diff; `node scripts/migrate-headers.js env-check` against the two tables at the lane's base; a read of ten blocks by the controller against their rows
     revert: git revert of the squash commit (after docs-restructure, whose env section is generated from it)
+  - id: env-port-heading
+    scope: one heading above the ten sweep and monitor switches that follow CAL_BOOKING_URL, which the Cal.com heading of env-port had taken (a section runs to the next heading and variable lines never move); a fix lane, because .env.example is tier A and a tier A quick fix is a lane
+    footprint:
+      - .env.example
+    blockedBy: [env-port]
+    laws: the diff changes comment lines only (the proof); no variable line moves; no literal phone number or email address is added (D9, the pre-step)
+    lenses: none (comment-only)
+    test plan: the proof over the lane's diff; the env parser reads the new section with its ten variables and Cal.com with its two
+    revert: git revert of the squash commit (together with env-port's)
   - id: docs-restructure
     scope: README and ARCHITECTURE restructured around the six generated sections: markers placed, the hand mirrors replaced by generated output, the sections the spec names cut, the prose the spec names corrected, the route notes and schema notes sections written from the rows and paragraphs the migration did not move; docs/dev.md gains the docs section (spec 5.1, 5.2, 7)
     footprint:
       - README.md
       - ARCHITECTURE.md
       - docs/dev.md
-    blockedBy: [gen-docs, header-migration-run, env-port]
+    blockedBy: [gen-docs, header-migration-run, env-port, env-port-heading]
     laws: generated sections sit between markers and nothing outside the markers is generated (5.1); hand-written prose stays only where it explains what the code does not say (D5), and this lane cuts, moves and corrects only what this plan names, never rewrites prose by judgment; every route row at the lane's base ends above its handler or in the route notes, and every schema paragraph in the schema notes
     lenses: none (tier docs: init, select, the pre-step, finalize)
     test plan: `node scripts/gen-docs.js --check` exit 0 on the tip; `npm run docs` twice changes nothing; the section and count checks below, by the controller
@@ -222,6 +231,7 @@ The five ways this step bites, each pinned to a check:
 8. comment-proof-split after comment-proof, in parallel with everything else (its footprint is the proof module alone).
 9. gen-docs-split after gen-docs and before docs-hook (the remedy it fixes becomes reachable when the hook is live).
 10. migrate-headers-split after migrate-headers and before env-port (env-check is the port's gate, and the split lane closes its last hole).
+11. env-port-heading after env-port and before docs-restructure merges; the restructure lane rebases over it and regenerates its env section before its review.
 
 Revert in reverse dependency order: docs-hook first (it alone changes what a commit must meet), then merge-docs, then docs-restructure together with header-migration-run and env-port, then migrate-headers, then gen-docs and comment-proof.
 
@@ -402,6 +412,7 @@ Every line below is a ruling recorded in the step's ledger while a lane was buil
 - migrate-headers-split (as built, 2026-10-27; squash 78776935, receipt 8e53b9a9, tier hinge; the failing-test record is the tip's envTables suite failing 3 of 20 against main's module): a code span the number tokenizer reads as exactly one number goes through the number rule in env-check; every other span keeps the substring test. Three lenses, one pass, clean; the one note was this plan's own wording (env-port's blockedBy and the Order, corrected above). Deferred to the lane report: the date pattern's missing right boundary; a word span found inside a longer word by substring; a 7-to-9-digit or 16-plus-digit backticked run printing whole on a miss (no row holds one).
 - header-migration-run (as built, 2026-10-27; squash ec10f6da, receipt 3abeaf9f, comment-only at tier A, rerun against 78776935 after a clean rebase over the split lane, as this lane's section foresaw): run by the controller as a mechanical run of the reviewed tool; 563 files, 1,748 insertions, 0 deletions, all under server/ and client/src/, no test file; 548 headers (113 described, 435 generated) and 62 route comments in 27 files (64 rows moved, two already in place; 329 left: 293 handler commented, 27 over max, 9 no match, of which two stale rows and seven irregular cells); the dropped file in the ledger directory holds 129 lines (the 42 directory descriptions with 73 continuation lines, 4 route groups, 10 non-source files); check 2: 0 no-header lines; check 3: the client build exit 0; the pre-step clean over 563 files; the select tier A (75 tier A files, 67 B, 421 C).
 - The quick fix after comment-proof (decision 20) is done: 66ce173c on main, reviewed in the skill's quick-fix comment-only mode (receipt 3a081674, tier hinge), board-write.test.js green.
+- env-port (as built, 2026-10-28; squash e243e5aa, receipt 362ab3c9, comment-only at tier A, reviewed against 8bb2d091 after a clean rebase over the board-writer quick fix and rev 7) and its fix lane env-port-heading (squash 840a8734, receipt 5a854c1e, comment-only at tier A): the 241 rows of the two tables (README 128, CLAUDE.md 113) folded into the block above each variable, each fact once, the Required cells as phrases, a shared block's Required or Optional line naming the members it covers when the chain's phrases differ; 585 insertions and 344 deletions, comment and blank lines only, every variable line byte-identical and in place; `# REACT_APP_API_URL=` added as a commented-out line under Client (141 names). The file is at decision 6's convention: at the lane's base the generator read 2 named sections of the 21 heading lines (no blank line followed the rest); the lane brought the 21 to the convention, the implementer added four headings where a run of variables had none (Venue search, Inbox and menu art; Scheduler and outbound-send gates; Call caps and call bridges; Marketing sends), the controller added Cal.com (consult booking) above the two consult-booking variables that sat under the scheduler-controls heading, and, because a section runs to the next heading and that one also took the ten sweep and monitor switches after CAL_BOOKING_URL, the fix lane added Sweeps and monitors (per-scheduler switches) above those ten: 27 headings, each over the variables it names; the three decorated headings' em dashes became " - ". env-check: every token of 241 rows found; the generator on marker copies: 141 rows, none with an empty description; the pre-step: nothing blocking (no new phone or email shape); the ten blocks of check 5 and the two named chains read against their rows by the controller with no sentence lost. Deferred to the lane report: RUN_VA_CALLING_SCHEDULER still declared twice as an active line (the generator folds it to one row; the removal is a later one-line change to a sensitive file); one named Required line of 102 characters; ADMIN_PHONE under the Admin Seed Account heading where the base had it. The docs-restructure lane, cut from e243e5aa, rebases over the fix lane and regenerates its env section before its review.
 
 ## Report back
 
