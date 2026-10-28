@@ -1,7 +1,7 @@
 ---
 spec: docs/superpowers/specs/2026-10-19-instruction-rewrite-design.md   # rev 6; this plan is Phase 3 step 4 of section 8
 format: lane map without code (spec D12)
-revision: 2 (2026-10-27; the plan fleet folded: merge-lane.sh's regeneration as its own lane before the hook lane, so the hook lane's own merge passes the check it switches on; the two placeholder tests the proof lane replaces named; the review skill's lines written by the lanes and checked after the merge; the env table's Required cell ported into the block; the tiers as the matcher computes them today (the D11 hinge set is already hinge); the departures from section 7 named; the parallel package.json rule; the re-proof after a rebase; counts read at the lane's base; rev 1 written on Fable from the step 3 handoff)
+revision: 3 (2026-10-27; the comment-proof lane as built and reviewed, and the split lane the review bar opened: the proof reads acorn's parser token stream with acorn-jsx on .js, compares line breaks, the shebang and directive comments, reads .sql strings, identifiers and dollar bodies as code, refuses a lone CR and non-ASCII blanks, skips the generated docs; finalize holds the tier floor for the kind, never deletes its proof input, and the block prints a quick-fix key as a tree; the verdict store takes --pass or --part, not both; rev 2 the plan fleet folded: merge-lane.sh's regeneration as its own lane before the hook lane, so the hook lane's own merge passes the check it switches on; the two placeholder tests the proof lane replaces named; the review skill's lines written by the lanes and checked after the merge; the env table's Required cell ported into the block; the tiers as the matcher computes them today (the D11 hinge set is already hinge); the departures from section 7 named; the parallel package.json rule; the re-proof after a rebase; counts read at the lane's base; rev 1 written on Fable from the step 3 handoff)
 status: written 2026-10-27; reviewed by the plan fleet (fidelity, decomposition, both on Fable) and folded as rev 2; shown to Dallas before any lane is cut (spec section 8, his instruction); not built until he says go. Execution model, stated once: each lane is built by an opus implementer from this plan in its own worktree, the controller verifies every acceptance check itself, the review skill runs per lane at the tier it computes and writes the receipt (the two one-shot lanes finalize as comment-only on the proof), then the lane merges through merge-lane.sh from os; no per-task reviewers (spec D14)
 lanes:
   - id: comment-proof
@@ -24,6 +24,17 @@ lanes:
     lenses: hinge floor (scripts/lib/**, package.json, the skill file are on the matcher's hinge set today): seams, access-egress; schema-data (scripts/ path); outcomes-providers (catch, exit codes)
     test plan: the sibling suites over fixture files and throwaway repos; the real proof over this lane's own diff must say not comment-only (it adds code)
     revert: git revert of the squash commit (after header-migration-run and env-port, whose receipts cite it, and the board-writer quick fix)
+  - id: comment-proof-split
+    scope: the two reachable proof gaps left open after the comment-proof lane's second fix re-pass, split under the review bar into their own reviewed change: nested block comments in the .sql reader counted by depth as Postgres does, and directive comments compared in place rather than as a multiset
+    footprint:
+      - scripts/lib/commentOnly.js
+      - scripts/lib/commentOnly.test.js
+      - scripts/comment-only-proof.js  (the header only)
+    blockedBy: [comment-proof]
+    laws: the same as comment-proof's; a finding reachable after a lane's second re-pass is fixed in its own lane, never a third round and never left confirmed in a merged receipt (D14 as amended)
+    lenses: hinge floor (scripts/lib/**): seams, access-egress; schema-data (scripts/ path); outcomes-providers (catch)
+    test plan: the two sibling suites; each fix's test shown failing on the code before it; the proof over the lane's own range says NO
+    revert: git revert of the squash commit
   - id: gen-docs
     scope: the generator of spec 5.1 behind npm run docs, with --check and --staged and --ref, over six sections (tree, scripts, env in README; routes, schema, agents in ARCHITECTURE), reading through git so the index and a commit read right, and the one header rule every other lane uses
     footprint:
@@ -188,6 +199,7 @@ The five ways this step bites, each pinned to a check:
 5. merge-docs after docs-restructure (its regeneration needs the markers on main).
 6. docs-hook last, after merge-docs.
 7. The board-writer comment quick fix (decision 20) any time after comment-proof merges.
+8. comment-proof-split after comment-proof, in parallel with everything else (its footprint is the proof module alone).
 
 Revert in reverse dependency order: docs-hook first (it alone changes what a commit must meet), then merge-docs, then docs-restructure together with header-migration-run and env-port, then migrate-headers, then gen-docs and comment-proof.
 
@@ -328,6 +340,21 @@ Cut after gen-docs, header-migration-run and env-port have merged. **README.md**
 ## The quick fix after comment-proof
 
 On main, the comment above board-write.sh's moved-origin ending (the five lines that end "so this line names the merge instead of saying the commit rides the next ship") says: a rejected push stops and reports under the git-safety invariant; nothing is pulled, rebased or shipped again; the board commit stays local until a person rebases main onto origin/main by hand, so this line names that rebase. Reviewed through the skill's quick-fix mode with `comment-only-proof.js --staged` and `finalize --kind comment-only --proof`, committed with the block. `node --test scripts/board-write.test.js` stays green.
+
+## Lane: comment-proof-split
+
+Cut from main at the comment-proof squash. **`scripts/lib/commentOnly.js`**: `sqlParts` counts block-comment depth as the Postgres lexer does (an inner `/*` raises it, each `*/` lowers it, the comment ends at depth zero, an unclosed one stays code to the end of the file); `compareJs` records each directive comment with its anchor (the token count when acorn reports it, and whether 0, 1 or more line breaks separate it from the previous and the next token) and compares the ordered sequences. **`scripts/comment-only-proof.js`**: the header names both rules and the two known shell limits.
+
+**Acceptance checks**
+
+1. `node --test scripts/lib/commentOnly.test.js` and `scripts/comment-only-proof.test.js` pass, with the new cases: a block comment holding an inner opener added above a statement is not ok; `/* a /* b */ -- c */ DROP TABLE x;` added is not ok; a properly nested comment closing at depth zero with nothing after it is ok; a comment line inserted directly under an `eslint-disable-next-line` is not ok; a `/*#__PURE__*/` moved between two calls is not ok; a trailing `eslint-disable-line` moved onto its own line is not ok; a prose comment added two lines above a directive is ok. Each not-ok case returns ok on the code before the fix (the report pastes the old-code fail counts).
+2. `node scripts/comment-only-proof.js --base <base> --tip <tip>` over the lane's own range says NO.
+
+## Amendments (as built)
+
+Every line below is a ruling recorded in the step's ledger while a lane was built or reviewed; the later lanes read the contracts as amended here. Where a contract line above and a line here differ, the line here is what was built.
+
+- comment-proof (as built, 2026-10-27; squash ac781a4e, receipt 92d696ab, tier hinge): the JS proof reads acorn's parser token stream through `onToken`, not the bare tokenizer (which reads a regex as a division and a `//` comment); acorn-jsx is used for `.js` as well as `.jsx` (472 of the 1,890 tracked source files hold JSX); the proof also compares whether a line break precedes each token (automatic semicolon insertion) and the shebang line; the directive comments a build or lint reads (`@jsx`, `@jsxRuntime`, `@jsxImportSource`, `@jsxFrag`, `__PURE__`, `__NO_SIDE_EFFECTS__`, `webpack` followed by a capital, and ESLint's `eslint`, `eslint-*`, `global`, `globals`, `exported` comments) are compared, as a multiset until the split lane makes it in place; a parse failure's reason names the error class and position only. The `.sql` rule reads a comment only outside single-quoted strings, double-quoted identifiers and dollar-quoted bodies, which are compared byte for byte; only Postgres's six blank characters fold; nested block comments are the split lane's. The `.sh` rule reads a line after an unescaped trailing backslash, and after a joined line ending in one, as code, a blank or `#` line included; the `.sh` and `.env.example` rules take leading and trailing blanks as space and tab only. Any side of a `.sql`, `.sh` or `.env.example` file holding a lone carriage return is refused (Postgres ends a `--` comment at it). The diff is listed with `git diff --raw -z --no-renames` (a mode change is seen); both sides are read in one `git cat-file --batch`; in staged mode the proof records `base` (HEAD) and `tree`, and `tip` is null; the generated docs are skipped as the receipt key skips them and listed under `skipped`, and a proof over nothing but them is NO. finalize: the tier floor holds for comment-only as for every kind (so a comment-only edit to a tier A file is a lane, never a quick fix, spec 4.2); a quick-fix proof's base is checked too; `proof.json` is written by review-receipt.js (receiptPublish.js is outside the footprint; its `proof.txt` branch is dead); the `--proof` input is never deleted, only a copy made elsewhere is removed on a publish failure. receipt.js was added to the footprint by controller ruling: the commit block prints a quick-fix comment-only key as a tree, by the receipt's recorded mode. The skill's comment-only line runs the pre-step, review-select for the tier alone, the proof, then finalize with `--tier`, `--base` and `--reviewed-against`, and says a tier A quick fix is a lane. Two reachable findings raised after the second re-pass were split into lane comment-proof-split (nested block comments; directives compared in place). Deferred to the lane report: the shell multi-line-string and heredoc shapes, the dead `proof.txt` branch, a stray `proof.json` in a lane receipt (inert), and the pre-step result untied to the keyed tree (every kind, pre-existing). Review tooling: the verdict store takes `--pass` or `--part`, never both, so a re-pass over a split brief is stored as consecutive passes; a lens report whose closure bullets open with a bold id is malformed for the store and is re-emitted as the next pass.
 
 ## Report back
 
