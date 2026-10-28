@@ -52,10 +52,26 @@
  * run docs`, or `npm run docs -- --staged`, which stages both docs itself; a
  * marker problem or an unparsed route alone never names the regeneration);
  * exit 1. Silent exit 0 when clean. Under a pathspec commit (GIT_INDEX_FILE
- * set to a temporary index, not <git dir>/index or its lock) the regeneration
- * remedy also says to name README.md and ARCHITECTURE.md in the commit's
- * pathspec, and one line counts the source files the real index has staged
- * that this commit does not carry.
+ * set to a temporary index, not <git dir>/index or its lock), which takes the
+ * commit's paths from the working tree while --staged renders the real index,
+ * the regeneration remedy reads `git add -- <paths>, then npm run docs --
+ * --staged, then name README.md and ARCHITECTURE.md in the commit's
+ * pathspec`: <paths> are every path the commit carries, of any kind, in byte
+ * order (adding an unchanged one does nothing), so a header or route fix the
+ * same line orders first is staged too. A deletion the real index still holds
+ * (the file removed from the working tree only) is named, since git add stages
+ * its removal; a path absent from both the temporary and the real index (a
+ * removal already staged: git rm, or the old name of a git mv) is left out,
+ * since git add fails on it. The add clause is left out when nothing is left
+ * to name. When a section is stale (and only then, the one case where the
+ * regeneration would render them), the staged paths the commit does not carry
+ * are judged by rendering, never by a path list: HEAD, the commit's entries
+ * and theirs go into a scratch index under the temp dir (removed after), and
+ * when its render changes a section, or one of them is a doc whose prose
+ * outside the markers changes, one line before the run line reads `<n>
+ * staged file(s) this commit does not carry change the docs; commit or
+ * unstage them first` (n counts them all; `may change the docs` and the
+ * reason when the render fails). They are never named in the git add clause.
  *
  * --readme <path>, --arch <path>: read and write these copies instead of the
  * repo's two docs (no `git add` for them); every other input is unchanged. A
@@ -72,6 +88,7 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 
@@ -233,13 +250,33 @@ function docsCommand(o) {
   return flags.length ? `npm run docs -- ${flags.join(' ')}` : 'npm run docs';
 }
 
+// One path as a shell word: bare when it holds only safe characters, else in
+// single quotes.
+function shellWord(p) {
+  return /^[\w./@%+=:,-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`;
+}
+
 // A pathspec commit (`git commit -- <paths>`) runs its hook against a
 // temporary index: GIT_INDEX_FILE set and resolving to neither <git dir>/index
 // nor its index.lock (commit -a and -i use that one, which becomes the real
-// index). There, `--staged` stages into the real index, which this commit
-// does not read, so the remedy must name the docs in the pathspec. foreign
-// counts the source files the real index has staged (differing from HEAD)
-// that the temporary index does not hold. Null outside such a commit.
+// index). It holds HEAD plus the commit's paths as the working tree has them,
+// while `--staged` renders from and stages into the real index, which this
+// commit does not read. So the remedy stages the commit's own paths first:
+// add lists, in byte order, every path the commit carries (its entry in the
+// temporary index differs from HEAD's), any kind of file, since package.json,
+// an agent file or a shell header feed the docs as a source file does. It
+// names them all, not only those the real index holds at another version: the
+// header or route fix the same run line orders first changes a file after this
+// check, and adding an unchanged path does nothing. A carried path absent from
+// both the temporary and the real index is left out: its removal is already
+// staged (git rm, a git mv's old name) and git add would fail on it, staging
+// none of the paths named with it; a deletion the real index still holds stays
+// in, since git add stages its removal. own holds the commit's
+// entries ([path, 'mode id'], or no entry for a deletion); others holds the
+// real index's entries for the staged paths the commit does not carry (the
+// temporary index holds HEAD's entry, or none), of any kind, which
+// othersChangeDocs judges; a path of the commit is never among them. Null
+// outside such a commit.
 function pathspecCommit(top) {
   const env = process.env.GIT_INDEX_FILE;
   if (!env) return null;
@@ -259,11 +296,62 @@ function pathspecCommit(top) {
   }));
   const temp = entries(run(['ls-files', '-s', '-z']), true);
   const staged = entries(run(['ls-files', '-s', '-z'], { GIT_INDEX_FILE: real }), true);
-  let head = new Map();
-  if (spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: top }).status === 0) head = entries(run(['ls-tree', '-r', '-z', 'HEAD']), false);
-  const paths = new Set([...staged.keys(), ...head.keys()]);
-  const foreign = [...paths].filter((p) => isSource(p) && staged.get(p) !== head.get(p) && staged.get(p) !== temp.get(p)).length;
-  return { foreign };
+  const born = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: top }).status === 0;
+  const head = born ? entries(run(['ls-tree', '-r', '-z', 'HEAD']), false) : new Map();
+  const paths = [...new Set([...temp.keys(), ...staged.keys(), ...head.keys()])].sort(source.byteOrder);
+  const carried = (p) => temp.get(p) !== head.get(p);
+  return {
+    born,
+    add: paths.filter((p) => carried(p) && (temp.has(p) || staged.has(p))),
+    own: paths.filter(carried).map((p) => [p, temp.get(p)]),
+    others: paths.filter((p) => !carried(p) && staged.get(p) !== head.get(p)).map((p) => [p, staged.get(p)]),
+  };
+}
+
+// The text of a doc with every generated section's body emptied (what
+// --generated-only compares), or null on a marker problem.
+function prose(text, doc) {
+  return markers.DOC_SECTIONS[doc].reduce((t, s) => (t == null ? null : markers.blankSection(t, s)), text);
+}
+
+// Whether the staged paths a pathspec commit does not carry change the docs.
+// The real index as the remedy leaves it (HEAD, the commit's own entries, then
+// theirs) is built in a scratch index under the temp dir, the way stage()
+// writes entries, and rendered; true when a section differs from the commit's
+// own render, or one of them is a doc whose prose outside the markers differs.
+// The scratch index is removed and GIT_INDEX_FILE restored on every way out.
+function othersChangeDocs(src, rendered, pc) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-docs-index-'));
+  const index = path.join(dir, 'index');
+  const saved = process.env.GIT_INDEX_FILE;
+  try {
+    const git = (args, input) => execFileSync('git', ['-c', 'core.splitIndex=false', ...args], {
+      cwd: src.top, input, env: { ...process.env, GIT_INDEX_FILE: index }, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 * 1024,
+    });
+    git(pc.born ? ['read-tree', 'HEAD'] : ['read-tree', '--empty']);
+    const entries = [...pc.own, ...pc.others];
+    const put = entries.filter(([, e]) => e).map(([p, e]) => `${e} 0\t${p}\0`).join('');
+    if (put) git(['update-index', '-z', '--index-info'], put);
+    const gone = entries.filter(([, e]) => !e).map(([p]) => `${p}\0`).join('');
+    if (gone) git(['update-index', '--force-remove', '-z', '--stdin'], gone);
+    process.env.GIT_INDEX_FILE = index;
+    const scratch = source.open({ mode: 'staged', cwd: src.top });
+    const theirs = renderAll(scratch);
+    if (Object.keys(rendered.sections).some((s) => theirs.sections[s] !== rendered.sections[s])) return true;
+    return pc.others.some(([p]) => {
+      if (!DOCS.includes(p)) return false;
+      const ours = src.read(p);
+      const next = scratch.read(p);
+      if (ours === next) return false;
+      const a = ours == null ? null : prose(ours, p);
+      const b = next == null ? null : prose(next, p);
+      return a == null || b == null || a !== b;
+    });
+  } finally {
+    if (saved === undefined) delete process.env.GIT_INDEX_FILE;
+    else process.env.GIT_INDEX_FILE = saved;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function check(o, src, io) {
@@ -291,11 +379,29 @@ function check(o, src, io) {
   if (rendered.unparsed.length) {
     remedies.push(`rewrite the route registration at ${rendered.unparsed.map((u) => `${u.file}:${u.line}`).join(', ')} so the walker can read it`);
   }
-  const pathspec = src.mode === 'staged' ? pathspecCommit(src.top) : null;
-  if (out.stale.length) remedies.push(pathspec ? `${docsCommand(o)}, then name README.md and ARCHITECTURE.md in the commit's pathspec` : docsCommand(o));
-  const foreign = pathspec && pathspec.foreign
-    ? [`${pathspec.foreign} source file(s) staged by another window are not in this commit; commit or unstage them first`] : [];
-  io.stdout.write(`${[...lines, ...foreign, `run: ${remedies.join(', then ')}`].join('\n')}\n`);
+  // The pathspec remedy and the count line below concern only the
+  // regeneration, so a refusal with no stale section (a marker, a header or an
+  // unparsed route alone) reads neither index again nor renders anything.
+  const pathspec = src.mode === 'staged' && out.stale.length ? pathspecCommit(src.top) : null;
+  if (pathspec) {
+    if (pathspec.add.length) remedies.push(`git add -- ${pathspec.add.map(shellWord).join(' ')}`);
+    remedies.push(docsCommand(o), "name README.md and ARCHITECTURE.md in the commit's pathspec");
+  } else if (out.stale.length) remedies.push(docsCommand(o));
+  // Staged paths this commit does not carry are named only when a section is
+  // stale and they change the docs: the regeneration would render them, and
+  // the retried commit would not hold them (a loop), or would take a doc's
+  // prose it never reviewed.
+  const others = pathspec ? pathspec.others.length : 0;
+  let verdict = null;
+  if (others) {
+    try {
+      verdict = othersChangeDocs(src, rendered, pathspec) ? 'change the docs' : null;
+    } catch (err) {
+      verdict = `may change the docs (they could not be rendered: ${String(err.message).trim().split('\n')[0]})`;
+    }
+  }
+  const count = verdict ? [`${others} staged file(s) this commit does not carry ${verdict}; commit or unstage them first`] : [];
+  io.stdout.write(`${[...lines, ...count, `run: ${remedies.join(', then ')}`].join('\n')}\n`);
   return 1;
 }
 

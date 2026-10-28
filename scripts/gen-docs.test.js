@@ -421,45 +421,204 @@ test('--ref renders that commit alone; it is read-only', (t) => {
   assert.equal(run(dir, '--check', '--ref', 'no-such-commit').code, 1);
 });
 
-test("a pathspec commit's hook reads the temporary index", (t) => {
+// A current fixture repo whose pre-commit hook runs --check --staged.
+function hooked(t) {
   const dir = current(t);
   const hook = path.join(dir, '.git', 'hooks', 'pre-commit');
   fs.mkdirSync(path.dirname(hook), { recursive: true });
   fs.writeFileSync(hook, `#!/bin/sh\nexec "${process.execPath}" "${CLI}" --check --staged\n`, { mode: 0o755 });
+  return dir;
+}
+
+// A pathspec commit (`git commit -- <paths>`); said is what the hook printed.
+const commitPaths = (dir, msg, paths) => ((r) => ({ status: r.status, said: r.stdout + r.stderr }))(
+  spawnSync('git', ['commit', '-q', '-m', msg, '--', ...paths], { cwd: dir, encoding: 'utf8' }));
+// The same commit, which the hook must refuse.
+const refuse = (...a) => { const r = commitPaths(...a); assert.notEqual(r.status, 0, 'the hook let the commit through'); return r; };
+// Writes files and stages them.
+const stage = (dir, files) => { put(dir, files); git(dir, 'add', '--', ...Object.keys(files)); };
+
+const ITEM = 'server/routes/item.js';
+const TOOL = 'scripts/tool.js';
+const renamed = (dir, how) => read(dir, ITEM).replace('// The item routes.', `// The item routes, ${how}.`);
+const PATHSPEC_TAIL = "npm run docs -- --staged, then name README.md and ARCHITECTURE.md in the commit's pathspec";
+const COUNT_TAIL = 'staged file(s) this commit does not carry change the docs; commit or unstage them first';
+const PATHSPEC_RUN = /^run: (?:(?:add a header comment|place the markers by hand) \(see docs\/dev\.md\), then |rewrite the route registration at .+? so the walker can read it, then )*(?:git add -- (.+), then )?npm run docs -- --staged, then name README\.md and ARCHITECTURE\.md in the commit's pathspec$/m;
+const runLine = (said) => (said.match(/^run: .*$/m) || [''])[0];
+// The words of a printed git add clause: bare, or single-quoted with '\'' for a quote.
+const words = (s) => [...s.matchAll(/(?:'[^']*'|\\'|[^\s'\\])+/g)].map((m) => m[0].replace(/'([^']*)'|\\'/g, (q, inner) => inner ?? "'"));
+
+// Follows a refused pathspec commit's printed lines exactly, round after
+// round: settle() (the other window commits or unstages its work) once a
+// count line is printed, then the run line's git add clause, the staged
+// regeneration, and the same commit with both docs added to its pathspec.
+// Returns the number of commits tried until one went through; a round refused
+// with the run line of the round before is a loop and fails.
+function follow(dir, refused, msg, paths, settleOnce) {
+  let said = refused.said;
+  let settle = settleOnce;
+  for (let round = 1; round <= 3; round += 1) {
+    if (settle && said.includes(COUNT_TAIL)) { settle(); settle = null; }
+    const m = PATHSPEC_RUN.exec(said);
+    assert.ok(m, `no pathspec remedy in:\n${said}`);
+    if (m[1]) git(dir, 'add', '--', ...words(m[1]));
+    const regen = run(dir, '--staged');
+    assert.equal(regen.code, 0, `the regeneration the remedy names failed:\n${regen.out}${regen.err}`);
+    const again = commitPaths(dir, msg, [...paths, 'README.md', 'ARCHITECTURE.md']);
+    if (again.status === 0) return round;
+    assert.notEqual(runLine(again.said), runLine(said), `following the printed remedy looped: refused again with the same run line\n${again.said}`);
+    said = again.said;
+  }
+  return Infinity;
+}
+
+test("a pathspec commit's hook reads the temporary index", (t) => {
+  const dir = hooked(t);
   // The real index holds a new file and a stale README; the pathspec commit's
   // temporary index holds the new file and the regenerated README.
-  put(dir, { 'server/feature.js': '// The feature.\n' });
-  git(dir, 'add', '--', 'server/feature.js');
+  stage(dir, { 'server/feature.js': '// The feature.\n' });
   assert.equal(run(dir).code, 0);
   assert.equal(run(dir, '--check', '--staged').code, 1);
-  const ok = spawnSync('git', ['commit', '-q', '-m', 'feature', '--', 'server/feature.js', 'README.md'], { cwd: dir, encoding: 'utf8' });
-  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const ok = commitPaths(dir, 'feature', ['server/feature.js', 'README.md']);
+  assert.equal(ok.status, 0, ok.said);
   // A header edit committed by pathspec without the regenerated README.
   put(dir, { 'server/feature.js': '// The feature, renamed.\n' });
-  const refused = spawnSync('git', ['commit', '-q', '-m', 'rename', '--', 'server/feature.js'], { cwd: dir, encoding: 'utf8' });
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.stdout + refused.stderr, /stale: README\.md gen:tree/);
+  assert.equal(refuse(dir, 'rename', ['server/feature.js']).said, `stale: README.md gen:tree\nrun: git add -- server/feature.js, then ${PATHSPEC_TAIL}\n`);
 });
 
-test("under a pathspec commit the remedy names the pathspec, and counts source staged outside it", (t) => {
-  const dir = current(t);
-  const hook = path.join(dir, '.git', 'hooks', 'pre-commit');
-  fs.mkdirSync(path.dirname(hook), { recursive: true });
-  fs.writeFileSync(hook, `#!/bin/sh\nexec "${process.execPath}" "${CLI}" --check --staged\n`, { mode: 0o755 });
-  put(dir, { 'server/routes/item.js': read(dir, 'server/routes/item.js').replace('// The item routes.', '// The item routes, renamed.') });
-  const commit = () => spawnSync('git', ['commit', '-q', '-m', 'rename', '--', 'server/routes/item.js'], { cwd: dir, encoding: 'utf8' });
-  const first = commit();
-  assert.notEqual(first.status, 0);
-  const said = first.stdout + first.stderr;
-  assert.match(said, /stale: README\.md gen:tree/);
-  assert.match(said, /run: npm run docs -- --staged, then name README\.md and ARCHITECTURE\.md in the commit's pathspec\n/);
-  assert.ok(!said.includes('staged by another window'));
-  put(dir, { 'server/other.js': '// Other.\n' });
-  git(dir, 'add', '--', 'server/other.js');
-  const second = commit();
-  assert.notEqual(second.status, 0);
-  assert.match(second.stdout + second.stderr, /\n1 source file\(s\) staged by another window are not in this commit; commit or unstage them first\nrun: /);
+test('under a pathspec commit the remedy names the pathspec, and counts staged files outside it that change the docs', (t) => {
+  const dir = hooked(t);
+  put(dir, { [ITEM]: renamed(dir, 'renamed') });
+  const said = () => refuse(dir, 'rename', [ITEM]).said;
+  assert.equal(said(), `stale: README.md gen:tree\nrun: git add -- ${ITEM}, then ${PATHSPEC_TAIL}\n`);
+  // Staged work this commit does not carry: a new source file, then an edit to
+  // a tracked one (the temporary index holds HEAD's version of it).
+  stage(dir, { 'server/other.js': '// Other.\n' });
+  assert.equal(said(), `stale: README.md gen:tree\n1 ${COUNT_TAIL}\nrun: git add -- ${ITEM}, then ${PATHSPEC_TAIL}\n`);
+  stage(dir, { 'server/middleware/auth.js': read(dir, 'server/middleware/auth.js').replace('// The auth guard.', '// The auth guard, edited.') });
+  assert.equal(said(), `stale: README.md gen:tree\n2 ${COUNT_TAIL}\nrun: git add -- ${ITEM}, then ${PATHSPEC_TAIL}\n`);
   assert.equal(run(dir, '--check', '--staged').out.includes('pathspec'), false);
+});
+
+const addScript = (dir) => {
+  const pkg = JSON.parse(read(dir, 'package.json'));
+  pkg.scripts.check = 'node scripts/tool.js';
+  put(dir, { 'package.json': `${JSON.stringify(pkg, null, 2)}\n` });
+};
+
+// The commit's own paths: an edit unstaged or staged at an older version, its
+// own non-source input, and deletions. The add clause names each path the
+// real or temporary index holds; a removal already staged (git rm, a git mv's
+// old name) is left out, since git add fails on it. Following the printed
+// line commits on the first try.
+const NO_TOOL = /^(?![\s\S]*tool\.js)/; // a README that no longer names tool.js
+const OWN = [
+  ['an unstaged edit', [ITEM], (dir) => put(dir, { [ITEM]: renamed(dir, 'renamed') }), 'README.md gen:tree', ITEM, /item\.js\s+# The item routes, renamed\./],
+  ['a file staged at an older version', [ITEM], (dir) => {
+    const later = renamed(dir, 'edited again');
+    stage(dir, { [ITEM]: renamed(dir, 'staged first') });
+    put(dir, { [ITEM]: later });
+  }, 'README.md gen:tree', ITEM, /item\.js\s+# The item routes, edited again\./],
+  ['its own non-source input (package.json)', ['package.json'], addScript, 'README.md gen:scripts', 'package.json', /\| `check` \| `node scripts\/tool\.js` \|/],
+  ['an unstaged deletion', [TOOL], (dir) => fs.rmSync(path.join(dir, TOOL)), 'README.md gen:tree', TOOL, NO_TOOL],
+  ['a staged deletion (git rm)', [TOOL], (dir) => git(dir, 'rm', '-q', '--', TOOL), 'README.md gen:tree', '', NO_TOOL],
+  ['a git mv with an edit to the new name', [TOOL, 'scripts/helper.js'], (dir) => {
+    git(dir, 'mv', '--', TOOL, 'scripts/helper.js');
+    put(dir, { 'scripts/helper.js': read(dir, 'scripts/helper.js').replace('// A tool.', '// A helper.') });
+  }, 'README.md gen:tree', 'scripts/helper.js', /helper\.js\s+# A helper\./],
+];
+for (const [what, paths, edit, stale, add, shows] of OWN) {
+  test(`a pathspec commit of ${what}: the add clause names what git add can stage, and the remedy commits on the first try`, (t) => {
+    const dir = hooked(t);
+    edit(dir);
+    const first = refuse(dir, 'own', paths);
+    assert.equal(follow(dir, first, 'own', paths), 1);
+    assert.equal(first.said, `stale: ${stale}\nrun: ${add ? `git add -- ${add}, then ` : ''}${PATHSPEC_TAIL}\n`);
+    assert.match(git(dir, 'show', 'HEAD:README.md'), shows);
+    assert.equal(git(dir, 'status', '--porcelain'), '');
+  });
+}
+
+// Another window's staged work that changes the docs. Each looped the remedy
+// unnamed (the README prose rode into this commit) before the count line was
+// judged by a render.
+const OTHER_WINDOW = [
+  ['package.json script', 'package.json', addScript],
+  ['schema.sql line', 'server/db/schema.sql', (dir) => put(dir, { 'server/db/schema.sql': `${read(dir, 'server/db/schema.sql')}\n-- One row per note.\nCREATE TABLE IF NOT EXISTS notes (\n  id SERIAL PRIMARY KEY,\n  note TEXT\n);\n` })],
+  ['agent file', '.claude/agents/other.md', (dir) => put(dir, { '.claude/agents/other.md': '---\nname: other\ndescription: Another lens.\nmodel: opus\n---\n' })],
+  ['new non-source file under server/', 'server/assets/chime.mp3', (dir) => put(dir, { 'server/assets/chime.mp3': 'not audio\n' })],
+  ['README prose edit outside the markers', 'README.md', (dir) => put(dir, { 'README.md': read(dir, 'README.md').replace('Hand prose above.', 'Hand prose above, from another window.') })],
+];
+for (const [what, file, edit] of OTHER_WINDOW) {
+  test(`another window's staged ${what} is counted, and once settled the run line commits on the first try`, (t) => {
+    const dir = hooked(t);
+    edit(dir);
+    git(dir, 'add', '--', file);
+    put(dir, { [ITEM]: renamed(dir, 'renamed') });
+    const first = refuse(dir, 'rename', [ITEM]);
+    // The other window commits its README (unstaged in a shared checkout, the
+    // edit would block --staged) and unstages anything else.
+    const settle = () => (file === 'README.md' ? assert.equal(commitPaths(dir, 'prose', [file]).status, 0) : git(dir, 'restore', '--staged', '--', file));
+    assert.equal(follow(dir, first, 'rename', [ITEM], settle), 1);
+    assert.doesNotMatch(git(dir, 'diff', 'HEAD~1', 'HEAD', '--', 'README.md'), /^\+.*another window/m, "the other window's prose rode into this commit");
+    assert.equal(first.said, `stale: README.md gen:tree\n1 ${COUNT_TAIL}\nrun: git add -- ${ITEM}, then ${PATHSPEC_TAIL}\n`);
+  });
+}
+
+test("a refusal with no stale section neither renders nor counts another window's staged files", (t) => {
+  const dir = hooked(t);
+  addScript(dir);
+  git(dir, 'add', '--', 'package.json');
+  put(dir, { 'README.md': read(dir, 'README.md').replace('<!-- /gen:env -->\n', '') });
+  assert.equal(refuse(dir, 'marker', ['README.md']).said, 'marker: README.md gen:env missing\nrun: place the markers by hand (see docs/dev.md)\n');
+});
+
+test("another window's staged test file under a root, or doc under docs/, changes no doc and is not counted", (t) => {
+  for (const [file, body] of [['server/routes/item.test.js', '// The item tests.\n'], ['docs/specs/new-spec.md', '# A new spec\n']]) {
+    const dir = hooked(t);
+    stage(dir, { 'docs/first.md': '# First\n' });
+    assert.equal(run(dir, '--staged').code, 0);
+    git(dir, 'commit', '-q', '-m', 'docs dir');
+    stage(dir, { [file]: body });
+    put(dir, { [ITEM]: renamed(dir, 'renamed') });
+    const first = refuse(dir, 'rename', [ITEM]);
+    assert.equal(follow(dir, first, 'rename', [ITEM]), 1, file);
+    assert.equal(first.said, `stale: README.md gen:tree\nrun: git add -- ${ITEM}, then ${PATHSPEC_TAIL}\n`, file);
+    assert.equal(git(dir, 'diff', '--cached', '--name-only'), file);
+  }
+});
+
+test('a header-less new file committed by pathspec is in the add clause, so once the header is added the line commits on the first try', (t) => {
+  const dir = hooked(t);
+  const file = 'server/new item.js';
+  stage(dir, { [file]: 'module.exports = 1;\n' });
+  const first = refuse(dir, 'new', [file]);
+  put(dir, { [file]: '// The new item.\nmodule.exports = 1;\n' });
+  assert.equal(follow(dir, first, 'new', [file]), 1, 'commits tried after the first refusal');
+  assert.equal(first.said, `stale: README.md gen:tree\nno header: ${file}\nrun: add a header comment (see docs/dev.md), then git add -- '${file}', then ${PATHSPEC_TAIL}\n`);
+  assert.match(git(dir, 'show', 'HEAD:README.md'), /new item\.js\s+# The new item\./);
+});
+
+test('staged files the render cannot judge are counted as may-change, and the stale and run lines still print', (t) => {
+  const dir = hooked(t);
+  // A temp dir that is not there, for the scratch index, fails the render.
+  fs.writeFileSync(path.join(dir, '.git', 'hooks', 'pre-commit'), `#!/bin/sh\nTMPDIR="${path.join(dir, 'no-such-dir')}" exec "${process.execPath}" "${CLI}" --check --staged\n`, { mode: 0o755 });
+  stage(dir, { 'server/other.js': '// Other.\n' });
+  put(dir, { [ITEM]: renamed(dir, 'renamed') });
+  assert.match(refuse(dir, 'rename', [ITEM]).said, /^stale: README\.md gen:tree\n1 staged file\(s\) this commit does not carry may change the docs \(they could not be rendered: ENOENT[^\n]*\); commit or unstage them first\nrun: git add -- server\/routes\/item\.js, then npm run docs/);
+});
+
+test("the CLI's header documents the lines a pathspec commit prints", (t) => {
+  const dir = hooked(t);
+  stage(dir, { 'server/other.js': '// Other.\n' });
+  put(dir, { [ITEM]: renamed(dir, 'renamed') });
+  const refused = refuse(dir, 'rename', [ITEM]);
+  const count = (refused.said.match(new RegExp(`^\\d+ ${COUNT_TAIL.replace(/[().]/g, '\\$&')}$`, 'm')) || [''])[0].replace(/^\d+/, '<n>');
+  const printed = runLine(refused.said).replace(/^run: git add -- .+?, then /, 'git add -- <paths>, then ');
+  assert.ok(count && printed.startsWith('git add -- <paths>, then '), refused.said);
+  const text = fs.readFileSync(CLI, 'utf8');
+  const header = text.slice(text.indexOf('/*'), text.indexOf('\n */')).replace(/^\s*\*\s?/gm, ' ').replace(/`/g, '').replace(/\s+/g, ' ');
+  for (const line of [count, printed]) assert.ok(header.includes(line), `the header of gen-docs.js does not document: ${line}`);
 });
 
 test('--generated-only: 0 for a lane head that changed only generated sections, 1 for one that changed prose', (t) => {
