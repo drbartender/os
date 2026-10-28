@@ -168,6 +168,42 @@ test('an ESLint configuration comment, added, removed or changed, is a directive
   assert.strictEqual(compareFile(b, `// eslintrc lives at the root\n// Global state, explained\n${b}`, 'client/src/x.js').ok, true, 'prose');
 });
 
+test('a directive comment is compared in place: the token after it, and the line an ESLint -line or -next-line comment covers', () => {
+  const directive = { ok: false, reason: 'a comment that is a compiler directive changed' };
+  const ok = { ok: true, reason: null };
+  for (const ext of JS_EXTS) {
+    const file = `client/src/item${ext}`;
+    // ESLint covers the line after a -next-line comment, so a line put under
+    // it moves the cover off the code.
+    const next = edit(base(ext), 'const n = 1;', '// eslint-disable-next-line react-hooks/exhaustive-deps\nconst n = 1;');
+    assert.deepStrictEqual(compareFile(next, edit(next, 'exhaustive-deps\n', 'exhaustive-deps\n// a note on the line\n'), file), directive, `${ext} a comment line under an eslint-disable-next-line`);
+    assert.deepStrictEqual(compareFile(next, edit(next, 'exhaustive-deps\n', 'exhaustive-deps\n\n'), file), directive, `${ext} a blank line under it`);
+    assert.deepStrictEqual(compareFile(next, edit(next, 'const re =', '// The pattern.\nconst re ='), file), ok, `${ext} prose two lines above it`);
+    // Lines above a directive never change what it covers.
+    assert.deepStrictEqual(compareFile(next, edit(next, '// eslint-disable-next-line', '// Why the rule is off here.\n// eslint-disable-next-line'), file), ok, `${ext} an explanation line directly above it`);
+    // A block -next-line comment with code after it on its line covers the
+    // line after that one.
+    const inline = edit(base(ext), 'const n = 1;', '/* eslint-disable-next-line no-unused-vars */ const n = 1;\nauth(n);');
+    for (const [what, put] of [['a blank line', '\n'], ['a comment line', '// why\n']]) {
+      const spaced = edit(inline, 'const n = 1;\nauth(n);', `const n = 1;\n${put}auth(n);`);
+      assert.deepStrictEqual(compareFile(inline, spaced, file), directive, `${ext} ${what} put between its line and the covered one`);
+      assert.deepStrictEqual(compareFile(spaced, inline, file), directive, `${ext} ${what} taken out from between them`);
+    }
+    // A pure annotation marks the call after it.
+    const pure = edit(base(ext), 'const n = 1;', 'const n = 1;\nconst a = /*#__PURE__*/ auth(1);\nconst b = auth(2);');
+    const moved = edit(edit(pure, '/*#__PURE__*/ auth(1)', 'auth(1)'), '= auth(2)', '= /*#__PURE__*/ auth(2)');
+    assert.deepStrictEqual(compareFile(pure, moved, file), directive, `${ext} __PURE__ moved to another call`);
+    // An -line comment covers its own line.
+    const line = edit(base(ext), 'const n = 1;', 'const n = 1; // eslint-disable-line no-unused-vars');
+    assert.deepStrictEqual(compareFile(line, edit(line, 'const n = 1; //', 'const n = 1;\n//'), file), directive, `${ext} eslint-disable-line moved onto its own line below`);
+    assert.deepStrictEqual(compareFile(line, edit(line, 'const n = 1; // eslint-disable-line no-unused-vars', '// eslint-disable-line no-unused-vars\nconst n = 1;'), file), directive, `${ext} moved onto its own line above`);
+    assert.deepStrictEqual(compareFile(line, edit(line, 'const n = 1; //', '\n// A note.\nconst n = 1; //'), file), ok, `${ext} lines added above the line it covers`);
+  }
+  // After the last token, lines are free, as they are for the tokens.
+  const last = `${base('.js')}/* eslint-enable */\n`;
+  assert.deepStrictEqual(compareFile(last, `${last}\n// a closing note\n`, 'client/src/x.js'), ok, 'lines added after a directive past the last token');
+});
+
 test('a parse failure names the error class and acorn\'s line and column, never the message, which quotes the source', () => {
   const b = base('.js');
   const twice = edit(b, 'const n = 1;', 'const n = 1;\nlet secretName = 1;\nlet secretName = 2;');
@@ -217,6 +253,84 @@ test('.sql: a comment counts only outside quoted strings and dollar bodies, whos
   const tagged = 'CREATE FUNCTION f() RETURNS INT AS $body$\n-- inside\nSELECT 1;\n$body$ LANGUAGE sql;\n';
   assert.strictEqual(compareFile(tagged, tagged.replace('-- inside', '-- inside, edited'), file).ok, false, 'a $tag$ body');
   assert.deepStrictEqual(compareFile(tagged, `-- The function.\n${tagged}`, file), ok);
+});
+
+test('.sql: block comments nest as the Postgres lexer reads them, closing only at depth zero', () => {
+  const file = 'server/db/schema.sql';
+  const sql = '-- The header.\nCREATE TABLE IF NOT EXISTS item (id INT, name TEXT, note TEXT);\nCREATE INDEX IF NOT EXISTS item_name ON item (name);\n';
+  const above = (comment) => edit(sql, 'CREATE INDEX', `${comment}\nCREATE INDEX`);
+  // The inner /* opens a second level and the one */ closes only that, so the
+  // rest of the file is one unclosed comment, which is code to the end.
+  const open = compareFile(sql, above('/* see service_packages.*_rate/*_fee */'), file);
+  assert.strictEqual(open.ok, false, 'an inner opener leaves the comment open');
+  assert.match(open.reason, /^code differs/);
+  // The inner */ returns to depth one, -- c */ closes the comment, and the
+  // DROP after it is code.
+  const after = compareFile(sql, above('/* a /* b */ -- c */ DROP TABLE x;'), file);
+  assert.strictEqual(after.ok, false, 'code after the comment closes at depth zero');
+  assert.match(after.reason, /^code differs/);
+  const ok = { ok: true, reason: null };
+  assert.deepStrictEqual(compareFile(sql, above('/* outer /* inner */ still outer */'), file), ok, 'a nested comment closing at depth zero');
+  assert.deepStrictEqual(compareFile(sql, above('/* outer\n  /* inner\n  */\n*/'), file), ok, 'over several lines');
+  const nested = above('/* outer /* inner */ still outer */');
+  assert.deepStrictEqual(compareFile(nested, nested.replace('inner', 'the inner, reworded'), file), ok, 'a nested comment reworded');
+  assert.deepStrictEqual(compareFile(sql, above('/**/ /*/ closed at the first */'), file), ok, '/**/ closes at once, and /*/ opens one level');
+  assert.deepStrictEqual(compareFile(sql, above('/*/* two levels */ */'), file), ok, '/*/* opens two');
+  assert.deepStrictEqual(compareFile(sql, above('-- a line comment holding /* is no opener'), file), ok, 'a /* inside a -- comment');
+  // server/db/index.js's splitStatements ends a comment at its first */, so
+  // what it reads as code between there and the real close must hold nothing
+  // it acts on, or the statements it sends to Postgres change.
+  for (const tail of ['a; b', "it's", '"x"', '$$', '-- x', '/* x']) {
+    const r = compareFile(sql, above(`/* outer /* inner */ ${tail} */`), file);
+    assert.strictEqual(r.ok, false, `a nested comment whose stretch past the first */ holds ${tail}`);
+    assert.match(r.reason, /^code differs/);
+  }
+  const held = above("/* outer /* inner */ it's */");
+  assert.deepStrictEqual(compareFile(held, `-- The file.\n${held}`, file), ok, 'such a comment, unchanged, with a comment added above it');
+  assert.strictEqual(compareFile(held, `${held}-- a note\n`, file).ok, false, 'such a comment, unchanged, with a comment added below it');
+  // An unclosed comment is code to the end of the file on either side.
+  const unclosed = `${sql}/* open /* inner */\n`;
+  assert.strictEqual(compareFile(unclosed, `${unclosed}-- more\n`, file).ok, false, 'a line after an unclosed nested comment');
+});
+
+test('.sql: a nested comment the boot splitter reads on past makes the rest of the file code', () => {
+  const file = 'server/db/schema.sql';
+  const ok = { ok: true, reason: null };
+  const tail = 'CREATE TABLE IF NOT EXISTS item (id INT, name TEXT, note TEXT);\n-- a later note\nCREATE INDEX IF NOT EXISTS item_name ON item (name);\n';
+  const later = (text) => edit(text, '-- a later note', "-- a later note on the item's */ shape");
+  // An inner */ touching the real one: splitStatements, reading on from its
+  // first */, takes the / of one and the * of the next as an opener.
+  const touching = `-- The header.\n/* note /* x /* y */ w */*/\n${tail}`;
+  assert.strictEqual(compareFile(`-- The header.\n${tail}`, touching, file).ok, false, 'a nested comment ending */*/ added');
+  assert.strictEqual(compareFile(touching, later(touching), file).ok, false, 'a comment edited after a nested comment ending */*/');
+  // A code * right after the real close: the closer's / and that * open a
+  // comment to splitStatements, which a */ written later then ends.
+  const star = `-- The header.\nSELECT /* c /* d */ e */* FROM t;\n${tail}`;
+  assert.strictEqual(compareFile(star, later(star), file).ok, false, 'a comment edited after a nested comment closed against a code *');
+  // A quote in the stretch: splitStatements is still inside the string it
+  // opened when the comment closes, so a later comment is string text to it.
+  const quoted = `-- The header.\n/* outer /* inner */ it's */\n${tail}`;
+  assert.strictEqual(compareFile(quoted, later(quoted), file).ok, false, 'a -- comment reworded after a nested comment holding a quote');
+  assert.strictEqual(compareFile(quoted, edit(quoted, '-- a later note', '-- a later note, reworded'), file).ok, false, 'reworded with no quote either');
+  // A comment edit above such a comment is still free, and a properly nested
+  // comment with nothing after it on its line stays a comment.
+  assert.deepStrictEqual(compareFile(quoted, edit(quoted, '-- The header.', '-- The header, reworded.'), file), ok, 'a comment edited above it');
+  const plain = `-- The header.\n/* outer /* inner */ still outer */\n${tail}`;
+  assert.deepStrictEqual(compareFile(plain, later(plain), file), ok, 'a comment edited after a properly nested comment');
+});
+
+test('.sql: an E-string ends the comment rule for the rest of the file', () => {
+  // Postgres reads backslash escapes in an E'...' string and splitStatements
+  // does not, so the two disagree on where it ends; from there on, all is code.
+  const file = 'server/db/schema.sql';
+  const ok = { ok: true, reason: null };
+  for (const e of ['E', 'e']) {
+    const sql = `-- The header.\nINSERT INTO item (note) VALUES (${e}'it\\'s');\n-- a note\nCREATE TABLE IF NOT EXISTS item (id INT);\n`;
+    assert.strictEqual(compareFile(sql, edit(sql, '-- a note', '-- a note, reworded'), file).ok, false, `a comment reworded after an ${e}-string holding an escaped quote`);
+    assert.deepStrictEqual(compareFile(sql, edit(sql, '-- The header.', '-- The header, reworded.'), file), ok, `a comment reworded above an ${e}-string`);
+  }
+  const named = "-- The header.\nSELECT note'x' FROM item;\n-- a note\n";
+  assert.deepStrictEqual(compareFile(named, edit(named, '-- a note', '-- a note, reworded'), file), ok, 'a quote after a name ending in e opens a plain string');
 });
 
 test('a lone carriage return in a .sql, .sh or .env.example side is refused; CRLF is not', () => {

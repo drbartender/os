@@ -21,8 +21,14 @@
 //                 comment, must be the same on both sides, and so must the
 //                 comments a compiler or the linter reads (a JSX pragma, a
 //                 pure or no-side-effects annotation, a webpack magic comment,
-//                 an ESLint configuration comment),
-//                 compared as a multiset of their texts. A side that does not
+//                 an ESLint configuration comment), each compared in place by
+//                 what it covers: the ordered list of their texts as written,
+//                 each with the index of the token after it, and for an ESLint
+//                 -next-line comment the index of the first token on the line
+//                 after the one it ends on, for a -line comment the index of
+//                 the first token on its own line (or none), must be the same.
+//                 Lines added or taken out above a directive change nothing it
+//                 covers and are free. A side that does not
 //                 parse fails the file. The parser, not the bare tokenizer:
 //                 acorn.tokenizer guesses regex against division without the
 //                 grammar, and `await /[//]/.test(s) && f()` reads to it as a
@@ -31,9 +37,21 @@
 //   .sql          read the way server/db/index.js's splitStatements reads it
 //                 (not required: that module opens a pool at load): a -- or
 //                 /* */ comment is a comment only outside single-quoted
-//                 strings (with the '' escape, and backslash escapes after E),
-//                 double-quoted identifiers and dollar-quoted bodies ($$ ... $$,
-//                 $tag$ ... $tag$, closed only by the same tag). The text of
+//                 strings (with the '' escape), double-quoted identifiers and
+//                 dollar-quoted bodies ($$ ... $$, $tag$ ... $tag$, closed
+//                 only by the same tag). A block comment nests as the Postgres
+//                 lexer reads it: an inner /* raises the depth, each */ lowers
+//                 it, and it ends at depth zero. splitStatements ends one at
+//                 its first */ instead and reads on from there as code, so a
+//                 nested comment is a comment only when nothing across or
+//                 beyond its closers could be read as an opener (a /* formed
+//                 over the stretch, the real closer and the character after
+//                 it) or as text the splitter is still inside (a ;, a quote, a
+//                 $ or a -- in the stretch); otherwise the file is code from
+//                 there on. An E'...' string ends the comment rule for the
+//                 file: Postgres reads backslash escapes in it and
+//                 splitStatements does not, so the rest of the file is code
+//                 from its opening quote. The text of
 //                 every string, identifier and body is code and must be the
 //                 same byte for byte, so a comment edited inside a DO block or
 //                 a function body is refused; the code between them must be
@@ -60,11 +78,14 @@
 //                 continuation are different commands; a line after a code
 //                 line ending in an unescaped backslash is code whatever it
 //                 holds, a blank or a # line included, since bash joins the
-//                 two. Known limits: a line
-//                 inside a multi-line quoted string in .sh that begins with #
-//                 is read as a comment, and in .env.example a commented-out
-//                 sample line (# VAR=value) is a comment, so its sample value
-//                 may change.
+//                 two. Known limits: a line inside a multi-line quoted string
+//                 in .sh that begins with # is read as a comment, and a blank
+//                 line or trailing blanks inside one are free; a # line inside
+//                 an unquoted heredoc whose body line ends in a backslash is
+//                 read as a comment, since bash joins that line to the next
+//                 and the delimiter line read here is body text to bash; and
+//                 in .env.example a commented-out sample line (# VAR=value) is
+//                 a comment, so its sample value may change.
 //   anything else not ok: unsupported file type.
 // A reason names lines and counts, never a word of the source.
 //
@@ -122,8 +143,11 @@ function shebang(text) {
   return text.startsWith('#!') ? text.split(LINE_BREAK, 1)[0] : null;
 }
 
-// The parser's tokens, with the texts of the comments that are compiler
-// directives on tokens.directives.
+// The parser's tokens, each with its loc, and the comments that are compiler
+// directives on tokens.directives as [{at, start, end, body, startLine,
+// endLine}] in source order: at is the number of tokens emitted when acorn
+// reports the comment (onToken and onComment fire in source order), so the
+// token after it is tokens[at].
 function parseTokens(Parser, text, sourceType) {
   const tokens = [];
   const directives = [];
@@ -132,13 +156,42 @@ function parseTokens(Parser, text, sourceType) {
     sourceType,
     allowHashBang: true,
     allowReturnOutsideFunction: true,
+    locations: true,
     onToken: (t) => tokens.push(t),
-    onComment: (block, body) => {
-      if (DIRECTIVE.test(body) || ESLINT_DIRECTIVE.test(body)) directives.push(body);
+    onComment: (block, body, start, end, startLoc, endLoc) => {
+      if (DIRECTIVE.test(body) || ESLINT_DIRECTIVE.test(body)) directives.push({ at: tokens.length, start, end, body, startLine: startLoc.line, endLine: endLoc.line });
     },
   });
-  tokens.directives = directives.sort();
+  tokens.directives = directives;
   return tokens;
+}
+
+// ESLint's comments that cover a line by where they sit: -line its own (the
+// line it starts on), -next-line the one after the line it ends on.
+const ESLINT_SAME_LINE = /^\s*eslint-disable-line(?:\s|$)/;
+const ESLINT_NEXT_LINE = /^\s*eslint-disable-next-line(?:\s|$)/;
+
+// Each directive in place, as one string: its text as written, the index of
+// the token after it (what an eslint-disable or -enable, a pure annotation or
+// a webpack comment acts from), and for an ESLint -line or -next-line comment
+// the index of the first token on the line it covers, or null when no token
+// starts there. With the token streams equal, these name what each directive
+// covers; lines added or taken out above a directive change none of them.
+function placed(text, tokens) {
+  const real = (k) => Boolean(tokens[k]) && tokens[k].type !== acorn.tokTypes.eof;
+  return tokens.directives.map(({ at, start, end, body, startLine, endLine }) => {
+    let covers = '';
+    if (ESLINT_SAME_LINE.test(body)) {
+      let k = at;
+      while (k > 0 && tokens[k - 1].loc.start.line === startLine) k--;
+      covers = real(k) && tokens[k].loc.start.line === startLine ? k : null;
+    } else if (ESLINT_NEXT_LINE.test(body)) {
+      let k = at;
+      while (real(k) && tokens[k].loc.start.line <= endLine) k++;
+      covers = real(k) && tokens[k].loc.start.line === endLine + 1 ? k : null;
+    }
+    return `${at} ${covers} ${text.slice(start, end)}`;
+  });
 }
 
 // A parse failure as its class and acorn's line and column, never its
@@ -199,7 +252,10 @@ function compareJs(oldText, newText, Parser) {
       return no(`a line break between two tokens was added or removed at token ${i + 1} (${where(i)}); the grammar reads line breaks`);
     }
   }
-  if (a.directives.join('\0') !== b.directives.join('\0')) return no('a comment that is a compiler directive changed');
+  // The token streams agree, so each side's token counts name the same tokens.
+  const x = placed(oldText, a);
+  const y = placed(newText, b);
+  if (x.length !== y.length || x.some((d, i) => d !== y[i])) return no('a comment that is a compiler directive changed');
   return ok();
 }
 
@@ -252,6 +308,44 @@ function compareLines(oldText, newText, marker, sh) {
   return ok();
 }
 
+// The end of the block comment opened at i in t, as the index of the */ that
+// closes it, or -1 when it never closes. The Postgres lexer nests them: an
+// inner /* raises the depth, each */ lowers it, and the comment ends at depth
+// zero. Read left to right two characters at a time, as its rules match: /*/
+// opens one level and the / after it is plain, and /**/ closes at once.
+function blockEnd(t, i) {
+  let depth = 0;
+  let j = i + 2;
+  while (j + 1 < t.length) {
+    if (t[j] === '/' && t[j + 1] === '*') {
+      depth++;
+      j += 2;
+    } else if (t[j] === '*' && t[j + 1] === '/') {
+      if (depth === 0) return j;
+      depth--;
+      j += 2;
+    } else {
+      j++;
+    }
+  }
+  return -1;
+}
+
+// What server/db/index.js's splitStatements acts on outside a comment: a
+// statement end, a quote or dollar tag, a comment opener.
+const SPLIT_ACTS = /[;'"$]|--|\/\*/;
+
+// Whether splitStatements, which ends the block comment opened at i at its
+// first */ (first) and reads on from there as code, reaches the real close
+// (end, the */ blockEnd found) in step with the Postgres reading. It reads the
+// stretch between as code and the closer's own two characters as plain ones,
+// so the stretch must hold nothing it acts on, and no /* may form across the
+// stretch's end, the closer and the character after it (*/*/ where an inner
+// closer touches the real one, or a code * right after the close).
+function splitterInStep(t, first, end) {
+  return first === end || (!SPLIT_ACTS.test(t.slice(first + 2, end)) && !t.slice(first + 2, end + 3).includes('/*'));
+}
+
 // A .sql text as parts, [{lit, text, start}]: lit marks a single-quoted
 // string, a double-quoted identifier or a dollar body, kept as written; a code
 // part has its comments dropped and its blanks folded (the header's rule).
@@ -275,11 +369,10 @@ function sqlParts(raw) {
     return to;
   };
   // The end of a quoted run opened at i by q: past its closing quote, or len.
-  const quoted = (i, q, backslash) => {
+  const quoted = (i, q) => {
     let j = i + 1;
     while (j < len) {
-      if (backslash && t[j] === '\\') j += 2;
-      else if (t[j] === q && t[j + 1] === q) j += 2;
+      if (t[j] === q && t[j + 1] === q) j += 2;
       else if (t[j] === q) return j + 1;
       else j++;
     }
@@ -294,18 +387,26 @@ function sqlParts(raw) {
       code += ' ';
       i = eol === -1 ? len : eol;
     } else if (ch === '/' && next === '*') {
-      const end = t.indexOf('*/', i + 2);
-      if (end === -1) {
+      const end = blockEnd(t, i);
+      // An unclosed comment is code to the end of the file. So is a nested
+      // one splitStatements reads out of step: past the close it is still
+      // inside the string, identifier, body or comment the stretch opened, so
+      // its cuts, and what any later comment edit does to them, are not the
+      // proof's to read.
+      if (end === -1 || !splitterInStep(t, t.indexOf('*/', i + 2), end)) {
         i = lit(i, len);
       } else {
         code += t.slice(i, end).includes('\n') ? '\n' : ' ';
         i = end + 2;
       }
     } else if (ch === "'") {
+      // An E'...' string: Postgres reads backslash escapes in it and
+      // splitStatements does not, so the two can disagree on where it ends,
+      // and the rest of the file is code.
       const e = (t[i - 1] === 'E' || t[i - 1] === 'e') && !/[A-Za-z0-9_$]/.test(t[i - 2] || '');
-      i = lit(i, quoted(i, "'", e));
+      i = lit(i, e ? len : quoted(i, "'"));
     } else if (ch === '"') {
-      i = lit(i, quoted(i, '"', false));
+      i = lit(i, quoted(i, '"'));
     } else {
       SQL_TAG.lastIndex = i;
       const m = ch === '$' ? SQL_TAG.exec(t) : null;
