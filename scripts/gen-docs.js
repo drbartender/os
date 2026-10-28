@@ -40,6 +40,20 @@
  * written). Each doc is written through a temp file in its directory and a
  * rename.
  *
+ * Every rendered section passes through the PII masker before it is compared
+ * or written (scripts/lib/piiShapes.js, allowlisted mode, one line at a time,
+ * each judged as a line of the doc it lands in, as the pre-step and the range
+ * check judge one): a secret-, email-, phone- or id-shaped run copied from a
+ * header comment, a route or schema comment or the env template renders as
+ * `<TOKEN>`, `<EMAIL>`, `<PHONE>` or the like, while the business lines and
+ * an address on the business domain stay (spec D9). A run is masked only when
+ * the scan that guards the source reports it there too, on one line of a
+ * code-class input, so a placeholder the template or a header holds masks and
+ * the source's own change is where the pre-step reads it; a run that scan
+ * cannot see (a number wrapped across two header lines and joined by the
+ * render; a line of a registry file, where phones and addresses are exempt)
+ * stays as rendered, and the doc's own scan trips on it.
+ *
  * --check: writes nothing; renders from the chosen source, compares with the
  * docs in the same source, checks the header rule (--staged: the source files
  * the index adds or modifies; otherwise every source file), and prints one
@@ -101,6 +115,7 @@ const env = require('./lib/genDocs/env');
 const routes = require('./lib/genDocs/routes');
 const schema = require('./lib/genDocs/schema');
 const agents = require('./lib/genDocs/agents');
+const PII = require('./lib/piiShapes');
 
 const DOCS = Object.keys(markers.DOC_SECTIONS);
 const USAGE = 'usage: gen-docs.js [--staged | --ref <sha>] [--check] [--readme <path>] [--arch <path>]\n'
@@ -141,20 +156,73 @@ const INPUTS = ['package.json', '.env.example', SCHEMA, ...DOCS];
 // roots, the top level, client/'s own files), the agent files and the inputs.
 const READS = /^(?:(?:server|client\/src|scripts)\/.*|client\/[^/]+|[^/]+)\.(?:js|jsx|mjs|cjs|sh|sql|css)$/;
 
+const DOC_OF = Object.freeze({ tree: 'README.md', scripts: 'README.md', env: 'README.md', routes: 'ARCHITECTURE.md', schema: 'ARCHITECTURE.md', agents: 'ARCHITECTURE.md' });
+
 function renderAll(src) {
   src.prefetch([...src.list().filter((p) => READS.test(p) || p.startsWith('.claude/')), ...INPUTS]);
   const walked = routes.walk(src);
-  return {
-    sections: {
-      tree: tree.render(src),
-      scripts: scriptsTable.render(src.read('package.json')),
-      env: env.render(env.parse(src.read('.env.example') || '')),
-      routes: routes.render(walked),
-      schema: schema.render(schema.parse(src.read(SCHEMA) || ''), SCHEMA),
-      agents: agents.render(src),
-    },
-    unparsed: walked.problems,
+  const sections = {
+    tree: tree.render(src),
+    scripts: scriptsTable.render(src.read('package.json')),
+    env: env.render(env.parse(src.read('.env.example') || '')),
+    routes: routes.render(walked),
+    schema: schema.render(schema.parse(src.read(SCHEMA) || ''), SCHEMA),
+    agents: agents.render(src),
   };
+  for (const name of Object.keys(sections)) sections[name] = maskLines(sections[name], DOC_OF[name], src);
+  return { sections, unparsed: walked.problems };
+}
+
+// Every rendered line is judged alone, as a line of the doc it lands in (the
+// allowlisted mode of piiShapes, path class code), which is how the pre-step
+// and the range check judge a doc: a secret-, email- or phone-shaped run copied
+// from a header, a route or schema comment or the env template reads <TOKEN>,
+// <EMAIL> or <PHONE> in the public docs; the business lines and an address on
+// the business domain stay; the nine-digit rules read their context words
+// within the line, never across a row. A run is masked only when the scan that
+// guards the source reports it there too (caughtAtSource): a run that scan
+// cannot see (a number wrapped across two header lines and joined here; a line
+// of a registry file, where phones and addresses are exempt) stays as rendered,
+// so the doc's own scan still trips on it and points back at the source.
+function maskLines(text, doc, src) {
+  return text.split('\n').map((line) => {
+    const spans = [];
+    for (const h of PII.findPii(line, { path: doc })) {
+      if (!caughtAtSource(src, h.match)) continue;
+      const last = spans[spans.length - 1];
+      if (last && h.start < last.end) last.end = Math.max(last.end, h.end);
+      else spans.push({ shape: h.shape, start: h.start, end: h.end });
+    }
+    if (spans.length === 0) return line;
+    const parts = [];
+    let pos = 0;
+    for (const sp of spans) {
+      parts.push(line.slice(pos, sp.start), '<', sp.shape, '>');
+      pos = sp.end;
+    }
+    parts.push(line.slice(pos));
+    return parts.join('');
+  }).join('\n');
+}
+
+// True when the pre-step's scan of the source would report the run: it stands
+// whole on one line of a tracked code-class file among the render's inputs
+// (the two docs are outputs, never read here, or a run written once would
+// count as caught on the next render), and findPii on that line alone, under
+// that path, reports it. Reads are the prefetched ones; a run with no such
+// line is never masked.
+function caughtAtSource(src, match) {
+  for (const p of src.list()) {
+    if (DOCS.includes(p)) continue;
+    if (!(READS.test(p) || p.startsWith('.claude/') || INPUTS.includes(p))) continue;
+    if (PII.pathClass(p) !== 'code') continue;
+    const text = src.read(p);
+    if (!text || !text.includes(match)) continue;
+    for (const line of text.split('\n')) {
+      if (line.includes(match) && PII.findPii(line, { path: p }).some((h) => h.match === match)) return true;
+    }
+  }
+  return false;
 }
 
 function override(o, doc) {
