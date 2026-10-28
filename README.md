@@ -1052,7 +1052,7 @@ tests omitted
 │   ├── guard-os-main.sh
 │   ├── lane-status.js        # lane-status: stale-lane detection + safe-scrap check for the build-in-lanes workflow (workflow-redesign).
 │   ├── make-admin-icon.js    # One-shot: rasterize the admin app icon set from an inline SVG. Placeholder mark until the design round-trip supplies the real one; the FILENAMES are the stable contract, rerun this script to regenerate. Run from the repo root: node scripts/make-admin-icon.js
-│   ├── merge-lane.sh
+│   ├── merge-lane.sh         # merge-lane.sh: crash-safe squash-merge wrapper for the build-in-lanes workflow.
 │   ├── migrate-headers.js    # migrate-headers.js: the one-shot migration of the docs' hand mirrors into the code (instruction rewrite step 4, lane migrate-headers; plan 2026-10-27 decisions 2, 6 and 8, the contract "scripts/migrate-headers.js"). It stays on main after its run as the record of what the migration did (decision 17).
 │   ├── migrate-staffing-roles.js # One-time migration for the staffing roster + waitlist feature.
 │   ├── mobile-capture.js     # Mobile verification harness. Renders every client-facing surface at a phone viewport (390x844), screenshots it, and probes for horizontal overflow. Merge gate for the mobile-fixes lanes.
