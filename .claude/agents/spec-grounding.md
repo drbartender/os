@@ -57,9 +57,10 @@ If any consumer is unmentioned, that is a missing parallel update and a groundin
 
 ### Documentation drift
 
-If the spec adds, renames, or removes anything in the folder tree:
-- Does the spec say to update `README.md` and `ARCHITECTURE.md` per the Mandatory Documentation Updates table in `CLAUDE.md`?
-- Does the spec mention `CLAUDE.md` updates for new env vars or new integrations?
+If the spec adds, renames, or removes anything in the folder tree, a route, a table, an env var or an agent file: the generated sections of `README.md` and `ARCHITECTURE.md` (the tree, the scripts, the env table, the routes, the schema index, the agents) come from `npm run docs`, which the pre-commit hook checks, so a spec never asks for a hand edit to them.
+- Does every new source file the spec names get a header comment (its first comment: what the file does), which is the tree's description of it?
+- Does every new env var the spec names get its comment block in `.env.example` (the one copy; its block is the variable's description in README's env section), and never a row in `CLAUDE.md`?
+- Does the spec say which hand-written ARCHITECTURE prose changes, if a concept changes?
 
 ## Output format
 
