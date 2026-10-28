@@ -1,6 +1,6 @@
 # Full bar by default in the drink planner: design
 
-Date: 2026-10-28, revision 2. Brainstormed with Dallas in chat on 2026-10-27 and 2026-10-28; his section-by-section answers are the approval. Every decision below that is not quoted from him is Claude's call and is marked as such. Revision 2 folds the spec fleet (spec-grounding, spec-gaps, spec-risk): one blocker, raised by two of them (the marker reached hosted plans), and the warnings, all taken.
+Date: 2026-10-28, revision 3. Brainstormed with Dallas in chat on 2026-10-27 and 2026-10-28; his section-by-section answers are the approval. Every decision below that is not quoted from him is Claude's call and is marked as such. Revision 2 folds the spec fleet (spec-grounding, spec-gaps, spec-risk): one blocker, raised by two of them (the marker reached hosted plans), and the warnings, all taken. Revision 3 settles two points the plan fleet found: an opted-out plan's echo and Review rows (3.5, 3.9), and the old Spirits and Mixers rows hidden whenever the marker is present (3.5, 3.8).
 
 ## 1. Why
 
@@ -97,7 +97,7 @@ The marker is `Array.isArray(selections.barExtras)`. It is never in `DEFAULT_SEL
 
 When the marker is first written on a plan that has old answers (a draft saved before the ship), the old answers come with it: Scotch and Mezcal in `spirits` become `barExtras` entries, and `spiritsOther` becomes `barExtrasOther` if that is empty (Claude's call; otherwise the client's earlier answer would vanish).
 
-Server side, every new rule (3.6, 3.7, 3.8, 3.9) applies only when `serving_type` is exactly `'full_bar'` and the marker is present. Never through `plannerServiceStyle`, which maps a null `serving_type` (every hosted v2 row) to `full_bar`.
+Server side, every extras rule (the list in 3.6, the menu in 3.7, the extras rows in 3.8 and 3.9) applies only when `serving_type` is exactly `'full_bar'` and the marker is present. Never through `plannerServiceStyle`, which maps a null `serving_type` (every hosted v2 row) to `full_bar`. Two rows also show for an opted-out plan: the echo's "Your bar" row (3.9) and Review's bar style row (3.4) read "Just your drinks, plus beer and wine" for a marked `sig_beer_wine` plan. Wherever the marker is present, on either style, the old Spirits and Mixers rows are not shown (Review, the recap, the answers panel, the echo).
 
 The sanitizer (`server/routes/drinkPlans/submitSanitize.js`, `ALLOWED_SELECTIONS_KEYS`) accepts both keys. A `barExtras` that is not an array is dropped, never coerced to `[]`, so garbage cannot set the marker; an array keeps only the two known slugs, deduplicated. A `barExtrasOther` that is not a string is dropped; a string is trimmed and capped at 80. Both normalize only when present, following the `crowd` pattern there. The old keys (`spirits`, `spiritsOther`, `mixersForSpirits`) stay on the allow-list and in the defaults, because old plans carry them.
 
@@ -121,11 +121,11 @@ Only the `full_bar` recipe changes, and only under 3.5's server condition:
 
 ### 3.8 The admin recap and the list modal's answers panel
 
-`DrinkPlanSelections.js`, for a plan carrying the marker on a full bar: "Bar extras: Scotch, Mezcal" for the chips and "Client asked for: <typed text>" for the request, and the old Spirits and Mixers lines are not rendered. On an opted-out plan, no extras lines. Plans without the marker render exactly as today. `answerSets.js` counts the extras as an answer under the same condition, so the shopping list modal's answers panel offers and shows them.
+`DrinkPlanSelections.js`, for a plan carrying the marker on a full bar: "Bar extras: Scotch, Mezcal" for the chips and "Client asked for: <typed text>" for the request. On an opted-out plan, no extras lines. Whenever the marker is present, the old Spirits and Mixers lines are not rendered. Plans without the marker render exactly as today. `answerSets.js` counts the extras as an answer under the same condition, so the shopping list modal's answers panel offers and shows them; it needs the plan's `serving_type`, passed down from `pickAnswerSets(plan, ...)`.
 
 ### 3.9 The submission echo email
 
-`drinkPlanEchoSection`, under 3.5's condition: a "Your bar" row ("Full bar" or "Just your drinks, plus beer and wine"), an "Extras" row with the chips and the typed text, and no Spirits or Mixers rows. The function takes the plan's `serving_type` from its callers for this. Its beer and wine rows pick the non-empty family; today `selections.beerFromFullBar || selections.beerFromBeerWine` always takes the full bar family because an empty array is truthy, so a `sig_beer_wine` client's email shows no beer or wine. That fix applies to every plan, old ones included: it changes only the email sent at the next submit, and an old plan is already submitted. Values keep passing through `esc()`.
+`drinkPlanEchoSection`, for a plan carrying the marker: a "Your bar" row, "Full bar" on `full_bar` or "Just your drinks, plus beer and wine" on `sig_beer_wine`; on a marked full bar only, an "Extras" row with the chips and the typed text; and no Spirits or Mixers rows on either style. The function takes the plan's `serving_type` from its callers for this. Its beer and wine rows pick the non-empty family; today `selections.beerFromFullBar || selections.beerFromBeerWine` always takes the full bar family because an empty array is truthy, so a `sig_beer_wine` client's email shows no beer or wine. That fix applies to every plan, old ones included: it changes only the email sent at the next submit, and an old plan is already submitted. Values keep passing through `esc()`.
 
 ## 4. Left to the builder
 
