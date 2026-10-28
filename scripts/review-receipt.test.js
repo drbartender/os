@@ -9,6 +9,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -16,6 +17,50 @@ const K = require('./lib/receiptTestkit');
 const { laneKey, receiptDir, workDir, readReceipt } = require('./lib/receipt');
 
 const { commit, tmpDir, laneRepo, cli, ok, refused, problems, report, writeFile, tap, suitesRun, smokeRun, position, prepare, selectFile, finalize, MARK } = K;
+
+const PROOF_CLI = path.join(__dirname, 'comment-only-proof.js');
+
+// The two server files as code the proof parses (the testkit's seed is not).
+const A_JS = "module.exports = 'a';\n";
+const B_JS = "module.exports = 'b';\n";
+
+// A repo whose main holds A_JS and B_JS.
+function codeRepo(t) {
+  const repo = K.makeRepo(t);
+  commit(repo, 'code', { 'server/a.js': A_JS, 'server/b.js': B_JS });
+  return repo;
+}
+
+// A lane of two comment-only commits (a comment above server/a.js, then
+// above server/b.js with README.md regenerated beside it; the proof skips the
+// generated docs as the key does) -> {repo, base, mid, tip}.
+function commentLane(t) {
+  const repo = codeRepo(t);
+  const base = K.git(repo, 'rev-parse', 'main');
+  K.git(repo, 'checkout', '-q', '-b', 'lane');
+  const mid = commit(repo, 'a comment', { 'server/a.js': `// what a holds\n${A_JS}` });
+  const tip = commit(repo, 'another comment', { 'server/b.js': `// what b holds\n${B_JS}`, 'README.md': 'readme, regenerated\n' });
+  return { repo, base, mid, tip };
+}
+
+// scripts/comment-only-proof.js's JSON for `args`, written to a file; the
+// proof must say yes.
+function proofFile(t, repo, ...args) {
+  const out = path.join(tmpDir(t, 'proof'), 'proof.json');
+  const r = spawnSync(process.execPath, [PROOF_CLI, ...args, '--out', out], { cwd: repo, encoding: 'utf8', env: { ...process.env, REVIEW_RECEIPT_ROOT: repo } });
+  assert.strictEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+  return out;
+}
+
+// A staged proof after staging `files`; unless keep, the files are put back
+// and unstaged after, so the checkout is as it was.
+function stagedProof(t, repo, files, { keep = false } = {}) {
+  for (const [rel, text] of Object.entries(files)) fs.writeFileSync(path.join(repo, rel), text);
+  if (Object.keys(files).length) K.git(repo, 'add', '--', ...Object.keys(files));
+  const out = proofFile(t, repo, '--staged');
+  if (!keep && Object.keys(files).length) K.git(repo, 'checkout', '-q', 'HEAD', '--', ...Object.keys(files));
+  return out;
+}
 
 test('init opens a working directory with a skeleton receipt, once per name', (t) => {
   const { repo } = laneRepo(t);
@@ -251,7 +296,7 @@ test('finalize refuses --failing-test whose count disagrees with the log, and re
   assert.strictEqual(fs.readFileSync(path.join(rdir, 'tests', 'failing-on-old-code.log'), 'utf8'), tap(3, 2));
 });
 
-test('finalize refuses --proof with any kind but comment-only, comment-only without a proof, and comment-only itself until step 4', (t) => {
+test('finalize refuses --proof with any kind but comment-only, and comment-only without a proof', (t) => {
   const { repo, base, files } = laneRepo(t);
   ok(cli(repo, 'init', '--branch', 'lane'));
   prepare(t, repo, 'lane', files);
@@ -262,10 +307,98 @@ test('finalize refuses --proof with any kind but comment-only, comment-only with
     assert.ok(lines.some((l) => /--proof is only for --kind comment-only/.test(l)), `${kind}: ${lines.join('\n')}`);
   }
   assert.ok(problems(refused(cli(repo, 'finalize', 'lane', '--kind', 'comment-only', '--base', base, '--reviewed-against', base, '--tier', 'B'))).some((l) => /needs --proof/.test(l)));
-  // Comment-only waits for step 4's proof script (plan 347): refused even with a proof, and nothing moves.
-  const co = problems(refused(cli(repo, 'finalize', 'lane', '--kind', 'comment-only', '--base', base, '--reviewed-against', base, '--tier', 'A', '--proof', proof)));
-  assert.deepStrictEqual(co, ["  - kind: comment-only waits for step 4's proof script"]);
-  assert.ok(fs.existsSync(workDir('lane', { cwd: repo })), 'a refusal moves nothing');
+  // The comment-only kind on a real proof: comment-only-proof.test.js is the proof's own suite.
+  const lane = commentLane(t);
+  const good = proofFile(t, lane.repo, '--base', lane.base, '--tip', lane.tip);
+  const co = (file) => cli(lane.repo, 'finalize', 'lane', '--kind', 'comment-only', '--base', lane.base, '--reviewed-against', lane.base, '--tier', 'B', '--proof', file);
+  ok(cli(lane.repo, 'init', '--branch', 'lane'));
+  const S = (sha) => sha.slice(0, 7);
+  const edited = (change) => writeFile(tmpDir(t, 'edited'), 'proof.json', JSON.stringify(change(JSON.parse(fs.readFileSync(good, 'utf8')))));
+  const refusals = [
+    [proofFile(t, lane.repo, '--base', lane.base, '--tip', lane.mid), `proof: tip ${S(lane.mid)} is not the review's tip ${S(lane.tip)}`],
+    [proofFile(t, lane.repo, '--base', lane.mid, '--tip', lane.tip), `proof: base ${S(lane.mid)} is not the review's base ${S(lane.base)}`],
+    [stagedProof(t, lane.repo, { 'server/a.js': `// staged\n// what a holds\n${A_JS}` }), 'proof: a staged proof cannot finalize a lane review'],
+    [edited((p) => ({ ...p, files: p.files.filter((f) => f.path !== 'server/b.js') })), 'proof: server/b.js is not in the proof'],
+    [edited((p) => ({ ...p, ok: false })), 'proof: the proof says not comment-only'],
+    [writeFile(tmpDir(t, 'text'), 'proof.json', `every added line is a comment ${MARK}\n`), 'proof: not JSON'],
+    [edited((p) => ({ ...p, version: 2 })), 'proof: version 2 is not 1'],
+  ];
+  for (const [file, line] of refusals) assert.deepStrictEqual(problems(refused(co(file))), [`  - ${line}`]);
+  assert.ok(fs.existsSync(workDir('lane', { cwd: lane.repo })), 'a refusal moves nothing');
+  // No --select, lens, verify, externals or tests: the proof is the body.
+  const r = ok(co(good));
+  const rdir = /dir: (\S+)/.exec(r.stdout)[1];
+  const rec = readReceipt(rdir);
+  assert.strictEqual(rec.kind, 'comment-only');
+  assert.strictEqual(rec.key, laneKey(lane.base, lane.tip, { cwd: lane.repo }));
+  assert.strictEqual(rec.written_by, 'comment-only proof');
+  assert.strictEqual(rec.proof, 'proof.json');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(rdir, 'proof.json'), 'utf8')), JSON.parse(fs.readFileSync(good, 'utf8')));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(good, 'utf8')).skipped, ['README.md']);
+  assert.strictEqual(rec.not_a_fix, 'comment-only: the proof shows the diff adds nothing but comment lines');
+  assert.deepStrictEqual([rec.lenses, rec.tests, rec.verify.run], [[], [], false]);
+  assert.ok(!fs.existsSync(workDir('lane', { cwd: lane.repo })), 'the working directory is gone');
+  for (const o of [r.stdout, r.stderr]) assert.ok(!o.includes(MARK));
+});
+
+test('finalize never deletes its --proof input, at <work>/proof.json or elsewhere, when the publish fails', (t) => {
+  if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    t.skip('root ignores directory permissions');
+    return;
+  }
+  const lane = commentLane(t);
+  const good = proofFile(t, lane.repo, '--base', lane.base, '--tip', lane.tip);
+  const text = fs.readFileSync(good, 'utf8');
+  ok(cli(lane.repo, 'init', '--branch', 'lane'));
+  const wd = workDir('lane', { cwd: lane.repo });
+  const inWork = path.join(wd, 'proof.json');
+  const co = (file) => cli(lane.repo, 'finalize', 'lane', '--kind', 'comment-only', '--base', lane.base, '--reviewed-against', lane.base, '--tier', 'B', '--proof', file);
+  // A directory publish cannot read forces the publish to fail (exit 1).
+  const blocker = path.join(wd, 'unreadable');
+  fs.mkdirSync(blocker);
+  fs.copyFileSync(good, inWork);
+  let atWork;
+  let kept;
+  let elsewhere;
+  fs.chmodSync(blocker, 0o000);
+  try {
+    atWork = co(inWork);
+    kept = fs.existsSync(inWork) ? fs.readFileSync(inWork, 'utf8') : null;
+    fs.rmSync(inWork, { force: true });
+    elsewhere = co(good);
+  } finally {
+    fs.chmodSync(blocker, 0o755);
+  }
+  assert.strictEqual(atWork.status, 1, atWork.stderr);
+  assert.strictEqual(kept, text, 'the --proof input at <work>/proof.json is left as it was');
+  assert.strictEqual(elsewhere.status, 1, elsewhere.stderr);
+  assert.strictEqual(fs.readFileSync(good, 'utf8'), text, 'the --proof input elsewhere is untouched');
+  assert.ok(!fs.existsSync(inWork), 'the copy finalize wrote is removed');
+  // The proof at <work>/proof.json itself is left as it was, and publishes.
+  fs.rmSync(blocker, { recursive: true });
+  fs.copyFileSync(good, inWork);
+  const r = ok(co(inWork));
+  assert.strictEqual(fs.readFileSync(path.join(/dir: (\S+)/.exec(r.stdout)[1], 'proof.json'), 'utf8'), text);
+});
+
+test('a quick fix finalizes comment-only on a staged proof of its staged tree, and refuses a range proof or a stale tree', (t) => {
+  const repo = codeRepo(t);
+  const head = K.git(repo, 'rev-parse', 'HEAD');
+  const parent = commit(repo, 'a comment on main', { 'server/a.js': `// on main\n${A_JS}` });
+  const name = /name: (quick-fix-\S+)/.exec(ok(cli(repo, 'init', '--branch', 'main', '--quick-fix')).stdout)[1];
+  const range = proofFile(t, repo, '--base', head, '--tip', parent);
+  const staged = stagedProof(t, repo, { 'server/b.js': `// staged\n${B_JS}` }, { keep: true });
+  const co = (file) => cli(repo, 'finalize', name, '--kind', 'comment-only', '--base', parent, '--reviewed-against', parent, '--tier', 'B', '--proof', file);
+  assert.deepStrictEqual(problems(refused(co(range))), ['  - proof: a range proof cannot finalize a quick fix']);
+  // Another comment staged after the proof: the staged tree moved.
+  fs.writeFileSync(path.join(repo, 'server/a.js'), `// on main, reworded\n${A_JS}`);
+  K.git(repo, 'add', '--', 'server/a.js');
+  const tree = K.git(repo, 'write-tree');
+  const stale = JSON.parse(fs.readFileSync(staged, 'utf8')).tree;
+  assert.deepStrictEqual(problems(refused(co(staged))), [`  - proof: tree ${stale.slice(0, 7)} is not the staged tree ${tree.slice(0, 7)}`]);
+  const r = ok(co(stagedProof(t, repo, {}, { keep: true })));
+  const rec = readReceipt(/dir: (\S+)/.exec(r.stdout)[1]);
+  assert.deepStrictEqual([rec.kind, rec.mode, rec.key, rec.proof, rec.written_by], ['comment-only', 'quick-fix', tree, 'proof.json', 'comment-only proof']);
 });
 
 test('tests records through the CLI: usage, a refusal and a green log (the recording rules are receiptTests.test.js)', (t) => {

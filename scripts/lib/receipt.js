@@ -459,8 +459,10 @@ function commitBlock(r) {
   const items = testItems(r.tests);
   const tests = items.length ? items.join(', ') : 'none recorded';
   // A quick fix's key is a tree, not a patch id, and its line says so on
-  // purpose: `tree <key7>` is what HEAD^{tree} of its commit must show.
-  const what = r.kind === 'quick-fix' ? 'tree' : 'patch';
+  // purpose: `tree <key7>` is what HEAD^{tree} of its commit must show. The
+  // review's recorded mode says it too, so a comment-only receipt of a quick
+  // fix (keyed by its staged tree) prints a tree.
+  const what = r.kind === 'quick-fix' || r.mode === 'quick-fix' ? 'tree' : 'patch';
   const rec = `${what} ${sha7(r.key)}, reviewed against main ${sha7(r.reviewed_against)}, ${blockTime(r.timestamp)}`;
 
   return [

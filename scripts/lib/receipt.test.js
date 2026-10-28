@@ -535,6 +535,14 @@ test('commitBlock: a quick fix, a not-run reviewer, allowed not reached, no test
   assert.strictEqual(commitBlock(rerun).split('\n')[4], '  tests:    scripts/x.test.js 3/3, no suites reached, scripts-lib-receipt.test.js 40/40');
 });
 
+test('commitBlock prints a quick-fix comment-only receipt\'s key as a tree, and a lane one\'s as a patch', () => {
+  const quick = commitBlock({ ...FIXTURE, kind: 'comment-only', mode: 'quick-fix', tier: 'B', lenses: [], matched_paths: [], content_rule_hits: [] }).split('\n');
+  assert.strictEqual(quick[0], 'Review: tier B (comment-only proof)');
+  assert.match(quick[5], /^ {2}receipt: {2}tree 3f2a9c1,/);
+  const lane = commitBlock({ ...FIXTURE, kind: 'comment-only', mode: 'lane', tier: 'B', lenses: [], matched_paths: [], content_rule_hits: [] }).split('\n');
+  assert.match(lane[5], /^ {2}receipt: {2}patch 3f2a9c1,/);
+});
+
 test('commitBlock prints a placeholder for a missing timestamp, sha or count, and never throws', () => {
   const r = { ...FIXTURE, timestamp: undefined, reviewed_against: null, tests: [{ type: 'suites', suites: [{ file: 'server/x.test.js', pass: 3 }] }, { type: 'smoke', pass: 9 }, { type: 'log', name: 'y.test.js' }] };
   const lines = commitBlock(r).split('\n');

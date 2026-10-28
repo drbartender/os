@@ -61,6 +61,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "acorn": "8.16.0",
+    "acorn-jsx": "5.3.2",
     "concurrently": "^8.2.2",
     "eslint": "^10.1.0",
     "eslint-plugin-react-hooks": "^7.1.1",

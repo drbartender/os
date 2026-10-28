@@ -20,7 +20,7 @@
  *   finalize <name> --kind <kind> --base <sha> --reviewed-against <sha> --tier <t>
  *            --select <select.json> (every kind but comment-only)
  *            [--failing-test <file>:<count> --failing-log <log> | --not-a-fix <reason>]
- *            [--stale-base] [--allow-not-reached] [--proof <file>]
+ *            [--stale-base] [--allow-not-reached] [--proof <proof.json>]
  *   show <key|name>
  *   block <key|name>
  *
@@ -32,7 +32,7 @@
  * <lens>.pass-<n>.md, <lens>.part-<n>.md, verify.md; a collapsed one-agent
  * report, one `## Lens: <name>` section per lens, is stored under each lens it
  * has a section for and read one section at a time), tests/ (a copy of every
- * runner log and summary), externals/ and, at finalize, proof.txt and
+ * runner log and summary), externals/ and, at finalize, proof.json and
  * tests/failing-on-old-code.log.
  *
  * finalize checks every field against the contract
@@ -104,9 +104,14 @@
  * carries the position snapshot it was recorded at, when there is one:
  * recorded, never gated, spec 3.10); `finalize --stale-base` (spec 3.8). finalize
  * refuses kinds squash and revert: spec 3.7 has merge-lane.sh ship write
- * those, and refuses comment-only until step 4's proof script exists (plan
- * 347); its exemptions stay for then: it runs no lens (its proof is the
- * body), so it needs no select.json, lens, verify, externals, tests or
+ * those. The comment-only kind is live (step 4): --proof <proof.json> is the
+ * JSON scripts/comment-only-proof.js writes (--base <base> --tip <tip> for a
+ * lane, --staged for a quick fix), and finalize refuses one that is not JSON,
+ * is not version 1, does not say ok, is for another mode, base, tip or staged
+ * tree than the review's, or leaves a file of the review's diff (the
+ * generated docs aside) out or not ok, one line each. The receipt stores it as
+ * proof.json and names it in its proof field; it runs no lens (the proof is
+ * the body), so it needs no select.json, lens, verify, externals, tests or
  * failing test at any tier. Every other kind needs one of --failing-test or
  * --not-a-fix (D13).
  *
@@ -155,7 +160,7 @@ const USAGE = [
   '       review-receipt.js verify <name> <report.md> --position <seq> [--pass <n>]',
   '       review-receipt.js finalize <name> --kind <kind> --base <sha> --reviewed-against <sha> --tier <t>',
   '                 --select <select.json> [--failing-test <file>:<count> --failing-log <log> | --not-a-fix <reason>]',
-  '                 [--stale-base] [--allow-not-reached] [--proof <file>]',
+  '                 [--stale-base] [--allow-not-reached] [--proof <proof.json>] (comment-only: --proof, no --select)',
   '       review-receipt.js show <key|name>',
   '       review-receipt.js block <key|name>',
 ].join('\n');
@@ -527,12 +532,20 @@ const FINALIZE_FLAGS = {
   '--proof': 'value',
 };
 
-function readOptional(file) {
+// --proof: the JSON scripts/comment-only-proof.js wrote, parsed ({json}), or
+// why it could not be ({error}: a file it cannot read, or not JSON).
+function readProof(file) {
   if (file === undefined) return undefined;
+  let text;
   try {
-    return { text: fs.readFileSync(file) };
+    text = fs.readFileSync(file, 'utf8');
   } catch {
     return { error: `cannot read ${file}` };
+  }
+  try {
+    return { json: JSON.parse(text) };
+  } catch {
+    return { error: 'not JSON' };
   }
 }
 
@@ -572,7 +585,7 @@ function cmdFinalize(args, cwd) {
   }
   const { ok: kindOk } = F.checkKind(state.mode, kind);
   const git = G.finalizeFacts(state, { base: flags.base, reviewed: flags['reviewed-against'] }, kindOk, cwd);
-  const proof = readOptional(flags.proof);
+  const proof = readProof(flags.proof);
   const { problems, receipt } = F.validate({
     name,
     kind,
@@ -590,7 +603,26 @@ function cmdFinalize(args, cwd) {
     for (const p of problems) console.error(`  - ${p}`);
     return 1;
   }
-  return publish(dir, receipt, { failing, proof, cwd });
+  // The proof goes into the receipt as proof.json through the working
+  // directory publish copies. finalize never deletes its --proof input: a
+  // --proof that is <work>/proof.json itself is left as it is; one elsewhere
+  // is copied there, validated JSON pretty-printed, and a publish that fails
+  // removes only that copy, leaving the review open as it was.
+  const proofFile = path.join(dir, 'proof.json');
+  const copied = Boolean(receipt.proof) && !samePath(flags.proof, proofFile);
+  if (copied) fs.writeFileSync(proofFile, `${JSON.stringify(proof.json, null, 2)}\n`);
+  const code = publish(dir, receipt, { failing, cwd });
+  if (code === 1 && copied) fs.rmSync(proofFile, { force: true });
+  return code;
+}
+
+// Whether two paths name one file (through symlinks when both exist).
+function samePath(a, b) {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch {
+    return path.resolve(a) === path.resolve(b);
+  }
 }
 
 // ---- show and block ---------------------------------------------------------------

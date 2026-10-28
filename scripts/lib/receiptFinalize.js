@@ -32,7 +32,8 @@
 //                          and reviewed),
 //                          and problems (refs it could not resolve, a key or
 //                          a tier it could not compute)
-//   flags                  allowNotReached, staleBase, notAFix, proof ({text} or
+//   flags                  allowNotReached, staleBase, notAFix, proof ({json}, the
+//                          parsed file scripts/comment-only-proof.js wrote, or
 //                          {error}), failing ({file, count, text, logName} or
 //                          {error})
 //   now                    the ISO timestamp the receipt records
@@ -205,9 +206,6 @@ function staleFiles(s, diffFiles, final, g, posOf) {
 function checkKind(mode, kind) {
   if (!R.KINDS.includes(kind)) return { ok: false, problems: [`kind: ${kind} is not one of the six kinds (${R.KINDS.join(', ')})`] };
   if (kind === 'squash' || kind === 'revert') return { ok: false, problems: [`kind: ${kind} receipts are written by merge-lane.sh ship, not by finalize`] };
-  // Plan 347: the mode is documented and not used until step 4's proof script
-  // exists. The kind, --proof and validate's comment-only exemptions stay.
-  if (kind === 'comment-only') return { ok: false, problems: ["kind: comment-only waits for step 4's proof script"] };
   const allowed = { lane: ['lane', 'comment-only'], 'quick-fix': ['quick-fix', 'comment-only'], commit: ['commit'] }[mode];
   if (!allowed.includes(kind)) return { ok: false, problems: [`kind: a ${mode} review cannot be finalized as ${kind} (it takes ${allowed.join(' or ')})`] };
   return { ok: true, problems: [] };
@@ -246,14 +244,49 @@ function checkTestPositions(mode, tests, g) {
 // summaries and verify's). Each returns problems; the order of the lines is
 // the order a refusal prints them.
 
+// A comment-only proof (scripts/comment-only-proof.js's JSON, plan 2026-10-27
+// "The receipt tool") against the review: version 1, ok, the review's mode
+// (a range proof for a lane, a staged one for a quick fix), its base and tip
+// (lane) or its base and staged tree (quick fix), and every diff file but the
+// generated docs present and ok. The checks run in stages and stop at the
+// first stage that fails, so each refusal is one line about one thing; a
+// value from the proof is printed only as a sha7 or a whole number (the
+// console carries no text a file brought in).
+function proofProblems(p, mode, g) {
+  const S = (x) => (typeof x === 'string' && R.KEY_RE.test(x) ? R.short(x) : '(none)');
+  if (!isObject(p)) return ['proof: not a proof object'];
+  if (p.version !== 1) return [`proof: version ${Number.isSafeInteger(p.version) ? p.version : '(not a number)'} is not 1`];
+  if (p.ok !== true) return ['proof: the proof says not comment-only'];
+  const lane = mode === 'lane';
+  if (lane && p.mode !== 'range') return [p.mode === 'staged' ? 'proof: a staged proof cannot finalize a lane review' : 'proof: its mode is neither range nor staged'];
+  if (!lane && p.mode !== 'staged') return [p.mode === 'range' ? 'proof: a range proof cannot finalize a quick fix' : 'proof: its mode is neither range nor staged'];
+  const problems = [];
+  if (p.base !== g.base) problems.push(`proof: base ${S(p.base)} is not the review's base ${S(g.base)}`);
+  if (lane && p.tip !== g.tip) problems.push(`proof: tip ${S(p.tip)} is not the review's tip ${S(g.tip)}`);
+  if (!lane && p.tree !== g.tree) problems.push(`proof: tree ${S(p.tree)} is not the staged tree ${S(g.tree)}`);
+  if (problems.length) return problems;
+  if (!Array.isArray(p.files)) return ['proof: files is not a list'];
+  // A path listed twice is ok only when every entry for it is.
+  const verdicts = new Map();
+  for (const f of p.files.filter(isObject)) verdicts.set(f.path, verdicts.get(f.path) !== false && f.ok === true);
+  const want = (g.files || []).filter((f) => !R.GENERATED_DOCS.includes(f));
+  const missing = want.filter((f) => !verdicts.has(f));
+  const bad = want.filter((f) => verdicts.get(f) === false);
+  if (missing.length) problems.push(`proof: ${listed(missing)} ${missing.length === 1 ? 'is' : 'are'} not in the proof`);
+  if (bad.length) problems.push(`proof: ${listed(bad)} ${bad.length === 1 ? 'is' : 'are'} not ok in the proof`);
+  return problems;
+}
+
 // The kind and the proof.
 function checkProof(c) {
-  const { kind, tier, state, flags } = c;
-  const problems = [...checkKind(state.mode, kind).problems];
+  const { kind, tier, state, flags, g } = c;
+  const kindCheck = checkKind(state.mode, kind);
+  const problems = [...kindCheck.problems];
   const proof = flags.proof;
   if (proof !== undefined && proof !== null && kind !== 'comment-only') problems.push('proof: --proof is only for --kind comment-only');
   if (kind === 'comment-only' && (proof === undefined || proof === null)) problems.push('proof: --kind comment-only needs --proof <file>');
   if (proof && proof.error) problems.push(`proof: ${proof.error}`);
+  else if (proof && kind === 'comment-only' && kindCheck.ok) problems.push(...proofProblems(proof.json, state.mode, g));
   if (tier === 'A' && (state.mode === 'quick-fix' || kind === 'quick-fix')) problems.push('tier: tier A is a lane, never a quick fix');
   return problems;
 }
@@ -307,10 +340,12 @@ function checkGit(c) {
 // The tier the diff computes to now (review 3, M3): --tier may not be lower,
 // and select.json's per-file tiers must be the computed ones, so a selection
 // read before a later change (a money write to a listed file) cannot keep a
-// lighter review. A kind finalize refuses gathers no tier.
+// lighter review. A kind finalize refuses gathers no tier. Comment-only is
+// held to the floor too: its --tier is what the receipt and the commit block
+// record, so it may not read lower than the diff computes.
 function checkTier(c) {
   const { tier, g, select, state, kind } = c;
-  if (c.commentOnly || !checkKind(state.mode, kind).ok) return [];
+  if (!checkKind(state.mode, kind).ok) return [];
   if (!g.computedTier) {
     return g.files && !(g.problems || []).some((p) => p.startsWith('tier:')) ? ['tier: no computed tier for the diff; finalize computes it itself'] : [];
   }
@@ -550,7 +585,7 @@ function buildReceipt(c) {
     escalated: c.escalated,
     triage: state.triage,
     reports: state.reports,
-    proof: proof && !proof.error ? 'proof.txt' : null,
+    proof: proof && !proof.error ? 'proof.json' : null,
     created_at: state.created_at,
     timestamp: now,
     written_by: kind === 'commit' ? 'review --commit' : kind === 'comment-only' ? 'comment-only proof' : 'review skill',
@@ -563,7 +598,8 @@ function validate(input) {
   const { name, kind, tier, state, texts, git: g, flags, now } = input;
   // Comment-only runs no lens (spec 3.7: the proof is the receipt's body), so
   // no lens, coverage, verify, externals, tests or failing test is required
-  // of it at any tier; every other kind keeps them all.
+  // of it at any tier (the tier floor still holds); every other kind keeps
+  // them all.
   const c = { input, name, kind, tier, state, texts, g, flags, now, commentOnly: kind === 'comment-only' };
   const problems = CHECKS.flatMap((check) => check(c));
   if (problems.length) return { problems, receipt: null };

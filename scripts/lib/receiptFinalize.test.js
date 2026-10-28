@@ -458,20 +458,76 @@ test('a verify finding marked fixed needs a later verify pass that raises nothin
   assert.strictEqual(run(['No findings.\n']), 0);
 });
 
-test("comment-only is refused until step 4's proof script; its exemptions stay for then", () => {
+// A comment-only proof as scripts/comment-only-proof.js writes it, parsed:
+// a range proof of the lane git() describes, every diff file ok.
+function rangeProof(extra = {}) {
+  return { version: 1, mode: 'range', base: A, tip: T, tree: 'e'.repeat(40), files: FILES.map((f) => ({ path: f, ok: true, reason: null })), ok: true, ...extra };
+}
+
+test('comment-only is accepted on a JSON proof of the reviewed diff; its exemptions stand', () => {
   const st = state([], { tests: [] });
-  const proof = { text: Buffer.from('every added line is a comment') };
-  assert.deepStrictEqual(F.checkKind('lane', 'comment-only'), { ok: false, problems: ["kind: comment-only waits for step 4's proof script"] });
-  assert.deepStrictEqual(F.checkKind('quick-fix', 'comment-only').ok, false);
-  // The only problem: it runs no lens, so no lens, verify, externals, tests or failing test is asked of it.
+  const proof = { json: rangeProof() };
+  assert.deepStrictEqual(F.checkKind('lane', 'comment-only'), { ok: true, problems: [] });
+  assert.deepStrictEqual(F.checkKind('quick-fix', 'comment-only').ok, true);
+  assert.deepStrictEqual(F.checkKind('commit', 'comment-only').ok, false);
+  // No problem: it runs no lens, so no lens, verify, externals, tests or failing test is asked of it.
   const { problems, receipt } = F.validate(input({ kind: 'comment-only', tier: 'A', state: st, texts: {}, select: null, flags: { proof } }));
-  assert.deepStrictEqual(problems, ["kind: comment-only waits for step 4's proof script"]);
-  assert.strictEqual(receipt, null);
+  assert.deepStrictEqual(problems, []);
+  assert.strictEqual(receipt.kind, 'comment-only');
+  assert.strictEqual(receipt.proof, 'proof.json');
+  assert.strictEqual(receipt.written_by, 'comment-only proof');
+  assert.strictEqual(receipt.not_a_fix, 'comment-only: the proof shows the diff adds nothing but comment lines');
+  assert.deepStrictEqual([receipt.lenses, receipt.verify.run, receipt.failing_test_on_old_code], [[], false, null]);
+  assert.deepStrictEqual(receipt.externals.codex, { state: 'not_run', reason: 'comment-only: no lens runs (spec 3.7)' });
   // Every other kind keeps them.
   const lane = F.validate(input({ tier: 'A', state: st, texts: {}, select: { tier: 'A' }, flags: {} })).problems;
   for (const re of [/^lenses: money was selected and has no report$/, /^verify: tier A needs the verify pass/, /^externals: tier A records codex/, /^tests: no money smoke recorded/, /^failing test: name the test/]) {
     assert.ok(lane.some((p) => re.test(p)), `${re}\n${lane.join('\n')}`);
   }
+});
+
+test('a comment-only proof is refused, one line each, unless it is version 1, ok, the review\'s mode, base and tip or staged tree, and covers the diff', () => {
+  const st = state([], { tests: [] });
+  const run = (json, extra = {}) => F.validate(input({ kind: 'comment-only', state: st, texts: {}, select: null, flags: { proof: { json } }, ...extra })).problems;
+  const S = (c) => c.repeat(7);
+  assert.deepStrictEqual(run(rangeProof({ tip: B })), [`proof: tip ${S('b')} is not the review's tip ${S('c')}`]);
+  assert.deepStrictEqual(run(rangeProof({ base: B })), [`proof: base ${S('b')} is not the review's base ${S('a')}`]);
+  assert.deepStrictEqual(run(rangeProof({ mode: 'staged', tip: null })), ['proof: a staged proof cannot finalize a lane review']);
+  assert.deepStrictEqual(run(rangeProof({ mode: 'other' })), ['proof: its mode is neither range nor staged']);
+  assert.deepStrictEqual(run(rangeProof({ ok: false })), ['proof: the proof says not comment-only']);
+  assert.deepStrictEqual(run(rangeProof({ version: 2 })), ['proof: version 2 is not 1']);
+  assert.deepStrictEqual(run(rangeProof({ version: 'x' })), ['proof: version (not a number) is not 1'], 'a value from the proof is never printed');
+  assert.deepStrictEqual(run(rangeProof({ base: 'not-a-sha' })), [`proof: base (none) is not the review's base ${S('a')}`]);
+  assert.deepStrictEqual(run([]), ['proof: not a proof object']);
+  assert.deepStrictEqual(run(rangeProof({ files: 'x' })), ['proof: files is not a list']);
+  assert.deepStrictEqual(run(rangeProof({ files: [{ path: 'server/a.js', ok: true }] })), ['proof: server/b.js is not in the proof']);
+  assert.deepStrictEqual(run(rangeProof({ files: [{ path: 'server/a.js', ok: true }, { path: 'server/b.js', ok: false }] })), ['proof: server/b.js is not ok in the proof']);
+  assert.deepStrictEqual(run(rangeProof({ files: [...rangeProof().files, { path: 'server/b.js', ok: false }] })), ['proof: server/b.js is not ok in the proof'], 'a path listed twice is ok only when every entry is');
+  // The generated docs need no place in it: the key leaves them out.
+  assert.deepStrictEqual(run(rangeProof(), { git: git({ files: [...FILES, 'README.md'] }) }), []);
+  assert.deepStrictEqual(F.validate(input({ kind: 'comment-only', state: st, texts: {}, select: null, flags: { proof: { error: 'not JSON' } } })).problems, ['proof: not JSON']);
+  // A quick fix: a staged proof of the staged tree, on the review's base.
+  const T2 = '2'.repeat(40);
+  const qf = state([], { mode: 'quick-fix', tests: [] });
+  const quick = (json) => F.validate(input({ kind: 'comment-only', state: qf, texts: {}, select: null, flags: { proof: { json } }, git: git({ head: A, tree: T2, key: T2 }) })).problems;
+  const staged = rangeProof({ mode: 'staged', tip: null, tree: T2 });
+  assert.deepStrictEqual(quick(staged), []);
+  assert.deepStrictEqual(quick(rangeProof()), ['proof: a range proof cannot finalize a quick fix']);
+  assert.deepStrictEqual(quick({ ...staged, tree: KEY }), [`proof: tree ${S('d')} is not the staged tree ${S('2')}`]);
+  assert.deepStrictEqual(quick({ ...staged, base: B }), [`proof: base ${S('b')} is not the review's base ${S('a')}`]);
+  // --proof with any other kind is refused for that, and its content is not read.
+  const lane = F.validate(input({ flags: { notAFix: 'x', proof: { json: rangeProof() } } })).problems;
+  assert.deepStrictEqual(lane, ['proof: --proof is only for --kind comment-only']);
+});
+
+test('the tier floor holds for comment-only: a --tier below the computed tier is refused, the exemptions stay', () => {
+  const st = state([], { tests: [] });
+  const g = git({ computedTier: 'A', computedTiers: { 'server/a.js': 'A', 'server/b.js': 'B' }, computedFloors: ['money', 'seams'] });
+  const run = (tier) => F.validate(input({ kind: 'comment-only', tier, state: st, texts: {}, select: null, git: g, flags: { proof: { json: rangeProof() } } })).problems;
+  assert.deepStrictEqual(run('B'), ['tier: B is lower than the tier sensitive-match computes for the diff, A']);
+  assert.deepStrictEqual(run('A'), [], 'no lens, verify, externals, tests or failing test at tier A either');
+  const none = F.validate(input({ kind: 'comment-only', tier: 'A', state: st, texts: {}, select: null, git: git({ computedTier: undefined }), flags: { proof: { json: rangeProof() } } })).problems;
+  assert.deepStrictEqual(none, ['tier: no computed tier for the diff; finalize computes it itself']);
 });
 
 test("a test entry that ran anywhere but the final tip, or a quick fix's final tree, is refused, naming it", () => {
