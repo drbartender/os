@@ -1,8 +1,8 @@
 ---
 spec: docs/superpowers/specs/2026-10-19-instruction-rewrite-design.md   # rev 6; this plan is Phase 3 step 5 of section 8, the switch-over
 format: lane map without code (spec D12)
-revision: 3 (2026-10-28; revs 1 and 2 the same day)
-status: written 2026-10-28 while step 4's last lane (merge-docs-split, the merge script's remaining windows) was in its first fix round; rev 2 folds the plan fleet's findings (two reviewers, four blockers, twelve warnings); rev 3 names that lane's final shape, merged the same day as 4fef2ba0 (the step 4 plan's rev 12 amendment is the record); shown to Dallas before any lane is cut (spec section 8, his instruction); not built until he says go. Execution model as in step 4: each lane is built by an opus implementer from a brief beside the ledger, the controller verifies every acceptance check itself, the review skill runs per lane at the tier it computes and writes a receipt, the lane merges through scripts/merge-lane.sh from os (the step 4 script until the merge-ship lane lands, then the new one), the three merged-lane checks run, the worktree and branch go, a lane report goes beside the ledger, and the plan gets a revision through the docs quick-fix chain. Every push in this step is Dallas's cue (pushes stay cue-only until the flip marker exists), and the flip itself, the rehearsal ship and the legacy-removal ship happen with him in the window.
+revision: 4 (2026-10-28; revs 1 to 3 the same day)
+status: written 2026-10-28 while step 4's last lane (merge-docs-split, the merge script's remaining windows) was in its first fix round; rev 2 folds the plan fleet's findings (two reviewers, four blockers, twelve warnings); rev 3 names that lane's final shape, merged the same day as 4fef2ba0 (the step 4 plan's rev 12 amendment is the record); rev 4 records Dallas's answers of 2026-10-28 on the four decisions put to him (decision 9) and the Vercel setting he confirmed (the Order's step 0); shown to Dallas before any lane is cut (spec section 8, his instruction); not built until he says go, which he has not said as of rev 4. Execution model as in step 4: each lane is built by an opus implementer from a brief beside the ledger, the controller verifies every acceptance check itself, the review skill runs per lane at the tier it computes and writes a receipt, the lane merges through scripts/merge-lane.sh from os (the step 4 script until the merge-ship lane lands, then the new one), the three merged-lane checks run, the worktree and branch go, a lane report goes beside the ledger, and the plan gets a revision through the docs quick-fix chain. Every push in this step is Dallas's cue (pushes stay cue-only until the flip marker exists), and the flip itself, the rehearsal ship and the legacy-removal ship happen with him in the window.
 lanes:
   - id: release-field
     scope: the deploy becomes observable (spec 3.11 step 2): GET /api/health returns a release field set from RENDER_GIT_COMMIT (absent locally), and Sentry.init on the server sets release from the same value, so the post-ship watch can tell when the pushed sha is live and Sentry events carry the sha
@@ -40,7 +40,7 @@ lanes:
     scope: no-unused-vars becomes an error for server/ in eslint.config.mjs (spec section 7) if every existing violation under server/ is mechanical (an unused binding deleted, or renamed with an underscore prefix the rule ignores); the count is measured first; when some are not mechanical, the mechanical fixes land, the rule stays a warning, and the report counts what is left and why
     footprint:
       - eslint.config.mjs
-      - server/**  (only the lines eslint names; never server/index.js, server/routes/telegram.js or server/scripts/staffPaymentImport/parsers/venmoCsv.js, which other lanes hold)
+      - server/**  (only the lines eslint names; never server/index.js or server/routes/telegram.js, which other lanes hold)
     blockedBy: [release-field, comment-followups]
     laws: every edit is a deletion of an unused binding or an underscore rename; a deletion that changes a function's arity, a destructuring's shape or an exported name is out of scope; the server suites a changed file reaches run green; the money smoke runs when a sensitive file is touched
     lenses: what the touched files fire (a sensitive server file makes it tier A); seams and access-egress floors on the config
@@ -203,11 +203,10 @@ lanes:
     test plan: the proof; the dry run's log; the real ship's log and the watch's record; the revert ship's log and receipt, all pasted in the step report
     revert: the third action is the revert
   - id: comment-followups
-    scope: optional, Dallas's call (decision 9): the step 4 leftovers a comment-only lane can take: the two code comments that point at the deleted env table (client/src/utils/uploadLimits.js, server/routes/telegram.js), the owner's payment handle in the Venmo parser's header, and guard-os-main.sh's set line moved below its header (board-write.sh's goes with the board-writer lane); the 300 placeholder headers under client/src are a separate, larger lane for a later step, Dallas's list
+    scope: optional, Dallas's call (decision 9): the step 4 leftovers a comment-only lane can take: the two code comments that point at the deleted env table (client/src/utils/uploadLimits.js, server/routes/telegram.js) and guard-os-main.sh's set line moved below its header (board-write.sh's goes with the board-writer lane); the owner's payment handle in the Venmo parser's header stays, Dallas's decision of 2026-10-28 (decision 9); the 300 placeholder headers under client/src are a separate, larger lane for a later step, Dallas's list
     footprint:
       - client/src/utils/uploadLimits.js
       - server/routes/telegram.js
-      - server/scripts/staffPaymentImport/parsers/venmoCsv.js
       - scripts/guard-os-main.sh
       - README.md  (the generated tree; regenerated in-lane)
     blockedBy: []
@@ -233,7 +232,7 @@ lanes:
 6. **The receipt cap's rules are three refusals and the clearing rule** named in the receipt-cap lane; the .test.js staleness relaxation the review skill's section 9 names as its own later tier A change is deferred (section "What this step does not do"), so the lane's revert is one feature.
 7. **Retention: the gate keeps the last 20 smoke-log directories and ship keeps raw stdio logs for 30 days**; the sweep runs inside the writers the gate and ship already call, never on a schedule; its own lane (log-retention), so a wrong marker rule and a wrong sweep revert apart.
 8. **The merged-lane checks as code exclude README.md and ARCHITECTURE.md from the byte-identical check**, as spec 4.1's ship does; the merge regenerates them.
-9. **The comment follow-ups are an optional lane**, taken only if Dallas wants them in this step; board-write.sh's header fix moves to the board-writer lane so no two first-wave lanes edit one file.
+9. **The comment follow-ups are an optional lane**, taken only if Dallas wants them in this step; board-write.sh's header fix moves to the board-writer lane so no two first-wave lanes edit one file. On 2026-10-28 Dallas was shown that the owner's payment handle sits in the public README through the generated tree (from the Venmo parser's header) and decided it stays (his decision; his words are in the step 4 ledger's entry of that day), so the lane loses that item and its file; what is left is housekeeping he did not ask for, so the lane is not cut in this step unless he asks (my call) and lint-errors follows release-field alone. The other three decisions put to him the same day stand as written, by his answer: the step 4 push as a real deploy (decision 13), his presence in the window for the flip push, the rehearsal's two real ships and the legacy-removal ship (the status line), and the review tooling's own files at the hinge depth with the two merge-script lanes alone at tier A (decision 22).
 10. **The rehearsal's file is pricingEngine.js** (tier A, pure, headed), one comment line, so the ship exercises the money smoke and the watch on a change that cannot act; the rehearsal is three actions (the dry run, the real ship, the revert ship), so the clean-revert recognition runs once for real too.
 11. **The memory archive at the flip is the spec's list (6.5)**: the push-day notes (eighteen files today, 2026-08-16 to 2026-10-27) and the four push-model notes move to memory/_archive/, every link to them rewritten, the two kept notes stay; done by the shipping session, outside git, after the marker is written.
 12. **The global file's transitional line is removed by hand at the flip**, with a dated .bak first, by the shipping session (the file is outside git).
@@ -263,7 +262,7 @@ As step 4's: no em dash in any file this plan writes; ids only under os/ (no cli
 
 ## Order
 
-0. Before any lane: Dallas confirms in the Vercel project that access to system environment variables is enabled (the ignore step reads VERCEL_GIT_PREVIOUS_SHA; when the setting is off the script sees an empty value and builds, which the evidence push would show as a build, not a cancel). The three dashboard items of spec section 8 are done since 2026-10-27 (the Render build filter, the Render health check path, the client Sentry DSN; docs/dev.md's Render section records them) and are not asked for again.
+0. Before any lane: Dallas confirms in the Vercel project that access to system environment variables is enabled (the ignore step reads VERCEL_GIT_PREVIOUS_SHA; when the setting is off the script sees an empty value and builds, which the evidence push would show as a build, not a cancel). Done: Dallas confirmed it enabled from the Vercel app on 2026-10-28 (docs/dev.md's Vercel section records it); not asked for again. The three dashboard items of spec section 8 are done since 2026-10-27 (the Render build filter, the Render health check path, the client Sentry DSN; docs/dev.md's Render section records them) and are not asked for again.
 1. vercel-ignore first, alone, so its squash rides in the step 4 push.
 2. The step 4 push, on Dallas's cue: everything unpushed since 2026-10-27 plus vercel-ignore's squash and this plan, through npm run gate and a literal-sha push (the legacy path; the pre-push hook runs the money smoke and the client build since server/ and client/ change). The shipping session states the inventory in one line first (the counts by top-level directory), then watches Render's deploy and Vercel's build by hand and records both in the ledger. This is a real deploy of step 4's work: header comments over 563 source files, the generator, the migration tool, the merge script, the hook.
 3. The evidence push, on Dallas's cue: one docs-only commit (the next plan revision serves) pushed alone, right after the step 4 deploy is live. Expected: Render skips the deploy (the build filter), Vercel's deployment is cancelled by the ignore step (its log line names the docs-only diff); the shipping session records both. A build on either side is a failed check and stops the step until its cause is known.
@@ -409,11 +408,13 @@ Each lane's acceptance checks are a command or a read with a stated pass conditi
 
 ### Lane: comment-followups
 
-1. The proof says comment-only yes for the four source files.
-2. grep for the deleted env table's name in the two code comments: 0; the payment handle absent from venmoCsv.js's header (a count); `head -5 scripts/guard-os-main.sh` shows the header before the set line.
+1. The proof says comment-only yes for the three source files.
+2. grep for the deleted env table's name in the two code comments: 0; `head -5 scripts/guard-os-main.sh` shows the header before the set line.
 3. `npm run docs` twice changes nothing.
 
-## What the plan fleet changed (rev 1 to rev 2), and rev 3
+## What the plan fleet changed (rev 1 to rev 2), and revs 3 and 4
+
+Rev 4 (the same day, no fleet run): Dallas's answers of 2026-10-28 recorded in decision 9, the Order's step 0 and the status line; the comment-followups lane loses the payment-handle item and the Venmo parser's file, its two checks and lint-errors' held-files note follow.
 
 Rev 3 (the same day, no fleet run): the last step 4 lane merged, so the merge contract names its final shape (three nothing-to-merge refusals; the generator's staging on the merge's lock budget; the discard of a failed render; the carried-by check at every refusal, in full or in part) and the merge-check lane takes that lane's two deferred minors that touch the check phase.
 
