@@ -58,12 +58,19 @@
 //                          block, so a named line ("Required for uploads (A,
 //                          B).") satisfies them for every variable of its
 //                          chain: the names neither add a word nor are
-//                          checked. A number is found only as a token of the block by
-//                          the same rule the row is read with, so a row's 30
-//                          is not found inside a block's 2026-09-30, nor its
-//                          5 inside 1.5. A phone-shaped token (10 to 15 digits, no letters)
-//                          is found as written, or by its last four digits
-//                          standing alone (the business
+//                          checked. A number is found only as a token of the
+//                          block by the same rule the row is read with, so a
+//                          row's 30 is not found inside a block's 2026-09-30,
+//                          nor its 5 inside 1.5. A code span is found as
+//                          written anywhere in the block, except a span the
+//                          number rule reads as exactly one number and nothing
+//                          else (`0`, `60`, `2026-08-25`): that span is a
+//                          number and found only as a token, so a row's `0`
+//                          is not found inside a block's 300 or 2026-08-25,
+//                          while `2560x3200` and `gpt-5.4-mini` are still
+//                          found as written. A phone-shaped token (10 to 15
+//                          digits, no letters) is found as written, or by its
+//                          last four digits standing alone (the business
 //                          lines are named by them, never added as a literal);
 //                          an email-shaped one also on the variable's own
 //                          line. A table variable the file lacks reads
@@ -313,6 +320,14 @@ const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 // A number is found only where it stands as its own token by the row side's
 // rule, never inside a date, a time or a decimal (2026-09-30 holds no 30).
 const hasNumber = (text, n) => numbersIn(text).includes(n);
+// A code span the number rule reads as exactly one number and nothing else
+// (`0`, `60`, `2026-08-25`) is checked as that number, never by substring, so
+// a row's `0` is not found inside a block's 300; any other span (`2560x3200`,
+// `gpt-5.4-mini`) is found as written.
+const isOneNumber = (span) => {
+  const n = numbersIn(span);
+  return n.length === 1 && n[0] === span;
+};
 
 function found(token, block, own, number) {
   if (phoneShaped(token)) return block.includes(token) || hasNumber(block, digitsOf(token)) || hasNumber(block, digitsOf(token).slice(-4));
@@ -340,7 +355,7 @@ function check(envText, rows) {
       const v = vars.get(name);
       const block = v.description;
       const own = fileLines[v.line - 1] || '';
-      for (const t of spans) if (!found(t, block, own, false)) miss(name, t);
+      for (const t of spans) if (!found(t, block, own, isOneNumber(t))) miss(name, t);
       for (const n of numbers) if (!found(n, block, own, true)) miss(name, n);
       for (const w of words) if (!new RegExp(`\\b${escapeRe(w)}\\b`, 'i').test(block)) miss(name, w);
     }

@@ -360,3 +360,37 @@ test('draft: a chain whose members share one phrase, and a single variable, get 
   assert.ok(text.includes('# A variable on its own.\n# Required.\n# [README] On its own\nALONE='), text);
   assert.deepEqual(envt.check(text, mixedRows()), []);
 });
+
+// ---- a backticked number is checked as a number (lane migrate-headers-split) -
+
+test('check: a backticked 0 is a miss where the only zeros sit inside 300 and a date; standing alone it is found', () => {
+  const r = numberRows('Max rings per day. `0` is treated as unset.');
+  assert.deepEqual(envt.rowTokens(r[0]), { spans: ['0'], numbers: [] });
+  assert.deepEqual(envt.check(lines('# Max rings per day (default 300, spec 2026-08-25); unset means the default.', 'RING_CAP=', ''), r), [{ name: 'RING_CAP', token: '0' }]);
+  assert.deepEqual(envt.check(lines('# Max rings per day (default 300, spec 2026-08-25); 0 is treated as unset.', 'RING_CAP=', ''), r), []);
+  assert.deepEqual(envt.check(lines('# Max rings per day (default 300); `0` is treated as unset.', 'RING_CAP=', ''), r), []);
+});
+
+test('check: a backticked 60 is a miss inside 600 and found standing alone; a backticked date is found as one token', () => {
+  const r = numberRows('Gap in ms, `60` in tests, since `2026-08-25`.');
+  assert.deepEqual(envt.check(lines('# Gap in ms, default 600, since 2026-08-25.', 'RING_CAP=', ''), r), [{ name: 'RING_CAP', token: '60' }]);
+  assert.deepEqual(envt.check(lines('# Gap in ms, 60 in tests (spec 2026-08-25).', 'RING_CAP=', ''), r), []);
+  assert.deepEqual(envt.check(lines('# Gap in ms, 60 in tests, since 08-25.', 'RING_CAP=', ''), r), [{ name: 'RING_CAP', token: '2026-08-25' }]);
+});
+
+test('check: a span holding letters and digits is still found by substring', () => {
+  const r = numberRows('Size `2560x3200`, words model `gpt-5.4-mini`.');
+  assert.deepEqual(envt.rowTokens(r[0]).numbers, []);
+  assert.deepEqual(envt.check(lines('# Size (2560x3200; fallback 1664x2080), words model gpt-5.4-mini.', 'RING_CAP=', ''), r), []);
+  assert.deepEqual(envt.check(lines('# Size 2560 by 3200, words model gpt 5.4 mini.', 'RING_CAP=', ''), r), [
+    { name: 'RING_CAP', token: '2560x3200' },
+    { name: 'RING_CAP', token: 'gpt-5.4-mini' },
+  ]);
+});
+
+test('check over the draft of a row with backticked numbers finds no miss', () => {
+  const r = numberRows('Max rings per day (default 300). `0` is treated as unset; `60` in tests; size `2560x3200`.');
+  const env = lines('# Max rings per day (default 300), spec 2026-08-25.', 'RING_CAP=300', '');
+  assert.deepEqual(envt.check(env, r).map((m) => m.token), ['0', '60', '2560x3200']);
+  assert.deepEqual(envt.check(envt.draft(env, r).text, r), []);
+});
