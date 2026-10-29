@@ -8,8 +8,8 @@
 # The manifest is read from beside this script, a rule per line as "<key>
 # <extended-regex>" split on the first run of whitespace; a line whose first
 # non-blank character is # is a comment. A malformed manifest refuses with
-# exit 2 instead of passing: a key with no pattern, a pattern that matches an
-# empty line (an empty alternative, .*, ^, x* and their kin: it would match
+# exit 2 instead of passing: a key with no pattern, a key that appears twice, a
+# pattern that matches an empty line (an empty alternative, .*, ^, x* and their kin: it would match
 # every line), a pattern grep cannot parse, or a manifest that yields no key
 # at all; the MALFORMED line goes to stderr and names the copy.
 # A last line without a trailing newline is read like any other.
@@ -56,12 +56,17 @@ MANIFEST="$HERE/claudemd-invariants.txt"
 # character is # are skipped.
 rules_of() {
   local file=$1 label=$2 line trimmed key regex n=0
+  local -A seen=()
   while IFS= read -r line || [ -n "$line" ]; do
     trimmed=${line#"${line%%[![:space:]]*}"}
     case "$trimmed" in ''|\#*) continue ;; esac
     key=""; regex=""
     read -r key regex <<< "$line"
     [ -n "$key" ] || continue
+    if [ -n "${seen[$key]+x}" ]; then
+      echo "MALFORMED [$key] in $label: the key appears twice (one rule per key; join alternatives with |)" >&2; return 2
+    fi
+    seen[$key]=1
     if [ -z "$regex" ]; then
       echo "MALFORMED [$key] in $label: no pattern (an empty pattern would match every line)" >&2; return 2
     fi
@@ -105,9 +110,9 @@ if [ -n "$REF" ]; then
   while IFS=$'\t' read -r key regex; do work[$key]=$regex; done <<< "$rules"
   while IFS=$'\t' read -r key regex; do
     if [ -z "${work[$key]+x}" ]; then
-      echo "REMOVED [$key]: $REF's manifest has it and the working manifest does not"; fail=1
+      echo "REMOVED [$key]: $REF's manifest has it and the commit's manifest (the index's copy, what git diff --cached shows) does not"; fail=1
     elif [ "${work[$key]}" != "$regex" ]; then
-      echo "CHANGED [$key]: /$regex/ at $REF, /${work[$key]}/ in the working manifest (a pattern change lands in its own commit, with no CLAUDE.md staged)"; fail=1
+      echo "CHANGED [$key]: /$regex/ at $REF, /${work[$key]}/ in the commit's manifest (the index's copy, what git diff --cached shows; a pattern change lands in its own commit, with no CLAUDE.md staged)"; fail=1
     fi
   done <<< "$ref_rules"
 fi

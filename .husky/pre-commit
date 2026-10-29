@@ -5,8 +5,9 @@
 # Husky runs it with `sh -e` from the worktree root. The docs check and the
 # CLAUDE.md check read the index git is committing from (GIT_INDEX_FILE: the
 # temporary index under a pathspec commit, the private copy under a lane
-# merge), never the working tree; the invariants manifest and its script, the
-# CSS check's class harvest and lint-staged read the working tree as before.
+# merge), never the working tree, and the CLAUDE.md check's manifest comes from
+# HEAD and from that same index; the check script itself, the CSS check's class
+# harvest and lint-staged read the working tree as before.
 #   1. node scripts/gen-docs.js --check --staged: the six generated sections of
 #      README.md and ARCHITECTURE.md against the index, and the header rule over
 #      the staged added and modified source files; refuses with one line per
@@ -14,7 +15,7 @@
 #   2. When .claude/CLAUDE.md is staged: its staged blob, written to a temp
 #      file, through scripts/check-claudemd-invariants.sh --additive-against
 #      HEAD; refuses when an invariant in scripts/claudemd-invariants.txt is
-#      missing, when the working-tree manifest removes or changes a key HEAD's
+#      missing, when the manifest in that index removes or changes a key HEAD's
 #      manifest has (a commit that stages CLAUDE.md may only add keys), or when
 #      the file is staged for deletion. The temp file is removed.
 #   3. node scripts/check-file-size.js --staged: the file-size ratchet.
