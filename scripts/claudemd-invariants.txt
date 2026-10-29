@@ -5,9 +5,19 @@
 # This is a coarse, necessary-not-sufficient net (it proves the rule's substance
 # is present, not just a bare keyword); a consistency agent does the semantics.
 # Every pattern matches today's file, and most match the rewritten file's
-# expected wording too; two (receipt-required, legal-hold) match today only
-# through lines the rewrite removes, so the rewrite carries a line for each,
-# and the check turns red on any dropped rule. Retired 2026-10-20: inline-self-check (the checklist dies with the
+# expected wording too; eleven match today only through lines the rewrite
+# removes, so the rewrite carries a line for each: receipt-required (the
+# TRANSITIONAL block), legal-hold (the Inbox sentence of the Tech Stack list),
+# gratuity (the checkout gratuity paragraph, replaced by three lines, one of
+# which names gratuity_rate, gratuityLineAmount or GRATUITY_LABEL),
+# scoped-reads, secrets-env, server-validation, error-no-leak and
+# multi-table-transactions (inline self-check lines, which survive as
+# one-line invariants), design-review-fleet (the design-stage paragraph, which
+# becomes the one pointer line naming /review-spec), doc-updates (the
+# mandatory documentation section, which becomes the header-comment
+# convention) and ships-after-gate (the push = deploy line, which becomes the
+# main-is-prod line); the check turns red on any dropped rule. Retired
+# 2026-10-20: inline-self-check (the checklist dies with the
 # rewrite; its lines survive as one-line invariants), file-size-ratchet (one
 # pointer line, which the key would not match), env-debug-discipline (the rule
 # moved to the private global file).
@@ -38,7 +48,14 @@
 # has no line for it. Corrected on main after the lane merged (2026-10-29):
 # ships-after-gate no longer accepts the Main-is-prod label alone, and gratuity
 # needs a term of the rule itself (gratuity_rate, gratuityLineAmount or
-# GRATUITY_LABEL), so a pointer that names gratuity cannot stand in. No key
+# GRATUITY_LABEL), so a pointer that names gratuity cannot stand in. Added
+# 2026-10-29 by the rewrite lane, each with the line that satisfies it (an
+# added key is what --additive-against allows): dev-live-stripe, and at that
+# lane's review, for rules of the rewritten file that no key covered,
+# passkey-mint, one-wrapper, ai-egress, public-repo, branches-stashes and
+# finished-commits (the block at the end), and at its second review
+# gratuity-rate and gratuity-election, so the rate rule and the
+# election-at-payment rule each hold a key beside the pointer line. No key
 # retired.
 
 # Named git-safety invariants (carried from the old Twelve Core Rules)
@@ -62,8 +79,11 @@ design-review-fleet spec-grounding|review-spec
 # Money / auth / data invariants (cross-cutting, must never weaken)
 stripe-test-mode STRIPE_TEST_MODE_UNTIL
 stripe-fails-closed stripe.*fails closed|fails closed.*stripe
+dev-live-stripe live Stripe
 hosted-bartender-ratio isHostedPackage
 gratuity gratuity_rate|gratuityLineAmount|GRATUITY_LABEL
+gratuity-rate per-staff-per-hour
+gratuity-election persists only at payment
 proposal-payment-status paid in full|paid flag
 money-cents integer cents
 encryption-pii AES-256|encryption\.js
@@ -89,3 +109,12 @@ drink-plan-canonical event-side.*canonical
 cross-cutting change X.*(depends on X|consumer)
 legal-hold legalHold\.js|legal.hold client
 pricing-engine pricingEngine\.js.*(pure|no DB)
+
+# Rules of the rewritten file that no key covered (added 2026-10-29 at the
+# rewrite lane's review)
+passkey-mint assert-verify
+one-wrapper one wrapper each|anthropicClient\.js
+ai-egress aiRedact\.js
+public-repo repo is public
+branches-stashes branches and stashes
+finished-commits finished work

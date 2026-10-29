@@ -1,15 +1,10 @@
-# Dr. Bartender — Claude Code Instructions
+# Dr. Bartender: project rules
 
-CLAUDE.md is the **rules doc**, organized in two tiers:
+Four sections: invariants (law that protects money, auth, data and code; whenever this file is staged, the pre-commit hook checks it against `scripts/claudemd-invariants.txt`, so a dropped invariant refuses the commit), how work flows, conventions, and pointers. Conventions are questionable by default: when one gets in the way, say so, change it and update its why in the same change. [Claude default 2026-06-19]
 
-- **Invariants** — genuine law that protects money, auth, data, and code. They change only with deliberate care, and the rewrite is coverage-checked so none is ever silently dropped.
-- **Conventions** — how we work now, each carrying its *why*. Conventions are questionable by default: when one gets in your way, say so, change it, and update its *why* right then. The doc stays alive.
+Every rule ends with its provenance: `[Dallas <date>]` when the owner decided it, `[Claude default]` when Claude derived it. A rule found without a bracket is a Claude default and may be dropped, saying so in one line; mechanics (what a script does) carry none. How to work with the owner lives in the private global rules file, never here. [Claude default 2026-10-19]
 
-> TRANSITIONAL (2026-10-20, instruction rewrite step 2; remove at the flip): from this commit every lane is reviewed before merge, and every quick fix before its commit, by the review skill (`.claude/skills/review/`), which writes a receipt under the git common dir; the old push-time review layer (the seam sweep, the sensitive-path re-review at push, the second opinion at push) is not run; pushes stay cue-only through `npm run gate` and a literal-sha push until the flip marker exists; where the Review model and Push model sections below describe that layer, this block supersedes them. [Claude default 2026-10-20, spec 2026-10-19 section 8]
-
-Structural reference (folder tree, route table) lives in `README.md` and `ARCHITECTURE.md`. Read those when you need to know where a file lives. Reference material (tech stack, env vars) sits at the end of this doc.
-
-> TRANSITIONAL (remove once fully off Windows): primary development is the Linux box now. A few notes still describe Windows-era behavior; each carries a `TRANSITIONAL` marker until the Windows machine is retired.
+TRANSITIONAL (2026-10-29, removed by the step 5 legacy-removal lane): until the flip marker (`<git-common-dir>/drb-flip.json`) exists, pushes are cue-only, through `npm run gate` and then a push of the literal sha; `npm run ship` refuses until then. [Claude default 2026-10-20]
 
 ---
 
@@ -17,242 +12,106 @@ Structural reference (folder tree, route table) lives in `README.md` and `ARCHIT
 
 ## Git safety
 
-Solo developer, vibe-coded. **Code preservation is the #1 priority.** Push to `main` = deploy to production via Render + Vercel. These rules protect work and the shared `main`; they do not bend.
+- `os` never leaves main: never `checkout`, `switch` or `checkout -b` inside `os`; a branch exists only as a lane worktree under `../worktrees/`, driven by path. Why: `os` is one shared checkout with one HEAD across parallel windows, and moving it strands another window's commits. `scripts/guard-os-main.sh` (pre-commit) refuses a commit on a non-main branch in `os` and a spec or plan committed off main. [Claude default 2026-06-19]
+- Code preservation beats shipping speed: when a git operation could destroy uncommitted or unpushed work, stop and ask. Why: lost work is unrecoverable; a late ship is not. [Claude default 2026-04-15]
+- Explicit staging: `git add <specific-path>` only, never `git add .`, `-A` or `-u`. Why: a sweep takes in screenshots, `.playwright-mcp/`, `.env` and another window's staged work. [Claude default 2026-04-15]
+- Never `git reset` on main and never `--amend` a pushed commit: undo pushed work with `git revert <sha>`, unstage with `git restore --staged <path>`, keep `git reset --soft HEAD~N` for a lane, and on an unpushed commit prefer a new commit, amending only on request. Why: rewriting shared main or pushed history breaks every other checkout. [Claude default 2026-04-15]
+- Destructive ops need explicit approval, a per-action yes every time: `push --force`, `reset --hard`, `clean -f`, `checkout .`, `restore .`, `rm` on tracked files and `branch -D`. The one standing exception is deleting a lane branch after its squash merge when three checks pass, run and stated with the delete: the squash is on main (`git log main --grep "merge(lane <name>"`), `git diff main <branch> -- <every file the lane touched>` is empty, and the lane's worktree is gone. Why: the others are irreversible, and a branch that passes the checks is provably redundant. [Claude default 2026-04-15; the merged-lane exception 2026-07-02]
+- Never scrap unmerged work: before any scrap `git log main..<lane-branch>` must be empty, and when it is not, ask; an automatic scrap uses `git branch -d` (which refuses unmerged work), never `-D`. [Dallas 2026-06-19]
+- Branches and stashes outside the lane model need a yes with a one-line reason and are never created silently. Why: ad-hoc branches and stashes are where work goes missing. [Claude default 2026-04-15]
+- A push rejection stops and reports, never auto-resolves: no auto-pull, auto-rebase or force-push (a sha a fetch shows already in `origin/main` is reported as shipped by another window). Why: an automatic fix can clobber work or ship the wrong thing. [Claude default 2026-04-15]
 
-- **os never leaves main.** The `os` checkout is permanently pinned to `main`. Never `checkout`, `switch`, or `checkout -b` inside `os`. *Why:* `os` is a single shared checkout with one HEAD across parallel windows; moving it drags another window onto the wrong branch and strands that window's commits. A branch exists only as a separate worktree ("lane") under `../worktrees/`, driven by path. A pre-commit guard (`scripts/guard-os-main.sh`) blocks any commit on a non-main branch from the `os` worktree, and any spec/plan doc committed off `main`.
-- **Code preservation beats shipping speed.** When a git op could destroy uncommitted or unpushed work, stop and ask. *Why:* lost work is unrecoverable; a delayed ship is not.
-- **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. *Why:* prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, and other junk.
-- **Never `git reset` on `main`.** Reset is safe inside a lane branch. Rewinding shared `main` is the exact collision the lane model removes. Unpushed work: `git reset --soft HEAD~N` (in a lane). Pushed work: `git revert <sha>` + push (a new undo commit, never a rewrite of pushed history). Unstage without losing work: `git restore --staged <path>`.
-- **Never `--amend` a pushed commit.** On unpushed commits prefer new commits over amend; amend only if the user explicitly asks. *Why:* rewriting pushed history breaks every other checkout.
-- **Destructive ops always require explicit approval — except merged-lane cleanup.** `push --force`, `reset --hard`, `clean -f`, `checkout .`, `restore .`, and `rm` on tracked files need a per-action yes every time. No "obviously safe" bypass. `branch -D` needs a yes too, with ONE standing pre-approval: deleting a lane branch after its squash-merge, verified by all three checks (Claude runs them and states the results in the same breath as the delete): (1) the lane's squash commit is on `main` (`git log main --grep "merge(lane <name>"` finds it); (2) `git diff main <branch> -- <every file the lane touched>` is EMPTY, i.e. every change the lane made is byte-identical on main, so deletion cannot lose work; (3) the lane's worktree is already removed. A `-D` that fails any check is back to per-action approval. *Why:* the others are irreversible; a squash-merged lane branch that passes the diff check is provably redundant, and asking permission to take out verified garbage just trains everyone to stop reading the prompts.
-- **Push failures stop and report — never auto-resolve.** If `git push` is rejected (non-fast-forward, auth, network), stop and ask. Never auto-pull, auto-rebase, or force-push. *Why:* an auto-fix can silently clobber or ship the wrong thing.
-- **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat it with gravity. Pushes are explicit-cue only (see Push model).
-- **Commits are finished, tested work, grouped by logical feature.** "Finished" means either (a) the user verified it works in the app, or (b) it is a behavior-inert change (copy, CSS, docs) the user approved. One commit per logical feature, not per file or step. No WIP or checkpoint commits on `main`. *Why:* clean, revertable history where a commit is a unit of intent. (Lane checkpoints are exempt: they never reach `main`; the squash merge is the unit.)
-- **Branches and stashes outside the lane model need approval with a one-line reason.** Claude may propose but never creates them silently. *Why:* the lane lifecycle is blanket-authorized, but ad-hoc branches/stashes are where work goes missing.
+## Main is prod
 
-## Money, auth, and data: cross-cutting consistency
+- Every commit on main ships after the gate: `npm run ship` gates `origin/main..<sha>` in a throwaway worktree, pushes that sha and starts the post-ship watch; the gate runs nothing for a docs-only range (the dated line above says what stands until the flip). [Dallas 2026-10-18]
+- Nothing reaches main without a review receipt: a lane gets its receipt before its merge and a quick fix before its commit, through the review skill (`.claude/skills/review/`); from the flip on, the merge path and the pre-push hook check it. [Dallas 2026-10-18]
+- Commits on main are finished work: reviewed, tested, one per logical feature; no WIP or checkpoint commit reaches main, since a lane's checkpoints are squashed away. Why: a revertable history where a commit is a unit of intent. [Claude default 2026-04-15]
 
-When modifying any entity, always check and update **all** related entities too. Never leave one part of the system out of sync with another. Examples:
+## Money, auth and data
 
-- **Proposal price changes** → re-evaluate payment status. If the new total exceeds `amount_paid`, remove or correct any "Paid in Full" flag. Never leave a proposal marked paid when it isn't.
-- **Proposal event detail changes** (date, time, location, guest count) → check and update linked shifts accordingly.
-- **Phone number / formatting changes** → update every component, route, and display that touches that field.
-- **Schema column changes** → update every route (SELECT, INSERT, UPDATE), every component that reads/writes that field, and every place that displays it.
-- **New feature data shape** → ensure every consumer of that data (backend endpoints, frontend components, PDF templates) is updated in the same PR.
-- **Event identity** — client name and event type are separate, independent data points. Never concatenate them into a single "title" string or prompt for an `event_name`. Display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the graceful fallback. Available in `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS — kept in sync manually).
-- **Hosted-package bartender rule** — Hosted (per_guest) packages include bartender staffing in the per-guest rate **at a 1:100 guest ratio** (so 100 guests = 1 included, 250 guests = 3 included; controlled by `pkg.guests_per_bartender`). Bartenders **within** the ratio are $0 line items with $0 gratuity. Bartenders **above** the ratio — added via the `num_bartenders` override OR the `additional-bartender` add-on — are charged at the standard hourly rate (`pkg.extra_bartender_hourly`, default $40/hr) plus the same sub-100-guest gratuity surcharge that applies on BYOB ($50/$25/$15 per hour for <50/<75/<100 guests). Use `isHostedPackage(pkg)` and `staffing.required` from `server/utils/pricingEngine.js`. Grep for `isHostedPackage` before adding any new bartender-cost code path; only zero the charge for the first `staffing.required` bartenders. This rule has been re-lost multiple times — treat as load-bearing.
-- **Drink plans: event-side is canonical, proposal-side is preview.** Bartender prep, shopping-list approval, and client communication all use the EVENT's drink plan (post-conversion). Verify drink-plan / shopping-list UI changes on the event path. Pricing logic still verifies on the proposal side (that's where money math runs).
-- **Checkout gratuity** — gratuity is stored as a per-staff-per-hour RATE (`gratuity_rate`); the dollar line is always computed (`rate × staffCount × hours`, staff = bartenders + additional-bartender addon, NOT barbacks/servers) and layered on top of the forced `"Shared Gratuity"` surcharge. Added on top of `total_price` (never diluted by a discount/override), pooled with the forced surcharge in payroll (both labels via `gratuityLabels.GRATUITY_PAYROLL_LABELS`), and gated on funded before accrual. Applies to all packages via `staff_noun`. Labels come from the one shared constant module (`gratuityLabels.js`, server + client mirror). The no-jar floor (rate ≥ 50) is enforced at the route (`deriveGratuityRate`), in the engine, and by a DB CHECK; an admin mandate (below) REPLACES that floor on both jar answers (the CHECK's third disjunct), never stacks on it. The Stripe webhook records the amount actually charged (additive), never `= total_price`. Aside from an admin mandate, the election persists ONLY at payment: `create-intent` computes it in memory and stamps `tip_jar`/`gratuity_rate` into PaymentIntent metadata; the `payment_intent.succeeded` webhook applies it (before the Balance invoice, `FOR UPDATE` on the proposal row, under the PAYABLE status guard `sent`/`viewed`/`accepted` — deliberately narrower than the credit's lifecycle guard, so a stale intent settling post-conversion or post-refund cannot rewrite `total_price` back up from a stale snapshot). The payment is never hostage to that write: the metadata is validated against the DB CHECK before the row is touched and the UPDATE runs inside a `SAVEPOINT`, so a failed gratuity apply degrades to "not applied, alerted" and never rolls back the payment record. Unpaid proposals never carry a client-elected gratuity; the ONLY pre-payment gratuity is an admin mandate (`gratuity_floor_rate > 0`, spec 2026-08-10), which floors the client's election on BOTH jar answers and rides the same rate machinery, with EVERY persisting snapshot writer carrying `gratuity.floor_rate` (crud, extras fold, webhook spread — a writer that drops it strips the checkout floor client-side while the server still enforces). The admin PATCH accepts exactly one gratuity field, `gratuity_mandate_total` (dollars > 0 via `gratuityMandate.js`; null clears only a real mandate and forces the jar on; absent carries forward and rescales at the canonical rate; rejected once signed or paid), and still never accepts `tip_jar`/`gratuity_total` (admin removal goes through cancel-line-item only, which also clears the mandate column AND the in-memory row before its fold). Payments that carry no metadata — balance, invoice, drink-plan, admin-issued Stripe payment links — never touch the gratuity FIELDS; a mandated gratuity rides inside `total_price` and is collected by any payment. Grep `gratuityLineAmount` / `GRATUITY_LABEL` before touching gratuity.
-
-The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
-
-## Coding patterns
-
-- **No ORM** — use raw SQL via `pool.query()` with parameterized queries (`$1`, `$2`, etc.). Never concatenate user input into SQL.
-- **One pooled connection per request.** If a handler holds a client from `pool.connect()`, every query it makes until `client.release()` must go through that client — never a bare `pool.query()`, which checks out a *second* connection. A request holding one connection while waiting for another is a pool deadlock: at `max` concurrent such requests, nobody can release until they get a connection nobody can free, and the whole app starves for `connectionTimeoutMillis`. After `COMMIT`/`ROLLBACK` the client is back in autocommit and is fine to keep using. *Why:* this has bitten twice (SERVER-17; the 2026-07-13 capture-lead deadlock). It is easy to reintroduce because `pool.query()` is the correct default *everywhere else*. Watch the post-COMMIT "best-effort" tail of a transaction handler especially — and note that a helper you call there (e.g. anything in `marketingHandlers.js`) may take its own pooled connection, in which case `release()` the client *before* that tail instead.
-- **Route files** export an Express Router. One file per resource under `server/routes/`.
-- **Auth middleware** — import `{ auth }` for protected routes; check `req.user.role` for admin/manager guards.
-- **Async route handlers** — wrap with `asyncHandler` so rejections funnel to the global error middleware. Throw `AppError` subclasses (`ValidationError`, `NotFoundError`, `PermissionError`, `ConflictError`, `ExternalServiceError`, `PaymentError`) for client-visible errors instead of `res.status(400).json({error: '...'})`. Hierarchy lives in `server/utils/errors.js`.
-- **File uploads** use `express-fileupload` → validated with magic bytes via `server/utils/fileValidation.js` → uploaded to R2 → URL stored in DB.
-- **Public token-gated routes** (drink plans, proposals, invoices) use UUID tokens in the URL instead of auth.
-- **Frontend API calls** go through `client/src/utils/api.js` (axios with auto-attached JWT). Never raw `fetch`/`axios`.
-- **Schema changes** go in `schema.sql` using idempotent statements (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
-- **Pricing logic** lives in `server/utils/pricingEngine.js` — pure functions, no DB calls. Money stored as integer cents, never floats.
-- **Stripe** — all Stripe API calls go through `server/utils/stripeClient.js`, never `require('stripe')` directly. The factory honors `STRIPE_TEST_MODE_UNTIL` and fails closed if creds are missing.
-- **Bank PII** — banking fields on `users` / `payouts` route through `server/utils/encryption.js` (AES-256-GCM, fails closed in prod). Never store plaintext.
-- **CSS** — vanilla CSS in `index.css`. No CSS modules, no utility frameworks.
-- **Naming**: camelCase for JS variables/functions, snake_case for DB columns and API JSON keys.
-
-## Inline self-check (every change, free)
-
-Before presenting ANY code change, silently verify:
-
-**Security**
-- All SQL uses parameterized queries (`$1`, `$2`) — never string concatenation
-- All non-public routes have `auth` middleware; admin routes check `req.user.role`
-- Endpoints filter by `req.user.id` to prevent accessing other users' data (IDOR)
-- No secrets hardcoded — everything from `process.env`
-- User input validated on server side (type, length, format)
-- File uploads validated with magic bytes via `fileValidation.js`
-- Error responses never leak stack traces, SQL, or internals
-
-**Data Integrity**
-- Multi-table writes wrapped in `BEGIN/COMMIT/ROLLBACK`
-- Schema changes are idempotent (`IF NOT EXISTS`)
-- Money stored as integer cents, never floats
-- Changed columns updated in ALL routes that touch that table
-
-**Frontend**
-- Async ops have loading, error, and empty states
-- API calls go through `utils/api.js` — never raw fetch/axios
-- New routes added to `App.js` with correct auth guards
-- Client-side validation matches server-side rules
-
-**Logic**
-- Null/undefined handled for DB results, API responses, optional fields
-- Date ranges and pagination boundaries correct
-- No race conditions on payment/mutation endpoints
-
-## Env-var debug discipline
-
-Production env vars live in Render (server) and Vercel (client) dashboards — I cannot read those. Local `.env` is gitignored. If a bug looks env-related, I will NEVER assert *"X isn't set"* — phrase it as *"Can you confirm `X` is set in [Render | Vercel]?"* My inability to see a value ≠ the value being absent.
+- Money is integer cents, never floats. [Claude default]
+- Pricing lives in `server/utils/pricingEngine.js`: pure functions, no DB calls. [Claude default]
+- Stripe calls go through `server/utils/stripeClient.js`, never `require('stripe')`; it honors `STRIPE_TEST_MODE_UNTIL` and fails closed without credentials. [Claude default]
+- The dev box talks to live Stripe by design: a dev charge, refund or payment link is real, and no `NODE_ENV` gate or test key goes in; the gate worktree (`push-gate.js sha`, docs/dev.md) is the one exempt environment and holds no live key. [Dallas 2026-08-19]
+- A price change re-evaluates the paid flag against `amount_paid` (which carries `external_paid`) through `reconcileProposalPaymentStatus`; never leave a proposal marked paid when it is not (`docs/money-laws.md` law 8). [Claude default]
+- Hosted (per-guest) packages include one bartender per `pkg.guests_per_bartender` guests (default 100) at $0 with $0 gratuity; bartenders above the ratio, by the `num_bartenders` override or the `additional-bartender` add-on, are charged at `pkg.extra_bartender_hourly` plus the sub-100-guest surcharge. Use `isHostedPackage(pkg)` and `staffing.required` from the engine, zero only the first `staffing.required`, and grep `isHostedPackage` before any new bartender-cost path; this rule has been lost more than once (`docs/money-laws.md` law 10). [Dallas 2026-05-14]
+- Gratuity is a per-staff-per-hour rate (`gratuity_rate`); the dollar line is always computed (`gratuityLineAmount`) and added on top of `total_price`, never diluted by a discount or override. [Claude default 2026-06-08]
+- Outside an admin mandate the client's election persists only at payment: create-intent stamps it into PaymentIntent metadata and the `payment_intent.succeeded` webhook applies it under the payable-status guard inside a `SAVEPOINT`; the admin PATCH takes only `gratuity_mandate_total`. [Dallas 2026-08-10 for the mandate; Claude default for the mechanics]
+- The full gratuity rule is `docs/money-laws.md` section 14, moved there verbatim; read it, and grep `gratuityLineAmount` and `GRATUITY_LABEL`, before touching gratuity. [Claude default 2026-10-20]
+- Parameterized SQL (`$1`, `$2`) only; never concatenate input into SQL. [Claude default]
+- One pooled connection per request: a handler holding a `pool.connect()` client sends every query through it until `client.release()`, never a bare `pool.query()`, and releases it before a post-COMMIT tail that calls a helper taking its own connection (anything in `marketingHandlers.js`). Why: a request waiting on a second connection deadlocks the pool at `max` (SERVER-17; the 2026-07-13 capture-lead deadlock), and `pool.query()` is the right default everywhere else. [Claude default 2026-07-13]
+- Route handlers are wrapped in `asyncHandler` and throw `AppError` subclasses (`server/utils/errors.js`) for client-visible errors; error responses never leak internals (stacks, SQL, paths, a raw database or SDK error), and the one allowed surfacing is a payment provider's decline reason on an admin or manager money route (refund, charge-balance), meant for the operator to read. [Claude default]
+- Auth middleware (`{ auth }`) and a role guard (`req.user.role`) on every non-public route, and a new client route goes into `App.js` behind the matching guard; reads are scoped by the current relationship row or `req.user.id`, never open to IDOR. [Claude default]
+- `server/routes/webauthn.js` (`assert-verify`) is the only site that mints the 12h device JWT; revoking a passkey bumps `users.token_version`, a deliberate global logout. [Claude default 2026-08-13]
+- Public routes (drink plans, proposals, invoices) are token-gated by a UUID token in the URL instead of auth. [Claude default]
+- Server-side validation of every input (type, length, format); client checks mirror it and never replace it. [Claude default]
+- Uploads (`express-fileupload`) are validated by magic bytes through `server/utils/fileValidation.js` before they go to R2, with the URL stored in the DB. [Claude default]
+- Secrets come only from `process.env`, never from code. [Claude default]
+- Multi-table writes run inside `BEGIN`/`COMMIT`/`ROLLBACK`. [Claude default]
+- Bank PII (the banking fields on `users` and `payouts`) goes through `server/utils/encryption.js` (AES-256-GCM, fails closed in prod), never plaintext. [Claude default]
+- Schema changes go in `schema.sql` as idempotent statements (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`). [Claude default]
+- Client name and event type are separate data points, never concatenated into a title and never prompted as an `event_name`; display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the fallback, from the hand-synced pair `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS). [Claude default 2026-04-17]
+- The event-side drink plan is canonical and the proposal-side plan a preview: bartender prep, shopping-list approval and client messages use the event's plan, so drink-plan UI is verified on the event path; pricing still verifies on the proposal side. [Claude default 2026-04-29]
+- The legal-hold proposal (`docs/money-laws.md` law 15) keeps its database state exactly: never archived, swept, repriced, chased, cleaned up or read by the AI; every writer guard calls `server/utils/legalHold.js:isLegalHold`, which fails closed. [Dallas 2026-08-11]
+- The AI and mail providers are reached only through their one wrapper each in `server/utils/` (`anthropicClient.js`, `openaiClient.js`, `geminiClient.js`, `gmailClient.js`), whose header holds its rules; each refuses a real call under `NODE_ENV=test` unless a test injected a stub, and `node --test` does not set it, so every menu art suite sets `process.env.NODE_ENV = 'test'` on its first line. Every wrapper pins its host; the Gmail feed is read-only and never sends; Gemini runs with `store: false` and Vertex off; the OpenAI org, project and logging variables are ignored. [Claude default 2026-10-01]
+- Nothing leaves the OS for the Inbox AI read without `server/utils/inbox/aiRedact.js` (phone, card and account numbers, email addresses and links dropped, and the surname when it is capitalized or right after the first name, an everyday-word surname only right after the first name); menu art sends no client name, contact, venue, address or event date (`menuArtPrompts.js`), and its wrappers store or send to Sentry only a sanitized error descriptor, never the SDK message. [Claude default 2026-10-06]
+- The repo is public: no real client's or staff member's name, phone number or email address goes into any file, commit message, fixture or diff sent to an external reviewer. People are named by role and records by id; fixture values stay in the shapes the PII scanner allows (a phone on the 555 exchange, a business line or an unassignable number; an email on a reserved or the business domain), as `scripts/lib/piiShapes.js` defines them, and codex and gemini get only a diff it masked; the business lines, and the owner's first name inside a provenance bracket, are not exposures. [Dallas 2026-10-02 for phone numbers, narrowed 2026-10-19; Claude default 2026-10-14 for names and emails]
+- Cross-cutting: if you change X, grep every consumer of X and update it in the same change: a price change and its payment status; event details (date, time, location, guest count) and the linked shifts; a phone field's format and every component, route and display of it; a schema column and every SELECT, INSERT, UPDATE, component and display; a data shape and every endpoint, component and PDF template. Why: one part of the system left out of sync is the defect. [Claude default]
 
 ---
 
-# Conventions (how we work now, and why)
-
-## The model: think-on-main, build-in-lanes
-
-**Thinking always lives on main.** Brainstorm, spec, and plan commit to `main` the moment they exist. Any number of parallel planning windows share the `os` main checkout, each writing its own spec/plan doc. *Why:* the old wound was branch-stranded thinking, a plan committed to a project branch whose code never fully landed, so the problem-solving was effectively lost while `main` moved on. Nothing valuable ever sits on a branch now, so nothing valuable can be stranded.
-
-**Code is built in lanes.** A "lane" is a short-lived, throwaway git worktree under `../worktrees/`, holding code only, living hours not weeks, owned end-to-end by Claude. When a plan is ready and the user says go, Claude cuts a lane off current `main`, builds it, merges it back by squash, and deletes it. The user never names, finds, or returns to a lane. *Why:* worktrees kept the parallel-execution throughput; redefining them as code-only and Claude-managed removes the branch-hunting overhead. If a lane rots, the worst case is re-running mechanical code from a plan that is safe on `main`.
-
-> TRANSITIONAL (remove once fully off Windows): a lane's shared `node_modules` / `client/node_modules` / `.husky/_` are real symlinks on Linux (the worktree helper's old `'junction'` arg was a Windows-only no-op). `.gitignore` matches them so a lane is born clean. Always use `npm run worktree:new` / `worktree:rm` (the husky `.husky/_` link is needed on Linux too); never a bare `git worktree add`.
+# How work flows
 
 ## Two tracks
 
-The user picks the track by how the work opens:
+- How the work is asked for picks the track: a quick fix is done on main in `os` (edit, `npm run docs`, the review skill on the staged diff, commit); a project thinks on main and builds in a lane. A tier A change is a lane however small. Why: a commit on main is prod, and the shared index cannot be held through a money review. [Claude default 2026-10-19]
+- Thinking lives on main: brainstorm, spec and plan commit to main the moment they exist, any number of planning windows at once. Why: a plan committed to a branch whose code never landed was lost thinking, and nothing valuable sits on a branch now. [Claude default 2026-06-19]
 
-- **Quick fix → on main, in `os`.** "Just fix this real quick." Claude edits on `main`, commits, done. No branch, no merge. Staying on `main` is exactly what the os invariant guarantees, so quick fixes never fight it.
-- **Project → think on main, build in a lane.** "Let's work on this." Brainstorm and plan on `main`, then Claude builds it in a lane and merges back.
+## Lanes
 
-## Thinking phase
+- A lane is a short-lived worktree under `../worktrees/`, code only, owned end to end by Claude, who cuts it from current main, builds and reviews it, squash-merges it and removes it, all without asking. [Dallas 2026-06-19]
+- Create and remove a lane only with `npm run worktree:new` and `npm run worktree:rm` (they link `node_modules`, `client/node_modules`, `.husky/_`, both env files and the lane's memory root), never a bare `git worktree add`; the superpowers worktrees skill does not apply here. [Claude default 2026-06-19]
+- Inside a lane, pick the build method that fits (one pass for a small coherent lane, parallel subagents for independent pieces) and say which; commit checkpoints freely, since the squash is the unit, and re-cut from the plan a lane that cannot be repaired. [Claude default 2026-06-19]
+- `lane:status` runs at every session start through the `SessionStart` hook and prints the flip, gate and watch markers, the last ship and the stale lanes; `npm run lane:status` is the full report. A lane is stale after 48h with no commit, 15 or more commits behind main, or once a sensitive path landed on main since its cut; a dead lane is scrapped and re-cut from its plan, salvaging code only when it is substantial and clean. [Claude default 2026-06-19]
+- The merge path is `scripts/merge-lane.sh`, run from `os` on main, never from a lane: one merge at a time under an exclusive lock, refusing a dirty `os` (commit the quick fix first) and the other cases its header names; it squashes the lane, regenerates the docs on the merged index and commits once as `merge(lane <name>): <plan>`. The lane's worktree and branch stay until the merge verifies clean and its review holds against main's new head (a stale base gets the overlap pass of the review skill). [Claude default 2026-06-19]
+- A merge conflict: an ordinary one is resolved from both diffs and both plans and reported; one on a sensitive path, or one with no clear resolution, stops. [Claude default 2026-06-19]
+- Hold: work asked to be held is built in a lane and left unmerged until the owner says ship, since the next ship from any window carries whatever sits on main. [Claude default 2026-10-19]
+- A standing gate marker (a failed gate on a sha on main) or watch marker (Sentry events after a deploy) refuses every push until it clears: the first by a passing gate on a descendant (fix forward, never reset), the second by `npm run ship -- --ack-watch <sha> --note <text>` after reading the events (docs/dev.md, The sha gate). [Claude default 2026-10-19]
+- After a bad ship the fastest fix is `git revert <sha>`: a clean revert is reviewed by construction (`ship` recognizes it and writes a revert receipt); Render's dashboard rollback is the hand lever (docs/dev.md, Render). [Claude default 2026-10-19]
 
-- **Brainstorm.** Claude digs in, forms an opinion and leads with it, asks one question at a time, prose not menus. **Section-by-section approvals ARE the approval; there is no "now read the whole written spec" gate.**
-- **Spec.** A byproduct of the live brainstorm, committed to `main`, fed to the spec-review agents. The user does not re-read it.
-- **Plan = lane map.** The plan comes out as the work broken into independent, individually buildable-and-reviewable lanes, plus a dependency/parallelism graph, in structured front-matter (see schema below). That graph IS the run-order, co-designed with the user.
+## Plans, design and review
 
-## Design artifacts are contracts
-
-When a surface goes through claude.ai/design, the returned design is TWO deliverables: the decisions (IA, copy, semantics) and the visual system (layout composition, component vocabulary, tokens). Both must survive the pipeline:
-
-- **Spec.** A spec whose surface has a design source carries a **Visual contract** section in its body: it names the artifact (repo snapshot under `docs/design-artifacts/` plus the design-project id) as the build benchmark and states the visual requirements — per-screen layout and composition, the component vocabulary, and the token-translation rule (design-system tokens → `index.css` tokens, or adopt the system's tokens). A bare "Design source:" citation in the header is provenance, not a contract, and does not count.
-- **Plan.** Visual fidelity is an owned scope: some named lane's scope says "match the artifact," with the artifact as its declared input. That lane pulls the real generated screen files from the design project via DesignSync (`list_files` → `get_file`) and folds their CSS in. When the design arrives as an export rather than through DesignSync (the `DesignSync` tool is limited to `/design-sync` flows), the vendored export, byte for byte, is the working input instead, and the spec's Visual contract says so (the 2026-10-06 Inbox is the precedent). Otherwise the vendored `.dc.html` is a for-the-record snapshot, not the working input.
-- **Review.** The `client` lens on any lane of a designed surface is pointed at the artifact and judges adherence to it, not just usability. Usability-clean but off-design is a finding, not a pass.
-
-*Why:* the 2026-08-14 marketing incident. The approved design was vendored and cited but never made a requirement. Every downstream gate faithfully validated against its immediate upstream artifact (plan vs spec, build vs plan), each lane correctly styled to match the surrounding old CSS, and the section shipped to prod with zero visual fidelity to the design. The pipeline's root of truth is the spec — anything that exists only upstream of the spec effectively doesn't exist.
-
-## Lane lifecycle and stale lanes
-
-- Claude auto-handles the safe moves: create the lane, merge it when clean, clean it up after merge. No asking. ("Manage it for me.")
-- **Stale detection.** A lane is flagged stale when it is older than 48h with no new commit, OR `main` has advanced 15+ commits since it was cut, OR any sensitive path has landed on `main` since it was cut. The check is `npm run lane:status`. It runs at every session start through the `SessionStart` hook, after `scripts/show-location.js` prints the worktree banner: `lane-status.js --session-start` prints the markers, the last ship and the stale lanes and never fails the session. Run `lane:status` on demand for the full report.
-- **Default for a dead lane:** scrap and re-cut fresh from the plan (safe on `main`), salvaging half-written code only if it is substantial and clean.
-- **Never scrap unmerged work.** Before any scrap, `git log main..<lane-branch>` must be empty. If it is non-empty, do NOT scrap without the user's okay. Auto-scrap always uses `git branch -d` (which refuses unmerged), never `-D`. ("Never lose my code.")
-
-## Inside a lane (execution method)
-
-Claude picks the most efficient method for the lane in front of it and does not default to subagents or any other ceremony because a skill says to. A small coherent lane is built in one pass; a lane with genuinely independent pieces is split across parallel subagents. Claude states the method so the user can wave it off. The Inline Self-Check still runs before every change. Inside a lane Claude self-commits freely as it builds (checkpoints, sandboxed, nothing ships); those checkpoints never reach `main` because the merge is a squash. On a mid-build failure (compile error, test fail, dev-server crash), the lane stays open for repair; if it cannot be repaired it follows the stale-lane default (re-cut from plan).
-
-## Merge model
-
-- **Serialized through `os`, behind a real lock.** Every merge runs in the one `os`/`main` checkout, never from inside a lane, and acquires an exclusive `flock` (`scripts/merge-lane.sh`). flock auto-releases if the holder dies, so a crashed merge cannot wedge future merges. The second merge waits.
-- **Lanes merge by squash.** In-lane checkpoints do not land on `main`; the squash is one clean commit per logical feature, and its message carries the lane name + plan link. The squash merge is the test gate; in-lane checkpoints are never assumed individually tested.
-- **Merge is not deploy.** `main` can hold several freshly merged lanes with nothing shipped. The push to prod is a separate, gated step.
-- **Dirty-tree rule.** If `os` has uncommitted quick-fix work when a lane is ready to merge, Claude does not merge into a dirty tree. It pauses and asks the user to commit the quick fix first (or, with okay, auto-stashes with an explicit, reported recovery).
-- **Source branch survives until the merge verifies clean** = no conflict AND the lane's per-lane review re-confirmed against main's new HEAD. Then the worktree is removed.
-- **Conflict handling, path-based.** Ordinary textual conflicts: Claude resolves using both diffs and both plans (on `main`) and reports what it did. Claude stops and brings it to the user whenever the conflict touches a **sensitive path** (see below) or the resolution is genuinely ambiguous.
-
-## Review model
-
-- **Per-lane, before merge, is the primary gate.** A single lane is a small, coherent scope where review agents finish and return real verdicts. By push time every lane on `main` was already cleanly reviewed.
-- **Risk-scaled by the sensitive-path list.** Cosmetic changes get a light look; anything touching a **sensitive path** gets the full agent fleet no matter how tiny. The one list is `scripts/sensitive-paths.txt` (matched by `scripts/sensitive-match.js`); it is the single trigger for review-scaling, conflict-escalation, AND auto-pull disqualification. Claude always states which level it ran.
-- **Iron rule: a failed or incomplete agent is never a pass.** A non-completing agent is a blind spot, not a green light. An agent that completes but returns no explicit pass/fail (empty, inconclusive, low-confidence) counts as a non-completion.
-- **Chunk-and-retry with a coverage manifest.** A review that does not finish is split into smaller chunks and re-run, halving down toward single-file. Coverage is guaranteed by a manifest: every file in `git diff --name-only` for the scope appears in exactly one chunk's input, and each file ends with an explicit pass/fail-or-anomaly recorded against it. The lane is blocked unless every file has a real verdict. If a single-file chunk still cannot complete after a retry, Claude stops, names the file, and blocks the merge (never allow-with-warning).
-- **Quick-fix review gate.** A quick fix touching any **sensitive path** triggers the full fleet at push time on those specific commits, regardless of scope. A quick fix touching nothing sensitive gets the light look plus the push-time sweep.
-- **Push-time integration sweep.** A focused pass over the seams between merged lanes and quick-fixes (files touched by more than one source since the last push, computed from `git log <lastPush>..HEAD --name-only`), checking that separately-clean pieces still agree. NOT a re-audit of every line. Same chunk-and-retry, manifest, and iron rule apply.
-- **Sensitive-path re-review at push.** Any commit since the last push that touches a **sensitive path** gets the full fleet at push, against main's new HEAD, regardless of overlap. Because squash-merge hides within-squash overlap, this (not seam intersection) is what guarantees sensitive code is re-reviewed at push.
-- **Cross-LLM second opinion on sensitive pushes.** Whenever the push-time full fleet runs on sensitive-path commits, also run `/second-opinion` on those same commits, in parallel with the fleet. Codex + gemini findings are Claude-verified before surfacing; external reviewers failing (quota, auth) is reported but does NOT block the push — the Claude fleet remains the gate. *Why:* decorrelated eyes; a different model family caught a money-seam bug the fleet passed (staffing-roster, 2026-07-01).
-
-Agent specs live in `.claude/agents/`. This project is vibe-coded; the author relies on Claude to catch issues.
-
-## Push model
-
-The push to prod is the user's deliberate, explicit call ("push", "deploy", "ship it", "send it"). It carries forward the old strictness:
-
-- **The cue IS the confirmation.** An explicit push call ("push", "deploy", "ship it", "send it", "let's get this pushed") is the yes — Claude does NOT ask again. It announces the batch in one line as a STATEMENT, not a question (*"N commits / M files pending — running review + push."*), naming anything the user might not know is riding along (other windows' commits, unpushed quick fixes), then proceeds. If the user says *defer / wait / one more thing / hold on*, Claude stands down silently and re-asks nothing; the next cue restarts it. **Claude NEVER volunteers a "ready to push?" prompt.** After a commit, silence is correct. *Why:* the gate exists so a push is never Claude's initiative and never a surprise batch — an explicit cue plus a visible inventory satisfies both, and asking "are you sure?" on top of a direct order is ceremony that trains everyone to stop reading prompts (same reasoning as the merged-lane `branch -D` pre-approval). Re-confirm ONLY when the inventory contains something the cue plainly did not intend.
-- The push-time sweep and the sensitive-path re-review run after that yes. **The cue gates the PUSH, never the review.** The Review model above (per-lane before merge, risk-scaled quick-fix review) runs on Claude's own initiative, without a cue and without asking; review is standing policy, not a permission request. What Claude does not do is run the push-time sweep as prep for a push nobody has called. *Why:* the old wording here ("never pre-run review agents ... the confirmation prompt is the single entry point to the fleet") contradicted the Review model in the same doc, and on 2026-08-25 and again on 2026-08-28 Claude read it as a standing "no agents until told", merged lanes unreviewed, marked review as owed pending the user's ask, and attributed that rule to the user. He never said it: *"Since when do I have to ASK for review."* / *"I haven't said not to use agents."*
-- A flagged finding gives the user a fix-now / push-anyway / abandon choice. **Root-cause discipline on the fix:** for anything important (security, auth, money/pricing, data integrity, logic, cross-cutting consistency, integration) or any non-trivial change, invoke `superpowers:systematic-debugging` — fix the root cause and check whether it manifests elsewhere, never just patch the symptom. Trivial one-liners (copy, a missing import, a doc tweak) get the direct fix.
-- Push failures stop and report (Git-safety invariant).
-
-> TRANSITIONAL (remove once fully off Windows): `.husky/pre-push` runs the exact Vercel client build (`CI=true react-scripts build`) only when a push changes `client/`, catching CI-fatal ESLint warnings that nothing else local catches. It sits below the confirmation gate as the last mechanical gate; emergencies bypass with `git push --no-verify`.
-
-> The same `.husky/pre-push` also runs the money-path smoke gate (`node scripts/testdb-smoke.js`) when a push changes `server/` — money suites against an isolated Neon `ci-smoke` branch — first (fails faster than the client build). **LIVE and fail-closed since ~2026-08-11**: `NEON_API_KEY` is configured and the gate ran all 42 money suites at both the 2026-08-11 and 2026-08-13 pushes (the old "SKIP banner until the key exists" transitional state is over). See README > Test gate. Same `--no-verify` escape.
-
-> **Run `npm run gate` BEFORE the push (2026-08-14).** Both gates now live in `scripts/push-gate.js`; the hook calls it and skips instantly when a receipt covers the exact bytes on disk. *Why this exists:* `git push` opens the SSH connection and pulls the ref advertisement BEFORE running the hook, so once the money smoke went live (~8 min hook) the connection sat idle until GitHub closed it and the push failed writing the packfile AFTER passing every gate — silently, looking like a network flake. Keepalives do not fix it (the remote closes an idle `git-receive-pack` session). The gate is not weakened, the DUPLICATION is removed: the review pass already runs these checks, so the hook re-running them is what broke the push. The receipt is keyed on a fingerprint of HEAD **plus the sha256 CONTENT of every modified and untracked file**, because both gates test the WORKING TREE and this is a shared checkout: any edit from any window moves the hash and the hook runs the full gate itself. It is also only valid when the sha being pushed IS HEAD — the gates describe your checkout, so they cannot vouch for `git push origin <other-sha>:main`. Receipts expire at 12h. **Known limits, deliberately not overstated:** gitignored files (`.env`, `client/.env*`, `~/.secrets/*`) are outside the fingerprint and can change what the gates do, and the receipt is a plain local file rather than a privilege boundary (anything that can forge it can already run `--no-verify`). A money gate that SKIPPED for want of `NEON_API_KEY` is never recorded as passed. The 2026-08-14 review broke the first draft of this on five paths, so treat changes here as money-path changes: `scripts/push-gate.js` is sensitive-listed.
-
-## Plan = lane map (front-matter schema)
-
-A plan's lanes are declared in structured front-matter so the spec-review agents, auto-pull, and the footprint-drift check can all read them. Each lane declares: a lane id, its `footprint` (the file globs it expects to touch), its dependencies (what blocks it), and its review fleet. A lane that edits outside its declared footprint aborts and surfaces rather than silently widening.
-
-## Reasoning effort
-
-**Use maximum reasoning effort when:**
-- A change crosses system boundaries (schema → routes → components, backend ↔ frontend)
-- Pricing, payment, or Stripe logic is involved (real money at stake)
-- Auth, security, or role-guard logic is involved (data exposure risk)
-- Schema migrations (hard to reverse in production)
-- Any change that triggers the Cross-Cutting Consistency rules
-
-**Normal effort is fine for:**
-- Single-file, single-layer edits (one component, one route, one style block)
-- Copy, text, or documentation-only changes
-- CSS-only styling tweaks
-- Isolated bug fixes with an obvious cause and fix
-
-**Quick test:** *"If I get this subtly wrong, will it cause a bug that's hard to catch?"* If yes — max effort. If the mistake would be immediately obvious — normal effort.
-
-## File-size discipline
-
-The codebase enforces line-count limits to prevent mega-files. A pre-commit hook runs `node scripts/check-file-size.js --staged` on staged source files (`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests). It is a **ratchet**, not a flat cap:
-
-- **Soft cap, 700 lines** — warns ("plan a split"). Never blocks.
-- **Hard cap, 1000 lines** — a file over 1000 lines blocks the commit **only if this commit makes it longer than it is at `HEAD`.** A non-growing change (bugfix, refactor, or anything flat or shrinking) to an over-cap file is always allowed. The only way to *add* to an over-cap file is to first extract enough that the file stays flat or shrinks.
-
-There is no per-file opt-out marker. A file over the cap is frozen at its current size, and the ratchet tightens: once a file sheds lines, the lower count becomes its new ceiling. For a genuine emergency where a growing commit to an over-cap file cannot wait, `git commit --no-verify` is the escape: per-commit, deliberate, and visible, not a permanent exemption.
-
-Run `npm run check:filesize` any time for a full-tree RED / YELLOW report.
-
-**When you write a new file or add to one, aim for the sweet spot:** under 300 lines is comfortable; 300 to 600 is fine for a focused page or route file; 600 to 700 is the yellow zone (one concern or two?); over 700, actively plan a split.
-
-**How to split, by the patterns already in the codebase:** route files into per-concern files behind a composition router (see `server/routes/proposals/`); template files into per-domain siblings (`lifecycleEmailTemplates.js`, `marketingEmailTemplates.js` alongside `emailTemplates.js`); page components by extracting self-contained sections.
-
-## Mandatory documentation updates
-
-Every source file carries a header comment the generated tree reads; README's and ARCHITECTURE's generated sections come from `npm run docs`, which the pre-commit hook checks (`node scripts/gen-docs.js --check --staged` refuses a stale section or a header-less staged source file; docs/dev.md, Docs, says what each refusal line means); hand-write ARCHITECTURE prose only when a concept changes.
-
-## Design-stage review fleet
-
-Explicit-only Claude agents for reviewing specs and plans BEFORE any code is written. `/review-spec` runs three agents (`spec-grounding`, `spec-gaps`, `spec-risk`) in parallel on a spec doc. `/review-plan` runs two agents (`plan-fidelity`, `plan-decomposition`) in parallel on an implementation plan. Natural-language triggers ("review the spec", "review the plan", "design review") route to the same commands. Both resolve to the most recent file in `docs/superpowers/specs/` or `docs/superpowers/plans/` unless an explicit path is given. Report-only; no auto-fix.
+- A plan is a lane map without code: per lane its `id`, scope, `footprint`, `blockedBy`, the lenses expected, runnable acceptance checks, the money laws and seams that apply, and the test plan, in the front matter the design agents read; code appears only where the code is the decision, and a lane that needs a file outside its footprint stops and says so. [Claude default 2026-10-19]
+- Design-stage review before any code: `/review-spec` (spec-grounding, spec-gaps, spec-risk) on a spec and `/review-plan` (plan-fidelity, plan-decomposition) on a plan, report-only. [Claude default 2026-06-19]
+- Design artifacts are contracts: a surface designed through claude.ai/design delivers its decisions (IA, copy, semantics) and its visual system (layout, component vocabulary, tokens), and both must survive to the build, by the four lines below. [Claude default 2026-08-14]
+  - Spec: a Visual contract section in the body names the artifact (the snapshot under `docs/design-artifacts/` and the design-project id) as the build benchmark and states per-screen layout and composition, the component vocabulary and the token-translation rule; a bare "Design source:" header line is provenance, not a contract.
+  - Plan: one named lane owns visual fidelity ("match the artifact") with the artifact as its declared input and pulls the generated screen files through DesignSync (`list_files`, then `get_file`); a design that arrives as an export (DesignSync serves only `/design-sync` flows) is vendored byte for byte and is the working input instead, and the spec says so (the 2026-10-06 Inbox is the precedent); otherwise the vendored `.dc.html` is a snapshot for the record.
+  - Review: the `client` lens on a designed surface judges adherence to the artifact, so usability-clean but off-design is a finding.
+  - Why: on 2026-08-14 an approved design was vendored and cited but never made a requirement, every gate checked only its immediate upstream, and the section shipped with no fidelity to the design; the spec is the pipeline's root of truth.
+- Review runs once per lane: one full pass of the lenses the review skill selects, then at most two fix re-passes; only a reachable failure path or an exposure opens a round, the rest goes to the lane report, and a reachable finding still open after the second re-pass splits the lane. The superpowers per-task reviewer ritual does not apply here, and nothing is reviewed again at push. [Dallas 2026-07-22; the cap 2026-10-23; Claude default 2026-10-20 for no review at push]
+- A finding on anything important (money, auth, data integrity, logic, cross-cutting, integration) is fixed at its root through `superpowers:systematic-debugging`, checking where else it shows; a trivial one-liner gets the direct fix. [Claude default]
 
 ---
 
-# Reference
+# Conventions
 
-## Tech Stack
+- camelCase for JS variables and functions, snake_case for DB columns and API JSON keys. Why: one spelling per layer. [Claude default]
+- No ORM: raw SQL through `pool.query()` or the held client. Why: every query is visible where it runs. [Claude default]
+- Route files export an Express Router, one file per resource under `server/routes/`; a big one splits into per-concern files behind a composition router (`server/routes/proposals/`). [Claude default]
+- Client API calls go through `client/src/utils/api.js` (axios with the JWT attached), never raw `fetch` or `axios`; a failed call rejects with `{ message, code, fieldErrors, status }`. Why: one place for auth, session expiry and the error shape. [Claude default]
+- Vanilla CSS: `client/src/index.css`, the tokens in `client/src/styles/drb-tokens.css`, and a per-page CSS file where a page needs one; no CSS modules, utility frameworks or preprocessors. [Claude default]
+- Every source file under `server/`, `client/src/` and `scripts/` starts with a header comment whose first paragraph is its line in README's generated tree; `npm run docs` regenerates the generated sections of README.md and ARCHITECTURE.md, the pre-commit hook refuses a stale section or a header-less staged file, and ARCHITECTURE prose is hand-written only when a concept changes (docs/dev.md, Docs). Why: the docs come from the code, so they cannot drift. [Claude default 2026-10-27]
+- File-size ratchet: `scripts/check-file-size.js` (pre-commit) warns at 700 lines and refuses a commit that grows a file past 1000; aim under 300 and split by the codebase's patterns (a composition router, per-domain template siblings such as `lifecycleEmailTemplates.js`, extracted page sections). [Claude default]
 
-- **Backend**: Node.js 26 (pinned; see .node-version) / Express 4.18
-- **Frontend**: React 18 (Create React App) / React Router 6
-- **Database**: Neon PostgreSQL (via `pg` driver, raw SQL — no ORM)
-- **Auth**: JWT (jsonwebtoken) + bcryptjs
-- **Passkeys (phone-admin unlock)**: `@simplewebauthn/server` (server) + `@simplewebauthn/browser` (client, via `client/src/utils/webauthnClient.js`). `server/routes/webauthn.js` is the ONLY site that mints the 12h device JWT (`assert-verify`); password login keeps its 7d mints. Revoking a passkey bumps `users.token_version`, i.e. a deliberate global logout.
-- **File Storage**: Cloudflare R2 (AWS SDK v3)
-- **Payments**: Stripe (server SDK + React Elements)
-- **Email**: Resend
-- **SMS**: Twilio
-- **AI read (Inbox)**: Anthropic, through `@anthropic-ai/sdk` (pinned 0.131.0) and `zod` for the two output schemas. Server code reaches the SDK ONLY through `server/utils/anthropicClient.js` (one client: 30 s timeout, 2 retries, the API host pinned), which refuses to build a real client under `NODE_ENV=test`. Its one caller is the Inbox read job (`server/utils/inbox/readJob.js`), which drops phone, card and account numbers, email addresses, links and the person's surname (when capitalized; an everyday-word surname only right after the first name) before anything leaves the OS (`aiRedact.js`) and never reads the legal-hold client.
-- **Email feed (Inbox)**: the Gmail API, read-only, through `server/utils/gmailClient.js` (raw fetch under a service account with domain-wide delegation; the mailbox is a code constant). The feed reads the business mailbox and never sends.
-- **Menu art (words and images)**: OpenAI, through `openai` (pinned 7.34.0). Server code reaches the SDK ONLY through `server/utils/openaiClient.js` (host pinned, `maxRetries: 0`, explicit timeouts, the org, project and logging env vars ignored), which refuses every call under `NODE_ENV=test` unless a test injected a stub (`__setTestStub`), so a missed mock can never spend money. Every new menu art suite sets `process.env.NODE_ENV = 'test'` on its first line, since `node --test` does not.
-- **Menu art (optional image model)**: Google Gemini, through `@google/genai` (pinned 2.30.0), reached ONLY through `server/utils/geminiClient.js` (Interactions API, `store: false`, host pinned, Vertex off), which refuses under `NODE_ENV=test` without an injected stub the same way. With `store: false` the Interactions API returns no response id, so Gemini ledger rows carry a null `provider_request_id`; the request never sends `response_format.delivery` (the live API rejects it on image output). The words step always uses OpenAI; images reach the job (`menuArtJob.js`) only through `server/utils/menuImageProvider.js`, which draws with each piece's stamped `provider` and `model`. Both wrappers store and send to Sentry only a sanitized error descriptor, never the SDK message, and send no client name, contact, venue, address or event date.
-- **VA calling (Zul)**: Telegram Bot API (raw HTTPS to the Bot API, no SDK) as the outbound-call trigger channel + Twilio Programmable Voice (`calls.create`) callback bridge that dials Zul's PH cell and bridges to a US target with the 224 as caller ID
-- **Web Push**: `web-push` (VAPID) for staff-portal browser / PWA notifications and the admin phone's per-kind banners (`server/utils/adminPush.js`)
-- **Booking / scheduling**: Cal.com (webhook integration; self-hosted target for V2)
-- **Venue search**: Google Places API (New) for venue-name autocomplete
-- **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
-- **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
-- **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
-- **Error Tracking**: `@sentry/node` (server), `@sentry/react` (client)
-- **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged, playwright-core (mobile:check harness)
+---
 
-## Environment Variables
+# Pointers
 
-`.env.example` is the one copy: each variable's description is the comment block directly above it, rendered into README's env section by `npm run docs`; add or change a variable there and nowhere else.
+- The review skill, `.claude/skills/review/SKILL.md`: how a change is reviewed and its receipt written.
+- `docs/dev.md`: the servers, the tests, the gate, lanes and ships, the docs, Render and Vercel, as they run on the dev box.
+- `docs/money-laws.md`: the money laws, read before any money-path change.
+- `scripts/sensitive-paths.txt`: the sensitive list, matched by `scripts/sensitive-match.js`.
+- `.env.example`: the one copy of every environment variable, each described by the comment above it, which README renders; add or change a variable there and nowhere else.
+- The ledger, `docs/fix-list-remaining-2026-07-02.md`: the owner's one list.
+- `docs/ops-runbook.md`: the manual procedures. `docs/reviewer-map.md`: a two-minute map of the system for a reviewer.
+- `README.md`: the stack table, the generated folder tree, env table and scripts list, the test gate. `ARCHITECTURE.md`: the generated route table and the concepts. Read them to find where a file lives.
