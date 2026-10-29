@@ -1,4 +1,5 @@
 {
+  "ignoreCommand": "bash scripts/vercel-ignore.sh",
   "redirects": [
     { "source": "/admin",            "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "/",          "permanent": true },
     { "source": "/admin/:path*",     "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "/:path*",    "permanent": true },
