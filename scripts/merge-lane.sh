@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
 #
-# merge-lane.sh: crash-safe squash-merge wrapper for the build-in-lanes workflow.
+# merge-lane.sh: crash-safe squash-merge wrapper for the build-in-lanes
+# workflow, with the merge-time receipt check and the merged-lane checks.
 #
-# Run ONLY from the primary (os) worktree, on main, and invoked EXPLICITLY by
-# Claude during integration. This is NOT a git hook: it is called by hand when a
-# lane is ready to fold back into main.
+# Run ONLY from the primary (os) worktree, on main, by hand (never a git hook)
+# when a lane is ready to fold back into main.
 #
 # Usage:
 #   scripts/merge-lane.sh <lane-branch> <plan-link> [lane-name]
 #     <lane-branch>  the worktree's branch to squash-merge into main
 #     <plan-link>    path/URL to the plan doc (kept in the squash commit message)
 #     [lane-name]    short label for the commit message; defaults to <lane-branch>
+#   scripts/merge-lane.sh check|merged <lane-branch>  the receipt check (ready,
+#     ready-moved, stale or refused) or the merged-lane checks, in
+#     scripts/lib/mergeCheck.js; a lane branch named check or merged is refused
 #   MERGE_LANE_LOCK_WAIT  seconds each index write waits out another git's
-#                         index.lock (default 30); exported, so the docs
-#                         generator's staging of a render waits it too
+#     index.lock (default 30); exported, so the generator's staging waits it too
 #
-# Behavior, in order:
-#   1. An EXCLUSIVE flock on .git/merge-lane.lock, which the kernel drops when
-#      the holder dies (kill -9 included), so a killed merge never wedges the
-#      next; a second merge waits behind the first instead of racing main.
+# The squash, in order:
+#   1. The ship lock (<git-common-dir>/drb-ship.lock; a merge, a check or a
+#      ship holds it) through scripts/lib/mergeCheck.js lock, flockExec's
+#      underLock: nested under a trusted DRB_SHIP_LOCK holder it runs itself,
+#      else it waits; the kernel drops the lock when its holder dies.
 #   2. Refuse unless run from the primary (os) worktree AND branch is main.
 #   3. Refuse on a dirty working tree (commit or stash the quick fix first),
 #      and without git hook run (git 2.36 or later) or an author identity.
@@ -75,8 +78,8 @@
 #      a compare-and-swap: when another window committed since, it refuses,
 #      never reverting that commit, and resets. That commit holds nothing of
 #      the lane unless it was a plain commit of the shared index, which takes
-#      the staged squash with it: when HEAD holds at least one own path but the
-#      docs that the squash changed exactly as the snapshot does (a pathspec
+#      the staged squash with it: when HEAD holds at least one path the squash
+#      changed, an own path or a doc, exactly as the snapshot does (a pathspec
 #      commit of an edited lane file never does), this refusal, a hook's, and
 #      a moved main at any check say instead that the lane is on main inside
 #      that commit, all of it or N of its M paths (the rest named as at that
@@ -88,9 +91,8 @@
 #      working file as that window left it; a lane path at neither entry, and
 #      any other path, staged by another window after the copy, stays staged
 #      for it, named.
-#   9. A notice: re-run the lane's per-lane review against the new HEAD before
-#      the worktree is removed ("verifies clean" = no conflict AND review
-#      re-confirmed). The worktree is NOT removed here.
+#   9. A notice: re-run the lane's per-lane review against the new HEAD, which
+#      must re-confirm clean before the worktree is removed (not removed here).
 #
 # Another window's staging: os is shared, and other windows stage into its one
 # index while a merge runs. The squash's own paths are what `git merge-tree
@@ -171,36 +173,29 @@
 # path could not be reset or unstaged, an entry is left staged for another
 # window, or a working file is kept.
 #
-# A wedged flock should never happen. `fuser .git/merge-lane.lock` (or lsof)
-# lists a holder: none means a re-run takes the lock; a PID is a LIVE merge in
-# another window, so let it finish (ps -fp <PID>). Never delete the zero-byte
-# lockfile to unstick it: flock locks the descriptor, and a new inode splits
-# the waiters; remove it only when fuser lists no holder.
+# A wedged lock should never happen. `fuser .git/drb-ship.lock` (or lsof) lists
+# a holder: none means a re-run takes it; a PID is a LIVE merge, check or ship,
+# so let it finish (ps -fp <PID>). Remove the lockfile only when fuser lists no
+# holder: flock locks the descriptor, a new inode splits waiters.
 
 set -euo pipefail
 
 usage() {
-  echo "usage: scripts/merge-lane.sh <lane-branch> <plan-link> [lane-name]" >&2
+  echo "usage: scripts/merge-lane.sh <lane-branch> <plan-link> [lane-name] | check <lane-branch> | merged <lane-branch>" >&2
   exit 2
 }
 
+case "${1-}" in check | merged) exec node "$(dirname -- "$0")/lib/mergeCheck.js" "$@" ;; esac
 [ "$#" -ge 2 ] || usage
 
 lane_branch="$1"
 plan_link="$2"
 lane_name="${3:-$1}"
+case "$(git rev-parse -q --symbolic-full-name "$lane_branch" 2> /dev/null || true)" in refs/heads/check | refs/heads/merged) echo "REFUSED: a lane branch named check or merged is never squashed (those are this script's subcommands); rename it." >&2 && exit 1 ;; esac
 
-git_dir=$(git rev-parse --git-dir)
-lockfile="${git_dir}/merge-lane.lock"
-
-# ---- Step 1: serialize behind an auto-releasing flock --------------------------
-# Re-exec self under flock so the lock spans the whole merge; the env var stops
-# a re-exec loop. flock waits by default, so a second invocation queues.
-if [ -z "${MERGE_LANE_LOCKED:-}" ]; then
-  exec env MERGE_LANE_LOCKED=1 flock "$lockfile" "$0" "$@"
-fi
-
-# From here on we hold the exclusive lock.
+# ---- Step 1: the ship lock, through scripts/lib/mergeCheck.js lock --------------
+# The locked run is this script again, MERGE_LANE_LOCKED naming its parent.
+[ "${MERGE_LANE_LOCKED:-}" = "$PPID" ] || exec node "$(dirname -- "$0")/lib/mergeCheck.js" lock "$0" "$@"
 
 # ---- Step 2: must be the primary (os) worktree, on main -----------------------
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -706,8 +701,8 @@ refuse_keeping() {
   [ "${#kept_disk[@]}" -eq 0 ] || echo "  Kept on disk, unstaged, since its working file changed during the merge: $(joined "${kept_disk[@]}")." >&2
   [ "${#stuck[@]}" -eq 0 ] || echo "  Still staged, as it could not be unstaged: $(joined "${stuck[@]}") (another window's)." >&2
   # A commit landing while this refusal ran (a plain commit of the shared
-  # index takes the staged squash with it) is checked once more, after the
-  # reset, so the last line never says nothing was merged when it was.
+  # index takes the staged squash) is checked once more, after the reset, so
+  # the last line says nothing was merged only when HEAD holds none of it.
   [ "$carried" -eq 1 ] || check_carried "found as this refusal ended" || true
   if [ "$(( ${#reset_failed[@]} + ${#stuck[@]} + ${#discard_failed[@]} ))" -gt 0 ]; then
     [ "${#reset_failed[@]}" -eq 0 ] || echo "  Could not reset $(joined "${reset_failed[@]}") ($why)." >&2
@@ -786,14 +781,14 @@ abandon_squash() {
 
 # When main is off the pin, whether the commit at HEAD carries the squash, or
 # part of it (another window's plain commit of the shared index while the
-# squash was staged): at least one own path but the docs that the squash
-# changed from the head it was planned against sits at HEAD as the snapshot
-# holds it (a pathspec commit of an edited lane file never matches the
-# snapshot). Then it says so (carried=1): that commit carries every path the
-# squash changed, or N of them, naming the rest in two groups, at that
-# window's own version (window_own: HEAD at neither the snapshot nor the
-# planned head) and not carried (HEAD at the planned head). $1, when given,
-# says when main was found moved.
+# squash was staged): at least one path the squash changed from the head it
+# was planned against, an own path or a doc (a prose-only lane has no other),
+# sits at HEAD as the snapshot holds it (a pathspec commit of an edited lane
+# file never matches the snapshot). Then it says so (carried=1): that commit
+# carries every path the squash changed, or N of them, naming the rest in two
+# groups, at that window's own version (window_own: HEAD at neither the
+# snapshot nor the planned head) and not carried (HEAD at the planned head).
+# $1, when given, says when main was found moved.
 carried=0
 declare -A window_own=()
 check_carried() {
@@ -801,11 +796,11 @@ check_carried() {
   local -A snap=() at_now=() at_plan=()
   local own_version=() not_carried=()
   now=$(git rev-parse HEAD)
-  [ "$now" != "$head_pin" ] && [ "${#own_list[@]}" -gt 0 ] || return 1
-  load_entries "$work/own.snap" snap
-  load_head at_now "$now" "${own_list[@]}"
-  load_head at_plan "$plan_head" "${own_list[@]}"
-  for p in "${own_list[@]}"; do
+  [ "$now" != "$head_pin" ] || return 1
+  load_entries <(cat "$work/own.snap" "$work/docs.snap") snap
+  load_head at_now "$now" "${own_list[@]}" "${docs[@]}"
+  load_head at_plan "$plan_head" "${own_list[@]}" "${docs[@]}"
+  for p in "${own_list[@]}" "${docs[@]}"; do
     [ "${snap[$p]-}" != "${at_plan[$p]-}" ] || continue
     changed=$((changed + 1))
     if [ "${at_now[$p]-}" = "${snap[$p]-}" ]; then

@@ -140,40 +140,39 @@ function spawnMerge(repo, args) {
   });
 }
 
+// Resolves once fn() holds, polled every 50 ms; fails after 30 seconds.
+async function until(fn, what) {
+  for (const end = Date.now() + 30000; !fn(); await new Promise((r) => setTimeout(r, 50))) if (Date.now() > end) assert.fail(`timed out: ${what}`);
+}
+
 test('serialization -> the second concurrent invocation waits for the lock', async () => {
   const repo = makeRepo();
   const wtA = addLaneWorktree(repo, 'lane-c', { 'c1.txt': 'x\n' });
   const wtB = addLaneWorktree(repo, 'lane-d', { 'd1.txt': 'y\n' });
+  // p1's pre-commit hook marks that it runs inside the lock, then holds it until go (~30s cap); p2's passes.
+  const inside = path.join(repo, '.git', 'first-inside');
+  const go = path.join(repo, '.git', 'go');
   try {
-    // First holder grabs the lock and holds it ~600ms via a slow pre-commit hook.
-    const hookDir = path.join(repo, '.git', 'hooks');
-    const hook = path.join(hookDir, 'pre-commit');
-    fs.writeFileSync(hook, '#!/usr/bin/env bash\nsleep 0.6\nexit 0\n');
+    const hook = path.join(repo, '.git', 'hooks', 'pre-commit');
+    fs.writeFileSync(hook, `#!/usr/bin/env bash\n[ -e '${inside}' ] && exit 0\n: > '${inside}'\nfor _ in $(seq 600); do [ -e '${go}' ] && break; sleep 0.05; done\n`);
     fs.chmodSync(hook, 0o755);
-
     const events = [];
+    const ended = (p, name) => new Promise((res) => p.on('exit', (c) => { events.push(name); res(c); }));
     const p1 = spawnMerge(repo, ['lane-c', 'plan-c.md', 'charlie']);
-    p1.on('exit', () => events.push('p1'));
-
-    // Give p1 a moment to acquire the lock and enter the slow commit.
-    await new Promise((r) => setTimeout(r, 150));
-
-    const start = Date.now();
+    const c1 = ended(p1, 'p1');
+    // p2 starts once p1 provably holds the lock (its hook runs inside it), never after a fixed delay.
+    await until(() => fs.existsSync(inside), 'the first merge inside the lock');
     const p2 = spawnMerge(repo, ['lane-d', 'plan-d.md', 'delta']);
-    p2.on('exit', () => events.push('p2'));
-
-    const codes = await Promise.all([
-      new Promise((res) => p1.on('exit', (c) => res(c))),
-      new Promise((res) => p2.on('exit', (c) => res(c))),
-    ]);
-    const elapsed = Date.now() - start;
-
+    let err2 = '';
+    p2.stderr.on('data', (d) => { err2 += d; });
+    const c2 = ended(p2, 'p2');
+    await until(() => err2.includes('holds the ship lock; waiting for it'), 'the second merge to wait');
+    assert.deepStrictEqual(events, [], 'neither merge ended while the first held the lock');
+    fs.writeFileSync(go, '');
+    const codes = await Promise.all([c1, c2]);
     assert.deepStrictEqual(events, ['p1', 'p2'], 'p1 must finish before p2');
     assert.strictEqual(codes[0], 0, 'first merge should succeed');
     assert.strictEqual(codes[1], 0, 'second merge should succeed after waiting');
-    // p2 started ~150ms in; it had to wait out the rest of p1's ~600ms hold.
-    assert.ok(elapsed >= 250, `second invocation should have waited (waited ${elapsed}ms)`);
-
     // Both lanes landed as two separate squash commits, no interleave/clobber.
     const subjects = git(repo, 'log', '--pretty=%s').trim().split('\n');
     assert.ok(subjects.includes('merge(lane charlie): plan-c.md'));
@@ -181,6 +180,7 @@ test('serialization -> the second concurrent invocation waits for the lock', asy
     assert.ok(fs.existsSync(path.join(repo, 'c1.txt')));
     assert.ok(fs.existsSync(path.join(repo, 'd1.txt')));
   } finally {
+    if (fs.existsSync(repo)) fs.writeFileSync(go, '');
     rmrf(repo);
     rmrf(wtA);
     rmrf(wtB);
@@ -198,19 +198,19 @@ test('killed lock holder -> flock auto-releases so a later run proceeds', async 
     fs.writeFileSync(hook, '#!/usr/bin/env bash\nsleep 30\nexit 0\n');
     fs.chmodSync(hook, 0o755);
 
-    // Launch the actual script in its own process group, let it acquire the
-    // lock and enter the slow commit, then SIGKILL the whole group (simulating
-    // a crash mid-merge). flock releases when the holding fd closes on death.
+    // Launch the actual script in its own process group, let it take the ship
+    // lock and enter the slow commit, then SIGKILL the launcher's group and the
+    // lock holder's (flock leads a session of its own, as flockExec runs it):
+    // a crash mid-merge. flock releases when the holding fd closes on death.
     const holder = spawn('bash', [SCRIPT, 'lane-kill', 'plan-kill.md', 'kilo'], {
       cwd: repo,
       stdio: 'ignore',
       detached: true, // new process group so we can kill the whole tree
     });
     await new Promise((r) => setTimeout(r, 800)); // let it lock + reach the hook
-    try {
-      process.kill(-holder.pid, 'SIGKILL'); // kill the group (script + flock + hook)
-    } catch {
-      holder.kill('SIGKILL');
+    const holders = require('./lib/flockExec').flockHolders(path.join(repo, '.git', 'drb-ship.lock')) || [];
+    for (const pid of [holder.pid, ...holders]) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
     }
     await new Promise((res) => holder.on('exit', () => res()));
 
