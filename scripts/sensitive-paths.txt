@@ -1,15 +1,156 @@
-# Sensitive paths: single source of truth (workflow-redesign spec, 2026-06-19).
+# The sensitive list scales the review tier and nothing else (instruction
+# rewrite spec 2026-10-19, D11 and section 3.3; the list dates from the
+# workflow-redesign spec, 2026-06-19). A change that touches a path here is
+# reviewed at that path's tier at least, however small the change. The hinge
+# set is in the list, so it is sensitive-listed too: lane-status's stale flag
+# and the review's overlap pass (spec 3.8: every diff file needs a seams
+# verdict) also fire when a hinge path lands on main, both stricter for it.
 #
-# A change touching ANY path here is money / auth / data / external-send risk.
-# This ONE list is the trigger for all three of:
-#   1. full agent-fleet review (either track), no matter how small the change
-#   2. conflict-escalation (stop and ask on a conflict in these files)
-#   3. auto-pull disqualification (these wait for an explicit go)
+# Four sections, each opened by a header line of the form '# section: <name>':
+#   auth-and-pii, client-money-surfaces, money: tier A, the six lenses, verify,
+#     the externals and the money smoke.
+#   hinge: tier hinge (spec 3.3), seams and access-egress, the pre-steps and
+#     the suites the change reaches; tier A when the content rule fires.
+# A path that matches patterns in more than one section takes the heaviest:
+# any tier A section outweighs hinge, and between tier A sections the first
+# match in this file names it. The hinge section comes first and money last,
+# so a block appended at the end of this file lands in money, never in hinge.
+# The tiers, the content rule and the docs allowlist live in
+# scripts/sensitive-match.js.
 #
 # Format: gitignore-style, repo-root-relative, one pattern per line.
 # '*' matches within a single path segment (it does NOT cross '/').
-# Blank lines and lines starting with '#' are ignored.
+# '**' crosses '/' ('**/' is zero or more directories).
+# Blank lines and lines starting with '#' are ignored, except a section header;
+# a line that looks like a header but does not parse stops the matcher.
 # Consumed by scripts/sensitive-match.js.
+
+# section: hinge
+# The D11 hinge set (spec 2026-10-19, D11): the files that define reviewed and
+# sensitive are themselves sensitive. Moved here verbatim in the flip commit
+# from the HINGE_PATHS constant scripts/sensitive-match.js held until then
+# (plan 2026-10-28 step 5, decision 4). A path here is tier hinge unless its
+# added lines fire the content rule or a heavier section below also matches
+# it (the gate machinery and the dev-JWT minters do); then it is tier A.
+.claude/skills/review/**
+.claude/agents/*.md
+.claude/settings.json
+scripts/sensitive-paths.txt
+scripts/sensitive-match.js
+scripts/static-checks.js
+scripts/merge-lane.sh
+scripts/ship.js
+scripts/push-gate.js
+scripts/post-ship-watch.js
+scripts/gen-docs.js
+scripts/lane-status.js
+scripts/board-write.sh
+scripts/lib/**
+.husky/*
+client/vercel.json
+docs/money-laws.md
+docs/runbooks/**
+AGENTS.md
+package.json
+package-lock.json
+client/package.json
+client/package-lock.json
+.node-version
+eslint.config.mjs
+.gitignore
+# scripts/lib/** above covers the step 3 modules scripts/lib/shipLog.js (the
+# ship log and manifest), scripts/lib/receipt.js (the review receipt) and
+# scripts/lib/piiShapes.js (the one PII shape module), so none is listed
+# again.
+# The client Ignored Build Step (lane vercel-ignore, 2026-10-28): it decides
+# whether a push deploys the client, and it sits outside the content
+# rule's roots, so without this line it computed tier C.
+client/scripts/vercel-ignore.sh
+
+# section: auth-and-pii
+# Auth, sessions, tokens, role and onboarding guards, and the input
+# perimeter. Before the money section so a tier A path here names this section
+# even when a broader money glob below also matches it.
+
+# Auth / guards / limits / the shared error funnel
+server/middleware/auth.js
+server/middleware/rateLimiters.js
+server/middleware/asyncHandler.js
+server/utils/errors.js
+
+# Onboarding promotion (found 2026-07-26 while reviewing the promotion-gate
+# lane). payment.js is where a staff account is granted
+# onboarding_status='approved', the status requireOnboarded (shifts.js:32)
+# gates every staff-data surface on. A public register + one POST here was a
+# live self-promotion hole for months, and the change that closed it matched
+# NO glob on this list, so an auth-perimeter fix scaled to a light look. The
+# promotion rule now lives in the helper, so both belong here.
+server/routes/payment.js
+server/utils/onboardingPromotion.js
+
+# Upload perimeter (2026-07-26, onboarding-upload plan). fileValidation.js is the
+# magic-bytes allowlist every upload route trusts, and this batch widens it to admit
+# OLE and zip containers (DOC/DOCX) for onboarding documents. application.js and
+# contractor.js are the two routes that call the widened validator, and application.js
+# additionally owns the submit-time file gate that a later lane makes conditional on
+# pre_hired. Removing a server-side validation gate is the same class as the
+# payment.js self-promotion hole listed above: it matched no glob here, so it would
+# have scaled to a light look at push.
+server/utils/fileValidation.js
+server/routes/application.js
+server/routes/contractor.js
+# Global upload middleware: the size limit and its 413/abort behavior apply to EVERY
+# upload route in the app, so a change here has app-wide blast radius.
+server/index.js
+
+# The dev-JWT minters and their shared dev-only gate (2026-10-06). dev-signin.js
+# runs WITHOUT a prompt (Dallas's allow rule in ~/.claude/settings.json pins its
+# absolute path), so an edit to it, or to the gate both scripts trust, is code
+# that runs unprompted and mints sessions. Security review, 2026-10-06.
+scripts/dev-signin.js
+scripts/mobile-capture.js
+scripts/lib/devDbGate.js
+
+# Mobile-admin auth + PWA perimeter (2026-08-14, spec 2026-08-13-mobile-admin
+# section 8). The webauthn routes mint sessions; AuthContext and
+# SessionExpiryHandler decide when a token is destroyed; the admin service
+# worker caches authenticated responses and the manifest/injector decide which
+# hosts get an installable admin surface. The spec fleet found the auth router
+# itself was never listed (and no client path was), so the promised 5-agent
+# fleet on auth changes would not have fired.
+server/routes/webauthn.js
+server/routes/auth.js
+client/src/context/AuthContext.js
+client/src/components/SessionExpiryHandler.js
+client/public/admin-sw.js
+client/public/admin-manifest.json
+client/src/utils/installAdminPwaMeta.js
+
+# section: client-money-surfaces
+# Client code that writes or shows money, in blocks whose every path is under
+# client/. A block that explains server and client paths together stays in the
+# money section with its comment.
+
+# Shared proposal-editor payload, preview and notice builders (lane ma-e3a): the money PATCH and what reaches a client
+client/src/pages/admin/proposalEditor/patchBody.js
+client/src/pages/admin/proposalEditor/editorCore.js
+client/src/components/comms/notifyDrafts.js
+
+# Phone edit sheet (lane ma-e3): the money write surface
+# useEditSheet.js writes; editSheetView.js holds the stale-save guard's basis (sheetBasis:
+# what the save rests on, never updated_at alone),
+# the curfew acknowledgement trigger and which reprice lines show; EditSheet.js holds
+# Confirm's priced-preview gate and the client-send buttons with their arm delay;
+# repriceSummary.js writes the confirm's money lines and the one disclosure of the
+# automatic gratuity email, on both surfaces.
+client/src/components/mobile/useEditSheet.js
+client/src/utils/editSheetView.js
+client/src/components/mobile/EditSheet.js
+client/src/pages/admin/proposalEditor/repriceSummary.js
+
+# section: money
+# Payroll, pricing, Stripe, payouts, invoices, refunds, bank PII, webhooks,
+# external sends and paid providers, schema, and the gate machinery.
 
 # Pricing / payments / PII
 server/utils/pricingEngine.js
@@ -26,7 +167,7 @@ server/routes/admin/payroll.js
 server/routes/staffPortal/payouts.js
 # The staff-home route itself (2026-08-19). Its sibling above was listed and it
 # was not, yet it is what tells a contractor WHICH pay period is current and what
-# they are owed in it — the payroll "which period is now" family, whose other
+# they are owed in it: the payroll "which period is now" family, whose other
 # members (admin/payroll.js, dutyLines.js) are all covered. It shipped a money
 # defect for exactly that reason: on the last evening of every period it resolved
 # the NEXT one and showed $0 for a worked week, and being unlisted meant the
@@ -39,7 +180,7 @@ server/routes/staffPortal.js
 # gets encrypted and what gets projected back, and holds the field whitelist. It
 # was split out of staffPortal.js BEFORE that parent was ever listed, so unlike
 # the payrollDuty and drinkPlans notes this is not sensitivity-followed-the-code-
-# out — it is a path that was simply never caught, and a change that accidentally
+# out; it is a path that was simply never caught, and a change that accidentally
 # projects a decrypted account number would have scaled to a light look. Found by
 # two review agents independently during the staffportal-split fleet; checked
 # against this file's own comments first, and there was no deliberate-absence
@@ -57,7 +198,7 @@ server/routes/staffPortal/paymentMethods.js
 # owning user's own sends, list it then.
 # Sensitivity follows the code (2026-08-13): the duty routes were split OUT of
 # payroll.js, taking the attribution write, the duty-line add/remove, and the
-# accrual re-derivation with them — so the file that actually moves duty money
+# accrual re-derivation with them, so the file that actually moves duty money
 # was invisible to review-scaling while its emptied-out parent stayed listed.
 # Same gap shape as the drinkPlans and stripeWebhook splits documented below.
 server/routes/admin/payrollDuty.js
@@ -93,7 +234,7 @@ server/routes/thumbtack.js
 # Public SMS opt-in form (2026-07-30). Unauthenticated POST that INSERTs a
 # clients row from attacker-controlled input, writes sms_consent_log (the
 # compliance evidence we would hand a carrier in a dispute), and sets
-# communication_preferences.sms_enabled — the SOLE enforcement of an SMS opt-out
+# communication_preferences.sms_enabled, the SOLE enforcement of an SMS opt-out
 # on the send path. Its sibling routes/sms.js is listed above, and this file was
 # split OUT of it precisely to keep the public write small; listing it is what
 # stops that split from hiding a public write from review-scaling. Same
@@ -148,8 +289,8 @@ server/utils/staffText.js
 # Inbox (spec 2026-10-06): it texts people from three numbers, enforces the
 # opt-out on every line, and decides who is waiting on DRB; the route file and
 # every module the rules, the readers and the text route live in. The
-# matcher's '*' never crosses '/', so the ** below matches the files directly
-# in server/utils/inbox/ and nothing deeper: the folder stays flat.
+# matcher's '**' crosses '/' (since the step 2 matcher), so the ** below
+# matches every file under server/utils/inbox/; the folder is flat today.
 server/routes/admin/inbox.js
 server/utils/inbox/**
 # The one module that requires @anthropic-ai/sdk (lane inbox-ai): a paid API
@@ -224,12 +365,6 @@ server/utils/consultCallCaps.js
 server/utils/consultCallBriefing.js
 server/utils/calcomWebhookHelpers.js
 
-# Auth / guards / limits / the shared error funnel
-server/middleware/auth.js
-server/middleware/rateLimiters.js
-server/middleware/asyncHandler.js
-server/utils/errors.js
-
 # Schedulers (scattered in server/utils/, not a folder)
 server/utils/*Scheduler.js
 
@@ -241,7 +376,7 @@ server/utils/*Handlers.js
 .env.example
 
 # Route-body extractions from shifts.js (2026-07-14 split): cancel-or-unassign
-# denies approved shift_requests + BEO-nudge suppression — same class as its
+# denies approved shift_requests + BEO-nudge suppression, same class as its
 # listed siblings shifts.approval.js / staffShiftActions.js.
 server/routes/shifts.handlers.js
 
@@ -304,16 +439,6 @@ server/utils/clientNotices.js
 # follows the code, not the filename it used to live in.
 server/routes/drinkPlans/submitSanitize.js
 server/routes/drinkPlans/submitNotify.js
-
-# Onboarding promotion (found 2026-07-26 while reviewing the promotion-gate
-# lane). payment.js is where a staff account is granted
-# onboarding_status='approved' — the status requireOnboarded (shifts.js:32)
-# gates every staff-data surface on. A public register + one POST here was a
-# live self-promotion hole for months, and the change that closed it matched
-# NO glob on this list, so an auth-perimeter fix scaled to a light look. The
-# promotion rule now lives in the helper, so both belong here.
-server/routes/payment.js
-server/utils/onboardingPromotion.js
 
 # THE MONEY CORE ITSELF (push review, 2026-07-26). Found while computing the
 # trigger for the cancel-line batch: the list gated the ROUTES that move money
@@ -384,30 +509,15 @@ server/utils/gratuityDisclosureNotify.js
 # waiting person's item, or never closes it.
 server/utils/answeringMessageTypes.js
 # Payout mirror. stripeWebhookHandlers/payout.js is a thin dispatcher; the
-# substance is here — writes money-bearing cents columns and ATTRIBUTES lines
+# substance is here: it writes money-bearing cents columns and ATTRIBUTES lines
 # back to payments / tips / refunds. Sensitivity follows the code (chunk-3
 # review, 2026-07-26).
 server/utils/stripePayoutSync.js
 server/routes/stripePayouts.js
 
-# Upload perimeter (2026-07-26, onboarding-upload plan). fileValidation.js is the
-# magic-bytes allowlist every upload route trusts, and this batch widens it to admit
-# OLE and zip containers (DOC/DOCX) for onboarding documents. application.js and
-# contractor.js are the two routes that call the widened validator, and application.js
-# additionally owns the submit-time file gate that a later lane makes conditional on
-# pre_hired. Removing a server-side validation gate is the same class as the
-# payment.js self-promotion hole listed above: it matched no glob here, so it would
-# have scaled to a light look at push.
-server/utils/fileValidation.js
-server/routes/application.js
-server/routes/contractor.js
-# Global upload middleware: the size limit and its 413/abort behavior apply to EVERY
-# upload route in the app, so a change here has app-wide blast radius.
-server/index.js
-
 # Public pricing surface for the proposal page (2026-08-11). publicOptions.js is
 # an unauthenticated token-gated endpoint that QUOTES prices a client then acts
-# on, and changeRequests.js holds priceProposedState — the one function that
+# on, and changeRequests.js holds priceProposedState, the one function that
 # turns a client-chosen configuration into a number, now shared by the change
 # request flow AND that public quote. Neither matched a glob here (the
 # server/utils/* patterns never cross '/', and neither filename ends in a
@@ -482,29 +592,6 @@ scripts/ship.js
 scripts/lib/shipFlow.js
 .husky/pre-push
 
-# The dev-JWT minters and their shared dev-only gate (2026-10-06). dev-signin.js
-# runs WITHOUT a prompt (Dallas's allow rule in ~/.claude/settings.json pins its
-# absolute path), so an edit to it, or to the gate both scripts trust, is code
-# that runs unprompted and mints sessions. Security review, 2026-10-06.
-scripts/dev-signin.js
-scripts/mobile-capture.js
-scripts/lib/devDbGate.js
-
-# Mobile-admin auth + PWA perimeter (2026-08-14, spec 2026-08-13-mobile-admin
-# section 8). The webauthn routes mint sessions; AuthContext and
-# SessionExpiryHandler decide when a token is destroyed; the admin service
-# worker caches authenticated responses and the manifest/injector decide which
-# hosts get an installable admin surface. The spec fleet found the auth router
-# itself was never listed (and no client path was), so the promised 5-agent
-# fleet on auth changes would not have fired.
-server/routes/webauthn.js
-server/routes/auth.js
-client/src/context/AuthContext.js
-client/src/components/SessionExpiryHandler.js
-client/public/admin-sw.js
-client/public/admin-manifest.json
-client/src/utils/installAdminPwaMeta.js
-
 # Admin push (lane ma-c-push, spec 2026-08-13-mobile-admin section 7).
 # adminPush.js: the dispatch allowlist is the blast-radius guard; its copy reaches a locked screen.
 server/utils/adminPush.js
@@ -555,11 +642,6 @@ server/utils/messageSuppression.js
 server/utils/channelFallback.js
 server/utils/notificationChannelResolver.js
 
-# Shared proposal-editor payload, preview and notice builders (lane ma-e3a): the money PATCH and what reaches a client
-client/src/pages/admin/proposalEditor/patchBody.js
-client/src/pages/admin/proposalEditor/editorCore.js
-client/src/components/comms/notifyDrafts.js
-
 # Price override removal, the editor (spec 2026-10-16 sections 5 and 5.1): the
 # money PATCH's guards (the strict id parse, the legal hold, the stale-lines
 # token, the retired override, line validation, refund markers), the agreed-
@@ -577,18 +659,6 @@ client/src/pages/admin/proposalEditor/AdjustmentsSection.js
 # removed the wrong line.
 client/src/pages/admin/RemoteStaffingFeePrompt.js
 client/src/pages/admin/proposalEditor/useCancelTargets.js
-
-# Phone edit sheet (lane ma-e3): the money write surface
-# useEditSheet.js writes; editSheetView.js holds the stale-save guard's basis (sheetBasis:
-# what the save rests on, never updated_at alone),
-# the curfew acknowledgement trigger and which reprice lines show; EditSheet.js holds
-# Confirm's priced-preview gate and the client-send buttons with their arm delay;
-# repriceSummary.js writes the confirm's money lines and the one disclosure of the
-# automatic gratuity email, on both surfaces.
-client/src/components/mobile/useEditSheet.js
-client/src/utils/editSheetView.js
-client/src/components/mobile/EditSheet.js
-client/src/pages/admin/proposalEditor/repriceSummary.js
 
 # Browser Sentry scrub (spec 2026-10-06 Inbox, section 17 item 42; lane
 # inbox-page). An Inbox p- person key is ten phone digits in the page URL and
@@ -644,3 +714,36 @@ server/routes/proposals/menuDraftApprove.js
 # (which file goes to MCP, on which branch, what counts as clean).
 scripts/override-conversion/*
 docs/runbooks/override-conversion.md
+
+# The flip commit's money additions (spec 2026-10-19, section 3.3): the
+# directories and name patterns that cover the 122 files the lens audit
+# (docs/superpowers/specs/2026-10-19-lens-audit.md, section 4) found carrying
+# money defects while unlisted. server/scripts/** is deliberately wider than
+# the audit's named folder. The same globs are still held by
+# scripts/content-rule-calibrate.js's FLIP_ADDITIONS for its measurement;
+# this list is the copy that decides a tier.
+server/routes/drinkPlans/*
+server/routes/stripeCreateIntent.js
+server/utils/serviceExtension*.js
+server/utils/drinkPlanExtras.js
+server/utils/proposalGroupCommit.js
+server/routes/proposals/metadata.js
+server/utils/metricsQueries.js
+server/utils/autoAssign.js
+server/routes/admin/payrollTax.js
+server/db/index.js
+server/scripts/**
+scripts/cc-*.js
+server/routes/serviceExtensions/*
+client/src/pages/proposal/proposalView/*
+client/src/pages/admin/proposalEditor/*
+client/src/pages/admin/ProposalDetail.js
+client/src/pages/admin/ProposalDetailPaymentPanel.js
+client/src/components/PricingBreakdown.js
+client/src/pages/admin/overview/*
+client/src/pages/admin/payroll/*
+client/src/pages/staff/PayPage.js
+server/utils/paystubData.js
+client/src/data/eventServicesAgreement.js
+server/data/contractorAgreement.js
+client/src/pages/website/ServicesPage.js

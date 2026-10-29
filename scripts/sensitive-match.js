@@ -11,13 +11,15 @@
 // Globs: '*' matches within one path segment and never crosses '/'; '**' crosses
 // slashes ('**/' is zero or more directories). Every other regex special is
 // escaped. Sections come from '# section: <name>' header lines in the list; a
-// list with no header reads as one 'money' section (today every listed path
-// means the full fleet). The D11 hinge set and the docs allowlist live here as
-// constants until the flip moves them into the list.
+// pattern above the first header reads as section 'money' (a list with no
+// header is one money section). The D11 hinge set is the list's hinge section,
+// moved there from a constant in this file by the flip commit (plan 2026-10-28
+// step 5, decision 4); the docs allowlist stays a constant here.
 //
 // Tier, per file: A when the path is in a money, auth-and-pii or
 // client-money-surfaces section, or the content rule fires on its added lines.
-// hinge for a D11 path with no content hit, for every unclassified path
+// hinge for a path in the list's hinge section (the D11 set) with no content
+// hit and no heavier section, for every unclassified path
 // (.claude/**, root files, a path outside the repo), and for every unlisted file
 // under scripts/ with no content hit that is not a .js, .mjs or .sh code file: a
 // non-code file (a manifest or list), a .sql, .cjs or .jsx, a test (*.test.js)
@@ -60,35 +62,10 @@ const TIER_FLOORS = Object.freeze({
   docs: Object.freeze([]),
 });
 
-// The D11 hinge set, as globs, until the flip commit moves it into the list.
-const HINGE_PATHS = Object.freeze([
-  '.claude/skills/review/**',
-  '.claude/agents/*.md',
-  '.claude/settings.json',
-  'scripts/sensitive-paths.txt',
-  'scripts/sensitive-match.js',
-  'scripts/static-checks.js',
-  'scripts/merge-lane.sh',
-  'scripts/ship.js',
-  'scripts/push-gate.js',
-  'scripts/post-ship-watch.js',
-  'scripts/gen-docs.js',
-  'scripts/lane-status.js',
-  'scripts/board-write.sh',
-  'scripts/lib/**',
-  '.husky/*',
-  'client/vercel.json',
-  'docs/money-laws.md',
-  'docs/runbooks/**',
-  'AGENTS.md',
-  'package.json',
-  'package-lock.json',
-  'client/package.json',
-  'client/package-lock.json',
-  '.node-version',
-  'eslint.config.mjs',
-  '.gitignore',
-]);
+// The D11 hinge set is the list's hinge section (see hingeRegexes). The
+// HINGE_PATHS constant that held it until the flip commit is gone, not left
+// empty: an empty export would answer "nothing is hinge" to a caller that
+// still read it, where a missing one fails loudly.
 
 // Docs-only (spec 4.7): every path on this list and none sensitive or hinge.
 const DOCS_ALLOWLIST = Object.freeze(['docs/**', 'README.md', 'ARCHITECTURE.md']);
@@ -199,7 +176,6 @@ function patternToRegex(pattern) {
   return new RegExp('^' + re + '$');
 }
 
-const HINGE_REGEXES = HINGE_PATHS.map(patternToRegex);
 const DOCS_REGEXES = DOCS_ALLOWLIST.map(patternToRegex);
 const CODE_EXCLUDE_REGEXES = CODE_PATHS.exclude.map(patternToRegex);
 
@@ -223,11 +199,12 @@ function escapesRoot(np) {
 // A line that tries to be a section header: one or more '#', any punctuation or
 // space, then 'section' or 'sections' followed by ':', '=' or '-', by a section
 // word (money, auth, client, hinge), or by exactly one word and nothing else.
-// Prose comments that merely open with the word ('# section 8). The webauthn
-// routes ...' and '# sections 5.1 and 13; ...', lines 472 and 580 of today's
-// list) stay comments. A header attempt that does not parse as
-// '# section: <known name>' throws: a malformed header must never leave the
-// patterns under it in the wrong section.
+// Prose comments that merely open with the word stay comments: two of the
+// list's own lines do ('# section 8). The webauthn routes ...' in the
+// mobile-admin auth block and '# sections 5.1 and 13; ...' in the menu art
+// block), and the suite checks the list still carries both. A header attempt
+// that does not parse as '# section: <known name>' throws: a malformed header
+// must never leave the patterns under it in the wrong section.
 const HEADER_ATTEMPT = /^#+\W*sections?\s*[:=-]|^#+\W*sections?\s+(?:money|auth|client|hinge)\b|^#+\W*sections?\s+[A-Za-z][\w-]*\s*$/i;
 const HEADER = /^#\s*section\s*:\s*([A-Za-z-]+)\s*$/i;
 
@@ -261,7 +238,11 @@ function sectionWeight(section) {
 // matches patterns in several sections the heaviest section wins (the first such
 // pattern names it), so list order can never lighten a path.
 function matchSensitiveDetailed(paths, listFile = DEFAULT_LIST) {
-  const patterns = loadPatterns(listFile);
+  return matchDetailed(paths, loadPatterns(listFile));
+}
+
+// matchSensitiveDetailed over patterns already loaded.
+function matchDetailed(paths, patterns) {
   const list = Array.isArray(paths) ? paths : [paths];
   const out = [];
   for (const p of list) {
@@ -287,9 +268,17 @@ function isSensitive(paths, listFile = DEFAULT_LIST) {
 
 // ---- hinge, docs, code paths ---------------------------------------------------
 
-function isHingePath(p) {
+// The regexes of the list's hinge section, from patterns loadPatterns returned.
+function hingeRegexes(patterns) {
+  return patterns.filter((p) => p.section === 'hinge').map((p) => p.regex);
+}
+
+// A path in the D11 hinge set: one any pattern in the list's hinge section
+// matches, whether or not a heavier section matches it too (so
+// scripts/lib/devDbGate.js is a hinge path that computes tier A).
+function isHingePath(p, listFile = DEFAULT_LIST) {
   const np = normalize(p);
-  return HINGE_REGEXES.some((re) => re.test(np));
+  return hingeRegexes(loadPatterns(listFile)).some((re) => re.test(np));
 }
 
 function isDocsAllowlisted(p) {
@@ -299,11 +288,12 @@ function isDocsAllowlisted(p) {
 }
 
 // Every path on the docs allowlist and none of them sensitive or hinge (4.7).
+// A hinge path is in the list's hinge section, so the sensitive check refuses
+// it too (docs/money-laws.md, docs/runbooks/**).
 function isDocsOnly(paths, listFile = DEFAULT_LIST) {
   const list = (Array.isArray(paths) ? paths : [paths]).map(normalize).filter(Boolean);
   if (list.length === 0) return false;
   if (!list.every(isDocsAllowlisted)) return false;
-  if (list.some(isHingePath)) return false;
   return !isSensitive(list, listFile);
 }
 
@@ -512,10 +502,11 @@ function tierForPath(p, { sensitiveSection, contentHit, statusWrite }) {
 
 function classify(p, { sensitiveSection, contentHit }) {
   if (escapesRoot(p)) return contentHit ? 'A' : 'hinge'; // unclassified (L2)
+  // A hinge path is always in a section (the list's hinge section, or a heavier
+  // one that also matches it), so it is decided here.
   if (sensitiveSection === 'hinge') return contentHit ? 'A' : 'hinge';
   if (sensitiveSection !== undefined) return 'A'; // one of A_SECTIONS: loadPatterns throws on any other name
   if (contentHit) return 'A';
-  if (isHingePath(p)) return 'hinge';
   if (p.startsWith('server/')) return 'B';
   if (p.startsWith('scripts/')) return isCodePath(p) && SCRIPT_B_EXTENSIONS.some((e) => p.endsWith(e)) ? 'B' : 'hinge';
   if (p.startsWith('client/')) return 'C';
@@ -563,7 +554,9 @@ function tier({ paths = [], diffText = '', newPaths = [], deletedPaths = [], lis
     ...deletedPaths.map(normalize),
     ...sections.filter((s) => s.deleted && s.path).map((s) => s.path),
   ]);
-  const detailed = matchSensitiveDetailed(list, listFile);
+  const patterns = loadPatterns(listFile);
+  const detailed = matchDetailed(list, patterns);
+  const hinge = hingeRegexes(patterns);
   const sectionByPath = new Map(detailed.map((h) => [normalize(h.path), h.section]));
   const hits = hitsFromSections(sections);
   for (const p of list) {
@@ -614,7 +607,7 @@ function tier({ paths = [], diffText = '', newPaths = [], deletedPaths = [], lis
     sections: [...new Set(detailed.map((h) => h.section))],
     contentRuleHits: hits,
     statusWrites,
-    hingePaths: list.filter(isHingePath),
+    hingePaths: list.filter((p) => hinge.some((re) => re.test(p))),
     docsOnly: isDocsOnly(list, listFile),
   };
 }
@@ -659,7 +652,6 @@ module.exports = {
   matchSensitiveDetailed,
   loadPatterns,
   patternToRegex,
-  HINGE_PATHS,
   isHingePath,
   DOCS_ALLOWLIST,
   isDocsAllowlisted,

@@ -15,7 +15,7 @@
 # deployment's sha for the branch (Vercel exposes it to this step alone; it is
 # empty on a first deployment) through the commit being deployed, so the whole
 # deployed range is judged, never the last commit alone. The allowlist is
-# scripts/sensitive-match.js's DOCS_ALLOWLIST minus its two hinge docs:
+# sensitive-match.js's DOCS_ALLOWLIST minus sensitive-paths.txt's hinge docs:
 # docs/** except docs/money-laws.md and docs/runbooks/**, plus README.md and
 # ARCHITECTURE.md exactly, each path judged as git prints it.
 #

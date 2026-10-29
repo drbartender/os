@@ -196,11 +196,102 @@ test('tier: per-file tiers, the union of floors, the label order A, hinge, B, C,
   assert.deepStrictEqual(newRoute.floors.sort(), ['access-egress', 'seams'], 'a new route file adds access-egress to the B floor');
 });
 
-test('HINGE_PATHS carries the D11 set', () => {
-  for (const p of ['scripts/merge-lane.sh', 'scripts/ship.js', 'scripts/push-gate.js', 'scripts/lib/receipt.js', '.husky/pre-push', 'package.json', 'client/package-lock.json', '.node-version', 'eslint.config.mjs', '.gitignore', 'docs/money-laws.md', 'docs/runbooks/x.md', 'AGENTS.md', 'client/vercel.json', '.claude/settings.json', 'scripts/sensitive-paths.txt', 'scripts/static-checks.js', '.claude/skills/review/SKILL.md', '.claude/agents/money.md', 'scripts/lib/staticChecks/jsScan.js', 'scripts/lib/flockExec.js']) {
+test("the list's hinge section carries the D11 set, and the constant is gone", () => {
+  for (const p of ['scripts/merge-lane.sh', 'scripts/ship.js', 'scripts/push-gate.js', 'scripts/lib/receipt.js', '.husky/pre-push', 'package.json', 'client/package-lock.json', '.node-version', 'eslint.config.mjs', '.gitignore', 'docs/money-laws.md', 'docs/runbooks/x.md', 'AGENTS.md', 'client/vercel.json', '.claude/settings.json', 'scripts/sensitive-paths.txt', 'scripts/static-checks.js', '.claude/skills/review/SKILL.md', '.claude/agents/money.md', 'scripts/lib/staticChecks/jsScan.js', 'scripts/lib/flockExec.js', 'scripts/lib/shipLog.js', 'scripts/lib/piiShapes.js', 'client/scripts/vercel-ignore.sh']) {
     assert.ok(sm.isHingePath(p), `${p} should be hinge`);
+    assert.ok(sm.isSensitive([p]), `${p} is sensitive-listed (D11)`);
   }
   assert.ok(!sm.isHingePath('server/routes/blog.js'));
+  assert.ok(!('HINGE_PATHS' in sm), 'the constant is retired: the list is the one source');
+  const listed = sm.loadPatterns().filter((p) => p.section === 'hinge').map((p) => p.pattern);
+  for (const p of ['.claude/skills/review/**', '.claude/agents/*.md', 'scripts/lib/**', '.husky/*', 'docs/runbooks/**', 'package-lock.json', 'client/scripts/vercel-ignore.sh']) {
+    assert.ok(listed.includes(p), `${p} is a pattern of the hinge section`);
+  }
+});
+
+test('a path under each section header reports that section and its tier', () => {
+  const list = fixtureList([
+    '# The role sentence stays a comment above the first section.',
+    '# section: auth-and-pii', 'server/middleware/guard.js',
+    '# section: client-money-surfaces', 'client/src/pages/Sheet.js',
+    '# section: money', 'server/utils/ledger.js',
+    '# section: hinge', 'scripts/tool.sh', 'docs/laws.md', 'server/utils/ledger.js', '',
+  ].join('\n'));
+  for (const [p, section, tierName] of [
+    ['server/middleware/guard.js', 'auth-and-pii', 'A'],
+    ['client/src/pages/Sheet.js', 'client-money-surfaces', 'A'],
+    ['server/utils/ledger.js', 'money', 'A'],
+    ['scripts/tool.sh', 'hinge', 'hinge'],
+    ['docs/laws.md', 'hinge', 'hinge'],
+  ]) {
+    assert.deepStrictEqual(sm.matchSensitiveDetailed([p], list).map((h) => h.section), [section], p);
+    const t = sm.tier({ paths: [p], diffText: plain([p]), listFile: list });
+    assert.strictEqual(t.tier, tierName, p);
+    assert.deepStrictEqual(t.sections, [section], p);
+    assert.deepStrictEqual(t.tiersByFile, { [p]: tierName }, p);
+  }
+  const hingeOnly = sm.tier({ paths: ['scripts/tool.sh'], diffText: plain(['scripts/tool.sh']), listFile: list });
+  assert.deepStrictEqual(hingeOnly.floors.sort(), ['access-egress', 'seams'], 'the hinge floor');
+  assert.deepStrictEqual(hingeOnly.hingePaths, ['scripts/tool.sh']);
+  assert.deepStrictEqual(hingeOnly.tests, { smoke: false, suites: true, clientBuild: false });
+  assert.strictEqual(sm.tier({ paths: ['scripts/tool.sh'], diffText: diffFor('scripts/tool.sh', ['await stripe.customers.retrieve(id);']), listFile: list }).tier, 'A', 'a hinge path whose added lines fire the content rule');
+  assert.ok(sm.isHingePath('server/utils/ledger.js', list), 'a hinge pattern under a heavier match still marks the path');
+  assert.deepStrictEqual(sm.tier({ paths: ['server/utils/ledger.js'], diffText: plain(['server/utils/ledger.js']), listFile: list }).hingePaths, ['server/utils/ledger.js']);
+  assert.strictEqual(sm.isDocsOnly(['docs/laws.md'], list), false, 'a doc in the hinge section is never docs-only');
+
+  // The hinge set comes from the list alone: with the same paths unlisted,
+  // scripts/tool.sh is B and docs/laws.md is docs.
+  const none = fixtureList('# A list with nothing in it.\n');
+  assert.strictEqual(sm.tier({ paths: ['scripts/tool.sh'], diffText: plain(['scripts/tool.sh']), listFile: none }).tier, 'B');
+  assert.strictEqual(sm.tier({ paths: ['docs/laws.md'], diffText: '', listFile: none }).tier, 'docs');
+  assert.strictEqual(sm.isHingePath('scripts/tool.sh', none), false);
+  assert.strictEqual(sm.isDocsOnly(['docs/laws.md'], none), true);
+});
+
+test('the real list: each of the four section headers exactly once, hinge first and money last', () => {
+  const realList = fs.readFileSync(path.join(__dirname, 'sensitive-paths.txt'), 'utf8').split('\n');
+  const headers = realList.filter((l) => /^#\s*section\s*:/i.test(l.trim()));
+  assert.deepStrictEqual(headers, ['# section: hinge', '# section: auth-and-pii', '# section: client-money-surfaces', '# section: money'], 'each header exactly once, in this order');
+  const runs = sm.loadPatterns().map((p) => p.section).filter((s, i, all) => i === 0 || all[i - 1] !== s);
+  assert.deepStrictEqual(runs, ['hinge', 'auth-and-pii', 'client-money-surfaces', 'money'], 'one run of patterns per section, in the same order');
+});
+
+test('a pattern appended at the end of a copy of the real list lands in money, never in hinge', () => {
+  const real = fs.readFileSync(path.join(__dirname, 'sensitive-paths.txt'), 'utf8');
+  const copy = fixtureList(`${real}${real.endsWith('\n') ? '' : '\n'}# An appended block.\nserver/routes/appended.js\n`);
+  assert.deepStrictEqual(sm.matchSensitiveDetailed(['server/routes/appended.js'], copy).map((h) => h.section), ['money']);
+  assert.strictEqual(sm.tier({ paths: ['server/routes/appended.js'], diffText: plain(['server/routes/appended.js']), listFile: copy }).tier, 'A');
+});
+
+test('the real list: a path in each section reports that section and tier', () => {
+  for (const [p, section, tierName] of [
+    ['server/middleware/auth.js', 'auth-and-pii', 'A'],
+    ['server/routes/webauthn.js', 'auth-and-pii', 'A'],
+    ['client/src/components/mobile/EditSheet.js', 'client-money-surfaces', 'A'],
+    ['client/src/pages/admin/proposalEditor/editorCore.js', 'client-money-surfaces', 'A'],
+    ['server/db/schema.sql', 'money', 'A'],
+    ['server/scripts/archive/x.js', 'money', 'A'],
+    ['scripts/merge-lane.sh', 'hinge', 'hinge'],
+    ['client/scripts/vercel-ignore.sh', 'hinge', 'hinge'],
+    ['scripts/lib/devDbGate.js', 'auth-and-pii', 'A'],
+    ['scripts/push-gate.js', 'money', 'A'],
+  ]) {
+    assert.deepStrictEqual(sm.matchSensitiveDetailed([p]).map((h) => h.section), [section], p);
+    assert.strictEqual(sm.tier({ paths: [p], diffText: plain([p]) }).tier, tierName, p);
+  }
+  const header = fs.readFileSync(path.join(__dirname, 'sensitive-paths.txt'), 'utf8').split('\n')[0];
+  assert.match(header, /^# The sensitive list scales the review tier and nothing else/, "the header's first sentence is the list's role");
+});
+
+test('no hinge-section pattern matches a tracked path under server/ or client/src/', () => {
+  const { execFileSync: runGit } = require('node:child_process');
+  const root = path.resolve(__dirname, '..');
+  const code = runGit('git', ['ls-files', '-z', '--', 'server/', 'client/src/'], { cwd: root, encoding: 'utf8', env: sm.gitEnv(), maxBuffer: 64 * 1024 * 1024 }).split('\0').filter(Boolean);
+  assert.ok(code.length > 0, 'git ls-files lists files under server/ and client/src/');
+  const hinge = sm.loadPatterns().filter((p) => p.section === 'hinge');
+  assert.ok(hinge.length > 0, 'the list has a hinge section');
+  const caught = code.flatMap((p) => hinge.filter((h) => h.regex.test(p)).map((h) => `${h.pattern} matches ${p}`));
+  assert.deepStrictEqual(caught, [], 'a code path caught by a hinge pattern would compute hinge where a tier A section or the B and C rules decide it');
 });
 
 // ---- fix pass after review 1 (M1-M6, L1-L5) ------------------------------------
@@ -214,7 +305,7 @@ test('M2: the heaviest section wins when a path matches patterns in several sect
 });
 
 test('M2: a malformed section header throws with its line number; prose comments stay comments', () => {
-  for (const bad of ['# section: client money surfaces', '# section: money  # note', '# section: payroll', '# section money', '#section:', '# sections: money']) {
+  for (const bad of ['# section: client money surfaces', '# section: money  # note', '# section: payroll', '# section money', '#section:', '# sections: money', '# section: auth', '# section: client']) {
     const list = fixtureList(`server/a.js\n# section: hinge\nscripts/x.sh\n${bad}\nserver/utils/pricingEngine.js\n`);
     assert.throws(() => sm.loadPatterns(list), (e) => e instanceof Error && /line 4/.test(e.message), bad);
     assert.throws(() => sm.isSensitive(['server/utils/pricingEngine.js'], list), /line 4/, `${bad} fails closed through isSensitive too`);
@@ -756,8 +847,11 @@ test('S-L2: header typos throw; the list prose that opens with "section" stays a
     const list = fixtureList(`server/a.js\n# section: hinge\nscripts/x.sh\n${bad}\nserver/utils/pricingEngine.js\n`);
     assert.throws(() => sm.loadPatterns(list), /line 4/, bad);
   }
-  // Lines 472 and 580 of scripts/sensitive-paths.txt today, verbatim.
+  // Two comment lines of scripts/sensitive-paths.txt, verbatim; the real list
+  // still carries both.
+  const realLines = fs.readFileSync(path.join(__dirname, 'sensitive-paths.txt'), 'utf8').split('\n');
   for (const prose of ['# section 8). The webauthn routes mint sessions; AuthContext and', '# sections 5.1 and 13; lane menu-art-foundation). The only modules that reach']) {
+    assert.ok(realLines.includes(prose), `the real list carries: ${prose}`);
     assert.deepStrictEqual(sm.loadPatterns(fixtureList(`${prose}\nserver/a.js\n`)).map((p) => [p.pattern, p.section]), [['server/a.js', 'money']], prose);
   }
   assert.ok(sm.loadPatterns().length > 0, 'the real list loads');
