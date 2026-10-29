@@ -10,25 +10,78 @@
 # rewrite; its lines survive as one-line invariants), file-size-ratchet (one
 # pointer line, which the key would not match), env-debug-discipline (the rule
 # moved to the private global file).
+# Edited 2026-10-29 in its own commit before the rewrite (spec 2026-10-19
+# section 6.3; step 5 plan 2026-10-28, decision 5), then tightened at that
+# lane's review. Added, for invariants spec 6.3 keeps that this manifest never
+# covered: os-on-main, one-connection, receipt-required, and the auth, data and
+# code block at the end (sixteen keys, each matching a line of today's file).
+# Not added: dev-live-stripe (the dev box talks to live Stripe), since today's
+# file has no line for it; the rewrite lane adds that key with its line (an
+# added key is what the check's --additive-against mode allows in a commit
+# that stages CLAUDE.md; a removed or changed key there refuses). Reworded:
+# encryption-pii gains encryption\.js beside AES-256. Tightened, so that a
+# pointer line the rewritten file must carry anyway cannot stand in for a
+# dropped rule: stripe-fails-closed (the bank PII line also says fails closed),
+# gratuity (the money-laws pointer), design-review-fleet (the review-skill
+# pointer), receipt-required (a merge-path receipt sentence), os-on-main (a
+# quick-fix "stays on main"), push-fail-stop (any "stops and reports"). At the
+# second re-pass, tightened again where a spec-required line still stood in:
+# pricing-engine (the hosted line names the file too), secrets-env (a test
+# sentence says process.env), receipt-required (the spec's review line), push-
+# fail-stop (the spec's one-line merge paragraph), legal-hold (today's only
+# match is the Inbox sentence; the pattern now names legalHold.js or the
+# legal-hold client); never-scrap added (a git-safety rule 6.3 keeps). Left to
+# the rewrite lane, which adds each key with its line in one commit (an added
+# key is what --additive-against allows): dev-live-stripe (live Stripe), since
+# today's file has no line for it; ships-after-gate (push = deploy today,
+# every commit ships after the gate in the rewrite) is added here. No key
+# retired.
 
 # Named git-safety invariants (carried from the old Twelve Core Rules)
+os-on-main `?os`? (never leaves|stays on) `?main
 code-preservation code preservation
 explicit-staging git add <specific
 no-add-dot never .*git add \.
 no-reset-main never .*reset.*on .*main
 no-amend-pushed never .*amend.*pushed
 destructive-approval destructive ops .*explicit approval
-push-fail-stop push fail.*stop|stop and report|stops and reports
+push-fail-stop push fail.*stop|push reject[a-z]* stops and reports
+never-scrap never scrap unmerged
+ships-after-gate push = deploy|main is prod|ships after the gate
+
+# Main is prod: nothing reaches main without a review receipt (added 2026-10-29)
+receipt-required nothing reaches .*main.*review receipt|TRANSITIONAL.*reviewed before merge.*receipt
 
 # Verification + discipline (carried)
-design-review-fleet spec-grounding|review-spec|review skill
+design-review-fleet spec-grounding|review-spec
 
 # Money / auth / data invariants (cross-cutting, must never weaken)
 stripe-test-mode STRIPE_TEST_MODE_UNTIL
-stripe-fails-closed fails closed
+stripe-fails-closed stripe.*fails closed|fails closed.*stripe
 hosted-bartender-ratio isHostedPackage
-gratuity gratuityLineAmount|GRATUITY_LABEL|money-laws
+gratuity gratuit.*money-laws|money-laws.*gratuit|gratuityLineAmount|GRATUITY_LABEL
 proposal-payment-status paid in full|paid flag
 money-cents integer cents
-encryption-pii AES-256
+encryption-pii AES-256|encryption\.js
+one-connection one pooled connection
 doc-updates mandatory doc|header comment
+
+# Auth, data and code invariants spec 6.3 keeps (added 2026-10-29 at the
+# manifest lane's review; the inline-self-check key was retired on the promise
+# that its lines survive as one-line rules, and these keys hold it to that)
+parameterized-sql parameterized
+error-no-leak never leak
+async-handler asyncHandler
+auth-guards auth.*middleware|role guard
+scoped-reads req\.user\.id|IDOR|relationship row
+public-token-gated token-gated
+server-validation validated on server|server-side validation
+magic-bytes magic bytes
+secrets-env secret.*process\.env|process\.env.*secret
+multi-table-transactions BEGIN.*COMMIT
+schema-idempotent idempotent
+event-identity getEventTypeLabel
+drink-plan-canonical event-side.*canonical
+cross-cutting change X.*(depends on X|consumer)
+legal-hold legalHold\.js|legal.hold client
+pricing-engine pricingEngine\.js.*(pure|no DB)

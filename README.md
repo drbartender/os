@@ -1039,7 +1039,7 @@ tests omitted
 │   ├── cc-clients-import.js  # One-time CheckCherry CLIENT import (2026-07-06 reboot of the retired v1 importer).
 │   ├── cc-ledger-import.js   # One-time CheckCherry LEDGER import (phase 2 of the lean cc-import reboot).
 │   ├── cc-transfer-events.js # One-time CheckCherry EVENT TRANSFER (cc-import phase 3).
-│   ├── check-claudemd-invariants.sh # Mechanical coverage check for the CLAUDE.md rewrite (workflow-redesign L8). For each invariant in claudemd-invariants.txt, the doc MUST match the paired regex. Coarse and necessary-not-sufficient (proves the rule's substance is present, not just a keyword); a consistency agent does the semantic check. Usage: bash scripts/check-claudemd-invariants.sh [path-to-CLAUDE.md]
+│   ├── check-claudemd-invariants.sh # Mechanical coverage check for the CLAUDE.md rewrite (workflow-redesign L8). For each invariant in claudemd-invariants.txt, the doc MUST match the paired regex. Coarse and necessary-not-sufficient (proves the rule's substance is present, not just a keyword); a consistency agent does the semantic check. Usage: bash scripts/check-claudemd-invariants.sh [path-to-CLAUDE.md] [--additive-against <ref>]
 │   ├── check-css-palette-scope.js # check-css-palette-scope.js - mechanical backstop for the legacy-palette scope.
 │   ├── check-file-size.js    # File-size guard. Two modes: --staged : ratchet check for the pre-commit hook. A file over the hard cap fails ONLY if this commit makes it longer than it is at HEAD. --all : full-tree RED / YELLOW report. Always exits 0. Thresholds, scope, and line counting are defined once and shared by both.
 │   ├── claudemd-invariants.txt

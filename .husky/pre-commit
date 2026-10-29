@@ -12,9 +12,11 @@
 #      the staged added and modified source files; refuses with one line per
 #      problem and a run: line saying what to do (docs/dev.md, Docs).
 #   2. When .claude/CLAUDE.md is staged: its staged blob, written to a temp
-#      file, through scripts/check-claudemd-invariants.sh; refuses when an
-#      invariant in scripts/claudemd-invariants.txt is missing or the file is
-#      staged for deletion. The temp file is removed.
+#      file, through scripts/check-claudemd-invariants.sh --additive-against
+#      HEAD; refuses when an invariant in scripts/claudemd-invariants.txt is
+#      missing, when the working-tree manifest removes or changes a key HEAD's
+#      manifest has (a commit that stages CLAUDE.md may only add keys), or when
+#      the file is staged for deletion. The temp file is removed.
 #   3. node scripts/check-file-size.js --staged: the file-size ratchet.
 #   4. node scripts/check-css-palette-scope.js --staged: warn-only (below).
 #   5. npx lint-staged: eslint on staged server/**/*.js.
@@ -28,9 +30,9 @@ if git diff --cached --name-only --no-renames | grep -qxF '.claude/CLAUDE.md'; t
     echo "pre-commit: .claude/CLAUDE.md is staged with no blob to check (a deletion); refused"
     exit 1
   fi
-  if ! bash scripts/check-claudemd-invariants.sh "$claudemd_tmp"; then
+  if ! bash scripts/check-claudemd-invariants.sh "$claudemd_tmp" --additive-against HEAD; then
     rm -f "$claudemd_tmp"
-    echo "pre-commit: the staged .claude/CLAUDE.md drops an invariant above; restore it (scripts/claudemd-invariants.txt)"
+    echo "pre-commit: the invariants check refused the staged .claude/CLAUDE.md (the line above says which): MISSING is a rule the staged file dropped, restore it; REMOVED or CHANGED is a manifest key loosened in this commit, land the manifest change in a commit of its own with no CLAUDE.md staged; MALFORMED or any other line is a broken or unreachable scripts/claudemd-invariants.txt, fix it in a commit of its own"
     exit 1
   fi
   rm -f "$claudemd_tmp"
