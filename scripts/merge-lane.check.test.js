@@ -298,7 +298,7 @@ test('the dispatch: check or merged first is the subcommand at any argument coun
   lane(t, repo, 'check', { 'server/b.js': 'b v2\n' });
   const r = script(repo, ['refs/heads/check', 'docs/plan.md']);
   assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
-  assert.deepEqual(r.stderr.split('\n').filter(Boolean), ['REFUSED: a lane branch named check or merged is never squashed (those are this script\'s subcommands); rename it.']);
+  assert.deepEqual(r.stderr.split('\n').filter(Boolean), ['REFUSED: a lane branch named check, merged or ship is never squashed (those are this script\'s subcommands); rename it.']);
   assert.equal(git(repo, 'rev-parse', 'HEAD'), head, 'nothing was squashed');
   assert.equal(git(repo, 'status', '--porcelain'), '');
 });

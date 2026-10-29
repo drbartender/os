@@ -34,14 +34,21 @@
 // markers.standing, both markers whatever the flip state. shipReport reads
 // the manifests under <git-common-dir>/drb-ship/ and the shipLog readers
 // (inFlight, unsettled, unwatched), never the log's prose, and prints sha7.
+// phaseReport (instruction rewrite step 5, lane merge-ship) prints the merge
+// script's ship phase from its manifests under drb-ship/phase/, through
+// scripts/lib/mergeShipLog.js's phaseLines: one line for a run in flight
+// (its step and since when), and one per lane whose latest run ended other
+// than ok, until a later run of that lane (its state, when it ended, and its
+// result, or that its squash is on origin since).
 //
-// --session-start: the markers, the ship record, then one line per stale lane,
-// at most SESSION_MAX_LINES lines, and exit 0 whatever it finds, so the hook
-// can never fail or hang a session. The work runs in a child process of this
-// same file (--session-start-run) under a hard timeout; the child loads
-// markers.js, shipLog.js and sensitive-match.js only inside its guard, and a
-// failed load, a crash, a cwd outside git or the timeout is one line naming
-// it. The plain CLI keeps its exit 1 on a stale lane.
+// --session-start: the markers, the ship record, the ship phase, then one
+// line per stale lane, at most SESSION_MAX_LINES lines, and exit 0 whatever
+// it finds, so the hook can never fail or hang a session. The work runs in a
+// child process of this same file (--session-start-run) under a hard timeout;
+// the child loads markers.js, shipLog.js, mergeShipLog.js and
+// sensitive-match.js only inside its guard, and a failed load, a crash, a cwd
+// outside git or the timeout is one line naming it. The plain CLI keeps its
+// exit 1 on a stale lane.
 //
 // This module exports its functions for tests AND runs as a CLI.
 
@@ -385,6 +392,11 @@ function shipReport({ cwd = process.cwd(), now = Date.now() } = {}) {
   return lines;
 }
 
+// The ship phase's lines (header), from its manifests.
+function phaseReport({ cwd = process.cwd() } = {}) {
+  return require('./lib/mergeShipLog').phaseLines({ cwd });
+}
+
 // One line per stale lane, or one line saying none is.
 function staleLines(cwd) {
   const lanes = listLanes(cwd);
@@ -431,6 +443,7 @@ function sessionStartLines({ cwd = process.cwd() } = {}) {
   if (loaded) {
     out.push(...guarded('markers', () => markersReport({ cwd })));
     out.push(...guarded('ship', () => shipReport({ cwd })));
+    out.push(...guarded('ship phase', () => phaseReport({ cwd })));
   }
   out.push(...guarded('lanes', () => staleLines(cwd)));
   return capLines(out);
@@ -510,6 +523,7 @@ module.exports = {
   STALE_MAIN_ADVANCE,
   markersReport,
   shipReport,
+  phaseReport,
   sessionStartLines,
   sessionStart,
   SESSION_MAX_LINES,
@@ -543,7 +557,7 @@ if (require.main === module) {
       const statuses = laneStatus({ cwd });
       const extra = {
         markers: guarded('markers', () => markersReport({ cwd })),
-        ship: guarded('ship', () => shipReport({ cwd })),
+        ship: [...guarded('ship', () => shipReport({ cwd })), ...guarded('ship phase', () => phaseReport({ cwd }))],
       };
       process.stdout.write(formatReport(statuses, extra) + '\n');
       // Exit non-zero if any lane is stale, so a caller can react.

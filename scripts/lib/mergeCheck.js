@@ -21,13 +21,20 @@
 // exits with its code; a SIGKILL of the launcher alone leaves the locked run
 // to finish, as with ship. check runs checkLane and prints exactly one stdout
 // line: ready, ready-moved, stale <files> [sensitive] or refused <reason>,
-// exit 0 for the first two and 1 for the others (2 for usage). A refusal's
+// exit 0 for the first two and 1 for the others (2 for usage). Before it, a
+// lane whose squash is on main and not pushed (merge-lane.sh ship's resume:
+// mergeShipSquash.findUnpushed, and resumeProblem, both under the lock) is
+// never judged as a lane, whose receipt is the squash's own now: check
+// answers `merged <squash7> of <branch>, unpushed; ship resumes it` (exit 0),
+// or refused with the line the resume would refuse with (exit 1). A refusal's
 // further problems and the receipt the line rests on go to stderr. merged
 // takes no lock, prints one pass or fail line per merged-lane check and exits
 // 0 only when all three pass.
 //
-// checkLane({cwd, branch, plan}) judges, in order, and the first
-// failure is the refusal:
+// checkLane({cwd, branch, plan, allowStaged}) judges, in order, and the first
+// failure is the refusal (allowStaged is ship's --resolved alone, whose index
+// holds the session's resolution, which ship verifies itself: neither read of
+// the staged status below refuses then):
 //   - cwd is the primary (os) worktree with refs/heads/main checked out;
 //   - nothing is staged in os (spec 4.6: git merge --squash stages into the
 //     one index and the commit takes all of it), then the branch resolves
@@ -400,12 +407,12 @@ function refuse(base, ...problems) {
   return result({ ...base, state: 'refused', problems: problems.flat().map(oneLine) });
 }
 
-function judge({ cwd, branch, plan = null, work }) {
+function judge({ cwd, branch, plan = null, work, allowStaged = false }) {
   const at = { branch, plan };
   const prim = primaryProblem(cwd);
   if (prim) return refuse(at, prim);
   const st = osStatus(cwd);
-  if (st.staged.length) return refuse(at, `os has a staged change (${listed(st.staged)}); a staged path would ride into the squash: commit or unstage it first`);
+  if (st.staged.length && !allowStaged) return refuse(at, `os has a staged change (${listed(st.staged)}); a staged path would ride into the squash: commit or unstage it first`);
   const tip = branchTip(cwd, branch);
   if (!tip) return refuse(at, `no branch ${oneLine(branch)}`);
   const main = commitOf(cwd, 'refs/heads/main');
@@ -474,7 +481,7 @@ function judge({ cwd, branch, plan = null, work }) {
   const settle = (r) => {
     const now = commitOf(cwd, 'refs/heads/main');
     if (now !== main) return refuse(at, `main moved during the check (${S(main)} to ${S(now)}); check again`);
-    const staged = osStatus(cwd).staged;
+    const staged = allowStaged ? [] : osStatus(cwd).staged;
     if (staged.length) return refuse(at, `os gained a staged change during the check (${listed(staged)}); check again`);
     return diskListIsMains(listFile) ? r : refuse(at, DISK_LIST_DIFFERS);
   };
@@ -492,11 +499,11 @@ function commitExists(cwd, sha) {
 }
 
 // The receipt check (header). Never throws: an error refuses.
-function checkLane({ cwd = process.cwd(), branch, plan = null } = {}) {
+function checkLane({ cwd = process.cwd(), branch, plan = null, allowStaged = false } = {}) {
   let work = null;
   try {
     work = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-check-'));
-    return judge({ cwd, branch, plan, work });
+    return judge({ cwd, branch, plan, work, allowStaged: allowStaged === true });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     return refuse({ branch, plan }, err && err.gitFailed ? msg : `the check could not run: ${msg}`);
@@ -639,6 +646,14 @@ async function main(argv) {
   }
   const held = await FE.underLock({ lockFile, guardVar: 'DRB_SHIP_LOCK', waitLine: WAIT_LINE });
   if (cmd === 'lock') return lockedRun(cwd, held, branch, rest);
+  // A lane whose squash is on main unpushed: ship's resume, never the lane check (header).
+  const SQ = require('./mergeShipSquash');
+  const squash = branchTip(cwd, branch) ? SQ.findUnpushed(cwd, branch) : null;
+  if (squash) {
+    const why = SQ.resumeProblem(cwd, branch, squash);
+    process.stdout.write(why ? `refused ${oneLine(why)}\n` : `merged ${S(squash)} of ${branch}, unpushed; ship resumes it\n`);
+    return why ? 1 : 0;
+  }
   const r = checkLane({ cwd, branch });
   report(r);
   return r.exitCode;

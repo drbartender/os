@@ -58,7 +58,7 @@ const FE = require('./lib/flockExec');
 const { shipFlow, precheck, standingResult } = require('./lib/shipFlow');
 
 const S = R.short;
-const WAIT_LINE = 'ship: another ship holds the ship lock; waiting for it';
+const WAIT_LINE = 'ship: a merge, a check or a ship holds the ship lock; waiting for it';
 const USAGE = 'usage: node scripts/ship.js [--no-push] [--foreground] | --ack-watch <sha> --note <text> | --status [<sha>]\n';
 const isSet = (v) => v !== null && v !== undefined;
 

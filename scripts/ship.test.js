@@ -40,7 +40,7 @@ const FLOORS = {
   B: ['seams'],
 };
 const CUE_ONLY = 'ship: no flip marker; pushes stay cue-only through npm run gate';
-const WAIT_LINE = 'ship: another ship holds the ship lock; waiting for it';
+const WAIT_LINE = 'ship: a merge, a check or a ship holds the ship lock; waiting for it';
 const s7 = (sha) => sha.slice(0, 7);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ago = (ms) => new Date(Date.now() - ms).toISOString();

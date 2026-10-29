@@ -422,3 +422,68 @@ test('--session-start exits 0 with scripts/lib/markers.js moved aside, naming th
   assert.ok(!res.lines.some((l) => l.startsWith('flip marker') || l === 'no ship yet'), res.stdout);
   assert.ok(res.lines.some((l) => l.startsWith('stale lane old-lane: ')), 'the lanes still report');
 });
+
+// ---- the ship phase (step 5, lane merge-ship): the merge script's runs, from
+// the phase manifests mergeShipLog's Phase writes under drb-ship/phase/.
+
+const SL = require('./lib/mergeShipLog');
+
+function phase(r, lane, tip = r.sha) {
+  const P = new SL.Phase({ cwd: r.repo, tip, lane, log: path.join(r.dir, `${tip}.log`) });
+  P.start();
+  return P;
+}
+
+test('phaseReport: nothing with no phase directory; a run in flight prints its step and since when; ended refused, its state and result; ended ok, nothing', (t) => {
+  const r = shipRepo(t, 'ph-run');
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), []);
+  const P = phase(r, 'lane-p');
+  const at = ago(2 * MIN);
+  assert.equal(P.write({ step: 'squash', step_at: at }), true);
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [`ship phase: lane-p at ${r.sha7}, squash since ${at}`]);
+  const end = ago(MIN);
+  P.write({ state: 'refused', result: 'the squash refused: a conflict in README.md', ended_at: end });
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [`ship phase: lane-p at ${r.sha7} ended refused at ${end}: the squash refused: a conflict in README.md`]);
+  P.write({ state: 'ok', result: 'pushed' });
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), []);
+});
+
+test('phaseReport: a running manifest whose pid is gone ended failed; each lane\'s latest ended run prints, newest first, until a later run of that lane; a run in flight and an ended one both print; an unreadable manifest is named', (t) => {
+  const r = shipRepo(t, 'ph-two');
+  commitAt(r.repo, 'server/b.js', 'b\n', 'more work');
+  const other = git(r.repo, ['rev-parse', 'HEAD']);
+  const gone = phase(r, 'lane-g');
+  gone.write({ step: 'commit', step_at: ago(3 * MIN) });
+  const file = path.join(r.dir, 'phase', `${r.sha}.json`);
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), pid: deadPid() })); // a run killed -9 writes nothing more
+  const gonePhase = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [`ship phase: lane-g at ${r.sha7} ended failed: its run is gone with no result, last step commit at ${gonePhase.step_at}`]);
+  const live = phase(r, 'lane-l', other);
+  live.write({ step: 'ship', step_at: ago(MIN) });
+  const lines = LS.phaseReport({ cwd: r.repo });
+  assert.deepStrictEqual(lines, [`ship phase: lane-l at ${other.slice(0, 7)}, ship since ${JSON.parse(fs.readFileSync(path.join(r.dir, 'phase', `${other}.json`), 'utf8')).step_at}`, lines[1]]);
+  assert.match(lines[1], /^ship phase: lane-g at [0-9a-f]{7} ended failed: /);
+  const end = new Date().toISOString();
+  live.write({ state: 'cue-only', result: 'no flip marker; the squash sits on main unpushed', ended_at: end });
+  const cue = `ship phase: lane-l at ${other.slice(0, 7)} ended cue-only at ${end}: no flip marker; the squash sits on main unpushed`;
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [cue, lines[1]], 'each lane\'s latest ended run, newest first');
+  // A later run of lane-g (another tip) that ends ok hides its gone one.
+  commitAt(r.repo, 'server/c.js', 'c\n', 'lane-g again');
+  const again = phase(r, 'lane-g', git(r.repo, ['rev-parse', 'HEAD']));
+  again.write({ state: 'ok', result: 'pushed', ended_at: new Date().toISOString() });
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [cue]);
+  fs.writeFileSync(file, '{torn');
+  assert.equal(LS.phaseReport({ cwd: r.repo })[0], `ship phase: unreadable manifest ${file}; fix or move it`);
+});
+
+test('the phase manifests are kept apart from the ship record: a drb-ship holding only phase/ is no ship yet, with nothing unsettled or in flight, and --session-start prints the phase line', (t) => {
+  const r = shipRepo(t, 'ph-apart');
+  const P = phase(r, 'lane-a');
+  const end = new Date().toISOString();
+  P.write({ state: 'refused', result: 'the check reads stale server/a.js', ended_at: end });
+  assert.deepStrictEqual(LS.shipReport({ cwd: r.repo }), ['no ship yet']);
+  assert.deepStrictEqual([L.unsettled({ cwd: r.repo, all: true }), L.inFlight({ cwd: r.repo })], [[], null]);
+  const res = runSessionStart(r.repo);
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(res.lines.includes(`ship phase: lane-a at ${r.sha7} ended refused at ${end}: the check reads stale server/a.js`), res.stdout);
+});

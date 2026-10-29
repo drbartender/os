@@ -13,7 +13,10 @@
 #     [lane-name]    short label for the commit message; defaults to <lane-branch>
 #   scripts/merge-lane.sh check|merged <lane-branch>  the receipt check (ready,
 #     ready-moved, stale or refused) or the merged-lane checks, in
-#     scripts/lib/mergeCheck.js; a lane branch named check or merged is refused
+#     scripts/lib/mergeCheck.js; a lane branch named check, merged or ship is refused
+#   scripts/merge-lane.sh ship <lane-branch> <plan-link> [--no-push] [--resolved]
+#     [--foreground]  the ship phase, scripts/lib/mergeShip.js; its header says
+#     what its run directory (MERGE_LANE_SHIP) changes in the squash below
 #   MERGE_LANE_LOCK_WAIT  seconds each index write waits out another git's
 #     index.lock (default 30); exported, so the generator's staging waits it too
 #
@@ -25,17 +28,21 @@
 #   2. Refuse unless run from the primary (os) worktree AND branch is main.
 #   3. Refuse on a dirty working tree (commit or stash the quick fix first),
 #      and without git hook run (git 2.36 or later) or an author identity.
-#   4. Resolve <lane-branch> to one commit, once; pin main's HEAD; list the
-#      squash's own paths (below), planned against the pin; refuse, with
-#      nothing staged, when main moved off the pin by then; git merge --squash.
-#      When the squash merged onto a head past the pin (a commit landed during
-#      the squash's own run), its own paths are planned again against that
-#      head, the ORIG_HEAD git merge writes from its own read of HEAD (the
-#      residual: another git rewriting ORIG_HEAD during the squash, a reset,
-#      rebase or merge no os window runs). Then snapshot what it stages for
-#      those paths (below). main moving off the pin (another window committed)
-#      refuses and resets, checked right after the squash, before each "nothing
-#      to merge" check and before the commit's copy.
+#   4. Resolve <lane-branch> to one commit, once; pin main's HEAD (a ship's
+#      pin is the main its check judged); list the squash's own paths
+#      (below), planned against the pin; refuse, with nothing staged, when main
+#      moved off the pin by then (under a ship's --resolved, whose resolution
+#      was staged before this run, first asking check_carried, below, whether
+#      the commit that moved main took it); git merge --squash (never under
+#      --resolved, whose plan stays the pin's). When the squash merged onto a
+#      head past the pin (a commit landed during the squash's own run), its
+#      own paths are planned again against that head, the ORIG_HEAD git merge
+#      writes from its own read of HEAD (the residual: another git rewriting
+#      ORIG_HEAD during the squash, a reset, rebase or merge no os window
+#      runs). Then snapshot what it stages for those paths (below). main
+#      moving off the pin (another window committed) refuses and resets,
+#      checked right after the squash, before each "nothing to merge" check
+#      and before the commit's copy.
 #   5. A conflict confined to README.md and ARCHITECTURE.md that the lane
 #      changed only inside their generated sections (`node scripts/gen-docs.js
 #      --generated-only --base <merge base> --tip <the lane commit>` exits 0)
@@ -181,21 +188,25 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: scripts/merge-lane.sh <lane-branch> <plan-link> [lane-name] | check <lane-branch> | merged <lane-branch>" >&2
+  echo "usage: scripts/merge-lane.sh <lane-branch> <plan-link> [lane-name] | check <lane-branch> | merged <lane-branch> | ship <lane-branch> <plan-link> [--no-push] [--resolved] [--foreground]" >&2
   exit 2
 }
 
-case "${1-}" in check | merged) exec node "$(dirname -- "$0")/lib/mergeCheck.js" "$@" ;; esac
+case "${1-}" in check | merged) [ "$#" -eq 2 ] || usage; exec node "$(dirname -- "$0")/lib/mergeCheck.js" "$@" ;; ship) exec node "$(dirname -- "$0")/lib/mergeShip.js" "$@" ;; esac
 [ "$#" -ge 2 ] || usage
 
 lane_branch="$1"
 plan_link="$2"
 lane_name="${3:-$1}"
-case "$(git rev-parse -q --symbolic-full-name "$lane_branch" 2> /dev/null || true)" in refs/heads/check | refs/heads/merged) echo "REFUSED: a lane branch named check or merged is never squashed (those are this script's subcommands); rename it." >&2 && exit 1 ;; esac
+case "$(git rev-parse -q --symbolic-full-name "$lane_branch" 2> /dev/null || true)" in refs/heads/check | refs/heads/merged | refs/heads/ship) echo "REFUSED: a lane branch named check, merged or ship is never squashed (those are this script's subcommands); rename it." >&2 && exit 1 ;; esac
 
 # ---- Step 1: the ship lock, through scripts/lib/mergeCheck.js lock --------------
 # The locked run is this script again, MERGE_LANE_LOCKED naming its parent.
 [ "${MERGE_LANE_LOCKED:-}" = "$PPID" ] || exec node "$(dirname -- "$0")/lib/mergeCheck.js" lock "$0" "$@"
+# Ship mode (header): a run directory its parent wrote, read through ship_file; nothing this starts inherits either variable.
+ship_dir="${MERGE_LANE_SHIP-}"; unset MERGE_LANE_SHIP MERGE_LANE_LOCKED
+[ -z "$ship_dir" ] || [ "$(cat -- "$ship_dir/pid" 2> /dev/null || true)" = "$PPID" ] || { echo "REFUSED: MERGE_LANE_SHIP names no ship run of this merge's parent; nothing was merged." >&2; exit 1; }
+ship_file() { [ -n "$ship_dir" ] && [ -f "$ship_dir/$1" ] && cat -- "$ship_dir/$1"; } && resolved=$(ship_file resolved || true)
 
 # ---- Step 2: must be the primary (os) worktree, on main -----------------------
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -203,35 +214,23 @@ common=$(git rev-parse --path-format=absolute --git-common-dir)
 primary=$(dirname "$common")
 toplevel=$(git rev-parse --show-toplevel)
 
-if [ "$toplevel" != "$primary" ]; then
-  echo "REFUSED: merge-lane.sh runs only from the primary (os) worktree." >&2
-  echo "  current worktree: $toplevel" >&2
-  echo "  primary worktree: $primary" >&2
-  echo "  Merges serialize through os; run it there." >&2
-  exit 1
-fi
-
-if [ "$branch" != "main" ]; then
-  echo "REFUSED: os must be on 'main' to merge a lane (currently on '$branch')." >&2
-  exit 1
-fi
+[ "$toplevel" = "$primary" ] || { printf '%s\n' "REFUSED: merge-lane.sh runs only from the primary (os) worktree." "  current worktree: $toplevel" \
+  "  primary worktree: $primary" "  Merges serialize through os; run it there." >&2; exit 1; }
+[ "$branch" = "main" ] || { echo "REFUSED: os must be on 'main' to merge a lane (currently on '$branch')." >&2; exit 1; }
 
 # The generator and every path git names below are read from the repo root.
 cd "$toplevel"
 
 # ---- Step 3: never merge into a dirty tree -----------------------------------
-if [ -n "$(git status --porcelain)" ]; then
-  echo "REFUSED: working tree is dirty. Never merge into a dirty tree." >&2
-  echo "  Commit or stash your quick fix first, then re-run the merge." >&2
-  echo "  (git status to see what is uncommitted.)" >&2
-  exit 1
-fi
+# A --resolved ship's index holds the resolution: only unstaged or untracked counts.
+dirty=$(git status --porcelain)
+[ -z "$resolved" ] || dirty=$(printf '%s\n' "$dirty" | grep -v '^[MADRT] ' || true)
+[ -z "$dirty" ] || { printf '%s\n' "REFUSED: working tree is dirty. Never merge into a dirty tree." \
+  "  Commit or stash your quick fix first, then re-run the merge." "  (git status to see what is uncommitted.)" >&2; exit 1; }
 
 # The squash commit runs its hooks through git hook run and stamps an author.
-if ! git hook run --ignore-missing merge-lane-probe 2> /dev/null || ! git var GIT_AUTHOR_IDENT > /dev/null; then
-  echo "REFUSED: the squash commit needs git hook run (git 2.36 or later) and a git author identity; nothing was merged." >&2
-  exit 1
-fi
+git hook run --ignore-missing merge-lane-probe 2> /dev/null && git var GIT_AUTHOR_IDENT > /dev/null ||
+  { echo "REFUSED: the squash commit needs git hook run (git 2.36 or later) and a git author identity; nothing was merged." >&2; exit 1; }
 
 gen_docs="scripts/gen-docs.js"
 docs=(README.md ARCHITECTURE.md)
@@ -837,12 +836,12 @@ check_pin() {
 
 # ---- Step 4: squash-merge as ONE clean commit --------------------------------
 # The branch is read once, so a lane commit landing mid-merge changes nothing.
-if ! lane_sha=$(git rev-parse --verify -q "${lane_branch}^{commit}"); then
-  echo "REFUSED: '$lane_branch' names no commit; nothing was merged." >&2
-  exit 1
-fi
+lane_sha=$(git rev-parse --verify -q "${lane_branch}^{commit}") || { echo "REFUSED: '$lane_branch' names no commit; nothing was merged." >&2; exit 1; }
 # The pin: the squash is judged against it, and lands only while main is at it.
 head_pin=$(git rev-parse --verify HEAD)
+# A ship squashes the tip its check judged, onto the main it judged, its pin (header).
+want=$(ship_file tip || true); [ -z "$want" ] || [ "$want" = "$lane_sha" ] || { echo "REFUSED: '$lane_branch' moved after the ship's check judged it at ${want:0:7} (now ${lane_sha:0:7}); nothing was merged." >&2; exit 1; }
+pin_moved=""; want=$(ship_file main || true); [ -z "$want" ] || [ "$want" = "$head_pin" ] || pin_moved="after the ship's check judged it at ${want:0:7}"; head_pin="${want:-$head_pin}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -916,6 +915,8 @@ plan_squash() {
   add_ours "$work/merged"
   git diff --name-only -z --no-renames "$base" "$lane_sha" > "$work/lane"
   add_ours "$work/lane"
+  # --resolved: the squash's own paths as planned, its snapshot the verified tree.
+  [ -z "$resolved" ] || { merged_tree="$resolved"; mt_conflict=(); : > "$work/conflict-entries"; }
 }
 
 # The snapshot (header): own_list, and what the squash stages for it and for
@@ -933,10 +934,7 @@ take_snapshot() {
   expected_entries "${docs[@]}" > "$work/docs.snap"
 }
 
-if ! plan_squash "$head_pin"; then
-  echo "REFUSED: $plan_why; nothing was merged." >&2
-  exit 1
-fi
+plan_squash "$head_pin" || { echo "REFUSED: $plan_why; nothing was merged." >&2; exit 1; }
 
 # A clean working tree is guaranteed above, so --squash stages only the merge.
 # git takes index.lock before it writes anything, so a squash that waits out
@@ -944,11 +942,13 @@ fi
 # so the squash's own run is the only window left for a commit to land in.
 now=$(git rev-parse HEAD)
 if [ "$now" != "$head_pin" ]; then
-  echo "REFUSED: main moved before the squash ($(git log -1 --format='%h %s' "$now") landed from another window); nothing was staged or merged. Run the merge again." >&2
+  # A --resolved ship's index held the resolution all along: a plain commit may have taken it.
+  [ -z "$resolved" ] || { take_snapshot; ! check_carried "${pin_moved:-before the squash}" || abandon_squash; }
+  echo "REFUSED: main moved ${pin_moved:-before the squash} ($(git log -1 --format='%h %s' "$now") landed from another window); the merge staged nothing and merged nothing. Run it again." >&2
   exit 1
 fi
 squash_rc=0
-git_retry merge --squash "$lane_sha" || { squash_rc=1; cat "$work/git.err" >&2; }
+[ -n "$resolved" ] || git_retry merge --squash "$lane_sha" || { squash_rc=1; cat "$work/git.err" >&2; }
 
 git diff --name-only --diff-filter=U -z > "$work/unmerged"
 while IFS= read -r -d '' p; do
@@ -966,6 +966,7 @@ if [ -z "$merged_onto" ] || ! git merge-base --is-ancestor "$head_pin" "$merged_
   ! git merge-base --is-ancestor "$merged_onto" HEAD; then
   merged_onto=$(git rev-parse HEAD)
 fi
+[ -z "$resolved" ] || merged_onto="$head_pin" # --resolved ran no merge, so ORIG_HEAD is not this run's: the pin is the head
 if [ "$merged_onto" != "$head_pin" ] && ! plan_squash "$merged_onto"; then
   echo "merge-lane: could not plan the squash again against $(git rev-parse --short "$merged_onto"), the head it merged onto ($plan_why); it is judged against the pin's plan." >&2
 fi
@@ -1057,6 +1058,9 @@ if [ -f "$gen_docs" ]; then
 else
   echo "docs: the merged tree holds no $gen_docs; the generated sections were not regenerated."
 fi
+# A ready-moved ship re-runs the receipt's suites on the merged tree (header).
+[ -z "$(ship_file suites || true)" ] || node "$(dirname -- "$0")/lib/mergeShip.js" suites "$ship_dir" ||
+  { echo "REFUSED: the receipt's suites failed on the merged tree (the run is above, or in the stdio log for a background run); nothing is committed." >&2; abandon_squash; }
 
 # ---- Step 8: the squash commit, from a private copy of the index -------------
 # git commit re-reads the index after its hook, which takes seconds in os, so
@@ -1088,6 +1092,7 @@ fi
 # What git commit -m does, step by step (header), so that main moves only by
 # a compare-and-swap from the pin. The author is exported as git commit does.
 commit_msg="merge(lane ${lane_name}): ${plan_link}"
+body=$(ship_file body || true); [ -z "$body" ] || commit_msg+=$'\n\n'"$body"
 dates_set="${GIT_AUTHOR_DATE+a}${GIT_COMMITTER_DATE+c}"
 ident=$(git var GIT_AUTHOR_IDENT)
 GIT_AUTHOR_NAME="${ident%% <*}"
@@ -1187,12 +1192,8 @@ done
 [ "${#put_back[@]}" -eq 0 ] || echo "merge-lane: put back at the merge's entry in the index: $(joined "${put_back[@]}") (another window unstaged it during the commit; its working file is as that window left it)."
 [ "${#late_moved[@]}" -eq 0 ] || echo "merge-lane: changed in the index by another window during the commit, left staged for it: $(joined "${late_moved[@]}")."
 [ "${#late[@]}" -eq 0 ] || echo "merge-lane: staged by another window during the commit, left staged for it: $(joined "${late[@]}")."
+[ -z "$ship_dir" ] || { printf '%s\n' "$new" > "$ship_dir/commit"; exit 0; } # a ship goes on from here (header), with no notice
 
 # ---- Step 9: per-lane review must re-run before worktree removal --------------
-echo
-echo "Squash-merged '${lane_branch}' into main as ONE commit:"
-echo "  ${commit_msg}"
-echo
-echo "NEXT: re-run this lane's per-lane review against the NEW main HEAD."
-echo "  'Verifies clean' = no conflict AND review re-confirmed (not just no conflict)."
-echo "  Do NOT remove the lane worktree until that review re-confirms clean."
+printf '\n%s\n  %s\n\n%s\n%s\n%s\n' "Squash-merged '${lane_branch}' into main as ONE commit:" "${commit_msg}" "NEXT: re-run this lane's per-lane review against the NEW main HEAD." \
+  "  'Verifies clean' = no conflict AND review re-confirmed (not just no conflict)." "  Do NOT remove the lane worktree until that review re-confirms clean."
