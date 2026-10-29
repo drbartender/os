@@ -2,8 +2,8 @@
 'use strict';
 // One-off (spec 2026-08-03): strip self-elected checkout gratuity from UNPAID
 // proposals. Before election-at-payment shipped, create-intent persisted the
-// client's "Skip the tip jar" click immediately — an abandoned checkout left a
-// Gratuity line baked into the quote (Delara, proposal 665). Paid proposals are
+// client's "Skip the tip jar" click immediately; an abandoned checkout left a
+// Gratuity line baked into the quote (proposal 665). Paid proposals are
 // NEVER touched.
 //   node scripts/reset-unpaid-gratuity.js           # dry run (default)
 //   node scripts/reset-unpaid-gratuity.js --apply   # write
