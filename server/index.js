@@ -9,6 +9,9 @@ if (process.env.SENTRY_DSN_SERVER) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN_SERVER,
     environment: process.env.NODE_ENV || 'development',
+    // The deployed sha (Render sets RENDER_GIT_COMMIT on each deploy), so an
+    // event names the release it came from. Unset locally: the key is left out.
+    ...(process.env.RENDER_GIT_COMMIT ? { release: process.env.RENDER_GIT_COMMIT } : {}),
     tracesSampleRate: 0.1,
     // Both pipelines, deliberately: beforeSend is ERROR-only, and a sampled
     // transaction carries the URL in span attributes an error never has.
@@ -432,14 +435,17 @@ app.use('/api/service-extensions', require('./routes/serviceExtensions'));
 // a probe that outlives the timeout -> 503 {status:'degraded'} so the platform
 // can pull an instance whose DB link has gone dark.
 app.get('/api/health', async (req, res) => {
+  // The deployed sha rides along when Render set RENDER_GIT_COMMIT, so the
+  // post-ship watch can tell the pushed sha is live. Unset locally: no key.
+  const releaseField = process.env.RENDER_GIT_COMMIT ? { release: process.env.RENDER_GIT_COMMIT } : {};
   try {
     await Promise.race([
       pool.query('SELECT 1'),
       new Promise((_, reject) => setTimeout(() => reject(new Error('health timeout')), 2000)),
     ]);
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', ...releaseField });
   } catch (err) {
-    res.status(503).json({ status: 'degraded' });
+    res.status(503).json({ status: 'degraded', ...releaseField });
   }
 });
 
