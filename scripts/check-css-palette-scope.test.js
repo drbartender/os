@@ -103,6 +103,9 @@ function rearmLegacy(css) {
 }
 
 test('B fails on the pre-fix .text-muted: unscoped --parchment, no admin twin', () => {
+  // The real file also carries html[data-app="admin-os"] .sl-answers .text-muted
+  // (since 2026-10-06). It is left in place on purpose: it reaches .text-muted
+  // only inside one panel, so it is not a twin of the bare rule.
   const { paletteHits } = run(rearmLegacy(CSS));
   const hit = paletteHits.find((h) => h.selector === '.text-muted');
   assert.ok(hit, 're-armed .text-muted should be flagged');
@@ -133,6 +136,18 @@ test('B fails on a brand-new admin-reachable rule painting a marketing token', (
   assert.ok(hit, 'a new unscoped marketing-token rule on an admin class should be flagged');
   assert.ok(hit.failing.includes('light'));
   assert.ok(hit.skins.light.ratio < 1.5, `--cream-text on House Lights paper, got ${hit.skins.light.ratio}`);
+
+  // A twin under an ancestor the bare rule lacks reaches the widget only inside
+  // that ancestor, so it is not coverage. This is the shape that silenced the
+  // .text-muted case: html[data-app="admin-os"] .sl-answers .text-muted beside
+  // a bare .text-muted.
+  const narrowed = analyze(
+    `${CSS}\n.zz-synthetic-admin-widget { color: var(--cream-text); }\n`
+    + 'html[data-app="admin-os"] .zz-synthetic-panel .zz-synthetic-admin-widget { color: var(--ink-1); }\n',
+    { adminClasses: widened }
+  );
+  assert.ok(narrowed.paletteHits.some((h) => h.selector === '.zz-synthetic-admin-widget'),
+    'a twin scoped under an ancestor the legacy rule lacks must not count as coverage');
 });
 
 test('B stays quiet when the same new rule is scoped out of admin', () => {
@@ -153,6 +168,20 @@ test('B does NOT flag a rule that has a skin-aware admin twin', () => {
   assert.ok(fieldError.skins.dark.ratio < 3, 'and it should be low-contrast on After Hours');
   assert.ok(fieldError.skins.dark.covered, 'but covered by an admin override');
   assert.ok(!paletteHits.some((h) => h.selector === '.field-error'), 'so it must not be flagged');
+
+  // The ancestor rule cuts one way only: a twin under the SAME ancestor, or a
+  // bare twin, still covers a legacy rule that carries that ancestor.
+  const widened = new Set([...ADMIN_CLASSES, 'zz-synthetic-panel', 'zz-synthetic-admin-widget']);
+  const leak = '.zz-synthetic-panel .zz-synthetic-admin-widget { color: var(--cream-text); }';
+  const flagged = (r) => r.paletteHits.some((h) => /zz-synthetic/.test(h.selector));
+  assert.ok(flagged(analyze(`${CSS}\n${leak}\n`, { adminClasses: widened })), 'sanity: with no twin it is flagged');
+  for (const twin of [
+    'html[data-app="admin-os"] .zz-synthetic-panel .zz-synthetic-admin-widget { color: var(--ink-1); }',
+    'html[data-app="admin-os"] .zz-synthetic-admin-widget { color: var(--ink-1); }',
+  ]) {
+    assert.ok(!flagged(analyze(`${CSS}\n${leak}\n${twin}\n`, { adminClasses: widened })),
+      `"${twin}" should cover the legacy rule`);
+  }
 });
 
 test('the admin type baseline uses inherit, not a hard-coded --ink-1', () => {

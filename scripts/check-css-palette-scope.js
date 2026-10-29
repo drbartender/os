@@ -41,7 +41,11 @@
  *      For each unscoped class rule that sets colour to an Apothecary :root
  *      token, this resolves the token per admin skin, works out the ground the
  *      text actually sits on, computes the WCAG contrast, and fails when it is
- *      below FLOOR in a skin that has no skin-aware admin override.
+ *      below FLOOR in a skin that has no skin-aware admin override. An admin
+ *      rule is that override only when it reaches every element the legacy
+ *      rule does: the same subject compound and no ancestor class the legacy
+ *      rule lacks, so html[data-app="admin-os"] .panel .text-muted covers
+ *      .panel .text-muted and never a bare .text-muted.
  *
  * Check B is a HEURISTIC over a stylesheet, not a browser. It can be wrong
  * about the ground (an element whose background comes from an ancestor it has
@@ -605,9 +609,17 @@ function analyze(cssText, options) {
         const subject = subjectClasses(part);
         if (!subject.length) continue;
         const key = compoundKey(subject);
+        // The classes this rule needs beyond its subject compound. An admin
+        // colour rule under an extra ancestor (.sl-answers .text-muted) repaints
+        // the subject only inside that ancestor, so check B credits it only to a
+        // legacy rule that carries the same ancestor.
+        const context = allClasses(part).filter((c) => !subject.includes(c));
         for (const skin of skins) {
           if (bg) noteBackground(skin, key, bg.value);
-          if (admin && setsColour) overrides[skin].set(key, r.line);
+          if (admin && setsColour) {
+            if (!overrides[skin].has(key)) overrides[skin].set(key, []);
+            overrides[skin].get(key).push({ line: r.line, context });
+          }
           if (admin && custom.length) {
             const m = rescopes[skin].get(key) || {};
             for (const d of custom) m[d.prop] = d.value;
@@ -642,6 +654,7 @@ function analyze(cssText, options) {
     const subject = subjectClasses(part);
     const key = compoundKey(subject);
     const ancestors = classes.filter((c) => !subject.includes(c));
+    const partClasses = allClasses(part);
     const ownBg = decls.filter((d) => d.prop === 'background' || d.prop === 'background-color').pop();
 
     const skins = {};
@@ -677,7 +690,9 @@ function analyze(cssText, options) {
         groundFrom,
         rescopedOn,
         ratio: fg ? contrastRatio(fg, ground) : null,
-        covered: overrides[skin].has(key),
+        // Covered only by an admin twin that reaches every element this rule
+        // does: same subject compound, no ancestor class this rule lacks.
+        covered: (overrides[skin].get(key) || []).some((o) => o.context.every((c) => partClasses.includes(c))),
       };
     }
 
