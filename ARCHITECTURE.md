@@ -1496,7 +1496,7 @@ _(tips/tip-feedback rows in `server/routes/admin/contractorTipPage.js`; the stub
 
 ### Other
 
-- **GET /api/health** (No): Health check (`{ status: 'ok' }`)
+- **GET /api/health** (No): Health check (`{ status: 'ok' }`, plus `release`, the deployed commit sha, when Render sets `RENDER_GIT_COMMIT`; the 503 `degraded` body carries it too)
 
 ### Public Website Pages (Client-Side Only)
 
@@ -2126,7 +2126,7 @@ The per-table prose this document's schema section carried before the table inde
 | `rejected` | Application denied | login blocked for staff | — |
 | `deactivated` | Offboarded | login blocked | — |
 
-Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `server/routes/shifts.js`) treats `submitted`/`reviewed`/`approved` as equivalent — the distinction is an admin-facing label, not a gate.
+Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `server/middleware/auth.js`) treats `submitted`/`reviewed`/`approved` as equivalent: the distinction is an admin-facing label, not a gate.
 
 **onboarding_progress** — Tracks completion of each onboarding step
 - `user_id` FK → users
