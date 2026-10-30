@@ -7,6 +7,8 @@ const {
   SHARED_GRATUITY_LABEL, GRATUITY_LABEL, currentDisplayLabels,
 } = require('./gratuityLabels');
 const { PRICING_SNAPSHOT_VERSION } = require('./pricingSnapshot');
+// The rehearsal of the instruction rewrite's ship path (step 5, 2026-10-30):
+// this comment is the whole change, and its revert is the rehearsal's third action.
 
 /**
  * HOSTED PACKAGE RULE — do not lose this.
