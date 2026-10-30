@@ -50,10 +50,14 @@
 // mix two runs in one file. Beside the log the run keeps its phase manifest,
 // drb-ship/phase/<tip>.json (mergeShipLog's header has its fields), written
 // at each step (running, the step and when it began; the squash once it
-// lands) and at the end (the result's state and text, the end time), which
+// lands; kept, when step 9 keeps the branch for what the squash may not hold)
+// and at the end (the result's state and text, the end time), which
 // scripts/lane-status.js prints at session start and on demand: the step of
-// a run in flight, and the result of the last run that ended other than ok;
-// locked moves a prior manifest aside with the logs. The steps:
+// a run in flight, and one line per lane whose latest run ended other than ok
+// or kept its branch (at most three at session start), retired once its
+// squash (or a replay of it) has reached origin, or it never squashed, and
+// its branch is gone (mergeShipLog's phaseLines); locked moves a prior
+// manifest aside with the logs. The steps:
 //   1. start and lock. Then, before anything is merged: an unreadable flip
 //      marker refuses with its line; with the flip marker present, so does
 //      what shipFlow would refuse after the squash (its precheck, the same
@@ -116,14 +120,16 @@
 //      receipt). Every ending that leaves the squash on main and not pushed
 //      (cue-only, ok-no-push, a refusal or a failure after the commit) says
 //      so and that the same ship command resumes it; an unknown push outcome
-//      says only that the squash is on main. A push rejection, and any ending
-//      while origin/main (as last fetched) is not in main's history, as a
-//      resume's range refusal is then (shipFlow's range check refuses until
-//      main holds origin's commit), names the way through instead, in place
-//      of the stay clause, since a log line holds 300 characters: bring
-//      origin's new commit into main first (the owner's call by the
-//      push-failure rule, never an auto-pull or a force), then the same ship
-//      command resumes the unpushed squash.
+//      says only that the squash is on main. A push rejection, and an ending
+//      while origin/main (as last fetched) is not in main's history or
+//      origin/main..main holds a merge commit (shipFlow's range check refuses
+//      both until a replay; main holds squashes only), names the way through
+//      instead, in place of the stay clause, since a log line holds 300
+//      characters: replay main's unpushed squashes onto origin's head (the
+//      owner's call by the push-failure rule; never a merge, which wedges
+//      main, an auto-pull or a force; the memory note on rewriting main
+//      before a push is the recipe), then the same ship command resumes the
+//      squash, which a replay leaves with its receipt under the same key.
 //   7. ship: shipFlow({cwd, noPush, log, lockFd}) with the lock held (the range
 //      gate, the markers, the literal-sha push; --no-push ends ok-no-push
 //      before the push), its lines here under the step ship; its own record of
@@ -132,16 +138,47 @@
 //      spawn and the ok result before the lock goes), with no lock descriptor.
 //   8. release: flock -u on the descriptor, so the watch runs outside the lock
 //      (spec 3.11); a nested run's lock stays with its holder.
-//   9. after a push (ok or pushed-elsewhere) only: worktree
-//      (scripts/worktree-rm.js <name> for the branch's worktree at
+//   9. after a push (ok or pushed-elsewhere) only: first the branch against
+//      the squash, compared only when the branch is not at the lane tip the
+//      squash records or none is recorded (the squash was made of that very
+//      tip, and a hand resolution's squash could never match the conflict
+//      merge-tree writes; mergeShipSquash.strandOf: the tree git merge-tree
+//      writes for the squash's parent and the branch tip against the squash's
+//      tree, outside the two docs, and the two docs by their prose, each
+//      generated section blanked (a render, or a conflict merge-tree leaves
+//      inside one, blanks away); a lane commit landed during the run that put
+//      a file or a doc's prose back to its base content or dropped a file the
+//      lane added is outside the net diff merged's files check reads, and
+//      inside this): a branch that holds what the squash does not keeps its
+//      worktree and itself, named with the commits since the lane tip the
+//      squash was made of ("the branch <lane> is kept for a new review
+//      (<reason>)", the review named first, since a log line's 300 characters
+//      may cut the reason, which the worktree and branch lines hold whole),
+//      and one that could not be compared is kept, to be compared again by
+//      hand after a git fault, and to be compared by hand when merged onto
+//      the squash's parent it conflicts in a lane path (no retry clears
+//      that). Else
+//      worktree (scripts/worktree-rm.js <name> for the branch's worktree at
 //      ../worktrees/<name>; its own branch -d refuses a squash-merged branch,
-//      as expected), merged (mergeCheck.mergedLane's three lines as printed),
-//      branch (git branch -D only after all three pass, else kept, named). A
-//      dry run, a cue-only run and a failed push leave both. Each of the
-//      three runs on its own: one that throws is a cleanup line naming it, a
-//      merged-lane check that fails is its merged fail line and keeps the
-//      branch, and the result stays the push's (the sha is live), as it does
-//      for any error after the push.
+//      as expected; the deleted result says "the worktree removed" only when
+//      this removed one, else "no worktree"). Kept or not, merged
+//      (mergeCheck.mergedLane's three lines as printed, run and logged; the
+//      worktree check fails too for a worktree holding the branch in a rebase
+//      or a bisect, whose detached HEAD no worktree list shows), then branch:
+//      the comparison once more, the worktree gone (no lane window can
+//      commit then), and only after all three pass git update-ref -d from the
+//      tip it read (mergeShipSquash.
+//      dropAt, the config section cleared as git branch -D clears it, and
+//      branchInUse asked right before it, since update-ref, unlike git branch
+//      -D, deletes a branch a rebase or a bisect holds), else kept, named, a
+//      branch that moved since that read or one a worktree holds so too
+//      (branchOutcome; a branch kept for what the squash may not hold, or
+//      for a worktree holding it so, is the manifest's kept). A dry run, a
+//      cue-only run and a failed push leave both. Each of the three runs on
+//      its own: one that throws, the kept line's write included, is a cleanup
+//      line naming it, a merged-lane check that fails is its merged fail line
+//      and keeps the branch, and the result stays the push's (the sha is
+//      live), as it does for any error after the push.
 // Exit 0 for ok, ok-no-push, pushed-elsewhere and cue-only, 1 for refused,
 // stale and failed, 2 for unknown (shipFlow's). A stop signal to the run
 // outside shipFlow is acted on once the step in hand ends (a landed squash
@@ -153,24 +190,40 @@
 // and not yet pushed (a dry run, a cue-only run, a gate or push refusal, a
 // stop). Before the check, locked looks for it as merged's first check does,
 // over the unpushed range: the newest commit of origin/main..main whose
-// subject opens merge(lane <branch>): (mergeShipSquash.findUnpushed). When
-// one is there and the branch still resolves, the check and the squash are
-// skipped (the receipt the check would find is the squash's own now, which it
-// would read as a stale lane, and the stale protocol would supersede it).
-// First, before any push, mergeShipSquash.resumeProblem: the squash receipt
-// records the lane tip it squashed, and a branch at another tip refuses,
-// naming the squash, that tip and the commits since, the way through a new
-// review of the branch once the squash is pushed or reverted, never a resume
-// (a resume would push the old squash and strand them); a squash with no
-// receipt refuses toward a review --commit of it, and one whose receipt
-// records no lane tip (a review --commit's) resumes only while every lane
-// file is on main. Then the run, keyed on the branch tip, finds the same
+// subject opens merge(lane <branch>): (mergeShipSquash.unpushedOf). One a
+// later commit of that range reverts no resume can push (the push check takes
+// no revert receipt for a squash that never shipped), so locked refuses with
+// the line check prints (revertedLine: push the two, the revert with a review
+// --commit receipt of its own, then a new review of the branch; exit 1,
+// nothing merged, no lane check). When an unreverted one is there
+// and the branch still resolves, the check and the squash are skipped (the
+// receipt the check would find is the squash's own now, which it would read
+// as a stale lane, and the stale protocol would supersede it). First, before
+// any push, mergeShipSquash.resumeProblem: the squash receipt records the
+// lane tip it squashed, and a branch at another tip refuses, naming the
+// squash, that tip and the commits since, the way through to push the
+// squash, then a new review of the branch, never a resume (a resume would
+// push the old squash and strand them); a squash with no
+// receipt refuses toward a review --commit of it; and a branch that holds
+// what the squash does not, by step 9's comparison, refuses with the line
+// step 9 keeps it with: made only when the receipt records no lane tip (a
+// review --commit's), since a branch at the recorded tip is the squash's own
+// source; a git fault in the comparison with "run the same command again",
+// and a conflict in a lane path, which no retry clears, with the way through
+// by hand (the squash pushed by hand, npm run ship after the flip, then a new
+// review of the branch). Then the run, keyed on the branch tip, finds the same
 // squash again under the lock, asks resumeProblem again, logs `resume squash
 // <sha7> of <branch>, unpushed`, takes the marker
 // refusals of step 1 for main's head, and goes on from step 6 for main's
 // head, the cleanup after a push included; a main moved past the squash by
 // plain commits ships whole (shipFlow's range carries every commit, each
-// needing its receipt). --resolved over such a lane refuses.
+// needing its receipt). A replayed squash (step 6's way through after a
+// rejection: the same hunks on origin's head) has no receipt whose tip is
+// itself, but its commit key, the patch id of parent..squash, is the earlier
+// squash's, and that squash receipt stands for it (squashRecord, the push
+// check reading it under the key as for any commit) while the branch is at
+// the lane tip it records; the resume line names the replay. --resolved over
+// such a lane refuses.
 //
 // --resolved (spec 4.1): the session re-ran the squash in os, edited only the
 // conflicting files and staged the lane's paths and the resolution. Before
@@ -204,7 +257,6 @@
 // or unstaged is named. ship adds nothing to that list.
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const R = require('./receipt');
@@ -216,14 +268,11 @@ const SQ = require('./mergeShipSquash');
 const SL = require('./mergeShipLog');
 const { shipFlow, CUE_ONLY } = require('./shipFlow');
 
-const SCRIPTS = path.resolve(__dirname, '..');
-const SHELL = path.join(SCRIPTS, 'merge-lane.sh');
-const WORKTREE_RM = path.join(SCRIPTS, 'worktree-rm.js');
 const USAGE = 'usage: scripts/merge-lane.sh ship <lane-branch> <plan-link> [--no-push] [--resolved] [--foreground] | check <lane-branch> | merged <lane-branch>\n';
 const RESERVED = Object.freeze(['check', 'merged', 'ship']);
 const EXIT = new Map([['ok', 0], ['ok-no-push', 0], ['pushed-elsewhere', 0], ['cue-only', 0], ['refused', 1], ['stale', 1], ['failed', 1], ['unknown', 2]]);
 const PUSHED = Object.freeze(['ok', 'pushed-elsewhere']);
-const OWNERS = "the owner's call by the push-failure rule, never an auto-pull or a force";
+const OWNERS = "the owner's call by the push-failure rule; never a merge, an auto-pull or a force";
 const STOPS = Object.freeze(['SIGTERM', 'SIGINT', 'SIGHUP']);
 // The ways the locked run can end before its answer (header, the processes).
 const SILENT = 'flock exits 66 on a lock file it cannot open, flockExec exits 1 when the DRB_SHIP_LOCK guard\'s pid is gone, and a stop signal or a crash can end it before its first line; its stderr says which';
@@ -236,7 +285,7 @@ const quote = (p) => `'${String(p).replace(/'/g, "'\\''")}'`;
 
 // ---- git -------------------------------------------------------------------------
 
-const { git, gitOut, commitOf, worktreeOf } = SQ;
+const { gitOut, commitOf } = SQ;
 
 // ---- the run (header) ----------------------------------------------------------------
 
@@ -244,6 +293,7 @@ class Ship {
   constructor(o) {
     Object.assign(this, o);
     this.squash = null;
+    this.laneTip = null;
     this.runDir = null;
     this.logFd = null;
     this.phase = null;
@@ -280,12 +330,12 @@ class Ship {
     }
   }
 
-  // behind: origin/main holds a commit main does not (header, step 6).
+  // behind: the push check refuses main's head until a replay (header, step 6).
   end(state, text, { behind = false } = {}) {
     let full = String(text);
     if (this.squash && !PUSHED.includes(state)) {
       if (state === 'unknown') full += `; the squash ${S(this.squash)} is on main`;
-      else if (behind) full += `; bring origin's new commit into main first (${OWNERS}), then the same ship command resumes the unpushed squash ${S(this.squash)}`;
+      else if (behind) full += `; replay main's unpushed squashes onto origin's head (${OWNERS}), then the same ship command resumes ${S(this.squash)}`;
       else full += `; the squash ${S(this.squash)} sits on main unpushed, and the same ship command resumes it`;
     }
     // The manifest first, so a line saying its write failed comes before the result line.
@@ -344,15 +394,16 @@ class Ship {
     }
     const halt = this.halted('check');
     if (halt) return halt;
-    this.runDir = this.writeRunDir(r, tree);
+    this.runDir = SQ.writeRunDir(r, tree, this.log);
     if (r.state === 'ready-moved') this.say('suites', r.suites.length ? `ready-moved: the shell re-runs the receipt's ${r.suites.length} suite(s) on the merged tree before its commit` : 'ready-moved: the receipt names no suite to re-run; the gate is the net');
-    const sh = await this.squashShell();
+    const sh = await SQ.squashShell({ cwd, branch, plan, runDir: this.runDir, lockFd: this.lockFd });
     this.squash = SQ.findSquash(cwd, this.runDir, { main: r.main, branch, plan });
     if (!this.squash) {
-      if (tree && this.wasReset(tree)) this.recovery(tree, r.main);
+      if (tree && SQ.wasReset(cwd, tree)) this.recovery(tree, r.main);
       return this.end('refused', `the squash refused: ${sh.refusal || `the shell ended ${sh.signal ? `by ${sh.signal}` : `exit ${sh.code}`} with nothing on main`}`);
     }
     this.mark({ squash: this.squash });
+    this.laneTip = r.tip;
     if (sh.code !== 0) this.say('commit', `the shell ended exit ${sh.code} after main moved to the squash; going on from the squash it landed`);
     this.say('commit', `${S(this.squash)} merge(lane ${branch}): ${plan}, onto main ${S(r.main)}`);
     const rec = SQ.writeSquashReceipt({ cwd, squash: this.squash, check: r, branch, suitesDir: path.join(this.runDir, 'suites-run') });
@@ -373,9 +424,10 @@ class Ship {
     if (now !== this.resume) return this.end('refused', `the squash ${S(this.resume)} of ${branch} is no longer on main unpushed (${now ? `the unpushed one is ${S(now)}` : 'none is'}); nothing was pushed`);
     const moved = SQ.resumeProblem(cwd, branch, now);
     if (moved) return this.end('refused', `${moved}; nothing was pushed`);
-    this.squash = now;
+    const rec = SQ.squashRecord(cwd, now);
+    [this.squash, this.laneTip] = [now, rec.laneTip || null];
     this.mark({ squash: now });
-    this.say('resume', `squash ${S(now)} of ${branch}, unpushed`);
+    this.say('resume', `squash ${S(now)} of ${branch}, unpushed${rec.replayOf ? `, a replay of ${S(rec.replayOf)} (its receipt under the same patch-id key)` : ''}`);
     const why = SQ.markerRefusal(cwd, commitOf(cwd, 'refs/heads/main'));
     if (why) return this.end('refused', `${why}; nothing was pushed`);
     const halt = this.halted('resume');
@@ -393,54 +445,10 @@ class Ship {
     this.release(res.state === 'ok');
     if (!this.pushed) {
       // Behind, the way through takes the place of the stay clause: a log line holds 300 characters.
-      const behind = /^push rejected \(/.test(res.text) || SQ.originAhead(this.cwd);
+      const behind = /^push rejected \(/.test(res.text) || SQ.wedged(this.cwd);
       return this.end(res.state, behind ? res.text : `${res.text}; the worktree and the branch stay`, { behind });
     }
     return this.end(res.state, `${res.text}; ${this.cleanup()}`);
-  }
-
-  writeRunDir(r, tree) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-ship-'));
-    const put = (name, text) => fs.writeFileSync(path.join(dir, name), `${text}\n`);
-    put('pid', process.pid);
-    put('tip', r.tip);
-    put('main', r.main);
-    put('body', R.commitBlock(r.receipt));
-    put('log', this.log);
-    if (r.state === 'ready-moved' && r.suites.length) put('suites', r.suites.join('\n'));
-    if (tree) put('resolved', tree);
-    return dir;
-  }
-
-  // The shell's squash (step 2): {code, signal, refusal}.
-  squashShell() {
-    return new Promise((resolve) => {
-      let done = false;
-      const finish = (v) => {
-        if (!done) resolve(v);
-        done = true;
-      };
-      const stdio = ['ignore', 'inherit', 'pipe', ...(this.lockFd === null ? [] : [this.lockFd])];
-      const child = spawn('bash', [SHELL, this.branch, this.plan], { cwd: this.cwd, env: { ...R.gitEnv(), MERGE_LANE_LOCKED: String(process.pid), MERGE_LANE_SHIP: this.runDir }, stdio });
-      let err = '';
-      child.stderr.on('data', (b) => {
-        process.stderr.write(b);
-        err = (err + b.toString('utf8')).slice(-262144);
-      });
-      child.on('error', (e) => finish({ code: null, signal: null, refusal: `bash could not start (${e.code || 'error'})` }));
-      child.on('close', (code, signal) => finish({ code, signal, refusal: SQ.refusalOf(err) }));
-    });
-  }
-
-  // Whether the shared index no longer holds the verified resolution outside
-  // the two docs, which step 7's regeneration rewrites on purpose (a refusal
-  // reset some of it); true when the index cannot be read.
-  wasReset(tree) {
-    try {
-      return SQ.differsOutsideDocs(this.cwd, SQ.indexTree(this.cwd), tree);
-    } catch {
-      return true;
-    }
   }
 
   // --resolved's way back after a refusal reset the resolution (header).
@@ -474,8 +482,11 @@ class Ship {
   }
 
   // Step 9: the closing words of the result. Each part runs on its own, so a
-  // step that throws is named and the rest still runs; the branch goes only
-  // after all three merged-lane checks pass.
+  // step that throws is named and the rest still runs; a branch that holds
+  // what the squash does not keeps its worktree and itself, and the branch
+  // goes only after all three merged-lane checks pass, compared once more
+  // when the worktree is gone (no lane window can commit then), its delete
+  // tied to the tip that read.
   cleanup() {
     const said = [];
     const part = (name, fn) => {
@@ -486,44 +497,33 @@ class Ship {
         return null;
       }
     };
-    part('worktree', () => this.removeWorktree());
+    const { cwd, branch, squash, laneTip } = this;
+    const first = SQ.strandOf(cwd, branch, squash, laneTip);
+    let removed = false;
+    part('worktree', () => {
+      const rm = first.line ? null : SQ.removeLaneWorktree(cwd, branch);
+      removed = Boolean(rm && rm.removed);
+      this.say('worktree', rm ? rm.line : `kept: ${first.line}`);
+    });
     const m = part('merged', () => {
-      const r = MC.mergedLane({ cwd: this.cwd, branch: this.branch });
+      const r = MC.mergedLane({ cwd, branch });
       for (const c of r.checks) this.say('merged', `${c.ok ? 'pass' : 'fail'} ${c.text}`);
       return r;
     });
-    const branch = part('branch', () => this.dropBranch(m));
-    return [...said, branch || `the branch ${this.branch} is kept`].join('; ');
+    const last = first.line ? first : SQ.strandOf(cwd, branch, squash, laneTip);
+    const told = part('branch', () => this.dropBranch(m, last.line ? last : null, last.tip, removed));
+    return [...said, told || `the branch ${branch} is kept`].join('; ');
   }
 
-  removeWorktree() {
-    const { cwd, branch } = this;
-    const wt = worktreeOf(cwd, branch);
-    if (!wt) return this.say('worktree', `no worktree has ${branch} checked out`);
-    const top = gitOut(cwd, ['rev-parse', '--show-toplevel']).trim();
-    const name = path.basename(wt);
-    if (path.resolve(wt) !== path.resolve(path.dirname(top), 'worktrees', name)) return this.say('worktree', `${wt} is not a lane under ../worktrees/; it is left for removal by hand`);
-    const rm = spawnSync(process.execPath, [WORKTREE_RM, name], { cwd: top, env: R.gitEnv(), encoding: 'utf8' });
-    return this.say('worktree', worktreeOf(cwd, branch) ? `scripts/worktree-rm.js ${name} left it (exit ${rm.status}: ${firstLine(rm.stderr)})` : `removed ${name} (scripts/worktree-rm.js)`);
-  }
-
-  // The branch, deleted only when all three merged-lane checks passed.
-  dropBranch(m) {
-    const { cwd, branch } = this;
-    if (!m || !m.ok) {
-      const bad = m ? m.checks.filter((c) => !c.ok).map((c) => c.name) : [];
-      const named = bad.length > 1 ? `${bad.slice(0, -1).join(', ')} and ${bad.at(-1)}` : bad[0];
-      const why = !m ? 'the merged-lane checks could not run' : bad.length ? `the ${named} merged-lane check${bad.length > 1 ? 's' : ''} failed` : 'the merged-lane checks did not all pass';
-      this.say('branch', `${branch} is kept: ${why}`);
-      return `the branch ${branch} is kept (${why})`;
-    }
-    if (!commitOf(cwd, `refs/heads/${branch}`)) {
-      this.say('branch', `${branch} is already gone`);
-      return `the three merged-lane checks passed; the branch ${branch} was already gone`;
-    }
-    const d = git(cwd, ['branch', '-D', branch]);
-    this.say('branch', d.status === 0 ? `deleted ${branch} (git branch -D, after all three merged-lane checks passed)` : `git branch -D ${branch} failed (${firstLine(d.stderr)}); it is kept`);
-    return d.status === 0 ? `the worktree removed, the three merged-lane checks passed, the branch ${branch} deleted` : `the branch ${branch} is kept (git branch -D failed)`;
+  // The branch step (mergeShipSquash.branchOutcome): its line, and a branch
+  // kept for what the squash may not hold written to the manifest (kept),
+  // which the phase lines show whatever the state; removed, whether the
+  // worktree step removed a worktree.
+  dropBranch(m, kept = null, tip = null, removed = false) {
+    const o = SQ.branchOutcome(this.cwd, this.branch, m, kept, tip, removed);
+    this.say('branch', o.said);
+    if (o.shown) this.mark({ kept: M.clean(oneLine(o.text)) });
+    return o.text;
   }
 }
 
@@ -590,8 +590,14 @@ async function locked(a, out) {
     return 1;
   }
   const held = await FE.underLock({ lockFile, guardVar: 'DRB_SHIP_LOCK', waitLine: MC.WAIT_LINE });
-  // A resume (header) skips the check: the lane's squash is on main already.
-  const resume = SQ.findUnpushed(cwd, a.branch);
+  // A resume (header) skips the check: the lane's squash is on main already;
+  // a reverted one refuses as check refuses it, never reaching the lane check.
+  const u = SQ.unpushedOf(cwd, a.branch);
+  if (u && u.revert) {
+    out(`refused ${SQ.revertedLine(a.branch, u)}`);
+    return 1;
+  }
+  const resume = u ? u.squash : null;
   const branchTip = resume ? commitOf(cwd, `refs/heads/${a.branch}`) : null;
   let [said, tip] = [null, null];
   if (resume && branchTip) {

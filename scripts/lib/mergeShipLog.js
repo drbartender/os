@@ -11,12 +11,16 @@
 //                     through markers.clean on one line; its last line is
 //                     the run's one `result <state> <text>`.
 //   <tip>.stdio.log   the detached run's raw stdout and stderr.
+//   phase/<tip>.done-<epoch ms>.json  a manifest phaseLines retired.
 //   phase/<tip>.json  the manifest: {version, lane, tip, started_at, pid,
-//                     step, step_at, state, squash, result, ended_at, log}:
-//                     state running until the run ends, then the result's
-//                     state (ok, ok-no-push, cue-only, pushed-elsewhere,
-//                     refused, stale, failed or unknown); step the step of the
-//                     run's latest line and step_at when that step began.
+//                     step, step_at, state, squash, result, ended_at, log,
+//                     kept}: state running until the run ends, then the
+//                     result's state (ok, ok-no-push, cue-only,
+//                     pushed-elsewhere, refused, stale, failed or unknown);
+//                     step the step of the run's latest line and step_at when
+//                     that step began; kept, null until a cleanup after a push
+//                     keeps the branch for what the squash may not hold, then
+//                     the words the result carries for it.
 // One run, one log: moveAside, called by the run's launcher under the ship
 // lock before the run starts, renames a prior run's files to
 // <tip>.prev-<epoch ms>.log, <tip>.prev-<epoch ms>.stdio.log and
@@ -36,23 +40,40 @@
 // the form <sha>.json, which the directory entry phase never is; the run logs
 // are keyed on lane tips, never on a commit shipLog records (a squash).
 //
-// phaseLines({cwd}) is lane-status's read of the current manifests
+// phaseLines({cwd, max}) is lane-status's read of the current manifests
 // (phase/<sha>.json): one line for the newest run in flight (state running,
-// its pid alive), `ship phase: <lane> at <tip7>, <step> since <time>`, and one
-// line per lane whose latest manifest (by its start) ended other than ok,
-// until a later run of that lane, newest first: `ship phase: <lane> at <tip7>
-// ended <state> at <ended_at>: <result>`, or, when the manifest names a
-// squash that is an ancestor of refs/remotes/origin/main (pushed by this run
-// or another way, as every cue-only squash is before the flip), `... ended
-// <state> at <ended_at>: the squash <sha7> is on origin since`, with no
-// resume advice (that read is the one git call). A running manifest whose pid
-// is gone ended with no result: `ended failed: its run is gone with no
-// result, last step <step> at <time>` (or the on-origin text). A manifest
-// that cannot be read is a line naming its file, first. Every text through
-// markers.clean.
+// its pid alive), `ship phase: <lane> at <tip7>, <step> since <time>`; then a
+// line naming each manifest that cannot be read, and one line per lane whose
+// latest manifest (by its start) ended other than ok or carries kept, until a
+// later run of that lane, newest first: `ship phase: <lane> at <tip7> ended
+// <state> at <ended_at>: <result>` (an ok run's `...: <kept>`), or `... ended
+// failed: its run is gone with no result, last step <step> at <time>` for a
+// running manifest whose pid is gone. Of these at most max are shown
+// (lane-status's session start passes three), and `ship phase: ... <n> more;
+// run npm run lane:status` stands for the rest, which no git call reads. A
+// shown line costs at most three git calls. For a manifest naming a squash: one
+// git merge-base --is-ancestor against refs/remotes/origin/main (resolved
+// once), and, the squash not in its history, one git log of origin/main since
+// the run's start for a commit whose subject opens merge(lane <lane>): (the
+// replay the push-rejection ending names rewrites the squash's sha; a squash of
+// an earlier lane of the same name is older than the run). Either reads in
+// place of the result, with no resume advice, `the squash <sha7> has since
+// reached origin` or `a squash of the lane has since reached origin as <sha7>`
+// (pushed by this run or another way, as every cue-only squash is before the
+// flip), the kept words beside it. Then one read of the lane's branch, for a
+// squash that reached origin and for a manifest naming none (a run that ended
+// before any, its line then `...: <result>; the branch is gone`): with the
+// branch gone the line is shown this once and the lane retires, each current
+// manifest of the lane that started no later moving to
+// phase/<tip>.done-<epoch ms>.json (its pid and start read again first, so a
+// run that took the file since keeps it), out of every later read. A manifest that vanished between
+// the directory read and its own (another read retired it, a run moved it
+// aside) is already gone: no line, as for a rename that meets the same. Every
+// text through markers.clean.
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const R = require('./receipt');
 const M = require('./markers');
 
@@ -123,7 +144,7 @@ class Phase {
   }
 
   start() {
-    R.writeJsonAtomic(this.file, { ...this.own, step: 'start', step_at: this.own.started_at, state: 'running', squash: null, result: null, ended_at: null, log: this.log });
+    R.writeJsonAtomic(this.file, { ...this.own, step: 'start', step_at: this.own.started_at, state: 'running', squash: null, result: null, ended_at: null, log: this.log, kept: null });
   }
 
   // true when it wrote; false when the file is no longer this run's.
@@ -136,7 +157,7 @@ class Phase {
 }
 
 // lane-status's lines (header).
-function phaseLines({ cwd = process.cwd() } = {}) {
+function phaseLines({ cwd = process.cwd(), max = Infinity } = {}) {
   const dir = paths(cwd, 'x').phaseDir;
   let names;
   try {
@@ -147,18 +168,21 @@ function phaseLines({ cwd = process.cwd() } = {}) {
   }
   const c = M.clean;
   const out = [];
+  const torn = [];
   const runs = [];
   const at = (v) => (Number.isFinite(Date.parse(v)) ? Date.parse(v) : -Infinity);
   for (const name of names.sort()) {
     const hit = CURRENT.exec(name);
     if (!hit) continue;
-    const m = readJson(path.join(dir, name));
-    if (!m || m.unreadable || m.tip !== hit[1]) {
-      out.push(`ship phase: unreadable manifest ${path.join(dir, name)}; fix or move it`);
+    const file = path.join(dir, name);
+    const m = readJson(file);
+    if (m === null) continue; // moved since the readdir (a retirement, a move aside): already gone
+    if (m.unreadable || m.tip !== hit[1]) {
+      torn.push({ line: `ship phase: unreadable manifest ${file}; fix or move it` });
       continue;
     }
     const live = m.state === 'running' && Number.isInteger(m.pid) && m.pid > 0 && M.pidAlive(m.pid);
-    runs.push({ m, live, started: at(m.started_at), ended: Math.max(at(m.ended_at), at(m.step_at), at(m.started_at)) });
+    runs.push({ m, file, live, started: at(m.started_at), ended: Math.max(at(m.ended_at), at(m.step_at), at(m.started_at)) });
   }
   const newest = (xs, k) => xs.reduce((a, b) => (!a || b[k] > a[k] ? b : a), null);
   const head = (m) => `ship phase: ${c(m.lane)} at ${R.short(m.tip)}`; // tip is the file name's sha
@@ -170,14 +194,66 @@ function phaseLines({ cwd = process.cwd() } = {}) {
     const was = latest.get(String(r.m.lane));
     if (!was || r.started > was.started) latest.set(String(r.m.lane), r);
   }
-  const origin = originMain(cwd);
-  const ended = [...latest.values()].filter((r) => !r.live && r.m.state !== 'ok').sort((a, b) => b.ended - a.ended);
-  for (const { m } of ended) {
-    const pushed = onOrigin(cwd, m.squash, origin) ? `the squash ${R.short(m.squash)} is on origin since` : null;
-    if (m.state === 'running') out.push(`${head(m)} ended failed: ${pushed || `its run is gone with no result, last step ${c(m.step)} at ${since(m)}`}`);
-    else out.push(`${head(m)} ended ${c(m.state)} at ${c(isSet(m.ended_at) ? m.ended_at : since(m))}: ${pushed || c(isSet(m.result) ? m.result : 'no result text')}`);
+  const kept = (m) => (typeof m.kept === 'string' && m.kept ? c(m.kept) : null);
+  const ended = [...latest.values()].filter((r) => !r.live && (r.m.state !== 'ok' || kept(r.m))).sort((a, b) => b.ended - a.ended);
+  // Only the lines shown are read further: at most three git calls each (header).
+  const listed = [...torn, ...ended];
+  let origin;
+  for (const x of listed.slice(0, max)) {
+    if (x.line) {
+      out.push(x.line);
+      continue;
+    }
+    const { m } = x;
+    const named = typeof m.squash === 'string' && R.KEY_RE.test(m.squash);
+    if (origin === undefined && named) origin = originMain(cwd);
+    let pushed = null;
+    if (named && onOrigin(cwd, m.squash, origin)) pushed = `the squash ${R.short(m.squash)} has since reached origin`;
+    else if (named) {
+      const as = replayedOn(cwd, m, origin);
+      if (as) pushed = `a squash of the lane has since reached origin as ${R.short(as)}`;
+    }
+    // A run that never squashed, of a lane whose branch is gone, retires too.
+    const gone = (pushed || !named) && branchGone(cwd, m.lane);
+    const tail = !named && gone ? '; the branch is gone' : '';
+    const said = m.state === 'ok' ? kept(m) : pushed && kept(m) ? `${pushed}; ${kept(m)}` : pushed;
+    if (m.state === 'running') out.push(`${head(m)} ended failed: ${said || `its run is gone with no result, last step ${c(m.step)} at ${since(m)}`}${tail}`);
+    else out.push(`${head(m)} ended ${c(m.state)} at ${c(isSet(m.ended_at) ? m.ended_at : since(m))}: ${said || c(isSet(m.result) ? m.result : 'no result text')}${tail}`);
+    if (gone) out.push(...retire(runs, x));
   }
+  if (listed.length > max) out.push(`ship phase: ... ${listed.length - max} more; run npm run lane:status`);
   return out;
+}
+
+// Whether refs/heads/<lane> is gone (git says it is missing; a name git
+// cannot take, or a git that fails, is not gone).
+function branchGone(cwd, lane) {
+  if (typeof lane !== 'string' || !lane || /[\0\n\r]/.test(lane)) return false;
+  const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${lane}`], { cwd, env: R.gitEnv(), stdio: 'ignore' });
+  return r.status === 1;
+}
+
+// The retirement (header): every current manifest of the run's lane that
+// started no later than it moves to phase/<tip>.done-<epoch ms>.json, each
+// only while the file still holds the manifest read (its pid and start), so
+// a run that took the file since keeps it. The lines of a move that failed.
+function retire(runs, r) {
+  const said = [];
+  for (const q of runs) {
+    if (q.live || String(q.m.lane) !== String(r.m.lane) || q.started > r.started) continue;
+    const now = readJson(q.file);
+    if (!now || now.unreadable || now.pid !== q.m.pid || now.started_at !== q.m.started_at) continue;
+    let ms = Date.now();
+    const to = () => path.join(path.dirname(q.file), `${q.m.tip}.done-${ms}.json`);
+    while (fs.existsSync(to())) ms += 1;
+    try {
+      fs.renameSync(q.file, to());
+    } catch (err) {
+      // ENOENT: another read retired it, or a run moved it aside, first.
+      if (err.code !== 'ENOENT') said.push(`ship phase: could not retire ${q.file} (${err.code || 'error'}); it is shown again`);
+    }
+  }
+  return said;
 }
 
 // refs/remotes/origin/main's sha, or null; and whether `squash` (a manifest
@@ -196,6 +272,26 @@ function onOrigin(cwd, squash, origin) {
   } catch {
     return false;
   }
+}
+
+// A commit of origin/main committed since the run started whose subject opens
+// the lane's squash subject (a replay rewrites the squash's sha, header), or
+// null: the lane name shape-checked and the start read as a time first, one
+// git log, its failure null. A squash of an earlier lane of the same name is
+// older than the run.
+function replayedOn(cwd, m, origin) {
+  const start = Date.parse(m.started_at);
+  if (!origin || !Number.isFinite(start)) return null;
+  try {
+    R.checkName(m.lane);
+  } catch {
+    return null;
+  }
+  const needle = `merge(lane ${m.lane}): `;
+  const r = spawnSync('git', ['log', '-F', `--grep=${needle}`, `--since=${new Date(start).toISOString()}`, '--format=%H%x09%s', origin, '--'], { cwd, env: R.gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  if (r.status !== 0) return null;
+  const hit = r.stdout.split('\n').map((l) => l.split('\t')).find(([h, s]) => R.KEY_RE.test(h) && typeof s === 'string' && s.startsWith(needle));
+  return hit ? hit[0] : null;
 }
 
 module.exports = { paths, appendLine, openLog, writeLine, moveAside, Phase, phaseLines };

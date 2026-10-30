@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -437,6 +438,7 @@ function phase(r, lane, tip = r.sha) {
 test('phaseReport: nothing with no phase directory; a run in flight prints its step and since when; ended refused, its state and result; ended ok, nothing', (t) => {
   const r = shipRepo(t, 'ph-run');
   assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), []);
+  git(r.repo, ['branch', 'lane-p']); // a lane whose branch is gone retires (below)
   const P = phase(r, 'lane-p');
   const at = ago(2 * MIN);
   assert.equal(P.write({ step: 'squash', step_at: at }), true);
@@ -450,6 +452,7 @@ test('phaseReport: nothing with no phase directory; a run in flight prints its s
 
 test('phaseReport: a running manifest whose pid is gone ended failed; each lane\'s latest ended run prints, newest first, until a later run of that lane; a run in flight and an ended one both print; an unreadable manifest is named', (t) => {
   const r = shipRepo(t, 'ph-two');
+  for (const b of ['lane-g', 'lane-l']) git(r.repo, ['branch', b]);
   commitAt(r.repo, 'server/b.js', 'b\n', 'more work');
   const other = git(r.repo, ['rev-parse', 'HEAD']);
   const gone = phase(r, 'lane-g');
@@ -478,6 +481,7 @@ test('phaseReport: a running manifest whose pid is gone ended failed; each lane\
 
 test('the phase manifests are kept apart from the ship record: a drb-ship holding only phase/ is no ship yet, with nothing unsettled or in flight, and --session-start prints the phase line', (t) => {
   const r = shipRepo(t, 'ph-apart');
+  git(r.repo, ['branch', 'lane-a']);
   const P = phase(r, 'lane-a');
   const end = new Date().toISOString();
   P.write({ state: 'refused', result: 'the check reads stale server/a.js', ended_at: end });
@@ -486,4 +490,123 @@ test('the phase manifests are kept apart from the ship record: a drb-ship holdin
   const res = runSessionStart(r.repo);
   assert.equal(res.status, 0, res.stderr);
   assert.ok(res.lines.includes(`ship phase: lane-a at ${r.sha7} ended refused at ${end}: the check reads stale server/a.js`), res.stdout);
+});
+
+test('phaseReport retires a lane once its squash has reached origin and its branch is gone: that line prints once, then the lane\'s manifests (an older one with it) move to .done- files; a lane whose branch stands keeps its line', (t) => {
+  const r = shipRepo(t, 'ph-retire');
+  git(r.repo, ['update-ref', 'refs/remotes/origin/main', r.sha]);
+  git(r.repo, ['branch', 'lane-k']);
+  commitAt(r.repo, 'server/b.js', 'b\n', 'more work');
+  const older = git(r.repo, ['rev-parse', 'HEAD']);
+  commitAt(r.repo, 'server/c.js', 'c\n', 'more work again');
+  const newer = git(r.repo, ['rev-parse', 'HEAD']);
+  const s7 = (sha) => sha.slice(0, 7);
+  // One write each, its start and last step included, so the order is fixed.
+  phase(r, 'lane-g', older).write({ started_at: ago(30 * MIN), step_at: ago(29 * MIN), state: 'refused', result: 'an older run of the lane', ended_at: ago(29 * MIN) });
+  const cueEnd = ago(10 * MIN);
+  phase(r, 'lane-g', newer).write({ started_at: ago(11 * MIN), step_at: cueEnd, state: 'cue-only', squash: r.sha, result: 'no flip marker; the squash sits on main unpushed', ended_at: cueEnd });
+  const keptEnd = ago(20 * MIN);
+  phase(r, 'lane-k', r.sha).write({ started_at: ago(21 * MIN), step_at: keptEnd, state: 'cue-only', squash: r.sha, result: 'no flip marker; the squash sits on main unpushed', ended_at: keptEnd });
+  const kept = `ship phase: lane-k at ${r.sha7} ended cue-only at ${keptEnd}: the squash ${r.sha7} has since reached origin`;
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [`ship phase: lane-g at ${s7(newer)} ended cue-only at ${cueEnd}: the squash ${r.sha7} has since reached origin`, kept]);
+  const names = fs.readdirSync(path.join(r.dir, 'phase')).sort();
+  assert.deepStrictEqual(names.filter((n) => /\.done-\d+\.json$/.test(n)).map((n) => n.split('.')[0]).sort(), [older, newer].sort(), 'both of lane-g\'s manifests retired');
+  assert.ok(names.includes(`${r.sha}.json`), 'lane-k\'s stays');
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [kept], 'lane-g prints no more, its older run with it');
+});
+
+test('--session-start with forty ended runs prints three phase lines and the pointer, the lanes line still in, within two seconds; at two hundred and sixty the same, never the timeout; the plain report prints them all', (t) => {
+  const r = shipRepo(t, 'ph-many');
+  git(r.repo, ['update-ref', 'refs/remotes/origin/main', r.sha]);
+  commitAt(r.repo, 'server/b.js', 'b\n', 'an unpushed squash');
+  const squash = git(r.repo, ['rev-parse', 'HEAD']);
+  const tipOf = (i) => crypto.createHash('sha1').update(`tip ${i}`).digest('hex');
+  const base = Date.now() + 60 * MIN;
+  const add = (from, to) => {
+    for (let i = from; i < to; i++) phase(r, `lane-${i}`, tipOf(i)).write({ state: 'refused', squash, result: `run ${i} refused`, ended_at: new Date(base + i * 1000).toISOString() });
+  };
+  const check = (n) => {
+    const res = runSessionStart(r.repo);
+    assert.equal(res.status, 0, res.stderr);
+    const shown = res.lines.filter((l) => l.startsWith('ship phase: '));
+    assert.deepStrictEqual(shown.slice(0, 3).map((l) => l.split(' ')[2]), [`lane-${n - 1}`, `lane-${n - 2}`, `lane-${n - 3}`], res.stdout);
+    assert.deepStrictEqual(shown.slice(3), [`ship phase: ... ${n - 3} more; run npm run lane:status`], res.stdout);
+    assert.ok(res.lines.includes('lanes: 0 open, none stale'), `the lanes line is still shown: ${res.stdout}`);
+    assert.ok(!res.lines.some((l) => /did not finish/.test(l)), res.stdout);
+    assert.ok(res.ms < 2000, `took ${res.ms} ms`);
+  };
+  add(0, 40);
+  check(40);
+  add(40, 260);
+  check(260);
+  // The ancestor reads, counted in this process: one per line shown.
+  const R = require('./lib/receipt');
+  const real = R.isAncestor;
+  let reads = 0;
+  R.isAncestor = (...a) => { reads += 1; return real(...a); };
+  try {
+    assert.equal(LS.phaseReport({ cwd: r.repo, max: LS.SESSION_PHASE_MAX }).length, 4);
+    assert.equal(reads, 3, 'three reads for three lines shown');
+    reads = 0;
+    assert.equal(LS.phaseReport({ cwd: r.repo }).length, 260, 'the plain report prints every one');
+    assert.equal(reads, 260);
+  } finally {
+    R.isAncestor = real;
+  }
+});
+
+test('phaseReport retires a lane whose squash a replay rewrote, once a commit of origin/main since the run carries its squash subject and its branch is gone, and a lane scrapped after a run that never squashed; a re-cut lane of the same name whose unpushed squash is its own is not read as on origin', (t) => {
+  const r = shipRepo(t, 'ph-replay');
+  const tree = git(r.repo, ['rev-parse', `${r.sha}^{tree}`]);
+  const s7 = (sha) => sha.slice(0, 7);
+  // A squash of an earlier lane-c, on origin long before the runs below.
+  commitAt(r.repo, 'server/c.js', 'c\n', 'merge(lane lane-c): docs/plan.md', '2026-01-01T00:00:00Z');
+  // The cue-only run's squash, rewritten by a replay: the old sha is in no history of origin/main.
+  const old = git(r.repo, ['commit-tree', '-p', r.sha, '-m', 'merge(lane lane-p): docs/plan.md', tree]);
+  const pEnd = ago(9 * MIN);
+  phase(r, 'lane-p', r.sha).write({ started_at: ago(10 * MIN), step_at: pEnd, state: 'cue-only', squash: old, result: 'no flip marker; the squash sits on main unpushed', ended_at: pEnd });
+  commitAt(r.repo, 'server/p.js', 'p\n', 'merge(lane lane-p): docs/plan.md');
+  const replayed = git(r.repo, ['rev-parse', 'HEAD']);
+  git(r.repo, ['update-ref', 'refs/remotes/origin/main', replayed]);
+  // A refused run of a lane scrapped since: it never squashed.
+  const sEnd = ago(8 * MIN);
+  const sTip = git(r.repo, ['commit-tree', '-p', r.sha, '-m', 'a scrapped lane', tree]);
+  phase(r, 'lane-s', sTip).write({ started_at: ago(9 * MIN), step_at: sEnd, state: 'refused', result: 'the check reads stale server/a.js', ended_at: sEnd });
+  // A re-cut lane-c, its own squash unpushed: the earlier lane's squash on origin is older than its run.
+  git(r.repo, ['branch', 'lane-c', r.sha]);
+  const cSquash = git(r.repo, ['commit-tree', '-p', 'HEAD', '-m', 'merge(lane lane-c): docs/plan.md', tree]);
+  const cEnd = ago(7 * MIN);
+  const cTip = git(r.repo, ['commit-tree', '-p', r.sha, '-m', 'the re-cut lane', tree]);
+  phase(r, 'lane-c', cTip).write({ started_at: ago(8 * MIN), step_at: cEnd, state: 'cue-only', squash: cSquash, result: 'no flip marker; the squash sits on main unpushed', ended_at: cEnd });
+  const recut = `ship phase: lane-c at ${s7(cTip)} ended cue-only at ${cEnd}: no flip marker; the squash sits on main unpushed`;
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [
+    recut,
+    `ship phase: lane-s at ${s7(sTip)} ended refused at ${sEnd}: the check reads stale server/a.js; the branch is gone`,
+    `ship phase: lane-p at ${r.sha7} ended cue-only at ${pEnd}: a squash of the lane has since reached origin as ${s7(replayed)}`,
+  ]);
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [recut], 'the replayed lane and the scrapped one retired; the re-cut lane stays');
+  const done = fs.readdirSync(path.join(r.dir, 'phase')).filter((n) => /\.done-\d+\.json$/.test(n)).map((n) => n.split('.')[0]).sort();
+  assert.deepStrictEqual(done, [r.sha, sTip].sort());
+});
+
+test('phaseReport shows a run whose cleanup kept the branch whatever its state: an ok run by its kept words, a pushed-elsewhere run with them beside the on-origin text; once its branch is gone, shown once more, then retired', (t) => {
+  const r = shipRepo(t, 'ph-kept');
+  git(r.repo, ['update-ref', 'refs/remotes/origin/main', r.sha]);
+  for (const b of ['lane-k', 'lane-e']) git(r.repo, ['branch', b]);
+  commitAt(r.repo, 'server/b.js', 'b\n', 'another tip');
+  const other = git(r.repo, ['rev-parse', 'HEAD']);
+  const words = (b) => `the branch ${b} is kept for a new review (${b} is at ${other.slice(0, 7)}, not the lane tip ${r.sha7} its squash ${r.sha7} records, with 1 commit since it)`;
+  const kEnd = ago(5 * MIN);
+  phase(r, 'lane-k', r.sha).write({ state: 'ok', squash: r.sha, result: `pushed ${r.sha7}, 1 commits; ${words('lane-k')}`, kept: words('lane-k'), ended_at: kEnd });
+  const eEnd = ago(4 * MIN);
+  phase(r, 'lane-e', other).write({ state: 'pushed-elsewhere', squash: r.sha, result: `${r.sha7} is already on origin/main; ${words('lane-e')}`, kept: words('lane-e'), ended_at: eEnd });
+  const lines = [
+    `ship phase: lane-e at ${other.slice(0, 7)} ended pushed-elsewhere at ${eEnd}: the squash ${r.sha7} has since reached origin; ${words('lane-e')}`,
+    `ship phase: lane-k at ${r.sha7} ended ok at ${kEnd}: ${words('lane-k')}`,
+  ];
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), lines);
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), lines, 'the branches stand, so the lines stay');
+  git(r.repo, ['branch', '-D', 'lane-k']);
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), lines, 'shown once more');
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [lines[0]], 'then lane-k retired');
 });

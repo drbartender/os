@@ -173,6 +173,53 @@ test('dropBranch keeps the branch and says why in plain words: merged-lane check
   assert.deepEqual(said, ['branch lane-1 is kept: the merged-lane checks could not run', 'branch lane-1 is kept: the worktree merged-lane check failed', 'branch lane-1 is kept: the files and worktree merged-lane checks failed']);
 });
 
+test('the branch delete is tied to the tip the comparison read: a lane commit landing between the comparison and the delete, one that passes the three merged-lane checks, keeps the branch, named; at the tip compared the branch goes, its config section with it', (t) => {
+  const repo = makeOs(t);
+  const base = git(repo, 'rev-parse', 'main');
+  const { wt, tip } = lane(t, repo, 'lane-u', { 'server/a.js': 'a v2\n', 'server/b.js': 'b v2\n' });
+  git(repo, 'merge', '--squash', '-q', 'lane-u');
+  git(repo, 'commit', '-q', '-m', 'merge(lane lane-u): docs/plan.md');
+  const squash = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'worktree', 'remove', wt);
+  git(repo, 'config', 'branch.lane-u.description', 'a lane');
+  const ship = new MS.Ship({ cwd: repo, branch: 'lane-u', log: path.join(tmpDir(t, 'log'), 'tip.log'), foreground: false });
+  assert.equal(SQ.strandLine(repo, 'lane-u', squash, tip), null, 'the comparison reads the branch at the lane tip');
+  // The lane window's commit, as git commit makes it: a.js back to its base content, the branch moved by update-ref.
+  const idx = path.join(tmpDir(t, 'idx'), 'index');
+  const g = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_INDEX_FILE: idx } }).stdout.trim();
+  g('read-tree', tip);
+  g('update-index', '--cacheinfo', `100644,${git(repo, 'rev-parse', `${base}:server/a.js`)},server/a.js`);
+  const back = g('commit-tree', '-p', tip, '-m', 'a back to its base content', g('write-tree'));
+  git(repo, 'update-ref', 'refs/heads/lane-u', back, tip);
+  const m = MC.mergedLane({ cwd: repo, branch: 'lane-u' });
+  assert.equal(m.ok, true, `the three merged-lane checks pass on the moved tip: ${m.checks.map((c) => c.text).join('; ')}`);
+  assert.equal(ship.dropBranch(m, null, tip), `the branch lane-u is kept for a new review (it moved after the comparison read ${s7(tip)}, now at ${s7(back)})`);
+  assert.equal(git(repo, 'rev-parse', 'refs/heads/lane-u'), back, 'the branch keeps the commit');
+  assert.equal(ship.dropBranch(m, null, back), 'no worktree, the three merged-lane checks passed, the branch lane-u deleted', 'at the tip compared it goes; the worktree went by hand, not by the cleanup');
+  assert.equal(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/lane-u'], { cwd: repo }).status, 1, 'deleted');
+  assert.equal(spawnSync('git', ['config', '--get', 'branch.lane-u.description'], { cwd: repo }).status, 1, 'its config section with it');
+});
+
+test('the cleanup\'s kept-branch line runs inside its step guard: a log that cannot take it is a worktree step failure named in the result, never a throw past the cleanup', (t) => {
+  const repo = makeOs(t);
+  lane(t, repo, 'lane-k', { 'server/b.js': 'b v2\n' });
+  const ship = new MS.Ship({ cwd: repo, branch: 'lane-k', log: repo, foreground: false, out: () => {} }); // a directory: no line lands
+  ship.squash = commit(repo, 'merge(lane lane-k): docs/plan.md', { 'docs/other.md': 'not the lane\n' });
+  const err = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk) => { err.push(String(chunk)); return true; };
+  let told;
+  try {
+    told = ship.cleanup();
+  } finally {
+    process.stderr.write = write;
+  }
+  assert.match(told, /^the cleanup's worktree step failed \(EISDIR[^;]*; /, told);
+  assert.match(told, /the branch lane-k is kept$/);
+  assert.ok(err.some((l) => /^merge-lane ship: cleanup the worktree step failed \(EISDIR/.test(l)), err.join(''));
+  assert.equal(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/lane-k'], { cwd: repo }).status, 0, 'the branch stays');
+});
+
 test('the suites callback: the named suites through run-suites into the run directory, green exits 0, red exits 1 naming the suite, an option-shaped path is refused', (t) => {
   const repo = K.makeRepo(t);
   commit(repo, 'two suites', {

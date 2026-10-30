@@ -13,12 +13,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const K = require('./receiptTestkit');
 const M = require('./mergeCheck');
+const SQ = require('./mergeShipSquash');
 const R = require('./receipt');
 const SM = require('../sensitive-match');
 
@@ -441,6 +442,64 @@ test('mergedLane: the two docs compared outside their generated sections; a post
   // A doc whose markers the lane broke fails closed.
   commit(wt, 'a broken marker', { 'README.md': doc('README.md', { body: 'v2' }).replace('<!-- /gen:env -->', '') });
   assert.match(files().text, /^lane files on main: README\.md differs from the branch outside its generated sections$/);
+});
+
+// A lane window's rebase stopped at a conflict, or its bisect, as git leaves
+// it: the operation's state file in the worktree's own git dir naming the
+// branch (git's bisect needs its BISECT_LOG beside it), the worktree's HEAD
+// detached at the lane tip and refs/heads/<branch> where it was. Returns the
+// undo, which puts the worktree back on the branch it had checked out.
+const HELD = [['rebase-merge/head-name', 'refs/heads/', 'rebasing'], ['rebase-apply/head-name', 'refs/heads/', 'rebasing'], ['BISECT_START', '', 'bisecting']];
+function holdBranch(wt, branch, file, prefix) {
+  const dir = git(wt, 'rev-parse', '--absolute-git-dir');
+  const on = git(wt, 'symbolic-ref', 'HEAD');
+  const state = path.join(dir, file);
+  fs.mkdirSync(path.dirname(state), { recursive: true });
+  fs.writeFileSync(state, `${prefix}${branch}\n`);
+  if (file === 'BISECT_START') fs.writeFileSync(path.join(dir, 'BISECT_LOG'), 'git bisect start\n');
+  git(wt, 'update-ref', '--no-deref', 'HEAD', git(wt, 'rev-parse', 'HEAD'));
+  return () => {
+    for (const f of [file.split('/')[0], 'BISECT_LOG']) fs.rmSync(path.join(dir, f), { recursive: true, force: true });
+    git(wt, 'symbolic-ref', 'HEAD', on);
+  };
+}
+
+test('mergedLane: a worktree holding the branch in a rebase or a bisect, its HEAD detached and the branch where it was, fails the worktree check, as git branch -D refuses it; a prunable one too; another branch\'s, the plain detached state and a state file that cannot be read are read as they are', (t) => {
+  const repo = osRepo(t);
+  const { wt } = lane(t, repo, 'lane-r', { 'server/a.js': 'a v2\n' });
+  git(repo, 'merge', '--squash', '-q', 'lane-r');
+  git(repo, 'commit', '-q', '-m', 'merge(lane lane-r): docs/plan.md');
+  const at = git(repo, 'rev-parse', 'refs/heads/lane-r');
+  const worktree = () => M.mergedLane({ cwd: repo, branch: 'lane-r' }).checks[2];
+  const branchD = () => spawnSync('git', ['branch', '-D', 'lane-r'], { cwd: repo, encoding: 'utf8' });
+  for (const [file, prefix, op] of HELD) {
+    const undo = holdBranch(wt, 'lane-r', file, prefix);
+    assert.equal(spawnSync('git', ['symbolic-ref', '-q', 'HEAD'], { cwd: wt }).status, 1, `${file}: the worktree's HEAD is detached`);
+    assert.deepEqual(worktree(), { name: 'worktree', ok: false, text: `worktree: ${wt} is ${op} lane-r` }, file);
+    assert.match(branchD().stderr, /used by worktree/, `${file}: git branch -D refuses the same state`);
+    assert.equal(git(repo, 'rev-parse', 'refs/heads/lane-r'), at);
+    undo();
+  }
+  // The same state of another branch is not this one's: the plain detached state passes, as git branch -D deletes there.
+  const undoOther = holdBranch(wt, 'lane-other', 'rebase-merge/head-name', 'refs/heads/');
+  assert.deepEqual(worktree(), { name: 'worktree', ok: true, text: 'worktree: gone (no worktree has lane-r checked out)' }, 'detached, no rebase or bisect of lane-r');
+  assert.deepEqual(SQ.branchInUse(repo, 'lane-other'), { path: wt, op: 'rebasing', text: `${wt} is rebasing lane-other` });
+  undoOther();
+  // A state file that cannot be read answers in use, the safe direction.
+  const undoTorn = holdBranch(wt, 'lane-r', 'rebase-merge/head-name', 'refs/heads/');
+  const dir = git(wt, 'rev-parse', '--absolute-git-dir');
+  fs.rmSync(path.join(dir, 'rebase-merge', 'head-name'));
+  fs.mkdirSync(path.join(dir, 'rebase-merge', 'head-name'));
+  assert.deepEqual(worktree(), { name: 'worktree', ok: false, text: `worktree: ${wt} could not be read (EISDIR at head-name); lane-r counts as in use` });
+  undoTorn();
+  // A prunable worktree, its directory gone, is read from its git dir, as git reads it.
+  holdBranch(wt, 'lane-r', 'rebase-merge/head-name', 'refs/heads/');
+  fs.rmSync(wt, { recursive: true, force: true });
+  assert.match(git(repo, 'worktree', 'list', '--porcelain'), /\nprunable /);
+  assert.deepEqual(worktree(), { name: 'worktree', ok: false, text: `worktree: ${wt} is rebasing lane-r` });
+  assert.match(branchD().stderr, /used by worktree/);
+  git(repo, 'worktree', 'prune');
+  assert.deepEqual(M.mergedLane({ cwd: repo, branch: 'lane-r' }).checks.map((c) => c.ok), [true, true, true], 'pruned, the lane passes the three');
 });
 
 // A git on PATH that fails the given subcommand (not merge-base --is-ancestor)

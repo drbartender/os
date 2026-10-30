@@ -66,7 +66,7 @@ test('Phase: start writes every field, a write merges only while the file is thi
   const old = new SL.Phase({ cwd: repo, tip, lane: 'lane-1', log: p.log });
   old.start();
   const m = read(p.phase);
-  assert.deepEqual(Object.keys(m).sort(), ['ended_at', 'lane', 'log', 'pid', 'result', 'squash', 'started_at', 'state', 'step', 'step_at', 'tip', 'version']);
+  assert.deepEqual(Object.keys(m).sort(), ['ended_at', 'kept', 'lane', 'log', 'pid', 'result', 'squash', 'started_at', 'state', 'step', 'step_at', 'tip', 'version']);
   assert.deepEqual([m.lane, m.tip, m.pid, m.state, m.step, m.log], ['lane-1', tip, process.pid, 'running', 'start', p.log]);
   assert.equal(old.write({ step: 'commit', step_at: m.started_at }), true);
   assert.equal(read(p.phase).step, 'commit');
@@ -81,4 +81,28 @@ test('Phase: start writes every field, a write merges only while the file is thi
   assert.equal(old.write({ state: 'failed' }), false);
   assert.equal(read(p.phase).state, 'running');
   assert.equal(read(path.join(p.dir, moved[0])).step, 'commit', 'the moved manifest is as the old run left it');
+});
+
+test('phaseLines: a manifest gone between the directory read and its own read, or a retirement rename another read made first (ENOENT), is already gone, no line', (t) => {
+  const repo = K.makeRepo(t);
+  const sha = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', sha);
+  const p = SL.paths(repo, sha);
+  const P = new SL.Phase({ cwd: repo, tip: sha, lane: 'lane-x', log: p.log });
+  P.start();
+  P.write({ state: 'cue-only', squash: sha, result: 'no flip marker', ended_at: new Date().toISOString() });
+  const shown = `ship phase: lane-x at ${sha.slice(0, 7)} ended cue-only at ${JSON.parse(fs.readFileSync(p.phase, 'utf8')).ended_at}: the squash ${sha.slice(0, 7)} has since reached origin`;
+  const [readdir, rename] = [fs.readdirSync, fs.renameSync];
+  t.after(() => { [fs.readdirSync, fs.renameSync] = [readdir, rename]; });
+  // A name the directory listed whose file is gone by its read.
+  fs.readdirSync = (d, ...a) => (d === p.phaseDir ? [...readdir(d, ...a), `${'f'.repeat(40)}.json`] : readdir(d, ...a));
+  // Another read retires the manifest just before this one's rename.
+  fs.renameSync = (from, to) => {
+    if (from === p.phase) rename(from, path.join(p.phaseDir, `${sha}.done-1.json`));
+    return rename(from, to);
+  };
+  assert.deepEqual(SL.phaseLines({ cwd: repo }), [shown], 'no unreadable line, no could-not-retire line');
+  [fs.readdirSync, fs.renameSync] = [readdir, rename];
+  assert.deepEqual(fs.readdirSync(p.phaseDir), [`${sha}.done-1.json`]);
+  assert.deepEqual(SL.phaseLines({ cwd: repo }), []);
 });

@@ -12,9 +12,11 @@
 // by DRB_SHIP_GATE_CMD and DRB_SHIP_WATCH_CMD, each recording its runs; HOME a
 // temp dir. The copy holds no scripts/gen-docs.js unless genDocs is set: then
 // a stand-in (GEN_DOCS) whose --generated-only always says the change is
-// inside the generated sections and whose --staged appends one marked line to
-// the index's README.md and stages it, as step 7's regeneration rewrites the
-// docs. A suite sets TMPDIR to its own temp dir before its first case.
+// inside the generated sections and whose --staged writes one marked line
+// into the index's README.md and stages it, as step 7's regeneration rewrites
+// the docs: inside its tree section when it has one (the real generator
+// writes nothing outside its sections), else at its end. A suite sets TMPDIR
+// to its own temp dir before its first case.
 // Nothing here touches os, its origin or the dev database.
 
 const assert = require('node:assert/strict');
@@ -90,8 +92,9 @@ rec('done');
 `;
 
 // The gen-docs.js stand-in (header): a --readme <path> or --arch <path>
-// render writes the index's doc, marked, to that path; a plain --staged
-// render writes README.md and stages it.
+// render writes the index's doc, marked (the mark inside its tree section
+// when it has one), to that path; a plain --staged render writes README.md
+// and stages it.
 const GEN_DOCS = `#!/usr/bin/env node
 'use strict';
 const { execFileSync } = require('child_process');
@@ -99,7 +102,9 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 if (args.includes('--generated-only')) process.exit(0);
 const MARK = '<!-- the generated sections, rendered -->\\n';
-const at = (doc) => { try { const x = execFileSync('git', ['show', ':' + doc], { encoding: 'utf8' }); return x.endsWith(MARK) ? x : x + MARK; } catch { return null; } };
+const CLOSE = '<!-- /gen:tree -->\\n';
+const marked = (x) => (x.includes(MARK) ? x : x.includes(CLOSE) ? x.replace(CLOSE, MARK + CLOSE) : x + MARK);
+const at = (doc) => { try { return marked(execFileSync('git', ['show', ':' + doc], { encoding: 'utf8' })); } catch { return null; } };
 const to = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : null);
 if (to('--readme') || to('--arch')) {
   for (const [flag, doc] of [['--readme', 'README.md'], ['--arch', 'ARCHITECTURE.md']]) if (to(flag) && at(doc) !== null) fs.writeFileSync(to(flag), at(doc));
@@ -209,9 +214,25 @@ const exists = (h, ref) => spawnSync('git', ['rev-parse', '--verify', '--quiet',
 const patchKey = (h, sha) => execFileSync('git', ['patch-id', '--stable'], { cwd: h.repo, encoding: 'utf8',
   input: execFileSync('git', ['diff', `${sha}^`, sha, '--', '.', ':!README.md', ':!ARCHITECTURE.md'], { cwd: h.repo }) }).trim().split(/\s+/)[0];
 
+// The way through an ending names while the push check refuses main's head
+// until a replay (a push rejection, origin ahead, a merge commit on main).
+const BEHIND = /; replay main's unpushed squashes onto origin's head \(the owner's call by the push-failure rule; never a merge, an auto-pull or a force\), then the same ship command resumes [0-9a-f]{7}$/;
+
+// A second clone of the origin with one commit of its own, which the gate
+// stub pushes while it runs (advance), so the ship's push is rejected.
+function advancer(h) {
+  const other = path.join(h.root, 'other');
+  git(h.root, 'clone', '-q', h.origin, other);
+  git(other, 'config', 'user.email', ['test', 'example.com'].join('@'));
+  git(other, 'config', 'user.name', 'Test User');
+  commit(other, 'elsewhere', { 'docs/elsewhere.md': 'x\n' });
+  setCfg(h.gate, { advance: other });
+  return other;
+}
+
 function hookOnce(h, body) {
   const hook = path.join(h.common, 'hooks', 'pre-commit');
   fs.writeFileSync(hook, ['#!/usr/bin/env bash', '[ -e .git/hook-done ] && exit 0', ': > .git/hook-done', ...body, ''].join('\n'), { mode: 0o755 });
 }
 
-module.exports = { K, git, commit, sleep, s7, SUITE, stub, setCfg, records, makeOs, flipOn, lane, review, reviewCommentOnly, ship, logFile, lines, steps, textOf, settled, head, originMain, status, exists, patchKey, hookOnce };
+module.exports = { K, git, commit, sleep, s7, SUITE, stub, setCfg, records, makeOs, flipOn, lane, review, reviewCommentOnly, ship, logFile, lines, steps, textOf, settled, head, originMain, status, exists, patchKey, BEHIND, advancer, hookOnce };

@@ -37,13 +37,23 @@
 // phaseReport (instruction rewrite step 5, lane merge-ship) prints the merge
 // script's ship phase from its manifests under drb-ship/phase/, through
 // scripts/lib/mergeShipLog.js's phaseLines: one line for a run in flight
-// (its step and since when), and one per lane whose latest run ended other
-// than ok, until a later run of that lane (its state, when it ended, and its
-// result, or that its squash is on origin since).
+// (its step and since when), one per manifest that cannot be read, and one
+// per lane whose latest run ended other than ok, or ended ok carrying the
+// manifest's kept (a cleanup after a push kept the branch for what the
+// squash may not hold, or for a worktree holding it; the line reads the kept
+// words), until a later run of that lane (its state, when it ended, and its
+// result, or that its squash, or a replay of it, has since reached origin,
+// the kept words beside it, shown once more and retired when the lane's
+// branch is gone too, as a run that never squashed is once its branch is
+// gone).
 //
-// --session-start: the markers, the ship record, the ship phase, then one
-// line per stale lane, at most SESSION_MAX_LINES lines, and exit 0 whatever
-// it finds, so the hook can never fail or hang a session. The work runs in a
+// --session-start: the markers, the ship record, the ship phase (at most
+// SESSION_PHASE_MAX lines past the one in flight, unreadable manifests first
+// and counted toward the cap, then the ended lines, and a pointer to
+// lane:status for the rest, so the stale-lane lines and the child's time
+// bound stay clear of them),
+// then one line per stale lane, at most SESSION_MAX_LINES lines, and exit 0
+// whatever it finds, so the hook can never fail or hang a session. The work runs in a
 // child process of this same file (--session-start-run) under a hard timeout;
 // the child loads markers.js, shipLog.js, mergeShipLog.js and
 // sensitive-match.js only inside its guard, and a failed load, a crash, a cwd
@@ -245,6 +255,8 @@ const SESSION_MAX_LINES = 12;
 // The child's hard bound: under the two seconds the plan allows the hook,
 // with room for the parent's own start and the line it adds.
 const SESSION_TIMEOUT_MS = 1500;
+// The ship phase's ended lines at session start (phaseLines' max).
+const SESSION_PHASE_MAX = 3;
 
 const isSet = (v) => v !== null && v !== undefined;
 const short = (sha) => String(sha).slice(0, 7);
@@ -392,9 +404,9 @@ function shipReport({ cwd = process.cwd(), now = Date.now() } = {}) {
   return lines;
 }
 
-// The ship phase's lines (header), from its manifests.
-function phaseReport({ cwd = process.cwd() } = {}) {
-  return require('./lib/mergeShipLog').phaseLines({ cwd });
+// The ship phase's lines (header), from its manifests; max caps the ended ones.
+function phaseReport({ cwd = process.cwd(), max = Infinity } = {}) {
+  return require('./lib/mergeShipLog').phaseLines({ cwd, max });
 }
 
 // One line per stale lane, or one line saying none is.
@@ -443,7 +455,7 @@ function sessionStartLines({ cwd = process.cwd() } = {}) {
   if (loaded) {
     out.push(...guarded('markers', () => markersReport({ cwd })));
     out.push(...guarded('ship', () => shipReport({ cwd })));
-    out.push(...guarded('ship phase', () => phaseReport({ cwd })));
+    out.push(...guarded('ship phase', () => phaseReport({ cwd, max: SESSION_PHASE_MAX })));
   }
   out.push(...guarded('lanes', () => staleLines(cwd)));
   return capLines(out);
@@ -528,6 +540,7 @@ module.exports = {
   sessionStart,
   SESSION_MAX_LINES,
   SESSION_TIMEOUT_MS,
+  SESSION_PHASE_MAX,
 };
 
 if (require.main === module) {

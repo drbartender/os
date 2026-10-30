@@ -23,10 +23,13 @@
 // line: ready, ready-moved, stale <files> [sensitive] or refused <reason>,
 // exit 0 for the first two and 1 for the others (2 for usage). Before it, a
 // lane whose squash is on main and not pushed (merge-lane.sh ship's resume:
-// mergeShipSquash.findUnpushed, and resumeProblem, both under the lock) is
+// mergeShipSquash.unpushedOf, and resumeProblem, both under the lock) is
 // never judged as a lane, whose receipt is the squash's own now: check
 // answers `merged <squash7> of <branch>, unpushed; ship resumes it` (exit 0),
-// or refused with the line the resume would refuse with (exit 1). A refusal's
+// or refused with resumeProblem's line (exit 1; the marker refusals a resume
+// also makes are ship's alone); a squash a later unpushed commit reverts is
+// refused naming the two and the way through (exit 1; no resume can push it,
+// and ship refuses it with the same line). A refusal's
 // further problems and the receipt the line rests on go to stderr. merged
 // takes no lock, prints one pass or fail line per merged-lane check and exits
 // 0 only when all three pass.
@@ -116,14 +119,18 @@
 // every file the lane changed since its merge base with main byte-identical
 // on main, README.md and ARCHITECTURE.md compared outside their generated
 // sections; and no worktree with the branch checked out (a prunable one
-// counts). The generated sections stay excluded because the merge regenerates
-// them (decision 8), but prose the lane wrote by hand in either doc, after its
-// squash too, is the lane's work: a doc whose text with every section's body
-// emptied (the generator's markers.blankSection over its sections, read
-// through genDocs/source, the comparison gen-docs.js --generated-only makes
-// for the squash) differs between the merge base and the tip must read the
-// same on main as on the tip, else it is named as off main; a marker problem
-// on either side counts as a difference.
+// counts) or holding it in a rebase or a bisect, which detaches the
+// worktree's HEAD and leaves the branch for the operation to write back, a
+// state git branch -D refuses as used by worktree (mergeShipSquash.
+// branchInUse, which the ship's branch delete asks too). The generated
+// sections stay excluded because the merge regenerates them (decision 8), but
+// prose the lane wrote by hand in either doc, after its squash too, is the
+// lane's work: a doc whose text with every section's body emptied (the
+// generator's markers.blankSection over its sections, read through
+// genDocs/source, the comparison gen-docs.js --generated-only makes for the
+// squash) differs between the merge base and the tip must read the same on
+// main as on the tip, else it is named as off main; a marker problem on
+// either side counts as a difference.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -603,13 +610,17 @@ function mergedLane({ cwd = process.cwd(), branch } = {}) {
       const dir = (attrs.find((a) => a.startsWith('worktree ')) || 'worktree (unknown)').slice('worktree '.length);
       held.push(`${dir}${attrs.some((a) => a === 'prunable' || a.startsWith('prunable ')) ? ' (prunable)' : ''}`);
     }
+    // A rebase or a bisect holding it with the worktree's HEAD detached
+    // (header), read beside the ship's worktreeOf.
+    const use = held.length ? null : require('./mergeShipSquash').branchInUse(cwd, branch);
     if (held.length) put('worktree', false, `worktree: ${branch} is still checked out at ${held.join(', ')}`);
+    else if (use) put('worktree', false, `worktree: ${use.text}`);
     else put('worktree', true, `worktree: gone (no worktree has ${branch} checked out)`);
   });
   return { ok: checks.length === 3 && checks.every((c) => c.ok), checks };
 }
 
-module.exports = { checkLane, report, line, mergedLane, findReceipt, testCounts, osStatus, WAIT_LINE };
+module.exports = { checkLane, report, line, mergedLane, proseOf, findReceipt, testCounts, osStatus, WAIT_LINE };
 
 // ---- CLI -------------------------------------------------------------------------
 
@@ -648,10 +659,14 @@ async function main(argv) {
   if (cmd === 'lock') return lockedRun(cwd, held, branch, rest);
   // A lane whose squash is on main unpushed: ship's resume, never the lane check (header).
   const SQ = require('./mergeShipSquash');
-  const squash = branchTip(cwd, branch) ? SQ.findUnpushed(cwd, branch) : null;
-  if (squash) {
-    const why = SQ.resumeProblem(cwd, branch, squash);
-    process.stdout.write(why ? `refused ${oneLine(why)}\n` : `merged ${S(squash)} of ${branch}, unpushed; ship resumes it\n`);
+  const u = branchTip(cwd, branch) ? SQ.unpushedOf(cwd, branch) : null;
+  if (u && u.revert) {
+    process.stdout.write(`refused ${SQ.revertedLine(branch, u)}\n`);
+    return 1;
+  }
+  if (u) {
+    const why = SQ.resumeProblem(cwd, branch, u.squash);
+    process.stdout.write(why ? `refused ${oneLine(why)}\n` : `merged ${S(u.squash)} of ${branch}, unpushed; ship resumes it\n`);
     return why ? 1 : 0;
   }
   const r = checkLane({ cwd, branch });

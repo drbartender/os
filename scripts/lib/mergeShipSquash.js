@@ -7,20 +7,28 @@
 // comment-only lane's squash keyed ahead, squashKeyAhead; and markerRefusal,
 // shipFlow's precheck and the marker refusals, which a resume shares),
 // --resolved's index rules and proof (resolvedIndexProblem, verifyResolved,
-// indexTree, differsOutsideDocs), the shell's first REFUSED line
-// (refusalOf), the squash on main (findSquash), a lane's squash on main and
-// not yet pushed (findUnpushed: merged's first check, the subject opening
-// merge(lane <branch>): , over origin/main..main; resumeProblem, the squash
-// receipt's lane tip against the branch's before a resume), the squash
+// indexTree, differsOutsideDocs, wasReset), the run directory and the shell's
+// squash (writeRunDir, squashShell, with the shell's first REFUSED line,
+// refusalOf), the squash on main (findSquash), a lane's squash on main and
+// not yet pushed (unpushedOf and findUnpushed: merged's first check, the
+// subject opening merge(lane <branch>): , over origin/main..main, a squash a
+// later commit reverts not resumable; resumeProblem, the squash
+// receipt's lane tip against the branch's before a resume, and strandLine,
+// the branch's tree against the squash's, the two docs by their prose
+// (proseDiffers), before a resume and before the branch delete, which the
+// cleanup ties to the tip it read, dropAt; the cleanup's branch step,
+// branchOutcome; and removeLaneWorktree), the squash
 // receipt (writeSquashReceipt) and the ready-moved re-run of the receipt's
 // suites on the merged tree (suitesStep, the shell's callback through
-// mergeShip.js suites), with two git reads the run shares (worktreeOf,
-// originAhead). No CLI of its own.
+// mergeShip.js suites), with the git reads the run shares (worktreeOf;
+// branchInUse, a worktree holding the branch in a rebase or a bisect, which
+// mergeCheck's merged-lane worktree check reads too; wedged). No CLI of its
+// own.
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const R = require('./receipt');
 const M = require('./markers');
 const MC = require('./mergeCheck');
@@ -30,6 +38,8 @@ const { precheck } = require('./shipFlow');
 
 const DOCS = R.GENERATED_DOCS;
 const RUN_SUITES = path.join(path.resolve(__dirname, '..'), 'run-suites.js');
+const SHELL = path.join(path.resolve(__dirname, '..'), 'merge-lane.sh');
+const WORKTREE_RM = path.join(path.resolve(__dirname, '..'), 'worktree-rm.js');
 // What the suites step drops from a re-run suite's environment (mergeShip's header, step 4).
 const SHIP_ENV = Object.freeze(['MERGE_LANE_SHIP', 'MERGE_LANE_LOCKED', 'DRB_SHIP_LOCK', 'DRB_SHIP_LOCK_PID', 'DRB_DEVDB_LOCK_FILE']);
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -70,15 +80,65 @@ function worktreeOf(cwd, branch) {
   return null;
 }
 
-// Whether origin/main, as last fetched, is not in main's history (false when
-// either is missing or git cannot say): mergeShip's behind ending.
-function originAhead(cwd) {
-  const [origin, main] = ['refs/remotes/origin/main', 'refs/heads/main'].map((ref) => commitOf(cwd, ref));
+// The worktree holding `branch` in a rebase or a bisect, which git branch -D
+// refuses as used by worktree (git's find_shared_symref) though no worktree
+// lists the branch: a rebase stopped at a conflict, or a bisect, detaches the
+// worktree's HEAD and leaves refs/heads/<branch> where it was, for the
+// operation to write back. Read as git reads it, from each worktree's git dir
+// (the common dir for the primary, worktrees/<id> for a linked one, a
+// prunable one included, its path from the gitdir file there): a
+// rebase-merge/head-name or rebase-apply/head-name naming refs/heads/<branch>,
+// or a BISECT_START naming the branch. {path, op, text} (op rebasing or
+// bisecting, text `<path> is rebasing <branch>`), or null. Never throws: a
+// file or directory it cannot read answers in use (op unreadable), the safe
+// direction. mergeCheck's merged-lane worktree check and dropAt ask it.
+function branchInUse(cwd, branch) {
+  let at = 'the worktrees';
+  const read = (file) => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch (err) {
+      if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return null;
+      throw Object.assign(err, { file });
+    }
+  };
   try {
-    return Boolean(origin && main) && !R.isAncestor(origin, main, { cwd });
+    const common = R.commonDir({ cwd });
+    const admin = path.join(common, 'worktrees');
+    const dirs = [[common, path.dirname(common)]];
+    for (const id of fs.existsSync(admin) ? fs.readdirSync(admin).sort() : []) {
+      const dotGit = read(path.join(admin, id, 'gitdir'));
+      if (dotGit !== null) dirs.push([path.join(admin, id), path.dirname(path.resolve(admin, id, dotGit.trim()))]);
+    }
+    for (const [dir, wt] of dirs) {
+      at = wt;
+      for (const [file, op] of [['rebase-merge/head-name', 'rebasing'], ['rebase-apply/head-name', 'rebasing'], ['BISECT_START', 'bisecting']]) {
+        const text = read(path.join(dir, file));
+        if (text !== null && text.trim().replace(/^refs\/heads\//, '') === branch) return { path: wt, op, text: `${wt} is ${op} ${branch}` };
+      }
+    }
+    return null;
+  } catch (err) {
+    const why = `${err && err.code ? err.code : firstLine(err && err.message ? err.message : String(err))}${err && err.file ? ` at ${path.basename(err.file)}` : ''}`;
+    return { path: at, op: 'unreadable', text: `${at} could not be read (${why}); ${branch} counts as in use` };
+  }
+}
+
+// Whether the push check refuses main's head until main's unpushed squashes
+// are replayed onto origin's head (mergeShip's behind ending): origin/main,
+// as last fetched, is not in main's history, or origin/main..main holds a
+// merge commit (main holds squashes only); false when either ref is missing
+// or git cannot say.
+function wedged(cwd) {
+  const [origin, main] = ['refs/remotes/origin/main', 'refs/heads/main'].map((ref) => commitOf(cwd, ref));
+  if (!origin || !main) return false;
+  try {
+    if (!R.isAncestor(origin, main, { cwd })) return true;
   } catch {
     return false;
   }
+  const n = git(cwd, ['rev-list', '--merges', '--count', `${origin}..${main}`, '--']);
+  return n.status === 0 && Number(n.stdout.trim()) > 0;
 }
 
 // ---- the refusals before anything is merged ---------------------------------------
@@ -185,6 +245,17 @@ function differsOutsideDocs(cwd, a, b) {
   return a !== b && nul(gitOut(cwd, ['diff-tree', '-r', '--name-only', '-z', '--no-renames', '--end-of-options', a, b])).some((p) => !DOCS.includes(p));
 }
 
+// Whether the shared index no longer holds the verified resolution `tree`
+// outside the two docs, which step 7's regeneration rewrites on purpose (a
+// refusal reset some of it); true when the index cannot be read.
+function wasReset(cwd, tree) {
+  try {
+    return differsOutsideDocs(cwd, indexTree(cwd), tree);
+  } catch {
+    return true;
+  }
+}
+
 // The paths git merge-tree --write-tree -z reports conflicted, after the
 // tree's line: one record per stage, `<mode> <oid> <stage>\t<path>`, up to
 // the empty record.
@@ -226,6 +297,41 @@ function verifyResolved(cwd, { main, tip, base }) {
 
 // ---- the squash, its commit and its receipt ----------------------------------------
 
+// The run directory the shell reads (mergeShip's header, step 2), under the
+// temp dir.
+function writeRunDir(r, tree, log) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-ship-'));
+  const put = (name, text) => fs.writeFileSync(path.join(dir, name), `${text}\n`);
+  put('pid', process.pid);
+  put('tip', r.tip);
+  put('main', r.main);
+  put('body', R.commitBlock(r.receipt));
+  put('log', log);
+  if (r.state === 'ready-moved' && r.suites.length) put('suites', r.suites.join('\n'));
+  if (tree) put('resolved', tree);
+  return dir;
+}
+
+// The shell's squash (step 2), its stderr passed on: {code, signal, refusal}.
+function squashShell({ cwd, branch, plan, runDir, lockFd }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => {
+      if (!done) resolve(v);
+      done = true;
+    };
+    const stdio = ['ignore', 'inherit', 'pipe', ...(lockFd === null ? [] : [lockFd])];
+    const child = spawn('bash', [SHELL, branch, plan], { cwd, env: { ...R.gitEnv(), MERGE_LANE_LOCKED: String(process.pid), MERGE_LANE_SHIP: runDir }, stdio });
+    let err = '';
+    child.stderr.on('data', (b) => {
+      process.stderr.write(b);
+      err = (err + b.toString('utf8')).slice(-262144);
+    });
+    child.on('error', (e) => finish({ code: null, signal: null, refusal: `bash could not start (${e.code || 'error'})` }));
+    child.on('close', (code, signal) => finish({ code, signal, refusal: refusalOf(err) }));
+  });
+}
+
 // The shell's first REFUSED line, with the paths it lists under it.
 function refusalOf(text) {
   const lines = String(text).split('\n');
@@ -255,50 +361,232 @@ function findSquash(cwd, runDir, { main, branch, plan }) {
   return null;
 }
 
-// The newest commit of origin/main..main whose subject opens
-// merge(lane <branch>): (header), or null, and null with no origin/main.
-function findUnpushed(cwd, branch) {
+// The lane's squash on main and not yet pushed (header): {squash, revert},
+// squash the newest commit of origin/main..main whose subject opens
+// merge(lane <branch>): , revert a later commit of that range whose message
+// holds git revert's line for it (This reverts commit <squash>), or null; null
+// when there is no such squash, and with no origin/main.
+function unpushedOf(cwd, branch) {
   const origin = commitOf(cwd, 'refs/remotes/origin/main');
   const main = commitOf(cwd, 'refs/heads/main');
   if (!origin || !main || origin === main) return null;
   const needle = `merge(lane ${branch}): `;
   const out = gitOut(cwd, ['log', '-F', `--grep=${needle}`, '--format=%H%x09%s', `${origin}..${main}`, '--']);
   const hit = out.split('\n').map((l) => l.split('\t')).find(([h, sub]) => R.KEY_RE.test(h) && typeof sub === 'string' && sub.startsWith(needle));
-  return hit ? hit[0] : null;
+  if (!hit) return null;
+  const squash = hit[0];
+  const line = new RegExp(`^This reverts commit ${squash}\\b`, 'm');
+  const named = gitOut(cwd, ['log', '-F', `--grep=This reverts commit ${squash}`, '--format=%H', main, `^${squash}`, `^${origin}`, '--']).split('\n').filter((c) => R.KEY_RE.test(c));
+  const revert = named.find((c) => line.test(gitOut(cwd, ['log', '-1', '--format=%B', c, '--']))) || null;
+  return { squash, revert };
+}
+
+// The squash a resume ships (header), or null: unpushedOf's squash unless a
+// later commit reverts it, which no resume can push (the push check takes no
+// revert receipt for a squash that never shipped), so a ship of the lane
+// refuses with revertedLine, as check does.
+function findUnpushed(cwd, branch) {
+  const u = unpushedOf(cwd, branch);
+  return u && !u.revert ? u.squash : null;
+}
+
+// The way through for a lane whose squash was made of another tip: push the
+// squash, then review the branch anew; never a resume.
+const PUSH_FIRST = 'the way through is to push the squash, then a new review of the branch, never a resume';
+// The way through when the comparison meets a conflict in a lane path.
+const BY_HAND = 'the squash is pushed by hand (npm run ship after the flip), then a new review of the branch';
+
+// The answer check and ship both give for an unpushed squash with its revert
+// (mergeShip's header, a resume).
+function revertedLine(branch, { squash, revert }) {
+  return `the squash ${S(squash)} of ${branch} sits on main unpushed with its revert ${S(revert)}; push the two (the revert needs a receipt of its own, a review --commit, its squash never having shipped), then a new review of the branch`;
+}
+
+// The squash's receipt and the lane tip it records: {laneTip, replayOf}
+// (laneTip null when it records none, as one a review --commit wrote), or
+// {problem}. The squash receipt is the receipt under the squash's commit key
+// whose tip is the squash, and it records the lane tip the squash was made of
+// (squash.lane_tip, writeSquashReceipt's). A replayed squash (mergeShip's
+// header, a resume: the same hunks on a new parent) is found under the same
+// key, its receipt the earlier squash's (replayOf): final, kind squash or
+// comment-only, its key the one it sits under, recording that commit as its
+// tip and its squash, and a lane tip.
+function squashRecord(cwd, squash) {
+  let rec;
+  let key;
+  try {
+    key = R.commitKey(squash, { cwd });
+    rec = R.readReceipt(R.receiptDir(key, { cwd }));
+  } catch (err) {
+    return { problem: `the receipt of the squash ${S(squash)} cannot be read (${firstLine(err && err.message ? err.message : String(err))}); fix or move it` };
+  }
+  const sq = rec && rec.squash && typeof rec.squash === 'object' ? rec.squash : null;
+  const replayOf = rec && rec.tip !== squash && sq && R.KEY_RE.test(String(rec.tip)) && sq.commit === rec.tip && rec.key === key && rec.state === 'final'
+    && ['squash', 'comment-only'].includes(rec.kind) && R.KEY_RE.test(String(sq.lane_tip)) ? rec.tip : null;
+  if (!rec || (rec.tip !== squash && !replayOf)) return { problem: `the squash ${S(squash)} on main has no receipt; a review --commit of it is the way through` };
+  const recorded = sq && sq.commit === rec.tip ? sq.lane_tip : null;
+  return { laneTip: R.KEY_RE.test(String(recorded)) ? recorded : null, replayOf };
+}
+
+// The branch named against its squash, the one line a resume refuses with and
+// the cleanup keeps the branch with: the commits since the lane tip the squash
+// records, or, with none recorded or the branch at it, what differs (why).
+// Bounded (no file list), so the run's log line, 300 characters, holds it.
+function movedLine(cwd, branch, tip, squash, laneTip, why = `its tree differs outside ${DOCS.join(' and ')}`) {
+  if (!R.KEY_RE.test(String(laneTip)) || laneTip === tip) return `${branch} at ${S(tip)} holds what its squash ${S(squash)} does not (${why})`;
+  const n = git(cwd, ['rev-list', '--count', '--end-of-options', `${laneTip}..${tip}`]);
+  const count = n.status === 0 ? Number(n.stdout.trim()) : null;
+  const since = count === null ? 'the recorded tip not in this repository' : `${count} commit${count === 1 ? '' : 's'} since it`;
+  return `${branch} is at ${S(tip)}, not the lane tip ${S(laneTip)} its squash ${S(squash)} records, with ${since}`;
+}
+
+// The two docs whose prose differs between trees (or commits) a and b: each
+// doc's text with every generated section's body emptied (mergeCheck.proseOf,
+// the generator's own markers), so a render, and a conflict merge-tree leaves
+// inside a section, blank away. A doc on one side only, or one whose markers
+// cannot be read on either side, differs; one byte-identical on both does not.
+function proseDiffers(cwd, a, b) {
+  const [ea, eb] = [a, b].map((t) => entriesOf(cwd, t, DOCS));
+  const text = (e, d) => (e.has(d) ? gitOut(cwd, ['cat-file', 'blob', e.get(d).split(' ')[1]]) : null);
+  return DOCS.filter((d) => {
+    if (ea.get(d) === eb.get(d)) return false;
+    const [x, y] = [text(ea, d), text(eb, d)];
+    if (x === y) return false;
+    const [px, py] = [MC.proseOf(x, d), MC.proseOf(y, d)];
+    return px === null || py === null || px !== py;
+  });
+}
+
+// What the branch holds that its squash does not (mergeShip's header, step 9
+// and a resume), as movedLine names it, or null when the squash carries all
+// of it (or there is no branch, or the branch is at the lane tip the squash
+// records: the squash was made of that very tip and nothing landed since, so
+// nothing is compared, which a hand resolution's squash could never match).
+// Else the comparison: the tree git merge-tree writes for the
+// squash's parent and the branch tip, the squash the branch as it stands now
+// would make on that main (the branch tip's own tree when the parent is its
+// merge base), against the squash's tree outside the two docs, and the two
+// docs by their prose (proseDiffers; a conflict merge-tree leaves in either is
+// read the same way, and one the blanking cannot clear differs). A lane commit
+// that puts a file, or a doc's prose, back to its base content, or drops a
+// file the lane added, is outside the net diff merged's files check reads, and
+// inside this. Never throws: a comparison that cannot be made is a line
+// saying so, never the strand advice. A git fault (no parent, merge-tree or a
+// diff failing) sets retry, whose advice is to compare again; a conflict in a
+// lane path when the branch is merged onto the squash's parent (a replay
+// resolved by hand there) says nothing of what the branch holds and no retry
+// clears it, so it sets hand, whose way through is by hand. strandOf: {tip,
+// line, retry, hand}, tip the branch tip the comparison read (null with no
+// branch), which the cleanup's delete is tied to (dropAt).
+function strandOf(cwd, branch, squash, laneTip = null) {
+  const tip = commitOf(cwd, `refs/heads/${branch}`);
+  if (!tip || (R.KEY_RE.test(String(laneTip)) && laneTip === tip)) return { tip, line: null, retry: false, hand: false };
+  const s = strandAt(cwd, branch, tip, squash, laneTip);
+  return { tip, line: s.line, retry: s.retry === true, hand: s.hand === true };
+}
+const strandLine = (cwd, branch, squash, laneTip = null) => strandOf(cwd, branch, squash, laneTip).line;
+
+function strandAt(cwd, branch, tip, squash, laneTip) {
+  const unmade = (why, retry = true) => ({ line: `${branch} at ${S(tip)} could not be compared with its squash ${S(squash)} (${why})`, retry, hand: !retry });
+  try {
+    const parent = commitOf(cwd, `${squash}^`);
+    if (!parent) return unmade(`${S(squash)} has no parent`);
+    const mt = git(cwd, ['merge-tree', '--write-tree', '-z', '--no-messages', '--end-of-options', parent, tip]);
+    if (mt.error || (mt.status !== 0 && mt.status !== 1)) return unmade(`git merge-tree failed (${firstLine(mt.stderr) || `exit ${mt.status}`})`);
+    const lane = mt.status === 1 ? conflictedOf(mt.stdout).filter((p) => !DOCS.includes(p)) : [];
+    if (lane.length) return unmade(`merged onto ${S(parent)} it conflicts in ${listed(lane, 3)}`, false);
+    const tree = mt.stdout.split('\0')[0];
+    let why;
+    if (!differsOutsideDocs(cwd, tree, squash)) {
+      const docs = proseDiffers(cwd, tree, squash);
+      if (!docs.length) return { line: null, retry: false };
+      const one = docs.length === 1;
+      why = `${docs.join(' and ')} ${one ? 'differs' : 'differ'} outside ${one ? 'its' : 'their'} generated sections`;
+    }
+    return { line: movedLine(cwd, branch, tip, squash, laneTip, why), retry: false };
+  } catch (err) {
+    return unmade(firstLine(err && err.message ? err.message : String(err)));
+  }
+}
+
+// The lane branch deleted only while it is at `tip`, the tip the comparison
+// read (git update-ref -d with that old value refuses a ref that moved), and
+// only while no worktree holds it in a rebase or a bisect (branchInUse, asked
+// right before the delete: update-ref has no notion of it, where git branch
+// -D refused it), its config section cleared as git branch -D clears it (a
+// failure, as for a branch with none, ignored): {deleted: true}, or {deleted:
+// false, now, inUse} or {deleted: false, now, error}, now where the branch is
+// (null when gone).
+function dropAt(cwd, branch, tip) {
+  const inUse = branchInUse(cwd, branch);
+  if (inUse) return { deleted: false, now: commitOf(cwd, `refs/heads/${branch}`), inUse };
+  const d = git(cwd, ['update-ref', '-d', `refs/heads/${branch}`, tip]);
+  if (d.status === 0) {
+    git(cwd, ['config', '--remove-section', `branch.${branch}`]);
+    return { deleted: true };
+  }
+  return { deleted: false, now: commitOf(cwd, `refs/heads/${branch}`), error: firstLine(d.stderr) || `exit ${d.status}` };
+}
+
+// The cleanup's branch step (mergeShip's header, step 9): {said, text,
+// shown}, the log line, the result's words, and shown when the branch is kept
+// for what the squash may not hold (kept, strandOf's {line, retry, hand}, a
+// branch that moved since the comparison read `tip`, or one a worktree holds
+// in a rebase or a bisect, dropAt's inUse), which the phase lines surface.
+// The branch goes only with no kept line, m passed, the branch still at tip
+// and no worktree holding it; the deleted result says the worktree was
+// removed only when removed (removeLaneWorktree removed one), else that there
+// was none. "for a new review" comes before the reason, which a 300 character
+// log line may cut (the worktree and branch lines hold it whole).
+function branchOutcome(cwd, branch, m, kept, tip, removed = false) {
+  const keep = (why, text, shown = false) => ({ said: `${branch} is kept: ${why}`, text, shown });
+  if (kept) return keep(kept.line, `the branch ${branch} is kept ${kept.retry ? 'to be compared again by hand' : kept.hand ? 'to be compared by hand' : 'for a new review'} (${kept.line})`, true);
+  if (!m || !m.ok) {
+    const bad = m ? m.checks.filter((c) => !c.ok).map((c) => c.name) : [];
+    const named = bad.length > 1 ? `${bad.slice(0, -1).join(', ')} and ${bad.at(-1)}` : bad[0];
+    const why = !m ? 'the merged-lane checks could not run' : bad.length ? `the ${named} merged-lane check${bad.length > 1 ? 's' : ''} failed` : 'the merged-lane checks did not all pass';
+    return keep(why, `the branch ${branch} is kept (${why})`);
+  }
+  const d = tip ? dropAt(cwd, branch, tip) : { deleted: false, now: null };
+  if (d.deleted) return { said: `deleted ${branch} at ${S(tip)} (git update-ref -d from the tip compared, after all three merged-lane checks passed)`, text: `${removed ? 'the worktree removed' : 'no worktree'}, the three merged-lane checks passed, the branch ${branch} deleted`, shown: false };
+  if (!d.now) return { said: `${branch} is already gone`, text: `the three merged-lane checks passed; the branch ${branch} was already gone`, shown: false };
+  if (d.inUse) return keep(d.inUse.text, `the branch ${branch} is kept (${d.inUse.text})`, true);
+  if (d.now === tip) return keep(`git update-ref -d failed: ${d.error}`, `the branch ${branch} is kept (git update-ref -d failed)`);
+  const why = `it moved after the comparison read ${S(tip)}, now at ${S(d.now)}`;
+  return keep(why, `the branch ${branch} is kept for a new review (${why})`, true);
+}
+
+// The lane's worktree at ../worktrees/<name> removed through
+// scripts/worktree-rm.js (step 9): {line, removed}, the line the run logs for
+// it and whether this removed one (the deleted result names it only then).
+function removeLaneWorktree(cwd, branch) {
+  const wt = worktreeOf(cwd, branch);
+  if (!wt) return { line: `no worktree has ${branch} checked out`, removed: false };
+  const top = gitOut(cwd, ['rev-parse', '--show-toplevel']).trim();
+  const name = path.basename(wt);
+  if (path.resolve(wt) !== path.resolve(path.dirname(top), 'worktrees', name)) return { line: `${wt} is not a lane under ../worktrees/; it is left for removal by hand`, removed: false };
+  const rm = spawnSync(process.execPath, [WORKTREE_RM, name], { cwd: top, env: R.gitEnv(), encoding: 'utf8' });
+  if (worktreeOf(cwd, branch)) return { line: `scripts/worktree-rm.js ${name} left it (exit ${rm.status}: ${firstLine(rm.stderr)})`, removed: false };
+  return { line: `removed ${name} (scripts/worktree-rm.js)`, removed: true };
 }
 
 // Why a resume of the unpushed `squash` stops before any push (mergeShip's
-// header, a resume), or null. The squash receipt (the receipt under the
-// squash's commit key whose tip is the squash) records the lane tip it
-// squashed (squash.lane_tip, writeSquashReceipt's); a branch tip other than
-// that holds what the squash does not, which a resume would strand (it
-// pushes the old squash and removes the clean worktree). A receipt of the
-// squash that records no lane tip (one a review --commit wrote) lets the
-// resume go on only while merged's files check passes, every lane file
-// byte-identical on main.
+// header, a resume), or null: the squash with no receipt (a replayed one's
+// is the earlier squash's, squashRecord); a branch tip other
+// than the lane tip the receipt records (the commits since it, which a
+// resume would strand: it pushes the old squash and removes the clean
+// worktree); and a branch that holds what the squash does not (strandOf),
+// the one check when the receipt records no lane tip, a git fault answered
+// with "run the same command again" and a lane-path conflict with BY_HAND.
 function resumeProblem(cwd, branch, squash) {
   const tip = commitOf(cwd, `refs/heads/${branch}`);
   if (!tip) return `no branch ${branch}; a resume needs the branch to resolve`;
-  let rec;
-  try {
-    rec = R.readReceipt(R.receiptDir(R.commitKey(squash, { cwd }), { cwd }));
-  } catch (err) {
-    return `the receipt of the squash ${S(squash)} cannot be read (${firstLine(err && err.message ? err.message : String(err))}); fix or move it`;
-  }
-  if (!rec || rec.tip !== squash) return `the squash ${S(squash)} on main has no receipt; a review --commit of it is the way through`;
-  const way = 'the way through is a new review of the branch once the squash is pushed or reverted, never a resume';
-  const recorded = rec.squash && rec.squash.commit === squash ? rec.squash.lane_tip : null;
-  if (!R.KEY_RE.test(String(recorded))) {
-    const files = MC.mergedLane({ cwd, branch }).checks.find((c) => c.name === 'files');
-    if (files && files.ok) return null;
-    return `the receipt of the squash ${S(squash)} records no lane tip, and merged's files check ${files ? 'names lane files main does not hold' : 'did not run'}, which a resume would strand; ${way}`;
-  }
-  if (recorded === tip) return null;
-  const n = git(cwd, ['rev-list', '--count', '--end-of-options', `${recorded}..${tip}`]);
-  const count = n.status === 0 ? Number(n.stdout.trim()) : null;
-  const since = count === null ? 'the recorded tip not in this repository' : `${count} commit${count === 1 ? '' : 's'} since it`;
-  // Bounded (no file list), so the run's log line, 300 characters, holds it whole.
-  return `${branch} is at ${S(tip)}, not the lane tip ${S(recorded)} its squash ${S(squash)} records, with ${since}, which a resume would strand; ${way}`;
+  const { problem, laneTip } = squashRecord(cwd, squash);
+  if (problem) return problem;
+  const moved = laneTip && laneTip !== tip ? { line: movedLine(cwd, branch, tip, squash, laneTip) } : strandOf(cwd, branch, squash, laneTip);
+  if (!moved.line) return null;
+  if (moved.retry) return `${moved.line}; run the same command again`;
+  return moved.hand ? `${moved.line}; ${BY_HAND}` : `${moved.line}, which a resume would strand; ${PUSH_FIRST}`;
 }
 
 // The squash receipt (header, step 5): {key, dir, kind, superseded}; throws
@@ -373,4 +661,4 @@ function suitesStep(runDir) {
   return ok ? 0 : 1;
 }
 
-module.exports = { markerRefusal, preRefusal, resolvedIndexProblem, indexTree, differsOutsideDocs, verifyResolved, refusalOf, findSquash, findUnpushed, writeSquashReceipt, resumeProblem, suitesStep, originAhead, worktreeOf, git, gitOut, commitOf };
+module.exports = { markerRefusal, preRefusal, resolvedIndexProblem, indexTree, differsOutsideDocs, wasReset, verifyResolved, refusalOf, writeRunDir, squashShell, findSquash, unpushedOf, findUnpushed, revertedLine, writeSquashReceipt, squashRecord, strandOf, strandLine, dropAt, branchOutcome, removeLaneWorktree, resumeProblem, suitesStep, wedged, worktreeOf, branchInUse, git, gitOut, commitOf };

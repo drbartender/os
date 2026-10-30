@@ -24,7 +24,7 @@ test.after(() => fs.rmSync(SUITE_TMP, { recursive: true, force: true }));
 const T = require('./lib/mergeShipTestkit');
 const { WAIT_LINE } = require('./lib/mergeCheck');
 
-const { K, git, commit, sleep, s7, setCfg, records, makeOs, lane, review, reviewCommentOnly, ship, logFile, lines, steps, textOf, settled, head, originMain, status, exists, patchKey, hookOnce } = T;
+const { K, git, commit, sleep, s7, setCfg, records, makeOs, lane, review, reviewCommentOnly, ship, logFile, lines, steps, textOf, settled, head, originMain, status, exists, patchKey, BEHIND, advancer, hookOnce } = T;
 
 // One run per log: the first run's log moved aside, ending in its result
 // (first), and the log now holding one run, with one result line.
@@ -176,6 +176,9 @@ test('a conflict stops the ship with a clean index naming the file; --resolved t
   assert.equal(ok.code, 0, ok.all);
   const done = (await settled(h, tip)).lines;
   assert.match(done.at(-1), / result ok pushed /);
+  // The branch at the lane tip the squash records: nothing compared, the worktree removed, and merged's docs check keeps the branch.
+  assert.deepEqual(textOf(done, 'worktree'), ['removed lane-x (scripts/worktree-rm.js)']);
+  assert.match(done.at(-1), /; the branch lane-x is kept \(the files merged-lane check failed\)$/);
   oneRunEach(h, tip, /^refused the squash refused: squash-merge of 'lane-x' hit a conflict/);
   assert.equal(git(h.repo, 'show', 'HEAD:README.md'), 'readme\nlane prose\nmain prose');
   assert.equal(git(h.repo, 'show', 'HEAD:server/c.js'), 'c');
@@ -262,6 +265,7 @@ test('ready-moved re-runs the receipt\'s suites on the merged tree before the co
   assert.match(r.stdout, new RegExp(`^ready-moved ${s7(tip)}: started`));
   const green = await settled(h, tip);
   assert.equal(green.state, 'ok', green.lines.join('\n'));
+  assert.match(green.text, /; the worktree removed, the three merged-lane checks passed, the branch lane-rm deleted$/, 'the squash made on a moved main carries the branch, so it goes');
   oneRunEach(h, tip, /^refused the squash refused: the receipt's suites failed/);
   const order = steps(green.lines);
   assert.ok(order.lastIndexOf('suites') < order.indexOf('commit') && order.indexOf('commit') < order.indexOf('ship'), 'the suites ran before the commit, the commit before the gate');
@@ -335,23 +339,15 @@ test('the re-run\'s environment: with the ship\'s four variables, RUN_SUITES_ROO
   assert.deepEqual(seen, { set: [], root: fs.realpathSync(h.repo) });
 });
 
-// The way through when origin/main holds a commit main does not (the push-failure rule).
-const BEHIND = /; bring origin's new commit into main first \(the owner's call by the push-failure rule, never an auto-pull or a force\), then the same ship command resumes the unpushed squash [0-9a-f]{7}$/;
-
 test('a push rejection stops and reports: the bare remote advanced while the gate ran, nothing retried, the worktree stays, the ending and the resume\'s range refusal both naming the way through', async (t) => {
   const h = makeOs(t);
   const { tip } = lane(h, 'lane-rj', { 'server/a.js': 'a v2\n' });
   review(t, h, 'lane-rj');
-  const other = path.join(h.root, 'other');
-  git(h.root, 'clone', '-q', h.origin, other);
-  git(other, 'config', 'user.email', ['test', 'example.com'].join('@'));
-  git(other, 'config', 'user.name', 'Test User');
-  commit(other, 'elsewhere', { 'docs/elsewhere.md': 'x\n' });
-  setCfg(h.gate, { advance: other });
+  advancer(h);
   ship(h, 'lane-rj');
   const res = await settled(h, tip);
   assert.equal(res.state, 'failed', res.lines.join('\n'));
-  assert.match(res.text, /^push rejected \(fetch first\): origin\/main moved since the fetch; nothing was pushed and nothing is retried; bring /);
+  assert.match(res.text, /^push rejected \(fetch first\): origin\/main moved since the fetch; nothing was pushed and nothing is retried; replay /);
   assert.match(res.text, BEHIND);
   assert.notEqual(originMain(h), head(h));
   assert.ok(exists(h, 'refs/heads/lane-rj'));
@@ -362,7 +358,7 @@ test('a push rejection stops and reports: the bare remote advanced while the gat
   assert.match(again.stdout, /^resume [0-9a-f]{7} of lane-rj: started in the background/);
   const range = await settled(h, tip);
   assert.equal(range.state, 'refused', range.lines.join('\n'));
-  assert.match(range.text, /^[0-9a-f]{7} is not an ancestor of [0-9a-f]{7}; the range is not a push onto it; bring /);
+  assert.match(range.text, /^[0-9a-f]{7} is not an ancestor of [0-9a-f]{7}; the range is not a push onto it; replay /);
   assert.match(range.text, BEHIND);
   assert.notEqual(originMain(h), head(h), 'nothing pushed');
 });

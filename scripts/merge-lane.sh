@@ -11,9 +11,9 @@
 #     <lane-branch>  the worktree's branch to squash-merge into main
 #     <plan-link>    path/URL to the plan doc (kept in the squash commit message)
 #     [lane-name]    short label for the commit message; defaults to <lane-branch>
-#   scripts/merge-lane.sh check|merged <lane-branch>  the receipt check (ready,
-#     ready-moved, stale or refused) or the merged-lane checks, in
-#     scripts/lib/mergeCheck.js; a lane branch named check, merged or ship is refused
+#   scripts/merge-lane.sh check|merged <lane-branch>  the receipt check (ready, ready-moved,
+#     stale, refused, or merged: a squash ship resumes; a reverted one refused, as by ship)
+#     or the merged-lane checks, scripts/lib/mergeCheck.js; a branch named check, merged or ship is refused
 #   scripts/merge-lane.sh ship <lane-branch> <plan-link> [--no-push] [--resolved]
 #     [--foreground]  the ship phase, scripts/lib/mergeShip.js; its header says
 #     what its run directory (MERGE_LANE_SHIP) changes in the squash below
