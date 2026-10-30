@@ -121,7 +121,7 @@ test('flipState has three shapes, and an unreadable flip has a standing line of 
   assert.deepEqual(M.flipState({ cwd: r.repo }), { state: 'unreadable', sha: null, pushed_at: null, written_by: null, path: flipPath });
   assert.equal(M.flip({ cwd: r.repo }), null, 'a torn flip file is no flip object');
   const torn = M.standing({ cwd: r.repo }).flip;
-  assert.match(torn, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship$/, 'repair to the recipe is the one remedy, nothing about removing');
+  assert.match(torn, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30T07:12:24Z", "written_by": "<who restored it>"\}, then npm run ship$/, 'repair to the recipe is the one remedy, nothing about removing');
 });
 
 test('setGate refuses a sha not on main, and a non-commit, and writes nothing', (t) => {

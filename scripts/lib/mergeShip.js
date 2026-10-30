@@ -59,18 +59,19 @@
 // its branch is gone (mergeShipLog's phaseLines); locked moves a prior
 // manifest aside with the logs. The steps:
 //   1. start and lock. Then, before anything is merged: an unreadable flip
-//      marker refuses with its line; with the flip marker present, so does
-//      what shipFlow would refuse after the squash (its precheck, the same
-//      function: a DRB_SHIP_GATE_CMD, DRB_SHIP_WATCH_CMD or DRB_SHIP_GIT_CMD
-//      set without DRB_SHIP_ALLOW_STUBS=1, then the primary worktree on
-//      main), a standing watch marker, and a gate marker main's head does not
-//      fix forward (markers.isFixForward with self, the squash being its
-//      child), each with its own line (spec 4.4). checkLane runs again under
-//      the lock this run holds (the foreground's answer is a snapshot, and
-//      plain commits take no lock): stale or refused ends the run; a tip
-//      other than the one the foreground judged refuses; so does ready-moved
-//      with a log entry the receipt recorded with no suite command
-//      (result.unnamed_logs), a dirty os (the squash refuses one),
+//      marker refuses with its line, and so does what shipFlow would refuse
+//      (its precheck, the same function: a DRB_SHIP_GATE_CMD,
+//      DRB_SHIP_WATCH_CMD or DRB_SHIP_GIT_CMD set without
+//      DRB_SHIP_ALLOW_STUBS=1; a missing flip marker, lost since the flip,
+//      with CUE_ONLY and the restore recipe, as npm run ship refuses it; the
+//      primary worktree on main), a standing watch marker, and a gate marker
+//      main's head does not fix forward (markers.isFixForward with self, the
+//      squash its child), each with its own line (spec 4.4). checkLane runs
+//      again under the lock this run holds (the foreground's answer is a
+//      snapshot, and plain commits take no lock): stale or refused ends the
+//      run; a tip other than the one the foreground judged refuses; so does
+//      ready-moved with a log entry the receipt recorded with no suite
+//      command (result.unnamed_logs), a dirty os (the squash refuses one),
 //      --resolved over a comment-only receipt (its proof covers no
 //      resolution), and a comment-only receipt whose squash would key other
 //      than its lane key (the patch id of main..the tree git merge-tree
@@ -115,11 +116,11 @@
 //      resolved) the lane receipt's directory moves to _superseded/<key>.<time>/
 //      first, as finalize's publish does, and back on a failure. Then
 //      rangeCheck over parent..squash says whether the push check accepts it.
-//   6. flip: with no flip marker the run ends cue-only (shipFlow's CUE_ONLY):
-//      the squash and its receipt are on main (the step 4 behaviour plus the
-//      receipt). Every ending that leaves the squash on main and not pushed
-//      (cue-only, ok-no-push, a refusal or a failure after the commit) says
-//      so and that the same ship command resumes it; an unknown push outcome
+//   6. endings: a missing flip marker refuses at step 1, before the squash,
+//      and one lost later refuses inside shipFlow (step 7), the squash left
+//      on main. Every ending that leaves the squash on main and not pushed
+//      (ok-no-push, a refusal or a failure after the commit) says so and
+//      that the same ship command resumes it; an unknown push outcome
 //      says only that the squash is on main. A push rejection, and an ending
 //      while origin/main (as last fetched) is not in main's history or
 //      origin/main..main holds a merge commit (shipFlow's range check refuses
@@ -174,22 +175,22 @@
 //      branch that moved since that read or one a worktree holds so too
 //      (branchOutcome; a branch kept for what the squash may not hold, or
 //      for a worktree holding it so, is the manifest's kept). A dry run, a
-//      cue-only run and a failed push leave both. Each of the three runs on
+//      refusal and a failed push leave both. Each of the three runs on
 //      its own: one that throws, the kept line's write included, is a cleanup
 //      line naming it, a merged-lane check that fails is its merged fail line
 //      and keeps the branch, and the result stays the push's (the sha is
 //      live), as it does for any error after the push.
-// Exit 0 for ok, ok-no-push, pushed-elsewhere and cue-only, 1 for refused,
-// stale and failed, 2 for unknown (shipFlow's). A stop signal to the run
-// outside shipFlow is acted on once the step in hand ends (a landed squash
-// still gets its receipt); inside it, shipFlow's own handling. One sent to the
-// run's whole process group reaches the shell too, which stops as the
-// positional form does.
+// Exit 0 for ok, ok-no-push and pushed-elsewhere, 1 for refused, stale and
+// failed, 2 for unknown (shipFlow's). A stop signal to the run outside
+// shipFlow is acted on once the step in hand ends (a landed squash still gets
+// its receipt); inside it, shipFlow's own handling. One sent to the run's
+// whole process group reaches the shell too, which stops as the positional
+// form does.
 //
 // A resume: the same ship command again for a lane whose squash is on main
-// and not yet pushed (a dry run, a cue-only run, a gate or push refusal, a
-// stop). Before the check, locked looks for it as merged's first check does,
-// over the unpushed range: the newest commit of origin/main..main whose
+// and not yet pushed (a dry run, a gate or push refusal, a stop). Before the
+// check, locked looks for it as merged's first check does, over the
+// unpushed range: the newest commit of origin/main..main whose
 // subject opens merge(lane <branch>): (mergeShipSquash.unpushedOf). One a
 // later commit of that range reverts no resume can push (the push check takes
 // no revert receipt for a squash that never shipped), so locked refuses with
@@ -210,8 +211,8 @@
 // review --commit's), since a branch at the recorded tip is the squash's own
 // source; a git fault in the comparison with "run the same command again",
 // and a conflict in a lane path, which no retry clears, with the way through
-// by hand (the squash pushed by hand, npm run ship after the flip, then a new
-// review of the branch). Then the run, keyed on the branch tip, finds the same
+// by hand (the squash pushed by hand, npm run ship, then a new review of the
+// branch). Then the run, keyed on the branch tip, finds the same
 // squash again under the lock, asks resumeProblem again, logs `resume squash
 // <sha7> of <branch>, unpushed`, takes the marker
 // refusals of step 1 for main's head, and goes on from step 6 for main's
@@ -266,11 +267,11 @@ const MC = require('./mergeCheck');
 const RC = require('./rangeCheck');
 const SQ = require('./mergeShipSquash');
 const SL = require('./mergeShipLog');
-const { shipFlow, CUE_ONLY } = require('./shipFlow');
+const { shipFlow } = require('./shipFlow');
 
 const USAGE = 'usage: scripts/merge-lane.sh ship <lane-branch> <plan-link> [--no-push] [--resolved] [--foreground] | check <lane-branch> | merged <lane-branch>\n';
 const RESERVED = Object.freeze(['check', 'merged', 'ship']);
-const EXIT = new Map([['ok', 0], ['ok-no-push', 0], ['pushed-elsewhere', 0], ['cue-only', 0], ['refused', 1], ['stale', 1], ['failed', 1], ['unknown', 2]]);
+const EXIT = new Map([['ok', 0], ['ok-no-push', 0], ['pushed-elsewhere', 0], ['refused', 1], ['stale', 1], ['failed', 1], ['unknown', 2]]);
 const PUSHED = Object.freeze(['ok', 'pushed-elsewhere']);
 const OWNERS = "the owner's call by the push-failure rule; never a merge, an auto-pull or a force";
 const STOPS = Object.freeze(['SIGTERM', 'SIGINT', 'SIGHUP']);
@@ -412,7 +413,6 @@ class Ship {
     this.say('receipt', rc.ok ? 'the push check accepts the squash receipt' : `the push check would refuse it: ${rc.problems.slice(0, 3).join('; ')}`);
     const halted = this.halted('receipt');
     if (halted) return halted;
-    if (M.flipState({ cwd }).state === 'absent') return this.end('cue-only', `${CUE_ONLY.replace(/^ship: /, '')}; the squash receipt is written, and the worktree and the branch stay until it is pushed`);
     return this.shipSquash();
   }
 
@@ -432,7 +432,6 @@ class Ship {
     if (why) return this.end('refused', `${why}; nothing was pushed`);
     const halt = this.halted('resume');
     if (halt) return halt;
-    if (M.flipState({ cwd }).state === 'absent') return this.end('cue-only', `${CUE_ONLY.replace(/^ship: /, '')}; the worktree and the branch stay until it is pushed`);
     return this.shipSquash();
   }
 
@@ -629,10 +628,9 @@ async function locked(a, out) {
   }
   const p = SL.paths(cwd, tip);
   SL.moveAside(cwd, tip);
-  const note = M.flipState({ cwd }).state !== 'absent' ? '' : resume && branchTip ? '; no flip marker, so it ends cue-only, the squash still unpushed' : '; no flip marker, so it stops after the squash receipt (cue-only)';
   const run = { ...a, cwd, lockFile, judgedTip: tip, resume: resume && branchTip ? resume : null, log: p.log };
   if (a.foreground || held.lockFd === null) {
-    out(`${said}: shipping in the foreground${held.lockFd === null ? ' inside its caller\'s ship lock' : ''}, log ${p.log}${note}`);
+    out(`${said}: shipping in the foreground${held.lockFd === null ? ' inside its caller\'s ship lock' : ''}, log ${p.log}`);
     return (await new Ship({ ...run, lockFd: held.lockFd, foreground: true, out }).go()).code;
   }
   fs.mkdirSync(p.dir, { recursive: true });
@@ -647,7 +645,7 @@ async function locked(a, out) {
   return new Promise((resolve) => {
     child.once('spawn', () => {
       child.unref();
-      out(`${said}: started in the background, log ${p.log}${note}`);
+      out(`${said}: started in the background, log ${p.log}`);
       resolve(0);
     });
     child.once('error', (err) => {

@@ -4,20 +4,20 @@
 // (instruction rewrite step 3, lane ship-state; spec 2026-10-19 sections 4.3
 // and 4.7, plan 2026-10-22 decision 18). push-gate.js held MONEY_PATHS and
 // CLIENT_PATHS until this step; from the gate-sha lane on it re-exports them
-// from here, so its tests and neededGates keep their names, and the sha gate,
+// from here, so its tests keep the names they import, and the sha gate,
 // rangeCheck and ship's manifest all classify a range through touches(). This
 // file requires only sensitive-match.js and receipt.js, never push-gate.js or
 // rangeCheck.js, so no require cycle can form through it.
 //
-// Matching follows the git pathspecs neededGates passes: an entry ending in
+// Matching follows git's pathspec rules for these entries: an entry ending in
 // '/' matches every path under it; any other entry matches that exact path
 // (and, as a pathspec does, anything under a directory of that name). No entry
 // holds a glob character, so pathspec magic never applies. Paths are compared
 // as git names them from the top of the worktree (--no-relative), so a cwd in
 // a subdirectory changes nothing.
 //
-// touches(base, tip) reads `git diff --name-only base tip` (two trees, the way
-// neededGates diffs them), with renames off so a file moved out of server/
+// touches(base, tip) reads `git diff --name-only base tip` (two trees, never
+// a working tree), with renames off so a file moved out of server/
 // still touches server/, and NUL-separated so an unusual name is read exactly.
 // It returns:
 //   server          a path under server/

@@ -56,7 +56,9 @@
 # finished-commits (the block at the end), and at its second review
 # gratuity-rate and gratuity-election, so the rate rule and the
 # election-at-payment rule each hold a key beside the pointer line. No key
-# retired.
+# retired. Narrowed 2026-10-30, in a commit that stages no CLAUDE.md:
+# receipt-required drops its TRANSITIONAL alternative, the dated block having
+# gone with the legacy push path.
 
 # Named git-safety invariants (carried from the old Twelve Core Rules)
 os-on-main `?os`? (never leaves|stays on) `?main
@@ -71,7 +73,7 @@ never-scrap never scrap unmerged
 ships-after-gate push = deploy|ships after the gate
 
 # Main is prod: nothing reaches main without a review receipt (added 2026-10-29)
-receipt-required nothing reaches .*main.*review receipt|TRANSITIONAL.*reviewed before merge.*receipt
+receipt-required nothing reaches .*main.*review receipt
 
 # Verification + discipline (carried)
 design-review-fleet spec-grounding|review-spec

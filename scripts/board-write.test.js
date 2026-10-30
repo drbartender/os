@@ -529,7 +529,7 @@ test('after the flip an unreadable flip marker prints its BLOCKED line and keeps
   const res = writeBoard(h, 'Recently shipped', line);
   assert.strictEqual(res.status, 0, said(res));
   assert.match(res.stderr, /^Board updated under 'Recently shipped' and committed LOCALLY, not pushed\.$/m);
-  assert.match(res.stderr, /^ {2}BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship$/m);
+  assert.match(res.stderr, /^ {2}BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30T07:12:24Z", "written_by": "<who restored it>"\}, then npm run ship$/m);
   assert.match(res.stderr, /^ {2}The board rides the next real push\. Nothing is lost\.$/m);
   assert.deepStrictEqual(records(h.rec('ship')), [], 'ship never ran');
   assert.strictEqual(originHead(h), h.seed);
@@ -683,7 +683,7 @@ test('no flip marker: the board commit stays local under the hook\'s missing-mar
   assert.strictEqual(fs.existsSync(h.flip), false, 'the writer never writes the marker');
 });
 
-test('no flip marker and a push-gate.js that cannot load: the fixed missing-marker line, the board commit local, nothing pushed', (t) => {
+test('no flip marker and a push-gate.js that cannot load: the fixed missing-marker line ending with the restore recipe through markers.js (the path and the full sha), the board commit local, nothing pushed', (t) => {
   const h = makeFlipped(t);
   stubShip(h, { code: 0, lines: ['ship: result ok pushed HEAD, 1 commits'] });
   fs.rmSync(h.flip);
@@ -692,7 +692,7 @@ test('no flip marker and a push-gate.js that cannot load: the fixed missing-mark
   const res = writeBoard(h, 'Ready to build', line);
   assert.strictEqual(res.status, 0, said(res));
   assert.match(res.stderr, /^Board updated under 'Ready to build' and committed LOCALLY, not pushed\.$/m);
-  assert.match(res.stderr, /^ {2}BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored \(push-gate\.js could not be loaded; markers\.js flipRestore holds the recipe\)$/m);
+  assert.ok(res.stderr.includes(`  BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored (push-gate.js could not be loaded): ${require(path.join(h.scripts, 'lib', 'markers.js')).flipRestore(h.flip)}\n`), said(res));
   assert.deepStrictEqual(records(h.rec('ship')), [], 'ship never ran');
   boardCommitLocal(h, 'Ready to build', line);
   assert.strictEqual(originHead(h), h.seed, 'nothing reached the remote');

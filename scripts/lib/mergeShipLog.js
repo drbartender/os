@@ -15,8 +15,8 @@
 //   phase/<tip>.json  the manifest: {version, lane, tip, started_at, pid,
 //                     step, step_at, state, squash, result, ended_at, log,
 //                     kept}: state running until the run ends, then the
-//                     result's state (ok, ok-no-push, cue-only,
-//                     pushed-elsewhere, refused, stale, failed or unknown);
+//                     result's state (ok, ok-no-push, pushed-elsewhere,
+//                     refused, stale, failed or unknown);
 //                     step the step of the run's latest line and step_at when
 //                     that step began; kept, null until a cleanup after a push
 //                     keeps the branch for what the squash may not hold, then
@@ -59,8 +59,8 @@
 // an earlier lane of the same name is older than the run). Either reads in
 // place of the result, with no resume advice, `the squash <sha7> has since
 // reached origin` or `a squash of the lane has since reached origin as <sha7>`
-// (pushed by this run or another way, as every cue-only squash is before the
-// flip), the kept words beside it. Then one read of the lane's branch, for a
+// (pushed by this run or another way, as a dry run's squash pushed by hand
+// is), the kept words beside it. Then one read of the lane's branch, for a
 // squash that reached origin and for a manifest naming none (a run that ended
 // before any, its line then `...: <result>; the branch is gone`): with the
 // branch gone the line is shown this once and the lane retires, each current

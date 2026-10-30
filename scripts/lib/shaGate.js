@@ -427,8 +427,8 @@ function setMarker(ctx, reason) {
     }
     throw err;
   }
-  if (res.written && res.uncertain) ctx.warn(`gate: gate marker written on ${s7} (git could not place it for certain); it binds every push from the flip on`);
-  else if (res.written) ctx.warn(`gate: gate marker written on ${s7}; it binds every push from the flip on until a descendant passes`);
+  if (res.written && res.uncertain) ctx.warn(`gate: gate marker written on ${s7} (git could not place it for certain); it binds every push`);
+  else if (res.written) ctx.warn(`gate: gate marker written on ${s7}; it binds every push until a descendant passes`);
   else ctx.warn(`gate: no gate marker: ${res.reason}`);
   return res;
 }

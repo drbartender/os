@@ -95,22 +95,23 @@ test('a commit on the lane after a dry run: the same ship command refuses before
   assert.equal(originMain(h), h.seed);
 });
 
-test('a cue-only squash, then the flip marker, then the same ship command: it resumes and pushes the squash', async (t) => {
-  const h = makeOs(t, { flip: false });
+test('a dry run, then the flip marker lost: the same ship command refuses the resume before any push with CUE_ONLY and the restore recipe, in the background and foreground forms (exit 1, the squash untouched, nothing more gated or pushed); restored, it resumes and pushes the squash', async (t) => {
+  const h = makeOs(t);
   const { tip } = lane(h, 'lane-cq', { 'server/a.js': 'a v2\n' });
   review(t, h, 'lane-cq');
-  assert.equal(ship(h, 'lane-cq').code, 0);
-  const cue = await settled(h, tip);
-  assert.equal(cue.state, 'cue-only', cue.lines.join('\n'));
-  assert.match(cue.text, UNPUSHED);
+  assert.equal(ship(h, 'lane-cq', ['--no-push']).code, 0);
+  assert.equal((await settled(h, tip)).state, 'ok-no-push');
   const squash = head(h);
-  // Before the marker a second ship resumes and ends cue-only again, the squash untouched.
-  const again = await resume(h, 'lane-cq', tip, squash);
-  assert.equal(again.state, 'cue-only', again.lines.join('\n'));
-  assert.match(again.text, UNPUSHED);
-  assert.equal(head(h), squash);
+  const flip = path.join(h.common, 'drb-flip.json');
+  fs.rmSync(flip);
+  const recipe = require(path.join(h.repo, 'scripts', 'lib', 'markers.js')).flipRestore(flip);
+  for (const flags of [[], ['--foreground']]) {
+    const r = ship(h, 'lane-cq', flags);
+    assert.deepEqual([r.code, r.stdout], [1, `refused no flip marker (lost since the flip of 2026-10-30); every push refuses until it is restored (npm run ship says how); ${recipe}; nothing was pushed\n`], `${flags.join(' ') || 'background'}: ${r.all}`);
+  }
+  assert.deepEqual([head(h), originMain(h), records(h.rec('gate')).length], [squash, h.seed, 1], 'the squash untouched, nothing more gated or pushed');
   flipOn(h);
-  resumedAndPushed(h, await resume(h, 'lane-cq', tip, squash), 'lane-cq', squash);
+  resumedAndPushed(h, await resume(h, 'lane-cq', tip, squash), 'lane-cq', squash, { gates: 2 });
 });
 
 test('a --resolved dry run, then the same ship command: the branch at the lane tip its squash records, the resume compares nothing and pushes the squash once; the worktree is removed and merged\'s docs check keeps the branch, the hand resolution of the prose not being the lane\'s own text', async (t) => {
@@ -139,30 +140,26 @@ test('a --resolved dry run, then the same ship command: the branch at the lane t
   assert.ok(exists(h, 'refs/heads/lane-rd'), 'the branch is kept');
 });
 
-test('a comment-only lane through both: a dry run then the real ship, and a cue-only squash then the marker then the ship', async (t) => {
-  for (const flip of [true, false]) {
-    const h = makeOs(t, { flip, seed: { 'server/c.js': C_JS } });
-    const { tip } = lane(h, 'lane-co', { 'server/c.js': `// what c holds\n${C_JS}` });
-    reviewCommentOnly(t, h, 'lane-co');
-    assert.equal(ship(h, 'lane-co', flip ? ['--no-push'] : []).code, 0);
-    const first = await settled(h, tip);
-    assert.equal(first.state, flip ? 'ok-no-push' : 'cue-only', first.lines.join('\n'));
-    const squash = head(h);
-    assert.match(textOf(first.lines, 'receipt')[0], /, kind comment-only, /);
-    if (!flip) flipOn(h);
-    resumedAndPushed(h, await resume(h, 'lane-co', tip, squash), 'lane-co', squash, { gates: flip ? 2 : 1 });
-  }
+test('a comment-only lane: a dry run, then the same ship command resumes and pushes its squash', async (t) => {
+  const h = makeOs(t, { seed: { 'server/c.js': C_JS } });
+  const { tip } = lane(h, 'lane-co', { 'server/c.js': `// what c holds\n${C_JS}` });
+  reviewCommentOnly(t, h, 'lane-co');
+  assert.equal(ship(h, 'lane-co', ['--no-push']).code, 0);
+  const first = await settled(h, tip);
+  assert.equal(first.state, 'ok-no-push', first.lines.join('\n'));
+  const squash = head(h);
+  assert.match(textOf(first.lines, 'receipt')[0], /, kind comment-only, /);
+  resumedAndPushed(h, await resume(h, 'lane-co', tip, squash), 'lane-co', squash, { gates: 2 });
 });
 
 test('a resume when main moved past the squash by a plain docs commit: main\'s head ships whole, both commits in the range', async (t) => {
-  const h = makeOs(t, { flip: false });
+  const h = makeOs(t);
   const { tip } = lane(h, 'lane-mv', { 'server/a.js': 'a v2\n' });
   review(t, h, 'lane-mv');
-  assert.equal(ship(h, 'lane-mv').code, 0);
-  assert.equal((await settled(h, tip)).state, 'cue-only');
+  assert.equal(ship(h, 'lane-mv', ['--no-push']).code, 0);
+  assert.equal((await settled(h, tip)).state, 'ok-no-push');
   const squash = head(h);
   const later = commit(h.repo, 'a plain docs commit', { 'docs/later.md': 'later\n' });
-  flipOn(h);
   const res = await resume(h, 'lane-mv', tip, squash);
   resumedAndPushed(h, res, 'lane-mv', squash);
   assert.equal(originMain(h), later);
@@ -344,35 +341,31 @@ test('lane:status shows the ship phase per lane: a refused background run with i
   assert.deepEqual(phaseOf(h), [refused], 'a later lane\'s ok run hides no other lane\'s refused one');
 });
 
-test('a cue-only run\'s phase line says the squash sits unpushed until it reaches origin, then that it is on origin; check on a dry-run lane answers merged, unpushed, ship resumes it', async (t) => {
-  const h = makeOs(t, { flip: false });
+test('a dry run\'s phase line says the squash sits unpushed until it reaches origin, then that it is on origin; check on the dry-run lane answers merged, unpushed, ship resumes it', async (t) => {
+  const h = makeOs(t);
   const { tip } = lane(h, 'lane-oc', { 'server/a.js': 'a v2\n' });
   review(t, h, 'lane-oc');
-  assert.equal(ship(h, 'lane-oc').code, 0);
-  const cue = await settled(h, tip);
-  assert.equal(cue.state, 'cue-only', cue.lines.join('\n'));
+  assert.equal(ship(h, 'lane-oc', ['--no-push']).code, 0);
+  const dry = await settled(h, tip);
+  assert.equal(dry.state, 'ok-no-push', dry.lines.join('\n'));
+  assert.match(dry.text, UNPUSHED);
   const squash = head(h);
-  assert.deepEqual(phaseOf(h), [`ship phase: lane-oc at ${s7(tip)} ended cue-only at ${endedAt(h, tip)}: ${cue.text}`]);
+  assert.deepEqual(phaseOf(h), [`ship phase: lane-oc at ${s7(tip)} ended ok-no-push at ${endedAt(h, tip)}: ${dry.text}`]);
+  const c = spawnSync('bash', [h.shell, 'check', 'lane-oc'], { cwd: h.repo, env: h.env, encoding: 'utf8' });
+  assert.deepEqual([c.status, c.stdout], [0, `merged ${s7(squash)} of lane-oc, unpushed; ship resumes it\n`], c.stderr);
   git(h.repo, 'push', '-q', 'origin', 'main');
-  assert.deepEqual(phaseOf(h), [`ship phase: lane-oc at ${s7(tip)} ended cue-only at ${endedAt(h, tip)}: the squash ${s7(squash)} has since reached origin`]);
-  const g = makeOs(t);
-  const d = lane(g, 'lane-dc', { 'server/a.js': 'a v2\n' });
-  review(t, g, 'lane-dc');
-  assert.equal(ship(g, 'lane-dc', ['--no-push']).code, 0);
-  assert.equal((await settled(g, d.tip)).state, 'ok-no-push');
-  const c = spawnSync('bash', [g.shell, 'check', 'lane-dc'], { cwd: g.repo, env: g.env, encoding: 'utf8' });
-  assert.deepEqual([c.status, c.stdout], [0, `merged ${s7(head(g))} of lane-dc, unpushed; ship resumes it\n`], c.stderr);
+  assert.deepEqual(phaseOf(h), [`ship phase: lane-oc at ${s7(tip)} ended ok-no-push at ${endedAt(h, tip)}: the squash ${s7(squash)} has since reached origin`]);
 });
 
-test('a cue-only run pushed by hand: its phase line says the squash has since reached origin while the branch stands, and once the worktree and the branch are gone it prints that once more and retires', async (t) => {
-  const h = makeOs(t, { flip: false });
+test('a dry run pushed by hand: its phase line says the squash has since reached origin while the branch stands, and once the worktree and the branch are gone it prints that once more and retires', async (t) => {
+  const h = makeOs(t);
   const { wt, tip } = lane(h, 'lane-rt', { 'server/a.js': 'a v2\n' });
   review(t, h, 'lane-rt');
-  assert.equal(ship(h, 'lane-rt').code, 0);
-  assert.equal((await settled(h, tip)).state, 'cue-only');
+  assert.equal(ship(h, 'lane-rt', ['--no-push']).code, 0);
+  assert.equal((await settled(h, tip)).state, 'ok-no-push');
   const squash = head(h);
   git(h.repo, 'push', '-q', 'origin', 'main');
-  const line = `ship phase: lane-rt at ${s7(tip)} ended cue-only at ${endedAt(h, tip)}: the squash ${s7(squash)} has since reached origin`;
+  const line = `ship phase: lane-rt at ${s7(tip)} ended ok-no-push at ${endedAt(h, tip)}: the squash ${s7(squash)} has since reached origin`;
   assert.deepEqual(phaseOf(h), [line]);
   assert.deepEqual(phaseOf(h), [line], 'the branch stands, so the line stays');
   git(h.repo, 'worktree', 'remove', wt);

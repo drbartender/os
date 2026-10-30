@@ -292,6 +292,8 @@ test('a ship nested under a holder of the ship lock (DRB_SHIP_LOCK) runs in the 
   const repo = makeOs(t);
   const { tip } = lane(t, repo, 'lane-n', { 'server/a.js': 'a v2\n' });
   review(t, repo, 'lane-n');
+  // The flip marker, so the ship gets past its refusals; with no origin, shipFlow's fetch then fails.
+  fs.writeFileSync(path.join(repo, '.git', 'drb-flip.json'), JSON.stringify({ sha: git(repo, 'rev-parse', 'main'), pushed_at: new Date().toISOString(), written_by: 'test' }));
   const holder = path.join(tmpDir(t, 'holder'), 'holder.js');
   fs.writeFileSync(holder, [
     "'use strict';",
@@ -307,12 +309,13 @@ test('a ship nested under a holder of the ship lock (DRB_SHIP_LOCK) runs in the 
     '',
   ].join('\n'));
   const r = spawnSync(process.execPath, [holder, path.join(repo, '.git', 'drb-ship.lock'), SHELL, repo], { encoding: 'utf8', timeout: 150000 });
-  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.equal(r.status, 1, `${r.stdout}${r.stderr}`);
   const out = r.stdout.split('\n');
-  assert.match(out[0], new RegExp(`^ready ${s7(tip)}: shipping in the foreground inside its caller's ship lock, log \\S+; no flip marker`));
+  assert.match(out[0], new RegExp(`^ready ${s7(tip)}: shipping in the foreground inside its caller's ship lock, log \\S+$`));
   assert.ok(!r.stderr.includes(MC.WAIT_LINE), 'it did not wait on its own holder');
   assert.ok(out.includes('merge-lane ship: lock inside the ship lock its caller holds (DRB_SHIP_LOCK)'));
-  assert.match(out.filter(Boolean).at(-1), /^merge-lane ship: result cue-only /);
+  assert.ok(out.includes('merge-lane ship: release the ship lock stays with the caller that holds it'), r.stdout);
+  assert.match(out.filter(Boolean).at(-1), /^merge-lane ship: result failed fetch failed; /);
   assert.match(git(repo, 'log', '-1', '--format=%s'), /^merge\(lane lane-n\): docs\/plan\.md$/);
 });
 

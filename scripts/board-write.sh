@@ -43,8 +43,9 @@ set -euo pipefail
 #     board commit was the only unpushed commit) retired with the legacy
 #     push path, and the board commit stays local under the refusal the
 #     pre-push hook prints for it (push-gate.js missingMarkerLine, ending
-#     with the restore recipe of scripts/lib/markers.js), or a fixed line
-#     naming that recipe when push-gate.js cannot be loaded.
+#     with the restore recipe of scripts/lib/markers.js), or, when
+#     push-gate.js cannot be loaded, a fixed line ending with that recipe
+#     through markers.js flipRestore (naming flipRestore when that fails too).
 #   unreadable, or a state that cannot be read at all: no push. The flip
 #     marker's BLOCKED line (standing().flip) is printed and the board commit
 #     stays local.
@@ -141,6 +142,13 @@ missing_line() {
   node -e 'const p = require("path"); const dir = p.resolve(process.argv[1]); process.stdout.write(require(p.join(dir, "push-gate.js")).missingMarkerLine(require(p.join(dir, "lib", "markers.js")).flipState({ cwd: process.cwd() }).path))' "$(dirname "$0")" || true
 }
 
+# markers.js flipRestore for the marker path flipState names (the restore
+# recipe alone: the path, the full flip sha, then npm run ship), for the fixed
+# line when push-gate.js cannot be loaded: the same one node call, or nothing.
+restore_line() {
+  node -e 'const M = require(require("path").resolve(process.argv[1])); process.stdout.write(M.flipRestore(M.flipState({ cwd: process.cwd() }).path))' "$(dirname "$0")/lib/markers.js" || true
+}
+
 # --- No push: the flip marker is missing, unreadable, or cannot be read -----
 # Fails closed: the board commit stays local, in the LOCALLY wording, with
 # the hook's line for a missing marker, the flip marker's BLOCKED line for an
@@ -154,7 +162,13 @@ keep_local_no_flip() {
   elif [ "$flip" = "absent" ]; then
     blocker=$(missing_line)
     if [ -z "$blocker" ]; then
-      blocker="BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored (push-gate.js could not be loaded; markers.js flipRestore holds the recipe)"
+      local recipe
+      recipe=$(restore_line)
+      if [ -n "$recipe" ]; then
+        blocker="BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored (push-gate.js could not be loaded): ${recipe}"
+      else
+        blocker="BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored (push-gate.js could not be loaded; markers.js flipRestore holds the recipe)"
+      fi
     fi
   fi
   echo "Board updated under '${section}' and committed LOCALLY, not pushed." >&2

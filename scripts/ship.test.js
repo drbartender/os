@@ -435,7 +435,7 @@ test('an unreadable flip marker refuses with its line; a cwd that is not the pri
   fs.writeFileSync(path.join(h.common, 'drb-flip.json'), '{"sha": ');
   const torn = ship(h);
   assert.equal(torn.status, 1, said(torn));
-  assert.match(torn.stdout, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship$/m);
+  assert.match(torn.stdout, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30T07:12:24Z", "written_by": "<who restored it>"\}, then npm run ship$/m);
   writeFlip(h);
   git(h.repo, 'checkout', '-q', '-b', 'side');
   const side = ship(h);

@@ -103,22 +103,22 @@ test('a cleanup error after the push: the worktree removal made to fail ends the
   assert.ok(exists(h, 'refs/heads/lane-cf'), 'the branch is kept');
 });
 
-test('with no flip marker: the squash and its receipt land, the cue-only line ends it, nothing is gated or pushed, the worktree stays', async (t) => {
+test('with no flip marker (lost since the flip): the ship refuses before the squash with CUE_ONLY and the restore recipe, in the background, foreground and dry-run forms, exit 1, main untouched, the lane receipt in place, no run started, nothing gated or pushed', (t) => {
   const h = makeOs(t, { flip: false });
-  const { tip } = lane(h, 'lane-cue', { 'server/a.js': 'a v2\n' });
-  review(t, h, 'lane-cue');
-  const r = ship(h, 'lane-cue', ['--foreground']);
-  assert.equal(r.code, 0, r.all);
-  assert.match(r.stdout, new RegExp(`^ready ${s7(tip)}: shipping in the foreground, log \\S+; no flip marker, so it stops after the squash receipt \\(cue-only\\)\\n`));
-  const res = await settled(h, tip);
-  assert.equal(res.state, 'cue-only');
-  assert.match(res.text, /^no flip marker \(lost since the flip of 2026-10-30\); every push refuses until it is restored \(npm run ship says how\); the squash receipt is written, and the worktree and the branch stay until it is pushed; the squash [0-9a-f]{7} sits on main unpushed, and the same ship command resumes it$/);
-  const squash = head(h);
-  assert.match(git(h.repo, 'log', '-1', '--format=%s'), /^merge\(lane lane-cue\): docs\/plan\.md$/);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(h.common, 'drb-review', patchKey(h, squash), 'receipt.json'), 'utf8')).kind, 'squash');
+  const { tip } = lane(h, 'lane-nf', { 'server/a.js': 'a v2\n' });
+  const key = review(t, h, 'lane-nf');
+  const recipe = require(path.join(h.repo, 'scripts', 'lib', 'markers.js')).flipRestore(path.join(h.common, 'drb-flip.json'));
+  for (const flags of [[], ['--foreground'], ['--no-push']]) {
+    const r = ship(h, 'lane-nf', flags);
+    assert.deepEqual([r.code, r.stdout], [1, `refused no flip marker (lost since the flip of 2026-10-30); every push refuses until it is restored (npm run ship says how); ${recipe}\n`], `${flags.join(' ') || 'background'}: ${r.all}`);
+  }
+  assert.equal(head(h), h.seed, 'nothing merged');
+  assert.equal(status(h), '');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(h.common, 'drb-review', key, 'receipt.json'), 'utf8')).kind, 'lane', 'the lane receipt stands');
+  assert.ok(!fs.existsSync(logFile(h, tip)), 'no run started');
   assert.equal(originMain(h), h.seed);
   assert.deepEqual(records(h.rec('gate')), []);
-  assert.ok(fs.existsSync(path.join(h.root, 'worktrees', 'lane-cue')) && exists(h, 'refs/heads/lane-cue'), 'the worktree and the branch stay');
+  assert.ok(fs.existsSync(path.join(h.root, 'worktrees', 'lane-nf')) && exists(h, 'refs/heads/lane-nf'), 'the worktree and the branch stay');
 });
 
 test('--no-push with the flip marker: the gate runs on the squash, nothing is pushed or watched, the result is ok-no-push', async (t) => {
@@ -310,22 +310,22 @@ const ENV_SUITE = ["'use strict';", "const test = require('node:test');", "const
   "test('records its environment', () => fs.writeFileSync(path.join(__dirname, '..', '..', 'suite-env.json'), JSON.stringify({ set: KEYS.filter((k) => k in process.env), root: process.env.RUN_SUITES_ROOT || null })));",
   ''].join('\n');
 
-// A ready-moved ship with no flip marker: main moves by a docs commit after
-// the review, so the receipt's suite (server/a.test.js) re-runs on the merged
-// tree before the commit, and the run ends cue-only.
+// A ready-moved dry run: main moves by a docs commit after the review, so the
+// receipt's suite (server/a.test.js) re-runs on the merged tree before the
+// commit, and the run ends ok-no-push, the gate stub run on the squash.
 async function readyMovedSuite(t, suite, env = {}) {
-  const h = makeOs(t, { flip: false, seed: { 'server/a.test.js': suite } });
+  const h = makeOs(t, { seed: { 'server/a.test.js': suite } });
   const { tip } = lane(h, 'lane-env', { 'server/b.js': 'b v2\n' });
   review(t, h, 'lane-env');
   commit(h.repo, 'main moves', { 'docs/other.md': 'other\n' });
-  const r = ship(h, 'lane-env', [], env);
+  const r = ship(h, 'lane-env', ['--no-push'], env);
   assert.match(r.stdout, new RegExp(`^ready-moved ${s7(tip)}: started in the background`), r.all);
   return { h, res: await settled(h, tip) };
 }
 
 test('ready-moved re-runs a suite that runs a merge-lane.sh of its own: the nested merge is never taken for the ship\'s (no MERGE_LANE_SHIP or MERGE_LANE_LOCKED reaches it), and it runs green', async (t) => {
   const { h, res } = await readyMovedSuite(t, NESTED);
-  assert.equal(res.state, 'cue-only', res.lines.join('\n'));
+  assert.equal(res.state, 'ok-no-push', res.lines.join('\n'));
   assert.match(textOf(res.lines, 'suites').at(-1), /^the receipt's 1 suite\(s\) green on the merged tree, pass 1$/);
   assert.match(git(h.repo, 'log', '-1', '--format=%s'), /^merge\(lane lane-env\): docs\/plan\.md$/);
 });
@@ -334,7 +334,7 @@ test('the re-run\'s environment: with the ship\'s four variables, RUN_SUITES_ROO
   const other = K.tmpDir(t, 'elsewhere');
   const env = { MERGE_LANE_SHIP: other, MERGE_LANE_LOCKED: '1', DRB_SHIP_LOCK: path.join(other, 'x.lock'), DRB_SHIP_LOCK_PID: '1', RUN_SUITES_ROOT: other, DRB_DEVDB_LOCK_FILE: path.join(other, 'devdb.lock') };
   const { h, res } = await readyMovedSuite(t, ENV_SUITE, env);
-  assert.equal(res.state, 'cue-only', res.lines.join('\n'));
+  assert.equal(res.state, 'ok-no-push', res.lines.join('\n'));
   const seen = JSON.parse(fs.readFileSync(path.join(h.root, 'suite-env.json'), 'utf8'));
   assert.deepEqual(seen, { set: [], root: fs.realpathSync(h.repo) });
 });
@@ -378,7 +378,7 @@ test('the marker refusals of spec 4.4, before anything is merged: a standing wat
   assert.match(ship(h, 'lane-m').stdout, /^refused [^\n]*gate[^\n]*\n$/i);
   fs.rmSync(path.join(h.common, 'drb-markers', 'gate.json'));
   fs.writeFileSync(path.join(h.common, 'drb-flip.json'), 'not json');
-  assert.match(ship(h, 'lane-m').stdout, /^refused BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S+drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship\n$/);
+  assert.match(ship(h, 'lane-m').stdout, /^refused BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S+drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30T07:12:24Z", "written_by": "<who restored it>"\}, then npm run ship\n$/);
   assert.equal(head(h), h.seed, 'nothing merged');
   assert.equal(status(h), '');
   assert.deepEqual(records(h.rec('gate')), []);

@@ -745,15 +745,15 @@ function clearWatch(sha, { note = null, cwd } = {}) {
 }
 
 // ---- the flip ------------------------------------------------------------------
-// The one copy of the flip's facts: FLIP_DATE, the day of the push that made
-// the sha gate the one push path, and FLIP_SHA, the sha its marker names,
-// joined from parts so that no source line holds a run of 32 hex digits (the
-// static checks' pii rule reads one as a token). flipRestore(file), the one
-// restore recipe: the path, and the JSON a restored or repaired flip marker
-// holds, then npm run ship.
-const FLIP_DATE = '2026-10-30';
+// The one copy of the flip's facts: FLIP_AT, the instant the flip marker held
+// when first written (zoned, as every _at key is), FLIP_DATE its day, and
+// FLIP_SHA the sha it names, joined from parts so no source line holds 32 hex
+// digits in a run (the static checks' pii rule reads one as a token). The one
+// restore recipe, flipRestore(file): the path, the JSON it holds, npm run ship.
+const FLIP_AT = '2026-10-30T07:12:24Z';
+const FLIP_DATE = FLIP_AT.slice(0, 10);
 const FLIP_SHA = ['8bf839995aa1d3d6', 'a4161623b8fb27cc', '8677b5a0'].join('');
-const flipRestore = (file) => `write ${file} as {"sha": "${FLIP_SHA}", "pushed_at": "${FLIP_DATE}", "written_by": "<who restored it>"}, then npm run ship`;
+const flipRestore = (file) => `write ${file} as {"sha": "${FLIP_SHA}", "pushed_at": "${FLIP_AT}", "written_by": "<who restored it>"}, then npm run ship`;
 
 // ---- the lines -----------------------------------------------------------------
 // Each line is a refusal, BLOCKED first, whatever the flip state: the markers
@@ -821,7 +821,7 @@ function standing({ cwd } = {}) {
 
 module.exports = {
   flip,
-  flipState, FLIP_DATE, FLIP_SHA, flipRestore,
+  flipState, FLIP_AT, FLIP_DATE, FLIP_SHA, flipRestore,
   gate,
   watch,
   setGate,

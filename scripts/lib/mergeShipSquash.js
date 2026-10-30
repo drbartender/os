@@ -145,18 +145,18 @@ function wedged(cwd) {
 
 // The refusals shipFlow would make, made before anything is merged
 // (mergeShip's header, step 1), for a ship of `sha` or of a child of it: an
-// unreadable flip marker; and with the flip marker present, shipFlow's own
-// precheck (a test override set without DRB_SHIP_ALLOW_STUBS=1, then the
-// primary worktree on main), a standing watch marker, and a gate marker
-// `sha` does not fix forward (spec 4.4).
+// unreadable flip marker; shipFlow's own precheck (a test override set
+// without DRB_SHIP_ALLOW_STUBS=1, a missing flip marker with CUE_ONLY and
+// the restore recipe, as npm run ship refuses, then the primary worktree on
+// main); a standing watch marker; and a gate marker `sha` does not fix
+// forward (spec 4.4).
 function markerRefusal(cwd, sha) {
-  const flip = M.flipState({ cwd });
   const st = M.standing({ cwd });
-  if (flip.state === 'unreadable') return st.flip;
-  const pre = flip.state === 'present' ? precheck(cwd) : {};
+  if (M.flipState({ cwd }).state === 'unreadable') return st.flip;
+  const pre = precheck(cwd);
   if (pre.refusal) return pre.refusal.split('\n').map((l) => l.replace(/^ship: /, '')).join('; ');
-  if (flip.state === 'present' && st.watch) return st.watch;
-  if (flip.state === 'present' && st.gate && !M.isFixForward(sha, { cwd, self: true })) return st.gate;
+  if (st.watch) return st.watch;
+  if (st.gate && !M.isFixForward(sha, { cwd, self: true })) return st.gate;
   return null;
 }
 
@@ -394,7 +394,7 @@ function findUnpushed(cwd, branch) {
 // squash, then review the branch anew; never a resume.
 const PUSH_FIRST = 'the way through is to push the squash, then a new review of the branch, never a resume';
 // The way through when the comparison meets a conflict in a lane path.
-const BY_HAND = 'the squash is pushed by hand (npm run ship after the flip), then a new review of the branch';
+const BY_HAND = 'the squash is pushed by hand (npm run ship), then a new review of the branch';
 
 // The answer check and ship both give for an unpushed squash with its revert
 // (mergeShip's header, a resume).

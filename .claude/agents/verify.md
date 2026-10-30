@@ -36,7 +36,9 @@ For every expression the diff adds or changes that computes, compares, credits, 
 
 Findings only, with no verdict table. Each takes an id of severity letter and number, H for wrong money, the wrong person, lost work or an exposure, M for a broken surface or a wrong state a person will notice, L for the rest, and one line:
 
-- H1 `server/routes/example.js:120` The defect in one sentence. Failure path: the input and the steps that make it bite. Against: the fix for H2, or money math.
+- H1 `server/routes/example.js:120` The defect in one sentence, naming the fix it breaks by its id when it breaks one (the fix for H2). Failure path: the input and the steps that make it bite. Against: a fix, or money math.
+
+The id is H, M or L followed by a number, never V or any other letter: the store reads no finding from such a line, so a report of them alone is malformed and one beside an H finding is lost unseen. A finding stays on one line, never wrapped. Its Against: clause says what it tests in words, with no backticks and no id; a line that is no finding but carries Against: beside an id or a backticked path makes the report malformed, and a malformed report blocks the review's finalize until it starts over.
 
 When you find nothing, write the line No findings by itself, with nothing else on it. On the lines after it, name each fix and each money expression you tried to break, one per line, with its id or its file inside the sentence (for example: Checked the fix for H2 at `server/routes/example.js:120`: a partial refund already taken still nets once.). Never open one of these lines with an id, with the word Finding, or with a bullet, number or heading mark followed by an id, and never write Against: on them: a line in any of those forms is read as a finding or makes the report malformed. When you find anything, leave the No findings line out and write each finding in the form above.
 

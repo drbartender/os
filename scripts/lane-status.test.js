@@ -258,7 +258,7 @@ test('markersReport reads the flip through flipState: a present flip by sha7 and
   // Repaired by hand to the recipe the line gives, it reads present.
   const fix = restoreFrom(r, LS.markersReport({ cwd: r.repo })[0]);
   fs.writeFileSync(fix.file, fix.body);
-  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [`flip marker: ${M.FLIP_SHA.slice(0, 7)} 2026-10-30`]);
+  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [`flip marker: ${M.FLIP_SHA.slice(0, 7)} 2026-10-30T07:12:24Z`], 'the instant the marker first held, never a bare day');
 });
 
 // The marker a missing-marker line's recipe writes, read as an operator reads
@@ -284,6 +284,7 @@ test('the hook, the session start and ship give one restore recipe for a missing
     const x = restoreFrom(r, line);
     fs.writeFileSync(x.file, x.body);
     assert.equal(M.flipState({ cwd: r.repo }).state, 'present', `the ${who} recipe writes a marker that reads present: ${line}`);
+    assert.ok(M.isZonedTime(M.flipState({ cwd: r.repo }).pushed_at), `the ${who} recipe's pushed_at is a zoned instant: ${line}`);
     fs.rmSync(x.file);
     return [x.sha, x.file];
   });
@@ -505,14 +506,14 @@ test('phaseReport: a running manifest whose pid is gone ended failed; each lane\
   assert.deepStrictEqual(lines, [`ship phase: lane-l at ${other.slice(0, 7)}, ship since ${JSON.parse(fs.readFileSync(path.join(r.dir, 'phase', `${other}.json`), 'utf8')).step_at}`, lines[1]]);
   assert.match(lines[1], /^ship phase: lane-g at [0-9a-f]{7} ended failed: /);
   const end = new Date().toISOString();
-  live.write({ state: 'cue-only', result: 'no flip marker; the squash sits on main unpushed', ended_at: end });
-  const cue = `ship phase: lane-l at ${other.slice(0, 7)} ended cue-only at ${end}: no flip marker; the squash sits on main unpushed`;
-  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [cue, lines[1]], 'each lane\'s latest ended run, newest first');
+  live.write({ state: 'ok-no-push', result: 'a dry run; the squash sits on main unpushed', ended_at: end });
+  const dry = `ship phase: lane-l at ${other.slice(0, 7)} ended ok-no-push at ${end}: a dry run; the squash sits on main unpushed`;
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [dry, lines[1]], 'each lane\'s latest ended run, newest first');
   // A later run of lane-g (another tip) that ends ok hides its gone one.
   commitAt(r.repo, 'server/c.js', 'c\n', 'lane-g again');
   const again = phase(r, 'lane-g', git(r.repo, ['rev-parse', 'HEAD']));
   again.write({ state: 'ok', result: 'pushed', ended_at: new Date().toISOString() });
-  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [cue]);
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [dry]);
   fs.writeFileSync(file, '{torn');
   assert.equal(LS.phaseReport({ cwd: r.repo })[0], `ship phase: unreadable manifest ${file}; fix or move it`);
 });
@@ -541,12 +542,12 @@ test('phaseReport retires a lane once its squash has reached origin and its bran
   const s7 = (sha) => sha.slice(0, 7);
   // One write each, its start and last step included, so the order is fixed.
   phase(r, 'lane-g', older).write({ started_at: ago(30 * MIN), step_at: ago(29 * MIN), state: 'refused', result: 'an older run of the lane', ended_at: ago(29 * MIN) });
-  const cueEnd = ago(10 * MIN);
-  phase(r, 'lane-g', newer).write({ started_at: ago(11 * MIN), step_at: cueEnd, state: 'cue-only', squash: r.sha, result: 'no flip marker; the squash sits on main unpushed', ended_at: cueEnd });
+  const dryEnd = ago(10 * MIN);
+  phase(r, 'lane-g', newer).write({ started_at: ago(11 * MIN), step_at: dryEnd, state: 'ok-no-push', squash: r.sha, result: 'a dry run; the squash sits on main unpushed', ended_at: dryEnd });
   const keptEnd = ago(20 * MIN);
-  phase(r, 'lane-k', r.sha).write({ started_at: ago(21 * MIN), step_at: keptEnd, state: 'cue-only', squash: r.sha, result: 'no flip marker; the squash sits on main unpushed', ended_at: keptEnd });
-  const kept = `ship phase: lane-k at ${r.sha7} ended cue-only at ${keptEnd}: the squash ${r.sha7} has since reached origin`;
-  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [`ship phase: lane-g at ${s7(newer)} ended cue-only at ${cueEnd}: the squash ${r.sha7} has since reached origin`, kept]);
+  phase(r, 'lane-k', r.sha).write({ started_at: ago(21 * MIN), step_at: keptEnd, state: 'ok-no-push', squash: r.sha, result: 'a dry run; the squash sits on main unpushed', ended_at: keptEnd });
+  const kept = `ship phase: lane-k at ${r.sha7} ended ok-no-push at ${keptEnd}: the squash ${r.sha7} has since reached origin`;
+  assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [`ship phase: lane-g at ${s7(newer)} ended ok-no-push at ${dryEnd}: the squash ${r.sha7} has since reached origin`, kept]);
   const names = fs.readdirSync(path.join(r.dir, 'phase')).sort();
   assert.deepStrictEqual(names.filter((n) => /\.done-\d+\.json$/.test(n)).map((n) => n.split('.')[0]).sort(), [older, newer].sort(), 'both of lane-g\'s manifests retired');
   assert.ok(names.includes(`${r.sha}.json`), 'lane-k\'s stays');
@@ -599,10 +600,10 @@ test('phaseReport retires a lane whose squash a replay rewrote, once a commit of
   const s7 = (sha) => sha.slice(0, 7);
   // A squash of an earlier lane-c, on origin long before the runs below.
   commitAt(r.repo, 'server/c.js', 'c\n', 'merge(lane lane-c): docs/plan.md', '2026-01-01T00:00:00Z');
-  // The cue-only run's squash, rewritten by a replay: the old sha is in no history of origin/main.
+  // The dry run's squash, rewritten by a replay: the old sha is in no history of origin/main.
   const old = git(r.repo, ['commit-tree', '-p', r.sha, '-m', 'merge(lane lane-p): docs/plan.md', tree]);
   const pEnd = ago(9 * MIN);
-  phase(r, 'lane-p', r.sha).write({ started_at: ago(10 * MIN), step_at: pEnd, state: 'cue-only', squash: old, result: 'no flip marker; the squash sits on main unpushed', ended_at: pEnd });
+  phase(r, 'lane-p', r.sha).write({ started_at: ago(10 * MIN), step_at: pEnd, state: 'ok-no-push', squash: old, result: 'a dry run; the squash sits on main unpushed', ended_at: pEnd });
   commitAt(r.repo, 'server/p.js', 'p\n', 'merge(lane lane-p): docs/plan.md');
   const replayed = git(r.repo, ['rev-parse', 'HEAD']);
   git(r.repo, ['update-ref', 'refs/remotes/origin/main', replayed]);
@@ -615,12 +616,12 @@ test('phaseReport retires a lane whose squash a replay rewrote, once a commit of
   const cSquash = git(r.repo, ['commit-tree', '-p', 'HEAD', '-m', 'merge(lane lane-c): docs/plan.md', tree]);
   const cEnd = ago(7 * MIN);
   const cTip = git(r.repo, ['commit-tree', '-p', r.sha, '-m', 'the re-cut lane', tree]);
-  phase(r, 'lane-c', cTip).write({ started_at: ago(8 * MIN), step_at: cEnd, state: 'cue-only', squash: cSquash, result: 'no flip marker; the squash sits on main unpushed', ended_at: cEnd });
-  const recut = `ship phase: lane-c at ${s7(cTip)} ended cue-only at ${cEnd}: no flip marker; the squash sits on main unpushed`;
+  phase(r, 'lane-c', cTip).write({ started_at: ago(8 * MIN), step_at: cEnd, state: 'ok-no-push', squash: cSquash, result: 'a dry run; the squash sits on main unpushed', ended_at: cEnd });
+  const recut = `ship phase: lane-c at ${s7(cTip)} ended ok-no-push at ${cEnd}: a dry run; the squash sits on main unpushed`;
   assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [
     recut,
     `ship phase: lane-s at ${s7(sTip)} ended refused at ${sEnd}: the check reads stale server/a.js; the branch is gone`,
-    `ship phase: lane-p at ${r.sha7} ended cue-only at ${pEnd}: a squash of the lane has since reached origin as ${s7(replayed)}`,
+    `ship phase: lane-p at ${r.sha7} ended ok-no-push at ${pEnd}: a squash of the lane has since reached origin as ${s7(replayed)}`,
   ]);
   assert.deepStrictEqual(LS.phaseReport({ cwd: r.repo }), [recut], 'the replayed lane and the scrapped one retired; the re-cut lane stays');
   const done = fs.readdirSync(path.join(r.dir, 'phase')).filter((n) => /\.done-\d+\.json$/.test(n)).map((n) => n.split('.')[0]).sort();

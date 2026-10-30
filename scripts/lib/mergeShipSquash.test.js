@@ -3,7 +3,7 @@
 // Suite for scripts/lib/mergeShipSquash.js (plan 2026-10-28 step 5, lane
 // merge-ship): the shell's first REFUSED line, verifyResolved, the squash
 // receipt (its key, the supersede, a comment-only lane's kind, a failure that
-// moves nothing) and findSquash. Every case runs in a throwaway os under the
+// moves nothing), findSquash and markerRefusal. Every case runs in a throwaway os under the
 // temp dir with the real sensitive list on its main, where check reads it;
 // receipts are written through the review-receipt CLI
 // (scripts/lib/receiptTestkit.js).
@@ -358,7 +358,7 @@ test('a comparison that cannot be made is never the strand advice: a branch whos
   fs.writeFileSync(recFile, JSON.stringify({ ...plain, kind: 'commit' }));
   const s7 = (sha) => sha.slice(0, 7);
   const line = `lane-q at ${s7(tip)} could not be compared with its squash ${s7(squash)} (merged onto ${s7(parent)} it conflicts in server/a.js)`;
-  assert.equal(MS.resumeProblem(repo, 'lane-q', squash), `${line}; the squash is pushed by hand (npm run ship after the flip), then a new review of the branch`);
+  assert.equal(MS.resumeProblem(repo, 'lane-q', squash), `${line}; the squash is pushed by hand (npm run ship), then a new review of the branch`);
   const conflict = MS.strandOf(repo, 'lane-q', squash);
   assert.deepEqual(conflict, { tip, line, retry: false, hand: true });
   assert.deepEqual(MS.branchOutcome(repo, 'lane-q', null, conflict, tip), { said: `lane-q is kept: ${line}`, text: `the branch lane-q is kept to be compared by hand (${line})`, shown: true });
@@ -409,4 +409,14 @@ test('the branch delete and a worktree holding the lane branch: a lane window\'s
   // The plain detached state, where git branch -D deletes too.
   assert.deepEqual(MS.dropAt(repo, 'lane-ru', landed), { deleted: true });
   assert.equal(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/lane-ru'], { cwd: repo }).status, 1, 'deleted');
+});
+
+test('markerRefusal with no flip marker (lost since the flip) answers shipFlow\'s CUE_ONLY and the restore recipe as one line, as npm run ship refuses; with the marker present, on main and nothing standing, it answers null', (t) => {
+  const repo = makeOs(t);
+  const head = git(repo, 'rev-parse', 'HEAD');
+  const M = require('./markers');
+  const flip = M.markerPaths({ cwd: repo }).flip;
+  assert.equal(MS.markerRefusal(repo, head), `${require('./shipFlow').CUE_ONLY.replace(/^ship: /, '')}; ${M.flipRestore(flip)}`);
+  fs.writeFileSync(flip, JSON.stringify({ sha: head, pushed_at: new Date().toISOString(), written_by: 'test' }));
+  assert.equal(MS.markerRefusal(repo, head), null);
 });

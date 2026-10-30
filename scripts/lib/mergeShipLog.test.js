@@ -90,8 +90,8 @@ test('phaseLines: a manifest gone between the directory read and its own read, o
   const p = SL.paths(repo, sha);
   const P = new SL.Phase({ cwd: repo, tip: sha, lane: 'lane-x', log: p.log });
   P.start();
-  P.write({ state: 'cue-only', squash: sha, result: 'no flip marker', ended_at: new Date().toISOString() });
-  const shown = `ship phase: lane-x at ${sha.slice(0, 7)} ended cue-only at ${JSON.parse(fs.readFileSync(p.phase, 'utf8')).ended_at}: the squash ${sha.slice(0, 7)} has since reached origin`;
+  P.write({ state: 'ok-no-push', squash: sha, result: 'a dry run', ended_at: new Date().toISOString() });
+  const shown = `ship phase: lane-x at ${sha.slice(0, 7)} ended ok-no-push at ${JSON.parse(fs.readFileSync(p.phase, 'utf8')).ended_at}: the squash ${sha.slice(0, 7)} has since reached origin`;
   const [readdir, rename] = [fs.readdirSync, fs.renameSync];
   t.after(() => { [fs.readdirSync, fs.renameSync] = [readdir, rename]; });
   // A name the directory listed whose file is gone by its read.

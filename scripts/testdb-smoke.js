@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /*
- * testdb-smoke.js — pre-push money-path smoke gate (audit P2, stage 1).
+ * testdb-smoke.js: the money-path smoke (audit P2, stage 1), which the sha
+ * gate runs (push-gate.js sha, inside npm run ship) and npm run test:smoke
+ * runs by hand.
  *
  * Flow when a Neon API key is configured:
  *   1. Reset the isolated `ci-smoke` branch to its prod parent (Neon REST API).
@@ -10,9 +12,14 @@
  *   4. Run the money-path smoke suites (scripts/money-smoke-list.txt) serially.
  *
  * Credential: NEON_API_KEY from process.env or ~/.secrets/neon_api_key.
- *   - No key  -> loud SKIP banner, exit 0 (gate is NOT yet blocking).
- *   - Key set -> the gate is HARD and FAIL-CLOSED: ANY error in reset / URI /
- *     initDb / a failing suite exits 1. Emergency escape: `git push --no-verify`.
+ *   - No key  -> loud SKIP banner, exit 0 (with --tap-dir, a summary marked
+ *     skipped), which the sha gate reads as never a pass: the gate fails,
+ *     nothing pushes, and no gate marker is written.
+ *   - Key set -> the smoke is HARD and FAIL-CLOSED: ANY error in reset / URI /
+ *     initDb / a failing suite exits 1. In the sha gate a failing suite is a
+ *     verdict on the code (the gate marker on a sha on main, cleared by a
+ *     descendant that passes, a fix forward); a smoke that could not run
+ *     fails the gate with no marker (fix the cause, then npm run ship again).
  *
  * The connection URI and the API key are NEVER printed (masked in every error).
  *
@@ -126,10 +133,10 @@ function die(msg) {
     }
   }
   console.error('');
-  console.error(`${RED}✗ pre-push BLOCKED — money smoke could not run.${RESET}`);
+  console.error(`${RED}✗ money smoke BLOCKED: it could not run.${RESET}`);
   console.error(`  ${mask(msg)}`);
-  console.error(`  ${DIM}Fail-closed: a configured gate never falls through to a silent pass.${RESET}`);
-  console.error(`  Emergencies only: ${YELLOW}git push --no-verify${RESET}`);
+  console.error(`  ${DIM}Fail-closed: a configured smoke never falls through to a silent pass.${RESET}`);
+  console.error(`  In the sha gate this fails the gate with no marker and nothing pushes: fix the cause, then ${YELLOW}npm run ship${RESET} again.`);
   process.exit(1);
 }
 
@@ -152,7 +159,7 @@ function skipBanner() {
   console.log('');
   console.log(`${RED}${bar}${RESET}`);
   console.log(`${RED}  MONEY SMOKE SKIPPED — NEON_API_KEY not configured.${RESET}`);
-  console.log(`${RED}  This gate is NOT yet blocking; your push will proceed.${RESET}`);
+  console.log(`${RED}  A skip is never a pass: the sha gate fails on it, so nothing pushes.${RESET}`);
   console.log(`${RED}  Set it up: see README > Test gate.${RESET}`);
   console.log(`${RED}${bar}${RESET}`);
   console.log('');
@@ -415,12 +422,12 @@ async function main({ tapDir }, lock) {
   let dbUrl;
   try {
     stopIfOrphaned(lock, 'the Neon reset');
-    console.log(`${DIM}pre-push: resetting ci-smoke branch to its parent…${RESET}`);
+    console.log(`${DIM}smoke: resetting ci-smoke branch to its parent…${RESET}`);
     await resetBranchToParent(apiKey);
-    console.log(`${DIM}pre-push: fetching ci-smoke connection URI…${RESET}`);
+    console.log(`${DIM}smoke: fetching ci-smoke connection URI…${RESET}`);
     dbUrl = await fetchConnectionUri(apiKey);
     stopIfOrphaned(lock, 'initDb');
-    console.log(`${DIM}pre-push: applying schema (initDb) to ci-smoke…${RESET}`);
+    console.log(`${DIM}smoke: applying schema (initDb) to ci-smoke…${RESET}`);
     try {
       runInitDb(dbUrl, lockFd);
     } finally {
@@ -431,7 +438,7 @@ async function main({ tapDir }, lock) {
   }
 
   console.log('');
-  console.log(`pre-push: running ${files.length} money-path smoke suite(s) against ci-smoke…`);
+  console.log(`smoke: running ${files.length} money-path smoke suite(s) against ci-smoke…`);
   let anyFailed = false;
   const tapResults = [];
   for (const file of files) {
@@ -449,11 +456,11 @@ async function main({ tapDir }, lock) {
   const totalSecs = ((Date.now() - totalStart) / 1000).toFixed(1);
   console.log('');
   if (anyFailed) {
-    console.error(`${RED}✗ pre-push BLOCKED — one or more money-path smoke suites failed (${totalSecs}s total).${RESET}`);
-    console.error(`  Fix the failing suite(s) above. Emergencies only: ${YELLOW}git push --no-verify${RESET}`);
+    console.error(`${RED}✗ money smoke FAILED: one or more money-path smoke suites failed (${totalSecs}s total).${RESET}`);
+    console.error(`  Fix the failing suite(s) above. In the sha gate this is a verdict on the code: the gate marker stands on a sha on main until a descendant passes (${YELLOW}npm run ship${RESET} on the fix).`);
     process.exit(1);
   }
-  console.log(`${GREEN}✓ pre-push: all ${files.length} money-path smoke suites passed (${totalSecs}s total).${RESET}`);
+  console.log(`${GREEN}✓ smoke: all ${files.length} money-path smoke suites passed (${totalSecs}s total).${RESET}`);
   process.exit(0);
 }
 
