@@ -4,8 +4,6 @@ Four sections: invariants (law that protects money, auth, data and code; wheneve
 
 Every rule ends with its provenance: `[Dallas <date>]` when the owner decided it, `[Claude default]` when Claude derived it. A rule found without a bracket is a Claude default and may be dropped, saying so in one line; mechanics (what a script does) carry none. How to work with the owner lives in the private global rules file, never here. [Claude default 2026-10-19]
 
-TRANSITIONAL (2026-10-29, removed by the step 5 legacy-removal lane): until the flip marker (`<git-common-dir>/drb-flip.json`) exists, pushes are cue-only, through `npm run gate` and then a push of the literal sha; `npm run ship` refuses until then. [Claude default 2026-10-20]
-
 ---
 
 # Invariants
@@ -23,7 +21,7 @@ TRANSITIONAL (2026-10-29, removed by the step 5 legacy-removal lane): until the 
 
 ## Main is prod
 
-- Every commit on main ships after the gate: `npm run ship` gates `origin/main..<sha>` in a throwaway worktree, pushes that sha and starts the post-ship watch; the gate runs nothing for a docs-only range (the dated line above says what stands until the flip). [Dallas 2026-10-18]
+- Every commit on main ships after the gate: `npm run ship` gates `origin/main..<sha>` in a throwaway worktree, pushes that sha and starts the post-ship watch; the gate runs nothing for a docs-only range. [Dallas 2026-10-18]
 - Nothing reaches main without a review receipt: a lane gets its receipt before its merge and a quick fix before its commit, through the review skill (`.claude/skills/review/`); from the flip on, the merge path and the pre-push hook check it. [Dallas 2026-10-18]
 - Commits on main are finished work: reviewed, tested, one per logical feature; no WIP or checkpoint commit reaches main, since a lane's checkpoints are squashed away. Why: a revertable history where a commit is a unit of intent. [Claude default 2026-04-15]
 

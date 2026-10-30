@@ -57,15 +57,6 @@ function makeRepoWithRemote() {
   return { root, remote, work };
 }
 
-// A second clone of the same remote, to model a concurrent window.
-function cloneOf(remote, root, name) {
-  const dir = path.join(root, name);
-  git(root, ['clone', '-q', remote, dir]);
-  git(dir, ['config', 'user.email', `${name}@example.com`]);
-  git(dir, ['config', 'user.name', `${name}`]);
-  return dir;
-}
-
 function run(cwd, args) {
   return spawnSync('bash', [SCRIPT, ...args], { cwd, encoding: 'utf8' });
 }
@@ -189,83 +180,10 @@ test('atomic write replaces content without corruption', () => {
   assert.deepStrictEqual(leftovers, [], 'no temp file may be left behind');
 });
 
-test('concurrent writes do not lost-update (second rebases over the first)', () => {
-  const { root, remote, work } = makeRepoWithRemote();
-  const other = cloneOf(remote, root, 'window2');
-
-  const lineA = 'L5 sensitive-paths (spec, plan)';
-  const lineB = 'L6 lane-lifecycle (spec, plan)';
-
-  // Window 1 writes and pushes first.
-  const resA = run(work, ['Ready to build', lineA]);
-  assert.strictEqual(resA.status, 0, resA.stderr);
-
-  // Window 2 is now behind origin. Its write must pull --rebase, replay over
-  // window 1's commit, and push --ff-only, keeping BOTH lines.
-  const resB = run(other, ['Ready to build', lineB]);
-  assert.strictEqual(resB.status, 0, resB.stderr);
-
-  // Pull the final state from origin into a fresh clone and assert both lines.
-  const verify = cloneOf(remote, root, 'verify');
-  const text = boardText(verify);
-  assert.ok(text.includes(lineA), 'first window line must survive');
-  assert.ok(text.includes(lineB), 'second window line must survive');
-  // Each anchor still appears exactly once (no merge duplication).
-  for (const anchor of ['## Ready to build', '## In flight', '## Recently shipped']) {
-    const count = text.split(anchor).length - 1;
-    assert.strictEqual(count, 1, `anchor ${anchor} must appear exactly once after concurrent writes`);
-  }
-});
-
-// ── The push guard ──────────────────────────────────────────────────────────
-// `git push origin main` is a BRANCH push: it ships every unpushed commit on
-// main, not just the board commit. Twice in 2026-08 that nearly turned a board
-// line into an uncued production deploy of unrelated work. These two tests are a
-// PAIR and only mean something together: the guard must refuse when other work
-// is riding, and must still push when it is not. Dropping either half lets the
-// script regress in one direction while the other test stays green.
-
-function remoteBoard(remote) {
-  return execFileSync('git', ['show', 'main:docs/build-board.md'], { cwd: remote, encoding: 'utf8' });
-}
-
-test('the board IS pushed when its commit is the only thing unpushed', () => {
-  const { remote, work } = makeRepoWithRemote();
-  const line = 'Guard positive control (spec, plan)';
-  const res = run(work, ['Ready to build', line]);
-  assert.strictEqual(res.status, 0, res.stderr);
-  assert.ok(remoteBoard(remote).includes(line),
-    'with nothing else riding, the board must still reach origin, otherwise the guard has simply disabled pushing');
-});
-
-test('an unrelated unpushed commit is NEVER deployed by a board write', () => {
-  const { remote, work } = makeRepoWithRemote();
-  // Somebody merged a lane and has not pushed it. This is the real situation:
-  // on 2026-08-19 it was five code files from a merged marketing lane.
-  fs.writeFileSync(path.join(work, 'shipped-code.js'), 'module.exports = 1;\n');
-  git(work, ['add', '--', 'shipped-code.js']);
-  git(work, ['commit', '-q', '-m', 'merge(lane something): unpushed code']);
-
-  const line = 'Guard negative control (spec, plan)';
-  const res = run(work, ['In flight', line]);
-
-  // The board write itself SUCCEEDS: the work is done, only the push defers.
-  assert.strictEqual(res.status, 0, res.stderr);
-  assert.ok(boardText(work).includes(line), 'the board is still written locally');
-  assert.match(res.stderr, /not pushed/i, 'it must say plainly that it did not push');
-
-  // The point of the whole exercise:
-  const pushed = remoteBoard(remote);
-  assert.ok(!pushed.includes(line), 'the board line must NOT have reached origin');
-  const remoteFiles = execFileSync('git', ['ls-tree', '--name-only', 'main'], { cwd: remote, encoding: 'utf8' });
-  assert.ok(!remoteFiles.includes('shipped-code.js'),
-    'the unrelated commit must NOT have been deployed: this is the bug the guard exists for');
-});
-
 // ---- After the flip (instruction rewrite step 3, lane board-ship) ----------
 // With the flip marker (drb-flip.json in the throwaway's common dir) the
-// writer pushes through ship.js --foreground instead of its guarded push, and
-// the only-unpushed-commit guard is retired. Each case below runs the
+// writer pushes through ship.js --foreground, with no guard of its own (lane
+// legacy-removal retired the other branch). Each case below runs the
 // throwaway's own copy of scripts/ (kept out of git through
 // .git/info/exclude), invoked by the relative path a session uses from os, so
 // ship, the gate, the pre-push hook, the markers and the ship records are all
@@ -463,7 +381,7 @@ test('after the flip a board line on a clean main ships through ship.js --foregr
   assert.strictEqual(originHead(h), head, 'the remote moved to the board commit');
   assert.strictEqual(occurrences(fgit(h.origin, 'show', 'main:docs/build-board.md'), line), 1);
   assert.deepStrictEqual(shipResults(res.stdout), [['ok', `pushed ${s7(head)}, 1 commits`]]);
-  assert.match(res.stdout, /^Board updated under 'Ready to build' \(attempt 1\)\.$/m);
+  assert.match(res.stdout, /^Board updated under 'Ready to build'\.$/m);
   assert.doesNotMatch(res.stderr, /LOCALLY|outcome is unknown|unpushed here/);
   // The real gate, no stub: a docs-only range is nothing_to_run with no
   // stubs recorded and no gate worktree, and the hook took the push.
@@ -596,7 +514,7 @@ for (const e of SHIP_ENDINGS) {
     } else if (e.ending === 'local') {
       assert.ok(res.stderr.includes(LOCAL_LINE('In flight', e.reason)), said(res));
     } else {
-      assert.match(res.stdout, /^Board updated under 'In flight' \(attempt 1\)\.$/m);
+      assert.match(res.stdout, /^Board updated under 'In flight'\.$/m);
       assert.doesNotMatch(res.stderr, /LOCALLY|outcome is unknown/);
     }
     assert.strictEqual(originHead(h), h.seed);
@@ -611,7 +529,7 @@ test('after the flip an unreadable flip marker prints its BLOCKED line and keeps
   const res = writeBoard(h, 'Recently shipped', line);
   assert.strictEqual(res.status, 0, said(res));
   assert.match(res.stderr, /^Board updated under 'Recently shipped' and committed LOCALLY, not pushed\.$/m);
-  assert.match(res.stderr, /^ {2}BLOCKED: the flip marker \S*drb-flip\.json is unreadable; repair or remove it by hand$/m);
+  assert.match(res.stderr, /^ {2}BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship$/m);
   assert.match(res.stderr, /^ {2}The board rides the next real push\. Nothing is lost\.$/m);
   assert.deepStrictEqual(records(h.rec('ship')), [], 'ship never ran');
   assert.strictEqual(originHead(h), h.seed);
@@ -663,27 +581,6 @@ function stagingShim(root, file) {
 }
 
 const withShim = (env, shim) => ({ ...env, PATH: `${shim.dir}${path.delimiter}${env.PATH}` });
-
-test('no flip marker: a file another window stages during the write stays staged and out of the board commit, and the push carries only the board commit', (t) => {
-  const { root, remote, work } = makeRepoWithRemote();
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const before = git(remote, ['rev-parse', 'main']);
-  fs.mkdirSync(path.join(work, 'server'), { recursive: true });
-  fs.writeFileSync(path.join(work, 'server', 'quickfix.js'), 'module.exports = 2;\n');
-  const shim = stagingShim(root, 'server/quickfix.js');
-  const line = 'Board beside a staged quick fix (spec, plan)';
-  const res = spawnSync('bash', [SCRIPT, 'In flight', line], { cwd: work, encoding: 'utf8', env: withShim(process.env, shim) });
-  assert.strictEqual(res.status, 0, said(res));
-  assert.ok(fs.existsSync(shim.flag), 'the other window staged its file during the write');
-  assert.deepStrictEqual(git(work, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD']).split('\n'), ['docs/build-board.md'], 'the board commit carries the board file only');
-  assert.deepStrictEqual(git(work, ['diff', '--cached', '--name-only']).split('\n'), ['server/quickfix.js'], 'the quick fix is still staged');
-  assert.ok(boardText(work).includes(line));
-  // Nothing else was unpushed, so the guarded push went out: the board commit alone.
-  assert.strictEqual(git(remote, ['rev-parse', 'main']), git(work, ['rev-parse', 'HEAD']));
-  assert.strictEqual(git(remote, ['rev-parse', 'main~1']), before);
-  assert.deepStrictEqual(git(remote, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'main']).split('\n'), ['docs/build-board.md']);
-  assert.ok(!git(remote, ['ls-tree', '-r', '--name-only', 'main']).split('\n').includes('server/quickfix.js'), 'the staged quick fix never reached origin');
-});
 
 test('after the flip a file another window stages during the write stays staged and out of the board commit, and the board ships alone', async (t) => {
   const h = makeFlipped(t);
@@ -739,4 +636,64 @@ test('after the flip a temp file that cannot be made for ship\'s output keeps th
   assert.deepStrictEqual(records(h.rec('ship')), [], 'ship never ran');
   boardCommitLocal(h, 'In flight', line);
   assert.strictEqual(originHead(h), h.seed);
+});
+
+// ---- The legacy path gone (instruction rewrite step 5, lane legacy-removal) ----
+// A missing flip marker keeps the board commit local under the hook's own
+// line; the pull --rebase is unchanged, so the concurrent case runs flipped.
+
+test('after the flip concurrent writes do not lost-update: a write behind origin rebases over a peer\'s board line and ships both', async (t) => {
+  const h = makeFlipped(t);
+  const [lineA, lineB] = ['L5 sensitive-paths (spec, plan)', 'L6 lane-lifecycle (spec, plan)'];
+  // A peer window wrote its line and its push reached origin; this checkout is now behind.
+  const peer = path.join(h.root, 'peer');
+  fgit(h.root, 'clone', '-q', h.origin, peer);
+  for (const [k, v] of [['user.email', ['peer', 'example.com'].join('@')], ['user.name', 'Peer Window'], ['commit.gpgsign', 'false']]) fgit(peer, 'config', k, v);
+  fs.writeFileSync(path.join(peer, 'docs', 'build-board.md'), boardText(peer).replace('## In flight', `${lineA}\n## In flight`));
+  fgit(peer, 'commit', '-q', '-m', 'board: update Ready to build', '--', 'docs/build-board.md');
+  fgit(peer, 'push', '-q', 'origin', 'main');
+  const res = writeBoard(h, 'Ready to build', lineB);
+  assert.strictEqual(res.status, 0, said(res));
+  const head = fgit(h.work, 'rev-parse', 'HEAD');
+  assert.strictEqual(originHead(h), head, 'the write rebased onto the peer and shipped');
+  assert.strictEqual(fgit(h.work, 'rev-parse', 'HEAD~1'), fgit(peer, 'rev-parse', 'HEAD'), 'the board commit sits on the peer\'s');
+  assert.deepStrictEqual(shipResults(res.stdout), [['ok', `pushed ${s7(head)}, 1 commits`]]);
+  const text = fgit(h.origin, 'show', 'main:docs/build-board.md');
+  for (const line of [lineA, lineB]) assert.strictEqual(occurrences(text, line), 1, `${line} survives once`);
+  for (const anchor of ['## Ready to build', '## In flight', '## Recently shipped']) assert.strictEqual(occurrences(text, anchor), 1, `anchor ${anchor} once`);
+  await waitFor('the watch stub', () => records(h.rec('watch')).some((r) => r.sha === head));
+});
+
+test('no flip marker: the board commit stays local under the hook\'s missing-marker line, exit 0; ship never runs and nothing is pushed', (t) => {
+  const h = makeFlipped(t);
+  stubShip(h, { code: 0, lines: ['ship: result ok pushed HEAD, 1 commits'] });
+  fs.rmSync(h.flip);
+  const line = 'Board with the flip marker lost (spec, plan)';
+  const res = writeBoard(h, 'In flight', line);
+  assert.strictEqual(res.status, 0, said(res));
+  assert.match(res.stderr, /^Board updated under 'In flight' and committed LOCALLY, not pushed\.$/m);
+  const PG = require(path.join(h.scripts, 'push-gate.js'));
+  assert.ok(res.stderr.includes(`  ${PG.missingMarkerLine(h.flip)}\n`), said(res));
+  assert.match(res.stderr, /the flip happened on 2026-10-30 and the legacy push path is gone/);
+  assert.match(res.stderr, /^ {2}The board rides the next real push\. Nothing is lost\.$/m);
+  assert.doesNotMatch(res.stderr, /unpushed here|Push rejected|ESCALATE/, 'no guarded push ran');
+  assert.deepStrictEqual(records(h.rec('ship')), [], 'ship never ran');
+  boardCommitLocal(h, 'In flight', line);
+  assert.strictEqual(originHead(h), h.seed, 'nothing reached the remote');
+  assert.strictEqual(fs.existsSync(h.flip), false, 'the writer never writes the marker');
+});
+
+test('no flip marker and a push-gate.js that cannot load: the fixed missing-marker line, the board commit local, nothing pushed', (t) => {
+  const h = makeFlipped(t);
+  stubShip(h, { code: 0, lines: ['ship: result ok pushed HEAD, 1 commits'] });
+  fs.rmSync(h.flip);
+  fs.writeFileSync(path.join(h.scripts, 'push-gate.js'), "throw new Error('push-gate.js broken on purpose');\n");
+  const line = 'Board with no flip marker and a broken push-gate (spec, plan)';
+  const res = writeBoard(h, 'Ready to build', line);
+  assert.strictEqual(res.status, 0, said(res));
+  assert.match(res.stderr, /^Board updated under 'Ready to build' and committed LOCALLY, not pushed\.$/m);
+  assert.match(res.stderr, /^ {2}BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored \(push-gate\.js could not be loaded; markers\.js flipRestore holds the recipe\)$/m);
+  assert.deepStrictEqual(records(h.rec('ship')), [], 'ship never ran');
+  boardCommitLocal(h, 'Ready to build', line);
+  assert.strictEqual(originHead(h), h.seed, 'nothing reached the remote');
 });

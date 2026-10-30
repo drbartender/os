@@ -39,7 +39,7 @@ const FLOORS = {
   A: ['money', 'lifecycle', 'concurrency', 'outcomes-providers', 'access-egress', 'seams'],
   B: ['seams'],
 };
-const CUE_ONLY = 'ship: no flip marker; pushes stay cue-only through npm run gate';
+const CUE_ONLY = 'ship: no flip marker (lost since the flip of 2026-10-30); every push refuses until it is restored (npm run ship says how)';
 const WAIT_LINE = 'ship: a merge, a check or a ship holds the ship lock; waiting for it';
 const s7 = (sha) => sha.slice(0, 7);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -415,15 +415,15 @@ function stuck(h, sha, { pushed = false, claim = null, watchLine = false } = {})
 
 // ---- check 1: the flow ------------------------------------------------------------
 
-test('without the flip marker, --foreground and the detached form refuse with the cue-only line, push nothing and write nothing', (t) => {
+test('without the flip marker, --foreground and the detached form refuse with the missing-marker line, push nothing and write nothing', (t) => {
   const h = makeRepo(t, { flip: false });
   commit(h.repo, 'notes', { 'docs/notes.md': 'notes v2\n' });
   const r = ship(h);
   assert.equal(r.status, 1, said(r));
-  assert.equal(r.stdout.trim(), CUE_ONLY);
+  assert.equal(r.stdout, `${CUE_ONLY}\nship: ${h.lib('markers').flipRestore(path.join(h.common, 'drb-flip.json'))}\n`, 'the restore recipe under it, for the marker path');
   const d = spawnSync(process.execPath, [h.ship], { cwd: h.repo, env: h.env, encoding: 'utf8' });
   assert.equal(d.status, 1, said(d));
-  assert.equal(d.stdout.trim(), CUE_ONLY);
+  assert.equal(d.stdout, r.stdout);
   assert.equal(originMain(h), h.seed);
   assert.equal(fs.existsSync(shipDir(h)), false, 'no drb-ship directory');
   assert.equal(fs.existsSync(path.join(h.common, 'drb-ship.lock')), false, 'no lock file either');
@@ -435,7 +435,7 @@ test('an unreadable flip marker refuses with its line; a cwd that is not the pri
   fs.writeFileSync(path.join(h.common, 'drb-flip.json'), '{"sha": ');
   const torn = ship(h);
   assert.equal(torn.status, 1, said(torn));
-  assert.match(torn.stdout, /^BLOCKED: the flip marker .* is unreadable; repair or remove it by hand$/m);
+  assert.match(torn.stdout, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship$/m);
   writeFlip(h);
   git(h.repo, 'checkout', '-q', '-b', 'side');
   const side = ship(h);
@@ -679,7 +679,7 @@ test('a watch marker that appears while the gate runs refuses right before the p
   assert.equal(originMain(h), h.seed);
 });
 
-test('a flip marker removed while the gate runs refuses with the cue-only line before the push stamp', (t) => {
+test('a flip marker removed while the gate runs refuses with the missing-marker line before the push stamp', (t) => {
   const h = makeRepo(t);
   const lane = landLane(h, { 'server/a.js': 'a v2\n' });
   setCfg(h.gate, { unflip: true });

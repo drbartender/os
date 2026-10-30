@@ -4,29 +4,20 @@ set -euo pipefail
 # board-write.sh: concurrency-safe writer for docs/build-board.md.
 #
 # Many Claude windows touch the board, so a naive write would lost-update.
-# This helper does, per attempt: git pull --rebase, an atomic temp-file +
-# rename write, a git commit of the board file alone (the no-change check and
-# the commit both name it, so a change another window has staged in the
-# shared index stays staged and never rides in a board commit), then the
-# push. Which push is the flip marker's (<git-common-dir>/drb-flip.json,
-# written by step 5 of the instruction rewrite), read after the commit by one
-# node call against scripts/lib/markers.js (flipState, the branch rule every
-# push path shares):
+# This helper does, once per call: git pull --rebase (so the write lands on
+# top of any peer's), an atomic temp-file + rename write, a git commit of the
+# board file alone (the no-change check and the commit both name it, so a
+# change another window has staged in the shared index stays staged and never
+# rides in a board commit), then the push. Whether it pushes is the flip
+# marker's (<git-common-dir>/drb-flip.json, written at the flip of
+# 2026-10-30), read after the commit by one node call against
+# scripts/lib/markers.js (flipState, the branch rule every push path shares):
 #
-#   absent: today's GUARDED git push. The push is fast-forward only (git
-#     rejects a non-fast-forward by default and --force is never passed), and
-#     it is SKIPPED ENTIRELY unless the board commit is the only unpushed
-#     commit on main (see the guard before it, and why: on 2026-08-14 and
-#     2026-08-19 a board push nearly deployed uncued work). On a rejected push
-#     (another window won the race) it retries the whole loop a bounded
-#     number of times, rebasing each pass so both lines survive, then
-#     escalates. Before the flip it never force-pushes, never pushes anyone
-#     else's work, and never loops forever.
 #   present: node scripts/ship.js --foreground, the one push command, runs
-#     once per board write in place of the guarded push, and the guard is
-#     retired (spec 4.5): the range gate, the receipt check and the markers
-#     inside ship decide what ships, so another window's reviewed commits
-#     ride along and anything ship refuses keeps the board commit local.
+#     once per board write, with no guard of its own (spec 4.5): the range
+#     gate, the receipt check and the markers inside ship decide what ships,
+#     so another window's reviewed commits ride along and anything ship
+#     refuses keeps the board commit local.
 #     ship's exit code and its last stdout line (ship: result <state>
 #     <text>) decide the ending: ok or pushed-elsewhere is success; a push
 #     turned away because origin/main moved (git's bracketed fetch first or
@@ -40,13 +31,20 @@ set -euo pipefail
 #     ended without its result after its push began) is reported as
 #     committed with the push outcome unknown; any other refusal or
 #     failure leaves the board commit local with ship's reason. Once the
-#     board commit exists, this branch never ends with git's exit code.
+#     board commit exists, this script never ends with git's exit code.
 #     Never forced and never detached. A board write here waits for a
 #     whole ship (seconds for a docs-only range, about ten minutes when
 #     other windows' unpushed money commits ride along and the gate runs
 #     the money smoke, longer while another ship holds the ship lock), so a
 #     session runs the writer with a long enough timeout or in the
 #     background.
+#   absent: no push. The flip happened, so a missing marker was lost: the
+#     guarded git push this branch ran before the flip (skipped unless the
+#     board commit was the only unpushed commit) retired with the legacy
+#     push path, and the board commit stays local under the refusal the
+#     pre-push hook prints for it (push-gate.js missingMarkerLine, ending
+#     with the restore recipe of scripts/lib/markers.js), or a fixed line
+#     naming that recipe when push-gate.js cannot be loaded.
 #   unreadable, or a state that cannot be read at all: no push. The flip
 #     marker's BLOCKED line (standing().flip) is printed and the board commit
 #     stays local.
@@ -57,10 +55,10 @@ set -euo pipefail
 # routing or tax id) is rejected outright (non-zero, clear message, no write).
 #
 # It operates on the current working directory's repo, so tests can run it
-# against a throwaway repo + local bare remote. ship.js and the node modules
-# it calls are found beside this script, the way the denylist finds
-# piiShapes.js, so a throwaway that carries its own copy of scripts/ runs its
-# own ship, gate and markers.
+# against a throwaway repo + local bare remote. ship.js, push-gate.js and the
+# node modules they call are found beside this script, the way the denylist
+# finds piiShapes.js, so a throwaway that carries its own copy of scripts/
+# runs its own ship, gate and markers.
 #
 # Usage:
 #   board-write.sh <section> <line>
@@ -71,7 +69,6 @@ set -euo pipefail
 #       (Discrete, testable step. No repo access, no write.)
 
 BOARD_PATH="docs/build-board.md"
-MAX_RETRIES=5
 
 # --- Denylist (discrete, testable step) -------------------------------------
 # Returns 0 (clean) or 1 (blocked). On block, prints the reason to stderr.
@@ -136,15 +133,29 @@ flip_line() {
   node -e 'process.stdout.write(require(require("path").resolve(process.argv[1])).standing({ cwd: process.cwd() }).flip || "")' "$(dirname "$0")/lib/markers.js" || true
 }
 
-# --- No push: the flip state is unreadable or cannot be read -----------------
-# Fails closed: the board commit stays local, in today's LOCALLY wording, with
-# the flip marker's BLOCKED line as the reason when markers.js could say it.
-keep_local_unread_flip() {
+# The pre-push hook's refusal for a missing flip marker (push-gate.js
+# missingMarkerLine, built on scripts/lib/markers.js, the one copy of the
+# flip's date and sha), for the marker path markers.js names: the same one
+# node call, or nothing when push-gate.js or markers.js cannot be loaded.
+missing_line() {
+  node -e 'const p = require("path"); const dir = p.resolve(process.argv[1]); process.stdout.write(require(p.join(dir, "push-gate.js")).missingMarkerLine(require(p.join(dir, "lib", "markers.js")).flipState({ cwd: process.cwd() }).path))' "$(dirname "$0")" || true
+}
+
+# --- No push: the flip marker is missing, unreadable, or cannot be read -----
+# Fails closed: the board commit stays local, in the LOCALLY wording, with
+# the hook's line for a missing marker, the flip marker's BLOCKED line for an
+# unreadable one, or a line saying the state could not be read.
+keep_local_no_flip() {
   local section="$1"
   local flip="$2"
   local blocker=""
   if [ "$flip" = "unreadable" ]; then
     blocker=$(flip_line)
+  elif [ "$flip" = "absent" ]; then
+    blocker=$(missing_line)
+    if [ -z "$blocker" ]; then
+      blocker="BLOCKED: the flip marker is missing; the flip happened and the legacy push path is gone, so every push refuses until it is restored (push-gate.js could not be loaded; markers.js flipRestore holds the recipe)"
+    fi
   fi
   echo "Board updated under '${section}' and committed LOCALLY, not pushed." >&2
   if [ -n "$blocker" ]; then
@@ -186,7 +197,6 @@ push_unknown() {
 
 ship_board() {
   local section="$1"
-  local attempt="$2"
   local code=0
   local last=""
   local rest=""
@@ -227,7 +237,7 @@ ship_board() {
 
   # ok or pushed-elsewhere: the board commit is on origin/main.
   if [ "$code" -eq 0 ] && { [ "$state" = "ok" ] || [ "$state" = "pushed-elsewhere" ]; }; then
-    echo "Board updated under '${section}' (attempt ${attempt})."
+    echo "Board updated under '${section}'."
     exit 0
   fi
 
@@ -273,7 +283,7 @@ ship_board() {
   keep_local "$section" "$reason"
 }
 
-# --- Main loop --------------------------------------------------------------
+# --- Main -------------------------------------------------------------------
 main() {
   # Discrete denylist-only mode for tests / callers.
   if [ "${1:-}" = "--check" ]; then
@@ -302,81 +312,35 @@ main() {
     exit 1
   fi
 
-  local attempt=0
-  while [ "$attempt" -lt "$MAX_RETRIES" ]; do
-    attempt=$((attempt + 1))
+  # Sync with origin first so our write rebases on top of any peer's.
+  git pull --rebase --quiet origin main
 
-    # Sync with origin first so our write rebases on top of any peer's.
-    git pull --rebase --quiet origin main
+  if [ ! -f "$BOARD_PATH" ]; then
+    echo "ERROR: $BOARD_PATH not found in repo." >&2
+    exit 3
+  fi
 
-    if [ ! -f "$BOARD_PATH" ]; then
-      echo "ERROR: $BOARD_PATH not found in repo." >&2
-      exit 3
-    fi
+  atomic_append "$section" "$line" "$BOARD_PATH"
 
-    atomic_append "$section" "$line" "$BOARD_PATH"
+  git add -- "$BOARD_PATH"
+  # Nothing to do if the line was already present (idempotent peers). The
+  # check and the commit both name the board file: the index is shared, so
+  # whatever another window has staged stays staged and out of this commit.
+  if git diff --cached --quiet -- "$BOARD_PATH"; then
+    echo "No change to board (line already present)."
+    exit 0
+  fi
+  git commit --quiet -m "board: update ${section}" -- "$BOARD_PATH"
 
-    git add -- "$BOARD_PATH"
-    # Nothing to do if the line was already present (idempotent peers). The
-    # check and the commit both name the board file: the index is shared, so
-    # whatever another window has staged stays staged and out of this commit.
-    if git diff --cached --quiet -- "$BOARD_PATH"; then
-      echo "No change to board (line already present)."
-      exit 0
-    fi
-    git commit --quiet -m "board: update ${section}" -- "$BOARD_PATH"
-
-    # The flip marker decides the push (see the header). present: ship.js
-    # --foreground, and the guard below is retired. unreadable, or a state
-    # that cannot be read: no push. Both functions exit. absent: today's
-    # guard and guarded push below, unchanged.
-    local flip
-    flip=$(flip_state)
-    if [ "$flip" = "present" ]; then
-      ship_board "$section" "$attempt"
-    elif [ "$flip" != "absent" ]; then
-      keep_local_unread_flip "$section" "$flip"
-    fi
-
-    # REFUSE TO PUSH SOMEBODY ELSE'S WORK. `git push origin main` is a BRANCH
-    # push: it ships EVERY unpushed commit on main, not just the board commit we
-    # made a line ago. That is not theoretical: on 2026-08-14 it came within a
-    # keystroke of deploying 49 uncued commits, and on 2026-08-19 it would have
-    # shipped five code files from a freshly merged lane, in both cases bypassing
-    # the push cue, the gate receipt and the review fleet. A board line is never
-    # worth that.
-    #
-    # The pull --rebase above just refreshed origin/main, so exactly ONE commit
-    # between origin/main and HEAD means ours is the only thing riding. Anything
-    # else and we keep the board commit local: it rides the next real push, which
-    # loses nothing. Fail CLOSED: if the count cannot be determined, do not push.
-    local riding
-    riding=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "")
-    if [ -z "$riding" ] || [ "$riding" -ne 1 ]; then
-      echo "Board updated under '${section}' and committed LOCALLY, not pushed." >&2
-      if [ -n "$riding" ]; then
-        echo "  ${riding} commits are unpushed here, so pushing would deploy $((riding - 1)) that never got a push cue." >&2
-      else
-        echo "  Could not determine what else is unpushed, so refusing to push." >&2
-      fi
-      echo "  The board rides the next real push. Nothing is lost." >&2
-      exit 0
-    fi
-
-    # Push fast-forward only. git rejects a non-fast-forward push by default
-    # (no --force is ever passed), so this IS fast-forward-only: if a peer
-    # advanced origin/main since our pull, the push is rejected and we rebase
-    # and retry the whole loop. We never force-push.
-    if git push --quiet origin main; then
-      echo "Board updated under '${section}' (attempt ${attempt})."
-      exit 0
-    fi
-
-    echo "Push rejected (peer won the race); retrying (attempt ${attempt}/${MAX_RETRIES})." >&2
-  done
-
-  echo "ESCALATE: board write failed after ${MAX_RETRIES} attempts. Not force-pushing. Resolve origin/main contention manually, then retry." >&2
-  exit 4
+  # The flip marker decides the push (see the header). present: ship.js
+  # --foreground. absent, unreadable, or a state that cannot be read: no
+  # push. Both functions exit.
+  local flip
+  flip=$(flip_state)
+  if [ "$flip" = "present" ]; then
+    ship_board "$section"
+  fi
+  keep_local_no_flip "$section" "$flip"
 }
 
 main "$@"

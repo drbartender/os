@@ -120,7 +120,8 @@ test('flipState has three shapes, and an unreadable flip has a standing line of 
   fs.writeFileSync(r.flipFile, '{ half');
   assert.deepEqual(M.flipState({ cwd: r.repo }), { state: 'unreadable', sha: null, pushed_at: null, written_by: null, path: flipPath });
   assert.equal(M.flip({ cwd: r.repo }), null, 'a torn flip file is no flip object');
-  assert.equal(M.standing({ cwd: r.repo }).flip, `BLOCKED: the flip marker ${flipPath} is unreadable; repair or remove it by hand`);
+  const torn = M.standing({ cwd: r.repo }).flip;
+  assert.match(torn, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship$/, 'repair to the recipe is the one remedy, nothing about removing');
 });
 
 test('setGate refuses a sha not on main, and a non-commit, and writes nothing', (t) => {
@@ -135,7 +136,7 @@ test('setGate refuses a sha not on main, and a non-commit, and writes nothing', 
   assert.equal(M.gate({ cwd: r.repo }), null);
 });
 
-test('setGate writes for a sha on main; the line reads the flip state', (t) => {
+test('setGate writes for a sha on main; the line is a refusal whatever the flip state', (t) => {
   const r = makeRepo(t);
   assert.deepEqual(M.setGate({ sha: r.B, reason: 'money smoke failed', gates: ['money'], cwd: r.repo }), { written: true });
   const g = M.gate({ cwd: r.repo });
@@ -144,13 +145,12 @@ test('setGate writes for a sha on main; the line reads the flip state', (t) => {
   assert.deepEqual(g.gates, ['money']);
   assert.equal(g.on_main, true);
   assert.ok(Number.isFinite(Date.parse(g.at)));
-  assert.equal(M.standing({ cwd: r.repo }).gate,
-    `gate marker stands on ${short(r.B)} (money smoke failed); it binds every push path from the flip on; a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`);
+  const blocked = `BLOCKED: gate marker stands on ${short(r.B)} (money smoke failed); a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`;
+  assert.equal(M.standing({ cwd: r.repo }).gate, blocked, 'a refusal with the flip marker absent: since the flip a missing one was lost');
   assert.ok(M.standing({ cwd: r.repo }).gate.includes('re-runs the checks this marker names (money;'));
   writeFlip(r, r.A);
   const s = M.standing({ cwd: r.repo });
-  assert.equal(s.gate,
-    `BLOCKED: gate marker stands on ${short(r.B)} (money smoke failed); a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`);
+  assert.equal(s.gate, blocked);
   assert.equal(s.watch, null);
   assert.equal(s.flip, null);
   // Atomic writes leave no temp file and no lock behind.
@@ -425,10 +425,10 @@ test('setWatch, watch, standing and clearWatch; clearWatch refuses another sha',
   assert.deepEqual(m.by_issue, { 'issue-a': 3 });
   assert.equal(m.deploy_at, '2026-10-22T06:00:00.000Z', 'stored normalized');
   const ack = `npm run ship -- --ack-watch ${short(r.B)} --note <what you saw and decided>`;
-  assert.equal(M.standing({ cwd: r.repo }).watch,
-    `watch marker stands on ${short(r.B)} (3 events since deploy); it binds every push path from the flip on; after the flip, read them and clear it with ${ack}`);
+  const blocked = `BLOCKED: watch marker stands on ${short(r.B)} (3 events since deploy); read them, then ${ack}`;
+  assert.equal(M.standing({ cwd: r.repo }).watch, blocked, 'a refusal with the flip marker absent: since the flip a missing one was lost');
   writeFlip(r, r.A);
-  assert.equal(M.standing({ cwd: r.repo }).watch, `BLOCKED: watch marker stands on ${short(r.B)} (3 events since deploy); read them, then ${ack}`);
+  assert.equal(M.standing({ cwd: r.repo }).watch, blocked);
   assert.equal(M.clearWatch(r.C, { cwd: r.repo }), false);
   assert.equal(M.clearWatch('not-a-ref', { cwd: r.repo }), false);
   assert.equal(M.watch({ cwd: r.repo }).sha, r.B);
@@ -838,7 +838,7 @@ test('a pack file listed and then gone (a concurrent repack) reads as readable',
 test('a watch marker with a null count stands and says the count is unknown', (t) => {
   const r = makeRepo(t);
   M.setWatch({ sha: r.C, deploy_at: null, count: null, by_issue: null, cwd: r.repo });
-  assert.match(M.standing({ cwd: r.repo }).watch, new RegExp(`^watch marker stands on ${short(r.C)} \\(unknown events since deploy\\);`));
+  assert.match(M.standing({ cwd: r.repo }).watch, new RegExp(`^BLOCKED: watch marker stands on ${short(r.C)} \\(unknown events since deploy\\);`));
 });
 
 test('setWatch writes a full sha git cannot resolve, its line names the full sha, and that sha acks it with a record', (t) => {
@@ -903,15 +903,15 @@ test('an unreadable marker file reads as standing with the unreadable marker rea
     assert.deepEqual(M.gate({ cwd: r.repo }), { unreadable: true, path: r.gateFile }, body);
     assert.deepEqual(M.watch({ cwd: r.repo }), { unreadable: true, path: r.watchFile }, body);
     const s = M.standing({ cwd: r.repo });
-    assert.equal(s.gate, `gate marker stands (unreadable marker ${r.gateFile}); it binds every push path from the flip on; read it, then repair or remove the file by hand`);
-    assert.equal(s.watch, `watch marker stands (unreadable marker ${r.watchFile}); it binds every push path from the flip on; read it, then repair or remove the file by hand`);
+    assert.equal(s.gate, `BLOCKED: gate marker stands (unreadable marker ${r.gateFile}); read it, then repair or remove the file by hand`, 'a refusal with the flip marker absent (lost)');
+    assert.equal(s.watch, `BLOCKED: watch marker stands (unreadable marker ${r.watchFile}); read it, then repair or remove the file by hand`);
   }
-  // With the flip file unreadable too, every line is a refusal.
+  // With the flip file unreadable too, the lines are the same refusals.
   fs.writeFileSync(r.flipFile, 'torn');
   const s = M.standing({ cwd: r.repo });
   assert.equal(s.gate, `BLOCKED: gate marker stands (unreadable marker ${r.gateFile}); read it, then repair or remove the file by hand`);
   assert.equal(s.watch, `BLOCKED: watch marker stands (unreadable marker ${r.watchFile}); read it, then repair or remove the file by hand`);
-  assert.match(s.flip, /^BLOCKED: the flip marker .* is unreadable/);
+  assert.match(s.flip, /^BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write /);
   // Nothing clears, overwrites or passes an unreadable marker.
   assert.equal(M.clearGateIfDescendant(r.C, { cwd: r.repo }).cleared, false);
   assert.equal(M.isFixForward(r.C, { cwd: r.repo }), false);
@@ -1079,13 +1079,13 @@ test('clearGateIfDescendant with self: a strict ancestor of the marker still nev
   assert.equal(M.gate({ cwd: r.repo }).sha, r.C);
 });
 
-test('the gate line names every check the marker names and the clearing rule, before and after the flip', (t) => {
+test('the gate line names every check the marker names and the clearing rule, a refusal with the flip marker absent and present', (t) => {
   const r = makeRepo(t);
   M.setGate({ sha: r.B, reason: 'money smoke: 1 failing', gates: ['money', 'client'], cwd: r.repo });
   for (const flipped of [false, true]) {
     if (flipped) writeFlip(r, r.A);
     const line = M.standing({ cwd: r.repo }).gate;
-    assert.equal(line.startsWith('BLOCKED: '), flipped);
+    assert.ok(line.startsWith('BLOCKED: '), `flipped ${flipped}: ${line}`);
     assert.ok(line.includes('re-runs the checks this marker names (money, client; all of them once the failing sha is on origin/main, otherwise those its range still needs)'), line);
     assert.ok(line.includes('passes on this sha again or on a descendant on main'), line);
     assert.ok(line.endsWith(`last resort: remove ${r.gateFile} by hand`), line);

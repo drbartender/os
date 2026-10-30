@@ -86,7 +86,7 @@ const { mask } = require('./piiShapes');
 // The directory holding ship.js, push-gate.js and post-ship-watch.js.
 const SCRIPTS = path.resolve(__dirname, '..');
 const S = R.short;
-const CUE_ONLY = 'ship: no flip marker; pushes stay cue-only through npm run gate';
+const CUE_ONLY = `ship: no flip marker (lost since the flip of ${M.FLIP_DATE}); every push refuses until it is restored (npm run ship says how)`;
 const STOP_SIGNALS = Object.freeze(['SIGTERM', 'SIGINT', 'SIGHUP']);
 const PUSH_BOUND_MS = 10 * 60 * 1000;
 const FETCH_BOUND_MS = 2 * 60 * 1000;
@@ -257,14 +257,14 @@ function primaryOnMain(cwd) {
 }
 
 // What can be refused without the lock and with nothing written: a test
-// override set without its allow variable, the flip state, then the primary
-// worktree on main.
+// override set without its allow variable, the flip state (absent: CUE_ONLY,
+// then markers' restore recipe, printed only), then the primary worktree.
 function precheck(cwd) {
   const stubs = stubRefusals();
   if (stubs.length) return { refusal: stubs.join('\n') };
   if (git(['rev-parse', '--show-toplevel'], cwd).status !== 0) return { refusal: `ship: ${M.clean(cwd)} is not inside a git checkout` };
   const flip = M.flipState({ cwd });
-  if (flip.state === 'absent') return { refusal: CUE_ONLY };
+  if (flip.state === 'absent') return { refusal: `${CUE_ONLY}\nship: ${M.flipRestore(flip.path)}` };
   if (flip.state === 'unreadable') return { refusal: M.standing({ cwd }).flip };
   return primaryOnMain(cwd);
 }

@@ -112,7 +112,7 @@ test('with no flip marker: the squash and its receipt land, the cue-only line en
   assert.match(r.stdout, new RegExp(`^ready ${s7(tip)}: shipping in the foreground, log \\S+; no flip marker, so it stops after the squash receipt \\(cue-only\\)\\n`));
   const res = await settled(h, tip);
   assert.equal(res.state, 'cue-only');
-  assert.match(res.text, /^no flip marker; pushes stay cue-only through npm run gate; the squash receipt is written, and the worktree and the branch stay until it is pushed; the squash [0-9a-f]{7} sits on main unpushed, and the same ship command resumes it$/);
+  assert.match(res.text, /^no flip marker \(lost since the flip of 2026-10-30\); every push refuses until it is restored \(npm run ship says how\); the squash receipt is written, and the worktree and the branch stay until it is pushed; the squash [0-9a-f]{7} sits on main unpushed, and the same ship command resumes it$/);
   const squash = head(h);
   assert.match(git(h.repo, 'log', '-1', '--format=%s'), /^merge\(lane lane-cue\): docs\/plan\.md$/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(h.common, 'drb-review', patchKey(h, squash), 'receipt.json'), 'utf8')).kind, 'squash');
@@ -378,7 +378,7 @@ test('the marker refusals of spec 4.4, before anything is merged: a standing wat
   assert.match(ship(h, 'lane-m').stdout, /^refused [^\n]*gate[^\n]*\n$/i);
   fs.rmSync(path.join(h.common, 'drb-markers', 'gate.json'));
   fs.writeFileSync(path.join(h.common, 'drb-flip.json'), 'not json');
-  assert.match(ship(h, 'lane-m').stdout, /^refused BLOCKED: the flip marker \S+ is unreadable; repair or remove it by hand\n$/);
+  assert.match(ship(h, 'lane-m').stdout, /^refused BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S+drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", "pushed_at": "2026-10-30", "written_by": "<who restored it>"\}, then npm run ship\n$/);
   assert.equal(head(h), h.seed, 'nothing merged');
   assert.equal(status(h), '');
   assert.deepEqual(records(h.rec('gate')), []);

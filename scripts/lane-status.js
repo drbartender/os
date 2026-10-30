@@ -270,15 +270,16 @@ function firstLine(err) {
   return text.length > 200 ? `${text.slice(0, 200)}...` : text;
 }
 
-// The flip state and the two markers' lines. On an absent flip the gate and
-// watch lines carry markers' before-flip wording; on an unreadable flip file
-// the flip line is standing().flip, never a read of flip() alone.
+// The flip state and the two markers' lines. The gate and watch lines are
+// refusals whatever the flip state (since the flip an absent marker was
+// lost); on an unreadable flip file the flip line is standing().flip, never a
+// read of flip() alone.
 function markersReport({ cwd = process.cwd() } = {}) {
   const markers = require('./lib/markers');
   const f = markers.flipState({ cwd });
   const s = markers.standing({ cwd });
   const lines = [];
-  if (f.state === 'absent') lines.push('flip marker: absent, pushes are cue-only through npm run gate');
+  if (f.state === 'absent') lines.push(`flip marker: missing (the flip happened, so it was lost); every push refuses until it is restored: ${markers.flipRestore(f.path)}`);
   else if (f.state === 'present') lines.push(`flip marker: ${short(f.sha)} ${isSet(f.pushed_at) ? markers.clean(f.pushed_at) : 'no date recorded'}`);
   else lines.push(s.flip);
   if (s.gate) lines.push(s.gate);

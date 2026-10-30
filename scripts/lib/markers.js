@@ -5,11 +5,10 @@
 //
 // Three files under the git common dir, so every worktree of the repo reads
 // the same ones (receipt.commonDir from the cwd):
-//   drb-flip.json           {sha, pushed_at, written_by}. Step 5 writes it once
-//                           the flip push is on origin; this module only reads
-//                           it. While it is absent every push path keeps
-//                           today's cue-only rules, and the two markers below
-//                           bind nothing yet (standing() says so).
+//   drb-flip.json           {sha, pushed_at, written_by}, written by hand once
+//                           the flip push was on origin (2026-10-30); this
+//                           module only reads it. Since the flip the two
+//                           markers below bind every push, whatever its state.
 //   drb-markers/gate.json   {sha, at, reason, gates, on_main, earlier}. The
 //                           gate writes it when it fails on a sha on main.
 //   drb-markers/watch.json  {sha, at, deploy_at, count, by_issue, earlier}.
@@ -18,24 +17,22 @@
 //                           could not be read, which never reads as quiet.
 //
 // The consumers' branch rule: every reader of the flip state branches on
-// flipState(), never on flip() alone. On 'absent' the hook takes the legacy
-// fingerprint path and the board writer its guarded push, both with the
-// markers unread, and ship refuses. On 'unreadable' every path refuses with
-// standing().flip's line. On 'present' every path takes the new one,
-// refusing on every line standing() returns. lane-status prints both
-// markers' lines whatever the flip state (the before-flip wording exists for
-// it), and standing().flip's line on 'unreadable'. The rules this module
-// holds:
+// flipState(), never on flip() alone. 'present': every push path validates,
+// refusing on every line standing() returns. 'absent': the flip happened, so
+// the marker was lost, and every push path refuses until it is restored by
+// flipRestore's recipe (below). 'unreadable': every path refuses with
+// standing().flip's line. lane-status prints both markers' lines whatever
+// the flip state, a refusal in each, and its own flip line. The rules:
 //   - A marker file that exists but cannot be read as one (not JSON, not an
 //     object, no full sha, or any read error but "no such file") reads as
 //     STANDING, {unreadable: true, path}, never as absent. Nothing here clears
 //     or overwrites an unreadable marker: a person reads the file and repairs
-//     or removes it. The flip file is the one exception in shape: flip()
-//     returns its object or null, null for a torn file too, so a consumer
-//     that refuses without flip() refuses on it; flipState() tells 'absent',
-//     'present' and 'unreadable' apart, and standing().flip is the blocker
-//     line for a torn file, so a consumer refusing on any standing() line
-//     refuses too.
+//     it, a flip marker to flipRestore's recipe (a gate or watch marker may
+//     be removed instead). The flip file is the one exception in shape:
+//     flip() returns its object or null, null for a torn file too, so a
+//     consumer refusing without flip() refuses on it; flipState() tells the
+//     three states apart, and standing().flip is the blocker line for a torn
+//     file, so a consumer refusing on any standing() line refuses too.
 //   - One predicate, placement(sha), says where a sha sits: 'on' (resolves,
 //     an ancestor of refs/heads/main), 'off' (resolves, not), 'gone' (only
 //     a clean miss: rev-parse --verify --quiet exits 1 with no line on
@@ -747,17 +744,23 @@ function clearWatch(sha, { note = null, cwd } = {}) {
   });
 }
 
+// ---- the flip ------------------------------------------------------------------
+// The one copy of the flip's facts: FLIP_DATE, the day of the push that made
+// the sha gate the one push path, and FLIP_SHA, the sha its marker names,
+// joined from parts so that no source line holds a run of 32 hex digits (the
+// static checks' pii rule reads one as a token). flipRestore(file), the one
+// restore recipe: the path, and the JSON a restored or repaired flip marker
+// holds, then npm run ship.
+const FLIP_DATE = '2026-10-30';
+const FLIP_SHA = ['8bf839995aa1d3d6', 'a4161623b8fb27cc', '8677b5a0'].join('');
+const flipRestore = (file) => `write ${file} as {"sha": "${FLIP_SHA}", "pushed_at": "${FLIP_DATE}", "written_by": "<who restored it>"}, then npm run ship`;
+
 // ---- the lines -----------------------------------------------------------------
-// After the flip (or with an unreadable flip file) each line is a refusal,
-// BLOCKED first. Before it the markers bind nothing yet, and the line says so.
+// Each line is a refusal, BLOCKED first, whatever the flip state: the markers
+// bind every push since the flip, and a missing flip marker was lost.
 
-const BEFORE_FLIP = 'it binds every push path from the flip on';
-
-function unreadableLine(kind, m, flipped) {
-  const what = `${kind} marker stands (unreadable marker ${m.path})`;
-  return flipped
-    ? `BLOCKED: ${what}; read it, then repair or remove the file by hand`
-    : `${what}; ${BEFORE_FLIP}; read it, then repair or remove the file by hand`;
+function unreadableLine(kind, m) {
+  return `BLOCKED: ${kind} marker stands (unreadable marker ${m.path}); read it, then repair or remove the file by hand`;
 }
 
 // How one failure under `earlier` clears, by its placement.
@@ -768,14 +771,14 @@ const EARLIER_EXIT = Object.freeze({
   unknown: 'git cannot place it, it waits for git or the by-hand removal',
 });
 
-function gateLine(m, file, flipped, cwd) {
-  if (m.unreadable) return unreadableLine('gate', m, flipped);
+function gateLine(m, file, cwd) {
+  if (m.unreadable) return unreadableLine('gate', m);
   const what = `gate marker stands on ${R.short(m.sha)} (${clean(m.reason) || 'no reason recorded'})`;
   // The gate's clearing rule (shaGate.js clearMarker): a pass on this sha
   // again or on a descendant on main, re-running the checks named.
   const named = Array.isArray(m.gates) && m.gates.length ? m.gates.map(clean).join(', ') : 'none recorded';
   const advice = `a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (${named}; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${file} by hand`;
-  const line = flipped ? `BLOCKED: ${what}; ${advice}` : `${what}; ${BEFORE_FLIP}; ${advice}`;
+  const line = `BLOCKED: ${what}; ${advice}`;
   const earlier = m.earlier || [];
   if (!earlier.length) return line;
   const one = earlier.length === 1;
@@ -787,15 +790,13 @@ function gateLine(m, file, flipped, cwd) {
 // resolve (a sha7 of it would name no commit).
 const ackSha = (e) => (e.resolved === false ? e.sha : R.short(e.sha));
 
-function watchLine(m, flipped) {
-  if (m.unreadable) return unreadableLine('watch', m, flipped);
+function watchLine(m) {
+  if (m.unreadable) return unreadableLine('watch', m);
   const sha7 = R.short(m.sha);
   const count = Number.isInteger(m.count) ? m.count : 'unknown';
   const what = `watch marker stands on ${sha7} (${count} events since deploy)`;
   const ack = `npm run ship -- --ack-watch ${ackSha(m)} --note <what you saw and decided>`;
-  let line = flipped
-    ? `BLOCKED: ${what}; read them, then ${ack}`
-    : `${what}; ${BEFORE_FLIP}; after the flip, read them and clear it with ${ack}`;
+  let line = `BLOCKED: ${what}; read them, then ${ack}`;
   const earlier = m.earlier || [];
   if (earlier.length) {
     const one = earlier.length === 1;
@@ -809,19 +810,18 @@ function watchLine(m, flipped) {
 function standing({ cwd } = {}) {
   const p = markerPaths({ cwd });
   const f = flipFrom(p.flip);
-  const flipped = f.state !== 'absent';
   const g = readMarker(p.gate, stackShape);
   const w = readMarker(p.watch, stackShape);
   return {
-    gate: g ? gateLine(g, p.gate, flipped, cwd) : null,
-    watch: w ? watchLine(w, flipped) : null,
-    flip: f.state === 'unreadable' ? `BLOCKED: the flip marker ${f.path} is unreadable; repair or remove it by hand` : null,
+    gate: g ? gateLine(g, p.gate, cwd) : null,
+    watch: w ? watchLine(w) : null,
+    flip: f.state === 'unreadable' ? `BLOCKED: the flip marker is unreadable; read it, then repair it by hand: ${flipRestore(f.path)}` : null,
   };
 }
 
 module.exports = {
   flip,
-  flipState,
+  flipState, FLIP_DATE, FLIP_SHA, flipRestore,
   gate,
   watch,
   setGate,

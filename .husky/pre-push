@@ -1,41 +1,28 @@
 #!/usr/bin/env sh
-# pre-push — two mechanical gates before a push reaches prod:
-#   1. MONEY SMOKE  (runs when server/ changed) — the money-path test suites
-#      against an isolated Neon ci-smoke branch (scripts/testdb-smoke.js).
-#      Runs FIRST because it fails faster than the ~1 min client build.
-#   2. CLIENT BUILD (runs when client/ changed) — the EXACT command Vercel runs
-#      (CI=true react-scripts build), where ESLint warnings are FATAL. Nothing
-#      else local catches that: lint-staged only covers server/, and a plain
-#      `eslint` run treats it as a non-fatal warning.
+# pre-push: validates that a push was gated and reviewed, and never runs a
+# gate itself.
 #
-# Both now live in scripts/push-gate.js so the hook and `npm run gate` can
-# never drift, and so a gate that ALREADY passed for this exact tree is not
-# re-run here. That re-run is what was breaking pushes: git opens the SSH
-# connection before this hook runs, so an 8-minute hook left the connection
-# idle until GitHub closed it, and the push then failed after passing
-# everything (2026-08-14; see the header in scripts/push-gate.js).
+# A push to main is the deploy. The gates (the money smoke, the exact Vercel
+# client build, the static checks) run before the push, in `npm run ship`,
+# through `node scripts/push-gate.js sha <sha>` in a throwaway worktree of its
+# own, which writes a receipt keyed on the sha. This hook runs inside git's
+# SSH window (git opens the connection before the hook runs, and on
+# 2026-08-14 an eight-minute hook let GitHub close it, so a push failed after
+# passing every gate), so it only reads: push-gate.js verify takes no lock
+# and runs nothing.
 #
-# Fail-closed is unchanged, and the receipt is only honoured when ALL of these
-# hold: same HEAD, byte-identical content for every modified/untracked file,
-# under 12h old, covering the gates this push needs, and the sha being pushed
-# IS HEAD (both gates test the WORKING TREE, so they cannot vouch for
-# `git push origin <other-sha>:main`). Anything else and the full gate runs
-# right here exactly as it always did.
-#
-# TWO PATHS, and the flip marker decides (instruction rewrite step 3; spec
-# 2026-10-19 sections 4.3 and 8). push-gate.js verify reads
-# <git-common-dir>/drb-flip.json first:
-#   - absent (today, and for the flip push itself): the fingerprint receipt
-#     path described above, unchanged, the markers unread.
-#   - present: the hook validates only and never runs a gate, so nothing slow
-#     happens inside git's SSH window. For a push to refs/heads/main only (any
-#     other remote ref is refused), it refuses on a standing gate or watch
-#     marker, then checks each pushed sha's sha receipt
-#     (<git-common-dir>/drb-gate/<sha>.json, written by
-#     push-gate.js sha, which ship calls) against origin/main, then the review
-#     receipts over origin/main..<sha>. No receipt means refuse with
-#     "run npm run ship".
-#   - unreadable: refuse until the file is repaired or removed by hand.
+# push-gate.js verify reads <git-common-dir>/drb-flip.json first (instruction
+# rewrite spec 2026-10-19 sections 4.3 and 8; the flip was 2026-10-30):
+#   - present: for a push to refs/heads/main only (any other remote ref is
+#     refused), it refuses on a standing gate or watch marker, then checks
+#     each pushed sha's sha receipt (<git-common-dir>/drb-gate/<sha>.json)
+#     against origin/main, then the review receipts over origin/main..<sha>.
+#     No receipt means refuse with "run npm run ship".
+#   - absent: refuse. The legacy working-tree path that ran without the
+#     marker is gone, so a missing marker was lost; the refusal ends with
+#     the restore recipe (scripts/lib/markers.js flipRestore).
+#   - unreadable: refuse until it is repaired by hand to the JSON the
+#     refusal's recipe gives (the flip's full sha, pushed_at, written_by).
 # Emergencies only, visible and per-push: git push --no-verify, or HUSKY=0.
 set -e
 

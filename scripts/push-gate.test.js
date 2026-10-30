@@ -1,99 +1,14 @@
 'use strict';
 
-// push-gate — the receipt logic that decides whether the pre-push hook can skip
-// an 8-minute re-run. The whole safety property lives here: skip ONLY when the
-// exact bytes on disk were already gated AND the commit being pushed is the one
-// those bytes belong to. A false yes ships code no gate ever saw.
-//
-// Nearly every case below is a regression test for a hole the 2026-08-14
-// push-gate review (Claude fleet + codex + gemini) actually exploited in the
-// first draft of this file, each one demonstrated shipping ungated code.
+// push-gate: the hook's stdin parse, the gate lock, and verify in throwaway
+// repos. The legacy working-tree path (npm run gate and its receipt) went
+// after the flip of 2026-10-30 (plan 2026-10-28, lane legacy-removal), and its
+// cases with it; what is left is the parse the hook still runs, the lock the
+// sha gate takes, and verify on each state of the flip marker.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const {
-  checkReceipt, treeFingerprint, parsePushedShas, neededGates,
-  RECEIPT_VERSION, MAX_AGE_MS, MONEY_PATHS,
-} = require('./push-gate');
-
-const NOW = Date.parse('2026-08-14T12:00:00Z');
-const HEAD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const OTHER = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-
-const fresh = (over = {}) => ({
-  version: RECEIPT_VERSION,
-  fingerprint: 'abc123',
-  head: HEAD,
-  gates: ['money', 'client'],
-  at: new Date(NOW - 60_000).toISOString(),
-  ...over,
-});
-const ask = (receipt, over = {}) => checkReceipt(receipt, {
-  fingerprint: 'abc123', head: HEAD, needed: ['money', 'client'], pushedShas: [HEAD], now: NOW, ...over,
-});
-
-// ── Accepts ──
-
-test('accepts a fresh receipt for the same tree, same HEAD, pushing HEAD', () => {
-  assert.equal(ask(fresh()), null);
-});
-
-test('accepts when the receipt covers MORE than this push needs', () => {
-  assert.equal(ask(fresh(), { needed: ['client'] }), null);
-});
-
-test('accepts a nothing-to-run receipt when nothing is needed (docs-only push)', () => {
-  assert.equal(ask(fresh({ gates: [] }), { needed: [] }), null);
-});
-
-test('accepts right up to the age boundary', () => {
-  assert.equal(ask(fresh({ at: new Date(NOW - MAX_AGE_MS + 1000).toISOString() })), null);
-});
-
-// ── Refusals. Each is a case where saying yes ships ungated code ──
-
-test('refuses when there is no receipt at all', () => {
-  const why = ask(null);
-  assert.match(why, /no receipt/);
-  assert.match(why, /npm run gate/, 'must tell the human how to fix it');
-});
-
-test('refuses when the working tree changed since the gate ran', () => {
-  assert.match(ask(fresh(), { fingerprint: 'different' }), /working tree changed/);
-});
-
-test('refuses when HEAD moved even if the fingerprint somehow matched', () => {
-  assert.match(ask(fresh({ head: OTHER })), /HEAD moved/);
-});
-
-// THE finding the review ranked highest: this repo pushes `git push origin
-// <sha>:main`, and both gates only ever test the WORKING TREE. A receipt earned
-// by HEAD said yes to a completely different commit, shipping a money bug.
-test('refuses when the sha being pushed is not HEAD', () => {
-  const why = ask(fresh(), { pushedShas: [OTHER] });
-  assert.match(why, /not HEAD/);
-  assert.match(why, /working tree/, 'must say WHY: the gates cannot describe another commit');
-});
-
-test('refuses when ANY of several pushed shas is not HEAD', () => {
-  assert.match(ask(fresh(), { pushedShas: [HEAD, OTHER] }), /not HEAD/);
-});
-
-test('refuses when the receipt does not cover a needed gate', () => {
-  assert.match(ask(fresh({ gates: ['client'] })), /does not cover: money/);
-});
-
-test('refuses a receipt older than the max age', () => {
-  assert.match(ask(fresh({ at: new Date(NOW - MAX_AGE_MS - 1000).toISOString() })), /receipt is \d+h old/);
-});
-
-test('refuses a FUTURE-dated receipt (clock skew or forgery must not read as fresh)', () => {
-  assert.match(ask(fresh({ at: new Date(NOW + 86_400_000).toISOString() })), /dated in the future/);
-});
-
-test('refuses an unreadable timestamp rather than treating it as fresh', () => {
-  assert.match(ask(fresh({ at: 'not-a-date' })), /timestamp is unreadable/);
-});
+const { parsePushedShas, MONEY_PATHS } = require('./push-gate');
 
 // ── Which shas are being pushed (git feeds this on the hook's stdin) ──
 
@@ -132,33 +47,6 @@ test('MALFORMED stdin is unknown, never deletes', () => {
   assert.equal(parsePushedShas(`refs/heads/main ${SHA} r x\ngarbage`).kind, 'unknown', 'one bad line poisons the batch');
 });
 
-// ── The fingerprint ──
-
-test('treeFingerprint is stable across calls and reports HEAD', () => {
-  const a = treeFingerprint();
-  const b = treeFingerprint();
-  assert.equal(a.fingerprint, b.fingerprint, 'same tree must hash the same twice');
-  assert.match(a.head, /^[0-9a-f]{40}$/);
-  assert.equal(a.fingerprint.length, 64);
-  assert.equal(typeof a.dirty, 'boolean');
-});
-
-test('treeFingerprint hashes file CONTENT, not just the porcelain status line', () => {
-  // The original bug: re-editing an already-modified file left the status text
-  // identical, so the fingerprint never moved and the receipt stayed valid.
-  const fs = require('fs');
-  const tmp = `scratch-push-gate-${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(tmp, 'first');
-    const a = treeFingerprint().fingerprint;
-    fs.writeFileSync(tmp, 'second'); // same path, same status letter, different bytes
-    const b = treeFingerprint().fingerprint;
-    assert.notEqual(a, b, 'changing the CONTENT of an untracked file must move the fingerprint');
-  } finally {
-    fs.unlinkSync(tmp);
-  }
-});
-
 // ── Gate selection ──
 
 test('the money trigger covers the gate machinery itself, not just server/', () => {
@@ -176,21 +64,6 @@ test('the smoke and suite-runner machinery is on the sensitive list (full review
   for (const p of ['scripts/lib/tapSummary.js', 'scripts/lib/flockExec.js', 'scripts/run-suites.js']) {
     assert.ok(isSensitive([p]), `${p} must be sensitive-listed`);
   }
-});
-
-test('neededGates unions over multiple refs rather than taking the first', () => {
-  // HEAD vs HEAD is empty; unioning with a ref that differs must still find work.
-  const one = neededGates(['HEAD']).gates;
-  const many = neededGates(['HEAD', 'HEAD~1']).gates;
-  assert.ok(many.length >= one.length, 'a second ref can only add gates, never remove them');
-});
-
-// ── Residuals closed at the second review pass ──
-
-test('an empty pushedShas list cannot satisfy the foreign-sha check by vacuity', () => {
-  // Documents WHY verify must not call checkReceipt with [] on unknown stdin:
-  // this passes, and that is exactly the hole.
-  assert.equal(ask(fresh(), { pushedShas: [] }), null);
 });
 
 // ── The gate lock (the money gate resets a SHARED Neon branch) ──
@@ -214,7 +87,7 @@ test('MALFORMED stdin stays unknown so the caller can BLOCK', () => {
 test('the gate serializes with flock, not a hand-rolled pidfile', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, 'push-gate.js'), 'utf8');
   const code = src.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
-  assert.match(code, /spawnSync\('flock'/, 'must re-exec under flock');
+  assert.match(code, /spawnSync\('flock'/, 'must lock with flock');
   assert.match(code, /'-n'/, 'must refuse rather than wait: waiting inside pre-push is the original bug');
   assert.match(code, /--git-common-dir/, 'the lock must span every worktree, they share one Neon branch');
   // The pidfile machinery must be gone: it leaked on every signal and its
@@ -235,7 +108,8 @@ test('flock -n genuinely refuses a second holder (the property we rely on)', () 
 
 // ---- Instruction rewrite step 3, lane gate-sha: verify in throwaway repos ----
 //
-// Checks 2 and 6 of the lane. Every case below runs in a throwaway repo under
+// Check 6 of the lane (check 2, the legacy path, went with it), then the
+// legacy-removal cases. Every case below runs in a throwaway repo under
 // the temp dir (removed when the test ends) with a local bare origin, carrying
 // its own copy of scripts/ kept out of git through .git/info/exclude, so the
 // common dir, the locks, the receipts and the markers are all the
@@ -402,49 +276,6 @@ async function gsHoldLock(t, h) {
   return holder;
 }
 
-// ---- check 2: no flip marker, today's path on every stdin shape ----
-
-test('gate-sha check 2: with no flip marker, verify answers each stdin shape as today', (t) => {
-  const h = gsRepo(t);
-  const head = gsCommit(h.repo, 'docs', { 'docs/notes.md': 'notes v2\n' });
-  const del = gsVerify(h, `(delete) ${GS_ZERO} refs/heads/stale ${head}\n`);
-  assert.equal(del.status, 0);
-  assert.match(del.stdout, /deletions only/);
-  const empty = gsVerify(h, '');
-  assert.equal(empty.status, 0);
-  assert.match(empty.stdout, /git listed no updated refs/);
-  const bad = gsVerify(h, 'refs/heads/main\n');
-  assert.equal(bad.status, 1);
-  assert.match(bad.stderr, /could not read the refs being pushed/);
-  const run = gs.cp.spawnSync(process.execPath, [gs.path.join(h.repo, 'scripts', 'push-gate.js'), 'run'], { cwd: h.repo, encoding: 'utf8', env: GS_ENV });
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /no gated paths changed/);
-  const legacy = JSON.parse(gs.fs.readFileSync(gs.path.join(h.common, 'drb-push-gate-receipt.json'), 'utf8'));
-  assert.deepEqual(Object.keys(legacy).sort(), ['at', 'fingerprint', 'gates', 'head', 'version']);
-  assert.equal(legacy.version, RECEIPT_VERSION);
-  assert.equal(legacy.head, head);
-  assert.deepEqual(legacy.gates, []);
-  // A gate marker stands, but before the flip the hook never reads it.
-  gs.fs.mkdirSync(gs.path.join(h.common, 'drb-markers'), { recursive: true });
-  gs.fs.writeFileSync(gs.path.join(h.common, 'drb-markers', 'gate.json'), JSON.stringify({ sha: head, at: new Date().toISOString(), reason: 'x', gates: ['money'] }));
-  const ok = gsVerify(h, gsLine(head));
-  assert.equal(ok.status, 0, ok.stderr);
-  assert.match(ok.stdout, /gate receipt valid for this exact tree \(nothing to run\)/);
-  const other = gsVerify(h, gsLine(h.seed));
-  assert.equal(other.status, 0, other.stderr);
-  assert.match(other.stdout, /running the full gate .*which is not HEAD/);
-  assert.match(other.stdout, /WARNING/);
-});
-
-test('gate-sha check 2: with no flip marker, verify still takes the gate lock', async (t) => {
-  const h = gsRepo(t);
-  const head = gsCommit(h.repo, 'docs', { 'docs/notes.md': 'notes v2\n' });
-  await gsHoldLock(t, h);
-  const r = gsVerify(h, gsLine(head));
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /another push gate is already running/);
-});
-
 // ---- check 6: the flip marker present ----
 
 test('gate-sha check 6: a push to main with a valid sha receipt and review receipts passes with no lock taken', async (t) => {
@@ -555,7 +386,7 @@ test('gate-sha check 6: an unreadable flip marker refuses and takes no lock', as
   await gsHoldLock(t, h);
   const r = gsVerify(h, gsLine(h.seed));
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /BLOCKED: the flip marker .*drb-flip\.json is unreadable/);
+  assert.match(r.stderr, /BLOCKED: the flip marker is unreadable; read it, then repair it by hand: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", /);
   assert.doesNotMatch(r.stderr, /another push gate/);
 });
 
@@ -572,4 +403,81 @@ test('gate-sha: push-gate re-exports the sha gate helpers and its path lists fro
   assert.equal(PG.MONEY_PATHS, GP.MONEY_PATHS);
   assert.equal(PG.CLIENT_PATHS, GP.CLIENT_PATHS);
   for (const name of ['classifyRange', 'checkShaReceipt', 'gateEnvFile', 'gateWorktreePath']) assert.equal(typeof PG[name], 'function', name);
+});
+
+// ---- Instruction rewrite step 5, lane legacy-removal: the legacy path is gone ----
+
+// Every file and directory under the throwaway's common dir, by its path
+// relative to it, so a case can say verify wrote nothing there.
+function gsTree(h) {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of gs.fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = gs.path.join(dir, e.name);
+      out.push(gs.path.relative(h.common, p));
+      if (e.isDirectory()) walk(p);
+    }
+  };
+  walk(h.common);
+  return out.sort();
+}
+
+const GS_MISSING = /BLOCKED: the flip marker is missing; the flip happened on 2026-10-30 and the legacy push path is gone, so every push refuses until it is restored: write \S*drb-flip\.json as \{"sha": "8bf83999[0-9a-f]{32}", /;
+
+test('legacy-removal: with no flip marker, verify refuses every stdin shape with the missing-marker line, takes no lock and writes nothing', async (t) => {
+  const h = gsRepo(t);
+  const head = gsCommit(h.repo, 'docs', { 'docs/notes.md': 'notes v2\n' });
+  const before = gsTree(h);
+  const shapes = [gsLine(head), gsLine(head, 'refs/heads/side'), `(delete) ${GS_ZERO} refs/heads/stale ${head}\n`, '', 'refs/heads/main\n'];
+  for (const stdin of shapes) {
+    const r = gsVerify(h, stdin);
+    assert.equal(r.status, 1, `stdin ${JSON.stringify(stdin)}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
+    assert.match(r.stderr, GS_MISSING);
+    assert.match(r.stderr, /Emergencies only: git push --no-verify/);
+    assert.equal(r.stdout, '', 'nothing ran, so nothing is printed on stdout');
+  }
+  assert.deepEqual(gsTree(h), before, 'no receipt, no lock file, nothing under the common dir');
+  // The exact line ends with markers.js's restore recipe for the marker's path.
+  const PG = require('./push-gate');
+  const file = gs.path.join(h.common, 'drb-flip.json');
+  const line = PG.missingMarkerLine(file);
+  assert.ok(line.endsWith(`until it is restored: ${require('./lib/markers').flipRestore(file)}`), line);
+  // A held gate lock changes nothing: verify never waits on it or reports it.
+  await gsHoldLock(t, h);
+  const held = gsVerify(h, gsLine(head));
+  assert.equal(held.status, 1);
+  assert.ok(held.stderr.includes(line), held.stderr);
+  assert.doesNotMatch(held.stderr, /another push gate/);
+});
+
+test('legacy-removal: with the flip marker present, the legacy receipt file changes nothing', (t) => {
+  const h = gsReady(t);
+  const legacy = gs.path.join(h.common, 'drb-push-gate-receipt.json');
+  // None on disk: a push with a sha receipt and review receipts passes, and verify writes none.
+  assert.equal(gs.fs.existsSync(legacy), false);
+  const ok = gsVerify(h, gsLine(h.sha, 'refs/heads/main', h.seed));
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /the sha receipt and the review receipts over origin\/main are valid/);
+  assert.equal(gs.fs.existsSync(legacy), false, 'verify writes no legacy receipt');
+  // One on disk, written for the sha being pushed and covering every gate: a
+  // push with no sha receipt still refuses.
+  const bare = gsLandLane(h, { 'server/b.js': 'b v2\n' });
+  gs.fs.writeFileSync(legacy, JSON.stringify({ version: 2, fingerprint: 'x', head: bare, gates: ['money', 'client'], at: new Date().toISOString() }));
+  const r = gsVerify(h, gsLine(bare));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no sha receipt \(run: npm run ship\)/);
+});
+
+test('legacy-removal: run, no word and any other word refuse with the usage, take no lock and write nothing', (t) => {
+  const h = gsRepo(t);
+  gsCommit(h.repo, 'docs', { 'docs/notes.md': 'notes v2\n' });
+  const before = gsTree(h);
+  for (const args of [['run'], [], ['gate']]) {
+    const r = gs.cp.spawnSync(process.execPath, [gs.path.join(h.repo, 'scripts', 'push-gate.js'), ...args], { cwd: h.repo, encoding: 'utf8', env: GS_ENV });
+    assert.equal(r.status, 1, `args ${JSON.stringify(args)}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
+    assert.match(r.stderr, /usage: node scripts\/push-gate\.js sha <sha> \| receipt <sha> \| verify/);
+    if (args[0] !== 'gate') assert.match(r.stderr, /the run command is gone since 2026-10-30; a push goes through npm run ship, whose gate is push-gate\.js sha/);
+    assert.equal(r.stdout, '');
+  }
+  assert.deepEqual(gsTree(h), before, 'no receipt, no lock file, nothing under the common dir');
 });

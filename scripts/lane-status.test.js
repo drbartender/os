@@ -211,27 +211,31 @@ function settledOk(r) {
   return L.readManifest(r.sha, { cwd: r.repo });
 }
 
+// The flip line with no marker: the flip happened, so a missing marker was
+// lost, and the line ends with the one restore recipe, for its path.
+const LS_MISSING = (r) => `flip marker: missing (the flip happened, so it was lost); every push refuses until it is restored: ${M.flipRestore(path.join(r.common, 'drb-flip.json'))}`;
+
 function runSessionStart(cwd, script = SCRIPT) {
   const t0 = Date.now();
   const res = spawnSync(process.execPath, [script, '--session-start'], { cwd, encoding: 'utf8' });
   return { ...res, ms: Date.now() - t0, lines: res.stdout.split('\n').filter(Boolean) };
 }
 
-test('markersReport with no marker files prints the absent flip line and no marker line', (t) => {
+test('markersReport with no marker files prints the missing flip line and no marker line', (t) => {
   const r = shipRepo(t, 'mk-none');
-  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), ['flip marker: absent, pushes are cue-only through npm run gate']);
+  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [LS_MISSING(r)]);
 });
 
-test('markersReport with both markers prints both lines, before-flip wording while the flip is absent', (t) => {
+test('markersReport with both markers prints both lines, refusals while the flip marker is absent (since the flip, lost)', (t) => {
   const r = shipRepo(t, 'mk-both');
   assert.equal(M.setGate({ sha: r.sha, reason: 'money smoke failed', gates: ['smoke'], cwd: r.repo }).written, true);
   M.setWatch({ sha: r.sha, deploy_at: ago(5 * MIN), count: 3, cwd: r.repo });
   const lines = LS.markersReport({ cwd: r.repo });
   assert.equal(lines.length, 3);
-  assert.equal(lines[0], 'flip marker: absent, pushes are cue-only through npm run gate');
-  assert.ok(lines[1].startsWith(`gate marker stands on ${r.sha7} (money smoke failed)`), lines[1]);
-  assert.ok(lines[2].startsWith(`watch marker stands on ${r.sha7} (3 events since deploy)`), lines[2]);
-  assert.ok(lines.every((l) => !l.startsWith('BLOCKED')), 'nothing binds before the flip');
+  assert.equal(lines[0], LS_MISSING(r));
+  assert.ok(lines[1].startsWith(`BLOCKED: gate marker stands on ${r.sha7} (money smoke failed); a gate that passes`), lines[1]);
+  assert.ok(lines[2].startsWith(`BLOCKED: watch marker stands on ${r.sha7} (3 events since deploy); read them, then npm run ship -- --ack-watch`), lines[2]);
+  assert.ok(lines.every((l) => !l.includes('from the flip on')), 'no before-flip wording: the flip happened');
 });
 
 test('markersReport with an unreadable marker file prints the unreadable marker line', (t) => {
@@ -250,7 +254,41 @@ test('markersReport reads the flip through flipState: a present flip by sha7 and
   fs.writeFileSync(flipFile, JSON.stringify({ sha: r.sha, pushed_at: '2026-10-23T12:00:00.000Z', written_by: 'test' }));
   assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [`flip marker: ${r.sha7} 2026-10-23T12:00:00.000Z`]);
   fs.writeFileSync(flipFile, '{torn');
-  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [`BLOCKED: the flip marker ${flipFile} is unreadable; repair or remove it by hand`]);
+  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [`BLOCKED: the flip marker is unreadable; read it, then repair it by hand: ${M.flipRestore(flipFile)}`]);
+  // Repaired by hand to the recipe the line gives, it reads present.
+  const fix = restoreFrom(r, LS.markersReport({ cwd: r.repo })[0]);
+  fs.writeFileSync(fix.file, fix.body);
+  assert.deepStrictEqual(LS.markersReport({ cwd: r.repo }), [`flip marker: ${M.FLIP_SHA.slice(0, 7)} 2026-10-30`]);
+});
+
+// The marker a missing-marker line's recipe writes, read as an operator reads
+// it: the first path naming drb-flip.json (a bare name taken as the common
+// dir's file), and the JSON object the line gives, else one holding the sha
+// the line names.
+function restoreFrom(r, line) {
+  const named = /(\S*drb-flip\.json)/.exec(line)[1];
+  const json = /\{"sha".*?\}/.exec(line);
+  const sha = /sha\W+([0-9a-f]{7,64})/.exec(line)[1];
+  return { file: path.isAbsolute(named) ? named : path.join(r.common, named), sha, body: json ? json[0] : JSON.stringify({ sha, pushed_at: 'as printed', written_by: 'test' }) };
+}
+
+test('the hook, the session start and ship give one restore recipe for a missing flip marker: a marker written from each line as printed reads present, and the three name the same full sha and path', (t) => {
+  const r = shipRepo(t, 'mk-restore');
+  const flipFile = M.markerPaths({ cwd: r.repo }).flip;
+  const lines = {
+    hook: require('./push-gate').missingMarkerLine(flipFile),
+    'session start': LS.markersReport({ cwd: r.repo })[0],
+    ship: require('./lib/shipFlow').precheck(r.repo).refusal,
+  };
+  const recipes = Object.entries(lines).map(([who, line]) => {
+    const x = restoreFrom(r, line);
+    fs.writeFileSync(x.file, x.body);
+    assert.equal(M.flipState({ cwd: r.repo }).state, 'present', `the ${who} recipe writes a marker that reads present: ${line}`);
+    fs.rmSync(x.file);
+    return [x.sha, x.file];
+  });
+  assert.deepStrictEqual(recipes, [0, 1, 2].map(() => [M.FLIP_SHA, flipFile]), 'one full sha and one path across the three');
+  assert.match(M.FLIP_SHA, /^8bf83999[0-9a-f]{32}$/);
 });
 
 test('shipReport with no drb-ship directory prints no ship yet', (t) => {
@@ -371,7 +409,7 @@ test('--session-start exits 0 on a repo with a stale lane, within two seconds; t
   assert.equal(res.status, 0, res.stderr);
   assert.ok(res.ms < 2000, `took ${res.ms} ms`);
   assert.ok(res.lines.length <= LS.SESSION_MAX_LINES);
-  assert.equal(res.lines[0], 'flip marker: absent, pushes are cue-only through npm run gate');
+  assert.equal(res.lines[0], LS_MISSING(r));
   assert.equal(res.lines[1], 'no ship yet');
   assert.ok(res.lines.some((l) => l.startsWith('stale lane old-lane: ') && l.includes('main advanced')), res.stdout);
   const plain = spawnSync(process.execPath, [SCRIPT], { cwd: r.repo, encoding: 'utf8' });

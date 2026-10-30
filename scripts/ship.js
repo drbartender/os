@@ -15,11 +15,12 @@
 //   node scripts/ship.js --status [<sha>]
 //
 // What it guarantees:
-//   - Dormant until the flip marker (<git-common-dir>/drb-flip.json): without
-//     it a ship refuses with the cue-only line and writes nothing, not even
-//     the lock file; so does an unreadable flip marker (with its line) and a
-//     cwd that is not the primary worktree on main. --status and --ack-watch
-//     push nothing and run either way.
+//   - The flip marker (<git-common-dir>/drb-flip.json) must stand: without
+//     it a ship refuses with shipFlow's CUE_ONLY and, under it, the restore
+//     recipe markers.flipRestore builds for the marker's path, and writes
+//     nothing, not even the lock file; so does an unreadable flip marker
+//     (with its line) and a cwd that is not the primary worktree on main.
+//     --status and --ack-watch push nothing and run either way.
 //   - The test overrides DRB_SHIP_GATE_CMD, DRB_SHIP_WATCH_CMD and
 //     DRB_SHIP_GIT_CMD run only with DRB_SHIP_ALLOW_STUBS=1: set without it,
 //     each refuses the ship with a line of its own before anything is
