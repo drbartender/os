@@ -212,8 +212,10 @@ test('the date expression is evaluated in the EVENT timezone, not the session', 
   // the party is still running.
   //
   // Proven behaviorally by contrasting two rows on the SAME event_date, one in
-  // Chicago and one in Pacific/Kiritimati (UTC+14). They are 19 hours apart, so
-  // for most of the day exactly one has crossed the +2 day line. Which OFFSET
+  // Chicago and one in Pacific/Kiritimati (UTC+14). They are 19 or 20 hours apart
+  // by the season (Chicago is UTC-5 on daylight time and UTC-6 from the first
+  // Sunday of November to the second Sunday of March), so for most of the day
+  // exactly one has crossed the +2 day line. Which OFFSET
   // discriminates depends on the time of day, so find it at runtime rather than
   // hardcoding one: an earlier cut hardcoded daysAgo(2), where both zones had
   // already crossed, and the test passed for free.
@@ -225,16 +227,42 @@ test('the date expression is evaluated in the EVENT timezone, not the session', 
   const split = probe.find((r) => r.kir && !r.chi);
 
   // Time-independent half: the same calendar date in two zones must yield
-  // thresholds exactly 19 hours apart. This alone fails if AT TIME ZONE is dropped.
+  // thresholds as far apart as the two zones' UTC offsets on that date, 19 or 20
+  // hours by the season. This alone fails if AT TIME ZONE is dropped (the delta
+  // is then 0).
+  //
+  // The expected gap is computed for that date, never hardcoded: a constant 19
+  // hours failed all winter, and from two days before the November change, since
+  // the date is CURRENT_DATE + 2 days. A zone's UTC offset at a local wall time ts
+  // is ts minus the UTC wall time of (ts AT TIME ZONE zone). EXTRACT(TIMEZONE ...)
+  // cannot give it: on a timestamp Postgres 17 refuses the unit, and on a
+  // timestamptz it reports the SESSION zone's offset, not the named zone's. One
+  // statement, so the delta and the offsets read the same CURRENT_DATE.
   const { rows: [delta] } = await pool.query(`
     SELECT EXTRACT(EPOCH FROM
       ((CURRENT_DATE + INTERVAL '2 days') AT TIME ZONE 'America/Chicago')
-      - ((CURRENT_DATE + INTERVAL '2 days') AT TIME ZONE 'Pacific/Kiritimati')) AS secs`);
-  assert.equal(Number(delta.secs), 19 * 3600,
-    'Chicago and Kiritimati thresholds for the same date must be 19 hours apart');
+      - ((CURRENT_DATE + INTERVAL '2 days') AT TIME ZONE 'Pacific/Kiritimati')) AS secs,
+      EXTRACT(EPOCH FROM (CURRENT_DATE + INTERVAL '2 days')
+        - (((CURRENT_DATE + INTERVAL '2 days') AT TIME ZONE 'America/Chicago') AT TIME ZONE 'UTC')) AS chi_off,
+      EXTRACT(EPOCH FROM (CURRENT_DATE + INTERVAL '2 days')
+        - (((CURRENT_DATE + INTERVAL '2 days') AT TIME ZONE 'Pacific/Kiritimati') AT TIME ZONE 'UTC')) AS kir_off`);
+  const gapSecs = Number(delta.secs);
+  const offsetGapSecs = Number(delta.kir_off) - Number(delta.chi_off);
+  // The measured gap is the offsets' difference for that date (Kiritimati is
+  // ahead, so its threshold comes first and Chicago's lands later).
+  assert.equal(gapSecs, offsetGapSecs,
+    'Chicago and Kiritimati thresholds must be their UTC offsets apart on that date');
+  // Nonzero: with AT TIME ZONE dropped both thresholds are the same instant.
+  assert.notEqual(gapSecs, 0,
+    'the threshold must depend on the zone; a 0 gap means AT TIME ZONE was dropped');
+  // And it is one of the two real values (Kiritimati UTC+14 against Chicago's
+  // UTC-5 or UTC-6), so the check stays anchored to the zones' actual rules.
+  assert.ok([19 * 3600, 20 * 3600].includes(gapSecs),
+    `the gap must be 19 or 20 hours by the season, got ${gapSecs / 3600}`);
 
   if (!split) {
-    // ~5 hours a day no integer offset lands inside the 19-hour window.
+    // About 5 hours a day on daylight time (4 on standard time) no integer
+    // offset lands inside the 19- or 20-hour window.
     console.log('    (no discriminating offset at this hour; behavioral half skipped)');
     return;
   }

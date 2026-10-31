@@ -127,11 +127,35 @@ test('shouldScheduleLongLeadRecap > returns false when created_at is missing', (
 });
 
 // ── schedulePreEventReminders ──
+// The fixture dates in this section are relative to the run, never literals.
+// scheduleEventEve (eventEveSms.js) skips, and deletes, an event-eve pair whose
+// send time (24 hours before the event start) is already past, so a literal
+// event date rots: once the calendar passed the old literal 2026-08-15, the
+// 5-row expectation came out as 3. No test here reads the weekday or the
+// event-local hour (the start time stays 18:00 Chicago), so only the distances
+// below matter.
+const DAY_MS = 24 * 3600 * 1000;
+// The UTC calendar date `days` from now, as 'YYYY-MM-DD'.
+function ymdFromNow(days) {
+  return new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
+}
+// The instant `days` from now (negative is in the past), as an ISO string.
+function isoFromNow(days) {
+  return new Date(Date.now() + days * DAY_MS).toISOString();
+}
+// Every fixture event is 45 days out, so the event-week reminder (T-7), the
+// drink-plan nudge (T-21) and the event-eve pair (T-24h) all lie ahead.
+const EVENT_DATE = ymdFromNow(45);
+// Booked now: a lead time just under 45 days, under the 90-day long-lead line.
+const SHORT_LEAD_CREATED_AT = isoFromNow(0);
+// Booked 75 days ago: a lead time just under 120 days, over the 90-day line.
+const LONG_LEAD_CREATED_AT = isoFromNow(-75);
+
 test('schedulePreEventReminders > schedules event_week_reminder (T-7) when proposal moves to deposit_paid', async () => {
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+     VALUES ($1, $2, 'deposit_paid', $3, '18:00', 'America/Chicago', $4, 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, EVENT_DATE, SHORT_LEAD_CREATED_AT]
   );
   // cc-import (Task 2): scheduleDrinkPlanNudge early-returns when no
   // drink_plans row exists. Seed the row so the nudge schedules below.
@@ -142,7 +166,8 @@ test('schedulePreEventReminders > schedules event_week_reminder (T-7) when propo
      FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
     [TEST_PROPOSAL_ID]
   );
-  // Lead time = 2026-08-15 - 2026-07-01 = 45 days. < 90, so no long_lead_t30_recap.
+  // Lead time just under 45 days (event 45 days out, booked now). < 90, so no
+  // long_lead_t30_recap.
   // schedulePreEventReminders now also schedules the drink-plan nudge (email +
   // SMS) and the event-eve PAIR (sms + its email twin).
   assert.strictEqual(rows.length, 5);
@@ -161,9 +186,12 @@ test('schedulePreEventReminders > schedules event_week_reminder (T-7) when propo
 test('schedulePreEventReminders > also schedules long_lead_t30_recap when booking lead time >= 90 days', async () => {
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-     VALUES ($1, $2, 'deposit_paid', '2026-12-01', '18:00', 'America/Chicago', '2026-05-01T12:00:00Z', 1000)`,
-    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+     VALUES ($1, $2, 'deposit_paid', $3, '18:00', 'America/Chicago', $4, 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, EVENT_DATE, LONG_LEAD_CREATED_AT]
   );
+  // Lead time just under 120 days (event 45 days out, booked 75 days ago), so
+  // >= 90 and the T-30 recap joins the five; the event is still ahead, so the
+  // event-eve pair is still among them.
   // cc-import (Task 2): seed drink_plans row so the nudge schedules.
   await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [TEST_PROPOSAL_ID]);
   await schedulePreEventReminders(TEST_PROPOSAL_ID);
@@ -180,8 +208,8 @@ test('schedulePreEventReminders > also schedules long_lead_t30_recap when bookin
 test('schedulePreEventReminders > is idempotent — calling twice does not duplicate rows', async () => {
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+     VALUES ($1, $2, 'deposit_paid', $3, '18:00', 'America/Chicago', $4, 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, EVENT_DATE, SHORT_LEAD_CREATED_AT]
   );
   // cc-import (Task 2): seed drink_plans row so the nudge schedules.
   await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [TEST_PROPOSAL_ID]);
@@ -200,9 +228,12 @@ test('schedulePreEventReminders > is idempotent — calling twice does not dupli
 test('schedulePreEventReminders > skips entirely when proposal is archived', async () => {
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, archive_reason, event_date, event_start_time, event_timezone, created_at, total_price)
-     VALUES ($1, $2, 'archived', 'client_cancelled', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+     VALUES ($1, $2, 'archived', 'client_cancelled', $3, '18:00', 'America/Chicago', $4, 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, EVENT_DATE, SHORT_LEAD_CREATED_AT]
   );
+  // Relative like the rest, though this count holds on any date: without the
+  // archived guard the event-week reminder (which has no past-date skip) would
+  // still be scheduled, so 0 is the guard's doing.
   await schedulePreEventReminders(TEST_PROPOSAL_ID);
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
