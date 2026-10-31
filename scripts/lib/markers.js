@@ -11,6 +11,9 @@
 //                           markers below bind every push, whatever its state.
 //   drb-markers/gate.json   {sha, at, reason, gates, on_main, earlier}. The
 //                           gate writes it when it fails on a sha on main.
+//                           An entry names its checks through namedChecks:
+//                           its gates when they are a list of names, else
+//                           every check (GATE_CHECKS), never none.
 //   drb-markers/watch.json  {sha, at, deploy_at, count, by_issue, earlier}.
 //                           The post-ship watch writes it when it reads Sentry
 //                           events after a deploy; count null means Sentry
@@ -52,27 +55,32 @@
 //     objects directory the walk cannot find. What stays uncovered: a pack
 //     git skips silently for a reason other than readability (a bad index it
 //     does not report). Git errors fail closed: 'gone' and 'off' count as off
-//     main, so any other sha fixes such a marker and a gate passing on main
-//     clears it (a main rewritten before a push, which the replay recipe
-//     does); 'unknown' never clears and never counts as fix forward, so its
-//     marker stands and its line names the by-hand removal.
+//     main, so any other sha fixes such a marker forward (a main rewritten
+//     before a push, which the replay recipe does, leaves one), and a gate on
+//     main clears it only after a run that re-ran every check it names (the
+//     sha gate's rule); 'unknown' never clears and never counts as fix
+//     forward, so its marker stands and its line names the by-hand removal.
 //   - setGate writes for a sha 'on' main, refuses one 'off' (a lane tip that
 //     fails its gate leaves no marker), and writes one 'gone' or 'unknown'
 //     anyway with `on_main: null` and `uncertain`: a marker that stands
-//     blocks, the safe direction. Never backwards: a standing marker git
-//     proves a strict descendant of the new sha is kept, since fix forward
-//     from the older sha would let the failing sha itself through. Otherwise
-//     the new failure is recorded; the standing one is dropped when it is
-//     'off' or 'gone' or git proves the new sha descends from it, and is
-//     otherwise kept under `earlier` (git could not order the two), so a
-//     failing sha is never left unrecorded.
+//     blocks, the safe direction. A standing failure is dropped only when the
+//     new sha fixes it (the fix-forward test below) and the failing run
+//     re-proved every check it names (`proven`); its own sha failing again
+//     carries forward what that run left unproven. Every other one stays
+//     under `earlier` (a superseded failure that shipped untested, one whose
+//     sha left main, one git could not order), so no failing sha goes
+//     unrecorded. Never backwards: one on main git proves a strict descendant
+//     of the new sha stays on top, the new failure recorded beside it
+//     (`beside`), since fix forward from the older sha would let the failing
+//     sha itself through.
 //   - Fix forward (decision 16): isFixForward(sha) is true when the sha fixes
 //     the marker and every failure under `earlier`: a STRICT descendant of
 //     one on main, any other sha for one 'off' or 'gone'. The failing sha is
 //     never its own fix by default; with `{self: true}` (the gate's, after it
 //     re-ran every check the marker names on that very sha) it is.
 //     clearGateIfDescendant clears only for a sha that is itself 'on' main
-//     and is such a fix: a lane tip never clears one.
+//     and is such a fix: a lane tip never clears one. Which checks the
+//     clearing run must have re-run is the sha gate's rule (shaGate.js).
 //   - setWatch writes a full sha git cannot resolve with `resolved: false`.
 //   - A watch marker stands until it is acked by its sha (clearWatch). A watch
 //     that finds events while a marker stands on another sha stacks on top of
@@ -301,7 +309,7 @@ function readMarker(file, extra = () => true) {
 }
 
 // A marker file's `earlier`, when present, is a list of marker objects: the
-// watch's stack of unacked shas, and the gate's failures git could not order.
+// watch's unacked shas, and every gate failure setGate keeps beside the top.
 function stackShape(v) {
   return v.earlier === undefined || (Array.isArray(v.earlier) && v.earlier.every(isMarkerObject));
 }
@@ -592,8 +600,14 @@ function fixesMarker(marker, full, cwd, self = false) {
 
 // ---- the gate marker -----------------------------------------------------------
 
-function setGate({ sha, reason = '', gates = [], cwd } = {}) {
-  if (!Array.isArray(gates) || gates.some((g) => typeof g !== 'string')) throw new TypeError('setGate: gates must be a list of gate names');
+// The checks a gate marker can name, the sha gate's verdict checks (shaGate.js
+// reads them here), and the ones an entry names: a missing or malformed list
+// reads as every check, never as naming none.
+const GATE_CHECKS = Object.freeze(['static checks', 'money', 'client', 'docs']);
+const namedChecks = (e) => (Array.isArray(e.gates) && e.gates.length && e.gates.every((g) => typeof g === 'string') ? e.gates : [...GATE_CHECKS]);
+
+function setGate({ sha, reason = '', gates = [], proven = [], cwd } = {}) {
+  if (![gates, proven].every((l) => Array.isArray(l) && l.every((g) => typeof g === 'string'))) throw new TypeError('setGate: gates and proven must be lists of gate names');
   // A ref that is not a full sha must resolve: no such commit is a refusal,
   // and git failing to answer throws, so the gate fails loudly rather than
   // record nothing. A full sha git cannot resolve gets the uncertain marker.
@@ -613,35 +627,27 @@ function setGate({ sha, reason = '', gates = [], cwd } = {}) {
   return withLock(p.lock, () => {
     const cur = readMarker(p.gate, stackShape);
     if (cur && cur.unreadable) return { written: false, reason: `unreadable marker ${cur.path}` };
-    // Never backwards: a standing marker git proves a strict descendant of
-    // the new sha is kept. Otherwise the new failure is recorded; the standing
-    // one is dropped only when it is off main or gone, or git proves the new
-    // sha strictly descends from it, and is otherwise kept under `earlier`
-    // (git could not order the two), so no failing sha goes unrecorded.
-    let earlier = [];
+    const entry = { sha: full, at: new Date().toISOString(), reason: clean(reason), gates: [...gates], on_main: where === 'on' ? true : null };
+    if (!resolvedSha) entry.resolved = false;
+    // The rule in the header: dropped only when fixed and re-proved, else
+    // kept; one on main (or unknown) that git proves descends from the new
+    // sha stays on top; one git cannot order makes the write uncertain.
+    let top = entry;
     let unordered = false;
-    if (cur) {
-      const { earlier: curEarlier, ...curTop } = cur;
-      earlier = [...(curEarlier || [])];
-      if (curTop.sha !== full) {
-        const curWhere = placement(curTop.sha, { cwd });
-        if (curWhere === 'on' || curWhere === 'unknown') {
-          if (ancestor(full, curTop.sha, cwd) === true && curTop.sha !== full) {
-            return { written: false, reason: `the gate marker on ${R.short(curTop.sha)} stands and descends from ${R.short(full)}; it is kept` };
-          }
-          if (ancestor(curTop.sha, full, cwd) !== true) {
-            earlier.push(curTop);
-            unordered = true;
-          }
-        }
+    const kept = [];
+    for (const e of cur ? watchStack(cur) : []) {
+      const left = namedChecks(e).filter((g) => !proven.includes(g));
+      if (e.sha === full) entry.gates = [...new Set([...entry.gates, ...left])];
+      else if (left.length || !fixesEntry(e.sha, full, cwd)) {
+        kept.push(e);
+        if (!['on', 'unknown'].includes(placement(e.sha, { cwd }))) continue;
+        if (ancestor(full, e.sha, cwd) === true) top = e;
+        else if (ancestor(e.sha, full, cwd) !== true) unordered = true;
       }
-      earlier = earlier.filter((e) => e.sha !== full);
     }
-    const marker = { sha: full, at: new Date().toISOString(), reason: clean(reason), gates: [...gates], on_main: where === 'on' ? true : null };
-    if (!resolvedSha) marker.resolved = false;
-    if (earlier.length) marker.earlier = earlier;
-    R.writeJsonAtomic(p.gate, marker);
-    return where === 'on' && !unordered ? { written: true } : { written: true, uncertain: true };
+    const earlier = [...kept, entry].filter((e) => e !== top);
+    R.writeJsonAtomic(p.gate, earlier.length ? { ...top, earlier } : top);
+    return { written: true, ...(top === entry ? {} : { beside: top.sha }), ...(where === 'on' && !unordered ? {} : { uncertain: true }) };
   });
 }
 
@@ -669,7 +675,8 @@ function isFixForward(sha, { cwd, self = false } = {}) {
 
 // ---- the watch marker ----------------------------------------------------------
 
-// The stack a watch file holds, oldest first, the standing marker last.
+// The stack a marker file holds: `earlier` as written, then the top (oldest
+// first for a watch; a gate's top can be older than a failure beside it).
 function watchStack(marker) {
   const { earlier, ...top } = marker;
   return [...(earlier || []), top];
@@ -763,27 +770,35 @@ function unreadableLine(kind, m) {
   return `BLOCKED: ${kind} marker stands (unreadable marker ${m.path}); read it, then repair or remove the file by hand`;
 }
 
-// How one failure under `earlier` clears, by its placement.
+// How one failure under `earlier` clears, by the sha gate's rule (shaGate.js
+// clearMarker): where it sits, and for one on main whether origin/main holds
+// it (git not saying reads as the stricter rule). At most five are named.
+const STRICT = 'cleared only by a later sha on main whose one pass re-runs every check it names';
 const EARLIER_EXIT = Object.freeze({
-  on: 'on main, needs a descendant that passes',
-  off: 'off main, cleared by any later sha on main that passes',
-  gone: 'gone, cleared by any later sha on main that passes',
-  unknown: 'git cannot place it, it waits for git or the by-hand removal',
+  unshipped: 'on main, not yet on origin/main: cleared by a descendant on main whose pass re-runs those of them its range still needs',
+  shipped: `on main and origin/main, shipped untested: ${STRICT}`, unsure: `on main, origin/main not read: ${STRICT}`,
+  off: `off main: ${STRICT}`, gone: `gone: ${STRICT}`, unknown: 'git cannot place it: it waits for git or the by-hand removal',
 });
+const namesOf = (e, list = namedChecks(e)) => `${list === e.gates ? '' : 'no list recorded, so every check: '}${list.map(clean).join(', ')}`;
+function exitOf(e, origin, cwd) {
+  const where = placement(e.sha, { cwd });
+  const shipped = where === 'on' && origin ? ancestor(e.sha, origin, cwd) : null;
+  return where !== 'on' ? where : shipped === false ? 'unshipped' : shipped ? 'shipped' : 'unsure';
+}
 
 function gateLine(m, file, cwd) {
   if (m.unreadable) return unreadableLine('gate', m);
   const what = `gate marker stands on ${R.short(m.sha)} (${clean(m.reason) || 'no reason recorded'})`;
-  // The gate's clearing rule (shaGate.js clearMarker): a pass on this sha
-  // again or on a descendant on main, re-running the checks named.
-  const named = Array.isArray(m.gates) && m.gates.length ? m.gates.map(clean).join(', ') : 'none recorded';
-  const advice = `a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (${named}; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${file} by hand`;
+  const named = namesOf(m);
+  const advice = `a gate that passes on this sha again or on a descendant on main (any later sha on main once the failing sha left main) clears it when that run re-runs the checks this marker names (${named}; all of them once the failing sha is on origin/main or has left main, otherwise those its range still needs); last resort: remove ${file} by hand`;
   const line = `BLOCKED: ${what}; ${advice}`;
   const earlier = m.earlier || [];
   if (!earlier.length) return line;
   const one = earlier.length === 1;
-  const each = earlier.map((e) => `${R.short(e.sha)} (${EARLIER_EXIT[placement(e.sha, { cwd })]})`).join(', ');
-  return `${line}; ${earlier.length} earlier failure${one ? '' : 's'} git could not order stand${one ? 's' : ''} with it: ${each}`;
+  const origin = resolveOrNull('refs/remotes/origin/main', cwd);
+  const each = earlier.slice(0, 5).map((e) => `${R.short(e.sha)} (${namesOf(e)}; ${EARLIER_EXIT[exitOf(e, origin, cwd)]})`).join(', ');
+  const more = earlier.length > 5 ? `, and ${earlier.length - 5} more` : '';
+  return `${line}; ${earlier.length} earlier failure${one ? '' : 's'} stand${one ? 's' : ''} with it: ${each}${more}`;
 }
 
 // The sha an ack names: sha7, or the full sha for an entry git could not
@@ -820,23 +835,8 @@ function standing({ cwd } = {}) {
 }
 
 module.exports = {
-  flip,
-  flipState, FLIP_AT, FLIP_DATE, FLIP_SHA, flipRestore,
-  gate,
-  watch,
-  setGate,
-  clearGateIfDescendant,
-  isFixForward,
-  setWatch,
-  clearWatch,
-  standing,
-  placement,
-  seams,
-  markerPaths,
-  withLock,
-  pidAlive,
-  clean,
-  isZonedTime,
-  resolveStrict,
-  cleanMiss,
+  flip, flipState, FLIP_AT, FLIP_DATE, FLIP_SHA, flipRestore,
+  gate, watch, standing, GATE_CHECKS, namedChecks,
+  setGate, clearGateIfDescendant, isFixForward, setWatch, clearWatch,
+  placement, seams, markerPaths, withLock, pidAlive, clean, isZonedTime, resolveStrict, cleanMiss,
 };

@@ -145,7 +145,7 @@ test('setGate writes for a sha on main; the line is a refusal whatever the flip 
   assert.deepEqual(g.gates, ['money']);
   assert.equal(g.on_main, true);
   assert.ok(Number.isFinite(Date.parse(g.at)));
-  const blocked = `BLOCKED: gate marker stands on ${short(r.B)} (money smoke failed); a gate that passes on this sha again or on a descendant on main clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main, otherwise those its range still needs); a marker whose sha left main clears on any gate that passes on main; last resort: remove ${r.gateFile} by hand`;
+  const blocked = `BLOCKED: gate marker stands on ${short(r.B)} (money smoke failed); a gate that passes on this sha again or on a descendant on main (any later sha on main once the failing sha left main) clears it when that run re-runs the checks this marker names (money; all of them once the failing sha is on origin/main or has left main, otherwise those its range still needs); last resort: remove ${r.gateFile} by hand`;
   assert.equal(M.standing({ cwd: r.repo }).gate, blocked, 'a refusal with the flip marker absent: since the flip a missing one was lost');
   assert.ok(M.standing({ cwd: r.repo }).gate.includes('re-runs the checks this marker names (money;'));
   writeFlip(r, r.A);
@@ -179,32 +179,42 @@ test('setGate writes under uncertainty: a sha git cannot resolve, and a repo wit
   assert.equal(M.gate({ cwd: r.repo }).resolved, undefined);
 });
 
-test('setGate never moves a standing marker backwards, and moves it forward', (t) => {
+test('setGate never moves a standing marker backwards: a failure on its ancestor is recorded beside it; and it moves forward', (t) => {
   const r = makeRepo(t);
   M.setGate({ sha: r.C, reason: 'failed on C', gates: ['money'], cwd: r.repo });
-  const back = M.setGate({ sha: r.B, reason: 'failed on B', gates: ['money'], cwd: r.repo });
-  assert.equal(back.written, false);
-  assert.match(back.reason, /descends from/);
-  assert.equal(M.gate({ cwd: r.repo }).sha, r.C);
+  assert.deepEqual(M.setGate({ sha: r.B, reason: 'failed on B', gates: ['client'], cwd: r.repo }), { written: true, beside: r.C });
+  const g = M.gate({ cwd: r.repo });
+  assert.equal(g.sha, r.C, 'the standing marker stays on top');
+  assert.deepEqual(g.earlier.map((e) => [e.sha, e.gates]), [[r.B, ['client']]], 'the ancestor\'s own result is recorded beside it');
+  assert.equal(M.isFixForward(r.C, { cwd: r.repo }), false, 'fix forward from the older sha never lets the failing sha through');
   const D = commit(r.repo, 'another', { 'server/d.js': 'd\n' });
+  assert.equal(M.isFixForward(D, { cwd: r.repo }), true);
   assert.deepEqual(M.setGate({ sha: D, reason: 'failed on D', gates: ['money'], cwd: r.repo }), { written: true });
   assert.equal(M.gate({ cwd: r.repo }).sha, D);
+  assert.deepEqual(M.gate({ cwd: r.repo }).earlier.map((e) => e.sha), [r.B, r.C], 'neither was re-proved by the run on D');
 });
 
-test('a standing gate marker that is off main is replaced', (t) => {
+test('a standing gate marker that is off main is kept beside a new failure, and replaced only by a run that re-proved what it names', (t) => {
   const r = makeRepo(t);
   fs.mkdirSync(r.markerDir, { recursive: true });
-  fs.writeFileSync(r.gateFile, JSON.stringify({ sha: r.S, at: '2026-10-22T06:00:00.000Z', reason: 'old', gates: ['money'] }));
+  const old = JSON.stringify({ sha: r.S, at: '2026-10-22T06:00:00.000Z', reason: 'old', gates: ['money'] });
+  fs.writeFileSync(r.gateFile, old);
   assert.deepEqual(M.setGate({ sha: r.B, reason: 'failed on B', gates: ['money'], cwd: r.repo }), { written: true });
   assert.equal(M.gate({ cwd: r.repo }).sha, r.B);
+  assert.deepEqual(M.gate({ cwd: r.repo }).earlier.map((e) => e.sha), [r.S], 'its money failure was never re-run');
+  fs.writeFileSync(r.gateFile, old);
+  assert.deepEqual(M.setGate({ sha: r.B, reason: 'failed on B', gates: ['client'], proven: ['static checks', 'money'], cwd: r.repo }), { written: true });
+  assert.equal(M.gate({ cwd: r.repo }).sha, r.B);
+  assert.equal(M.gate({ cwd: r.repo }).earlier, undefined, 'the run on B re-proved money');
 });
 
-test('a marker on a sha git cannot resolve is replaced by a failure on main, which is not its own fix', (t) => {
+test('a marker on a sha git cannot resolve is kept beside a failure on main, which is not its own fix', (t) => {
   const r = makeRepo(t);
   fs.mkdirSync(r.markerDir, { recursive: true });
   fs.writeFileSync(r.gateFile, JSON.stringify({ sha: ghostSha(), at: '2026-10-22T06:00:00.000Z', reason: 'ghost', gates: ['money'] }));
   assert.deepEqual(M.setGate({ sha: r.B, reason: 'failed on B', gates: ['money'], cwd: r.repo }), { written: true });
   assert.equal(M.gate({ cwd: r.repo }).sha, r.B);
+  assert.deepEqual(M.gate({ cwd: r.repo }).earlier.map((e) => e.sha), [ghostSha()]);
   assert.equal(M.isFixForward(r.B, { cwd: r.repo }), false);
   assert.equal(M.isFixForward(r.C, { cwd: r.repo }), true);
 });
@@ -241,7 +251,7 @@ test('setGate records a failure it cannot order against the standing one, keepin
   assert.equal(g.earlier[0].reason, 'failed on B');
   assert.equal(M.isFixForward(r.C, { cwd: r.repo }), false, 'the failing sha is never its own fix');
   // main is C, so placing B asks the same broken pair: B reads as unknown.
-  assert.ok(M.standing({ cwd: r.repo }).gate.endsWith(`1 earlier failure git could not order stands with it: ${short(r.B)} (git cannot place it, it waits for git or the by-hand removal)`));
+  assert.ok(M.standing({ cwd: r.repo }).gate.endsWith(`1 earlier failure stands with it: ${short(r.B)} (money; git cannot place it: it waits for git or the by-hand removal)`));
 });
 
 test('placement is gone only for exit 1; any other resolve failure is unknown and clears nothing', (t) => {
@@ -299,10 +309,11 @@ test('the earlier suffix states each failure\'s own exit by its placement', (t) 
   fs.writeFileSync(r.gateFile, JSON.stringify({ ...entry(r.C), earlier: [entry(r.B), entry(r.S), entry(ghost), entry(r.A)] }));
   breakResolve(t, (ref) => ref === r.A, 128);
   const line = M.standing({ cwd: r.repo }).gate;
-  assert.ok(line.includes(`4 earlier failures git could not order stand with it: ${short(r.B)} (on main, needs a descendant that passes), `), line);
-  assert.ok(line.includes(`${short(r.S)} (off main, cleared by any later sha on main that passes)`));
-  assert.ok(line.includes(`${short(ghost)} (gone, cleared by any later sha on main that passes)`));
-  assert.ok(line.endsWith(`${short(r.A)} (git cannot place it, it waits for git or the by-hand removal)`));
+  const strict = 'cleared only by a later sha on main whose one pass re-runs every check it names';
+  assert.ok(line.includes(`4 earlier failures stand with it: ${short(r.B)} (money; on main, origin/main not read: ${strict}), `), line);
+  assert.ok(line.includes(`${short(r.S)} (money; off main: ${strict})`), line);
+  assert.ok(line.includes(`${short(ghost)} (money; gone: ${strict})`), line);
+  assert.ok(line.endsWith(`${short(r.A)} (money; git cannot place it: it waits for git or the by-hand removal)`));
 });
 
 test('an ack whose record cannot be appended throws with the marker intact, and a later ack clears', (t) => {
@@ -330,12 +341,13 @@ test('a fix must descend from every failure under earlier', (t) => {
   assert.equal(M.clearGateIfDescendant(D, { cwd: r.repo }).cleared, true);
 });
 
-test('main reset to its parent: the marker that left main is replaced by the gate failing there', (t) => {
+test('main reset to its parent: the marker that left main stays beside the gate failing there, never on top of it', (t) => {
   const r = makeRepo(t);
   M.setGate({ sha: r.C, reason: 'failed on C', gates: ['money'], cwd: r.repo });
   git(r.repo, 'update-ref', 'refs/heads/main', r.B);
   assert.deepEqual(M.setGate({ sha: r.B, reason: 'failed on B', gates: ['money'], cwd: r.repo }), { written: true });
   assert.equal(M.gate({ cwd: r.repo }).sha, r.B);
+  assert.deepEqual(M.gate({ cwd: r.repo }).earlier.map((e) => e.sha), [r.C]);
 });
 
 test('the gate reason is masked on write and when the line is built, and cut after masking', (t) => {
@@ -1086,8 +1098,80 @@ test('the gate line names every check the marker names and the clearing rule, a 
     if (flipped) writeFlip(r, r.A);
     const line = M.standing({ cwd: r.repo }).gate;
     assert.ok(line.startsWith('BLOCKED: '), `flipped ${flipped}: ${line}`);
-    assert.ok(line.includes('re-runs the checks this marker names (money, client; all of them once the failing sha is on origin/main, otherwise those its range still needs)'), line);
+    assert.ok(line.includes('re-runs the checks this marker names (money, client; all of them once the failing sha is on origin/main or has left main, otherwise those its range still needs)'), line);
     assert.ok(line.includes('passes on this sha again or on a descendant on main'), line);
     assert.ok(line.endsWith(`last resort: remove ${r.gateFile} by hand`), line);
   }
+});
+
+// Step 5, lane gate-markers, item 3: a gates field that is missing or is not
+// a list of names reads as naming every check, never as naming none.
+test('a marker with no gates list, or one that is not a list of names, reads as naming every check', (t) => {
+  const r = makeRepo(t);
+  fs.mkdirSync(r.markerDir, { recursive: true });
+  const base = { sha: r.B, at: '2026-10-22T06:00:00.000Z', reason: 'r' };
+  for (const gates of [undefined, 'money', null, [], ['money', 3]]) {
+    fs.writeFileSync(r.gateFile, JSON.stringify(gates === undefined ? base : { ...base, gates }));
+    const line = M.standing({ cwd: r.repo }).gate;
+    assert.ok(line.includes('the checks this marker names (no list recorded, so every check: static checks, money, client'), `${JSON.stringify(gates)}: ${line}`);
+    assert.deepEqual(M.namedChecks(M.gate({ cwd: r.repo })), [...M.GATE_CHECKS], JSON.stringify(gates));
+  }
+  fs.writeFileSync(r.gateFile, JSON.stringify({ ...base, gates: ['client'] }));
+  assert.deepEqual(M.namedChecks(M.gate({ cwd: r.repo })), ['client']);
+  assert.ok(M.standing({ cwd: r.repo }).gate.includes('the checks this marker names (client;'));
+});
+
+// Step 5, lane gate-markers, item 1: a superseded failure (one a later
+// failure on a descendant stands over) is kept under earlier until a failing
+// run on a descendant re-proves every check it names; the gate hands setGate
+// the checks it proved.
+test('a superseded failure stays under earlier until a failing run on a descendant re-proves every check it names', (t) => {
+  const r = makeRepo(t);
+  M.setGate({ sha: r.B, reason: 'failed on B', gates: ['money'], cwd: r.repo });
+  assert.deepEqual(M.setGate({ sha: r.C, reason: 'failed on C', gates: ['client'], proven: ['static checks'], cwd: r.repo }), { written: true });
+  let g = M.gate({ cwd: r.repo });
+  assert.equal(g.sha, r.C);
+  assert.deepEqual(g.earlier.map((e) => [e.sha, e.gates]), [[r.B, ['money']]], 'the run on C never re-ran money');
+  const D = commit(r.repo, 'later', { 'server/d.js': 'd\n' });
+  M.setGate({ sha: D, reason: 'failed on D', gates: ['client'], proven: ['static checks', 'money'], cwd: r.repo });
+  g = M.gate({ cwd: r.repo });
+  assert.equal(g.sha, D);
+  assert.deepEqual(g.earlier.map((e) => e.sha), [r.C], 'B is dropped once money passed on its descendant; C\'s client failure is not re-proved');
+  assert.throws(() => M.setGate({ sha: D, gates: [], proven: 'money', cwd: r.repo }), /gates and proven must be lists/);
+});
+
+test('a failure on the standing sha again carries forward what that run left unproven', (t) => {
+  const r = makeRepo(t);
+  M.setGate({ sha: r.B, reason: 'first', gates: ['money', 'client'], cwd: r.repo });
+  M.setGate({ sha: r.B, reason: 'again', gates: ['money'], proven: ['static checks'], cwd: r.repo });
+  assert.deepEqual(M.gate({ cwd: r.repo }).gates, ['money', 'client'], 'client was never re-run');
+  M.setGate({ sha: r.B, reason: 'third', gates: ['client'], proven: ['static checks', 'money'], cwd: r.repo });
+  const g = M.gate({ cwd: r.repo });
+  assert.deepEqual([g.reason, g.gates, g.earlier], ['third', ['client'], undefined]);
+});
+
+// Fix round 1, item 1: each earlier failure is named with its own checks and
+// the exit that really clears it (the sha gate's rule), at most five of them.
+test('the earlier suffix names each failure\'s checks and the exit that clears it, at most five then a count', (t) => {
+  const r = makeRepo(t);
+  fs.mkdirSync(r.markerDir, { recursive: true });
+  const D = commit(r.repo, 'd', { 'server/d.js': 'd\n' });
+  const E = commit(r.repo, 'e', { 'server/e.js': 'e\n' });
+  const F = commit(r.repo, 'f', { 'server/f.js': 'f\n' });
+  git(r.repo, 'update-ref', 'refs/remotes/origin/main', r.B);
+  const entry = (sha, gates) => ({ sha, at: '2026-10-22T06:00:00.000Z', reason: 'r', ...(gates ? { gates } : {}) });
+  const ghost = ghostSha();
+  fs.writeFileSync(r.gateFile, JSON.stringify({ ...entry(F, ['client']), earlier: [entry(r.B, ['money']), entry(r.C, ['client', 'docs']), entry(r.S), entry(ghost, ['money']), entry(D, ['docs']), entry(E, ['money']), entry(r.A, ['client'])] }));
+  const strict = 'cleared only by a later sha on main whose one pass re-runs every check it names';
+  let line = M.standing({ cwd: r.repo }).gate;
+  assert.ok(line.includes(`7 earlier failures stand with it: ${short(r.B)} (money; on main and origin/main, shipped untested: ${strict}), `), line);
+  assert.ok(line.includes(`${short(r.C)} (client, docs; on main, not yet on origin/main: cleared by a descendant on main whose pass re-runs those of them its range still needs), `), line);
+  assert.ok(line.includes(`${short(r.S)} (no list recorded, so every check: static checks, money, client, docs; off main: ${strict}), `), line);
+  assert.ok(line.includes(`${short(ghost)} (money; gone: ${strict}), `), line);
+  assert.ok(line.endsWith(`${short(D)} (docs; on main, not yet on origin/main: cleared by a descendant on main whose pass re-runs those of them its range still needs), and 2 more`), line);
+  assert.equal(line.includes(short(E)), false, 'only the first five are named');
+  assert.equal(line.split('\n').length, 1, 'one line');
+  git(r.repo, 'update-ref', '-d', 'refs/remotes/origin/main');
+  line = M.standing({ cwd: r.repo }).gate;
+  assert.ok(line.includes(`${short(r.C)} (client, docs; on main, origin/main not read: ${strict}), `), 'with no origin/main the stricter exit is named');
 });

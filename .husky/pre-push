@@ -3,13 +3,13 @@
 # gate itself.
 #
 # A push to main is the deploy. The gates (the money smoke, the exact Vercel
-# client build, the static checks) run before the push, in `npm run ship`,
-# through `node scripts/push-gate.js sha <sha>` in a throwaway worktree of its
-# own, which writes a receipt keyed on the sha. This hook runs inside git's
-# SSH window (git opens the connection before the hook runs, and on
-# 2026-08-14 an eight-minute hook let GitHub close it, so a push failed after
-# passing every gate), so it only reads: push-gate.js verify takes no lock
-# and runs nothing.
+# client build, the static checks, the whole-tree docs check) run before the
+# push, in `npm run ship`, through `node scripts/push-gate.js sha <sha>` in a
+# throwaway worktree of its own, which writes a receipt keyed on the sha. This
+# hook runs inside git's SSH window (git opens the connection before the hook
+# runs, and on 2026-08-14 an eight-minute hook let GitHub close it, so a push
+# failed after passing every gate), so it only reads: push-gate.js verify
+# takes no lock and runs nothing.
 #
 # push-gate.js verify reads <git-common-dir>/drb-flip.json first (instruction
 # rewrite spec 2026-10-19 sections 4.3 and 8; the flip was 2026-10-30):

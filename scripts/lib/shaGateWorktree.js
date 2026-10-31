@@ -3,8 +3,9 @@
 // shaGateWorktree: the sha gate's worktree and child half, a leaf module
 // (instruction rewrite step 3, lane gate-sha; plan 2026-10-22 decision 11).
 // shaGate.js requires it for the paths, the gate worktree's removal and
-// sweep, the smoke logs it keeps, and the children it runs and stops. This
-// file requires only receipt.js and Node's own modules.
+// sweep, the smoke logs it keeps, the children it runs and stops, and the
+// probe that says whether the docs check applies (step 5, lane gate-markers).
+// This file requires only receipt.js and Node's own modules.
 //
 // What it guarantees:
 //   - The gate worktree is <worktrees dir>/.gate-<sha7>, the worktrees dir
@@ -23,12 +24,17 @@
 //   - runChild runs each child as the leader of a process group of its own,
 //     so stopChild can reach everything it started: SIGTERM to the group,
 //     SIGKILL after a grace.
+//   - generatedDocs says whether a tree carries generated docs (spec 5.1),
+//     read from git objects alone, never a working tree, and true whenever
+//     git fails to answer, the side that runs the docs check.
 
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const R = require('./receipt');
 
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const GENERATOR = 'scripts/gen-docs.js';
 const KILL_GRACE_MS = 10_000;
 const TAIL_BYTES = 256 * 1024;
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -206,8 +212,22 @@ function stopChild(state) {
   });
 }
 
+// ---- the docs check -------------------------------------------------------------
+
+// True when the tree at `tip` (a full sha) carries generated docs, which the
+// docs check needs: the generator at the tip, a range whose `files` touch it
+// (one that removes it included, so the check then fails as not run), or a
+// gen marker in README.md or ARCHITECTURE.md at the tip.
+function generatedDocs(tip, files, { cwd = REPO_ROOT } = {}) {
+  if (files.includes(GENERATOR)) return true;
+  const ls = git(cwd, ['ls-tree', '--name-only', tip, '--', GENERATOR]);
+  if (ls.status !== 0 || ls.stdout.trim() !== '') return true;
+  return git(cwd, ['grep', '-q', '-F', '-e', '<!-- gen:', tip, '--', 'README.md', 'ARCHITECTURE.md']).status !== 1;
+}
+
 module.exports = {
   git,
+  generatedDocs,
   describe,
   gateRoots,
   gateWorktreePath,

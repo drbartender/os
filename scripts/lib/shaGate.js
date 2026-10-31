@@ -20,9 +20,10 @@
 //   - The gates are picked from the range, never from the tip commit:
 //     classifyRange diffs the freshly fetched origin/main against the sha as
 //     two trees (gatePaths.touches), so a server change two commits back
-//     still needs the money smoke. A range that needs no gate (docs only, or
-//     only files outside server/, client/, the money paths and the install
-//     paths, or no file at all) is nothing_to_run and creates no worktree.
+//     still needs the money smoke. A range that needs no gate (every file
+//     under docs/, or only files outside server/, client/, the money paths
+//     and the install paths on a tree without generated docs, or no file at
+//     all) is nothing_to_run and creates no worktree.
 //   - The worktree holds no live key and no real credential. Its .env is
 //     gateEnvFile() and nothing else (its STRIPE_SECRET_KEY is a placeholder
 //     of dashed words, so the Stripe client constructs for the suites' local
@@ -48,15 +49,32 @@
 //     reason given to setGate is a descriptor (gate, suite file names, exit,
 //     counts), never a line of suite output: ci-smoke is reset from
 //     production, so that output can carry production-derived data.
+//   - The docs check (spec 5.1 and 5.3): node scripts/gen-docs.js --check
+//     --ref <sha>, the sha's own generator in the gate worktree reading the
+//     sha's own tree from git, never a working tree, for a range with a path
+//     outside docs/ (every other path is one the generator reads or one its
+//     tree names) on a tree with generated docs (shaGateWorktree's
+//     generatedDocs). Each problem it names (a stale section, a misplaced
+//     marker, an unparsed route, a header-less source file) is a verdict
+//     about the code, named in the FAILED line and the marker's reason, the
+//     marker naming `docs`, and echoed in at most 20 `gate: docs:` lines with
+//     the generator's own remedy last; an ending that names none is the
+//     gate's own.
 //   - The marker names only the verdict checks (static checks, money,
-//     client) the failing run did not prove: the one that failed and every
+//     client, docs) the failing run did not prove: the one that failed and every
 //     one it never reached, never one that passed first and never npm ci.
+//     setGate is handed the ones it did prove (none from a run with stubs
+//     unless DRB_GATE_ALLOW_STUBBED=1), so a failure standing before it is
+//     dropped only when this run re-proved every check that one names.
 //   - A pass clears a gate marker when the sha fixes it forward or is the
 //     marker's own sha (markers.clearGateIfDescendant with self: a re-test of
 //     main's tip after a transient failure, never a reset), and this run
-//     re-ran and passed what each entry requires: every check it names when
-//     its sha is on origin/main (its changes shipped untested), otherwise only
-//     those this run's range needed (an unshipped failing change is still
+//     re-ran and passed what each entry requires (markers.namedChecks: one
+//     with no list of names names every check): every check it names when
+//     its sha is on origin/main (its changes shipped untested) or has left
+//     main (main replayed or rewritten without it before a push, so the
+//     range no longer says what of it remains), otherwise only those this
+//     run's range needed (an unshipped failing change on main is still
 //     inside origin/main..sha, so the range demands the right checks, and a
 //     range that nets to nothing, a revert, sends none of it to prod).
 //   - A receipt (version 2) records the stubs that ran in place of a real
@@ -78,7 +96,9 @@
 // in <wt>/client with CI=true), DRB_GATE_INSTALL_CMD (run as <path> ci in each
 // directory being installed) and DRB_GATE_STATIC_CMD (run as <path> --base
 // <base> --tip <sha> in the worktree in place of static-checks.js; it must
-// print static-checks' JSON).
+// print static-checks' JSON) and DRB_GATE_DOCS_CMD (run as <path> --check
+// --ref <sha> in the worktree in place of gen-docs.js; it prints gen-docs'
+// problem lines).
 
 const fs = require('fs');
 const path = require('path');
@@ -93,7 +113,7 @@ const { git, describe, gateRoots, gateWorktreePath, lstatOrNull, removeWorktree,
 // Version 2 added `stubbed`; an older receipt reads as its version and is
 // refused by it.
 const VERSION = 2;
-const VERDICT_CHECKS = Object.freeze(['static checks', 'money', 'client']);
+const VERDICT_CHECKS = M.GATE_CHECKS;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STOP_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM', 'SIGHUP']);
@@ -106,6 +126,7 @@ const OVERRIDES = Object.freeze([
   { key: 'smoke', env: 'DRB_GATE_SMOKE_CMD', what: 'the money smoke' },
   { key: 'build', env: 'DRB_GATE_BUILD_CMD', what: 'the client build' },
   { key: 'install', env: 'DRB_GATE_INSTALL_CMD', what: 'npm' },
+  { key: 'docs', env: 'DRB_GATE_DOCS_CMD', what: 'scripts/gen-docs.js' },
 ]);
 
 // ---- the env file (decision 3) -------------------------------------------------
@@ -163,13 +184,16 @@ function resolveOrNull(ref, cwd) {
 // What the range base..tip needs, from the two-tree diff gatePaths.touches
 // reads (never the tip commit alone). nothing_to_run is true only when no
 // gate, no pre-step and no install is needed, which an empty range and a
-// docs-only range satisfy by construction (the docs allowlist holds no path
-// under server/, client/, the money paths or the install paths).
+// range under docs/ alone satisfy by construction; a docs-only range that
+// edits README.md or ARCHITECTURE.md needs the docs check on a tree with
+// generated docs.
 function classifyRange(base, tip, { cwd } = {}) {
-  const touches = GP.touches(base, tip, cwd === undefined ? {} : { cwd });
+  const at = cwd === undefined ? {} : { cwd };
+  const touches = GP.touches(base, tip, at);
   const needed = [];
   if (touches.money) needed.push('money');
   if (touches.client) needed.push('client');
+  if (touches.files.some((f) => !f.startsWith('docs/')) && W.generatedDocs(R.resolveCommit(tip, at), touches.files, at)) needed.push('docs');
   const statik = Boolean(touches.server || touches.client);
   const install = Boolean(touches.install || touches.client_install);
   const nothing = touches.files.length === 0 || (needed.length === 0 && !statik && !install);
@@ -287,6 +311,22 @@ function staticVerdict(r) {
   return { kind: 'pass', blocking: v.blocking, file: first && typeof first.file === 'string' ? first.file : null };
 }
 
+// gen-docs.js --check's lines: exit 0 naming nothing is a pass; exit 1
+// naming a problem (marker:, stale:, unparsed:, no header:) a verdict about
+// the code, with every other line it printed (its run: remedy) as remedies;
+// any other ending, exit 1 naming none included, the gate's own.
+const DOCS_PROBLEM = /^(?:marker|stale|unparsed|no header): \S/;
+function docsVerdict(r) {
+  const out = String(r.out || '').split('\n');
+  const lines = r.error || r.signal ? [] : out.filter((l) => DOCS_PROBLEM.test(l));
+  if (r.error || r.signal || ![0, 1].includes(r.status) || (r.status === 0) !== (lines.length === 0)) {
+    return own(`the docs check did not run (${describe(r)}${r.status === 1 ? ', no problem named' : ''})`);
+  }
+  if (r.status === 0) return { kind: 'pass' };
+  const more = lines.length > 3 ? `; and ${lines.length - 3} more` : '';
+  return { ...code(`docs check: ${lines.length} problem(s): ${lines.slice(0, 3).join('; ')}${more}`), lines, remedies: out.filter((l) => l.trim() !== '' && !DOCS_PROBLEM.test(l)) };
+}
+
 // The smoke's summary.json: a pass only when skipped is false, there is no
 // did_not_run, total_fail is 0 and the smoke exited 0.
 function smokeVerdict(r, tapDir) {
@@ -398,8 +438,10 @@ function clearMarker(ctx) {
     return { cleared: false, marker: cur };
   }
   for (const e of [cur, ...(cur.earlier || [])]) {
-    const named = Array.isArray(e.gates) ? e.gates : [];
-    const required = shipped(e.sha, ctx) ? named : named.filter((g) => ctx.needs.includes(g));
+    const named = M.namedChecks(e);
+    // Every check it names unless its sha is on main and not yet shipped.
+    const strict = shipped(e.sha, ctx) || M.placement(e.sha, { cwd: ctx.cwd }) !== 'on';
+    const required = strict ? named : named.filter((g) => ctx.needs.includes(g));
     const missing = required.filter((g) => !ctx.ran.includes(g));
     if (missing.length) {
       log(`gate: the gate marker on ${R.short(cur.sha)} stands; this run did not re-run ${missing.join(', ')}, which the failure on ${R.short(e.sha)} still requires`);
@@ -419,7 +461,9 @@ function setMarker(ctx, reason) {
   let res;
   try {
     const unproven = ctx.needs.filter((g) => VERDICT_CHECKS.includes(g) && !ctx.ran.includes(g));
-    res = M.setGate({ sha: ctx.full, reason, gates: unproven, cwd: ctx.cwd });
+    // A stubbed run proves nothing, as clearMarker reads it.
+    const proven = ctx.stubbed.length && ctx.env.DRB_GATE_ALLOW_STUBBED !== '1' ? [] : ctx.ran.filter((g) => VERDICT_CHECKS.includes(g));
+    res = M.setGate({ sha: ctx.full, reason, gates: unproven, proven, cwd: ctx.cwd });
   } catch (err) {
     if (err && err.code === 'GATE_RESOLVE_FAILED') {
       ctx.warn(`gate: ${err.message}`);
@@ -427,9 +471,10 @@ function setMarker(ctx, reason) {
     }
     throw err;
   }
+  if (!res.written) ctx.warn(`gate: no gate marker: ${res.reason}`);
+  if (res.written && res.beside) ctx.warn(`gate: the failure on ${s7} is recorded beside the gate marker on ${R.short(res.beside)}, which descends from it and stands`);
   if (res.written && res.uncertain) ctx.warn(`gate: gate marker written on ${s7} (git could not place it for certain); it binds every push`);
-  else if (res.written) ctx.warn(`gate: gate marker written on ${s7}; it binds every push until a descendant passes`);
-  else ctx.warn(`gate: no gate marker: ${res.reason}`);
+  else if (res.written && !res.beside) ctx.warn(`gate: gate marker written on ${s7}; it binds every push until a descendant passes`);
   return res;
 }
 
@@ -493,6 +538,22 @@ async function gateInWorktree(ctx, state) {
     ctx.receipt.static_checks = { blocking: v.blocking, file: v.file };
     if (v.blocking > 0) return finish(ctx, 'code', `static checks: ${v.blocking} blocking finding(s), the first in ${v.file === null ? 'no file' : v.file}`);
     ctx.ran.push('static checks');
+  }
+  if (cls.needed.includes('docs')) {
+    log(`gate: the docs check (gen-docs.js --check --ref ${s7}, the sha's own tree)`);
+    const args = ['--check', '--ref', full];
+    const r = await runChild(state, stubbed(ctx, 'docs') || process.execPath, ov.docs ? args : [path.join(wt, 'scripts', 'gen-docs.js'), ...args], { cwd: wt, env, keep: 'stdout' });
+    if (state.stopping) return pending();
+    const v = docsVerdict(r);
+    // At most 20 lines: the problems, a count of those left out, the remedy last.
+    const remedies = v.kind === 'code' ? v.remedies.slice(0, 20) : [];
+    const room = 20 - remedies.length;
+    const more = v.kind === 'code' && v.lines.length > room ? [`and ${v.lines.length - room} more`] : [];
+    for (const l of [...(v.kind === 'code' ? v.lines.slice(0, room) : []), ...more, ...remedies]) warn(`gate: docs: ${l}`);
+    if (v.kind !== 'pass') return finish(ctx, v.kind, v.reason);
+    ctx.passed.push('docs');
+    ctx.ran.push('docs');
+    log('gate: docs check passed');
   }
   if (cls.needed.includes('money')) {
     const tapDir = path.join(wt, '.gate-smoke');
