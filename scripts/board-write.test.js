@@ -36,12 +36,12 @@ function git(cwd, args) {
 }
 
 // Build a bare remote + one working clone seeded with the board fixture on
-// `main`. Returns { remote, work }.
-function makeRepoWithRemote() {
+// `main`, removed after the case t. Returns { root, remote, work }.
+function makeRepoWithRemote(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'board-write-'));
   const remote = path.join(root, 'origin.git');
   const work = path.join(root, 'work');
-
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   git(root, ['init', '--bare', '-q', '-b', 'main', remote]);
 
   git(root, ['init', '-q', '-b', 'main', work]);
@@ -65,8 +65,8 @@ function boardText(cwd) {
   return fs.readFileSync(path.join(cwd, 'docs', 'build-board.md'), 'utf8');
 }
 
-test('denylist blocks a seeded email (non-zero, no write)', () => {
-  const { work } = makeRepoWithRemote();
+test('denylist blocks a seeded email (non-zero, no write)', (t) => {
+  const { work } = makeRepoWithRemote(t);
   const before = boardText(work);
   const res = run(work, ['Ready to build', 'New lane for dallas@drbartender.com']);
   assert.notStrictEqual(res.status, 0);
@@ -74,8 +74,8 @@ test('denylist blocks a seeded email (non-zero, no write)', () => {
   assert.strictEqual(boardText(work), before, 'board must be untouched on a blocked write');
 });
 
-test('denylist blocks a phone number (non-zero, no write)', () => {
-  const { work } = makeRepoWithRemote();
+test('denylist blocks a phone number (non-zero, no write)', (t) => {
+  const { work } = makeRepoWithRemote(t);
   const before = boardText(work);
   const res = run(work, ['Ready to build', 'Call client at 312-555-0142 about lane']);
   assert.notStrictEqual(res.status, 0);
@@ -83,8 +83,8 @@ test('denylist blocks a phone number (non-zero, no write)', () => {
   assert.strictEqual(boardText(work), before, 'board must be untouched on a blocked write');
 });
 
-test('denylist blocks a Stripe pi_ id (non-zero, no write)', () => {
-  const { work } = makeRepoWithRemote();
+test('denylist blocks a Stripe pi_ id (non-zero, no write)', (t) => {
+  const { work } = makeRepoWithRemote(t);
   const before = boardText(work);
   const res = run(work, ['In flight', 'refund lane pi_3Abc123XyZ pending']);
   assert.notStrictEqual(res.status, 0);
@@ -149,8 +149,8 @@ test('denylist is strict: a business line is still noise on the board', () => {
   assert.notStrictEqual(res.status, 0);
 });
 
-test('a clean board line is accepted and written', () => {
-  const { work } = makeRepoWithRemote();
+test('a clean board line is accepted and written', (t) => {
+  const { work } = makeRepoWithRemote(t);
   const line = 'Workflow redesign L3 (docs/.../spec.md, docs/.../plan.md)';
   const res = run(work, ['Ready to build', line]);
   assert.strictEqual(res.status, 0, res.stderr);
@@ -163,8 +163,8 @@ test('a clean board line is accepted and written', () => {
   assert.ok(lineIdx > readyIdx && lineIdx < inFlightIdx, 'line must sit under Ready to build');
 });
 
-test('atomic write replaces content without corruption', () => {
-  const { work } = makeRepoWithRemote();
+test('atomic write replaces content without corruption', (t) => {
+  const { work } = makeRepoWithRemote(t);
   const line = 'L7 pre-push reconcile (spec, plan)';
   const res = run(work, ['In flight', line]);
   assert.strictEqual(res.status, 0, res.stderr);
@@ -218,7 +218,7 @@ const occurrences = (text, s) => text.split(s).length - 1;
 const originHead = (h) => fgit(h.origin, 'rev-parse', 'refs/heads/main');
 const UNKNOWN_LINE = (section) => `Board updated under '${section}' and committed; the push outcome is unknown, run npm run ship again to complete it.`;
 const LOCAL_LINE = (section, reason) => `Board updated under '${section}' and committed LOCALLY, not pushed: ${reason}. It rides the next ship.`;
-const MOVED_LINE = (section) => `Board updated under '${section}' and committed LOCALLY, not pushed: origin/main moved since ship's fetch (a push from outside this checkout). Stop and ask: main has to be rebased onto origin/main by hand (git pull --rebase origin main while no other window is mid-edit; ship refuses a merge commit, since main holds squashes only), then run npm run ship.`;
+const MOVED_LINE = (section) => `Board updated under '${section}' and committed LOCALLY, not pushed: origin/main moved during this write (a push from outside this checkout). Stop and ask: main's unpushed commits have to be replayed onto origin/main by hand, the owner's call under the push-failure rule (never a merge, which ship refuses since main holds squashes only, an auto-pull or a force), then run npm run ship; until then a board write refuses, since main cannot fast-forward.`;
 
 function records(file) {
   if (!fs.existsSync(file)) return [];
@@ -551,26 +551,26 @@ test('after the flip a flip state that cannot be read (markers.js fails to load)
 
 // ---- The shared index (controller fix, lane board-ship) ---------------------
 // os is one checkout that every window shares, its index included. The
-// writer's no-change check and its commit both name the board file, so a
-// change another window stages while the writer runs stays staged and never
-// rides in a board commit, on either branch. The stage is injected by a git
-// shim first on PATH, after the writer's pull and right before its own add of
-// the board: a file staged before the write never gets that far, because
-// git pull --rebase refuses to run over a staged change (exit 128, nothing
-// written).
+// writer commits the board alone from its working copy (git commit --only),
+// so a change another window stages while the writer runs stays staged and
+// never rides in a board commit, on either branch. The stage is injected by a
+// git shim first on PATH, after the writer's sync, right before the writer's
+// own git `on` call: a file staged before the write never gets that far,
+// because the writer refuses a staged change or an edited tracked file before
+// its sync (exit 1, nothing written; board-write.sync.test.js).
 
-// A shim dir holding `git`: the first time it sees the writer's
-// `git add -- docs/build-board.md` it stages `file` through the real git,
-// as another window would, then runs the requested command; every other call
-// passes straight through. Returns {dir, flag}; flag exists once it fired.
-function stagingShim(root, file) {
+// A shim dir holding `git`: the first time it sees the writer's `git <on>`
+// (its commit by default) it stages `file` through the real git, as another
+// window would, then runs the requested command; every other call passes
+// straight through. Returns {dir, flag}; flag exists once it fired.
+function stagingShim(root, file, on = 'commit') {
   const dir = path.join(root, 'shim');
   const flag = path.join(root, 'staged-by-another-window');
   const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'git'), [
     '#!/bin/sh',
-    `if [ "$1" = add ] && [ "$3" = docs/build-board.md ] && [ ! -e '${flag}' ]; then`,
+    `if [ "$1" = ${on} ] && [ ! -e '${flag}' ]; then`,
     `  : > '${flag}'`,
     `  '${real}' add -- '${file}' || exit 1`,
     'fi',
@@ -601,9 +601,8 @@ test('after the flip a file another window stages during the write stays staged 
   await waitFor('the watch stub', () => records(h.rec('watch')).some((r) => r.sha === head));
 });
 
-test('no flip marker: a board missing the target section commits nothing, even with a file another window staged during the write', (t) => {
-  const { root, remote, work } = makeRepoWithRemote();
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+test('no flip marker: a board missing the target section writes and commits nothing (exit 3), even with a file another window staged during the write', (t) => {
+  const { root, remote, work } = makeRepoWithRemote(t);
   // The append finds no "## Recently shipped" heading, so the board is unchanged.
   fs.writeFileSync(path.join(work, 'docs', 'build-board.md'), BOARD_FIXTURE.replace('## Recently shipped\n', ''));
   git(work, ['commit', '-q', '-m', 'board without its last section', '--', 'docs/build-board.md']);
@@ -611,11 +610,11 @@ test('no flip marker: a board missing the target section commits nothing, even w
   const before = git(work, ['rev-parse', 'HEAD']);
   fs.mkdirSync(path.join(work, 'server'), { recursive: true });
   fs.writeFileSync(path.join(work, 'server', 'quickfix.js'), 'module.exports = 2;\n');
-  const shim = stagingShim(root, 'server/quickfix.js');
+  const shim = stagingShim(root, 'server/quickfix.js', 'fetch');
   const res = spawnSync('bash', [SCRIPT, 'Recently shipped', 'Board line with no section (spec, plan)'], { cwd: work, encoding: 'utf8', env: withShim(process.env, shim) });
-  assert.strictEqual(res.status, 0, said(res));
+  assert.strictEqual(res.status, 3, said(res));
   assert.ok(fs.existsSync(shim.flag), 'the other window staged its file during the write');
-  assert.match(res.stdout, /^No change to board \(line already present\)\.$/m);
+  assert.match(res.stderr, /^ERROR: docs\/build-board\.md has no '## Recently shipped' heading, so the line was not written; nothing was committed\.$/m);
   assert.strictEqual(git(work, ['rev-parse', 'HEAD']), before, 'nothing was committed');
   assert.strictEqual(git(remote, ['rev-parse', 'main']), before, 'nothing was pushed');
   assert.deepStrictEqual(git(work, ['diff', '--cached', '--name-only']).split('\n'), ['server/quickfix.js'], 'the quick fix is still staged');
@@ -640,9 +639,10 @@ test('after the flip a temp file that cannot be made for ship\'s output keeps th
 
 // ---- The legacy path gone (instruction rewrite step 5, lane legacy-removal) ----
 // A missing flip marker keeps the board commit local under the hook's own
-// line; the pull --rebase is unchanged, so the concurrent case runs flipped.
+// line. The case behind a peer's push is sequential; two writes at once in
+// one checkout are board-write.sync.test.js's board lock cases.
 
-test('after the flip concurrent writes do not lost-update: a write behind origin rebases over a peer\'s board line and ships both', async (t) => {
+test('after the flip a write behind origin fast-forwards onto a peer\'s pushed board line and ships both, each line once', async (t) => {
   const h = makeFlipped(t);
   const [lineA, lineB] = ['L5 sensitive-paths (spec, plan)', 'L6 lane-lifecycle (spec, plan)'];
   // A peer window wrote its line and its push reached origin; this checkout is now behind.
@@ -655,7 +655,7 @@ test('after the flip concurrent writes do not lost-update: a write behind origin
   const res = writeBoard(h, 'Ready to build', lineB);
   assert.strictEqual(res.status, 0, said(res));
   const head = fgit(h.work, 'rev-parse', 'HEAD');
-  assert.strictEqual(originHead(h), head, 'the write rebased onto the peer and shipped');
+  assert.strictEqual(originHead(h), head, 'the write fast-forwarded onto the peer and shipped');
   assert.strictEqual(fgit(h.work, 'rev-parse', 'HEAD~1'), fgit(peer, 'rev-parse', 'HEAD'), 'the board commit sits on the peer\'s');
   assert.deepStrictEqual(shipResults(res.stdout), [['ok', `pushed ${s7(head)}, 1 commits`]]);
   const text = fgit(h.origin, 'show', 'main:docs/build-board.md');

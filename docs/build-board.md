@@ -2,7 +2,7 @@
 
 Maintained by Claude as a byproduct of working, never by Dallas. It is the index: each ready item links to its spec and plan, so the thinking is one click away.
 
-Note: this board carries titles and paths ONLY. Never paste spec or plan bodies here, and never a customer name, token, Stripe id, or any payload. Writes go through `scripts/board-write.sh`, which enforces a denylist before any commit and then commits LOCALLY. It pushes only when the board commit is the sole unpushed commit on main, and fails closed when that count cannot be determined, because `git push origin main` is a branch push that would ship everyone else's unpushed work alongside a board line. So the published board can lag the local one until the next real push; that is the design, not a failure. Keep the section headings below stable: the write helper anchors on them.
+Note: this board carries titles and paths ONLY. Never paste spec or plan bodies here, and never a customer name, token, Stripe id, or any payload. Writes go through `scripts/board-write.sh`, which checks the line against a denylist, refuses a checkout with a staged change or an edited tracked file, then fetches and fast-forwards main (never a pull or a rebase: when main and origin have diverged it refuses, and replaying main's unpushed commits is the owner's call), appends the line, commits it and runs a real ship (the gate, the push, the post-ship watch). So a write takes minutes and carries whatever else sits unpushed on main; never cut one short. A write run again for a line already under its section writes nothing and says so, so a re-run after a write that was cut short or refused never doubles the line. Keep the section headings below stable: the write helper anchors on them.
 
 ## Ready to build
 

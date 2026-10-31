@@ -1033,7 +1033,7 @@ tests omitted
 ├── scripts/
 │   ├── backfill-duty-lines.js # backfill-duty-lines.js - one-time ship backfill (spec 2026-08-06 §10.1).
 │   ├── backfill-positions-needed.js # One-time backfill: re-derive shifts.positions_needed for upcoming events from the full paid roster (bartenders + banquet servers + barbacks), per-role shrink-capped so an approved-active assignment is NEVER dropped.
-│   ├── board-write.sh
+│   ├── board-write.sh        # board-write.sh: concurrency-safe writer for docs/build-board.md.
 │   ├── cc-balance-invoice.js # One-time operator script: mint the remaining Check Cherry balance invoices.
 │   ├── cc-clients-import.js  # One-time CheckCherry CLIENT import (2026-07-06 reboot of the retired v1 importer).
 │   ├── cc-ledger-import.js   # One-time CheckCherry LEDGER import (phase 2 of the lean cc-import reboot).
