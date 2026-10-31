@@ -14,7 +14,7 @@ The user will give you a path to a spec file under `docs/superpowers/specs/`. Th
 ## How to start
 
 1. Read the target spec file (path supplied in the invocation prompt).
-2. Read `.claude/CLAUDE.md` for the project's standing invariants and cross-cutting consistency rules.
+2. Read `.claude/CLAUDE.md` for the project's standing invariants (its Invariants section; the cross-cutting rule is the last rule of Money, auth and data).
 3. For every concrete codebase claim the spec makes, verify against the current code via Read, Grep, or Glob.
 
 ## What to check
@@ -45,7 +45,7 @@ The spec may be about to violate a load-bearing rule the brainstormer forgot. Ch
 - Drink plans: the event's drink plan is canonical post-conversion; the proposal-side plan is preview only. Bartender prep, shopping list approval, and client communication all use the event's plan.
 - API JSON keys are snake_case; JavaScript variables are camelCase.
 
-### Cross-Cutting Consistency table from `CLAUDE.md`
+### The cross-cutting rule from `CLAUDE.md` (Money, auth and data)
 
 If the spec adds a new database column or changes the shape of an API response:
 - Grep for the table or endpoint across the codebase.
@@ -59,7 +59,7 @@ If any consumer is unmentioned, that is a missing parallel update and a groundin
 
 If the spec adds, renames, or removes anything in the folder tree, a route, a table, an env var or an agent file: the generated sections of `README.md` and `ARCHITECTURE.md` (the tree, the scripts, the env table, the routes, the schema index, the agents) come from `npm run docs`, which the pre-commit hook checks, so a spec never asks for a hand edit to them.
 - Does every new source file the spec names get a header comment (its first comment: what the file does), which is the tree's description of it?
-- Does every new env var the spec names get its comment block in `.env.example` (the one copy; its block is the variable's description in README's env section), and never a row in `CLAUDE.md`?
+- Does every new env var the spec names get its comment block in `.env.example` (the one copy; its block is the variable's description in README's env section), and no second copy anywhere (`CLAUDE.md`, Pointers)?
 - Does the spec say which hand-written ARCHITECTURE prose changes, if a concept changes?
 
 ## Output format

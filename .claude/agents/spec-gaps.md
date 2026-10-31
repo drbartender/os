@@ -14,7 +14,7 @@ The user will give you a path to a spec file under `docs/superpowers/specs/`. Th
 ## How to start
 
 1. Read the target spec file (path supplied in the invocation prompt).
-2. Skim `.claude/CLAUDE.md` for the project's standing patterns (loading states, error handling, async patterns).
+2. Skim `.claude/CLAUDE.md` for the project's standing patterns (Money, auth and data for error handling, async route handlers, validation parity and route guards; Conventions for client API calls and their error shape).
 3. For each new surface or new mutation the spec introduces, read the analogous existing surface to know what flows it covers. The gap is the flow the spec is missing, not the flow the spec includes.
 
 ## What to check
@@ -23,7 +23,7 @@ The user will give you a path to a spec file under `docs/superpowers/specs/`. Th
 
 Check the spec header and body for a design source: a claude.ai/design project reference, a file under `docs/design-artifacts/`, or "Design source" / "Design system" lines.
 
-- If one exists, the spec body must carry a **visual contract**: the artifact named as the build benchmark plus concrete visual requirements (per-screen layout and composition, component vocabulary, the token-translation rule). See CLAUDE.md "Design artifacts are contracts". A header citation with no visual requirements in the body is a **Blocker** — report it as "design demoted to provenance". This exact gap shipped the 2026-08 marketing section to prod with zero visual fidelity to its approved design.
+- If one exists, the spec body must carry a **visual contract**: the artifact named as the build benchmark plus concrete visual requirements (per-screen layout and composition, component vocabulary, the token-translation rule). See CLAUDE.md, Plans, design and review, "Design artifacts are contracts". A header citation with no visual requirements in the body is a **Blocker**: report it as "design demoted to provenance". This exact gap shipped the 2026-08 marketing section to prod with zero visual fidelity to its approved design.
 - If the spec introduces a heavy new UI surface with no design source at all, add a Suggestion asking whether the claude.ai/design round-trip was considered. Ordinary UI edits and small additions do not need one.
 
 ### UI surfaces

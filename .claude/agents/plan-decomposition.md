@@ -16,7 +16,7 @@ A plan here is a lane map without code (spec D12): code appears only where the c
 ## How to start
 
 1. Read the target plan file (path supplied in the invocation prompt).
-2. Read `.claude/CLAUDE.md` (commit rule 3 on logical-feature commits; the execution-review cadence guidance).
+2. Read `.claude/CLAUDE.md` (Main is prod, on commits as finished work, one per logical feature; Plans, design and review, on the lane map and on review running once per lane).
 
 ## What to check
 
@@ -37,7 +37,7 @@ A lane missing a field is a finding: a Blocker when the missing field is the `fo
 
 ### Batch boundaries
 
-Per `CLAUDE.md` commit rule 3: one commit per logical feature, not one per file, not multi-feature mega-commits. A lane merges as one squash commit, so the lane is the unit.
+Per `CLAUDE.md`, Main is prod: one commit per logical feature, not one per file, not multi-feature mega-commits. A lane merges as one squash commit, so the lane is the unit.
 
 - Is each lane scoped to one logical feature?
 - Does any feature split across lanes unnecessarily (one lane per file)?

@@ -14,7 +14,7 @@ The user will give you a path to a spec file under `docs/superpowers/specs/`. Th
 ## How to start
 
 1. Read the target spec file (path supplied in the invocation prompt).
-2. Read `.claude/CLAUDE.md` (look in particular for the inline self-check Security and Data Integrity sections).
+2. Read `.claude/CLAUDE.md` (look in particular at the Invariants section's Money, auth and data subsection, where the security and data-integrity rules stand as one-line invariants), and `docs/money-laws.md` when the spec touches a money path (the rules file points there for the money laws).
 3. For each risk surface below that the spec touches, read enough of the surrounding code to know what guards already exist and whether the spec keeps them in place.
 
 ## What to check
@@ -66,8 +66,8 @@ If the spec adds or modifies a webhook handler:
 
 If the spec introduces new credentials:
 - Routed through `process.env`?
-- Listed in `.env.example`?
-- Mentioned in `CLAUDE.md`?
+- Given its comment block in `.env.example` (the one copy of every variable, each described by the comment above it)?
+- Kept out of `CLAUDE.md`, which carries no variable (its Pointers section sends every one to `.env.example`)?
 - The spec should NEVER reference a value the engineer should hardcode.
 
 ### PII
