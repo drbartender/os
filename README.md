@@ -1845,7 +1845,7 @@ Because a push to `main` **is** the deploy, nothing reaches it ungated. `npm run
 - **Client build** (when the range touches `client/`): the exact `CI=true react-scripts build` Vercel runs, catching CI-fatal ESLint warnings.
 - **Static checks** (when the range touches `server/` or `client/`): `scripts/static-checks.js`; a blocking finding fails the gate.
 
-A range that needs none of them (docs only, or only files outside `server/`, `client/`, the money paths and the install paths) runs nothing, and its receipt says so. "Docs-only" means exactly that: a `package-lock.json` bump or an edit to the gate scripts needs the money smoke even with no `server/` change. `docs/dev.md` (The sha gate) has the receipt's fields, the markers and the test overrides.
+A range that needs none of them (docs only, or only files outside `server/`, `client/`, the money paths and the install paths) runs nothing, and its receipt says so, bar the docs check (`gen-docs.js --check --ref <sha>`) when the range edits `README.md` or `ARCHITECTURE.md`. "Docs-only" means exactly that: a `package-lock.json` bump or an edit to the gate scripts needs the money smoke even with no `server/` change. `docs/dev.md` (The sha gate) has the receipt's fields, the markers and the test overrides.
 
 **Credential: `NEON_API_KEY`.** The money smoke reads the key from `process.env.NEON_API_KEY` or `~/.secrets/neon_api_key` (trimmed). Without it the smoke prints a loud red SKIP banner and the gate records the money check as not passed, so a range that needs it cannot ship: a skip is never a pass. The gate worktree writes its own `.env` of throwaway values with no live key; the box's `.env` never reaches it. To set the key up:
 

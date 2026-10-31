@@ -21,7 +21,7 @@ Every rule ends with its provenance: `[Dallas <date>]` when the owner decided it
 
 ## Main is prod
 
-- Every commit on main ships after the gate: `npm run ship` gates `origin/main..<sha>` in a throwaway worktree, pushes that sha and starts the post-ship watch; the gate runs nothing for a docs-only range. [Dallas 2026-10-18]
+- Every commit on main ships after the gate: `npm run ship` gates `origin/main..<sha>` in a throwaway worktree, pushes that sha and starts the post-ship watch; the gate runs nothing for a docs-only range, bar the docs check when the range edits README.md or ARCHITECTURE.md. [Dallas 2026-10-18]
 - Nothing reaches main without a review receipt: a lane gets its receipt before its merge and a quick fix before its commit, through the review skill (`.claude/skills/review/`); from the flip on, the merge path and the pre-push hook check it. [Dallas 2026-10-18]
 - Commits on main are finished work: reviewed, tested, one per logical feature; no WIP or checkpoint commit reaches main, since a lane's checkpoints are squashed away. Why: a revertable history where a commit is a unit of intent. [Claude default 2026-04-15]
 
