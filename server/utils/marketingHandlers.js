@@ -430,7 +430,9 @@ function registerMarketingHandlers() {
     // which DELETEs the pending row and calls `scheduleNewYearHello` again
     // with the new event_date (re-evaluating eligibility). Without this hook
     // the row stays pinned to the OLD Jan 2 when admin moves an event across
-    // a year boundary. See `.plan-2-contract.md` for the cross-plan contract.
+    // a year boundary. The cross-plan contract this followed lived in the plan 2
+    // contract file, retired from the root on 2026-10-30; the plan
+    // docs/superpowers/plans/2026-05-20-comms-marketing-emails.md holds it.
     { offsetFromEventDate: null, anchor: 'event_date', category: 'marketing', priority: 5 }
   );
   registerHandler(
