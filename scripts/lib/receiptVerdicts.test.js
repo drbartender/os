@@ -505,3 +505,26 @@ test("verify's escaped forms are malformed: Against: beside an id or a location 
     assert.deepStrictEqual([v.malformed, v.findings.map((x) => x.id)], [false, ['H1']], `${line}: ${v.problems.join('; ')}`);
   }
 });
+
+test('storable: the store reads a report before it writes, refusing one the parser calls malformed with every problem on its own line', () => {
+  const { storable } = require('./receiptVerdicts');
+  const sound = report([['server/a.js', 'pass']]);
+  assert.deepStrictEqual(storable('s.md', sound, 'seams'), { lenses: ['seams'], malformed: null });
+  assert.deepStrictEqual(storable('v.md', 'No findings.\n', 'verify'), { lenses: ['verify'], malformed: null });
+  const lines = (r) => r.malformed.split('\n');
+  assert.deepStrictEqual(lines(storable('s.md', 'prose only\n', 'seams')), ['s.md is malformed (1 problem(s)); nothing was stored: ask the agent to re-emit it in the form the store reads, then store the re-emission', '  no verdict table']);
+  assert.deepStrictEqual(lines(storable('v.md', 'Verified the fixes.\n', 'verify')).slice(1), ['  verify must raise a finding or record No findings (the line No findings alone, outside any fence)']);
+  // A collapsed report is stored under every section or none; each problem names its lens.
+  const two = `## Lens: seams\n\n${sound}\n## Lens: money\n\nprose only\n`;
+  assert.deepStrictEqual(lines(storable('c.md', two, null)).slice(1), ['  money: no verdict table']);
+  assert.deepStrictEqual(storable('c.md', `## Lens: seams\n\n${sound}\n## Lens: money\n\n${sound}`, null), { lenses: ['seams', 'money'], malformed: null });
+  // The heading refusals the store made before, ahead of its snapshot checks.
+  assert.match(storable('c.md', sound, null).refusal, /^c\.md has no ## Lens: <name> heading/);
+  assert.match(storable('s.md', two, 'seams').refusal, /^s\.md line \d+: a ## Lens: heading for a lens other than seams; a collapsed report is stored with --collapsed$/);
+});
+
+test('noteIds: the ids a row note names, uppercase whole words only (the fixed-mark clearing reads them)', () => {
+  const { noteIds } = require('./receiptVerdicts');
+  assert.deepStrictEqual(noteIds("M1 L2, (H3); see h4, M5's and M6."), ['M1', 'L2', 'H3', 'M6']);
+  assert.deepStrictEqual([noteIds(''), noteIds(null), noteIds('pass')], [[], [], []]);
+});

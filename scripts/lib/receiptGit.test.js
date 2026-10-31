@@ -86,6 +86,26 @@ test('a lane rebased after a report: the files main changed between the older ba
   assert.deepStrictEqual(g.overlapFiles, { [m0]: ['a.js', 'c.js'] }, 'what main changed since the older base');
 });
 
+test('the reviewed patch is read without context: a rebase that moved only the base keeps it, main editing a line beside a lane hunk included; a fix changes it (receipt-cap round 2)', (t) => {
+  const repo = makeRepo(t);
+  const lines = (edit = {}) => `${Array.from({ length: 20 }, (_, i) => edit[i + 1] || `line ${i + 1}`).join('\n')}\n`;
+  const m0 = commit(repo, 'twenty lines', { 'c.js': lines() });
+  git(repo, 'checkout', '-q', '-b', 'lane');
+  const read = commit(repo, 'a lane hunk at line 10', { 'c.js': lines({ 10: 'lane 10' }) });
+  git(repo, 'checkout', '-q', 'main');
+  const m1 = commit(repo, 'main edits line 8, two lines above the hunk', { 'c.js': lines({ 8: 'main 8' }) });
+  git(repo, 'checkout', '-q', '-B', 'lane', m1);
+  const tip = commit(repo, 'the lane, rebased with no new commit', { 'c.js': lines({ 8: 'main 8', 10: 'lane 10' }) });
+  const fixed = commit(repo, 'a fix', { 'c.js': lines({ 8: 'main 8', 10: 'lane 10, fixed' }) });
+  const state = { mode: 'lane', name: 'lane', reports: [{ tip: read, main: m0 }, { tip, main: m1 }, { tip: fixed, main: m1 }] };
+  const g = G.finalizeFacts(state, { base: m1, reviewed: m1 }, true, repo);
+  assert.deepStrictEqual(g.problems, []);
+  const [p0, p1, p2] = state.reports.map((r) => g.reviewedPatch[G.patchKey(r)]);
+  assert.match(p0, /^[0-9a-f]{40}$/);
+  assert.strictEqual(p1, p0, 'a move of the base alone, its edit inside the old three-line context');
+  assert.notStrictEqual(p2, p1, 'a fix');
+});
+
 test('quick-fix facts: HEAD, the staged tree as key and tree, and the files changed since each recorded tree', (t) => {
   const repo = makeRepo(t);
   fs.writeFileSync(path.join(repo, 'a.js'), 'a fixed\n');

@@ -152,6 +152,11 @@ function parseFindingRow(t) {
   return { finding: finding(m[1], m[2], TICKED_CELL.exec(cells[at])[1], cells.slice(at + 1).join(' | ')) };
 }
 
+// The finding ids a row's note names (uppercase whole-word tokens, NOTE_ID).
+function noteIds(note) {
+  return String(note == null ? '' : note).match(NOTE_ID) || [];
+}
+
 // A row's note names the findings it stands for (uppercase id tokens): a
 // note on any row, a pass row's too, naming an id no finding line carries,
 // an empty note on a finding or escalate row, or a finding row naming no id
@@ -378,6 +383,33 @@ function parseVerdictTable(markdown, { findingsOnly = false, lens } = {}) {
   return { rows, findings, malformed: false, problems };
 }
 
+// What the store reads before it writes (scripts/review-receipt.js verdicts
+// and verify; plan 2026-10-28, lane receipt-cap): the lenses a report is
+// stored under, and whether each parses. `lens` is the lens a one-lens report
+// is stored under, 'verify' (read findings-only), or null (--collapsed: every
+// `## Lens: <name>` section) -> {refusal} for a one-lens report carrying
+// another lens's heading or a collapsed one with no heading or a loose one,
+// else {lenses, malformed}: malformed is null, or the refusal for a report
+// the parser calls malformed (any section of a collapsed one), one message
+// with each problem on a line of its own, which the store makes once its
+// snapshot checks pass and before it writes, so it never writes a malformed
+// report: the agent re-emits it, and the re-emission is stored in its place.
+function storable(base, text, lens) {
+  let lenses = [lens];
+  if (lens !== 'verify') {
+    const { sectioned, sections, problems } = lensHeadings(text);
+    const other = lens && sections.find((x) => x.name !== lens);
+    if (other) return { refusal: `${base} line ${other.line}: a ## Lens: heading for a lens other than ${lens}; a collapsed report is stored with --collapsed` };
+    if (!lens && !sectioned) return { refusal: `${base} has no ## Lens: <name> heading; a one-lens report is stored with verdicts <name> <lens> <report.md>` };
+    if (!lens && problems.length) return { refusal: `${base} ${problems.join('; ')} (one of ${LENSES.join(', ')})` };
+    if (!lens) lenses = sections.map((x) => x.name);
+  }
+  const bad = lenses.map((l) => [l, parseVerdictTable(text, l === 'verify' ? { findingsOnly: true } : { lens: l })]).filter(([, p]) => p.malformed);
+  if (!bad.length) return { lenses, malformed: null };
+  const lines = bad.flatMap(([l, p]) => (p.problems.length ? p.problems : ['malformed']).map((x) => `  ${lens ? '' : `${l}: `}${x}`));
+  return { lenses, malformed: [`${base} is malformed (${lines.length} problem(s)); nothing was stored: ask the agent to re-emit it in the form the store reads, then store the re-emission`, ...lines].join('\n') };
+}
+
 // file -> {verdict, note, report}; the latest report that lists a file wins.
 function mergeVerdicts(reportsInOrder) {
   const merged = Object.create(null);
@@ -399,4 +431,4 @@ function coverage(fileList, merged) {
   };
 }
 
-module.exports = { parseVerdictTable, lensHeadings, mergeVerdicts, coverage, VERDICTS, LENSES };
+module.exports = { parseVerdictTable, lensHeadings, storable, noteIds, mergeVerdicts, coverage, VERDICTS, LENSES };

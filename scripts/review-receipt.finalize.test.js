@@ -166,7 +166,7 @@ test('every finding must be triaged; a fix needs a re-pass by the lens that rais
   refused(cli(repo, 'triage', 'lane', 'seams.md', 'H1', 'rejected'), 2);
   ok(cli(repo, 'triage', 'lane', 'seams.md', 'h1', 'fixed', '--reason', `the write moved ${MARK}`));
   ok(cli(repo, 'triage', 'lane', 'seams.md', 'M2', 'rejected', '--reason', `guarded upstream ${MARK}`));
-  const fixedLine = new RegExp(`seams\\.md H1 \\(seams\\) is marked fixed but no later seams pass lists ${files[0].replace(/[/.]/g, '\\$&')} as pass`);
+  const fixedLine = new RegExp(`seams\\.md H1 \\(seams\\) is marked fixed but no later seams pass lists ${files[0].replace(/[/.]/g, '\\$&')} as pass, or as finding with every finding it holds on the file rejected \\(--pass <n>\\)$`);
   assert.match(problems(refused(finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x')))[0], fixedLine);
   // A re-pass that does not list the fixed file, or lists it not reached, does not clear it.
   ok(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 'seams-b.md', report([[files[1], 'pass']])), '--pass', '1'));
@@ -383,7 +383,9 @@ test('no command prints a value it stored from a report, a log, a reason or a pr
   const at = position(repo, 'lane');
   const dir = tmpDir(t, 'reports');
   const rep = writeFile(dir, 'seams.md', report([[files[0], 'finding', `H1 ${MARK}`], [files[1], 'looks good']], [`- H1 \`${files[0]}:1\` ${MARK}. Check: SEAM-1.`, `- H2 \`${MARK}:7\` ${MARK}. Check: SEAM-2.`]));
-  ok(run('verdicts', 'lane', '--position', at, 'seams', rep));
+  // A malformed report is refused at the store, its problems printed without a word of it; the re-emission is stored.
+  refused(run('verdicts', 'lane', '--position', at, 'seams', rep));
+  ok(run('verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 'seams1.md', report([[files[0], 'finding', `H1 ${MARK}`], [files[1], 'pass']], [`- H1 \`${files[0]}:1\` ${MARK}. Check: SEAM-1.`, `- H2 \`${MARK}:7\` ${MARK}. Check: SEAM-2.`]))));
   ok(run('verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 'seams2.md', report([[files[0], 'finding', `H1 ${MARK}`], [files[1], 'pass']], [`- H1 \`${files[0]}:1\` ${MARK}. Check: SEAM-1.`])), '--pass', '1'));
   ok(run('triage', 'lane', 'seams.pass-1.md', 'H1', 'rejected', '--reason', MARK));
   ok(run('triage', 'lane', 'seams.md', 'H1', 'rejected', '--reason', MARK));
@@ -398,7 +400,7 @@ test('no command prints a value it stored from a report, a log, a reason or a pr
   // A finding marked fixed whose location is no file in the diff: named by id and lens only.
   ok(run('triage', 'lane', 'seams.md', 'H2', 'fixed', '--reason', MARK));
   const fixedLine = problems(refused(run('finalize', 'lane', '--kind', 'lane', '--base', base, '--reviewed-against', base, '--tier', 'B', '--not-a-fix', MARK, '--select', selectFile(repo, 'B'))));
-  assert.deepStrictEqual(fixedLine, ['  - triage: seams.md H2 (seams) is marked fixed but no later seams pass lists the file it names (not a file in the diff) as pass (--pass <n>)']);
+  assert.deepStrictEqual(fixedLine, ['  - triage: seams.md H2 (seams) is marked fixed but no later seams pass lists the file it names (not a file in the diff) as pass, or as finding with every finding it holds on the file rejected (--pass <n>)']);
   ok(run('triage', 'lane', 'seams.md', 'H2', 'rejected', '--reason', MARK));
   ok(run('finalize', 'lane', '--kind', 'lane', '--base', base, '--reviewed-against', base, '--tier', 'B', '--not-a-fix', MARK, '--select', selectFile(repo, 'B')));
   ok(run('show', 'lane'));
@@ -455,10 +457,9 @@ test("a collapsed report's trailing table or mistyped heading never stands in fo
   ok(cli(repo, 'verdicts', 'lane', '--position', at, '--collapsed', writeFile(dir, 'trailing.md', trailing)));
   const lines = problems(refused(finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x')));
   assert.deepStrictEqual(lines.map((l) => l.replace(/;.*$/, '')), [`  - coverage: 1 file(s) not reached (seams: ${files[1]})`]);
-  // Every heading mistyped, stored as one lens's report: read as malformed, never as the last table.
+  // Every heading mistyped, given as one lens's report: read as malformed, never as the last table, so the store refuses it.
   const typo = [`${MARK}`, '', '## Lens money', '', ...table(files.map((f) => [f, 'pass'])), '## Lens seams', '', ...table(files.map((f) => [f, 'pass']))].join('\n');
-  const stored = ok(cli(repo, 'verdicts', 'lane', '--position', at, 'money', writeFile(dir, 'typo.md', typo)));
-  assert.match(stored.stdout, /stored money\.md \(malformed, 2 problem\(s\), no rows read/);
+  assert.match(refused(cli(repo, 'verdicts', 'lane', '--position', at, 'money', writeFile(dir, 'typo.md', typo))).stderr, /typo\.md is malformed \(2 problem\(s\)\); nothing was stored/);
   assert.match(refused(cli(repo, 'verdicts', 'lane', '--position', at, '--collapsed', writeFile(dir, 'typo2.md', typo), '--pass', '1')).stderr, /typo2\.md line 3: a heading names a lens but is not ## Lens: <one of the nine lenses>/);
 });
 

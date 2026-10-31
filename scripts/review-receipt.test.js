@@ -119,9 +119,39 @@ test('verdicts reports the files a lens did not reach, by name from the diff', (
   const r = ok(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 's.md', report([[files[0], 'pass']]))));
   assert.match(r.stdout, /seams: 1\/2 files with a verdict/);
   assert.match(r.stdout, new RegExp(`not reached: ${files[1].replace(/\//g, '\\/')}`));
-  const broken = ok(cli(repo, 'verdicts', 'lane', '--position', at, 'money', writeFile(dir, 'm.md', `prose only ${MARK}\n`)));
-  assert.match(broken.stdout, /malformed/);
-  assert.match(broken.stdout, /money: 0\/2 files with a verdict/);
+  // A report with no table is malformed: refused at the store, nothing written.
+  const broken = refused(cli(repo, 'verdicts', 'lane', '--position', at, 'money', writeFile(dir, 'm.md', `prose only ${MARK}\n`)));
+  assert.match(broken.stderr, /m\.md is malformed \(1 problem\(s\)\); nothing was stored/);
+  assert.ok(!fs.existsSync(path.join(workDir('lane', { cwd: repo }), 'money.md')));
+});
+
+test('the store refuses a malformed report, a lens\'s, a collapsed one\'s or verify\'s, with exit 1 and nothing written; the re-emission is stored in its place', (t) => {
+  const { repo, files } = laneRepo(t);
+  ok(cli(repo, 'init', '--branch', 'lane'));
+  const at = position(repo, 'lane');
+  const dir = tmpDir(t, 'reports');
+  const wd = workDir('lane', { cwd: repo });
+  const finding = `- H1 \`${files[0]}:1\` A defect ${MARK}. Check: SEAM-1.`;
+  const nothingStored = (r, problemLines) => {
+    refused(r);
+    for (const re of problemLines) assert.match(r.stderr, re);
+    assert.match(r.stderr, /nothing was stored: ask the agent to re-emit it in the form the store reads, then store the re-emission/);
+    assert.ok(!r.out.includes(MARK), 'no word of the report is printed');
+    assert.deepStrictEqual([readReceipt(wd).reports, fs.readdirSync(wd).filter((f) => f.endsWith('.md'))], [[], []]);
+  };
+  // A finding id read twice; a collapsed report with one malformed section (all or none);
+  // a verify report whose ids are V-numbered (no finding read and no record).
+  nothingStored(cli(repo, 'verdicts', 'lane', 'seams', writeFile(dir, 'twice.md', report([[files[0], 'finding', 'H1'], [files[1], 'pass']], [finding, finding])), '--position', at),
+    [/twice\.md is malformed \(1 problem\(s\)\)/, /\n {2}line 4: finding H1 listed twice; the first is kept/]);
+  const sound = report(files.map((f) => [f, 'pass']));
+  const collapsed = `## Lens: seams\n\n${sound}\n## Lens: money\n\nNo table, only prose ${MARK}.\n`;
+  nothingStored(cli(repo, 'verdicts', 'lane', '--collapsed', writeFile(dir, 'both.md', collapsed), '--position', at), [/both\.md is malformed \(1 problem\(s\)\)/, /\n {2}money: no verdict table/]);
+  nothingStored(cli(repo, 'verify', 'lane', writeFile(dir, 'verify.md', `- V1 \`${files[0]}:1\` x ${MARK}. Against: the write.\n`), '--position', at),
+    [/verify\.md is malformed \(1 problem\(s\)\)/, /\n {2}line 1: Against: beside an id or a backticked location on a line that is no finding/]);
+  // The re-emissions take the names the refused reports would have taken.
+  ok(cli(repo, 'verdicts', 'lane', 'seams', writeFile(dir, 'again.md', report([[files[0], 'finding', 'H1'], [files[1], 'pass']], [finding])), '--position', at));
+  ok(cli(repo, 'verify', 'lane', writeFile(dir, 'verify-again.md', `No findings.\nChecked the lane. ${MARK}\n`), '--position', at));
+  assert.deepStrictEqual(readReceipt(wd).reports.map((r) => [r.file, r.pass]), [['seams.md', 0], ['verify.md', 0]]);
 });
 
 test('finalize writes receipt.json to the contract, moves the directory and updates the index', (t) => {
@@ -197,16 +227,118 @@ test('finalize refuses a file not reached unless --allow-not-reached is passed a
   assert.deepStrictEqual(rec.coverage.not_reached, [{ lens: 'seams', file: files[1] }]);
 });
 
-test('a report with no table leaves every file not reached and finalize refuses', (t) => {
+test('finalize refuses a finding whose latest mark is confirmed, naming the way through: the fix, its fixed mark, a later pass that clears the file', (t) => {
+  const { repo, base, files } = laneRepo(t);
+  ok(cli(repo, 'init', '--branch', 'lane'));
+  const dir = tmpDir(t, 'reports');
+  ok(cli(repo, 'verdicts', 'lane', 'seams', writeFile(dir, 's.md', report([[files[0], 'finding', 'M1'], [files[1], 'pass']], [`- M1 \`${files[0]}:1\` A defect ${MARK}. Check: SEAM-1.`])), '--position', position(repo, 'lane')));
+  ok(cli(repo, 'triage', 'lane', 'seams.md', 'M1', 'confirmed', '--reason', `the write is lost ${MARK}`));
+  // The fix and a re-pass that clears the file leave it open while its latest mark is confirmed.
+  commit(repo, 'the fix', { [files[0]]: 'a fixed\n' });
+  const at = position(repo, 'lane');
+  ok(cli(repo, 'verdicts', 'lane', 'seams', writeFile(dir, 's1.md', report(files.map((f) => [f, 'pass']))), '--pass', '1', '--position', at));
+  ok(cli(repo, 'tests', 'lane', '--position', at, '--suites', suitesRun(t)));
+  assert.deepStrictEqual(problems(refused(finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x'))), [`  - triage: seams.md M1 (seams) on ${files[0]} is confirmed and still open; fix it in the lane, mark it fixed (triage lane seams.md M1 fixed --reason <the fix>) and re-pass seams until a later pass clears the file, or split it to a new lane and record it rejected with the split named, or reject it with the reason`]);
+  assert.ok(fs.existsSync(workDir('lane', { cwd: repo })), 'a refusal moves nothing');
+  ok(cli(repo, 'triage', 'lane', 'seams.md', 'M1', 'fixed', '--reason', `the write lands ${MARK}`));
+  ok(finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x'));
+});
+
+test('finalize refuses a third fix re-pass, counted from the positions the stores recorded; a re-dispatch at a tip already read is none', (t) => {
+  const { repo, base, files } = laneRepo(t);
+  ok(cli(repo, 'init', '--branch', 'lane'));
+  const dir = tmpDir(t, 'reports');
+  const pass = (n, at) => ok(cli(repo, 'verdicts', 'lane', 'seams', writeFile(dir, `s${n}.md`, report(files.map((f) => [f, 'pass']))), '--position', at, ...(n ? ['--pass', String(n)] : [])));
+  pass(0, position(repo, 'lane'));
+  for (const n of [1, 2]) {
+    commit(repo, `fix ${n}`, { [files[0]]: `a fix ${n}\n` });
+    pass(n, position(repo, 'lane'));
+  }
+  pass(3, position(repo, 'lane'));
+  commit(repo, 'fix 3', { [files[0]]: 'a fix 3\n' });
+  const at = position(repo, 'lane');
+  pass(4, at);
+  ok(cli(repo, 'tests', 'lane', '--position', at, '--suites', suitesRun(t)));
+  const lines = problems(refused(finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x')));
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], new RegExp(`^ {2}- cap: seams\\.pass-4\\.md \\(position ${at}, tip [0-9a-f]{7}\\) is fix re-pass 3 after the first full pass, past the cap`));
+  // The way through, in order, names the work dir that init refuses on while it stands.
+  const wd = workDir('lane', { cwd: repo });
+  assert.ok(lines[0].endsWith(`; split the lane, in order: take the fix out of the lane (a revert in the lane), cut the split lane with it, remove this review's work dir ${wd} (init refuses while it exists), init again, and record the split in the new review's triage when its full pass raises the finding`), lines[0]);
+  assert.match(refused(cli(repo, 'init', '--branch', 'lane')).stderr, /is already open at/);
+  fs.rmSync(wd, { recursive: true });
+  ok(cli(repo, 'init', '--branch', 'lane'));
+});
+
+// A lane given a full pass, then one round per entry of `fixes`: a lane fix
+// when the entry is true, main moving, the lane rebased onto it, and a seams
+// overlap pass at the rebased tip; -> finalize --stale-base at the last main.
+function rebasedRounds(t, fixes) {
+  const { repo, files } = laneRepo(t);
+  ok(cli(repo, 'init', '--branch', 'lane'));
+  const dir = tmpDir(t, 'reports');
+  const pass = (n, at) => ok(cli(repo, 'verdicts', 'lane', 'seams', writeFile(dir, `s${n}.md`, report(files.map((f) => [f, 'pass']))), '--position', at, ...(n ? ['--pass', String(n)] : [])));
+  pass(0, position(repo, 'lane'));
+  let main;
+  let at;
+  fixes.forEach((fix, i) => {
+    if (fix) commit(repo, `fix ${i + 1}`, { [files[0]]: `a fix ${i + 1}\n` });
+    K.git(repo, 'checkout', '-q', 'main');
+    main = commit(repo, `main moves ${i + 1}`, { [`server/m${i + 1}.js`]: `m${i + 1}\n` });
+    K.git(repo, 'checkout', '-q', 'lane');
+    K.rebase(repo, 'main');
+    at = position(repo, 'lane', '--overlap', main);
+    pass(i + 1, at);
+  });
+  ok(cli(repo, 'tests', 'lane', '--position', at, '--suites', suitesRun(t)));
+  return cli(repo, 'finalize', 'lane', '--kind', 'lane', '--base', main, '--reviewed-against', main, '--tier', 'B', '--stale-base', '--not-a-fix', 'x', '--select', selectFile(repo, 'B'));
+}
+
+test('the cap counts a fix that rode a rebase: three rounds riding rebases are refused, and a rebase that carried no new commit is no re-pass', (t) => {
+  const lines = problems(refused(rebasedRounds(t, [true, true, true])));
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^ {2}- cap: seams\.pass-3\.md \(position \d+, tip [0-9a-f]{7}\) is fix re-pass 3 after the first full pass/);
+  ok(rebasedRounds(t, [true, true, false]));
+});
+
+test('a quick fix whose third fix is restaged while another window moves main is refused at the cap', (t) => {
+  const repo = K.makeRepo(t);
+  const stage = (text) => {
+    fs.writeFileSync(path.join(repo, 'server/a.js'), text);
+    K.git(repo, 'add', '--', 'server/a.js');
+  };
+  stage('a fix 0\n');
+  const name = /name: (\S+)/.exec(ok(cli(repo, 'init', '--branch', 'main', '--quick-fix')).stdout)[1];
+  const dir = tmpDir(t, 'reports');
+  const pass = (n, at) => ok(cli(repo, 'verdicts', name, 'seams', writeFile(dir, `q${n}.md`, report([['server/a.js', 'pass']])), '--position', at, ...(n ? ['--pass', String(n)] : [])));
+  pass(0, position(repo, name));
+  for (const n of [1, 2]) {
+    stage(`a fix ${n}\n`);
+    pass(n, position(repo, name));
+  }
+  // Another window commits its own path on main; the session restages its third fix and runs the overlap pass.
+  fs.writeFileSync(path.join(repo, 'server/b.js'), 'b moved\n');
+  K.git(repo, 'commit', '-q', '-m', 'another window', '--', 'server/b.js');
+  const head = K.git(repo, 'rev-parse', 'HEAD');
+  stage('a fix 3\n');
+  const at = position(repo, name, '--overlap', head);
+  pass(3, at);
+  ok(cli(repo, 'tests', name, '--position', at, '--suites', suitesRun(t)));
+  const lines = problems(refused(cli(repo, 'finalize', name, '--kind', 'quick-fix', '--base', head, '--reviewed-against', head, '--tier', 'B', '--stale-base', '--not-a-fix', 'x', '--select', selectFile(repo, 'B'))));
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], new RegExp(`^ {2}- cap: seams\\.pass-3\\.md \\(position ${at}, tree [0-9a-f]{7}\\) is fix re-pass 3 after the first full pass`));
+  assert.ok(lines[0].includes('; split the change, in order: take the fix out of the change (undo it in the index), cut the split change with it,'), lines[0]);
+});
+
+test('a report with no table is refused at the store, so finalize finds no report of its lens', (t) => {
   const { repo, base } = laneRepo(t);
   ok(cli(repo, 'init', '--branch', 'lane'));
   const at = position(repo, 'lane');
   const dir = tmpDir(t, 'reports');
-  ok(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 's.md', `Everything looks fine. ${MARK}\n`)));
+  assert.match(refused(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 's.md', `Everything looks fine. ${MARK}\n`))).stderr, /\n {2}no verdict table/);
   ok(cli(repo, 'tests', 'lane', '--position', at, '--suites', suitesRun(t)));
   const lines = problems(refused(finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x')));
-  assert.strictEqual(lines.length, 1);
-  assert.match(lines[0], /2 file\(s\) not reached/);
+  assert.deepStrictEqual(lines, ['  - lenses: seams was selected and has no report']);
 });
 
 for (const tier of ['A', 'B', 'hinge']) {

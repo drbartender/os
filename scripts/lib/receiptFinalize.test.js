@@ -442,7 +442,110 @@ test('a finding marked fixed needs a later pass of its lens whose table lists th
   const st = state([['seams.md', 'seams']]);
   st.triage = { 'seams.md#H1': { status: 'fixed' } };
   const { problems } = F.validate(input({ state: st, texts: { 'seams.md': first } }));
-  assert.ok(problems.some((p) => /^triage: seams\.md H1 \(seams\) is marked fixed but no later seams pass lists server\/a\.js as pass \(--pass <n>\)$/.test(p)), problems.join('\n'));
+  assert.ok(problems.some((p) => /^triage: seams\.md H1 \(seams\) is marked fixed but no later seams pass lists server\/a\.js as pass, or as finding with every finding it holds on the file rejected \(--pass <n>\)$/.test(p)), problems.join('\n'));
+});
+
+test('a finding whose latest mark is confirmed is refused at finalize by report, id and file (D14 as amended)', () => {
+  const text = `- H1 \`server/a.js:1\` One. Check: SEAM-1.\n- M2 \`server/b.js:2\` Two. Check: SEAM-2.\n- L3 \`docs/x.md:1\` Three. Check: SEAM-3.\n\n${table([['server/a.js', 'finding', 'H1'], ['server/b.js', 'finding', 'M2 L3']])}`;
+  const run = (marks) => {
+    const st = state([['seams.md', 'seams'], ['verify.md', 'verify']]);
+    st.triage = Object.fromEntries(Object.entries(marks).map(([k, status]) => [k, { status }]));
+    const r = F.validate(input({ state: st, texts: { 'seams.md': text, 'verify.md': '- M1 `server/a.js:4` x. Against: the write.\n' } }));
+    return { lines: r.problems.filter((p) => /^triage:/.test(p)), receipt: r.receipt };
+  };
+  const open = (report, id, lens, scope = 'lane') => `is confirmed and still open; fix it in the ${scope}, mark it fixed (triage lane ${report} ${id} fixed --reason <the fix>) and re-pass ${lens} until a later pass clears the file, or split it to a new lane and record it rejected with the split named, or reject it with the reason`;
+  const refused = run({ 'seams.md#H1': 'confirmed', 'seams.md#M2': 'rejected', 'seams.md#L3': 'confirmed', 'verify.md#M1': 'confirmed' });
+  assert.deepStrictEqual(refused.lines, [
+    `triage: seams.md H1 (seams) on server/a.js ${open('seams.md', 'H1', 'seams')}`,
+    `triage: seams.md L3 (seams) on the file it names (not a file in the diff) ${open('seams.md', 'L3', 'seams')}`,
+    `triage: verify.md M1 (verify) on server/a.js ${open('verify.md', 'M1', 'verify')}`,
+  ]);
+  assert.strictEqual(refused.receipt, null);
+  // A later mark replaces it: rejected (a split names the new lane) closes it.
+  const closed = run({ 'seams.md#H1': 'rejected', 'seams.md#M2': 'rejected', 'seams.md#L3': 'rejected', 'verify.md#M1': 'rejected' });
+  assert.deepStrictEqual([closed.lines, closed.receipt.lenses[0].confirmed, closed.receipt.verify.rejected], [[], 0, 1]);
+  // The way through follows the state: a quick fix fixes the change; once two fix re-passes are stored, or in a
+  // commit review, no fix can clear it, and only the split or the rejection remain, unless a later pass past the
+  // cap already clears the file, where the fixed mark alone is left.
+  const one = `- H1 \`server/a.js:1\` One. Check: SEAM-1.\n\n${table([['server/a.js', 'finding', 'H1'], ['server/b.js', 'pass']])}`;
+  const lines = (st, over = {}) => F.validate(input({ state: Object.assign(st, { triage: { 'seams.md#H1': { status: 'confirmed' } } }),
+    texts: Object.fromEntries(st.reports.map((r) => [r.file, r.file === 'seams.md' ? one : passing()])), ...over })).problems.filter((p) => /^triage:/.test(p));
+  const stuck = (why) => [`triage: seams.md H1 (seams) on server/a.js is confirmed and still open; ${why}, so no fix can clear it here: split it to a new lane and record it rejected with the split named, or reject it with the reason`];
+  assert.deepStrictEqual(lines(state([['seams.md', 'seams']], { mode: 'quick-fix' }), { kind: 'quick-fix', git: git({ head: A }) }), [`triage: seams.md H1 (seams) on server/a.js ${open('seams.md', 'H1', 'seams', 'change')}`]);
+  const capped = state([['seams.md', 'seams'], ['seams.pass-1.md', 'seams', 1], ['seams.pass-2.md', 'seams', 2]]);
+  capped.reports.forEach((r, i) => { r.tip = ['1', '2', 'c'][i].repeat(40); });
+  assert.deepStrictEqual(lines(capped), [`triage: seams.md H1 (seams) on server/a.js is confirmed and still open; two fix re-passes are already stored (the cap) and a later seams pass already clears the file: mark it fixed (triage lane seams.md H1 fixed --reason <the fix>)`]);
+  const unlisted = `${table([['server/b.js', 'pass']])}`;
+  assert.deepStrictEqual(lines(capped, { texts: { 'seams.md': one, 'seams.pass-1.md': unlisted, 'seams.pass-2.md': unlisted } }), stuck('two fix re-passes are already stored (the cap)'));
+  assert.deepStrictEqual(lines(state([['seams.md', 'seams']], { mode: 'commit' }), { kind: 'commit', git: git({ parent: A }) }), stuck("a commit review's commit never moves"));
+});
+
+test('the review cap: a report read at a third fix re-pass after the first full pass is refused, naming the cap and the split (D14 as amended)', () => {
+  const sha = (d) => String(d).repeat(40);
+  // rows: [file, lens, position, tip (a digit), {main, overlap}]; readBase and the reviewed patch by tip digit.
+  const run = (rows, { mode = 'lane', bases = {}, patches = {} } = {}) => {
+    const st = state(rows.map(([file, lens]) => [file, lens]), { mode });
+    st.reports.forEach((r, i) => {
+      const [, , position, d, extra = {}] = rows[i];
+      Object.assign(r, { seq: i + 1, position, tip: mode === 'quick-fix' ? A : sha(d), main: A, ...extra });
+      if (mode === 'quick-fix') r.tree = sha(d);
+    });
+    const readBase = Object.fromEntries(st.reports.map((r, i) => [`${r.main} ${r.tip}`, rows[i][3] in bases ? bases[rows[i][3]] : A]));
+    const key = (r) => `${r.main} ${r.tip}${r.tree ? ` ${r.tree}` : ''}`; // as receiptGit.patchKey keys it
+    const reviewedPatch = Object.fromEntries(st.reports.map((r, i) => [key(r), rows[i][3] in patches ? patches[rows[i][3]] : `p${rows[i][3]}`]));
+    const texts = Object.fromEntries(st.reports.map((r) => [r.file, r.lens === 'verify' ? 'No findings.\n' : passing()]));
+    return F.validate(input({ kind: mode, state: st, texts, git: git({ readBase, reviewedPatch, head: A }) })).problems.filter((p) => /^cap:/.test(p));
+  };
+  const line = (file, at, n, qf = false, [s, undo] = qf ? ['change', 'undo it in the index'] : ['lane', 'a revert in the lane']) => `cap: ${file} (position ${at}) is fix re-pass ${n} after the first full pass, past the cap of one full pass and two fix re-passes (D14 as amended); split the ${s}, in order: take the fix out of the ${s} (${undo}), cut the split ${s} with it, remove this review's work dir <git-common-dir>/drb-review/_work/lane/ (init refuses while it exists), init again, and record the split in the new review's triage when its full pass raises the finding`;
+  // Two fix re-passes; a not-reached re-dispatch and verify after the last fix sit at a tip already read.
+  const two = [['seams.md', 'seams', 1, 1], ['seams.pass-1.md', 'seams', 2, 2], ['seams.pass-2.md', 'seams', 3, 3], ['seams.pass-3.md', 'seams', 4, 3], ['verify.md', 'verify', 4, 3]];
+  assert.deepStrictEqual(run(two), []);
+  assert.deepStrictEqual(run([...two, ['seams.pass-4.md', 'seams', 5, 4], ['verify.pass-1.md', 'verify', 5, 4], ['seams.pass-5.md', 'seams', 6, 5]]),
+    [line('seams.pass-4.md', `5, tip ${sha(4).slice(0, 7)}`, 3), line('seams.pass-5.md', `6, tip ${sha(5).slice(0, 7)}`, 4)]);
+  // The stale-base overlap pass: a move of the base alone (the reviewed patch unchanged) is no fix; a patch that
+  // changed with the move (a fix rode it) or that git could not give, an unmoved base, or an unnamed one, is one.
+  const rebased = [...two, ['seams.pass-4.md', 'seams', 5, 4, { main: B, overlap: B }]];
+  assert.deepStrictEqual(run(rebased, { bases: { 4: B }, patches: { 4: 'p3' } }), []);
+  assert.deepStrictEqual(run(rebased, { bases: { 4: B } }), [line('seams.pass-4.md', `5, tip ${sha(4).slice(0, 7)}`, 3)], 'a fix that rode the rebase');
+  assert.deepStrictEqual(run(rebased, { bases: { 4: B }, patches: { 4: null } }).length, 1, 'a patch git could not give');
+  assert.deepStrictEqual(run([...rebased, ['seams.pass-5.md', 'seams', 6, 5, { main: B }]], { bases: { 4: B, 5: B }, patches: { 4: 'p3' } }), [line('seams.pass-5.md', `6, tip ${sha(5).slice(0, 7)}`, 3)]);
+  assert.deepStrictEqual(run(rebased, { patches: { 4: 'p3' } }).length, 1, 'an overlap snapshot on the same base');
+  assert.deepStrictEqual(run(rebased, { bases: { 4: null }, patches: { 4: 'p3' } }).length, 1, 'a read base git could not name');
+  // A quick fix counts its staged trees, a third one restaged while another window moved main among them; a commit review's tip never moves.
+  const trees = [['seams.md', 'seams', 1, 1], ['seams.pass-1.md', 'seams', 2, 2], ['seams.pass-2.md', 'seams', 3, 3], ['seams.pass-3.md', 'seams', 4, 4]];
+  assert.deepStrictEqual(run(trees, { mode: 'quick-fix' }), [line('seams.pass-3.md', `4, tree ${sha(4).slice(0, 7)}`, 3, true)]);
+  const movedMain = [...trees.slice(0, 3), ['seams.pass-3.md', 'seams', 4, 4, { main: B, overlap: B }]];
+  assert.deepStrictEqual(run(movedMain, { mode: 'quick-fix', bases: { 4: B } }), [line('seams.pass-3.md', `4, tree ${sha(4).slice(0, 7)}`, 3, true)]);
+  assert.deepStrictEqual(run(movedMain, { mode: 'quick-fix', bases: { 4: B }, patches: { 4: 'p3' } }), [], 'main moved and the staged change did not');
+});
+
+test('a fixed mark clears when a later pass of its lens lists the file as finding and every finding that pass raises on the file is rejected', () => {
+  const first = `- H1 \`server/a.js:1\` One. Check: SEAM-1.\n\n${table([['server/a.js', 'finding', 'H1'], ['server/b.js', 'pass']])}`;
+  const later = `- M1 \`server/a.js:4\` Two. Check: SEAM-2.\n- L2 \`server/a.js:9\` Three. Check: SEAM-3.\n- L3 \`server/b.js:2\` Four. Check: SEAM-4.\n\n${table([['server/a.js', 'finding', 'M1 L2'], ['server/b.js', 'finding', 'L3']])}`;
+  const marks = (m) => ({ 'seams.md#H1': { status: 'fixed' }, ...Object.fromEntries(Object.entries(m).map(([k, status]) => [k, { status }])) });
+  const run = (m, text = later) => {
+    const st = state([['seams.md', 'seams'], ['seams.pass-1.md', 'seams', 1]]);
+    st.triage = marks(m);
+    return F.lensSummary(st, { 'seams.md': first, 'seams.pass-1.md': text }, 'seams').fixedNoRepass.map((f) => `${f.report} ${f.id}`);
+  };
+  const rejected = { 'seams.pass-1.md#M1': 'rejected', 'seams.pass-1.md#L2': 'rejected', 'seams.pass-1.md#L3': 'rejected' };
+  assert.deepStrictEqual(run(rejected), []);
+  assert.deepStrictEqual(run({ ...rejected, 'seams.pass-1.md#L3': 'confirmed' }), [], 'a finding on another file has its own mark');
+  assert.deepStrictEqual(run({ ...rejected, 'seams.pass-1.md#L2': 'confirmed' }), ['seams.md H1'], 'one finding on the file not rejected');
+  assert.deepStrictEqual(run({ ...rejected, 'seams.pass-1.md#L2': 'fixed' }), ['seams.md H1', 'seams.pass-1.md L2'], 'fixed is no rejection (and needs its own later pass)');
+  assert.deepStrictEqual(run({ 'seams.pass-1.md#M1': 'rejected' }), ['seams.md H1'], 'one untriaged');
+  // The findings a row holds on its file: located there, or named by its note though located elsewhere.
+  const named = `- L3 \`server/b.js:2\` Four. Check: SEAM-4.\n\n${table([['server/a.js', 'finding', 'L3']])}`;
+  assert.deepStrictEqual(run({ 'seams.pass-1.md#L3': 'rejected' }, named), [], 'the row names a rejected finding located elsewhere');
+  assert.deepStrictEqual(run({ 'seams.pass-1.md#L3': 'confirmed' }, named), ['seams.md H1']);
+  const unnamed = `- M1 \`server/a.js:4\` Two. Check: SEAM-2.\n- L2 \`server/a.js:9\` Three. Check: SEAM-3.\n\n${table([['server/a.js', 'finding', 'M1']])}`;
+  assert.deepStrictEqual(run({ 'seams.pass-1.md#M1': 'rejected', 'seams.pass-1.md#L2': 'confirmed' }, unnamed), ['seams.md H1'], 'a finding on the file the row does not name');
+  // Through validate: no triage line, and the receipt counts the fix.
+  const st = state([['seams.md', 'seams'], ['seams.pass-1.md', 'seams', 1]]);
+  st.triage = marks(rejected);
+  const { problems, receipt } = F.validate(input({ state: st, texts: { 'seams.md': first, 'seams.pass-1.md': later } }));
+  assert.deepStrictEqual(problems, []);
+  assert.deepStrictEqual([receipt.lenses[0].fixed, receipt.lenses[0].rejected, receipt.lenses[0].verdicts['server/a.js']], [1, 3, 'finding']);
 });
 
 test('a verify finding marked fixed needs a later verify pass that raises nothing on its file', () => {

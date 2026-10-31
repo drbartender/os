@@ -33,7 +33,11 @@
  * report, one `## Lens: <name>` section per lens, is stored under each lens it
  * has a section for and read one section at a time), tests/ (a copy of every
  * runner log and summary), externals/ and, at finalize, proof.json and
- * tests/failing-on-old-code.log.
+ * tests/failing-on-old-code.log. verdicts and verify read a report with the
+ * store's parser before they write (scripts/lib/receiptVerdicts.js storable):
+ * a malformed one (a lens's, any section of a collapsed one, verify's) is
+ * refused with exit 1 once the snapshot checks pass, its problems printed one
+ * per line and nothing stored, and the agent's re-emission takes its name.
  *
  * finalize checks every field against the contract
  * (scripts/lib/receiptFinalize.js, over the git facts of
@@ -44,9 +48,16 @@
  * earlier receipt under the same key moves to _superseded/<key>.<time>/,
  * never deleted), removes the working directory and maps <name> to the key in
  * index.json. A refused finalize names every problem, one line each, and
- * moves nothing. --allow-not-reached admits a file not reached only when a
- * --pass report of its lens (the one re-dispatch of spec 3.5) has a not
- * reached row for it.
+ * moves nothing. It refuses a finding whose latest mark is confirmed: fix it,
+ * mark it fixed (triage <name> <report> <id> fixed) and re-pass the raising
+ * lens until a later pass clears the file; or, and only these once two fix
+ * re-passes are stored (a fix a later pass clears is marked fixed) or in a
+ * commit review, split it (rejected, the split named) or reject it. It
+ * also refuses a report read at a third fix re-pass after the first full
+ * pass (the review cap of spec D14 as amended, counted from the tips the
+ * reports recorded: receiptFinalize.js's header). --allow-not-reached admits
+ * a file not reached only when a --pass report of its lens (the one
+ * re-dispatch of spec 3.5) has a not reached row for it.
  * --reviewed-against must equal --base, --stale-base or not. A review that
  * moved onto a newer main is rebased onto it first (spec 3.7), so the
  * rebased tip holds main's changes, then finalized with --base and
@@ -82,9 +93,9 @@
  * snapshot does not record (every checkout of a lane; at a quick fix's tests
  * store, any unstaged change or untracked file, since the suites run on the
  * working tree), or an index entry marked assume-unchanged or skip-worktree,
- * which hides an edit from git diff, by count. Each
- * stored report also carries seq, its storage order, which the verdict merge
- * and the fixed-finding clearing follow (--pass <n> only names the file).
+ * which hides an edit from git diff, by count. Each stored report also
+ * carries seq, its storage order, which the verdict merge, the fixed-finding
+ * clearing and the review cap follow (--pass <n> only names the file).
  * finalize refuses a verdict read before a later commit or staged hunk
  * changed its file, naming the lens and the files, until a re-pass of that
  * lens lists them (spec 3.8 and 3.9), and a quick fix whose staged tree
@@ -94,7 +105,8 @@
  * had no other way in: `position` (above); `triage` (the per-lens raised,
  * confirmed, fixed and rejected counts and the block's findings line need
  * the session's triage; a finding marked fixed needs a later pass of the lens
- * that raised it whose table lists the finding's file as pass, spec 3.9);
+ * that raised it whose table lists the finding's file as pass, or as finding
+ * with every finding that pass holds on it rejected, spec 3.9);
  * `tests --suites <dir>` (run-suites' summary.json, read the way --smoke
  * reads the smoke's); `tests --build` (the client build, spec 3.3's tier C
  * tests); `init --commit <sha>` (the commit kind of spec 3.7 keys a commit,
@@ -143,6 +155,7 @@ const fs = require('fs');
 const path = require('path');
 const R = require('./lib/receipt');
 const F = require('./lib/receiptFinalize');
+const V = require('./lib/receiptVerdicts');
 const RT = require('./lib/receiptTests');
 const G = require('./lib/receiptGit');
 const P = require('./lib/receiptPosition');
@@ -259,8 +272,9 @@ function positionSeq(flags, cmd) {
 }
 
 // Stores one report under each lens's contract name (a collapsed report
-// under every lens it has a section for), all or none.
-function storeReports(dir, state, lenses, text, { pass, part, collapsed = false, seq }, cwd) {
+// under every lens it has a section for), all or none; `malformed` (the
+// store's parse, receiptVerdicts.storable) refuses it once the snapshot holds.
+function storeReports(dir, state, lenses, text, { pass, part, collapsed = false, seq, malformed = null }, cwd) {
   const targets = lenses.map((lens) => (pass ? `${lens}.pass-${pass}.md` : part ? `${lens}.part-${part}.md` : `${lens}.md`));
   for (const [i, lens] of lenses.entries()) {
     const target = targets[i];
@@ -272,6 +286,7 @@ function storeReports(dir, state, lenses, text, { pass, part, collapsed = false,
   // The report records the position snapshot its input was taken at
   // (receiptPosition.js), never where git stands when it is stored.
   const snap = snapshot(dir, state, cwd, 'the lens', seq);
+  if (malformed) refuse(malformed);
   for (const [i, lens] of lenses.entries()) {
     fs.writeFileSync(path.join(dir, targets[i]), text, { flag: 'wx' });
     // seq is the storage order the merge and the fix clearing follow.
@@ -377,22 +392,6 @@ function cmdPosition(args, cwd) {
 
 // ---- verdicts, verify, triage -----------------------------------------------------
 
-// The lenses a report is stored under: the one named, or (--collapsed) every
-// `## Lens: <name>` section. A one-lens report carrying another lens's
-// heading is refused, so a collapsed report is never read as one lens.
-function reportLenses(file, text, lens) {
-  const { sectioned, sections, problems } = R.lensHeadings(text);
-  const base = path.basename(file);
-  if (lens) {
-    const other = sections.find((x) => x.name !== lens);
-    if (other) refuse(`${base} line ${other.line}: a ## Lens: heading for a lens other than ${lens}; a collapsed report is stored with --collapsed`);
-    return [lens];
-  }
-  if (!sectioned) refuse(`${base} has no ## Lens: <name> heading; a one-lens report is stored with verdicts <name> <lens> <report.md>`);
-  if (problems.length) refuse(`${base} ${problems.join('; ')} (one of ${R.LENSES.join(', ')})`);
-  return sections.map((x) => x.name);
-}
-
 function cmdVerdicts(args, cwd) {
   const { positional, flags } = parseArgs(args, { '--pass': 'value', '--part': 'value', '--collapsed': 'value', '--position': 'value' });
   const collapsed = flags.collapsed !== undefined;
@@ -406,15 +405,16 @@ function cmdVerdicts(args, cwd) {
   const file = collapsed ? flags.collapsed : single;
   const { dir, state } = loadWork(name, cwd);
   const text = RT.readFile(file, 'report');
-  const lenses = reportLenses(file, text.toString('utf8'), collapsed ? null : lens);
-  const targets = storeReports(dir, state, lenses, text, { pass, part, collapsed, seq }, cwd);
+  // The store's parse (receiptVerdicts.storable): headings that do not fit the
+  // command refuse here, a malformed report in storeReports.
+  const { lenses, malformed, refusal } = V.storable(path.basename(file), text.toString('utf8'), collapsed ? null : lens);
+  if (refusal) refuse(refusal);
+  const targets = storeReports(dir, state, lenses, text, { pass, part, collapsed, seq, malformed }, cwd);
   const files = G.previewFiles(state, cwd);
   for (const [i, l] of lenses.entries()) {
     const s = summary(dir, state, l);
     const mine = s.parsed.find((p) => p.name === targets[i]);
-    const shape = mine.malformed ? `malformed, ${mine.problems.length} problem(s), no rows read` : `${mine.rows.length} row(s)`;
-    console.log(`verdicts: stored ${targets[i]} (${shape}; ${mine.findings.length} finding(s))`);
-    for (const p of mine.problems) console.log(`  ${p}`);
+    console.log(`verdicts: stored ${targets[i]} (${mine.rows.length} row(s); ${mine.findings.length} finding(s))`);
     if (!files) {
       console.log(`${l}: coverage is checked at finalize`);
       continue;
@@ -433,10 +433,11 @@ function cmdVerify(args, cwd) {
   const pass = passNumber(flags, 'pass');
   const seq = positionSeq(flags, 'verify');
   const { dir, state } = loadWork(name, cwd);
-  const [target] = storeReports(dir, state, ['verify'], RT.readFile(file, 'report'), { pass, part: null, seq }, cwd);
+  const text = RT.readFile(file, 'report');
+  const { malformed } = V.storable(path.basename(file), text.toString('utf8'), 'verify');
+  const [target] = storeReports(dir, state, ['verify'], text, { pass, part: null, seq, malformed }, cwd);
   const parsed = F.parseStored(fs.readFileSync(path.join(dir, target), 'utf8'), 'verify');
-  console.log(`verify: stored ${target} (${parsed.malformed ? `malformed, ${parsed.problems.length} problem(s); ` : ''}${parsed.findings.length} finding(s))`);
-  for (const p of parsed.problems) console.log(`  ${p}`);
+  console.log(`verify: stored ${target} (${parsed.findings.length} finding(s))`);
   return 0;
 }
 
@@ -592,6 +593,7 @@ function cmdFinalize(args, cwd) {
     tier,
     state,
     texts: reportTexts(dir, state),
+    workDir: dir,
     select,
     selectError,
     git,

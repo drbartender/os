@@ -313,7 +313,9 @@ test('a finding row whose ids are all rejected passes; one with an id neither fi
   const found = report([['server/a.js', 'finding', 'M1'], ['server/b.js', 'pass']], ['- M1 `server/a.js:1` the line reads wrong. Check: the caller.']);
   const ok = landLane(h, { 'server/a.js': 'a v2\n', 'server/b.js': 'b v2\n' }, { reports: () => [found], triage: [['seams.md', 'M1', 'rejected']] });
   passes(h.check(h.seed));
-  const open = landLane(h, { 'server/a.js': 'a v3\n', 'server/b.js': 'b v3\n' }, { reports: () => [found], triage: [['seams.md', 'M1', 'confirmed']] });
+  // finalize refuses a finding left confirmed, so a receipt holds one only by a hand edit.
+  const open = landLane(h, { 'server/a.js': 'a v3\n', 'server/b.js': 'b v3\n' }, { reports: () => [found], triage: [['seams.md', 'M1', 'rejected']] });
+  edit(h, open.dir, (r) => { r.triage['seams.md#M1'].status = 'confirmed'; });
   const res = h.check(h.seed);
   assert.deepEqual(problemsOf(res, ok.sha), []);
   refusedWith(res, open.sha, 'seams', 'server/a.js', 'M1', 'neither fixed nor rejected');
@@ -323,13 +325,16 @@ test('every finding a report raised must be fixed or rejected, whether or not a 
   const h = makeRepo(t);
   const two = report([['server/a.js', 'finding', 'M1'], ['server/b.js', 'pass']],
     ['- M1 `server/a.js:1` the line reads wrong. Check: the caller.', '- M2 `server/a.js:1` a second reading. Check: the caller.']);
-  const lane = landLane(h, { 'server/a.js': 'a v2\n', 'server/b.js': 'b v2\n' }, { reports: () => [two], triage: [['seams.md', 'M1', 'rejected'], ['seams.md', 'M2', 'confirmed']] });
+  // finalize refuses a finding left confirmed, so a receipt holds one only by a hand edit.
+  const lane = landLane(h, { 'server/a.js': 'a v2\n', 'server/b.js': 'b v2\n' }, { reports: () => [two], triage: [['seams.md', 'M1', 'rejected'], ['seams.md', 'M2', 'rejected']] });
+  edit(h, lane.dir, (r) => { r.triage['seams.md#M2'].status = 'confirmed'; });
   const hit = refusedWith(h.check(h.seed), lane.sha, 'seams', 'M2', 'seams.md', 'server/a.js', 'neither fixed nor rejected');
   assert.ok(!hit.includes('M1'), hit);
   edit(h, lane.dir, (r) => { r.triage['seams.md#M2'].status = 'rejected'; });
   passes(h.check(h.seed));
   const under = report([['server/a.js', 'pass'], ['server/b.js', 'pass']], ['- M1 `server/a.js:1` the line reads wrong. Check: the caller.']);
-  const quiet = landLane(h, { 'server/a.js': 'a v3\n', 'server/b.js': 'b v3\n' }, { reports: () => [under], triage: [['seams.md', 'M1', 'confirmed']] });
+  const quiet = landLane(h, { 'server/a.js': 'a v3\n', 'server/b.js': 'b v3\n' }, { reports: () => [under], triage: [['seams.md', 'M1', 'rejected']] });
+  edit(h, quiet.dir, (r) => { r.triage['seams.md#M1'].status = 'confirmed'; });
   refusedWith(h.check(h.seed), quiet.sha, 'seams', 'M1', 'server/a.js', 'neither fixed nor rejected');
 });
 
@@ -337,9 +342,12 @@ test('a malformed lens report stands only when a later well-formed report of its
   const h = makeRepo(t);
   const good = report([['server/a.js', 'pass']]);
   const broken = `Read the brief. ${MARK}\nNo table here.\n`;
-  const last = landLane(h, { 'server/a.js': 'a v2\n' }, { reports: () => [good, broken] });
+  // The store refuses a malformed report, so a receipt holds one only by a hand edit.
+  const last = landLane(h, { 'server/a.js': 'a v2\n' }, { reports: () => [good, good] });
+  fs.writeFileSync(path.join(last.dir, 'seams.pass-1.md'), broken);
   refusedWith(h.check(h.seed), last.sha, 'seams report seams.pass-1.md', 'malformed');
-  const healed = landLane(h, { 'server/a.js': 'a v3\n' }, { reports: () => [good, broken, good] });
+  const healed = landLane(h, { 'server/a.js': 'a v3\n' }, { reports: () => [good, good, good] });
+  fs.writeFileSync(path.join(healed.dir, 'seams.pass-1.md'), broken);
   assert.deepEqual(problemsOf(h.check(h.seed), healed.sha), []);
   const vh = makeRepo(t);
   const lane = landLane(vh, { 'server/money.js': 'm v1\n' }, { tier: 'A' });

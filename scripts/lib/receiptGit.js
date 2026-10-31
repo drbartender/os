@@ -33,6 +33,12 @@
 //                     between it and reviewed} (review 5, M1); a base git
 //                     cannot diff is left out, so every verdict read on it
 //                     reads as stale
+//   reviewedPatch     {patchKey of a report (its main and tip, and a quick
+//                     fix's staged tree): the stable patch id of the diff
+//                     from its readBase to its tip (a quick fix: to its
+//                     staged tree), generated docs excluded; '' for an empty
+//                     diff, null when git cannot say} (lane and quick fix;
+//                     receiptFinalize's review cap reads it)
 //   landedSensitive   whether a sensitive path (sensitive-match's
 //                     isSensitive) is among the files main changed between
 //                     an older base a report was read on (and the base, when
@@ -46,6 +52,7 @@
 //                     problem, never a lighter tier
 // When kindOk is false (a kind finalize refuses) no key is gathered.
 
+const { execFileSync } = require('child_process');
 const R = require('./receipt');
 const { tierFromGit, isSensitive } = require('../sensitive-match');
 
@@ -161,6 +168,7 @@ function finalizeFacts(state, { base, reviewed }, kindOk, cwd) {
   }
   if (state.mode !== 'commit') {
     readBases(g, state.reports, anc, cwd);
+    reviewedPatches(g, state.reports, state.mode === 'quick-fix', cwd);
     overlap(g, cwd);
     landed(g, cwd);
   }
@@ -214,4 +222,47 @@ function readBases(g, reports, anc, cwd) {
   for (const b of new Set(Object.values(g.readBase).filter((x) => x && x !== g.base))) g.olderBase[b] = anc(b, g.base);
 }
 
-module.exports = { previewFiles, changedSince, finalizeFacts };
+// The key of the reviewed patch at a report's position, or null.
+function patchKey(r) {
+  return r && r.main && r.tip ? `${r.main} ${r.tip}${r.tree ? ` ${r.tree}` : ''}` : null;
+}
+
+// The diff is pinned (no colour, external driver or textconv, full binary
+// content, no renames, fixed prefixes, myers) and read from the top of the
+// worktree, so the two sides of one comparison are read alike. It carries no
+// context lines: patch-id hashes context, so main editing a line beside a
+// lane hunk would change the id of a rebase that carried no fix.
+const PATCH_DIFF = Object.freeze(['-c', 'core.quotePath=true', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--full-index', '--binary',
+  '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0', '--diff-algorithm=myers', '--ignore-submodules=none']);
+const PATCH_PATHS = Object.freeze([':(top)', ...R.GENERATED_DOCS.map((p) => `:(top,exclude)${p}`)]);
+
+// The stable patch id of the diff from a commit to a commit or a tree, the
+// generated docs excluded; '' when that diff is empty.
+function patchOf(from, to, cwd) {
+  const git = (args, input) => execFileSync('git', args, { cwd, env: R.gitEnv(), input, maxBuffer: 1024 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] });
+  const diff = git([...PATCH_DIFF, '--end-of-options', from, to, '--', ...PATCH_PATHS]);
+  if (!diff.length) return '';
+  const id = git(['patch-id', '--stable'], diff).toString('utf8').trim().split(/\s+/)[0] || '';
+  if (!R.KEY_RE.test(id)) throw new Error('git patch-id returned no id');
+  return id;
+}
+
+// The reviewed patch at each report's position (readBases first), so the
+// cap can tell a rebase that moved only the base from one that carried a
+// change; a position git cannot diff is null, which the cap counts.
+function reviewedPatches(g, reports, qf, cwd) {
+  g.reviewedPatch = {};
+  for (const r of reports) {
+    const k = patchKey(r);
+    if (!k || k in g.reviewedPatch) continue;
+    const base = g.readBase[`${r.main} ${r.tip}`];
+    const to = qf ? r.tree : r.tip;
+    try {
+      g.reviewedPatch[k] = base && to ? patchOf(base, to, cwd) : null;
+    } catch {
+      g.reviewedPatch[k] = null;
+    }
+  }
+}
+
+module.exports = { previewFiles, changedSince, finalizeFacts, patchKey };

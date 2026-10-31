@@ -13,6 +13,7 @@
 //   state                  the working receipt.json (reports, triage, tests,
 //                          externals)
 //   texts                  {report file: its text} for every stored report
+//   workDir                the review's working directory (the cap line names it)
 //   select, selectError    select.json as parsed (or null), or why it could
 //                          not be read
 //   git                    what the CLI's gather read from git: base,
@@ -69,11 +70,34 @@
 //                      is not the final tip (review 4, L2)
 // A lens in the receipt carries fired_because from the selection, else floor
 // for a floor lens, else an empty list (it ran without being selected).
+//
+// The review cap (spec 2026-10-19 D14 as amended; plan 2026-10-28, decision
+// 6): one full pass, then at most two fix re-passes, counted (fixRepasses)
+// from the stored reports, every lens's and verify's, as the working state
+// holds them, in storage order. Each report records the tip its position
+// snapshot read (a quick fix's staged tree) and the main beside it. The
+// first full pass is the tip of the first report stored; a fix re-pass is
+// each later tip no earlier report was read at, since only a fix commit (a
+// quick fix's restaged fix) moves it. A position at a tip already read is
+// none: a file not reached re-dispatched, a malformed report re-emitted, an
+// escalation's floor lenses, verify after the last fix. Nor is the
+// stale-base overlap pass: a report stored under position --overlap whose
+// read base (readBase) is known and is not the read base of the tip before
+// it, and whose reviewed patch (receiptGit's reviewedPatch, the stable patch
+// id of read base..tip, or ..staged tree) equals that tip's, a move of the
+// base alone (the patch carries no context lines, so main editing a line
+// beside a lane hunk leaves it equal). A patch that differs (a fix that rode
+// the rebase, a quick fix restaged while another window moved main) or that
+// git could not give counts, and so does an overlap on an unmoved or unnamed
+// base. A commit review's tip never moves. The third fix
+// re-pass, and each one after it, is refused.
 
 const R = require('./receipt');
 const { parse: parseTap } = require('./tapSummary');
 const { TIER_FLOORS, TIER_ORDER } = require('../sensitive-match');
 const { checkCommits, checkMains, checkOverlap: overlapPass, changedFor, stored, listed } = require('./receiptBase');
+const { noteIds } = require('./receiptVerdicts');
+const { patchKey } = require('./receiptGit');
 
 const REVIEWERS = Object.freeze(['codex', 'gemini']);
 const SUITE_TIERS = Object.freeze(['A', 'B', 'hinge']);
@@ -152,20 +176,30 @@ function parseStored(text, lens) {
 
 // One lens's (or verify's) stored reports in storage order, parsed, with the
 // triage counts; the latest stored report that lists a file sets its verdict.
+// A finding whose latest mark is confirmed is still open (D14 as amended):
+// finalize refuses it until it is fixed and re-reviewed or rejected.
 // A finding marked fixed is re-reviewed (spec 3.9) only by a pass of the lens
-// that raised it, stored later, whose table lists the finding's file as pass
-// (a pass that leaves the file out, or lists it as finding or not reached,
-// does not count); verify, which returns no table, by a later verify pass
-// that raises nothing on that file.
+// that raised it, stored later, whose table lists the finding's file as pass,
+// or as finding when every finding that pass holds on the file, located
+// there or named by the row's note, is triaged rejected, and there is one
+// (plan 2026-10-28, lane receipt-cap: a pass that leaves the file out, lists
+// it as not reached, or holds a finding on it not rejected, does not count);
+// verify, which returns no table, by a later verify pass that raises nothing
+// on that file.
 function lensSummary(state, texts, lens) {
   const entries = state.reports.map((r, i) => ({ ...r, i })).filter((r) => r.lens === lens).sort((a, b) => stored(a) - stored(b));
   const parsed = entries.map((e) => ({ entry: e, name: e.file, ...parseStored(texts[e.file], lens) }));
   const merged = R.mergeVerdicts(parsed);
   const findings = parsed.flatMap((p) => p.findings.map((f) => ({ report: p.name, at: stored(p.entry), id: f.id, file: f.file })));
+  const rejectedOn = (q, row) => {
+    const named = new Set(noteIds(row.note));
+    const on = q.findings.filter((x) => x.file === row.file || named.has(x.id));
+    return on.length > 0 && on.every((x) => (state.triage[`${q.name}#${x.id}`] || {}).status === 'rejected');
+  };
   const cleared = (f) => parsed.some((q) => stored(q.entry) > f.at && (lens === 'verify'
     ? !q.malformed && !q.findings.some((x) => x.file === f.file)
-    : q.rows.some((r) => r.file === f.file && r.verdict === 'pass')));
-  const out = { entries, parsed, merged, raised: findings.length, confirmed: 0, fixed: 0, rejected: 0, untriaged: [], fixedNoRepass: [] };
+    : q.rows.some((r) => r.file === f.file && (r.verdict === 'pass' || (r.verdict === 'finding' && rejectedOn(q, r))))));
+  const out = { entries, parsed, merged, raised: findings.length, confirmed: 0, fixed: 0, rejected: 0, untriaged: [], open: [], fixedNoRepass: [] };
   for (const f of findings) {
     const tr = state.triage[`${f.report}#${f.id}`];
     if (!tr) {
@@ -177,6 +211,8 @@ function lensSummary(state, texts, lens) {
       if (tr.status === 'fixed') {
         out.fixed++;
         if (!cleared(f)) out.fixedNoRepass.push(f);
+      } else {
+        out.open.push({ ...f, cleared: cleared(f) });
       }
     }
   }
@@ -460,10 +496,21 @@ function checkStale(c) {
   return problems;
 }
 
-// Every finding triaged, and every fix re-reviewed. A finding's location is
-// the report's words: printed only when it is a file in the diff.
+// Every finding triaged, none left confirmed, and every fix re-reviewed. A
+// finding's location is the report's words: printed only when it is a file
+// in the diff. A confirmed finding's way through is the state's: a fix, its
+// fixed mark and a later pass that clears the file, or the split or the
+// rejection; once two fix re-passes are stored (the cap), or in a commit
+// review (its commit never moves), no fix can clear it and only those two
+// remain, except past the cap where a later pass of the raising lens already
+// clears the file: the fix is in, and its fixed mark alone is left.
 function checkTriage(c) {
-  const { summaries, v, diffFiles } = c;
+  const { summaries, v, diffFiles, state } = c;
+  const scope = state.mode === 'quick-fix' ? 'change' : 'lane';
+  const stuck = state.mode === 'commit' ? "a commit review's commit never moves" : fixRepasses(c).length >= 2 ? 'two fix re-passes are already stored (the cap)' : null;
+  const way = (f, lens) => (stuck && state.mode !== 'commit' && f.cleared ? `${stuck} and a later ${lens} pass already clears the file: mark it fixed (triage ${c.name} ${f.report} ${f.id} fixed --reason <the fix>)`
+    : stuck ? `${stuck}, so no fix can clear it here: split it to a new lane and record it rejected with the split named, or reject it with the reason`
+    : `fix it in the ${scope}, mark it fixed (triage ${c.name} ${f.report} ${f.id} fixed --reason <the fix>) and re-pass ${lens} until a later pass clears the file, or split it to a new lane and record it rejected with the split named, or reject it with the reason`);
   const problems = [];
   const all = [...[...summaries.values()].filter(Boolean), ...(v ? [v] : [])];
   const untriaged = all.flatMap((s) => s.untriaged);
@@ -471,16 +518,56 @@ function checkTriage(c) {
     const shown = untriaged.slice(0, 10).map((f) => `${f.report} ${f.id}`).join(', ');
     problems.push(`triage: ${untriaged.length} finding(s) untriaged (${shown}${untriaged.length > 10 ? `, and ${untriaged.length - 10} more` : ''}); triage each one`);
   }
+  const named = (f) => (diffFiles.includes(f.file) ? f.file : 'the file it names (not a file in the diff)');
   for (const s of all) {
     const lens = s.entries[0].lens;
+    for (const f of s.open) {
+      problems.push(`triage: ${f.report} ${f.id} (${lens}) on ${named(f)} is confirmed and still open; ${way(f, lens)}`);
+    }
     for (const f of s.fixedNoRepass) {
-      const where = diffFiles.includes(f.file) ? f.file : 'the file it names (not a file in the diff)';
+      const where = named(f);
       problems.push(lens === 'verify'
         ? `triage: ${f.report} ${f.id} (verify) is marked fixed but no later verify pass clears ${where} (--pass <n>)`
-        : `triage: ${f.report} ${f.id} (${lens}) is marked fixed but no later ${lens} pass lists ${where} as pass (--pass <n>)`);
+        : `triage: ${f.report} ${f.id} (${lens}) is marked fixed but no later ${lens} pass lists ${where} as pass, or as finding with every finding it holds on the file rejected (--pass <n>)`);
     }
   }
   return problems;
+}
+
+// The fix re-passes the header defines, in storage order (the first report
+// stored at each such tip), computed once per validate.
+function fixRepasses(c) {
+  if (c.fixes) return c.fixes;
+  const { state, g } = c;
+  if (c.commentOnly || state.mode === 'commit') return (c.fixes = []);
+  const at = (e) => String(state.mode === 'quick-fix' ? e.tree : e.tip);
+  const readOn = (e) => (e.main && e.tip ? (g.readBase || {})[`${e.main} ${e.tip}`] : null) || null;
+  const patchAt = (e) => { const p = (g.reviewedPatch || {})[patchKey(e)]; return typeof p === 'string' ? p : null; };
+  const seen = new Set();
+  const fixes = [];
+  let before = null;
+  for (const e of state.reports.map((r, i) => ({ ...r, i })).sort((x, y) => stored(x) - stored(y))) {
+    if (seen.has(at(e))) continue;
+    const now = { base: readOn(e), patch: patchAt(e) };
+    const moved = Boolean(before) && now.base !== null && before.base !== null && now.base !== before.base;
+    const rebase = Boolean(e.overlap) && moved && now.patch !== null && now.patch === before.patch;
+    if (seen.size && !rebase) fixes.push(e);
+    seen.add(at(e));
+    before = now;
+  }
+  return (c.fixes = fixes);
+}
+
+// The review cap: every tip past the second fix re-pass is one line naming
+// the cap and the way through, the split, step by step (a stored re-pass
+// cannot be taken back, so the review starts over in its own work dir).
+function checkCap(c) {
+  const qf = c.state.mode === 'quick-fix';
+  const [scope, undo] = qf ? ['change', 'undo it in the index'] : ['lane', 'a revert in the lane'];
+  const dir = c.input.workDir || `<git-common-dir>/drb-review/_work/${c.name}/`;
+  const at = (e) => String(qf ? e.tree : e.tip);
+  const where = (e) => `${Number.isInteger(e.position) ? `position ${e.position}, ` : ''}${qf ? 'tree' : 'tip'} ${R.KEY_RE.test(at(e)) ? R.short(at(e)) : '(none)'}`;
+  return fixRepasses(c).slice(2).map((e, k) => `cap: ${e.file} (${where(e)}) is fix re-pass ${k + 3} after the first full pass, past the cap of one full pass and two fix re-passes (D14 as amended); split the ${scope}, in order: take the fix out of the ${scope} (${undo}), cut the split ${scope} with it, remove this review's work dir ${dir} (init refuses while it exists), init again, and record the split in the new review's triage when its full pass raises the finding`);
 }
 
 // Verify and the externals ride tier A (spec 3.3), or the selection's say.
@@ -592,7 +679,7 @@ function buildReceipt(c) {
   };
 }
 
-const CHECKS = Object.freeze([checkProof, checkSelection, checkGit, checkTier, checkOverlap, checkLenses, checkCoverage, checkStale, checkTriage, checkVerifyExternals, checkTests, checkFailing]);
+const CHECKS = Object.freeze([checkProof, checkSelection, checkGit, checkTier, checkOverlap, checkLenses, checkCoverage, checkStale, checkTriage, checkCap, checkVerifyExternals, checkTests, checkFailing]);
 
 function validate(input) {
   const { name, kind, tier, state, texts, git: g, flags, now } = input;
