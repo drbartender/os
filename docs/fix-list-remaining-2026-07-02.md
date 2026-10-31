@@ -2867,6 +2867,17 @@ Parked by the push-time fleet on `b3148da4..7d5e5f8c`; none of them blocked the 
 
 ## Platform, schema, and test gates
 
+### Instruction rewrite leftovers (step 5 ended 2026-10-31)
+
+Plan `docs/superpowers/plans/2026-10-28-instruction-rewrite-step5.md` rev 14 parks the first three as lanes; the step report sits beside the step ledger under `.superpowers/sdd/2026-10-28-instruction-rewrite-step5/`.
+
+- **Gate and ship logs are never swept (lane log-retention, parked).** The gate keeps every smoke-log directory under `.git/drb-gate/` and ship every raw log under `.git/drb-ship/`; 9 MB over eight days on 2026-10-31 with 385 GB free. The lane keeps the last 20 smoke-log directories and 30 days of raw logs, swept inside the writers, never the latest record's log; tier A.
+- **no-unused-vars stays a warning for server/ (lane lint-errors, parked).** 151 warnings in 100 server files, 0 errors (2026-10-31). Built to `d00daa5c` and never reviewed; the worktree and branch are kept but stale, so it is re-cut from the plan entry. Its diff touches money files, so the review is tier A.
+- **The review cap has two gaps past the cap (lane receipt-cap-replay, parked; the split recorded in receipt 60ac0dd0).** The overlap exemption compares zero-context patch ids, so a third fix that only moves a lane line, riding a rebase, finalizes past the cap; past the cap the confirmed-open line can name the fixed mark when no fix followed the finding. The first needs a session to commit a third fix, which the skill forbids; no code reaches main unreviewed either way.
+- **Two gate-script comments predate gate-markers' rules.** `scripts/push-gate.js`'s header (lines 22 to 25, "names the verdict checks that run did not prove") and `scripts/testdb-smoke.js` line 460 ("until a descendant passes"). Both are tier A files, so the fix is a comment-only lane; the next lane on either file takes it.
+- **README's Test gate check list leaves out the docs check** (`README.md` lines 1844 to 1846), so "a range that needs none of them" reads against an incomplete list; the sentence after it states the docs check's rule. A README-only edit carries no receipt.
+- **The design-stage agents have not run since their pointer edits** (cf4be753, the design-agents lane's acceptance check 3: `/review-spec` and `/review-plan` once on the step 5 plan, not run). If one broke, the next spec or plan review shows it; they only report.
+
 ### The shared timing-safe compare throws on a same-length non-ASCII header
 
 `server/utils/secrets.js` `safeEqual` compares string lengths, then calls `crypto.timingSafeEqual` on
@@ -3521,6 +3532,8 @@ re-grep before surgery.
   Sentry already beat on truthfulness. The narrow version that would pay is a config-PRESENCE board:
   which env vars are actually SET on Render and Vercel, presence only, no values, no health checks.
   That is the one fact neither Dallas nor Claude can see today, and it is a standing debug tax.
+- **Paused lanes from before the 2026-10-30 switch-over.** Each is a worktree under `../worktrees/`, unmerged and stale; each needs a rebase onto main and the review skill's full review before its merge, which now goes through `merge-lane.sh ship`. `beer-picks` (12 commits, last 2026-08-20): the BYOB beer catalog and full-bar picks, plan `docs/superpowers/plans/2026-08-20-byob-beer-full-bar-picks.md` and its spec of the same date. `override-removal` (8 commits, last 2026-10-19): push 2 of the price override removal (the fold-ins under Platform's "Fold into push 2" list what it owes). `gv-post-server` and `gv-sender`: section 3's Thumbtack entry.
+- **The project plan skill** (instruction rewrite spec `docs/superpowers/specs/2026-10-19-instruction-rewrite-design.md`, D15 and section 6's table: `os/.claude/skills/plan/`). It replaces superpowers' writing-plans and subagent-driven-development with the lane-map format of D12; the spec puts it after the flip as its own plan; not started. Superpowers keeps working meanwhile.
 - **Ideas, unscoped.** Referral program. Admin permissions / manager-toggle framework. Contractor
   onboarding flow audit. AI responder for staff SMS. Google Reviews monitoring + staff review-forward.
   Newsletter and seasonal campaigns. Thumbtack auto-draft becoming auto-send. Auto-assign weights as
