@@ -1331,6 +1331,7 @@ tests omitted
 │   │   ├── backfillStripePayouts.js # One-off backfill: full Stripe payout history into the read-side mirror. Safe to re-run (idempotent upserts). Refuses to run in test mode. Pass --full to force a full-history sweep even when the mirror table is already non-empty (recovers from a partial bootstrap that narrowed re-runs to 30 days).
 │   │   ├── backfillTipPages.js # server/scripts/backfillTipPages.js One-time backfill: for each approved contractor missing tip_page_token, generate a UUID and create a Stripe Payment Link in DRB's account. Idempotent: skips rows that already have tokens. Usage: node server/scripts/backfillTipPages.js
 │   │   ├── createAdmin.js    # One-off script to grant admin access to a user.
+│   │   ├── findMaskedBankNumbers.js # Read-only audit: which payment profiles hold a masked display value ('****' plus the last four) where an encrypted bank number belongs.
 │   │   ├── healBalanceReminderTimes.js # Re-anchor already-scheduled balance-reminder rows to the corrected 10:00am local (REMINDER_ANCHOR_HOUR) event-local send instant (T2 fix). Before the fix, balanceReminderScheduling anchored these to the pg DATE -> JS Date midnight-UTC value, which under a GMT session fired around 7pm the PRIOR evening in Chicago. This script recomputes scheduled_for for PENDING rows only, using the same single-source-of-truth offset map + anchor helper the scheduler now uses.
 │   │   ├── migrateDrinkMeta.js # One-time migration: fold the hardcoded client drink metadata into the DB so the recipe card becomes the single source of truth (potion planner v2, plan lane pp2-core task 4).
 │   │   ├── prelaunch-data-scrub.sql # One-time pre-launch production data scrub. Spec: docs/superpowers/specs/2026-05-15-prelaunch-data-scrub-design.md Plan: docs/superpowers/plans/2026-05-15-prelaunch-data-scrub.md
@@ -1393,6 +1394,7 @@ tests omitted
 │       ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js); anchors 10am event-local
 │       ├── balanceScheduler.js # Autopay balance charge scheduler
 │       ├── balanceSmsHandlers.js # Balance SMS handlers - the SMS halves of the non-autopay balance reminder ladder (spec 3.5 due-today, 3.6 late t1 / t3). The email halves (balance_due_today, balance_late_t1, balance_late_t3) live in scheduledMessageDispatcher.js. Kept separate so the dispatcher core stays lean.
+│       ├── bankNumbers.js    # Bank-number rules shared by every writer of payment_profiles.routing_number and account_number: the format checks, the masked display value, and what an incoming value means.
 │       ├── bankPaymentProcessingNotify.js # server/utils/bankPaymentProcessingNotify.js
 │       ├── beoFinalize.js    # BEO finalize lifecycle: POST /api/drink-plans/:id/finalize (manual), autoFinalizeIfEligible (derived), POST /:id/unfinalize, and the lock guard.
 │       ├── beoHandlers.js    # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers

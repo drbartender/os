@@ -9,9 +9,10 @@ const { promoteOnboardingIfEligible } = require('../utils/onboardingPromotion');
 const { auth } = require('../middleware/auth');
 const { isValidUpload, safeUploadExtension } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
-const { encrypt, decrypt } = require('../utils/encryption');
+const { decrypt } = require('../utils/encryption');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
+const { resolveBankFields, BANK_REQUIRED_MESSAGES } = require('../utils/bankNumbers');
 const {
   normalizeVenmoHandle,
   normalizeCashappHandle,
@@ -84,10 +85,32 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       );
     }
 
+    // Bank numbers. Every screen shows them masked ('****' plus the last four), and
+    // a page that posts that display value back must not have it encrypted over the
+    // real number: a masked value means unchanged, kept inside the UPDATE below.
+    // A real value must be a valid bank number (utils/bankNumbers.js). Only direct
+    // deposit stores them; any other method clears them, as before.
+    step = 'resolve_bank_numbers';
+    const isDirectDeposit = preferred_payment_method === 'direct_deposit';
+    const bank = isDirectDeposit
+      ? resolveBankFields({ routing_number, account_number }, { blank: 'require' })
+      : { routing_number: { keep: false, value: null }, account_number: { keep: false, value: null } };
+
     let w9_url = null, w9_name = null;
 
     step = 'load_existing_profile';
-    const existing = await pool.query('SELECT id, w9_file_url, w9_filename FROM payment_profiles WHERE user_id = $1', [req.user.id]);
+    const existing = await pool.query(
+      `SELECT id, w9_file_url, w9_filename,
+              routing_number IS NOT NULL AS has_routing, account_number IS NOT NULL AS has_account
+         FROM payment_profiles WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    // A masked value with nothing stored behind it is no number at all.
+    const keepMissing = {};
+    if (bank.routing_number.keep && !existing.rows[0]?.has_routing) keepMissing.routing_number = BANK_REQUIRED_MESSAGES.routing_number;
+    if (bank.account_number.keep && !existing.rows[0]?.has_account) keepMissing.account_number = BANK_REQUIRED_MESSAGES.account_number;
+    if (Object.keys(keepMissing).length > 0) throw new ValidationError(keepMissing);
 
     if (req.files?.w9) {
       const file = req.files.w9;
@@ -122,15 +145,34 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     try {
       await client.query('BEGIN');
 
+      // Re-check a keep under the row lock. The check above read the row before
+      // the transaction, so a write that cleared the bank numbers since then must
+      // refuse here instead of leaving direct deposit with nothing behind it.
+      if (bank.routing_number.keep || bank.account_number.keep) {
+        step = 'lock_bank_row';
+        const locked = await client.query(
+          `SELECT routing_number IS NOT NULL AS has_routing, account_number IS NOT NULL AS has_account
+             FROM payment_profiles WHERE user_id = $1 FOR UPDATE`,
+          [req.user.id]
+        );
+        const lockMissing = {};
+        if (bank.routing_number.keep && !locked.rows[0]?.has_routing) lockMissing.routing_number = BANK_REQUIRED_MESSAGES.routing_number;
+        if (bank.account_number.keep && !locked.rows[0]?.has_account) lockMissing.account_number = BANK_REQUIRED_MESSAGES.account_number;
+        if (Object.keys(lockMissing).length > 0) throw new ValidationError(lockMissing);
+      }
+
       step = existing.rows[0] ? 'update_payment_profile' : 'insert_payment_profile';
       if (existing.rows[0]) {
+        // $8 and $9 keep the stored bank column when a masked value came back.
         await client.query(
           `UPDATE payment_profiles
-           SET preferred_payment_method=$1, payment_username=$2, routing_number=$3, account_number=$4,
+           SET preferred_payment_method=$1, payment_username=$2,
+               routing_number = CASE WHEN $8::boolean THEN routing_number ELSE $3 END,
+               account_number = CASE WHEN $9::boolean THEN account_number ELSE $4 END,
                w9_file_url=$5, w9_filename=$6
            WHERE user_id=$7`,
-          [preferred_payment_method, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null,
-           w9_url, w9_name, req.user.id]
+          [preferred_payment_method, payment_username || null, bank.routing_number.value, bank.account_number.value,
+           w9_url, w9_name, req.user.id, bank.routing_number.keep, bank.account_number.keep]
         );
       } else {
         await client.query(
@@ -138,7 +180,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
              (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [req.user.id, preferred_payment_method, payment_username || null,
-           routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null, w9_url, w9_name]
+           bank.routing_number.value, bank.account_number.value, w9_url, w9_name]
         );
       }
 

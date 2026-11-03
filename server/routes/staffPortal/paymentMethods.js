@@ -26,18 +26,9 @@ const PAYMENT_METHOD_VALUES = new Set([
   'venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check',
 ]);
 
-// ABA routing-number checksum. 9 digits, weighted sum mod 10 == 0.
-function isValidRoutingNumber(s) {
-  if (typeof s !== 'string' || !/^\d{9}$/.test(s)) return false;
-  const w = [3, 7, 1, 3, 7, 1, 3, 7, 1];
-  let sum = 0;
-  for (let i = 0; i < 9; i += 1) sum += Number(s[i]) * w[i];
-  return sum % 10 === 0;
-}
-
-function isValidAccountNumber(s) {
-  return typeof s === 'string' && /^\d{4,17}$/.test(s);
-}
+// The ABA routing checksum and the 4 to 17 digit account rule, shared with the
+// other two writers of these columns (utils/bankNumbers.js).
+const { isValidRoutingNumber, isValidAccountNumber } = require('../../utils/bankNumbers');
 
 // Safe decrypt that swallows the error and returns null, capturing the
 // failure to Sentry so admin tooling can repair the row later. Spec §6.11:

@@ -1,7 +1,7 @@
 // AdminUserDetail (React component, default export). Header generated from the file's exports by
 // migrate-headers on 2026-10-27; replace with what it does.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../../utils/api';
 import useUrlListState from '../../../hooks/useUrlListState';
@@ -19,6 +19,7 @@ import {
   rateOf,
   computeYtdEstEarnings,
   ytdShiftCount,
+  profileSaveBody,
 } from './helpers';
 import TabButton from './components/TabButton';
 import AssignToEventModal from './components/AssignToEventModal';
@@ -72,6 +73,11 @@ export default function AdminUserDetail() {
   // Profile/payment edit shared state
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
+  // The bank values the edit form was seeded with (masked, last four only). A
+  // save leaves out a bank field still holding its seed, and the server keeps the
+  // stored number for a field it is not sent, so a number the staffer saved after
+  // this page opened is never cleared by an admin who did not touch it.
+  const bankSeedRef = useRef({});
   const [saving, setSaving] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [profileFieldErrors, setProfileFieldErrors] = useState({});
@@ -240,6 +246,10 @@ export default function AdminUserDetail() {
   const startEditing = () => {
     const p = profile || {};
     const pay = payment || {};
+    bankSeedRef.current = {
+      routing_number: pay.routing_number || '',
+      account_number: pay.account_number || '',
+    };
     setEditForm({
       preferred_name: p.preferred_name || '',
       phone: p.phone || '',
@@ -278,7 +288,7 @@ export default function AdminUserDetail() {
     setProfileError('');
     setProfileFieldErrors({});
     try {
-      const r = await api.put(`/admin/users/${id}/profile`, editForm);
+      const r = await api.put(`/admin/users/${id}/profile`, profileSaveBody(editForm, bankSeedRef.current));
       setData(d => ({ ...d, profile: r.data.profile, payment: r.data.payment }));
       setEditing(false);
       toast.success('User updated.');

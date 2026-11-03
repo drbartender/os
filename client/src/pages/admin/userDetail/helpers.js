@@ -58,3 +58,17 @@ export function initialsOf(name, email) {
 // label (under-counting "needed") and never canonicalized, so a lowercase
 // `bartender` row produced a duplicate option. Use parsePositionsNeeded from
 // utils/staffingRoles, which every other staffing surface already shares.
+
+// The body a profile save sends: the edit form, less any bank field still holding
+// the value it was seeded with (the masked last four, or blank). The server keeps
+// the stored number for a field it is not sent (server/utils/bankNumbers.js), so
+// a number the staffer saved after the page opened survives an admin save that
+// never touched it; an edited or deliberately emptied box is still sent.
+export const BANK_FIELDS = ['routing_number', 'account_number'];
+export function profileSaveBody(editForm, bankSeed) {
+  const body = { ...editForm };
+  for (const key of BANK_FIELDS) {
+    if (bankSeed && body[key] === bankSeed[key]) delete body[key];
+  }
+  return body;
+}

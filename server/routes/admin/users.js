@@ -8,7 +8,8 @@ const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { STAFF_URL } = require('../../utils/urls');
 const { geocodeAddress, buildAddressString } = require('../../utils/geocode');
-const { encrypt, decrypt } = require('../../utils/encryption');
+const { decrypt } = require('../../utils/encryption');
+const { resolveBankFields } = require('../../utils/bankNumbers');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError } = require('../../utils/errors');
 const { validatePhone } = require('../../utils/phone');
@@ -364,6 +365,20 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     else nextName = nameCheck.value;
   }
 
+  // Bank numbers. The admin page seeds its form with the masked display values
+  // ('****' plus the last four) and sends them back on every save, which used to
+  // encrypt the mask over the staffer's real numbers. A masked value now means
+  // unchanged (kept inside the payment upsert below), a blank clears, and a real
+  // value must be a valid bank number (utils/bankNumbers.js). Checked here, with
+  // the other fields, before anything is written.
+  let bank = null;
+  try {
+    bank = resolveBankFields({ routing_number, account_number }, { blank: 'clear' });
+  } catch (err) {
+    if (!(err instanceof ValidationError)) throw err;
+    Object.assign(fieldErrors, err.fieldErrors);
+  }
+
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   // Upsert contractor profile
@@ -419,13 +434,17 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       .catch(err => console.error('[Admin] Geocode error:', err.message));
   }
 
-  // Upsert payment profile
+  // Upsert payment profile. $6 and $7 keep the stored bank column when the form
+  // sent the masked value back; a new row has nothing to keep, so it gets null.
   await pool.query(`
     INSERT INTO payment_profiles (user_id, preferred_payment_method, payment_username, routing_number, account_number)
     VALUES ($1,$2,$3,$4,$5)
     ON CONFLICT (user_id) DO UPDATE SET
-      preferred_payment_method=$2, payment_username=$3, routing_number=$4, account_number=$5
-  `, [userId, preferred_payment_method || null, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null]);
+      preferred_payment_method=$2, payment_username=$3,
+      routing_number = CASE WHEN $6::boolean THEN payment_profiles.routing_number ELSE EXCLUDED.routing_number END,
+      account_number = CASE WHEN $7::boolean THEN payment_profiles.account_number ELSE EXCLUDED.account_number END
+  `, [userId, preferred_payment_method || null, payment_username || null,
+    bank.routing_number.value, bank.account_number.value, bank.routing_number.keep, bank.account_number.keep]);
 
   // Return updated data
   const [profileRes, paymentRes] = await Promise.all([

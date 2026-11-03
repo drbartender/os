@@ -275,13 +275,32 @@ export default function PayoutsTab(props) {
                   <div className="meta-k" style={{ marginBottom: 4 }}>Username / handle</div>
                   <input className="input" value={editForm.payment_username} onChange={(e) => updateField('payment_username', e.target.value)} />
                 </div>
+                {/* The bank boxes show the stored numbers masked, last four only. The
+                    server keeps a number when its masked value comes back unchanged,
+                    so editing anything else never touches it; a full new number
+                    replaces it and must be valid (server/utils/bankNumbers.js). */}
                 <div>
                   <div className="meta-k" style={{ marginBottom: 4 }}>Routing number</div>
-                  <input className="input" value={editForm.routing_number} onChange={(e) => updateField('routing_number', e.target.value)} />
+                  <input
+                    className="input"
+                    value={editForm.routing_number}
+                    onChange={(e) => updateField('routing_number', e.target.value)}
+                    aria-invalid={profileFieldErrors?.routing_number ? 'true' : undefined}
+                  />
+                  <FieldError error={profileFieldErrors?.routing_number} />
                 </div>
                 <div>
                   <div className="meta-k" style={{ marginBottom: 4 }}>Account number</div>
-                  <input className="input" value={editForm.account_number} onChange={(e) => updateField('account_number', e.target.value)} />
+                  <input
+                    className="input"
+                    value={editForm.account_number}
+                    onChange={(e) => updateField('account_number', e.target.value)}
+                    aria-invalid={profileFieldErrors?.account_number ? 'true' : undefined}
+                  />
+                  <FieldError error={profileFieldErrors?.account_number} />
+                  <div className="tiny muted" style={{ marginTop: 3 }}>
+                    Shows the last four only. Leave it as is to keep the number on file, or type the full new number.
+                  </div>
                 </div>
               </div>
             ) : (
