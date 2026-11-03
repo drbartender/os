@@ -57,7 +57,7 @@ const SECTIONS = [
       <>
         <ul>
           <li>Setup begins 1 hour before the event unless otherwise noted. Breakdown is 30 minutes. Any additional time must be approved in advance. Otherwise, it won't be paid.</li>
-          <li>Arriving more than 10 minutes late will result in a 20% deduction in your contracted pay. Excessive tardiness will result in being removed from staffing.</li>
+          <li>Late arrivals are handled case by case and may result in a deduction from your contracted pay. Excessive tardiness will result in being removed from staffing.</li>
           <li>If you're not sure or running behind, stay in touch with Dr. Bartender management. Communication keeps you on the schedule.</li>
           <li>Running late? Call the Dr. Bartender company line at <strong>{COMPANY_PHONE}</strong>. The client's contact info will be shared before the event.</li>
         </ul>
