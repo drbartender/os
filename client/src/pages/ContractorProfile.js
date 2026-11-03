@@ -13,6 +13,7 @@ import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 import useFormDraft from '../hooks/useFormDraft';
 import { computeDisplayName, validatePreferredName } from '../utils/preferredName';
+import { nextOnboardingPath } from '../utils/onboardingSteps';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const STATES = ['Illinois','Indiana','Michigan','Minnesota','Wisconsin','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
@@ -198,7 +199,9 @@ export default function ContractorProfile() {
       const r = await api.put('/progress/step', { step: 'contractor_profile_completed' });
       setProgress(r.data);
       toast.success('Profile saved.');
-      navigate('/payday-protocols');
+      // The first step not yet done, never straight to Payday: the documents notice
+      // links here from every page, so the agreement can still be unsigned.
+      navigate(nextOnboardingPath(r.data, '/payday-protocols', user?.onboarding_status));
     } catch (err) {
       setError(err.message || 'Failed to save profile.');
       if (err.fieldErrors) { setFieldErrors(err.fieldErrors); scrollToFirstError(); }
@@ -432,7 +435,7 @@ export default function ContractorProfile() {
             ← Back
           </button>
           <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Saving...' : 'Next: Payday Protocols →'}
+            {loading ? 'Saving...' : 'Save and Continue →'}
           </button>
         </div>
       </form>

@@ -12,12 +12,13 @@ import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 import { splitBoldRuns } from '../utils/markdownBold';
+import { nextOnboardingPath } from '../utils/onboardingSteps';
 
 export default function Agreement() {
   const navigate = useNavigate();
   const toast = useToast();
   const { user } = useAuth();
-  const { setProgress } = useOutletContext();
+  const { progress, setProgress } = useOutletContext();
 
   const [legalText, setLegalText] = useState(null);
   const [legalTextError, setLegalTextError] = useState('');
@@ -136,7 +137,9 @@ export default function Agreement() {
         last_completed_step: 'agreement_completed',
       }));
       toast.success('Agreement signed.');
-      navigate('/contractor-profile');
+      // The first step not yet done: the profile, or Payday when the profile was
+      // finished first (the documents notice links to it from every page).
+      navigate(nextOnboardingPath({ ...progress, agreement_completed: true }, '/contractor-profile', user?.onboarding_status));
     } catch (err) {
       setError(err.message || 'Failed to save agreement.');
       if (err.fieldErrors) { setFieldErrors(err.fieldErrors); scrollToFirstError(); }

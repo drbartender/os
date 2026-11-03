@@ -59,6 +59,7 @@ export default function Completion() {
           <ul style={{ paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
             <li style={{ marginBottom: '0.35rem' }}>Browse open shifts in the staff portal and request the ones that fit your schedule.</li>
             <li style={{ marginBottom: '0.35rem' }}>We'll confirm your requests as shifts get staffed. Watch for SMS/email updates.</li>
+            <li style={{ marginBottom: '0.35rem' }}>Your public tip page lets guests tip you. It shows the Venmo, Cash App, PayPal or Zelle handle you gave us, and you can add or change handles any time in the staff portal: Tip Card, then Manage methods.</li>
             <li style={{ marginBottom: '0.35rem' }}>
               Join our team WhatsApp group for real-time scheduling updates:{' '}
               <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', fontWeight: 600 }}>

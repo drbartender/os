@@ -413,7 +413,7 @@ tests omitted
 │       │   ├── FileUpload.js # FileUpload (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── FormBanner.js # FormBanner (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── InvoiceDropdown.js # InvoiceDropdown (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   ├── Layout.js     # Layout (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   ├── Layout.js     # The onboarding shell: header, the step progress bar and the outstanding-documents notice around each onboarding page.
 │       │   ├── LeadImportModal.js # LeadImportModal (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── MenuSamplesModal.js # MenuSamplesModal (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── NumberStepper.js # NumberStepper (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -434,7 +434,7 @@ tests omitted
 │       │   ├── Toast.js      # ToastContainer (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── VenueAddressFields.js # VenueAddressFields (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── VenueSearchInput.js # VenueSearchInput (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   ├── W9Form.js     # W9Form (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   ├── W9Form.js     # The W-9 fill-out fields for onboarding, with each field's error shown under it.
 │       │   ├── MenuPNG/
 │       │   │   └── MenuPNG.jsx # MenuPNG (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── SendModal/
@@ -597,7 +597,7 @@ tests omitted
 │       │   ├── ForgotPassword.js # ForgotPassword (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── HiringLanding.js # HiringLanding (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── Login.js      # Login (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   ├── PaydayProtocols.js # PaydayProtocols (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   ├── PaydayProtocols.js # Onboarding step 5, Payday Protocols: the recruit picks how they get paid and fills out or uploads a W-9, in one Submit.
 │       │   ├── PreHireOnboarding.js # PreHireOnboarding (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── Register.js   # Register (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── ResetPassword.js # ResetPassword (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -1005,6 +1005,7 @@ tests omitted
 │           ├── mobileLock.js # Phone lock model (30-min background + expired-JWT decisions, enrolled/nudge flags, 401-claim handler registry; keys purge on logout)
 │           ├── notificationsView.js # The Notifications screen's copy and state rules (spec 2026-08-13-mobile-admin section 3, "Design-session decisions of 2026-10-14", and section 7). Pure: no React, no network, so the words the screen shows are pinned by tests. Copy law: no em dashes; the typographic apostrophe where the benchmark draws one.
 │           ├── offlineRead.js # offlineGet: api.get plus the X-Offline-Ok header. The admin service worker stores and stale-serves a read ONLY for a request that carries it (the identity read /api/auth/me aside); a caller sends it only if it renders the staleness line and takes no action on a cache-served copy
+│           ├── onboardingSteps.js # The onboarding steps in order, and the path of the first one a recruit has not finished.
 │           ├── packageIncludes.js # Shared interpolation for package_includes strings. The DB rows carry {hours}, {bartenders}, and {bartenders_s} tokens; every client-facing surface that renders the includes list must run them through here. Extracted verbatim from the inline copy in proposalView/ProposalView.js; consumers: ProposalView, admin ProposalDetail, admin EventDetailPage, portal PrescriptionTab. A null/undefined ctx value leaves its token untouched (visible braces beat silently rendering a wrong number).
 │           ├── preferredName.js # PORT of server/utils/staffDisplayName.js + staffDisplayName.validate.js. The browser needs the live preview without a round trip per keystroke, and CRA cannot import from outside client/src. The server is the source of truth and validates every write regardless of what happens here.
 │           ├── proposalCards.js # Turns one GET /proposals row into what the phone Proposals card shows (spec 2026-08-13-mobile-admin section 5; benchmark docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html, Proposals tab). Pure: no React, no fetch, no clock unless the caller passes one. Lane ma-f1.
@@ -1028,6 +1029,7 @@ tests omitted
 │           ├── tipCardMarks.js # Pure: given the server's computed tip-method tokens, return which payment marks a surface may show.
 │           ├── uploadLimits.js # Client-side upload rules.
 │           ├── userRoutes.js # Applicant-tier routes (/apply, /application-status) are mounted on hiring.drbartender.com and the admin app, but NOT on staff.drbartender.com (see App.js StaffSiteRoutes). An applicant who lands on staff.* (a bookmark, a stale link, a fresh login) would otherwise resolve to the staff catch-all '/', which RequirePortal rejects back to getHomePath('/application-status'), an infinite Navigate-replace loop that trips Safari's "replaceState more than 100x/10s" limiter (Sentry CLIENT-5 / CLIENT-6). Kick them cross-domain to the hiring portal where the route exists. A full page load (window.location) is required because Vercel cross-subdomain rewrites do not fire on client-side React Router navs.
+│           ├── w9Pdf.js      # The W-9 for onboarding: the empty form, its field checks, and the signed PDF built from it.
 │           └── webauthnClient.js # Passkey client (@simplewebauthn/browser wrap: registerPasskey, unlockWithPasskey, isPasskeySupported)
 ├── docs/
 ├── scripts/

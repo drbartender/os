@@ -1,30 +1,14 @@
-// Layout (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// The onboarding shell: header, the step progress bar and the outstanding-documents notice around each onboarding page.
+//
+// The steps and their numbers come from utils/onboardingSteps.js, the same list the
+// pages use to decide where a finished step goes next.
 
 import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import BrandLogo from './BrandLogo';
-
-const STEPS = [
-  { key: 'account_created', label: 'Account', path: null },
-  { key: 'welcome_viewed', label: 'Welcome', path: '/welcome' },
-  { key: 'field_guide_completed', label: 'Field Guide', path: '/field-guide' },
-  { key: 'agreement_completed', label: 'Agreement', path: '/agreement' },
-  { key: 'contractor_profile_completed', label: 'Profile', path: '/contractor-profile' },
-  { key: 'payday_protocols_completed', label: 'Payday', path: '/payday-protocols' },
-  { key: 'onboarding_completed', label: 'Complete', path: '/complete' },
-];
-
-const PATH_TO_STEP = {
-  '/welcome': 1,
-  '/field-guide': 2,
-  '/agreement': 3,
-  '/contractor-profile': 4,
-  '/payday-protocols': 5,
-  '/complete': 6,
-};
+import { ONBOARDING_STEPS as STEPS, ONBOARDING_STEP_COUNT, PATH_TO_STEP } from '../utils/onboardingSteps';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -73,12 +57,14 @@ export default function Layout() {
                   role={canNavigate ? 'button' : undefined}
                   tabIndex={canNavigate ? 0 : undefined}
                   aria-current={status === 'active' ? 'step' : undefined}
-                  aria-label={step.path ? `Step ${i + 1}: ${step.label}` : undefined}
+                  aria-label={step.path ? `Step ${i}: ${step.label}` : undefined}
                   onClick={canNavigate ? () => navigate(step.path) : undefined}
                   onKeyDown={canNavigate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(step.path); } } : undefined}
                 >
                   <div className="step-dot">
-                    {status === 'completed' ? '✓' : i + 1}
+                    {/* Account (index 0) is the pre-step and has no number;
+                        Welcome is 1, matching each page's "Step n of 6". */}
+                    {status === 'completed' || i === 0 ? '✓' : i}
                   </div>
                   <div className="step-label">{step.label}</div>
                 </div>
@@ -88,7 +74,7 @@ export default function Layout() {
           {/* Compact counter, phones only (CSS swaps it in for .steps-track,
               which runs off-screen at 390px). Same STEPS/currentStepIndex. */}
           <div className="steps-compact">
-            Step {currentStepIndex + 1} of {STEPS.length}: {STEPS[currentStepIndex].label}
+            Step {currentStepIndex} of {ONBOARDING_STEP_COUNT}: {STEPS[currentStepIndex].label}
           </div>
           <div style={{ maxWidth: 800, margin: '0.75rem auto 0', padding: '0 4px' }}>
             <div className="progress-track">

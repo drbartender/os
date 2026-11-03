@@ -57,8 +57,9 @@ const SECTIONS = [
       <>
         <ul>
           <li>Setup begins 1 hour before the event unless otherwise noted. Breakdown is 30 minutes. Any additional time must be approved in advance. Otherwise, it won't be paid.</li>
-          <li>Arriving more than 10 minutes late will result in a 20% deduction in your contracted pay.</li>
+          <li>Arriving more than 10 minutes late will result in a 20% deduction in your contracted pay. Excessive tardiness will result in being removed from staffing.</li>
           <li>If you're not sure or running behind, stay in touch with Dr. Bartender management. Communication keeps you on the schedule.</li>
+          <li>Running late? Call the Dr. Bartender company line at <strong>{COMPANY_PHONE}</strong>. The client's contact info will be shared before the event.</li>
         </ul>
         <p style={{marginTop:'0.75rem', fontStyle:'italic'}}>This is someone's wedding, retirement, or corporate big deal. Be there like it matters, because it does.</p>
       </>
@@ -153,6 +154,14 @@ const SECTIONS = [
           <li>You're responsible for your own taxes</li>
           <li>You set your availability</li>
           <li>You're paid hourly, by the gig. No time clocks. Your scheduled block = your payout.</li>
+        </ul>
+        <p className="guide-sub-heading">Your Pay Rate</p>
+        <ul>
+          <li><strong>Bartenders: $20/hr</strong>, plus tips from jars, digital codes, or pooled gratuity.</li>
+          <li><strong>Barbacks / Servers: $35/hr</strong>, gratuity included in the rate.</li>
+          <li>Why the difference? Bartenders earn a lower base rate because they receive tips directly from guests (via tip jars, digital codes, or pooled gratuity). Barback and server rates include gratuity so their total compensation is comparable.</li>
+          <li>Tips from multi-bartender events will be pooled and split evenly. Tip methods vary by event. Details will be shared before each gig.</li>
+          <li>Your pay is based on contracted time: event time + 1 hour for setup + 30 minutes for breakdown.</li>
         </ul>
         <p className="guide-sub-heading">How Payments Work</p>
         <ul>
