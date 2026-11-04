@@ -10,7 +10,7 @@
 --
 -- Keep-sets: users {1,2,12,15,16,19}  proposals {21,25,30,51,52,54}
 --   clients {has thumbtack_leads link} U {21,26,31,80,83,102}  email_leads {44,46}
--- (#54/#102 = Ketan Patel — real paid booking that converted post-analysis.)
+-- (#54/#102 = real paid booking that converted post-analysis.)
 
 BEGIN;
 

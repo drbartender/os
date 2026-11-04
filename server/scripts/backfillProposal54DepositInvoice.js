@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * One-off, idempotent backfill — proposal 54 (Ketan Patel).
+ * One-off, idempotent backfill — proposal 54.
  *
  * No Deposit invoice was ever created for this proposal (createInvoiceOnSend
  * never ran — Check Cherry cutover artifact). The $100 deposit (proposal_payments

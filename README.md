@@ -1326,7 +1326,7 @@ tests omitted
 │   │   ├── applyPackageLineup2026.js # One-time lineup application: writes the owner-decided 2026-07-18 package lineup (spec §5) into the DB as CONTENT - service_packages flags/slots, package_items contents rows (category pars with split-par eligible bottles), missing branded par_items, and the ingredient_class_addons gap-pricing map.
 │   │   ├── backfillExtrasInvoices.js # One-off, idempotent backfill for ABANDONED pay-now drink-plan extras.
 │   │   ├── backfillFullPaymentInvoices.js # backfillFullPaymentInvoices.js - one-time repair (spec 2026-08-28 §5).
-│   │   ├── backfillProposal54DepositInvoice.js # One-off, idempotent backfill - proposal 54 (Ketan Patel).
+│   │   ├── backfillProposal54DepositInvoice.js # One-off, idempotent backfill - proposal 54.
 │   │   ├── backfillShiftClosures.js # Backfill: close shifts stranded on a NON-TERMINAL status on proposals that are already 'completed', and - the part that actually needs a human - report the PAID events with nobody recorded on the roster.
 │   │   ├── backfillStripePayouts.js # One-off backfill: full Stripe payout history into the read-side mirror. Safe to re-run (idempotent upserts). Refuses to run in test mode. Pass --full to force a full-history sweep even when the mirror table is already non-empty (recovers from a partial bootstrap that narrowed re-runs to 30 days).
 │   │   ├── backfillTipPages.js # server/scripts/backfillTipPages.js One-time backfill: for each approved contractor missing tip_page_token, generate a UUID and create a Stripe Payment Link in DRB's account. Idempotent: skips rows that already have tokens. Usage: node server/scripts/backfillTipPages.js
@@ -1336,7 +1336,7 @@ tests omitted
 │   │   ├── migrateDrinkMeta.js # One-time migration: fold the hardcoded client drink metadata into the DB so the recipe card becomes the single source of truth (potion planner v2, plan lane pp2-core task 4).
 │   │   ├── prelaunch-data-scrub.sql # One-time pre-launch production data scrub. Spec: docs/superpowers/specs/2026-05-15-prelaunch-data-scrub-design.md Plan: docs/superpowers/plans/2026-05-15-prelaunch-data-scrub.md
 │   │   ├── refreshDisplayNames.js # Backfill and audit for contractor_profiles.display_name. Spec §6, §7.
-│   │   ├── repairProposal54Balance.sql # One-off, guarded balance correction - proposal 54 (Ketan Patel).
+│   │   ├── repairProposal54Balance.sql # One-off, guarded balance correction - proposal 54.
 │   │   ├── seedRecipeDrafts.js # One-off, idempotent seeder for Potions (Bar Program) recipe DRAFTS.
 │   │   ├── verify-marketing-schema.js # verify-marketing-schema: assert the marketing tag / do-not-contact objects are installed AND have the definition this code expects.
 │   │   ├── archive/

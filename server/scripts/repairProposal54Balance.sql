@@ -1,4 +1,4 @@
--- One-off, guarded balance correction — proposal 54 (Ketan Patel).
+-- One-off, guarded balance correction — proposal 54.
 --
 -- Root cause: payment_type='invoice' had no webhook branch, so the $550 invoice
 -- payment (pi_3TXo3wAZrfv5tWfN34hdR4EK, succeeded) marked INV-0009 paid but
