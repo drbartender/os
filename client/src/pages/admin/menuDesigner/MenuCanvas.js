@@ -229,7 +229,7 @@ const MenuCanvas = forwardRef(function MenuCanvas({
   const vars = {
     '--mc-ink': colors.ink, '--mc-accent': colors.accent,
     '--mc-tf': t.stack, '--mc-ts': px(t.size), '--mc-tw': String(t.weight), '--mc-tt': t.transform, '--mc-tk': t.tracking,
-    '--mc-hf': h.stack, '--mc-hs': px(cur.step ? stepSize(hs, NAME_FLOOR) : hs), '--mc-hw': String(h.weight), '--mc-hk': h.tracking,
+    '--mc-hf': h.stack, '--mc-hs': px(cur.step ? stepSize(hs, NAME_FLOOR) : hs), '--mc-hw': String(h.weight), '--mc-ht': h.transform, '--mc-hk': h.tracking,
     '--mc-bf': b.stack, '--mc-bs': px(cur.step ? stepSize(bs, DESC_FLOOR) : bs), '--mc-bw': String(b.weight),
   };
   if (scale !== 1) vars.transform = `scale(${scale})`;

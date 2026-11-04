@@ -1,9 +1,10 @@
-// The fixed font pairing ids for the menu art generator (spec 10.3).
+// The twelve fixed font pairing ids for the menu art generator (spec 10.3; menu designer v2 spec 6).
 //
 // The server knows only the ids: the words step's output schema and the draft
 // PATCH validation both read them from here. Faces, sizes and default colors
 // live on the client (client/src/pages/admin/menuDesigner/fontPairings.js),
-// which must carry exactly these ids.
+// which must carry exactly these ids in this order; its test imports this
+// list. Table P's six come first, then v2 spec 6's six.
 
 const FONT_PAIRING_IDS = Object.freeze([
   'elegant-script',
@@ -12,6 +13,12 @@ const FONT_PAIRING_IDS = Object.freeze([
   'retro',
   'spooky',
   'tropical',
+  'art-deco',
+  'botanical',
+  'hand-lettered',
+  'fiesta',
+  'editorial',
+  'black-tie',
 ]);
 
 function isFontPairingId(value) {

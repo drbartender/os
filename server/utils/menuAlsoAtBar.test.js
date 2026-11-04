@@ -158,10 +158,14 @@ test('each list keeps its first 50 entries and each entry its first 200 characte
   assert.deepEqual(buildAlsoAtBar({ spiritsOther: `${' '.repeat(199)}F` }), [{ label: 'Spirits', text: 'F.' }]);
 });
 
-test('FONT_PAIRING_IDS are the six fixed ids (spec 10.3)', () => {
-  assert.deepEqual([...FONT_PAIRING_IDS], ['elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical']);
+test('FONT_PAIRING_IDS are the twelve fixed ids (spec 10.3; menu designer v2 spec 6)', () => {
+  assert.deepEqual([...FONT_PAIRING_IDS], [
+    'elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical',
+    'art-deco', 'botanical', 'hand-lettered', 'fiesta', 'editorial', 'black-tie',
+  ]);
   assert.ok(Object.isFrozen(FONT_PAIRING_IDS));
   assert.equal(isFontPairingId('retro'), true);
+  assert.equal(isFontPairingId('black-tie'), true);
   assert.equal(isFontPairingId('script'), false);
   assert.equal(isFontPairingId(null), false);
 });

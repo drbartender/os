@@ -44,24 +44,31 @@ test('a read-only draft (no plan): inert, and nothing PATCHes or re-rolls', () =
   expect(p.onReroll).not.toHaveBeenCalled();
   // The editor may say so itself.
   const q = props({ readOnly: true });
-  render(<DesignTab {...q} />);
-  fireEvent.click(screen.getAllByRole('button', { name: /^Bar Menu/ })[7]);
+  const { container: second } = render(<DesignTab {...q} />);
+  fireEvent.click(within(second).getAllByRole('button', { name: /^Bar Menu/ })[1]);
   expect(q.onPatch).not.toHaveBeenCalled();
 });
 
-test('loads all six pairings\' faces, since the tab shows each', () => {
+test('loads all twelve pairings\' faces, since the tab shows each', () => {
   render(<DesignTab {...props()} />);
   const href = document.head.querySelector('link[data-menu-fonts]').getAttribute('href');
-  ['Pinyon+Script', 'Rye', 'Josefin+Sans', 'Shrikhand', 'Creepster', 'Pacifico'].forEach((f) => expect(href).toContain(f));
+  ['Pinyon+Script', 'Rye', 'Josefin+Sans', 'Shrikhand', 'Creepster', 'Pacifico',
+    'Limelight', 'Playfair+Display', 'Caveat', 'Lilita+One', 'DM+Serif+Display', 'Cinzel'].forEach((f) => expect(href).toContain(f));
 });
 
+const TWELVE = [
+  'elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical',
+  'art-deco', 'botanical', 'hand-lettered', 'fiesta', 'editorial', 'black-tie',
+];
+const pairButton = (id) => screen.getAllByRole('button', { name: /^Bar Menu/ })
+  .find((b) => b.querySelector('.md-pair-id').textContent === id);
+
 describe('font pairing', () => {
-  test('six buttons, "Bar Menu" in each title face with its id; the chosen one is pressed', () => {
+  test('twelve buttons, "Bar Menu" in each title face with its id; the chosen one is pressed', () => {
     render(<DesignTab {...props()} />);
     const buttons = screen.getAllByRole('button', { name: /^Bar Menu/ });
-    expect(buttons).toHaveLength(6);
-    expect(buttons.map((b) => b.querySelector('.md-pair-id').textContent))
-      .toEqual(['elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical']);
+    expect(buttons).toHaveLength(12);
+    expect(buttons.map((b) => b.querySelector('.md-pair-id').textContent)).toEqual(TWELVE);
     expect(buttons[0]).toHaveAttribute('aria-pressed', 'true');
     expect(buttons[0]).toHaveClass('is-on');
     const gallery = buttons[2].querySelector('.md-pair-sample');
@@ -72,11 +79,61 @@ describe('font pairing', () => {
     expect(buttons[0].querySelector('.md-pair-sample').style.fontSize).toBe('26px');
   });
 
+  test('a new pairing\'s sample: Gatsby\'s uppercase deco title at 0.3 of its size, tracked', () => {
+    render(<DesignTab {...props()} />);
+    const deco = pairButton('art-deco').querySelector('.md-pair-sample');
+    expect(deco.style.fontFamily).toContain('Limelight');
+    expect(deco.style.fontSize).toBe('17px');
+    expect(deco.style.textTransform).toBe('uppercase');
+    expect(deco.style.letterSpacing).toBe('0.18em');
+    expect(pairButton('black-tie').querySelector('.md-pair-sample').style.fontFamily).toContain('Cinzel');
+    expect(pairButton('black-tie')).toHaveAttribute('title', 'Black Tie · Formal');
+  });
+
   test('choosing a pairing resets ink and accent to its defaults', () => {
-    const p = props({ content: CONTENT({ ink_color: '#1f2a44', accent_color: '#ee8a72' }) });
+    const p = props({ content: CONTENT({ ink_color: '#1f2a44', accent_color: '#ee8a72', font_pairing_suggested: 'fiesta' }) });
     render(<DesignTab {...p} />);
     fireEvent.click(screen.getAllByRole('button', { name: /^Bar Menu/ })[1]);
     expect(p.onPatch).toHaveBeenCalledWith({ content: { font_pairing: 'rustic', ink_color: null, accent_color: null } });
+    // A new pairing, and the suggested one, reset the same way; the suggestion is never sent.
+    fireEvent.click(pairButton('black-tie'));
+    expect(p.onPatch).toHaveBeenLastCalledWith({ content: { font_pairing: 'black-tie', ink_color: null, accent_color: null } });
+    fireEvent.click(pairButton('fiesta'));
+    expect(p.onPatch).toHaveBeenLastCalledWith({ content: { font_pairing: 'fiesta', ink_color: null, accent_color: null } });
+  });
+
+  // v2 spec 6: the words step's pick is tagged Suggested; the chosen pairing
+  // stays font_pairing, so the tag and the pressed button can differ.
+  const tags = (container) => [...container.querySelectorAll('.md-pairs .tag')];
+
+  test('the Suggested tag sits on the words step\'s pick, beside its id', () => {
+    const { container, rerender } = render(<DesignTab {...props({ content: CONTENT({ font_pairing_suggested: 'rustic' }) })} />);
+    expect(tags(container)).toHaveLength(1);
+    const tag = tags(container)[0];
+    expect(tag).toHaveTextContent(/^Suggested$/);
+    expect(tag.closest('.md-pair')).toBe(pairButton('rustic'));
+    expect(tag.nextElementSibling).toHaveClass('md-pair-id');
+    // Stacked over the id in one right-hand column, never a third item in the row.
+    expect(tag.parentElement).toHaveClass('md-pair-meta');
+    expect(tag.parentElement.parentElement).toBe(pairButton('rustic'));
+    // The chosen pairing is still the pressed one.
+    expect(pairButton('elegant-script')).toHaveAttribute('aria-pressed', 'true');
+    expect(pairButton('rustic')).toHaveAttribute('aria-pressed', 'false');
+    // On the chosen pairing too, and on a new one.
+    rerender(<DesignTab {...props({ content: CONTENT({ font_pairing: 'botanical', font_pairing_suggested: 'botanical' }) })} />);
+    expect(tags(container)).toHaveLength(1);
+    expect(tags(container)[0].closest('.md-pair')).toBe(pairButton('botanical'));
+    expect(pairButton('botanical')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('no Suggested tag on a draft without a suggestion, or with one that is not a pairing', () => {
+    const { container, rerender } = render(<DesignTab {...props()} />);
+    expect(tags(container)).toHaveLength(0);
+    expect(screen.queryByText('Suggested')).toBeNull();
+    rerender(<DesignTab {...props({ content: CONTENT({ font_pairing_suggested: null }) })} />);
+    expect(tags(container)).toHaveLength(0);
+    rerender(<DesignTab {...props({ content: CONTENT({ font_pairing_suggested: 'comic-sans' }) })} />);
+    expect(tags(container)).toHaveLength(0);
   });
 });
 

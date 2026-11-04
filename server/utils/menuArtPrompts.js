@@ -17,7 +17,11 @@
 //   status fields). Catalog descriptions are forced back to the catalog text.
 //   has_art: with artKeys (the drink keys the run has pieces for), exactly
 //   those; otherwise the first artSlots drinks. accent_color is one of the
-//   returned palette's hexes, otherwise null.
+//   returned palette's hexes, otherwise null. The model's pairing is both the
+//   starting font_pairing and font_pairing_suggested (v2 spec 6), which only
+//   this fill writes (PATCH refuses it), so the Design tab can tag the pick
+//   Suggested after another pairing is chosen. The schema's enum is
+//   FONT_PAIRING_IDS, all twelve.
 //   Throws MenuWordsInvalid on a wrong shape or type, a missing, extra or
 //   repeated drink key, a font pairing outside FONT_PAIRING_IDS or a bad hex.
 //   A value that is only too long is cut to its limit at a word boundary
@@ -237,7 +241,7 @@ function parseWords(json, normalized, { artSlots = LIMITS.art_drinks, artKeys = 
     headings: { ...DEFAULT_HEADINGS },
     drinks: drinks.map((d, i) => parseDrink(d, byKey.get(d.key), i, opts)),
     also_at_bar: buildAlsoAtBar(normalized && normalized.bar),
-    palette, font_pairing: json.font_pairing, ink_color: null,
+    palette, font_pairing: json.font_pairing, font_pairing_suggested: json.font_pairing, ink_color: null,
     accent_color: palette.some((p) => p.hex === accentHex) ? accentHex : null,
     text_backing: 'soft', logo_mode: 'above_title', logo_badge: false, mark_color: 'ink',
     background_label: clamp(json.background_label, OUT.backgroundLabel) || null,

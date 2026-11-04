@@ -318,6 +318,33 @@ test('logo_badge: a non-boolean fails', () => fails(() => content({ logo_badge: 
 // ---- font_pairing: one of the fixed ids ----
 test('font_pairing: a fixed id passes', () => assert.equal(content({ font_pairing: 'retro' }).font_pairing, 'retro'));
 test('font_pairing: an unknown id fails', () => fails(() => content({ font_pairing: 'comic-sans' }), 'font_pairing'));
+// v2 spec 6: six more pairings.
+test('font_pairing: each of the six new ids passes', () => {
+  for (const id of ['art-deco', 'botanical', 'hand-lettered', 'fiesta', 'editorial', 'black-tie']) {
+    assert.equal(content({ font_pairing: id }).font_pairing, id);
+  }
+});
+
+// ---- font_pairing_suggested: words-step output only (v2 spec 6) ----
+const SERVER_WRITTEN = 'This is written by the menu drafter and cannot be edited.';
+const withSuggestion = (id) => { const s = storedDraft(); s.content.font_pairing_suggested = id; return s; };
+test('font_pairing_suggested: refused from PATCH as server-written, whatever the value', () => {
+  for (const v of ['rustic', 'botanical', null]) {
+    fails(() => content({ font_pairing_suggested: v }), 'font_pairing_suggested');
+    assert.throws(() => content({ font_pairing_suggested: v }, withSuggestion('botanical')),
+      (err) => err.fieldErrors.font_pairing_suggested === SERVER_WRITTEN);
+  }
+  // Refused even beside an allowed change, which is then not written either.
+  assert.throws(() => content({ font_pairing: 'retro', font_pairing_suggested: 'retro' }),
+    (err) => Object.keys(err.fieldErrors).join() === 'font_pairing_suggested');
+});
+test('font_pairing_suggested: kept as the words step wrote it, through a pairing change', () => {
+  assert.equal(content({ title: 'Hi' }, withSuggestion('botanical')).font_pairing_suggested, 'botanical');
+  const next = content({ font_pairing: 'retro', ink_color: null, accent_color: null }, withSuggestion('botanical'));
+  assert.deepEqual([next.font_pairing, next.font_pairing_suggested], ['retro', 'botanical']);
+  // An old draft has none, and a PATCH does not add one.
+  assert.equal(Object.hasOwn(content({ font_pairing: 'retro' }), 'font_pairing_suggested'), false);
+});
 
 // ---- text_backing ----
 test('text_backing: off, soft and panel pass', () => {

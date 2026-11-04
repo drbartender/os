@@ -252,7 +252,9 @@ const CONTENT_CHECKS = new Map([
   // Where the mark sits along the bottom (v2 spec 5); a draft without it reads as right.
   ['mark_position', enumCheck(['left', 'center', 'right'], 'Pick Left, Center or Right.')],
 ]);
-const CONTENT_SERVER_ONLY = new Map(['palette', 'background_label', 'words_status', 'words_error', 'words_heartbeat_at']
+// font_pairing_suggested is the words step's pick (v2 spec 6); the chosen
+// pairing is font_pairing, which PATCH sets.
+const CONTENT_SERVER_ONLY = new Map(['palette', 'background_label', 'font_pairing_suggested', 'words_status', 'words_error', 'words_heartbeat_at']
   .map((k) => [k, MSG.serverWritten]));
 
 const INPUT_CHECKS = new Map([

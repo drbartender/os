@@ -159,6 +159,25 @@ test('the schema keys drinks by an enum of the run\'s keys and pins the font pai
   assert.deepEqual(schema.properties.drinks.items.properties.description.type, ['string', 'null']);
 });
 
+// v2 spec 6: twelve pairings. The strict schema is what the provider holds the
+// model to, so the enum must offer every id the client can draw, and no other.
+const TWELVE = [
+  'elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical',
+  'art-deco', 'botanical', 'hand-lettered', 'fiesta', 'editorial', 'black-tie',
+];
+
+test('the schema\'s font pairing enum offers the twelve ids', () => {
+  const { schema } = wordsRequest({ normalized: normalized(), eventTypeLabel: 'Wedding' });
+  assert.deepEqual(schema.properties.font_pairing.enum, TWELVE);
+  assert.equal(schema.properties.font_pairing.type, 'string');
+});
+
+test('the font pairing prompt line is the same sentence, listing the twelve ids', () => {
+  const { system } = wordsRequest({ normalized: normalized() });
+  const line = system.split('\n').filter((l) => l.startsWith('font_pairing:'));
+  assert.deepEqual(line, [`font_pairing: the pairing that best suits the theme, one of ${TWELVE.join(', ')}.`]);
+});
+
 test('a words request with no drinks is refused', () => {
   assert.throws(() => wordsRequest({ normalized: { drinks: [], brief: {} } }), TypeError);
 });
@@ -218,8 +237,8 @@ test('parseWords returns the stored content shape, each drink with exactly the t
   const norm = normalized();
   const content = parseWords(modelAnswer(norm), norm);
   assert.deepEqual(Object.keys(content).sort(), [
-    'accent_color', 'also_at_bar', 'background_label', 'drinks', 'font_pairing', 'headings', 'ink_color',
-    'logo_badge', 'logo_mode', 'mark_color', 'palette', 'text_backing', 'title',
+    'accent_color', 'also_at_bar', 'background_label', 'drinks', 'font_pairing', 'font_pairing_suggested', 'headings',
+    'ink_color', 'logo_badge', 'logo_mode', 'mark_color', 'palette', 'text_backing', 'title',
   ]);
   for (const d of content.drinks) {
     assert.deepEqual(Object.keys(d).sort(), [
@@ -285,6 +304,32 @@ test('parseWords refuses bad types, an unknown pairing and bad colors', () => {
   const extraField = modelAnswer(norm);
   extraField.drinks[0].price = '$12';
   refuses(() => parseWords(extraField, norm), 'bad_drink');
+});
+
+// v2 spec 6: the model's pick is kept apart from the chosen pairing, so the
+// Design tab can tag it Suggested after Dallas picks another.
+test('parseWords stores the model\'s pick as both the pairing and font_pairing_suggested', () => {
+  const norm = normalized();
+  const content = parseWords(modelAnswer(norm, { font_pairing: 'rustic' }), norm);
+  assert.equal(content.font_pairing, 'rustic');
+  assert.equal(content.font_pairing_suggested, 'rustic');
+});
+
+test('parseWords accepts each of the six new pairings', () => {
+  const norm = normalized();
+  for (const id of TWELVE.slice(6)) {
+    const content = parseWords(modelAnswer(norm, { font_pairing: id }), norm);
+    assert.deepEqual([content.font_pairing, content.font_pairing_suggested], [id, id]);
+  }
+});
+
+test('the stored suggestion is one PATCH cannot write back', () => {
+  const norm = normalized();
+  const stored = { content: { ...parseWords(modelAnswer(norm, { font_pairing: 'rustic' }), norm), words_status: 'done' }, inputs: {} };
+  assert.throws(() => validatePatch({ stored, body: { version: 1, content: { font_pairing_suggested: 'retro' } } }),
+    (err) => err.fieldErrors && err.fieldErrors.font_pairing_suggested === 'This is written by the menu drafter and cannot be edited.');
+  const next = validatePatch({ stored, body: { version: 1, content: { font_pairing: 'retro' } } }).content;
+  assert.deepEqual([next.font_pairing, next.font_pairing_suggested], ['retro', 'rustic']);
 });
 
 test('the refusal reason is a fixed sentence and never quotes the model', () => {

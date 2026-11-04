@@ -231,6 +231,25 @@ describe('colors', () => {
   });
 });
 
+// v2 spec 6: Masthead (editorial) sets its names in uppercase; the canvas hands
+// the names face's case to .mc-name, which every other pairing leaves as none.
+describe('the names face case', () => {
+  const mcNameRule = () => {
+    const css = fs.readFileSync(path.join(__dirname, '../../../index.css'), 'utf8');
+    return css.match(/\.mc-menu \.mc-name \{([^}]*)\}/)[1];
+  };
+  test('Masthead hands uppercase to the names; another pairing hands none', () => {
+    const { container, unmount } = renderCanvas({ content: { ...GARDEN(), font_pairing: 'editorial' } });
+    expect(menuVar(container, '--mc-ht')).toBe('uppercase');
+    unmount();
+    const other = renderCanvas({ content: { ...GARDEN(), font_pairing: 'botanical' } });
+    expect(menuVar(other.container, '--mc-ht')).toBe('none');
+  });
+  test('the .mc-name rule reads the variable, defaulting to none', () => {
+    expect(mcNameRule()).toMatch(/text-transform:\s*var\(--mc-ht,\s*none\)/);
+  });
+});
+
 describe('backing', () => {
   test('Panel: the fill at .86, the 7 px ring and the accent hairline as borders, no blur', () => {
     const { container } = renderCanvas({ content: { ...GARDEN(), text_backing: 'panel' } });

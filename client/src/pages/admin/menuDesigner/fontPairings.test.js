@@ -1,20 +1,66 @@
 import {
   PAIRING_IDS, PAIRINGS, DEFAULT_PAIRING_ID, pairingFor, pairingFaces, fontsHref, ensureFontsLink, isPairingId,
 } from './fontPairings';
+// The server's list itself, so the two lists cannot drift apart (spec
+// 2026-10-01 10.3; v2 spec 6): the server validates and the words schema
+// offers exactly these ids, and the client must draw every one.
+import { FONT_PAIRING_IDS as SERVER_IDS } from '../../../../../server/utils/menuFontPairings';
 
-// server/utils/menuFontPairings.js FONT_PAIRING_IDS, copied here on purpose:
-// the client and server lists must stay identical (spec 10.3).
-const SERVER_IDS = ['elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical'];
+// Table P's six, then v2 spec 6's six, in the order the Design tab lists them.
+const TWELVE = [
+  'elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical',
+  'art-deco', 'botanical', 'hand-lettered', 'fiesta', 'editorial', 'black-tie',
+];
 
 const familiesOf = (href) => new URL(href).searchParams.getAll('family');
 
 test('the ids match the server list, and every id has a pairing', () => {
-  expect([...PAIRING_IDS]).toEqual(SERVER_IDS);
+  expect([...PAIRING_IDS]).toEqual([...SERVER_IDS]);
   SERVER_IDS.forEach((id) => {
     expect(PAIRINGS[id].id).toBe(id);
     expect(isPairingId(id)).toBe(true);
   });
   expect(isPairingId('script')).toBe(false);
+  expect(Object.keys(PAIRINGS).sort()).toEqual([...PAIRING_IDS].sort());
+});
+
+test('twelve pairings: table P\'s six, then v2 spec 6\'s six', () => {
+  expect([...PAIRING_IDS]).toEqual(TWELVE);
+});
+
+// v2 spec 6's table, as given: id, name and theme, then title, heading and
+// body as [family, size, weight, case, tracking], then the light and dark sets.
+const V2_ROWS = [
+  ['art-deco', 'Gatsby', 'Art deco',
+    ['Limelight', 56, 400, 'uppercase', '.12em'], ['Josefin Sans', 18, 600, 'none', '.08em'], ['Josefin Sans', 15, 400, 'none', '0'],
+    ['#1b1b1f', '#a8842e'], ['#f3ead6', '#e3c56a']],
+  ['botanical', 'Conservatory', 'Botanical serif',
+    ['Playfair Display', 62, 700, 'none', '0'], ['Lora', 22, 600, 'none', '0'], ['Lora', 16, 400, 'none', '0'],
+    ['#2f3b2a', '#6d7f4c'], ['#eef3e6', '#b7cf8a']],
+  ['hand-lettered', 'Chalkboard', 'Hand lettered',
+    ['Caveat', 76, 700, 'none', '0'], ['Patrick Hand', 24, 400, 'none', '0'], ['Nunito', 15, 400, 'none', '0'],
+    ['#2b2b2b', '#b8433a'], ['#f6f1e8', '#f4b183']],
+  ['fiesta', 'Fiesta', 'Bold festive',
+    ['Lilita One', 66, 400, 'none', '0'], ['Baloo 2', 22, 700, 'none', '0'], ['Baloo 2', 15.5, 500, 'none', '0'],
+    ['#2a1a3a', '#e4572e'], ['#fff4e6', '#ffcf5c']],
+  ['editorial', 'Masthead', 'Minimal serif',
+    ['DM Serif Display', 62, 400, 'none', '0'], ['DM Sans', 18, 600, 'uppercase', '.06em'], ['DM Sans', 15, 400, 'none', '0'],
+    ['#141414', '#8a1c1c'], ['#f5f5f0', '#e8b4a0']],
+  ['black-tie', 'Black Tie', 'Formal',
+    ['Cinzel', 54, 700, 'none', '.1em'], ['Cinzel', 18, 500, 'none', '.06em'], ['Cormorant Garamond', 17, 500, 'none', '0'],
+    ['#15161d', '#7d6a3c'], ['#f1ede4', '#d6c08a']],
+];
+
+test.each(V2_ROWS)('v2 spec 6: %s carries the table\'s faces, sizes, tracking and colors', (id, name, theme, title, heading, body, light, dark) => {
+  const p = PAIRINGS[id];
+  const faceOf = ([family, size, weight, transform, tracking]) => ({ family, size, weight, transform, tracking });
+  expect(p).toMatchObject({ id, designKey: id, name, theme });
+  expect(p.title).toMatchObject(faceOf(title));
+  expect(p.heading).toMatchObject(faceOf(heading));
+  expect(p.body).toMatchObject(faceOf(body));
+  [p.title, p.heading, p.body].forEach((f) => expect(f.stack.startsWith(`'${f.family}', `)).toBe(true));
+  expect(p.light).toEqual({ ink: light[0], accent: light[1] });
+  expect(p.dark).toEqual({ ink: dark[0], accent: dark[1] });
 });
 
 test('table P: faces, sizes and the light and dark sets', () => {
@@ -63,10 +109,40 @@ describe('fontsHref', () => {
     ]);
   });
 
-  test('all six pairings load the sixteen families once each', () => {
+  test('all twelve pairings load the twenty-seven families once each', () => {
     const fams = familiesOf(fontsHref(PAIRING_IDS)).map((f) => f.split(':')[0]);
-    expect(fams).toHaveLength(16);
-    expect(new Set(fams).size).toBe(16);
+    expect(fams).toHaveLength(27);
+    expect(new Set(fams).size).toBe(27);
+  });
+
+  test('all twelve: shared families merge their weights ascending; spaced and numbered names are spelled right', () => {
+    const href = fontsHref(PAIRING_IDS);
+    const fams = familiesOf(href);
+    // Josefin Sans at 300 and 600 (Gallery) and 400 and 600 (Gatsby).
+    expect(fams).toContain('Josefin Sans:wght@300;400;600');
+    expect(fams).toContain('Cormorant Garamond:wght@500;700');
+    expect(fams).toContain('Cinzel:wght@500;700');
+    expect(fams).toContain('Baloo 2:wght@500;700');
+    expect(fams).toContain('DM Serif Display');
+    expect(fams).toContain('DM Sans:wght@400;600');
+    expect(fams).toContain('Lora:wght@400;600');
+    expect(href).toContain('family=Baloo+2:wght@500;700');
+    expect(href).toContain('family=DM+Serif+Display&');
+    // The six new pairings add these, after table P's sixteen, in first-seen order.
+    expect(fams.slice(16).map((f) => f.split(':')[0])).toEqual([
+      'Limelight', 'Playfair Display', 'Lora', 'Caveat', 'Patrick Hand', 'Nunito', 'Lilita One', 'Baloo 2',
+      'DM Serif Display', 'DM Sans', 'Cinzel',
+    ]);
+  });
+
+  test('one new pairing: exactly its families', () => {
+    expect(familiesOf(fontsHref(['fiesta']))).toEqual(['Lilita One', 'Baloo 2:wght@500;700']);
+    expect(familiesOf(fontsHref(['black-tie']))).toEqual(['Cinzel:wght@500;700', 'Cormorant Garamond:wght@500']);
+    expect(pairingFaces('art-deco')).toEqual([
+      { family: 'Limelight', weight: 400 },
+      { family: 'Josefin Sans', weight: 600 },
+      { family: 'Josefin Sans', weight: 400 },
+    ]);
   });
 
   test('a single id string works; unknown ids and none give no URL', () => {

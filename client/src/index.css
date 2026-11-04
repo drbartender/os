@@ -22803,7 +22803,7 @@ html[data-app="admin-os"] .ib-cp-links { display: flex; flex-wrap: wrap; gap: 6p
    2026-10-01 snapshot), amended by 11.2 for the mark. 800 x 1000 canvas px,
    100 px = 1 in. Not the OS skin: every color and face comes from the
    variables MenuCanvas sets from table P (--mc-ink, --mc-accent, --mc-tf/ts/
-   tw/tt/tk title, --mc-hf/hs/hw/hk names, --mc-bf/bs/bw body), never an OS
+   tw/tt/tk title, --mc-hf/hs/hw/ht/hk names, --mc-bf/bs/bw body), never an OS
    token. Nothing here may use a CSS mask, filter, backdrop-filter, blend mode
    or object-fit, which html2canvas 1.4.1 does not draw, nor a box-shadow,
    which it draws wrong (a blurred one over the box, layered inset ones
@@ -22851,7 +22851,7 @@ html[data-app="admin-os"] .ib-cp-links { display: flex; flex-wrap: wrap; gap: 6p
 .mc-menu .mc-art { position: relative; flex: none; }
 .mc-menu .mc-art-img { position: absolute; left: 0; display: block; max-width: none; }
 .mc-menu .mc-name {
-  margin: 0; color: var(--mc-ink); line-height: 1.12; text-wrap: balance; text-transform: none;
+  margin: 0; color: var(--mc-ink); line-height: 1.12; text-wrap: balance; text-transform: var(--mc-ht, none);
   font-family: var(--mc-hf); font-weight: var(--mc-hw); font-size: var(--mc-hs); letter-spacing: var(--mc-hk);
 }
 .mc-menu .mc-desc {
@@ -23115,6 +23115,9 @@ html[data-app="admin-os"] .md-pair {
 html[data-app="admin-os"] .md-pair.is-on { border-color: var(--accent); background: var(--accent-soft); }
 html[data-app="admin-os"] .md-pair-sample { flex: 1; min-width: 0; line-height: 1.25; white-space: nowrap; overflow: hidden; }
 html[data-app="admin-os"] .md-pair-id { font-size: 10.5px; color: var(--ink-3); }
+/* The Suggested tag stacks over the id, so the row's right column is as wide
+   as the wider of the two and the title sample keeps its room. */
+html[data-app="admin-os"] .md-pair-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }
 html[data-app="admin-os"] .md-colors {
   display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12px; color: var(--ink-3);
 }

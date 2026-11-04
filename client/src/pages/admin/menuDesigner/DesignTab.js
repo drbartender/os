@@ -1,8 +1,8 @@
-// DesignTab (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// The menu editor's Design tab: twelve font pairings with the words step's pick tagged
+// Suggested, ink and accent, text backing, the background re-roll and the Dr. Bartender mark.
 
 import React, { useEffect, useRef } from 'react';
-import { PAIRINGS, PAIRING_IDS, pairingFor, ensureFontsLink } from './fontPairings';
+import { PAIRINGS, PAIRING_IDS, pairingFor, isPairingId, ensureFontsLink } from './fontPairings';
 import { resolveColors, isHex } from './menuColors';
 import { Section, Seg, useInert, rerollWhy, isReadOnly, OPEN, isObj, list } from './panelParts';
 
@@ -11,15 +11,17 @@ import { Section, Seg, useInert, rerollWhy, isReadOnly, OPEN, isObj, list } from
 // unsaved edits), inputs, pieces, configured, cap, onPatch({ content?, inputs? }),
 // onReroll(pieceKey, note), wordsDone, readOnly. Inert at 0.45 until the words
 // land, and on a read-only draft (no plan), where nothing PATCHes or re-rolls.
-// - Font pairing: six buttons, "Bar Menu" in each title face; choosing one
-//   resets ink and accent to its defaults.
+// - Font pairing: twelve buttons (v2 spec 6), "Bar Menu" in each title face;
+//   choosing one resets ink and accent to its defaults. The words step's pick
+//   (content.font_pairing_suggested, server-written) carries a "Suggested" tag
+//   beside its id; a draft without one shows no tag.
 // - Colors: Ink (Pairing default, Plum, Navy, Charcoal) and Accent (Pairing
 //   default, then the words step's palette); "Pairing default" is the set the
 //   background's tone picks (11.2) and saves as null.
 // - Text backing; the Background row with Re-roll; the Dr. Bartender mark and,
 //   while it is on, its Placement (v2 spec 5: Left / Center / Right, missing
 //   reads as right; the switch's sub line names it) and Wordmark color.
-// The editor loads all six pairings' faces on open, since this tab shows each.
+// The editor loads all twelve pairings' faces on open, since this tab shows each.
 
 const INKS = [['#6b3a6e', 'Plum'], ['#1f2a44', 'Navy'], ['#2a2a2a', 'Charcoal']];
 const BACKINGS = [['off', 'Off'], ['soft', 'Soft'], ['panel', 'Panel']];
@@ -65,6 +67,7 @@ export default function DesignTab({
   const all = list(pieces);
   const bg = all.find((p) => p.piece_key === 'background') || null;
   const pairing = pairingFor(c.font_pairing);
+  const suggested = isPairingId(c.font_pairing_suggested) ? c.font_pairing_suggested : null;
   const defaults = resolveColors({ pairing: pairing.id, tone: bg && bg.status === 'done' ? bg.tone : null });
   const send = (body) => { if (live && typeof onPatch === 'function') onPatch(body); };
   const patch = (next) => send({ content: next });
@@ -93,7 +96,10 @@ export default function DesignTab({
                   fontFamily: p.title.stack, fontSize: `${Math.round(Math.min(SAMPLE_MAX, p.title.size * 0.3))}px`,
                   fontWeight: p.title.weight, textTransform: p.title.transform, letterSpacing: upper ? '0.18em' : '0',
                 }}>Bar Menu</span>
-                <span className="md-pair-id md-num">{id}</span>
+                <span className="md-pair-meta">
+                  {id === suggested && <span className="tag">Suggested</span>}
+                  <span className="md-pair-id md-num">{id}</span>
+                </span>
               </button>
             );
           })}

@@ -1,12 +1,15 @@
-// The printed menu's six font pairings (spec 2026-10-01 section 11.2, table P;
-// section 10.3). The ids are fixed and shared with the server
-// (server/utils/menuFontPairings.js, FONT_PAIRING_IDS): the server knows only
-// the ids, and the faces, sizes and default colors live here.
+// The printed menu's twelve font pairings (spec 2026-10-01 section 11.2, table P,
+// and section 10.3; menu designer v2 spec 6). The ids are fixed and shared with
+// the server (server/utils/menuFontPairings.js, FONT_PAIRING_IDS): the server
+// knows only the ids, and the faces, sizes and default colors live here.
 //
-// The 2026-10-01 snapshot (menu-designer.html, PAIRINGS) keyed them by design
-// name. Its keys map to the fixed ids like this:
+// The 2026-10-01 snapshot (menu-designer.html, PAIRINGS) keyed table P's six by
+// design name. Its keys map to the fixed ids like this:
 //   script -> elegant-script, rustic -> rustic, modern -> modern-clean,
 //   disco -> retro, spooky -> spooky, tropical -> tropical.
+// v2 spec 6's six (art-deco, botanical, hand-lettered, fiesta, editorial,
+// black-tie) have no snapshot entry, so their design key is their id. Their
+// faces, sizes, tracking and colors are the spec's starting values, as given.
 //
 // Each face is { family, stack, size (canvas px), weight, transform, tracking }.
 // light and dark are the default { ink, accent } for light art and dark art.
@@ -26,6 +29,7 @@ import { useEffect, useState } from 'react';
 
 export const PAIRING_IDS = Object.freeze([
   'elegant-script', 'rustic', 'modern-clean', 'retro', 'spooky', 'tropical',
+  'art-deco', 'botanical', 'hand-lettered', 'fiesta', 'editorial', 'black-tie',
 ]);
 
 export const DEFAULT_PAIRING_ID = 'elegant-script';
@@ -84,6 +88,55 @@ export const PAIRINGS = Object.freeze({
     body: face('Nunito Sans', "'Helvetica Neue', sans-serif", 15, 400),
     light: { ink: '#173a38', accent: '#cf4f37' },
     dark: { ink: '#f2fbf6', accent: '#ffb27a' },
+  },
+  // v2 spec 6.
+  'art-deco': {
+    id: 'art-deco', designKey: 'art-deco', name: 'Gatsby', theme: 'Art deco',
+    title: face('Limelight', 'Georgia, serif', 56, 400, 'uppercase', '.12em'),
+    heading: face('Josefin Sans', "'Helvetica Neue', sans-serif", 18, 600, 'none', '.08em'),
+    body: face('Josefin Sans', "'Helvetica Neue', sans-serif", 15, 400),
+    light: { ink: '#1b1b1f', accent: '#a8842e' },
+    dark: { ink: '#f3ead6', accent: '#e3c56a' },
+  },
+  botanical: {
+    id: 'botanical', designKey: 'botanical', name: 'Conservatory', theme: 'Botanical serif',
+    title: face('Playfair Display', 'Georgia, serif', 62, 700),
+    heading: face('Lora', 'Georgia, serif', 22, 600),
+    body: face('Lora', 'Georgia, serif', 16, 400),
+    light: { ink: '#2f3b2a', accent: '#6d7f4c' },
+    dark: { ink: '#eef3e6', accent: '#b7cf8a' },
+  },
+  'hand-lettered': {
+    id: 'hand-lettered', designKey: 'hand-lettered', name: 'Chalkboard', theme: 'Hand lettered',
+    title: face('Caveat', "'Bradley Hand', cursive", 76, 700),
+    heading: face('Patrick Hand', "'Bradley Hand', cursive", 24, 400),
+    body: face('Nunito', "'Helvetica Neue', sans-serif", 15, 400),
+    light: { ink: '#2b2b2b', accent: '#b8433a' },
+    dark: { ink: '#f6f1e8', accent: '#f4b183' },
+  },
+  fiesta: {
+    id: 'fiesta', designKey: 'fiesta', name: 'Fiesta', theme: 'Bold festive',
+    title: face('Lilita One', 'Impact, sans-serif', 66, 400),
+    heading: face('Baloo 2', "'Trebuchet MS', sans-serif", 22, 700),
+    body: face('Baloo 2', "'Trebuchet MS', sans-serif", 15.5, 500),
+    light: { ink: '#2a1a3a', accent: '#e4572e' },
+    dark: { ink: '#fff4e6', accent: '#ffcf5c' },
+  },
+  editorial: {
+    id: 'editorial', designKey: 'editorial', name: 'Masthead', theme: 'Minimal serif',
+    title: face('DM Serif Display', 'Georgia, serif', 62, 400),
+    heading: face('DM Sans', "'Helvetica Neue', sans-serif", 18, 600, 'uppercase', '.06em'),
+    body: face('DM Sans', "'Helvetica Neue', sans-serif", 15, 400),
+    light: { ink: '#141414', accent: '#8a1c1c' },
+    dark: { ink: '#f5f5f0', accent: '#e8b4a0' },
+  },
+  'black-tie': {
+    id: 'black-tie', designKey: 'black-tie', name: 'Black Tie', theme: 'Formal',
+    title: face('Cinzel', 'Georgia, serif', 54, 700, 'none', '.1em'),
+    heading: face('Cinzel', 'Georgia, serif', 18, 500, 'none', '.06em'),
+    body: face('Cormorant Garamond', 'Georgia, serif', 17, 500),
+    light: { ink: '#15161d', accent: '#7d6a3c' },
+    dark: { ink: '#f1ede4', accent: '#d6c08a' },
   },
 });
 
