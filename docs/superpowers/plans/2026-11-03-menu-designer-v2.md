@@ -3,7 +3,7 @@ spec: docs/superpowers/specs/2026-10-19-menu-designer-v2-design.md (rev 2, 2026-
 format: lane map without code (spec 2026-10-19 D12)
 revision: 2 (2026-11-03; the design-stage plan review folded in, owner "go")
 status: >
-  Twelve lanes. Claude cuts each from current main with npm run worktree:new, builds it, reviews it at the
+  Fifteen lanes (twelve, then three split from lane reviews). Claude cuts each from current main with npm run worktree:new, builds it, reviews it at the
   tier the review skill computes, squash-merges it through scripts/merge-lane.sh from os and removes it.
   Lanes merge in the order the blockedBy graph allows, and every merged lane is safe to ship alone: the
   public proof routes land with no proof to show, the Inbox reader and all four task kinds land before
@@ -67,13 +67,16 @@ lanes:
 
   - id: menu-bar-fingerprint
     scope: >
-      Spec section 17 (revised by this lane's review, 2026-11-03). The plan-changed check notices bar picks
-      by what the menu prints: bar_hash is a hash of the Also at the bar lines the current picks would
-      print; computeDiff reports bar_changed against it, and for a draft fingerprinted before it, against the
-      draft's stored also_at_bar lines; Update draft rewrites also_at_bar when the lines differ and stores
-      only what it applied (drink keys and bar_hash, keeping the brief and planner-image parts); the OpenAI
-      check in the sync runs only when a provider is called; the card and the Brief tab print "The bar
-      picks changed since this draft.", beside the drink lines when both changed. The same lane fixes the Promise.all on one
+      Spec section 17 (revised twice by this lane's review, 2026-11-03). The plan-changed check notices bar
+      picks by what the menu prints, line by line: the fingerprint stores bar_lines (the hash of each Also at
+      the bar line the current picks would print, keyed by its label) and bar_hash over them; computeDiff
+      reports bar_changed when a label's line hash moved, appeared or went; a draft fingerprinted before this
+      takes today's picks as its baseline on its first GET (a one-time write to plan_fingerprint, no version
+      bump); Update draft rewrites only the changed lines, keeps every other line's text (hand edits
+      included) and stores only what it applied (drink keys and the bar baseline, keeping the brief and
+      planner-image parts); the AI key check in the sync runs only when a provider is called; the card and
+      the Brief tab print "The bar picks changed since this draft.", beside the drink lines and the notes
+      line when those changed too. The same lane fixes the Promise.all on one
       pg client in Update draft's catalog load (through loadCatalogMaps): the maps load sequentially on the
       held client, or through the pool before the client is taken. The lane report names both fix-list lines
       it closes, each with its own failing test.
@@ -108,6 +111,44 @@ lanes:
       ignores, but a banner dismissed after the deploy hashed the bar, so a revert brings those banners back
       once (each is dismissed again or updated).
 
+  - id: menu-legal-hold-guards
+    scope: >
+      Split from menu-bar-fingerprint by its review (2026-11-04, the review cap reached): no menu art path
+      guards the legal-hold proposal. Its money pass found the GET's one-time bar baseline stamp
+      (stampBarBaseline in menuDraftRead.js) writes plan_fingerprint with no isLegalHold call, and Generate,
+      the draft PATCH, re-roll, Update draft, Dismiss, Approve and the menu print POST, PATCH and DELETE have
+      none either (older gaps). Every one of them now refuses the legal-hold proposal before it reads the plan,
+      calls a provider or writes, with 409 LEGAL_HOLD through the patchGuards.js assertNotLegalHold precedent
+      (isLegalHold, which fails closed); the GET still answers and skips the stamp. Generate and re-roll
+      refusing first also keeps the held booking's plan away from the AI (money law 15: never read by the AI).
+      Merges right after menu-bar-fingerprint and before any ship, since that lane's merge puts the stamp on
+      main.
+    footprint:
+      - server/utils/menuDraftRead.js  (the stamp skips a held proposal)
+      - server/utils/menuDraftRead.test.js
+      - server/routes/proposals/menuDrafts.js  (Generate, PATCH, re-roll, Dismiss)
+      - server/routes/proposals/menuDraftSync.js  (Update draft)
+      - server/routes/proposals/menuDraftApprove.js  (Approve)
+      - server/routes/proposals/menuPrint.js  (POST, PATCH, DELETE)
+      - server/routes/proposals/menuDrafts.test.js
+      - server/routes/proposals/menuDraftApprove.test.js
+      - server/routes/proposals/menuPrint.test.js
+      - README.md, ARCHITECTURE.md  (generated sections)
+    blockedBy: [menu-bar-fingerprint]
+    lenses: tier A (menuDraftSync.js, menuDraftApprove.js, menuPrint.js are sensitive); money (law 15), access-egress, seams, verify, the externals, the money smoke.
+    laws: Money law 15 and CLAUDE.md's legal-hold rule: the held proposal keeps its database state exactly and is never read by the AI; every guard calls server/utils/legalHold.js isLegalHold, which fails closed; a refusal writes nothing and calls no provider.
+    seams: assertNotLegalHold's 409 LEGAL_HOLD body is the one the proposal PATCH already answers, so the card shows the server's message like any other refused write; the next lanes that add menu writers (menu-no-menu-mark, menu-proof-page, menu-approve-send, menu-auto-start) already name isLegalHold in their laws.
+    acceptance: >
+      Suites pass and the money smoke passes; the guard tests fail on main (on main a Generate, an Update
+      draft and a GET stamp for a synthetic held id each succeed or write).
+    test plan: >
+      With a synthetic held id added through __setLegalHoldIdsForTest: menuDrafts.test.js, Generate, PATCH,
+      re-roll and Dismiss answer 409 LEGAL_HOLD, write no row and reserve no ledger spend; Update draft likewise.
+      menuDraftApprove.test.js: Approve answers 409 and stores no print key. menuPrint.test.js: POST, PATCH and
+      DELETE answer 409 and change no column. menuDraftRead.test.js: the GET on a held proposal's legacy draft
+      returns the draft and leaves plan_fingerprint unchanged.
+    revert: Revert the squash before menu-bar-fingerprint's; nothing is stored in a new shape.
+
   - id: menu-no-menu-mark
     scope: >
       Spec section 15. A client submit with Skip the Menu marks the event as needing no printed menu; a later
@@ -141,7 +182,7 @@ lanes:
       - server/scripts/backfillMenuNotRequired.test.js  (new)
       - scripts/sensitive-paths.txt  (menuAutoStart.js)
       - README.md, ARCHITECTURE.md  (generated sections)
-    blockedBy: [menu-bar-fingerprint]
+    blockedBy: [menu-bar-fingerprint, menu-legal-hold-guards]
     lenses: tier A (submit.js, menuPrint.js, menuPrintFile.js, schema); schema-data, lifecycle, concurrency, seams, money (menu_not_required gates the $5 menu_print duty line), verify, the externals, the money smoke.
     laws: >
       Money law 15: the legal-hold proposal keeps its state exactly; every writer here calls isLegalHold,
@@ -802,7 +843,7 @@ The spec, `docs/superpowers/specs/2026-10-19-menu-designer-v2-design.md` rev 2, 
 
 ```
 menu-out-of-credit ─────────────────────────────┐
-menu-bar-fingerprint ── menu-no-menu-mark ──────┤
+menu-bar-fingerprint ── menu-legal-hold-guards ── menu-no-menu-mark ──┤
 menu-mark-placement ── menu-fonts-twelve ───────┴── menu-brief-tab ── menu-house-card ──┐
             menu-no-menu-mark ── menu-proof-page ── menu-inbox-tasks ───────────────────┴── menu-approve-send ──┬── menu-events-dashboard
                                                                                                              └── menu-auto-start
@@ -811,13 +852,13 @@ menu-mark-placement ── menu-fonts-twelve ───────┴── menu
 (menu-auto-start also waits on menu-house-card, menu-out-of-credit and menu-no-menu-mark, all merged by then.)
 
 - **Can start at once, in parallel:** menu-out-of-credit, menu-bar-fingerprint, menu-mark-placement. They share no file.
-- **Serialized only to keep footprints apart:** the no-menu mark follows the fingerprint (`menuDraftRead.js`, `menuCardState.js`); fonts follow placement (`DesignTab.js`, `menuDraftValidation.js`); the Brief tab follows those and the out-of-credit lane (`menuArtJob.test.js`); the proof page follows the no-menu mark, because both edit `schema.sql` and `scripts/sensitive-paths.txt`, which are sensitive, and a conflict on a sensitive file stops a merge (CLAUDE.md). README and ARCHITECTURE never conflict: the merge regenerates them.
+- **Serialized only to keep footprints apart:** the legal-hold guards follow the fingerprint (`menuDraftRead.js`, `menuDraftSync.js`) and merge before any ship; the no-menu mark follows the guards (`menuDraftRead.js`, `menuCardState.js`); fonts follow placement (`DesignTab.js`, `menuDraftValidation.js`); the Brief tab follows those and the out-of-credit lane (`menuArtJob.test.js`); the proof page follows the no-menu mark, because both edit `schema.sql` and `scripts/sensitive-paths.txt`, which are sensitive, and a conflict on a sensitive file stops a merge (CLAUDE.md). README and ARCHITECTURE never conflict: the merge regenerates them.
 - **Serialized by dependency:** the house card needs the Brief tab's stored-inputs rule; the Inbox tasks need the proof table and the release columns; approve and send needs the Inbox reminder live before it holds any file, and the house card's moved `layoutPieceKeys` and export; the dashboard needs the held state; auto-start needs everything it hands a draft to.
 - **Every merged lane is safe to ship alone.** The proof routes land with no proof to show; the Inbox reader and all four task kinds land while no proof exists; holding print files starts only when the reminder that catches an unanswered proof is already live; the dashboard's "Menu with client" lands after that; auto-start lands last.
 
 ## Revert order
 
-Revert in reverse merge order; each lane's `revert` names the later lanes that must go first. In short: menu-auto-start first, then menu-events-dashboard, menu-approve-send, menu-inbox-tasks, menu-proof-page, menu-house-card, menu-brief-tab, menu-fonts-twelve, menu-mark-placement, menu-no-menu-mark, menu-bar-fingerprint and menu-out-of-credit. After a bad ship the fastest lever is still `git revert` of the one squash that caused it, when no later lane builds on it (CLAUDE.md).
+Revert in reverse merge order; each lane's `revert` names the later lanes that must go first. In short: menu-auto-start first, then menu-events-dashboard, menu-approve-send, menu-inbox-tasks, menu-proof-page, menu-house-card, menu-brief-tab, menu-fonts-twelve, menu-mark-placement, menu-no-menu-mark, menu-legal-hold-guards, menu-bar-fingerprint and menu-out-of-credit. After a bad ship the fastest lever is still `git revert` of the one squash that caused it, when no later lane builds on it (CLAUDE.md).
 
 ## Owner steps (not lanes)
 
