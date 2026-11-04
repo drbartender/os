@@ -249,6 +249,8 @@ const CONTENT_CHECKS = new Map([
   ['logo_mode', enumCheck(['above_title', 'replaces_title'], 'Pick above the title or replacing it.')],
   ['logo_badge', booleanCheck],
   ['mark_color', enumCheck(['ink', 'accent', 'gold'], 'Pick Theme ink, Accent or Gold.')],
+  // Where the mark sits along the bottom (v2 spec 5); a draft without it reads as right.
+  ['mark_position', enumCheck(['left', 'center', 'right'], 'Pick Left, Center or Right.')],
 ]);
 const CONTENT_SERVER_ONLY = new Map(['palette', 'background_label', 'words_status', 'words_error', 'words_heartbeat_at']
   .map((k) => [k, MSG.serverWritten]));

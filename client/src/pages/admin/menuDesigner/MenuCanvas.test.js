@@ -87,6 +87,79 @@ test('no mark when drb_mark is false', () => {
   expect(screen.queryByAltText('Dr. Bartender')).toBeNull();
 });
 
+// v2 spec 5: content.mark_position puts the mark bottom left, center or right;
+// missing (and anything unknown) reads as right. The mark's rules are read
+// from index.css itself and cascaded here over the rendered node (they are
+// class-only selectors, so specificity is the class count, then file order),
+// then its inline style: jsdom's cssstyle drops `auto` on left and right, so
+// getComputedStyle cannot show these offsets.
+describe('the mark placement', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../../../index.css'), 'utf8');
+  const RULES = (css.match(/^\.mc-menu \.mc-(?:mark|avatar|wordmark)[^{\n]*\{[^}\n]*\}$/gm) || []).map((r, i) => {
+    const [, sel, body] = r.match(/^([^{]+)\{([^}]*)\}$/);
+    const decls = Object.fromEntries(body.split(';').map((d) => d.split(':').map((s) => s.trim())).filter(([k, v]) => k && v));
+    return { sel: sel.trim(), spec: (sel.match(/\./g) || []).length, i, decls };
+  }).sort((a, b) => a.spec - b.spec || a.i - b.i);
+  const cascade = (el) => {
+    const out = {};
+    RULES.forEach((r) => { if (el.matches(r.sel)) Object.assign(out, r.decls); });
+    ['left', 'right', 'bottom', 'transform'].forEach((k) => { if (el.style[k]) out[k] = el.style[k]; });
+    return out;
+  };
+
+  const place = (over, backing = 'soft') => {
+    const { container, unmount } = renderCanvas({ content: { ...GARDEN(), text_backing: backing, ...over } });
+    const s = cascade(container.querySelector('.mc-mark'));
+    unmount();
+    // Never a transform (v1 11.3: nothing html2canvas might draw differently).
+    expect(s.transform).toBeUndefined();
+    expect(s.position).toBe('absolute');
+    return { left: s.left || 'auto', right: s.right || 'auto', bottom: s.bottom };
+  };
+
+  test('the rules it cascades are plain class rules, with no !important to bypass the order', () => {
+    expect(RULES.length).toBeGreaterThanOrEqual(5);
+    RULES.forEach((r) => {
+      expect(r.sel).toMatch(/^\.mc-menu(?: \.mc-[\w-]+(?:\.mc-[\w-]+)*)$/);
+      Object.values(r.decls).forEach((v) => expect(v).not.toMatch(/important/));
+    });
+  });
+
+  test('right, and missing or unknown, keep today\'s 40 / 40 (68 / 64 inside the Panel)', () => {
+    [{}, { mark_position: 'right' }, { mark_position: 'middle' }, { mark_position: null }].forEach((over) => {
+      expect(place(over)).toEqual({ left: 'auto', right: '40px', bottom: '40px' });
+      expect(place(over, 'panel')).toEqual({ left: 'auto', right: '68px', bottom: '64px' });
+    });
+    expect(place({}, 'off')).toEqual({ left: 'auto', right: '40px', bottom: '40px' });
+  });
+
+  test('left mirrors it: 40 from the left (68 inside the Panel), the vertical offset unchanged', () => {
+    expect(place({ mark_position: 'left' })).toEqual({ left: '40px', right: 'auto', bottom: '40px' });
+    expect(place({ mark_position: 'left' }, 'off')).toEqual({ left: '40px', right: 'auto', bottom: '40px' });
+    expect(place({ mark_position: 'left' }, 'panel')).toEqual({ left: '68px', right: 'auto', bottom: '64px' });
+  });
+
+  test('center: an inline left of (800 - the mark\'s width) / 2, with and without the Panel', () => {
+    // The mark's width from the avatar file (its rendered height at the PNG's
+    // natural ratio), the row gap and the wordmark's width, all as index.css and
+    // the file give them: about 208, so about 296.
+    const { container, unmount } = renderCanvas();
+    const px = (el, k) => parseFloat(cascade(el)[k]);
+    const avatarH = px(container.querySelector('.mc-avatar'), 'height');
+    const gap = px(container.querySelector('.mc-mark'), 'gap');
+    const wordmarkW = px(container.querySelector('.mc-wordmark'), 'width');
+    unmount();
+    const png = fs.readFileSync(path.join(__dirname, '../../../../public/images/menu-mark-avatar.png'));
+    const markWidth = (avatarH * png.readUInt32BE(16)) / png.readUInt32BE(20) + gap + wordmarkW;
+    expect([avatarH, gap, wordmarkW]).toEqual([40, 8, 159]);
+    const left = `${Math.round((800 - markWidth) / 2)}px`;
+    expect(left).toBe('296px');
+    expect(place({ mark_position: 'center' })).toEqual({ left, right: 'auto', bottom: '40px' });
+    expect(place({ mark_position: 'center' }, 'off')).toEqual({ left, right: 'auto', bottom: '40px' });
+    expect(place({ mark_position: 'center' }, 'panel')).toEqual({ left, right: 'auto', bottom: '64px' });
+  });
+});
+
 test('each drink image is a square of its box width, centered, never stretched', () => {
   const { container } = renderCanvas();
   // 3 rows start the art at 165: the box is 119 wide, the image 119 x 119, 23 down.

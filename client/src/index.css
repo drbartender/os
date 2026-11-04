@@ -22881,6 +22881,15 @@ html[data-app="admin-os"] .ib-cp-links { display: flex; flex-wrap: wrap; gap: 6p
    panel's line ran through the wordmark). Off and Soft are unchanged. */
 .mc-menu .mc-page.mc-page-panel { padding-bottom: 110px; }
 .mc-menu .mc-mark.mc-mark-panel { right: 68px; bottom: 64px; }
+/* Placement (v2 spec 5). Left mirrors the right: 40 from the trim, 68 inside
+   the Panel's line (inset 54, then the 8 px ring and hairline, 6 clear).
+   Center's left is an inline style MenuCanvas sets, (800 - the mark's width)
+   / 2, never a transform (v1 11.3); this rule only frees its right. Both
+   follow the Panel rule so they win over its right at equal specificity, and
+   the vertical offsets stay as they are. */
+.mc-menu .mc-mark.mc-mark-left { left: 40px; right: auto; }
+.mc-menu .mc-mark.mc-mark-left.mc-mark-panel { left: 68px; right: auto; }
+.mc-menu .mc-mark.mc-mark-center { right: auto; }
 /* Drawing states (spec 11.1, On-canvas editing). They draw over the menu, not
    the OS, so their colors stay literal; never on the export. */
 .mc-menu .mc-slot-st {

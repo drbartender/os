@@ -21,7 +21,8 @@ import { EditCtx, Text, Heading, DrinkText, Slot, useCanvasEdit, clearOnClick, t
 // Props:
 //   content       draft.content (title, headings, drinks, also_at_bar,
 //                 font_pairing, ink_color, accent_color, text_backing,
-//                 logo_mode, logo_badge, mark_color); missing keys default.
+//                 logo_mode, logo_badge, mark_color, mark_position);
+//                 missing keys default.
 //   inputs        draft.inputs: drb_mark (on unless false) and
 //                 planner_image_role ('logo' unless set).
 //   pieces        the GET payload's pieces; the background's tone and
@@ -99,10 +100,23 @@ function Backing({ kind, ground, accent }) {
 
 // With the Panel backing the mark sits inside the panel's line (review
 // 2026-10-17: at 40 / 40 the line ran through the wordmark).
-function Mark({ color, inPanel }) {
+// content.mark_position (v2 spec 5) puts it bottom left, center or right;
+// missing or unknown reads as right, today's place. Left is a mirrored CSS
+// rule (.mc-mark-left). Center is an inline left of (800 - the mark's width)
+// / 2, the width being the avatar 40 tall at its PNG's 283 x 273, the 8 px gap
+// and the 159 px wordmark (index.css), about 208, so about 296, with
+// .mc-mark-center freeing the right; never a transform (v1 11.3: nothing
+// html2canvas might draw differently). The vertical offsets never change.
+const MARK_W = (40 * 283) / 273 + 8 + 159;
+const MARK_CENTER_STYLE = { left: Math.round((CANVAS_W - MARK_W) / 2) };
+const MARK_PLACE_CLASS = { left: 'mc-mark-left', center: 'mc-mark-center' };
+
+function Mark({ color, inPanel, position }) {
   const wordmark = useTintedWordmark(color);
+  const place = position === 'left' || position === 'center' ? position : 'right';
+  const cls = ['mc-mark', MARK_PLACE_CLASS[place], inPanel && 'mc-mark-panel'].filter(Boolean).join(' ');
   return (
-    <div className={inPanel ? 'mc-mark mc-mark-panel' : 'mc-mark'}>
+    <div className={cls} style={place === 'center' ? MARK_CENTER_STYLE : undefined}>
       <img className="mc-avatar" src={AVATAR_SRC} alt="" data-mc-layer="avatar" />
       {wordmark
         ? <img className="mc-wordmark" src={wordmark} alt="Dr. Bartender" data-mc-layer="wordmark" />
@@ -272,7 +286,7 @@ const MenuCanvas = forwardRef(function MenuCanvas({
               </div>
             )}
           </div>
-          {inp.drb_mark !== false && <Mark color={colors.mark} inPanel={backing === 'panel'} />}
+          {inp.drb_mark !== false && <Mark color={colors.mark} inPanel={backing === 'panel'} position={c.mark_position} />}
         </div>
       </EditCtx.Provider>
     </div>

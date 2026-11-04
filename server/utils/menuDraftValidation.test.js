@@ -96,6 +96,26 @@ test('mark_color: ink, accent and gold pass', () => {
 });
 test('mark_color: anything else fails', () => fails(() => content({ mark_color: 'silver' }), 'mark_color'));
 
+// ---- mark_position: left | center | right (v2 spec 5, 21); missing reads as right ----
+test('mark_position: left, center and right pass, and only the sent key changes', () => {
+  for (const v of ['left', 'center', 'right']) {
+    const next = patch({ content: { mark_position: v } });
+    assert.equal(next.content.mark_position, v);
+    assert.deepEqual(next.content, { ...storedDraft().content, mark_position: v });
+    assert.equal(next.changed, true);
+  }
+  // Sent back as stored, nothing changed.
+  const stored = storedDraft();
+  stored.content.mark_position = 'center';
+  assert.equal(patch({ content: { mark_position: 'center' } }, stored).changed, false);
+});
+test('mark_position: anything else fails, as a placement error (not an unknown field)', () => {
+  for (const v of ['middle', 'Left', '', null, 1, true, ['left']]) {
+    fails(() => content({ mark_position: v }), 'mark_position');
+    assert.throws(() => content({ mark_position: v }), (err) => err.fieldErrors.mark_position === 'Pick Left, Center or Right.');
+  }
+});
+
 // ---- background_label: words-step output only ----
 test('background_label: kept as the words step wrote it when the PATCH omits it', () => {
   assert.equal(content({ title: 'Garden Party' }).background_label, 'Pastel garden');

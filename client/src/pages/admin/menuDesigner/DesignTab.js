@@ -17,11 +17,13 @@ import { Section, Seg, useInert, rerollWhy, isReadOnly, OPEN, isObj, list } from
 //   default, then the words step's palette); "Pairing default" is the set the
 //   background's tone picks (11.2) and saves as null.
 // - Text backing; the Background row with Re-roll; the Dr. Bartender mark and,
-//   while it is on, its Wordmark color.
+//   while it is on, its Placement (v2 spec 5: Left / Center / Right, missing
+//   reads as right; the switch's sub line names it) and Wordmark color.
 // The editor loads all six pairings' faces on open, since this tab shows each.
 
 const INKS = [['#6b3a6e', 'Plum'], ['#1f2a44', 'Navy'], ['#2a2a2a', 'Charcoal']];
 const BACKINGS = [['off', 'Off'], ['soft', 'Soft'], ['panel', 'Panel']];
+const MARK_POSITIONS = [['left', 'Left'], ['center', 'Center'], ['right', 'Right']];
 const MARK_COLORS = [['ink', 'Theme ink'], ['accent', 'Accent'], ['gold', 'Gold']];
 const SAMPLE_MAX = 26;
 
@@ -72,6 +74,7 @@ export default function DesignTab({
   const palette = (Array.isArray(c.palette) ? c.palette : [])
     .filter((p) => isObj(p) && isHex(p.hex)).map((p) => ({ hex: p.hex, name: typeof p.name === 'string' && p.name ? p.name : p.hex }));
   const markOn = inp.drb_mark !== false;
+  const markPosition = c.mark_position === 'left' || c.mark_position === 'center' ? c.mark_position : 'right';
   const markColor = c.mark_color === 'accent' || c.mark_color === 'gold' ? c.mark_color : 'ink';
 
   return (
@@ -127,9 +130,15 @@ export default function DesignTab({
       <div className="md-mark">
         <button type="button" role="switch" aria-checked={markOn} className="md-switch"
           onClick={() => send({ inputs: { drb_mark: !markOn } })}>
-          <span>Dr. Bartender mark<span className="md-switch-sub">Small, bottom right</span></span>
+          <span>Dr. Bartender mark<span className="md-switch-sub">{`Small, bottom ${markPosition}`}</span></span>
           <span className={markOn ? 'md-switch-track is-on' : 'md-switch-track'}><span className="md-switch-knob" /></span>
         </button>
+        {markOn && (
+          <div className="md-mark-color">
+            <span>Placement</span>
+            <Seg label="Mark placement" options={MARK_POSITIONS} value={markPosition} onChange={(v) => patch({ mark_position: v })} />
+          </div>
+        )}
         {markOn && (
           <div className="md-mark-color">
             <span>Wordmark color</span>

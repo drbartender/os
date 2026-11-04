@@ -166,4 +166,65 @@ describe('the Dr. Bartender mark', () => {
     expect(screen.getByRole('switch', { name: /Dr\. Bartender mark/ })).toHaveAttribute('aria-checked', 'false');
     expect(screen.queryByText('Wordmark color')).toBeNull();
   });
+
+  // v2 spec 5: the Placement .seg, the Wordmark color row's twin, under the
+  // switch and above Wordmark color; missing reads as right.
+  const placement = () => screen.getByRole('group', { name: 'Mark placement' });
+  const sub = () => screen.getByRole('switch', { name: /Dr\. Bartender mark/ }).querySelector('.md-switch-sub');
+
+  test('Placement: Left / Center / Right under the switch, above Wordmark color; missing reads as right', () => {
+    const { container } = render(<DesignTab {...props()} />);
+    expect(screen.getByText('Placement')).toBeInTheDocument();
+    expect(within(placement()).getAllByRole('button').map((b) => b.textContent)).toEqual(['Left', 'Center', 'Right']);
+    expect(within(placement()).getByRole('button', { name: 'Right' })).toHaveClass('active');
+    expect(within(placement()).getByRole('button', { name: 'Right' })).toHaveAttribute('aria-pressed', 'true');
+    expect(sub()).toHaveTextContent(/^Small, bottom right$/);
+    // The order in the mark block: the switch, Placement, then Wordmark color.
+    const rows = [...container.querySelector('.md-mark').children];
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveAttribute('role', 'switch');
+    expect(within(rows[1]).getByRole('group', { name: 'Mark placement' })).toBeInTheDocument();
+    expect(within(rows[2]).getByRole('group', { name: 'Wordmark color' })).toBeInTheDocument();
+  });
+
+  test('Placement PATCHes { content: { mark_position } } and the sub line follows the value', () => {
+    const p = props();
+    const { rerender } = render(<DesignTab {...p} />);
+    fireEvent.click(within(placement()).getByRole('button', { name: 'Left' }));
+    expect(p.onPatch).toHaveBeenLastCalledWith({ content: { mark_position: 'left' } });
+    fireEvent.click(within(placement()).getByRole('button', { name: 'Center' }));
+    expect(p.onPatch).toHaveBeenLastCalledWith({ content: { mark_position: 'center' } });
+    // The chosen one again sends nothing.
+    p.onPatch.mockClear();
+    fireEvent.click(within(placement()).getByRole('button', { name: 'Right' }));
+    expect(p.onPatch).not.toHaveBeenCalled();
+    [['left', 'Left', 'Small, bottom left'], ['center', 'Center', 'Small, bottom center'], ['right', 'Right', 'Small, bottom right']]
+      .forEach(([v, label, line]) => {
+        rerender(<DesignTab {...props({ content: CONTENT({ mark_position: v }) })} />);
+        expect(within(placement()).getByRole('button', { name: label })).toHaveClass('active');
+        expect(sub()).toHaveTextContent(new RegExp(`^${line}$`));
+      });
+    // An unknown stored value reads as right.
+    rerender(<DesignTab {...props({ content: CONTENT({ mark_position: 'middle' }) })} />);
+    expect(within(placement()).getByRole('button', { name: 'Right' })).toHaveClass('active');
+    expect(sub()).toHaveTextContent(/^Small, bottom right$/);
+  });
+
+  test('Placement is off with the rest of the tab until the words land, and hidden with the mark off', () => {
+    const p = props({ wordsDone: false });
+    const { rerender } = render(<DesignTab {...p} />);
+    expect(placement().closest('.md-tabpane')).toHaveAttribute('inert');
+    fireEvent.click(within(placement()).getByRole('button', { name: 'Left' }));
+    expect(p.onPatch).not.toHaveBeenCalled();
+    const ro = props({ readOnly: true });
+    rerender(<DesignTab {...ro} />);
+    expect(placement().closest('.md-tabpane')).toHaveAttribute('inert');
+    fireEvent.click(within(placement()).getByRole('button', { name: 'Center' }));
+    expect(ro.onPatch).not.toHaveBeenCalled();
+    rerender(<DesignTab {...props({ inputs: { drb_mark: false }, content: CONTENT({ mark_position: 'left' }) })} />);
+    expect(screen.queryByRole('group', { name: 'Mark placement' })).toBeNull();
+    expect(screen.queryByText('Placement')).toBeNull();
+    // The sub line still says where the mark goes when it is switched back on.
+    expect(sub()).toHaveTextContent(/^Small, bottom left$/);
+  });
 });
