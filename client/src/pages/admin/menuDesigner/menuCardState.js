@@ -20,6 +20,9 @@ const OPEN = new Set(['pending', 'working']);
 const MODEL_NAME = { openai: 'GPT Image', gemini: 'Gemini' };
 const FIELD_NAME = { theme: 'Theme & colors', naming: 'Drink naming', notes: 'Design notes' };
 const ART_MAX = 8;
+const BAR_LINE = 'The bar picks changed since this draft.';
+const NOTES_LINE = 'Client edited their menu notes.';
+const BAR_SUB = 'refreshes the changed "Also at the bar" lines.';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v.filter((x) => x !== null && x !== undefined) : []);
@@ -82,6 +85,7 @@ function readFacts(p) {
     dropped: diff ? list(diff.dropped) : [],
     edited: diff ? list(diff.brief_edited) : [],
     imageChanged: !!(diff && diff.image_changed),
+    barChanged: !!(diff && diff.bar_changed === true),
     plan: isObj(p.plan) ? p.plan : null,
     cap: isObj(p.cap) ? p.cap : null,
     configured: isObj(p.configured) ? p.configured : {},
@@ -106,13 +110,29 @@ const S = (id, kind, text, message, sub = null, primary = null, secondary = null
 const act = (id, label, style = 'primary') => ({ id, label, style });
 const ed = (id, label, style = 'primary', editor = {}) => ({ id, label, style, editor });
 
+// The Plan changed card: the drink lines, then the bar line when the bar
+// picks changed too, then a notes edit or a new client image riding along
+// (spec 2026-10-19 section 17), so a Dismiss never hides an edit the card did
+// not show. The sub says what Update draft does: the drinks, and only the
+// "Also at the bar" lines whose picks moved.
+const briefLines = (f, image) => [...(f.edited.length ? [NOTES_LINE] : []), ...(f.imageChanged ? [image] : [])];
+
 function changeLines(f) {
   const all = [...f.added.map((d) => [d, 'added']), ...f.dropped.map((d) => [d, 'dropped'])];
-  if (all.length !== 1) return { message: `${all.length} drinks changed on the plan.`, sub: 'Update the draft to match.' };
+  const say = (first) => [first, ...briefLines(f, 'The client image changed.')].join(' ');
+  if (!all.length) return { message: say(BAR_LINE), sub: `Update draft ${BAR_SUB}` };
+  const withBar = (line) => say(f.barChanged ? `${line} ${BAR_LINE}` : line);
+  if (all.length !== 1) {
+    return { message: withBar(`${all.length} drinks changed on the plan.`),
+      sub: f.barChanged ? `Update draft updates the drinks and ${BAR_SUB}` : 'Update the draft to match.' };
+  }
   const [d, how] = all[0];
-  return how === 'added'
-    ? { message: `${d.name} was added to the plan.`, sub: 'Update the draft to include it.' }
-    : { message: `${d.name} was dropped from the plan.`, sub: 'Update the draft to remove it.' };
+  if (how === 'added') {
+    return { message: withBar(`${d.name} was added to the plan.`),
+      sub: f.barChanged ? `Update draft adds the drink and ${BAR_SUB}` : 'Update the draft to include it.' };
+  }
+  return { message: withBar(`${d.name} was dropped from the plan.`),
+    sub: f.barChanged ? `Update draft removes the drink and ${BAR_SUB}` : 'Update the draft to remove it.' };
 }
 
 // Table C, the first state that applies.
@@ -134,7 +154,7 @@ function pickState(f, L) {
       n === 1 ? `${pieceName(f, f.failed[0].piece_key)} didn't draw.` : `${n} drawings didn't come through.`,
       n === 1 ? 'Re-roll it in the editor.' : 'Re-roll them in the editor.', ed('fix', 'Fix', 'primary', editor));
   }
-  if (f.added.length || f.dropped.length) {
+  if (f.added.length || f.dropped.length || f.barChanged) {
     const { message, sub } = changeLines(f);
     return S('plan-changed', 'info', 'Plan changed', message, sub, act('update', 'Update draft'), act('dismiss', 'Dismiss', 'ghost'));
   }
@@ -237,9 +257,11 @@ function bannerList(f, L, tooLong) {
       `${f.cap.used} of ${f.cap.limit} images used in the last 24 hours. Re-rolls resume ${resumeTime(f.cap.resets_at, L.now)}. Text, type and color still work.`);
   }
   if (f.draft && !f.configured.openai) B('drawing-off', 'neutral', 'Drawing is off.', "The AI key isn't on the server. Text, type, color and Approve still work.");
-  if (f.added.length || f.dropped.length) {
-    const lines = [...f.added.map((d) => `${d.name} was added.`), ...f.dropped.map((d) => `${d.name} was dropped.`)];
-    B('plan-changed', 'info', 'Plan changed since this draft.', `${lines.join(' ')} Updating paints only the new drinks.`,
+  if (f.added.length || f.dropped.length || f.barChanged) {
+    const drinks = [...f.added.map((d) => `${d.name} was added.`), ...f.dropped.map((d) => `${d.name} was dropped.`)];
+    const lines = [...drinks, ...(f.barChanged ? [BAR_LINE] : []), ...briefLines(f, 'The client image changed since this draft.'),
+      ...(drinks.length ? ['Updating paints only the new drinks.'] : [])];
+    B('plan-changed', 'info', 'Plan changed since this draft.', lines.join(' '),
       [btn('dismiss', 'Dismiss', 'ghost'), btn('update', 'Update draft')]);
   }
   if (f.edited.length || f.imageChanged) {

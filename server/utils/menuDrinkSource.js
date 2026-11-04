@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const { buildGeneratorInputFromConsult } = require('./shoppingList');
 const { recipeRowLabel } = require('./potionCatalog');
+const { buildAlsoAtBar } = require('./menuAlsoAtBar');
 const {
   matchKey, matchCustomNames, loadRecipeCandidates, plannerServiceStyle,
 } = require('./shoppingListGen');
@@ -111,17 +112,17 @@ async function loadEventPlan(proposalId, db = defaultDb()) {
 
 // Every catalog drink, active or not, keyed 'cocktail:<id>' / 'mocktail:<id>'
 // (the raw id: a lookup map, never an emitted key), plus the matcher's
-// candidate pool. The two queries run together; a pg Client queues them.
-// Callers inside a transaction must pass their client, never the pool default.
+// candidate pool. Callers inside a transaction pass their client, never the
+// pool default (Update draft does), so the two queries run one after the
+// other: a pg client must never get a second query while one is running (pg 8
+// queues it with a deprecation warning; pg 9 refuses it).
 async function loadCatalogMaps(db = defaultDb()) {
-  const [result, candidates] = await Promise.all([
-    db.query(
-      `SELECT 'cocktail' AS kind, id, name, description, ingredients FROM cocktails
-       UNION ALL
-       SELECT 'mocktail' AS kind, id, name, description, ingredients FROM mocktails`
-    ),
-    loadRecipeCandidates(db),
-  ]);
+  const result = await db.query(
+    `SELECT 'cocktail' AS kind, id, name, description, ingredients FROM cocktails
+     UNION ALL
+     SELECT 'mocktail' AS kind, id, name, description, ingredients FROM mocktails`
+  );
+  const candidates = await loadRecipeCandidates(db);
   const catalogById = new Map();
   for (const row of result.rows) catalogById.set(`${row.kind}:${row.id}`, row);
   return { catalogById, candidates };
@@ -316,8 +317,28 @@ function normalizeBriefField(value) {
   return asText(value).replace(/\s+/g, ' ').trim();
 }
 
+// The bar part of the fingerprint is what the menu prints, line by line (spec
+// 2026-10-19 section 17). Generate stores buildAlsoAtBar(normalized.bar) as
+// content.also_at_bar, and the owner adds brand names to those lines by hand,
+// so bar_lines keeps one baseline per line: the line's label to the hash of
+// the text the picks build, in print order. Update draft then refreshes only
+// the lines whose picks moved. The order the client picked in, a pick that
+// prints nothing (None, Other, a stale key family) and no bar at all are no
+// change. bar_hash is one hash over bar_lines (any key order), for
+// fingerprintHash, so a dismissal covers the bar it saw.
+function barLinesOf(bar) {
+  const out = {};
+  for (const line of buildAlsoAtBar(bar)) out[line.label] = sha256(asText(line.text));
+  return out;
+}
+function hashBarLines(barLines) {
+  const b = isObject(barLines) ? barLines : {};
+  return sha256(JSON.stringify(Object.keys(b).sort().map((k) => [k, asText(b[k])])));
+}
+
 function buildFingerprint(normalized) {
   const n = normalized || {};
+  const barLines = barLinesOf(n.bar);
   const brief = n.brief || {};
   const theme = normalizeBriefField(brief.theme);
   const naming = normalizeBriefField(brief.naming);
@@ -327,20 +348,27 @@ function buildFingerprint(normalized) {
     brief_hash: sha256(JSON.stringify([theme, naming, notes])),
     brief_fields: { theme: sha256(theme), naming: sha256(naming), notes: sha256(notes) },
     planner_image_key: n.plannerImageKey || null,
+    bar_lines: barLines,
+    bar_hash: hashBarLines(barLines),
   };
 }
 
 // One hash over a fingerprint (the dismissed_plan_hash value, spec 9), built
 // from a canonical array so a fingerprint read back from JSONB (which reorders
 // object keys) hashes the same as a freshly built one. brief_hash already
-// covers the three brief fields.
+// covers the three brief fields. bar_hash joins the array only when the
+// fingerprint has one, so a fingerprint stored before it existed hashes
+// exactly as it always did and an old dismissed_plan_hash still matches it
+// (computeDiff relies on this).
 function fingerprintHash(fingerprint) {
   const f = fingerprint || {};
-  return sha256(JSON.stringify([
+  const parts = [
     asArray(f.drink_keys).map(String).sort(),
     f.brief_hash || null,
     f.planner_image_key || null,
-  ]));
+  ];
+  if (typeof f.bar_hash === 'string' && f.bar_hash) parts.push(f.bar_hash);
+  return sha256(JSON.stringify(parts));
 }
 
 module.exports = {
@@ -349,6 +377,7 @@ module.exports = {
   normalizePlan,
   buildFingerprint,
   fingerprintHash,
+  hashBarLines,
   drinkKey,
   slugifyTyped,
   plannerImageKeyOf,

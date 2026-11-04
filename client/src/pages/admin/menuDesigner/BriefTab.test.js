@@ -53,6 +53,17 @@ test('a field the client edited is tinted and labeled; the client image changed 
   expect(screen.queryByText('The client image changed since this draft.')).toBeNull();
 });
 
+test('the bar picks changed note shows until dismissed', () => {
+  const line = 'The bar picks changed since this draft.';
+  const diff = { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: true, dismissed: false };
+  const { rerender } = render(<BriefTab {...props({ diff })} />);
+  expect(screen.getByText(line)).toHaveClass('md-brief-edited');
+  rerender(<BriefTab {...props({ diff: { ...diff, dismissed: true } })} />);
+  expect(screen.queryByText(line)).toBeNull();
+  rerender(<BriefTab {...props({ diff: { ...diff, bar_changed: false } })} />);
+  expect(screen.queryByText(line)).toBeNull();
+});
+
 describe('the client image', () => {
   const roles = () => screen.getByRole('group', { name: 'Client image use' });
 

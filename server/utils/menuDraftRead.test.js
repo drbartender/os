@@ -183,6 +183,83 @@ test('the catalog maps are cached for 60 seconds, and a reset reloads them', asy
   await second;
 });
 
+// The bar in the diff (spec 2026-10-19 section 17), on plain plan rows.
+const planWith = (sel) => normalizePlan({
+  id: 1, serving_type: 'full_bar', selections: { customCocktails: ['Zq Pure One'], menuTheme: 'Garden', ...sel },
+});
+const barNormalized = (wine, typed = ['Zq Pure One']) => planWith({ customCocktails: typed, wineFromFullBar: wine });
+const NO_CHANGE = { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_changed_labels: [], dismissed: false };
+const fingerprinted = (normalized, over = {}) => ({
+  plan_fingerprint: buildFingerprint(normalized), content: { drinks: [] }, dismissed_plan_hash: null, ...over,
+});
+// A fingerprint as stored before this lane: no bar_lines and no bar_hash.
+const withoutBar = (fp) => { const out = { ...fp }; delete out.bar_hash; delete out.bar_lines; return out; };
+
+test('computeDiff: bar_changed for a changed bar pick, never for list order', () => {
+  const stored = fingerprinted(barNormalized(['Red', 'White']));
+  assert.equal(read.computeDiff(stored, barNormalized(['Red', 'White'])).bar_changed, false);
+  assert.equal(read.computeDiff(stored, barNormalized(['White', 'Red'])).bar_changed, false);
+  assert.deepEqual(read.computeDiff(stored, barNormalized(['Red'])), { added: [], dropped: [], brief_edited: [], image_changed: false,
+    bar_changed: true, bar_changed_labels: ['Beer and Wine'], dismissed: false });
+});
+
+test('computeDiff: a dismissal holds until the bar changes again', () => {
+  const now = barNormalized(['Red', 'White']);
+  const draft = fingerprinted(barNormalized(['Red']), { dismissed_plan_hash: fingerprintHash(buildFingerprint(now)) });
+  const diff = read.computeDiff(draft, now);
+  assert.deepEqual([diff.dismissed, diff.bar_changed], [true, true], 'the diff itself is still reported');
+  assert.equal(read.computeDiff(draft, barNormalized(['White'])).dismissed, false);
+  const legacyHash = fingerprintHash(withoutBar(buildFingerprint(now)));
+  assert.equal(read.computeDiff({ ...draft, dismissed_plan_hash: legacyHash }, now).dismissed, false,
+    'a hash with no bar never covers a bar move');
+});
+
+test('computeDiff: None or Other ticked after a draft built with no picks is no bar change; a wine swap is one', () => {
+  const nothing = fingerprinted(planWith({}));
+  const ticked = planWith({ beerFromFullBar: ['None'], wineFromFullBar: ['Other'], spirits: ['None', 'Other'] });
+  assert.deepEqual(read.computeDiff(nothing, ticked), NO_CHANGE);
+  const red = fingerprinted(planWith({ wineFromFullBar: ['Red'] }));
+  assert.equal(read.computeDiff(red, planWith({ wineFromFullBar: ['White'] })).bar_changed, true);
+});
+
+test('computeDiff: bar_changed_labels names each line whose picks moved, appeared or went', () => {
+  const stored = fingerprinted(planWith({ wineFromFullBar: ['Red'], spirits: ['Vodka'] }));
+  let d = read.computeDiff(stored, planWith({ wineFromFullBar: ['White'], spirits: ['Vodka'] }));
+  assert.deepEqual([d.bar_changed, d.bar_changed_labels], [true, ['Beer and Wine']], 'only the wine line moved');
+  d = read.computeDiff(stored, planWith({ wineFromFullBar: ['Red'], beerFromFullBar: ['Non-Alcoholic'] }));
+  assert.deepEqual([d.bar_changed, d.bar_changed_labels], [true, ['Non-Alcoholic', 'Spirits']], 'a line appeared and one went');
+  d = read.computeDiff(stored, planWith({ wineFromFullBar: ['Red'], spirits: ['Vodka'] }));
+  assert.deepEqual([d.bar_changed, d.bar_changed_labels], [false, []]);
+});
+
+test('computeDiff: a fingerprint with no bar_lines reads the bar unchanged, a hand-edited line or older picks alike', () => {
+  const then = barNormalized(['Red', 'White']);
+  const edited = [{ label: 'Beer and Wine', text: 'Red, White, and a house pinot.' }];
+  const legacy = { plan_fingerprint: withoutBar(buildFingerprint(then)), content: { drinks: [], also_at_bar: edited }, dismissed_plan_hash: null };
+  assert.deepEqual(read.computeDiff(legacy, then), NO_CHANGE, 'a hand edit is never a bar change');
+  assert.deepEqual(read.computeDiff(legacy, barNormalized(['Sparkling'])), NO_CHANGE, 'no baseline, nothing to compare');
+  const round1 = { ...legacy, plan_fingerprint: { ...legacy.plan_fingerprint, bar_hash: 'f'.repeat(64) } };
+  assert.equal(read.computeDiff(round1, barNormalized(['Sparkling'])).bar_changed, false, 'a bar_hash alone is no baseline');
+});
+
+test('computeDiff: on a stamped legacy draft a dismissal from before the deploy holds until the bar moves; a later one covers the bar it saw', () => {
+  const then = barNormalized(['Red', 'White']);
+  const stampedFp = buildFingerprint(then);
+  const draft = { plan_fingerprint: stampedFp, content: { drinks: [] }, dismissed_plan_hash: fingerprintHash(withoutBar(stampedFp)) };
+  let d = read.computeDiff(draft, then);
+  assert.deepEqual([d.dismissed, d.bar_changed], [true, false], 'no bar move: the old dismissal holds');
+  d = read.computeDiff(draft, barNormalized(['Sparkling']));
+  assert.deepEqual([d.dismissed, d.bar_changed], [false, true], 'it hashed no bar, so it never covers a bar move');
+  assert.equal(read.computeDiff(draft, barNormalized(['Red', 'White'], ['Zq Pure One', 'Zq Pure Two'])).dismissed, false,
+    'a drink change undoes it');
+  const mid = barNormalized(['Red']);
+  const after = { ...draft, dismissed_plan_hash: fingerprintHash(buildFingerprint(mid)) };
+  d = read.computeDiff(after, mid);
+  assert.deepEqual([d.dismissed, d.bar_changed], [true, true], 'a dismissal stored since covers the bar it saw');
+  d = read.computeDiff(after, barNormalized(['Sparkling']));
+  assert.deepEqual([d.dismissed, d.bar_changed], [false, true], 'and a later bar move undoes it');
+});
+
 // ─── Live ────────────────────────────────────────────────────────────────────
 
 test('no plan and no draft, then a draft with no plan reads read-only', async () => {
@@ -232,7 +309,7 @@ test('the plan payload: drinks with the mock flag, the bar summary, a house menu
 test('the diff: added and dropped, by key, dropped named from the draft', async () => {
   await reset();
   let out = await payload();
-  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: [], image_changed: false, dismissed: false });
+  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_changed_labels: [], dismissed: false });
   await setPlan({ customCocktails: [DRINK_A, DRINK_C] });
   out = await payload();
   assert.deepEqual(out.diff.added, [{ key: KEY.c, name: DRINK_C }]);
@@ -244,7 +321,7 @@ test('brief edited only names the changed field; the planner image reads as chan
   await reset();
   await setPlan({ menuTheme: 'Roaring twenties', drinkNaming: '  Name   them after flowers ' });
   let out = await payload();
-  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: ['theme'], image_changed: false, dismissed: false },
+  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: ['theme'], image_changed: false, bar_changed: false, bar_changed_labels: [], dismissed: false },
     'whitespace alone is not an edit');
   assert.equal(out.brief.theme, 'Roaring twenties');
 
@@ -299,6 +376,64 @@ test('dismissed until the plan changes again', async () => {
   out = await payload();
   assert.equal(out.diff.dismissed, false);
   assert.deepEqual(out.diff.brief_edited, ['notes']);
+});
+
+test('bar picks through the GET: a changed wine pick reads bar_changed; order is no change; a draft with no bar_lines reads unchanged', async () => {
+  await reset();
+  await setPlan({ wineFromFullBar: ['White', 'Red'] });
+  let out = await payload();
+  assert.equal(out.diff.bar_changed, false, 'list order is not a change');
+  await setPlan({ wineFromFullBar: ['Red', 'Sparkling'] });
+  out = await payload();
+  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: [], image_changed: false,
+    bar_changed: true, bar_changed_labels: ['Beer and Wine'], dismissed: false });
+  // A draft fingerprinted before this lane (no bar_lines): the bar reads unchanged, its lines edited or not.
+  await pool.query(
+    "UPDATE menu_drafts SET plan_fingerprint = plan_fingerprint - 'bar_hash' - 'bar_lines', content = content || $2::jsonb WHERE id = $1",
+    [draftId, { also_at_bar: [{ label: 'Beer and Wine', text: 'Light beer, IPA, Red, White, and a house pinot.' }] }]);
+  out = await payload();
+  assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [false, []]);
+});
+
+test('a draft with no bar baseline takes today\'s picks as one on its first GET: a hand-edited line reads unchanged, a later wine swap reads changed, a second GET writes nothing', async () => {
+  await reset();
+  const edited = [{ label: 'Beer and Wine', text: 'Light beer, IPA, Red, White, and a house pinot.' }];
+  const legacy = (contentPatch) => pool.query(
+    "UPDATE menu_drafts SET plan_fingerprint = plan_fingerprint - 'bar_hash' - 'bar_lines', content = content || $2::jsonb WHERE id = $1",
+    [draftId, contentPatch]);
+  const rowOf = async () => (await pool.query(
+    'SELECT xmin::text AS xmin, version, content, plan_fingerprint, dismissed_plan_hash FROM menu_drafts WHERE id = $1', [draftId])).rows[0];
+  await legacy({ also_at_bar: edited });
+  const before = await rowOf();
+  let out = await payload();
+  assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [false, []], 'the hand edit is no bar change');
+  const stamped = await rowOf();
+  const current = await currentFingerprint();
+  assert.deepEqual([stamped.plan_fingerprint.bar_lines, stamped.plan_fingerprint.bar_hash], [current.bar_lines, current.bar_hash]);
+  assert.deepEqual(withoutBar(stamped.plan_fingerprint), before.plan_fingerprint, 'nothing else in the fingerprint moved');
+  assert.deepEqual([stamped.version, stamped.content, stamped.dismissed_plan_hash], [before.version, before.content, before.dismissed_plan_hash]);
+  await payload();
+  assert.equal((await rowOf()).xmin, stamped.xmin, 'a second GET writes nothing');
+  await setPlan({ wineFromFullBar: ['Red', 'Sparkling'] });
+  out = await payload();
+  assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [true, ['Beer and Wine']], 'from then on a change is caught');
+
+  // A draft whose words are not done yet is left alone.
+  await reset();
+  await legacy({ words_status: 'working', words_heartbeat_at: new Date().toISOString() });
+  await payload();
+  assert.equal(Object.prototype.hasOwnProperty.call((await rowOf()).plan_fingerprint, 'bar_lines'), false);
+});
+
+test('an admin brief value never changes the diff', async () => {
+  await reset();
+  await setPlan({ customCocktails: [DRINK_A], menuDesignNotes: 'Gold foil' });
+  const before = (await payload()).diff;
+  await pool.query('UPDATE menu_drafts SET inputs = inputs || $2::jsonb WHERE id = $1',
+    [draftId, { admin_brief: { theme: 'Navy and brass', naming: 'After the dogs', notes: 'Keep the title small' } }]);
+  const after = (await payload()).diff;
+  assert.deepEqual(after, before);
+  assert.deepEqual([after.brief_edited, after.bar_changed], [['notes'], false]);
 });
 
 test('stuck pieces and a stuck words step read failed "interrupted"; no R2 key leaves the payload', async () => {
