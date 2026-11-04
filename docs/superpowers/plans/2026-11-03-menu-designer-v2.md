@@ -20,7 +20,10 @@ lanes:
       mapError keeps the rpc status on the descriptor and maps a spent prepaid balance to the same class when
       its error details show a billing reason; when they cannot, Gemini keeps today's retries and the sentence
       after the second failed retry becomes the "still refusing, check billing" line. The lane report states
-      which Gemini case it found, with the SDK error shape it read as evidence.
+      which Gemini case it found, with the SDK error shape it read as evidence. Added by its review
+      (2026-11-03): a piece's out-of-credit failure also ends Update draft's shared piece run, the Update
+      draft words call gets its own sentence, and billing_hard_limit_reached reads as out of credit (spec 16).
+      Showing the sentences on the card moved to lane menu-error-display.
     footprint:
       - server/utils/openaiClient.js  (mapError and the new error class; nothing else)
       - server/utils/openaiClient.test.js
@@ -64,10 +67,13 @@ lanes:
 
   - id: menu-bar-fingerprint
     scope: >
-      Spec section 17. The plan-changed check notices bar picks. buildFingerprint and fingerprintHash add
-      bar_hash (normalized.bar, each list sorted); computeDiff reports bar_changed; the card and the Brief tab
-      print "The bar picks changed since this draft."; Update draft and Dismiss store the new hash. A stored
-      fingerprint without bar_hash reads as unchanged for the bar. The same lane fixes the Promise.all on one
+      Spec section 17 (revised by this lane's review, 2026-11-03). The plan-changed check notices bar picks
+      by what the menu prints: bar_hash is a hash of the Also at the bar lines the current picks would
+      print; computeDiff reports bar_changed against it, and for a draft fingerprinted before it, against the
+      draft's stored also_at_bar lines; Update draft rewrites also_at_bar when the lines differ and stores
+      only what it applied (drink keys and bar_hash, keeping the brief and planner-image parts); the OpenAI
+      check in the sync runs only when a provider is called; the card and the Brief tab print "The bar
+      picks changed since this draft.", beside the drink lines when both changed. The same lane fixes the Promise.all on one
       pg client in Update draft's catalog load (through loadCatalogMaps): the maps load sequentially on the
       held client, or through the pool before the client is taken. The lane report names both fix-list lines
       it closes, each with its own failing test.
@@ -98,7 +104,9 @@ lanes:
       BriefTab tests: the line renders on bar_changed.
     revert: >
       Revert after any merged lane that edits the same files (menu-no-menu-mark, menu-brief-tab,
-      menu-house-card); drafts that stored bar_hash keep an extra key the old code ignores.
+      menu-house-card, menu-error-display); drafts that stored bar_hash keep an extra key the old code
+      ignores, but a banner dismissed after the deploy hashed the bar, so a revert brings those banners back
+      once (each is dismissed again or updated).
 
   - id: menu-no-menu-mark
     scope: >
@@ -166,6 +174,34 @@ lanes:
       Revert after any merged lane that edits menuAutoStart.js or these files (menu-auto-start,
       menu-approve-send, menu-proof-page, menu-brief-tab); the column stays (idempotent ADD COLUMN); marks the
       planner set remain valid marks.
+
+  - id: menu-error-display
+    scope: >
+      Spec section 16, showing it. Split from menu-out-of-credit by its review (2026-11-03): the card and
+      the editor never show content.words_error, and a piece's own sentence shows only when exactly one
+      piece failed, so an out-of-credit run reads as a generic failure. The Words failed state (card and
+      editor banner) shows content.words_error in place of its generic sub line when it is one of the fixed
+      sentences in menuArtJobErrors.js (the client keeps a mirror of the allowed set, so no other text is
+      ever shown); when several pieces failed and every failure but one reads "not attempted", the banner
+      and the card show that one piece's sentence.
+    footprint:
+      - client/src/pages/admin/menuDesigner/menuCardState.js
+      - client/src/pages/admin/menuDesigner/menuCardState.test.js
+      - client/src/pages/admin/menuDesigner/menuArtSentences.js  (new, the client mirror of the fixed sentences, with the header comment naming its server twin)
+      - server/utils/menuArtJobErrors.js  (its header names the client mirror; nothing else)
+      - server/utils/menuArtSentences.test.js  (new, the parity test that the client mirror equals SENTENCES)
+      - README.md, ARCHITECTURE.md  (generated sections)
+    blockedBy: [menu-out-of-credit, menu-bar-fingerprint]
+    lenses: the computed tier; client (captures of the Words failed state and the multi-failure banner), seams (the mirrored sentence set), access-egress (no provider text reaches the client).
+    laws: only the fixed sentences are shown; a words_error that is not one of them shows the generic sub line, so no provider text can reach the screen.
+    seams: the client mirror and SENTENCES stay equal, pinned by the parity test.
+    acceptance: Suites pass; the state test fails on main (the Words failed sub line is fixed text on main); the client lens on the two states.
+    test plan: >
+      menuCardState.test.js: Words failed with words_error set to the out-of-credit sentence shows it; with an
+      unknown string shows the generic sub; a run with one out-of-credit piece and two not-attempted pieces
+      shows the out-of-credit sentence; two genuine piece failures keep the count banner.
+      menuArtSentences.test.js: the mirror equals SENTENCES.
+    revert: Revert the squash; the card goes back to its generic text.
 
   - id: menu-mark-placement
     scope: >
@@ -236,7 +272,11 @@ lanes:
       client's fields. The Admin brief box with its hint naming email, text and phone. Benchmark: the v1
       artifact (the Admin brief fields as the Art direction .input three times, From the planner as a
       .md-brief-box). The lane report names both fix-list items it closes (planner data, display only; the
-      admin brief, which changes what reaches the providers).
+      admin brief, which changes what reaches the providers). Added by the menu-bar-fingerprint review
+      (2026-11-03): the GET returns the current plan hash and Dismiss and Update draft send back the hash
+      the admin saw, answering 409 MENU_PLAN_MOVED when the plan changed since (so a change that lands while
+      the page sits open is never dismissed or applied unseen); the Brief tab's bar line moves under the
+      From the planner Bar row.
     footprint:
       - server/utils/menuDraftRead.js  (plan.side, plan.planner_reference)
       - server/utils/menuDraftRead.test.js
@@ -246,8 +286,9 @@ lanes:
       - server/utils/menuDraftValidation.test.js
       - server/utils/menuArtJob.js  (the words, background and re-roll seams)
       - server/utils/menuArtJob.test.js
-      - server/routes/proposals/menuDraftSync.js  (the typed-drinks words call)
-      - server/routes/proposals/menuDrafts.test.js  (the sync seam)
+      - server/routes/proposals/menuDraftSync.js  (the typed-drinks words call; the plan-hash echo)
+      - server/routes/proposals/menuDrafts.js  (Dismiss checks the plan-hash echo; nothing else)
+      - server/routes/proposals/menuDrafts.test.js  (the sync seam; the plan-hash echo on Dismiss and Update draft)
       - client/src/pages/admin/menuDesigner/BriefTab.js
       - client/src/pages/admin/menuDesigner/BriefTab.test.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.js
@@ -339,7 +380,7 @@ lanes:
       - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
       - client/src/index.css  (mc-house- rules)
       - README.md, ARCHITECTURE.md  (generated sections)
-    blockedBy: [menu-brief-tab]
+    blockedBy: [menu-brief-tab, menu-error-display]
     lenses: tier A (menuDrafts, menuDraftShared, menuDraftSync, menuDraftImages, menuDraftApprove, the job files); seams (the hand-synced sections pair, layoutPieceKeys on both sides), outcomes-providers (a run with no provider call), access-egress (the house prompt's content), client (captures against MenuPreview, the house-touches sketch and the v1 artifact), business-time (the December rule), verify, the externals.
     laws: >
       v1 11.2 and 11.3: the fit rule's Too long state and export parity hold for the house layout, which means
