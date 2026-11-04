@@ -300,6 +300,25 @@ test('headings: empty, 41 characters, or a missing or extra key fail', () => {
   fails(() => content({ headings: { ...ok, extra: 'D' } }), 'headings');
 });
 
+// ---- also_at_bar[].key: server-written, kept through every PATCH (lane menu-bar-baseline) ----
+const keyedStored = () => {
+  const s = storedDraft();
+  s.content.also_at_bar = s.content.also_at_bar.map((l) => ({ key: l.label, ...l }));
+  return s;
+};
+test('also_at_bar key: a renamed label or edited text keeps the stored key', () => {
+  const next = content({ also_at_bar: [{ label: 'Beer & Wine', text: 'IPA, Red, house pinot.' }, { label: 'Liquor', text: 'Vodka.' }] }, keyedStored());
+  assert.deepEqual(next.also_at_bar, [
+    { key: 'Beer and Wine', label: 'Beer & Wine', text: 'IPA, Red, house pinot.' },
+    { key: 'Spirits', label: 'Liquor', text: 'Vodka.' },
+  ]);
+});
+test('also_at_bar key: a PATCH never sets one, whatever the value', () => {
+  for (const key of ['Spirits', 'Beer and Wine', '']) {
+    fails(() => content({ also_at_bar: [{ key, label: 'Beer and Wine', text: 'IPA.' }, { label: 'Spirits', text: 'Vodka.' }] }, keyedStored()), 'also_at_bar');
+  }
+});
+
 // ---- also_at_bar[].label: 1 to 30 ----
 test('also_at_bar label: 30 characters pass', () => {
   const next = content({ also_at_bar: [{ label: str(30), text: 'IPA, Red.' }, { label: 'Liquor', text: 'Vodka.' }] });

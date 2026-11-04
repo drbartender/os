@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { performance } = require('node:perf_hooks');
 
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, hashBarLines,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, legacyBarBaseline, fingerprintHash, hashBarLines,
   drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev,
 } = require('./menuDrinkSource');
 const { buildAlsoAtBar } = require('./menuAlsoAtBar');
@@ -724,6 +724,46 @@ test('bar_lines: each printed line\'s text hash keyed by its label, in print ord
   assert.notEqual(swapped.bar_hash, fp.bar_hash);
   const reordered = Object.fromEntries(Object.entries(fp.bar_lines).reverse());
   assert.equal(hashBarLines(reordered), fp.bar_hash, 'JSONB key order does not matter');
+});
+
+// Lane menu-bar-baseline: a draft fingerprinted before bar_lines takes today's
+// picks as its baseline, except where its keyed stored lines prove a category
+// came or went since Generate; those read as a bar change.
+test('legacyBarBaseline: today\'s picks, with a stored category that went and a built one that is new left reading changed', () => {
+  const n = barPlan();
+  const today = buildFingerprint(n).bar_lines;
+  const labels = Object.keys(today);
+  const keyed = (keys) => keys.map((k) => ({ key: k, label: `${k} renamed`, text: 'hand edited.' }));
+  // Every built category stored: the baseline is today's, a hand edit or an in-line swap reads unchanged.
+  let base = legacyBarBaseline(keyed(labels), n);
+  assert.deepEqual(base.bar_lines, today);
+  assert.equal(base.bar_hash, hashBarLines(today));
+  // A stored category the picks no longer build stays in the baseline, so it reads gone.
+  base = legacyBarBaseline(keyed([...labels, 'Ghost Category']), n);
+  assert.deepEqual(Object.keys(base.bar_lines).sort(), [...labels, 'Ghost Category'].sort());
+  assert.notEqual(base.bar_lines['Ghost Category'], undefined);
+  // A built category with no stored line is left out, so it reads new.
+  base = legacyBarBaseline(keyed(labels.slice(1)), n);
+  assert.deepEqual(Object.keys(base.bar_lines), labels.slice(1));
+  // An empty stored list proves every built category new.
+  assert.deepEqual(legacyBarBaseline([], n).bar_lines, {});
+});
+
+test('legacyBarBaseline: with an unkeyed line, the count still proves a change; when it cannot, or with no list, today\'s picks', () => {
+  const n = barPlan();
+  const today = buildFingerprint(n).bar_lines;
+  const labels = Object.keys(today);
+  const unkeyed = { label: 'House pours', text: 'x.' };
+  const keyed = (k) => ({ key: k, label: k, text: 'x.' });
+  // As many lines as today's categories, every keyed one still built: nothing provable.
+  assert.deepEqual(legacyBarBaseline([...labels.slice(1).map(keyed), unkeyed], n).bar_lines, today);
+  // Fewer lines than today's categories: the ones no keyed line stands for read as new.
+  assert.deepEqual(legacyBarBaseline([keyed(labels[0]), unkeyed].slice(0, labels.length - 1), n).bar_lines,
+    labels.length > 2 ? { [labels[0]]: today[labels[0]] } : {});
+  // A keyed category gone today: it reads gone, and the rest read new.
+  const base = legacyBarBaseline([keyed('Ghost Category'), ...labels.slice(1).map(() => unkeyed)], n);
+  assert.deepEqual(Object.keys(base.bar_lines), ['Ghost Category']);
+  assert.deepEqual(legacyBarBaseline(undefined, n).bar_lines, today);
 });
 
 test('bar_hash: None and Other print nothing, so they hash as no picks at all', () => {

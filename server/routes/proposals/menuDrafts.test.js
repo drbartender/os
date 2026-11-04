@@ -1049,9 +1049,10 @@ test('sync: a 429 at the text cap refuses before anything is written', async () 
 const planNow = async (id) => normalizePlan(await loadEventPlan(id), await loadCatalogMaps());
 const syncAt = (id, version, imageModel = 'openai') => request('POST', `${base(id)}/sync`, { json: { version, image_model: imageModel } });
 
-const BW = (text) => ({ label: 'Beer and Wine', text });
-const SPIRITS = (text) => ({ label: 'Spirits', text });
-const NA = (text) => ({ label: 'Non-Alcoholic', text });
+// Stored lines carry the builder's label as their key (lane menu-bar-baseline).
+const BW = (text, label = 'Beer and Wine') => ({ key: 'Beer and Wine', label, text });
+const SPIRITS = (text, label = 'Spirits') => ({ key: 'Spirits', label, text });
+const NA = (text, label = 'Non-Alcoholic') => ({ key: 'Non-Alcoholic', label, text });
 
 test('sync: an edited Spirits line survives an Update draft that only changes the wine; the edited wine line is replaced', async () => {
   const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
@@ -1087,6 +1088,77 @@ test('sync: a category whose picks went loses its line and a new one gains its l
   assert.equal((await request('GET', base(id))).body.diff.bar_changed, false);
 });
 
+test('generate: each Also at the bar line is stored with the builder\'s label as its key', async () => {
+  const { id } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'], beerFromFullBar: ['Non-Alcoholic'] } });
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('Red.'), SPIRITS('Vodka.'), NA('Athletic Brewing NA.')]);
+});
+
+test('sync: a renamed line is found by its key: rewritten in place when its picks moved, removed when they went, kept with its words and place when they held', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'], beerFromFullBar: ['Non-Alcoholic'] } });
+  // The owner renames every label on the canvas (the PATCH keeps each stored key).
+  await setContent(id, { also_at_bar: [BW('Red, and a house pinot.', 'Beer & Wine'), SPIRITS('Vodka, Gin.', 'Liquor'),
+    NA('Athletic Brewing NA.', 'Zero Proof')] });
+  await setPlan(planId, selections(2, { wineFromFullBar: ['White'], beerFromFullBar: ['Non-Alcoholic'] }));
+  assert.deepEqual((await request('GET', base(id))).body.diff.bar_changed_labels, ['Beer and Wine', 'Spirits']);
+  const res = await syncAt(id, 1);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('White.'), NA('Athletic Brewing NA.', 'Zero Proof')],
+    'the moved line is rebuilt in its place, the gone one removed, the held one keeps its words and place');
+  assert.equal((await request('GET', base(id))).body.diff.bar_changed, false);
+});
+
+test('sync: a stored line with no key, from before keys, is keyed by its label and refreshed', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  await setContent(id, { also_at_bar: [{ label: 'Beer and Wine', text: 'Red.' }, { label: 'Spirits', text: 'Vodka, local.' }] });
+  await setPlan(planId, selections(2, { wineFromFullBar: ['White'], spirits: ['Vodka'] }));
+  const res = await syncAt(id, 1);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('White.'), SPIRITS('Vodka, local.')]);
+});
+
+test('sync: an unkeyed renamed line is keyed from the categories the draft baseline names, then matched by that key', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], beerFromFullBar: ['Non-Alcoholic'] } });
+  // Two lines, the NA one renamed, neither keyed (stored before keys, or a PATCH that raced a key write).
+  await setContent(id, { also_at_bar: [{ label: 'Beer and Wine', text: 'Red.' }, { label: 'Zero Proof', text: 'Athletic Brewing NA.' }] });
+  await setPlan(planId, selections(2, { wineFromFullBar: ['White'] }));
+  assert.deepEqual((await request('GET', base(id))).body.diff.bar_changed_labels, ['Beer and Wine', 'Non-Alcoholic']);
+  const res = await syncAt(id, 1);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('White.')],
+    'Zero Proof was keyed Non-Alcoholic (the baseline names Beer and Wine and Non-Alcoholic), so its gone category removed it');
+  assert.equal((await request('GET', base(id))).body.diff.bar_changed, false);
+});
+
+test('sync: a draft with no baseline yet is keyed and diffed against the boot stamp\'s baseline, so a category its lines prove gone is repaired in the same Update draft', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  // A draft from before the per-line check: no bar baseline, lines unkeyed, Beer and Wine renamed.
+  await pool.query("UPDATE menu_drafts SET plan_fingerprint = plan_fingerprint - 'bar_lines' - 'bar_hash' WHERE proposal_id = $1", [id]);
+  await setContent(id, { also_at_bar: [{ label: 'Beer & Wine', text: 'Red, house pinot.' }, { label: 'Spirits', text: 'Vodka.' }] });
+  // Since Generate the client swapped the wine and dropped every spirit, and the plan lost a drink, which Update draft applies.
+  await setPlan(planId, selections(1, { wineFromFullBar: ['White'] }));
+  assert.equal((await request('GET', base(id))).body.diff.bar_changed, false, 'no baseline yet, so no bar flag');
+  const res = await syncAt(id, 1);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  const draft = await draftOf(id);
+  assert.deepEqual(draft.content.also_at_bar, [BW('Red, house pinot.', 'Beer & Wine')],
+    'the gone Spirits line is removed in this one click; the in-line wine swap is taken as the baseline (spec 17), the hand edit kept');
+  assert.deepEqual(draft.plan_fingerprint.bar_lines, buildFingerprint(await planNow(id)).bar_lines);
+  assert.equal((await request('GET', base(id))).body.diff.bar_changed, false);
+});
+
+test('sync: a line no key can be found for gives way to the built lines when the bar moves, so no stale pick prints', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  // A keyed, hand-edited Beer and Wine line and a renamed line whose words name no category.
+  await setContent(id, { also_at_bar: [BW('Red, house pinot.'), { label: 'House pours', text: 'Our favorites.' }] });
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'], spirits: ['Gin'] }));
+  assert.deepEqual((await request('GET', base(id))).body.diff.bar_changed_labels, ['Spirits']);
+  const res = await syncAt(id, 1);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('Red, house pinot.'), SPIRITS('Gin.')],
+    'the keyed line keeps its words; the unkeyed one is replaced by the built Spirits line');
+  assert.equal((await request('GET', base(id))).body.diff.bar_changed, false);
+});
+
 test('sync: a notes edit and a new client image saved with a bar change still read after Update draft', async () => {
   const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'] } });
   await setPlan(planId, selections(2, {
@@ -1111,7 +1183,7 @@ test('sync: without the keys a bar-only or a drop-only Update draft still works;
   await setPlan(planId, selections(2, { wineFromFullBar: ['White'] }));
   let res = await syncAt(id, 1);
   assert.deepEqual([res.status, res.body.version], [202, 2], JSON.stringify(res.body));
-  assert.deepEqual((await draftOf(id)).content.also_at_bar, [{ label: 'Beer and Wine', text: 'White.' }]);
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('White.')]);
   await setPlan(planId, selections(1, { wineFromFullBar: ['White'] }));
   res = await syncAt(id, 2, 'gemini');
   assert.deepEqual([res.status, res.body.version], [202, 3], JSON.stringify(res.body));
@@ -1242,4 +1314,17 @@ test('dismiss: the stored hash covers the bar picks, so a later bar change shows
   await setPlan(planId, selections(2, { wineFromFullBar: ['Red', 'White'] }));
   diff = (await request('GET', base(id))).body.diff;
   assert.deepEqual([diff.bar_changed, diff.dismissed], [true, false]);
+});
+
+test('dismiss: leaves the Saved time alone, while an edit moves it (lane menu-bar-baseline)', async () => {
+  const { id, planId } = await ready();
+  const savedAt = async () => (await pool.query('SELECT updated_at FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0].updated_at.toISOString();
+  await pool.query("UPDATE menu_drafts SET updated_at = NOW() - interval '5 days' WHERE proposal_id = $1", [id]);
+  const before = await savedAt();
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'] }));
+  const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  assert.equal(res.status, 200);
+  assert.equal(await savedAt(), before, 'a dismissal is no save');
+  await setContent(id, { title: `Edited ${NONCE}` });
+  assert.notEqual(await savedAt(), before);
 });

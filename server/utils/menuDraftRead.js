@@ -38,9 +38,10 @@
 //   bar_changed is true when an "Also at the bar" line the plan would print
 //   differs from its stored baseline (bar_lines), or a line appears or goes
 //   (spec 2026-10-19 section 17); bar_changed_labels names those lines, for
-//   Update draft. A fingerprint with no bar_lines reads the bar unchanged,
-//   and the read writes that draft's baseline once (stampBarBaseline), the
-//   read model's one write.
+//   Update draft. A fingerprint with no bar_lines reads the bar unchanged
+//   until it has a baseline, which the server stamps at boot
+//   (menuBarBaselineStamp.js) or Update draft writes. The read model writes
+//   nothing.
 // - menu_style is selections.menuStyle ('custom' | 'house' | 'none') or null.
 //   bar_summary counts the plan's bar picks for the phone's "+ 5 beer and wine,
 //   3 spirits, 2 NA" line ("None" and "Other" picks are not counted).
@@ -115,7 +116,9 @@ function _resetCatalogCacheForTest() {
 // in bar_lines, plus a label that appears or goes. A fingerprint with no
 // bar_lines (every draft made before this, and a dev draft carrying only an
 // earlier bar_hash) reads the bar unchanged, so the owner's hand edits never
-// raise a false flag; the GET stamps its baseline once (stampBarBaseline).
+// raise a false flag; the server stamps its baseline at boot
+// (menuBarBaselineStamp.js), or Update draft writes it (lane menu-bar-baseline).
+// The GET itself writes nothing.
 // Dismissed: the hash matches the current fingerprint, or the current one
 // with no bar (a dismissal stored before the deploy hashed none, and
 // fingerprintHash keeps that hash), but that one only while the bar has not
@@ -248,25 +251,6 @@ const DRAFT_SQL = `
     LEFT JOIN contractor_profiles cp ON cp.user_id = d.approved_by
    WHERE p.id = $1`;
 
-// A draft fingerprinted before bar_lines existed takes today's picks as its
-// bar baseline the first time it is read once its words are done (spec
-// 2026-10-19 section 17): one conditional write of bar_lines and bar_hash into
-// plan_fingerprint, no version bump and no other column written (the
-// updated_at trigger still runs, as it does for Dismiss). The WHERE makes a
-// second read, or a writer that stored a full fingerprint first, a no-op.
-const STAMP_BAR_SQL = `
-  UPDATE menu_drafts
-     SET plan_fingerprint = plan_fingerprint || jsonb_build_object('bar_lines', $2::jsonb, 'bar_hash', $3::text)
-   WHERE id = $1 AND jsonb_typeof(plan_fingerprint) = 'object' AND NOT plan_fingerprint ? 'bar_lines'`;
-
-async function stampBarBaseline(row, normalized) {
-  const fp = row.plan_fingerprint;
-  if (!normalized || !isObject(fp) || hasOwn(fp, 'bar_lines')) return;
-  if (!isObject(row.content) || row.content.words_status !== 'done') return;
-  const current = buildFingerprint(normalized);
-  await pool.query(STAMP_BAR_SQL, [row.draft_id, current.bar_lines, current.bar_hash]);
-}
-
 async function readDraftPayload(proposalId) {
   const id = Number(proposalId);
   if (!Number.isInteger(id) || id <= 0 || id > 2147483647) throw new NotFoundError('Proposal not found.');
@@ -284,7 +268,6 @@ async function readDraftPayload(proposalId) {
   const normalized = planRow ? normalizePlan(planRow, maps) : null;
   const hasDraft = row.draft_id !== null && row.draft_id !== undefined;
   const draftRow = hasDraft ? Object.fromEntries(DRAFT_STATE.map((k) => [k, row[k]])) : null;
-  if (hasDraft) await stampBarBaseline(row, normalized);
   const printKey = row.menu_print_key || null;
 
   return {

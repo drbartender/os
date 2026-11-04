@@ -251,7 +251,8 @@ test('parseWords returns the stored content shape, each drink with exactly the t
   assert.equal(content.ink_color, null);
   assert.equal(content.accent_color, '#9caf88');
   assert.deepEqual(content.palette, [{ name: 'sage', hex: '#9caf88' }, { name: 'blush', hex: '#f4c2c2' }]);
-  assert.deepEqual(content.also_at_bar, [{ label: 'Beer and Wine', text: 'IPA, Red.' }]);
+  // Each stored line carries its builder label as a server-written key (lane menu-bar-baseline).
+  assert.deepEqual(content.also_at_bar, [{ key: 'Beer and Wine', label: 'Beer and Wine', text: 'IPA, Red.' }]);
   const mock = content.drinks.find((d) => d.key === 'mocktail:3');
   assert.equal(mock.group, 'mock');
   assert.equal(mock.catalog_kind, 'mocktail');

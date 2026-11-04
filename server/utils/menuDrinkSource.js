@@ -318,14 +318,16 @@ function normalizeBriefField(value) {
 }
 
 // The bar part of the fingerprint is what the menu prints, line by line (spec
-// 2026-10-19 section 17). Generate stores buildAlsoAtBar(normalized.bar) as
-// content.also_at_bar, and the owner adds brand names to those lines by hand,
-// so bar_lines keeps one baseline per line: the line's label to the hash of
-// the text the picks build, in print order. Update draft then refreshes only
-// the lines whose picks moved. The order the client picked in, a pick that
-// prints nothing (None, Other, a stale key family) and no bar at all are no
-// change. bar_hash is one hash over bar_lines (any key order), for
-// fingerprintHash, so a dismissal covers the bar it saw.
+// 2026-10-19 section 17). The words step stores keyedBarLines(normalized.bar)
+// as content.also_at_bar: each line carries the builder's label as its key
+// beside a label the owner may rename, and the owner adds brand names to the
+// lines by hand. bar_lines keeps one baseline per line, keyed by the builder's
+// label (the stored line's key, never its renameable label): that label to the
+// hash of the text the picks build. Update draft then refreshes only the lines
+// whose picks moved. The order the client picked in, a pick that prints
+// nothing (None, Other, a stale key family) and no bar at all are no change.
+// bar_hash is one hash over bar_lines (any key order), for fingerprintHash, so
+// a dismissal covers the bar it saw.
 function barLinesOf(bar) {
   const out = {};
   for (const line of buildAlsoAtBar(bar)) out[line.label] = sha256(asText(line.text));
@@ -334,6 +336,32 @@ function barLinesOf(bar) {
 function hashBarLines(barLines) {
   const b = isObject(barLines) ? barLines : {};
   return sha256(JSON.stringify(Object.keys(b).sort().map((k) => [k, asText(b[k])])));
+}
+
+// The baseline for a draft fingerprinted before bar_lines existed (lane
+// menu-bar-baseline): today's picks, except where its stored lines prove the
+// bar moved since Generate. Lines are written only by the words step and keep
+// their count and order (a PATCH edits words, never lines), so once every
+// stored line carries a key (keyBarLines), a stored key the picks no longer
+// build reads as gone and a built label with no stored line reads as new: the
+// card flags them and Update draft repairs them. A change inside a line (Red
+// for White) cannot be told from the owner's hand edit, so it is taken as the
+// baseline (spec section 17). With a line no key could be found for, the count
+// still proves a change when the stored list and today's picks differ in
+// length, or a keyed category is gone: then every built category no keyed line
+// stands for reads as new, and Update draft replaces the unkeyed lines with
+// built ones. Otherwise, or with no list at all, it takes today's picks.
+function legacyBarBaseline(storedLines, normalized) {
+  const current = barLinesOf((normalized || {}).bar);
+  const today = { bar_lines: current, bar_hash: hashBarLines(current) };
+  if (!Array.isArray(storedLines)) return today;
+  const hasOwnKey = (key) => Object.prototype.hasOwnProperty.call(current, key);
+  const keys = storedLines.map((l) => (isObject(l) && typeof l.key === 'string' ? l.key : ''));
+  const keyed = keys.filter(Boolean);
+  if (keyed.length < keys.length && keys.length === Object.keys(current).length && keyed.every(hasOwnKey)) return today;
+  const barLines = {};
+  for (const key of keyed) barLines[key] = hasOwnKey(key) ? current[key] : sha256(`gone:${key}`);
+  return { bar_lines: barLines, bar_hash: hashBarLines(barLines) };
 }
 
 function buildFingerprint(normalized) {
@@ -376,6 +404,7 @@ module.exports = {
   loadCatalogMaps,
   normalizePlan,
   buildFingerprint,
+  legacyBarBaseline,
   fingerprintHash,
   hashBarLines,
   drinkKey,

@@ -395,34 +395,23 @@ test('bar picks through the GET: a changed wine pick reads bar_changed; order is
   assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [false, []]);
 });
 
-test('a draft with no bar baseline takes today\'s picks as one on its first GET: a hand-edited line reads unchanged, a later wine swap reads changed, a second GET writes nothing', async () => {
+test('a GET on a draft with no bar baseline writes nothing: the bar reads unchanged, hand edits or picks moved, until it is given a baseline', async () => {
   await reset();
   const edited = [{ label: 'Beer and Wine', text: 'Light beer, IPA, Red, White, and a house pinot.' }];
-  const legacy = (contentPatch) => pool.query(
+  await pool.query(
     "UPDATE menu_drafts SET plan_fingerprint = plan_fingerprint - 'bar_hash' - 'bar_lines', content = content || $2::jsonb WHERE id = $1",
-    [draftId, contentPatch]);
+    [draftId, { also_at_bar: edited }]);
   const rowOf = async () => (await pool.query(
-    'SELECT xmin::text AS xmin, version, content, plan_fingerprint, dismissed_plan_hash FROM menu_drafts WHERE id = $1', [draftId])).rows[0];
-  await legacy({ also_at_bar: edited });
+    'SELECT xmin::text AS xmin, updated_at FROM menu_drafts WHERE id = $1', [draftId])).rows[0];
   const before = await rowOf();
   let out = await payload();
   assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [false, []], 'the hand edit is no bar change');
-  const stamped = await rowOf();
-  const current = await currentFingerprint();
-  assert.deepEqual([stamped.plan_fingerprint.bar_lines, stamped.plan_fingerprint.bar_hash], [current.bar_lines, current.bar_hash]);
-  assert.deepEqual(withoutBar(stamped.plan_fingerprint), before.plan_fingerprint, 'nothing else in the fingerprint moved');
-  assert.deepEqual([stamped.version, stamped.content, stamped.dismissed_plan_hash], [before.version, before.content, before.dismissed_plan_hash]);
-  await payload();
-  assert.equal((await rowOf()).xmin, stamped.xmin, 'a second GET writes nothing');
   await setPlan({ wineFromFullBar: ['Red', 'Sparkling'] });
   out = await payload();
-  assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [true, ['Beer and Wine']], 'from then on a change is caught');
-
-  // A draft whose words are not done yet is left alone.
-  await reset();
-  await legacy({ words_status: 'working', words_heartbeat_at: new Date().toISOString() });
-  await payload();
-  assert.equal(Object.prototype.hasOwnProperty.call((await rowOf()).plan_fingerprint, 'bar_lines'), false);
+  assert.deepEqual([out.diff.bar_changed, out.diff.bar_changed_labels], [false, []], 'no baseline yet, so no flag');
+  const after = await rowOf();
+  assert.deepEqual([after.xmin, after.updated_at.toISOString()], [before.xmin, before.updated_at.toISOString()],
+    'the GET wrote nothing, and the Saved time did not move');
 });
 
 test('an admin brief value never changes the diff', async () => {

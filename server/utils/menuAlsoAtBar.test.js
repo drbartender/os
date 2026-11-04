@@ -4,7 +4,7 @@ process.env.NODE_ENV = 'test';
 //   node --test server/utils/menuAlsoAtBar.test.js
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildAlsoAtBar, LINE_LABELS, HOUSE_BEER_MIX, TEXT_MAX } = require('./menuAlsoAtBar');
+const { buildAlsoAtBar, keyedBarLines, barLineKey, keyBarLines, categoryByWords, LINE_LABELS, HOUSE_BEER_MIX, TEXT_MAX } = require('./menuAlsoAtBar');
 const { FONT_PAIRING_IDS, isFontPairingId } = require('./menuFontPairings');
 const { BEER_STYLE_MAP } = require('./shoppingList');
 
@@ -168,4 +168,70 @@ test('FONT_PAIRING_IDS are the twelve fixed ids (spec 10.3; menu designer v2 spe
   assert.equal(isFontPairingId('black-tie'), true);
   assert.equal(isFontPairingId('script'), false);
   assert.equal(isFontPairingId(null), false);
+});
+
+// v2 spec 17, lane menu-bar-baseline: the lines a draft stores carry the builder's
+// label as a key, so a line the owner renamed is still found by Update draft.
+test('keyedBarLines: each built line carries its builder label as its key', () => {
+  const bar = { beer: ['IPA'], wine: ['Red'], spirits: ['Vodka'], na: ['Non-Alcoholic'] };
+  const keyed = keyedBarLines(bar);
+  assert.deepEqual(keyed, buildAlsoAtBar(bar).map((l) => ({ key: l.label, ...l })));
+  assert.deepEqual(keyed.map((l) => l.key), [LINE_LABELS.beerWine, LINE_LABELS.spirits, LINE_LABELS.na]);
+  assert.deepEqual(keyedBarLines({}), []);
+});
+
+test('barLineKey: the stored key, else the label of a line stored before keys', () => {
+  assert.equal(barLineKey({ key: 'Spirits', label: 'Liquor', text: 'Vodka.' }), 'Spirits');
+  assert.equal(barLineKey({ label: 'Spirits', text: 'Vodka.' }), 'Spirits');
+  assert.equal(barLineKey({ key: '', label: 'Spirits' }), 'Spirits');
+  assert.equal(barLineKey(null), '');
+  assert.equal(barLineKey({ text: 'x' }), '');
+});
+
+// keyBarLines keys lines stored before keys existed: by label, then by place in
+// the print order, and when two readings fit, by the table words in the text.
+const BWL = 'Beer and Wine';
+const SPL = 'Spirits';
+const NAL = 'Non-Alcoholic';
+const ln = (label, key, text = 'x.') => (key ? { key, label, text } : { label, text });
+const tx = (label, text) => ({ label, text });
+const keysOf = (r) => r.lines.map((l) => l.key || null);
+
+test('keyBarLines: a line still under its builder label takes it; a keyed line is left alone', () => {
+  const r = keyBarLines([ln(BWL), ln('Liquor', SPL)]);
+  assert.deepEqual(r.lines, [ln(BWL, BWL), ln('Liquor', SPL)]);
+  assert.deepEqual([r.byLabel, r.byOrder, r.unkeyed], [1, 0, 0]);
+});
+
+test('keyBarLines: a renamed line takes the one label its place allows', () => {
+  assert.deepEqual(keysOf(keyBarLines([ln('Beer & Wine'), ln(SPL), ln('Zero Proof')])), [BWL, SPL, NAL]);
+  assert.deepEqual(keysOf(keyBarLines([ln(SPL), ln('Zero Proof')])), [SPL, NAL], 'after Spirits only Non-Alcoholic fits');
+  assert.deepEqual(keysOf(keyBarLines([ln('A'), ln('B'), ln('C')])), [BWL, SPL, NAL]);
+});
+
+test('categoryByWords: the one category whose table words the text carries most, else null', () => {
+  assert.equal(categoryByWords('Vodka, Gin, from a local distillery.'), SPL);
+  assert.equal(categoryByWords('IPA, Red, a house pinot.'), BWL);
+  assert.equal(categoryByWords('Athletic Brewing NA.'), NAL);
+  assert.equal(categoryByWords('House pours.'), null);
+  assert.equal(categoryByWords('Red, Vodka.'), null, 'a tie names none');
+  assert.equal(categoryByWords('Gingerbread syrup.'), null, 'a word inside another word is no match');
+});
+
+test('keyBarLines: two readings are decided by the line\'s words; with none to go on, the line stays unkeyed', () => {
+  assert.deepEqual(keysOf(keyBarLines([tx(BWL, 'Red.'), tx('Zero Proof', 'Athletic Brewing NA.')])), [BWL, NAL]);
+  assert.deepEqual(keysOf(keyBarLines([tx(BWL, 'Red.'), tx('Liquor', 'Vodka.')])), [BWL, SPL],
+    'a renamed Spirits line stays Spirits whatever today\'s picks are');
+  assert.deepEqual(keysOf(keyBarLines([tx('Liquor', 'Vodka, Gin.'), tx(NAL, 'Athletic Brewing NA.')])), [SPL, NAL]);
+  assert.deepEqual(keysOf(keyBarLines([tx('Beer & Wine', 'IPA, Red.'), tx('Liquor', 'Vodka.')])), [BWL, SPL]);
+  assert.deepEqual(keysOf(keyBarLines([tx('Liquor', 'Vodka.')])), [SPL]);
+  const r = keyBarLines([tx('House pours', 'Our favorites.')]);
+  assert.deepEqual([keysOf(r), r.unkeyed], [[null], 1]);
+});
+
+test('keyBarLines: an empty list, a non-list and a list of keyed lines come back as they were', () => {
+  assert.deepEqual(keyBarLines([]).lines, []);
+  assert.equal(keyBarLines(undefined).lines, undefined);
+  const keyed = [ln('Liquor', SPL)];
+  assert.deepEqual(keyBarLines(keyed).lines, keyed);
 });

@@ -518,6 +518,18 @@ async function start() {
         clearHealthRow,
       } = require('./utils/schedulerHealth');
 
+      // Menu designer v2 (spec 2026-10-19 section 17): the bar baseline for
+      // menu drafts made before the per-line bar check, stamped at once so no
+      // client change after the deploy is taken as a baseline, and again 20
+      // minutes on, after the deploy's outgoing instance (still on the shipped
+      // code) has stopped serving. Once every draft is stamped it selects only
+      // the skipped ones; it never throws (it logs and reports).
+      if (!globalScheduleDisabled) {
+        const { runAtBoot: stampMenuBarBaselines } = require('./utils/menuBarBaselineStamp');
+        stampMenuBarBaselines();
+        setTimeout(stampMenuBarBaselines, 20 * 60 * 1000).unref();
+      }
+
       // Autopay balance scheduler — check hourly for due balances
       if (enabled('RUN_AUTOPAY_SCHEDULER')) {
         const wrapped = wrapScheduler('autopay', 3600, processAutopayCharges);

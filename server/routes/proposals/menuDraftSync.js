@@ -48,8 +48,8 @@ const { reserveImages, reserveText, releasePieceReserved, requireImageHeadroom }
 const job = require('../../utils/menuArtJob');
 const { computeDiff } = require('../../utils/menuDraftRead');
 const { validateImageModel, LIMITS } = require('../../utils/menuDraftValidation');
-const { loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint } = require('../../utils/menuDrinkSource');
-const { buildAlsoAtBar, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
+const { loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, legacyBarBaseline } = require('../../utils/menuDrinkSource');
+const { keyedBarLines, barLineKey, keyBarLines, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const {
   isObject, capList, parseId, parseVersion, requireProposal, noDraft, draftChanged, noPlan, requireWords,
@@ -72,16 +72,29 @@ function diffOf(draft, normalized) {
   }, normalized);
 }
 
-// Only the bar lines whose picks moved (the diff's bar_changed_labels): a
-// changed label's line is rebuilt from the current picks (a hand edit on it is
-// replaced, since the picks under it moved), a new label's line is added and
-// a gone label's line removed, in the builder's print order. Every other
-// stored line is kept as it is, the owner's words included.
+// Only the bar lines whose picks moved (the diff's bar_changed_labels, the
+// builder's labels): a changed line is rebuilt from the current picks (a hand
+// edit on it, its label included, is replaced, since the picks under it
+// moved), a new line is added and a gone line removed, in the builder's print
+// order. A stored line is matched by its server-written key, never by the
+// label the owner can rename (lane menu-bar-baseline), so a renamed line is
+// refreshed in place and keeps its position. Every other stored line is kept
+// as it is, the owner's words included.
 function refreshBarLines(stored, built, changedLabels) {
   const changed = new Set(changedLabels);
-  const kept = capList(stored).filter((line) => isObject(line) && !changed.has(line.label));
-  const fresh = built.filter((line) => changed.has(line.label));
-  const rank = (line) => { const i = BAR_ORDER.indexOf(line.label); return i === -1 ? BAR_ORDER.length : i; };
+  const lines = capList(stored).filter(isObject);
+  const keyed = lines.filter((line) => typeof line.key === 'string' && line.key !== '');
+  let kept = [...keyed.filter((line) => !changed.has(line.key)), ...lines.filter((line) => !keyed.includes(line))];
+  let fresh = built.filter((line) => changed.has(line.key));
+  // A line no key could be found for (keyBarLines) cannot be matched, so a
+  // moved pick under it would print stale: when the bar moved, every unkeyed
+  // line gives way to the built lines no kept keyed line stands for.
+  if (changed.size && keyed.length < lines.length) {
+    kept = keyed.filter((line) => !changed.has(line.key));
+    const covered = new Set(kept.map((line) => line.key));
+    fresh = built.filter((line) => !covered.has(line.key));
+  }
+  const rank = (line) => { const i = BAR_ORDER.indexOf(barLineKey(line)); return i === -1 ? BAR_ORDER.length : i; };
   return [...kept, ...fresh].map((line, i) => ({ line, i }))
     .sort((a, b) => rank(a.line) - rank(b.line) || a.i - b.i)
     .map(({ line }) => line);
@@ -220,14 +233,25 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
       await upsertPendingPieces(client, { draftId: locked.id, runId: pieceRunId, pieceKeys: artKeys, provider, model });
     }
     const content = { ...locked.content, drinks: [...kept, ...added] };
-    if (diff.bar_changed) {
-      content.also_at_bar = refreshBarLines(content.also_at_bar, buildAlsoAtBar(normalized.bar), diff.bar_changed_labels);
+    // A line stored before keys existed is keyed here, under the row lock, by
+    // its label, its place and its words (keyBarLines), so a renamed line is
+    // matched by what it stands for (lane menu-bar-baseline).
+    const storedFp = isObject(locked.plan_fingerprint) ? locked.plan_fingerprint : {};
+    content.also_at_bar = keyBarLines(content.also_at_bar).lines;
+    // A draft with no baseline yet is diffed against the one the boot stamp
+    // would give it (menuBarBaselineStamp.js), so a category its stored lines
+    // prove came or went since Generate is repaired in this same Update draft.
+    const barDiff = isObject(storedFp.bar_lines) ? diff
+      : diffOf({ ...locked, plan_fingerprint: { ...storedFp, ...legacyBarBaseline(content.also_at_bar, normalized) } }, normalized);
+    if (barDiff.bar_changed) {
+      content.also_at_bar = refreshBarLines(content.also_at_bar, keyedBarLines(normalized.bar), barDiff.bar_changed_labels);
     }
+    const applied = appliedFingerprint(locked.plan_fingerprint, normalized);
     const { rows } = await client.query(
       `UPDATE menu_drafts SET content = $2::jsonb, plan_fingerprint = $3::jsonb, dismissed_plan_hash = NULL,
               drink_plan_id = $4, version = version + 1
         WHERE id = $1 RETURNING version`,
-      [locked.id, content, appliedFingerprint(locked.plan_fingerprint, normalized), current.id]);
+      [locked.id, content, applied, current.id]);
     return { version: rows[0].version, artKeys };
   });
 
