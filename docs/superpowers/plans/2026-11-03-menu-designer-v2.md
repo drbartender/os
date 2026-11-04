@@ -183,12 +183,20 @@ lanes:
       editor banner) shows content.words_error in place of its generic sub line when it is one of the fixed
       sentences in menuArtJobErrors.js (the client keeps a mirror of the allowed set, so no other text is
       ever shown); when several pieces failed and every failure but one reads "not attempted", the banner
-      and the card show that one piece's sentence.
+      and the card show that one piece's sentence. Added by the menu-out-of-credit review (2026-11-03, the
+      review cap reached): a spend or usage limit is not an empty balance, so OpenAIOutOfCredit carries a
+      kind (balance or limit, from the code: billing_hard_limit_reached and the four spend and usage limit
+      codes are limits) and a limit gets its own words, piece and Update draft sentences naming OpenAI's
+      limits settings ("OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then ...").
     footprint:
       - client/src/pages/admin/menuDesigner/menuCardState.js
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - client/src/pages/admin/menuDesigner/menuArtSentences.js  (new, the client mirror of the fixed sentences, with the header comment naming its server twin)
-      - server/utils/menuArtJobErrors.js  (its header names the client mirror; nothing else)
+      - server/utils/menuArtJobErrors.js  (the limit sentences; its header names the client mirror)
+      - server/utils/openaiClient.js  (OpenAIOutOfCredit carries the kind)
+      - server/utils/openaiClient.test.js
+      - server/utils/menuImageProvider.js  (MenuArtOutOfCredit keeps the kind)
+      - server/utils/menuArtJob.test.js  (the limit sentences on the words, piece and Update draft paths)
       - server/utils/menuArtSentences.test.js  (new, the parity test that the client mirror equals SENTENCES)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-out-of-credit, menu-bar-fingerprint]
