@@ -390,6 +390,10 @@ lanes:
       - server/utils/menuDraftValidation.test.js
       - client/src/pages/admin/menuDesigner/DesignTab.js
       - client/src/pages/admin/menuDesigner/DesignTab.test.js
+      - server/utils/menuAlsoAtBar.test.js  (its FONT_PAIRING_IDS pin; added 2026-11-04 when the build found it still listed six)
+      - client/src/pages/admin/menuDesigner/MenuCanvas.js  (the names face's case, --mc-ht; added 2026-11-04 by the review: Masthead's uppercase names were never drawn)
+      - client/src/pages/admin/menuDesigner/MenuCanvas.test.js
+      - client/src/index.css  (.mc-name reads --mc-ht; the Suggested tag stacks over the id; added 2026-11-04 by the review)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-mark-placement]
     lenses: the computed tier; outcomes-providers (menuArtPrompts.js holds the strict words-schema enum the provider validates against, so a bad enum fails every words call), client (captures against the v1 artifact), seams (two id lists kept in sync).
