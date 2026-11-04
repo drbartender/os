@@ -41,7 +41,7 @@ This spec is piece 2 of five:
 **Out of scope**
 - Pieces 1, 3, 4 and 5. The design shows Email, Zola and Google Voice items; those channels render once their pieces land. This spec defines the event shape they plug into (section 5.1).
 - Notifications or pings of any kind (Dallas: "no pings. Maybe we'll want that later.").
-- Shift requests, cover claims and change requests. They stay where they live (Dallas: "don't need the shift requests on the list, that is a separate thing").
+- Shift requests, cover claims and change requests. They stay where they live (Dallas: "don't need the shift requests on the list, that is a separate thing"). Amended 2026-11-03: a client's menu change request and the other menu tasks do join (decision 2).
 - Replying to email, Zola or Thumbtack from inside Inbox. Those open the right app.
 - Email-lead replies (`email_conversations`, marketing prospects, `server/routes/emailMarketing/conversations.js:49-72`). Piece 3 decides whether they join.
 - AI-drafted replies.
@@ -170,7 +170,7 @@ All facts were read from code on `main` and from the prod database on 2026-10-06
 ## 3. Decisions
 
 1. **A live list, not a morning email.** Dallas: "the morning email is not what I want. The live list is better."
-2. **Correspondence only.** No shift requests, cover claims or change requests.
+2. **Correspondence only.** No shift requests, cover claims or change requests. **Amended 2026-11-03** (`2026-10-19-menu-designer-v2-design.md` rev 2, decision 9 and section 13): menu tasks under a client (menu ready to review, menu couldn't be generated, the client asked for menu changes, no answer yet on a proof) are the one non-correspondence item. They are kept apart from the conversation rules: a reply never clears them, they never count as a reply, Done does not clear them, and the AI never reads them. A proposal change request still stays on the Needs-attention card. They are list items, not pings (decision 4 stands).
 3. **Shared by Dallas and Zul, whoever sees it first.** No routing by type. "On it" shows the other person who has it and lapses after 4 hours with no reply. Staff items are included for both (Dallas approved the design with Zul claiming a staffer's cover request), so a staffer's free text, including pay or personal matters, becomes visible to Zul.
 4. **No pings.** Inbox is pull-only. A nudge can be added later on the same data.
 5. **One item per person across channels.** A reply from either of them on any channel the OS sees closes it.

@@ -419,7 +419,7 @@ The due time is computed from the latest proof's `sent_at`, so re-approving rest
 
 ### 13.4 The Inbox spec
 
-`2026-10-06-inbox-design.md`, decision 2 ("Correspondence only") and its out-of-scope line (`:44, :173`), gain one sentence: menu tasks are the one non-correspondence item, kept apart from the conversation rules as section 13.2 says.
+`2026-10-06-inbox-design.md`, decision 2 ("Correspondence only") and its out-of-scope line (`:44, :173`), carry the amendment: menu tasks are the one non-correspondence item, kept apart from the conversation rules as section 13.2 says. It was written on main with the plan on 2026-11-03 (specs live on main), so no lane edits that spec.
 
 ## 14. The card and the editor
 
