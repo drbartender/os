@@ -1,5 +1,5 @@
-// AdminUserDetail (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// AdminUserDetail: the admin staff record page at /staffing/users/:id, mounted fresh per
+// staffer so no form, draft or late response carries over to the next one.
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -42,7 +42,16 @@ const USER_DETAIL_TABS = [
   'tip-page', 'documents', 'messages', 'application',
 ];
 
+// The route keeps its element when only :id changes (global search, a link on
+// the page), so the key gives each staffer a new mount: without it the open edit
+// form and its bank seed, the seniority form and a message draft carried over, and
+// a save wrote the first staffer's values onto the second.
 export default function AdminUserDetail() {
+  const { id } = useParams();
+  return <UserDetailBody key={id} />;
+}
+
+function UserDetailBody() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user: viewer } = useAuth();

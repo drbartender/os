@@ -767,7 +767,7 @@ tests omitted
 │       │   │   │       ├── reviewSource.js # Review source is a key in the payload and a label on screen. Every artboard (1h, 1i) prints it capitalized; the raw enum never reaches the page. Unknown sources fall through unchanged so a new one still shows something.
 │       │   │   │       └── suggestNames.js # Client-side only. A suggestion is a pre-filled, removable chip; it is never PATCHed on render and becomes a credit only when the admin confirms (spec §7). The server keeps validating credit user ids against active staff.
 │       │   │   └── userDetail/
-│       │   │       ├── AdminUserDetail.js # AdminUserDetail (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │       ├── AdminUserDetail.js # AdminUserDetail: the admin staff record page at /staffing/users/:id, mounted fresh per staffer so no form, draft or late response carries over to the next one.
 │       │   │       ├── helpers.js # Helpers shared across AdminUserDetail tabs.
 │       │   │       ├── components/
 │       │   │       │   ├── AssignToEventModal.js # AssignToEventModal (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
