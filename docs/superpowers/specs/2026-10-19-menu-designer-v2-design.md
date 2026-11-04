@@ -455,7 +455,7 @@ The due time is computed from the latest proof's `sent_at`, so re-approving rest
 - **The payloads:** `getOne.js` selects `p.*`, so the event page has the column already; the designer's read model selects explicit columns (`menuDraftRead.js:192`) and adds `p.menu_not_required_by`.
 - **The card's sub line** for No menu needed adds "The client chose Skip the Menu." when the mark is the planner's.
 - **The legacy planner value:** a plan with `customMenuDesign: false` and no `menuStyle` counts as `none`, as the planner itself reads it (`PotionPlanningLab.js:212-215`).
-- **Backfill** (Claude's call): a one-time script, `server/scripts/backfillMenuNotRequired.js`, dry run by default (prints counts and proposal ids only), marking `planner` on every proposal with `event_date` on or after `chicagoTodayYmd()`, not archived, not the legal-hold proposal, no `menu_print_key`, `menu_not_required` false, whose designer plan (the lowest-id plan) has been **submitted** (a draft plan still sitting at Skip the Menu is left alone) and says `none`. Past events are left alone. The dry run also prints how many rows the legal hold excluded (money law 15 asks a bulk operation to confirm that count first); the write runs in one transaction and writes the same activity row as the submit path for each proposal it marks. It runs on production once, after the lane ships, with Dallas's yes at that time (a production data write).
+- **Backfill** (Claude's call): a one-time script, `server/scripts/backfillMenuNotRequired.js`, dry run by default (prints counts and proposal ids only), marking `planner` on every proposal with `event_date` on or after `chicagoTodayYmd()`, booked (`isBooked`, as auto-start requires, 8.2), not archived, not the legal-hold proposal, no `menu_print_key`, `menu_not_required` false, whose designer plan (the lowest-id plan) has been **submitted** (a draft plan still sitting at Skip the Menu is left alone) and says `none`. Past events are left alone. The dry run also prints how many rows the legal hold excluded (money law 15 asks a bulk operation to confirm that count first); the write runs in one transaction and writes the same activity row as the submit path for each proposal it marks. It runs on production once, after the lane ships, with Dallas's yes at that time (a production data write).
 
 ## 16. Out of credit
 
@@ -602,6 +602,9 @@ Error bodies keep `{ error, code, fieldErrors? }`. Key on codes, never messages.
 
 ## 26. Review level
 
+These are the floor the plan expects; each lane runs at the tier the review skill computes from its diff (CLAUDE.md), which for most lanes here is tier A because the files they touch are sensitive.
+
+
 - **Approve and send, release, the client page, the Inbox tasks:** the full fleet plus the external second opinion: a public route that takes a client write and can move `menu_print_key` (a duty-pay seam), an external send, the Inbox's waiting rules, and sensitive-listed files.
 - **Auto-start:** the full fleet: a billed provider run started by a public submit with no person in the loop, the run-once guard, and the legal-hold check.
 - **The no-menu mark and backfill:** schema and data lenses; the backfill's production run waits for Dallas's yes.
@@ -613,7 +616,7 @@ Error bodies keep `{ error, code, fieldErrors? }`. Key on codes, never messages.
 1. **Fixes first,** independent of the rest: out of credit (16), bar picks (17), the no-menu mark (15).
 2. **The designer additions:** mark placement (5), fonts (6), the Brief tab (7).
 3. **The house card template** (9).
-4. **Approve and send, the client page, release and the Inbox tasks** (10 to 14), one full-fleet lane or two (the plan decides).
+4. **The client page, the Inbox tasks, then approve and send with release, then the events dashboard** (10 to 14): the plan cuts them into four lanes so the Inbox reminder is live before any print file is held.
 5. **Auto-start** (8) last, so an auto-started draft lands in an Inbox and an Approve that already send. It ships only after OpenAI credit is added (section 24).
 6. **First real use:** the next upcoming event whose client submits a plan; Dallas watches the Inbox.
 7. The phone lane picks up the new card states from `menuCardState.js` when it is cut.
