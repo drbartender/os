@@ -132,7 +132,7 @@ async function runWordsForDrinks({
       await E.safely('sync_words', () => markCall(reservationId, 'failed', E.failedCall(d, { model })));
       if (err instanceof E.RunLost) throw new ConflictError('The draft changed. Try again.', 'MENU_DRAFT_CHANGED');
       if (!E.isRefusal(err)) E.report('sync_words', d);
-      throw Object.assign(new AppError(E.wordsSentence(err), 502, 'MENU_WORDS_FAILED'), { descriptor: d });
+      throw Object.assign(new AppError(E.wordsSentence(err, { sync: true }), 502, 'MENU_WORDS_FAILED'), { descriptor: d });
     }
   } finally {
     if (!sent) await E.safely('sync_words', () => S.releaseCall(reservationId));

@@ -436,6 +436,48 @@ test('real SDK: a 429 RESOURCE_EXHAUSTED becomes GeminiRateLimited (20 s with no
   }
 });
 
+test('real SDK: the descriptor carries the rpc status as its code when the body has no string code', async () => {
+  const cases = [
+    [429, 'RESOURCE_EXHAUSTED', 'RateLimitError', GeminiRateLimited, 'resource_exhausted'],
+    [403, 'PERMISSION_DENIED', 'PermissionDeniedError', ExternalServiceError, 'permission_denied'],
+    [400, 'FAILED_PRECONDITION', 'BadRequestError', ExternalServiceError, 'failed_precondition'],
+  ];
+  for (const [status, rpc, errorClass, cls, code] of cases) {
+    const f = fakeFetch([jsonResponse(status, { error: { code: status, message: 'Quota for the Testerton wedding', status: rpc } })]);
+    __setTestStub(sdkClientWith(f));
+    await assert.rejects(generateImage({ ...BASE_ARGS }), (err) => {
+      assert.ok(err instanceof cls, `${status} ${rpc}`);
+      assert.deepEqual(err.descriptor, { provider: 'gemini', errorClass, status, requestId: null, code });
+      assert.doesNotMatch(formatError(err.descriptor), /Testerton|Quota/);
+      return true;
+    });
+  }
+  // A string code in the body still wins over the rpc status.
+  const f = fakeFetch([jsonResponse(400, { error: { code: 'IMAGE_SAFETY', message: 'x', status: 'INVALID_ARGUMENT' } })]);
+  __setTestStub(sdkClientWith(f));
+  await assert.rejects(generateImage({ ...BASE_ARGS }), (err) => err instanceof GeminiRefusal && err.descriptor.code === 'image_safety');
+});
+
+test('real SDK: a spent balance cannot be told from a rate limit, so every RESOURCE_EXHAUSTED stays GeminiRateLimited (details included)', async () => {
+  // The SDK hands the body's details through untyped; Google's quota answer
+  // carries QuotaFailure, Help and RetryInfo, and nothing in it names billing.
+  const details = [
+    { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_requests_per_model', quotaId: 'GenerateRequestsPerDayPerProjectPerModel' }] },
+    { '@type': 'type.googleapis.com/google.rpc.Help', links: [{ description: 'Learn more about Gemini API quotas', url: 'https://ai.google.dev/gemini-api/docs/rate-limits' }] },
+    { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '12s' },
+  ];
+  const f = fakeFetch([jsonResponse(429, { error: { code: 429, message: 'You exceeded your current quota, please check your plan and billing details.', status: 'RESOURCE_EXHAUSTED', details } })]);
+  __setTestStub(sdkClientWith(f));
+  await assert.rejects(generateImage({ ...BASE_ARGS }), (err) => {
+    assert.ok(err instanceof GeminiRateLimited);
+    assert.equal(err.retryAfterSec, 12);
+    assert.equal(err.descriptor.code, 'resource_exhausted');
+    assert.doesNotMatch(`${err.message} ${formatError(err.descriptor)}`, /billing|exceeded/);
+    return true;
+  });
+  assert.equal(f.calls.length, 1);
+});
+
 test('real SDK: any other error rethrows as ExternalServiceError(gemini) whose Sentry payload is the descriptor only', async () => {
   const f = fakeFetch([new globalThis.Response('<html>bad gateway for the Testerton wedding</html>', { status: 502, headers: { 'content-type': 'text/html' } })]);
   __setTestStub(sdkClientWith(f));

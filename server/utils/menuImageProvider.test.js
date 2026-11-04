@@ -12,7 +12,7 @@ const openaiClient = require('./openaiClient');
 const geminiClient = require('./geminiClient');
 const { AppError, ExternalServiceError } = require('./errors');
 const {
-  drawImage, prepareReferences, MenuArtRefusal, MenuArtRateLimited, OPENAI_REFUSAL_REASON, REFERENCE_MAX_EDGE,
+  drawImage, prepareReferences, MenuArtRefusal, MenuArtRateLimited, MenuArtOutOfCredit, OPENAI_REFUSAL_REASON, REFERENCE_MAX_EDGE,
 } = require('./menuImageProvider');
 const { RESIZE_BYTE_LIMIT } = require('./r2Proxy');
 
@@ -321,6 +321,23 @@ test('rate limits from both providers normalize to MenuArtRateLimited, capped at
     assert.equal(err.descriptor.provider, 'gemini');
     return true;
   });
+});
+
+test('an empty OpenAI balance normalizes to MenuArtOutOfCredit, never MenuArtRateLimited, the code kept', async () => {
+  for (const [status, code] of [[429, 'credit_balance_exhausted'], [429, 'insufficient_quota'], [403, 'insufficient_quota']]) {
+    const empty = Object.assign(new Error('Your credit balance is too low'), {
+      status, code, headers: new globalThis.Headers({ 'retry-after': '5' }),
+    });
+    stubOpenAI(throwing(empty));
+    await assert.rejects(drawImage({ provider: 'openai', model: 'm', kind: 'drink', prompt: 'p' }), (err) => {
+      assert.ok(!(err instanceof MenuArtRateLimited), `${status} ${code}: not a rate limit`);
+      assert.ok(err instanceof MenuArtOutOfCredit, `${status} ${code}: out of credit`);
+      assert.equal(err.name, 'MenuArtOutOfCredit');
+      assert.deepEqual([err.descriptor.provider, err.descriptor.status, err.descriptor.code], ['openai', status, code]);
+      assert.doesNotMatch(err.message, /balance is too low/);
+      return true;
+    });
+  }
 });
 
 test('other errors pass through with their descriptor', async () => {

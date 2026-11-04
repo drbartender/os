@@ -11,14 +11,17 @@
 //   wrappers and menuImageProvider guarantee it).
 // - withRetries retries a 429 at most twice on the same (still sent)
 //   reservation, waiting Retry-After (at most 60 s, 20 s when none was sent)
-//   in steps of 10 s with a heartbeat after each.
+//   in steps of 10 s with a heartbeat after each. A spent balance
+//   (isOutOfCredit: OpenAIOutOfCredit, MenuArtOutOfCredit) is never retried;
+//   on the words step or on any piece it ends the run at once, so the run
+//   reports it to Sentry once (spec 2026-10-19 section 16).
 // - __setTestHooks swaps the wait, the Sentry call and a seam run before each
 //   piece is claimed; it refuses under NODE_ENV=production.
 
 const Sentry = require('@sentry/node');
 const { ExternalServiceError } = require('./errors');
-const { MenuArtRefusal, MenuArtRateLimited, retrySeconds } = require('./menuImageProvider');
-const { OpenAIRefusal, OpenAIRateLimited } = require('./openaiClient');
+const { MenuArtRefusal, MenuArtRateLimited, MenuArtOutOfCredit, retrySeconds } = require('./menuImageProvider');
+const { OpenAIRefusal, OpenAIRateLimited, OpenAIOutOfCredit } = require('./openaiClient');
 const { MenuWordsInvalid } = require('./menuArtPrompts');
 
 const MAX_RETRIES = 2;
@@ -29,6 +32,14 @@ const LABEL = new Map([['openai', 'OpenAI'], ['gemini', 'Gemini']]);
 const SENTENCES = Object.freeze({
   noDrinks: 'The drink plan has no drinks to put on the menu.',
   wordsBusy: 'OpenAI is busy right now. Try again in a minute.',
+  wordsOutOfCredit: "OpenAI is out of credit. Add credit in OpenAI's billing settings, then Generate again.",
+  // Update draft's words call (runWordsForDrinks): Generate on a live draft
+  // is Start over, so this one names Update draft.
+  syncWordsOutOfCredit: "OpenAI is out of credit. Add credit in OpenAI's billing settings, then try Update draft again.",
+  openaiOutOfCredit: "OpenAI is out of credit. Add credit in OpenAI's billing settings, then re-roll.",
+  // Gemini's spent balance reads as a rate limit (geminiClient.mapError), so
+  // a piece still refused after both retries says to check billing.
+  geminiStillRefusing: "Gemini is still refusing. If this keeps happening, check Gemini's billing.",
   wordsProvider: 'OpenAI could not write the menu words. Try again.',
   wordsFailed: 'The menu words could not be written. Try again.',
   notSetUp: 'Menu art is not set up.',
@@ -117,7 +128,11 @@ function pieceSentence(err, provider) {
   if (err instanceof MenuArtRefusal) {
     return typeof err.reason === 'string' && err.reason ? err.reason.slice(0, 300) : `${who} blocked this image.`;
   }
-  if (err instanceof MenuArtRateLimited) return `${who} is busy right now. Re-roll in a minute.`;
+  // Only OpenAI's spent balance is told apart (menuImageProvider).
+  if (err instanceof MenuArtOutOfCredit) return SENTENCES.openaiOutOfCredit;
+  if (err instanceof MenuArtRateLimited) {
+    return provider === 'gemini' ? SENTENCES.geminiStillRefusing : `${who} is busy right now. Re-roll in a minute.`;
+  }
   if (err && err.name === 'MenuArtImageUnprocessable') return SENTENCES.unprocessable;
   if (err && err.code === 'MENU_ART_GEMINI_NOT_CONFIGURED') return SENTENCES.geminiOff;
   if (err && err.code === 'MENU_ART_REFERENCE_UNREADABLE') return SENTENCES.referenceUnreadable;
@@ -125,8 +140,10 @@ function pieceSentence(err, provider) {
   return SENTENCES.drawFailed;
 }
 
-function wordsSentence(err) {
+// sync: the Update draft words call (runWordsForDrinks), not Generate's.
+function wordsSentence(err, { sync = false } = {}) {
   if (err instanceof MenuWordsInvalid || err instanceof OpenAIRefusal) return err.reason;
+  if (err instanceof OpenAIOutOfCredit) return sync ? SENTENCES.syncWordsOutOfCredit : SENTENCES.wordsOutOfCredit;
   if (err instanceof OpenAIRateLimited) return SENTENCES.wordsBusy;
   if (err && err.code === 'MENU_ART_NOT_CONFIGURED') return SENTENCES.notSetUp;
   if (err instanceof ExternalServiceError) return SENTENCES.wordsProvider;
@@ -155,13 +172,16 @@ async function waitBeating(seconds, beat) {
   return true;
 }
 
-// Any other error, or a third 429, is thrown. RunLost: lost during a wait.
+const isOutOfCredit = (err) => err instanceof OpenAIOutOfCredit || err instanceof MenuArtOutOfCredit;
+
+// Any other error, a spent balance whatever isLimited says, or a third 429,
+// is thrown. RunLost: lost during a wait.
 async function withRetries(call, isLimited, beat) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await call();
     } catch (err) {
-      if (!isLimited(err) || attempt >= MAX_RETRIES) throw err;
+      if (isOutOfCredit(err) || !isLimited(err) || attempt >= MAX_RETRIES) throw err;
       if (!(await waitBeating(retrySeconds(err.retryAfterSec), beat))) throw new RunLost(err);
     }
   }
@@ -172,6 +192,6 @@ const wordsLimited = (err) => err instanceof OpenAIRateLimited;
 
 module.exports = {
   SENTENCES, NOT_ATTEMPTED, SUPERSEDED, MAX_RETRIES, hooks, __setTestHooks,
-  describe, failedCall, report, safely, isRefusal, pieceSentence, wordsSentence,
+  describe, failedCall, report, safely, isRefusal, isOutOfCredit, pieceSentence, wordsSentence,
   RunLost, withRetries, imageLimited, wordsLimited,
 };

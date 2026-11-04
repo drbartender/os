@@ -28,6 +28,7 @@ const {
   WORDS_REFUSAL_REASON,
   OpenAIRefusal,
   OpenAIRateLimited,
+  OpenAIOutOfCredit,
   isConfigured,
   clientOptions,
   draftMenuCopy,
@@ -417,14 +418,109 @@ test('real SDK: a 429 becomes OpenAIRateLimited with Retry-After (default 20, ca
   }
 });
 
-test('real SDK: a 429 for an exhausted balance is not a rate limit; it rethrows as ExternalServiceError', async () => {
-  const f = fakeFetch([jsonResponse(429, { error: { message: 'You exceeded your current quota', type: 'insufficient_quota', code: 'insufficient_quota' } })]);
+test('real SDK: an empty balance (a 429 or 403 coded credit_balance_exhausted or insufficient_quota) is OpenAIOutOfCredit, never a rate limit, and is not retried', async () => {
+  const cases = [
+    [429, 'credit_balance_exhausted', 'RateLimitError'],
+    [429, 'insufficient_quota', 'RateLimitError'],
+    [403, 'insufficient_quota', 'PermissionDeniedError'],
+    [403, 'credit_balance_exhausted', 'PermissionDeniedError'],
+  ];
+  for (const [status, code, errorClass] of cases) {
+    const body = { error: { message: 'You exceeded your current quota for the Testerton wedding', type: code, code } };
+    const f = fakeFetch([jsonResponse(status, body, { 'x-request-id': 'req_credit', 'retry-after': '5' })]);
+    __setTestStub(sdkClientWith(f));
+    await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+      assert.ok(!(err instanceof OpenAIRateLimited), `${status} ${code}: an empty balance is not a rate limit`);
+      assert.ok(err instanceof OpenAIOutOfCredit, `${status} ${code}: out of credit`);
+      assert.equal(err.name, 'OpenAIOutOfCredit');
+      assert.deepEqual(err.descriptor, { provider: 'openai', errorClass, status, requestId: 'req_credit', code });
+      assert.equal('retryAfterSec' in err, false, 'nothing to wait for');
+      assert.doesNotMatch(`${err.message} ${formatError(err.descriptor)}`, /Testerton|exceeded/);
+      return true;
+    });
+    assert.equal(f.calls.length, 1, 'maxRetries 0 means one request');
+  }
+});
+
+test('real SDK: a plain 429 (no code, or a rate-limit code) is still OpenAIRateLimited; a 403 with another code is still ExternalServiceError', async () => {
+  for (const body of [{ error: { message: 'slow down', type: 'requests' } }, { error: { message: 'slow down', type: 'tokens', code: 'rate_limit_exceeded' } }]) {
+    const f = fakeFetch([jsonResponse(429, body, { 'retry-after': '4' })]);
+    __setTestStub(sdkClientWith(f));
+    await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+      assert.ok(err instanceof OpenAIRateLimited);
+      assert.equal(err.retryAfterSec, 4);
+      return true;
+    });
+  }
+  const f = fakeFetch([jsonResponse(403, { error: { message: 'Project does not have access', type: 'invalid_request_error', code: 'model_not_found' } })]);
   __setTestStub(sdkClientWith(f));
   await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
     assert.ok(err instanceof ExternalServiceError);
-    assert.equal(err.descriptor.code, 'insufficient_quota');
+    assert.ok(!(err instanceof OpenAIOutOfCredit));
+    assert.equal(err.descriptor.code, 'model_not_found');
     return true;
   });
+});
+
+test('real SDK: billing_hard_limit_reached is OpenAIOutOfCredit at any status (a 400 on the image endpoints); a 400 with another code is not', async () => {
+  for (const status of [400, 429]) {
+    const body = { error: { message: 'Billing hard limit has been reached', type: 'image_generation_user_error', param: null, code: 'billing_hard_limit_reached' } };
+    const f = fakeFetch([jsonResponse(status, body, { 'x-request-id': 'req_hard' })]);
+    __setTestStub(sdkClientWith(f));
+    await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+      assert.ok(err instanceof OpenAIOutOfCredit, `${status} billing_hard_limit_reached: out of credit`);
+      assert.equal(err.descriptor.code, 'billing_hard_limit_reached');
+      assert.equal(err.descriptor.status, status);
+      assert.equal(err.descriptor.requestId, 'req_hard');
+      return true;
+    });
+    assert.equal(f.calls.length, 1);
+  }
+  const f = fakeFetch([jsonResponse(400, { error: { message: 'Invalid size', type: 'invalid_request_error', code: 'invalid_value' } })]);
+  __setTestStub(sdkClientWith(f));
+  await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+    assert.ok(err instanceof ExternalServiceError);
+    assert.ok(!(err instanceof OpenAIOutOfCredit));
+    assert.equal(err.descriptor.code, 'invalid_value');
+    return true;
+  });
+});
+
+test('real SDK: the spend and usage limit codes the SDK documents are OpenAIOutOfCredit at 429 and at 400; rate_limit_exceeded is still a rate limit', async () => {
+  // openai resources/beta/agents/agents.d.ts, SessionTurnError.code.
+  const codes = ['billing_not_active', 'project_spend_limit_exceeded', 'organization_spend_limit_exceeded',
+    'usage_limit_exceeded', 'organization_usage_limit_exceeded'];
+  for (const code of codes) {
+    for (const status of [429, 400]) {
+      const f = fakeFetch([jsonResponse(status, { error: { message: 'limit reached', type: 'requests', code } }, { 'x-request-id': 'req_limit', 'retry-after': '5' })]);
+      __setTestStub(sdkClientWith(f));
+      await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+        assert.ok(err instanceof OpenAIOutOfCredit, `${status} ${code}: out of credit`);
+        assert.deepEqual([err.descriptor.status, err.descriptor.code, err.descriptor.requestId], [status, code, 'req_limit']);
+        return true;
+      });
+      assert.equal(f.calls.length, 1);
+    }
+  }
+  const f = fakeFetch([jsonResponse(429, { error: { message: 'slow down', type: 'requests', code: 'rate_limit_exceeded' } }, { 'retry-after': '6' })]);
+  __setTestStub(sdkClientWith(f));
+  await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+    assert.ok(err instanceof OpenAIRateLimited);
+    assert.ok(!(err instanceof OpenAIOutOfCredit));
+    assert.equal(err.retryAfterSec, 6);
+    return true;
+  });
+});
+
+test('real SDK: the words call on an empty balance is OpenAIOutOfCredit too', async () => {
+  const f = fakeFetch([jsonResponse(429, { error: { message: 'Your credit balance is too low', type: 'insufficient_quota', code: 'credit_balance_exhausted' } })]);
+  __setTestStub(sdkClientWith(f));
+  await assert.rejects(draftMenuCopy({ system: 's', user: 'u', schema: SCHEMA, model: 'm' }), (err) => {
+    assert.ok(err instanceof OpenAIOutOfCredit);
+    assert.equal(err.descriptor.code, 'credit_balance_exhausted');
+    return true;
+  });
+  assert.equal(f.calls.length, 1);
 });
 
 test('real SDK: a moderation block becomes OpenAIRefusal with the moderation text as its reason', async () => {

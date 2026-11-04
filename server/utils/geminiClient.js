@@ -138,7 +138,18 @@ function errorCode(err) {
   return env && typeof env.code === 'string' ? env.code : null;
 }
 
-/** The sanitized descriptor of any failure; errors thrown here already carry it. */
+// The envelope's google.rpc status name ("RESOURCE_EXHAUSTED"), uppercased.
+function rpcStatus(err) {
+  const env = errorEnvelope(err);
+  return env && typeof env.status === 'string' ? env.status.toUpperCase() : null;
+}
+
+/**
+ * The sanitized descriptor of any failure; errors thrown here already carry
+ * it. A body with no string code keeps its rpc status as the code
+ * ('resource_exhausted'), so the ledger and Sentry see it in the same five
+ * keys (spec 2026-10-19 section 16).
+ */
 function describeError(err) {
   if (err && err.descriptor && err.descriptor.provider === 'gemini') return err.descriptor;
   let errorClass = 'UnknownError';
@@ -147,7 +158,7 @@ function describeError(err) {
   else if (err instanceof RangeError) errorClass = 'RangeError';
   return descriptor(errorClass, {
     status: err && Number.isInteger(err.status) ? err.status : null,
-    code: codeSegment(errorCode(err)),
+    code: codeSegment(errorCode(err)) || codeSegment(rpcStatus(err)),
   });
 }
 
@@ -191,12 +202,14 @@ function retryAfterSeconds(err) {
 
 // A thrown SDK error becomes GeminiRateLimited (a 429 or RESOURCE_EXHAUSTED),
 // GeminiRefusal (a code REFUSAL_RULES reads) or ExternalServiceError('gemini').
+// A spent prepaid balance is not told apart from a rate limit: the SDK hands
+// the body's details through untyped, and nothing known in them names billing
+// (spec 2026-10-19 section 16), so it is retried like one and the job's last
+// sentence points at billing instead.
 function mapError(err) {
   if (err instanceof GeminiRefusal || err instanceof GeminiRateLimited || err instanceof AppError) return err;
   const d = describeError(err);
-  const env = errorEnvelope(err);
-  const rpcStatus = env && typeof env.status === 'string' ? env.status.toUpperCase() : null;
-  if (d.status === 429 || rpcStatus === 'RESOURCE_EXHAUSTED') return new GeminiRateLimited(retryAfterSeconds(err), d);
+  if (d.status === 429 || rpcStatus(err) === 'RESOURCE_EXHAUSTED') return new GeminiRateLimited(retryAfterSeconds(err), d);
   const reason = refusalReason(d.code);
   return reason ? new GeminiRefusal(reason, d) : externalError(d);
 }

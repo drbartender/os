@@ -35,6 +35,19 @@ const WORDS_REFUSAL_REASON = 'OpenAI declined to write this menu. Try different 
 // What the safety system answers with when it blocks an image
 // (moderation_blocked on the GPT image models; the other two on older paths).
 const REFUSAL_CODES = new Set(['moderation_blocked', 'content_policy_violation', 'image_content_policy_violation']);
+// What OpenAI answers with, on a 429 or a 403, when the balance is spent:
+// insufficient_quota, or credit_balance_exhausted (this account's answer,
+// Sentry DRBARTENDER-SERVER-2T, 2026-10-30).
+const OUT_OF_CREDIT_CODES = new Set(['insufficient_quota', 'credit_balance_exhausted']);
+const OUT_OF_CREDIT_STATUSES = new Set([429, 403]);
+// Billing and spend or usage limits, read as out of credit at any status:
+// the billing hard limit (a 400 on the image endpoints) and the limit codes
+// the SDK documents beside credit_balance_exhausted (SessionTurnError.code,
+// openai resources/beta/agents/agents.d.ts). rate_limit_exceeded is not one.
+const OUT_OF_CREDIT_ANY_STATUS = new Set([
+  'billing_hard_limit_reached', 'billing_not_active', 'project_spend_limit_exceeded',
+  'organization_spend_limit_exceeded', 'usage_limit_exceeded', 'organization_usage_limit_exceeded',
+]);
 
 class OpenAIRefusal extends Error {
   constructor(reason, descriptor) {
@@ -47,6 +60,15 @@ class OpenAIRateLimited extends Error {
   constructor(retryAfterSec, descriptor) {
     super('OpenAI rate limit reached.');
     Object.assign(this, { name: 'OpenAIRateLimited', retryAfterSec, descriptor });
+  }
+}
+
+// The account's balance is spent: waiting cannot help, so it carries no
+// retryAfterSec and the job never retries it.
+class OpenAIOutOfCredit extends Error {
+  constructor(descriptor) {
+    super('OpenAI is out of credit.');
+    Object.assign(this, { name: 'OpenAIOutOfCredit', descriptor });
   }
 }
 
@@ -178,14 +200,19 @@ function readableReason(text) {
   return oneLine.length > REASON_MAX_CHARS ? `${oneLine.slice(0, REASON_MAX_CHARS - 3)}...` : oneLine;
 }
 
-// A thrown SDK error becomes OpenAIRateLimited (a 429 that is a rate limit,
-// not an exhausted balance), OpenAIRefusal (a moderation block: on an image
-// call the reason is the API's own message, on the words call the fixed
+// A thrown SDK error becomes OpenAIOutOfCredit (a 429 or 403 coded as a
+// spent balance, or a billing, spend or usage limit at any status),
+// OpenAIRateLimited (any other 429), OpenAIRefusal (a moderation block: on an
+// image call the reason is the API's own message, on the words call the fixed
 // WORDS_REFUSAL_REASON) or ExternalServiceError('openai').
 function mapError(err, { words = false } = {}) {
-  if (err instanceof OpenAIRefusal || err instanceof OpenAIRateLimited || err instanceof AppError) return err;
+  if (err instanceof OpenAIRefusal || err instanceof OpenAIRateLimited || err instanceof OpenAIOutOfCredit
+    || err instanceof AppError) return err;
   const d = describeError(err);
-  if (d.status === 429 && d.code !== 'insufficient_quota') return new OpenAIRateLimited(retryAfterSeconds(err.headers), d);
+  if (OUT_OF_CREDIT_ANY_STATUS.has(d.code) || (OUT_OF_CREDIT_STATUSES.has(d.status) && OUT_OF_CREDIT_CODES.has(d.code))) {
+    return new OpenAIOutOfCredit(d);
+  }
+  if (d.status === 429) return new OpenAIRateLimited(retryAfterSeconds(err.headers), d);
   if (d.code && REFUSAL_CODES.has(d.code)) {
     if (words) return new OpenAIRefusal(WORDS_REFUSAL_REASON, d);
     const body = err && err.error && typeof err.error === 'object' ? err.error : {};
@@ -307,7 +334,7 @@ function _resetForTest() {
 
 module.exports = {
   OPENAI_API_BASE_URL, TEXT_TIMEOUT_MS, IMAGE_TIMEOUT_DEFAULT_MS, SDK_ERROR_CLASSES, WORDS_REFUSAL_REASON,
-  OpenAIRefusal, OpenAIRateLimited,
+  OpenAIRefusal, OpenAIRateLimited, OpenAIOutOfCredit,
   isConfigured, clientOptions, draftMenuCopy, generateImage, editImage, describeError, formatError,
   __setTestStub, _getClientForTest, _resetForTest,
 };

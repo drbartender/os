@@ -27,7 +27,9 @@
 // runPieceReroll({ draftId, pieceKey, pieceRunId, proposalId })
 //   One piece: a re-roll, or a drink Update draft added (queue several one
 //   after another, not side by side). A drink sends the CURRENT background,
-//   when done, as its style reference. Never throws.
+//   when done, as its style reference. A spent balance ends the whole piece
+//   run, so the drinks of one Update draft queued after it call nothing.
+//   Never throws.
 // runWordsForDrinks({ normalizedDrinks, brief, eventTypeLabel, reservationId, draftId, runId, model })
 //   Update draft's words; see menuArtJobWords.js for the reservation contract.
 // textModelId(): the words model the routes stamp on reserveText.
@@ -38,7 +40,10 @@
 // The end of every run (finally): each pending or working piece of the run
 // fails "not attempted: <cause>" (conditional on the run), the run's own
 // reservations settle by their own status (reserved -> released, sent ->
-// failed), and an unexpected error goes to Sentry as its descriptor only.
+// failed), and an unexpected error goes to Sentry as its descriptor only. A
+// piece whose provider says the balance is spent (MenuArtOutOfCredit) ends
+// the run the same way, once: no further piece is drawn (spec 2026-10-19
+// section 16).
 
 const geminiClient = require('./geminiClient');
 const storage = require('./storage');
@@ -75,12 +80,16 @@ function preflight(ctx, piece, resId) {
 }
 
 // The provider call failed (or was lost during a 429 wait): the reservation
-// was sent, so it is marked failed and keeps counting.
+// was sent, so it is marked failed and keeps counting. A spent balance keeps
+// its sentence on this piece and is rethrown, so the run stops on it the way
+// it stops on any thrown error: its catch reports it once and the finally
+// fails the rest "not attempted" and releases their unsent reservations.
 async function failCall(ctx, key, resId, err, provider, step) {
   const d = E.describe(err, provider);
   await markCall(resId, 'failed', E.failedCall(d));
   if (err instanceof E.RunLost) return { status: await S.lost(ctx) };
   await S.failPiece(ctx, key, E.pieceSentence(err, provider));
+  if (E.isOutOfCredit(err)) throw err;
   if (!E.isRefusal(err)) E.report(step, d);
   return { status: 'failed' };
 }
@@ -241,6 +250,7 @@ async function runGeneration({ draftId, runId, proposalId } = {}) {
 async function runPieceReroll({ draftId, pieceKey, pieceRunId, proposalId } = {}) {
   const ctx = newContext(draftId, proposalId, pieceRunId, null);
   let cause = E.NOT_ATTEMPTED.ended;
+  let wholeRun = false;
   const step = pieceKey === 'background' ? 'background' : 'drinks';
   try {
     const held = await S.findReservations(pieceRunId);
@@ -270,12 +280,16 @@ async function runPieceReroll({ draftId, pieceKey, pieceRunId, proposalId } = {}
     }
   } catch (err) {
     cause = E.NOT_ATTEMPTED.error;
+    wholeRun = E.isOutOfCredit(err);
     E.report(step, E.describe(err));
   } finally {
     // Only this piece: siblings sharing an Update draft run sweep themselves.
-    // A missing key sweeps nothing ('' matches no piece).
-    await E.safely('sweep', () => S.sweep(ctx, cause, typeof pieceKey === 'string' ? pieceKey : ''));
-    await E.safely('settle', () => settleRun({ runId: pieceRunId, pieceKeys: [pieceKey] }));
+    // A missing key sweeps nothing ('' matches no piece). A spent balance
+    // sweeps the whole piece run and releases its unsent reservations, so a
+    // sibling queued after this one finds nothing to claim and calls nothing.
+    const only = typeof pieceKey === 'string' ? pieceKey : '';
+    await E.safely('sweep', () => S.sweep(ctx, cause, wholeRun ? null : only));
+    await E.safely('settle', () => settleRun({ runId: pieceRunId, pieceKeys: wholeRun ? null : [pieceKey] }));
   }
 }
 

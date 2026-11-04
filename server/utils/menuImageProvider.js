@@ -19,12 +19,15 @@
 //     1024x1024 when needed), PNG with real alpha.
 //   size is what the provider was asked for ('2560x3200', '4:5 4K').
 //
-// Errors fold into two shapes so the job handles one of each:
+// Errors fold into three shapes so the job handles one of each:
 // - MenuArtRefusal (.reason, a fixed readable sentence, never provider text;
 //   .descriptor, the sanitized descriptor for Sentry) for OpenAIRefusal,
 //   GeminiRefusal and MenuKeyOutFailed;
 // - MenuArtRateLimited (.retryAfterSec, at most 60, 20 when none was sent;
-//   .descriptor) for both providers' rate limits.
+//   .descriptor) for both providers' rate limits;
+// - MenuArtOutOfCredit (.descriptor) for OpenAIOutOfCredit, a spent balance,
+//   which the job never retries (spec 2026-10-19 section 16; Gemini cannot
+//   tell one apart, so its spent balance reads as a rate limit).
 // Anything else passes through. A failure after the provider answered (the
 // image could not be processed) carries a descriptor with the request id.
 // Gemini without GEMINI_API_KEY throws AppError 503
@@ -71,6 +74,13 @@ class MenuArtRateLimited extends Error {
   }
 }
 
+class MenuArtOutOfCredit extends Error {
+  constructor(descriptor) {
+    super('The image provider is out of credit.');
+    Object.assign(this, { name: 'MenuArtOutOfCredit', descriptor: descriptor || null });
+  }
+}
+
 const descriptor = (provider, errorClass, requestId = null, code = null) => ({ provider, errorClass, status: null, requestId, code });
 
 let warnedSize = false;
@@ -104,6 +114,7 @@ function normalizeError(err) {
     const reason = typeof err.reason === 'string' && err.reason && err.reason.length <= 200 ? err.reason : GEMINI_REFUSAL_FALLBACK;
     return new MenuArtRefusal(reason, err.descriptor);
   }
+  if (err instanceof openaiClient.OpenAIOutOfCredit) return new MenuArtOutOfCredit(err.descriptor);
   if (err instanceof openaiClient.OpenAIRateLimited || err instanceof geminiClient.GeminiRateLimited) {
     return new MenuArtRateLimited(retrySeconds(err.retryAfterSec), err.descriptor);
   }
@@ -244,6 +255,6 @@ async function drawImage({ provider, model, kind, prompt, references = [] } = {}
 }
 
 module.exports = {
-  drawImage, prepareReferences, retrySeconds, MenuArtRefusal, MenuArtRateLimited,
+  drawImage, prepareReferences, retrySeconds, MenuArtRefusal, MenuArtRateLimited, MenuArtOutOfCredit,
   BACKGROUND_SIZE_DEFAULT, OPENAI_REFUSAL_REASON, REFERENCE_MAX_EDGE,
 };

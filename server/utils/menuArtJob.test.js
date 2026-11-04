@@ -246,6 +246,14 @@ const httpError = (status, extra = {}) => Object.assign(new Error(`provider said
 const rateLimited = (retryAfter) => httpError(429, {
   headers: new globalThis.Headers(retryAfter ? { 'retry-after': String(retryAfter) } : {}),
 });
+// An empty balance as OpenAI answers it (spec 16): a 429 or 403 whose code is
+// credit_balance_exhausted or insufficient_quota, with a Retry-After that must
+// not be honored.
+const outOfCredit = (status, code) => httpError(status, { code, headers: new globalThis.Headers({ 'retry-after': '3' }) });
+const WORDS_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then Generate again.";
+const SYNC_WORDS_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then try Update draft again.";
+const PIECE_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then re-roll.";
+const GEMINI_STILL_REFUSING = "Gemini is still refusing. If this keeps happening, check Gemini's billing.";
 const imageCount = (body) => (Array.isArray(body.image) ? body.image.length : body.image ? 1 : 0);
 const openaiCallsFor = (kind) => calls.openai.filter((c) => (c.body.size === '1024x1024') === (kind === 'drink'));
 
@@ -629,6 +637,78 @@ test('a third 429 fails the piece after two retries; the reservation ends failed
   await assertSettled(g.runId);
 });
 
+test('words on an empty OpenAI balance: the out-of-credit sentence, no retry, every piece not attempted, one Sentry event', async () => {
+  stubOpenAI({ words: () => { throw outOfCredit(429, 'credit_balance_exhausted'); } });
+  const g = await generate();
+  await run(g);
+  assert.deepEqual(sleeps, [], 'never retried: the wait is never entered');
+  assert.equal(calls.words.length, 1);
+  const draft = await draftRow();
+  assert.deepEqual([draft.content.words_status, draft.content.words_error], ['failed', WORDS_OUT_OF_CREDIT]);
+  assert.equal(SENTENCES.wordsOutOfCredit, WORDS_OUT_OF_CREDIT);
+  const pieces = await pieceMap();
+  for (const key of g.keys) assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', NOT_ATTEMPTED.words], key);
+  assert.equal(calls.openai.length, 0);
+  const rows = await ledger(g.runId);
+  const text = rows.find((r) => r.kind === 'text');
+  assert.equal(text.status, 'failed');
+  assert.equal(JSON.parse(text.error).code, 'credit_balance_exhausted');
+  assert.ok(!text.error.includes(SECRET), 'never the provider text');
+  assert.ok(rows.filter((r) => r.kind === 'image').every((r) => r.status === 'released'));
+  assert.equal(captured.length, 1, 'one Sentry event for the run');
+  assert.deepEqual(captured[0].context.tags, { area: 'menuArt', step: 'words' });
+  assert.equal(captured[0].context.extra.descriptor.code, 'credit_balance_exhausted');
+  assert.ok(!captured[0].err.message.includes(SECRET), 'Sentry gets the descriptor only');
+});
+
+test('an image on an empty OpenAI balance stops the run: no further call, the rest not attempted and released, one Sentry event', async () => {
+  // Call 1 is the background, call 2 the first drink.
+  stubOpenAI({ image: ({ n }) => { if (n === 2) throw outOfCredit(429, 'insufficient_quota'); return null; } });
+  const g = await generate({ drinks: 3 });
+  await run(g);
+  assert.equal(calls.openai.length, 2, 'no image call after the empty balance');
+  assert.deepEqual(sleeps, [], 'never retried');
+  const draft = await draftRow();
+  assert.equal(draft.content.words_status, 'done', 'the words are kept');
+  const pieces = await pieceMap();
+  assert.equal(pieces.background.status, 'done');
+  assert.deepEqual([pieces[KEYS[0]].status, pieces[KEYS[0]].error], ['failed', PIECE_OUT_OF_CREDIT]);
+  assert.equal(SENTENCES.openaiOutOfCredit, PIECE_OUT_OF_CREDIT);
+  for (const key of [KEYS[1], KEYS[2]]) {
+    assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', NOT_ATTEMPTED.error], key);
+  }
+  const rows = byKey(await ledger(g.runId));
+  assert.equal(rows.background.status, 'ok');
+  assert.equal(rows[KEYS[0]].status, 'failed', 'it was sent');
+  assert.equal(JSON.parse(rows[KEYS[0]].error).code, 'insufficient_quota');
+  assert.deepEqual([rows[KEYS[1]].status, rows[KEYS[2]].status], ['released', 'released'], 'never sent, so the cap is not spent');
+  assert.equal(captured.length, 1, 'one Sentry event for the run');
+  assert.deepEqual(captured[0].context.tags, { area: 'menuArt', step: 'drinks' });
+  assert.equal(captured[0].context.extra.descriptor.code, 'insufficient_quota');
+  assert.ok(!captured[0].err.message.includes(SECRET), 'Sentry gets the descriptor only');
+  await assertSettled(g.runId);
+});
+
+test('a re-roll on an empty OpenAI balance, background or drink: the piece sentence, one call, no retry, one Sentry event', async () => {
+  const g = await generate();
+  await run(g);
+  for (const key of ['background', KEYS[0]]) {
+    captured.length = 0;
+    sleeps.length = 0;
+    calls.openai.length = 0;
+    stubOpenAI({ image: () => { throw outOfCredit(403, 'insufficient_quota'); } });
+    const pieceRun = await reroll(key, { provider: 'openai' });
+    const pieces = await pieceMap();
+    assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', PIECE_OUT_OF_CREDIT], key);
+    assert.equal(calls.openai.length, 1, `${key}: one call`);
+    assert.deepEqual(sleeps, [], `${key}: never retried`);
+    assert.deepEqual((await ledger(pieceRun)).map((r) => r.status), ['failed'], `${key}: sent, so failed`);
+    assert.equal(captured.length, 1, `${key}: one Sentry event`);
+    assert.equal(captured[0].context.tags.step, key === 'background' ? 'background' : 'drinks');
+    assert.ok(!captured[0].err.message.includes(SECRET));
+  }
+});
+
 test('a 500 fails its drink without a retry, and a refusal stores its fixed reason, never provider text', async () => {
   stubOpenAI({
     image: ({ kind, body }) => {
@@ -892,6 +972,55 @@ test('a mixed run: the background by OpenAI, a drink re-rolled by Gemini against
   assert.equal((await draftRow()).art_version, 4);
 });
 
+test('Update draft drinks sharing one piece run on an empty OpenAI balance: one call, the rest not attempted and released, one Sentry event', async () => {
+  const g = await generate({ drinks: 3 });
+  await run(g);
+  for (const list of [calls.openai, captured, sleeps]) list.length = 0;
+  stubOpenAI({ image: () => { throw outOfCredit(429, 'credit_balance_exhausted'); } });
+  // menuDraftSync queues its added drinks under one piece run and runs them
+  // one after another, each through runPieceReroll.
+  const pieceRun = await stageReroll(KEYS, { provider: 'openai' });
+  for (const key of KEYS) await runReroll(key, pieceRun);
+  assert.equal(calls.openai.length, 1, 'no call after the empty balance');
+  assert.deepEqual(sleeps, []);
+  const pieces = await pieceMap();
+  assert.deepEqual([pieces[KEYS[0]].status, pieces[KEYS[0]].error], ['failed', PIECE_OUT_OF_CREDIT]);
+  for (const key of [KEYS[1], KEYS[2]]) {
+    assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', NOT_ATTEMPTED.error], key);
+  }
+  assert.equal(pieces.background.status, 'done', 'a piece outside the run is untouched');
+  const rows = byKey(await ledger(pieceRun));
+  assert.equal(rows[KEYS[0]].status, 'failed', 'it was sent');
+  assert.deepEqual([rows[KEYS[1]].status, rows[KEYS[2]].status], ['released', 'released'], 'never sent, so the cap is not spent');
+  assert.equal(captured.length, 1, 'one Sentry event for the run');
+  assert.equal(captured[0].context.extra.descriptor.code, 'credit_balance_exhausted');
+});
+
+test('a Gemini piece refused a third time (RESOURCE_EXHAUSTED) fails with the still-refusing sentence after two retries', async () => {
+  const g = await generate();
+  await run(g);
+  captured.length = 0;
+  sleeps.length = 0;
+  stubGemini(() => {
+    throw httpError(429, { error: { error: {
+      code: 429, message: SECRET, status: 'RESOURCE_EXHAUSTED',
+      details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '1s' }],
+    } } });
+  });
+  const pieceRun = await reroll(KEYS[0], { provider: 'gemini' });
+  assert.equal(calls.gemini.length, 3, 'two retries, as for any rate limit');
+  assert.deepEqual(sleeps, [1000, 1000]);
+  const pieces = await pieceMap();
+  assert.deepEqual([pieces[KEYS[0]].status, pieces[KEYS[0]].error], ['failed', GEMINI_STILL_REFUSING]);
+  assert.equal(SENTENCES.geminiStillRefusing, GEMINI_STILL_REFUSING);
+  const [row] = await ledger(pieceRun);
+  assert.equal(row.status, 'failed');
+  assert.deepEqual([JSON.parse(row.error).provider, JSON.parse(row.error).status, JSON.parse(row.error).code], ['gemini', 429, 'resource_exhausted']);
+  assert.ok(!row.error.includes(SECRET));
+  assert.equal(captured.length, 1);
+  assert.ok(!captured[0].err.message.includes(SECRET));
+});
+
 test('a background re-roll carries its note, bumps drawn_count and art_version, and leaves the drinks alone', async () => {
   const g = await generate();
   await run(g);
@@ -1027,6 +1156,32 @@ test('runWordsForDrinks: a superseded run is a 409 with no call and the row rele
     return true;
   });
   assert.equal((await ledger(g.runId)).find((r) => r.id === live).status, 'failed');
+});
+
+test('runWordsForDrinks: an empty OpenAI balance throws the Update draft out-of-credit sentence at once, with no retry', async () => {
+  const g = await generate();
+  await run(g);
+  const normalized = normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps());
+  calls.words.length = 0;
+  captured.length = 0;
+  stubOpenAI({ words: () => { throw outOfCredit(429, 'credit_balance_exhausted'); } });
+  const reservationId = await inTx((client) => cap.reserveText(client, { proposalId, runId: g.runId, model: TEXT_MODEL }));
+  await assert.rejects(job.runWordsForDrinks({
+    normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party',
+    reservationId, draftId, runId: g.runId,
+  }), (err) => {
+    assert.equal(err.statusCode, 502);
+    assert.equal(err.code, 'MENU_WORDS_FAILED');
+    assert.equal(err.message, SYNC_WORDS_OUT_OF_CREDIT, 'Update draft, not Generate (Start over)');
+    assert.equal(SENTENCES.syncWordsOutOfCredit, SYNC_WORDS_OUT_OF_CREDIT);
+    assert.equal(err.descriptor.code, 'credit_balance_exhausted');
+    assert.ok(!JSON.stringify(err.descriptor).includes(SECRET));
+    return true;
+  });
+  assert.equal(calls.words.length, 1);
+  assert.deepEqual(sleeps, []);
+  assert.equal((await ledger(g.runId)).find((r) => r.id === reservationId).status, 'failed');
+  assert.deepEqual(captured.map((c) => c.context.tags.step), ['sync_words']);
 });
 
 test('runWordsForDrinks: a 429 retries on the same row; a Start over during the wait is a 409 with no retried call', async () => {
