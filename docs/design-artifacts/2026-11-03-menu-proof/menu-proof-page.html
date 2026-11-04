@@ -1,0 +1,209 @@
+<title>Client Menu Proof</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&family=Pirata+One&family=Alegreya+Sans:wght@400;500;700&display=swap">
+<style>
+  /* Layout: a short intro, then four phone screens in the order the client meets them, wrapping to one column on a phone. */
+  :root {
+    --bg: #e4e7ea;
+    --fg: #1d2329;
+    --muted: #55606b;
+    --label: #8a6a2e;
+    --font-ui: 'Alegreya Sans', 'Segoe UI', Helvetica, Arial, sans-serif;
+    --font-display: 'IM Fell English SC', Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #0d1014; --fg: #e6e1d6; --muted: #a49d90; --label: #d6ae65; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #0d1014; --fg: #e6e1d6; --muted: #a49d90; --label: #d6ae65; color-scheme: dark; }
+
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 16px; line-height: 1.5; }
+  .wrap { max-width: 1340px; margin: 0 auto; padding-block: 32px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1.page { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.15; margin: 0 0 10px; text-wrap: balance; }
+  .lede { max-width: 70ch; color: var(--muted); margin: 0 0 28px; }
+  .row { display: flex; flex-wrap: wrap; gap: 28px; justify-content: flex-start; align-items: flex-start; }
+  .screen { display: flex; flex-direction: column; gap: 10px; width: 300px; max-width: 100%; }
+  .screen .cap { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+  .screen .what { font-size: 14px; color: var(--muted); margin: 0; }
+
+  /* The phone and the page inside it: the client-facing palette, fixed on purpose (paper, deep brown, teal, brass). */
+  .phone { width: 300px; max-width: 100%; border-radius: 28px; background: #1b1f24; padding: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
+  .scr { border-radius: 20px; background: #EDE6D6; color: #1C1610; overflow: hidden; min-height: 560px; font-family: 'IM Fell English', Georgia, serif; }
+  .pg { padding: 22px 18px 24px; display: flex; flex-direction: column; gap: 12px; }
+  .kicker { font-family: 'IM Fell English SC', Georgia, serif; font-size: 11px; letter-spacing: .22em; color: #8a6a2e; text-align: center; margin: 0; }
+  .pg h2 { font-family: 'IM Fell English SC', Georgia, serif; font-weight: 400; font-size: 24px; line-height: 1.15; text-align: center; margin: 0; }
+  .pg p { margin: 0; font-size: 14.5px; line-height: 1.45; }
+  .pg .center { text-align: center; }
+  .pg .small { font-size: 12.5px; color: #5A5048; text-align: center; }
+  .btn { display: block; width: 100%; border-radius: 6px; padding: 11px 12px; font-family: 'IM Fell English SC', Georgia, serif; font-size: 15px; letter-spacing: .06em; text-align: center; border: 1px solid #1D8C89; }
+  .btn.primary { background: #1D8C89; color: #F0E8D6; }
+  .btn.secondary { background: transparent; color: #134544; }
+  .ta { border: 1px solid #b9ae98; background: #f7f2e7; border-radius: 6px; padding: 9px 10px; font-size: 14px; min-height: 76px; color: #1C1610; font-family: 'IM Fell English', Georgia, serif; }
+  .ta .ph { color: #8b8070; }
+  .count { font-family: var(--font-ui); font-size: 11.5px; color: #5A5048; text-align: right; margin-top: -6px; }
+  .note-ro { border-left: 2px solid #B8924A; padding: 6px 10px; background: #e6ddcc; font-style: italic; font-size: 13.5px; }
+
+  /* The proof: the menu scaled down, with the light PROOF band drawn under it. */
+  .proof { margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,.22); border-radius: 2px; overflow: hidden; }
+  .proof .band { background: #fbf8f3; border-top: 1px solid #d8d2c6; color: #6b665e; font-family: var(--font-ui); font-weight: 700; font-size: 9px; letter-spacing: .08em; text-align: center; padding: 5px 0; }
+  .fit { position: relative; overflow: hidden; }
+  .fit .hc { position: absolute; top: 0; left: 0; transform-origin: top left; }
+  .fit.w256 { width: 256px; height: 320px; } .fit.w256 .hc { transform: scale(.9143); }
+  .fit.w180 { width: 180px; height: 225px; } .fit.w180 .hc { transform: scale(.6429); }
+
+  .hc { width: 280px; height: 350px; background: #12161C; position: relative; overflow: hidden; font-family: 'IM Fell English', Georgia, serif; color: #F0E8D6; }
+  .hc .frame { position: absolute; inset: 12px; border: 1px solid #B8924A; }
+  .hc .inner { position: absolute; inset: 18px; border: 1px solid rgba(184,146,74,.4); }
+  .hc svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .hc .content { position: absolute; left: 0; right: 0; top: 60px; text-align: center; }
+  .hc .title { font-family: 'Pirata One', Georgia, serif; font-size: 36px; color: #D6AE65; line-height: 1; }
+  .hc .sub { font-family: 'IM Fell English SC', Georgia, serif; font-size: 10px; letter-spacing: .22em; color: #B8924A; margin-top: 6px; }
+  .hc .orn { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px auto 12px; width: 150px; }
+  .hc .orn .l { flex: 1; height: 1px; background: #B8924A; }
+  .hc .orn .d { width: 6px; height: 6px; background: #D6AE65; transform: rotate(45deg); }
+  .hc .drink { margin: 0 0 12px; }
+  .hc .name { font-family: 'IM Fell English SC', Georgia, serif; font-size: 14px; letter-spacing: .08em; color: #F0E8D6; }
+  .hc .desc { font-size: 10.5px; font-style: italic; color: rgba(240,232,214,.72); margin-top: 2px; }
+  .hc .mark { position: absolute; left: 0; right: 0; bottom: 26px; text-align: center; font-family: 'IM Fell English SC', Georgia, serif; font-size: 9px; letter-spacing: .3em; color: #B8924A; }
+
+  /* The email, in a plain mail-app frame. */
+  .mail { background: #ffffff; color: #1d2329; min-height: 560px; border-radius: 20px; overflow: hidden; font-family: var(--font-ui); }
+  .mail .hdr { padding: 16px 16px 12px; border-bottom: 1px solid #e3e6e9; }
+  .mail .from { font-size: 13px; color: #55606b; }
+  .mail .subj { font-size: 17px; font-weight: 700; margin-top: 4px; }
+  .mail .body { padding: 18px 16px; display: flex; flex-direction: column; gap: 12px; font-family: Georgia, serif; font-size: 15px; line-height: 1.5; color: #1C1610; background: #EDE6D6; min-height: 470px; }
+  .mail .body p { margin: 0; }
+  .mail .cta { align-self: center; background: #1D8C89; color: #F0E8D6; border-radius: 6px; padding: 10px 18px; font-family: 'IM Fell English SC', Georgia, serif; letter-spacing: .06em; }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="bday" viewBox="0 0 280 350">
+    <g fill="none" stroke="#B8924A" stroke-width=".7" opacity=".85">
+      <path d="M30 40 q2 30 16 62"/><path d="M32 59 q4 24 14 43"/><path d="M49 49.5 q-2 26 -3 52.5"/><path d="M64 59.5 q-6 22 -18 42.5"/><path d="M42 75 q2 14 4 27"/>
+      <path d="M250 40 q-2 30 -16 62"/><path d="M248 59 q-4 24 -14 43"/><path d="M231 49.5 q2 26 3 52.5"/><path d="M216 59.5 q6 22 18 42.5"/><path d="M238 75 q-2 14 -4 27"/>
+    </g>
+    <ellipse cx="30" cy="31" rx="6.5" ry="8.5" fill="#D6AE65"/><ellipse cx="32" cy="48" rx="8.5" ry="11" fill="#C98B8B"/>
+    <ellipse cx="49" cy="38" rx="9" ry="11.5" fill="#7F9BB3"/><ellipse cx="64" cy="50" rx="7.5" ry="9.5" fill="#8FA88A"/>
+    <ellipse cx="42" cy="66" rx="7" ry="9" fill="#B39BC8"/>
+    <ellipse cx="250" cy="31" rx="6.5" ry="8.5" fill="#C98B8B"/><ellipse cx="248" cy="48" rx="8.5" ry="11" fill="#8FA88A"/>
+    <ellipse cx="231" cy="38" rx="9" ry="11.5" fill="#D6AE65"/><ellipse cx="216" cy="50" rx="7.5" ry="9.5" fill="#7F9BB3"/>
+    <ellipse cx="238" cy="66" rx="7" ry="9" fill="#B39BC8"/>
+    <path d="M74 28 c8 8 16 -6 24 2 s16 -5 22 3" fill="none" stroke="#C98B8B" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M206 28 c-8 8 -16 -6 -24 2 s-16 -5 -22 3" fill="none" stroke="#7F9BB3" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M126 24 q7 5 14 0 q7 -5 14 0" fill="none" stroke="#D6AE65" stroke-width="1.3" stroke-linecap="round"/>
+    <g>
+      <circle cx="98" cy="52" r="1.5" fill="#C98B8B"/><circle cx="114" cy="42" r="1.5" fill="#7F9BB3"/><circle cx="140" cy="38" r="1.6" fill="#D6AE65"/>
+      <circle cx="166" cy="42" r="1.5" fill="#B39BC8"/><circle cx="182" cy="52" r="1.5" fill="#D6AE65"/><circle cx="64" cy="112" r="1.4" fill="#7F9BB3"/>
+      <circle cx="216" cy="112" r="1.4" fill="#8FA88A"/><circle cx="30" cy="132" r="1.4" fill="#D6AE65"/><circle cx="250" cy="140" r="1.4" fill="#C98B8B"/>
+      <rect x="84" y="44" width="3" height="5" fill="#D6AE65"/><rect x="124" y="48" width="3" height="5" fill="#8FA88A"/><rect x="152" y="47" width="3" height="5" fill="#C98B8B"/>
+      <rect x="193" y="43" width="3" height="5" fill="#7F9BB3"/><rect x="60" y="88" width="3" height="5" fill="#D6AE65"/><rect x="217" y="88" width="3" height="5" fill="#C98B8B"/>
+    </g>
+  </symbol>
+</svg>
+
+<div class="wrap">
+  <h1 class="page">What the client sees</h1>
+  <p class="lede">The screens in the order the client meets them, on a phone, which is where most clients open the email. The page uses the same paper, teal and brass as the client's proposal and planner pages. The menu shown is the birthday house card from earlier.</p>
+
+  <div class="row">
+
+    <div class="screen">
+      <div class="cap">1 · The email</div>
+      <div class="phone"><div class="mail">
+        <div class="hdr"><div class="from">Dr. Bartender</div><div class="subj">Your bar menu is ready for a look</div></div>
+        <div class="body">
+          <p>Hi Jordan,</p>
+          <p>Here's a first look at the bar menu for your Birthday Party. Open it, and let us know if it looks great or if you'd like any changes.</p>
+          <div class="cta">Review the menu</div>
+          <p>The link works for 30 days. If you have questions, just reply to this email.</p>
+          <p>Cheers,<br>Dallas</p>
+        </div>
+      </div></div>
+      <p class="what">Sent the moment you approve. First name only, no date, venue or amounts.</p>
+    </div>
+
+    <div class="screen">
+      <div class="cap">2 · The page</div>
+      <div class="phone"><div class="scr"><div class="pg">
+        <p class="kicker">DR. BARTENDER</p>
+        <h2>Your bar menu</h2>
+        <p class="center">Here's the menu we drafted for your event. Tap the menu to see it larger.</p>
+        <div class="proof" style="width:256px">
+          <div class="fit w256"><div class="hc"><div class="frame"></div><div class="inner"></div><svg viewBox="0 0 280 350"><use href="#bday"/></svg>
+            <div class="content"><div class="title">Cocktails</div><div class="sub">SIGNATURE POURS</div><div class="orn"><span class="l"></span><span class="d"></span><span class="l"></span></div>
+            <div class="drink"><div class="name">OLD FASHIONED</div><div class="desc">bourbon, demerara, orange bitters</div></div>
+            <div class="drink"><div class="name">PALOMA</div><div class="desc">tequila, grapefruit, lime, soda</div></div>
+            <div class="drink"><div class="name">ESPRESSO MARTINI</div><div class="desc">vodka, coffee liqueur, espresso</div></div></div>
+            <div class="mark">DR. BARTENDER</div></div></div>
+          <div class="band">PROOF · NOT FOR PRINT · V4.2</div>
+        </div>
+        <div class="btn primary">Looks great</div>
+        <div class="btn secondary">Request changes</div>
+        <p class="small">Replying here doesn't change your booking. We'll take it from here.</p>
+      </div></div></div>
+      <p class="what">The proof is a picture frozen when you approved; later edits don't change it.</p>
+    </div>
+
+    <div class="screen">
+      <div class="cap">3 · Request changes</div>
+      <div class="phone"><div class="scr"><div class="pg">
+        <p class="kicker">DR. BARTENDER</p>
+        <h2>Your bar menu</h2>
+        <div class="proof" style="width:180px">
+          <div class="fit w180"><div class="hc"><div class="frame"></div><div class="inner"></div><svg viewBox="0 0 280 350"><use href="#bday"/></svg>
+            <div class="content"><div class="title">Cocktails</div><div class="sub">SIGNATURE POURS</div><div class="orn"><span class="l"></span><span class="d"></span><span class="l"></span></div>
+            <div class="drink"><div class="name">OLD FASHIONED</div><div class="desc">bourbon, demerara, orange bitters</div></div>
+            <div class="drink"><div class="name">PALOMA</div><div class="desc">tequila, grapefruit, lime, soda</div></div>
+            <div class="drink"><div class="name">ESPRESSO MARTINI</div><div class="desc">vodka, coffee liqueur, espresso</div></div></div>
+            <div class="mark">DR. BARTENDER</div></div></div>
+          <div class="band">PROOF · NOT FOR PRINT · V4.2</div>
+        </div>
+        <div class="btn primary">Looks great</div>
+        <div class="btn secondary" style="background:#e6ddcc">Request changes</div>
+        <div class="ta">Can the title say Happy 40th instead of Cocktails? And swap the Paloma for a margarita.</div>
+        <div class="count">86 / 1000</div>
+        <div class="btn primary">Send changes</div>
+      </div></div></div>
+      <p class="what">Their note lands in your Inbox under their name, and on the Bar menu card.</p>
+    </div>
+
+    <div class="screen">
+      <div class="cap">4 · After Send changes</div>
+      <div class="phone"><div class="scr"><div class="pg">
+        <p class="kicker">DR. BARTENDER</p>
+        <h2>Thanks! We've got your notes.</h2>
+        <p class="center">We'll make the changes and send you a fresh look. Reply to our email if you think of anything else.</p>
+        <div class="note-ro">Can the title say Happy 40th instead of Cocktails? And swap the Paloma for a margarita.</div>
+        <div class="proof" style="width:180px">
+          <div class="fit w180"><div class="hc"><div class="frame"></div><div class="inner"></div><svg viewBox="0 0 280 350"><use href="#bday"/></svg>
+            <div class="content"><div class="title">Cocktails</div><div class="sub">SIGNATURE POURS</div><div class="orn"><span class="l"></span><span class="d"></span><span class="l"></span></div>
+            <div class="drink"><div class="name">OLD FASHIONED</div><div class="desc">bourbon, demerara, orange bitters</div></div>
+            <div class="drink"><div class="name">PALOMA</div><div class="desc">tequila, grapefruit, lime, soda</div></div>
+            <div class="drink"><div class="name">ESPRESSO MARTINI</div><div class="desc">vodka, coffee liqueur, espresso</div></div></div>
+            <div class="mark">DR. BARTENDER</div></div></div>
+          <div class="band">PROOF · NOT FOR PRINT · V4.2</div>
+        </div>
+      </div></div></div>
+      <p class="what">Their note, read-only, above the proof they commented on. No buttons: the next step is your fresh proof by email, which replaces this link.</p>
+    </div>
+
+    <div class="screen">
+      <div class="cap">5 · Or, after Looks great</div>
+      <div class="phone"><div class="scr"><div class="pg">
+        <p class="kicker">DR. BARTENDER</p>
+        <h2>Thanks! We've got it.</h2>
+        <p class="center">You said this looks great on November 3. We'll get it printed for your event.</p>
+        <div class="proof" style="width:180px">
+          <div class="fit w180"><div class="hc"><div class="frame"></div><div class="inner"></div><svg viewBox="0 0 280 350"><use href="#bday"/></svg>
+            <div class="content"><div class="title">Cocktails</div><div class="sub">SIGNATURE POURS</div><div class="orn"><span class="l"></span><span class="d"></span><span class="l"></span></div>
+            <div class="drink"><div class="name">OLD FASHIONED</div><div class="desc">bourbon, demerara, orange bitters</div></div>
+            <div class="drink"><div class="name">PALOMA</div><div class="desc">tequila, grapefruit, lime, soda</div></div>
+            <div class="drink"><div class="name">ESPRESSO MARTINI</div><div class="desc">vodka, coffee liqueur, espresso</div></div></div>
+            <div class="mark">DR. BARTENDER</div></div></div>
+          <div class="band">PROOF · NOT FOR PRINT · V4.2</div>
+        </div>
+      </div></div></div>
+      <p class="what">Staff can print from here. Coming back to the link later shows this same screen.</p>
+    </div>
+
+  </div>
+</div>

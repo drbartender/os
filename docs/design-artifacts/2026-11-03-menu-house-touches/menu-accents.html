@@ -1,0 +1,169 @@
+<title>House Card Event Touches</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&family=Pirata+One&family=Alegreya+Sans:wght@400;500;700&display=swap">
+<style>
+  /* Layout: one short intro, then the revised corner treatment for two events side by side, stacking on a phone. */
+  :root {
+    --bg: #eceef0;
+    --fg: #1d2329;
+    --muted: #55606b;
+    --accent: #8a6a2e;
+    --panel: #ffffff;
+    --line: #d3d8dd;
+    --font-display: 'IM Fell English SC', Georgia, serif;
+    --font-body: 'Alegreya Sans', 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #0d1014; --fg: #e6e1d6; --muted: #a49d90; --accent: #d6ae65; --panel: #171b21; --line: #2a3038; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #0d1014; --fg: #e6e1d6; --muted: #a49d90; --accent: #d6ae65; --panel: #171b21; --line: #2a3038; color-scheme: dark; }
+
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
+  .wrap { max-width: 760px; margin: 0 auto; padding-block: 32px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1 { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.15; margin: 0 0 10px; text-wrap: balance; }
+  .lede { max-width: 65ch; color: var(--muted); margin: 0 0 28px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+  .opt { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 20px 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .opt h2 { font-family: var(--font-body); font-weight: 700; font-size: 17px; margin: 0; }
+  .opt p { margin: 0; color: var(--muted); font-size: 15px; }
+  .foot { margin-top: 28px; color: var(--muted); max-width: 65ch; }
+
+  /* The house card itself: fixed colors on purpose, it is the printed card's own palette. */
+  .hc { width: 280px; max-width: 100%; aspect-ratio: 4 / 5; background: #12161C; position: relative; overflow: hidden; border-radius: 3px; box-shadow: 0 6px 18px rgba(0,0,0,.28); margin: 0 auto; font-family: 'IM Fell English', Georgia, serif; color: #F0E8D6; }
+  .hc .frame { position: absolute; inset: 12px; border: 1px solid #B8924A; }
+  .hc .inner { position: absolute; inset: 18px; border: 1px solid rgba(184,146,74,.4); }
+  .hc svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .hc .content { position: absolute; left: 0; right: 0; top: 60px; text-align: center; }
+  .hc .title { font-family: 'Pirata One', Georgia, serif; font-size: 36px; color: #D6AE65; line-height: 1; }
+  .hc .sub { font-family: 'IM Fell English SC', Georgia, serif; font-size: 10px; letter-spacing: .22em; color: #B8924A; margin-top: 6px; }
+  .hc .orn { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px auto 12px; width: 150px; }
+  .hc .orn .l { flex: 1; height: 1px; background: #B8924A; }
+  .hc .orn .d { width: 6px; height: 6px; background: #D6AE65; transform: rotate(45deg); }
+  .hc .drink { margin: 0 0 12px; }
+  .hc .name { font-family: 'IM Fell English SC', Georgia, serif; font-size: 14px; letter-spacing: .08em; color: #F0E8D6; }
+  .hc .desc { font-size: 10.5px; font-style: italic; color: rgba(240,232,214,.72); margin-top: 2px; }
+  .hc .mark { position: absolute; left: 0; right: 0; bottom: 26px; text-align: center; font-family: 'IM Fell English SC', Georgia, serif; font-size: 9px; letter-spacing: .3em; color: #B8924A; }
+</style>
+
+<div class="wrap">
+  <h1>Corner touches, fuller</h1>
+  <p class="lede">Option A with bigger corner clusters and confetti and streamers drifting in toward the title, kept off the drink names. The holiday card shows the same placement with that event's own touches. Hand sketches: the image model draws the real ones into the background art.</p>
+
+  <div class="grid">
+    <section class="opt">
+      <div class="hc">
+        <div class="frame"></div><div class="inner"></div>
+        <svg viewBox="0 0 280 350" aria-hidden="true">
+          <!-- strings, gathered under each cluster -->
+          <g fill="none" stroke="#B8924A" stroke-width=".7" opacity=".85">
+            <path d="M30 40 q2 30 16 62"/><path d="M32 59 q4 24 14 43"/><path d="M49 49.5 q-2 26 -3 52.5"/><path d="M64 59.5 q-6 22 -18 42.5"/><path d="M42 75 q2 14 4 27"/>
+            <path d="M250 40 q-2 30 -16 62"/><path d="M248 59 q-4 24 -14 43"/><path d="M231 49.5 q2 26 3 52.5"/><path d="M216 59.5 q6 22 18 42.5"/><path d="M238 75 q-2 14 -4 27"/>
+          </g>
+          <!-- left cluster -->
+          <ellipse cx="30" cy="31" rx="6.5" ry="8.5" fill="#D6AE65"/><polygon points="28,39 32,39 30,41.5" fill="#D6AE65"/>
+          <ellipse cx="32" cy="48" rx="8.5" ry="11" fill="#C98B8B"/><polygon points="29.5,58.5 34.5,58.5 32,61" fill="#C98B8B"/>
+          <ellipse cx="49" cy="38" rx="9" ry="11.5" fill="#7F9BB3"/><polygon points="46.5,49 51.5,49 49,51.5" fill="#7F9BB3"/>
+          <ellipse cx="64" cy="50" rx="7.5" ry="9.5" fill="#8FA88A"/><polygon points="62,59 66,59 64,61.5" fill="#8FA88A"/>
+          <ellipse cx="42" cy="66" rx="7" ry="9" fill="#B39BC8"/><polygon points="40,74.5 44,74.5 42,77" fill="#B39BC8"/>
+          <path d="M44 102 l-4 4 M46 102 l4 4" stroke="#D6AE65" stroke-width="1.2"/>
+          <!-- right cluster -->
+          <ellipse cx="250" cy="31" rx="6.5" ry="8.5" fill="#C98B8B"/><polygon points="248,39 252,39 250,41.5" fill="#C98B8B"/>
+          <ellipse cx="248" cy="48" rx="8.5" ry="11" fill="#8FA88A"/><polygon points="245.5,58.5 250.5,58.5 248,61" fill="#8FA88A"/>
+          <ellipse cx="231" cy="38" rx="9" ry="11.5" fill="#D6AE65"/><polygon points="228.5,49 233.5,49 231,51.5" fill="#D6AE65"/>
+          <ellipse cx="216" cy="50" rx="7.5" ry="9.5" fill="#7F9BB3"/><polygon points="214,59 218,59 216,61.5" fill="#7F9BB3"/>
+          <ellipse cx="238" cy="66" rx="7" ry="9" fill="#B39BC8"/><polygon points="236,74.5 240,74.5 238,77" fill="#B39BC8"/>
+          <path d="M234 102 l-4 4 M236 102 l4 4" stroke="#D6AE65" stroke-width="1.2"/>
+          <!-- streamers curling in toward the center -->
+          <path d="M74 28 c8 8 16 -6 24 2 s16 -5 22 3" fill="none" stroke="#C98B8B" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M206 28 c-8 8 -16 -6 -24 2 s-16 -5 -22 3" fill="none" stroke="#7F9BB3" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M126 24 q7 5 14 0 q7 -5 14 0" fill="none" stroke="#D6AE65" stroke-width="1.3" stroke-linecap="round"/>
+          <!-- confetti across the top band and down the sides -->
+          <rect x="84" y="44" width="3" height="5" fill="#D6AE65" transform="rotate(30 85 46)"/>
+          <circle cx="98" cy="52" r="1.5" fill="#C98B8B"/>
+          <circle cx="114" cy="42" r="1.5" fill="#7F9BB3"/>
+          <rect x="124" y="48" width="3" height="5" fill="#8FA88A" transform="rotate(-25 125 50)"/>
+          <circle cx="140" cy="38" r="1.6" fill="#D6AE65"/>
+          <rect x="152" y="47" width="3" height="5" fill="#C98B8B" transform="rotate(20 153 49)"/>
+          <circle cx="166" cy="42" r="1.5" fill="#B39BC8"/>
+          <circle cx="182" cy="52" r="1.5" fill="#D6AE65"/>
+          <rect x="193" y="43" width="3" height="5" fill="#7F9BB3" transform="rotate(-35 194 45)"/>
+          <rect x="60" y="88" width="3" height="5" fill="#D6AE65" transform="rotate(15 61 90)"/>
+          <circle cx="64" cy="112" r="1.4" fill="#7F9BB3"/>
+          <rect x="217" y="88" width="3" height="5" fill="#C98B8B" transform="rotate(-15 218 90)"/>
+          <circle cx="216" cy="112" r="1.4" fill="#8FA88A"/>
+          <circle cx="30" cy="132" r="1.4" fill="#D6AE65"/><circle cx="250" cy="140" r="1.4" fill="#C98B8B"/>
+          <rect x="34" y="166" width="3" height="5" fill="#8FA88A" transform="rotate(40 35 168)"/>
+          <rect x="244" y="186" width="3" height="5" fill="#D6AE65" transform="rotate(-40 245 188)"/>
+        </svg>
+        <div class="content">
+          <div class="title">Cocktails</div>
+          <div class="sub">SIGNATURE POURS</div>
+          <div class="orn"><span class="l"></span><span class="d"></span><span class="l"></span></div>
+          <div class="drink"><div class="name">OLD FASHIONED</div><div class="desc">bourbon, demerara, orange bitters</div></div>
+          <div class="drink"><div class="name">PALOMA</div><div class="desc">tequila, grapefruit, lime, soda</div></div>
+          <div class="drink"><div class="name">ESPRESSO MARTINI</div><div class="desc">vodka, coffee liqueur, espresso</div></div>
+        </div>
+        <div class="mark">DR. BARTENDER</div>
+      </div>
+      <h2>Birthday</h2>
+      <p>Five balloons a corner, gathered with a bow, streamers curling in over the title, and confetti across the top and drifting down the sides.</p>
+    </section>
+
+    <section class="opt">
+      <div class="hc">
+        <div class="frame"></div><div class="inner"></div>
+        <svg viewBox="0 0 280 350" aria-hidden="true">
+          <!-- left stack of gifts, bottom corner -->
+          <rect x="24" y="308" width="24" height="20" fill="#B5524E"/><rect x="34" y="308" width="4" height="20" fill="#D6AE65"/><rect x="24" y="316" width="24" height="4" fill="#D6AE65"/>
+          <rect x="30" y="290" width="18" height="18" fill="#5E8C61"/><rect x="37" y="290" width="4" height="18" fill="#E8DCC2"/><rect x="30" y="297" width="18" height="4" fill="#E8DCC2"/>
+          <ellipse cx="36" cy="288" rx="4" ry="2.5" fill="#E8DCC2" transform="rotate(-25 36 288)"/><ellipse cx="42" cy="288" rx="4" ry="2.5" fill="#E8DCC2" transform="rotate(25 42 288)"/>
+          <rect x="50" y="314" width="14" height="14" fill="#D6AE65"/><rect x="55.5" y="314" width="3" height="14" fill="#B5524E"/><rect x="50" y="319.5" width="14" height="3" fill="#B5524E"/>
+          <!-- holly, top left -->
+          <ellipse cx="31" cy="38" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(-20 31 38)"/><ellipse cx="41" cy="38" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(20 41 38)"/>
+          <circle cx="36" cy="40" r="2" fill="#B5524E"/><circle cx="39" cy="42.5" r="2" fill="#B5524E"/><circle cx="33" cy="42.5" r="2" fill="#B5524E"/>
+          <ellipse cx="56" cy="30" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(-20 56 30)"/><ellipse cx="66" cy="30" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(20 66 30)"/>
+          <circle cx="61" cy="32" r="2" fill="#B5524E"/><circle cx="64" cy="34.5" r="2" fill="#B5524E"/><circle cx="58" cy="34.5" r="2" fill="#B5524E"/>
+          <!-- right stack of gifts, bottom corner -->
+          <rect x="232" y="308" width="24" height="20" fill="#5E8C61"/><rect x="242" y="308" width="4" height="20" fill="#E8DCC2"/><rect x="232" y="316" width="24" height="4" fill="#E8DCC2"/>
+          <rect x="232" y="290" width="18" height="18" fill="#B5524E"/><rect x="239" y="290" width="4" height="18" fill="#D6AE65"/><rect x="232" y="297" width="18" height="4" fill="#D6AE65"/>
+          <ellipse cx="244" cy="288" rx="4" ry="2.5" fill="#D6AE65" transform="rotate(25 244 288)"/><ellipse cx="238" cy="288" rx="4" ry="2.5" fill="#D6AE65" transform="rotate(-25 238 288)"/>
+          <rect x="216" y="314" width="14" height="14" fill="#E8DCC2"/><rect x="221.5" y="314" width="3" height="14" fill="#5E8C61"/><rect x="216" y="319.5" width="14" height="3" fill="#5E8C61"/>
+          <!-- holly, top right -->
+          <ellipse cx="249" cy="38" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(20 249 38)"/><ellipse cx="239" cy="38" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(-20 239 38)"/>
+          <circle cx="244" cy="40" r="2" fill="#B5524E"/><circle cx="241" cy="42.5" r="2" fill="#B5524E"/><circle cx="247" cy="42.5" r="2" fill="#B5524E"/>
+          <ellipse cx="224" cy="30" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(20 224 30)"/><ellipse cx="214" cy="30" rx="6" ry="2.6" fill="#5E8C61" transform="rotate(-20 214 30)"/>
+          <circle cx="219" cy="32" r="2" fill="#B5524E"/><circle cx="216" cy="34.5" r="2" fill="#B5524E"/><circle cx="222" cy="34.5" r="2" fill="#B5524E"/>
+          <!-- ribbon curls toward the center -->
+          <path d="M74 28 c8 8 16 -6 24 2 s16 -5 22 3" fill="none" stroke="#B5524E" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M206 28 c-8 8 -16 -6 -24 2 s-16 -5 -22 3" fill="none" stroke="#5E8C61" stroke-width="1.6" stroke-linecap="round"/>
+          <!-- small stars and snow across the top band and down the sides -->
+          <g fill="#D6AE65">
+            <path d="M140 33 l1.1 2.9 2.9 1.1 -2.9 1.1 -1.1 2.9 -1.1 -2.9 -2.9 -1.1 2.9 -1.1z"/>
+            <path d="M96 44 l.9 2.3 2.3 .9 -2.3 .9 -.9 2.3 -.9 -2.3 -2.3 -.9 2.3 -.9z"/>
+            <path d="M184 44 l.9 2.3 2.3 .9 -2.3 .9 -.9 2.3 -.9 -2.3 -2.3 -.9 2.3 -.9z"/>
+            <path d="M62 92 l.9 2.3 2.3 .9 -2.3 .9 -.9 2.3 -.9 -2.3 -2.3 -.9 2.3 -.9z"/>
+            <path d="M218 92 l.9 2.3 2.3 .9 -2.3 .9 -.9 2.3 -.9 -2.3 -2.3 -.9 2.3 -.9z"/>
+          </g>
+          <g fill="#E8DCC2" opacity=".75">
+            <circle cx="114" cy="44" r="1.4"/><circle cx="126" cy="52" r="1.2"/><circle cx="154" cy="50" r="1.3"/><circle cx="166" cy="42" r="1.2"/>
+            <circle cx="84" cy="50" r="1.2"/><circle cx="196" cy="50" r="1.2"/><circle cx="64" cy="114" r="1.2"/><circle cx="216" cy="114" r="1.2"/>
+            <circle cx="30" cy="132" r="1.3"/><circle cx="250" cy="140" r="1.3"/><circle cx="36" cy="168" r="1.2"/><circle cx="244" cy="188" r="1.2"/>
+          </g>
+        </svg>
+        <div class="content">
+          <div class="title">Cocktails</div>
+          <div class="sub">SIGNATURE POURS</div>
+          <div class="orn"><span class="l"></span><span class="d"></span><span class="l"></span></div>
+          <div class="drink"><div class="name">OLD FASHIONED</div><div class="desc">bourbon, demerara, orange bitters</div></div>
+          <div class="drink"><div class="name">PALOMA</div><div class="desc">tequila, grapefruit, lime, soda</div></div>
+          <div class="drink"><div class="name">ESPRESSO MARTINI</div><div class="desc">vodka, coffee liqueur, espresso</div></div>
+        </div>
+        <div class="mark">DR. BARTENDER</div>
+      </div>
+      <h2>Holiday party</h2>
+      <p>Gift boxes stacked in the bottom corners, holly in the top corners, ribbon curling in over the title, small gold stars and snow across the top.</p>
+    </section>
+  </div>
+
+  <p class="foot">The drink names and descriptions stay clear in both: the touches live in the top band, the corners and the side margins.</p>
+</div>
