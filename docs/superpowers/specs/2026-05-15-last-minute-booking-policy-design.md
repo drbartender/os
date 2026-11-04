@@ -9,7 +9,7 @@
 Today a client can book any event with a **$100 deposit** (optionally autopay the balance), regardless of how close the event is. Two failures result:
 
 1. **Deposit booking inside the balance window.** `balance_due_date` is already `event_date − 14 days`. A deposit-only booking made *inside* 14 days has a balance that is immediately past-due — the autopay scheduler either fires instantly or the balance silently sits unpaid. Nothing prevents this.
-2. **No brake on last-minute bookings.** A client can book an event a day or two out and the system instantly promises a slot (spawns an `open` shift + "you're all set" email) with zero check that we can actually staff it. Real case: **Ketan Patel, proposal #54** — booked last-minute, painful to staff, nothing flagged it.
+2. **No brake on last-minute bookings.** A client can book an event a day or two out and the system instantly promises a slot (spawns an `open` shift + "you're all set" email) with zero check that we can actually staff it. Real case: **proposal #54** — booked last-minute, painful to staff, nothing flagged it.
 
 ## The Tier Model
 

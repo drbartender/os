@@ -14,10 +14,10 @@ The review confirmed the spec is well grounded (every named file, function, rout
 
 ## Guard: do NOT "repair" any payment data
 
-The external reconciliation report that surfaced Part A proposed collapsing "duplicate" payment rows and deleting a "failed" deposit for Ketan Patel and Shruti Parekh. **That remediation is wrong and must not be executed.** Verified against production and Stripe:
+The external reconciliation report that surfaced Part A proposed collapsing "duplicate" payment rows and deleting a "failed" deposit for two clients (proposal 54 and a second client). **That remediation is wrong and must not be executed.** Verified against production and Stripe:
 
-- `proposal_payments` holds exactly the right rows (Ketan: one `$100` deposit + one `$550` invoice; Shruti: one `$100` deposit). No duplicates, zero rows with `status='failed'` account-wide.
-- Both refunds are correctly recorded in `proposal_refunds` (Ketan `$200`, Shruti `$100`) with correct `stripe_refund_id`, and applied via negative `invoice_payments` lines so each invoice's `amount_paid` is correct (Ketan INV-0009 nets `$350`, Shruti INV-0084 nets `$0`).
+- `proposal_payments` holds exactly the right rows (proposal 54: one `$100` deposit + one `$550` invoice; the second client: one `$100` deposit). No duplicates, zero rows with `status='failed'` account-wide.
+- Both refunds are correctly recorded in `proposal_refunds` (proposal 54 `$200`, the second client `$100`) with correct `stripe_refund_id`, and applied via negative `invoice_payments` lines so each invoice's `amount_paid` is correct (proposal 54 INV-0009 nets `$350`, the second client INV-0084 nets `$0`).
 
 The write side is healthy. Deleting any of those rows would destroy correct financial records. Part A is a read-query fix only.
 
@@ -41,7 +41,7 @@ The same blind spot exists in the dashboard metrics: `qMoney` paid basis (`serve
 | Figure | Value |
 |---|---|
 | `SUM(proposal_payments) WHERE succeeded` (34 rows) | $9,555.00 (gross, what "Collected" shows today) |
-| succeeded `proposal_refunds` (2 rows: Ketan $200, Shruti $100) | $300.00 |
+| succeeded `proposal_refunds` (2 rows: proposal 54 $200, the second client $100) | $300.00 |
 | **True net collected** | **$9,255.00** |
 | Ledger fan-out row sum (gross + refunded-payment double-count) | $10,205.00 |
 

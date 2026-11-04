@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `payment_type='invoice'` Stripe payments roll up into the parent proposal (`amount_paid` + `status`), then reconcile proposal 54 (Ketan Patel) with a backfilled Deposit invoice and a balance correction.
+**Goal:** Make `payment_type='invoice'` Stripe payments roll up into the parent proposal (`amount_paid` + `status`), then reconcile proposal 54 with a backfilled Deposit invoice and a balance correction.
 
 **Architecture:** Add a dedicated `'invoice'` branch to the `payment_intent.succeeded` webhook handler in `server/routes/stripe.js`, mirroring the proven `drink_plan_extras` increment-and-promote pattern. The webhook money code is NOT refactored for unit-testability (explicitly out of scope); the code fix is verified by a reproduction on an isolated Neon test branch. Two guarded, idempotent one-off scripts in `server/scripts/` reconcile proposal 54 after the fix deploys.
 
@@ -214,7 +214,7 @@ Create `server/scripts/backfillProposal54DepositInvoice.js` with exactly this co
 'use strict';
 
 /**
- * One-off, idempotent backfill — proposal 54 (Ketan Patel).
+ * One-off, idempotent backfill — proposal 54.
  *
  * No Deposit invoice was ever created for this proposal (createInvoiceOnSend
  * never ran — Check Cherry cutover artifact). The $100 deposit (proposal_payments
@@ -354,7 +354,7 @@ git commit -m "chore(scripts): one-off backfill of missing Deposit invoice for p
 Create `server/scripts/repairProposal54Balance.sql` with exactly this content:
 
 ```sql
--- One-off, guarded balance correction — proposal 54 (Ketan Patel).
+-- One-off, guarded balance correction — proposal 54.
 --
 -- Root cause: payment_type='invoice' had no webhook branch, so the $550 invoice
 -- payment (pi_3TXo3wAZrfv5tWfN34hdR4EK, succeeded) marked INV-0009 paid but
@@ -464,7 +464,7 @@ Expected: proposal `amount_paid 650.00, status balance_paid`; TWO invoices (Depo
 
 - [ ] **Step 6: Confirm in the app UI**
 
-Ask the user to open proposal 54 (Ketan Patel) in the admin dashboard and confirm: balance shows paid in full, and both the Deposit and Balance invoices are listed. Report completion.
+Ask the user to open proposal 54 in the admin dashboard and confirm: balance shows paid in full, and both the Deposit and Balance invoices are listed. Report completion.
 
 ---
 

@@ -5,7 +5,7 @@
 **Goal:** Land both money changes in this session, correctly ordered, without the two `server/routes/stripe.js` edit sets colliding and without refunds operating on financially-stale proposals.
 
 **The two underlying plans (authoritative — execute their steps verbatim):**
-- **Rollup:** `docs/superpowers/plans/2026-05-17-invoice-payment-proposal-rollup.md` (spec: `…/specs/2026-05-17-invoice-payment-proposal-rollup-design.md`) — adds the missing `payment_type='invoice'` branch to the `payment_intent.succeeded` webhook + two guarded one-off scripts to reconcile proposal 54 (Ketan Patel).
+- **Rollup:** `docs/superpowers/plans/2026-05-17-invoice-payment-proposal-rollup.md` (spec: `…/specs/2026-05-17-invoice-payment-proposal-rollup-design.md`) — adds the missing `payment_type='invoice'` branch to the `payment_intent.succeeded` webhook + two guarded one-off scripts to reconcile proposal 54.
 - **Refunds:** `docs/superpowers/plans/2026-05-17-partial-refunds.md` (spec: `…/specs/2026-05-17-partial-refunds-design.md`) — admin partial refunds: `proposal_refunds` ledger, pure `planRefund`, idempotent `applyRefundReconciliation`, `POST/GET /stripe/refund(s)/:id`, `charge.refunded` backstop, admin UI.
 
 ---
@@ -41,7 +41,7 @@ The regions do not overlap, so there is **no textual merge conflict** — but li
 The two plans are each correct in isolation but combine into a functional hole that **breaks the headline use case** (refund a no-show bartender on a normally-booked event):
 
 - Refunds hardening restricted auto-target to `payment_type IN ('deposit','balance','full')` — `invoice` deliberately excluded (rationale: Approach A lowers `total_price`, only valid for money *in* `total_price`).
-- The rollup fix makes `payment_type='invoice'` the **normal, primary** way a balance is paid post-cutover. Verified against the rollup spec's production evidence: Ketan (proposal 54) paid the $550 **Balance** as `proposal_payments #25 payment_type='invoice'`, linked to INV-0009 `label='Balance'`.
+- The rollup fix makes `payment_type='invoice'` the **normal, primary** way a balance is paid post-cutover. Verified against the rollup spec's production evidence: the proposal 54 client paid the $550 **Balance** as `proposal_payments #25 payment_type='invoice'`, linked to INV-0009 `label='Balance'`.
 - **Net:** for any post-cutover booking whose balance was paid via the invoice link (the standard path now), refunds would reject *"largest refundable payment is $100.00"* — the $100 deposit is the only candidate; the contracted balance is invisible to the refund tool. The exact scenario the feature was built for (refund the second bartender, whose cost is in the balance) becomes impossible to service in-app.
 
 This is safe (it rejects, never mis-refunds — the layered guards hold) but functionally defeats the feature for standard bookings.
@@ -77,7 +77,7 @@ Execute **Refunds plan Tasks 1–7** in order (schema → pure `planRefund` TDD 
 
 ### Wave 3 — Production reconciliation of proposal 54 (operator/deploy-gated, NOT autonomous)
 
-Execute **Rollup plan Task 4** — the production runbook (live Neon writes to Ketan's proposal 54).
+Execute **Rollup plan Task 4** — the production runbook (live Neon writes to proposal 54).
 
 **Hard gate (per CLAUDE.md trunk-only + Rollup Task 4 Step 1):** this runs only *after the user has pushed the Wave 1 fix to `main` and Render has finished deploying*. Pushing is user-initiated; production data mutation is never autonomous. This session **stops at the Wave 3 gate** and hands back. Wave 3 is included for completeness of "execute both," but it is explicitly out of this session's autonomous scope — it is a post-push operator step.
 
@@ -100,13 +100,13 @@ Execute **Rollup plan Task 4** — the production runbook (live Neon writes to K
 
 ### Proposal 54 caution (pre-Wave-3 window)
 
-Until Wave 3 reconciles it, proposal 54 carries the buggy state (`amount_paid=100.00`, true paid `$650`). Issuing a refund against it in that window is **safe but wrong-feeling**: the layered guards (`amount_paid` cap, per-charge cap, `invoice` handling) make it reject rather than mis-pay, but the operator must not attempt a Ketan refund until Wave 3 is done. Documented operator caution; no code guard needed (the guards already fail safe).
+Until Wave 3 reconciles it, proposal 54 carries the buggy state (`amount_paid=100.00`, true paid `$650`). Issuing a refund against it in that window is **safe but wrong-feeling**: the layered guards (`amount_paid` cap, per-charge cap, `invoice` handling) make it reject rather than mis-pay, but the operator must not attempt a proposal 54 refund until Wave 3 is done. Documented operator caution; no code guard needed (the guards already fail safe).
 
 ### Operational decision — push cadence (raise with user)
 
-Wave 1 fixes a **live production money-display bug on a real customer** (Ketan sees the wrong balance right now). Wave 2 is a net-new feature. These do not have to share a push:
+Wave 1 fixes a **live production money-display bug on a real customer** (the client sees the wrong balance right now). Wave 2 is a net-new feature. These do not have to share a push:
 
-- **Option A (recommended):** push Wave 1 alone, urgently → Render deploys → run Wave 3 to reconcile Ketan ASAP → ship Wave 2 (refunds) on its own later cadence. Decouples an urgent prod fix from a new feature's risk; Ketan is correct soonest.
+- **Option A (recommended):** push Wave 1 alone, urgently → Render deploys → run Wave 3 to reconcile proposal 54 ASAP → ship Wave 2 (refunds) on its own later cadence. Decouples an urgent prod fix from a new feature's risk; proposal 54 is correct soonest.
 - **Option B:** batch Wave 1 + Wave 2 in one push; Wave 3 after that single deploy.
 
 Either is valid; the user owns push timing across parallel windows. Recommend A on protect-working-paths + customer-impact grounds.

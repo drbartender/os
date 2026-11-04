@@ -3,7 +3,7 @@
 **Date:** 2026-05-15
 **Status:** **EXECUTED 2026-05-16Z** — production (`br-noisy-frog-ad99sa6l`) scrubbed via `server/scripts/prelaunch-data-scrub.sql` after a clean rehearsal. Post-scrub verified: proposals 6 `{21,25,30,51,52,54}`, clients 71 (0 keep-predicate violations), users 6 `{1,2,12,15,16,19}`; catalog/Thumbtack/automation config untouched. Restore point: Neon branch `br-morning-union-ad26nq4r` (full pre-scrub copy) retained + ~6h PITR. Audit dump: `C:\Users\dalla\prelaunch-scrub-deleted-2026-05-15.json` (46 proposals / 28 clients / 13 users, outside repo — PII).
 
-**Drift addendum 2026-05-15:** Ketan Patel converted from quote-wizard lead #46 to a real `deposit_paid` booking ($650, event 2026-05-16) during rehearsal prep — proposal **#54** + client **#102** added to the keep-set; verified intact post-scrub. The `created_at < 2026-05-16Z` cutoff + Task 5 drift gate handled live traffic.
+**Drift addendum 2026-05-15:** The proposal 54 client converted from quote-wizard lead #46 to a real `deposit_paid` booking ($650, event 2026-05-16) during rehearsal prep — proposal **#54** + client **#102** added to the keep-set; verified intact post-scrub. The `created_at < 2026-05-16Z` cutoff + Task 5 drift gate handled live traffic.
 **Risk:** HIGH — destructive operation on the production Neon database. Real client/staff data is interleaved with development/test data.
 
 ## Problem
@@ -22,13 +22,13 @@ Includes deliberately-removed real records the user confirmed: `#11` slparent@gm
 
 ### Proposals — keep 6, delete 46
 
-**KEEP (ids):** `21` (Stef D., $400 balance_paid) · `25` (Jane) · `30` (Kaite Watson) · `51` (David Luebke) · `52` (Tabitha Lopez) · `54` (Ketan Patel — real `deposit_paid` booking, converted post-analysis 2026-05-15)
+**KEEP (ids):** `21` (Stef D., $400 balance_paid) · `25` (Jane) · `30` (Kaite Watson) · `51` (David Luebke) · `52` (Tabitha Lopez) · `54` (real `deposit_paid` booking, converted post-analysis 2026-05-15)
 
 **DELETE:** all other 46 proposals.
 
 ### Clients — keep 71, delete 28
 
-**KEEP:** every client with a row in `thumbtack_leads` (i.e. `EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = clients.id)`) — 65 real webhook leads — **UNION** the 6 clients of kept proposals: `21` (Stef D.), `26` (Jane), `31` (Kaite Watson), `80` (David Luebke), `83` (Tabitha Lopez), `102` (Ketan Patel — converted post-analysis 2026-05-15).
+**KEEP:** every client with a row in `thumbtack_leads` (i.e. `EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = clients.id)`) — 65 real webhook leads — **UNION** the 6 clients of kept proposals: `21` (Stef D.), `26` (Jane), `31` (Kaite Watson), `80` (David Luebke), `83` (Tabitha Lopez), `102` (converted post-analysis 2026-05-15).
 
 **DELETE:** all other 28 clients (Dallas Raby variants, @labrat.test, joke names, unlinked `source='thumbtack'` test entries).
 
@@ -42,7 +42,7 @@ Zero invoices reference a kept proposal. All 8 must be deleted **before** their 
 
 ### Email leads / quote drafts / enrollments — keep real customer trail + config
 
-- **KEEP `email_leads`:** `44` (David Luebke — kept proposal #51) · `46` (Ketan Patel — fresh real inbound 5/15). **DELETE:** `41, 42, 43, 45`.
+- **KEEP `email_leads`:** `44` (David Luebke — kept proposal #51) · `46` (fresh real inbound 5/15). **DELETE:** `41, 42, 43, 45`.
 - **KEEP `quote_drafts`:** the 2 whose `lead_id` ∈ {44, 46}. **DELETE** the other 4.
 - **KEEP `email_sequence_enrollments`:** the 2 whose `lead_id` ∈ {44, 46}. **DELETE** the 1 for lead 42 (Sean).
 - **KEEP untouched (automation config):** `email_campaigns` (1 — "Abandoned Quote Followup") · `email_sequence_steps` (2).

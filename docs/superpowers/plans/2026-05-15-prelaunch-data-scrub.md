@@ -19,7 +19,7 @@
 - proposals: `21, 25, 30, 51, 52, 54`
 - clients: any row with a `thumbtack_leads` link **OR** id ∈ `21, 26, 31, 80, 83, 102`
 
-> **Amended 2026-05-15 (drift):** #54/#102 = Ketan Patel — quote-wizard lead #46 that converted to a real `deposit_paid` booking between analysis and rehearsal. Added to the keep-set; canonical script `server/scripts/prelaunch-data-scrub.sql` (commit `fbf49c0`) is the source of truth if this embedded copy ever drifts.
+> **Amended 2026-05-15 (drift):** #54/#102 = quote-wizard lead #46 that converted to a real `deposit_paid` booking between analysis and rehearsal. Added to the keep-set; canonical script `server/scripts/prelaunch-data-scrub.sql` (commit `fbf49c0`) is the source of truth if this embedded copy ever drifts.
 - email_leads: `44, 46`
 
 ---
@@ -270,7 +270,7 @@ UNION ALL SELECT 'sms_messages',COUNT(*) FROM sms_messages
 UNION ALL SELECT 'thumbtack_leads',COUNT(*) FROM thumbtack_leads
 UNION ALL SELECT 'email_campaigns',COUNT(*) FROM email_campaigns ORDER BY t;
 ```
-Expected (the rehearsal branch already includes Ketan's #54/#102): proposals 6, clients 71, users 6, shifts 1, invoices 0, email_leads 2, quote_drafts 2, email_sequence_enrollments 2, sms_messages 0, thumbtack_leads 66, email_campaigns 1.
+Expected (the rehearsal branch already includes #54/#102): proposals 6, clients 71, users 6, shifts 1, invoices 0, email_leads 2, quote_drafts 2, email_sequence_enrollments 2, sms_messages 0, thumbtack_leads 66, email_campaigns 1.
 
 - [ ] **Step 2: Spot-check identities on the branch**
 

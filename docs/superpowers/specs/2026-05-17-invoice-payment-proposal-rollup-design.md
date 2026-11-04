@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-17
 **Status:** Approved (design)
-**Trigger:** Ketan Patel (proposal 54) — paid balance in full, UI shows balance unpaid; only one invoice visible.
+**Trigger:** proposal 54 — paid balance in full, UI shows balance unpaid; only one invoice visible.
 
 ## Problem
 
@@ -30,7 +30,7 @@ rows** for an already-`deposit_paid` proposal. The invoice row is updated correc
 
 Result: any UI computing `total_price − amount_paid` shows the full balance still owed.
 
-### Production evidence — proposal 54 (Ketan Patel, client 102)
+### Production evidence — proposal 54 (client 102)
 
 | Source | Record |
 |---|---|
@@ -43,14 +43,14 @@ Result: any UI computing `total_price − amount_paid` shows the full balance st
 Both Stripe charges succeeded ($100 + $550 = $650 = full total). The invoice ledger is
 correct; the proposal was never updated. No Deposit invoice was ever created because
 `createInvoiceOnSend` (fires on proposal→`sent`) never ran for this proposal — a
-Check Cherry cutover artifact (Ketan is the first post-cutover booking). `createBalanceInvoice`
+Check Cherry cutover artifact (proposal 54 is the first post-cutover booking). `createBalanceInvoice`
 then produced INV-0009 directly after the deposit.
 
 ### Blast radius
 
-Systemic, not Ketan-specific. **Every** payment with `payment_type='invoice'` (Balance,
+Systemic, not specific to proposal 54. **Every** payment with `payment_type='invoice'` (Balance,
 Additional Services, manual invoices) marks the invoice paid but never rolls up to the
-proposal. It surfaced now because Ketan is the first real booking where a direct invoice
+proposal. It surfaced now because proposal 54 is the first real booking where a direct invoice
 payment link was used for the balance.
 
 ## Money-type boundary (load-bearing)
@@ -171,4 +171,4 @@ backdating — cosmetic ordering only, no money math, isolated to a final `UPDAT
 - Any other `payment_type` (all others are correctly handled).
 - Backfilling missing Deposit invoices for proposals other than 54, or fixing the
   upstream `createInvoiceOnSend`-skipped-on-cutover gap (one-off; no other affected
-  proposals identified — Ketan is the first post-cutover booking).
+  proposals identified — proposal 54 is the first post-cutover booking).
