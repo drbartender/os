@@ -113,61 +113,65 @@ lanes:
 
   - id: menu-bar-baseline
     scope: >
-      Split from menu-bar-fingerprint by its second fix re-pass (2026-11-04, the review cap reached), which
-      raised three reachable defects in that lane's round 2. (1) Update draft finds the stored Also at the bar
-      line to refresh by its label, but the owner can rename a label on the canvas, so a renamed line keeps
-      its old pick, a fresh line is added beside it and bar_changed clears: each line now carries a
-      server-written key (the builder's label), written wherever the lines are built (parseWords and Update
-      draft) and kept through every PATCH, and refreshBarLines matches on the key, so a renamed line is
-      rewritten or removed in place and keeps its print position. (2) The GET's one-time baseline stamp takes a
-      pre-deploy draft's baseline at its first open after the deploy, so a bar change the client makes before
-      anyone opens the event becomes the baseline unflagged; and the stamp's UPDATE moves the time the card
-      prints as Saved, and an unguarded failure of it turns the GET into a 500. The stamp leaves the GET: a
-      one-time script, server/scripts/stampMenuBarBaseline.js, dry run by default, stamps bar_lines and
-      bar_hash and keys the stored lines (by label, else by the builder's order) on every draft whose words
-      are done and whose fingerprint has no bar_lines, skips the legal-hold proposal (isLegalHold), prints ids
-      and counts only, and writes in one transaction. Its production run, right after the ship, is an
-      owner-approved step. (3) The baseline write leaves the time the card prints as Saved alone. Spec
-      section 17 is amended with the lane.
+      Split from menu-bar-fingerprint by its second fix re-pass (2026-11-04, the review cap reached), and
+      reshaped by this lane's own review (2026-11-04). (1) Update draft found the stored Also at the bar line
+      to refresh by its label, which the owner can rename: each line now carries a server-written key (the
+      builder's label), written by parseWords (keyedBarLines) and kept through every PATCH, and Update draft
+      matches and orders by it; a line stored before keys (or one a racing PATCH stored without its key) is
+      keyed by Update draft under its row lock (keyBarLines: by label, else by its place in the print order
+      among the categories the draft's baseline names). (2) The GET's one-time baseline stamp absorbed bar
+      changes made before the first open, moved the Saved time and could fail the read: it is removed, and the
+      server stamps every pre-deploy draft once at its first production boot (menuBarBaselineStamp.js, from
+      the scheduler block in server/index.js), writing plan_fingerprint only, from today's picks except that a
+      category the stored lines prove came or went since Generate keeps reading as a change
+      (legacyBarBaseline); a draft Update draft reaches before the stamp takes the same baseline. (3) The
+      menu_drafts updated_at trigger skips a write that changes only plan_fingerprint or dismissed_plan_hash,
+      so the stamp and Dismiss leave the Saved time alone. Spec section 17 is amended with the lane.
     footprint:
-      - server/routes/proposals/menuDraftSync.js  (refreshBarLines matches on the line key)
+      - server/routes/proposals/menuDraftSync.js  (match by key; key unkeyed lines; the legacy baseline)
       - server/routes/proposals/menuDrafts.test.js
-      - server/utils/menuAlsoAtBar.js  (each built line carries its key)
+      - server/utils/menuAlsoAtBar.js  (keyedBarLines, barLineKey, keyBarLines)
       - server/utils/menuAlsoAtBar.test.js
-      - server/utils/menuArtPrompts.js  (parseWords keeps the key)
+      - server/utils/menuArtPrompts.js  (parseWords stores keyed lines)
       - server/utils/menuArtPrompts.test.js
-      - server/utils/menuDraftValidation.js  (checkAlsoAtBar keeps the stored key and refuses one in the body)
-      - server/utils/menuDraftValidation.test.js
-      - server/utils/menuDraftRead.js  (the GET stamp removed; publicContent leaves the key out if the client must not see it)
+      - server/utils/menuDraftValidation.test.js  (the PATCH keeps the stored key, refuses one in the body)
+      - server/utils/menuDraftRead.js  (the GET stamp removed)
       - server/utils/menuDraftRead.test.js
-      - server/scripts/stampMenuBarBaseline.js  (new, with the header comment)
-      - server/scripts/stampMenuBarBaseline.test.js  (new)
-      - server/db/schema.sql  (only if the Saved time needs the menu_drafts updated_at trigger narrowed; idempotent)
+      - server/utils/menuDrinkSource.js  (legacyBarBaseline; the fingerprint header)
+      - server/utils/menuDrinkSource.test.js
+      - server/utils/menuBarBaselineStamp.js  (new, with the header comment)
+      - server/utils/menuBarBaselineStamp.test.js  (new)
+      - server/index.js  (the one-time call in the production scheduler block)
+      - server/db/schema.sql  (the updated_at trigger narrowed, swapped in place once)
+      - server/db/schema.menuArt.test.js
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-bar-fingerprint]
-    lenses: tier A (menuDraftSync.js is sensitive, and a script writes production rows); seams, lifecycle, concurrency, outcomes-providers, schema-data if schema.sql is touched, client, verify, the externals, the money smoke.
+    lenses: tier A (menuDraftSync.js, server/index.js and schema.sql are sensitive); seams, lifecycle, concurrency, outcomes-providers, schema-data, money, access-egress, verify, the externals, the money smoke.
     laws: >
-      Money law 15: the script skips the legal-hold proposal through isLegalHold, which fails closed. Parameterized
-      SQL only; the script prints ids and counts, never content. Nothing here writes a proposal column, the print
-      key or menu_not_required, or bumps a draft's version. Schema changes, if any, are idempotent in schema.sql;
-      no data backfill runs from it.
+      Money law 15: the boot stamp skips the legal-hold proposal through isLegalHold, which fails closed.
+      Parameterized SQL only; the boot log carries draft ids and counts, never content. Nothing here writes a
+      proposal column, the print key or menu_not_required, or bumps a draft's version. The schema change is
+      idempotent in schema.sql; the data stamp is JS at boot, never in schema.sql.
     seams: >
       The line key is server-written: the words step and Update draft write it, the PATCH keeps it, and every
       reader of also_at_bar (MenuCanvas, the export, the house card later) ignores it; plan_fingerprint.bar_lines
-      stays keyed by the builder's label, so the key and the baseline agree.
+      stays keyed by the builder's label, so keys and baselines share one vocabulary; updated_at is read only
+      as the card's Saved time.
     acceptance: >
-      Suites pass and the money smoke passes; the rename test fails on menu-bar-fingerprint's merge (a renamed
-      line keeps its old pick after Update draft); the script's dry run on dev writes nothing and prints only
-      ids and counts; a GET on a legacy draft writes nothing.
+      Suites pass and the money smoke passes; the renamed-line test fails on menu-bar-fingerprint's merge (a
+      renamed line keeps its old pick after Update draft); a GET on a legacy draft writes nothing; the dev
+      trigger carries the WHEN clause after the boot replay; the stamp test shows a provable category change
+      flagged and the Saved time unmoved.
     test plan: >
-      menuDrafts.test.js: a renamed line whose picks moved is rewritten in place under its new words, a renamed
-      line whose picks went is removed, a renamed line whose picks did not move keeps its words and position.
-      menuAlsoAtBar.test.js and menuArtPrompts.test.js: each built line carries its key. menuDraftValidation.test.js:
-      a PATCH keeps the stored key and refuses one in the body. menuDraftRead.test.js: a GET on a legacy draft writes
-      nothing. stampMenuBarBaseline.test.js: the dry run writes nothing; a legacy draft gets bar_lines, bar_hash and
-      line keys, a renamed legacy line keyed by its order; a stamped draft, one whose words are not done and the
-      legal-hold proposal are skipped; the card's Saved time is unchanged by the write.
-    revert: Revert the squash before menu-bar-fingerprint's; stored line keys are extra keys the old code ignores.
+      menuDrafts.test.js: a renamed keyed line rewritten in place, removed, or kept with its words and place; an
+      unkeyed renamed line keyed from the baseline; a draft with no baseline keyed and given the provable
+      baseline, then repaired by the next Update draft; Dismiss leaves the Saved time. menuAlsoAtBar.test.js:
+      keyedBarLines and keyBarLines on every legacy shape. menuDrinkSource.test.js: legacyBarBaseline.
+      menuArtPrompts.test.js: keyed lines from parseWords. menuDraftValidation.test.js: the PATCH and the key.
+      menuDraftRead.test.js: a GET on a legacy draft writes nothing. menuBarBaselineStamp.test.js: the stamp on
+      unchanged and provably changed drafts, the skips, idempotence, the log line and a failure.
+      schema.menuArt.test.js: the trigger block and the live trigger.
+    revert: Revert the squash before menu-bar-fingerprint's; stored line keys are extra keys the old code ignores, and the narrowed trigger stays (a later replay of the old block sees the trigger present and leaves it).
 
   - id: menu-legal-hold-guards
     scope: >
@@ -921,9 +925,8 @@ Revert in reverse merge order; each lane's `revert` names the later lanes that m
 ## Owner steps (not lanes)
 
 1. **Add OpenAI credit** in OpenAI's billing settings before menu-auto-start ships (spec 24), and before any live walk that generates a custom menu. The plain-touch house card walks need none.
-2. **Say yes to the bar baseline script's production run** right after the ship that carries menu-bar-baseline: Claude runs the dry run first and shows the counts.
-3. **Say yes to the no-menu backfill's production run** after menu-no-menu-mark ships: Claude runs the dry run first and shows the counts and the excluded legal-hold count.
-4. **The fix list** (`docs/fix-list-remaining-2026-07-02.md`) is the owner's: each lane report names the lines it closes with its sha and the test that failed on main (bar picks and the one-client `Promise.all` by menu-bar-fingerprint; `approved_by` ON DELETE by menu-approve-send; the Potions notes items 1 to 5 and 7 by their lanes).
+2. **Say yes to the no-menu backfill's production run** after menu-no-menu-mark ships: Claude runs the dry run first and shows the counts and the excluded legal-hold count.
+3. **The fix list** (`docs/fix-list-remaining-2026-07-02.md`) is the owner's: each lane report names the lines it closes with its sha and the test that failed on main (bar picks and the one-client `Promise.all` by menu-bar-fingerprint; `approved_by` ON DELETE by menu-approve-send; the Potions notes items 1 to 5 and 7 by their lanes).
 
 ## Global constraints
 
