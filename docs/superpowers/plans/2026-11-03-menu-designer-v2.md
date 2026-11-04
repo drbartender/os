@@ -203,6 +203,45 @@ lanes:
       menuArtSentences.test.js: the mirror equals SENTENCES.
     revert: Revert the squash; the card goes back to its generic text.
 
+  - id: menu-plan-review-state
+    scope: >
+      Split from menu-bar-fingerprint by its review (2026-11-03): what the admin has reviewed about a plan
+      change is kept as state, not as one hash. (1) Mark reviewed and Dismiss record what they cover:
+      Dismiss stores the reviewed parts (the brief and planner-image parts, the bar baseline, the drink
+      keys the admin chose not to add) so a later Update draft never brings back a notes edit already
+      reviewed, and a dismissed drink stays dismissed until the plan moves again. (2) The plan-hash echo:
+      the GET returns the current plan hash, and Dismiss and Update draft send back the hash the admin saw,
+      answering 409 MENU_PLAN_MOVED when the plan changed since, so a change that lands while the page sits
+      open is never dismissed or applied unseen. (3) Generate's two reads: the words step stamps the bar
+      baseline into plan_fingerprint from the same plan read it built also_at_bar from, so the stored
+      baseline always matches the printed lines. The spec section 17 text is amended with the lane.
+    footprint:
+      - server/routes/proposals/menuDrafts.js  (Dismiss and Mark reviewed record what they cover; the echo check)
+      - server/routes/proposals/menuDraftSync.js  (the echo check; keeps a still-valid review)
+      - server/routes/proposals/menuDrafts.test.js
+      - server/utils/menuDraftRead.js  (the current plan hash in the GET; the diff against the recorded review)
+      - server/utils/menuDraftRead.test.js
+      - server/utils/menuDrinkSource.js  (the review-state helpers)
+      - server/utils/menuDrinkSource.test.js
+      - server/utils/menuArtJobWords.js  (the words step stamps the bar baseline)
+      - server/utils/menuArtJob.test.js
+      - client/src/pages/admin/menuDesigner/useMenuDraft.js  (Dismiss and Update draft send the hash they saw; a 409 refetches)
+      - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
+      - README.md, ARCHITECTURE.md  (generated sections)
+    blockedBy: [menu-bar-fingerprint, menu-brief-tab]
+    lenses: tier A (menuDrafts.js, menuDraftSync.js, menuArtJobWords.js); concurrency (the echo and the two-read stamp), lifecycle (what review state survives which action), seams (every writer and reader of plan_fingerprint and dismissed_plan_hash), client.
+    laws: one pooled connection per request; the echo check and the write it guards run in one transaction under the draft row lock; nothing here calls a provider.
+    seams: plan_fingerprint and dismissed_plan_hash keep one meaning each across Generate, the words step, Update draft, Dismiss, Mark reviewed and the GET's diff; the client hook is the one place that sends the echoed hash.
+    acceptance: Suites pass; the review-state tests fail on main (a reviewed notes edit returns after Update draft on main; a Dismiss sent from a stale page succeeds on main).
+    test plan: >
+      menuDrafts.test.js: Mark reviewed then a drink added then Update draft leaves the notes flag cleared; a
+      dismissed drink stays dismissed through a bar-only Update draft; Dismiss and Update draft with a stale
+      hash answer 409 MENU_PLAN_MOVED and write nothing; with the current hash they succeed.
+      menuArtJob.test.js: a plan change between Generate's read and the words step leaves the stored bar
+      baseline equal to the printed lines. menuDraftRead.test.js: the GET's hash equals the one the routes
+      compare. useMenuDraft.test.js: the hook sends the hash it holds and refetches on 409.
+    revert: Revert the squash; the review falls back to one dismissed hash, as before.
+
   - id: menu-mark-placement
     scope: >
       Spec section 5. content.mark_position left | center | right, missing reads as right; the Design tab's
@@ -273,10 +312,7 @@ lanes:
       artifact (the Admin brief fields as the Art direction .input three times, From the planner as a
       .md-brief-box). The lane report names both fix-list items it closes (planner data, display only; the
       admin brief, which changes what reaches the providers). Added by the menu-bar-fingerprint review
-      (2026-11-03): the GET returns the current plan hash and Dismiss and Update draft send back the hash
-      the admin saw, answering 409 MENU_PLAN_MOVED when the plan changed since (so a change that lands while
-      the page sits open is never dismissed or applied unseen); the Brief tab's bar line moves under the
-      From the planner Bar row.
+      (2026-11-03): the Brief tab's bar line moves under the From the planner Bar row.
     footprint:
       - server/utils/menuDraftRead.js  (plan.side, plan.planner_reference)
       - server/utils/menuDraftRead.test.js
@@ -286,9 +322,8 @@ lanes:
       - server/utils/menuDraftValidation.test.js
       - server/utils/menuArtJob.js  (the words, background and re-roll seams)
       - server/utils/menuArtJob.test.js
-      - server/routes/proposals/menuDraftSync.js  (the typed-drinks words call; the plan-hash echo)
-      - server/routes/proposals/menuDrafts.js  (Dismiss checks the plan-hash echo; nothing else)
-      - server/routes/proposals/menuDrafts.test.js  (the sync seam; the plan-hash echo on Dismiss and Update draft)
+      - server/routes/proposals/menuDraftSync.js  (the typed-drinks words call)
+      - server/routes/proposals/menuDrafts.test.js  (the sync seam)
       - client/src/pages/admin/menuDesigner/BriefTab.js
       - client/src/pages/admin/menuDesigner/BriefTab.test.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.js
