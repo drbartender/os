@@ -30,6 +30,7 @@ lanes:
       - server/utils/menuImageProvider.test.js
       - server/utils/menuArtJobErrors.js  (SENTENCES, the no-retry branch, Sentry once per run)
       - server/utils/menuArtJobWords.js  (only if the words step's catch must name the new class)
+      - server/utils/menuArtJob.js  (stop the run at the first out-of-credit piece, so Sentry hears once per run; added 2026-11-03 when the build found pieces kept drawing after an empty balance)
       - server/utils/menuArtJob.test.js
       - README.md  (generated sections, npm run docs)
       - ARCHITECTURE.md  (generated sections, npm run docs)
