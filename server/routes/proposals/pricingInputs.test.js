@@ -70,6 +70,24 @@ test('the /calculate preview reads duration_hours and its refusal names that fie
   assert.doesNotThrow(() => assertPricingInputs({ event_duration_hours: -1 }, { durationField: 'duration_hours' }));
 });
 
+test('with the stored row (the PATCH), a value that repeats the stored column passes and only a changed value is judged', () => {
+  // A booking saved before the bounds: 1500 guests, 12 bars, 60 bartenders, a 30-hour day, stored as the row holds them.
+  const stored = { guest_count: 1500, num_bars: 12, num_bartenders: 60, event_duration_hours: '30.0' };
+  assert.doesNotThrow(() => assertPricingInputs({ guest_count: 1500, num_bars: 12, num_bartenders: 60, event_duration_hours: 30 }, { stored }));
+  assert.doesNotThrow(() => assertPricingInputs({ guest_count: '1500', event_duration_hours: '30.0' }, { stored }), 'the editor re-sends numbers; a string spelling is the same value');
+  assert.deepEqual(Object.keys(refused({ guest_count: 1600 }, { stored })), ['guest_count'], 'a changed value is judged');
+  assert.deepEqual(Object.keys(refused({ guest_count: -1 }, { stored })), ['guest_count']);
+  assert.deepEqual(Object.keys(refused({ event_duration_hours: 30.5 }, { stored })), ['event_duration_hours']);
+  // A stored value in bounds gives nothing away: a change is judged as ever.
+  assert.deepEqual(Object.keys(refused({ guest_count: 0 }, { stored: { guest_count: 50 } })), ['guest_count']);
+  assert.doesNotThrow(() => assertPricingInputs({ guest_count: 50 }, { stored: { guest_count: 50 } }));
+  // No stored row (the create, the preview): every present value is judged.
+  assert.deepEqual(Object.keys(refused({ guest_count: 1500 }, { stored: null })), ['guest_count']);
+  assert.deepEqual(Object.keys(refused({ guest_count: 1500 })), ['guest_count']);
+  // A stored null (no bartender override) never matches a present value.
+  assert.deepEqual(Object.keys(refused({ num_bartenders: 1.5 }, { stored: { num_bartenders: null } })), ['num_bartenders']);
+});
+
 test('every bad field is named in one refusal', () => {
   const fe = refused({ guest_count: -50, num_bars: -1, num_bartenders: 1.5, event_duration_hours: 4.25 });
   assert.deepEqual(Object.keys(fe).sort(), ['event_duration_hours', 'guest_count', 'num_bars', 'num_bartenders']);

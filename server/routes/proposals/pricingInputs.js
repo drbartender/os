@@ -12,13 +12,22 @@
 // 500ed, and a negative num_bars was stored and carried onto the shifts. The
 // public quote wizard (public.js) keeps its own gate and is not touched.
 //
-// Pure: a function of the body only, so it runs before any connection is
-// checked out, and a malformed body never opens a transaction. It asserts and
-// never coerces: each route keeps reading the values the way it did (a numeric
-// string is accepted here, as every route's Number() reading accepts it), and
-// an absent or null value keeps the route's own default or stored value
-// (`guest_count || 50` on create, `?? old.guest_count` on the PATCH, the
-// `/calculate` preview's defaults).
+// Pure: a function of the body (and, on the PATCH, the locked row), so on the
+// create and the preview it runs before any connection is checked out and a
+// malformed body never opens a transaction. It asserts and never coerces: each
+// route keeps reading the values the way it did (a numeric string is accepted
+// here, as every route's Number() reading accepts it), and an absent or null
+// value keeps the route's own default or stored value (`guest_count || 50` on
+// create, `?? old.guest_count` on the PATCH, the `/calculate` preview's
+// defaults).
+//
+// On the PATCH the gate takes the locked row (`stored`) and judges only a
+// CHANGED value: a body value equal to the stored column passes, the way the
+// override guard lets a body repeat a stored value (patchGuards.js). The
+// editor re-sends every stored value on every save, so without that a
+// booking saved before these bounds (1500 guests, a 30-hour day) could not
+// take a date or venue change at all (audit round 2, M2). The create and the
+// preview have no stored row and judge every present value.
 //
 // Bounds: the editor and the create form cap guests at 1000, bars at 5 and the
 // duration at 12 hours in half-hour steps (ProposalEditorForm.js, EventSection.js),
@@ -51,28 +60,40 @@ const wholeInRange = (v, min, max) => {
 };
 const onTenths = (n) => Math.abs(n * 10 - Math.round(n * 10)) < 1e-6;
 
+// A body value that repeats the stored column (compared as numbers: the row
+// holds NUMERIC strings) is not a change and is not judged.
+const sameAsStored = (v, storedValue) => {
+  if (storedValue === undefined || storedValue === null) return false;
+  const n = asNumber(v);
+  return Number.isFinite(n) && n === Number(storedValue);
+};
+
 /**
  * 400 naming every field whose present value is out of shape; absent and
- * null pass through to the route's own default or stored value.
+ * null pass through to the route's own default or stored value, and on the
+ * PATCH a value equal to the stored one passes unjudged.
  *
  * @param {object} body  the request body (the four fields are read by name)
- * @param {{ durationField?: 'event_duration_hours' | 'duration_hours' }} [opts]
- *   which key the route reads the duration from (/calculate reads duration_hours)
+ * @param {{ durationField?: 'event_duration_hours' | 'duration_hours', stored?: object|null }} [opts]
+ *   durationField: which key the route reads the duration from (/calculate
+ *   reads duration_hours); stored: the locked proposals row on the PATCH
  */
-function assertPricingInputs(body = {}, { durationField = 'event_duration_hours' } = {}) {
+function assertPricingInputs(body = {}, { durationField = 'event_duration_hours', stored = null } = {}) {
   const b = body && typeof body === 'object' ? body : {};
+  const row = stored && typeof stored === 'object' ? stored : {};
   const duration = durationField === 'duration_hours' ? b.duration_hours : b.event_duration_hours;
   const errors = {};
-  if (present(b.guest_count) && !wholeInRange(b.guest_count, 1, MAX_GUESTS)) {
+  if (present(b.guest_count) && !sameAsStored(b.guest_count, row.guest_count) && !wholeInRange(b.guest_count, 1, MAX_GUESTS)) {
     errors.guest_count = `Guest count must be a whole number from 1 to ${MAX_GUESTS}.`;
   }
-  if (present(b.num_bars) && !wholeInRange(b.num_bars, 0, MAX_BARS)) {
+  if (present(b.num_bars) && !sameAsStored(b.num_bars, row.num_bars) && !wholeInRange(b.num_bars, 0, MAX_BARS)) {
     errors.num_bars = `Bars must be a whole number from 0 to ${MAX_BARS}.`;
   }
-  if (present(b.num_bartenders) && !wholeInRange(b.num_bartenders, 0, MAX_BARTENDERS)) {
+  if (present(b.num_bartenders) && !sameAsStored(b.num_bartenders, row.num_bartenders)
+      && !wholeInRange(b.num_bartenders, 0, MAX_BARTENDERS)) {
     errors.num_bartenders = `Bartenders must be a whole number from 0 to ${MAX_BARTENDERS}, or left blank to use the guest ratio.`;
   }
-  if (present(duration)) {
+  if (present(duration) && !sameAsStored(duration, row.event_duration_hours)) {
     const h = asNumber(duration);
     if (!Number.isFinite(h) || h < MIN_HOURS || h > MAX_HOURS || !onTenths(h)) {
       const message = `Duration must be between ${MIN_HOURS} and ${MAX_HOURS} hours, in tenths of an hour.`;

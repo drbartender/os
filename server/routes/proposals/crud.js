@@ -351,12 +351,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   } = req.body;
 
   // Structural validation BEFORE any connection is checked out: a malformed
-  // notify list or an out-of-shape pricing input (pricingInputs.js: a zero,
-  // negative or fractional guest count, bar or bartender count, a duration off
-  // the tenths grid) never opens a transaction. Trigger validation (does this
-  // save actually fire the notice?) happens below, where shouldSendEmail is
+  // notify list never opens a transaction. Trigger validation (does this save
+  // actually fire the notice?) happens below, where shouldSendEmail is
   // computed. Absent/empty = nothing sends (fail-quiet by design).
-  assertPricingInputs({ guest_count, num_bars, num_bartenders, event_duration_hours });
   const requestedNotices = validateNotifyList(notify);
   const eventNotice = requestedNotices.find((n) => n.type === NOTICE_EVENT_DETAILS) || null;
 
@@ -384,6 +381,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     assertLinesFresh(req.body, old, old.adjustments_token);
     assertRefundMarkersBound(adjustments, old);
     assertOverrideUnchanged(req.body, old);
+    // The pricing inputs' shape (pricingInputs.js), judged against the locked
+    // row: a CHANGED guest count, bar or bartender count or duration must be a
+    // whole number in bounds (the duration on the tenths grid); a value the
+    // editor re-sends unchanged passes, so a booking saved before the bounds
+    // can still take a date or venue change. Before any write.
+    assertPricingInputs({ guest_count, num_bars, num_bartenders, event_duration_hours }, { stored: old });
 
     // Hoisted so the post-COMMIT reschedule-email block (outside this inner
     // try) can read whether the in-tx re-anchor decided an email is warranted.
