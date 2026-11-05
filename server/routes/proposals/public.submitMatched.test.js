@@ -54,6 +54,15 @@ let proposalRow = null;
 const realQuery = pool.query;
 const realConnect = pool.connect;
 
+// Every statement and release in order, tagged by the connection it went
+// through: the handler's held client ('held'), the shared pool ('pool'), or a
+// further connection a tail helper took ('conn2', ...). The one-connection
+// rule (CLAUDE.md; audit 2026-11-05 AUTH-13) says the held client is released
+// right after COMMIT, before any of those.
+const timeline = [];
+let connections = 0;
+const label = (tag, text) => `${tag}:${String(text).replace(/\s+/g, ' ').trim().slice(0, 60)}`;
+
 function answer(raw, params) {
   const text = String(raw).replace(/\s+/g, ' ').trim();
   statements.push({ text, params });
@@ -124,11 +133,21 @@ const body = (email, phone) => ({
 });
 
 before(async () => {
-  pool.query = (text, params) => Promise.resolve(answer(text, params || []));
-  pool.connect = () => Promise.resolve({
-    query: (text, params) => Promise.resolve(answer(text, params || [])),
-    release() {},
-  });
+  pool.query = (text, params) => {
+    timeline.push(label('pool', text));
+    return Promise.resolve(answer(text, params || []));
+  };
+  pool.connect = () => {
+    connections += 1;
+    const tag = connections === 1 ? 'held' : `conn${connections}`;
+    return Promise.resolve({
+      query: (text, params) => {
+        timeline.push(label(tag, text));
+        return Promise.resolve(answer(text, params || []));
+      },
+      release() { timeline.push(`${tag}:release`); },
+    });
+  };
   sendProposal.__setDeps({
     sendEmail: (args) => { sent.emails.push(args); return Promise.resolve({ id: 'stub' }); },
     sendAndLogSms: (args) => { sent.sms.push(args); return Promise.resolve({ ok: true }); },
@@ -156,8 +175,29 @@ after(async () => {
   if (server) await new Promise((r) => server.close(r));
 });
 
+function reset() {
+  statements = []; proposalRow = null; sent.emails = []; sent.sms = []; timeline.length = 0; connections = 0;
+}
+
+test('the held connection is released right after COMMIT, before the post-commit tail makes a query of its own', async () => {
+  reset();
+  const res = await submit(body('newcomer@example.com', '5555550900'));
+  assert.equal(res.status, 201, res.raw);
+  const commitAt = timeline.indexOf('held:COMMIT');
+  const releaseAt = timeline.indexOf('held:release');
+  const firstTail = timeline.findIndex((e, i) => i > commitAt && !e.startsWith('held:'));
+  assert.ok(commitAt >= 0, 'the transaction committed');
+  assert.ok(firstTail > commitAt, 'the tail made at least one query of its own');
+  assert.ok(
+    releaseAt > commitAt && releaseAt < firstTail,
+    `held client released at ${releaseAt}, first tail query at ${firstTail}: ${timeline.slice(commitAt, Math.max(releaseAt, firstTail) + 1).join(' | ')}`
+  );
+  assert.equal(timeline.filter((e) => e === 'held:release').length, 1, 'released exactly once');
+  assert.ok(!timeline.slice(releaseAt + 1).some((e) => e.startsWith('held:')), 'nothing touches the released client');
+});
+
 test('a submit whose email matches an existing client attaches the proposal but withholds the token and delivers to the address on file', async () => {
-  statements = []; proposalRow = null; sent.emails = []; sent.sms = [];
+  reset();
   const res = await submit(body('Victim@example.com', '5555550666'));
   assert.equal(res.status, 201, res.raw);
   assert.equal(res.body.token, null, 'the token is withheld');
@@ -176,7 +216,7 @@ test('a submit whose email matches an existing client attaches the proposal but 
 });
 
 test('a submit that creates the client row keeps the token in the response and delivers to the submitted contact', async () => {
-  statements = []; proposalRow = null; sent.emails = []; sent.sms = [];
+  reset();
   const res = await submit(body('newcomer@example.com', '5555550900'));
   assert.equal(res.status, 201, res.raw);
   assert.equal(res.body.token, TOKEN);

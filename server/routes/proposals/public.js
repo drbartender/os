@@ -302,6 +302,14 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const isTopShelfClass = !!cleanClassOptions && cleanClassOptions.top_shelf_requested;
 
   const dbClient = await pool.connect();
+  // Released right after COMMIT (audit 2026-11-05 AUTH-13), BEFORE the
+  // post-commit tail: sendProposalSentEmail, notifyAdminCategory and
+  // scheduleDripForProposal each query through the pool or take their own
+  // pooled connection, and a request holding one client while it waits for
+  // another is the shape that deadlocks the pool at max (SERVER-17; the
+  // one-connection rule in CLAUDE.md). `held` keeps the catch and the finally
+  // honest once the client is gone.
+  let held = true;
   try {
     await dbClient.query('BEGIN');
 
@@ -545,6 +553,8 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     }
 
     await dbClient.query('COMMIT');
+    dbClient.release();
+    held = false;
 
     // DELIVERY (audit 2026-11-05 AUTH-12). A submit that resolved to an
     // EXISTING client row (clients.email is unique, so an email match must
@@ -646,10 +656,12 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       res.status(201).json({ token: null, delivered_to: maskEmail(deliveryEmail), total, top_shelf: isTopShelfClass });
     }
   } catch (err) {
-    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    if (held) {
+      try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    }
     throw err;
   } finally {
-    dbClient.release();
+    if (held) dbClient.release();
   }
 }));
 
