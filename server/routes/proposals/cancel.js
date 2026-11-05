@@ -94,6 +94,7 @@ async function assembleContext(executor, proposalId, noticeYmd) {
     `SELECT p.id, p.status, p.total_price, p.amount_paid, p.event_date,
             p.pricing_snapshot, p.event_type, p.event_type_custom, p.client_id,
             p.autopay_status, p.autopay_enrolled, p.cancelled_at, p.cancelled_by,
+            p.dispute_open_at,
             c.name AS client_name, c.email AS client_email
        FROM proposals p
        LEFT JOIN clients c ON c.id = p.client_id
@@ -299,9 +300,15 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
     if (!ctx) throw new NotFoundError('Proposal not found');
     // Re-read status under a row lock so a concurrent settle/archive serializes here.
     const locked = await dbClient.query(
-      'SELECT status, autopay_status FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
+      'SELECT status, autopay_status, dispute_open_at FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
     const status = locked.rows[0].status;
     const autopayStatus = locked.rows[0].autopay_status;
+    // Open chargeback (audit 2026-11-05, H1): the cancel email promises a refund
+    // figure built from money the cardholder's bank is holding; settle the
+    // dispute in Stripe first.
+    if (locked.rows[0].dispute_open_at) {
+      throw new ConflictError('A chargeback is open on this proposal. Resolve it in Stripe before cancelling.', 'DISPUTE_OPEN');
+    }
 
     // Idempotent guards, mirroring the archive-path rejections.
     if (status === 'archived') throw new ConflictError('This booking is already archived.', 'ALREADY_ARCHIVED');
@@ -540,6 +547,11 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
     const { proposal } = ctx;
     if (!proposal.cancelled_at) {
       throw new ConflictError('This proposal has not been cancelled, so no cancellation refund applies.', 'NOT_CANCELLED');
+    }
+    // Open chargeback (audit 2026-11-05, H1): Stripe already holds the disputed
+    // amount; refunding on top pays it twice if the dispute is then lost.
+    if (proposal.dispute_open_at) {
+      throw new ConflictError('A chargeback is open on this proposal. Resolve it in Stripe before refunding.', 'DISPUTE_OPEN');
     }
 
     const mode = proposal.cancelled_by === 'admin' ? 'drb' : 'client';

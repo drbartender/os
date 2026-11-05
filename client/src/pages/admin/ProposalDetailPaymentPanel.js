@@ -400,7 +400,13 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     <div className="card">
       <div className="card-head">
         <h3>Payment</h3>
-        {overpaymentCents > 0 ? (
+        {proposal.dispute_open_at ? (
+          // Chargeback open (audit 2026-11-05, H1): autopay, Charge balance,
+          // refunds and cancel all refuse until Stripe closes it.
+          <StatusChip kind="warn">
+            Chargeback open since {String(proposal.dispute_open_at).slice(0, 10)}
+          </StatusChip>
+        ) : overpaymentCents > 0 ? (
           // Durable overpayment signal (§6), netted: money held beyond the
           // contract once off-contract invoice money is taken out. With no Stripe
           // charge left to refund against, say so here rather than let the admin
@@ -457,7 +463,17 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
           {proposal.autopay_enrolled && (
             <>
               <dt>Autopay</dt>
-              <dd><StatusChip kind="ok">Enrolled</StatusChip></dd>
+              <dd>
+                {proposal.autopay_status === 'failed' && Number(proposal.autopay_attempts) >= 3 ? (
+                  // The scheduler stops after three failed attempts (audit
+                  // 2026-11-05, M1); Charge balance below is the manual retry.
+                  <StatusChip kind="warn">Stopped after {proposal.autopay_attempts} failed attempts</StatusChip>
+                ) : proposal.autopay_status === 'failed' ? (
+                  <StatusChip kind="warn">Last charge failed, retrying daily</StatusChip>
+                ) : (
+                  <StatusChip kind="ok">Enrolled</StatusChip>
+                )}
+              </dd>
             </>
           )}
         </dl>

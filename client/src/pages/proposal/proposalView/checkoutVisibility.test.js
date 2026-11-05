@@ -7,7 +7,7 @@ const pending = { amount_cents: 10000, started_at: '2026-09-05T16:05:35Z' };
 
 test('plain visit, unsigned sent row: sign and pay is shown, nothing is settling', () => {
   const v = checkoutVisibility({ proposal: unsignedSent, paid: false, settlePhase: 'idle', isPaid: false, pendingPayment: null });
-  expect(v).toEqual({ settling: false, isPayableStatus: true, showSignAndPay: true, showPayOnly: false, showPaidCard: false, paidCardPhase: 'settling' });
+  expect(v).toEqual({ settling: false, isPayableStatus: true, showSignAndPay: true, showPayOnly: false, showPaidCard: false, showLateSign: false, paidCardPhase: 'settling' });
 });
 
 test('redirect landed on a signed accepted row: settling, no pay controls, spinner phase', () => {
@@ -40,7 +40,7 @@ test('a pending payment on an unpaid row is a settling state with the pending ca
 
 test('a paid row is the truth: paid phase whatever the poll or the pending flag says', () => {
   const v = checkoutVisibility({ proposal: depositPaid, paid: true, settlePhase: 'fallback', isPaid: true, pendingPayment: pending });
-  expect(v).toEqual({ settling: false, isPayableStatus: false, showSignAndPay: false, showPayOnly: false, showPaidCard: true, paidCardPhase: 'paid' });
+  expect(v).toEqual({ settling: false, isPayableStatus: false, showSignAndPay: false, showPayOnly: false, showPaidCard: true, showLateSign: false, paidCardPhase: 'paid' });
 });
 
 test('signed accepted row, plain visit, nothing pending: pay-only section', () => {
@@ -68,4 +68,22 @@ test('a 409 latch whose reload found the processing row lands the pending phase 
   const v = checkoutVisibility({ proposal: signedAccepted, paid: false, settlePhase: 'idle', isPaid: false, pendingPayment: pending, payBlocked: true });
   expect(v.paidCardPhase).toBe('pending');
   expect(v.showPayOnly).toBe(false);
+});
+
+test('a paid row with no signature on file offers the late signature block beside the paid card', () => {
+  const v = checkoutVisibility({ proposal: { status: 'deposit_paid', client_signed_at: null }, paid: false, settlePhase: 'idle', isPaid: true, pendingPayment: null });
+  expect(v.showPaidCard).toBe(true);
+  expect(v.showLateSign).toBe(true);
+  expect(v.showSignAndPay).toBe(false);
+  expect(v.showPayOnly).toBe(false);
+});
+
+test('a paid, signed row never shows the late signature block', () => {
+  const v = checkoutVisibility({ proposal: { status: 'deposit_paid', client_signed_at: '2026-11-01T00:00:00Z' }, paid: false, settlePhase: 'idle', isPaid: true, pendingPayment: null });
+  expect(v.showLateSign).toBe(false);
+});
+
+test('a completed unsigned row does not offer a late signature (the server refuses it too)', () => {
+  const v = checkoutVisibility({ proposal: { status: 'completed', client_signed_at: null }, paid: false, settlePhase: 'idle', isPaid: true, pendingPayment: null });
+  expect(v.showLateSign).toBe(false);
 });

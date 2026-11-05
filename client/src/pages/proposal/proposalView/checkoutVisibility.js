@@ -33,10 +33,15 @@ export function checkoutVisibility({ proposal, paid, settlePhase, isPaid, pendin
   const showSignAndPay = !isPaid && !settling && !isAlreadySigned && ['sent', 'viewed'].includes(status);
   const showPayOnly = !isPaid && !settling && isAlreadySigned && status === 'accepted';
   const showPaidCard = settling || isPaid;
+  // Paid but never signed (audit 2026-11-05, M4): the deposit can settle before
+  // the signature posts, and a Payment Link never asks for one. The server
+  // accepts a late signature on a paid row (POST /t/:token/sign), so the page
+  // offers the signature block beside the paid card.
+  const showLateSign = isPaid && !isAlreadySigned && LIFECYCLE_PAID.includes(status);
   const paidCardPhase = isPaid ? 'paid'
     : pending ? 'pending'
       : blocked ? 'blocked'
         : settlePhase === 'fallback' ? 'fallback'
           : 'settling';
-  return { settling, isPayableStatus, showSignAndPay, showPayOnly, showPaidCard, paidCardPhase };
+  return { settling, isPayableStatus, showSignAndPay, showPayOnly, showPaidCard, showLateSign, paidCardPhase };
 }

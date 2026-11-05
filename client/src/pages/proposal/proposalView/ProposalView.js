@@ -71,6 +71,10 @@ export default function ProposalView() {
   const [clientPhone, setClientPhone] = useState('');
   const phoneSeeded = useRef(false);
   const signedThisSession = useRef(false);
+  // Late signature on a paid row (audit 2026-11-05, M4): flips once the
+  // signature block beside the paid card has posted, so it disappears without
+  // remounting anything.
+  const [lateSigned, setLateSigned] = useState(false);
 
   // Payment option state
   const [paymentOption, setPaymentOption] = useState('deposit');
@@ -484,7 +488,10 @@ export default function ProposalView() {
     setSwitched((v) => (v ? { ...v, failed: true } : v));
   };
 
-  const handleSign = async () => {
+  // `lateSign`: the signature block beside the paid card. The row is already
+  // paid, so the gratuity election is moot (it only ever rides the payment
+  // intent) and the success copy says signed, not accepted.
+  const handleSign = async ({ lateSign = false } = {}) => {
     setFormError('');
     setFieldErrors({});
     if (!sigName.trim()) {
@@ -511,7 +518,7 @@ export default function ProposalView() {
       }
     }
 
-    if (gratuityBelowFloor) {
+    if (gratuityBelowFloor && !lateSign) {
       const msg = gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun, gratuityMandated);
       setFormError(msg);
       throw new Error(msg);
@@ -543,7 +550,8 @@ export default function ProposalView() {
         acknowledged_total: Number(proposal.total_price),
       });
       signedThisSession.current = true;
-      toast.success('Proposal accepted!');
+      toast.success(lateSign ? 'Agreement signed. Thank you!' : 'Proposal accepted!');
+      if (lateSign) setLateSigned(true);
       // Do NOT update proposal state here — changing status/client_signed_at
       // would unmount the Elements provider while payment is in progress.
       // Server state is already updated; UI refreshes on Stripe redirect.
@@ -669,7 +677,7 @@ export default function ProposalView() {
   // Gating is derived from the redirect, the row and the pending payment, not
   // from the hook's phase, so the first committed render is already settling.
   // checkoutVisibility.js holds the rules and their reasons.
-  const { settling, showSignAndPay, showPayOnly, showPaidCard, paidCardPhase } = checkoutVisibility({
+  const { settling, showSignAndPay, showPayOnly, showPaidCard, showLateSign, paidCardPhase } = checkoutVisibility({
     proposal, paid, settlePhase: settle, isPaid, pendingPayment, payBlocked,
   });
 
@@ -831,6 +839,36 @@ export default function ProposalView() {
                 stripePromise={stripePromise}
                 payOnlyLabel={payOnlyLabel}
                 clientSignedAt={proposal.client_signed_at}
+              />
+            )}
+
+            {/* Paid but unsigned (audit 2026-11-05, M4): the deposit settled
+                before the signature posted, or a Payment Link took the money
+                with no signature step. The server accepts a late signature on
+                a paid row; this block asks for it beside the paid card. */}
+            {showLateSign && !lateSigned && !signedThisSession.current && (
+              <SignAndPaySection
+                mode="signOnly"
+                sigName={sigName}
+                setSigName={setSigName}
+                sigData={sigData}
+                setSigData={setSigData}
+                setSigMethod={setSigMethod}
+                clientPhone={clientPhone}
+                setClientPhone={setClientPhone}
+                formError={formError}
+                fieldErrors={fieldErrors}
+                setFieldErrors={setFieldErrors}
+                handleSign={() => handleSign({ lateSign: true })}
+                venue={venue}
+                setVenue={setVenue}
+                venueComplete={venueComplete}
+                venuePrefilled={!!proposal?.venue_complete}
+                proposalVenue={{
+                  venue_name: proposal.venue_name, venue_street: proposal.venue_street,
+                  venue_city: proposal.venue_city, venue_state: proposal.venue_state,
+                  venue_zip: proposal.venue_zip,
+                }}
               />
             )}
 

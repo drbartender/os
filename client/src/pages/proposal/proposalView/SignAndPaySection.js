@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
@@ -55,7 +55,7 @@ function PaymentTablet({
 }
 
 export default function SignAndPaySection({
-  mode, // 'signAndPay' | 'payOnly'
+  mode, // 'signAndPay' | 'payOnly' | 'signOnly'
   // Signature (signAndPay only)
   sigName,
   setSigName,
@@ -112,6 +112,8 @@ export default function SignAndPaySection({
   const depositSelected = paymentOption === 'deposit';
   const fullSelected = paymentOption === 'full';
   const autopayLabel = `Automatically pay remaining ${fmt(balanceAmount)} on ${formatDateShort(balanceDueDate)}`;
+  // signOnly: the post button's in-flight state (no Stripe form to own it).
+  const [signing, setSigning] = useState(false);
 
   // Memoize so Stripe Elements isn't handed a brand-new options object every
   // render — it only needs to re-init when the clientSecret changes.
@@ -153,6 +155,125 @@ export default function SignAndPaySection({
     if (!sigData) needs.push('your signature');
     return needs;
   }, [venuePrefilled, venue?.venue_street, venue?.venue_city, venue?.venue_state, sigName, sigData]);
+
+  // signOnly (audit 2026-11-05, M4): the row is already paid and no signature
+  // is on file. Same name / phone / signature / venue blocks as signAndPay,
+  // no payment options and no Stripe form; one button posts the signature.
+  if (mode === 'signOnly') {
+    const canSign = !!sigName?.trim() && !!sigData && !!venueComplete && !signing;
+    const onSignClick = async () => {
+      setSigning(true);
+      try { await handleSign(); } catch { /* handleSign already surfaced the message */ }
+      setSigning(false);
+    };
+    return (
+      <div id="sign-pay-section" className="sign-pay-card">
+        <div>
+          <span className="sign-pay-eyebrow">One more step &middot; Sign</span>
+          <h2 className="sign-pay-title">Your agreement still needs a signature.</h2>
+          <p className="sign-pay-accept-note">
+            Your payment is in. Please sign the Service Agreement above so your booking is complete.
+          </p>
+        </div>
+
+        <div>
+          <label className="sign-pay-eyebrow" htmlFor="sig-name">Full Legal Name</label>
+          <input
+            id="sig-name"
+            type="text"
+            className="sign-pay-input"
+            value={sigName}
+            onChange={(e) => setSigName(e.target.value)}
+            placeholder="Your full name"
+          />
+        </div>
+
+        <div>
+          <label className="sign-pay-eyebrow" htmlFor="sig-phone">
+            Best phone number for event-day updates (optional)
+          </label>
+          <input
+            id="sig-phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            className="sign-pay-input"
+            value={clientPhone}
+            onChange={(e) => {
+              setClientPhone(e.target.value);
+              setFieldErrors((fe) => {
+                if (!fe.client_phone) return fe;
+                const next = { ...fe };
+                delete next.client_phone;
+                return next;
+              });
+            }}
+            placeholder="(312) 555-0148"
+          />
+          {fieldErrors?.client_phone && (
+            <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }} role="alert">
+              {fieldErrors.client_phone}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="sign-pay-eyebrow">Signature</label>
+          <div className="sign-pay-sig-wrap">
+            <SignaturePad
+              requireAccept
+              value={sigData}
+              onChange={(data, method) => { setSigData(data); setSigMethod(method); }}
+            />
+          </div>
+          <p className="sign-pay-sig-caption">x &middot; sign above</p>
+          <p className="sign-pay-accept-note">
+            By signing, you agree to the Service Agreement above and confirm your event details are accurate.
+          </p>
+        </div>
+
+        <div>
+          <label className="sign-pay-eyebrow">Where is your event?</label>
+          {venuePrefilled ? (
+            <p className="sign-pay-venue-confirm">
+              {formatVenue(proposalVenue)}
+            </p>
+          ) : (
+            <VenueAddressFields
+              value={venue}
+              onChange={(f, val) => {
+                setVenue((cur) => ({ ...cur, [f]: val }));
+                setFieldErrors((fe) => {
+                  if (!fe[f]) return fe;
+                  const next = { ...fe };
+                  delete next[f];
+                  return next;
+                });
+              }}
+              fieldErrors={fieldErrors}
+              requireStreet
+              inputClassName="sign-pay-input"
+              selectClassName="sign-pay-input"
+              labelClassName="sign-pay-eyebrow"
+              idPrefix="signpay-venue"
+            />
+          )}
+        </div>
+
+        {payNeeds.length > 0 && (
+          <div className="sign-pay-needs" role="status" aria-live="polite">
+            Before you can sign, please add: {payNeeds.join(' · ')}.
+          </div>
+        )}
+
+        <FormBanner error={formError || ''} fieldErrors={fieldErrors} />
+
+        <button type="button" className="btn btn-primary" onClick={onSignClick} disabled={!canSign}>
+          {signing ? 'Signing…' : 'Sign the agreement'}
+        </button>
+      </div>
+    );
+  }
 
   if (mode === 'signAndPay') {
     return (

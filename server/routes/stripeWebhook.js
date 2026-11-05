@@ -18,7 +18,9 @@ const handlePaymentIntentFailed = require('./stripeWebhookHandlers/paymentIntent
 const handleCheckoutSessionCompleted = require('./stripeWebhookHandlers/checkoutSessionCompleted');
 const handleChargeRefunded = require('./stripeWebhookHandlers/chargeRefunded');
 const handleRefundCreated = require('./stripeWebhookHandlers/refundCreated');
-const { handleDisputeFundsWithdrawn, handleDisputeFundsReinstated } = require('./stripeWebhookHandlers/disputes');
+const {
+  handleDisputeCreated, handleDisputeFundsWithdrawn, handleDisputeClosed, handleDisputeFundsReinstated,
+} = require('./stripeWebhookHandlers/disputes');
 const handlePayout = require('./stripeWebhookHandlers/payout');
 
 const router = express.Router();
@@ -134,8 +136,23 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   // notifyDisputeWon below gates on tips.dispute_won_at (redelivery returns early). So an
   // at-least-once redelivery of charge.refunded / dispute.* cannot double-clawback or
   // double-notify; no extra guard is needed here.
+  // Client-payment chargebacks (audit 2026-11-05, H1) ride the same events plus
+  // charge.dispute.created / charge.dispute.closed, which the Stripe dashboard
+  // must be subscribed to for a LOST dispute to reach the ledger (a won one also
+  // arrives as funds_reinstated). Idempotent on the dispute id inside
+  // proposalDisputes.js, so created + funds_withdrawn flag a proposal once.
+  if (event.type === 'charge.dispute.created') {
+    await handleDisputeCreated(event);
+    if (res.headersSent) return;
+  }
+
   if (event.type === 'charge.dispute.funds_withdrawn') {
     await handleDisputeFundsWithdrawn(event);
+    if (res.headersSent) return;
+  }
+
+  if (event.type === 'charge.dispute.closed') {
+    await handleDisputeClosed(event);
     if (res.headersSent) return;
   }
 
