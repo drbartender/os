@@ -1,7 +1,7 @@
 // The one check both signature writers run on a signature payload (the staff agreement sign in
 // routes/agreement.js and the proposal sign in routes/proposals/publicToken.js): a drawn
 // signature is a PNG or JPEG data URL whose decoded bytes carry that image's magic bytes and
-// fit SIGNATURE_MAX_BYTES, a typed one is a 2 to 120 character name; anything else is a field
+// fit SIGNATURE_MAX_BYTES, a typed one is a 2 to 120 character printable string; anything else is a field
 // error for the route to 400 with. Pure: no DB, no Express.
 //
 // Why both shapes are checked here and not where they are drawn (agreementPdf.js prints
@@ -22,10 +22,12 @@ const MAX_BASE64_LENGTH = Math.ceil(SIGNATURE_MAX_BYTES / 3) * 4;
 const DATA_URL_RE = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/;
 const TYPED_MIN = 2;
 const TYPED_MAX = 120;
-// A typed signature is a name: letters and marks in any script, digits (a
-// "3rd"), spaces, and the punctuation names carry. No slash, colon, angle
-// bracket or parenthesis, so a URL or markup is never stored as a signature.
-const TYPED_RE = /^[\p{L}\p{M}\p{N} .,'’-]+$/u;
+// A typed signature is a bounded printable string: any script, digits, and
+// whatever punctuation a name carries (an ampersand, a slash, parentheses
+// included; a letters-only alphabet refused "Jane & John Doe"). Only control
+// characters are refused; the value is stored trimmed, and every surface that
+// prints it does so as text (the PDF renderer, the admin's signature card).
+const CONTROL_RE = /\p{Cc}/u;
 const METHODS = ['draw', 'type'];
 
 const MAGIC = { png: PNG_MAGIC, jpeg: JPEG_MAGIC };
@@ -45,7 +47,7 @@ function validateSignaturePayload({ data, method } = {}) {
     if (name.length < TYPED_MIN || name.length > TYPED_MAX) {
       return { value: null, error: `Type your full name (${TYPED_MIN} to ${TYPED_MAX} characters).` };
     }
-    if (!TYPED_RE.test(name)) return { value: null, error: 'Type your name using letters only.' };
+    if (CONTROL_RE.test(name)) return { value: null, error: 'Type your name using printable characters only.' };
     return { value: name, error: null };
   }
   if (data.length > MAX_BASE64_LENGTH + 'data:image/jpeg;base64,'.length) {
