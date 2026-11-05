@@ -21,6 +21,7 @@
 const { esc } = require('./htmlEscape');
 const { firstNameOf } = require('./firstName');
 const { COMPANY_PHONE, COMPANY_TEXT_PHONE } = require('./companyPhone');
+const { signedRecordBlock } = require('./signedRecordEmail');
 
 const BRAND = {
   dark: '#2d1810',
@@ -91,8 +92,12 @@ function signedAndPaidClient({
   receiptBlock,
   potionPlannerUrl,
   timelineLines,
+  // The "what you signed" block (signedRecordEmail.js, from the row the sign
+  // wrote; audit ESIG-05). Additive: null renders neither shape differently.
+  signedRecord = null,
 }) {
   const name = clientName || 'there';
+  const record = signedRecordBlock(signedRecord);
 
   // Fallback: old short-form behavior when caller hasn't migrated to the
   // orientation shape. Lets us ship the template change ahead of the route
@@ -105,11 +110,12 @@ function signedAndPaidClient({
         <p>Hi ${esc(firstNameOf(name))},</p>
         <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>. Your date is officially on the books.</p>
         ${lastMinuteCaveatHtml(lastMinute)}
+        ${record.html}
         <p>We'll be in touch with next steps as your event date approaches.</p>
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
         <p>Cheers, Dallas</p>
       `),
-      text: `Hi ${firstNameOf(name)}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} Cheers, Dallas`,
+      text: `Hi ${firstNameOf(name)}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)}${record.text ? `\n\n${record.text}\n\n` : ' '}Cheers, Dallas`,
     };
   }
 
@@ -156,6 +162,7 @@ function signedAndPaidClient({
     ${bookingTable}
     <h3 style="color:${BRAND.primary};margin-top:1.5rem;">Receipt</h3>
     ${receiptTable}
+    ${record.html}
     ${plannerCta}
     ${timelineHtml}
     ${lastMinuteCaveatHtml(lastMinute)}
@@ -175,6 +182,7 @@ function signedAndPaidClient({
     rb.paidInFull
       ? `Paid in full: $${rb.depositPaid || amount || ''}`
       : `${paymentType || 'Deposit'} paid: $${rb.depositPaid || amount || ''}. Balance: $${rb.balanceRemaining || ''}${rb.formattedBalanceDueDate ? `, ${rb.dueLabel || 'due on'} ${rb.formattedBalanceDueDate}` : ''}.`,
+    record.text ? `\n${record.text}\n` : null,
     potionPlannerUrl ? `Pick your drinks: ${potionPlannerUrl}` : null,
     ...(timelineLines || []),
     lastMinuteCaveatText(lastMinute).trim(),

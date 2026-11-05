@@ -23,6 +23,7 @@ const { validatePhone } = require('../../utils/phone');
 const { validateSignaturePayload } = require('../../utils/signaturePayload');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
 const { publicPriceView, signedPriceRecord } = require('../../utils/publicSnapshot');
+const { signedRecordFromRow } = require('../../utils/signedRecordEmail');
 const { isLegalHold } = require('../../utils/legalHold');
 
 const router = express.Router();
@@ -676,8 +677,12 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   );
   if (pendingPayment.rowCount === 0) {
     try {
+      // The signed record the email prints (audit ESIG-05) is read back from
+      // the row the UPDATE above wrote, never from the request.
       const fp = await pool.query(`
         SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.event_timezone,
+               p.client_signed_name, p.client_signed_at, p.client_signature_document_version,
+               p.client_signed_snapshot,
                c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
@@ -685,7 +690,9 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       const pd = fp.rows[0];
       const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
       if (pd?.client_email) {
-        const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
+        const tpl = emailTemplates.proposalSignedConfirmation({
+          clientName: pd.client_name, eventTypeLabel, signedRecord: signedRecordFromRow(pd),
+        });
         await sendEmail({ to: pd.client_email, ...tpl });
       }
       if (pd) {

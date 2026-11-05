@@ -37,8 +37,17 @@ const KNOWN_AGREEMENT_VERSIONS = [
   CURRENT_AGREEMENT_VERSION,
 ];
 
+// Each version's revised date, the client module's `revisedDate` by hand
+// (agreementVersions.test.js pins the pair), for the sign-time emails. Legacy
+// v2 has none: its abridged text lives only in git history.
+const AGREEMENT_REVISED_DATES = Object.freeze({
+  'event-services-agreement-v3': '2026-06-04',
+  'event-services-agreement-v4': '2026-09-27',
+});
+
 module.exports = {
   LEGACY_AGREEMENT_VERSION,
   CURRENT_AGREEMENT_VERSION,
   KNOWN_AGREEMENT_VERSIONS,
+  AGREEMENT_REVISED_DATES,
 };
