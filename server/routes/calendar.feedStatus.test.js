@@ -35,10 +35,15 @@ const { AppError } = require('../utils/errors');
 const BLOCKED = ['deactivated', 'rejected', 'suspended'];
 const ADMIN_ID = 1;
 const TARGET_ID = 2;
+const LEGACY_ID = 3;
 const base = { can_hire: false, can_staff: false, token_version: 0, pre_hired: false, presence_lead_rank: null };
 const users = {
   [ADMIN_ID]: { id: ADMIN_ID, email: 'feed-admin@example.com', role: 'admin', onboarding_status: 'approved', calendar_token: crypto.randomUUID(), ...base },
   [TARGET_ID]: { id: TARGET_ID, email: 'feed-manager@example.com', role: 'manager', onboarding_status: 'approved', calendar_token: crypto.randomUUID(), ...base },
+  // A legacy row with no status at all: middleware/auth.js lets it through
+  // (none of the three blocked values), so the feed must too, which takes the
+  // COALESCE in the lookup.
+  [LEGACY_ID]: { id: LEGACY_ID, email: 'feed-legacy@example.com', role: 'manager', onboarding_status: null, calendar_token: crypto.randomUUID(), ...base },
 };
 
 let statements = [];
@@ -46,16 +51,19 @@ const realQuery = pool.query;
 const realConnect = pool.connect;
 
 // The lookup's status predicate, evaluated from the SQL itself rather than
-// matched as a string: the `[NOT] IN (...)` list on onboarding_status (the
-// COALESCE to '' included) and the `role = 'admin' OR` exemption. An inverted
-// predicate (IN for NOT IN) resolves a deactivated row here and fails the
-// test, as it would in Postgres. No predicate at all is the old lookup.
+// matched as a string: the `[NOT] IN (...)` list on onboarding_status, the
+// COALESCE to '' only when the SQL carries it, and the `role = 'admin' OR`
+// exemption. An inverted predicate (IN for NOT IN) resolves a deactivated row
+// here and fails the test, as it would in Postgres; a dropped COALESCE loses
+// the NULL-status legacy row, as it would there (NULL [NOT] IN (...) is NULL,
+// which excludes the row either way). No predicate at all is the old lookup.
 function statusPredicateAllows(text, u) {
-  const m = /onboarding_status(?:, '')?\)?\s+(NOT\s+)?IN\s*\(([^)]*)\)/.exec(text);
+  const m = /(COALESCE\()?onboarding_status(?:, '')?\)?\s+(NOT\s+)?IN\s*\(([^)]*)\)/.exec(text);
   if (!m) return true;
-  const list = m[2].split(',').map((s) => s.trim().replace(/^'(.*)'$/, '$1'));
-  const inList = list.includes(u.onboarding_status ?? '');
-  const passes = m[1] ? !inList : inList;
+  const list = m[3].split(',').map((s) => s.trim().replace(/^'(.*)'$/, '$1'));
+  const status = m[1] ? (u.onboarding_status ?? '') : u.onboarding_status;
+  const inList = status === null || status === undefined ? null : list.includes(status);
+  const passes = inList === null ? false : (m[2] ? !inList : inList);
   const adminExempt = /\brole = 'admin' OR\b/.test(text) && u.role === 'admin';
   return adminExempt || passes;
 }
@@ -171,6 +179,11 @@ for (const status of BLOCKED) {
     }
   });
 }
+
+test('a legacy row with a NULL status still gets its feed, as middleware/auth.js still lets it in', async () => {
+  const res = await request('GET', `/api/calendar/feed/${users[LEGACY_ID].calendar_token}`);
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw.slice(0, 120)}`);
+});
 
 test('the feed lookup fails closed the way middleware/auth.js does (admin exempt, the three statuses blocked)', async () => {
   statements = [];
