@@ -51,15 +51,26 @@ const ROW = {
   pricing_snapshot: SNAPSHOT, total_price: '556.55', package_name: 'Test Flat',
 };
 
+// Round 2 (L5): the record must come from the row read FOR UPDATE inside the
+// sign's own transaction. A lookup that is not locked gets a STALE copy of the
+// snapshot (the terms before a concurrent PATCH committed), so a record built
+// from it carries the wrong rows and fails below.
+const STALE_SNAPSHOT = { ...SNAPSHOT, package: { ...SNAPSHOT.package, base_cost: 300 }, breakdown: [], total: 256.55 };
 const calls = [];
-function answer(sql, params) {
-  calls.push({ sql, params });
-  if (/FROM proposals\b[\s\S]*WHERE p?\.?token = \$1/.test(sql) && /^\s*SELECT/i.test(sql)) return { rows: [ROW], rowCount: 1 };
+function answer(via, sql, params) {
+  calls.push({ via, sql, params });
+  if (/FROM proposals\b[\s\S]*WHERE p?\.?token = \$1/.test(sql) && /^\s*SELECT/i.test(sql)) {
+    const locked = /FOR UPDATE/.test(sql);
+    return { rows: [{ ...ROW, status: 'viewed', client_signed_at: null, pricing_snapshot: locked ? SNAPSHOT : STALE_SNAPSHOT }], rowCount: 1 };
+  }
   if (/UPDATE proposals SET/.test(sql) && /client_signed_name = \$1/.test(sql)) return { rows: [{ id: ROW.id }], rowCount: 1 };
   return { rows: [], rowCount: 0 };
 }
-pool.query = async (sql, params) => answer(sql, params);
-pool.connect = async () => ({ query: async (sql, params) => answer(sql, params), release() {} });
+pool.query = async (sql, params) => answer('pool', sql, params);
+pool.connect = async () => ({
+  query: async (sql, params) => answer('client', sql, params),
+  release() { calls.push({ via: 'release', sql: '<release>', params: [] }); },
+});
 
 const publicTokenRouter = require('./publicToken');
 
@@ -149,4 +160,22 @@ test('the sign UPDATE stores the row total and the rendered price view beside th
   assert.ok(!raw.includes('123.45'), 'no hidden amount in the signed record');
   const keys = keysDeep(record);
   for (const k of ['breakdown', 'subtotal', 'total_price_override']) assert.ok(!keys.has(k), `no "${k}" key`);
+
+  // Round 2 (L5): the record is built from the row read FOR UPDATE in one
+  // transaction with the sign UPDATE, on one pooled client, released before
+  // the post-commit tail reads through the pool.
+  const lookup = calls.find((c) => /FROM proposals\b[\s\S]*WHERE p?\.?token = \$1/.test(c.sql) && /^\s*SELECT/i.test(c.sql));
+  assert.match(lookup.sql, /FOR UPDATE/, 'the lookup locks the row');
+  const at = (pred) => calls.findIndex(pred);
+  const begin = at((c) => c.via === 'client' && c.sql === 'BEGIN');
+  const commit = at((c) => c.via === 'client' && c.sql === 'COMMIT');
+  const release = at((c) => c.via === 'release');
+  assert.ok(begin >= 0 && commit > begin, 'a transaction wraps the sign');
+  assert.equal(lookup.via, 'client', 'the lookup runs on the transaction client');
+  assert.equal(upd.via, 'client', 'so does the UPDATE');
+  assert.ok(begin < calls.indexOf(lookup) && calls.indexOf(lookup) < calls.indexOf(upd) && calls.indexOf(upd) < commit, 'lookup, then UPDATE, inside BEGIN/COMMIT');
+  assert.ok(release > commit, 'the client is released after COMMIT');
+  const readBack = at((c) => /FROM proposals p LEFT JOIN clients c/.test(c.sql));
+  assert.ok(readBack > release && calls[readBack].via === 'pool', 'the post-commit tail reads through the pool after the release');
+  assert.ok(!calls.some((c, i) => c.via === 'client' && i > release), 'nothing runs on the released client');
 });
