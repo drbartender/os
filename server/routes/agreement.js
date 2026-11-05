@@ -15,6 +15,7 @@ const { sendEmail } = require('../utils/email');
 const { STAFF_URL } = require('../utils/urls');
 const { refreshDisplayName } = require('../utils/refreshDisplayName');
 const { validatePhone } = require('../utils/phone');
+const { validateSignaturePayload } = require('../utils/signaturePayload');
 
 const router = express.Router();
 
@@ -99,13 +100,12 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
   if (!signature_data) fieldErrors.signature = 'Please sign the agreement before submitting';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
-  if (typeof signature_data !== 'string' || signature_data.length > 200000) {
-    throw new ValidationError({ signature: 'Signature payload is too large.' });
-  }
-
-  if (signature_method !== 'draw' && signature_method !== 'type') {
-    throw new ValidationError({ signature: 'Invalid signature method.' });
-  }
+  // The signature itself: a PNG or JPEG data URL of bounded size under 'draw',
+  // a 2 to 120 character name under 'type' (utils/signaturePayload.js, shared
+  // with the proposal sign). A row that says signed must hold a signature.
+  const sig = validateSignaturePayload({ data: signature_data, method: signature_method });
+  if (sig.error) throw new ValidationError({ signature: sig.error });
+  const signatureValue = sig.value;
 
   // req.ip is the proxy-validated client address (trust proxy is set in
   // index.js) and is bounded to the VARCHAR(45) column; the leftmost
@@ -153,7 +153,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
         [
           fullName, emailValue, phoneCheck.value, sms_consent === true,
           true, true, true, true, true, true, // every ack was asserted === true above
-          signature_data, signature_method, ip, userAgent,
+          signatureValue, signature_method, ip, userAgent,
           CURRENT_VERSION, req.user.id,
         ]
       );
@@ -169,7 +169,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
           req.user.id,
           fullName, emailValue, phoneCheck.value, sms_consent === true,
           true, true, true, true, true, true, // every ack was asserted === true above
-          signature_data, signature_method, ip, userAgent,
+          signatureValue, signature_method, ip, userAgent,
           CURRENT_VERSION,
         ]
       );

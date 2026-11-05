@@ -20,6 +20,7 @@ const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../ut
 const { additionalTimeRate } = require('../../utils/additionalTimeRate');
 const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
+const { validateSignaturePayload } = require('../../utils/signaturePayload');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
 const { publicPriceView } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
@@ -427,9 +428,13 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
   }
-  if (client_signature_method !== 'draw' && client_signature_method !== 'type') {
-    throw new ValidationError({ signature: 'Invalid signature method' });
-  }
+  // The signature itself: a PNG or JPEG data URL of bounded size under 'draw',
+  // a 2 to 120 character name under 'type' (utils/signaturePayload.js, shared
+  // with the staff agreement sign). Checked before the first query, so a
+  // refusal reaches no row.
+  const sig = validateSignaturePayload({ data: client_signature_data, method: client_signature_method });
+  if (sig.error) throw new ValidationError({ signature: sig.error });
+  const signatureValue = sig.value;
 
   // Version recording (spec section 4.4). The client sends the version it
   // actually rendered; we validate against the allowlist and record exactly that
@@ -554,7 +559,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       AND ABS(total_price - $14::numeric) < 0.005
     RETURNING id
   `, [
-    signedName, client_signature_data, client_signature_method, ip, userAgent,
+    signedName, signatureValue, client_signature_method, ip, userAgent,
     documentVersion, lookup.rows[0].id,
     venueToPersist ? (vStr(venue_name) || null) : null,
     venueToPersist ? vStr(venue_street) : null,
