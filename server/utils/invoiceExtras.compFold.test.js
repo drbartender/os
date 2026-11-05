@@ -70,3 +70,21 @@ test('H1: a row minted before the column (NULL) keeps the line-shape classificat
   await voidExtrasInvoiceWithReconcile(77, 9001, byAddon);
   assert.equal(totalDrops(byAddon).length, 1);
 });
+
+test('M1: the comp ladder nets the off-contract money: the M2 shape is not fully paid after the void', async () => {
+  // After the void the row reads 150.00 total against 160.00 paid, 60.00 of it
+  // a paid syrup-only invoice: raw promotes to balance_paid, netted it is
+  // 100.00 of contract money against 150.00, so a balance_paid row demotes.
+  const client = scriptedClient({
+    invoice: unpaid({ folded_into_total: true }), lines: SYRUP_LINES,
+    afterVoid: { status: 'balance_paid', amount_paid: '160.00', total_price: '150.00' },
+    offContract: [{ id: 78, label: 'Drink Plan Extras', amount_paid: 6000, folded_into_total: false }],
+  });
+  await voidExtrasInvoiceWithReconcile(77, 9001, client);
+  const writes = statusWrites(client);
+  assert.equal(writes.length, 1, 'the ladder moved the row');
+  assert.deepEqual(writes[0].params, ['deposit_paid', 4242]);
+  const netIdx = client.calls.findIndex((c) => /amount_paid > 0/.test(c.text));
+  const dropIdx = client.calls.findIndex((c) => /UPDATE proposals SET total_price/.test(c.text));
+  assert.ok(netIdx > dropIdx, 'the term is read on the held client after the total moved');
+});
