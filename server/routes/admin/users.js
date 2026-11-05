@@ -412,49 +412,85 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
 
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
-  // Upsert contractor profile
-  await pool.query(`
-    INSERT INTO contractor_profiles (
-      user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
-      city, state, street_address, zip_code, travel_distance, reliable_transportation,
-      equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-      equipment_none_but_open, equipment_no_space, equipment_will_pickup,
-      emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-      hourly_rate
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23, 20.00))
-    ON CONFLICT (user_id) DO UPDATE SET
-      preferred_name = CASE WHEN $24 THEN EXCLUDED.preferred_name ELSE contractor_profiles.preferred_name END,
-      phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
-      city=$8, state=$9, street_address=$10, zip_code=$11, travel_distance=$12, reliable_transportation=$13,
-      equipment_portable_bar=$14, equipment_cooler=$15, equipment_table_with_spandex=$16,
-      equipment_none_but_open=$17, equipment_no_space=$18, equipment_will_pickup=$19,
-      emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22,
-      hourly_rate=COALESCE($23, contractor_profiles.hourly_rate)
-  `, [
-    userId, nextName, phoneCheck.value, profileEmail || null,
-    birth_month || null, birth_day || null, birth_year || null,
-    city || null, state || null, street_address || null, zip_code || null,
-    travel_distance || null, reliable_transportation || null,
-    equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
-    equipment_none_but_open || false, equipment_no_space || false, equipment_will_pickup || false,
-    emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
-    rate, preferredNameProvided,
-  ]);
-
-  // Contained like its contractor.js sibling: the profile upsert above has
-  // already autocommitted, so a transient DB blip here must not 500 a save
-  // that succeeded — especially since a 500 at this line would also skip the
-  // geocode below and strand stale coordinates that autoAssign ranks by.
-  // Worst case is a stale display name, and refreshDisplayNames.js --check is
-  // the net that finds it.
+  // One transaction on one held connection for the two rows this form edits
+  // (audit 2026-11-05, POUT-09): as two autocommits, a transient failure on
+  // the payment upsert left the new hourly rate saved while the bank and
+  // method change was lost, behind a 500 the admin read as "nothing saved".
+  // Everything after COMMIT runs on the same client (one connection per
+  // request, payroll.js's payout-event PATCH refreshes the same way) and the
+  // geocode, which takes its own pool.query, starts only after the release.
+  let profileRow;
+  let paymentRow;
+  const client = await pool.connect();
   try {
-    await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
-  } catch (dnErr) {
-    console.error('[Admin] display-name refresh failed:', dnErr.message);
-    Sentry.captureException(dnErr, { tags: { route: 'PUT /api/admin/users/:id/profile', step: 'display_name' } });
+    await client.query('BEGIN');
+
+    // Upsert contractor profile
+    await client.query(`
+      INSERT INTO contractor_profiles (
+        user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
+        city, state, street_address, zip_code, travel_distance, reliable_transportation,
+        equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
+        equipment_none_but_open, equipment_no_space, equipment_will_pickup,
+        emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+        hourly_rate
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23, 20.00))
+      ON CONFLICT (user_id) DO UPDATE SET
+        preferred_name = CASE WHEN $24 THEN EXCLUDED.preferred_name ELSE contractor_profiles.preferred_name END,
+        phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
+        city=$8, state=$9, street_address=$10, zip_code=$11, travel_distance=$12, reliable_transportation=$13,
+        equipment_portable_bar=$14, equipment_cooler=$15, equipment_table_with_spandex=$16,
+        equipment_none_but_open=$17, equipment_no_space=$18, equipment_will_pickup=$19,
+        emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22,
+        hourly_rate=COALESCE($23, contractor_profiles.hourly_rate)
+    `, [
+      userId, nextName, phoneCheck.value, profileEmail || null,
+      birth_month || null, birth_day || null, birth_year || null,
+      city || null, state || null, street_address || null, zip_code || null,
+      travel_distance || null, reliable_transportation || null,
+      equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
+      equipment_none_but_open || false, equipment_no_space || false, equipment_will_pickup || false,
+      emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
+      rate, preferredNameProvided,
+    ]);
+
+    // Upsert payment profile. $6 and $7 keep the stored bank column when the form
+    // sent the masked value back; a new row has nothing to keep, so it gets null.
+    await client.query(`
+      INSERT INTO payment_profiles (user_id, preferred_payment_method, payment_username, routing_number, account_number)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (user_id) DO UPDATE SET
+        preferred_payment_method=$2, payment_username=$3,
+        routing_number = CASE WHEN $6::boolean THEN payment_profiles.routing_number ELSE EXCLUDED.routing_number END,
+        account_number = CASE WHEN $7::boolean THEN payment_profiles.account_number ELSE EXCLUDED.account_number END
+    `, [userId, preferred_payment_method || null, payment_username || null,
+      bank.routing_number.value, bank.account_number.value, bank.routing_number.keep, bank.account_number.keep]);
+
+    await client.query('COMMIT');
+
+    // Contained like its contractor.js sibling: the save above has already
+    // committed, so a transient DB blip here must not 500 a save that
+    // succeeded. Worst case is a stale display name, and
+    // refreshDisplayNames.js --check is the net that finds it.
+    try {
+      await refreshDisplayName(userId, client, { previousPreferredName: prevPreferredName });
+    } catch (dnErr) {
+      console.error('[Admin] display-name refresh failed:', dnErr.message);
+      Sentry.captureException(dnErr, { tags: { route: 'PUT /api/admin/users/:id/profile', step: 'display_name' } });
+    }
+
+    // Return updated data (post-COMMIT, on the client we already hold).
+    profileRow = (await client.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [userId])).rows[0] || {};
+    paymentRow = (await client.query('SELECT * FROM payment_profiles WHERE user_id = $1', [userId])).rows[0] || {};
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* not in a transaction, or the connection is gone */ }
+    throw err;
+  } finally {
+    client.release();
   }
 
-  // Geocode address in background (fire-and-forget; failures logged only)
+  // Geocode address in background (fire-and-forget; failures logged only).
+  // After the release: its UPDATE takes its own pooled connection.
   if (street_address || city || state || zip_code) {
     geocodeAddress(buildAddressString({ street_address, city, state, zip_code }))
       .then(coords => {
@@ -465,29 +501,11 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       .catch(err => console.error('[Admin] Geocode error:', err.message));
   }
 
-  // Upsert payment profile. $6 and $7 keep the stored bank column when the form
-  // sent the masked value back; a new row has nothing to keep, so it gets null.
-  await pool.query(`
-    INSERT INTO payment_profiles (user_id, preferred_payment_method, payment_username, routing_number, account_number)
-    VALUES ($1,$2,$3,$4,$5)
-    ON CONFLICT (user_id) DO UPDATE SET
-      preferred_payment_method=$2, payment_username=$3,
-      routing_number = CASE WHEN $6::boolean THEN payment_profiles.routing_number ELSE EXCLUDED.routing_number END,
-      account_number = CASE WHEN $7::boolean THEN payment_profiles.account_number ELSE EXCLUDED.account_number END
-  `, [userId, preferred_payment_method || null, payment_username || null,
-    bank.routing_number.value, bank.account_number.value, bank.routing_number.keep, bank.account_number.keep]);
-
-  // Return updated data
-  const [profileRes, paymentRes] = await Promise.all([
-    pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [userId]),
-    pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [userId]),
-  ]);
-
-  const payment = paymentRes.rows[0] || {};
+  const payment = paymentRow;
   if (payment.routing_number) payment.routing_number = maskBankNumber(payment.routing_number, { userId, column: 'routing_number' });
   if (payment.account_number) payment.account_number = maskBankNumber(payment.account_number, { userId, column: 'account_number' });
 
-  res.json({ profile: profileRes.rows[0] || {}, payment });
+  res.json({ profile: profileRow, payment });
 }));
 
 // Update user permissions (role + flags)
