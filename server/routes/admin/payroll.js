@@ -170,7 +170,12 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
     if (!Number.isFinite(n) || n < 0 || n > 24) {
       throw new ValidationError(null, 'hours must be between 0 and 24');
     }
-    patch.hours = n;
+    // Two decimals, the precision of payout_events.hours NUMERIC(5,2): the wage
+    // below is computed from the value the column will hold, so the paystub's
+    // printed hours and its wage agree and a re-accrual recomputing from the
+    // stored hours changes nothing (audit 2026-11-05, POUT-11; 7.125 h at
+    // 2000c/h stored 7.13 h against a 14,250c wage).
+    patch.hours = Math.round(n * 100) / 100;
   }
   if ('rate_cents' in patch) {
     const n = Number(patch.rate_cents);
