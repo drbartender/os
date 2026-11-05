@@ -13,6 +13,15 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$2dp } from '../../components/adminos/format';
 
+// charge-balance refusals where no charge was attempted because money is already
+// moving or none is owed (server/routes/stripe.js), so nothing failed.
+const CHARGE_NOT_STARTED = new Set(['CHARGE_IN_PROGRESS', 'CHARGE_SETTLING', 'NO_BALANCE']);
+const CHARGE_TONE_COLOR = {
+  ok: 'hsl(var(--ok-h) var(--ok-s) 38%)',
+  muted: 'var(--ink-3)',
+  danger: 'hsl(var(--danger-h) var(--danger-s) 50%)',
+};
+
 // Self-contained payment panel for ProposalDetail's right rail.
 // Owns: balance due date editor, charge-balance button, payment-link generation,
 // record-payment form, invoice list + create form. Calls onUpdate after any
@@ -61,6 +70,9 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // Charge balance (autopay)
   const [chargingBalance, setChargingBalance] = useState(false);
   const [chargeResult, setChargeResult] = useState('');
+  // 'ok' for a charge or a started debit, 'muted' for a refusal where nothing
+  // failed, 'danger' for a failure or an unknown outcome.
+  const [chargeTone, setChargeTone] = useState('danger');
 
   // Generate payment link
   const [paymentLinkUrl, setPaymentLinkUrl] = useState('');
@@ -244,15 +256,50 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     }
   };
 
+  // Both outcomes also raise a toast naming the record: the answer can land after
+  // the admin moved to another page, where the line under the button is gone.
   const chargeBalance = async () => {
     setChargingBalance(true);
     setChargeResult('');
+    const who = proposal.client_name
+      ? `${proposal.client_name} (proposal #${proposal.id})`
+      : `proposal #${proposal.id}`;
     try {
       const res = await api.post(`/stripe/charge-balance/${proposal.id}`);
-      setChargeResult(`Charged ${fmt$2dp(res.data.amount / 100)} successfully.`);
+      const amount = fmt$2dp(res.data.amount / 100);
+      setChargeTone('ok');
+      if (res.data.status === 'processing') {
+        // A saved bank account: Stripe took the debit, and it clears or bounces
+        // over the next few business days, so it is not yet a charge.
+        setChargeResult(`Bank debit of ${amount} started. It takes a few business days to clear.`);
+        toast.info(`Bank debit of ${amount} started for ${who}. It takes a few business days to clear.`);
+      } else {
+        setChargeResult(`Charged ${amount} successfully.`);
+        toast.success(`Charged ${amount} for ${who}.`);
+      }
       onUpdate?.();
     } catch (err) {
-      setChargeResult(err.message || 'Failed to charge balance.');
+      const reason = err.message || 'Failed to charge balance.';
+      setChargeTone(CHARGE_NOT_STARTED.has(err.code) ? 'muted' : 'danger');
+      setChargeResult(reason);
+      // No answer from the server (a dropped connection, a proxy page), or a server
+      // failure that can land after Stripe took the charge (the 500 when the charge
+      // record fails to write, the 502 when Stripe's answer was lost): the outcome
+      // is unknown. A 503 means payments are off, so nothing was attempted.
+      const outcomeUnknown = !err.code || err.code === 'NETWORK_ERROR'
+        || (err.status >= 500 && err.code !== 'PAYMENTS_NOT_CONFIGURED');
+      if (outcomeUnknown) {
+        setChargeResult('Could not confirm the charge. Reload the page to check before trying again.');
+        toast.error(`Could not confirm the balance charge for ${who}. Reload the page to check before trying again.`);
+      } else if (CHARGE_NOT_STARTED.has(err.code)) {
+        // A refusal where money is already moving or none is owed: nothing failed.
+        toast.info(`Balance charge for ${who} not started: ${reason}`);
+      } else {
+        toast.error(`Balance charge for ${who} did not go through. ${reason}`);
+      }
+      // A 409 can mean this panel is stale (the balance was paid elsewhere, or a
+      // charge is already moving): reload so it shows the record's real state.
+      if (err.status === 409) onUpdate?.();
     } finally {
       setChargingBalance(false);
     }
@@ -566,11 +613,19 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
               {chargingBalance ? 'Charging…' : `Charge balance (${fmt$2dp(balanceDue)})`}
             </button>
             {chargeResult && (
-              <div className="tiny" style={{
+              <div className="tiny" data-tone={chargeTone} style={{
                 marginTop: 6,
-                color: chargeResult.includes('success') ? 'hsl(var(--ok-h) var(--ok-s) 38%)' : 'hsl(var(--danger-h) var(--danger-s) 50%)',
+                color: CHARGE_TONE_COLOR[chargeTone],
               }}>
                 {chargeResult}
+              </div>
+            )}
+            {/* The charge route and the balance scheduler set autopay_status
+                'failed' when a charge does not go through, and a success clears
+                it, so a failure nobody was watching still shows here. */}
+            {!chargeResult && proposal.autopay_status === 'failed' && (
+              <div className="tiny" style={{ marginTop: 6, color: 'hsl(var(--danger-h) var(--danger-s) 50%)' }}>
+                The last balance charge did not go through.
               </div>
             )}
           </div>
