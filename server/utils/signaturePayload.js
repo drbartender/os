@@ -24,10 +24,18 @@ const TYPED_MIN = 2;
 const TYPED_MAX = 120;
 // A typed signature is a bounded printable string: any script, digits, and
 // whatever punctuation a name carries (an ampersand, a slash, parentheses
-// included; a letters-only alphabet refused "Jane & John Doe"). Only control
-// characters are refused; the value is stored trimmed, and every surface that
-// prints it does so as text (the PDF renderer, the admin's signature card).
-const CONTROL_RE = /\p{Cc}/u;
+// included; a letters-only alphabet refused "Jane & John Doe"). Control and
+// format characters (zero-width spaces, soft hyphens, joiners) are refused
+// outright, and the trimmed value must carry at least two letters or digits,
+// a combining mark counting only beside a base character, so nothing that
+// prints as a blank line is ever stored as a signature. The value is stored
+// trimmed, and every surface prints it as text (the PDF renderer, the admin's
+// signature card).
+const CONTROL_OR_FORMAT_RE = /[\p{Cc}\p{Cf}]/u;
+const BASE_CHAR_RE = /[\p{L}\p{N}]/gu;
+// A combining mark at the start, or after anything but a letter, a digit or
+// another attached mark: a mark with no base character under it.
+const ORPHAN_MARK_RE = /(?:^|[^\p{L}\p{N}\p{M}])\p{M}/u;
 const METHODS = ['draw', 'type'];
 
 const MAGIC = { png: PNG_MAGIC, jpeg: JPEG_MAGIC };
@@ -47,7 +55,10 @@ function validateSignaturePayload({ data, method } = {}) {
     if (name.length < TYPED_MIN || name.length > TYPED_MAX) {
       return { value: null, error: `Type your full name (${TYPED_MIN} to ${TYPED_MAX} characters).` };
     }
-    if (CONTROL_RE.test(name)) return { value: null, error: 'Type your name using printable characters only.' };
+    if (CONTROL_OR_FORMAT_RE.test(name)) return { value: null, error: 'Type your name using printable characters only.' };
+    if (ORPHAN_MARK_RE.test(name) || (name.match(BASE_CHAR_RE) || []).length < TYPED_MIN) {
+      return { value: null, error: 'Type your full name using letters.' };
+    }
     return { value: name, error: null };
   }
   if (data.length > MAX_BASE64_LENGTH + 'data:image/jpeg;base64,'.length) {

@@ -66,6 +66,21 @@ test('a typed signature is a 2 to 120 character printable string, stored trimmed
     assert.match(typed(bad).error, /printable/, JSON.stringify(bad));
     assert.equal(typed(bad).value, null);
   }
+  // Round 3 (L10): a value made of format or combining characters alone
+  // passed the length check and printed as a blank line in the PDF. Format
+  // characters (zero-width spaces, soft hyphens, joiners) are refused
+  // outright; the trimmed value must carry at least two letters or digits,
+  // and a combining mark counts only beside a base character.
+  for (const invisible of ['​​', '­­­', '́́', '́ ́', 'J​ane Doe', '‍‍', 'Jane⁠Doe']) {
+    assert.ok(typed(invisible).error, JSON.stringify(invisible));
+    assert.equal(typed(invisible).value, null, JSON.stringify(invisible));
+  }
+  for (const thin of ['--', '& (', '. ,', 'A', 'Á', '́A']) {
+    assert.ok(typed(thin).error, JSON.stringify(thin));
+  }
+  // Decomposed accents sit beside their base and pass with their letters.
+  assert.deepEqual(typed('José Nandú'), { value: 'José Nandú', error: null });
+  assert.equal(typed('A1').error, null);
 });
 
 test('an empty, non-string or unknown-method payload is refused', () => {
