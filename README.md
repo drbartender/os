@@ -779,7 +779,7 @@ tests omitted
 │       │   │       └── tabs/
 │       │   │           ├── ApplicationTab.js # ApplicationTab (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │           ├── CertificationsTab.js # CertificationsTab (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   │           ├── DocumentsTab.js # DocumentsTab (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │           ├── DocumentsTab.js # The admin staff record's Documents tab: the contractor agreement (its signed PDF through the prefix-checked admin route, a resend of the signer's copy when the sign-time email never went out), the W-9, the alcohol certification, the resume and the headshot, each opened in the document lightbox, plus the signature and acknowledgments cards.
 │       │   │           ├── FeedbackCard.js # FeedbackCard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │           ├── MessagesTab.js # MessagesTab (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │           ├── OverviewTab.js # OverviewTab (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.

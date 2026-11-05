@@ -4,13 +4,14 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { publicReadLimiter, signLimiter } = require('../middleware/rateLimiters');
-const { ValidationError, NotFoundError, ConflictError } = require('../utils/errors');
+const { publicReadLimiter, signLimiter, adminWriteLimiter } = require('../middleware/rateLimiters');
+const { ValidationError, NotFoundError, ConflictError, ExternalServiceError } = require('../utils/errors');
 const { getCurrentAgreement, getAgreementVersion, CURRENT_VERSION, agreementVersionSha256 } = require('../data/contractorAgreement');
 const { renderAgreementPdf } = require('../utils/agreementPdf');
-const { uploadFile, getSignedUrl } = require('../utils/storage');
+const { uploadFile, getSignedUrl, readFile } = require('../utils/storage');
+const { assertKeyUnder } = require('../utils/r2Proxy');
 const { sendEmail } = require('../utils/email');
 const { STAFF_URL } = require('../utils/urls');
 const { refreshDisplayName } = require('../utils/refreshDisplayName');
@@ -64,6 +65,79 @@ router.get('/download', auth, asyncHandler(async (req, res) => {
   if (!key) throw new NotFoundError('Signed agreement PDF not available.');
   const url = await getSignedUrl(key);
   res.json({ url });
+}));
+
+// Every PDF this file hands out sits under the signer's own prefix; the admin
+// routes assert it before presigning or reading (r2Proxy.js), so a row whose
+// key was ever pointed elsewhere serves nothing.
+const agreementKeyPrefix = (userId) => `agreements/${userId}/`;
+
+// A path id as a positive integer, else 400 (the editor PATCH's
+// parseProposalId reading: Postgres would read '1_23' as 123).
+function parseUserId(raw) {
+  const n = typeof raw === 'string' && /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(n) || n < 1) throw new ValidationError({ user_id: 'Invalid user id.' });
+  return n;
+}
+
+// The signer's copy (audit ESIG-04): the archived PDF attached to one email,
+// the sent stamp written only once the provider accepted it. The sign tail
+// fires it without waiting; the admin resend route awaits it. A provider
+// failure is an ExternalServiceError (502 for the admin, Sentry either way).
+async function sendSignedCopyEmail({ userId, email, fullName, pdfBuf }) {
+  const safeName = escapeHtml(fullName) || 'there';
+  const portalUrl = escapeHtml(`${STAFF_URL}/dashboard`);
+  try {
+    await sendEmail({
+      to: email,
+      subject: 'Your signed Dr. Bartender Contractor Agreement',
+      html: `
+        <p>Hi ${safeName},</p>
+        <p>Thanks for signing — your Dr. Bartender Independent Contractor Agreement is attached as a PDF for your records.</p>
+        <p>You can also download it anytime from your <a href="${portalUrl}">staff portal</a>.</p>
+        <p>— Dr. Bartender</p>
+      `,
+      text: 'Thanks for signing — your Dr. Bartender Independent Contractor Agreement is attached.',
+      attachments: [
+        { filename: 'dr-bartender-contractor-agreement.pdf', content: pdfBuf },
+      ],
+    });
+  } catch (err) {
+    throw new ExternalServiceError('resend', err, 'The copy could not be emailed. Please try again in a moment.');
+  }
+  await pool.query(
+    `UPDATE agreements SET pdf_email_sent_at=NOW() WHERE user_id=$1`,
+    [userId]
+  );
+}
+
+// ── GET /api/agreement/admin/:userId/pdf — admin/manager: signed R2 URL to a contractor's PDF ──
+router.get('/admin/:userId/pdf', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseUserId(req.params.userId);
+  const result = await pool.query(
+    'SELECT pdf_storage_key FROM agreements WHERE user_id = $1',
+    [userId]
+  );
+  const key = result.rows[0]?.pdf_storage_key;
+  if (!key) throw new NotFoundError('Signed agreement PDF not available.');
+  assertKeyUnder(key, agreementKeyPrefix(userId));
+  res.json({ url: await getSignedUrl(key) });
+}));
+
+// ── POST /api/agreement/admin/:userId/resend-copy — admin/manager: re-send the signer's copy ──
+router.post('/admin/:userId/resend-copy', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
+  const userId = parseUserId(req.params.userId);
+  const result = await pool.query(
+    'SELECT email, full_name, pdf_storage_key FROM agreements WHERE user_id = $1',
+    [userId]
+  );
+  const row = result.rows[0];
+  if (!row || !row.pdf_storage_key) throw new NotFoundError('Signed agreement PDF not available.');
+  assertKeyUnder(row.pdf_storage_key, agreementKeyPrefix(userId));
+  if (!row.email) throw new ValidationError({ email: 'This contractor has no email on the agreement.' });
+  const { buffer } = await readFile(row.pdf_storage_key);
+  await sendSignedCopyEmail({ userId, email: row.email, fullName: row.full_name, pdfBuf: buffer });
+  res.json({ sent: true, pdf_email_sent_at: new Date() });
 }));
 
 // ── POST /api/agreement — sign ───────────────────────────────────────
@@ -306,30 +380,13 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     };
     res.json({ agreement, pdf_url: pdfUrl });
 
-    // Background the email send — fire-and-forget with error capture.
-    const safeName = escapeHtml(saved.full_name) || 'there';
-    const portalUrl = escapeHtml(`${STAFF_URL}/dashboard`);
-    sendEmail({
-      to: saved.email,
-      subject: 'Your signed Dr. Bartender Contractor Agreement',
-      html: `
-        <p>Hi ${safeName},</p>
-        <p>Thanks for signing — your Dr. Bartender Independent Contractor Agreement is attached as a PDF for your records.</p>
-        <p>You can also download it anytime from your <a href="${portalUrl}">staff portal</a>.</p>
-        <p>— Dr. Bartender</p>
-      `,
-      text: 'Thanks for signing — your Dr. Bartender Independent Contractor Agreement is attached.',
-      attachments: [
-        { filename: 'dr-bartender-contractor-agreement.pdf', content: pdfBuf },
-      ],
-    })
-      .then(() => pool.query(
-        `UPDATE agreements SET pdf_email_sent_at=NOW() WHERE user_id=$1`,
-        [req.user.id]
-      ))
+    // Background the email send — fire-and-forget with error capture. A copy
+    // that never went out leaves pdf_email_sent_at NULL, which the admin's
+    // Documents tab shows as "Copy not emailed" with a resend (the route above).
+    sendSignedCopyEmail({ userId: req.user.id, email: saved.email, fullName: saved.full_name, pdfBuf })
       .catch((emailErr) => {
-        console.error('[agreement] PDF email send failed:', emailErr.message);
-        Sentry.captureException(emailErr, { tags: { route: 'POST /api/agreement', step: 'email' } });
+        console.error('[agreement] PDF email send failed:', (emailErr.originalError || emailErr).message);
+        Sentry.captureException(emailErr.originalError || emailErr, { tags: { route: 'POST /api/agreement', step: 'email' } });
       });
   } catch (pdfErr) {
     console.error('[agreement] PDF render/upload failed:', pdfErr.message);
