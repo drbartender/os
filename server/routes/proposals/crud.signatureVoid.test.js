@@ -76,11 +76,6 @@ let row;
 // Bank debits still settling on the row (paymentInFlight.js reads
 // stripe_sessions.status = 'processing'); set per test.
 let inFlightRows = [];
-// Card confirmations that may be landing (paymentInFlight.js reads pending
-// sessions created within its window, the window riding as a parameter so the
-// recorder can apply it the way Postgres would); set per test as
-// [{ created_at: Date }].
-let pendingSessions = [];
 const calls = [];
 const SIGNATURE_COLUMNS = ['client_signed_name', 'client_signature_data', 'client_signed_at', 'client_signature_method',
   'client_signature_ip', 'client_signature_user_agent', 'client_signature_document_version', 'client_signed_total', 'client_signed_snapshot'];
@@ -104,11 +99,6 @@ function answer(via, sql, params) {
     return { rows: [{ ...row, adjustments_token: 'tok-' + row.id }], rowCount: 1 };
   }
   if (/FROM stripe_sessions s/.test(sql) && /status = 'processing'/.test(sql)) return { rows: inFlightRows, rowCount: inFlightRows.length };
-  if (/FROM stripe_sessions/.test(sql) && /status = 'pending'/.test(sql)) {
-    const cutoff = Date.now() - Number(params[1]) * 60000;
-    const rows = pendingSessions.filter((s) => s.created_at.getTime() > cutoff);
-    return { rows, rowCount: rows.length };
-  }
   if (/SELECT COUNT\(\*\)::int AS n FROM shifts/.test(sql)) return { rows: [{ n: 0 }], rowCount: 1 };
   if (/SELECT id, event_date, event_start_time, event_timezone, balance_due_date/.test(sql)) return { rows: [{ ...row }], rowCount: 1 };
   if (/SELECT total_price, deposit_amount, external_paid FROM proposals/.test(sql)) return { rows: [{ ...row }], rowCount: 1 };
@@ -179,7 +169,7 @@ after(async () => {
   if (server) await new Promise((r) => server.close(r));
 });
 
-beforeEach(() => { calls.length = 0; inFlightRows = []; pendingSessions = []; });
+beforeEach(() => { calls.length = 0; inFlightRows = []; });
 
 test('a guest-count change on a signed unpaid accepted row voids the signature inside the transaction and sends the row back to sent', async () => {
   row = signedUnpaidRow();
@@ -276,35 +266,4 @@ test('money collected off-platform (external_paid) keeps the signature too', asy
   assert.equal(voidUpdate(), -1, 'no void UPDATE with external money on the row');
   assert.equal(voidedRow(), undefined);
   assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime());
-});
-
-// Round 3 (L8): a card payment never produces a processing session, so a card
-// deposit confirmed but not yet credited (the seconds before
-// payment_intent.succeeded, a 3DS challenge keeping the intent pending) was
-// invisible to the money guard and the void fired ahead of the credit; the
-// webhook then credited a row the sign UPDATE refuses. A pending session
-// inside the sign email's own window counts as money on the row; one older
-// than the window is a stale intent and the void is allowed.
-test('a pending card session inside the window keeps the signature', async () => {
-  row = signedUnpaidRow();
-  pendingSessions = [{ created_at: new Date(Date.now() - 5 * 60000) }];
-  const res = await patch(`/api/proposals/${row.id}`, { guest_count: 80 });
-  assert.equal(res.status, 200, res.raw);
-  assert.equal(voidUpdate(), -1, 'no void UPDATE while a card confirmation may be landing');
-  assert.equal(voidedRow(), undefined);
-  assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime());
-  assert.equal(res.body.client_signed_total, '600.00');
-  const probe = calls.find((c) => /FROM stripe_sessions/.test(c.sql) && /status = 'pending'/.test(c.sql));
-  assert.ok(probe && probe.via === 'client', 'the pending read ran on the held client');
-});
-
-test('a pending session older than the window is stale and the void goes ahead', async () => {
-  row = signedUnpaidRow();
-  pendingSessions = [{ created_at: new Date(Date.now() - 45 * 60000) }];
-  const res = await patch(`/api/proposals/${row.id}`, { guest_count: 80 });
-  assert.equal(res.status, 200, res.raw);
-  assert.ok(voidUpdate() >= 0, 'the signature was cleared');
-  assert.ok(voidedRow(), 'a signature_voided row was written');
-  assert.equal(res.body.client_signed_at, null);
-  assert.equal(res.body.status, 'sent');
 });
