@@ -262,16 +262,18 @@ function venueChanged(body, row) {
 
 /**
  * Why a save must void the client's signature, as the moved terms, or null
- * when the signature stands: the row is signed, unpaid and in a status the
+ * when the signature stands: the row is signed, holds no money (amount_paid
+ * and external_paid both 0; a debit still in flight is the DB-side half of
+ * the same rule, signatureVoid.js rowHoldsMoney) and sits in a status the
  * client can sign or pay from, and the save moves a priced term (the new
  * engine snapshot against the stored one), the total the signature
  * acknowledged (client_signed_total, else the row total), or the venue. A
- * paid row keeps its signature (the additional-services flow); its signed
- * snapshot keeps the record either way.
+ * row with money keeps its signature (the additional-services flow); its
+ * signed snapshot keeps the record either way.
  */
 function signatureVoidReason({ old, snapshot, body }) {
   if (!old || old.client_signed_at === null || old.client_signed_at === undefined) return null;
-  if (Number(old.amount_paid || 0) > 0) return null;
+  if (Number(old.amount_paid || 0) > 0 || Number(old.external_paid || 0) > 0) return null;
   if (!VOIDABLE_STATUSES.includes(old.status)) return null;
   const before = pricedTermsOf(old.pricing_snapshot, old);
   const after = pricedTermsOf(snapshot, {});

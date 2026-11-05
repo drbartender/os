@@ -73,6 +73,9 @@ function signedUnpaidRow({ status = 'accepted', amountPaid = '0.00' } = {}) {
 
 // ─── the recorder in place of Postgres ──────────────────────────────────────
 let row;
+// Bank debits still settling on the row (paymentInFlight.js reads
+// stripe_sessions.status = 'processing'); set per test.
+let inFlightRows = [];
 const calls = [];
 const SIGNATURE_COLUMNS = ['client_signed_name', 'client_signature_data', 'client_signed_at', 'client_signature_method',
   'client_signature_ip', 'client_signature_user_agent', 'client_signature_document_version', 'client_signed_total', 'client_signed_snapshot'];
@@ -95,6 +98,7 @@ function answer(via, sql, params) {
     row = { ...row, guest_count: params[4], num_bars: params[6], num_bartenders: params[7], pricing_snapshot: JSON.parse(params[8]), total_price: String(Number(params[9]).toFixed(2)) };
     return { rows: [{ ...row, adjustments_token: 'tok-' + row.id }], rowCount: 1 };
   }
+  if (/FROM stripe_sessions s/.test(sql) && /status = 'processing'/.test(sql)) return { rows: inFlightRows, rowCount: inFlightRows.length };
   if (/SELECT COUNT\(\*\)::int AS n FROM shifts/.test(sql)) return { rows: [{ n: 0 }], rowCount: 1 };
   if (/SELECT id, event_date, event_start_time, event_timezone, balance_due_date/.test(sql)) return { rows: [{ ...row }], rowCount: 1 };
   if (/SELECT total_price, deposit_amount, external_paid FROM proposals/.test(sql)) return { rows: [{ ...row }], rowCount: 1 };
@@ -165,7 +169,7 @@ after(async () => {
   if (server) await new Promise((r) => server.close(r));
 });
 
-beforeEach(() => { calls.length = 0; });
+beforeEach(() => { calls.length = 0; inFlightRows = []; });
 
 test('a guest-count change on a signed unpaid accepted row voids the signature inside the transaction and sends the row back to sent', async () => {
   row = signedUnpaidRow();
@@ -231,6 +235,35 @@ test('a paid row keeps its signature when its terms move (the additional-service
   const res = await patch(`/api/proposals/${row.id}`, { guest_count: 80 });
   assert.equal(res.status, 200, res.raw);
   assert.equal(voidUpdate(), -1, 'no void UPDATE on a paid row');
+  assert.equal(voidedRow(), undefined);
+  assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime());
+});
+
+// Round 2 (M2): "unpaid" for the void means no money on the row AND none in
+// flight. amount_paid stays 0 until payment_intent.succeeded, so an ACH deposit
+// still settling plus an admin edit used to clear the signature the webhook
+// then credited against, leaving a paid row the client could never re-sign.
+test('a bank debit still settling keeps the signature: no void, the signed total stands', async () => {
+  row = signedUnpaidRow();
+  inFlightRows = [{ stripe_payment_intent_id: 'pi_test_1', amount_cents: 10000, started_at: new Date(), invoice_id: null, invoice_number: null }];
+  const res = await patch(`/api/proposals/${row.id}`, { guest_count: 80 });
+  assert.equal(res.status, 200, res.raw);
+  assert.equal(voidUpdate(), -1, 'no void UPDATE while a payment is in flight');
+  assert.equal(voidedRow(), undefined, 'no signature_voided row');
+  assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime());
+  assert.equal(res.body.client_signed_total, '600.00');
+  assert.equal(res.body.status, 'accepted');
+  const probe = calls.find((c) => /FROM stripe_sessions s/.test(c.sql) && /status = 'processing'/.test(c.sql));
+  assert.ok(probe, 'the in-flight read ran');
+  assert.equal(probe.via, 'client', 'on the held transaction client');
+  assert.equal(res.body.guest_count, 80, 'the edit itself still landed');
+});
+
+test('money collected off-platform (external_paid) keeps the signature too', async () => {
+  row = { ...signedUnpaidRow(), external_paid: '100.00' };
+  const res = await patch(`/api/proposals/${row.id}`, { guest_count: 80 });
+  assert.equal(res.status, 200, res.raw);
+  assert.equal(voidUpdate(), -1, 'no void UPDATE with external money on the row');
   assert.equal(voidedRow(), undefined);
   assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime());
 });
