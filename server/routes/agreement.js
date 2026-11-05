@@ -87,7 +87,10 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     throw new ValidationError({ signature: 'Invalid signature method.' });
   }
 
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+  // req.ip FIRST (audit 2026-11-05, L3): behind `trust proxy` it is the
+  // proxy-validated address; the leftmost x-forwarded-for entry is whatever
+  // the client sent. A signature IP is evidence, so it must not be forgeable.
+  const ip = (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '') || null;
   const userAgent = req.headers['user-agent'] || null;
 
   // ── Transaction: upsert agreement row + mark onboarding step ──────

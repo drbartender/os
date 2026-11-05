@@ -124,7 +124,12 @@ router.post('/proposals/:token/change-requests', requireUuidToken('token', 'Prop
 
     const { requested, baseline } = await buildDiff(proposal, proposed, dbClient);
     const editWindow = computeEditWindow(proposal);
-    const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || null;
+    // req.ip FIRST (audit 2026-11-05, L3): express runs behind `trust proxy`,
+    // so req.ip is the proxy-validated address while the first
+    // x-forwarded-for entry is client-supplied. This row is the provenance
+    // for a disputed change, so it must not be the forgeable one. Matches
+    // publicToken.js and publicSwitch.js.
+    const ip = (req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '') || null;
     const ua = req.headers['user-agent'] || null;
 
     let inserted;

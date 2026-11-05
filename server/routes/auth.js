@@ -45,6 +45,23 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Password must have uppercase, lowercase, and a digit
 const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
+// Timing-neutral login (audit 2026-11-05, L2). An unknown email used to answer
+// before any bcrypt work, so a 409 that came back ~250 ms faster told the
+// caller the account does not exist. Every login now runs exactly one
+// bcrypt.compare, against the stored hash or this throwaway one, before it
+// answers. The lockout Map above stays keyed on KNOWN accounts only, so the
+// bound it documents still holds.
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 12);
+
+// Logs name the account only by a masked address: enough to correlate a
+// run of failures, never a full email in Render's log stream.
+function maskEmail(e) {
+  const s = String(e || '');
+  const at = s.indexOf('@');
+  if (at < 0) return '***';
+  return `${s.slice(0, Math.min(2, at))}***@${s.slice(at + 1)}`;
+}
+
 // Register
 router.post('/register', authLimiter, asyncHandler(async (req, res) => {
   const { email, password } = req.body;
@@ -321,12 +338,16 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
 
   const result = await pool.query('SELECT u.id, u.email, u.role, u.onboarding_status, u.can_hire, u.can_staff, u.password_hash, u.token_version, cp.preferred_name FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id WHERE u.email = $1', [normalizedEmail]);
   const user = result.rows[0];
+  // One compare on every path (see DUMMY_HASH): the unknown-email branch and
+  // the wrong-password branch take the same time to answer. A row with no
+  // password hash (a pre-hire account that never set one) is simply a bad
+  // credential, not a 500.
+  const valid = await bcrypt.compare(String(password), (user && user.password_hash) || DUMMY_HASH);
   if (!user) {
     throw new ConflictError('Invalid email or password', 'INVALID_CREDENTIALS');
   }
 
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) {
+  if (!valid || !user.password_hash) {
     // Track failed attempt
     const existing = loginAttempts.get(normalizedEmail);
     if (existing && Date.now() - existing.firstAttempt <= LOCKOUT_WINDOW) {
@@ -334,7 +355,7 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     } else {
       loginAttempts.set(normalizedEmail, { count: 1, firstAttempt: Date.now() });
     }
-    console.warn('Failed login attempt for', email, 'from IP', req.ip);
+    console.warn('Failed login attempt for', maskEmail(email), 'from IP', req.ip);
     throw new ConflictError('Invalid email or password', 'INVALID_CREDENTIALS');
   }
 

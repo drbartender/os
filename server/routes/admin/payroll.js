@@ -775,6 +775,28 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   if (!shiftRes.rows[0]) throw new NotFoundError('shift not found');
   const { proposal_id: proposalId, event_date: eventDate } = shiftRes.rows[0];
 
+  // The tip's bartender must be on the target shift (audit 2026-11-05, L6):
+  // the pool is split among THAT shift's approved bartenders, so assigning a
+  // tip to a shift its recipient never worked pays the wrong crew. `force:
+  // true` keeps a deliberate correction possible; the audit row names it.
+  const tipRes = await pool.query('SELECT id, target_user_id FROM tips WHERE id = $1', [tipId]);
+  if (!tipRes.rows[0]) throw new NotFoundError('tip not found');
+  const forced = req.body?.force === true;
+  if (!forced) {
+    const onShift = await pool.query(
+      `SELECT 1 FROM shift_requests
+        WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' AND dropped_at IS NULL
+        LIMIT 1`,
+      [shiftId, tipRes.rows[0].target_user_id]
+    );
+    if (!onShift.rowCount) {
+      throw new ConflictError(
+        "This tip's bartender is not on that shift. Pass force: true to assign it anyway.",
+        'TIP_BARTENDER_NOT_ON_SHIFT'
+      );
+    }
+  }
+
   // Look up the period this event falls in (it may not exist yet if no event
   // has accrued; in that case there's nothing frozen).
   let frozen = false;
@@ -808,7 +830,17 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
     });
   }
 
-  res.json({ tip: updated.rows[0], frozen_period: frozen });
+  if (forced) {
+    // logAdminAction is best-effort and never throws.
+    await logAdminAction({
+      actorUserId: req.user.id,
+      targetUserId: tipRes.rows[0].target_user_id,
+      action: 'payroll_tip_assign_forced',
+      metadata: { tip_id: tipId, shift_id: shiftId },
+    });
+  }
+
+  res.json({ tip: updated.rows[0], frozen_period: frozen, forced });
 }));
 
 async function loadDeferredTips() {

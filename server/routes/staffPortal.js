@@ -11,7 +11,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireOnboarded } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, PayloadTooLargeError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
@@ -73,7 +73,14 @@ router.use(auth);
 // (routes/shifts.queries.js). All three now import the same fragment, because
 // the count and the list it counts drifting apart is exactly what broke the
 // round this replaces. The pay-period query is the one holdout — see its note.
-router.get('/staff-home', asyncHandler(async (req, res) => {
+//
+// requireOnboarded (audit 2026-11-05, M5): POST /api/auth/register is public
+// and mints a live JWT for an in_progress account, so `auth` alone is not "a
+// real staffer". This payload carries other staffers' cover requests (with
+// their email) and every open event's client name, venue and guest count, the
+// same data GET /api/shifts already gates behind this predicate. The other
+// /api/me reads are own-row only and keep plain `auth`.
+router.get('/staff-home', requireOnboarded, asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
   const [nextShift, pendingRequests, coverBroadcasts, currentPeriod, openShiftsTeaser, openShiftsCount] = await Promise.all([

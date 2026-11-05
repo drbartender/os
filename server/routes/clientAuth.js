@@ -20,13 +20,33 @@ const otpLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Per-address cap on code requests (audit 2026-11-05, L7). otpLimiter is per
+// IP, so an IP-rotating caller could use /request to flood one client's inbox
+// with "your code" emails. This bucket is keyed on the address being asked
+// for, not the caller. Skipped under NODE_ENV=test (calcomWebhookLimiter
+// precedent) so a suite can request codes freely.
+const otpEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => `otp-email-${String(req.body?.email || '').trim().toLowerCase() || 'no-email'}`,
+  message: { error: 'Too many codes requested for this email. Please wait a few minutes.', code: 'RATE_LIMITED' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
+const OTP_TTL_MS = 15 * 60 * 1000;
+// A code minted this recently is still in the client's inbox: a double tap or
+// a resend storm gets the same neutral answer and no second email.
+const OTP_REISSUE_GUARD_MS = 60 * 1000;
+
 // POST /api/client-auth/request — send OTP to client email
-router.post('/request', otpLimiter, asyncHandler(async (req, res) => {
+router.post('/request', otpLimiter, otpEmailLimiter, asyncHandler(async (req, res) => {
   const { email } = req.body;
-  if (!email) throw new ValidationError({ email: 'Email is required' });
+  if (!email || typeof email !== 'string') throw new ValidationError({ email: 'Email is required' });
 
   const result = await pool.query(
-    'SELECT id, name, email FROM clients WHERE LOWER(email) = LOWER($1)',
+    'SELECT id, name, email, auth_token, auth_token_expires_at FROM clients WHERE LOWER(email) = LOWER($1)',
     [email]
   );
   const client = result.rows[0];
@@ -36,10 +56,20 @@ router.post('/request', otpLimiter, asyncHandler(async (req, res) => {
     return res.json({ success: true });
   }
 
+  // Reissue guard: expires_at is minted as now + OTP_TTL_MS below, so the
+  // issue time is recoverable from it. A mail failure clears both columns,
+  // which correctly re-arms this path.
+  if (client.auth_token && client.auth_token_expires_at) {
+    const issuedAtMs = new Date(client.auth_token_expires_at).getTime() - OTP_TTL_MS;
+    if (Number.isFinite(issuedAtMs) && Date.now() - issuedAtMs < OTP_REISSUE_GUARD_MS) {
+      return res.json({ success: true });
+    }
+  }
+
   // Generate 6-digit OTP
   const otp = crypto.randomInt(100000, 999999).toString();
   const hash = await bcrypt.hash(otp, 12);
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
   await pool.query(
     'UPDATE clients SET auth_token = $1, auth_token_expires_at = $2, auth_token_attempts = 0 WHERE id = $3',

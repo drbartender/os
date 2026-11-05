@@ -31,6 +31,37 @@ const VALID_LEAD_SOURCES = new Set([
   'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other',
 ]);
 
+// Wizard numbers are PUBLIC input (audit 2026-11-05, L5). A decimal guest
+// count used to pass the `< 1` check and 500 on the INTEGER column; a zero or
+// negative duration threw a bare Error out of calculateBaseCost (also a 500).
+// Bound them here so a malformed value is a 400 with a field message. Absent
+// values keep the defaults the routes always used (50 guests, 4 hours, 0 bars).
+function parseWizardInputs({ guest_count, duration_hours, num_bars }, { requireGuests = false } = {}) {
+  const errors = {};
+  const present = (v) => v !== undefined && v !== null && v !== '';
+  let gc = 50;
+  if (present(guest_count)) {
+    const n = Number(guest_count);
+    if (!Number.isInteger(n) || n < 1 || n > 5000) errors.guest_count = 'Guest count must be a whole number between 1 and 5000';
+    else gc = n;
+  } else if (requireGuests) {
+    errors.guest_count = 'Guest count is required';
+  }
+  let dh = 4;
+  if (present(duration_hours)) {
+    const n = Number(duration_hours);
+    if (!Number.isFinite(n) || n <= 0 || n > 24) errors.event_duration_hours = 'Duration must be more than 0 and at most 24 hours';
+    else dh = n;
+  }
+  let nb = 0;
+  if (present(num_bars)) {
+    const n = Number(num_bars);
+    if (!Number.isInteger(n) || n < 0 || n > 20) errors.num_bars = 'Number of bars must be a whole number between 0 and 20';
+    else nb = n;
+  }
+  return { gc, dh, nb, errors };
+}
+
 // ─── Public website endpoints (no auth) ─────────────────────────
 
 /** GET /api/proposals/public/packages — list active packages (public, limited
@@ -83,11 +114,14 @@ router.post('/public/calculate', publicReadLimiter, asyncHandler(async (req, res
     }));
   }
 
+  const wizard = parseWizardInputs({ guest_count, duration_hours, num_bars });
+  if (Object.keys(wizard.errors).length > 0) throw new ValidationError(wizard.errors);
+
   const snapshot = calculateProposal({
     pkg: pkgResult.rows[0],
-    guestCount: guest_count || 50,
-    durationHours: duration_hours || 4,
-    numBars: num_bars ?? 0,
+    guestCount: wizard.gc,
+    durationHours: wizard.dh,
+    numBars: wizard.nb,
     addons,
     syrupSelections: syrup_selections || [],
     gratuityRate: 0, tipJar: true, // chosen later at sign-and-pay
@@ -249,7 +283,11 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   if (!client_name || !client_name.trim()) fieldErrors.client_name = 'Name is required';
   if (!client_email || !client_email.trim()) fieldErrors.client_email = 'Email is required';
   if (!package_id) fieldErrors.package_id = 'Package is required';
-  if (!guest_count || guest_count < 1) fieldErrors.guest_count = 'Guest count is required';
+  const wizard = parseWizardInputs(
+    { guest_count, duration_hours: event_duration_hours, num_bars },
+    { requireGuests: true }
+  );
+  Object.assign(fieldErrors, wizard.errors);
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   const venueInput = { venue_name, venue_street, venue_city, venue_state, venue_zip };
@@ -267,7 +305,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     eventDate: event_date,
     startTime: event_start_time,
     timezone: null,
-    durationHours: Number(event_duration_hours) || 4,
+    durationHours: wizard.dh,
   });
   if (publicCurfew && publicCurfew.past) {
     // The message must ride the error itself: the wizard submits from the
@@ -390,9 +428,8 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       throw new ValidationError({ class_options: 'Top Shelf is only valid for class packages' });
     }
 
-    const gc = Number(guest_count) || 50;
-    const dh = Number(event_duration_hours) || 4;
-    const nb = Number(num_bars) || 0;
+    // Validated and bounded above (parseWizardInputs); never raw body values.
+    const { gc, dh, nb } = wizard;
 
     // Fetch the FULL active add-on set. validateProposalRules needs it so
     // requires_addon_slug parent lookups can see parents absent from the
