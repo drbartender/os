@@ -1,12 +1,13 @@
 require('dotenv').config();
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { decrypt } = require('./encryption');
+const { decrypt, encrypt } = require('./encryption');
 const { ValidationError } = require('./errors');
 const {
   isValidRoutingNumber,
   isValidAccountNumber,
   isMaskedBankValue,
+  maskBankNumber,
   resolveBankFields,
 } = require('./bankNumbers');
 
@@ -97,4 +98,26 @@ test('invalid values are refused together, keyed to each field', () => {
     () => resolveBankFields({ routing_number: '****00150', account_number: '****3456' }, { blank: 'clear' }),
     (err) => err instanceof ValidationError && Boolean(err.fieldErrors.routing_number) && !err.fieldErrors.account_number,
   );
+});
+
+// POUT-08 (audit 2026-11-05): the one safe mask, shared by GET /api/payment and
+// the admin user record. Under a real key a good ciphertext masks to its last
+// four; one that cannot be decrypted (a rotated key, a corrupted row) masks to
+// '****' instead of throwing, so one bad row never 500s a whole profile read.
+test('maskBankNumber masks to the last four, and to four stars alone when the ciphertext cannot be decrypted', () => {
+  const prev = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = 'a'.repeat(64);
+  try {
+    assert.equal(maskBankNumber(encrypt('011000015')), '****0015');
+    assert.equal(maskBankNumber(null), null);
+    assert.equal(maskBankNumber(''), '');
+    // Well-formed ciphertext under some other key: decrypt() throws on the auth tag.
+    const underAnotherKey = `enc:${'0'.repeat(32)}:${'0'.repeat(32)}:${'0'.repeat(32)}`;
+    assert.throws(() => decrypt(underAnotherKey), 'premise: decrypt itself refuses the value');
+    assert.equal(maskBankNumber(underAnotherKey, { userId: 1, column: 'routing_number' }), '****');
+    assert.equal(isMaskedBankValue('****'), true, 'the degraded mask still round-trips as unchanged');
+  } finally {
+    if (prev === undefined) delete process.env.ENCRYPTION_KEY;
+    else process.env.ENCRYPTION_KEY = prev;
+  }
 });
