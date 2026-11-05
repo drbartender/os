@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const stripeRouter = require('./stripe');
 const { loadPaymentsWithRemaining } = require('../utils/refundHelpers');
@@ -32,6 +33,11 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+// The exceeds-remainder path reports to Sentry before it alerts; observed here
+// so a redelivery that took it would show (round 2 M1).
+const sentryMessages = [];
+const realCaptureMessage = Sentry.captureMessage;
+Sentry.captureMessage = (msg, ctx) => { sentryMessages.push(msg); return realCaptureMessage ? realCaptureMessage.call(Sentry, msg, ctx) : undefined; };
 let server, baseUrl;
 const proposalIds = [];
 const clientIds = [];
@@ -160,11 +166,17 @@ test('created, then funds withdrawn: the opened record, the dispute row, the mon
   const bal = charges.find((c) => c.id === f.balancePaymentId);
   assert.equal(bal.remainingCents, 0, 'nothing of the disputed charge is refundable');
 
-  // Redelivery changes nothing a second time.
+  // Redelivery changes nothing a second time, and is recognized as the same
+  // dispute (round 2 M1): no second row, no exceeds-remainder path (the
+  // netted remainder is 0 now, which used to read as an over-sized new one).
+  sentryMessages.length = 0;
   assert.equal((await postWebhook(disputeEvent('charge.dispute.funds_withdrawn', f, disputeId))).status, 200);
   const again = (await pool.query('SELECT amount_paid FROM proposals WHERE id = $1', [f.proposalId])).rows[0];
   assert.equal(Number(again.amount_paid), 100);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM proposal_refunds WHERE stripe_refund_id = $1', [disputeId])).rows[0].n, 1);
+  assert.ok(!sentryMessages.includes('dispute_withdrawal_exceeds_charge_remainder'), 'the redelivery did not read as a new over-sized dispute');
+  const withdrawnRows = await pool.query(`SELECT id FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'dispute_funds_withdrawn'`, [f.proposalId]);
+  assert.equal(withdrawnRows.rows.length, 1, 'one withdrawal recorded');
 });
 
 test('funds reinstated: the money, the invoice and the status come back, the dispute row reads failed, the charge is refundable again', async () => {
