@@ -405,10 +405,18 @@ async function accruePayoutsForProposal(proposalId) {
       };
     });
 
-    // Existing line items for this event, keyed by contractor+shift, so a
+    // Existing line items for this event, with each payout's period. A
     // re-accrual preserves admin edits (hours, rate, late, adjustment) and
-    // recomputes only the system-owned money fields. pay_period_id is carried so
-    // the roster-correction sweep below can scope its deletes to THIS open period.
+    // recomputes only the system-owned money fields, so a worker's PRIOR line
+    // is the one in THIS period and no other: the key is
+    // contractor:shift:period (one payout per contractor per period plus
+    // UNIQUE (payout_id, shift_id) make it unique, so the map never depends on
+    // SELECT order). Keyed without the period, a PAID line in a frozen period
+    // seeded a second payable line in the open period after an event-date
+    // move, and a later period's clawback stub (hours 0, wage 0, a negative
+    // adjustment) could win the key and rewrite this period's wage line to
+    // zero hours and the debt (audit 2026-11-05, POUT-03). pay_period_id also
+    // scopes the roster-correction sweep below to THIS open period.
     const existingRes = await client.query(
       `SELECT pe.*, po.contractor_id, po.pay_period_id
        FROM payout_events pe
@@ -418,14 +426,62 @@ async function accruePayoutsForProposal(proposalId) {
       [proposalId]
     );
     const existing = new Map(
-      existingRes.rows.map(r => [`${r.contractor_id}:${r.shift_id}`, r])
+      existingRes.rows.map(r => [`${r.contractor_id}:${r.shift_id}:${r.pay_period_id}`, r])
     );
+    // A line carries the worker's pay for the shift when any payable component
+    // is on it. Shared with the orphan sweep below, where it tells a real wage
+    // line from a pure clawback debt stub.
+    const hasPayable = (r) =>
+      Number(r.wage_cents || 0) > 0
+      || Number(r.gratuity_share_cents || 0) > 0
+      || Number(r.card_tip_net_cents || 0) !== 0
+      || Number(r.hours || 0) > 0;
+    // Wage lines for this event's shifts that live in ANOTHER period, keyed
+    // contractor:shift. A pure debt stub elsewhere (every payable zero, a
+    // negative adjustment: the clawback and late-tip roll-forward shapes) is
+    // debt, not the wage, and is ignored; a held reimbursement elsewhere is
+    // zeroed to non-payable and is ignored too. Anything else is the worker's
+    // pay for this shift already booked in another period: a hard stop in the
+    // loop below, never a seed, since this accrual cannot touch that period
+    // (frozen, or simply not the one being written) and a second line here
+    // would pay the shift twice. Period ids are sorted so the warning reads
+    // the same whatever order the rows came back in.
+    const elsewhere = new Map();
+    for (const r of existingRes.rows) {
+      if (Number(r.pay_period_id) === Number(payPeriodId) || !hasPayable(r)) continue;
+      const key = `${r.contractor_id}:${r.shift_id}`;
+      if (!elsewhere.has(key)) elsewhere.set(key, new Set());
+      elsewhere.get(key).add(Number(r.pay_period_id));
+    }
 
     const touchedPayoutIds = new Set();
     const payoutIdByContractor = new Map();
 
     for (const w of workers.rows) {
-      const prior = existing.get(`${w.user_id}:${w.shift_id}`);
+      const otherPeriods = elsewhere.get(`${w.user_id}:${w.shift_id}`);
+      if (otherPeriods) {
+        // Hard stop for this worker only: no payout stub, no line, and the
+        // period split still counts them (`bartenders` above), so a teammate
+        // is never handed the share the other period's line already carries.
+        // An admin moves the line by hand; the warning names where it is and
+        // whether this period already holds a duplicate from before the rule.
+        Sentry.captureMessage(
+          'payrollAccrual: wage line for this shift already lives in another period; not minted here (move it by hand)',
+          {
+            level: 'warning',
+            tags: { component: 'payrollAccrual', reason: 'cross_period_line_exists', preserved: true },
+            extra: {
+              proposalId, payPeriodId,
+              contractorId: Number(w.user_id), shiftId: Number(w.shift_id),
+              other_period_ids: [...otherPeriods].sort((a, b) => a - b),
+              existing_line_in_this_period:
+                existing.get(`${w.user_id}:${w.shift_id}:${payPeriodId}`)?.id ?? null,
+            },
+          }
+        );
+        continue;
+      }
+      const prior = existing.get(`${w.user_id}:${w.shift_id}:${payPeriodId}`);
       // A held/confirmed prior line belongs to a worker who was off the roster
       // and is now BACK on it. Its hours=0 came from the hold, not from an
       // admin — treating them as admin-owned would silently accrue wage = 0
@@ -554,15 +610,11 @@ async function accruePayoutsForProposal(proposalId) {
     // NEVER swept: the person owes that money regardless of roster status and the
     // tip's refunded_amount_cents marker has already advanced, so a swept debt
     // line would be permanently un-collected (H1's leak in a new guise) — they
-    // are excluded from `orphans` below by !hasPayable and survive verbatim. Only
-    // zero-adjustment orphan lines are deleted. Lines already 'held' are left
-    // alone, and 'confirmed' lines are NEVER re-held or deleted: the admin
-    // explicitly decided that off-roster line's fate.
-    const hasPayable = (r) =>
-      Number(r.wage_cents || 0) > 0
-      || Number(r.gratuity_share_cents || 0) > 0
-      || Number(r.card_tip_net_cents || 0) !== 0
-      || Number(r.hours || 0) > 0;
+    // are excluded from `orphans` below by !hasPayable (defined with the
+    // existing-lines map above) and survive verbatim. Only zero-adjustment
+    // orphan lines are deleted. Lines already 'held' are left alone, and
+    // 'confirmed' lines are NEVER re-held or deleted: the admin explicitly
+    // decided that off-roster line's fate.
     const orphans = existingRes.rows.filter(
       r => Number(r.pay_period_id) === Number(payPeriodId)
         && !currentKeys.has(`${r.contractor_id}:${r.shift_id}`)
