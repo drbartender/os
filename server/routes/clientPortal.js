@@ -84,7 +84,9 @@ router.get('/home', asyncHandler(async (req, res) => {
   // until the business day it falls on is over.
   const today = _deps.today();
   const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
+    // static-checks: allow parameterized-sql (focusSelect and BOOKED_FIRST are this handler's own constant SQL; every value is bound)
     pool.query(`${focusSelect} AND p.event_date >= $3::date ${BOOKED_FIRST}`, [clientId, BOOKED_STATUSES, today]),
+    // static-checks: allow parameterized-sql (the same two fragments)
     pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId, BOOKED_STATUSES]),
     pool.query(`SELECT COUNT(*)::int AS n FROM proposals
                 WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= $2::date`, [clientId, today]),
