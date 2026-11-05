@@ -142,11 +142,13 @@ before(async () => {
   // agreement, no application, no payment_profile. Exercises the new-hire
   // path: every projected field must collapse to null / present:false, no 500.
   emailB = `acctq-b-${NONCE}@example.com`;
-  // 'applied' is an allowed value in users_onboarding_status_check (the
-  // brand-new-applicant state, before agreement / payment_profile exist).
+  // 'submitted' is the earliest status that passes the router-wide
+  // requireOnboarded on /api/me (audit 2026-11-05 AUTH-01; it was 'applied',
+  // which the gate now refuses with 403). The row still has none of the child
+  // rows this fixture is about, which is the point.
   const b = await pool.query(
     `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
-     VALUES ($1, $2, 'staff', 'applied', 0) RETURNING id, token_version`,
+     VALUES ($1, $2, 'staff', 'submitted', 0) RETURNING id, token_version`,
     [emailB, pwHash]
   );
   userB = b.rows[0].id;
