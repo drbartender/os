@@ -456,6 +456,9 @@ async function accruePayoutsForProposal(proposalId) {
 
     const touchedPayoutIds = new Set();
     const payoutIdByContractor = new Map();
+    // Workers stopped below: their duty lines are reconciled where their wage
+    // line is, never here (handed to reconcileDutyLines as excluded).
+    const stoppedContractorIds = new Set();
 
     for (const w of workers.rows) {
       const otherPeriods = elsewhere.get(`${w.user_id}:${w.shift_id}`);
@@ -465,6 +468,7 @@ async function accruePayoutsForProposal(proposalId) {
         // is never handed the share the other period's line already carries.
         // An admin moves the line by hand; the warning names where it is and
         // whether this period already holds a duplicate from before the rule.
+        stoppedContractorIds.add(Number(w.user_id));
         Sentry.captureMessage(
           'payrollAccrual: wage line for this shift already lives in another period; not minted here (move it by hand)',
           {
@@ -586,12 +590,19 @@ async function accruePayoutsForProposal(proposalId) {
             if (ins.rowCount) dutyCtx.attributions.push(ins.rows[0]);
           }
         }
+        // A stopped worker (wage line in another period) is left out of this
+        // period's duty reconciliation entirely: neither desired here nor
+        // removable from where it is. Otherwise their desired lines fell out
+        // for want of a payout here and the reconcile system-removed their
+        // existing auto lines in the other open period (verify pass, H2).
         const desired = computeDesiredDutyLines(dutyCtx)
+          .filter(d => !stoppedContractorIds.has(Number(d.contractor_id)))
           .map(d => ({ ...d, payout_id: payoutIdByContractor.get(Number(d.contractor_id)) }))
           .filter(d => d.payout_id);
         const dutyRes = await reconcileDutyLines(client, {
           proposalId, desired, shiftIds: dutyCtx.shiftIds, periodOpen: true,
           rosterContractorIds: dutyCtx.workers.map(w => Number(w.user_id)),
+          excludeContractorIds: [...stoppedContractorIds],
         });
         for (const pid of dutyRes.affectedPayoutIds) touchedPayoutIds.add(pid);
         reportFrozenSkips(proposalId, dutyRes.frozenSkips);

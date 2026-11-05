@@ -54,6 +54,9 @@ let workerRows;        // the roster the workers SELECT answers with
 let tipPool;           // the card-tip pool SELECT answers with
 let payoutInserts;     // ensurePayout calls (params)
 let lineInserts;       // payout_events upserts (params)
+let dutyRows;          // existing payout_duty_lines the duty reconcile reads
+let dutyWrites;        // every payout_duty_lines INSERT/UPDATE
+let payoutRecomputes;  // payout ids handed to the total recompute
 
 const worker = (userId) => ({ user_id: userId, position: 'Bartender', shift_id: SHIFT_ID, hourly_rate: '20.00' });
 
@@ -109,8 +112,42 @@ function answer(text, params = []) {
     lineInserts.push(params);
     return { rows: [], rowCount: 1 };
   }
-  // The duty context (no proposal row: skipped), the legacy-stub guard, the
-  // fee captures, the deferred-tip sweep and the total recompute: nothing.
+  // The duty context (dutyLines.loadProposalDutyContext), answered only when a
+  // test seeds duty rows: a funded proposal with one parking-fee addon, the
+  // same one-bartender roster, one shift with no bonus, no attributions.
+  if (dutyRows.length && sql.startsWith('SELECT p.id, p.event_date, p.status, p.total_price')) {
+    return {
+      rows: [{
+        id: PROPOSAL_ID, event_date: new Date(2026, 9, 17), status: 'completed',
+        total_price: '1000.00', amount_paid: '1000.00',
+        pricing_snapshot: '{"addons":[{"slug":"parking-fee","line_total":20}],"breakdown":[]}',
+        num_bars: 0, menu_print_key: null, menu_not_required: true, package_id: null,
+      }],
+      rowCount: 1,
+    };
+  }
+  if (sql.startsWith('SELECT sr.user_id, sr.position, s.id AS shift_id FROM shift_requests')) {
+    return { rows: workerRows.map((w) => ({ user_id: w.user_id, position: w.position, shift_id: w.shift_id })), rowCount: workerRows.length };
+  }
+  if (sql.startsWith('SELECT slug, requires_provisioning')) {
+    return { rows: [{ slug: 'parking-fee', requires_provisioning: false }], rowCount: 1 };
+  }
+  if (sql.startsWith('SELECT id, out_of_area_bonus_cents')) {
+    return { rows: [{ id: SHIFT_ID, out_of_area_bonus_cents: null, out_of_area_locked_user_id: null }], rowCount: 1 };
+  }
+  if (sql.startsWith('SELECT d.*, po.status AS payout_status')) {
+    return { rows: dutyRows, rowCount: dutyRows.length };
+  }
+  if (sql.startsWith('UPDATE payout_duty_lines') || sql.startsWith('INSERT INTO payout_duty_lines')) {
+    dutyWrites.push({ sql, params });
+    return { rows: [{ id: 1 }], rowCount: 1 };
+  }
+  if (sql.startsWith('UPDATE payouts po SET total_cents')) {
+    payoutRecomputes.push(...(Array.isArray(params[0]) ? params[0] : [params[0]]));
+    return { rows: [], rowCount: 0 };
+  }
+  // The legacy-stub guard, the fee captures, the attribution read and the
+  // deferred-tip sweep: nothing.
   return { rows: [], rowCount: 0 };
 }
 
@@ -129,6 +166,9 @@ beforeEach(() => {
   existingRows = [];
   workerRows = [worker(WORKER_ID)];
   tipPool = { gross: 0, fee: 0 };
+  dutyRows = [];
+  dutyWrites = [];
+  payoutRecomputes = [];
   mock.restoreAll();
 });
 
@@ -210,6 +250,30 @@ test('C: a clawback stub already in THIS period never seeds the hours: the wage 
     }, 'contract hours and rate, the tip share, and the claw merged');
   }
   assert.equal(sentry.mock.calls.length, 0, 'a stub in this period is not a cross-period line either');
+});
+
+test('D: a stopped worker is left out of this period duty reconciliation: their P1 parking line is neither removed nor re-minted', async () => {
+  // Both periods open, the event date corrected from P1 into P2. The worker's
+  // wage line stays in P1 (the stop), and so must their 2,000c parking line
+  // there: with no payout in P2 the desired line was dropped and the reconcile
+  // system-removed the P1 line as "trigger no longer met", and nothing ever
+  // re-created it (the verify pass's H2).
+  mock.method(Sentry, 'captureMessage');
+  thisPeriod = { id: P2, status: 'open' };
+  existingRows = [line({ pay_period_id: P1, id: 11, payout_id: 91 })];
+  dutyRows = [{
+    id: 77, payout_id: 91, contractor_id: WORKER_ID, shift_id: SHIFT_ID, kind: 'parking',
+    amount_cents: 2000, origin: 'auto', admin_owned: false, removed_at: null, removed_by: null,
+    held_state: null, payout_status: 'pending', period_status: 'open',
+  }];
+
+  await accruePayoutsForProposal(PROPOSAL_ID);
+  assert.deepEqual(lineInserts, [], 'the stop holds for the wage line');
+  assert.ok(!dutyWrites.some((w) => w.sql.includes('removed_at = NOW()')),
+    `the P1 parking line keeps removed_at NULL: ${JSON.stringify(dutyWrites)}`);
+  assert.ok(!dutyWrites.some((w) => w.sql.startsWith('INSERT INTO payout_duty_lines')), 'nothing is minted in P2');
+  assert.deepEqual(dutyWrites, [], 'no duty write at all for a stopped worker');
+  assert.ok(!payoutRecomputes.includes(91), 'P1 total untouched');
 });
 
 test('a held reimbursement line in another period is not a stop: the worker still accrues here', async () => {

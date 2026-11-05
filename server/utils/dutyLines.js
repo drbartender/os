@@ -277,8 +277,17 @@ async function loadProposalDutyContext(executor, proposalId) {
  * Returns { inserted, updated, systemRemoved, restored, held, frozenSkips,
  * affectedPayoutIds } — the caller recomputes totals for affectedPayoutIds
  * via the single writer.
+ *
+ * `excludeContractorIds` (optional) names on-roster workers this period does
+ * not reconcile at all: neither their desired lines nor their existing ones
+ * are touched. Accrual passes the workers it stopped because their wage line
+ * for the shift lives in another period (payrollAccrual.js, POUT-03): their
+ * duty lines stay where that wage line is. Without this, a stopped worker had
+ * no payout here, so their desired lines were dropped and this reconcile
+ * system-removed their existing auto lines in the other period whenever it
+ * was open, and nothing ever re-created them (verify pass, H2).
  */
-async function reconcileDutyLines(client, { proposalId, desired, shiftIds, periodOpen, rosterContractorIds }) {
+async function reconcileDutyLines(client, { proposalId, desired, shiftIds, periodOpen, rosterContractorIds, excludeContractorIds = [] }) {
   const result = {
     inserted: 0, updated: 0, systemRemoved: 0, restored: 0, held: 0,
     frozenSkips: [], affectedPayoutIds: new Set(),
@@ -290,6 +299,7 @@ async function reconcileDutyLines(client, { proposalId, desired, shiftIds, perio
     throw new Error('reconcileDutyLines requires rosterContractorIds (pass [] for an empty roster)');
   }
   const roster = new Set(rosterContractorIds.map(Number));
+  const excluded = new Set((excludeContractorIds || []).map(Number));
 
   // Existing event-kind lines on this proposal's shifts, with payout AND
   // period state: lines can live in another (frozen) period when an event
@@ -309,6 +319,7 @@ async function reconcileDutyLines(client, { proposalId, desired, shiftIds, perio
 
   for (const d of desired || []) {
     if (!d.payout_id) continue; // caller must resolve payout ids before reconcile
+    if (excluded.has(Number(d.contractor_id))) continue; // reconciled where their wage line is
     const key = `${d.payout_id}:${d.shift_id}:${d.kind}`;
     desiredKeys.add(key);
     const prior = existing.get(key);
@@ -379,6 +390,7 @@ async function reconcileDutyLines(client, { proposalId, desired, shiftIds, perio
   for (const r of existingRes.rows) {
     if (desiredKeys.has(keyOf(r))) continue;
     if (r.removed_at) continue; // already removed (admin or system): leave alone
+    if (excluded.has(Number(r.contractor_id))) continue; // their lines live with their wage line, elsewhere
     const frozen = r.payout_status === 'paid' || !periodOpen
       || r.period_status === 'paid' || r.period_status === 'processing';
     const adminLine = r.admin_owned || r.origin === 'admin';
