@@ -25,6 +25,7 @@ const { rosterCounts } = require('./positionsNeeded');
 const { toCents } = require('./invoiceShared');
 const { isProtectedAdjustment, adjAmount, adjLabel, adjVisible } = require('./adjustmentRules');
 const { isLegalHold } = require('./legalHold');
+const { voidSignatureIfTermsMoved } = require('../routes/proposals/signatureVoid');
 
 // Archived proposals are settled history; completed events have run payroll.
 // Changes there are deliberate manual territory, never one-click.
@@ -451,6 +452,10 @@ async function applyLineItemCancel(client, {
   const pRes = await client.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [proposalId]);
   const proposal = pRes.rows[0];
   if (!proposal) throw new NotFoundError('Proposal not found');
+  // The locked row as read, before the per-kind mutations below touch it in
+  // memory: the signature void (step 4b) compares the terms the client signed
+  // against the fold's result, so it needs the row as it was.
+  const rowBefore = { ...proposal };
   // Right after the lock, before any per-kind write, on the locked row's id
   // (never the raw :id).
   if (isLegalHold(proposal.id)) throw new ConflictError(LEGAL_HOLD_MSG, 'LEGAL_HOLD');
@@ -656,6 +661,19 @@ async function applyLineItemCancel(client, {
     statusChangeReason: 'line_item_cancelled',
   });
 
+  // 4b. A signature never stands against terms admin changed afterward (audit
+  // ESIG-02, round 2 M1): a signed booking with no money on it or in flight
+  // whose line just came off is voided here, in this transaction, by the
+  // editor PATCH's own rule (signatureVoid.js), so the page shows Sign & Pay
+  // again and the prior record goes to a signature_voided row. A row with
+  // money keeps its signature with its signed record, and so do the client's
+  // own Lab and drink-plan additions (lab.js, drinkPlans/submit.js): those are
+  // the client's acts, not an edit to the terms they signed.
+  const signatureVoid = await voidSignatureIfTermsMoved(client, {
+    proposalId: proposal.id, old: rowBefore, snapshot, actorId, reason: 'line_item_cancelled',
+  });
+  if (signatureVoid.voided) proposal.status = signatureVoid.row.status;
+
   // 5. Partial-quantity removal: the fold has now repriced, so re-sync the row
   // from the snapshot entry. Writing BOTH figures is correct and is what the
   // three other writers (crud.js, proposalInsert.js, public.js) do: the column
@@ -752,6 +770,8 @@ async function applyLineItemCancel(client, {
     snapshot,
     statusChanged,
     newStatus: proposal.status,
+    // The void of step 4b, so the preview can say the client will sign again.
+    signatureVoided: signatureVoid.voided === true,
     // Same netting the panel and the admin payload use, through the one pure
     // function, so the two can never drift (lane code review, 2026-09-15). The
     // total here is the NEW, not-yet-committed one, which is the only reason
