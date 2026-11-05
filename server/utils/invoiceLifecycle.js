@@ -265,7 +265,8 @@ async function createInvoiceOnSend(proposalId, dbClient) {
  * Creates a "Balance" invoice for the contract balance due: total_price −
  * amount_paid, net of money collected outside the contract
  * (invoiceExtras.contractBalanceDueCents, audit PAY-01).
- * Returns null if a balance invoice already exists or the balance is zero.
+ * Returns null if a balance invoice already exists, if an open Full Payment
+ * invoice already demands the remainder, or the balance is zero.
  *
  * @param {number} proposalId
  * @param {object} [dbClient]
@@ -279,8 +280,17 @@ async function createBalanceInvoice(proposalId, dbClient) {
   // code path that ever mints a label='Balance' row, so a void-blind check made
   // a voided Balance permanently unmintable and stranded the whole remaining
   // balance as uncollectable through every automated surface.
+  //
+  // An OPEN Full Payment invoice (sent or partially_paid) stands in the way
+  // too (round 2 L1, 2026-11-05): a partial payment on a full-pay quote (the
+  // admin record-payment door, the webhook deposit branch on the same shape)
+  // credits that invoice, which keeps demanding the remainder, so a Balance
+  // beside it was two open invoices for the same money. A paid or voided Full
+  // Payment invoice demands nothing and does not block.
   const existingResult = await client.query(
-    `SELECT id FROM invoices WHERE proposal_id = $1 AND label = 'Balance' AND status <> 'void' LIMIT 1`,
+    `SELECT id FROM invoices WHERE proposal_id = $1 AND status <> 'void'
+       AND (label = 'Balance' OR (label = 'Full Payment' AND status IN ('sent', 'partially_paid')))
+     LIMIT 1`,
     [proposalId]
   );
   if (existingResult.rows.length > 0) return null;

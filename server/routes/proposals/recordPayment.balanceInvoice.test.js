@@ -22,7 +22,14 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'record-payment-balance-test-
 
 const invoiceHelpers = require('../../utils/invoiceHelpers');
 const balanceMints = [];
-invoiceHelpers.createBalanceInvoice = async (proposalId) => { balanceMints.push(proposalId); return null; };
+// The real helper runs for the Full Payment case below (round 2 L1); the rest
+// observe the call only.
+const realCreateBalanceInvoice = invoiceHelpers.createBalanceInvoice;
+let runRealBalanceMint = false;
+invoiceHelpers.createBalanceInvoice = async (proposalId, client) => {
+  balanceMints.push(proposalId);
+  return runRealBalanceMint ? realCreateBalanceInvoice(proposalId, client) : null;
+};
 invoiceHelpers.linkOpenContractInvoice = async () => null;
 invoiceHelpers.upgradeDepositInvoiceToFull = async () => null;
 invoiceHelpers.createInvoiceOnSend = async () => null;
@@ -43,6 +50,7 @@ actionsRouter.__setDeps({ sendEmail: async () => ({ id: 'dev-skipped' }), notify
 
 const ADMIN = { id: 9001, email: 'record-balance@example.com', role: 'admin', onboarding_status: 'approved', token_version: 0, presence_lead_rank: null };
 let proposalRow;
+let openFullPayment = false; // an open Full Payment invoice demands the remainder
 let server, baseUrl, realQuery, realConnect;
 const txQueries = [];
 
@@ -52,6 +60,9 @@ function scriptedClient() {
     release() {},
     async query(text, params) {
       txQueries.push({ text, params });
+      if (/FROM invoices WHERE proposal_id = \$1 AND status <> 'void'/.test(text) && /label = 'Balance'/.test(text)) {
+        return openFullPayment ? { rows: [{ id: 66 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
       if (/SELECT id, group_id FROM proposals/.test(text)) return { rows: [{ id: proposalRow.id, group_id: null }], rowCount: 1 };
       if (/SELECT id, client_id FROM proposals/.test(text)) return { rows: [{ id: proposalRow.id, client_id: 9 }], rowCount: 1 };
       if (/SELECT total_price, amount_paid, status FROM proposals WHERE id = \$1 FOR UPDATE/.test(text)) {
@@ -91,7 +102,7 @@ after(async () => {
 });
 
 beforeEach(() => {
-  balanceMints.length = 0; txQueries.length = 0;
+  balanceMints.length = 0; txQueries.length = 0; runRealBalanceMint = false; openFullPayment = false;
   proposalRow = { id: 4242, total_price: '1000.00', amount_paid: '0', deposit_amount: '100.00', status: 'sent' };
 });
 
@@ -131,4 +142,19 @@ test('a second partial on a deposit_paid row still asks for the Balance (the hel
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.status, 'deposit_paid');
   assert.deepEqual(balanceMints, [4242]);
+});
+
+// Round 2 L1: the mint fires on every partial, so a row whose open contract
+// invoice is a Full Payment invoice (a full-pay quote paid in part by hand)
+// got a second open demand for the same remainder. The helper's own
+// idempotency now covers it, for this door and the webhook deposit branch alike.
+test('a partial record on a row whose open contract invoice is a Full Payment invoice mints no second demand', async () => {
+  runRealBalanceMint = true;
+  openFullPayment = true;
+  const r = await post({ amount: 100, method: 'zelle' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.status, 'deposit_paid');
+  assert.deepEqual(balanceMints, [4242], 'the route still asks');
+  assert.ok(!txQueries.some((q) => /INSERT INTO invoices/.test(q.text)), 'the helper stood down: the Full Payment invoice already demands the remainder');
+  assert.ok(txQueries.some((q) => q.text === 'COMMIT'));
 });
