@@ -22,6 +22,7 @@ let _deps = { sendEmail, notifyAdminCategory };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const { linkOpenContractInvoice, createInvoiceOnSend, upgradeDepositInvoiceToFull, createBalanceInvoice, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
+const { contractPaidCents } = require('../../utils/invoiceExtras');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { reapShiftsForProposal } = require('../../utils/shiftReap');
 const { notifyStaffOfCancellation } = require('../../utils/staffShiftHandlers');
@@ -168,12 +169,15 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     throw new ConflictError('Proposal is already fully paid.', 'ALREADY_PAID_IN_FULL');
   }
 
-  const totalPrice = Number(proposal.total_price);
   const currentPaid = Number(proposal.amount_paid || 0);
-  const paymentAmount = paid_in_full ? totalPrice - currentPaid : Number(amount);
-
-  if (!paymentAmount || paymentAmount <= 0) {
-    throw new ValidationError({ amount: 'Enter a valid payment amount' });
+  // A typed amount is checked here. A paid-in-full remainder is the CONTRACT
+  // money still owed, derived under the row lock below from the netted figure
+  // (round 3 H2), never from this stale raw read.
+  if (!paid_in_full) {
+    const typed = Number(amount);
+    if (!typed || typed <= 0) {
+      throw new ValidationError({ amount: 'Enter a valid payment amount' });
+    }
   }
 
   // Derived under the proposals row lock inside the tx (see the locked re-read
@@ -245,18 +249,30 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     }
     const lockedTotal = Number(lockedRow.total_price);
     const lockedCurrentPaid = Number(lockedRow.amount_paid || 0);
-    const lockedPaymentAmount = paid_in_full ? lockedTotal - lockedCurrentPaid : Number(amount);
-    if (!lockedPaymentAmount || lockedPaymentAmount <= 0) {
+    // The remainder, the cap and the paid flag read the CONTRACT money, net of
+    // what was collected outside it (contractPaidCents on the held client,
+    // under the lock; round 3 H2, money law 8 with laws 5 and 7). On 100000
+    // with 16000 paid of which 6000 is a paid syrup invoice, paid-in-full
+    // records the 90000 the client handed over, not 84000; a typed amount is
+    // capped at that remainder; and amount_paid keeps the syrup money beside
+    // the contract money, as the webhook rails leave it.
+    const lockedTotalCents = Math.round(lockedTotal * 100);
+    const lockedContractPaidCents = await contractPaidCents(
+      { id: proposal.id, amount_paid: lockedRow.amount_paid }, dbClient
+    );
+    const remainderCents = Math.max(0, lockedTotalCents - lockedContractPaidCents);
+    const requestedCents = paid_in_full ? remainderCents : Math.round(Number(amount) * 100);
+    if (!requestedCents || requestedCents <= 0) {
       throw new ValidationError({ amount: 'Enter a valid payment amount' });
     }
-    // Same Math.min cap semantics as before, now computed from the locked values.
-    newAmountPaid = Math.min(lockedCurrentPaid + lockedPaymentAmount, lockedTotal);
-    isFullyPaid = newAmountPaid >= lockedTotal;
-    newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
     // The capped delta actually applied to EVERY consumer (proposal ledger,
     // invoice, activity log, and the client/admin receipt email), never the raw
     // admin-supplied amount, so an over-payment reports the $Y applied, not $X entered.
-    appliedAmount = newAmountPaid - lockedCurrentPaid;
+    const appliedCents = Math.min(requestedCents, remainderCents);
+    appliedAmount = appliedCents / 100; // dollars for the NUMERIC column and the receipt
+    newAmountPaid = lockedCurrentPaid + appliedAmount;
+    isFullyPaid = lockedContractPaidCents + appliedCents >= lockedTotalCents;
+    newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
 
     // accepted_at: an admin-recorded outside payment is an acceptance source
     // (the client paid), so stamp it — otherwise the financial dashboard
@@ -286,7 +302,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     const insertedPayment = await dbClient.query(
       `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
        VALUES ($1, $2, $3, 'succeeded') RETURNING id`,
-      [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(appliedAmount * 100)]
+      [proposal.id, isFullyPaid ? 'full' : 'deposit', appliedCents]
     );
 
     // Log activity with the capped applied amount (appliedAmount, hoisted above),
