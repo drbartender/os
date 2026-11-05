@@ -419,13 +419,21 @@ router.post(
         // quote. NEVER in this SET list: tip_jar, gratuity_rate,
         // gratuity_floor_rate, deposit_amount (election-at-payment law; a
         // hand-set deposit is Dallas's).
+        // The lines the switch priced with (priceProposedState derives every
+        // comp line from the items it carries, compLine.js): when a comp
+        // moved or left because its add-on could not ride the new package,
+        // the column follows the snapshot, or the next editor save would
+        // start from a stale comp. Unchanged lines keep the column, and its
+        // md5 adjustments token, exactly as it is.
+        const linesAsStored = JSON.stringify(p.adjustments || []);
+        const linesPriced = JSON.stringify(snapshot.adjustments || []);
         await client.query(
           `UPDATE proposals
               SET package_id = $1, total_price = $2, pricing_snapshot = $3,
-                  num_bartenders = $4, updated_at = NOW()
+                  num_bartenders = $4, adjustments = COALESCE($6::jsonb, adjustments), updated_at = NOW()
             WHERE id = $5`,
           [packageId, snapshot.total, JSON.stringify(snapshot),
-            snapshot.staffing?.actual ?? null, p.id]
+            snapshot.staffing?.actual ?? null, p.id, linesPriced === linesAsStored ? null : linesPriced]
         );
 
         // Belt and braces, and honestly labelled: the amount_paid = 0 guard

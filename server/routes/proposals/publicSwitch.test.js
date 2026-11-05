@@ -539,6 +539,42 @@ test('a discounted proposal switches cleanly (the SELECT carries adjustments)', 
   assert.equal(Number(row.total_price), ack);
 });
 
+// A comp line (compLine.js, audit PRC-01 round 3 L1): the switch prices every
+// comp line at the current price of the items it comps, and a comped add-on
+// that cannot ride the new package leaves the comp with it. The switch must
+// write that to the adjustments column too, or the column keeps the
+// un-netted line until the next editor save; the md5 token moves with it.
+test('a comped byob-only add-on that cannot ride a hosted package takes its comp line out of the column, and the token moves', async () => {
+  const garnish = await addonIdBySlug('garnish-package-only');
+  assert.ok(garnish, 'seeded add-on exists');
+  const { rows: [g] } = await pool.query('SELECT name, rate, billing_type FROM service_addons WHERE id = $1', [garnish]);
+  const p = await insertProposal();
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, $2, $3, $4, $5, 2, $6)`,
+    [p.id, garnish, g.name, g.billing_type, Number(g.rate), Number(g.rate) * 2]);
+  await pool.query(
+    `UPDATE proposals SET adjustments = $2::jsonb WHERE id = $1`,
+    [p.id, JSON.stringify([{
+      type: 'discount', label: 'Drink Plan Extras comped (INV0001)', amount: Number(g.rate) * 2, visible: true,
+      source: 'comp', comped: { addons: [garnish], bar: false, syrups: [] },
+    }])]);
+  const tokenOf = async () => (await pool.query(
+    "SELECT md5(COALESCE(adjustments, '[]'::jsonb)::text) AS t FROM proposals WHERE id = $1", [p.id])).rows[0].t;
+  const before = await tokenOf();
+  const quote = await quoteFor(p.token);
+  const ack = optionTotal(quote, hostedPkgId);
+  const res = await request('POST', `/api/proposals/t/${p.token}/switch`, {
+    body: { package_id: hostedPkgId, tier_addon_id: null, extra_addon_ids: [], acknowledged_total: ack },
+  });
+  assert.equal(res.status, 200, `the quote and the commit derive the same comp: ${res.raw}`);
+  const row = await rowOf(p.id);
+  assert.equal(Number(row.total_price), ack);
+  assert.deepEqual(row.adjustments, [], 'the comp left the column with the add-on it comped');
+  assert.deepEqual(row.pricing_snapshot.adjustments, [], 'and the snapshot');
+  assert.notEqual(await tokenOf(), before, 'the adjustments token moved with the column');
+});
+
 test('TOTAL_CHANGED: cents-strict, carries a fresh quote, writes nothing', async () => {
   const p = await insertProposal();
   const quote = await quoteFor(p.token);
