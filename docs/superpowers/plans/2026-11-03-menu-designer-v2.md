@@ -5,11 +5,16 @@ revision: 2 (2026-11-03; the design-stage plan review folded in, owner "go")
 status: >
   Eighteen lanes (twelve, then six split from lane reviews). Claude cuts each from current main with npm run worktree:new, builds it, reviews it at the
   tier the review skill computes, squash-merges it through scripts/merge-lane.sh from os and removes it.
-  Lanes merge in the order the blockedBy graph allows, and every merged lane is safe to ship alone: the
+  Lanes merge in the order the blockedBy graph allows, and every merged lane is safe to ship alone, the
+  bar chain excepted (below): the
   public proof routes land with no proof to show, the Inbox reader and all four task kinds land before
   anything can hold a print file or raise a task, the events dashboard change lands after the reminders
   it relies on, and auto-start lands last. menu-auto-start ships only after the owner adds OpenAI credit
   (spec section 24). The ship of any merged lane waits for the owner's word.
+  The bar chain cannot ship lane by lane: menu-bar-fingerprint (8121cd78) and menu-bar-baseline (53d63688)
+  merged, never shipped alone, and were reverted by 7882775a, which shipped 2026-11-05. menu-bar-legacy-keys
+  re-applies both squashes at its rebase; it, menu-bar-renamed-lines and menu-legal-hold-guards stay in
+  their worktrees until all five lanes can merge in one sitting and ship at once.
 lanes:
   - id: menu-out-of-credit
     scope: >

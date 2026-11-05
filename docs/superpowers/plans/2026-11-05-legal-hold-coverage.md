@@ -5,9 +5,8 @@ revision: 1 (2026-11-05)
 status: >
   Three lanes. legal-hold-auto and legal-hold-admin are built now, by Claude, each in its own worktree,
   reviewed at the tier it computes (tier A), merged through scripts/merge-lane.sh from os.
-  legal-hold-client waits on two owner decisions (below). Main holds menu designer work that must not
-  ship before menu-bar-renamed-lines and menu-legal-hold-guards merge, so these lanes ship with it, on
-  the owner's word.
+  legal-hold-client waits on two owner decisions (below). Each lane ships on its own once merged: the
+  menu bar work that once had to ship first was reverted from main by 7882775a (shipped 2026-11-05).
 lanes:
   - id: legal-hold-auto
     scope: >
