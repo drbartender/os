@@ -17,6 +17,7 @@ const { proposalUrl } = require('./urls');
 const { sendEmail } = require('./email');
 const { SuppressMessageError, DeferMessageError } = require('./errors');
 const { findInFlightPayments } = require('./paymentInFlight');
+const { contractBalanceDueCents } = require('./invoiceExtras');
 
 function lastFour(_proposal) {
   // last4 is not stored on proposals today (only stripe_payment_method_id).
@@ -26,7 +27,9 @@ function lastFour(_proposal) {
 }
 
 async function sendBalanceReminder({ entity, recipient, paymentMode }) {
-  const balanceDue = Number(entity.total_price) - Number(entity.amount_paid);
+  // Net of money collected outside the contract (audit PAY-01): the figure the
+  // client is asked to pay must be the one autopay and charge-balance charge.
+  const balanceDue = (await contractBalanceDueCents(entity)) / 100;
   if (balanceDue <= 0) {
     throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   }
@@ -57,7 +60,7 @@ async function sendBalanceDueToday({ entity, recipient }) {
 }
 
 async function sendBalanceLate({ entity, recipient, daysLate }) {
-  const balanceDue = Number(entity.total_price) - Number(entity.amount_paid);
+  const balanceDue = (await contractBalanceDueCents(entity)) / 100;
   if (balanceDue <= 0) {
     throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   }

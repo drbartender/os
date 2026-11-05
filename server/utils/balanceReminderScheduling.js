@@ -6,6 +6,7 @@ const { resolveEventTimezone } = require('./eventTimezone');
 const { eventLocalToUtc, chicagoTodayYmd } = require('./businessTime');
 const { isLegalHold } = require('./legalHold');
 const Sentry = require('@sentry/node');
+const { contractBalanceDueCents } = require('./invoiceExtras');
 
 // Each balance-reminder message_type fires at 10:00am LOCAL (event timezone) on a
 // day offset from balance_due_date. This map is the single source of truth,
@@ -89,7 +90,9 @@ async function scheduleBalanceReminders(proposalId) {
     if (p.status === 'archived') return;
     if (!p.client_id) return;
     if (!p.balance_due_date) return;
-    const balanceDue = Number(p.total_price) - Number(p.amount_paid);
+    // Net of money collected outside the contract (audit PAY-01): the ladder
+    // gates on the figure the handlers will quote and autopay will charge.
+    const balanceDue = (await contractBalanceDueCents(p)) / 100;
     if (balanceDue <= 0) return;
 
     const dueDate = new Date(p.balance_due_date);

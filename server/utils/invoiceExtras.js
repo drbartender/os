@@ -313,6 +313,12 @@ const IN_TOTAL_PRICE_LABELS = Object.freeze([
   'Deposit', 'Balance', 'Full Payment', 'Additional Services', 'Enhancement Lab',
 ]);
 
+// Labels whose collected money is NOT off-contract: inside total_price
+// (IN_TOTAL_PRICE_LABELS) or off both columns (OFF_LEDGER_INVOICE_LABELS).
+// sumOffContractPaidCents skips exactly these, and offContractPaidCentsSql
+// binds the same array, so the two readers can never disagree on the partition.
+const NOT_OFF_CONTRACT_LABELS = Object.freeze([...IN_TOTAL_PRICE_LABELS, ...OFF_LEDGER_INVOICE_LABELS]);
+
 /**
  * Sum the money a proposal has COLLECTED that does NOT live inside
  * proposals.total_price: syrup-only "Drink Plan Extras" and any free-text
@@ -343,7 +349,7 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
     `SELECT id, label, amount_paid FROM invoices
       WHERE proposal_id = $1 AND status <> 'void' AND amount_paid > 0
         AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
-    [proposalId, [...IN_TOTAL_PRICE_LABELS, ...OFF_LEDGER_INVOICE_LABELS]]
+    [proposalId, NOT_OFF_CONTRACT_LABELS]
   );
 
   let cents = 0;
@@ -358,6 +364,62 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
     cents += Number(inv.amount_paid);
   }
   return cents;
+}
+
+// ─── 11b3. contractBalanceDueCents / offContractPaidCentsSql ─────────────────
+
+/**
+ * The contract balance still due, in SIGNED cents (negative = the contract is
+ * overpaid): total_price − amount_paid + sumOffContractPaidCents.
+ *
+ * `total_price − amount_paid` alone is NOT the balance due in this schema, for
+ * the same reason the raw difference is not the overpayment (above): a paid
+ * syrup-only Drink Plan Extras invoice or a free-text manual invoice rolls into
+ * amount_paid and never into total_price, so the raw difference forgives the
+ * contract by that money. Every site that charges, bills or quotes the balance
+ * (autopay, charge-balance, the Balance invoice, the drink-plan balance fold,
+ * the reminders, the client surfaces) reads THIS, and the status ladder keeps
+ * its own raw `amount_paid >= total_price` paid flag (money law 8), which is a
+ * different question. Audit PAY-01, 2026-11-05: a deposit-paid client who paid
+ * a 6000-cent syrup pack was then auto-charged 84000 against a 90000 balance.
+ *
+ * Takes the row values the caller already holds (a claim UPDATE ... RETURNING,
+ * a locked read, a payload row), never a re-read, so the figure matches the
+ * row the caller decided on. Callers that want a floor clamp it themselves.
+ *
+ * @param {{id:number, total_price:any, amount_paid:any}} proposal
+ * @param {object} [dbClient]  the caller's transaction client, or the pool
+ * @returns {Promise<number>} signed cents
+ */
+async function contractBalanceDueCents(proposal, dbClient) {
+  const offContract = await sumOffContractPaidCents(proposal.id, dbClient);
+  return toCents(proposal.total_price || 0) - toCents(proposal.amount_paid || 0) + offContract;
+}
+
+/**
+ * SQL twin of sumOffContractPaidCents, for the one set-based reader that cannot
+ * call it per row (balanceInvoiceMonitor scans every proposal in one query).
+ * A correlated scalar subquery on the outer proposals alias (`proposalRef`,
+ * e.g. 'p.id'); `labelsParam` is the placeholder the caller binds
+ * NOT_OFF_CONTRACT_LABELS to (e.g. '$2'). The folded-extras predicate is the
+ * SQL form of extrasLinesAreFolded: an addon line or a bar-rental line marks a
+ * Drink Plan Extras invoice as folded (contract money). Keep the three in step.
+ *
+ * @param {string} proposalRef
+ * @param {string} labelsParam
+ * @returns {string} a SQL expression yielding integer cents (0 when none)
+ */
+function offContractPaidCentsSql(proposalRef, labelsParam) {
+  return `COALESCE((
+    SELECT SUM(oc.amount_paid) FROM invoices oc
+     WHERE oc.proposal_id = ${proposalRef} AND oc.status <> 'void' AND oc.amount_paid > 0
+       AND NOT (COALESCE(oc.label, '') = ANY(${labelsParam}::text[]))
+       AND NOT (oc.label = 'Drink Plan Extras' AND EXISTS (
+             SELECT 1 FROM invoice_line_items ocl
+              WHERE ocl.invoice_id = oc.id
+                AND (ocl.source_type = 'addon'
+                     OR ocl.description IN ('Portable Bar Rental', 'Additional Portable Bar'))))
+  ), 0)::bigint`;
 }
 
 // ─── 11c. voidExtrasInvoiceWithReconcile ─────────────────────────────────────
@@ -472,6 +534,9 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
 module.exports = {
   extrasLinesAreFolded,
   sumOffContractPaidCents,
+  contractBalanceDueCents,
+  offContractPaidCentsSql,
+  NOT_OFF_CONTRACT_LABELS,
   IN_TOTAL_PRICE_LABELS,
   writeExtrasLineItems,
   createDrinkPlanExtrasInvoice,

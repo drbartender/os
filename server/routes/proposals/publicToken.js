@@ -23,6 +23,7 @@ const { validatePhone } = require('../../utils/phone');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
 const { publicPriceView } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
+const { contractBalanceDueCents } = require('../../utils/invoiceExtras');
 
 const router = express.Router();
 
@@ -229,7 +230,7 @@ async function buildPublicProposalPayload(token, db = pool) {
   const proposal = result.rows[0];
 
   // Parallelize the non-dependent fetches: addons + drink plan
-  const [addonsRes, dpRes, inFlight] = await Promise.all([
+  const [addonsRes, dpRes, inFlight, balanceDueCents] = await Promise.all([
     db.query(
       'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [proposal.id]
@@ -240,6 +241,11 @@ async function buildPublicProposalPayload(token, db = pool) {
     ),
     // Bank debit in flight (spec 2026-09-14 section 7).
     findInFlightPayments(proposal.id, db),
+    // The contract balance the page quotes, net of money collected outside the
+    // contract (audit PAY-01): the client twin (paidState.js) reads this rather
+    // than recomputing total_price - amount_paid, which forgives a paid
+    // syrup-only extras invoice.
+    contractBalanceDueCents(proposal, db),
   ]);
 
   const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
@@ -347,6 +353,8 @@ async function buildPublicProposalPayload(token, db = pool) {
     additional_time: additionalTime,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
+    // Signed dollars, as shapeFocus reports it on the portal; the page clamps.
+    balance_due: balanceDueCents / 100,
     pending_payment: toPublicPending(inFlight),
     venue_complete: isVenueComplete(proposal),
     client_phone_prefill: clientPhonePrefill,

@@ -17,6 +17,14 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// A money figure the payload carries, or null when absent: null, undefined and
+// '' are absent (Number() would read them as 0, a real balance of nothing).
+const carried = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 // `renderedTotal` is the snapshot total the page renders (what balanceAmount
 // reads today); `total` is the row's total_price (what isFullyPaid reads
 // today). Keeping the two sources keeps the card and the breakdown above it
@@ -27,7 +35,17 @@ export function paidState(proposal, renderedTotal) {
   const total = num(proposal.total_price);
   const n = Number(renderedTotal);
   const basis = renderedTotal == null || !Number.isFinite(n) ? total : n;
-  const remaining = Math.max(0, basis - amountPaid);
+  // The server's balance_due when the payload carries it (audit PAY-01):
+  // total_price - amount_paid plus the money collected outside the contract
+  // (a paid syrup-only extras invoice, a manual invoice), which the row's
+  // amount_paid holds but the contract never did, so the raw arithmetic
+  // forgave it. The rendered basis still shifts it by the row-to-rendered gap,
+  // so the card and the breakdown above it keep printing the same remainder.
+  // A row without it (the settle poll's state) falls back to the arithmetic.
+  const serverDue = carried(proposal.balance_due);
+  const remaining = serverDue === null
+    ? Math.max(0, basis - amountPaid)
+    : Math.max(0, serverDue + (basis - total));
   const completed = proposal.status === 'completed';
   // kind is gated on STATUS first: a non-paid status with full arithmetic is
   // still none. Today's isFullyPaid ignored status, and no surface depended on it.

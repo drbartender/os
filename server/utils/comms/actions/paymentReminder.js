@@ -3,12 +3,15 @@
 // Comms action: payment_reminder (plan P1). Ports POST
 // /api/proposals/:id/send-reminder (server/routes/proposals/actions.js:90). It
 // is a BALANCE reminder — named honestly so the modal copy never implies a
-// receipt. MONEY RULE: the outstanding balance is derived exactly as the legacy
-// route (total_price - amount_paid) and rendered by the SAME formula the parts
-// template uses; no amount is invented or recomputed differently, and no money
-// column is written. The legacy route has no state side effect, so
-// ensureSideEffects only enforces the "balance must be positive" guard.
+// receipt. MONEY RULE: the outstanding balance is the contract balance due
+// (total_price - amount_paid, net of money collected outside the contract:
+// invoiceExtras.sumOffContractPaidCents, audit PAY-01), read ONCE in load()
+// and rendered by the SAME formula the parts template uses; no amount is
+// invented or recomputed differently, and no money column is written. The
+// legacy route has no state side effect, so ensureSideEffects only enforces
+// the "balance must be positive" guard.
 const { pool } = require('../../../db');
+const { sumOffContractPaidCents } = require('../../invoiceExtras');
 const { sendEmail } = require('../../email');
 const { sendSMS, normalizePhone } = require('../../sms');
 const { logClientMessage } = require('../../messageLog');
@@ -36,6 +39,9 @@ async function load(proposalId) {
     [proposalId]
   );
   if (!rows[0]) throw new NotFoundError('Proposal not found');
+  // The netting term for balanceDueOf, attached to the row so every reader of
+  // the row (resolve, build, dispatch) nets the same money exactly once.
+  rows[0].off_contract_paid_cents = await sumOffContractPaidCents(rows[0].id, pool);
   return rows[0];
 }
 
@@ -44,10 +50,16 @@ function smsAllowed(row, phone) {
   return Boolean(phone) && row.phone_status !== 'bad' && prefs.sms_enabled !== false;
 }
 
-// Exact legacy math: balanceDue = total_price - amount_paid (integer dollars as
-// stored on proposals). Never recomputed differently anywhere in this file.
+// balanceDue = total_price - amount_paid + the off-contract money load()
+// attached (a paid syrup-only extras or manual invoice sits in amount_paid but
+// not in total_price; audit PAY-01). Dollars, computed in cents. Never
+// recomputed differently anywhere in this file; a synthetic row without the
+// netting term (the action-level unit tests) nets nothing.
 function balanceDueOf(row) {
-  return Number(row.total_price || 0) - Number(row.amount_paid || 0);
+  const cents = Math.round(Number(row.total_price || 0) * 100)
+    - Math.round(Number(row.amount_paid || 0) * 100)
+    + (Number(row.off_contract_paid_cents) || 0);
+  return cents / 100;
 }
 
 function resolveFromRow(row) {

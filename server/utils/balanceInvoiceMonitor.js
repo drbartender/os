@@ -2,7 +2,15 @@
 //
 // Watches one invariant:
 //
-//     Σ(open invoice remaining)  ≤  owed,   owed = total_price − amount_paid
+//     Σ(open invoice remaining)  ≤  owed,
+//     owed = total_price − amount_paid + money collected outside the contract
+//
+// The netting term (a paid syrup-only Drink Plan Extras invoice, a manual
+// invoice: money that rolls into amount_paid but never into total_price) is
+// the SQL twin of invoiceExtras.sumOffContractPaidCents (audit PAY-01); the
+// raw difference read a client who paid a syrup pack as owing less than the
+// contract, so the Balance invoice looked over-billed and a Balance invoice
+// written short by the same bug never looked under-covered.
 //
 // Not equality. Billing a client LESS than they owe is sometimes deliberate (a
 // Deposit is a partial bill by design, and ~154 sit open at any time). Billing
@@ -29,6 +37,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
+const { offContractPaidCentsSql, NOT_OFF_CONTRACT_LABELS } = require('./invoiceExtras');
 const { findStaleProcessingPayments, STALE_PROCESSING_DAYS } = require('./paymentInFlight');
 const { heldProposalIds } = require('./legalHold');
 
@@ -56,9 +65,13 @@ const PAYABLE_SUM = `
        AND NOT (i.label = ANY($1::text[]))
   ), 0)`;
 
+// $3 is NOT_OFF_CONTRACT_LABELS (the netting's skip list; $2 is the legal-hold
+// id list both directions bind); every query interpolating this fragment
+// binds all three arrays at the call site.
 const OWED_CENTS = `
   ROUND(COALESCE(p.total_price, 0) * 100)::int
-- ROUND(COALESCE(p.amount_paid, 0) * 100)::int`;
+- ROUND(COALESCE(p.amount_paid, 0) * 100)::int
++ ${offContractPaidCentsSql('p.id', '$3')}`;
 
 // Labels present on the proposal, for context in the alert.
 const LABELS = `
@@ -220,8 +233,8 @@ async function monitorMissingBalanceInvoices() {
   // A missing legal-hold list throws here, before any read or write.
   const held = heldProposalIds();
   const [overRes, underRes] = await Promise.all([
-    pool.query(OVER_SQL, [OFF_LEDGER_INVOICE_LABELS, held]),
-    pool.query(UNDER_SQL, [OFF_LEDGER_INVOICE_LABELS, held]),
+    pool.query(OVER_SQL, [OFF_LEDGER_INVOICE_LABELS, held, NOT_OFF_CONTRACT_LABELS]),
+    pool.query(UNDER_SQL, [OFF_LEDGER_INVOICE_LABELS, held, NOT_OFF_CONTRACT_LABELS]),
   ]);
 
   const candidates = overRes.rows.length + underRes.rows.length;

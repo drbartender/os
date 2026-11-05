@@ -19,11 +19,17 @@ export function mapDetailToFocus(p) {
   // section 4.4): the Prescription tab's rows add up to it, gratuity included.
   const total = Number(p.total_price ?? 0);
   const paid = Number(p.amount_paid ?? 0);
+  // The server's balance_due when the detail carries it (audit PAY-01): the
+  // balance net of money collected outside the contract, as shapeFocus reports
+  // it on /home. A detail without it (an older server) falls back to the raw
+  // arithmetic.
+  const served = p.balance_due === null || p.balance_due === undefined || p.balance_due === '' ? NaN : Number(p.balance_due);
+  const balanceDue = Number.isFinite(served) ? served : total - paid;
   return {
     token: p.token, status: p.status, booked: BOOKED.has(p.status), past: PAST.has(p.status),
     event_type: p.event_type, event_type_custom: p.event_type_custom,
     event_date: p.event_date, event_start_time: p.event_start_time, guest_count: p.guest_count,
-    venue_label: venueLabel(p), total_price: total, amount_paid: paid, balance_due: total - paid,
+    venue_label: venueLabel(p), total_price: total, amount_paid: paid, balance_due: balanceDue,
     balance_due_date: p.balance_due_date,
     drink_plan_token: p.drink_plan_token || null,
     drink_plan_submitted: p.drink_plan_submitted_at !== null && p.drink_plan_submitted_at !== undefined,

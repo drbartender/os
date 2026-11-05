@@ -9,6 +9,7 @@ const { registerHandler } = require('./scheduledMessageDispatcher');
 const { sendEmail } = require('./email');
 const { enhancementLabFollowup } = require('./lifecycleEmailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
+const { contractBalanceDueCents } = require('./invoiceExtras');
 
 const LAB_CLOSE_HORIZON_MS = 72 * 60 * 60 * 1000;
 
@@ -50,8 +51,9 @@ async function labFollowupHandler({ entity: proposal, recipient: client }) {
   }
 
   const base = process.env.PUBLIC_SITE_URL || 'https://drbartender.com';
-  // Proposals money is DOLLARS (never cents) — straight subtraction is right.
-  const balanceDue = Math.max(0, (Number(proposal.total_price) || 0) - (Number(proposal.amount_paid) || 0));
+  // The contract balance net of money collected outside the contract (audit
+  // PAY-01), in dollars for the template.
+  const balanceDue = Math.max(0, await contractBalanceDueCents(proposal)) / 100;
   const { subject, html, text } = enhancementLabFollowup({
     clientName: client.name,
     eventTypeLabel: getEventTypeLabel(proposal),

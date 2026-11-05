@@ -6,7 +6,7 @@
 // submitted" (an admin-built plan finalizes without a submit, 2026-09-22).
 const { BOOKED_SET: BOOKED } = require('../../utils/proposalStatus');
 const PROPOSAL_SUMMARY_COLUMNS = [
-  'p.token', 'p.status', 'p.archive_reason', 'p.event_type', 'p.event_type_custom',
+  'p.id', 'p.token', 'p.status', 'p.archive_reason', 'p.event_type', 'p.event_type_custom',
   'p.event_date', 'p.event_start_time', 'p.guest_count',
   'p.venue_name', 'p.venue_city', 'p.venue_state',
   'p.total_price', 'p.amount_paid', 'p.balance_due_date',
@@ -22,11 +22,16 @@ function shapeFocus(r) {
   // the gratuity out of the portal's Total and balance.
   const total = Number(r.total_price ?? 0);
   const paid = Number(r.amount_paid ?? 0);
+  // The balance net of money collected outside the contract (audit PAY-01):
+  // the route attaches off_contract_paid_cents from sumOffContractPaidCents,
+  // since a paid syrup-only extras or manual invoice rolls into amount_paid
+  // but never into total_price. A row without it nets nothing.
+  const balanceDue = (Math.round(total * 100) - Math.round(paid * 100) + (Number(r.off_contract_paid_cents) || 0)) / 100;
   return {
     token: r.token, status: r.status, booked: BOOKED.has(r.status),
     event_type: r.event_type, event_type_custom: r.event_type_custom,
     event_date: r.event_date, event_start_time: r.event_start_time, guest_count: r.guest_count,
-    venue_label: venueLabel(r), total_price: total, amount_paid: paid, balance_due: total - paid,
+    venue_label: venueLabel(r), total_price: total, amount_paid: paid, balance_due: balanceDue,
     balance_due_date: r.balance_due_date,
     drink_plan_token: r.drink_plan_token || null,
     drink_plan_submitted: r.drink_plan_submitted_at !== null && r.drink_plan_submitted_at !== undefined,
