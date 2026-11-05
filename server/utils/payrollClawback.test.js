@@ -718,3 +718,102 @@ test('clawbackTip > cross-lane: claw onto a fixture-seeded held-NEGATIVE row kee
     await cleanHeldFixture(fx);
   }
 });
+
+// POUT-03 (audit 2026-11-05): while the EVENT's own period is still open the
+// claw nets into the wage line that lives there, instead of minting a debt
+// stub in today's period keyed by the same shift (two rows for one
+// contractor+shift, which accrual could misread as the wage line). The
+// suite's other tests keep the event period PAID, so they still land in
+// today's period as before.
+test('clawbackTip > the event period is still open: the claw nets into its wage line, not into today', async () => {
+  // An open far-past week this suite alone uses (Tue 2019-03-12..Mon 2019-03-18).
+  const open = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2019-03-12','2019-03-18','2019-03-19','open')
+     ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`
+  );
+  const openPeriodId = open.rows[0].id;
+  const pr = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price)
+     VALUES (NULL, '2019-03-12', 'completed', 'wedding', '6:00 PM', 4, 2000)
+     RETURNING id`
+  );
+  const openProposalId = pr.rows[0].id;
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2019-03-12','6:00 PM','open',$1) RETURNING id`,
+    [openProposalId]
+  );
+  const openShiftId = s.rows[0].id;
+  let openTipId = null;
+  try {
+    for (const id of [bartenderA, bartenderB]) {
+      await pool.query(
+        `INSERT INTO shift_requests (shift_id, user_id, position, status)
+         VALUES ($1,$2,'Bartender','approved')
+         ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+        [openShiftId, id]
+      );
+      // The accrued wage line for the shift, in the EVENT period.
+      await pool.query(
+        `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+         VALUES ($1,$2,'pending',11000)
+         ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = 11000`,
+        [openPeriodId, id]
+      );
+      await pool.query(
+        `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents, line_total_cents)
+         SELECT po.id, $1, 5.5, 5.5, 2000, 11000, 11000 FROM payouts po
+          WHERE po.pay_period_id = $2 AND po.contractor_id = $3`,
+        [openShiftId, openPeriodId, id]
+      );
+    }
+    const t = await pool.query(
+      `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                         stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
+       VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_claw_open_period', '2019-03-12 23:30:00+00', $2, 0)
+       RETURNING id`,
+      [bartenderA, openShiftId]
+    );
+    openTipId = t.rows[0].id;
+
+    const result = await clawbackTip(openTipId, 4000);
+    assert.equal(result.period_id, openPeriodId, 'booked in the event period, not today');
+    const { rows } = await pool.query(
+      `SELECT po.contractor_id, po.pay_period_id, pe.hours, pe.wage_cents, pe.adjustment_cents,
+              pe.line_total_cents, po.total_cents
+         FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE pe.shift_id = $1 ORDER BY po.contractor_id`,
+      [openShiftId]
+    );
+    assert.equal(rows.length, 2, 'no second row per bartender: the claw merged into the wage line');
+    for (const r of rows) {
+      assert.equal(r.pay_period_id, openPeriodId);
+      assert.equal(Number(r.hours), 5.5, 'the wage line keeps its hours');
+      assert.equal(Number(r.wage_cents), 11000);
+      assert.equal(Number(r.adjustment_cents), -1936);
+      assert.equal(Number(r.line_total_cents), 11000 - 1936);
+      assert.equal(Number(r.total_cents), 11000 - 1936, 'the event period total absorbs the debt');
+    }
+    const todayRows = await pool.query(
+      'SELECT 1 FROM payouts WHERE contractor_id IN ($1,$2) AND pay_period_id = $3',
+      [bartenderA, bartenderB, todayPeriodId]
+    );
+    assert.equal(todayRows.rowCount, 0, 'nothing is minted in today period');
+  } finally {
+    await pool.query('DELETE FROM payout_events WHERE shift_id = $1', [openShiftId]);
+    await pool.query(
+      'DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id IN ($2,$3)',
+      [openPeriodId, bartenderA, bartenderB]
+    );
+    if (openTipId) await pool.query('DELETE FROM tips WHERE id = $1', [openTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [openShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [openShiftId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [openProposalId]);
+    await pool.query(
+      `DELETE FROM pay_periods pp WHERE pp.id = $1
+         AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+      [openPeriodId]
+    );
+  }
+});
