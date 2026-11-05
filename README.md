@@ -952,6 +952,7 @@ tests omitted
 │       │       └── quoteWizard/
 │       │           ├── PrescriptionCard.js # PrescriptionCard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │           ├── QuoteWizard.js # QuoteWizard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │           ├── SubmitSuccess.js # Submit success panel for the quote and class wizards (default export): the state after POST /api/proposals/public/submit answers 201. With a token it offers the proposal link; without one the submit resolved to an existing client and the link went to the address on file, so it says where to look and offers no link (audit 2026-11-05 AUTH-12).
 │       │           ├── WizardPriceBar.js # WizardPriceBar (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │           ├── bundleConfig.js # BYOB bundle definitions KEEP IN SYNC: server/utils/proposalRules.js mirrors the FULL bundle config in CJS - BYOB_BUNDLE_SLUGS, MIXER_SLUGS, BUNDLE_INCLUDED, BUNDLE_UNAVAILABLE (and the derived BUNDLE_COVERED). If you edit any of these here, update that twin too.
 │       │           ├── helpers.js # Exports getSteps, ADDON_TAGLINES, ADDON_QTY_HINTS, formatCurrency, priceLabel. Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.

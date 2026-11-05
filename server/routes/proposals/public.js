@@ -234,6 +234,17 @@ router.put('/public/quote-draft/:token', publicReadLimiter, asyncHandler(async (
   res.json({ ok: true });
 }));
 
+// 'j***@example.com': the first character of the local part and the domain.
+// Echoed only for a submit that matched an existing row, and the submitter
+// typed the address themselves, so it reveals nothing to them; it tells a
+// returning client where to look.
+function maskEmail(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at < 1) return '';
+  return `${s[0]}***${s.slice(at)}`;
+}
+
 /** POST /api/proposals/public/submit — create a proposal from the public website quote wizard */
 router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const {
@@ -376,8 +387,10 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       );
     }
 
+    // phone and email ride along: when the submit resolved to an EXISTING
+    // row they are the delivery address (see the send below).
     const prefRow = await dbClient.query(
-      'SELECT communication_preferences, email_status, phone_status FROM clients WHERE id = $1',
+      'SELECT communication_preferences, email_status, phone_status, phone, email FROM clients WHERE id = $1',
       [finalClientId]
     );
 
@@ -495,10 +508,12 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       );
     }
 
-    // Log creation
+    // Log creation. client_matched records that the submit landed on an
+    // existing client row rather than creating one (audit 2026-11-05 AUTH-12),
+    // so the admin can tell a returning client's quote from a stranger's.
     const logDetails = snapshot
-      ? { source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name }
-      : { source: 'website_quote_wizard', top_shelf_requested: true, package: pkgResult.rows[0].name, spirit_category: cleanClassOptions?.spirit_category || null };
+      ? { source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name, client_matched: !clientIsNew }
+      : { source: 'website_quote_wizard', top_shelf_requested: true, package: pkgResult.rows[0].name, spirit_category: cleanClassOptions?.spirit_category || null, client_matched: !clientIsNew };
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'created', 'client', $2)`,
       [proposal.id, JSON.stringify(logDetails)]
@@ -530,6 +545,21 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     }
 
     await dbClient.query('COMMIT');
+
+    // DELIVERY (audit 2026-11-05 AUTH-12). A submit that resolved to an
+    // EXISTING client row (clients.email is unique, so an email match must
+    // attach to it) proves nothing about the submitter: a stranger who knows a
+    // client's email can post the wizard with that email and any name and
+    // phone. So for a matched row the proposal link goes only to the address
+    // and phone ON FILE, never to the submitted phone, and the response below
+    // withholds the token (the mail is the delivery). A row this submit
+    // created is the submitter's own, so their contact and the token are used
+    // as before. On an email match the row's email equals the submitted one.
+    const onFile = prefRow.rows[0] || {};
+    const deliveryEmail = clientIsNew
+      ? client_email.trim().toLowerCase()
+      : String(onFile.email || client_email).trim().toLowerCase();
+    const deliveryPhone = clientIsNew ? (client_phone || null) : (onFile.phone || null);
 
     // Send email notifications (non-blocking)
     try {
@@ -566,9 +596,9 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           {
             ...proposal,
             client_name: client_name.trim(),
-            client_email: client_email.trim().toLowerCase(),
+            client_email: deliveryEmail,
             client_id: finalClientId,
-            client_phone: client_phone || null,
+            client_phone: deliveryPhone,
             communication_preferences: prefRow.rows[0].communication_preferences,
             email_status: prefRow.rows[0].email_status,
             phone_status: prefRow.rows[0].phone_status,
@@ -606,7 +636,15 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       }
     }
 
-    res.status(201).json({ token: proposal.token, total: snapshot ? snapshot.total : 0, top_shelf: isTopShelfClass });
+    // The token is withheld for a matched row (see DELIVERY above); the masked
+    // address tells a returning client where their link went. The wizard
+    // renders its "check your email" state on a null token.
+    const total = snapshot ? snapshot.total : 0;
+    if (clientIsNew) {
+      res.status(201).json({ token: proposal.token, total, top_shelf: isTopShelfClass });
+    } else {
+      res.status(201).json({ token: null, delivered_to: maskEmail(deliveryEmail), total, top_shelf: isTopShelfClass });
+    }
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;

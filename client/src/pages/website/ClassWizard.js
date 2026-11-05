@@ -10,6 +10,7 @@ import { resolveGratuityDisplayLabel } from '../../utils/gratuityLabels';
 import { useToast } from '../../context/ToastContext';
 import useWizardHistory from '../../hooks/useWizardHistory';
 import TimePicker from '../../components/TimePicker';
+import SubmitSuccess from './quoteWizard/SubmitSuccess';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -236,25 +237,14 @@ export default function ClassWizard() {
       <PublicLayout>
       <div className="wz-class-page">
         <div className="wz-section">
-          <div className="wz-success">
-            <div className="wz-success-icon">&#10003;</div>
-            <h2>{topShelf ? 'Request submitted!' : 'Your quote is ready!'}</h2>
-            {topShelf ? (
-              <p>We'll follow up with custom Top Shelf pricing. Check your email for details.</p>
-            ) : (
-              <>
-                <p>Estimated total: <strong>{formatCurrency(success.total)}</strong></p>
-                <p>We've sent the full proposal to your email. You can also view it now:</p>
-              </>
-            )}
-            <button
-              className="btn btn-primary"
-              onClick={() => navigate(`/proposal/${success.token}`)}
-              style={{ marginTop: '1rem' }}
-            >
-              View Your Proposal
-            </button>
-          </div>
+          {/* token: null means the submit matched an existing client and the
+              link went to the address on file (audit 2026-11-05 AUTH-12). */}
+          <SubmitSuccess
+            success={success}
+            topShelf={topShelf}
+            readyHeading="Your quote is ready!"
+            onView={() => navigate(`/proposal/${success.token}`)}
+          />
         </div>
       </div>
       </PublicLayout>
