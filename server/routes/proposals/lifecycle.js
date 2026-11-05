@@ -11,7 +11,7 @@ const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 const { SWEEP_EXEMPT_ACTION } = require('../../utils/staleProposalSweep');
-const { voidClientSignature } = require('./signatureVoid');
+const { voidClientSignature, rowHoldsMoney, PRE_PAYMENT_STATUSES } = require('./signatureVoid');
 
 const router = express.Router();
 
@@ -67,9 +67,9 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
     await dbClient.query('BEGIN');
 
     // The signature columns ride along so a restore can record the prior
-    // signature before clearing it (below).
+    // signature before clearing it (below), with the money columns its guard reads.
     const current = await dbClient.query(
-      `SELECT status, group_id,
+      `SELECT status, group_id, amount_paid, external_paid,
               client_signed_name, client_signed_at, client_signature_method, client_signature_ip,
               client_signature_document_version, client_signed_total, client_signed_snapshot
          FROM proposals WHERE id = $1 FOR UPDATE`, [req.params.id]
@@ -120,15 +120,20 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       [req.params.id, action, req.user.id, JSON.stringify({ from: currentStatus, to: status, forced: force })]
     );
 
-    // A restored quote is re-signed (audit ESIG-14): archived -> draft -> sent
-    // used to keep a signature the public page could neither sign over nor
-    // pay against. Cleared the way the cancel fields are, in this transaction,
-    // with the prior signature kept on a signature_voided row
-    // (signatureVoid.js); the status set above stands.
-    if (currentStatus === 'archived' && status === 'draft' && current.rows[0].client_signed_at) {
+    // A restored quote is re-signed (audit ESIG-14): a restore out of archived
+    // onto any pre-payment status (draft by the table, sent or viewed by
+    // force) used to keep a signature the public page could neither sign over
+    // nor pay against. Cleared the way the cancel fields are, in this
+    // transaction, with the prior signature kept on a signature_voided row
+    // (signatureVoid.js); the status set above stands. A row that holds money
+    // keeps its signature (amount_paid, external_paid, or a debit still
+    // settling: rowHoldsMoney): a cancelled booking that kept its retainer
+    // (money law 1) rests on the signature it was forfeited under.
+    if (currentStatus === 'archived' && PRE_PAYMENT_STATUSES.includes(status) && current.rows[0].client_signed_at
+        && !(await rowHoldsMoney(dbClient, current.rows[0], req.params.id))) {
       const voided = await voidClientSignature(dbClient, {
         proposalId: req.params.id, row: current.rows[0], actorId: req.user.id,
-        reason: 'archived -> draft', resetStatus: false,
+        reason: `archived -> ${status}`, resetStatus: false,
       });
       if (voided.voided) result.rows[0] = voided.row;
     }

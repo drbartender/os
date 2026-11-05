@@ -37,9 +37,9 @@ const SIGNED_AT = new Date('2026-10-01T15:00:00.000Z');
 const SIGNATURE_COLUMNS = ['client_signed_name', 'client_signature_data', 'client_signed_at', 'client_signature_method',
   'client_signature_ip', 'client_signature_user_agent', 'client_signature_document_version', 'client_signed_total', 'client_signed_snapshot'];
 
-function archivedRow({ signed = true } = {}) {
+function archivedRow({ signed = true, amountPaid = '0.00', externalPaid = '0.00' } = {}) {
   return {
-    id: 902, status: 'archived', group_id: null, amount_paid: '0.00', total_price: '600.00',
+    id: 902, status: 'archived', group_id: null, amount_paid: amountPaid, external_paid: externalPaid, total_price: '600.00',
     client_signed_name: signed ? 'Test Signer' : null, client_signature_data: signed ? 'data:image/png;base64,iVBORw0KGgo=' : null,
     client_signed_at: signed ? SIGNED_AT : null, client_signature_method: signed ? 'draw' : null,
     client_signature_ip: signed ? '10.0.0.1' : null, client_signature_user_agent: signed ? 'test-agent' : null,
@@ -51,10 +51,14 @@ function archivedRow({ signed = true } = {}) {
 }
 
 let row;
+// Bank debits still settling on the row (paymentInFlight.js reads
+// stripe_sessions.status = 'processing'); set per test.
+let inFlightRows = [];
 const calls = [];
 function answer(via, sql, params) {
   calls.push({ via, sql, params });
   if (/FROM users WHERE id = \$1/.test(sql)) return { rows: [ADMIN], rowCount: 1 };
+  if (/FROM stripe_sessions s/.test(sql) && /status = 'processing'/.test(sql)) return { rows: inFlightRows, rowCount: inFlightRows.length };
   if (/FROM proposals WHERE id = \$1 FOR UPDATE/.test(sql)) return { rows: [{ ...row }], rowCount: 1 };
   if (/^\s*UPDATE proposals SET\s+status = \$1::text/.test(sql)) {
     row = { ...row, status: params[0], cancelled_at: null, cancelled_by: null, cancellation_note: null, archive_reason: null };
@@ -82,7 +86,7 @@ function patch(path, body) {
     const payload = JSON.stringify(body);
     const u = new URL(baseUrl + path);
     const req = http.request({
-      hostname: u.hostname, port: u.port, path: u.pathname, method: 'PATCH',
+      hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Authorization: `Bearer ${token}` },
     }, (res) => {
       let data = '';
@@ -126,7 +130,7 @@ after(async () => {
   if (server) await new Promise((r) => server.close(r));
 });
 
-beforeEach(() => { calls.length = 0; });
+beforeEach(() => { calls.length = 0; inFlightRows = []; });
 
 test('archived -> draft on a signed row clears the signature inside the transaction and records the prior signature', async () => {
   row = archivedRow({ signed: true });
@@ -159,4 +163,49 @@ test('archived -> draft on an unsigned row writes no void', async () => {
   assert.equal(voidUpdate(), -1);
   assert.equal(voidedRow(), undefined);
   assert.equal(res.body.status, 'draft');
+});
+
+// Round 2 (L3): the void keys on leaving 'archived' for any pre-payment status,
+// not on the target 'draft': a forced restore straight to sent or viewed used
+// to keep the signature and recreate the second path of the audit.
+test('a forced archived -> sent on a signed, money-free row clears the signature too', async () => {
+  row = archivedRow({ signed: true });
+  const res = await patch(`/api/proposals/${row.id}/status?force=true`, { status: 'sent' });
+  assert.equal(res.status, 200, res.raw);
+  assert.ok(voidUpdate() >= 0, 'the signature was cleared on a forced restore');
+  const details = JSON.parse(voidedRow().params[2]);
+  assert.match(String(details.reason), /archived -> sent/);
+  assert.equal(res.body.status, 'sent');
+  assert.equal(res.body.client_signed_at, null);
+});
+
+// Round 2 (L4): the restore keeps the signature when the row holds money
+// (amount_paid, external_paid, or a bank debit still settling): a cancelled
+// booking that kept its retainer (money law 1) rests on the signature it was
+// forfeited under, and a debit in flight credits the row after the restore.
+test('archived -> draft keeps the signature when the row holds money or a payment is in flight', async () => {
+  for (const [label, fixture, inFlight] of [
+    ['amount_paid', archivedRow({ signed: true, amountPaid: '100.00' }), []],
+    ['external_paid', archivedRow({ signed: true, externalPaid: '100.00' }), []],
+    ['in flight', archivedRow({ signed: true }), [{ stripe_payment_intent_id: 'pi_test_1', amount_cents: 10000, started_at: new Date(), invoice_id: null, invoice_number: null }]],
+  ]) {
+    row = fixture;
+    inFlightRows = inFlight;
+    calls.length = 0;
+    const res = await patch(`/api/proposals/${row.id}/status`, { status: 'draft' });
+    assert.equal(res.status, 200, `${label}: ${res.raw}`);
+    assert.equal(voidUpdate(), -1, `${label}: no void UPDATE`);
+    assert.equal(voidedRow(), undefined, `${label}: no signature_voided row`);
+    assert.equal(res.body.status, 'draft', label);
+    assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime(), `${label}: the signature stands`);
+    assert.equal(res.body.client_signed_total, '600.00', label);
+  }
+});
+
+test('a forced restore onto a paid status keeps the signature', async () => {
+  row = archivedRow({ signed: true, amountPaid: '100.00' });
+  const res = await patch(`/api/proposals/${row.id}/status?force=true`, { status: 'deposit_paid' });
+  assert.equal(res.status, 200, res.raw);
+  assert.equal(voidUpdate(), -1);
+  assert.equal(new Date(res.body.client_signed_at).getTime(), SIGNED_AT.getTime());
 });
