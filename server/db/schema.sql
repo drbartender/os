@@ -164,6 +164,10 @@ ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_field_guide BOOLEAN;
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_storage_key VARCHAR(500);
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_generated_at TIMESTAMPTZ;
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_email_sent_at TIMESTAMPTZ;
+-- The content pin of the text signed (audit ESIG-10): sha256 of the frozen
+-- version object (server/data/contractorAgreement.js agreementVersionSha256),
+-- written by the sign route beside signature_document_version.
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_document_sha256 VARCHAR(64);
 
 CREATE TABLE IF NOT EXISTS payment_profiles (
   id SERIAL PRIMARY KEY,
