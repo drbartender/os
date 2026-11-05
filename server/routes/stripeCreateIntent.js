@@ -156,11 +156,21 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
         || (reqMeta !== null && intentMeta !== null
             && reqMeta.tip_jar === intentMeta.tip_jar
             && reqMeta.gratuity_rate === intentMeta.gratuity_rate);
+      // Autopay is part of the identity too (audit PAY-03). The page mints the
+      // deposit intent on load with autopay false and asks again with autopay
+      // true once the client ticks the box; reusing the pending intent
+      // regardless left setup_future_usage unset (the retrieved intent carries
+      // the field) and autopay_enrolled on the first request's value, so the
+      // webhook saved no card and the client who expected autopay was chased by
+      // the non-autopay ladder instead. A mismatch cancels and mints fresh, the
+      // same shape an election change takes.
+      const intentAutopay = intent.setup_future_usage === 'off_session';
+      const autopayMatch = intentAutopay === wantsAutopay;
       // Reuse ONLY a metadata-less intent for a metadata-less request: an
       // election-bearing intent is never reused (a reload resets the client's
       // UI state; confirming a stale election the client can no longer see is
       // exactly the harm this redesign removes).
-      if (amountMatch && reqMeta === null && intentMeta === null
+      if (amountMatch && autopayMatch && reqMeta === null && intentMeta === null
           && (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation')) {
         return res.json({
           clientSecret: intent.client_secret,
@@ -168,12 +178,13 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
           gratuity: (effSnap && effSnap.gratuity) || null,
         });
       }
-      // Stale-intent safety: cancel when the identity (amount OR election)
-      // no longer matches, so a stale tab can't confirm an old total/election.
+      // Stale-intent safety: cancel when the identity (amount, election OR
+      // autopay) no longer matches, so a stale tab can't confirm an old
+      // total/election and a toggled autopay box is honoured.
       // A succeeded/processing intent never reaches here any more (the
       // in-flight guards above refuse the request), so the status filter is
       // belt and braces for the one retrieve this branch makes itself.
-      if ((!amountMatch || !metaMatch)
+      if ((!amountMatch || !metaMatch || !autopayMatch)
           && !['succeeded', 'processing', 'canceled'].includes(intent.status)) {
         await stripe.paymentIntents.cancel(intent.id);
         await pool.query(
