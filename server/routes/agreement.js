@@ -8,7 +8,7 @@ const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { publicReadLimiter, signLimiter } = require('../middleware/rateLimiters');
 const { ValidationError, NotFoundError } = require('../utils/errors');
-const { getCurrentAgreement, CURRENT_VERSION } = require('../data/contractorAgreement');
+const { getCurrentAgreement, CURRENT_VERSION, agreementVersionSha256 } = require('../data/contractorAgreement');
 const { renderAgreementPdf } = require('../utils/agreementPdf');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
@@ -116,6 +116,11 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
   const ip = (req.ip || '').replace(/^::ffff:/, '').slice(0, 45) || null;
   const userAgent = req.headers['user-agent'] || null;
 
+  // The content pin of the text being signed (audit ESIG-10): the row carries
+  // the hash of what its version string pointed to on the day, beside the
+  // version itself.
+  const documentSha256 = agreementVersionSha256(getCurrentAgreement());
+
   // ── Transaction: upsert agreement row + mark onboarding step ──────
   let saved;
   const client = await pool.connect();
@@ -132,7 +137,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
       'ack_ic_status','ack_commitment','ack_non_solicit',
       'ack_damage_recoupment','ack_legal_protections','ack_field_guide',
       'signature_data','signature_method','signature_ip','signature_user_agent',
-      'signature_document_version','signed_at',
+      'signature_document_version','signature_document_sha256','signed_at',
     ];
 
     if (existing.rows[0]) {
@@ -147,14 +152,14 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
            ack_ic_status=$5, ack_commitment=$6, ack_non_solicit=$7,
            ack_damage_recoupment=$8, ack_legal_protections=$9, ack_field_guide=$10,
            signature_data=$11, signature_method=$12, signature_ip=$13, signature_user_agent=$14,
-           signature_document_version=$15, signed_at=NOW()
+           signature_document_version=$15, signature_document_sha256=$17, signed_at=NOW()
          WHERE user_id=$16
          RETURNING *`,
         [
           fullName, emailValue, phoneCheck.value, sms_consent === true,
           true, true, true, true, true, true, // every ack was asserted === true above
           signatureValue, signature_method, ip, userAgent,
-          CURRENT_VERSION, req.user.id,
+          CURRENT_VERSION, req.user.id, documentSha256,
         ]
       );
       saved = upd.rows[0];
@@ -163,14 +168,14 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
         `INSERT INTO agreements
            (user_id, ${cols.join(', ')})
          VALUES
-           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
          RETURNING *`,
         [
           req.user.id,
           fullName, emailValue, phoneCheck.value, sms_consent === true,
           true, true, true, true, true, true, // every ack was asserted === true above
           signatureValue, signature_method, ip, userAgent,
-          CURRENT_VERSION,
+          CURRENT_VERSION, documentSha256,
         ]
       );
       saved = ins.rows[0];
