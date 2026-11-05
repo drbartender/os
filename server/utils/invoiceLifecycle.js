@@ -4,7 +4,6 @@
 
 const { toCents, db } = require('./invoiceShared');
 const { generateLineItemsFromProposal, writeLineItems } = require('./invoiceLineItems');
-const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 
 // The invoice-label literals written below ('Deposit' / 'Balance' /
 // 'Full Payment') are the origin of the contract-total classification. The
@@ -77,6 +76,36 @@ async function lockInvoice(invoiceId, dbClient) {
 
 // ─── 6. refreshUnlockedInvoices ──────────────────────────────────────────────
 
+// The locked invoices whose money sits INSIDE total_price, summed: the only
+// ones a Balance refresh may subtract from the contract (money law 5, the same
+// partition sumOffContractPaidCents nets on the amount_paid side). Three kinds
+// stay out. Off-ledger labels have no total_price entry (2026-07-20;
+// 'Service Extension' since 2026-07-26, so this exclusion is live). A
+// syrup-only Drink Plan Extras invoice and a free-text manual invoice roll
+// into amount_paid but never into total_price, so counting a locked, paid one
+// here shrank the Balance invoice by money the contract never contained
+// (audit PAY-01, 2026-11-05: a 6000-cent syrup pack cut a 90000 Balance to
+// 84000). A folded Drink Plan Extras invoice (an add-on or bar line, read
+// from its persisted lines) IS contract money and counts, as lab and
+// Additional Services invoices do. Lazy require: invoiceExtras requires this
+// module at load (createInvoice).
+async function lockedContractTotal(lockedRows, client) {
+  const { IN_TOTAL_PRICE_LABELS, extrasLinesAreFolded } = require('./invoiceExtras');
+  let total = 0;
+  for (const inv of lockedRows) {
+    if (IN_TOTAL_PRICE_LABELS.includes(inv.label)) {
+      total += Number(inv.amount_due);
+    } else if (inv.label === 'Drink Plan Extras') {
+      const lines = await client.query(
+        'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
+        [inv.id]
+      );
+      if (extrasLinesAreFolded(lines.rows)) total += Number(inv.amount_due);
+    }
+  }
+  return total;
+}
+
 /**
  * Regenerate line items and recalculate amount_due for all unlocked,
  * non-void invoices belonging to a proposal.
@@ -84,7 +113,9 @@ async function lockInvoice(invoiceId, dbClient) {
  * amount_due logic:
  *   - "Deposit"       → proposal.deposit_amount in cents
  *   - "Full Payment"  → (total_price − external_paid) in cents
- *   - "Balance"       → (total_price − external_paid − sum(locked invoice amount_due)) in cents
+ *   - "Balance"       → (total_price − external_paid − sum(locked invoice amount_due)) in cents,
+ *                        summing only the locked invoices whose money is inside
+ *                        total_price (lockedContractTotal below)
  *
  * external_paid (cc-transfer, 2026-07-07) is money collected off-platform in
  * CheckCherry, folded into amount_paid with NO payment rows and NO locked
@@ -99,26 +130,17 @@ async function lockInvoice(invoiceId, dbClient) {
 async function refreshUnlockedInvoices(proposalId, dbClient) {
   const client = db(dbClient);
 
-  // Fetch proposal financials, locked total, and unlocked invoices in parallel
+  // Fetch proposal financials, locked invoices, and unlocked invoices in parallel
   const [propResult, lockedResult, unlockedResult] = await Promise.all([
     client.query(
       `SELECT total_price, deposit_amount, external_paid FROM proposals WHERE id = $1`,
       [proposalId]
     ),
     client.query(
-      // Off-ledger labels are excluded: their amounts have no total_price
-      // entry, so counting a locked one here would shrink the Balance invoice
-      // by money the contract never contained (2026-07-20). COALESCE keeps a
-      // NULL-label invoice counted (NULL = ANY(...) is NULL, and NOT NULL
-      // would silently drop the row). 'Service Extension' is that label
-      // (since 2026-07-26): a locked extension invoice must stay out of
-      // lockedTotal, so this exclusion is live, not a no-op. (Lab money folds
-      // into the contract since 2026-07-20, so lab invoices count normally.)
-      `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
-         FROM invoices
+      `SELECT id, label, amount_due FROM invoices
         WHERE proposal_id = $1 AND locked = true AND status != 'void'
-          AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
-      [proposalId, OFF_LEDGER_INVOICE_LABELS]
+        ORDER BY id`,
+      [proposalId]
     ),
     client.query(
       `SELECT id, label FROM invoices
@@ -134,7 +156,7 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
   const totalCents = toCents(prop.total_price);
   const depositCents = toCents(prop.deposit_amount);
   const externalCents = toCents(prop.external_paid);
-  const lockedTotal = Number(lockedResult.rows[0].locked_total);
+  const lockedTotal = await lockedContractTotal(lockedResult.rows, client);
 
   // Fresh line items, shared across all unlocked invoices for this proposal and
   // built on the first write: generation reports any fold it makes, so a
@@ -238,7 +260,9 @@ async function createInvoiceOnSend(proposalId, dbClient) {
 
 /**
  * Called after the deposit is paid.
- * Creates a "Balance" invoice for total_price − amount_paid.
+ * Creates a "Balance" invoice for the contract balance due: total_price −
+ * amount_paid, net of money collected outside the contract
+ * (invoiceExtras.contractBalanceDueCents, audit PAY-01).
  * Returns null if a balance invoice already exists or the balance is zero.
  *
  * @param {number} proposalId
@@ -268,9 +292,9 @@ async function createBalanceInvoice(proposalId, dbClient) {
   if (propResult.rows.length === 0) throw new Error(`Proposal ${proposalId} not found`);
 
   const prop = propResult.rows[0];
-  const totalCents = toCents(prop.total_price);
-  const paidCents = toCents(prop.amount_paid);
-  const balanceCents = Math.max(0, totalCents - paidCents);
+  // Lazy require: invoiceExtras requires this module at load (createInvoice).
+  const { contractBalanceDueCents } = require('./invoiceExtras');
+  const balanceCents = Math.max(0, await contractBalanceDueCents({ id: proposalId, ...prop }, client));
 
   if (balanceCents === 0) return null;
 

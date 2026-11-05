@@ -10,6 +10,7 @@ const { requireUuidToken } = require('../utils/tokens');
 const { chicagoTodayYmd } = require('../utils/businessTime');
 const { buildClientPriceRows, moneyToCents } = require('../utils/clientPriceLines');
 const { reportPriceRowsFold } = require('./proposals/publicToken');
+const { sumOffContractPaidCents, contractBalanceDueCents } = require('../utils/invoiceExtras');
 
 // Injection seam for the business day — see staffPortal.js. The UTC and
 // Chicago days agree for about 19 hours a day, so without this a boundary
@@ -93,6 +94,9 @@ router.get('/home', asyncHandler(async (req, res) => {
     pool.query(`SELECT EXISTS(SELECT 1 FROM quote_drafts WHERE LOWER(email) = LOWER($1) AND status = 'draft') AS has`, [email]),
   ]);
   const focusRow = dated.rows[0] || nullDraft.rows[0] || null;
+  // The focus balance nets money collected outside the contract (audit
+  // PAY-01); shapeFocus reads it off the row. One read, for the one row shown.
+  if (focusRow) focusRow.off_contract_paid_cents = await sumOffContractPaidCents(focusRow.id, pool);
   res.json({
     focus: focusRow ? shapeFocus(focusRow) : null,
     upcoming_count: countRes.rows[0].n,
@@ -195,11 +199,16 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
 
   const priceView = portalPriceRows(storedSnapshot, proposal.total_price, proposal.package_name);
   reportPriceRowsFold(proposal.id, priceView.fold, priceView.rows.length, { route: 'client-portal' });
+  // The balance the drill-down shows, net of money collected outside the
+  // contract (audit PAY-01); the client's mapDetailToFocus reads it rather
+  // than recomputing total_price - amount_paid. Signed dollars, as /home.
+  const balanceDue = (await contractBalanceDueCents(proposal, pool)) / 100;
 
   res.json({
     proposal: {
       ...proposal, addons: addons.rows, payments: payments.rows,
       price_rows: priceView.rows, gratuity_amount: priceView.gratuityAmount,
+      balance_due: balanceDue,
     },
   });
 }));

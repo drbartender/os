@@ -7,6 +7,7 @@ const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
 const { shouldSendImmediate, suppressionMessage } = require('./messageSuppression');
 const { isPlaceholderEmail } = require('./emailValidation');
+const { contractBalanceDueCents } = require('./invoiceExtras');
 
 // Dependency seam for tests (mirrors crud.js/actions.js __setDeps).
 let _deps = { sendEmail };
@@ -63,7 +64,9 @@ async function sendRefundClientNotification({ proposalId, amountCents, source, s
       console.log(`[refundClientNotify] suppressed for proposal ${proposalId}: ${gate.reason}`);
       return { email: 'skipped', skip_reasons: { email: suppressionMessage(gate.reason, 'email') } };
     }
-    const newBalance = Number(a.total_price) - Number(a.amount_paid);
+    // The balance the notice quotes, net of money collected outside the
+    // contract (audit PAY-01), in dollars for the template.
+    const newBalance = (await contractBalanceDueCents({ id: proposalId, total_price: a.total_price, amount_paid: a.amount_paid })) / 100;
     const tpl = emailTemplates.refundNotificationClient({
       clientName: a.client_name,
       refundAmount: amountCents / 100,

@@ -6,6 +6,7 @@ const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth')
 const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { computeExtrasBreakdown } = require('../utils/drinkPlanExtras');
+const { contractBalanceDueCents } = require('../utils/invoiceExtras');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -94,7 +95,13 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
     balanceDueDate = d;
   }
   const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
-  const currentBalance = Math.max(0, Number(data.total_price || 0) - Number(data.amount_paid || 0));
+  // The contract balance net of money already collected outside the contract
+  // (a paid syrup-only extras invoice, a manual invoice), never the raw
+  // total_price - amount_paid difference (audit PAY-01). The extras priced
+  // above are still unpaid, so they are not in the netting term.
+  const currentBalance = Math.max(0, await contractBalanceDueCents(
+    { id: data.proposal_id, total_price: data.total_price, amount_paid: data.amount_paid }, pool
+  )) / 100;
   const balanceOptionAvailable = !isPastDue && currentBalance > 0 && extrasAmount > 0;
 
   if (extrasAmount <= 0 && !(isPastDue && currentBalance > 0)) {
@@ -339,7 +346,11 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
 
   const proposal = result.rows[0];
 
-  const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
+  // Net of money collected outside the contract (audit PAY-01): a paid
+  // syrup-only extras invoice rolls into amount_paid but never into
+  // total_price, and the raw difference charged the balance short by exactly
+  // that money. Same helper the scheduler charges with.
+  const balanceCents = await contractBalanceDueCents(proposal, pool);
   if (balanceCents <= 0) {
     // Release the claim before bailing out so a real balance charge can run later.
     await pool.query(`UPDATE proposals SET autopay_status = NULL WHERE id = $1`, [proposal.id]);

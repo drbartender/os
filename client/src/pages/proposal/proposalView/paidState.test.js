@@ -89,3 +89,35 @@ test('completed with money still owed is NOT full: the status is a lifecycle fac
   expect(s.remaining).toBe(150);
   expect(s.completed).toBe(true);
 });
+
+// Audit PAY-01 (2026-11-05): the payload carries balance_due, the contract
+// balance net of money collected outside the contract (a paid syrup-only
+// extras invoice rolls into amount_paid but never into total_price). The card
+// reads it instead of recomputing total - paid, which forgave that money.
+test('the remainder reads the server balance_due when the payload carries it: 1000 total, 160 paid, 60 of it syrups -> 900', () => {
+  const s = paidState({ status: 'deposit_paid', amount_paid: '160.00', total_price: '1000.00', balance_due: 900 });
+  expect(s.kind).toBe('deposit');
+  expect(s.remaining).toBe(900);
+});
+
+test('a rendered total still shifts the server balance by the row-to-rendered gap, so the card matches the breakdown', () => {
+  const s = paidState({ status: 'deposit_paid', amount_paid: '160.00', total_price: '1000.00', balance_due: 900 }, 1010);
+  expect(s.remaining).toBe(910);
+});
+
+test('a server balance_due of zero is zero, and a negative one clamps to zero', () => {
+  expect(paidState({ status: 'balance_paid', amount_paid: '1060.00', total_price: '1000.00', balance_due: 0 }).remaining).toBe(0);
+  expect(paidState({ status: 'balance_paid', amount_paid: '1100.00', total_price: '1000.00', balance_due: -40 }).remaining).toBe(0);
+});
+
+test('an absent, null, empty or unparseable balance_due falls back to the arithmetic, never to zero', () => {
+  for (const balance_due of [undefined, null, '', 'abc']) {
+    expect(paidState({ status: 'deposit_paid', amount_paid: '160.00', total_price: '1000.00', balance_due }).remaining).toBe(840);
+  }
+});
+
+test('full-vs-deposit still reads the row (money law 8), not the netted balance', () => {
+  const s = paidState({ status: 'confirmed', amount_paid: '1000.00', total_price: '1000.00', balance_due: 60 });
+  expect(s.kind).toBe('full');
+  expect(s.remaining).toBe(60);
+});

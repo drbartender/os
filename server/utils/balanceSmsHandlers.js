@@ -27,6 +27,7 @@ const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { proposalUrl } = require('./urls');
 const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
+const { contractBalanceDueCents } = require('./invoiceExtras');
 
 const DAY_SECONDS = 86400;
 
@@ -56,7 +57,8 @@ async function loadBalanceSmsContext(proposalId) {
   if (ctx.phone_status === 'bad') throw new SuppressMessageError('phone_status_bad');
   const prefs = ctx.comm_prefs || {};
   if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
-  const balanceDue = Number(ctx.total_price) - Number(ctx.amount_paid);
+  // Net of money collected outside the contract (audit PAY-01), as the email half.
+  const balanceDue = (await contractBalanceDueCents(ctx)) / 100;
   if (!(balanceDue > 0)) throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   // Bank debit in flight (spec 2026-09-14 section 6): defer, never suppress.
   if ((await findInFlightPayments(ctx.id)).length) throw new DeferMessageError('payment_in_flight');

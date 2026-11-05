@@ -8,6 +8,7 @@ const { notifyAdminCategory } = require('./adminNotifications');
 const { accruePayoutsForProposal } = require('./payrollAccrual');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('./autopayDurableCharge');
 const { chicagoTodayYmd } = require('./businessTime');
+const { contractBalanceDueCents } = require('./invoiceExtras');
 
 // Injection seam for the business day — see routes/staffPortal.js.
 let _deps = { today: chicagoTodayYmd };
@@ -71,7 +72,11 @@ async function processAutopayCharges() {
     // Bound concurrency to 5 — Stripe allows 100 req/s but we avoid burst-noisy neighbors.
     const CONCURRENCY = 5;
     const chargeOne = async (proposal) => {
-      const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
+      // Net of money collected outside the contract (audit PAY-01): a paid
+      // syrup-only extras invoice rolls into amount_paid but never into
+      // total_price, and the raw difference auto-charged the balance short by
+      // exactly that money, after which the balance branch marked the row paid.
+      const balanceCents = await contractBalanceDueCents(proposal);
       if (balanceCents <= 0) {
         // Nothing to charge; clear claim so future runs can re-evaluate.
         await pool.query(
