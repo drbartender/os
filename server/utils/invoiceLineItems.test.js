@@ -139,6 +139,17 @@ test('a hidden surcharge raises the package line by its amount', () => {
 // additional bartender stores hours and folds its sub-100-guest surcharge into
 // line_total. Printing the catalog rate beside them read 100 x $2.50 = $500
 // and 4 x $40 = $260.
+//
+// Which shapes multiply after the derivation (round 2, L1): per_guest at any
+// count (guests x rate x count over guests is rate x count, whole cents), the
+// additional bartender (hours x count x (rate + surcharge) over hours x count),
+// per_hour at any hours and count (the rate itself), per_staff, per_100_guests
+// and flat (rate x units over units), and per_guest_timed on whole extra hours
+// (rate + hours x extra rate, whole cents). The ONE shape that does not:
+// per_guest_timed on a fractional extra hour whose extra cents are not whole
+// (the Foundation at 4.5h: 300 + 37.5 cents a guest); it keeps the catalog
+// rate, and the test below pins that it keeps it rather than printing a
+// rounded unit that would not multiply either.
 test('a unit price that would not multiply to the line total is derived from it, so every add-on row multiplies', () => {
   const { items, fold } = buildInvoiceLineItems({
     snapshot: snap({ base: 350, subtotal: 1110, total: 1110 }),
@@ -158,6 +169,23 @@ test('a unit price that would not multiply to the line total is derived from it,
   for (const it of items) assert.equal(it.quantity * it.unit_price, it.line_total, it.description);
   assert.equal(sum(items), 111000, 'the fold is by line_total, unchanged');
   assert.equal(fold.applied, null);
+});
+
+test('a per_guest_timed add-on on a fractional extra hour keeps the catalog rate: its exact unit is not whole cents', () => {
+  const { items } = buildInvoiceLineItems({
+    snapshot: snap({ base: 350, subtotal: 1062.5, total: 1062.5 }),
+    addonRows: [
+      // The Foundation, 100 guests, 4.5h: 100 x ($3.00 + 0.5 x $0.75) = $337.50; 33750 / 100 is 337.5 cents.
+      { addon_id: 11, addon_name: 'The Foundation', billing_type: 'per_guest_timed', rate: '3.00', quantity: '100', line_total: '337.50' },
+      // The same add-on on a whole extra hour, 5h: 100 x ($3.00 + $0.75) = $375; 375 cents a guest, derived.
+      { addon_id: 11, addon_name: 'The Foundation', billing_type: 'per_guest_timed', rate: '3.00', quantity: '100', line_total: '375.00' },
+    ],
+    totalPriceCents: 106250,
+  });
+  assert.deepEqual(items.slice(1).map((i) => [i.quantity, i.unit_price, i.line_total]), [[100, 300, 33750], [100, 375, 37500]]);
+  assert.notEqual(items[1].quantity * items[1].unit_price, items[1].line_total, 'the one shape that cannot multiply keeps the catalog rate');
+  assert.equal(items[2].quantity * items[2].unit_price, items[2].line_total);
+  assert.equal(sum(items), 106250, 'the fold is by line_total either way');
 });
 
 test('an add-on whose rate multiplies to its line total keeps the catalog rate as its unit price', () => {

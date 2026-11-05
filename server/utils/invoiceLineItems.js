@@ -125,19 +125,25 @@ function buildInvoiceLineItems({ snapshot, packageName = null, packageId = null,
   // Add-ons from proposal_addons (authoritative at booking time).
   // Skip $0 add-ons (e.g., addons that bundle into the package or were
   // adjusted to zero by an admin override — they don't deserve a line).
-  // The printed unit price must multiply with the printed quantity to the
+  // The printed unit price should multiply with the printed quantity to the
   // line total (money-laws law 6: `quantity` is the engine's display quantity,
   // and the engine folds a per-guest COUNT above one, and the additional
   // bartender's gratuity surcharge, into line_total only). Where rate x
-  // quantity is not the line total, print line_total / quantity, as the
-  // staffing line above does; the line total itself is never recomputed
-  // (audit PRC-04).
+  // quantity is not the line total and line_total / quantity is a whole
+  // number of cents, print that, as the staffing line above does; where it is
+  // not whole cents (a per_guest_timed add-on on a fractional extra hour: the
+  // Foundation at 4.5h is $3.00 + 0.5 x $0.75 a guest, 337.5 cents) the
+  // catalog rate stays, since a rounded unit would not multiply either and a
+  // catalog rate beside the line is at least explicable. The line total
+  // itself is never recomputed (audit PRC-04, round 2 L1).
   for (const addon of addonRows || []) {
     const lineTotal = toCents(addon.line_total);
     if (lineTotal === 0) continue;
     const qty = Number(addon.quantity) || 1;
     const rateCents = toCents(addon.rate);
-    const unitPrice = Math.round(rateCents * qty) === lineTotal ? rateCents : Math.round(lineTotal / qty);
+    const unit = lineTotal / qty;
+    const derivable = qty > 0 && Math.abs(unit - Math.round(unit)) < 1e-6;
+    const unitPrice = Math.round(rateCents * qty) === lineTotal || !derivable ? rateCents : Math.round(unit);
     items.push({
       description: addon.addon_name || 'Add-on',
       quantity: qty,
