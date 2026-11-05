@@ -36,6 +36,7 @@ const { AppError } = require('../../utils/errors');
 // The tip-placement routes live in payrollTips.js (split out of payroll.js on
 // 2026-11-05 when the assign guards took that file past the 1000-line ratchet).
 const payrollTipsRouter = require('./payrollTips');
+const { rollForwardLateTip } = require('../../utils/payrollLateTip');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payroll.tipAssign.test.js refuses to run against production');
@@ -342,3 +343,30 @@ test('a partly refunded tip on a frozen event is placed when today period row do
   assert.equal(tipRow.refunded_amount_cents, 600, 'the cumulative marker is back at the refunded total');
 });
 
+// Round 3, L1: the roll-forward's success UPDATE clears deferred_at and
+// defer_kind, so between its COMMIT and the claw there was no clawback marker
+// left for retryDeferredTips to replay. The route re-arms it in one UPDATE as
+// soon as the roll-forward reports success, and the claw's own completion
+// clears it, exactly as on the open path.
+test('on the frozen path the clawback deferral is re-armed after the roll-forward lands and cleared by the claw, in that order', async () => {
+  tipRow.refunded_amount_cents = 600;
+  periodStatus = 'paid';
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.deepEqual(log, ['assign', 'rollforward:read', 'rollforward:success', 'rearm', 'claw:read', 'claw:final'],
+    'the marker is re-armed between the roll-forward success and the claw, and the claw clears it');
+  const rearm = markerWrites.find((w) => w && w.rearm);
+  assert.deepEqual(rearm.rearm, [TIP_ID, 600], 'defer_target_cents is the refunded total');
+  assert.equal(tipRow.defer_kind, null, 'the claw final write cleared the marker');
+  assert.equal(tipRow.deferred_at, null);
+  assert.equal(tipRow.refunded_amount_cents, 600);
+  assert.equal(r.body.refund_clawed_cents, 600);
+
+  // The retry sweep replays a clawback marker through clawbackTip, never the
+  // roll-forward; and a roll-forward replay would be a no-op anyway, since
+  // rolled_forward_at is set: it reads the tip and writes nothing.
+  const before = rollLines.length;
+  const again = await rollForwardLateTip(TIP_ID);
+  assert.equal(again, null, 'rolled_forward_at refuses a second roll-forward');
+  assert.equal(rollLines.length, before, 'nothing written');
+});

@@ -235,6 +235,22 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
       const rolled = await rollForwardLateTip(tipId);
       if (priorRefunded > 0) {
         if (rolled && rolled.period_id) {
+          // The roll-forward's success write clears deferred_at and
+          // defer_kind, so the clawback deferral armed at placement is gone
+          // before the claw runs: a request interrupted here left nothing
+          // for retryDeferredTips to replay (round 3, L1). Re-arm it in one
+          // write, guarded on the roll-forward having landed; the claw's own
+          // completion clears it, as on the open path, and a replay goes
+          // through clawbackTip only, never the roll-forward, which refuses a
+          // second pass on rolled_forward_at anyway.
+          await pool.query(
+            `UPDATE tips
+                SET deferred_at = NOW(), defer_kind = 'clawback',
+                    defer_target_cents = $2::int, defer_attempts = 0
+              WHERE id = $1 AND rolled_forward_at IS NOT NULL
+                AND COALESCE(refunded_amount_cents, 0) < $2::int`,
+            [tipId, priorRefunded]
+          );
           await bookRefundClaw();
         } else {
           // The roll-forward did not land (deferred, or no payable bartender):
