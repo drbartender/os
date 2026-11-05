@@ -104,7 +104,7 @@ export default function ProposalCompare({ preview = false }) {
     pricing_type: o.pricing_type,
     token: o.token,
     total: o.total_price,
-    deposit: o.deposit_amount,
+    deposit: o.deposit_amount_effective,
     floor_reason: o.floor_reason,
     billed_guests: o.billed_guests,
     floor_applied: o.floor_applied,
