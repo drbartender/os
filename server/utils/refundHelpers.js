@@ -651,10 +651,13 @@ async function applyRefundReconciliation(
   // amount just refunded. A normal deposit-stage partial refund does NOT change
   // status, so legitimate future autopay on a still-owed contract balance is
   // left armed — the disarm is scoped to the was-fully-paid transition only.
+  // Net of the off-contract money (round 2 M2), read after the invoice
+  // reversals above so a refunded extras invoice is already out of the term.
   const mr = moneyRes.rows[0];
   if (mr) {
     const rec = reconcileProposalPaymentStatus({
       status: statusBefore, amountPaid: mr.amount_paid, totalPrice: mr.total_price,
+      offContractPaidCents: await offContractPaidCents(proposalId, dbClient),
     });
     if (rec.changed) {
       autopayDisarmed = rec.autopayDisarmed;

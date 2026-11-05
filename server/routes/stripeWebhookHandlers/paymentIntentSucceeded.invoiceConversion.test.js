@@ -55,6 +55,10 @@ function scriptedClient({ status, clientSignedAt, label = 'Deposit', totalPrice 
         paid += Number(params[0]);
         return { rows: [{ amount_paid: String(paid), total_price: totalPrice }], rowCount: 1 };
       }
+      // The netted paid flag's own read (round 2 M2), after the invoice link.
+      if (/SELECT total_price, amount_paid FROM proposals WHERE id = \$1/.test(text)) {
+        return { rows: [{ total_price: totalPrice, amount_paid: String(paid) }], rowCount: 1 };
+      }
       if (/SELECT event_date, event_start_time FROM proposals/.test(text)) {
         return { rows: [{ event_date: new Date('2099-06-01T00:00:00Z'), event_start_time: '18:00' }], rowCount: 1 };
       }

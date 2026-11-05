@@ -255,8 +255,12 @@ async function foldExtrasIntoProposal({
   // demotion. reconcile is pure; the UPDATE uses the
   // SAME tx client (one-connection rule). Keep proposal.status honest in
   // memory so the caller's post-commit reporting sees the real state.
+  // Net of the off-contract money (round 2 M2); lazy require, invoiceExtras
+  // loads this module's siblings.
+  const { sumOffContractPaidCents } = require('./invoiceExtras');
   const rec = reconcileProposalPaymentStatus({
     status: proposal.status, amountPaid: proposal.amount_paid, totalPrice: snapshot.total,
+    offContractPaidCents: await sumOffContractPaidCents(proposal.id, client),
   });
   if (rec.changed) {
     const priorStatus = proposal.status;

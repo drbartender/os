@@ -424,10 +424,12 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
  * amount_paid and never into total_price, so the raw difference forgives the
  * contract by that money. Every site that charges, bills or quotes the balance
  * (autopay, charge-balance, the Balance invoice, the drink-plan balance fold,
- * the reminders, the client surfaces) reads THIS, and the status ladder keeps
- * its own raw `amount_paid >= total_price` paid flag (money law 8), which is a
- * different question. Audit PAY-01, 2026-11-05: a deposit-paid client who paid
- * a 6000-cent syrup pack was then auto-charged 84000 against a 90000 balance.
+ * the reminders, the client surfaces) reads THIS, and the paid flag (money
+ * law 8: the status ladder, the webhook's extras and invoice rails) compares
+ * contractPaidCents below with total_price, the same partition, so the two
+ * can never disagree (round 2 M2). Audit PAY-01, 2026-11-05: a deposit-paid
+ * client who paid a 6000-cent syrup pack was then auto-charged 84000 against
+ * a 90000 balance.
  *
  * Takes the row values the caller already holds (a claim UPDATE ... RETURNING,
  * a locked read, a payload row), never a re-read, so the figure matches the
@@ -438,8 +440,25 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
  * @returns {Promise<number>} signed cents
  */
 async function contractBalanceDueCents(proposal, dbClient) {
+  return toCents(proposal.total_price || 0) - (await contractPaidCents(proposal, dbClient));
+}
+
+/**
+ * The money paid INTO the contract, in cents: amount_paid less
+ * sumOffContractPaidCents. This is the figure money law 8 compares with
+ * total_price (round 2 M2, 2026-11-05): amount_paid also carries the
+ * off-contract money, so the raw comparison promoted a row to balance_paid
+ * (total 15000, deposit 10000, a 6000 syrup pack: 16000 >= 15000) while the
+ * balance above still said 5000 was owed, which autopay and charge-balance
+ * then refused to collect on a balance_paid row. One partition for both.
+ *
+ * @param {{id:number, amount_paid:any}} proposal
+ * @param {object} [dbClient]  the caller's transaction client, or the pool
+ * @returns {Promise<number>} cents
+ */
+async function contractPaidCents(proposal, dbClient) {
   const offContract = await sumOffContractPaidCents(proposal.id, dbClient);
-  return toCents(proposal.total_price || 0) - toCents(proposal.amount_paid || 0) + offContract;
+  return toCents(proposal.amount_paid || 0) - offContract;
 }
 
 /**
@@ -582,6 +601,7 @@ module.exports = {
   extrasLinesAreFolded,
   sumOffContractPaidCents,
   contractBalanceDueCents,
+  contractPaidCents,
   offContractPaidCentsSql,
   NOT_OFF_CONTRACT_LABELS,
   IN_TOTAL_PRICE_LABELS,

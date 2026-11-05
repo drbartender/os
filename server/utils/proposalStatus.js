@@ -21,11 +21,19 @@
  * payment statuses never promote (money-in is still the only door INTO the
  * ladder), and 'confirmed'/'completed' are lifecycle states left untouched.
  *
+ * `offContractPaidCents` (round 2 M2, 2026-11-05) is the money in amount_paid
+ * that sits outside total_price (invoiceExtras.sumOffContractPaidCents: a paid
+ * unfolded Drink Plan Extras invoice, a free-text manual invoice; money laws
+ * 5 and 7), handed in by the caller so law 8's comparison is net of it, as
+ * the balance due is: 16000 paid of which 6000 is syrup money against a
+ * 15000 contract is NOT fully paid. Defaults to 0; an unreadable term makes
+ * the paid figure unknown, and nothing moves.
+ *
  * @returns {{status:string, changed:boolean, autopayDisarmed:boolean,
  *            overpaid:boolean, overpaidCents:number}}
  */
-function reconcileProposalPaymentStatus({ status, amountPaid, totalPrice }) {
-  const paidCents = Math.round(Number(amountPaid || 0) * 100);
+function reconcileProposalPaymentStatus({ status, amountPaid, totalPrice, offContractPaidCents = 0 }) {
+  const paidCents = Math.round(Number(amountPaid || 0) * 100) - Number(offContractPaidCents);
   const totalCents = Math.round(Number(totalPrice || 0) * 100);
 
   // Fail closed on anything we cannot read. A total that is missing (nullable
