@@ -467,3 +467,24 @@ test('13: a half-cent override string is refused and never moves the stored over
   assert.equal(after13.total_price_override, '1024.21');
   assert.equal(cents(after13.total_price), 102421);
 });
+
+// ─── 7. the pricing-input gate against a booking saved before its bounds (round 2, M2) ───
+test('7: a booking stored with 1500 guests takes a date change re-sending 1500, and refuses a change to 1600', async () => {
+  const p = await seed({ guests: 1500 });
+  const before7 = await row(p.id);
+  assert.equal(before7.guest_count, 1500);
+  const body = {
+    guest_count: 1500, package_id: corePkg.id, num_bars: 0, addon_ids: [], addon_quantities: {},
+    event_duration_hours: 4, event_date: '2027-06-13',
+  };
+  const res = await request('PATCH', `/api/proposals/${p.id}`, body);
+  assert.equal(res.status, 200, res.raw);
+  const after7 = await row(p.id);
+  assert.equal(after7.guest_count, 1500, 'the stored count is kept');
+  assert.equal(String(after7.event_date).slice(0, 10), '2027-06-13', 'the date change landed');
+  assert.equal(cents(after7.total_price), cents(before7.total_price), 'a re-price at the same inputs holds the total');
+  const refused = await request('PATCH', `/api/proposals/${p.id}`, { ...body, guest_count: 1600 });
+  assert.equal(refused.status, 400, refused.raw);
+  assert.deepEqual(Object.keys(refused.body.fieldErrors), ['guest_count']);
+  assert.equal((await row(p.id)).guest_count, 1500, 'nothing written');
+});
