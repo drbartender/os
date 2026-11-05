@@ -33,9 +33,21 @@ router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
+// The two key shapes the admin uploaders write at the bucket root for these
+// public images (admin/blog.js, emailMarketing/designer.js and the archived
+// importer): `blog_<uuid v4>` and `email_<uuid v4>`, each followed by the
+// uploaded file's own extension, which may be absent or oddly cased. The root
+// also holds the staff headshots (`<userId>_headshot_<uuid>`) and other
+// private objects, and this route is unauthenticated, so any other key is a
+// 404 before any signing (audit 2026-11-05 AUTH-06). Nothing is moved: the
+// stored cover_image_url values keep their basenames. r2Proxy's assertKeyUnder
+// is a single-prefix check (and pulls in sharp), so the shape is pinned here.
+const PUBLIC_IMAGE_KEY_RE = /^(?:blog|email)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:$|\.[A-Za-z0-9]{1,16}$)/;
+
 // Serve blog images via R2 signed URL
 router.get('/images/:filename', publicReadLimiter, asyncHandler(async (req, res) => {
   const filename = path.basename(req.params.filename);
+  if (!PUBLIC_IMAGE_KEY_RE.test(filename)) throw new NotFoundError('Image not found');
   let url;
   try {
     url = await getSignedUrl(filename);
