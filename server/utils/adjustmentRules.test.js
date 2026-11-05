@@ -28,7 +28,10 @@ test('coercions match the engine (pricingEngine.js L476-479)', () => {
 test('protection is by source, never by label', () => {
   assert.equal(R.isProtectedAdjustment({ source: 'refund', label: 'Anything' }), true);
   assert.equal(R.isProtectedAdjustment({ source: 'agreed_price' }), true);
+  // A comp line (compLine.js, audit PRC-01) is protected the same way.
+  assert.equal(R.isProtectedAdjustment({ source: 'comp', label: 'Anything' }), true);
   assert.equal(R.isProtectedAdjustment({ label: 'Refund' }), false);
+  assert.equal(R.isProtectedAdjustment({ label: R.COMP_LABEL }), false);
   assert.equal(R.isProtectedAdjustment(null), false);
 });
 
@@ -38,6 +41,9 @@ test('validateAdjustments normalizes and keeps only known keys', () => {
     { type: 'discount', label: '', amount: '', visible: true },                // the editor's fresh line
     { type: 'surcharge', label: '', amount: 5, visible: true, source: 'agreed_price' },
     { type: 'discount', label: 'Refund', amount: 20, visible: true, source: 'refund', refund_id: 14 },
+    // The comp line exactly as compLine.js writes it: a later editor save
+    // carries it back through this validator, so it must pass unchanged.
+    { type: 'discount', label: 'Drink Plan Extras comped (INV0001)', amount: 310, visible: true, source: 'comp' },
   ]);
   assert.equal(error, null);
   assert.deepEqual(value, [
@@ -45,6 +51,7 @@ test('validateAdjustments normalizes and keeps only known keys', () => {
     { type: 'discount', label: '', amount: 0, visible: true },
     { type: 'surcharge', label: '', amount: 5, visible: true, source: 'agreed_price' },
     { type: 'discount', label: 'Refund', amount: 20, visible: true, source: 'refund', refund_id: 14 },
+    { type: 'discount', label: 'Drink Plan Extras comped (INV0001)', amount: 310, visible: true, source: 'comp' },
   ]);
 });
 
@@ -61,6 +68,7 @@ test('validateAdjustments refuses bad input with one message', () => {
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'other' }],
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund' }],            // refund needs refund_id
     [{ type: 'discount', label: '', amount: 1, visible: true, refund_id: 3 }],                // refund_id needs source refund
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', refund_id: 3 }], // a comp line names no refund
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund', refund_id: 0 }],
     // refund_id past int4 (proposal_refunds.id is SERIAL)
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund', refund_id: 2147483648 }],
@@ -103,7 +111,7 @@ test('isWholeCents: no part finer than a cent, float noise tolerated, nothing ro
 
 test('client twin behaves the same', async () => {
   const C = await import(pathToFileURL(path.join(__dirname, '../../client/src/utils/adjustmentRules.js')).href);
-  for (const k of ['AGREED_PRICE_LABEL', 'REFUND_LABEL', 'MAX_ADJUSTMENTS', 'MAX_ADJUSTMENT_DOLLARS', 'MAX_ADJUSTMENT_LABEL']) {
+  for (const k of ['AGREED_PRICE_LABEL', 'REFUND_LABEL', 'COMP_LABEL', 'MAX_ADJUSTMENTS', 'MAX_ADJUSTMENT_DOLLARS', 'MAX_ADJUSTMENT_LABEL']) {
     // eslint-disable-next-line security/detect-object-injection -- k is one of this suite's own literal export names
     assert.deepEqual(C[k], R[k], k);
   }
@@ -117,6 +125,7 @@ test('client twin behaves the same', async () => {
     { type: 'weird', amount: 5 }, { type: 'Discount', amount: '25', visible: 'true' }, // any non-surcharge, or a case-folded type, read as a discount
     { type: 'discount', amount: 0.125 },                                        // rounding the signed dollars
     { source: 'REFUND' }, { source: 'other' }, { source: 'agreed_price' },     // a case-folded or widened source
+    { source: 'comp' }, { source: 'COMP' }, { source: 'comped' },              // the comp source, and two near misses
   ];
   for (const c of cases) {
     for (const fn of ['adjVisible', 'adjAmount', 'adjSignedCents', 'adjLabel', 'isProtectedAdjustment']) {

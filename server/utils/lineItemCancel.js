@@ -259,10 +259,11 @@ async function computeCancelTargets(dbClient, proposalId) {
       // The engine row's own signed, unrounded amount (never adjSignedCents):
       // the admin page binds a target to its breakdown row by label and cents.
       amount: adj.type === 'discount' ? -amt : amt,
-      // A refund or agreed-price line (spec 2026-10-16 section 6) is not a
-      // cancel target: removing it raises the total, so the increase path
-      // bills refunded money, or the whole agreed difference, again. The
-      // editor still changes it. applyLineItemCancel refuses it too.
+      // A refund, comp or agreed-price line (spec 2026-10-16 section 6;
+      // compLine.js) is not a cancel target: removing it raises the total, so
+      // the increase path bills refunded or comped money, or the whole agreed
+      // difference, again. The editor still changes it. applyLineItemCancel
+      // refuses it too.
       ...(isProtectedAdjustment(adj)
         ? { cancellable: false, reason: 'protected_line' }
         : { cancellable: true }),
@@ -600,9 +601,9 @@ async function applyLineItemCancel(client, {
     if (t.key >= adjustmentsBefore.length) throw new NotFoundError('That adjustment is not on this proposal.');
     const adj = adjustmentsBefore[t.key];
     // The server half of the targets' 'protected_line' mark: a direct preview
-    // or execute on a refund or agreed-price line is refused before any write.
+    // or execute on a refund, comp or agreed-price line is refused before any write.
     if (isProtectedAdjustment(adj)) {
-      throw new ConflictError('This line records a refund or an agreed price and cannot be removed here.', 'PROTECTED_LINE');
+      throw new ConflictError('This line records a refund, a comp or an agreed price and cannot be removed here.', 'PROTECTED_LINE');
     }
     removedLabel = adjLabel(adj);
     // A line the client never sees is never named to them (spec 2026-10-16

@@ -331,15 +331,19 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // ever called it, which is the whole reason invoices "could not be edited".
   const handleVoidInvoice = async (inv) => {
     // A 'Drink Plan Extras' invoice is the one label whose void has a money
-    // side effect: the server's comp path subtracts it from the contract total.
-    // That is right when you are WAIVING the add-on and wrong when you are
-    // clearing a stale duplicate demand, and on a paid-in-full proposal the
-    // wrong choice invents an overpayment. So ask, and never rely on a default.
+    // side effect: the server's comp path takes it off the contract total as a
+    // protected "Drink Plan Extras comped" line the client sees (compLine.js),
+    // with the add-on itself kept. That is right when you are WAIVING the
+    // add-on and wrong when you are clearing a stale duplicate demand, and on
+    // a paid-in-full proposal the wrong choice invents an overpayment. So ask,
+    // and never rely on a default.
     const isExtras = inv.label === 'Drink Plan Extras';
     if (isExtras) {
       const waive = window.confirm(
         `Void ${inv.invoice_number} (${inv.label}).\n\n` +
-        'OK = Waive it: also reduce the event total by this amount. Use this when you are comping the add-on.\n\n' +
+        'OK = Waive it: the add-on stays on the event, free, and a "Drink Plan Extras comped" line ' +
+        'reduces the event total by this amount. Use this when you are comping the add-on. ' +
+        'Remove that line in the proposal editor to undo the comp.\n\n' +
         'Cancel = Correct it: void the invoice and leave the event total unchanged. ' +
         'Use this when the invoice is a stale or duplicate charge.'
       );

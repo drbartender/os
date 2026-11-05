@@ -12,15 +12,17 @@
 // A line is { type: 'discount' | 'surcharge', label, amount (positive
 // dollars), visible }, plus two optional markers the engine ignores:
 // `source` ('agreed_price' for a Set agreed price line or a converted
-// override, 'refund' for a refund line) and `refund_id` (proposal_refunds.id,
-// only with source 'refund'). Protection keys on `source`, never on a label
-// an admin can edit.
+// override, 'refund' for a refund line, 'comp' for a comped Drink Plan Extras
+// invoice, compLine.js) and `refund_id` (proposal_refunds.id, only with
+// source 'refund'). Protection keys on `source`, never on a label an admin
+// can edit.
 
 const { GRATUITY_LABEL } = require('./gratuityLabels');
 
-const ADJUSTMENT_SOURCES = Object.freeze(['agreed_price', 'refund']);
+const ADJUSTMENT_SOURCES = Object.freeze(['agreed_price', 'refund', 'comp']);
 const AGREED_PRICE_LABEL = 'Agreed price adjustment';
 const REFUND_LABEL = 'Refund';
+const COMP_LABEL = 'Drink Plan Extras comped';
 const MAX_ADJUSTMENTS = 50;
 const MAX_ADJUSTMENT_DOLLARS = 1000000; // exclusive; the bound TOTAL_PRICE_OVERRIDE_MAX had
 const MAX_ADJUSTMENT_LABEL = 255;      // invoice_line_items.description
@@ -99,7 +101,7 @@ function insertAdjustmentBreakdownRow(snapshot, row) {
 }
 
 module.exports = {
-  ADJUSTMENT_SOURCES, AGREED_PRICE_LABEL, REFUND_LABEL,
+  ADJUSTMENT_SOURCES, AGREED_PRICE_LABEL, REFUND_LABEL, COMP_LABEL,
   MAX_ADJUSTMENTS, MAX_ADJUSTMENT_DOLLARS, MAX_ADJUSTMENT_LABEL,
   adjVisible, adjAmount, adjSignedCents, adjLabel, isProtectedAdjustment,
   isWholeCents,

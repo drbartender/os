@@ -10,6 +10,7 @@ const { ConflictError } = require('./errors');
 const { writeLineItems } = require('./invoiceLineItems');
 const { createInvoice } = require('./invoiceLifecycle');
 const { readSnapshot } = require('./pricingSnapshot');
+const { appendCompLine } = require('./compLine');
 
 // ─── 11. writeExtrasLineItems + createDrinkPlanExtrasInvoice ──────────────────
 
@@ -368,10 +369,13 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
  * void-before-refresh path so the void/audit logic never drifts.
  *
  * The `reconcileTotalPrice` flag is the ONE thing that differs between callers:
- *   - Comp/waive (PATCH, default true): the add-on portion is being WAIVED, so
- *     subtract it from proposals.total_price and re-run the payment-status
- *     ladder. Syrups were never in total_price, so a syrup-only comp is a pure
- *     void.
+ *   - Comp/waive (PATCH, default true): the add-on portion is being WAIVED,
+ *     delivered free: the add-on row stays, and the waived cents leave
+ *     proposals.total_price as a protected comp line (compLine.js) written to
+ *     the adjustments column, the pricing snapshot and the snapshot total in
+ *     one UPDATE, so the next re-price nets the comp instead of billing the
+ *     add-on again (audit PRC-01); then the payment-status ladder re-runs.
+ *     Syrups were never in total_price, so a syrup-only comp is a pure void.
  *   - Path-switch (submit, false): the plan is being re-submitted as
  *     add-to-balance, which keeps the add-on in the extras-inclusive
  *     total_price so refreshUnlockedInvoices can put it on the rebuilt Balance.
@@ -397,7 +401,7 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
   const client = db(dbClient);
 
   const invRes = await client.query(
-    `SELECT id, proposal_id, label, amount_due, amount_paid, status
+    `SELECT id, proposal_id, label, amount_due, amount_paid, status, invoice_number
        FROM invoices WHERE id = $1`,
     [invoiceId]
   );
@@ -443,13 +447,14 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
       ? lines.rows.reduce((sum, r) => sum + Number(r.line_total), 0)
       : 0;
     if (foldedCents > 0) {
-      // proposals.total_price is NUMERIC DOLLARS — subtract dollars, not cents.
-      const prop = await client.query(
-        `UPDATE proposals SET total_price = total_price - $1, updated_at = NOW()
-          WHERE id = $2 RETURNING status, amount_paid, total_price`,
-        [foldedCents / 100, inv.proposal_id]
-      );
-      const p = prop.rows[0];
+      // The waived cents leave as a comp line, never a bare subtraction: the
+      // line lands in proposals.adjustments and the snapshot with the snapshot
+      // total, total_price and any override lowered by the same cents, under
+      // the proposals row lock (compLine.js). A row whose lines cannot be read,
+      // or a held booking, throws and rolls the void back with it.
+      const { proposal: p } = await appendCompLine(client, {
+        proposalId: inv.proposal_id, compCents: foldedCents, invoiceNumber: inv.invoice_number,
+      });
       if (p) {
         const rec = reconcileProposalPaymentStatus({
           status: p.status,

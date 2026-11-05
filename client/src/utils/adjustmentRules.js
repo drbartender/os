@@ -9,12 +9,14 @@
 // saved line may hold.
 //
 // `source` marks a line the system wrote ('agreed_price' for Set agreed price
-// and converted overrides, 'refund' for a refund line); protection keys on it,
-// never on a label an admin can edit. `refund_id` rides only with 'refund'.
+// and converted overrides, 'refund' for a refund line, 'comp' for a comped
+// Drink Plan Extras invoice); protection keys on it, never on a label an admin
+// can edit. `refund_id` rides only with 'refund'.
 
-export const ADJUSTMENT_SOURCES = Object.freeze(['agreed_price', 'refund']);
+export const ADJUSTMENT_SOURCES = Object.freeze(['agreed_price', 'refund', 'comp']);
 export const AGREED_PRICE_LABEL = 'Agreed price adjustment';
 export const REFUND_LABEL = 'Refund';
+export const COMP_LABEL = 'Drink Plan Extras comped';
 export const MAX_ADJUSTMENTS = 50;
 export const MAX_ADJUSTMENT_DOLLARS = 1000000; // exclusive
 export const MAX_ADJUSTMENT_LABEL = 255;

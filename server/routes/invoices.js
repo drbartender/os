@@ -482,10 +482,11 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       }
       if (locked.status !== 'void') {
         // reconcile_total expresses the CALLER'S INTENT and has no safe default.
-        //   true  (comp/waive) — the add-on is being given away, so subtract it
-        //                        from total_price. This is what the comp route
-        //                        has always meant, so it stays the default for
-        //                        any caller that does not say.
+        //   true  (comp/waive) — the add-on is being given away, so its cents
+        //                        leave total_price as a protected comp line
+        //                        (compLine.js) with the add-on row kept. This is
+        //                        what the comp route has always meant, so it
+        //                        stays the default for any caller that does not say.
         //   false (correction) — the invoice is a stale or duplicate demand and
         //                        the contract is right as it stands.
         // Getting this backwards on a PAID-IN-FULL proposal invents an

@@ -1412,6 +1412,7 @@ tests omitted
 │       ├── clientNotices.js  # Which client notice a proposal edit triggers + structural validation of the caller's opt-in list. ONE module so the read-only notify-preflight and the PATCH can never drift on "would this send?".
 │       ├── clientPriceLines.js # server/utils/clientPriceLines.js
 │       ├── clientSources.js  # Canonical source vocabularies. Two DISTINCT lists that overlap but are not the same concept, so they are kept separate (mirrors reality - do not merge): - CLIENT_SOURCES : how a client was acquired (backs clients.source) - LEAD_SOURCES : email-lead attribution (backs email_leads.lead_source)
+│       ├── compLine.js       # The comp line for a waived Drink Plan Extras invoice: the comped cents come off total_price, the override and the snapshot total as one protected, visible discount line written to proposals.adjustments and the pricing snapshot in the same UPDATE, so the next re-price nets the comp instead of billing the waived add-on again (audit PRC-01).
 │       ├── companyPhone.js   # server/utils/companyPhone.js
 │       ├── consultCallBriefing.js # Spoken copy for the consult call bridge (spec 2026-08-25 section 4.4).
 │       ├── consultCallCaps.js # Consult call bridge: the rolling-24h SPEND CEILINGS.
