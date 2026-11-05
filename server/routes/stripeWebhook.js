@@ -18,7 +18,7 @@ const handlePaymentIntentFailed = require('./stripeWebhookHandlers/paymentIntent
 const handleCheckoutSessionCompleted = require('./stripeWebhookHandlers/checkoutSessionCompleted');
 const handleChargeRefunded = require('./stripeWebhookHandlers/chargeRefunded');
 const handleRefundCreated = require('./stripeWebhookHandlers/refundCreated');
-const { handleDisputeFundsWithdrawn, handleDisputeFundsReinstated } = require('./stripeWebhookHandlers/disputes');
+const { handleDisputeCreated, handleDisputeFundsWithdrawn, handleDisputeFundsReinstated } = require('./stripeWebhookHandlers/disputes');
 const handlePayout = require('./stripeWebhookHandlers/payout');
 
 const router = express.Router();
@@ -129,11 +129,19 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   }
 
   // Dispute/refund idempotency lives in the helpers, not in an event-level webhook_events
-  // gate (audit A08, confirmed). clawbackTipByPaymentIntent moves only the delta beyond
+  // gate (audit A08, confirmed). clawbackTip moves only the delta beyond
   // tips.refunded_amount_cents (a same-cumulative Stripe redelivery is delta=0 = no-op), and
   // notifyDisputeWon below gates on tips.dispute_won_at (redelivery returns early). So an
   // at-least-once redelivery of charge.refunded / dispute.* cannot double-clawback or
-  // double-notify; no extra guard is needed here.
+  // double-notify; no extra guard is needed here. A dispute on a PROPOSAL charge (audit
+  // PAY-04) is anchored the same way: the opened record on the dispute id in the activity
+  // log, the withdrawal on the refund ledger's stripe_refund_id index, the reinstatement
+  // on that row's status.
+  if (event.type === 'charge.dispute.created') {
+    await handleDisputeCreated(event);
+    if (res.headersSent) return;
+  }
+
   if (event.type === 'charge.dispute.funds_withdrawn') {
     await handleDisputeFundsWithdrawn(event);
     if (res.headersSent) return;
