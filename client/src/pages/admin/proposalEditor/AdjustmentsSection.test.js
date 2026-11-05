@@ -139,3 +139,25 @@ test('a raise backed out to the recorded refund never asks', () => {
   expect(screen.getByText(CONFIRM)).toBeInTheDocument();
   expect(lines()[0].amount).toBe('20');
 });
+
+// A comp line (compLine.js, audit PRC-01 round 3 L2): its amount follows the
+// comped items' current price and is overwritten on save, so the field is
+// read-only with the note, and removing the line (the way to un-comp) asks
+// no refund confirm.
+const COMP = {
+  type: 'discount', label: 'Drink Plan Extras comped (INV0001)', amount: 187.5, visible: true, source: 'comp',
+  comped: { addons: [42], bar: false, syrups: [] },
+};
+const COMP_NOTE = 'This comp follows the comped items\u2019 current price and cannot be partial. Remove the line to un-comp.';
+
+test('a comp line shows its amount read-only with the note, and removes without a confirm', () => {
+  render(<Harness initial={[OTHER, COMP]} />);
+  const amount = within(row('Drink Plan Extras comped (INV0001)')).getByLabelText('Amount');
+  expect(amount).toHaveAttribute('readonly');
+  expect(amount).toHaveValue(187.5);
+  expect(screen.getByRole('note')).toHaveTextContent(COMP_NOTE);
+  expect(within(row('Test discount A')).getByLabelText('Amount')).not.toHaveAttribute('readonly');
+  fireEvent.click(within(row('Drink Plan Extras comped (INV0001)')).getByRole('button', { name: 'Remove' }));
+  expect(screen.queryByText(CONFIRM)).toBeNull();
+  expect(lines()).toEqual([OTHER]);
+});

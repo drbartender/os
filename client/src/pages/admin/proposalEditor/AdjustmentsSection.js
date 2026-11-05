@@ -1,5 +1,6 @@
 // the editor's price adjustment rows (moved out of ProposalEditorForm), with the inline confirm
-// before a refund line is removed or lowered below its recorded amount (asked once per line)
+// before a refund line is removed or lowered below its recorded amount (asked once per line), and
+// a comp line's amount shown read-only, since it follows the comped items' current price
 
 import React, { useState } from 'react';
 import Icon from '../../../components/adminos/Icon';
@@ -24,6 +25,11 @@ import AgreedPriceControl from './AgreedPriceControl';
 // onChange takes an updater, (lines) => lines, applied to the form's current
 // lines.
 export const REFUND_CONFIRM_TEXT = 'This line records money already refunded. Removing it bills that amount again.';
+// A comp line (source 'comp') comps items, not cents: its amount is derived
+// from the comped items' current price at every pricing and overwritten on
+// save, so the field is read-only and a comp cannot be partial. Remove the
+// line to un-comp (audit PRC-01, round 3 L2).
+export const COMP_NOTE_TEXT = 'This comp follows the comped items\u2019 current price and cannot be partial. Remove the line to un-comp.';
 
 const DOLLAR = { position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontSize: 12, pointerEvents: 'none' };
 
@@ -80,6 +86,8 @@ export default function AdjustmentsSection({ adjustments, loadedAdjustments, onC
                 <span style={DOLLAR}>$</span>
                 <input className="input" type="number" min="0" step="0.01" placeholder="0.00" aria-label="Amount"
                   value={adj.amount}
+                  readOnly={adj.source === 'comp'}
+                  title={adj.source === 'comp' ? COMP_NOTE_TEXT : undefined}
                   onChange={e => setField(i, 'amount', e.target.value)}
                   style={{ width: 110, paddingLeft: 18 }} />
               </div>
@@ -92,6 +100,9 @@ export default function AdjustmentsSection({ adjustments, loadedAdjustments, onC
                 <Icon name="x" size={12} />
               </button>
             </div>
+            {adj.source === 'comp' && (
+              <div className="meta-k" role="note" style={{ marginTop: 4 }}>{COMP_NOTE_TEXT}</div>
+            )}
             {held && held.index === i && (
               <div className="adj-confirm" role="alert">
                 <span>{REFUND_CONFIRM_TEXT}</span>

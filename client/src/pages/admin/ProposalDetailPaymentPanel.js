@@ -341,9 +341,10 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     if (isExtras) {
       const waive = window.confirm(
         `Void ${inv.invoice_number} (${inv.label}).\n\n` +
-        'OK = Waive it: the add-on stays on the event, free, and a "Drink Plan Extras comped" line ' +
-        'reduces the event total by this amount. Use this when you are comping the add-on. ' +
-        'Remove that line in the proposal editor to undo the comp.\n\n' +
+        'OK = Waive it: what this invoice charged for stays on the event, free, and a "Drink Plan Extras comped" line ' +
+        'takes its price off the event total, following the items\u2019 current price from then on. ' +
+        'Use this when you are comping the add-on. A comp cannot be partial: ' +
+        'remove that line in the proposal editor to un-comp.\n\n' +
         'Cancel = Correct it: void the invoice and leave the event total unchanged. ' +
         'Use this when the invoice is a stale or duplicate charge.'
       );

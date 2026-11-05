@@ -743,7 +743,7 @@ tests omitted
 │       │   │   │   ├── PackageSection.js # PackageSection (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   │   └── helpers.js # Exports Lbl. Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── proposalEditor/
-│       │   │   │   ├── AdjustmentsSection.js # the editor's price adjustment rows (moved out of ProposalEditorForm), with the inline confirm before a refund line is removed or lowered below its recorded amount (asked once per line)
+│       │   │   │   ├── AdjustmentsSection.js # the editor's price adjustment rows (moved out of ProposalEditorForm), with the inline confirm before a refund line is removed or lowered below its recorded amount (asked once per line), and a comp line's amount shown read-only, since it follows the comped items' current price
 │       │   │   │   ├── AgreedPriceControl.js # Set agreed price: one dollar input and Apply beside + Discount / + Surcharge, gated on a fresh preview; a booking that still has an override shows it read-only
 │       │   │   │   ├── PackageSection.js # PackageSection (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   │   ├── ProposalEditorForm.js # ProposalEditorForm (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
