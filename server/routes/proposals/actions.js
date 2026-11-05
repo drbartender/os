@@ -20,7 +20,7 @@ const { isPlaceholderEmail } = require('../../utils/emailValidation');
 // routine_finance notice is NEVER gated.
 let _deps = { sendEmail, notifyAdminCategory };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
-const { linkOpenContractInvoice, createInvoiceOnSend, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
+const { linkOpenContractInvoice, createInvoiceOnSend, upgradeDepositInvoiceToFull, createBalanceInvoice, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { reapShiftsForProposal } = require('../../utils/shiftReap');
@@ -328,6 +328,18 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     // Link the payment to the oldest open invoice: the one lookup-and-link all
     // three entrances share (off-ledger exclusion, overflow payload).
     linkOverflow = await linkOpenContractInvoice(proposal.id, insertedPayment.rows[0].id, payAmountCents, dbClient);
+
+    // The Balance invoice, as both webhook rails mint it after a deposit (audit
+    // PAY-05). A partial recorded by hand (the deposit by Zelle, say) credits
+    // the Deposit invoice, which locks when paid, and left nothing payable: the
+    // reminder ladder linked a proposal page with no pay control (create-intent
+    // refuses deposit_paid), the portal's Pay balance dead-ended there, autopay
+    // could not apply, and the balance monitor told the admin a day later to
+    // mint one by hand. Idempotent on an existing non-void Balance, null at
+    // zero; a group conflict threw above, so the rails' conflict guard holds.
+    if (!isFullyPaid) {
+      await createBalanceInvoice(proposal.id, dbClient);
+    }
 
     await dbClient.query('COMMIT');
   } catch (txErr) {
