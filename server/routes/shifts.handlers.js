@@ -176,6 +176,7 @@ async function cancelOrUnassignShiftHandler(req, res) {
 
   const dbClient = await pool.connect();
   let affectedUserIds = [];
+  let bonusReleased = false;
   let proposalIdForDuty = null;
   const kind = mode === 'cancel' ? 'cancelled' : 'unassigned';
   try {
@@ -211,7 +212,7 @@ async function cancelOrUnassignShiftHandler(req, res) {
       // Out-of-Area lock: a cancel denies EVERY request, so nobody is left to
       // hold the bonus. Unscoped release (no user filter) — whoever held it is
       // off the shift by definition.
-      await releaseOutOfAreaLock(dbClient, shiftId);
+      bonusReleased = await releaseOutOfAreaLock(dbClient, shiftId);
     } else {
       const upd = await dbClient.query(
         "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' RETURNING id",
@@ -249,17 +250,24 @@ async function cancelOrUnassignShiftHandler(req, res) {
     dbClient.release();
   }
 
-  // Post-commit (pooled client released). Payroll re-accrual is deliberately
-  // NOT gated on `bonusReleased`, the same rule as Remove (shifts.js): on a
-  // completed event the wage and tip lines were minted at auto-completion,
-  // and only accrual's orphan sweep removes an off-roster line and re-splits
-  // the tips. Gated on the lock, a no-show unassigned or cancelled after
+  // Post-commit (pooled client released). For an UNASSIGN the payroll
+  // re-accrual is deliberately NOT gated on the lock, the same rule as Remove
+  // (shifts.js): on a completed event the wage and tip lines were minted at
+  // auto-completion, and only accrual's orphan sweep removes an off-roster
+  // line and re-splits the tips. Gated on the lock, a no-show unassigned after
   // completion kept her wage and a share of the tips whenever the shift
   // carried no bonus (audit 2026-11-05, POUT-02; the Remove precedent is prod
   // 2026-08-24). The hook is a full re-accrual on a recently-completed
   // proposal and one cheap SELECT on anything else (maybeReaccrueForDuty), so
   // a pre-event unassign costs nothing.
-  reaccrueDutyForProposal(proposalIdForDuty);
+  //
+  // A CANCEL keeps its lock gate on purpose: it empties the roster, and on a
+  // completed shift the empty-roster sweep deletes every zero-adjustment line
+  // (an admin's hour edits included) and the emptied payouts, so a mistaken
+  // cancel followed by a re-approve would re-mint the lines from contract
+  // hours (verify pass of POUT-02, L4). A cancelled event's payroll is the
+  // cancel flow's business, not this hook's.
+  if (mode === 'unassign' || bonusReleased) reaccrueDutyForProposal(proposalIdForDuty);
 
   if (notify_assigned_staff === true && (notify_sms === true || notify_email === true)) {
     try {
