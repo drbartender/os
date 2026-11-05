@@ -2,8 +2,17 @@
 // adminos/format. Kept local to keep the public proposal page self-contained.
 import { fmtDateOnly, calcEndTime as sharedCalcEndTime } from '../../../components/adminos/format';
 
-export const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
-export const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
+// The deposit a proposal charges, in dollars (audit PAY-06): the row's
+// deposit_amount, which the public payload carries and the server charges
+// (stripeRouteHelpers.depositCentsFor), with the schema default (100) for a
+// row that carries none. The client's own REACT_APP_DEPOSIT_AMOUNT copy of
+// the figure is gone: a hand-set deposit must read the same everywhere the
+// client sees it and everywhere the server collects it.
+export const DEFAULT_DEPOSIT_DOLLARS = 100;
+export function depositDollars(proposal) {
+  const n = Number(proposal && proposal.deposit_amount);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_DEPOSIT_DOLLARS;
+}
 
 export const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

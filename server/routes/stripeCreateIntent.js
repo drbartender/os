@@ -17,7 +17,7 @@ const { AppError, NotFoundError, ConflictError, ExternalServiceError, Validation
 const { getStripe } = require('../utils/stripeClient');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { deriveGratuityRate, gratuityBasisFromSnapshot, recomputeSnapshotGratuity } = require('../utils/pricingEngine');
-const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { depositCentsFor, CHECKOUT_PAYMENT_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 const { assertNoPaymentInFlight, STRIPE_RETRIEVE_OPTS } = require('../utils/paymentInFlight');
 const { requireUuidToken } = require('../utils/tokens');
 
@@ -112,9 +112,12 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
 
   const isFullPay = payment_option === 'full';
   const wantsAutopay = !isFullPay && autopay === true;
+  // The row's deposit (audit PAY-06), never the global default: the Deposit
+  // invoice and the cancellation retainer already read deposit_amount.
+  const depositCents = depositCentsFor(proposal);
   const amount = isFullPay
     ? Math.round(Number(effTotal) * 100)   // the ONE dollars->cents seam in this flow
-    : DEPOSIT_AMOUNT;
+    : depositCents;
 
   // Bank debit in flight (spec 2026-09-14 section 5.1). Runs BEFORE the reuse
   // and stale-cancel logic below, so a settling intent is never reused, never
