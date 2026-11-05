@@ -7,8 +7,8 @@ const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { publicReadLimiter, signLimiter } = require('../middleware/rateLimiters');
-const { ValidationError, NotFoundError } = require('../utils/errors');
-const { getCurrentAgreement, CURRENT_VERSION, agreementVersionSha256 } = require('../data/contractorAgreement');
+const { ValidationError, NotFoundError, ConflictError } = require('../utils/errors');
+const { getCurrentAgreement, getAgreementVersion, CURRENT_VERSION, agreementVersionSha256 } = require('../data/contractorAgreement');
 const { renderAgreementPdf } = require('../utils/agreementPdf');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
@@ -72,8 +72,27 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     full_name, email, phone, sms_consent,
     ack_ic_status, ack_commitment, ack_non_solicit,
     ack_damage_recoupment, ack_legal_protections, ack_field_guide,
-    signature_data, signature_method,
+    signature_data, signature_method, version,
   } = req.body;
+
+  // Version binding (audit ESIG-11; the proposal sign's document_version
+  // precedent): the page sends the version it rendered from /legal-text, so a
+  // deploy that bumps CURRENT_VERSION under an open page refuses instead of
+  // recording a version the signer never read. A missing or malformed value
+  // is a stale bundle: one refresh 400. A known-but-not-current one is a 409,
+  // and nothing is written either way.
+  if (typeof version !== 'string' || version === '') {
+    throw new ValidationError(
+      { version: 'Please refresh the page and try again.' },
+      'Your page is out of date. Please refresh and sign again.'
+    );
+  }
+  if (version !== CURRENT_VERSION) {
+    throw new ConflictError(
+      'The agreement was updated since you opened this page. Please refresh and sign again.',
+      'AGREEMENT_VERSION_STALE'
+    );
+  }
 
   const fieldErrors = {};
   // Bounds are the column widths (schema.sql: full_name and email VARCHAR(255),
@@ -215,7 +234,9 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
 
   // ── Post-commit: render PDF, upload, respond, then background email ──
   try {
-    const versionData = getCurrentAgreement();
+    // The text the committed row says was signed, never "whatever is current
+    // now" (audit ESIG-11); the fallback only covers a row with no version.
+    const versionData = getAgreementVersion(saved.signature_document_version) || getCurrentAgreement();
     const pdfBuf = await renderAgreementPdf(versionData, {
       full_name: saved.full_name,
       email: saved.email,

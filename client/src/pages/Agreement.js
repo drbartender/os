@@ -127,7 +127,10 @@ export default function Agreement() {
 
     setLoading(true);
     try {
-      const payload = { ...form, ...acks };
+      // The version this page rendered rides with the signature: the server
+      // records exactly that and refuses (409, "please refresh") when the
+      // agreement was bumped under an open page.
+      const payload = { ...form, ...acks, version: legalText.version };
       await api.post('/agreement', payload);
       // POST /agreement already marks agreement_completed in onboarding_progress
       // atomically in the same transaction — just mirror it optimistically here.
