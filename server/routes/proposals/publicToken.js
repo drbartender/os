@@ -471,29 +471,6 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     throw new ValidationError({ document_version: 'Please refresh the page and try again.' });
   }
 
-  // The venue gate's inputs, and the snapshot and package name the signed
-  // record below is built from.
-  const lookup = await pool.query(
-    `SELECT p.id, p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
-            p.pricing_snapshot, sp.name AS package_name
-       FROM proposals p
-       LEFT JOIN service_packages sp ON sp.id = p.package_id
-      WHERE p.token = $1`,
-    [req.params.token]
-  );
-  if (!lookup.rows[0]) throw new NotFoundError('This proposal is no longer available');
-
-  // Venue address gate: if the proposal doesn't already have a complete venue
-  // address, the client must supply one now (street + city + state required).
-  const storedVenue = lookup.rows[0];
-  let venueToPersist = null;
-  if (!isVenueComplete(storedVenue)) {
-    const submitted = { venue_name, venue_street, venue_city, venue_state, venue_zip };
-    const venueErrors = validateVenue(submitted, { requireStreet: true, requireCityState: true });
-    if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
-    venueToPersist = submitted;
-  }
-
   // req.ip FIRST: express runs behind `trust proxy`, so req.ip is the
   // proxy-validated address while the first x-forwarded-for entry is
   // attacker-supplied. A signature IP is the strongest artifact in a payment
@@ -534,27 +511,68 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   }
   const ackTotal = ackRaw;
 
-  // The configuration being signed, stored beside the signature in the same
-  // UPDATE (audit ESIG-02): the public price view the page rendered and the
-  // document version, so an edit after the signature can never rewrite the
-  // only record of what was signed (the editor PATCH voids the signature
-  // instead, patchGuards.js). The stored total is the row's own, which the
-  // WHERE below asserts equals the acknowledged figure (law 2).
-  const signedRecord = signedPriceRecord(lookup.rows[0].pricing_snapshot, {
-    packageName: lookup.rows[0].package_name, documentVersion, total: ackTotal,
-  });
-
-  // Make the UPDATE itself the gate: WHERE clause re-asserts both that no
-  // signature has been recorded yet AND that the status is still in a signable
-  // state. This collapses the SELECT-then-UPDATE TOCTOU window so two parallel
-  // requests on the same token can't both pass a check and overwrite each other.
-  // When venueToPersist is set, also write the structured fields and the
-  // recomposed event_location in the same atomic UPDATE. String-coerce values
-  // (public endpoint — never trust req.body types).
-  const mergedVenue = venueToPersist || storedVenue;
-  const composedLocation = composeVenueLocation(mergedVenue);
+  // ── The sign transaction (audit ESIG-02, round 2 L5) ──────────────────────
+  // One pooled client from the locked read to COMMIT: the row is read FOR
+  // UPDATE, the venue gate and the signed record are computed from THAT row,
+  // and the UPDATE lands in the same transaction, so a sign that reaches the
+  // row after a concurrent PATCH commits (an equal-price add-on swap, a venue
+  // change) records the terms as they are, never a snapshot of the old ones.
+  // The UPDATE keeps its own TOCTOU-collapsing predicates (unsigned, signable
+  // status, the total to the cent). The client is released before the
+  // post-commit tail, which reads and writes through the pool (one pooled
+  // connection per request).
   const vStr = (x) => String(x ?? '').trim();
-  const upd = await pool.query(`
+  const NOT_SIGNABLE = ['deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'];
+  let proposalId = null;
+  let failure = null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The venue gate's inputs, the signed record's inputs, and the status and
+    // signature the 409 below is told apart by, all under the lock.
+    const lookup = await client.query(
+      `SELECT p.id, p.status, p.client_signed_at, p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
+              p.pricing_snapshot, sp.name AS package_name
+         FROM proposals p
+         LEFT JOIN service_packages sp ON sp.id = p.package_id
+        WHERE p.token = $1
+        FOR UPDATE OF p`,
+      [req.params.token]
+    );
+    if (!lookup.rows[0]) throw new NotFoundError('This proposal is no longer available');
+    const storedVenue = lookup.rows[0];
+    proposalId = storedVenue.id;
+
+    // Venue address gate: if the proposal doesn't already have a complete venue
+    // address, the client must supply one now (street + city + state required).
+    let venueToPersist = null;
+    if (!isVenueComplete(storedVenue)) {
+      const submitted = { venue_name, venue_street, venue_city, venue_state, venue_zip };
+      const venueErrors = validateVenue(submitted, { requireStreet: true, requireCityState: true });
+      if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+      venueToPersist = submitted;
+    }
+
+    // The configuration being signed, stored beside the signature in the same
+    // UPDATE (audit ESIG-02): the public price view the page rendered and the
+    // document version, so an edit after the signature can never rewrite the
+    // only record of what was signed (the editor PATCH voids the signature
+    // instead, patchGuards.js). The stored total is the row's own, which the
+    // WHERE below asserts equals the acknowledged figure (law 2).
+    const signedRecord = signedPriceRecord(storedVenue.pricing_snapshot, {
+      packageName: storedVenue.package_name, documentVersion, total: ackTotal,
+    });
+
+    // Make the UPDATE itself the gate: WHERE clause re-asserts both that no
+    // signature has been recorded yet AND that the status is still in a signable
+    // state. This collapses the SELECT-then-UPDATE TOCTOU window so two parallel
+    // requests on the same token can't both pass a check and overwrite each other.
+    // When venueToPersist is set, also write the structured fields and the
+    // recomposed event_location in the same atomic UPDATE. String-coerce values
+    // (public endpoint — never trust req.body types).
+    const mergedVenue = venueToPersist || storedVenue;
+    const composedLocation = composeVenueLocation(mergedVenue);
+    const upd = await client.query(`
     UPDATE proposals SET
       client_signed_name = $1,
       client_signature_data = $2,
@@ -584,34 +602,37 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       AND ABS(total_price - $14::numeric) < 0.005
     RETURNING id
   `, [
-    signedName, signatureValue, client_signature_method, ip, userAgent,
-    documentVersion, lookup.rows[0].id,
-    venueToPersist ? (vStr(venue_name) || null) : null,
-    venueToPersist ? vStr(venue_street) : null,
-    venueToPersist ? vStr(venue_city) : null,
-    venueToPersist ? normalizeVenueState(vStr(venue_state)) : null,
-    venueToPersist ? (vStr(venue_zip) || null) : null,
-    venueToPersist ? composedLocation : null,
-    ackTotal,
-    JSON.stringify(signedRecord),
-  ]);
-  if (!upd.rows[0]) {
-    // Disambiguate: a still-signable row can only have failed the total
-    // assertion, so tell the client to re-review rather than lying that it
-    // was already accepted.
-    let code = 'ALREADY_ACCEPTED';
-    let message = 'This proposal has already been accepted';
-    const re = await pool.query(
-      'SELECT client_signed_at, status FROM proposals WHERE id = $1',
-      [lookup.rows[0].id]
-    );
-    const r = re.rows[0];
-    const stillSignable = r && !r.client_signed_at
-      && !['deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
-    if (stillSignable) {
-      code = 'TOTAL_CHANGED';
-      message = 'The total for this proposal has changed. Please review the updated price and sign again.';
+      signedName, signatureValue, client_signature_method, ip, userAgent,
+      documentVersion, storedVenue.id,
+      venueToPersist ? (vStr(venue_name) || null) : null,
+      venueToPersist ? vStr(venue_street) : null,
+      venueToPersist ? vStr(venue_city) : null,
+      venueToPersist ? normalizeVenueState(vStr(venue_state)) : null,
+      venueToPersist ? (vStr(venue_zip) || null) : null,
+      venueToPersist ? composedLocation : null,
+      ackTotal,
+      JSON.stringify(signedRecord),
+    ]);
+    if (!upd.rows[0]) {
+      // Disambiguate from the locked row: a still-signable row can only have
+      // failed the total assertion, so tell the client to re-review rather
+      // than lying that it was already accepted. Nothing was written.
+      const stillSignable = !storedVenue.client_signed_at && !NOT_SIGNABLE.includes(storedVenue.status);
+      failure = stillSignable
+        ? { code: 'TOTAL_CHANGED', message: 'The total for this proposal has changed. Please review the updated price and sign again.' }
+        : { code: 'ALREADY_ACCEPTED', message: 'This proposal has already been accepted' };
+      await client.query('ROLLBACK');
+    } else {
+      await client.query('COMMIT');
     }
+  } catch (txErr) {
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw txErr;
+  } finally {
+    client.release();
+  }
+  if (failure) {
+    const { code, message } = failure;
     // A blocked signature must never be silent (spec 2026-08-28 §3e). For a
     // week in August every gratuity-electing client 409'd here and the only
     // trace was a run of 'viewed' rows from the recovery refetch, which read
@@ -622,20 +643,20 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
        VALUES ($1, 'sign_failed', 'client', $2)`,
-      [lookup.rows[0].id, JSON.stringify({ code, acknowledged_total: ackTotal, ip })]
+      [proposalId, JSON.stringify({ code, acknowledged_total: ackTotal, ip })]
     ).catch((err) => console.error('sign_failed activity log failed (non-blocking):', err.message));
     if (process.env.SENTRY_DSN_SERVER) {
       // TOTAL_CHANGED is the state worth paging on; ALREADY_ACCEPTED is a
       // benign double-submit or replay and only needs to be countable.
       Sentry.captureMessage('proposal_sign_failed', {
         level: code === 'TOTAL_CHANGED' ? 'warning' : 'info',
-        tags: { route: 'proposals/sign', code, proposal_id: String(lookup.rows[0].id) },
+        tags: { route: 'proposals/sign', code, proposal_id: String(proposalId) },
         extra: { acknowledged_total: ackTotal },
       });
     }
     throw new ConflictError(message, code);
   }
-  const proposal = { id: lookup.rows[0].id };
+  const proposal = { id: proposalId };
 
   // Phone write is gated on the sign UPDATE having returned a row (the
   // client_signed_at IS NULL TOCTOU gate above): a replayed sign POST that hit
