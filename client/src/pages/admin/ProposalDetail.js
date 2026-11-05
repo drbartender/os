@@ -32,6 +32,7 @@ import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
+import { ARCHIVE_REASONS } from '../../utils/archiveReasons';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import RemoteStaffingFeePrompt from './RemoteStaffingFeePrompt';
 import ProposalDetailPhone, { usePhoneFork } from '../mobile/ProposalDetailPhone';
@@ -501,7 +502,7 @@ function ProposalDetailBody() {
                 <Icon name="check" size={12} />Mark accepted
               </button>
             )}
-            {!editing && ARCHIVABLE_STATUSES.includes(proposal.status) && (
+            {!editing && ARCHIVABLE_STATUSES.includes(proposal.status) && !(Number(proposal.amount_paid) > 0) && (
               <button type="button" className="btn btn-ghost" onClick={openArchiveModal} disabled={archiving}>
                 <Icon name="x" size={12} />{archiving ? 'Archiving…' : 'Archive'}
               </button>
@@ -907,10 +908,7 @@ function ProposalDetailBody() {
                 <label className="meta-k" htmlFor="archive-reason">Reason</label>
                 <select id="archive-reason" className="select" value={archiveReason}
                   onChange={(e) => setArchiveReason(e.target.value)} disabled={archiving}>
-                  <option value="no_hire">No hire</option>
-                  <option value="client_cancelled">Client cancelled</option>
-                  <option value="we_cancelled">We cancelled</option>
-                  <option value="other">Other</option>
+                  {ARCHIVE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
               </div>
               {openSiblings.length > 0 ? (

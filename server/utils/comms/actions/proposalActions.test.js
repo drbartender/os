@@ -138,6 +138,32 @@ test('proposal_resend: dispatch reports per-channel truth (dev-gated)', async ()
   assert.equal(r.recipient_email, LIVE_EMAIL);
 });
 
+// Law 15. Synthetic held id only (__setLegalHoldIdsForTest adds to the real
+// list and never replaces it), cleared in the finally.
+test('proposal_resend: a legal-hold proposal is refused with 409 LEGAL_HOLD before any send, in proposal_send\'s borrowed dispatch too; the unheld id passes', async () => {
+  const { __setLegalHoldIdsForTest } = require('../../legalHold');
+  const resend = getAction('proposal_resend');
+  const logged = async () => (await pool.query('SELECT COUNT(*)::int AS n FROM message_log WHERE proposal_id = $1', [proposalId])).rows[0].n;
+  const before = await logged();
+  const isHoldRefusal = (err) => err.code === 'LEGAL_HOLD' && err.statusCode === 409
+    && err.message === 'This booking is on legal hold and cannot be edited.';
+  __setLegalHoldIdsForTest([proposalId]);
+  try {
+    await assert.rejects(() => resend.ensureSideEffects(proposalId), isHoldRefusal);
+    await assert.rejects(() => resend.dispatch(proposalId, undefined, ['email', 'sms'], { sentBy: null }), isHoldRefusal);
+    await assert.rejects(() => getAction('proposal_send').dispatch(proposalId, undefined, ['email', 'sms'], { sentBy: null }), isHoldRefusal);
+  } finally {
+    __setLegalHoldIdsForTest(null);
+  }
+  assert.equal(await logged(), before, 'nothing was sent or ledgered for the held id');
+  // The same id unheld passes both, and with no channel picked sends nothing.
+  assert.equal((await resend.ensureSideEffects(proposalId)).applied, false);
+  const r = await resend.dispatch(proposalId, undefined, [], { sentBy: null });
+  assert.equal(r.email, 'skipped');
+  assert.equal(r.sms, 'skipped');
+  assert.equal(await logged(), before);
+});
+
 test('proposal_resend: a .invalid client email makes email unavailable (placeholder reason, 937ba35 mirror)', async () => {
   // CC-import RFC-2606 placeholder: sendEmail silently drops it, so the channel
   // must never be offered/reported available. Mutate the shared client, restore

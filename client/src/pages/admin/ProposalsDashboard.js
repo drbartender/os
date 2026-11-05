@@ -20,6 +20,9 @@ import SourceBadge from '../../components/admin/SourceBadge';
 import EntityLink from '../../components/EntityLink';
 import useUrlListState from '../../hooks/useUrlListState';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
+// The archive_reason's label, shown under the status chip on an archived row so
+// the Archived shelf tells a no-hire from a cancellation.
+import { archiveReasonLabel } from '../../utils/archiveReasons';
 
 const TAB_IDS = ['active', 'draft', 'won', 'paid', 'archive', 'all'];
 const SOURCE_IDS = ['thumbtack', 'manual'];
@@ -43,17 +46,6 @@ const PRESET_CHIPS = [
 ];
 const STATUS_CHIPS = [['sent', 'Sent'], ['viewed', 'Viewed'], ['modified', 'Modified']];
 const COHORT_LABELS = { quoted: 'Quoted', won: 'Won', lost: 'Lost' };
-// Human labels for the archive_reason bucket, shown under the status chip on an
-// archived row so the Archived shelf distinguishes no-hire from a cancellation.
-const ARCHIVE_REASON_LABELS = {
-  no_hire: 'No hire',
-  client_cancelled: 'Client cancelled',
-  we_cancelled: 'We cancelled',
-  event_completed: 'Event completed',
-  option_not_chosen: 'Option not chosen',
-  event_passed: 'Event passed',
-  other: 'Other',
-};
 // Server page size, sent explicitly as `limit` rather than leaning on the
 // server's default also being 50 (list.js clamps to [1,200], default 50). If the
 // two ever disagree, pageCount below is silently wrong with no error anywhere.
@@ -530,7 +522,7 @@ function ProposalsDashboardDesktop() {
                     <td>
                       <StatusChip kind={st.kind}>{st.label}</StatusChip>
                       {p.status === 'archived' && p.archive_reason && (
-                        <div className="sub">{ARCHIVE_REASON_LABELS[p.archive_reason] || p.archive_reason}</div>
+                        <div className="sub">{archiveReasonLabel(p.archive_reason) || p.archive_reason}</div>
                       )}
                     </td>
                     <td className="muted">{relDayTs(p.sent_at)}</td>

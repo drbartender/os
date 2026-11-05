@@ -5,10 +5,12 @@ import path from 'path';
 const read = (rel) => fs.readFileSync(path.resolve(__dirname, '..', rel), 'utf8');
 const css = read('index.css');
 const SOURCES = [
+  'components/mobile/ArchiveSheet.js',
   'components/mobile/AssignmentSheet.js',
   'components/mobile/EditSheet.js',
   'components/mobile/MobileHeader.js',
   'components/mobile/NoteSheet.js',
+  'components/mobile/ResendSheet.js',
   'pages/mobile/EventDetailPhone.js',
   'pages/mobile/EventDetailSections.js',
   'pages/mobile/ProposalDetailPhone.js',

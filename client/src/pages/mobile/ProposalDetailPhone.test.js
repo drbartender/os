@@ -1,7 +1,7 @@
 import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import ProposalDetailPhone from './ProposalDetailPhone';
 import ProposalDetail from '../admin/ProposalDetail';
 import api from '../../utils/api';
@@ -175,18 +175,156 @@ test("Package & extras lists the stored snapshot's lines and the total", async (
   expect(screen.getByText('Total')).toBeInTheDocument();
 });
 
-test('the action card: Resend proposal then Archive, no Send reminder; each opens desktop view for now', async () => {
-  serve();
-  mount();
-  await screen.findByText('Contacts');
-  expect(row('Resend proposal')).toHaveTextContent(/desktop view/i);
-  expect(row('Archive')).toBeInTheDocument();
-  expect(screen.queryByText(/reminder/i)).not.toBeInTheDocument();
-  fireEvent.click(row('Resend proposal'));
-  expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
-  fireEvent.click(row('Archive'));
-  fireEvent.click(row('Edit details'));
-  expect(mockMobileView.setDesktopView).toHaveBeenCalledTimes(3);
+// The resend sheet's preview, for the tests that open it.
+const PREVIEW = {
+  recipient: { name: 'Test Client', email: 'client41@example.test', phone: null, source: 'client' },
+  warnings: [],
+  channels: { email: { available: true, default: true }, sms: { available: false, default: false, unavailable_reason: 'Client has opted out of SMS.' } },
+  email: { subject: 'Your proposal', bodyText: 'Here it is.' },
+  sms: { body: '' },
+};
+function BackButton() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(-1)}>history back</button>;
+}
+const withBack = <><ProposalDetailPhone /><BackButton /></>;
+const sheet = (name) => screen.queryByRole('dialog', { name });
+
+describe('the action card and its sheets', () => {
+  beforeEach(() => {
+    api.post.mockImplementation((url) => (url === '/comms/preview' ? Promise.resolve({ data: PREVIEW }) : new Promise(() => {})));
+  });
+  test('Resend proposal then Archive, no Send reminder; each opens its sheet as a history entry, and Back closes it', async () => {
+    serve();
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    expect(row('Resend proposal')).not.toHaveTextContent(/desktop view/i);
+    expect(row('Archive')).not.toHaveTextContent(/desktop view/i);
+    expect(screen.queryByText(/reminder/i)).not.toBeInTheDocument();
+
+    await act(async () => { fireEvent.click(row('Resend proposal')); });
+    expect(sheet('Resend proposal')).toBeInTheDocument();
+    expect(screen.getByTestId('search')).toHaveTextContent('?drawer=resend&drawerId=41');
+    expect(api.post).toHaveBeenCalledWith('/comms/preview', { action: 'proposal_resend', entity_id: 41 }, { timeout: 10000 });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(sheet('Resend proposal')).not.toBeInTheDocument();
+    expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals\/41$/);
+    expect(screen.getByTestId('search')).toBeEmptyDOMElement();
+
+    await act(async () => { fireEvent.click(row('Archive')); });
+    expect(sheet('Archive proposal')).toBeInTheDocument();
+    expect(screen.getByTestId('search')).toHaveTextContent('?drawer=archive&drawerId=41');
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(sheet('Archive proposal')).not.toBeInTheDocument();
+    expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals\/41$/);
+
+    // Edit details opens desktop view until the phone's edit sheet lands.
+    fireEvent.click(row('Edit details'));
+    expect(mockMobileView.setDesktopView).toHaveBeenCalledTimes(1);
+    expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
+  });
+  test('a draft and a modified proposal keep Send proposal on desktop view; their Archive opens its sheet', async () => {
+    for (const status of ['draft', 'modified']) {
+      serve({ '/proposals/41': { data: { ...PROPOSAL, status, sent_at: status === 'draft' ? null : PROPOSAL.sent_at } } });
+      const { unmount } = mount();
+      // eslint-disable-next-line no-await-in-loop
+      await screen.findByText('Contacts');
+      expect(row('Send proposal')).toHaveTextContent(/desktop view/i);
+      fireEvent.click(row('Send proposal'));
+      expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
+      expect(sheet('Resend proposal')).not.toBeInTheDocument();
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => { fireEvent.click(row('Archive')); });
+      expect(sheet('Archive proposal')).toBeInTheDocument();
+      unmount();
+    }
+  });
+  test('an options group keeps Resend on desktop view, and its Archive (this proposal only) opens the sheet', async () => {
+    serve({ '/proposals/41': { data: { ...PROPOSAL, group_id: 9 } } });
+    mount();
+    await screen.findByText('Contacts');
+    expect(row('Resend proposal')).toHaveTextContent(/desktop view/i);
+    fireEvent.click(row('Resend proposal'));
+    expect(sheet('Resend proposal')).not.toBeInTheDocument();
+    expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
+    await act(async () => { fireEvent.click(row('Archive')); });
+    expect(sheet('Archive proposal')).toBeInTheDocument();
+  });
+  test('a sheet parameter that can open nothing here is dropped once the read settles', async () => {
+    const cases = [
+      ['a stored copy', '/proposals/41?drawer=resend&drawerId=41', { '/proposals/41': { data: PROPOSAL, staleAt: '2026-11-05T15:00:00Z' } }],
+      ['an options group', '/proposals/41?drawer=resend&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, group_id: 9 } } }],
+      ['money on the row', '/proposals/41?drawer=archive&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, status: 'accepted', amount_paid: '100.00' } } }],
+      ['legal hold', '/proposals/41?drawer=archive&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, legal_hold: true } } }],
+      ['another proposal', '/proposals/41?drawer=archive&drawerId=42', {}],
+    ];
+    for (const [, path, over] of cases) {
+      serve(over);
+      const { unmount } = mount(path);
+      // eslint-disable-next-line no-await-in-loop
+      await screen.findByText('Contacts');
+      // eslint-disable-next-line no-await-in-loop
+      await waitFor(() => expect(screen.getByTestId('search')).toBeEmptyDOMElement());
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      unmount();
+    }
+    expect(api.post).not.toHaveBeenCalled();
+  });
+  test('when the remote staffing fee comes first, Desktop view closes the sheet and opens the desktop page', async () => {
+    serve({ '/proposals/41/remote-staffing-check': { data: { should_prompt: true } } });
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    await act(async () => { fireEvent.click(row('Resend proposal')); });
+    expect(sheet('Resend proposal')).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Desktop view' })); });
+    expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
+    expect(sheet('Resend proposal')).not.toBeInTheDocument();
+    expect(screen.getByTestId('search')).toBeEmptyDOMElement();
+    expect(api.post.mock.calls.filter((c) => c[0] === '/comms/send')).toHaveLength(0);
+  });
+  test('an archive that lands after Back closed its sheet has the page read the proposal again', async () => {
+    let reads = 0;
+    serve({
+      '/proposals/41': () => {
+        reads += 1;
+        return { data: reads <= 2 ? PROPOSAL : { ...PROPOSAL, status: 'archived', archive_reason: 'no_hire' } };
+      },
+    });
+    let land;
+    api.post.mockImplementation((url) => (url.endsWith('/archive') ? new Promise((resolve) => { land = resolve; }) : Promise.reject({ status: 404 })));
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    await act(async () => { fireEvent.click(row('Archive')); });
+    fireEvent.click(screen.getByRole('button', { name: 'No hire' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Archive proposal' })); });
+    expect(reads).toBe(2);   // the page's read, then the sheet's fresh read
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(sheet('Archive proposal')).not.toBeInTheDocument();
+    await act(async () => { land({ data: { archived_ids: [41] } }); });
+    expect(await screen.findByText('archived · No hire')).toBeInTheDocument();
+    expect(reads).toBe(3);
+    expect(screen.queryByRole('button', { name: /^Archive/ })).not.toBeInTheDocument();
+  });
+  test('a sheet that refused because the proposal changed has the page read it again as it closes', async () => {
+    let reads = 0;
+    serve({
+      '/proposals/41': () => {
+        reads += 1;
+        return { data: reads === 1 ? PROPOSAL : { ...PROPOSAL, status: 'deposit_paid', amount_paid: '0.00' } };
+      },
+    });
+    mount();
+    await screen.findByText('Contacts');
+    await act(async () => { fireEvent.click(row('Archive')); });
+    fireEvent.click(screen.getByRole('button', { name: 'No hire' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Archive proposal' })); });
+    expect(screen.getByRole('alert')).toHaveTextContent('This proposal changed since you opened it. Nothing was archived.');
+    expect(api.post).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByText('Close')); });
+    // The page's read again finds a booking, which belongs to the event detail.
+    await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent(/^\/events\/41$/));
+    expect(reads).toBe(3);
+  });
 });
 
 test('a draft reads Send proposal on desktop view, and its Client link is not sent yet', async () => {

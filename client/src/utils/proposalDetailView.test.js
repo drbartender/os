@@ -1,5 +1,6 @@
 import {
-  BOOKED_STATUSES, bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, clientLinkOf, gatesOf, archiveReasonLabel,
+  BOOKED_STATUSES, bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, clientLinkOf, gatesOf,
+  sheetRefusal, HOLD_NOTE, SHEET_PAID, SHEET_MOVED,
 } from './proposalDetailView';
 import { PUBLIC_SITE_URL } from './constants';
 
@@ -52,14 +53,6 @@ describe('statusLineOf', () => {
   test('archived: the reason in the desktop words', () => {
     expect(statusLineOf(prop({ status: 'archived', archive_reason: 'client_cancelled' }), NOW)).toBe('archived · Client cancelled');
     expect(statusLineOf(prop({ status: 'archived', archive_reason: null }), NOW)).toBe('archived');
-  });
-});
-
-describe('archiveReasonLabel', () => {
-  test('every stored reason reads as the desktop writes it', () => {
-    expect(['no_hire', 'client_cancelled', 'we_cancelled', 'event_completed', 'option_not_chosen', 'event_passed', 'other'].map(archiveReasonLabel))
-      .toEqual(['No hire', 'Client cancelled', 'We cancelled', 'Event completed', 'Option not chosen', 'Event passed', 'Other']);
-    expect(archiveReasonLabel('nonsense')).toBe('');
   });
 });
 
@@ -125,8 +118,8 @@ describe('gatesOf', () => {
     for (const status of BOOKED_STATUSES) expect(bookedTarget(prop({ status }))).toBe('/events/41');
     for (const status of ['draft', 'sent', 'viewed', 'modified', 'accepted', 'archived']) expect(bookedTarget(prop({ status }))).toBeNull();
   });
-  test('sent, viewed and accepted offer Resend proposal; draft and modified Send proposal; both open desktop view', () => {
-    for (const status of ['sent', 'viewed', 'accepted']) expect(gatesOf(prop({ status })).send).toEqual({ label: 'Resend proposal', mode: 'desktop' });
+  test('sent, viewed and accepted offer Resend proposal in its sheet; draft and modified Send proposal on desktop view', () => {
+    for (const status of ['sent', 'viewed', 'accepted']) expect(gatesOf(prop({ status })).send).toEqual({ label: 'Resend proposal', mode: 'sheet' });
     for (const status of ['draft', 'modified']) expect(gatesOf(prop({ status })).send).toEqual({ label: 'Send proposal', mode: 'desktop' });
   });
   test('an options group keeps desktop view, and its first send reads Send options', () => {
@@ -142,8 +135,10 @@ describe('gatesOf', () => {
       expect(gatesOf(prop({ status }))).toEqual(expect.objectContaining({ send: null, archive: null, edit: null, link: null }));
     }
   });
-  test('Archive for the five open statuses with nothing paid, absent with money on the row', () => {
-    for (const status of ['draft', 'sent', 'viewed', 'modified', 'accepted']) expect(gatesOf(prop({ status })).archive).toEqual({ label: 'Archive', mode: 'desktop' });
+  test('Archive opens its sheet for the five open statuses with nothing paid, absent with money on the row', () => {
+    for (const status of ['draft', 'sent', 'viewed', 'modified', 'accepted']) expect(gatesOf(prop({ status })).archive).toEqual({ label: 'Archive', mode: 'sheet' });
+    // This proposal alone: an option in a group archives from its sheet too.
+    expect(gatesOf(prop({ group_id: 7 })).archive).toEqual({ label: 'Archive', mode: 'sheet' });
     expect(gatesOf(prop({ status: 'accepted', amount_paid: '0.01' })).archive).toBeNull();
   });
   test('archived is read-only: no action, no Edit details, no link', () => {
@@ -167,5 +162,43 @@ describe('gatesOf', () => {
   });
   test('no gate offers a Send reminder', () => {
     expect(Object.keys(gatesOf(prop()))).not.toContain('remind');
+  });
+});
+
+describe('sheetRefusal: the fresh read before a sheet writes', () => {
+  const opened = prop();
+  test('a fresh row that still offers the row lets the sheet write', () => {
+    expect(sheetRefusal('resend', prop({ status: 'viewed' }), opened)).toBeNull();
+    expect(sheetRefusal('archive', prop({ status: 'modified' }), opened)).toBeNull();
+  });
+  test('legal hold refuses, and an unknown hold refuses too', () => {
+    for (const legal_hold of [true, undefined, null]) {
+      expect(sheetRefusal('resend', prop({ legal_hold }), opened)).toBe(HOLD_NOTE);
+      expect(sheetRefusal('archive', prop({ legal_hold }), opened)).toBe(HOLD_NOTE);
+    }
+    expect(sheetRefusal('archive', null, opened)).toBe(HOLD_NOTE);
+  });
+  test('money that landed since the sheet opened refuses, saying nothing was done', () => {
+    expect(sheetRefusal('resend', prop({ status: 'accepted', amount_paid: '100.00' }), prop({ status: 'accepted' })))
+      .toBe(`${SHEET_PAID} Nothing was sent.`);
+    expect(sheetRefusal('archive', prop({ status: 'accepted', amount_paid: '100.00' }), prop({ status: 'accepted' })))
+      .toBe(`${SHEET_PAID} Nothing was archived.`);
+    // Money already on the row when it opened is not new.
+    expect(sheetRefusal('resend', prop({ status: 'accepted', amount_paid: '100.00' }), prop({ status: 'accepted', amount_paid: '100.00' }))).toBeNull();
+  });
+  test('a resend refuses when a field its drafted words come from changed; an archive does not care', () => {
+    for (const over of [{ event_date: '2026-12-05T00:00:00.000Z' }, { event_type: 'birthday' }, { event_type_custom: 'Gala' }, { client_name: 'Other Client' }]) {
+      expect(sheetRefusal('resend', prop(over), opened)).toBe(`${SHEET_MOVED} Nothing was sent.`);
+      expect(sheetRefusal('archive', prop(over), opened)).toBeNull();
+    }
+  });
+  test('a status that left the set, or a proposal that joined a group, refuses', () => {
+    for (const status of ['draft', 'modified', 'deposit_paid', 'archived']) {
+      expect(sheetRefusal('resend', prop({ status }), opened)).toBe(`${SHEET_MOVED} Nothing was sent.`);
+    }
+    expect(sheetRefusal('resend', prop({ group_id: 7 }), opened)).toBe(`${SHEET_MOVED} Nothing was sent.`);
+    for (const status of ['deposit_paid', 'confirmed', 'archived']) {
+      expect(sheetRefusal('archive', prop({ status }), opened)).toBe(`${SHEET_MOVED} Nothing was archived.`);
+    }
   });
 });

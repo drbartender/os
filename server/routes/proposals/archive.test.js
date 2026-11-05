@@ -415,3 +415,117 @@ test('W1 gate: force-archive from completed does NOT reap (clawback roster prese
   const reqRow = (await pool.query('SELECT status FROM shift_requests WHERE shift_id = $1', [shiftId])).rows[0];
   assert.equal(reqRow.status, 'approved', 'the approved roster must survive for the clawback');
 });
+
+// ── Law 15: the legal-hold proposal is never archived ────────────────────
+// Synthetic held ids only (__setLegalHoldIdsForTest adds to the real list and
+// never replaces it); each case clears them in its finally.
+const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
+const countOf = async (sql, id) => (await pool.query(sql, [id])).rows[0].n;
+
+test('a legal-hold proposal is refused with 409 LEGAL_HOLD on either scope and nothing is written; an unheld twin archives', async () => {
+  const clientId = await makeClient();
+  const held = await makeProposal(clientId, { status: 'sent' });
+  const twin = await makeProposal(clientId, { status: 'sent' });
+  const invId = await makeInvoice(held);
+  const bartenderId = await makeBartender();
+  const shiftId = await makeShift(held, { status: 'open' });
+  await makeShiftRequest(shiftId, bartenderId, { position: 'bartender', status: 'approved' });
+  const smId = await makeScheduledMessage({ entityType: 'proposal', entityId: held, messageType: 'balance_due_today', recipientType: 'client', recipientId: clientId });
+  __setLegalHoldIdsForTest([held]);
+  try {
+    for (const scope of ['one', 'set']) {
+      const r = await postBody(`/api/proposals/${held}/archive`, adminToken, JSON.stringify({ scope, archive_reason: 'we_cancelled' }));
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'LEGAL_HOLD');
+      assert.equal(r.body.error, 'This booking is on legal hold and cannot be edited.', "the proposal PATCH's body");
+    }
+    assert.equal(await statusOf(held), 'sent', 'the held proposal keeps its status');
+    assert.equal(await reasonOf(held), null, 'no reason is written');
+    assert.equal(await statusOf(twin), 'sent', "scope 'set' on the held id archived no sibling either");
+    assert.equal((await pool.query('SELECT status FROM invoices WHERE id = $1', [invId])).rows[0].status, 'sent', 'its invoice is not voided');
+    assert.equal((await pool.query('SELECT status FROM shifts WHERE id = $1', [shiftId])).rows[0].status, 'open', 'its shift is not cancelled');
+    assert.equal((await pool.query('SELECT status FROM shift_requests WHERE shift_id = $1', [shiftId])).rows[0].status, 'approved', 'its roster is kept');
+    assert.equal(await countOf("SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE id = $1 AND status = 'pending'", smId), 1, 'its follow-up stays pending');
+    assert.equal(await countOf("SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'archived'", held), 0, 'no archived activity row');
+
+    const ok = await postBody(`/api/proposals/${twin}/archive`, adminToken, JSON.stringify({ scope: 'one', archive_reason: 'we_cancelled' }));
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(await statusOf(twin), 'archived');
+    assert.equal(await statusOf(held), 'sent', "the twin's archive leaves the held proposal alone");
+  } finally {
+    __setLegalHoldIdsForTest(null);
+  }
+});
+
+test("scope 'set' leaves a legal-hold sibling exactly as it is and archives the rest", async () => {
+  const clientId = await makeClient();
+  const target = await makeProposal(clientId, { status: 'viewed' });
+  const heldSibling = await makeProposal(clientId, { status: 'sent' });
+  const openSibling = await makeProposal(clientId, { status: 'draft' });
+  const heldInv = await makeInvoice(heldSibling);
+  __setLegalHoldIdsForTest([heldSibling]);
+  try {
+    const r = await postBody(`/api/proposals/${target}/archive`, adminToken, JSON.stringify({ scope: 'set', archive_reason: 'no_hire' }));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual([...r.body.archived_ids].sort((a, b) => a - b), [target, openSibling].sort((a, b) => a - b));
+    assert.equal(await statusOf(heldSibling), 'sent', 'the held sibling keeps its status');
+    assert.equal(await reasonOf(heldSibling), null);
+    assert.equal((await pool.query('SELECT status FROM invoices WHERE id = $1', [heldInv])).rows[0].status, 'sent', "the held sibling's invoice is not voided");
+  } finally {
+    __setLegalHoldIdsForTest(null);
+  }
+});
+
+test('a malformed id is refused with 400 before anything is read', async () => {
+  const r = await postBody('/api/proposals/1_23/archive', adminToken, JSON.stringify({ scope: 'one' }));
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+});
+
+// ── Never archive a row with money on it, settled or settling ─────────────
+test('a sent target holding money (an invoice payment short of full) is refused with 409 NOT_ARCHIVABLE and nothing written', async () => {
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'sent', amount_paid: 100 });
+  const invId = await makeInvoice(pid);
+  const r = await postBody(`/api/proposals/${pid}/archive`, adminToken, JSON.stringify({ scope: 'one', archive_reason: 'no_hire' }));
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'NOT_ARCHIVABLE');
+  assert.equal(await statusOf(pid), 'sent');
+  assert.equal(await reasonOf(pid), null);
+  assert.equal((await pool.query('SELECT status FROM invoices WHERE id = $1', [invId])).rows[0].status, 'sent', 'its invoice is not voided');
+});
+
+test('a target whose bank debit is still settling is refused with 409 PAYMENT_IN_FLIGHT and nothing written', async () => {
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'accepted', amount_paid: 0 });
+  const invId = await makeInvoice(pid);
+  // The processing webhook's row (stripe_sessions cascades with the proposal in after()).
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 25000, 'processing', NOW() - INTERVAL '1 day')`,
+    [pid, `pi_archivetest_${NONCE}`.slice(0, 60)]);
+  const r = await postBody(`/api/proposals/${pid}/archive`, adminToken, JSON.stringify({ scope: 'one', archive_reason: 'no_hire' }));
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'PAYMENT_IN_FLIGHT');
+  // In the admin's words, never the paying client's (no receipt, no "email us").
+  assert.match(r.body.error, /nothing was archived/);
+  assert.doesNotMatch(r.body.error, /receipt|contact@/);
+  assert.equal(await statusOf(pid), 'accepted');
+  assert.equal((await pool.query('SELECT status FROM invoices WHERE id = $1', [invId])).rows[0].status, 'sent', 'its invoice is not voided');
+});
+
+test("scope 'set' leaves out a sibling whose bank debit is still settling, and archives the rest", async () => {
+  const clientId = await makeClient();
+  const target = await makeProposal(clientId, { status: 'sent' });
+  const settling = await makeProposal(clientId, { status: 'accepted', amount_paid: 0 });
+  const open = await makeProposal(clientId, { status: 'draft' });
+  const settlingInv = await makeInvoice(settling);
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, processing_at)
+     VALUES ($1, $2, 25000, 'processing', NOW() - INTERVAL '2 days')`,
+    [settling, `pi_archivesib_${NONCE}`.slice(0, 60)]);
+  const r = await postBody(`/api/proposals/${target}/archive`, adminToken, JSON.stringify({ scope: 'set', archive_reason: 'no_hire' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual([...r.body.archived_ids].sort((a, b) => a - b), [target, open].sort((a, b) => a - b));
+  assert.equal(await statusOf(settling), 'accepted', 'the settling sibling keeps its status');
+  assert.equal((await pool.query('SELECT status FROM invoices WHERE id = $1', [settlingInv])).rows[0].status, 'sent', 'the invoice it is paying is not voided');
+});

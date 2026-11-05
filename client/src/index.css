@@ -22252,6 +22252,27 @@ html[data-app="admin-os"] .m-link-path { flex: none; }
 html[data-app="admin-os"] .m-money-row.m-money-line { border-top: 1px solid var(--line-1); padding: 8px 16px; }
 /* The legal-hold note: the sheets' note box, at the page's own inset. */
 html[data-app="admin-os"] .m-sheet-note.m-hold-note { margin: 0 0 10px; }
+/* The archive sheet (benchmark 2026-10-14, archive sheet): the four reasons
+   are sheet rows; the picked one is bold with a check at its end, and the
+   plan's "Archive proposal" sits beside Cancel at the benchmark's padding. */
+html[data-app="admin-os"] .m-arch-label { flex: 1; min-width: 0; }
+html[data-app="admin-os"] .m-sheet-row.m-arch-picked { font-weight: 600; }
+html[data-app="admin-os"] .m-sheet-row.m-arch-picked > svg { flex: none; color: var(--accent); }
+html[data-app="admin-os"] .m-fail.m-arch-fail { margin-top: 10px; }
+html[data-app="admin-os"] .m-acts.m-arch-acts { flex: none; padding: 10px 16px 14px; }
+/* The resend sheet's server warnings: the edit sheet's autopay notice box. */
+html[data-app="admin-os"] .m-notify-warn {
+  margin-top: 8px; padding: 8px 10px; border: 1px solid hsl(var(--warn-h) var(--warn-s) 52% / 0.45); border-radius: var(--radius);
+  background: hsl(var(--warn-h) var(--warn-s) 52% / 0.10); font-size: var(--fs-meta); color: var(--ink-1); line-height: 1.5;
+}
+html[data-app="admin-os"][data-skin="light"] .m-notify-warn {
+  border-color: hsl(var(--warn-h) var(--warn-s) 40% / 0.55); background: hsl(var(--warn-h) var(--warn-s) 52% / 0.12); border-radius: 0;
+}
+/* The resend sheet's answer, a line per channel; a failed one is an .m-fail
+   box with its Retry, at the step's own inset. */
+html[data-app="admin-os"] .m-send-line { padding: 6px 0; font-size: var(--fs-body); color: var(--ink-2); line-height: 1.5; overflow-wrap: anywhere; }
+html[data-app="admin-os"] .m-send-line.m-send-sent { color: var(--ink-1); }
+html[data-app="admin-os"] .m-notify > .m-fail.m-notify-fail { margin: 6px 0; }
 /* ---- end: event detail and assignment sheet ---- */
 
 /* ==========================================================================

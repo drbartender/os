@@ -6,13 +6,16 @@ import { useLocation, useNavigate, useOutletContext, useParams } from 'react-rou
 import api from '../../utils/api';
 import { offlineGet } from '../../utils/offlineRead';
 import { useMobileView } from '../../context/MobileViewContext';
+import useDrawerParam from '../../hooks/useDrawerParam';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
+import ResendSheet from '../../components/mobile/ResendSheet';
+import ArchiveSheet from '../../components/mobile/ArchiveSheet';
 import StatusChip from '../../components/adminos/StatusChip';
 import { formatStaleTime } from '../../utils/staleTime';
 import { whenOf } from '../../utils/eventDetailView';
 import {
-  bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, gatesOf,
+  bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, gatesOf, HOLD_NOTE,
 } from '../../utils/proposalDetailView';
 import { Caret, ContactsSection, EditRow } from './EventDetailSections';
 
@@ -43,13 +46,19 @@ import { Caret, ContactsSection, EditRow } from './EventDetailSections';
 // a cold launch or a resume, with nothing behind it, it dispatches
 // mobile-route-dead and the chrome falls back to /events (spec section 9).
 //
-// Edit details, Resend proposal and Archive open desktop view until the phone
-// sheets land; Send proposal (a draft or a modified proposal: the first send
-// runs the remote staffing fee check) and anything in an options group stay
-// on desktop view for good. No Send reminder row (the owner, 2026-11-05:
-// "leave it off").
+// Resend proposal and Archive open their phone sheets (ResendSheet,
+// ArchiveSheet) as pushed history entries, so Android's Back closes them. A
+// sheet opens only on a fresh read whose row offers it, and a parameter that
+// can open none here is dropped once the read settles; each sheet reads the
+// proposal fresh again before it writes. A sheet that refused because the
+// proposal changed has the page read it again as it closes. Edit details opens
+// desktop view until the phone's edit sheet lands; Send proposal (a draft or a
+// modified proposal: the first send runs the remote staffing fee check) and
+// anything an options group sends stay on desktop view for good. No Send
+// reminder row (the owner, 2026-11-05: "leave it off").
 const LOAD_FAILED = 'Network error. Check your connection.';
-const HOLD_NOTE = 'This proposal is on legal hold. Nothing is changed or sent from here.';
+// The kinds of drawer that are phone sheets here. Module scope: one identity.
+const SHEETS = ['resend', 'archive'];
 const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
 // The change-requests read is live and the worker never races it, so on weak
 // signal it could hang for minutes. It is never aborted: an answer that comes
@@ -81,14 +90,16 @@ export function usePhoneFork() {
 // Whether an in-app page sits behind this one in history (the router's index).
 const pageBehind = () => !!(window.history.state && window.history.state.idx > 0);
 
-// A row of the action card. 'offline' takes no tap and says why.
-function ActionRow({ icon, label, mode, sep, onDesktop }) {
+// A row of the action card. 'offline' takes no tap and says why; 'sheet'
+// opens its phone sheet and, as drawn, carries no note; 'desktop' says where
+// it goes.
+function ActionRow({ icon, label, mode, sep, onSheet, onDesktop }) {
   return (
     <button type="button" className={`m-section-row${sep ? ' m-section-row-sep' : ''}`}
-      disabled={mode === 'offline'} onClick={onDesktop}>
+      disabled={mode === 'offline'} onClick={mode === 'sheet' ? onSheet : onDesktop}>
       <Icon name={icon} size={20} />
       <span className="m-section-name m-row-label">{label}</span>
-      {mode === 'offline' ? (
+      {mode === 'sheet' ? null : mode === 'offline' ? (
         <span className="m-edit-note m-edit-note-locked m-row-note"><span className="m-stale-dot" aria-hidden="true" />needs connection</span>
       ) : (
         <>
@@ -108,6 +119,7 @@ export default function ProposalDetailPhone() {
   const navigate = useNavigate();
   const location = useLocation();
   const toast = useToast();
+  const drawer = useDrawerParam({ push: true, kinds: SHEETS });
   // Read inside the load's answer, which must not re-run when they change.
   const latest = useRef({ mobileView, location });
   latest.current = { mobileView, location };
@@ -196,6 +208,26 @@ export default function ProposalDetailPhone() {
     pkg: packageOf(proposal),
     gates: gatesOf(proposal, { stale: !!staleAt }),
   } : null), [proposal, staleAt]);
+
+  // The sheets. Each opens only for this proposal, on a fresh read whose row
+  // offers it; a parameter that can open neither (another proposal, a stored
+  // copy, a row the proposal does not offer) is dropped once the read settles.
+  const forThis = drawer.id !== null && String(drawer.id) === String(id);
+  const resendOpen = drawer.kind === 'resend' && forThis && !!view && !!view.gates.send && view.gates.send.mode === 'sheet';
+  const archiveOpen = drawer.kind === 'archive' && forThis && !!view && !!view.gates.archive && view.gates.archive.mode === 'sheet';
+  const closeDrawer = drawer.close;
+  useEffect(() => {
+    if (loading) return;
+    if ((drawer.kind === 'resend' && !resendOpen) || (drawer.kind === 'archive' && !archiveOpen)) closeDrawer();
+  }, [loading, drawer.kind, resendOpen, archiveOpen, closeDrawer]);
+  // A sheet's closer acts only while the URL still shows that sheet: if Back
+  // closed it meanwhile, a second close would pop the page itself.
+  const live = useRef({ kind: null, close: null });
+  live.current = { kind: drawer.kind, close: drawer.close };
+  const sheetClosed = useCallback((kind, { moved = false } = {}) => {
+    if (live.current.kind === kind) live.current.close();
+    if (moved) setAttempt((n) => n + 1);
+  }, []);
 
   const toDesktop = () => setDesktopView('proposal-detail', true);
   const toggle = (key) => setPanes((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -329,11 +361,24 @@ export default function ProposalDetailPhone() {
 
       {(gates.send || gates.archive) && (
         <section className="m-section">
-          {gates.send && <ActionRow icon="mail" label={gates.send.label} mode={gates.send.mode} onDesktop={toDesktop} />}
+          {gates.send && (
+            <ActionRow icon="mail" label={gates.send.label} mode={gates.send.mode}
+              onSheet={() => drawer.open('resend', proposal.id)} onDesktop={toDesktop} />
+          )}
           {gates.archive && (
-            <ActionRow icon="clipboard" label={gates.archive.label} mode={gates.archive.mode} sep={!!gates.send} onDesktop={toDesktop} />
+            <ActionRow icon="clipboard" label={gates.archive.label} mode={gates.archive.mode} sep={!!gates.send}
+              onSheet={() => drawer.open('archive', proposal.id)} onDesktop={toDesktop} />
           )}
         </section>
+      )}
+
+      {resendOpen && (
+        <ResendSheet proposal={proposal} onClose={(how) => sheetClosed('resend', how)}
+          onDesktop={() => { sheetClosed('resend'); toDesktop(); }} />
+      )}
+      {archiveOpen && (
+        <ArchiveSheet proposal={proposal} onClose={(how) => sheetClosed('archive', how)}
+          onLateAnswer={() => setAttempt((n) => n + 1)} />
       )}
     </div>
   );

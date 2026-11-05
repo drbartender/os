@@ -29,8 +29,12 @@ const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
+const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { ADMIN_URL } = require('../../utils/urls');
+const { parseProposalId, assertNotLegalHold } = require('./patchGuards');
+const { isLegalHold } = require('../../utils/legalHold');
+const { assertNoPaymentInFlight, IN_FLIGHT_MAX_AGE_DAYS } = require('../../utils/paymentInFlight');
+const { getStripe } = require('../../utils/stripeClient');
 
 const router = express.Router();
 
@@ -457,18 +461,46 @@ const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
 // never mislabel an abandoned or cancelled lead; the DB CHECK is the backstop.
 const ARCHIVE_REASONS = ['no_hire', 'client_cancelled', 'we_cancelled', 'other'];
 
+// The in-flight check's own words are written for the paying client (a
+// receipt by email, write to us); an admin reads these instead.
+const ARCHIVE_PAYMENT_SETTLING = 'A payment on this proposal is still going through, so nothing was archived. Archive it once the payment clears or fails.';
+const ARCHIVE_PAYMENTS_UNCHECKED = "Couldn't check this proposal's payments with Stripe, so nothing was archived. Try again.";
+
 /** POST /api/proposals/:id/archive — archive this proposal, or (scope 'set') this
  *  plus every other open, unpaid proposal for the same client (covers formal
  *  option groups and loose multi-proposal sets with one rule). Archives in one
  *  transaction with unpaid-invoice voids; best-effort marketing/change-request
  *  reaps run post-commit, matching the ->archived lifecycle semantics. */
 router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Law 15: a legal-hold proposal is never archived. The id is parsed once and
+  // used for every query (Postgres reads '1_23' as 123), checked here before
+  // anything is read, and again on the row the lock holds. The 409 is the
+  // proposal PATCH's (patchGuards.js).
+  const proposalId = parseProposalId(req.params.id);
+  assertNotLegalHold(proposalId);
   const scope = req.body?.scope === 'set' ? 'set' : 'one';
   // archive_reason: default 'no_hire' (never NULL), validated against the route
   // allowlist. The same admin reason applies to the whole scope 'set'.
   const archiveReason = req.body?.archive_reason ?? 'no_hire';
   if (!ARCHIVE_REASONS.includes(archiveReason)) {
     throw new ValidationError({ archive_reason: 'Invalid archive reason' });
+  }
+
+  // Never archive a proposal with money on it, settled or settling. A bank
+  // debit still processing leaves amount_paid at 0 for days, and archiving
+  // then voids the invoice it is paying and cancels the booking under it. For
+  // the target, the in-flight check the invoice and deposit rails use (409
+  // PAYMENT_IN_FLIGHT) runs first, before any lock, since it may ask Stripe;
+  // settled money is refused on the locked row below. A scope 'set' sibling
+  // with either is left out of the set, as a paid one always was.
+  const { rows: [pre] } = await pool.query('SELECT event_timezone FROM proposals WHERE id = $1', [proposalId]);
+  if (!pre) throw new NotFoundError('Proposal not found');
+  try {
+    await assertNoPaymentInFlight({ proposalId, stripe: getStripe(), timeZone: pre.event_timezone });
+  } catch (err) {
+    if (err && err.code === 'PAYMENT_IN_FLIGHT') throw new ConflictError(ARCHIVE_PAYMENT_SETTLING, 'PAYMENT_IN_FLIGHT');
+    if (err instanceof ExternalServiceError) throw new ExternalServiceError('Stripe', err.originalError || err, ARCHIVE_PAYMENTS_UNCHECKED);
+    throw err;
   }
 
   let archivedIds = [];
@@ -486,29 +518,40 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
     // discovers client_id; the authoritative status check happens on the
     // re-read under the row lock.
     const { rows: [peek] } = await dbClient.query(
-      'SELECT id, client_id FROM proposals WHERE id = $1', [req.params.id]);
+      'SELECT id, client_id FROM proposals WHERE id = $1', [proposalId]);
     if (!peek) throw new NotFoundError('Proposal not found');
     if (peek.client_id !== null) {
       await dbClient.query('SELECT id FROM clients WHERE id = $1 FOR UPDATE', [peek.client_id]);
     }
 
     const { rows: [target] } = await dbClient.query(
-      'SELECT id, client_id, status FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
+      'SELECT id, client_id, status, amount_paid FROM proposals WHERE id = $1 FOR UPDATE', [proposalId]);
     if (!target) throw new NotFoundError('Proposal not found');
-    if (!ARCHIVABLE_STATUSES.includes(target.status)) {
+    assertNotLegalHold(target.id);
+    // An invoice payment adds to amount_paid and moves the status only when it
+    // pays in full, so a sent or accepted row can hold money; it is refused as
+    // a paid sibling is left out below.
+    if (!ARCHIVABLE_STATUSES.includes(target.status) || Number(target.amount_paid || 0) > 0) {
       throw new ConflictError('Only unpaid, unconverted proposals can be archived.', 'NOT_ARCHIVABLE');
     }
 
     let targetIds = [target.id];
     if (scope === 'set' && target.client_id !== null) {
+      // A sibling whose bank debit is processing (the processing webhook's
+      // stripe_sessions row, inside the in-flight window) is left out too.
       const { rows: siblings } = await dbClient.query(
-        `SELECT id FROM proposals
-          WHERE client_id = $1 AND id <> $2
-            AND status = ANY($3) AND COALESCE(amount_paid, 0) = 0
-          ORDER BY id
-          FOR UPDATE`,
-        [target.client_id, target.id, ARCHIVABLE_STATUSES]);
-      targetIds = targetIds.concat(siblings.map((s) => s.id));
+        `SELECT p.id FROM proposals p
+          WHERE p.client_id = $1 AND p.id <> $2
+            AND p.status = ANY($3) AND COALESCE(p.amount_paid, 0) = 0
+            AND NOT EXISTS (
+              SELECT 1 FROM stripe_sessions s
+               WHERE s.proposal_id = p.id AND s.status = 'processing'
+                 AND s.processing_at > NOW() - make_interval(days => $4::int))
+          ORDER BY p.id
+          FOR UPDATE OF p`,
+        [target.client_id, target.id, ARCHIVABLE_STATUSES, IN_FLIGHT_MAX_AGE_DAYS]);
+      // A held sibling is left out, as a paid one is: it keeps its state exactly.
+      targetIds = targetIds.concat(siblings.map((s) => s.id).filter((sid) => !isLegalHold(sid)));
     }
 
     for (const pid of targetIds) {

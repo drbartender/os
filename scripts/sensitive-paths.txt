@@ -148,6 +148,12 @@ client/src/utils/editSheetView.js
 client/src/components/mobile/EditSheet.js
 client/src/pages/admin/proposalEditor/repriceSummary.js
 
+# Phone proposal action sheets (lane proposal-actions-phone): ResendSheet.js sends the
+# proposal to a real client through /comms/send; ArchiveSheet.js archives, which voids
+# the unpaid invoice, cancels the shifts and stops the follow-ups.
+client/src/components/mobile/ResendSheet.js
+client/src/components/mobile/ArchiveSheet.js
+
 # section: money
 # Payroll, pricing, Stripe, payouts, invoices, refunds, bank PII, webhooks,
 # external sends and paid providers, schema, and the gate machinery.

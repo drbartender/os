@@ -19,6 +19,9 @@ const { getEventTypeLabel } = require('../../../utils/eventTypes');
 const { formatEventDateForSms } = require('../../smsEventDate');
 const { NotFoundError, ValidationError } = require('../../errors');
 const { proposalUrl: buildProposalUrl } = require('../../urls');
+// The proposal PATCH's legal-hold refusal (409 LEGAL_HOLD), so every path
+// answers a held proposal with one body.
+const { assertNotLegalHold } = require('../../../routes/proposals/patchGuards');
 
 const key = 'proposal_resend';
 const messageType = 'proposal_sent';
@@ -141,11 +144,14 @@ async function buildMessages(proposalId) {
 
 /**
  * Validate-only, no state change: the legacy resend never bumped status or
- * sent timestamps. This just enforces the resendable-status guard (throws), so
+ * sent timestamps. This refuses a legal-hold proposal (409 LEGAL_HOLD, law 15;
+ * POST /api/comms/send and the deprecated POST /api/proposals/:id/resend both
+ * call it before dispatch) and enforces the resendable-status guard (throws), so
  * a retry-after-failed-send is safe (nothing to un-apply). Second call is an
  * identical no-op.
  */
 async function ensureSideEffects(proposalId) {
+  assertNotLegalHold(proposalId);
   const row = await load(proposalId);
   if (!RESENDABLE.includes(row.status)) {
     // ValidationError (HTTP 400) preserves the legacy resend route's status code.
@@ -162,6 +168,10 @@ async function ensureSideEffects(proposalId) {
  * (mirrors shoppingListApprove.js).
  */
 async function dispatch(proposalId, message, channels, ctx = {}) {
+  // Law 15: nothing is sent to a legal-hold proposal's client. Checked in the
+  // send itself as well as in ensureSideEffects, since proposal_send borrows
+  // this dispatch and its Retry reaches it without this action's validate step.
+  assertNotLegalHold(proposalId);
   const row = await load(proposalId);
   const recipient = resolveFromRow(row);
   const defaults = defaultParts(row);

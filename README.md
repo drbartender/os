@@ -517,6 +517,7 @@ tests omitted
 │       │   │   ├── useInboxList.js # useInboxList (default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   └── useNow.js # useNow (default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── mobile/
+│       │   │   ├── ArchiveSheet.js # ArchiveSheet: the phone's Archive for one proposal, a reason picked and then confirmed (spec 2026-08-13-mobile-admin section 3, Plan decisions of 2026-11-05; benchmark the archive sheet, 2026-10-14 shell).
 │       │   │   ├── AssignmentSheet.js # AssignmentSheet (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── EditSheet.js # EditSheet (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── MobileHeader.js # MobileHeader (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -525,6 +526,7 @@ tests omitted
 │       │   │   ├── MoreSecurityRow.js # MoreSecurityRow (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── NoteSheet.js # NoteSheet (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── PasskeyEnrollNudge.js # PasskeyEnrollNudge (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── ResendSheet.js # ResendSheet: the phone's Resend proposal, the server's drafted words sent read-only on the channels picked (spec 2026-08-13-mobile-admin section 3, Plan decisions of 2026-11-05; the edit sheet's notify idiom).
 │       │   │   ├── useEditSheet.js # useEditSheet (default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   └── useSheetWrites.js # useSheetWrites (default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── potions/
@@ -974,6 +976,7 @@ tests omitted
 │           ├── adminPush.js  # The admin phone's push state and switches (spec 2026-08-13-mobile-admin section 7, 2026-10-14). Thin over pushSubscribe.js: this file knows the admin worker's path and the rule that the switch shows this device's REAL state (Android's permission, then whether the admin registration holds a subscription), never a stored flag. The VAPID key comes from the API (GET /me/notification-preferences, push.public_key), not from the build.
 │           ├── adminSw.js    # Register the admin service worker and speak its message protocol. Callers do not await anything useful from failure: an unregistered SW just means no offline shell this session.
 │           ├── api.js        # Axios instance with JWT interceptor
+│           ├── archiveReasons.js # archiveReasons: the four reasons an admin archives a proposal with, and the label for every stored archive_reason, in the desktop's words (one copy for the desktop modal, the Proposals list and the phone).
 │           ├── beoOutcomeCopy.js # One sentence for what the derived BEO finalize did after a shopping-list approve (the only derived trigger since 2026-09-22; approving the list IS the review). `beo` is the server's report ({ finalized, reason, unpaid_extras_cents }); the reason codes mirror server/utils/beoFinalize.js. `finalized` means "the BEO is finalized now" (the server reports it true on already_finalized too), so it wins over any reason. Empty string means "say nothing" (the action's own toast stands alone).
 │           ├── buildTipDeepLink.js # Returns the URL to navigate to when the customer taps a payment button. Cash App and PayPal pre-fill the amount via URL; Venmo and Stripe ignore it.
 │           ├── chicagoDay.js # The calendar day, in the business timezone, of a TIMESTAMPTZ moment.

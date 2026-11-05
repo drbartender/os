@@ -12,6 +12,7 @@ import { PUBLIC_SITE_URL } from './constants';
 import { whenLabel } from './proposalCards';
 import { proposalStatusMeta } from './proposalStatusMap';
 import { headerOf, contactsOf, financialsOf, dollars } from './eventDetailView';
+import { archiveReasonLabel } from './archiveReasons';
 
 // A booking belongs to the event detail: these open /events/:id instead.
 export const BOOKED_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
@@ -23,20 +24,9 @@ const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
 // The open statuses: the only ones that offer Edit details and the Client link.
 const OPEN_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
 
-// Every stored archive_reason (the schema's CHECK), in the desktop's words
-// (ProposalsDashboard.js).
-const REASON_LABELS = {
-  no_hire: 'No hire',
-  client_cancelled: 'Client cancelled',
-  we_cancelled: 'We cancelled',
-  event_completed: 'Event completed',
-  option_not_chosen: 'Option not chosen',
-  event_passed: 'Event passed',
-  other: 'Other',
-};
-export function archiveReasonLabel(reason) {
-  return REASON_LABELS[reason] || '';
-}
+// The legal-hold note: on the screen, and in a sheet that finds the hold on
+// its fresh read.
+export const HOLD_NOTE = 'This proposal is on legal hold. Nothing is changed or sent from here.';
 
 const text = (v) => String(v === null || v === undefined ? '' : v).trim();
 const dot = (parts) => parts.filter(Boolean).join(' · ');
@@ -128,8 +118,12 @@ export function clientLinkOf(proposal, base = PUBLIC_SITE_URL) {
 
 // Which rows the screen offers, and how each acts.
 //   mode 'offline'  a stored copy: the row reads "needs connection" and does nothing.
-//   mode 'desktop'  the row opens desktop view (the interim until the phone's
-//                   sheets land, and for good where the plan keeps it there).
+//   mode 'sheet'    the row opens its phone sheet: Resend proposal (ResendSheet)
+//                   and Archive (ArchiveSheet).
+//   mode 'desktop'  the row opens desktop view: the first send of a draft or a
+//                   modified proposal (it runs the remote staffing fee check),
+//                   anything an options group sends, and Edit details until
+//                   the phone's edit sheet lands.
 // A legal-hold proposal offers nothing that writes or sends (law 15), and the
 // hold fails closed: only an explicit false from the server reads as no hold.
 // It also offers no client link, since a client's view writes to the row.
@@ -140,6 +134,7 @@ export function gatesOf(proposal, { stale = false } = {}) {
   const archived = p.status === 'archived';
   const open = !held && OPEN_STATUSES.includes(p.status);
   const mode = stale ? 'offline' : 'desktop';
+  const sheet = stale ? 'offline' : 'sheet';
   // An options group's sends and Edit details stay on desktop view for good:
   // its options go out together on the compare link, so a draft or modified
   // option reads "Send options", the desktop's Alternatives panel action (the
@@ -147,7 +142,7 @@ export function gatesOf(proposal, { stale = false } = {}) {
   const grouped = p.group_id !== null && p.group_id !== undefined;
 
   let send = null;
-  if (open && RESEND_STATUSES.includes(p.status)) send = { label: 'Resend proposal', mode };
+  if (open && RESEND_STATUSES.includes(p.status)) send = { label: 'Resend proposal', mode: grouped ? mode : sheet };
   else if (open && FIRST_SEND_STATUSES.includes(p.status)) send = { label: grouped ? 'Send options' : 'Send proposal', mode };
 
   const archivable = open && ARCHIVABLE_STATUSES.includes(p.status) && !(Number(p.amount_paid) > 0);
@@ -157,8 +152,34 @@ export function gatesOf(proposal, { stale = false } = {}) {
     archived,
     grouped,
     send,
-    archive: archivable ? { label: 'Archive', mode } : null,
+    archive: archivable ? { label: 'Archive', mode: sheet } : null,
     edit: open ? { mode } : null,
     link: open ? clientLinkOf(p) : null,
   };
+}
+
+// Why a sheet must not write, judged on the proposal read fresh just before
+// the write, or null when it may. `opened` is the proposal the sheet opened on.
+// It refuses when the hold is on (or unknown: only an explicit false reads as
+// no hold), when money landed since it opened, or when the fresh row no longer
+// offers the sheet's row (its status left the set, or it joined a group). A
+// resend also refuses when a field its drafted words are built from changed
+// (the date, the kind, the client's name): the words were drafted at open and
+// are sent as drafted.
+// kind: 'resend' | 'archive'.
+export const SHEET_PAID = 'A payment came in on this proposal since you opened it.';
+export const SHEET_MOVED = 'This proposal changed since you opened it.';
+const NOTHING_DONE = { resend: 'Nothing was sent.', archive: 'Nothing was archived.' };
+const WORDS_FROM = ['event_date', 'event_type', 'event_type_custom', 'client_name'];
+export function sheetRefusal(kind, fresh, opened) {
+  const p = fresh || {};
+  if (p.legal_hold !== false) return HOLD_NOTE;
+  const after = NOTHING_DONE[kind] || '';
+  if (Number(p.amount_paid || 0) > Number((opened || {}).amount_paid || 0)) return `${SHEET_PAID} ${after}`;
+  const gates = gatesOf(p);
+  const row = kind === 'archive' ? gates.archive : gates.send;
+  if (!row || row.mode !== 'sheet') return `${SHEET_MOVED} ${after}`;
+  const was = opened || {};
+  if (kind === 'resend' && WORDS_FROM.some((f) => text(p[f]) !== text(was[f]))) return `${SHEET_MOVED} ${after}`;
+  return null;
 }
