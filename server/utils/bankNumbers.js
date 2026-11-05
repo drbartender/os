@@ -10,8 +10,36 @@
 // POST /api/payment, PUT /api/admin/users/:id/profile, and the staff portal's
 // PATCH (server/routes/staffPortal/paymentMethods.js, the validators only).
 
-const { encrypt } = require('./encryption');
+const Sentry = require('@sentry/node');
+const { encrypt, decrypt } = require('./encryption');
 const { ValidationError } = require('./errors');
+
+/**
+ * The masked display value for a stored bank number: four stars plus the last
+ * four of the decrypted number, or four stars alone when the ciphertext cannot
+ * be decrypted (a rotated ENCRYPTION_KEY, a corrupted row), with a Sentry
+ * breadcrumb so the row can be repaired. One bad row must never 500 a whole
+ * profile read: GET /api/payment degraded this way from the start, while GET
+ * and PUT /api/admin/users/:id decrypted bare and took every direct-deposit
+ * contractor's record page down with one row (audit 2026-11-05, POUT-08).
+ * The bare '****' round-trips as "unchanged" through isMaskedBankValue.
+ */
+function maskBankNumber(cipher, { userId = null, column = null } = {}) {
+  if (!cipher) return cipher;
+  try {
+    return '****' + String(decrypt(cipher)).slice(-4);
+  } catch (err) {
+    try {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(err, {
+          tags: { util: 'bankNumbers', op: 'mask', column },
+          extra: { user_id: userId },
+        });
+      }
+    } catch (_) { /* never let logging break a response */ }
+    return '****';
+  }
+}
 
 /** True for a 9-digit ABA routing number whose 3-7-1 weighted digit sum ends in 0. */
 function isValidRoutingNumber(s) {
@@ -103,6 +131,7 @@ module.exports = {
   isValidRoutingNumber,
   isValidAccountNumber,
   isMaskedBankValue,
+  maskBankNumber,
   resolveBankFields,
   BANK_REQUIRED_MESSAGES,
 };

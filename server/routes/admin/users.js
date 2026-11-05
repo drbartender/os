@@ -8,8 +8,7 @@ const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { STAFF_URL } = require('../../utils/urls');
 const { geocodeAddress, buildAddressString } = require('../../utils/geocode');
-const { decrypt } = require('../../utils/encryption');
-const { resolveBankFields } = require('../../utils/bankNumbers');
+const { resolveBankFields, maskBankNumber } = require('../../utils/bankNumbers');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError } = require('../../utils/errors');
 const { validatePhone } = require('../../utils/phone');
@@ -77,10 +76,10 @@ router.get('/users/:id', auth, requireAdminOrManager, asyncHandler(async (req, r
   if (!userRes.rows[0]) throw new NotFoundError('User not found');
 
   const payment = paymentRes.rows[0] || {};
-  if (payment) {
-    if (payment.routing_number) { const raw = decrypt(payment.routing_number); payment.routing_number = '****' + raw.slice(-4); }
-    if (payment.account_number) { const raw = decrypt(payment.account_number); payment.account_number = '****' + raw.slice(-4); }
-  }
+  // The safe mask (bankNumbers.js): a bad ciphertext is '****', not a 500 for
+  // the whole record page (audit 2026-11-05, POUT-08).
+  if (payment.routing_number) payment.routing_number = maskBankNumber(payment.routing_number, { userId, column: 'routing_number' });
+  if (payment.account_number) payment.account_number = maskBankNumber(payment.account_number, { userId, column: 'account_number' });
 
   // Least-privilege for managers (this route is open to admin + manager). A
   // manager manages/evaluates/schedules staff, but the payroll/financial tier
@@ -453,8 +452,8 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
   ]);
 
   const payment = paymentRes.rows[0] || {};
-  if (payment.routing_number) { const raw = decrypt(payment.routing_number); payment.routing_number = '****' + raw.slice(-4); }
-  if (payment.account_number) { const raw = decrypt(payment.account_number); payment.account_number = '****' + raw.slice(-4); }
+  if (payment.routing_number) payment.routing_number = maskBankNumber(payment.routing_number, { userId, column: 'routing_number' });
+  if (payment.account_number) payment.account_number = maskBankNumber(payment.account_number, { userId, column: 'account_number' });
 
   res.json({ profile: profileRes.rows[0] || {}, payment });
 }));
