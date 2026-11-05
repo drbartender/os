@@ -14,8 +14,13 @@ const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
 const { STAFF_URL } = require('../utils/urls');
 const { refreshDisplayName } = require('../utils/refreshDisplayName');
+const { validatePhone } = require('../utils/phone');
 
 const router = express.Router();
+
+// The email shape every signup route checks (routes/auth.js): one @, a dot
+// after it, no whitespace. Shape only; the inbox is proven by the copy arriving.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Minimal HTML escape for inline interpolation in the signer confirmation email.
 function escapeHtml(s) {
@@ -70,14 +75,27 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
   } = req.body;
 
   const fieldErrors = {};
-  if (!full_name) fieldErrors.full_name = 'Full name is required';
-  if (!email) fieldErrors.email = 'Email is required';
-  if (!ack_ic_status)         fieldErrors.ack_ic_status         = 'This acknowledgment is required';
-  if (!ack_commitment)        fieldErrors.ack_commitment        = 'This acknowledgment is required';
-  if (!ack_non_solicit)       fieldErrors.ack_non_solicit       = 'This acknowledgment is required';
-  if (!ack_damage_recoupment) fieldErrors.ack_damage_recoupment = 'This acknowledgment is required';
-  if (!ack_legal_protections) fieldErrors.ack_legal_protections = 'This acknowledgment is required';
-  if (!ack_field_guide)       fieldErrors.ack_field_guide       = 'This acknowledgment is required';
+  // Bounds are the column widths (schema.sql: full_name and email VARCHAR(255),
+  // phone VARCHAR(50)); an overflow used to reach Postgres as a 22001 500, and
+  // the email is where the only copy of the signed contract is sent.
+  const fullName = typeof full_name === 'string' ? full_name.trim() : '';
+  if (!fullName) fieldErrors.full_name = 'Full name is required';
+  else if (fullName.length < 2 || fullName.length > 255) fieldErrors.full_name = 'Full name must be 2 to 255 characters';
+  const emailValue = typeof email === 'string' ? email.trim() : '';
+  if (!emailValue) fieldErrors.email = 'Email is required';
+  else if (emailValue.length < 3 || emailValue.length > 255 || !EMAIL_RE.test(emailValue)) {
+    fieldErrors.email = 'Enter a valid email address';
+  }
+  // The save-time phone helper the proposal sign uses (10-digit storage);
+  // empty stays optional and stores NULL.
+  const phoneCheck = validatePhone(phone);
+  if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
+  // An acknowledgment is the boolean true and nothing else: the old `!!`
+  // coercion recorded the string "false" as acknowledged.
+  const acks = { ack_ic_status, ack_commitment, ack_non_solicit, ack_damage_recoupment, ack_legal_protections, ack_field_guide };
+  for (const key of Object.keys(acks)) {
+    if (acks[key] !== true) fieldErrors[key] = 'This acknowledgment is required';
+  }
   if (!signature_data) fieldErrors.signature = 'Please sign the agreement before submitting';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
@@ -133,9 +151,8 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
          WHERE user_id=$16
          RETURNING *`,
         [
-          full_name, email, phone, !!sms_consent,
-          !!ack_ic_status, !!ack_commitment, !!ack_non_solicit,
-          !!ack_damage_recoupment, !!ack_legal_protections, !!ack_field_guide,
+          fullName, emailValue, phoneCheck.value, sms_consent === true,
+          true, true, true, true, true, true, // every ack was asserted === true above
           signature_data, signature_method, ip, userAgent,
           CURRENT_VERSION, req.user.id,
         ]
@@ -150,9 +167,8 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
          RETURNING *`,
         [
           req.user.id,
-          full_name, email, phone, !!sms_consent,
-          !!ack_ic_status, !!ack_commitment, !!ack_non_solicit,
-          !!ack_damage_recoupment, !!ack_legal_protections, !!ack_field_guide,
+          fullName, emailValue, phoneCheck.value, sms_consent === true,
+          true, true, true, true, true, true, // every ack was asserted === true above
           signature_data, signature_method, ip, userAgent,
           CURRENT_VERSION,
         ]
