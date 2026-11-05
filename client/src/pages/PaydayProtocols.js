@@ -16,7 +16,7 @@ import FieldError from '../components/FieldError';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { EMPTY_W9, validateW9, buildW9File, preloadW9Pdf } from '../utils/w9Pdf';
+import { EMPTY_W9, W9_FORM_REVISION, validateW9, buildW9File, preloadW9Pdf } from '../utils/w9Pdf';
 
 // New (Tip & Payroll Preferences) — values must match the backend enum.
 const PAYMENT_METHODS = [
@@ -323,7 +323,14 @@ export default function PaydayProtocols() {
       }
 
       // Upload mode with a W-9 already on file sends none; the server reuses it.
-      if (w9Upload) data.append('w9', w9Upload);
+      if (w9Upload) {
+        data.append('w9', w9Upload);
+        // The certification event the server records beside the file (audit
+        // ESIG-07): the form revision this page drew and how it was signed; a
+        // scanned upload says so. Never the TIN, which lives only in the PDF.
+        data.append('w9_signature_method', w9Mode === 'fill' ? (w9.signatureMethod || '') : 'upload');
+        data.append('w9_form_revision', w9Mode === 'fill' ? W9_FORM_REVISION : '');
+      }
 
       await api.post('/payment', data);
       // Payment saved. Refresh the user so RequirePortal sees the new 'approved'
