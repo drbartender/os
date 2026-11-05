@@ -8,10 +8,11 @@
 // the transition out of archived and uses the same money guard (rowHoldsMoney).
 //
 // Why money keeps a signature: a paid booking's edits go through the additional-services flow
-// and its signed snapshot keeps the record; a debit still in flight (paymentInFlight.js, the one
-// definition of "settling") credits the row at payment_intent.succeeded, so clearing the
-// signature meanwhile would leave a paid row the client can never sign again; and a retainer a
-// cancelled booking kept (money law 1) rests on the signature it was forfeited under.
+// and its signed snapshot keeps the record; a debit still in flight or a card confirmation that
+// may be landing (paymentInFlight.js, the one definition of each) credits the row at
+// payment_intent.succeeded, so clearing the signature meanwhile would leave a paid row the
+// client can never sign again; and a retainer a cancelled booking kept (money law 1) rests on
+// the signature it was forfeited under.
 //
 // The caller holds the row FOR UPDATE and passes its transaction client (one pooled connection
 // per request); everything here reads and writes through that client only. The pure decision
@@ -20,21 +21,26 @@
 'use strict';
 
 const { signatureVoidReason } = require('./patchGuards');
-const { findInFlightPayments } = require('../../utils/paymentInFlight');
+const { findInFlightPayments, findPendingPayments } = require('../../utils/paymentInFlight');
 
 // The statuses a restore out of archived may land on that still precede money.
 const PRE_PAYMENT_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
 
 /**
- * True when the row holds money or a payment is still settling on it:
- * amount_paid or external_paid above zero, or a processing bank debit
- * (findInFlightPayments on the caller's client). The row is the one read
- * under the caller's lock.
+ * True when the row holds money or a payment may be landing on it:
+ * amount_paid or external_paid above zero, a processing bank debit
+ * (findInFlightPayments), or a pending card session inside the sign email's
+ * window (findPendingPayments: the seconds before payment_intent.succeeded,
+ * or a 3DS challenge), both read on the caller's client. A pending session
+ * older than the window is a stale intent and keeps nothing. The row is the
+ * one read under the caller's lock.
  */
 async function rowHoldsMoney(db, row, proposalId) {
   if (Number(row.amount_paid || 0) > 0 || Number(row.external_paid || 0) > 0) return true;
   const inFlight = await findInFlightPayments(proposalId, db);
-  return inFlight.length > 0;
+  if (inFlight.length > 0) return true;
+  const pending = await findPendingPayments(proposalId, db);
+  return pending.length > 0;
 }
 
 /**
