@@ -100,3 +100,35 @@ test('find-or-refresh, a paid locked invoice already carrying the same fact: not
   await findOrRefreshExtrasInvoice(args(client, { foldedIntoTotal: true }), client);
   assert.equal(stamps(client).length, 0);
 });
+
+// ── The stored fact is monotone upward (round 3, L1) ─────────────────────────
+// A re-submit through the fast path onto an open invoice stamped false over a
+// stored true while the earlier fold's 6000 stayed in total_price, so once
+// paid the netting added the 6000 back. Money is in total_price until a fold
+// takes it out, which the fast path never does: a true is never overwritten by
+// false; a NULL or a false takes the caller's value.
+test('L1: an open invoice stored NULL takes the caller\'s false', async () => {
+  const client = scriptedClient({ existing: { id: 80, label: 'Drink Plan Extras', status: 'sent', locked: false, amount_due: 2500, amount_paid: 0, folded_into_total: null } });
+  await findOrRefreshExtrasInvoice(args(client, { foldedIntoTotal: false }), client);
+  assert.deepEqual(amountWrites(client)[0].params, [6000, false, 80]);
+});
+
+test('L1: an open invoice stored false takes the caller\'s true (the fold ran this time)', async () => {
+  const client = scriptedClient({ existing: { id: 81, label: 'Drink Plan Extras', status: 'sent', locked: false, amount_due: 2500, amount_paid: 0, folded_into_total: false } });
+  const inv = await findOrRefreshExtrasInvoice(args(client, { foldedIntoTotal: true }), client);
+  assert.deepEqual(amountWrites(client)[0].params, [6000, true, 81]);
+  assert.equal(inv.folded_into_total, true);
+});
+
+test('L1: an open invoice stored true keeps true on a fast-path re-submit that says false', async () => {
+  const client = scriptedClient({ existing: { id: 82, label: 'Drink Plan Extras', status: 'sent', locked: false, amount_due: 2500, amount_paid: 0, folded_into_total: true } });
+  const inv = await findOrRefreshExtrasInvoice(args(client, { foldedIntoTotal: false }), client);
+  assert.deepEqual(amountWrites(client)[0].params, [6000, true, 82], 'the demand and the lines refresh; the fact stands');
+  assert.equal(inv.folded_into_total, true);
+});
+
+test('L1: a paid locked invoice stored true is never stamped false either', async () => {
+  const client = scriptedClient({ existing: { id: 83, label: 'Drink Plan Extras', status: 'paid', locked: true, amount_due: 6000, amount_paid: 6000, folded_into_total: true } });
+  await findOrRefreshExtrasInvoice(args(client, { foldedIntoTotal: false }), client);
+  assert.equal(stamps(client).length, 0);
+});

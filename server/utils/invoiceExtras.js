@@ -259,6 +259,12 @@ async function findExtrasInvoice(proposalId, dbClient) {
  *
  * `foldedIntoTotal` is that fact (round 2 H1): the transaction path passes
  * true, the fast path false; it is written on the create and on the refresh.
+ * The stored fact is monotone upward (round 3 L1): a true is never
+ * overwritten by false, since the money is in total_price until a fold takes
+ * it out and the fast path never folds; a NULL or a false takes the caller's
+ * value. A re-submit through the fast path onto an open invoice used to stamp
+ * false over a true while the earlier fold's 6000 stayed in total_price, and
+ * once paid the netting added the 6000 back.
  *
  * @param {{ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars, foldedIntoTotal?:boolean }} args
  * @param {object} dbClient — must be a transaction client
@@ -274,7 +280,8 @@ async function findOrRefreshExtrasInvoice(
     const isOpenUnlocked =
       (inv.status === 'sent' || inv.status === 'partially_paid') && !inv.locked;
     if (isOpenUnlocked) {
-      const fact = factKnown ? foldedIntoTotal : (inv.folded_into_total ?? null);
+      const fact = inv.folded_into_total === true ? true
+        : (factKnown ? foldedIntoTotal : (inv.folded_into_total ?? null));
       await dbClient.query(
         'UPDATE invoices SET amount_due = $1, folded_into_total = $2, updated_at = NOW() WHERE id = $3',
         [breakdown.totalCents, fact, inv.id]
@@ -285,8 +292,9 @@ async function findOrRefreshExtrasInvoice(
         { lines: breakdown.lines, selections, guestCount, pricingSnapshot, numBars, totalCents: breakdown.totalCents },
         dbClient
       );
-    } else if (factKnown && inv.folded_into_total !== foldedIntoTotal) {
-      // paid/locked: the demand and the lines stand; the provenance is recorded.
+    } else if (factKnown && inv.folded_into_total !== true && inv.folded_into_total !== foldedIntoTotal) {
+      // paid/locked: the demand and the lines stand; the provenance is recorded
+      // (never a true overwritten by false).
       await dbClient.query('UPDATE invoices SET folded_into_total = $1 WHERE id = $2', [foldedIntoTotal, inv.id]);
       inv.folded_into_total = foldedIntoTotal;
     }
