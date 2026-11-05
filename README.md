@@ -634,7 +634,7 @@ tests omitted
 │       │   │   ├── PotionsPage.js # PotionsPage (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── ProposalChangeRequestCard.js # ProposalChangeRequestCard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── ProposalCreate.js # ProposalCreate (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   │   ├── ProposalDetail.js # ProposalDetail (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── ProposalDetail.js # ProposalDetail: the admin proposal page at /proposals/:id, mounted fresh per proposal so no open editor, dialog or late response carries over to the next one.
 │       │   │   ├── ProposalDetailPaymentPanel.js # ProposalDetailPaymentPanel (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── ProposalDetailStopDrip.js # ProposalDetailStopDrip (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── ProposalsDashboard.js # ProposalsDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.

@@ -651,8 +651,9 @@ function EventDetailPageDesktop() {
 export default function EventDetailPage() {
   const { id } = useParams();
   const { isPhone, desktopView } = useMobileView();
-  // Keyed by the event: going from one event to another is a NEW screen, so
-  // no state and no late answer of the previous event can show on the next.
+  // Keyed by the event, both branches: going from one event to another is a NEW
+  // screen, so no state (an open editor, a send or cancel dialog) and no late
+  // answer of the previous event can show on the next.
   if (isPhone && !desktopView('event-detail')) return <EventDetailPhone key={id} />;
-  return <EventDetailPageDesktop />;
+  return <EventDetailPageDesktop key={id} />;
 }

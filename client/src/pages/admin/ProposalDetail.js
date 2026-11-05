@@ -1,5 +1,5 @@
-// ProposalDetail (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// ProposalDetail: the admin proposal page at /proposals/:id, mounted fresh per proposal
+// so no open editor, dialog or late response carries over to the next one.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -67,7 +67,16 @@ function firstReplyLabel(fr) {
   return 'failed';
 }
 
+// The route keeps its element when only :id changes (global search, the
+// palette, a link on the page), so the key gives each proposal a new mount:
+// without it an open editor kept the form seeded from the first proposal and
+// saved it onto the second, and a late answer for the first replaced the second.
 export default function ProposalDetail() {
+  const { id } = useParams();
+  return <ProposalDetailBody key={id} />;
+}
+
+function ProposalDetailBody() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
