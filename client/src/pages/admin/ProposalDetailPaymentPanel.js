@@ -704,6 +704,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
                     · {r.reason} ·{' '}
                     {new Date(r.created_at).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     {r.total_scope === 'overpayment' && <> · overpayment</>}
+                    {r.total_scope === 'dispute' && <> · chargeback</>}
                     {r.status !== 'succeeded' && <> · <em>{r.status}</em></>}
                     <div className="muted">
                       total {fmt$2dp(Number(r.total_price_before))} → {fmt$2dp(Number(r.total_price_after))}

@@ -1177,7 +1177,25 @@ DO $$ BEGIN
     SELECT 1 FROM pg_constraint WHERE conname = 'proposal_refunds_total_scope_check'
   ) THEN
     ALTER TABLE proposal_refunds ADD CONSTRAINT proposal_refunds_total_scope_check
-      CHECK (total_scope IN ('contract', 'overpayment'));
+      CHECK (total_scope IN ('contract', 'overpayment', 'dispute'));
+  END IF;
+END $$;
+-- Chargebacks (audit PAY-04, 2026-11-05): a card dispute whose funds Stripe
+-- withdrew is recorded here as a 'dispute'-scope row (stripe_refund_id = the
+-- dispute id, so the unique index above is its idempotency anchor), which
+-- every refund-netting reader then counts; the contract stands, so the
+-- reconciler moves neither total_price nor the invoice demand for it. A
+-- database whose constraint predates the third value is re-constrained once;
+-- guarded on the definition so re-runs skip it.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'proposal_refunds_total_scope_check'
+      AND pg_get_constraintdef(oid) NOT LIKE '%dispute%'
+  ) THEN
+    ALTER TABLE proposal_refunds DROP CONSTRAINT proposal_refunds_total_scope_check;
+    ALTER TABLE proposal_refunds ADD CONSTRAINT proposal_refunds_total_scope_check
+      CHECK (total_scope IN ('contract', 'overpayment', 'dispute'));
   END IF;
 END $$;
 

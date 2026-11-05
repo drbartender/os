@@ -305,6 +305,12 @@ function planRefund({
  * @param {number} a.amountCents
  * @param {string} a.reason
  * @param {number|null} a.issuedBy           users.id, or null (dashboard)
+ * @param {string|null} [a.totalScope]       'contract' (lowers total_price), 'overpayment'
+ *        (returns excess, moves neither total_price nor a refresh-managed demand), or
+ *        'dispute' (audit PAY-04: a chargeback; the money left but the contract stands,
+ *        so amount_paid drops, the invoices it paid are owed again at their full
+ *        demand, and total_price and the override never move). disputeLedger.js is
+ *        the one writer of 'dispute' rows.
  * @param {object} dbClient                  transaction client
  * @returns {Promise<{applied:boolean}>}     applied=false → was already done
  */
@@ -443,7 +449,9 @@ async function applyRefundReconciliation(
     // entered amount_paid, so absorbing them would drop money that is not there.
     // Extension invoices are minted alone and paid alone (headroom is
     // structurally 0), so this guard states the rule rather than relying on it.
-    if (scope === 'overpayment') {
+    // A dispute absorbs headroom the same way: the uncredited part of the
+    // charge sat on no invoice, so there is nothing to re-open for it.
+    if (scope === 'overpayment' || scope === 'dispute') {
       if (!(await paymentIsOffLedger(paymentId, dbClient))) {
         const headroom = await uncreditedHeadroomCents(paymentId, dbClient, {
           excludeRefundRowId: refundRowId,
@@ -502,9 +510,12 @@ async function applyRefundReconciliation(
       // constant, not on the `locked` proxy that first encoded it — so adding
       // a label to the refresh can never silently desync this rule
       // (push review, 2026-07-26).
+      // A dispute never drops the demand (audit PAY-04): the client took the
+      // money back while the contract stands, so the invoice is owed again at
+      // its full figure and its pay link is live again.
       const demandIsRefreshManaged = link.invoice_locked !== true
         && TOTAL_TRACKING_INVOICE_LABELS.includes(link.invoice_label);
-      const dropDue = scope !== 'overpayment' || !demandIsRefreshManaged;
+      const dropDue = scope === 'contract' || (scope === 'overpayment' && !demandIsRefreshManaged);
       const upd = dropDue
         ? await dbClient.query(
             `UPDATE invoices
@@ -563,7 +574,9 @@ async function applyRefundReconciliation(
   // docs/fix-list-remaining-2026-07-02.md with the netting formula that would
   // fix it properly. Do not re-attempt without netting out outstanding
   // non-contract invoice money.
-  const contractCents = scope === 'overpayment' ? 0 : amountCents - nonContractCents;
+  // Only contract scope lowers the contract; an overpayment returns excess
+  // and a dispute (PAY-04) takes money the contract still demands.
+  const contractCents = scope === 'contract' ? amountCents - nonContractCents : 0;
   const paidDropCents = amountCents - offLedgerCents;
   // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending
   // preview). Without this the audit figure written to total_price_after could
