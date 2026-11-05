@@ -22,12 +22,21 @@ const { validatePreferredNameChange } = require('../../utils/staffDisplayName.va
 const router = express.Router();
 
 // ─── Per-Contractor Tip Page Actions ─────────────────────────────
-// Admin/manager surface for managing a contractor's tip page: edit handles,
-// rotate or generate the Stripe Payment Link, and toggle the page on/off.
+// Admin/manager surface for managing a contractor's tip page: edit the
+// preferred name, rotate or generate the Stripe Payment Link, and toggle the
+// page on/off. The handles and the payroll method are admin-only (below).
 // `regenerate-stripe` preserves tip_page_token so existing printed QRs keep
 // working — only the Stripe link rotates.
 
 const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other'];
+
+// The payout destination: the columns the admin Pay panel pays to (client
+// PayPanel.js builds the Venmo / Cash App / PayPal deep link from them and
+// opens on preferred_payment_method). Admin-only on this route, the same tier
+// as the payroll routes and the users.js projection that withholds the payment
+// row from managers; a manager could otherwise redirect a contractor's payout
+// with no audit row (audit 2026-11-05, POUT-01).
+const PAYOUT_DESTINATION_FIELDS = ['venmo_handle', 'cashapp_handle', 'paypal_url', 'preferred_payment_method'];
 
 // Managers shouldn't be able to mutate an admin's tip page (rotate their Stripe
 // link, change their handles, or deactivate them). Admins can mutate anyone.
@@ -39,16 +48,22 @@ async function ensureNonAdminTargetForManager(req, userId) {
   }
 }
 
-// PATCH — admin override of handles + payroll preference + preferred_name
+// PATCH — handles + payroll preference (admin only) and preferred_name (admin
+// or manager)
 router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
   await ensureNonAdminTargetForManager(req, userId);
 
-  const fields = {};
-  for (const k of ['venmo_handle', 'cashapp_handle', 'paypal_url', 'preferred_payment_method']) {
-    if (k in req.body) fields[k] = req.body[k];
+  // Refused on key presence, before any write, so a manager body that also
+  // carries preferred_name writes nothing at all.
+  const payoutKeys = PAYOUT_DESTINATION_FIELDS.filter((k) => k in (req.body || {}));
+  if (payoutKeys.length > 0 && req.user.role !== 'admin') {
+    throw new PermissionError('Only an admin can change where a contractor is paid');
   }
+
+  const fields = {};
+  for (const k of payoutKeys) fields[k] = req.body[k];
 
   // Empty-string preferred_payment_method = "form left this blank" → no-op,
   // not silent clear. Explicit null clears (consistent with /api/me/tip-page).
@@ -98,6 +113,16 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
       VALUES ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')})
       ON CONFLICT (user_id) DO UPDATE SET ${setClause}, updated_at = NOW()
     `, [userId, ...cols.map(c => fields[c] || null)]);
+    // Field names only: a handle is where a person's money goes and never
+    // belongs in a log row. Awaited (rotate-token pattern) so the row exists
+    // when the caller sees 200; the helper takes its own pooled connection and
+    // this handler holds none.
+    await logAdminAction({
+      actorUserId: req.user.id,
+      targetUserId: userId,
+      action: 'tip_handles_change',
+      metadata: { fields_changed: cols },
+    });
   }
   res.json({ ok: true });
 }));

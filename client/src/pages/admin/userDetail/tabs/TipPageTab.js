@@ -124,7 +124,11 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
           </div>
         </div>
 
-        {/* Handles */}
+        {/* Handles: the payout destination. Admin-only on the server (the
+            PATCH refuses these fields from a manager, POUT-01), and the parent
+            hands a manager `payment: {}` anyway, so the form is withheld
+            rather than shown blank. */}
+        {viewer?.role === 'admin' && (
         <div className="card">
           <div className="card-head">
             <h3>Handles (admin override)</h3>
@@ -183,6 +187,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
             </div>
           </div>
         </div>
+        )}
 
         {viewer?.role === 'admin' && <FeedbackCard userId={userId} />}
       </div>
