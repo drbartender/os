@@ -6,6 +6,11 @@
 // Nothing here stores the form: the SSN and EIN live only in page state until the PDF
 // is posted to /api/payment.
 
+// The IRS form revision this page draws. Printed on the PDF's header line and
+// sent beside the file so the server records which revision was certified
+// (payment_profiles.w9_form_revision, audit ESIG-07); bump both together.
+export const W9_FORM_REVISION = 'Rev. March 2024';
+
 export const EMPTY_W9 = {
   name: '',
   business_name: '',
@@ -98,7 +103,7 @@ export async function buildW9File(form) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(100, 100, 100);
-  doc.text('Rev. March 2024  |  Department of the Treasury — Internal Revenue Service', ML, 62);
+  doc.text(`${W9_FORM_REVISION}  |  Department of the Treasury — Internal Revenue Service`, ML, 62);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);

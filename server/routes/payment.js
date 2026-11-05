@@ -47,6 +47,10 @@ router.get('/', auth, asyncHandler(async (req, res) => {
 // Save payment profile
 router.post('/', auth, asyncHandler(async (req, res) => {
   const { preferred_payment_method, payment_username, routing_number, account_number } = req.body;
+  // The certification event's inputs (audit ESIG-07), sent beside the file by
+  // the Payday Protocols page: the W-9 revision the fill-mode page drew and
+  // how it was signed ('draw' or 'type'; a scanned form says 'upload').
+  const { w9_form_revision, w9_signature_method } = req.body;
 
   // Step marker — on failure we log which step the handler was on so Render logs
   // pinpoint the exact operation that crashed. Hardening while we diagnose a
@@ -97,6 +101,18 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       : { routing_number: { keep: false, value: null }, account_number: { keep: false, value: null } };
 
     let w9_url = null, w9_name = null;
+    // The certification event (audit ESIG-07): recorded only when a NEW W-9
+    // arrives, from the request and the proxy-validated address, never from
+    // the PDF the browser built. A reuse of the stored file keeps the stored
+    // event. Never the TIN: it stays inside the PDF and out of every column.
+    const W9_METHODS = ['draw', 'type', 'upload'];
+    const w9Cert = {
+      isNew: false,
+      ip: (req.ip || '').replace(/^::ffff:/, '').slice(0, 45) || null,
+      ua: (req.headers['user-agent'] || '').slice(0, 500) || null,
+      revision: typeof w9_form_revision === 'string' ? (w9_form_revision.trim().slice(0, 20) || null) : null,
+      method: W9_METHODS.includes(w9_signature_method) ? w9_signature_method : null,
+    };
 
     step = 'load_existing_profile';
     const existing = await pool.query(
@@ -129,6 +145,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       await uploadFile(file.data, filename);
       w9_url = `/files/${filename}`;
       w9_name = originalName;
+      w9Cert.isNew = true;
     } else if (existing.rows[0]?.w9_file_url) {
       // Reuse previously uploaded W-9
       w9_url = existing.rows[0].w9_file_url;
@@ -164,23 +181,37 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       step = existing.rows[0] ? 'update_payment_profile' : 'insert_payment_profile';
       if (existing.rows[0]) {
         // $8 and $9 keep the stored bank column when a masked value came back.
+        // $10 is the new-W-9 flag: the certification columns move only with a
+        // new file (ESIG-07); a reuse keeps the stored event.
         await client.query(
           `UPDATE payment_profiles
            SET preferred_payment_method=$1, payment_username=$2,
                routing_number = CASE WHEN $8::boolean THEN routing_number ELSE $3 END,
                account_number = CASE WHEN $9::boolean THEN account_number ELSE $4 END,
-               w9_file_url=$5, w9_filename=$6
+               w9_file_url=$5, w9_filename=$6,
+               w9_submitted_at = CASE WHEN $10::boolean THEN NOW() ELSE w9_submitted_at END,
+               w9_submit_ip = CASE WHEN $10::boolean THEN $11 ELSE w9_submit_ip END,
+               w9_submit_ua = CASE WHEN $10::boolean THEN $12 ELSE w9_submit_ua END,
+               w9_form_revision = CASE WHEN $10::boolean THEN $13 ELSE w9_form_revision END,
+               w9_signature_method = CASE WHEN $10::boolean THEN $14 ELSE w9_signature_method END
            WHERE user_id=$7`,
           [preferred_payment_method, payment_username || null, bank.routing_number.value, bank.account_number.value,
-           w9_url, w9_name, req.user.id, bank.routing_number.keep, bank.account_number.keep]
+           w9_url, w9_name, req.user.id, bank.routing_number.keep, bank.account_number.keep,
+           w9Cert.isNew, w9Cert.isNew ? w9Cert.ip : null, w9Cert.isNew ? w9Cert.ua : null,
+           w9Cert.isNew ? w9Cert.revision : null, w9Cert.isNew ? w9Cert.method : null]
         );
       } else {
+        // A first profile always carries a new file (the W-9 gate above), so
+        // the certification event is written with it.
         await client.query(
           `INSERT INTO payment_profiles
-             (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+             (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename,
+              w9_submitted_at, w9_submit_ip, w9_submit_ua, w9_form_revision, w9_signature_method)
+           VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::boolean THEN NOW() ELSE NULL END, $9, $10, $11, $12)`,
           [req.user.id, preferred_payment_method, payment_username || null,
-           bank.routing_number.value, bank.account_number.value, w9_url, w9_name]
+           bank.routing_number.value, bank.account_number.value, w9_url, w9_name,
+           w9Cert.isNew, w9Cert.isNew ? w9Cert.ip : null, w9Cert.isNew ? w9Cert.ua : null,
+           w9Cert.isNew ? w9Cert.revision : null, w9Cert.isNew ? w9Cert.method : null]
         );
       }
 

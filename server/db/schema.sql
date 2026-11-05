@@ -212,6 +212,18 @@ CREATE TABLE IF NOT EXISTS payment_profiles (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- The electronic W-9's certification event (audit ESIG-07), recorded by
+-- routes/payment.js when a NEW W-9 file arrives, from the request: the
+-- proxy-validated address, the user agent, the form revision the fill-mode
+-- page drew (client/src/utils/w9Pdf.js W9_FORM_REVISION) and the signature
+-- method ('draw' or 'type' in fill mode, 'upload' for a scanned form). A reuse
+-- of the stored file keeps the stored event. Never the TIN: the SSN stays
+-- inside the PDF and out of every column and log.
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_submitted_at TIMESTAMPTZ;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_submit_ip VARCHAR(45);
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_submit_ua TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_form_revision VARCHAR(20);
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS w9_signature_method VARCHAR(10);
 
 -- Applications table (replaces Google Form)
 CREATE TABLE IF NOT EXISTS applications (
