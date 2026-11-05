@@ -43,9 +43,16 @@
 // the same cents, total_price lowered by the same cents (the 0 floor it has),
 // and total_price_override lowered by the same cents when one exists, because
 // the engine substitutes an override for the whole calculated total, lines
-// included (refundHelpers.js applyRefundReconciliation does the same). A
-// snapshot that is not an object (a legacy row) is left as it is: the line
-// still reaches the adjustments column, and the next re-price rebuilds the
+// included (refundHelpers.js applyRefundReconciliation does the same).
+//
+// A legacy row's snapshot is {} (pricing_snapshot is JSONB NOT NULL DEFAULT
+// '{}'), an object with no total, no breakdown and no lines: it takes the
+// line into its adjustments and nothing else is invented, no total where
+// there was none (a snapshot whose total is not money is left with it as it
+// was, never NaN, never negative) and no breakdown row where there is no
+// breakdown. Only a snapshot that is not an object at all (a JSON scalar in
+// the column, which nothing writes) is left untouched; the line still reaches
+// the adjustments column either way, and the next re-price rebuilds the
 // snapshot from the engine with the comp netted.
 //
 // Unlike the refund writer it THROWS instead of skipping: nothing external has
@@ -176,6 +183,8 @@ async function appendCompLine(dbClient, { proposalId, compCents, invoiceNumber =
     if (Array.isArray(snap.breakdown)) {
       nextSnap.breakdown = insertAdjustmentBreakdownRow(snap, { label: line.label, amount: -line.amount, visible: true });
     }
+    // A total that is money moves by the comp's cents and floors at 0; one
+    // that is absent or not money is left exactly as it was (M1, round 2).
     const totalCents = totalCentsOf(snap.total);
     if (totalCents !== null) nextSnap.total = Math.max(0, totalCents - compCents) / 100;
   }

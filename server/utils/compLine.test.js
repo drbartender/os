@@ -170,7 +170,25 @@ test('an override moves by the same cents and NULL stays NULL', async () => {
   assert.equal(b.proposal.total_price_override, null);
 });
 
-test('a snapshot that is not an object is left alone; the line still reaches the adjustments column', async () => {
+test('a legacy {} snapshot (the column default) takes the line and nothing else: no total, no breakdown row', async () => {
+  for (const snapshot of [{}, { adjustments: [] }, { total: null }, { total: 'not money' }, { total: '' }]) {
+    const client = fakeClient({ id: 9, adjustments: null, pricing_snapshot: snapshot });
+    const out = await appendCompLine(client, { proposalId: 9, compCents: 31000 });
+    const upd = client.calls[1];
+    const written = JSON.parse(upd.params[2]);
+    assert.deepEqual(written.adjustments, [out.line], JSON.stringify(snapshot));
+    assert.equal('breakdown' in written, false, 'no breakdown row where there is no breakdown');
+    if ('total' in snapshot) {
+      assert.deepEqual(written.total, snapshot.total, 'a total that is not money is left as it was, never NaN');
+    } else {
+      assert.equal('total' in written, false, 'no total invented');
+    }
+    assert.deepEqual(JSON.parse(upd.params[1]), [out.line]);
+    assert.equal(out.proposal.total_price, '1080.00', '1390 - 310: total_price still moves');
+  }
+});
+
+test('a snapshot that is not an object at all is left alone; the line still reaches the adjustments column', async () => {
   for (const snapshot of [null, undefined, 'not a snapshot']) {
     const client = fakeClient({ id: 9, adjustments: null, pricing_snapshot: snapshot });
     const out = await appendCompLine(client, { proposalId: 9, compCents: 31000 });

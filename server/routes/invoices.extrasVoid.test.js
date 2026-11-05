@@ -51,9 +51,11 @@ function request(method, path, { token, body } = {}) {
   });
 }
 
-// `snapshot` (an engine-shaped object) and `adjustments` are stored as given;
-// absent, the columns stay NULL (a legacy row). The optional pricing inputs
-// seed a row computeCatalogSnapshot can re-price (it needs the whole row).
+// `snapshot` (an engine-shaped object) is stored as given, and as {} when
+// absent: pricing_snapshot is JSONB NOT NULL DEFAULT '{}' (schema.sql), so {}
+// is what a legacy row really holds. `adjustments` stays NULL when absent
+// (the column is nullable). The optional pricing inputs seed a row
+// computeCatalogSnapshot can re-price (it needs the whole row).
 async function seedProposal({ totalPrice, snapshot = null, adjustments = null, packageId = null, guestCount = 75, hours = 4, numBars = 1, amountPaid = 100 }) {
   const c = await pool.query(
     `INSERT INTO clients (name, email) VALUES ('Void Test', $1) RETURNING id`,
@@ -66,7 +68,7 @@ async function seedProposal({ totalPrice, snapshot = null, adjustments = null, p
                             gratuity_rate, tip_jar, event_type, event_timezone)
      VALUES ($1, 'deposit_paid', $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, NULL, 0, true, 'wedding', 'America/Chicago')
      RETURNING id`,
-    [c.rows[0].id, totalPrice, amountPaid, snapshot === null ? null : JSON.stringify(snapshot),
+    [c.rows[0].id, totalPrice, amountPaid, JSON.stringify(snapshot === null ? {} : snapshot),
       adjustments === null ? null : JSON.stringify(adjustments), packageId, guestCount, hours, numBars]
   );
   proposalIds.push(p.rows[0].id);
@@ -215,7 +217,7 @@ test('comp mixed add-on/bar/syrup: removes the FULL extras from total_price as a
   assert.equal(row.status, 'deposit_paid');
 });
 
-test('comp on a legacy row (no snapshot): total_price drops and the line still reaches the adjustments column', async () => {
+test('comp on a legacy row (the {} snapshot the column defaults to): total_price drops, the line lands in the column and the snapshot, no total is invented', async () => {
   const p = await seedProposal({ totalPrice: 1310 });
   const inv = await seedExtrasInvoice(p, { amountDue: 25000, lines: [
     { description: 'Champagne Toast (75 guests)', line_total: 20000, source_type: 'addon', source_id: 42 },
@@ -225,10 +227,13 @@ test('comp on a legacy row (no snapshot): total_price drops and the line still r
   assert.equal(r.status, 200, r.raw);
   assert.equal(await totalPriceOf(p), 1060);
   const row = await rowOf(p);
-  assert.equal(row.pricing_snapshot, null, 'a snapshot that is not an object is left alone');
   assert.equal(row.adjustments.length, 1);
   assert.equal(row.adjustments[0].source, 'comp');
   assert.equal(row.adjustments[0].amount, 250);
+  assert.deepEqual(row.adjustments[0].comped_addons, [{ addon_id: 42, cents: 20000 }]);
+  // {} is an object: it takes the line, and nothing else (no total, no
+  // breakdown row) is written into a snapshot that never had them.
+  assert.deepEqual(row.pricing_snapshot, { adjustments: row.adjustments });
 });
 
 test('after a comp, a re-price at the catalog lands on the comped total instead of billing the add-on again', async () => {
