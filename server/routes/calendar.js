@@ -340,9 +340,16 @@ function buildStaffDescription(shift, teamList) {
 
 /** GET /api/calendar/feed/:token — iCal feed (public, token-gated) */
 router.get('/feed/:token', requireUuidToken('token', 'Calendar feed not found'), calendarLimiter, asyncHandler(async (req, res) => {
-  // Look up user by calendar token
+  // Look up the user by calendar token, failing closed on account status the
+  // way middleware/auth.js does (audit 2026-11-05 AUTH-03): this route has no
+  // `auth`, so without the predicate a deactivated manager's calendar app kept
+  // polling every client's phone, email, total and balance for a year. Admin
+  // is exempt as in auth.js (a mis-set status must not lock the owner out);
+  // the status route also rotates the token on deactivation (admin/users.js).
   const userRes = await pool.query(
-    'SELECT id, role FROM users WHERE calendar_token = $1',
+    `SELECT id, role FROM users
+      WHERE calendar_token = $1
+        AND (role = 'admin' OR COALESCE(onboarding_status, '') NOT IN ('deactivated', 'rejected', 'suspended'))`,
     [req.params.token]
   );
   if (!userRes.rows[0]) throw new NotFoundError('Calendar feed not found');
