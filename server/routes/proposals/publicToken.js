@@ -24,7 +24,7 @@ const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFro
 const { publicPriceView } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
 const { contractBalanceDueCents } = require('../../utils/invoiceExtras');
-const { bookedStatusSqlList } = require('../../utils/proposalStatus');
+const { BOOKED_STATUSES } = require('../../utils/proposalStatus');
 const { depositCentsFor } = require('../../utils/stripeRouteHelpers');
 
 const router = express.Router();
@@ -190,7 +190,7 @@ async function buildPublicProposalPayload(token, db = pool) {
     LEFT JOIN LATERAL (
       SELECT token AS open_invoice_token
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
-        AND p.status IN (${bookedStatusSqlList()})
+        AND p.status = ANY($2::text[])
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1
@@ -228,7 +228,7 @@ async function buildPublicProposalPayload(token, db = pool) {
       -- Prod at 2026-08-25: 7 grouped, 3 ungrouped. Pinned by
       -- publicToken.archived.test.js.
       AND p.status <> 'archived'
-  `, [token]);
+  `, [token, BOOKED_STATUSES]);
 
   if (!result.rows[0]) return null;
 

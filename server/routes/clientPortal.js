@@ -11,7 +11,7 @@ const { chicagoTodayYmd } = require('../utils/businessTime');
 const { buildClientPriceRows, moneyToCents } = require('../utils/clientPriceLines');
 const { reportPriceRowsFold } = require('./proposals/publicToken');
 const { sumOffContractPaidCents, contractBalanceDueCents } = require('../utils/invoiceExtras');
-const { bookedStatusSqlList } = require('../utils/proposalStatus');
+const { BOOKED_STATUSES } = require('../utils/proposalStatus');
 
 // Injection seam for the business day — see staffPortal.js. The UTC and
 // Chicago days agree for about 19 hours a day, so without this a boundary
@@ -67,7 +67,7 @@ router.get('/home', asyncHandler(async (req, res) => {
     LEFT JOIN LATERAL (
       SELECT token AS open_invoice_token, label AS open_invoice_label
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
-        AND p.status IN (${bookedStatusSqlList()})
+        AND p.status = ANY($2::text[])
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.client_id = $1 AND p.status <> 'archived' AND p.status <> 'completed'`;
@@ -84,8 +84,8 @@ router.get('/home', asyncHandler(async (req, res) => {
   // until the business day it falls on is over.
   const today = _deps.today();
   const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
-    pool.query(`${focusSelect} AND p.event_date >= $2::date ${BOOKED_FIRST}`, [clientId, today]),
-    pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId]),
+    pool.query(`${focusSelect} AND p.event_date >= $3::date ${BOOKED_FIRST}`, [clientId, BOOKED_STATUSES, today]),
+    pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId, BOOKED_STATUSES]),
     pool.query(`SELECT COUNT(*)::int AS n FROM proposals
                 WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= $2::date`, [clientId, today]),
     // Archive is bounded (LIMIT 50) so the landing payload can't grow without
@@ -166,11 +166,11 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       -- Booked rows only (audit PAY-02), as /home above.
       SELECT token AS open_invoice_token, label AS open_invoice_label
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
-        AND p.status IN (${bookedStatusSqlList()})
+        AND p.status = ANY($3::text[])
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1 AND p.client_id = $2
-  `, [req.params.token, req.user.id]);
+  `, [req.params.token, req.user.id, BOOKED_STATUSES]);
 
   if (!result.rows[0]) throw new NotFoundError('Proposal not found.');
 
