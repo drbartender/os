@@ -102,7 +102,7 @@ function answer(raw, params) {
 
 let server;
 let baseUrl;
-const sent = { emails: [], sms: [] };
+const sent = { emails: [], sms: [], failEmail: false };
 
 function submit(body) {
   return new Promise((resolve, reject) => {
@@ -149,7 +149,10 @@ before(async () => {
     });
   };
   sendProposal.__setDeps({
-    sendEmail: (args) => { sent.emails.push(args); return Promise.resolve({ id: 'stub' }); },
+    sendEmail: (args) => {
+      sent.emails.push(args);
+      return sent.failEmail ? Promise.reject(new Error('provider down')) : Promise.resolve({ id: 'stub' });
+    },
     sendAndLogSms: (args) => { sent.sms.push(args); return Promise.resolve({ ok: true }); },
   });
   const app = express();
@@ -176,7 +179,7 @@ after(async () => {
 });
 
 function reset() {
-  statements = []; proposalRow = null; sent.emails = []; sent.sms = []; timeline.length = 0; connections = 0;
+  statements = []; proposalRow = null; sent.emails = []; sent.sms = []; sent.failEmail = false; timeline.length = 0; connections = 0;
 }
 
 test('the held connection is released right after COMMIT, before the post-commit tail makes a query of its own', async () => {
@@ -203,6 +206,7 @@ test('a submit whose email matches an existing client attaches the proposal but 
   assert.equal(res.body.token, null, 'the token is withheld');
   assert.ok(!res.raw.includes(TOKEN), 'the token appears nowhere in the body');
   assert.equal(res.body.delivered_to, 'v***@example.com', 'the address on file, masked');
+  assert.equal(res.body.delivery_failed, undefined, 'the mail went out, so no failure flag');
   assert.equal(typeof res.body.total, 'number');
   const insert = statements.find((s) => s.text.startsWith('INSERT INTO proposals'));
   assert.equal(insert.params[0], VICTIM_ID, 'the proposal hangs off the matched row (the unique index allows no other)');
@@ -213,6 +217,23 @@ test('a submit whose email matches an existing client attaches the proposal but 
   for (const s of sent.sms) {
     assert.equal(s.to, VICTIM_PHONE, 'any SMS goes to the phone on file, never the submitted number');
   }
+});
+
+test('a matched submit whose proposal mail fails says so instead of claiming the delivery; a new-row submit still gets its token', async () => {
+  reset();
+  sent.failEmail = true;
+  let res = await submit(body('Victim@example.com', '5555550666'));
+  assert.equal(res.status, 201, res.raw);
+  assert.equal(res.body.token, null, 'the token stays withheld');
+  assert.equal(res.body.delivered_to, null, 'no delivery is claimed');
+  assert.equal(res.body.delivery_failed, true);
+  assert.equal(sent.emails.length, 1, 'the send was attempted');
+  reset();
+  sent.failEmail = true;
+  res = await submit(body('newcomer@example.com', '5555550900'));
+  assert.equal(res.status, 201, res.raw);
+  assert.equal(res.body.token, TOKEN, 'the new-row branch is unchanged by a failed mail');
+  assert.equal(res.body.delivery_failed, undefined);
 });
 
 test('a submit that creates the client row keeps the token in the response and delivers to the submitted contact', async () => {

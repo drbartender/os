@@ -31,6 +31,16 @@ test('without a token and without delivered_to: falls back to "the email address
   expect(screen.queryByRole('button')).toBeNull();
 });
 
+test('delivery_failed: no delivery is claimed; the follow-up and the business line are offered, no link', () => {
+  render(<SubmitSuccess success={{ token: null, delivered_to: null, delivery_failed: true, total: 400 }} onView={() => {}} />);
+  expect(screen.getByRole('heading', { name: "We'll follow up shortly" })).toBeInTheDocument();
+  expect(screen.getByText(/We couldn't send the link just now/)).toBeInTheDocument();
+  expect(screen.queryByText(/We've sent/)).toBeNull();
+  const phone = screen.getByRole('link', { name: '(224) 222-1922' });
+  expect(phone).toHaveAttribute('href', 'tel:+12242221922');
+  expect(screen.queryByRole('button')).toBeNull();
+});
+
 test('top shelf without a token: the follow-up goes to the masked address, no link', () => {
   render(<SubmitSuccess success={{ token: null, delivered_to: 'v***@example.com', total: 0, top_shelf: true }} topShelf onView={() => {}} />);
   expect(screen.getByRole('heading', { name: 'Request submitted!' })).toBeInTheDocument();

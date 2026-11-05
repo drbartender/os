@@ -1,7 +1,9 @@
 // Post-commit, best-effort client email + SMS for a proposal that just entered
 // the 'sent' state. NEVER throws — the proposal + invoice are already
 // committed, so a notification failure is recoverable (admin resends from the
-// detail page). Invoice creation is NOT here — it runs inside the caller's DB
+// detail page). Resolves to { emailSent } so a caller whose only delivery is
+// the mail (the wizard's matched-client path, audit 2026-11-05 AUTH-12) can
+// tell whether it went out; the swallow-and-log behavior is unchanged. Invoice creation is NOT here — it runs inside the caller's DB
 // transaction via createInvoiceOnSend. See the 2026-05-20 manual-proposal-
 // overhaul spec and the 2026-05-22 comms Phase 3 plan (initial-proposal SMS).
 const realSentry = require('@sentry/node');
@@ -28,6 +30,7 @@ function __setDeps(d) { _deps = { ..._deps, ...d }; }
 // VALUE from the route. The website quote wizard passes none, so its send
 // ledgers sent_by NULL and never counts as a reply.
 async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = null } = {}) {
+  let emailSent = false;
   // ── Email half (existing behavior) ──
   try {
     if (!proposal || !proposal.client_email) {
@@ -48,6 +51,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
         to: proposal.client_email, ...tpl,
         meta: { proposalId: proposal.id, clientId: proposal.client_id || null, messageType: 'proposal_sent', sentBy },
       });
+      emailSent = true;
     }
   } catch (emailErr) {
     if (process.env.SENTRY_DSN_SERVER) {
@@ -67,7 +71,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
   // ── SMS half (Phase 3, spec 1.2) — separate try/catch so an SMS failure
   // never masks a successful email and never throws into the request path. ──
   try {
-    if (!proposal) return;
+    if (!proposal) return { emailSent };
     const sendCheck = await shouldSendImmediate({
       proposal: { id: proposal.id, status: proposal.status },
       client: {
@@ -79,7 +83,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
     });
     if (!sendCheck.ok) {
       console.log(`[initialProposalSms] suppressed for proposal ${proposal.id}: ${sendCheck.reason}`);
-      return;
+      return { emailSent };
     }
     const eventTypeLabel = getEventTypeLabel({
       event_type: proposal.event_type,
@@ -113,6 +117,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin', sentBy = n
     console.error('Initial-proposal SMS failed (non-blocking) for proposal',
       proposal && proposal.id);
   }
+  return { emailSent };
 }
 
 module.exports = { sendProposalSentEmail, __setDeps };

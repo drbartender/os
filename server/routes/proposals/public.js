@@ -570,6 +570,9 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       ? client_email.trim().toLowerCase()
       : String(onFile.email || client_email).trim().toLowerCase();
     const deliveryPhone = clientIsNew ? (client_phone || null) : (onFile.phone || null);
+    // Whether the proposal mail went out: on the matched path the mail IS the
+    // delivery, so the response below claims it only when it happened.
+    let emailSent = false;
 
     // Send email notifications (non-blocking)
     try {
@@ -602,7 +605,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
         // so merge the request-body values onto it. token / event_type* come
         // from the proposal row.
         const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
-        await sendProposalSentEmail(
+        const delivery = await sendProposalSentEmail(
           {
             ...proposal,
             client_name: client_name.trim(),
@@ -615,6 +618,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           },
           { actorType: 'client' },
         );
+        emailSent = Boolean(delivery && delivery.emailSent);
 
         const tpl2 = emailTemplates.clientSignedAdmin({
           clientName: client_name.trim(),
@@ -652,8 +656,16 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     const total = snapshot ? snapshot.total : 0;
     if (clientIsNew) {
       res.status(201).json({ token: proposal.token, total, top_shelf: isTopShelfClass });
-    } else {
+    } else if (isTopShelfClass || emailSent) {
+      // Top Shelf sends the client no mail by design (the admin follows up at
+      // the address on file), so its promise stands on the address alone.
       res.status(201).json({ token: null, delivered_to: maskEmail(deliveryEmail), total, top_shelf: isTopShelfClass });
+    } else {
+      // The mail was the delivery and it did not go out (sendProposalSentEmail
+      // swallowed and logged the failure; the SMS is suppressed on its own
+      // terms): say so rather than claim it. The admin resends from the
+      // detail page, as for any failed proposal mail.
+      res.status(201).json({ token: null, delivered_to: null, delivery_failed: true, total, top_shelf: isTopShelfClass });
     }
   } catch (err) {
     if (held) {

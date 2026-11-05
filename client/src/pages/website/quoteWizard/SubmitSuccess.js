@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { formatCurrency } from './helpers';
+import { COMPANY_PHONE, COMPANY_PHONE_TEL } from '../../../utils/constants';
 
 export default function SubmitSuccess({ success, topShelf = false, readyHeading = 'Your proposal is ready!', onView }) {
   // The server answers token: null when the submit matched an existing client
@@ -13,10 +14,25 @@ export default function SubmitSuccess({ success, topShelf = false, readyHeading 
   // submitter). delivered_to is that address, masked.
   const sentToFile = !success?.token;
   const where = success?.delivered_to ? success.delivered_to : 'the email address on file';
+  // delivery_failed: the mail was the delivery and the server could not send
+  // it (it says so rather than claim it), so the panel offers the follow-up
+  // and the business line instead of "check your inbox".
+  const failed = sentToFile && success?.delivery_failed === true;
 
   let heading;
   let body;
-  if (topShelf) {
+  if (failed && !topShelf) {
+    heading = 'We\'ll follow up shortly';
+    body = (
+      <>
+        <p>Estimated total: <strong>{formatCurrency(success.total)}</strong></p>
+        <p>
+          We couldn't send the link just now. We'll follow up at the address on file, or reach us at{' '}
+          <a href={COMPANY_PHONE_TEL}>{COMPANY_PHONE}</a>.
+        </p>
+      </>
+    );
+  } else if (topShelf) {
     heading = 'Request submitted!';
     body = sentToFile
       ? <p>We'll follow up with custom Top Shelf pricing at {where}.</p>
