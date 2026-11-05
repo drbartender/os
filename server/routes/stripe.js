@@ -10,6 +10,8 @@ const { contractBalanceDueCents } = require('../utils/invoiceExtras');
 const { CONTRACT_LABELS } = require('../utils/proposalMoneyShared');
 const { BOOKED_SET } = require('../utils/proposalStatus');
 const { proposalUrl } = require('../utils/urls');
+const { chicagoTodayYmd } = require('../utils/businessTime');
+const { toBaseYmd, shiftYmd } = require('../utils/balanceReminderScheduling');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -90,14 +92,19 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
   );
   const extrasAmount = bd.totalCents / 100;
 
-  const now = new Date();
-  let balanceDueDate = data.balance_due_date;
-  if (!balanceDueDate && data.event_date) {
-    const d = new Date(data.event_date);
-    d.setUTCDate(d.getUTCDate() - 14);
-    balanceDueDate = d;
-  }
-  const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
+  // Past due by the Chicago CALENDAR DAY, never by the instant (audit PAY-07):
+  // pg hands a DATE back as a JS Date at the process-local midnight, which
+  // under the production GMT session is 19:00 Chicago the evening before, so
+  // `now > dueMidnight` called the whole due day (and the prior evening) past
+  // due and forced the balance into the extras charge a day before the
+  // scheduler charges it and the reminders call it due. Both of those compare
+  // calendar strings (balanceScheduler.js, balanceReminderScheduling.js); so
+  // does this now, including the event-day-minus-14 default. A balance due
+  // today is not past due.
+  const dueYmd = data.balance_due_date
+    ? toBaseYmd(data.balance_due_date)
+    : (data.event_date ? shiftYmd(toBaseYmd(data.event_date), -14) : null);
+  const isPastDue = dueYmd ? dueYmd < chicagoTodayYmd() : false;
   // The contract balance net of money already collected outside the contract
   // (a paid syrup-only extras invoice, a manual invoice), never the raw
   // total_price - amount_paid difference (audit PAY-01). The extras priced

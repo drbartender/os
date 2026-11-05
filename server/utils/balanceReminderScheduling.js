@@ -153,4 +153,5 @@ module.exports = {
   REMINDER_OFFSET_DAYS,
   reminderAnchorInstant,
   toBaseYmd,
+  shiftYmd,
 };
