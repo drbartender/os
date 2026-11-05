@@ -1210,6 +1210,7 @@ tests omitted
 │   │   ├── shifts.queries.js # Long SQL strings for server/routes/shifts.js (Task 28 projections).
 │   │   ├── sms.js            # Twilio inbound-SMS webhook (line-aware), the message status callback (POST /status), and the admin thread API; the status callback and the Messages reply clear the Inbox cache, and a first reply from a 224 line takes the Inbox first-text prefix
 │   │   ├── smsOptIn.js       # Standalone public SMS opt-in form (POST /api/sms/opt-in).
+│   │   ├── staffDocumentFiles.js # GET /files/staff/:docType/:userId/:basename, the admin and manager reader for a document a staffer replaced from the Account page: signs the R2 object under its staff/<doc_type>/<user_id>/ key, which the basename-only /api/files route in index.js cannot reach
 │   │   ├── staffPortal.js    # Staff portal API - composite + account-management endpoints (spec docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md).
 │   │   ├── staffShiftActions.js # Staff portal Drop / Cover marketplace endpoints (spec §6.5).
 │   │   ├── stripe.js         # Payment intents, payment links, webhooks

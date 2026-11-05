@@ -3922,6 +3922,17 @@ CREATE TABLE IF NOT EXISTS staff_document_history (
   replaced_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sdh_user ON staff_document_history(user_id);
+-- A document replaced from the staff Account page is stored as `/files/` plus
+-- its R2 key (`staff/<doc_type>/<user_id>/<ts>_<slug>`), the URL shape every
+-- reader understands, signed by routes/staffDocumentFiles.js. Rows written
+-- before 2026-11-05 hold the bare key, which no admin surface could open
+-- (audit POUT-05). Idempotent: a prefixed value no longer matches.
+UPDATE payment_profiles SET w9_file_url = '/files/' || w9_file_url
+  WHERE w9_file_url LIKE 'staff/%';
+UPDATE contractor_profiles SET alcohol_certification_file_url = '/files/' || alcohol_certification_file_url
+  WHERE alcohol_certification_file_url LIKE 'staff/%';
+UPDATE staff_document_history SET previous_url = '/files/' || previous_url
+  WHERE previous_url LIKE 'staff/%';
 
 -- ─── User-scoped audit log (spec §6.10 + §6.11) ───
 -- proposal_activity_log is proposal-scoped; this table is for user-only events

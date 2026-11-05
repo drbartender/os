@@ -825,7 +825,9 @@ test('POST /api/me/documents/w9/replace > writes to payment_profiles + history',
     headers: { 'Content-Type': contentType },
   });
   assert.strictEqual(res.status, 200);
-  assert.ok(res.body.file_url.startsWith(`staff/w9/${staffUserId}/`));
+  // `/files/` plus the R2 key: the URL shape every reader understands, signed
+  // by routes/staffDocumentFiles.js (POUT-05; the bare key was unopenable).
+  assert.ok(res.body.file_url.startsWith(`/files/staff/w9/${staffUserId}/`), res.body.file_url);
   assert.strictEqual(res.body.filename, 'my-w9.pdf');
   assert.strictEqual(uploadFileCalls.length, 1);
 
@@ -835,7 +837,10 @@ test('POST /api/me/documents/w9/replace > writes to payment_profiles + history',
     [staffUserId]
   );
   assert.strictEqual(pp.rows[0].w9_filename, 'my-w9.pdf');
-  assert.ok(pp.rows[0].w9_file_url.startsWith('staff/w9/'));
+  assert.ok(pp.rows[0].w9_file_url.startsWith('/files/staff/w9/'), pp.rows[0].w9_file_url);
+  assert.strictEqual(pp.rows[0].w9_file_url, res.body.file_url, 'the stored URL is the one the response carries');
+  assert.strictEqual(`/files/${uploadFileCalls[0].key}`, pp.rows[0].w9_file_url,
+    'the stored URL is /files/ plus the key the object was uploaded under');
 
   // history row inserted.
   const hist = await pool.query(
@@ -887,7 +892,8 @@ test('POST /api/me/documents/alcohol_certification/replace > writes 3 fields', a
     [staffUserId]
   );
   assert.strictEqual(cp.rows[0].alcohol_certification_filename, 'basset.png');
-  assert.ok(cp.rows[0].alcohol_certification_file_url.startsWith('staff/alcohol_certification/'));
+  assert.ok(cp.rows[0].alcohol_certification_file_url.startsWith('/files/staff/alcohol_certification/'),
+    cp.rows[0].alcohol_certification_file_url);
   // pg returns DATE as a Date object; coerce to YYYY-MM-DD for the assertion.
   const dateOut = cp.rows[0].alcohol_certification_expires_on;
   const dateStr = dateOut instanceof Date
