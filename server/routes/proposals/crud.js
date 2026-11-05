@@ -23,6 +23,7 @@ const { findOrCreateClient } = require('../../utils/clientDedup');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
 const { resolvePatchHours } = require('./patchContractHours');
+const { assertPricingInputs } = require('./pricingInputs');
 const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
@@ -75,6 +76,10 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
   }
+  // The pricing inputs' shape (pricingInputs.js), before any connection: a
+  // present guest count, bar count, bartender count or duration must be a
+  // whole number in bounds (the duration on the tenths grid), else 400.
+  assertPricingInputs({ guest_count, num_bars, num_bartenders, event_duration_hours });
 
   // Venue is optional at create-time (admin may add the address later via edit).
   // Validate only the shape — match PATCH's requireStreet:false, requireCityState:false.
@@ -345,9 +350,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   } = req.body;
 
   // Structural validation BEFORE any connection is checked out: a malformed
-  // notify list never opens a transaction. Trigger validation (does this save
-  // actually fire the notice?) happens below, where shouldSendEmail is
+  // notify list or an out-of-shape pricing input (pricingInputs.js: a zero,
+  // negative or fractional guest count, bar or bartender count, a duration off
+  // the tenths grid) never opens a transaction. Trigger validation (does this
+  // save actually fire the notice?) happens below, where shouldSendEmail is
   // computed. Absent/empty = nothing sends (fail-quiet by design).
+  assertPricingInputs({ guest_count, num_bars, num_bartenders, event_duration_hours });
   const requestedNotices = validateNotifyList(notify);
   const eventNotice = requestedNotices.find((n) => n.type === NOTICE_EVENT_DETAILS) || null;
 
