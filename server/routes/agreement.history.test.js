@@ -210,3 +210,26 @@ test('a re-sign appends a second history row that keeps the superseded PDF key, 
   assert.match(upd.sql, /first_signed_at\s*=\s*COALESCE\(first_signed_at,\s*NOW\(\)\)/, 'a re-sign never moves first_signed_at');
   assert.equal(new Date(res.body.agreement.first_signed_at).getTime(), FIRST_SIGNED_AT.getTime());
 });
+
+// Round 2 (L6): the prior row, and with it the PDF key the new history row
+// records as superseded, is read FOR UPDATE inside the sign transaction, so
+// two overlapping signs serialize and cannot both record the same key.
+test('the prior row is read FOR UPDATE inside the sign transaction before the history row is written', async () => {
+  existingRow = {
+    id: 77, user_id: USER.id, full_name: 'Test Signer', email: 'signer@example.com', phone: '5550001234', sms_consent: true,
+    signature_data: 'data:image/png;base64,old', signature_method: 'type', signature_document_version: CURRENT_VERSION,
+    signed_at: FIRST_SIGNED_AT, first_signed_at: FIRST_SIGNED_AT, pdf_storage_key: OLD_KEY, pdf_generated_at: FIRST_SIGNED_AT, pdf_email_sent_at: FIRST_SIGNED_AT,
+  };
+  calls.length = 0;
+  uploads.length = 0;
+  const res = await post('/api/agreement', signBody());
+  assert.equal(res.status, 200, res.raw);
+  const read = calls.find((c) => /^\s*SELECT/i.test(c.sql) && /FROM agreements WHERE user_id = \$1/.test(c.sql) && /pdf_storage_key/.test(c.sql));
+  assert.ok(read, 'the prior row is read for its PDF key');
+  assert.match(read.sql, /FOR UPDATE/, 'under the row lock');
+  assert.equal(read.via, 'client', 'on the transaction client');
+  const h = historyRow();
+  const i = calls.indexOf(read);
+  assert.ok(idx(/^BEGIN$/) < i && i < h.__index && h.__index < idx(/^COMMIT$/), 'between BEGIN and the history INSERT, before COMMIT');
+  assert.equal(h.superseded_pdf_storage_key, OLD_KEY);
+});

@@ -225,8 +225,12 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // FOR UPDATE: two overlapping signs serialize here, so the second reads
+    // the first's row and never records the same superseded PDF key (the key
+    // itself is still written post-commit, so a sign that lands between the
+    // first's COMMIT and its upload reads the key before that one).
     const existing = await client.query(
-      'SELECT id, pdf_storage_key FROM agreements WHERE user_id = $1',
+      'SELECT id, pdf_storage_key FROM agreements WHERE user_id = $1 FOR UPDATE',
       [req.user.id]
     );
 
