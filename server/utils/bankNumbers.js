@@ -36,7 +36,12 @@ function maskBankNumber(cipher, { userId = null, column = null } = {}) {
           extra: { user_id: userId },
         });
       }
-    } catch (_) { /* never let logging break a response */ }
+    } catch (logErr) {
+      // The breadcrumb is best-effort: a logging failure must never break the
+      // masked response. Said out loud (the SDK's own message, no PII) rather
+      // than swallowed, which the static pre-step refuses.
+      console.warn('[bankNumbers] mask breadcrumb failed:', logErr.message);
+    }
     return '****';
   }
 }
