@@ -274,6 +274,29 @@ test('GET /api/me/staff-home > 401 without JWT', async () => {
   assert.strictEqual(res.status, 401);
 });
 
+// Audit 2026-11-05 AUTH-01: POST /api/auth/register is public and mints a live
+// JWT for an in_progress row; the router-wide requireOnboarded keeps that
+// account off every /api/me surface. The pure companion is
+// staffPortal.onboardedGate.test.js; this is the same assertion on real rows.
+test('GET /api/me/staff-home > 403 PERMISSION_DENIED for a self-registered (in_progress) account', async () => {
+  const a = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, 'x', 'staff', 'in_progress', 0) RETURNING id, token_version`,
+    [`staff-portal-test-applicant-${NONCE}@example.com`]
+  );
+  const applicantToken = jwt.sign(
+    { userId: a.rows[0].id, tokenVersion: a.rows[0].token_version },
+    process.env.JWT_SECRET, { expiresIn: '1h' }
+  );
+  try {
+    const res = await request('GET', '/api/me/staff-home', { token: applicantToken });
+    assert.strictEqual(res.status, 403, res.raw);
+    assert.strictEqual(res.body.code, 'PERMISSION_DENIED');
+  } finally {
+    await pool.query('DELETE FROM users WHERE id = $1', [a.rows[0].id]);
+  }
+});
+
 test('GET /api/me/staff-home > composite payload shape', async () => {
   const res = await request('GET', '/api/me/staff-home', { token: staffToken });
   assert.strictEqual(res.status, 200);

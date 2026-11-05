@@ -16,6 +16,10 @@
  * All endpoints require `auth`. None of them are admin-only — they're the
  * staffer's own self-service flows. Ownership is enforced inside the handler
  * via `sr.user_id = req.user.id` predicates plus 403 responses on mismatch.
+ * The cover claim is the one route here with no ownership predicate (any
+ * staffer may claim another's broadcast), so it also carries requireOnboarded
+ * (audit 2026-11-05 AUTH-01): a self-registered account was kept out only by
+ * its missing contractor_profiles.position.
  */
 
 const express = require('express');
@@ -23,7 +27,7 @@ const crypto = require('node:crypto');
 const Sentry = require('@sentry/node');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireOnboarded } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const {
   ValidationError,
@@ -517,7 +521,7 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
 
 const SWAP_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
-router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
+router.post('/requests/:shiftId/claim-cover', requireOnboarded, asyncHandler(async (req, res) => {
   const shiftId = parseInt(req.params.shiftId, 10);
   if (!Number.isInteger(shiftId) || shiftId <= 0) {
     throw new ValidationError({ shiftId: 'Invalid shift id.' });
