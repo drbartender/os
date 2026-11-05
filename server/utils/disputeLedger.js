@@ -62,6 +62,29 @@ async function findDisputedPayment(paymentIntentId, db = pool) {
 }
 
 /**
+ * The refund-ledger row a dispute id already anchors, in any status
+ * (succeeded while the withdrawal stands, failed once the funds were
+ * reinstated), or null. The webhook reads it FIRST (round 2 M1, 2026-11-05):
+ * after the first apply the dispute row is netted into the charge's
+ * remainder, so a Stripe redelivery of the same funds_withdrawn event capped
+ * against that remainder read as a brand-new, over-sized dispute and fired
+ * the exceeds-remainder warning and the admin email for money already on the
+ * books. A row here means the delivery is a redelivery.
+ *
+ * @param {string} disputeId
+ * @param {object} [db]
+ * @returns {Promise<{id:number, status:string, amountCents:number}|null>}
+ */
+async function findRecordedDispute(disputeId, db = pool) {
+  if (!disputeId) return null;
+  const { rows } = await db.query(
+    'SELECT id, status, amount FROM proposal_refunds WHERE stripe_refund_id = $1 LIMIT 1',
+    [disputeId]
+  );
+  return rows[0] ? { id: rows[0].id, status: rows[0].status, amountCents: Number(rows[0].amount) } : null;
+}
+
+/**
  * Record the funds Stripe withdrew for a dispute on a proposal payment.
  * Idempotent on the dispute id (the reconciler's stripe_refund_id anchor): a
  * redelivery returns applied=false and writes nothing.
@@ -184,4 +207,4 @@ async function reverseDisputeWithdrawal({ proposalId, disputeId }, dbClient) {
   return { reversed: true, amountCents };
 }
 
-module.exports = { findDisputedPayment, recordDisputeWithdrawal, reverseDisputeWithdrawal };
+module.exports = { findDisputedPayment, findRecordedDispute, recordDisputeWithdrawal, reverseDisputeWithdrawal };

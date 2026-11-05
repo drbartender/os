@@ -8,7 +8,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { clawbackTip, rewindDisputeClawbackByPaymentIntent } = require('../../utils/payrollClawback');
-const { findDisputedPayment, recordDisputeWithdrawal, reverseDisputeWithdrawal } = require('../../utils/disputeLedger');
+const { findDisputedPayment, findRecordedDispute, recordDisputeWithdrawal, reverseDisputeWithdrawal } = require('../../utils/disputeLedger');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
 
 const usd = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
@@ -74,7 +74,10 @@ async function handleDisputeCreated(event) {
  * target). A proposal payment: the withdrawal is recorded on the refund ledger
  * as a 'dispute'-scope row (disputeLedger.js), capped at what is still on the
  * charge, and the admin is told. Errors propagate so Stripe retries; both
- * writers are idempotent on the dispute id.
+ * writers are idempotent on the dispute id, and a redelivery is recognized by
+ * the ledger row that id anchors BEFORE the cap (round 2 M1): the recorded
+ * withdrawal is netted into the remainder, so capping first read the same
+ * event a second time as a new over-sized dispute and alerted for nothing.
  */
 async function handleDisputeFundsWithdrawn(event) {
   const dispute = event.data.object;
@@ -88,6 +91,10 @@ async function handleDisputeFundsWithdrawn(event) {
     await clawbackTip(tip.id, cumulative);
     return;
   }
+
+  // Already on the ledger: the same event delivered again. Nothing to record,
+  // nothing to cap, nothing to tell the admin a second time.
+  if (await findRecordedDispute(dispute.id)) return;
 
   const pay = await findDisputedPayment(piId);
   if (!pay) return; // not a proposal charge of ours

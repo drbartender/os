@@ -38,6 +38,7 @@ const { handleDisputeCreated, handleDisputeFundsWithdrawn, handleDisputeFundsRei
 let tips = {};        // pi -> { id, amount_cents, refunded_amount_cents }
 let payments = {};    // pi -> { id, proposal_id, amount, remaining }
 let seenDisputes = new Set();
+let recordedDisputes = new Set(); // dispute ids already on the refund ledger
 const queries = [];
 const txQueries = [];
 
@@ -52,6 +53,10 @@ pool.query = async (text, params) => {
   if (/FROM proposal_payments pp/.test(text)) {
     const p = payments[params[0]];
     return { rows: p ? [p] : [], rowCount: p ? 1 : 0 };
+  }
+  if (/FROM proposal_refunds WHERE stripe_refund_id = \$1/.test(text)) {
+    const hit = recordedDisputes.has(params[0]);
+    return { rows: hit ? [{ id: 1, status: 'succeeded', amount: 90000 }] : [], rowCount: hit ? 1 : 0 };
   }
   if (/action = 'dispute_opened'/.test(text)) {
     const hit = seenDisputes.has(params[1]);
@@ -78,7 +83,7 @@ const tipWrites = () => txQueries.filter((q) => /UPDATE tips SET refunded_amount
 process.on('exit', () => { pool.query = realQuery; pool.connect = realConnect; });
 
 beforeEach(() => {
-  tips = {}; payments = {}; seenDisputes = new Set();
+  tips = {}; payments = {}; seenDisputes = new Set(); recordedDisputes = new Set();
   queries.length = 0; txQueries.length = 0; reconCalls.length = 0; adminAlerts.length = 0;
 });
 
@@ -115,6 +120,27 @@ test('PAY-04: the withdrawal is capped at what is still on the charge, and an al
   assert.equal(reconCalls.length, 0, 'nothing recorded');
   assert.equal(adminAlerts.length, 1);
   assert.match(adminAlerts[0].subject, /already refunded/);
+});
+
+// Round 2 M1: after the first apply the dispute row is netted into the charge's
+// remainder, so a Stripe redelivery of the same funds_withdrawn event read as a
+// brand-new, over-sized dispute: the exceeds-remainder warning and the admin
+// email fired for money already recorded. The ledger anchor (the row carrying
+// this dispute id) is resolved first and a redelivery is already recorded.
+test('M1: a redelivery of the same funds_withdrawn event is already recorded: no second row, no exceeds-remainder alert', async () => {
+  payments.pi_balance = { id: 501, proposal_id: 4242, amount: 90000, remaining: 90000 };
+  await handleDisputeFundsWithdrawn(withdrawn());
+  assert.equal(reconCalls.length, 1);
+  assert.equal(adminAlerts.length, 1);
+
+  // What the first apply left behind: the ledger row and a netted remainder.
+  recordedDisputes.add('dp_1');
+  payments.pi_balance = { id: 501, proposal_id: 4242, amount: 90000, remaining: 0 };
+  reconCalls.length = 0; adminAlerts.length = 0; txQueries.length = 0;
+  await handleDisputeFundsWithdrawn(withdrawn());
+  assert.equal(reconCalls.length, 0, 'nothing recorded a second time');
+  assert.equal(adminAlerts.length, 0, 'no "already refunded" alert: the money is the same dispute');
+  assert.equal(txQueries.length, 0, 'no transaction opened');
 });
 
 test('PAY-04: a dispute on a charge that is neither a tip nor a proposal payment changes nothing', async () => {
