@@ -265,10 +265,12 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           // Cleanup or a stale-effect abort — don't surface the error; the
           // next effect run (if any) will reset loading state below.
         // eslint-disable-next-line no-restricted-syntax
-        } else if (err.response?.data?.code === 'PAYMENT_IN_FLIGHT') {
+        } else if (['PAYMENT_IN_FLIGHT', 'EXTRAS_NOT_PRICEABLE'].includes(err.response?.data?.code)) {
           // Bank debit in flight (spec 2026-09-14): the rail refused because a
           // payment on this event is already processing. Show its message, not
-          // a form error; the selections still submit.
+          // a form error; the selections still submit. EXTRAS_NOT_PRICEABLE
+          // (audit PRC-03): the booking cannot price these extras separately;
+          // the message points at add-to-balance.
           // eslint-disable-next-line no-restricted-syntax
           setPaymentError(err.response.data.error);
         } else {
