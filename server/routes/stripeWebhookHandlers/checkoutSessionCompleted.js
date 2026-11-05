@@ -262,10 +262,18 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             // higher total (DrB would eat the gap). Guard = LIFECYCLE states only
             // (confirmed/completed/archived); the monotonic CASE makes a payment-state
             // exclusion redundant and would only drop a legitimate second credit.
+            // accepted_at (audit ESIG-03): a Payment Link is paid without an
+            // online signature, so nothing else stamps the acceptance and the
+            // financial dashboard (accepted_at IS NOT NULL) never saw the
+            // booking; the admin record-payment precedent stamps it for the
+            // same reason. COALESCE so a signature's own stamp is never moved.
+            // No unsigned alert on this rail: the admin issued the link knowing
+            // it carries no signature.
             await dbClient.query(
               `UPDATE proposals
                SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
-                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                   accepted_at = COALESCE(accepted_at, NOW())
                WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
               [proposalId, session.amount_total / 100]
             );
@@ -277,7 +285,8 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             await dbClient.query(
               `UPDATE proposals
                SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
-                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                   accepted_at = COALESCE(accepted_at, NOW())
                WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
               [proposalId, session.amount_total / 100]
             );

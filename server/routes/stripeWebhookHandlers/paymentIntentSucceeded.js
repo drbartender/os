@@ -13,64 +13,13 @@ const { OFF_LEDGER_INVOICE_LABELS, CONTRACT_LABELS } = require('../../utils/prop
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
-const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { notifyPaymentOnArchived, warnGratuityApplySkipped, notifyUnsignedSettle } = require('./settleAlerts');
 const { recomputeSnapshotGratuity, GRATUITY_FLOOR_RATE, GRATUITY_SANITY_MAX_RATE } = require('../../utils/pricingEngine');
-
-// B3: email-first admin alert when a payment settles onto a cancelled (archived)
-// proposal. Fire-and-forget from the post-commit tail; notifyAdminCategory self-
-// guards, the extra catch keeps this from masking sibling post-commit work. Copy
-// carries no em dashes (client/admin copy convention).
-function notifyPaymentOnArchived(proposalId, amountCents, paymentType, archiveReason) {
-  const dollars = `$${(amountCents / 100).toFixed(2)}`;
-  const reasonSuffix = archiveReason ? ` (archive reason: ${archiveReason})` : '';
-  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund already ran before it arrived. Open the proposal and refund this payment straight from the payment panel (the Refund button), which returns it without re-running the cancellation math. Do NOT expect the Cancel then Refund flow to catch it: the booking is already archived, so that path may report nothing is owed.`;
-  return notifyAdminCategory({
-    category: 'payment_failure',
-    subject: `Payment received on a cancelled event (proposal #${proposalId})`,
-    emailText: line,
-    emailHtml: `<p>${line}</p>`,
-  }).catch((err) => {
-    console.error('payment_on_archived admin notify failed (non-blocking):', err && err.message);
-  });
-}
-
-// Audit PAY-02 / ESIG-03: contract money settled on a row the client never
-// signed. The booking is converted and the money is in the ledger (refusing it
-// would strand captured money outside the ledger); the fact is recorded in-tx
-// (an unsigned_payment activity row) and the admin is told here, post-commit,
-// through the money-anomaly lane. Fire-and-forget, same shape as the archived
-// alert above.
-function notifyUnsignedSettle(proposalId, amountCents, paymentType) {
-  const dollars = `$${(amountCents / 100).toFixed(2)}`;
-  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which the client has not signed. The booking is converted and the money is in the ledger, but no signed Event Services Agreement stands behind it. Open the proposal and send the client the proposal link to sign.`;
-  return notifyAdminCategory({
-    category: 'payment_failure',
-    subject: `Payment received on an unsigned proposal (proposal #${proposalId})`,
-    emailText: line,
-    emailHtml: `<p>${line}</p>`,
-  }).catch((err) => {
-    console.error('unsigned_payment admin notify failed (non-blocking):', err && err.message);
-  });
-}
 
 // The statuses a proposal holds before any money has booked it: the set
 // create-intent accepts, the gratuity apply guards on, and the invoice-branch
 // conversion below converts from.
 const PRE_CONVERSION_STATUSES = Object.freeze(['sent', 'viewed', 'accepted']);
-
-// Election-at-payment (spec 2026-08-03 §4.5): the gratuity apply must NEVER take
-// the payment record down with it. Both the pre-write validation refusal and the
-// SAVEPOINT rollback land here — loud breadcrumb, credit proceeds untouched.
-// The admin reconciles from the alert; the money is always in the ledger.
-function warnGratuityApplySkipped(reason, proposalId, intentId, metadata, err) {
-  const line = `gratuity_apply_skipped (${reason}): proposal ${proposalId}, intent ${intentId}, `
-    + `tip_jar=${metadata?.tip_jar}, gratuity_rate=${metadata?.gratuity_rate}`
-    + (err ? ` — ${err.message}` : '');
-  console.warn(line);
-  if (process.env.SENTRY_DSN_SERVER) {
-    Sentry.captureMessage(line, 'warning');
-  }
-}
 
 module.exports = async function handlePaymentIntentSucceeded(event) {
     const intent = event.data.object;
@@ -113,9 +62,19 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
       // branch runs: the Balance invoice (in-tx), the last-minute hold, and
       // post-commit the reminder ladder and the marketing enrol.
       let invoiceConversion = false;
-      // Audit PAY-02 / ESIG-03: set in-tx when contract money settles on a row
-      // with no client signature; read post-commit for the admin alert.
+      // Audit PAY-02 / ESIG-03: set in-tx when contract money (a deposit, a
+      // full payment, a contract invoice that books the row) settles on a row
+      // with no client signature; read post-commit for the alert. The three
+      // booking branches hand this their credit UPDATE's RETURNING row.
       let unsignedSettle = null;
+      const noteUnsigned = async (row, invoiceLabel = null) => {
+        if (!row || row.client_signed_at) return;
+        unsignedSettle = { paymentType };
+        await dbClient.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'unsigned_payment', 'system', $2)`,
+          [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, invoice_label: invoiceLabel })]
+        );
+      };
       try {
         await dbClient.query('BEGIN');
 
@@ -317,12 +276,21 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // must not rewind those). The CASE keeps status monotonic, so excluding a
             // PAYMENT state would only drop a legitimate second distinct-intent credit
             // in a two-tab double-confirm race.
-            await dbClient.query(`
+            // accepted_at (audit ESIG-03): the sign UPDATE stamps it, but a
+            // client can confirm the intent without signing, and the financial
+            // dashboard filters accepted_at IS NOT NULL, so a paid, unsigned row
+            // was invisible to it. The money is the acceptance (the admin
+            // record-payment precedent); COALESCE never moves a signature's own
+            // stamp. RETURNING client_signed_at feeds the unsigned note.
+            const fullRes = await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                  accepted_at = COALESCE(accepted_at, NOW())
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
+              RETURNING client_signed_at
             `, [proposalId, intent.amount / 100]);
+            await noteUnsigned(fullRes.rows[0]);
           } else if (paymentType === 'balance') {
             // M3 (phantom-Outstanding fix): credit the balance monotonically across
             // EVERY money-bearing lifecycle state, not just 'deposit_paid'. The old
@@ -408,13 +376,7 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
               // & Pay still offered, a second deposit takable).
               if (paid && CONTRACT_LABELS.includes(paid.label) && PRE_CONVERSION_STATUSES.includes(paid.status)) {
                 invoiceConversion = true;
-                if (!paid.client_signed_at) {
-                  unsignedSettle = { paymentType, invoiceLabel: paid.label };
-                  await dbClient.query(
-                    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'unsigned_payment', 'system', $2)`,
-                    [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, invoice_label: paid.label })]
-                  );
-                }
+                await noteUnsigned(paid, paid.label);
               }
             }
             if (!offLedger) {
@@ -438,6 +400,10 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                   [proposalId]
                 );
               }
+              // accepted_at (audit ESIG-03), as the deposit and full branches.
+              if (upd.rows[0] && invoiceConversion) {
+                await dbClient.query('UPDATE proposals SET accepted_at = COALESCE(accepted_at, NOW()) WHERE id = $1', [proposalId]);
+              }
             }
           } else {
             // deposit — additive + DERIVED status (mirror the full branch): credit what
@@ -447,12 +413,16 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // two same-amount deposit intents (fixed deposit amount → both survive the
             // stale-cancel), silently under-crediting a real charge. Idempotent via the
             // proposal_payments ON CONFLICT gate above.
-            await dbClient.query(`
+            // accepted_at and the unsigned note: see the full branch above.
+            const depRes = await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                  accepted_at = COALESCE(accepted_at, NOW())
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
+              RETURNING client_signed_at
             `, [proposalId, intent.amount / 100]);
+            await noteUnsigned(depRes.rows[0]);
           }
 
           // Last-minute staffing hold — only for INITIAL-booking branches (full;
