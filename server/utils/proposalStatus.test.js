@@ -119,3 +119,33 @@ test('pins the boundary on the deposit_paid side: one cent short stays, one cent
   assert.strictEqual(inside.changed, true);
   assert.strictEqual(inside.overpaidCents, 1);
 });
+
+// Round 2 M2 (2026-11-05): law 8's comparison is net of the money collected
+// outside the contract (laws 5 and 7): a paid unfolded Drink Plan Extras
+// invoice or a free-text manual invoice rolls into amount_paid and never into
+// total_price, so the raw comparison promoted a row to balance_paid while the
+// netted balance (quoted, invoiced, chased) still said money was owed, and
+// autopay (deposit_paid claim) and charge-balance (INVALID_STATUS) then did not
+// collect it while the completion sweep completed the event. The caller hands
+// the ladder the netting term from sumOffContractPaidCents.
+test('M2: 16000 paid of which 6000 is off-contract, against 15000, is NOT balance_paid', () => {
+  const r = reconcileProposalPaymentStatus({ status: 'deposit_paid', amountPaid: 160, totalPrice: 150, offContractPaidCents: 6000 });
+  assert.strictEqual(r.status, 'deposit_paid');
+  assert.strictEqual(r.changed, false);
+  assert.strictEqual(r.overpaid, false, 'no overpayment either: the 6000 is syrup money, not contract money');
+  const demoted = reconcileProposalPaymentStatus({ status: 'balance_paid', amountPaid: 160, totalPrice: 150, offContractPaidCents: 6000 });
+  assert.strictEqual(demoted.status, 'deposit_paid', 'a row the raw read promoted comes back down');
+  assert.strictEqual(demoted.autopayDisarmed, true);
+});
+
+test('M2: 15000 of contract money against 15000 is balance_paid, with or without off-contract money beside it', () => {
+  assert.strictEqual(reconcileProposalPaymentStatus({ status: 'deposit_paid', amountPaid: 150, totalPrice: 150, offContractPaidCents: 0 }).status, 'balance_paid');
+  assert.strictEqual(reconcileProposalPaymentStatus({ status: 'deposit_paid', amountPaid: 210, totalPrice: 150, offContractPaidCents: 6000 }).status, 'balance_paid');
+  assert.strictEqual(reconcileProposalPaymentStatus({ status: 'deposit_paid', amountPaid: 150, totalPrice: 150 }).status, 'balance_paid', 'the term defaults to 0');
+});
+
+test('M2: an unreadable netting term fails closed: nothing moves, nothing is flagged', () => {
+  const r = reconcileProposalPaymentStatus({ status: 'deposit_paid', amountPaid: 160, totalPrice: 150, offContractPaidCents: 'abc' });
+  assert.strictEqual(r.changed, false);
+  assert.strictEqual(r.overpaid, false);
+});

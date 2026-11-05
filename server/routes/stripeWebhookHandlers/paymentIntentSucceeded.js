@@ -10,6 +10,7 @@ const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
 const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, linkOpenContractInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { OFF_LEDGER_INVOICE_LABELS, CONTRACT_LABELS } = require('../../utils/proposalMoneyShared');
+const { contractPaidCents } = require('../../utils/invoiceExtras');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
@@ -62,6 +63,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
       // branch runs: the Balance invoice (in-tx), the last-minute hold, and
       // post-commit the reminder ladder and the marketing enrol.
       let invoiceConversion = false;
+      // The invoice rail's off-ledger skip, read again by the netted paid flag
+      // below (round 2 M2).
+      let offLedger = false;
       // Audit PAY-02 / ESIG-03: set in-tx when contract money (a deposit, a
       // full payment, a contract invoice that books the row) settles on a row
       // with no client signature; read post-commit for the alert. The three
@@ -317,25 +321,15 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
               WHERE id = $1 AND status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
             `, [proposalId, intent.amount / 100]);
           } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
-            // Drink plan extras payment — increment amount_paid
+            // Drink plan extras payment — increment amount_paid. The paid flag
+            // is derived below, after this payment's invoice credit lands, net
+            // of the off-contract money (round 2 M2).
             const paidDollars = intent.amount / 100;
-            const updateRes = await dbClient.query(`
+            await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $1
               WHERE id = $2
-              RETURNING amount_paid, total_price
             `, [paidDollars, proposalId]);
-
-            if (updateRes.rows[0]) {
-              const newAmountPaid = Number(updateRes.rows[0].amount_paid);
-              const totalPrice = Number(updateRes.rows[0].total_price);
-              if (newAmountPaid >= totalPrice) {
-                await dbClient.query(
-                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
-                  [proposalId]
-                );
-              }
-            }
           } else if (paymentType === 'invoice') {
             // Invoice payment (Balance / Additional Services / manual invoice paid
             // via the public invoice page). Roll the captured amount up into the
@@ -354,7 +348,7 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // when lab money started folding into total_price; its payments
             // roll up like any contract invoice.)
             const paidInvoiceId = Number(intent.metadata?.invoice_id) || null;
-            let offLedger = false;
+            offLedger = false;
             if (paidInvoiceId) {
               // The label decides the off-ledger skip; the proposal's status and
               // signature decide the conversion below. Scoped to this proposal's
@@ -387,12 +381,10 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 WHERE id = $2
                 RETURNING amount_paid, total_price
               `, [paidDollars, proposalId]);
-              if (upd.rows[0] && Number(upd.rows[0].amount_paid) >= Number(upd.rows[0].total_price)) {
-                await dbClient.query(
-                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
-                  [proposalId]
-                );
-              } else if (upd.rows[0] && invoiceConversion) {
+              // Fully paid is derived below, after the invoice credit lands,
+              // net of the off-contract money (round 2 M2); a conversion's
+              // partial status lands here first, and the promotion lifts it.
+              if (upd.rows[0] && invoiceConversion) {
                 // The deposit branch's derived status for the partial case,
                 // guarded to the pre-conversion statuses the read above saw.
                 await dbClient.query(
@@ -673,6 +665,25 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
               // overflow payload live in linkOpenContractInvoice, shared with
               // the other two entrances so the three cannot drift again.
               linkOverflow = await linkOpenContractInvoice(proposalId, paymentRowId, intent.amount, dbClient);
+            }
+          }
+
+          // The paid flag for the rails whose money may sit outside the contract
+          // (round 2 M2): an extras payment or an invoice payment is compared
+          // net of the off-contract money laws 5 and 7 name (a paid unfolded
+          // Drink Plan Extras invoice, a free-text manual invoice) through
+          // contractPaidCents, the partition the balance due nets, and only
+          // now, after this payment's own invoice credit landed above, so the
+          // invoice just paid is in the partition. The deposit, full and
+          // balance rails keep their inline CASE: their money is contract money.
+          if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance'
+            || (paymentType === 'invoice' && !offLedger)) {
+            const prow = (await dbClient.query('SELECT total_price, amount_paid FROM proposals WHERE id = $1', [proposalId])).rows[0];
+            if (prow && (await contractPaidCents({ id: proposalId, amount_paid: prow.amount_paid }, dbClient)) >= Math.round(Number(prow.total_price) * 100)) {
+              await dbClient.query(
+                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
+                [proposalId]
+              );
             }
           }
 

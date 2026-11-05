@@ -17,7 +17,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  contractBalanceDueCents, sumOffContractPaidCents, offContractPaidCentsSql,
+  contractBalanceDueCents, contractPaidCents, sumOffContractPaidCents, offContractPaidCentsSql,
   NOT_OFF_CONTRACT_LABELS, IN_TOTAL_PRICE_LABELS,
 } = require('./invoiceExtras');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
@@ -163,4 +163,16 @@ test('H1: the netting read carries the stored fact and the SQL twin reads it fir
   assert.match(client.calls[0].text, /folded_into_total/, 'the invoice read selects the stored fact');
   const sql = offContractPaidCentsSql('p.id', '$2');
   assert.match(sql, /oc\.label = 'Drink Plan Extras' AND COALESCE\(oc\.folded_into_total, EXISTS/);
+});
+
+// ── contractPaidCents (round 2, M2) ───────────────────────────────────────────
+// The paid figure law 8 compares with total_price, net of the same partition
+// the balance nets, so the paid flag and the balance due can never disagree.
+test('M2: contractPaidCents is amount_paid less the off-contract money, and the balance is total less it', async () => {
+  const client = scriptedClient({
+    invoices: [{ id: 84, label: 'Drink Plan Extras', amount_paid: 6000, folded_into_total: false }],
+  });
+  const row = { id: 4242, total_price: '150.00', amount_paid: '160.00' };
+  assert.equal(await contractPaidCents(row, client), 10000, '16000 paid, 6000 of it syrup money');
+  assert.equal(await contractBalanceDueCents(row, client), 5000);
 });

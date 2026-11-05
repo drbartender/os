@@ -27,6 +27,7 @@ const { applyRefundReconciliation } = require('./refundHelpers');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { lockInvoice } = require('./invoiceLifecycle');
+const { sumOffContractPaidCents } = require('./invoiceExtras');
 
 /**
  * The succeeded proposal payment a disputed PaymentIntent paid, with the
@@ -160,7 +161,11 @@ async function reverseDisputeWithdrawal({ proposalId, disputeId }, dbClient) {
   const statusBefore = propRes.rows[0].status;
   let statusAfter = statusBefore;
   if (mr) {
-    const rec = reconcileProposalPaymentStatus({ status: statusBefore, amountPaid: mr.amount_paid, totalPrice: mr.total_price });
+    // Net of the off-contract money (round 2 M2); the re-credits above are in.
+    const rec = reconcileProposalPaymentStatus({
+      status: statusBefore, amountPaid: mr.amount_paid, totalPrice: mr.total_price,
+      offContractPaidCents: await sumOffContractPaidCents(proposalId, dbClient),
+    });
     if (rec.changed) {
       await dbClient.query('UPDATE proposals SET status = $1 WHERE id = $2', [rec.status, proposalId]);
       statusAfter = rec.status;
