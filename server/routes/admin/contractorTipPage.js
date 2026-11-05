@@ -28,7 +28,9 @@ const router = express.Router();
 // `regenerate-stripe` preserves tip_page_token so existing printed QRs keep
 // working — only the Stripe link rotates.
 
-const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other'];
+// The one allowed set and the one eligibility rule for the preferred payroll
+// method, shared with every other writer (audit 2026-11-05, POUT-10).
+const { PAYMENT_METHOD_VALUES, isPreferredEligible } = require('../staffPortal/paymentMethods');
 
 // The payout destination: the columns the admin Pay panel pays to (client
 // PayPanel.js builds the Venmo / Cash App / PayPal deep link from them and
@@ -71,13 +73,30 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
     delete fields.preferred_payment_method;
   }
   if ('preferred_payment_method' in fields && fields.preferred_payment_method
-      && !ALLOWED_PAYMENT_METHODS.includes(fields.preferred_payment_method)) {
-    throw new ValidationError('invalid preferred_payment_method');
+      && !PAYMENT_METHOD_VALUES.has(fields.preferred_payment_method)) {
+    throw new ValidationError({ preferred_payment_method: `must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')}` });
   }
 
   // Validate + normalize handle formats (paypal_url especially — flows into an
   // <a href> on the public tip page so anything off paypal.me is rejected).
   normalizeTipHandlesInPlace(fields);
+
+  // The preferred payroll method must be payable (POUT-10): checked only when
+  // it CHANGES, against the row as it will be after this write, so a handle
+  // saved in the same request counts and a resent stored value never blocks.
+  if (fields.preferred_payment_method) {
+    const cur = await pool.query(
+      `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
+              routing_number, account_number
+         FROM payment_profiles WHERE user_id = $1`,
+      [userId]
+    );
+    const row = cur.rows[0] || {};
+    const method = fields.preferred_payment_method;
+    if (method !== row.preferred_payment_method && !isPreferredEligible(method, { ...row, ...fields })) {
+      throw new ValidationError({ preferred_payment_method: `Add a ${method} handle before setting it as preferred.` });
+    }
+  }
 
   if ('preferred_name' in req.body) {
     const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [userId]);

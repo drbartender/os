@@ -211,7 +211,11 @@ const ALLOWED_PATCH_FIELDS = new Set([
   'paypal_url',
   'preferred_payment_method',
 ]);
-const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
+// The one allowed set and the one eligibility rule for the preferred payroll
+// method, shared with every other writer (audit 2026-11-05, POUT-10; this
+// file's own list lacked zelle and let direct_deposit through with no bank
+// data on file).
+const { PAYMENT_METHOD_VALUES, isPreferredEligible } = require('./staffPortal/paymentMethods');
 
 // Update bartender-editable fields on the tip page (display name override, Venmo/CashApp handles,
 // opt-in flags).
@@ -240,13 +244,33 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
     delete updates.preferred_payment_method;
   }
   if ('preferred_payment_method' in updates && updates.preferred_payment_method
-      && !ALLOWED_PAYMENT_METHODS.includes(updates.preferred_payment_method)) {
-    throw new ValidationError('invalid preferred_payment_method');
+      && !PAYMENT_METHOD_VALUES.has(updates.preferred_payment_method)) {
+    throw new ValidationError({ preferred_payment_method: `must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')}` });
   }
 
   // Validate + normalize handle formats so a malformed paypal_url can't land
   // in the DB and end up as a phishing link target on the public tip page.
   normalizeTipHandlesInPlace(updates);
+
+  // The preferred payroll method must be payable: a method whose handle or
+  // bank data is missing leaves the admin's Pay panel with nothing to pay to
+  // (POUT-10; direct_deposit used to be accepted here with no bank numbers on
+  // file). Checked only when the method CHANGES, against the row as it will
+  // be after this write, so a form that resends the stored value never blocks
+  // a handle edit and a handle saved in the same request counts.
+  if (updates.preferred_payment_method) {
+    const cur = await pool.query(
+      `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
+              routing_number, account_number
+         FROM payment_profiles WHERE user_id = $1`,
+      [req.user.id]
+    );
+    const row = cur.rows[0] || {};
+    const method = updates.preferred_payment_method;
+    if (method !== row.preferred_payment_method && !isPreferredEligible(method, { ...row, ...updates })) {
+      throw new ValidationError({ preferred_payment_method: `Add a ${method} handle before setting it as preferred.` });
+    }
+  }
 
   // preferred_name lives on contractor_profiles
   if ('preferred_name' in updates) {
