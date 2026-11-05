@@ -411,7 +411,13 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   const { client_signed_name, client_signature_data, client_signature_method,
     venue_name, venue_street, venue_city, venue_state, venue_zip } = req.body;
   const fieldErrors = {};
-  if (!client_signed_name) fieldErrors.client_signed_name = 'Please enter your full name';
+  // Bounded to the VARCHAR(255) column: an overflow used to reach the sign
+  // UPDATE as a 22001 500 instead of this field error.
+  const signedName = typeof client_signed_name === 'string' ? client_signed_name.trim() : '';
+  if (!signedName) fieldErrors.client_signed_name = 'Please enter your full name';
+  else if (signedName.length < 2 || signedName.length > 255) {
+    fieldErrors.client_signed_name = 'Please enter your full name (2 to 255 characters)';
+  }
   if (!client_signature_data) fieldErrors.signature = 'Please sign before accepting';
   // Optional real-number capture (spec 2026-06-11 Component 4). validatePhone
   // is the save-time helper (10-digit storage), NOT sms.js#normalizePhone
@@ -548,7 +554,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       AND ABS(total_price - $14::numeric) < 0.005
     RETURNING id
   `, [
-    client_signed_name, client_signature_data, client_signature_method, ip, userAgent,
+    signedName, client_signature_data, client_signature_method, ip, userAgent,
     documentVersion, lookup.rows[0].id,
     venueToPersist ? (vStr(venue_name) || null) : null,
     venueToPersist ? vStr(venue_street) : null,
@@ -629,7 +635,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
 
   await pool.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackTotal })]
+    [proposal.id, JSON.stringify({ signed_name: signedName, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackTotal })]
   );
 
   // Email notifications (non-blocking)
