@@ -9,7 +9,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
+const { AppError, NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod } = require('../../utils/payrollProcessing');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 const { rollForwardLateTip } = require('../../utils/payrollLateTip');
@@ -788,6 +788,37 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   if (!shiftRes.rows[0]) throw new NotFoundError('shift not found');
   const { proposal_id: proposalId, event_date: eventDate } = shiftRes.rows[0];
 
+  // Only an UNPLACED tip may be placed (audit 2026-11-05, POUT-07). A tip
+  // already on a shift was summed into that shift's pool by accrual, or rolled
+  // forward into a later period; placing it again sums it into a second pool
+  // and pays it twice. A refunded tip has been clawed and must not be paid.
+  // The list that feeds the screen shows only unplaced tips, but the route is
+  // the gate (a stale tab, a replayed request, a script).
+  const tipRes = await pool.query(
+    `SELECT id, shift_id, rolled_forward_at, COALESCE(refunded_amount_cents, 0) AS refunded_amount_cents,
+            target_user_id
+       FROM tips WHERE id = $1`,
+    [tipId]
+  );
+  const tip = tipRes.rows[0];
+  if (!tip) throw new NotFoundError('tip not found');
+  if (tip.shift_id !== null || tip.rolled_forward_at !== null || Number(tip.refunded_amount_cents) > 0) {
+    throw new ConflictError('tip is already placed, rolled forward or refunded', 'TIP_ALREADY_PLACED');
+  }
+  // The recipient must have worked the target shift as an approved, non-dropped
+  // bartender: accrual splits the shift's tip pool across exactly that set, so
+  // a shift the recipient never worked pays their tip to other people. Same
+  // predicate as the clawback's bartender set.
+  const rosterRes = await pool.query(
+    `SELECT 1 FROM shift_requests
+      WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' AND dropped_at IS NULL
+        AND LOWER(TRIM(position)) = 'bartender'`,
+    [shiftId, tip.target_user_id]
+  );
+  if (!rosterRes.rows[0]) {
+    throw new AppError('the tip recipient is not an approved bartender on that shift', 422, 'RECIPIENT_NOT_ON_SHIFT');
+  }
+
   // Look up the period this event falls in (it may not exist yet if no event
   // has accrued; in that case there's nothing frozen).
   let frozen = false;
@@ -800,12 +831,18 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
     frozen = !!periodRes.rows[0] && periodRes.rows[0].status !== 'open';
   }
 
-  // Assign the tip.
+  // Assign the tip. The statement carries the same guards as the read above,
+  // so two admins placing one tip at once cannot both succeed.
   const updated = await pool.query(
-    `UPDATE tips SET shift_id = $1 WHERE id = $2 RETURNING id, shift_id, amount_cents, tipped_at`,
+    `UPDATE tips SET shift_id = $1
+      WHERE id = $2 AND shift_id IS NULL AND rolled_forward_at IS NULL
+        AND COALESCE(refunded_amount_cents, 0) = 0
+      RETURNING id, shift_id, amount_cents, tipped_at`,
     [shiftId, tipId]
   );
-  if (!updated.rows[0]) throw new NotFoundError('tip not found');
+  if (!updated.rows[0]) {
+    throw new ConflictError('tip was placed by another request', 'TIP_ALREADY_PLACED');
+  }
 
   // On the open path the standard accrual refreshes the tip pool. On the
   // frozen path roll forward so the tip lands on a bartender payout next period.
