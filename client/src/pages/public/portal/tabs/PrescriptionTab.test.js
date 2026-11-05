@@ -184,3 +184,25 @@ test('row labels read as the proposal page reads them: a canonical gratuity labe
   expect(within(pricing).queryByText('Shared Gratuity')).not.toBeInTheDocument();
   expect(within(pricing).getByText('Package R')).toBeInTheDocument();
 });
+
+// Audit PAY-02 (2026-11-05): the Deposit invoice is minted 'sent' when the
+// proposal goes out, so an UNBOOKED proposal carried an open_invoice_token and
+// "Pay balance" rendered beside "Review & book", taking the deposit from the
+// invoice page before the agreement was signed. Pay balance is a booked-only
+// action: before booking, the proposal page (Review & book) is the rail.
+test('an unbooked proposal with a balance offers Review & book but NO Pay balance', async () => {
+  const unbooked = { ...focusA, status: 'sent', balance_due: 100, open_invoice_token: 'inv-tok-deposit' };
+  render(<PrescriptionTab focus={unbooked} proposalDetail={detailA} />);
+  expect(await screen.findByText('Package A')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /Review & book/i })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Pay balance/i })).not.toBeInTheDocument();
+});
+
+test('a booked proposal with a balance still offers Pay balance on its open invoice', async () => {
+  const booked = { ...focusRows, open_invoice_token: 'inv-tok-balance' };
+  render(<PrescriptionTab focus={booked} proposalDetail={detailRows} />);
+  await screen.findByRole('region', { name: 'Pricing' });
+  const pay = screen.getByRole('link', { name: /Pay balance/i });
+  expect(pay).toHaveAttribute('href', '/invoice/inv-tok-balance');
+  expect(screen.queryByRole('link', { name: /Review & book/i })).not.toBeInTheDocument();
+});

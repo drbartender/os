@@ -24,6 +24,7 @@ const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFro
 const { publicPriceView } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
 const { contractBalanceDueCents } = require('../../utils/invoiceExtras');
+const { bookedStatusSqlList } = require('../../utils/proposalStatus');
 
 const router = express.Router();
 
@@ -182,10 +183,13 @@ async function buildPublicProposalPayload(token, db = pool) {
     LEFT JOIN proposal_groups pg ON pg.id = p.group_id
     -- Oldest still-payable invoice for THIS proposal (client-owned token for the
     -- client's own invoice; no PII widening). Lets ProposalView's paid-state card
-    -- link "Pay balance" straight to /invoice/:token.
+    -- link "Pay balance" straight to /invoice/:token. Booked rows only (audit
+    -- PAY-02): the send-time Deposit invoice is open on an unbooked proposal
+    -- and its page must not be offered as a way around the sign-and-pay rail.
     LEFT JOIN LATERAL (
       SELECT token AS open_invoice_token
       FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+        AND p.status IN (${bookedStatusSqlList()})
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1
