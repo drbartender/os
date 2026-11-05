@@ -23,12 +23,15 @@ async function insertClient() {
 
 async function insertProposal(fields = {}) {
   const { rows: [p] } = await pool.query(
-    `INSERT INTO proposals (status, amount_paid, pricing_snapshot, total_price, client_id)
-     VALUES ($1, $2, '{}'::jsonb, 1000, $3) RETURNING *`,
-    [fields.status || 'sent', fields.amount_paid || 0, fields.client_id || null]);
+    `INSERT INTO proposals (status, amount_paid, pricing_snapshot, total_price, client_id, event_date)
+     VALUES ($1, $2, '{}'::jsonb, 1000, $3, $4) RETURNING *`,
+    [fields.status || 'sent', fields.amount_paid || 0, fields.client_id || null, fields.event_date || null]);
   proposalIds.add(p.id);
   return p;
 }
+
+const EVENT_DAY = '2031-06-14';
+const OTHER_DAY = '2031-09-20';
 
 async function insertInvoice(proposalId, { status = 'sent', amount_paid = 0, amount_due = 10000 } = {}) {
   invSeq += 1;
@@ -117,14 +120,15 @@ test('idempotent replay of the same winner does not re-commit', async () => {
 
 // ── sweepClientAlternatives (ungrouped same-client sweep) ────────────────────
 
-test('sweep archives the same-client open alternative and voids its invoice', async () => {
+test('sweep archives the same-client, same-date open alternative and voids its invoice', async () => {
   const clientId = await insertClient();
-  const winner = await insertProposal({ status: 'sent', client_id: clientId });
-  const alt = await insertProposal({ status: 'draft', client_id: clientId });
+  const winner = await insertProposal({ status: 'sent', client_id: clientId, event_date: EVENT_DAY });
+  const alt = await insertProposal({ status: 'draft', client_id: clientId, event_date: EVENT_DAY });
   await insertInvoice(alt.id, { status: 'sent', amount_paid: 0 });
 
-  const { sweptIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  const { sweptIds, skippedIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
   assert.deepStrictEqual(sweptIds, [alt.id]);
+  assert.deepStrictEqual(skippedIds, []);
 
   const { rows: [swept] } = await pool.query('SELECT status, archive_reason FROM proposals WHERE id = $1', [alt.id]);
   assert.strictEqual(swept.status, 'archived');
@@ -133,16 +137,35 @@ test('sweep archives the same-client open alternative and voids its invoice', as
   assert.strictEqual(inv.status, 'void', "swept alternative's unpaid invoice is voided");
 });
 
+test('sweep leaves a same-client proposal on ANOTHER date open and reports it', async () => {
+  const clientId = await insertClient();
+  const winner = await insertProposal({ status: 'sent', client_id: clientId, event_date: EVENT_DAY });
+  const otherDate = await insertProposal({ status: 'sent', client_id: clientId, event_date: OTHER_DAY });
+  const undated = await insertProposal({ status: 'draft', client_id: clientId });
+  const inv = await insertInvoice(otherDate.id, { status: 'sent', amount_paid: 0 });
+
+  const { sweptIds, skippedIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  assert.deepStrictEqual(sweptIds, [], 'a different date is not provably an alternative');
+  assert.deepStrictEqual(skippedIds.sort(), [otherDate.id, undated.id].sort(), 'both left-open rows are reported');
+
+  const { rows: [p] } = await pool.query('SELECT status, archive_reason FROM proposals WHERE id = $1', [otherDate.id]);
+  assert.strictEqual(p.status, 'sent');
+  assert.strictEqual(p.archive_reason, null);
+  const { rows: [i] } = await pool.query('SELECT status FROM invoices WHERE id = $1', [inv.id]);
+  assert.strictEqual(i.status, 'sent', 'its invoice is untouched');
+});
+
 test('sweep never touches other clients, paid siblings, or converted siblings', async () => {
   const clientId = await insertClient();
   const otherClientId = await insertClient();
-  const winner = await insertProposal({ status: 'sent', client_id: clientId });
-  const paidSibling = await insertProposal({ status: 'sent', amount_paid: 100, client_id: clientId });
-  const converted = await insertProposal({ status: 'deposit_paid', client_id: clientId });
-  const otherClients = await insertProposal({ status: 'draft', client_id: otherClientId });
+  const winner = await insertProposal({ status: 'sent', client_id: clientId, event_date: EVENT_DAY });
+  const paidSibling = await insertProposal({ status: 'sent', amount_paid: 100, client_id: clientId, event_date: EVENT_DAY });
+  const converted = await insertProposal({ status: 'deposit_paid', client_id: clientId, event_date: EVENT_DAY });
+  const otherClients = await insertProposal({ status: 'draft', client_id: otherClientId, event_date: EVENT_DAY });
 
-  const { sweptIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  const { sweptIds, skippedIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
   assert.deepStrictEqual(sweptIds, [], 'nothing eligible to sweep');
+  assert.deepStrictEqual(skippedIds, [], 'nothing eligible to report either');
 
   for (const [id, expected] of [[paidSibling.id, 'sent'], [converted.id, 'deposit_paid'], [otherClients.id, 'draft']]) {
     const { rows: [p] } = await pool.query('SELECT status FROM proposals WHERE id = $1', [id]);
@@ -152,6 +175,6 @@ test('sweep never touches other clients, paid siblings, or converted siblings', 
 
 test('sweep is a no-op for a clientless winner', async () => {
   const winner = await insertProposal({ status: 'sent' });
-  const { sweptIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
-  assert.deepStrictEqual(sweptIds, []);
+  const res = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  assert.deepStrictEqual(res, { sweptIds: [], skippedIds: [] });
 });

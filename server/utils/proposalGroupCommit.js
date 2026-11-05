@@ -76,8 +76,8 @@ async function commitGroupChoice(winnerProposalId, dbClient) {
 
 // Same-client sweep for UNGROUPED alternatives. When a client's FIRST payment
 // settles on a proposal, their other open proposals (draft/sent/viewed/modified/
-// accepted, nothing paid) are almost always alternatives for the same event, so
-// archive them like formal-group losers: status 'archived' + reason
+// accepted, nothing paid) FOR THE SAME EVENT DATE are alternatives for that
+// event, so archive them like formal-group losers: status 'archived' + reason
 // 'option_not_chosen' + unpaid-invoice void + activity row. Runs INSIDE the
 // settle tx, AFTER commitGroupChoice (formal-group losers are already 'archived'
 // by then, so the status filter skips them; this catches ungrouped strays).
@@ -87,12 +87,21 @@ async function commitGroupChoice(winnerProposalId, dbClient) {
 // event is legitimate by then. Best-effort marketing/change-request reaps run
 // post-commit in the caller, same as commitGroupChoice's losers.
 //
-// Returns { sweptIds }.
+// SAME DATE ONLY (audit 2026-11-05, M2): an open proposal on a DIFFERENT date
+// may be a second real booking (the rehearsal dinner next to the wedding, a
+// repeat corporate client's next quarter), and the old sweep archived it,
+// voided its invoice and cancelled its marketing the moment the first one
+// paid. Those rows are now left exactly as they are and returned as
+// `skippedIds`; the caller emails the admin post-commit
+// (unsweptAlternativesAlert.js) so a genuine alternative still gets archived
+// by hand. Undated rows on either side are never swept.
+//
+// Returns { sweptIds, skippedIds }.
 async function sweepClientAlternatives(winnerProposalId, dbClient) {
   const winnerId = Number(winnerProposalId);
   const { rows: [winner] } = await dbClient.query(
     'SELECT id, client_id FROM proposals WHERE id = $1', [winnerId]);
-  if (!winner || winner.client_id === null) return { sweptIds: [] };
+  if (!winner || winner.client_id === null) return { sweptIds: [], skippedIds: [] };
 
   // Serialize concurrent archivers via the client row. GLOBAL LOCK ORDER:
   // clients -> proposal_groups -> proposals — every path that archives
@@ -103,16 +112,23 @@ async function sweepClientAlternatives(winnerProposalId, dbClient) {
   // a same-tx re-lock (a no-op); it stays here so the helper is safe alone.
   await dbClient.query('SELECT id FROM clients WHERE id = $1 FOR UPDATE', [winner.client_id]);
 
+  // same_event is decided in SQL (DATE = DATE), never by comparing the driver's
+  // JS Date objects, whose midnight shifts with the session timezone.
   const { rows: alts } = await dbClient.query(
-    `SELECT id FROM proposals
-      WHERE client_id = $1 AND id <> $2
-        AND status = ANY($3) AND COALESCE(amount_paid, 0) = 0
-      ORDER BY id
-      FOR UPDATE`,
+    `SELECT p.id,
+            (p.event_date IS NOT NULL AND w.event_date IS NOT NULL AND p.event_date = w.event_date) AS same_event
+       FROM proposals p
+       CROSS JOIN (SELECT event_date FROM proposals WHERE id = $2) w
+      WHERE p.client_id = $1 AND p.id <> $2
+        AND p.status = ANY($3) AND COALESCE(p.amount_paid, 0) = 0
+      ORDER BY p.id
+      FOR UPDATE OF p`,
     [winner.client_id, winnerId, SWEEPABLE_STATUSES]);
 
   const sweptIds = [];
+  const skippedIds = [];
   for (const alt of alts) {
+    if (!alt.same_event) { skippedIds.push(alt.id); continue; }
     await dbClient.query(
       `UPDATE proposals SET status = 'archived', archive_reason = 'option_not_chosen', updated_at = NOW()
         WHERE id = $1`,
@@ -124,7 +140,7 @@ async function sweepClientAlternatives(winnerProposalId, dbClient) {
       [alt.id, JSON.stringify({ swept_by_proposal_id: winnerId })]);
     sweptIds.push(alt.id);
   }
-  return { sweptIds };
+  return { sweptIds, skippedIds };
 }
 
 module.exports = { commitGroupChoice, sweepClientAlternatives };

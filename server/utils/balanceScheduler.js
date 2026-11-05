@@ -11,6 +11,17 @@ const { chicagoTodayYmd } = require('./businessTime');
 let _deps = { today: chicagoTodayYmd };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
+// Retry budget for a failed off-session balance charge (audit 2026-11-05, M1 /
+// L1). A declined card used to be re-claimed EVERY HOUR forever: the claim
+// admitted autopay_status='failed' with no counter and no wait, and the retry
+// reused the day's idempotency key, so Stripe replayed the decline for 24h and
+// then started charging for real, hourly, with a 24h-throttled email saying
+// so. Now a failure waits a day (the key window has expired, so the next try
+// is a genuine retry, which is what a transient decline needs) and the third
+// failure stops autopay for that balance: the final email says so, and only an
+// admin's Charge balance click (routes/stripe.js) or a re-enrol tries again.
+const MAX_AUTOPAY_ATTEMPTS = 3;
+
 // Rate-limit the no-stripe-client alert so Sentry isn't spammed every cycle.
 let stripeUnavailableLastLog = 0;
 const STRIPE_ALERT_INTERVAL_MS = 60 * 60 * 1000; // once per hour
@@ -55,12 +66,17 @@ async function processAutopayCharges() {
         AND stripe_payment_method_id IS NOT NULL
         AND (
           autopay_status IS NULL
-          OR autopay_status = 'failed'
+          -- A failed attempt is retried a day later, at most MAX_AUTOPAY_ATTEMPTS times.
+          OR (autopay_status = 'failed'
+              AND COALESCE(autopay_attempts, 0) < $2
+              AND (autopay_attempted_at IS NULL OR autopay_attempted_at < NOW() - INTERVAL '24 hours'))
           OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '72 hours')
         )
+        -- An open chargeback (audit 2026-11-05, H1) freezes the saved card.
+        AND dispute_open_at IS NULL
       RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
-                event_type, event_type_custom, balance_due_date
-    `, [_deps.today()]);
+                event_type, event_type_custom, balance_due_date, autopay_attempts
+    `, [_deps.today(), MAX_AUTOPAY_ATTEMPTS]);
 
     if (result.rows.length === 0) return;
 
@@ -79,14 +95,20 @@ async function processAutopayCharges() {
         return;
       }
 
-      // Stripe idempotency key: scoped per (proposal, balance_due_date) so a
-      // retried call against the same balance returns the original PaymentIntent
-      // instead of charging again. balance_due_date is part of the key so a
-      // genuinely new balance (rescheduled event) gets a fresh charge.
+      // Stripe idempotency key: scoped per (proposal, balance_due_date, attempt)
+      // so a retried call against the same balance IN THE SAME ATTEMPT returns
+      // the original PaymentIntent instead of charging again (a manual admin
+      // click racing a scheduler tick reads the same counter and builds the
+      // same key). balance_due_date is part of the key so a genuinely new
+      // balance (rescheduled event) gets a fresh charge; the attempt counter is
+      // part of it so a retry after a recorded failure is a real new attempt
+      // rather than Stripe replaying the decline. priorBalanceChargeSettling
+      // below is what guards a retry against a prior intent that did settle.
       const balanceDueIso = proposal.balance_due_date
         ? new Date(proposal.balance_due_date).toISOString().slice(0, 10)
         : 'no-date';
-      const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
+      const attempt = Number(proposal.autopay_attempts) || 0;
+      const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}-a${attempt}`;
 
       try {
         // F1(b): on a stale (>72h) re-claim a prior balance intent may already be
@@ -132,17 +154,24 @@ async function processAutopayCharges() {
           extra: { amount_cents: balanceCents },
         });
 
-        // Release the claim into a 'failed' state — admin gets a one-time
-        // email (throttled below); future cycles won't auto-retry until the
-        // claim is reset (e.g. admin re-enrolls or fixes the card).
+        // Release the claim into a 'failed' state and count the attempt. The
+        // claim above re-admits the row a day later while the count is under
+        // MAX_AUTOPAY_ATTEMPTS; at the cap autopay stops for this balance and the
+        // admin is told once, below, without the 24h throttle.
+        let attemptsSoFar = attempt + 1;
         try {
-          await pool.query(
-            `UPDATE proposals SET autopay_status = 'failed' WHERE id = $1`,
+          const failRes = await pool.query(
+            `UPDATE proposals
+                SET autopay_status = 'failed', autopay_attempts = COALESCE(autopay_attempts, 0) + 1
+              WHERE id = $1
+              RETURNING autopay_attempts`,
             [proposal.id]
           );
+          if (failRes.rows[0]) attemptsSoFar = Number(failRes.rows[0].autopay_attempts) || attemptsSoFar;
         } catch (claimErr) {
           console.error('[BalanceScheduler] Failed to mark autopay_status=failed:', claimErr);
         }
+        const exhausted = attemptsSoFar >= MAX_AUTOPAY_ATTEMPTS;
 
         // Log the failure for admin visibility and capture the inserted row's id
         // so the throttle UPDATE below can target THIS row (not a stale older one
@@ -151,7 +180,7 @@ async function processAutopayCharges() {
         try {
           const logRes = await pool.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'autopay_failed', 'system', $2) RETURNING id`,
-            [proposal.id, JSON.stringify({ error: err.message, amount: balanceCents })]
+            [proposal.id, JSON.stringify({ error: err.message, amount: balanceCents, attempt: attemptsSoFar, exhausted })]
           );
           logRowId = logRes.rows[0]?.id ?? null;
         } catch (logErr) {
@@ -173,14 +202,23 @@ async function processAutopayCharges() {
                LIMIT 1`,
               [proposal.id, logRowId]
             );
-            if (recent.rowCount === 0) {
-              const failSubject = `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`;
-              const failHtml = `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`;
+            // The exhaustion notice is never throttled: it is the one email
+            // that says nothing further will happen on its own.
+            if (recent.rowCount === 0 || exhausted) {
+              const dollars = `$${(balanceCents / 100).toFixed(2)}`;
+              const retriesLeft = Math.max(0, MAX_AUTOPAY_ATTEMPTS - attemptsSoFar);
+              const failSubject = exhausted
+                ? `Autopay stopped after ${attemptsSoFar} failed attempts: proposal #${proposal.id} (${dollars})`
+                : `Autopay failed (attempt ${attemptsSoFar} of ${MAX_AUTOPAY_ATTEMPTS}): proposal #${proposal.id} (${dollars})`;
+              const next = exhausted
+                ? 'Autopay will not retry this balance. Collect it another way, or fix the card and use Charge balance on the proposal.'
+                : `The charge will be retried in 24 hours (${retriesLeft} more ${retriesLeft === 1 ? 'retry' : 'retries'} before autopay stops).`;
+              const failHtml = `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p><p>${next}</p>`;
               await notifyAdminCategory({
                 category: 'payment_failure',
                 subject: failSubject,
                 emailHtml: failHtml,
-                emailText: `Autopay attempt failed for proposal #${proposal.id}. Error: ${err.message}`,
+                emailText: `Autopay attempt failed for proposal #${proposal.id}. Error: ${err.message}\n${next}`,
               });
               // Mark THIS log row (not the most-recent via ORDER BY) as notified
               await pool.query(
@@ -287,4 +325,5 @@ async function processEventCompletions() {
   }
 }
 
-module.exports = { processAutopayCharges, processEventCompletions, __setDeps };
+module.exports = {
+  MAX_AUTOPAY_ATTEMPTS, processAutopayCharges, processEventCompletions, __setDeps };

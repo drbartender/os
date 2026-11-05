@@ -4,6 +4,8 @@
 
 const { toCents, db } = require('./invoiceShared');
 const { calculateSyrupCost } = require('./pricingEngine');
+const { priceExtrasAddon, staffCountFromSnapshot, resolveDurationHours } = require('./drinkPlanExtras');
+const { contractDurationHours } = require('./contractDuration');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 const { ConflictError } = require('./errors');
@@ -13,25 +15,56 @@ const { readSnapshot } = require('./pricingSnapshot');
 
 // ─── 11. writeExtrasLineItems + createDrinkPlanExtrasInvoice ──────────────────
 
+/** Invoice line label for an extras add-on, mirroring the engine's breakdown labels. */
+function extrasLineDescription(addon, priced, guestCount) {
+  const q = Number(priced.quantity) || 0;
+  switch (addon.slug === 'additional-bartender' ? 'bartender' : addon.billing_type) {
+    case 'bartender':
+      return priced.gratuityPerHour > 0
+        ? `${addon.name} (${q} hrs, gratuity included)`
+        : `${addon.name} (${q} hrs)`;
+    case 'per_guest':
+    case 'per_guest_timed':
+      return `${addon.name} (${guestCount || 1} guests)`;
+    case 'per_hour':
+      return `${addon.name} (${q} hrs)`;
+    case 'per_staff':
+      return `${addon.name} (${q} staff)`;
+    case 'per_100_guests':
+      return q > 1 ? `${addon.name} (${q} x 100 guests)` : addon.name;
+    default:
+      return addon.name;
+  }
+}
+
 /**
  * Build and write the "Drink Plan Extras" line items for an invoice from a
  * selections payload. Extracted from createDrinkPlanExtrasInvoice so the submit
  * find-or-refresh path and the create path share ONE line-item builder and can
  * never drift.
  *
- * Mirrors the create-intent extras math: raw enabled add-on slugs (per-guest vs
- * flat), bar rental (first-vs-additional keyed on numBars), and NEW syrups only
- * (excludes self-provided + already-in-snapshot). `totalCents` is the invoice
- * amount_due (what Stripe charged); per-line rounding can drift a cent or two
- * from that, so the drift is absorbed into the last line — the lines always sum
- * to amount_due and the invoice never shows a phantom balance.
+ * Mirrors the create-intent extras math: raw enabled add-on slugs, each priced
+ * by the engine's per-type math through drinkPlanExtras.priceExtrasAddon (the
+ * same function computeExtrasBreakdown sums, audit 2026-11-05 M3), bar rental
+ * (first-vs-additional keyed on numBars), and NEW syrups only (excludes
+ * self-provided + already-in-snapshot). `totalCents` is the invoice amount_due
+ * (what Stripe charged); per-line rounding can drift a cent or two from that,
+ * so the drift is absorbed into the last line — the lines always sum to
+ * amount_due and the invoice never shows a phantom balance.
  *
  * @param {number} invoiceId
- * @param {{ selections:object, guestCount:number, pricingSnapshot:object, numBars:number, totalCents:number }} args
+ * @param {{ selections:object, guestCount:number, pricingSnapshot:object, numBars:number, totalCents:number,
+ *           durationHours?:number, isClassPackage?:boolean }} args
+ *   durationHours is the CONTRACT's hours (contractDuration.js); omitted, the
+ *   snapshot's priced duration is used.
  * @param {object} dbClient — must be a transaction client
  * @returns {Promise<Array>} the line items written
  */
-async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricingSnapshot, numBars, totalCents }, dbClient) {
+async function writeExtrasLineItems(
+  invoiceId,
+  { selections, guestCount, pricingSnapshot, numBars, totalCents, durationHours, isClassPackage = false },
+  dbClient
+) {
   const client = db(dbClient);
   const sel = selections || {};
   const snap = pricingSnapshot || {};
@@ -42,20 +75,21 @@ async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricing
   );
   if (addonSlugs.length > 0) {
     const addonRows = await client.query(
-      'SELECT id, slug, name, rate, billing_type FROM service_addons WHERE slug = ANY($1) AND is_active = true',
+      'SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true',
       [addonSlugs]
     );
+    const hours = resolveDurationHours(durationHours, snap);
+    const staffCount = staffCountFromSnapshot(snap, hours);
     for (const addon of addonRows.rows) {
-      const rate = Number(addon.rate);
-      const isPerGuest = addon.billing_type === 'per_guest';
-      const qty = isPerGuest ? (guestCount || 1) : 1;
-      const lineCents = toCents(rate * qty);
-      const unitCents = toCents(rate);
-      const description = isPerGuest
-        ? `${addon.name} (${qty} guests)`
-        : addon.name;
+      const priced = priceExtrasAddon(addon, { guestCount, durationHours: hours, staffCount, isClassPackage });
+      const lineCents = toCents(priced.total);
+      // Display quantity = the engine's output shape (guests, hours, staff,
+      // 100-guest blocks, hours x bartenders); unit = line / quantity so the
+      // invoice renders `quantity x rate` truthfully.
+      const qty = Number(priced.quantity) > 0 ? Number(priced.quantity) : 1;
+      const unitCents = qty > 1 ? Math.round(lineCents / qty) : lineCents;
       items.push({
-        description,
+        description: extrasLineDescription(addon, priced, guestCount),
         quantity: qty,
         unit_price: unitCents,
         line_total: lineCents,
@@ -163,22 +197,30 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
   let guestCount;
   let pricingSnapshot;
   let numBars;
+  let durationHours;
+  let isClassPackage = false;
   if (lineItemState) {
-    ({ selections, guestCount, pricingSnapshot, numBars } = lineItemState);
+    ({ selections, guestCount, pricingSnapshot, numBars, durationHours, isClassPackage = false } = lineItemState);
   } else {
-    const [dpRes, propRes] = await Promise.all([
-      dbClient.query('SELECT selections FROM drink_plans WHERE id = $1', [drinkPlanId]),
-      dbClient.query(
-        'SELECT guest_count, num_bars, pricing_snapshot FROM proposals WHERE id = $1',
-        [proposalId]
-      ),
-    ]);
+    // Sequential on purpose: dbClient is the caller's ONE connection.
+    const dpRes = await dbClient.query('SELECT selections FROM drink_plans WHERE id = $1', [drinkPlanId]);
+    const propRes = await dbClient.query(
+      `SELECT p.guest_count, p.num_bars, p.pricing_snapshot, p.event_duration_hours,
+              sp.pricing_type AS package_pricing_type, sp.bar_type AS package_bar_type
+         FROM proposals p
+         LEFT JOIN service_packages sp ON sp.id = p.package_id
+        WHERE p.id = $1`,
+      [proposalId]
+    );
     if (!dpRes.rows[0]) throw new Error(`Drink plan ${drinkPlanId} not found`);
     if (!propRes.rows[0]) throw new Error(`Proposal ${proposalId} not found`);
+    const row = propRes.rows[0];
     selections = dpRes.rows[0].selections || {};
-    guestCount = propRes.rows[0].guest_count;
-    pricingSnapshot = readSnapshot(propRes.rows[0].pricing_snapshot, { context: 'invoiceExtras' });
-    numBars = propRes.rows[0].num_bars;
+    guestCount = row.guest_count;
+    pricingSnapshot = readSnapshot(row.pricing_snapshot, { context: 'invoiceExtras' });
+    numBars = row.num_bars;
+    durationHours = await contractDurationHours(dbClient, proposalId, row.event_duration_hours);
+    isClassPackage = row.package_pricing_type === 'per_guest' && row.package_bar_type === 'class';
   }
 
   const invoice = await createInvoice(
@@ -193,7 +235,7 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
   );
   await writeExtrasLineItems(
     invoice.id,
-    { selections, guestCount, pricingSnapshot, numBars, totalCents: extrasAmountCents },
+    { selections, guestCount, pricingSnapshot, numBars, totalCents: extrasAmountCents, durationHours, isClassPackage },
     dbClient
   );
   return invoice;
@@ -234,12 +276,14 @@ async function findExtrasInvoice(proposalId, dbClient) {
  *   - existing paid/locked     → reuse AS-IS (never mutate a paid invoice; the
  *     out-of-order webhook already settled it).
  *
- * @param {{ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars }} args
+ * @param {{ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars,
+ *           durationHours?, isClassPackage? }} args  (durationHours / isClassPackage: the same
+ *   values the caller gave computeExtrasBreakdown, so the lines price as the charge did)
  * @param {object} dbClient — must be a transaction client
  * @returns {Promise<object>} the extras invoice row
  */
 async function findOrRefreshExtrasInvoice(
-  { proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars },
+  { proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars, durationHours, isClassPackage = false },
   dbClient
 ) {
   const inv = await findExtrasInvoice(proposalId, dbClient);
@@ -253,7 +297,7 @@ async function findOrRefreshExtrasInvoice(
       );
       await writeExtrasLineItems(
         inv.id,
-        { selections, guestCount, pricingSnapshot, numBars, totalCents: breakdown.totalCents },
+        { selections, guestCount, pricingSnapshot, numBars, totalCents: breakdown.totalCents, durationHours, isClassPackage },
         dbClient
       );
     }
@@ -267,7 +311,7 @@ async function findOrRefreshExtrasInvoice(
       extrasAmountCents: breakdown.totalCents,
       // Pre-mutation state so the fresh invoice's line LABELS match amount_due
       // (the submit tx already incremented num_bars / recalced the snapshot).
-      lineItemState: { selections, guestCount, pricingSnapshot, numBars },
+      lineItemState: { selections, guestCount, pricingSnapshot, numBars, durationHours, isClassPackage },
     },
     dbClient
   );

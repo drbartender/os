@@ -21,6 +21,7 @@ const {
 const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('../utils/autopayDurableCharge');
 const { assertNoPaymentInFlight } = require('../utils/paymentInFlight');
+const { contractDurationHours } = require('../utils/contractDuration');
 
 // create-intent lives in its own module (extracted in the gratuity split).
 router.use(require('./stripeCreateIntent'));
@@ -49,9 +50,12 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
            p.total_price, p.amount_paid, p.event_date,
            p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
            p.event_type, p.event_type_custom, p.pricing_snapshot, p.event_timezone,
+           p.event_duration_hours,
+           sp.pricing_type AS package_pricing_type, sp.bar_type AS package_bar_type,
            c.email AS client_email, c.name AS client_name
     FROM drink_plans dp
     JOIN proposals p ON p.id = dp.proposal_id
+    LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE dp.token = $1
   `, [req.params.token]);
@@ -77,9 +81,14 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
   // to build the "Drink Plan Extras" invoice, so the invoice amount_due can
   // never drift from what Stripe charges. numBars is the client's current count
   // (the first-vs-additional bar fee is priced pre-submit here, exactly as the
-  // invoice prices it at submit).
+  // invoice prices it at submit). The contract's hours and the hosted-class
+  // flag are what the engine prices per_hour / per_staff / bartender add-ons
+  // with (audit 2026-11-05, M3); submit passes the same two.
+  const contractHours = await contractDurationHours(pool, data.proposal_id, data.event_duration_hours);
+  const isClassPackage = data.package_pricing_type === 'per_guest' && data.package_bar_type === 'class';
   const bd = await computeExtrasBreakdown(
-    { selections, guestCount: data.guest_count, pricingSnapshot: data.pricing_snapshot, numBars: data.num_bars },
+    { selections, guestCount: data.guest_count, pricingSnapshot: data.pricing_snapshot, numBars: data.num_bars,
+      durationHours: contractHours, isClassPackage },
     pool
   );
   const extrasAmount = bd.totalCents / 100;
@@ -310,19 +319,27 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
         OR autopay_status = 'failed'
         OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '72 hours')
       )
+      -- An open chargeback (audit 2026-11-05, H1) freezes the saved card: charging
+      -- the balance while the client disputes the deposit invites a second dispute.
+      AND dispute_open_at IS NULL
     RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
-              autopay_enrolled, status, event_type, event_type_custom, balance_due_date
+              autopay_enrolled, status, event_type, event_type_custom, balance_due_date,
+              autopay_attempts
   `, [req.params.id]);
 
   if (!result.rows[0]) {
     // Distinguish "not found" from "already charging" with a follow-up read so
     // admins see why the click was rejected.
     const probe = await pool.query(
-      `SELECT status, autopay_status, stripe_customer_id, stripe_payment_method_id FROM proposals WHERE id = $1`,
+      `SELECT status, autopay_status, stripe_customer_id, stripe_payment_method_id, dispute_open_at
+         FROM proposals WHERE id = $1`,
       [req.params.id]
     );
     if (!probe.rows[0]) throw new NotFoundError('Proposal not found');
     const p = probe.rows[0];
+    if (p.dispute_open_at) {
+      throw new ConflictError('A chargeback is open on this proposal. Resolve it before charging the balance.', 'DISPUTE_OPEN');
+    }
     if (p.status !== 'deposit_paid') {
       throw new ConflictError('Proposal must be in deposit_paid status to charge balance', 'INVALID_STATUS');
     }
@@ -346,10 +363,11 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
 
   // Stripe idempotency key shared with the scheduler — a manual click +
   // scheduler tick that race against the same balance return the SAME intent.
+  // The attempt counter is part of it (balanceScheduler.js explains why).
   const balanceDueIso = proposal.balance_due_date
     ? new Date(proposal.balance_due_date).toISOString().slice(0, 10)
     : 'no-date';
-  const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
+  const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}-a${Number(proposal.autopay_attempts) || 0}`;
 
   // F1(b): stale re-claim double-charge guard (mirrors the scheduler). If a prior
   // balance intent for this proposal is already succeeded/processing at
@@ -390,8 +408,13 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
       },
     }, { idempotencyKey });
   } catch (err) {
-    // Release the claim so the admin can retry after fixing the card.
-    await pool.query(`UPDATE proposals SET autopay_status = 'failed' WHERE id = $1`, [proposal.id]);
+    // Release the claim so the admin can retry after fixing the card. The
+    // attempt counter advances so the scheduler's retry budget and the next
+    // idempotency key both see this attempt (balanceScheduler.js).
+    await pool.query(
+      `UPDATE proposals SET autopay_status = 'failed', autopay_attempts = COALESCE(autopay_attempts, 0) + 1 WHERE id = $1`,
+      [proposal.id]
+    );
     console.error('Stripe charge-balance error:', err);
     // Preserve Stripe's specific decline message for card errors so admins
     // see the exact reason (e.g. "Your card has insufficient funds.").
@@ -457,11 +480,17 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   }
 
   const propRes = await pool.query(
-    'SELECT id, total_price, amount_paid FROM proposals WHERE id = $1',
+    'SELECT id, total_price, amount_paid, dispute_open_at FROM proposals WHERE id = $1',
     [proposalId]
   );
   if (!propRes.rows[0]) throw new NotFoundError('Proposal not found');
   const proposal = propRes.rows[0];
+  // Open chargeback (audit 2026-11-05, H1): Stripe already holds the disputed
+  // amount; a manual refund on top pays it twice if the dispute is then lost.
+  // Settle the dispute (or accept it in the Stripe dashboard) first.
+  if (proposal.dispute_open_at) {
+    throw new AppError('A chargeback is open on this proposal. Resolve the dispute in Stripe before refunding.', 409, 'DISPUTE_OPEN');
+  }
 
   // Refundable charges: deposit/balance/full AND invoice. `invoice` is the
   // STANDARD balance path post the invoice-rollup fix (balance paid via the

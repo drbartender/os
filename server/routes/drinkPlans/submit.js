@@ -577,14 +577,25 @@ async function handleSubmit(req, res) {
       // rolls back the plan UPDATE, so the client retries cleanly.
       if (proposal) {
         if (paidSeparately) {
+          // Price the extras the way the fold above just priced them into
+          // total_price: the CONTRACT's hours and the hosted-class rule (audit
+          // 2026-11-05, M3). Both reads on the held client. `pkg` is scoped to
+          // the pricing block above, so the package kind is re-read here.
+          const payNowHours = await contractDurationHours(client, proposal.id, proposal.event_duration_hours);
+          const pkgKind = proposal.package_id
+            ? (await client.query('SELECT pricing_type, bar_type FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0]
+            : null;
+          const payNowClass = !!pkgKind && pkgKind.pricing_type === 'per_guest' && pkgKind.bar_type === 'class';
           const bd = await computeExtrasBreakdown(
-            { selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent },
+            { selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent,
+              durationHours: payNowHours, isClassPackage: payNowClass },
             client
           );
           if (bd.totalCents > 0) {
             await findOrRefreshExtrasInvoice(
               { proposalId: proposal.id, drinkPlanId: updatedPlan.id, breakdown: bd,
-                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent },
+                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent,
+                durationHours: payNowHours, isClassPackage: payNowClass },
               client
             );
           }
@@ -670,19 +681,25 @@ async function handleSubmit(req, res) {
 
       if (result.rows[0]) {
         const propRes = await client.query(
-          'SELECT id, guest_count, pricing_snapshot, num_bars FROM proposals WHERE id = $1 FOR UPDATE',
+          'SELECT id, guest_count, pricing_snapshot, num_bars, event_duration_hours FROM proposals WHERE id = $1 FOR UPDATE',
           [result.rows[0].proposal_id]
         );
         const proposal = propRes.rows[0];
         if (proposal) {
+          // No add-ons reach this path (hasFinancialSideEffects is false), so
+          // only the syrup math runs; the contract hours ride along for parity
+          // with the create-intent call (audit 2026-11-05, M3).
+          const fastPathHours = await contractDurationHours(client, proposal.id, proposal.event_duration_hours);
           const bd = await computeExtrasBreakdown(
-            { selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars },
+            { selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars,
+              durationHours: fastPathHours },
             client
           );
           if (bd.totalCents > 0) {
             await findOrRefreshExtrasInvoice(
               { proposalId: proposal.id, drinkPlanId: result.rows[0].id, breakdown: bd,
-                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars },
+                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars,
+                durationHours: fastPathHours },
               client
             );
           }

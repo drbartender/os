@@ -215,6 +215,42 @@ function calculateAddonCost(addon, guestCount, durationHours, staffCount, addonQ
   }
 }
 
+/**
+ * Additional-bartender gratuity surcharge per hour: the same sub-100-guest
+ * tiers calculateStaffing applies to an over-ratio extra. An addon bartender is
+ * a luxury add on top of the ratio, so the small-event bump always applies.
+ * Class packages are exempt (HOSTED PACKAGE RULE EXCEPTION).
+ */
+function additionalBartenderGratuityPerHour(guestCount, isClassPackage = false) {
+  if (isClassPackage) return 0;
+  const guests = Number(guestCount) || 0;
+  if (guests < 50) return 50;
+  if (guests < 75) return 25;
+  if (guests < 100) return 15;
+  return 0;
+}
+
+/**
+ * The additional-bartender line, the ONE place its math lives: calculateProposal
+ * and the drink-plan extras pricing (drinkPlanExtras.js) both call it, so a
+ * pay-now extras charge can never drift from what the fold adds to total_price.
+ * qty bartenders x RAW durationHours (never minimum_hours; see
+ * addonQuantity.effectiveHoursFor) x (rate + gratuity surcharge). Class packages
+ * price at 0. `quantity` is the engine OUTPUT shape stored on proposal_addons
+ * (hours x count).
+ */
+function additionalBartenderLine({ rate, guestCount, durationHours, qty = 1, isClassPackage = false }) {
+  const hours = Number(durationHours) || 0;
+  const count = Number(qty) || 1;
+  const gratuityPerHour = additionalBartenderGratuityPerHour(guestCount, isClassPackage);
+  const effectiveRate = isClassPackage ? 0 : Number(rate) + gratuityPerHour;
+  return {
+    quantity: hours * count,
+    gratuityPerHour,
+    total: Math.round(count * hours * effectiveRate * 100) / 100,
+  };
+}
+
 const SYRUP_PRICE_SINGLE = 30;
 const SYRUP_PRICE_3PACK = 75;
 
@@ -417,18 +453,13 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   const totalStaff = staffing.actual + additionalBartenderQty
     + (addons || []).filter(a => a.slug === 'barback' || a.slug === 'banquet-server').reduce((sum, a) => sum + (a.quantity || 1), 0);
 
-  // Gratuity surcharge for additional-bartender add-on. Addon bartenders are
-  // treated as luxury adds layered on top of the auto/override staffing count
-  // — even if `num_bartenders` was simultaneously set under-ratio (an admin
-  // edge case), the addon-driven extra still carries the small-event gratuity
-  // because the bartender's tip volume is what's at stake. Class packages are
-  // exempt — see HOSTED PACKAGE RULE EXCEPTION by isHostedPackage().
-  let bartenderGratuityPerHour = 0;
-  if (additionalBartenderQty > 0 && !isClassPackage) {
-    if (guestCount < 50) bartenderGratuityPerHour = 50;
-    else if (guestCount < 75) bartenderGratuityPerHour = 25;
-    else if (guestCount < 100) bartenderGratuityPerHour = 15;
-  }
+  // Gratuity surcharge for the additional-bartender add-on lives in
+  // additionalBartenderLine() (shared with the drink-plan extras pricing).
+  // Addon bartenders are luxury adds layered on top of the auto/override
+  // staffing count — even if `num_bartenders` was simultaneously set
+  // under-ratio (an admin edge case), the addon-driven extra still carries the
+  // small-event gratuity because the bartender's tip volume is what's at stake.
+  // Class packages are exempt — see HOSTED PACKAGE RULE EXCEPTION.
 
   const addonResults = (addons || []).map(addon => {
     if (addon.slug === 'additional-bartender') {
@@ -437,8 +468,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       // hourly + gratuity rate as BYOB. Class packages are exempt — see
       // HOSTED PACKAGE RULE EXCEPTION by isHostedPackage().
       const qty = addon.quantity || 1;
-      const effectiveRate = isClassPackage ? 0 : Number(addon.rate) + bartenderGratuityPerHour;
-      const totalCost = qty * durationHours * effectiveRate;
+      const line = additionalBartenderLine({ rate: addon.rate, guestCount, durationHours, qty, isClassPackage });
       return {
         id: addon.id,
         slug: addon.slug,
@@ -446,9 +476,9 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
         billing_type: addon.billing_type,
         rate: Number(addon.rate),
         extra_hour_rate: addon.extra_hour_rate ? Number(addon.extra_hour_rate) : null,
-        quantity: durationHours * qty,
-        gratuity_per_hour: isClassPackage ? 0 : bartenderGratuityPerHour,
-        line_total: Math.round(totalCost * 100) / 100
+        quantity: line.quantity,
+        gratuity_per_hour: line.gratuityPerHour,
+        line_total: line.total
       };
     }
     const { quantity, total } = calculateAddonCost(addon, guestCount, durationHours, totalStaff, addon.quantity);
@@ -648,6 +678,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
 module.exports = {
   calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing,
   calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage, extraHourCharge,
+  additionalBartenderGratuityPerHour, additionalBartenderLine,
   hostedRateTier,
   computeCocktailGap, packageSuppressedAddons, isCocktailFullyCovered,
   getStaffNoun, computeGratuityBasis, gratuityBasisFromSnapshot, gratuityLineAmount,

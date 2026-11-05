@@ -33,6 +33,10 @@ const { findStaleProcessingPayments, STALE_PROCESSING_DAYS } = require('./paymen
 
 const OVER_ACTION = 'invoice_over_bill';
 const UNDER_ACTION = 'balance_invoice_missing';
+const ENDED_ACTION = 'event_ended_not_completed';
+// Direction 3 repeats weekly, not daily: nothing about it changes hour to hour,
+// and the row stays detected until a human completes or cancels the event.
+const ENDED_THROTTLE = '7 days';
 
 const usd = (cents) => '$' + (Number(cents) / 100).toFixed(2);
 
@@ -120,21 +124,47 @@ const UNDER_SQL = `
      AND ${OWED_CENTS} > ${PAYABLE_SUM}
    ORDER BY p.id`;
 
+// ── Direction 3: ENDED, NEVER COMPLETED ─────────────────────────────────────
+// A booked event whose date is at least two days past in its own zone, still in
+// a pre-completion booked status, with staff approved on its shifts. The
+// auto-complete sweep (balanceScheduler.processEventCompletions) completes only
+// FULLY PAID events, so a booking whose balance never settled sits here
+// forever, nobody is asked for the money, and its payroll never accrues
+// (audit 2026-11-05, L4). Alert only: the admin collects the balance (or
+// completes / cancels the event by hand) and the next accrual pass pays staff.
+// Two days, not one, so an evening event that ran past midnight is never
+// flagged the morning after.
+const ENDED_SQL = `
+  SELECT p.id, COALESCE(c.name, 'No client') AS client_name, p.status,
+         to_char(p.event_date, 'YYYY-MM-DD') AS event_ymd,
+         ${OWED_CENTS} AS owed_cents,
+         ${LABELS} AS labels,
+         (SELECT COUNT(*) FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
+           WHERE s.proposal_id = p.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)::int AS staff_count
+    FROM proposals p
+    LEFT JOIN clients c ON c.id = p.client_id
+   WHERE p.status IN ('deposit_paid', 'balance_paid', 'confirmed')
+     AND p.event_date IS NOT NULL
+     AND p.event_date <= ((NOW() AT TIME ZONE COALESCE(NULLIF(p.event_timezone, ''), 'America/Chicago'))::date - 2)
+     AND EXISTS (SELECT 1 FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
+                  WHERE s.proposal_id = p.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
+   ORDER BY p.event_date, p.id`;
+
 /**
- * Has this proposal already been notified for this direction inside 24h?
+ * Has this proposal already been notified for this direction inside the window?
  *
  * Mirrors balanceScheduler.js:155-181 exactly. The throttle is mandatory: a
  * detected proposal stays detected until a human acts, notifyAdminCategory has
  * no dedupe of its own, and the Resend quota is shared with client comms.
  */
-async function recentlyNotified(proposalId, action) {
+async function recentlyNotified(proposalId, action, within = '24 hours') {
   const { rowCount } = await pool.query(
     `SELECT 1 FROM proposal_activity_log
       WHERE proposal_id = $1 AND action = $2
-        AND created_at > NOW() - INTERVAL '24 hours'
+        AND created_at > NOW() - $3::interval
         AND details->>'admin_notified' = 'true'
       LIMIT 1`,
-    [proposalId, action]
+    [proposalId, action, within]
   );
   return rowCount > 0;
 }
@@ -157,7 +187,9 @@ async function escalate({ action, row, direction, detail }) {
   if (process.env.SENTRY_DSN_SERVER) {
     const message = direction === 'over'
       ? `Client over-billed: open invoices exceed balance due (proposal ${row.id})`
-      : `Balance due with no payable invoice (proposal ${row.id})`;
+      : direction === 'ended'
+        ? `Event ended but never completed; staff unpaid (proposal ${row.id})`
+        : `Balance due with no payable invoice (proposal ${row.id})`;
     Sentry.captureMessage(message, {
       level: 'warning',
       tags: { scheduler: 'balance_invoice_monitor', direction },
@@ -167,10 +199,11 @@ async function escalate({ action, row, direction, detail }) {
   }
 }
 
-function renderEmail(over, under) {
+function renderEmail(over, under, ended = []) {
+  const when = (r) => r.event_ymd || (r.event_date ? new Date(r.event_date).toISOString().slice(0, 10) : null);
   const line = (r, figure) =>
     `<li><strong>${r.client_name}</strong> (proposal #${r.id}, ${r.status}` +
-    `${r.event_date ? ', event ' + new Date(r.event_date).toISOString().slice(0, 10) : ''})` +
+    `${when(r) ? ', event ' + when(r) : ''})` +
     ` ${figure}. Invoices: ${r.labels || 'none'}. ` +
     `<a href="${process.env.CLIENT_URL || ''}/admin/proposals/${r.id}">Open</a></li>`;
 
@@ -197,11 +230,21 @@ function renderEmail(over, under) {
       `  #${r.id} ${r.client_name}: owes ${usd(r.balance_cents)}, only ${usd(r.payable_cents)} payable`));
   }
 
-  const count = over.length + under.length;
-  const subject = over.length > 0
-    ? `Invoice check: ${over.length} client${over.length === 1 ? '' : 's'} over-billed` +
-      (under.length > 0 ? `, ${under.length} with no payable invoice` : '')
-    : `Invoice check: ${count} client${count === 1 ? '' : 's'} with no payable invoice`;
+  if (ended.length > 0) {
+    parts.push(
+      '<h3>Ended but never completed: staff are not being paid</h3>',
+      '<p>These events happened days ago and are still booked, not completed, so payroll has not accrued. Auto-complete only runs on fully paid events: collect the balance, or complete or cancel the event by hand.</p>',
+      '<ul>' + ended.map((r) => line(r, `still ${r.status} with ${usd(r.owed_cents)} owed and ${r.staff_count} staff approved`)).join('') + '</ul>'
+    );
+    textParts.push('ENDED, NOT COMPLETED:', ...ended.map((r) =>
+      `  #${r.id} ${r.client_name}: event ${when(r)}, still ${r.status}, ${usd(r.owed_cents)} owed, ${r.staff_count} staff approved`));
+  }
+
+  const subjectParts = [];
+  if (over.length > 0) subjectParts.push(`${over.length} client${over.length === 1 ? '' : 's'} over-billed`);
+  if (under.length > 0) subjectParts.push(`${under.length} with no payable invoice`);
+  if (ended.length > 0) subjectParts.push(`${ended.length} event${ended.length === 1 ? '' : 's'} ended but never completed`);
+  const subject = `Invoice check: ${subjectParts.join(', ')}`;
 
   return { subject, emailHtml: parts.join('\n'), emailText: textParts.join('\n') };
 }
@@ -212,14 +255,16 @@ function renderEmail(over, under) {
  * @returns {Promise<{candidates:number, alerted:number, throttled:number}>}
  */
 async function monitorMissingBalanceInvoices() {
-  const [overRes, underRes] = await Promise.all([
+  const [overRes, underRes, endedRes] = await Promise.all([
     pool.query(OVER_SQL, [OFF_LEDGER_INVOICE_LABELS]),
     pool.query(UNDER_SQL, [OFF_LEDGER_INVOICE_LABELS]),
+    pool.query(ENDED_SQL),
   ]);
 
-  const candidates = overRes.rows.length + underRes.rows.length;
+  const candidates = overRes.rows.length + underRes.rows.length + endedRes.rows.length;
   const freshOver = [];
   const freshUnder = [];
+  const freshEnded = [];
   let throttled = 0;
 
   for (const row of overRes.rows) {
@@ -247,12 +292,25 @@ async function monitorMissingBalanceInvoices() {
     freshUnder.push(row);
   }
 
-  const alerted = freshOver.length + freshUnder.length;
+  for (const row of endedRes.rows) {
+    if (await recentlyNotified(row.id, ENDED_ACTION, ENDED_THROTTLE)) { throttled += 1; continue; }
+    await escalate({
+      action: ENDED_ACTION, row, direction: 'ended',
+      detail: {
+        owed_cents: Number(row.owed_cents),
+        staff_count: Number(row.staff_count),
+        event_date: row.event_ymd,
+      },
+    });
+    freshEnded.push(row);
+  }
+
+  const alerted = freshOver.length + freshUnder.length + freshEnded.length;
 
   if (alerted > 0) {
     // One batched email per RUN, not per proposal. The per-proposal throttle
     // above already bounds how often any single proposal can appear in one.
-    const { subject, emailHtml, emailText } = renderEmail(freshOver, freshUnder);
+    const { subject, emailHtml, emailText } = renderEmail(freshOver, freshUnder, freshEnded);
     await notifyAdminCategory({ category: 'payment_failure', subject, emailHtml, emailText });
   }
 
@@ -270,12 +328,13 @@ async function monitorMissingBalanceInvoices() {
     }
   }
 
-  console.log(`[balance_invoice_monitor] candidates=${candidates} alerted=${alerted} throttled=${throttled} stale_processing=${stale.length}`);
-  return { candidates, alerted, throttled, staleProcessing: stale.length };
+  console.log(`[balance_invoice_monitor] candidates=${candidates} alerted=${alerted} throttled=${throttled} ended_not_completed=${endedRes.rows.length} stale_processing=${stale.length}`);
+  return { candidates, alerted, throttled, endedNotCompleted: endedRes.rows.length, staleProcessing: stale.length };
 }
 
 module.exports = {
   monitorMissingBalanceInvoices,
   OVER_ACTION,
   UNDER_ACTION,
+  ENDED_ACTION,
 };

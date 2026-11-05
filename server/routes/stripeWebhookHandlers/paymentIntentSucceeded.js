@@ -15,6 +15,7 @@ const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRe
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { notifyUnsignedPayment } = require('../../utils/unsignedPaymentAlert');
+const { notifyUnsweptAlternatives } = require('../../utils/unsweptAlternativesAlert');
 const { recomputeSnapshotGratuity, GRATUITY_FLOOR_RATE, GRATUITY_SANITY_MAX_RATE } = require('../../utils/pricingEngine');
 
 // B3: email-first admin alert when a payment settles onto a cancelled (archived)
@@ -64,8 +65,10 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
       // gate conversion and run the losing options' best-effort reaps.
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
       // Ungrouped same-client alternatives archived by the sweep (in-tx below);
-      // read post-commit for the same best-effort reaps.
+      // read post-commit for the same best-effort reaps. skipped = same-client
+      // open proposals on OTHER dates the sweep left alone (M2); post-commit alert.
       let sweptAlternativeIds = [];
+      let skippedAlternativeIds = [];
       // B3: set in-tx when this payment settles onto an already-archived
       // (cancelled) proposal. The credit stays byte-identical (blocking it would
       // strand charged money outside the ledger and break /cancel/refund pickup);
@@ -165,6 +168,7 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
           if (!groupChoice.conflict && !archivedSettle && (paymentType === 'full' || paymentType === 'deposit')) {
             const sweep = await sweepClientAlternatives(proposalId, dbClient);
             sweptAlternativeIds = sweep.sweptIds;
+            skippedAlternativeIds = sweep.skippedIds || [];
           }
 
           // Election-at-payment (spec 2026-08-03 §4.5/§4.6): a deposit/full intent
@@ -304,7 +308,7 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // ON CONFLICT insert above.
             await dbClient.query(`
               UPDATE proposals
-              SET amount_paid = COALESCE(amount_paid, 0) + $2, autopay_status = NULL,
+              SET amount_paid = COALESCE(amount_paid, 0) + $2, autopay_status = NULL, autopay_attempts = 0,
                   status = CASE
                     WHEN status IN ('confirmed', 'completed') THEN status
                     WHEN COALESCE(amount_paid, 0) + $2 >= total_price THEN 'balance_paid'
@@ -685,6 +689,13 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
         if ((paymentType === 'deposit' || paymentType === 'full') && !groupChoice.conflict && !archivedSettle) {
           notifyUnsignedPayment({ proposalId, amountCents: intent.amount, paymentType, source: 'payment_intent.succeeded' })
             .catch((err) => console.error('unsigned-payment alert failed (non-blocking):', err && err.message));
+        }
+
+        // Same-client open proposals on OTHER dates were left open by the sweep
+        // (audit 2026-11-05, M2): tell the admin so a real alternative gets archived.
+        if (skippedAlternativeIds.length > 0) {
+          notifyUnsweptAlternatives(proposalId, skippedAlternativeIds)
+            .catch((err) => console.error('unswept-alternatives alert failed (non-blocking):', err && err.message));
         }
 
         // ─── Service extension: settle AFTER the commit AND after release ───

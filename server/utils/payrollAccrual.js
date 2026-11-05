@@ -410,22 +410,53 @@ async function accruePayoutsForProposal(proposalId) {
     // recomputes only the system-owned money fields. pay_period_id is carried so
     // the roster-correction sweep below can scope its deletes to THIS open period.
     const existingRes = await client.query(
-      `SELECT pe.*, po.contractor_id, po.pay_period_id
+      `SELECT pe.*, po.contractor_id, po.pay_period_id, pp.status AS pay_period_status
        FROM payout_events pe
        JOIN payouts po ON po.id = pe.payout_id
+       JOIN pay_periods pp ON pp.id = po.pay_period_id
        JOIN shifts s ON s.id = pe.shift_id
        WHERE s.proposal_id = $1`,
       [proposalId]
     );
-    const existing = new Map(
-      existingRes.rows.map(r => [`${r.contractor_id}:${r.shift_id}`, r])
-    );
+    // Only lines in THIS period seed the re-accrual. A WAGE line for the same
+    // (contractor, shift) in ANOTHER period means the event date moved after a
+    // prior accrual (payPeriodForDate now resolves elsewhere) and that worker
+    // is already being paid for this shift there; writing a second line here
+    // would pay them twice (audit 2026-11-05, M7). Such workers are skipped and
+    // Sentry is told; an admin moves or deletes the old line and the next
+    // accrual writes it here. A tip-only line elsewhere (a late-tip
+    // roll-forward: hours 0, wage 0, payrollLateTip.js) is a legitimate
+    // placement and is ignored for seeding, which also stops it from being
+    // read as `prior` and zeroing a wage line here (the old last-wins Map).
+    const existing = new Map();
+    const wageLinesElsewhere = new Map();
+    const isWageLine = (r) => Number(r.hours || 0) > 0 || Number(r.wage_cents || 0) > 0
+      || Number(r.contracted_hours || 0) > 0;
+    for (const r of existingRes.rows) {
+      const key = `${r.contractor_id}:${r.shift_id}`;
+      if (Number(r.pay_period_id) === Number(payPeriodId)) existing.set(key, r);
+      else if (isWageLine(r) && !wageLinesElsewhere.has(key)) wageLinesElsewhere.set(key, r);
+    }
+    const crossPeriodSkips = [];
+    const crossPeriodDuplicates = [];
 
     const touchedPayoutIds = new Set();
     const payoutIdByContractor = new Map();
 
     for (const w of workers.rows) {
-      const prior = existing.get(`${w.user_id}:${w.shift_id}`);
+      const key = `${w.user_id}:${w.shift_id}`;
+      const elsewhere = wageLinesElsewhere.get(key);
+      if (elsewhere) {
+        const note = {
+          user_id: w.user_id, shift_id: w.shift_id,
+          pay_period_id: elsewhere.pay_period_id, pay_period_status: elsewhere.pay_period_status,
+        };
+        if (!existing.has(key)) { crossPeriodSkips.push(note); continue; }
+        // Both periods already hold a wage line: the double exists; keep this
+        // period's line current and flag the pair rather than strand either.
+        crossPeriodDuplicates.push(note);
+      }
+      const prior = existing.get(key);
       // A held/confirmed prior line belongs to a worker who was off the roster
       // and is now BACK on it. Its hours=0 came from the hold, not from an
       // admin — treating them as admin-owned would silently accrue wage = 0
@@ -494,6 +525,17 @@ async function accruePayoutsForProposal(proposalId) {
          late, share.gratuity, share.tipGross, share.tipFee,
          tipNet, adjustment, adjustmentNote, lineTotal]
       );
+    }
+
+    if (crossPeriodSkips.length || crossPeriodDuplicates.length) {
+      const line = `payrollAccrual: proposal ${proposalId} has wage lines in another pay period `
+        + `(${crossPeriodSkips.length} worker(s) skipped, ${crossPeriodDuplicates.length} duplicated); move or delete the old line`;
+      console.warn(`[payrollAccrual] ${line}`);
+      Sentry.captureMessage(line, {
+        level: 'warning',
+        tags: { component: 'payrollAccrual', reason: 'cross_period_wage_line' },
+        extra: { proposalId, payPeriodId, skipped: crossPeriodSkips, duplicated: crossPeriodDuplicates },
+      });
     }
 
     // ---- Duty-pay derivation (spec 2026-08-06 §3.2) -----------------------

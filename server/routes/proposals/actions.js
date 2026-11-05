@@ -22,6 +22,7 @@ let _deps = { sendEmail, notifyAdminCategory };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const { linkOpenContractInvoice, createInvoiceOnSend, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
+const { notifyUnsweptAlternatives } = require('../../utils/unsweptAlternativesAlert');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { reapShiftsForProposal } = require('../../utils/shiftReap');
 const { notifyStaffOfCancellation } = require('../../utils/staffShiftHandlers');
@@ -179,6 +180,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 
   let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
   let sweptAlternativeIds = [];
+  let skippedAlternativeIds = []; // same-client proposals on other dates the sweep left open (M2)
   // Set in-tx from linkPaymentToInvoice's return when the label-blind fallback
   // link overflowed; read in the post-commit tail to email the money-anomaly
   // lane. Post-commit because notifyAdminCategory takes a pooled connection
@@ -212,6 +214,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     if (currentPaid === 0) {
       const sweep = await sweepClientAlternatives(proposal.id, dbClient);
       sweptAlternativeIds = sweep.sweptIds;
+      skippedAlternativeIds = sweep.skippedIds || [];
     }
 
     // M7: authoritative money read UNDER the proposals row lock. The prior code
@@ -441,6 +444,13 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     } catch (reapErr) {
       if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { route: 'proposals/payment', reap: 'option_loser' } });
     }
+  }
+
+  // Same-client open proposals on OTHER dates were left open by the sweep
+  // (audit 2026-11-05, M2): tell the admin so a real alternative gets archived.
+  if (skippedAlternativeIds.length > 0) {
+    notifyUnsweptAlternatives(proposal.id, skippedAlternativeIds)
+      .catch((err) => console.error('unswept-alternatives alert failed (non-blocking):', err && err.message));
   }
 
   res.json({ success: true, status: newStatus, amount_paid: newAmountPaid, notifications });

@@ -16,6 +16,7 @@ const { UUID_RE } = require('../../utils/tokens');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { notifyUnsignedPayment } = require('../../utils/unsignedPaymentAlert');
+const { notifyUnsweptAlternatives } = require('../../utils/unsweptAlternativesAlert');
 
 // B3: email-first admin alert when a payment settles onto a cancelled (archived)
 // proposal. Fire-and-forget from the post-commit tail; notifyAdminCategory self-
@@ -173,6 +174,7 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
       let isLastMinuteHold = false;
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
       let sweptAlternativeIds = [];
+      let skippedAlternativeIds = []; // same-client proposals on other dates the sweep left open (M2)
       // B3: set in-tx when this Payment-Link settlement lands on an already-archived
       // (cancelled) proposal. On this rail the amount_paid UPDATE already excludes
       // archived (credit is a no-op), but the proposal_payments row and the invoice
@@ -253,6 +255,7 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
           if (!groupChoice.conflict && !archivedSettle) {
             const sweep = await sweepClientAlternatives(proposalId, dbClient);
             sweptAlternativeIds = sweep.sweptIds;
+            skippedAlternativeIds = sweep.skippedIds || [];
           }
 
           if (linkPaymentType === 'full') {
@@ -423,6 +426,13 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
         if (!groupChoice.conflict && !archivedSettle) {
           notifyUnsignedPayment({ proposalId, amountCents: session.amount_total || 0, paymentType: linkPaymentType, source: 'checkout.session.completed' })
             .catch((err) => console.error('unsigned-payment alert failed (non-blocking):', err && err.message));
+        }
+
+        // Same-client open proposals on OTHER dates were left open by the sweep
+        // (audit 2026-11-05, M2): tell the admin so a real alternative gets archived.
+        if (skippedAlternativeIds.length > 0) {
+          notifyUnsweptAlternatives(proposalId, skippedAlternativeIds)
+            .catch((err) => console.error('unswept-alternatives alert failed (non-blocking):', err && err.message));
         }
 
         // ≤72h booking: admin + broad-net staff SMS blast. Fire-and-forget;
