@@ -12,7 +12,38 @@ const { toCents } = require('../utils/invoiceShared');
 const { cancelOpenInvoiceIntents } = require('../utils/invoiceVoid');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
-const { OFF_LEDGER_INVOICE_LABELS } = require('../utils/proposalMoneyShared');
+const { OFF_LEDGER_INVOICE_LABELS, CONTRACT_LABELS, TOTAL_TRACKING_INVOICE_LABELS } = require('../utils/proposalMoneyShared');
+const { IN_TOTAL_PRICE_LABELS } = require('../utils/invoiceExtras');
+
+// Every label a money seam dispatches on (audit PAY-08; money law 5 names the
+// sets): the contract labels (refund scope, the cancellation retainer reads
+// 'Deposit'), the total-tracking labels (the Balance refresh rewrites their
+// amount_due from total_price; createBalanceInvoice is idempotent on 'Balance'),
+// the in-total-price labels (the overpayment netting), the delta labels the
+// cancel-line shrinks (Additional Services, Enhancement Lab, Drink Plan Extras,
+// all inside this set by construction) and the off-ledger label. Every one of
+// them is minted by a helper, never by these routes: an admin who minted or
+// renamed an invoice INTO one of them had the next reprice rewrite its demand,
+// or the retainer read 0 and a client cancel refund it. Matched trimmed and
+// case-insensitively so no near-miss slips past the seams' exact compares.
+const SYSTEM_INVOICE_LABELS = Object.freeze([...new Set([
+  ...CONTRACT_LABELS, ...TOTAL_TRACKING_INVOICE_LABELS, ...IN_TOTAL_PRICE_LABELS,
+  'Drink Plan Extras', ...OFF_LEDGER_INVOICE_LABELS,
+])]);
+const SYSTEM_LABEL_KEYS = new Set(SYSTEM_INVOICE_LABELS.map((l) => l.toLowerCase()));
+const isSystemLabel = (label) => SYSTEM_LABEL_KEYS.has(String(label || '').trim().toLowerCase());
+const SYSTEM_LABEL_MESSAGE = 'This label is reserved for system-generated invoices. Pick a different label.';
+
+// Money bounds for an admin-typed invoice (audit PAY-08): finite dollars, at
+// most a million, so a typo can never 500 on the INTEGER cents column or print
+// a negative line on the public page. Quantities are whole and bounded.
+const MAX_INVOICE_DOLLARS = 1000000;
+const MAX_LINE_QUANTITY = 1000;
+function isMoneyDollars(value, { allowZero = false } = {}) {
+  return typeof value === 'number' && Number.isFinite(value)
+    && (allowZero ? value >= 0 : value > 0) && value <= MAX_INVOICE_DOLLARS;
+}
+const dollarsText = (cents) => '$' + (cents / 100).toFixed(2);
 const { renderExtensionTerms } = require('../data/extensionTermsCopy');
 const { findInFlightPayments, toPublicPending } = require('../utils/paymentInFlight');
 const { contractStep } = require('../utils/invoiceStep');
@@ -283,18 +314,58 @@ router.post('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(a
   const fieldErrors = {};
   if (!label || typeof label !== 'string' || !label.trim()) {
     fieldErrors.label = 'Label is required.';
-  } else if (OFF_LEDGER_INVOICE_LABELS.includes(label.trim())) {
-    // Off-ledger labels (currently 'Service Extension') are minted ONLY by the
-    // extension request route. The webhook keys its amount_paid roll-up skip on
-    // the label alone (paymentIntentSucceeded.js), so an admin minting an
-    // invoice INTO this label would silently take its money off-ledger.
-    fieldErrors.label = 'This label is reserved for system-generated invoices. Pick a different label.';
+  } else if (isSystemLabel(label)) {
+    // Every system label, not only the off-ledger one (audit PAY-08): see
+    // SYSTEM_INVOICE_LABELS above.
+    fieldErrors.label = SYSTEM_LABEL_MESSAGE;
   }
-  if (typeof amount !== 'number' || amount <= 0) {
-    fieldErrors.amount = 'Amount must be a positive number.';
-  }
+  // The amount is finite money under the cap. With line items it is derived
+  // from them (the lines are the invoice), and an amount sent alongside must
+  // agree to the cent; without lines it is required.
+  const hasLines = Array.isArray(line_items) && line_items.length > 0;
   if (line_items !== undefined && !Array.isArray(line_items)) {
     fieldErrors.line_items = 'line_items must be an array.';
+  }
+  if (amount !== undefined && !isMoneyDollars(amount)) {
+    fieldErrors.amount = 'Amount must be a positive number of dollars, at most ' + MAX_INVOICE_DOLLARS.toLocaleString('en-US') + '.';
+  } else if (amount === undefined && !hasLines) {
+    fieldErrors.amount = 'Amount must be a positive number.';
+  }
+  // Each line: finite, non-negative dollars under the cap and a whole quantity
+  // from 1 to MAX_LINE_QUANTITY (absent reads as 1, as before). Validated into
+  // the cents the INSERT writes, so the figures below are the validated ones.
+  let validatedLines = null;
+  if (hasLines && !fieldErrors.line_items) {
+    validatedLines = [];
+    for (const li of line_items) {
+      const amt = li && typeof li === 'object' ? Number(li.amount) : NaN;
+      const qtyRaw = li && typeof li === 'object' && li.quantity !== undefined && li.quantity !== null ? Number(li.quantity) : 1;
+      if (!isMoneyDollars(amt, { allowZero: true })) {
+        fieldErrors.line_items = 'Each line amount must be a non-negative number of dollars, at most ' + MAX_INVOICE_DOLLARS.toLocaleString('en-US') + '.';
+        break;
+      }
+      if (!Number.isInteger(qtyRaw) || qtyRaw < 1 || qtyRaw > MAX_LINE_QUANTITY) {
+        fieldErrors.line_items = 'Each line quantity must be a whole number from 1 to ' + MAX_LINE_QUANTITY + '.';
+        break;
+      }
+      const unitPrice = Math.round(amt * 100);
+      validatedLines.push({
+        description: String(li.description || '').trim() || String(label || '').trim(),
+        quantity: qtyRaw,
+        unit_price: unitPrice,
+        line_total: unitPrice * qtyRaw,
+        source_type: 'manual',
+        source_id: null,
+      });
+    }
+    if (!fieldErrors.line_items) {
+      const lineCents = validatedLines.reduce((sum, it) => sum + it.line_total, 0);
+      if (lineCents <= 0) {
+        fieldErrors.line_items = 'The line items must add up to more than $0.00.';
+      } else if (amount !== undefined && !fieldErrors.amount && Math.round(amount * 100) !== lineCents) {
+        fieldErrors.amount = 'Amount must equal the line items (' + dollarsText(lineCents) + ').';
+      }
+    }
   }
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
@@ -314,8 +385,10 @@ router.post('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(a
       throw new NotFoundError('Proposal not found.');
     }
 
-    // Convert dollars → cents
-    const amountDueCents = Math.round(amount * 100);
+    // Convert dollars → cents: the validated lines when given, else the amount.
+    const amountDueCents = validatedLines
+      ? validatedLines.reduce((sum, it) => sum + it.line_total, 0)
+      : Math.round(amount * 100);
 
     const invoice = await createInvoice(
       {
@@ -328,21 +401,10 @@ router.post('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(a
       client
     );
 
-    // Build line items: use provided array or fall back to a single line from label+amount
+    // Build line items: the validated array, or a single line from label+amount
     let items;
-    if (Array.isArray(line_items) && line_items.length > 0) {
-      items = line_items.map((li) => {
-        const qty = Number(li.quantity) > 0 ? Math.round(Number(li.quantity)) : 1;
-        const unitPrice = Math.round(Number(li.amount || 0) * 100);
-        return {
-          description: String(li.description || '').trim() || label.trim(),
-          quantity: qty,
-          unit_price: unitPrice,
-          line_total: unitPrice * qty,
-          source_type: 'manual',
-          source_id: null,
-        };
-      });
+    if (validatedLines) {
+      items = validatedLines;
     } else {
       items = [
         {
@@ -394,11 +456,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     if (typeof label !== 'string' || !label.trim()) {
       throw new ValidationError({ label: 'Label must be a non-empty string.' });
     }
-    if (OFF_LEDGER_INVOICE_LABELS.includes(label.trim())) {
-      // Same guard as the create route: renaming an ordinary invoice INTO an
-      // off-ledger label would silently take its money off-ledger (the webhook
-      // keys the amount_paid roll-up skip on the label alone).
-      throw new ValidationError({ label: 'This label is reserved for system-generated invoices. Pick a different label.' });
+    if (isSystemLabel(label)) {
+      // Same guard as the create route (audit PAY-08): renaming an ordinary
+      // invoice INTO any system label hands its money to that label's seams.
+      throw new ValidationError({ label: SYSTEM_LABEL_MESSAGE });
     }
     values.push(label.trim());
     setClauses.push(`label = $${values.length}`);
@@ -448,6 +509,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     throw new ConflictError(
       'This is a system-generated off-ledger invoice; its label cannot be changed.',
       'OFF_LEDGER_LABEL_LOCKED'
+    );
+  }
+  // And every other system label (audit PAY-08): the paid Deposit IS the
+  // cancellation retainer, a Balance is what the refresh re-bills, an extras
+  // invoice is what the comp and the netting read. Renamed away, each of those
+  // seams reads nothing where money sits.
+  if (label !== undefined && isSystemLabel(existing.rows[0].label)) {
+    throw new ConflictError(
+      'This is a system-generated invoice; its label is a money key and cannot be changed.',
+      'SYSTEM_LABEL_LOCKED'
     );
   }
 
