@@ -125,11 +125,19 @@ function buildInvoiceLineItems({ snapshot, packageName = null, packageId = null,
   // Add-ons from proposal_addons (authoritative at booking time).
   // Skip $0 add-ons (e.g., addons that bundle into the package or were
   // adjusted to zero by an admin override — they don't deserve a line).
+  // The printed unit price must multiply with the printed quantity to the
+  // line total (money-laws law 6: `quantity` is the engine's display quantity,
+  // and the engine folds a per-guest COUNT above one, and the additional
+  // bartender's gratuity surcharge, into line_total only). Where rate x
+  // quantity is not the line total, print line_total / quantity, as the
+  // staffing line above does; the line total itself is never recomputed
+  // (audit PRC-04).
   for (const addon of addonRows || []) {
     const lineTotal = toCents(addon.line_total);
     if (lineTotal === 0) continue;
     const qty = Number(addon.quantity) || 1;
-    const unitPrice = toCents(addon.rate);
+    const rateCents = toCents(addon.rate);
+    const unitPrice = Math.round(rateCents * qty) === lineTotal ? rateCents : Math.round(lineTotal / qty);
     items.push({
       description: addon.addon_name || 'Add-on',
       quantity: qty,
