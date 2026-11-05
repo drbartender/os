@@ -607,7 +607,12 @@ async function handleSubmit(req, res) {
           if (bd.totalCents > 0) {
             await findOrRefreshExtrasInvoice(
               { proposalId: proposal.id, drinkPlanId: updatedPlan.id, breakdown: bd,
-                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent },
+                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent,
+                // Stored provenance (round 2 H1): the fold above put this money
+                // inside total_price exactly when it ran, whatever the lines
+                // look like (an already-sold upgrade beside new syrups mints a
+                // syrup-only-looking invoice whose money the contract holds).
+                foldedIntoTotal: foldDeltaCents !== null },
               client
             );
           }
@@ -704,7 +709,9 @@ async function handleSubmit(req, res) {
           if (bd.totalCents > 0) {
             await findOrRefreshExtrasInvoice(
               { proposalId: proposal.id, drinkPlanId: result.rows[0].id, breakdown: bd,
-                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars },
+                selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars,
+                // Stored provenance (round 2 H1): this path folds nothing.
+                foldedIntoTotal: false },
               client
             );
           }

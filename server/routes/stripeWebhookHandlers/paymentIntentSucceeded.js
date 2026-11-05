@@ -586,6 +586,10 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 if (extrasInv && !alreadyPaid) {
                   await linkPaymentToInvoice(extrasInv.id, paymentRowId, extrasCents, dbClient);
                 } else if (!extrasInv && drinkPlanId) {
+                  // Whether this money folds into total_price is the submit's
+                  // decision, and the submit has not run yet here: the row's
+                  // folded_into_total stays NULL (its lines classify it) until
+                  // findOrRefreshExtrasInvoice stamps it on the submit.
                   const created = await createDrinkPlanExtrasInvoice(
                     { proposalId, drinkPlanId, extrasAmountCents: extrasCents },
                     dbClient

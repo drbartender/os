@@ -164,11 +164,18 @@ async function writeExtrasLineItems(invoiceId, { lines, selections, guestCount, 
  * post-commit and omit it, so the final DB state is read instead. Caller records
  * the payment via linkPaymentToInvoice().
  *
- * @param {{ proposalId:number, drinkPlanId:number, extrasAmountCents:number, lineItemState?:object }} opts
+ * `foldedIntoTotal` (optional) is the stored fold fact (round 2 H1): true
+ * from the submit transaction path, whose fold put this money inside
+ * total_price, false from the fast path, which folds nothing. A caller that
+ * cannot know it (the out-of-order webhook mint, the backfill) leaves the
+ * column NULL and the readers fall back to the line shape until the submit
+ * stamps it through findOrRefreshExtrasInvoice.
+ *
+ * @param {{ proposalId:number, drinkPlanId:number, extrasAmountCents:number, lineItemState?:object, foldedIntoTotal?:boolean }} opts
  * @param {object} dbClient  — must be a transaction client
  * @returns {Promise<object>} The new invoice row.
  */
-async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents, lineItemState }, dbClient) {
+async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents, lineItemState, foldedIntoTotal }, dbClient) {
   let selections;
   let guestCount;
   let pricingSnapshot;
@@ -202,6 +209,10 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
     },
     dbClient
   );
+  if (foldedIntoTotal === true || foldedIntoTotal === false) {
+    await dbClient.query('UPDATE invoices SET folded_into_total = $1 WHERE id = $2', [foldedIntoTotal, invoice.id]);
+    invoice.folded_into_total = foldedIntoTotal;
+  }
   await writeExtrasLineItems(
     invoice.id,
     { lines, selections, guestCount, pricingSnapshot, numBars, totalCents: extrasAmountCents },
@@ -222,12 +233,12 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
  *
  * @param {number} proposalId
  * @param {object} [dbClient]
- * @returns {Promise<{id, label, status, locked, amount_due, amount_paid}|null>}
+ * @returns {Promise<{id, label, status, locked, amount_due, amount_paid, folded_into_total}|null>}
  */
 async function findExtrasInvoice(proposalId, dbClient) {
   const client = db(dbClient);
   const result = await client.query(
-    `SELECT id, label, status, locked, amount_due, amount_paid
+    `SELECT id, label, status, locked, amount_due, amount_paid, folded_into_total
        FROM invoices
       WHERE proposal_id = $1 AND label = 'Drink Plan Extras' AND status <> 'void'
       ORDER BY id DESC
@@ -243,32 +254,42 @@ async function findExtrasInvoice(proposalId, dbClient) {
  *   - existing OPEN + UNLOCKED → refresh amount_due + line items to the new
  *     breakdown (covers a selection edit before the card is confirmed);
  *   - existing paid/locked     → reuse AS-IS (never mutate a paid invoice; the
- *     out-of-order webhook already settled it).
+ *     out-of-order webhook already settled it); only the stored fold fact is
+ *     stamped, since the webhook could not know it and the submit decides it.
  *
- * @param {{ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars }} args
+ * `foldedIntoTotal` is that fact (round 2 H1): the transaction path passes
+ * true, the fast path false; it is written on the create and on the refresh.
+ *
+ * @param {{ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars, foldedIntoTotal?:boolean }} args
  * @param {object} dbClient — must be a transaction client
  * @returns {Promise<object>} the extras invoice row
  */
 async function findOrRefreshExtrasInvoice(
-  { proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars },
+  { proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars, foldedIntoTotal },
   dbClient
 ) {
+  const factKnown = foldedIntoTotal === true || foldedIntoTotal === false;
   const inv = await findExtrasInvoice(proposalId, dbClient);
   if (inv) {
     const isOpenUnlocked =
       (inv.status === 'sent' || inv.status === 'partially_paid') && !inv.locked;
     if (isOpenUnlocked) {
+      const fact = factKnown ? foldedIntoTotal : (inv.folded_into_total ?? null);
       await dbClient.query(
-        'UPDATE invoices SET amount_due = $1, updated_at = NOW() WHERE id = $2',
-        [breakdown.totalCents, inv.id]
+        'UPDATE invoices SET amount_due = $1, folded_into_total = $2, updated_at = NOW() WHERE id = $3',
+        [breakdown.totalCents, fact, inv.id]
       );
+      inv.folded_into_total = fact;
       await writeExtrasLineItems(
         inv.id,
         { lines: breakdown.lines, selections, guestCount, pricingSnapshot, numBars, totalCents: breakdown.totalCents },
         dbClient
       );
+    } else if (factKnown && inv.folded_into_total !== foldedIntoTotal) {
+      // paid/locked: the demand and the lines stand; the provenance is recorded.
+      await dbClient.query('UPDATE invoices SET folded_into_total = $1 WHERE id = $2', [foldedIntoTotal, inv.id]);
+      inv.folded_into_total = foldedIntoTotal;
     }
-    // paid/locked → reuse as-is.
     return inv;
   }
   return createDrinkPlanExtrasInvoice(
@@ -280,6 +301,7 @@ async function findOrRefreshExtrasInvoice(
       // (the submit tx already incremented num_bars / recalced the snapshot),
       // and the breakdown's own priced lines (audit PRC-03).
       lineItemState: { lines: breakdown.lines, selections, guestCount, pricingSnapshot, numBars },
+      foldedIntoTotal: factKnown ? foldedIntoTotal : undefined,
     },
     dbClient
   );
@@ -290,21 +312,31 @@ async function findOrRefreshExtrasInvoice(
 /**
  * Did this "Drink Plan Extras" invoice's money fold into proposals.total_price?
  *
- * PURE. The label alone cannot answer it, which is the single most expensive
- * ambiguity in the invoice code: an extras invoice with ANY add-on or
- * bar-rental line came through the submit TRANSACTION path, where
- * calculateProposal folds the WHOLE extras (add-ons + bar + new syrups) into
- * total_price. A syrup-only invoice took the fast path, which never runs
- * calculateProposal, so nothing was folded — routes/drinkPlans/submit.js says
- * it outright: "syrups are additive money that never fold into total_price".
+ * PURE. The stored fact answers first (invoices.folded_into_total, round 2
+ * H1, 2026-11-05): the submit path that minted or refreshed the invoice wrote
+ * true from the transaction path, whose fold put the whole extras (new add-on
+ * rows, a bar, the new syrups) inside total_price, and false from the fast
+ * path, which folds nothing. The line shape alone could not tell them apart:
+ * a transaction-path submit that adds no NEW add-on row (an upgrade already
+ * sold, toggled beside two new syrups) mints a syrup-only-looking invoice
+ * whose money the contract already holds, and reading it as unfolded charged
+ * that money twice. Money law 5: provenance is stored, never read off a label
+ * or a line shape.
  *
- * Derived from PERSISTED line items, never a fresh recompute, so a mid-flight
- * price change cannot corrupt the answer.
+ * A row minted before the column, or by the out-of-order webhook mint the
+ * submit has not stamped yet (NULL), keeps the old classification: ANY add-on
+ * or bar-rental line marks the transaction path, a syrup-only invoice the fast
+ * path. Derived from PERSISTED line items, never a fresh recompute, so a
+ * mid-flight price change cannot corrupt the answer.
  *
  * @param {{line_total:any, source_type:string, description:string}[]} lineRows
+ * @param {{folded_into_total?:boolean|null}} [invoice]  the invoice row, when the
+ *   caller selected folded_into_total; omitted, the line shape decides
  * @returns {boolean}
  */
-function extrasLinesAreFolded(lineRows) {
+function extrasLinesAreFolded(lineRows, invoice) {
+  const stored = invoice ? invoice.folded_into_total : undefined;
+  if (stored === true || stored === false) return stored;
   return (lineRows || []).some((r) =>
     r.source_type === 'addon'
     || r.description === 'Portable Bar Rental'
@@ -358,7 +390,7 @@ const NOT_OFF_CONTRACT_LABELS = Object.freeze([...IN_TOTAL_PRICE_LABELS, ...OFF_
 async function sumOffContractPaidCents(proposalId, dbClient) {
   const client = db(dbClient);
   const { rows } = await client.query(
-    `SELECT id, label, amount_paid FROM invoices
+    `SELECT id, label, amount_paid, folded_into_total FROM invoices
       WHERE proposal_id = $1 AND status <> 'void' AND amount_paid > 0
         AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
     [proposalId, NOT_OFF_CONTRACT_LABELS]
@@ -367,11 +399,13 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
   let cents = 0;
   for (const inv of rows) {
     if (inv.label === 'Drink Plan Extras') {
-      const lines = await client.query(
+      // The stored fact decides; the lines are read only for a NULL row.
+      const stored = inv.folded_into_total === true || inv.folded_into_total === false;
+      const lines = stored ? [] : (await client.query(
         'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
         [inv.id]
-      );
-      if (extrasLinesAreFolded(lines.rows)) continue; // folded: it IS contract money
+      )).rows;
+      if (extrasLinesAreFolded(lines, inv)) continue; // folded: it IS contract money
     }
     cents += Number(inv.amount_paid);
   }
@@ -414,8 +448,9 @@ async function contractBalanceDueCents(proposal, dbClient) {
  * A correlated scalar subquery on the outer proposals alias (`proposalRef`,
  * e.g. 'p.id'); `labelsParam` is the placeholder the caller binds
  * NOT_OFF_CONTRACT_LABELS to (e.g. '$2'). The folded-extras predicate is the
- * SQL form of extrasLinesAreFolded: an addon line or a bar-rental line marks a
- * Drink Plan Extras invoice as folded (contract money). Keep the three in step.
+ * SQL form of extrasLinesAreFolded: the stored fact (folded_into_total) first,
+ * and on a NULL row an addon line or a bar-rental line marks a Drink Plan
+ * Extras invoice as folded (contract money). Keep the three in step.
  *
  * @param {string} proposalRef
  * @param {string} labelsParam
@@ -426,11 +461,11 @@ function offContractPaidCentsSql(proposalRef, labelsParam) {
     SELECT SUM(oc.amount_paid) FROM invoices oc
      WHERE oc.proposal_id = ${proposalRef} AND oc.status <> 'void' AND oc.amount_paid > 0
        AND NOT (COALESCE(oc.label, '') = ANY(${labelsParam}::text[]))
-       AND NOT (oc.label = 'Drink Plan Extras' AND EXISTS (
+       AND NOT (oc.label = 'Drink Plan Extras' AND COALESCE(oc.folded_into_total, EXISTS (
              SELECT 1 FROM invoice_line_items ocl
               WHERE ocl.invoice_id = oc.id
                 AND (ocl.source_type = 'addon'
-                     OR ocl.description IN ('Portable Bar Rental', 'Additional Portable Bar'))))
+                     OR ocl.description IN ('Portable Bar Rental', 'Additional Portable Bar')))))
   ), 0)::bigint`;
 }
 
