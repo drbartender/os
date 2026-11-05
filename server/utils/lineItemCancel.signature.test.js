@@ -70,10 +70,17 @@ const SIGNATURE_COLUMNS = ['client_signed_name', 'client_signature_data', 'clien
 // A scripted transaction client for the cancel core's whole cascade, matched
 // by statement shape, specific before generic; an unknown statement rejects,
 // so a new query in the core shows up here as a failure, never a silent pass.
-function scriptedClient(row, { inFlight = [] } = {}) {
+function scriptedClient(row, { inFlight = [], pending = [] } = {}) {
   const calls = [];
   let addonDeleted = false;
   const answer = (v) => Promise.resolve(v);
+  // Pending card sessions (paymentInFlight.js reads the ones created within
+  // its window; the window rides as a parameter and is applied here the way
+  // Postgres would): [{ created_at: Date }].
+  const pendingWithin = (mins) => {
+    const cutoff = Date.now() - Number(mins) * 60000;
+    return pending.filter((s) => s.created_at.getTime() > cutoff);
+  };
   return {
     calls,
     query: (sql, params) => {
@@ -109,6 +116,7 @@ function scriptedClient(row, { inFlight = [] } = {}) {
         return answer({ rows: [{ ...row }], rowCount: 1 });
       }
       if (/FROM stripe_sessions s/.test(sql) && /status = 'processing'/.test(sql)) return answer({ rows: inFlight });
+      if (/FROM stripe_sessions/.test(sql) && /status = 'pending'/.test(sql)) return answer({ rows: pendingWithin(params[1]) });
       if (/INSERT INTO proposal_activity_log/.test(sql)) return answer({ rowCount: 1 });
       if (/SELECT total_price, deposit_amount, external_paid FROM proposals/.test(sql)) {
         return answer({ rows: [{ total_price: row.total_price, deposit_amount: '100.00', external_paid: row.external_paid }] });
@@ -181,4 +189,26 @@ test('a bank debit still settling keeps the signature; money collected off-platf
   assert.equal(voidUpdate(client), -1, 'no void UPDATE with external money on the row');
   assert.equal(row.client_signed_at, SIGNED_AT);
   assert.equal(result.signatureVoided, false);
+});
+
+// Round 3 (L8): a pending card session inside the sign email's window counts
+// as money on the row (a confirmation may be landing); one older than the
+// window is a stale intent and the void goes ahead.
+test('a pending card session inside the window keeps the signature; a stale one does not', async () => {
+  let row = signedRow();
+  let client = scriptedClient(row, { pending: [{ created_at: new Date(Date.now() - 5 * 60000) }] });
+  let result = await applyLineItemCancel(client, { proposalId: 77, target: 'addon:test-addon', actorId: 9 });
+  assert.equal(result.newTotal, 1500);
+  assert.equal(voidUpdate(client), -1, 'no void UPDATE while a card confirmation may be landing');
+  assert.equal(voidedRow(client), undefined);
+  assert.equal(row.client_signed_at, SIGNED_AT);
+  assert.equal(row.client_signed_total, '1600.00');
+  assert.equal(result.signatureVoided, false);
+
+  row = signedRow();
+  client = scriptedClient(row, { pending: [{ created_at: new Date(Date.now() - 45 * 60000) }] });
+  result = await applyLineItemCancel(client, { proposalId: 77, target: 'addon:test-addon', actorId: 9 });
+  assert.ok(voidUpdate(client) >= 0, 'a stale pending session does not keep the signature');
+  assert.equal(row.client_signed_at, null);
+  assert.equal(result.signatureVoided, true);
 });
