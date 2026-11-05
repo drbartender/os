@@ -440,20 +440,34 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
     // A syrup-only invoice took the fast path (no calculateProposal), so nothing
     // was folded (subtract 0). Derived from PERSISTED line items, never a recompute.
     const lines = await client.query(
-      'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
+      'SELECT line_total, source_type, source_id, description FROM invoice_line_items WHERE invoice_id = $1',
       [invoiceId]
     );
     const foldedCents = extrasLinesAreFolded(lines.rows)
       ? lines.rows.reduce((sum, r) => sum + Number(r.line_total), 0)
       : 0;
     if (foldedCents > 0) {
+      // The add-ons this comp waives, by catalog id with each one's cents off
+      // the invoice's own addon lines (source_id is service_addons.id, as
+      // proposal_addons.addon_id is). The comp line carries them so a later
+      // cancel-line, lab save, re-submit or editor save that removes a comped
+      // add-on takes its comped cents off the line with it instead of netting
+      // the comp a second time (compLine.js netCompLinesAgainstAddons). The
+      // bar and syrup portions name no add-on and stay on the line.
+      const centsByAddon = new Map();
+      for (const r of lines.rows) {
+        if (r.source_type !== 'addon' || r.source_id === null || r.source_id === undefined) continue;
+        const id = Number(r.source_id);
+        centsByAddon.set(id, (centsByAddon.get(id) || 0) + Math.max(0, Number(r.line_total) || 0));
+      }
+      const compedAddons = [...centsByAddon].map(([addon_id, cents]) => ({ addon_id, cents }));
       // The waived cents leave as a comp line, never a bare subtraction: the
       // line lands in proposals.adjustments and the snapshot with the snapshot
       // total, total_price and any override lowered by the same cents, under
       // the proposals row lock (compLine.js). A row whose lines cannot be read,
       // or a held booking, throws and rolls the void back with it.
       const { proposal: p } = await appendCompLine(client, {
-        proposalId: inv.proposal_id, compCents: foldedCents, invoiceNumber: inv.invoice_number,
+        proposalId: inv.proposal_id, compCents: foldedCents, invoiceNumber: inv.invoice_number, compedAddons,
       });
       if (p) {
         const rec = reconcileProposalPaymentStatus({

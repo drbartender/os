@@ -66,6 +66,12 @@ test('canonicalLines reads lines the way the validator coerces them', () => {
   assert.notEqual(G.canonicalLines(a), G.canonicalLines([{ ...b[0], visible: false }]));
   assert.notEqual(G.canonicalLines([AP(162)]), G.canonicalLines([{ ...AP(162), source: undefined }]), 'the marker counts');
   assert.notEqual(G.canonicalLines([REFUND(14)]), G.canonicalLines([REFUND(15)]), 'the refund id counts');
+  // The comp marker (compLine.js) counts too, entry by entry, whatever key order a client spells it in.
+  const COMP = (comped) => ({ type: 'discount', label: 'Drink Plan Extras comped', amount: 310, visible: true, source: 'comp', comped_addons: comped });
+  assert.notEqual(G.canonicalLines([COMP([{ addon_id: 42, cents: 20000 }])]), G.canonicalLines([COMP([{ addon_id: 42, cents: 10000 }])]), 'the comped cents count');
+  assert.notEqual(G.canonicalLines([COMP([{ addon_id: 42, cents: 20000 }])]), G.canonicalLines([COMP([])]), 'the comped add-ons count');
+  assert.equal(G.canonicalLines([COMP([{ addon_id: 42, cents: 20000 }])]), G.canonicalLines([COMP([{ cents: 20000, addon_id: 42 }])]), 'entry key order does not');
+  assert.equal(G.canonicalLines([COMP([{ addon_id: '42', cents: '20000' }])]), G.canonicalLines([COMP([{ addon_id: 42, cents: 20000 }])]), 'numeric strings read as numbers');
   assert.equal(G.canonicalLines(null), G.canonicalLines([]));
   assert.equal(G.canonicalLines(undefined), '[]');
   assert.notEqual(G.canonicalLines([a[0], AP(5)]), G.canonicalLines([AP(5), a[0]]), 'order is part of the lines');

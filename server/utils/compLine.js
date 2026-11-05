@@ -16,12 +16,26 @@
 // This is the refundLine.js pattern (spec 2026-10-16 section 6) for a comp:
 // the same cents, written where every re-price reads them. The line is
 // { type: 'discount', label: COMP_LABEL (invoice number), amount, visible:
-// true, source: 'comp' }; `source` is what protects it (adjustmentRules.js
-// ADJUSTMENT_SOURCES, lineItemCancel.js isProtectedAdjustment) and the editor
-// may still edit or drop it, which is how a comp is undone, or retired after
-// the add-on itself is cancelled. The engine ignores the marker and nets the
-// line like any discount, so an editor save or a fold that re-bills the add-on
-// nets the comp against it and the total stays where the comp left it.
+// true, source: 'comp', comped_addons: [{ addon_id, cents }] }; `source` is
+// what protects it (adjustmentRules.js ADJUSTMENT_SOURCES, lineItemCancel.js
+// isProtectedAdjustment) and the editor may still edit or drop it, which is
+// how a comp is undone. The engine ignores the markers and nets the line like
+// any discount, so an editor save or a fold that re-bills the add-on nets the
+// comp against it and the total stays where the comp left it.
+//
+// `comped_addons` ties the comp to what it comped (audit round 2, H1): the
+// catalog id and the comped cents of every add-on line on the waived invoice,
+// as invoice_line_items carries them (source_id, line_total). When a later
+// price no longer carries one of those add-ons (cancel-line, a lab save, a
+// re-submit, an editor save, a package switch), netCompLinesAgainstAddons
+// takes that add-on's comped cents off the line, and the whole line when
+// nothing is left, so the comp leaves with the add-on. Without that tie a
+// cancel-line priced Before = toast minus comp and After = no toast minus
+// comp, read the difference as an overpayment and refunded money the client
+// never paid. The bar and syrup portions of a comp name no add-on (the
+// invoice's fee lines carry no source_id) and stay on the line, since the bar
+// and the syrups stay delivered; the editor is where that remainder is
+// retired by hand.
 //
 // One UPDATE moves all four places or none: proposals.adjustments (what the
 // engine nets on the next save), pricing_snapshot.adjustments and .breakdown
@@ -61,14 +75,55 @@ const totalCentsOf = (v) => {
   return typeof n === 'number' && Number.isFinite(n) ? Math.round(n * 100) : null;
 };
 
-/** The line the comp writes, exactly as the editor's validator reads it on every later save. */
-function compLineFor({ compCents, invoiceNumber }) {
+/**
+ * The line the comp writes, exactly as the editor's validator reads it on every
+ * later save. `compedAddons` is [{ addon_id, cents }] for the invoice's add-on
+ * lines (absent or empty when the comp names none).
+ */
+function compLineFor({ compCents, invoiceNumber, compedAddons = [] }) {
   const label = invoiceNumber ? `${COMP_LABEL} (${invoiceNumber})` : COMP_LABEL;
+  const comped = Array.isArray(compedAddons) && compedAddons.length > 0 ? { comped_addons: compedAddons } : {};
   const { value, error } = validateAdjustments([{
-    type: 'discount', label, amount: compCents / 100, visible: true, source: 'comp',
+    type: 'discount', label, amount: compCents / 100, visible: true, source: 'comp', ...comped,
   }]);
   if (error) throw new Error(`compLine: ${error}`); // whole cents by construction; a throw here is a bug
   return value[0];
+}
+
+/**
+ * The lines after the add-ons a comp line comped have left the booking: pure,
+ * and the ONE rule every pricer applies to the add-on set it prices
+ * (proposalExtrasFold.js After leg and computeCatalogSnapshot, the editor
+ * PATCH and /calculate in routes/proposals, changeRequests.priceProposedState).
+ * A comp line keeps the cents of every comped add-on still present; the cents
+ * of a gone add-on come off the line (and off its comped list); a line left
+ * at zero or below is dropped. Every other line, and a comp line that names
+ * no add-ons, is returned as it is. The input is never mutated; `lines` is the
+ * same array when nothing changed.
+ *
+ * @param {Array} lines               proposals.adjustments as stored (anything else reads as none)
+ * @param {Iterable<number>} presentAddonIds  service_addons ids the price carries
+ * @returns {{ lines: Array, changed: boolean }}
+ */
+function netCompLinesAgainstAddons(lines, presentAddonIds) {
+  const list = Array.isArray(lines) ? lines : [];
+  const present = new Set([...(presentAddonIds || [])].map(Number));
+  let changed = false;
+  const out = [];
+  for (const line of list) {
+    const comped = line && line.source === 'comp' && Array.isArray(line.comped_addons) ? line.comped_addons : null;
+    if (!comped || comped.length === 0) { out.push(line); continue; }
+    const kept = comped.filter((c) => c && present.has(Number(c.addon_id)));
+    if (kept.length === comped.length) { out.push(line); continue; }
+    changed = true;
+    const goneCents = comped
+      .filter((c) => !kept.includes(c))
+      .reduce((sum, c) => sum + (Number.isInteger(c && c.cents) && c.cents > 0 ? c.cents : 0), 0);
+    const remainingCents = Math.round((Math.abs(Number(line.amount)) || 0) * 100) - goneCents;
+    if (remainingCents <= 0) continue; // the comp was these add-ons: it leaves with them
+    out.push({ ...line, amount: remainingCents / 100, comped_addons: kept });
+  }
+  return { lines: changed ? out : list, changed };
 }
 
 /**
@@ -80,16 +135,17 @@ function compLineFor({ compCents, invoiceNumber }) {
  * @param {number} a.proposalId
  * @param {number} a.compCents       the folded cents the comp takes off total_price (> 0)
  * @param {string} [a.invoiceNumber] printed in the line's label
+ * @param {Array<{addon_id:number, cents:number}>} [a.compedAddons]  the invoice's add-on lines
  * @returns {Promise<{ line: object, proposal: { status, amount_paid, total_price } }>}
  *   the written line and the row's post-write money columns (for the payment ladder)
  * @throws {NotFoundError} no such proposal
  * @throws {ConflictError} LEGAL_HOLD, or COMP_LINE_UNWRITABLE when a stored line list is not a list
  */
-async function appendCompLine(dbClient, { proposalId, compCents, invoiceNumber = null } = {}) {
+async function appendCompLine(dbClient, { proposalId, compCents, invoiceNumber = null, compedAddons = [] } = {}) {
   if (!Number.isInteger(compCents) || compCents <= 0) {
     throw new Error('compLine: compCents must be a positive integer number of cents');
   }
-  const line = compLineFor({ compCents, invoiceNumber });
+  const line = compLineFor({ compCents, invoiceNumber, compedAddons });
 
   const { rows } = await dbClient.query(
     'SELECT id, adjustments, pricing_snapshot FROM proposals WHERE id = $1 FOR UPDATE',
@@ -143,4 +199,4 @@ async function appendCompLine(dbClient, { proposalId, compCents, invoiceNumber =
   return { line, proposal: upd.rows[0] || null };
 }
 
-module.exports = { appendCompLine, compLineFor };
+module.exports = { appendCompLine, compLineFor, netCompLinesAgainstAddons };

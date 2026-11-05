@@ -5,6 +5,7 @@ const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal, computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
 const { assertPricingInputs } = require('./pricingInputs');
+const { netCompLinesAgainstAddons } = require('../../utils/compLine');
 const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -130,7 +131,9 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
     numBartenders: num_bartenders,
     addons,
     syrupSelections: syrup_selections || [],
-    adjustments: adjustments || [],
+    // As the PATCH prices them: a comp line loses what it comped for an add-on
+    // this preview leaves out (compLine.js), so preview and save agree.
+    adjustments: netCompLinesAgainstAddons(adjustments || [], addons.map((a) => a.id)).lines,
     totalPriceOverride: total_price_override ?? null,
     gratuityRate: previewRate, tipJar: previewTipJar, gratuityFloorRate: previewFloorRate,
   });

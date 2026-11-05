@@ -10,7 +10,7 @@
 // nothing here reads or writes a real held booking.
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { appendCompLine, compLineFor } = require('./compLine');
+const { appendCompLine, compLineFor, netCompLinesAgainstAddons } = require('./compLine');
 const { isProtectedAdjustment, validateAdjustments, COMP_LABEL } = require('./adjustmentRules');
 const { __setLegalHoldIdsForTest } = require('./legalHold');
 const { GRATUITY_LABEL, SHARED_GRATUITY_LABEL } = require('./gratuityLabels');
@@ -69,12 +69,64 @@ test('compLineFor is a whole-cent, visible, protected discount the editor valida
   assert.deepEqual(validateAdjustments([line]).value, [line]);
   assert.equal(compLineFor({ compCents: 1 }).label, COMP_LABEL, 'no invoice number: the bare label');
   assert.equal(compLineFor({ compCents: 1 }).amount, 0.01);
+  // The comped add-ons ride on the line (audit round 2, H1), in the invoice
+  // line items' own identity: service_addons.id and that line's cents.
+  const tied = compLineFor({ compCents: 31000, invoiceNumber: 'INV0001', compedAddons: [{ addon_id: 42, cents: 20000 }] });
+  assert.deepEqual(tied.comped_addons, [{ addon_id: 42, cents: 20000 }]);
+  assert.deepEqual(validateAdjustments([tied]).value, [tied], 'a later editor save keeps the tie');
+  assert.equal('comped_addons' in compLineFor({ compCents: 100, compedAddons: [] }), false, 'none named: no key');
+});
+
+// ─── the fold-side drop ───────────────────────────────────────────────────────
+const comp = (amount, comped) => ({
+  type: 'discount', label: COMP_LABEL, amount, visible: true, source: 'comp', comped_addons: comped,
+});
+const PLAIN = { type: 'discount', label: 'Test discount A', amount: 50, visible: true };
+const REFUND = { type: 'discount', label: 'Refund', amount: 20, visible: true, source: 'refund', refund_id: 3 };
+
+test('netCompLinesAgainstAddons: a comp for add-on 7 leaves when 7 leaves the After set, and stays while 7 is present', () => {
+  const lines = [PLAIN, comp(100, [{ addon_id: 7, cents: 10000 }]), REFUND];
+  const gone = netCompLinesAgainstAddons(lines, [8, 9]);
+  assert.equal(gone.changed, true);
+  assert.deepEqual(gone.lines, [PLAIN, REFUND]);
+  const kept = netCompLinesAgainstAddons(lines, [7, 8]);
+  assert.equal(kept.changed, false);
+  assert.equal(kept.lines, lines, 'the same array when nothing changed');
+  assert.deepEqual(lines[1].comped_addons, [{ addon_id: 7, cents: 10000 }], 'the input is never mutated');
+  // Ids arrive as strings from some rows: compared as numbers.
+  assert.equal(netCompLinesAgainstAddons(lines, ['7']).changed, false);
+});
+
+test('netCompLinesAgainstAddons: a comp of two add-ons loses only the gone one, keeps its bar and syrup remainder, and drops at zero', () => {
+  // Toast 200 + other 50 comped, with a 110 bar-and-syrup remainder: 360.
+  const mixed = comp(360, [{ addon_id: 7, cents: 20000 }, { addon_id: 8, cents: 5000 }]);
+  const toastGone = netCompLinesAgainstAddons([mixed], [8]);
+  assert.deepEqual(toastGone.lines, [comp(160, [{ addon_id: 8, cents: 5000 }])]);
+  const bothGone = netCompLinesAgainstAddons([mixed], []);
+  assert.deepEqual(bothGone.lines, [comp(110, [])], 'the bar and syrup portion stays, naming no add-on');
+  assert.equal(netCompLinesAgainstAddons(bothGone.lines, []).changed, false, 'a remainder is never dropped again');
+  // A comp that was exactly its add-ons drops whole.
+  assert.deepEqual(netCompLinesAgainstAddons([comp(250, [{ addon_id: 7, cents: 20000 }, { addon_id: 8, cents: 5000 }])], []).lines, []);
+  // Junk cents never go negative: a non-integer entry counts as 0.
+  assert.deepEqual(netCompLinesAgainstAddons([comp(100, [{ addon_id: 7, cents: 'x' }])], []).lines, [comp(100, [])]);
+});
+
+test('netCompLinesAgainstAddons: every other line, a comp naming no add-ons, and junk input pass through', () => {
+  const untied = { type: 'discount', label: COMP_LABEL, amount: 30, visible: true, source: 'comp' };
+  const lines = [PLAIN, REFUND, untied, comp(10, []), null];
+  const out = netCompLinesAgainstAddons(lines, []);
+  assert.equal(out.changed, false);
+  assert.equal(out.lines, lines);
+  assert.deepEqual(netCompLinesAgainstAddons('junk', [1]), { lines: [], changed: false });
+  assert.deepEqual(netCompLinesAgainstAddons(undefined, undefined), { lines: [], changed: false });
 });
 
 test('writes the line to the row and the snapshot in one UPDATE, lowering the snapshot total and total_price by the same cents', async () => {
   const row = { id: 7, adjustments: [DISCOUNT_A], pricing_snapshot: fullSnapshot() };
   const client = fakeClient(row);
-  const out = await appendCompLine(client, { proposalId: 7, compCents: 30000, invoiceNumber: 'INV0007' });
+  const out = await appendCompLine(client, {
+    proposalId: 7, compCents: 30000, invoiceNumber: 'INV0007', compedAddons: [{ addon_id: 42, cents: 30000 }],
+  });
 
   assert.equal(client.calls.length, 2, 'one locking read, one UPDATE');
   const upd = client.calls[1];
@@ -86,7 +138,10 @@ test('writes the line to the row and the snapshot in one UPDATE, lowering the sn
   assert.equal(upd.params[0], 7);
   assert.equal(upd.params[3], 30000, 'the cents, sent as integer cents');
 
-  const line = { type: 'discount', label: `${COMP_LABEL} (INV0007)`, amount: 300, visible: true, source: 'comp' };
+  const line = {
+    type: 'discount', label: `${COMP_LABEL} (INV0007)`, amount: 300, visible: true, source: 'comp',
+    comped_addons: [{ addon_id: 42, cents: 30000 }],
+  };
   assert.deepEqual(out.line, line);
   assert.deepEqual(JSON.parse(upd.params[1]), [DISCOUNT_A, line], 'appended after the stored lines');
 

@@ -39,7 +39,13 @@
  * adjustments pass BOTH legs AND persist the new num_bartenders/adjustments
  * column values themselves; the fold writes only total_price /
  * pricing_snapshot / total_price_override. The final snapshot always prices
- * at the After legs.
+ * at the After legs. One exception, since the 2026-11-05 audit (round 2, H1):
+ * a comp line (compLine.js) names the add-ons it comped, and when the After
+ * add-on set no longer holds one of them the fold takes that add-on's comped
+ * cents off the line (the whole line when nothing is left) in the After leg
+ * and writes proposals.adjustments too, so the comp leaves with the add-on
+ * instead of being netted a second time against a price that no longer
+ * carries it; `proposal.adjustments` is updated in memory with it.
  *
  * computeCatalogSnapshot (below) prices a booking's current inputs at today's
  * catalog through the same engine-args builder the fold uses; the override
@@ -56,6 +62,7 @@ const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { storedToInputCount } = require('./addonQuantity');
 const { readSnapshot } = require('./pricingSnapshot');
 const { contractDurationHours, contractHoursFromAggregate, SETTLED_EXTENSION_COLUMNS } = require('./contractDuration');
+const { netCompLinesAgainstAddons } = require('./compLine');
 
 // SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
 // per-proposal stored quantity AND the event duration needed to convert it.
@@ -171,7 +178,14 @@ async function foldExtrasIntoProposal({
   }
 
   const adjBefore = adjustmentsBefore ?? (proposal.adjustments || []);
-  const adjAfter = adjustmentsAfter ?? (proposal.adjustments || []);
+  // The After lines, less what a comp line comped for an add-on the After set
+  // no longer holds (compLine.js). Before keeps the line as it stands: it
+  // prices what the booking was, comp included.
+  const afterNet = netCompLinesAgainstAddons(
+    adjustmentsAfter ?? (proposal.adjustments || []),
+    (addonsAfter || []).map((a) => a && a.id)
+  );
+  const adjAfter = afterNet.lines;
   const bartendersBefore = numBartendersBefore ?? proposal.num_bartenders;
   const bartendersAfter = numBartendersAfter ?? proposal.num_bartenders;
 
@@ -242,9 +256,14 @@ async function foldExtrasIntoProposal({
   // inconsistent). For a native proposal effectiveOverride is null and
   // the column is already null, so this is a no-op there.
   await client.query(
-    'UPDATE proposals SET total_price = $1, pricing_snapshot = $2, total_price_override = $4, updated_at = NOW() WHERE id = $3',
-    [snapshot.total, JSON.stringify(snapshot), proposal.id, effectiveOverride]
+    `UPDATE proposals
+        SET total_price = $1, pricing_snapshot = $2, total_price_override = $4,
+            adjustments = COALESCE($5::jsonb, adjustments), updated_at = NOW()
+      WHERE id = $3`,
+    [snapshot.total, JSON.stringify(snapshot), proposal.id, effectiveOverride,
+      afterNet.changed ? JSON.stringify(adjAfter) : null]
   );
+  if (afterNet.changed) proposal.adjustments = adjAfter;
 
   // F2 (CLAUDE.md cross-cutting: price moved -> re-evaluate payment status).
   // The extras just moved total_price; a fully-paid proposal that now owes
@@ -340,7 +359,8 @@ async function computeCatalogSnapshot(client, proposal, { adjustments } = {}) {
     numBartenders: proposal.num_bartenders,
     addons,
     syrups: stored?.syrups?.selections || [],
-    adjustments: adjustments ?? proposal.adjustments ?? [],
+    // A comp line for an add-on no longer on the booking is not a current input.
+    adjustments: netCompLinesAgainstAddons(adjustments ?? proposal.adjustments ?? [], addons.map((a) => a.id)).lines,
   }));
 }
 

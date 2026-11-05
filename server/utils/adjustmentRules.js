@@ -13,9 +13,11 @@
 // dollars), visible }, plus two optional markers the engine ignores:
 // `source` ('agreed_price' for a Set agreed price line or a converted
 // override, 'refund' for a refund line, 'comp' for a comped Drink Plan Extras
-// invoice, compLine.js) and `refund_id` (proposal_refunds.id, only with
-// source 'refund'). Protection keys on `source`, never on a label an admin
-// can edit.
+// invoice, compLine.js), `refund_id` (proposal_refunds.id, only with source
+// 'refund') and `comped_addons` (only with source 'comp': the catalog add-ons
+// the comp waived, [{ addon_id, cents }], so the comp leaves with them,
+// compLine.js netCompLinesAgainstAddons). Protection keys on `source`, never
+// on a label an admin can edit.
 
 const { GRATUITY_LABEL } = require('./gratuityLabels');
 
@@ -27,6 +29,8 @@ const MAX_ADJUSTMENTS = 50;
 const MAX_ADJUSTMENT_DOLLARS = 1000000; // exclusive; the bound TOTAL_PRICE_OVERRIDE_MAX had
 const MAX_ADJUSTMENT_LABEL = 255;      // invoice_line_items.description
 const MAX_REFUND_ID = 2147483647;      // proposal_refunds.id is SERIAL (int4)
+const MAX_ADDON_ID = 2147483647;       // service_addons.id is SERIAL (int4)
+const MAX_COMPED_ADDONS = 50;          // one extras invoice names far fewer add-ons
 
 const adjVisible = (adj) => !!(adj && adj.visible);
 const adjAmount = (adj) => Math.abs(Number(adj && adj.amount) || 0);
@@ -43,6 +47,28 @@ const isWholeCents = (dollars) => {
   const cents = Number(dollars) * 100;
   return Number.isFinite(cents) && Math.abs(cents - Math.round(cents)) < 1e-6;
 };
+
+// The comped add-ons of a comp line as stored: [{ addon_id, cents }] with
+// integer ids inside int4, whole non-negative cents, no id twice, and the
+// cents summing to no more than the line (what is left is the comp's bar and
+// syrup portion, which names no add-on). null for any other shape.
+function readCompedAddons(raw, amountDollars) {
+  if (!Array.isArray(raw) || raw.length > MAX_COMPED_ADDONS) return null;
+  const out = [];
+  const seen = new Set();
+  let sum = 0;
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') return null;
+    const { addon_id: id, cents } = c;
+    if (!Number.isInteger(id) || id < 1 || id > MAX_ADDON_ID || seen.has(id)) return null;
+    if (!Number.isInteger(cents) || cents < 0) return null;
+    seen.add(id);
+    sum += cents;
+    out.push({ addon_id: id, cents });
+  }
+  if (sum > Math.round(amountDollars * 100)) return null;
+  return out;
+}
 
 function validateAdjustments(input) {
   const fail = (error) => ({ value: null, error });
@@ -76,6 +102,15 @@ function validateAdjustments(input) {
       line.refund_id = adj.refund_id;
     } else if (adj.refund_id !== undefined && adj.refund_id !== null) {
       return fail('Only a refund line can name a refund.');
+    }
+    if (line.source === 'comp') {
+      if (adj.comped_addons !== undefined && adj.comped_addons !== null) {
+        const comped = readCompedAddons(adj.comped_addons, n);
+        if (comped === null) return fail('A comp line must name the add-ons it comps with whole cents each, within the line.');
+        line.comped_addons = comped;
+      }
+    } else if (adj.comped_addons !== undefined && adj.comped_addons !== null) {
+      return fail('Only a comp line can name comped add-ons.');
     }
     value.push(line);
   }

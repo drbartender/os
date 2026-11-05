@@ -24,6 +24,7 @@ const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
 const { resolvePatchHours } = require('./patchContractHours');
 const { assertPricingInputs } = require('./pricingInputs');
+const { netCompLinesAgainstAddons } = require('../../utils/compLine');
 const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
@@ -440,7 +441,11 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       proposalId: id, old, bodyDuration: event_duration_hours,
     });
     const nb = num_bars ?? old.num_bars;
-    const adj = linesToWrite(normalizeAdjustmentsOrThrow(adjustments), old);
+    // The lines this save prices and writes: the stored or validated body
+    // lines, less what a comp line comped for an add-on this save removes
+    // (compLine.js): otherwise the comp nets a second time against a price
+    // that no longer carries the add-on, and the row reads as overpaid.
+    const adj = netCompLinesAgainstAddons(linesToWrite(normalizeAdjustmentsOrThrow(adjustments), old), strippedIds).lines;
     const tpo = overrideToWrite(req.body, old); // the stored value (guarded above), or null to clear
 
     // 2:00 AM insurance curfew (serviceCurfew.js). Checked against the times

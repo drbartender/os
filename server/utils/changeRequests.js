@@ -9,6 +9,7 @@ const { validateProposalRules, stripIncludedAddons } = require('./proposalRules'
 const { ValidationError } = require('./errors');
 const { safeAddonQty } = require('./proposalMoneyShared');
 const { readSnapshot } = require('./pricingSnapshot');
+const { netCompLinesAgainstAddons } = require('./compLine');
 
 const { BOOKED_SET: BOOKED } = require('./proposalStatus');
 
@@ -140,7 +141,9 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null,
     numBartenders: proposed.num_bartenders ?? overrideOnlyBartenders(proposal),
     addons,
     syrupSelections: readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.syrups?.selections || [],
-    adjustments: proposal.adjustments || [],
+    // A comp line loses what it comped for an add-on the proposed state drops
+    // (compLine.js; a package switch can drop one), as every other pricer does.
+    adjustments: netCompLinesAgainstAddons(proposal.adjustments || [], strippedIds).lines,
     totalPriceOverride: proposal.total_price_override ?? null,
     // Election-at-payment: carry the STORED gratuity so a change-request preview
     // on a paid proposal doesn't silently drop the client's paid gratuity line.

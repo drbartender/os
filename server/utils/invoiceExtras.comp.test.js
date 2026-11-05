@@ -13,12 +13,14 @@ const assert = require('node:assert/strict');
 const { voidExtrasInvoiceWithReconcile } = require('./invoiceExtras');
 const { COMP_LABEL } = require('./adjustmentRules');
 
+// source_id is service_addons.id on an addon line and null on a fee line, as
+// writeExtrasLineItems writes them.
 const MIXED_LINES = [
-  { description: 'Champagne Toast (75 guests)', line_total: 20000, source_type: 'addon' },
-  { description: 'Portable Bar Rental', line_total: 5000, source_type: 'fee' },
-  { description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee' },
+  { description: 'Champagne Toast (75 guests)', line_total: 20000, source_type: 'addon', source_id: 42 },
+  { description: 'Portable Bar Rental', line_total: 5000, source_type: 'fee', source_id: null },
+  { description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee', source_id: null },
 ];
-const SYRUP_ONLY = [{ description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee' }];
+const SYRUP_ONLY = [{ description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee', source_id: null }];
 
 const snapshot = () => ({
   package: { name: 'Test Package', base_cost: 1000 },
@@ -83,8 +85,15 @@ test('comp (reconcile mode): the folded cents leave as a comp line in one UPDATE
   assert.match(upd.sql, /pricing_snapshot = COALESCE\(\$3::jsonb, pricing_snapshot\)/);
   assert.equal(upd.params[0], 77);
   assert.equal(upd.params[3], 31000, 'the WHOLE folded extras (add-on + bar + syrup), as cents');
+  const lineRead = client.calls.find((c) => /FROM invoice_line_items WHERE invoice_id = \$1/.test(c.sql));
+  assert.match(lineRead.sql, /source_id/, 'the add-on identity is read off the invoice lines');
 
-  const line = { type: 'discount', label: `${COMP_LABEL} (INV0501)`, amount: 310, visible: true, source: 'comp' };
+  // The comp is tied to the add-on it waived (audit round 2, H1): the invoice's
+  // addon line's catalog id and cents; the bar and syrup lines name none.
+  const line = {
+    type: 'discount', label: `${COMP_LABEL} (INV0501)`, amount: 310, visible: true, source: 'comp',
+    comped_addons: [{ addon_id: 42, cents: 20000 }],
+  };
   assert.deepEqual(JSON.parse(upd.params[1]), [line]);
   const snap = JSON.parse(upd.params[2]);
   assert.deepEqual(snap.adjustments, [line]);

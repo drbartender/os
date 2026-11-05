@@ -62,6 +62,13 @@ function canonicalLine(adj) {
     label: adj.label === undefined || adj.label === null ? '' : adj.label,
   };
   if (adj.refund_id !== undefined && adj.refund_id !== null) line.refund_id = adj.refund_id;
+  // The comp marker (compLine.js), entry by entry in a fixed key order, so
+  // the same comped add-ons spelled by another client compare equal.
+  if (Array.isArray(adj.comped_addons)) {
+    line.comped_addons = adj.comped_addons.map((c) => ({
+      addon_id: Number(c && c.addon_id), cents: Number(c && c.cents),
+    }));
+  }
   if (adj.source !== undefined && adj.source !== null) line.source = adj.source;
   line.type = adj.type;
   line.visible = !!adj.visible;

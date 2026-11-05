@@ -19,6 +19,7 @@ const {
   applyLineItemCancel,
   CANCEL_BLOCKED_STATUSES,
 } = require('./lineItemCancel');
+const { voidExtrasInvoiceWithReconcile } = require('./invoiceExtras');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('lineItemCancel.test.js refuses to run against production');
@@ -1054,4 +1055,50 @@ test('mandate: lowering ABOVE the floor still clears it (deliberate, spec §6)',
     assert.equal(row.pricing_snapshot.gratuity.floor_rate, null,
       'persisted snapshot floor cleared in lockstep with the column');
   });
+});
+
+// ─── a comped add-on cancelled (audit round 2, H1) ───────────────────────────
+// A booking paid in full, a toast comped through the real comp helper (its
+// comp line names the toast's catalog id and cents), then the toast removed
+// through the core. The comp must leave with the toast: Before prices toast
+// minus comp, After prices neither, the total holds, and no overpayment is
+// reported for the route to refund. Both steps run in one rolled-back
+// transaction (the preview pattern), so the dev DB keeps nothing.
+test('cancelling a comped add-on drops its comp line with it: the total holds and nothing is overpaid', async () => {
+  const toCentsLocal = (n) => Math.round(Number(n) * 100);
+  const { proposalId, snapshot } = await seedProposal({
+    status: 'balance_paid',
+    addons: [{ slug: SLUGS.champagne, name: 'Champagne Toast', billingType: 'per_guest', rate: 2.5, quantity: 1 }],
+  });
+  await pool.query('UPDATE proposals SET amount_paid = total_price WHERE id = $1', [proposalId]);
+  const toast = snapshot.addons[0];
+  const toastCents = toCentsLocal(toast.line_total);
+  const invoiceId = await seedInvoice(proposalId, { label: 'Drink Plan Extras', dueCents: toastCents });
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type, source_id)
+     VALUES ($1, $2, 1, $3, $3, 'addon', $4)`,
+    [invoiceId, 'Champagne Toast (80 guests)', toastCents, toast.id]
+  );
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await voidExtrasInvoiceWithReconcile(invoiceId, null, client, {});
+    const comped = (await client.query('SELECT total_price, adjustments FROM proposals WHERE id = $1', [proposalId])).rows[0];
+    assert.equal(toCentsLocal(comped.total_price), toCentsLocal(snapshot.total) - toastCents, 'the comp took the toast off the total');
+    assert.equal(comped.adjustments.length, 1);
+    assert.equal(comped.adjustments[0].source, 'comp');
+    assert.deepEqual(comped.adjustments[0].comped_addons, [{ addon_id: toast.id, cents: toastCents }]);
+
+    const result = await applyLineItemCancel(client, { proposalId, actorId: null, target: `addon:${SLUGS.champagne}` });
+    assert.equal(toCentsLocal(result.newTotal), toCentsLocal(result.oldTotal), 'the comp left with the add-on: the total holds');
+    assert.equal(result.overpaymentCents, 0, 'nothing to refund');
+    const after = (await client.query('SELECT adjustments, pricing_snapshot, total_price FROM proposals WHERE id = $1', [proposalId])).rows[0];
+    assert.deepEqual(after.adjustments, []);
+    assert.deepEqual(after.pricing_snapshot.adjustments, []);
+    assert.equal(toCentsLocal(after.total_price), toCentsLocal(result.oldTotal));
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
 });

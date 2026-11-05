@@ -69,6 +69,18 @@ test('validateAdjustments refuses bad input with one message', () => {
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund' }],            // refund needs refund_id
     [{ type: 'discount', label: '', amount: 1, visible: true, refund_id: 3 }],                // refund_id needs source refund
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', refund_id: 3 }], // a comp line names no refund
+    // comped_addons (compLine.js): only on a comp line, int ids, whole cents, no id twice, within the line
+    [{ type: 'discount', label: '', amount: 1, visible: true, comped_addons: [{ addon_id: 1, cents: 1 }] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund', refund_id: 1, comped_addons: [] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: 'x' }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [{ addon_id: 0, cents: 1 }] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [{ addon_id: 1.5, cents: 1 }] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [{ addon_id: 1, cents: -1 }] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [{ addon_id: 1, cents: 0.5 }] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [{ addon_id: 1, cents: 101 }] }], // past the line
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [{ addon_id: 1, cents: 1 }, { addon_id: 1, cents: 1 }] }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped_addons: [null] }],
+    [{ type: 'discount', label: '', amount: 1000, visible: true, source: 'comp', comped_addons: Array.from({ length: 51 }, (_, i) => ({ addon_id: i + 1, cents: 1 })) }],
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund', refund_id: 0 }],
     // refund_id past int4 (proposal_refunds.id is SERIAL)
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'refund', refund_id: 2147483648 }],
@@ -86,6 +98,21 @@ test('validateAdjustments refuses bad input with one message', () => {
   }
   assert.equal(R.validateAdjustments([{ type: 'discount', label: '', amount: 0.005, visible: true }]).error,
     'A price adjustment amount must be in whole cents.');
+});
+
+test('validateAdjustments keeps a comp line\'s comped add-ons with only their two keys, in order', () => {
+  const { value, error } = R.validateAdjustments([
+    { type: 'discount', label: 'Drink Plan Extras comped', amount: 3.1, visible: true, source: 'comp',
+      comped_addons: [{ addon_id: 42, cents: 200, extra: 'drop me' }, { addon_id: 7, cents: 0 }] },
+    { type: 'discount', label: 'Drink Plan Extras comped', amount: 1, visible: true, source: 'comp', comped_addons: [] },
+    { type: 'discount', label: 'Drink Plan Extras comped', amount: 1, visible: true, source: 'comp', comped_addons: null },
+  ]);
+  assert.equal(error, null);
+  assert.deepEqual(value[0].comped_addons, [{ addon_id: 42, cents: 200 }, { addon_id: 7, cents: 0 }]);
+  assert.deepEqual(value[1].comped_addons, []);
+  assert.equal('comped_addons' in value[2], false, 'null reads as absent');
+  // The sum may equal the line exactly (a comp that was only its add-ons).
+  assert.equal(R.validateAdjustments([{ type: 'discount', label: '', amount: 2, visible: true, source: 'comp', comped_addons: [{ addon_id: 1, cents: 200 }] }]).error, null);
 });
 
 test('validateAdjustments keeps whole cents as sent and takes refund_id up to int4', () => {
