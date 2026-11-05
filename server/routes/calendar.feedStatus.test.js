@@ -45,6 +45,21 @@ let statements = [];
 const realQuery = pool.query;
 const realConnect = pool.connect;
 
+// The lookup's status predicate, evaluated from the SQL itself rather than
+// matched as a string: the `[NOT] IN (...)` list on onboarding_status (the
+// COALESCE to '' included) and the `role = 'admin' OR` exemption. An inverted
+// predicate (IN for NOT IN) resolves a deactivated row here and fails the
+// test, as it would in Postgres. No predicate at all is the old lookup.
+function statusPredicateAllows(text, u) {
+  const m = /onboarding_status(?:, '')?\)?\s+(NOT\s+)?IN\s*\(([^)]*)\)/.exec(text);
+  if (!m) return true;
+  const list = m[2].split(',').map((s) => s.trim().replace(/^'(.*)'$/, '$1'));
+  const inList = list.includes(u.onboarding_status ?? '');
+  const passes = m[1] ? !inList : inList;
+  const adminExempt = /\brole = 'admin' OR\b/.test(text) && u.role === 'admin';
+  return adminExempt || passes;
+}
+
 // The stub's reading of the two statements it emulates; everything else is
 // "no rows", which is enough for the feed (an empty calendar) and the status
 // route's tail (no profile, no application, no payment profile).
@@ -56,9 +71,7 @@ function answer(raw, params) {
   if (text.includes('FROM users WHERE calendar_token = $1')) {
     const u = Object.values(users).find((x) => x.calendar_token === params[0]);
     if (!u) return { rows: [], rowCount: 0 };
-    const hasStatusPredicate = text.includes('onboarding_status');
-    const blocked = hasStatusPredicate && u.role !== 'admin' && BLOCKED.includes(u.onboarding_status);
-    return blocked ? { rows: [], rowCount: 0 } : { rows: [{ id: u.id, role: u.role }], rowCount: 1 };
+    return statusPredicateAllows(text, u) ? { rows: [{ id: u.id, role: u.role }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (text.includes('FROM users WHERE id = $1')) {
     const u = users[params[0]];

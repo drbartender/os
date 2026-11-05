@@ -46,6 +46,25 @@ const realQuery = pool.query;
 const realCompare = bcrypt.compare;
 let compares = 0;
 
+// The claim's WHERE, evaluated from the SQL rather than matched as a string:
+// `auth_token IS [NOT] NULL` and `COALESCE(auth_token_attempts, 0) <op> N`
+// against the row, so an inverted or loosened predicate fails the test as it
+// would in Postgres. A claim with neither is the old unconditional increment.
+function claimPredicateHolds(text) {
+  const nul = /auth_token IS (NOT )?NULL/.exec(text);
+  if (nul) {
+    const wantsNull = !nul[1];
+    if ((row.auth_token === null) !== wantsNull) return false;
+  }
+  const cmp = /COALESCE\(auth_token_attempts, 0\) (<=|>=|<|>|=) (\d+)/.exec(text);
+  if (cmp) {
+    const a = row.auth_token_attempts ?? 0;
+    const n = Number(cmp[2]);
+    if (!{ '<': a < n, '<=': a <= n, '>': a > n, '>=': a >= n, '=': a === n }[cmp[1]]) return false;
+  }
+  return true;
+}
+
 // A faithful reading of the statements verify runs: the SELECT by email, the
 // attempt increment (conditional on whatever predicates the SQL carries), and
 // the clear. Anything else is a bug in this suite, not a silent no-op.
@@ -57,8 +76,7 @@ function answer(raw, params) {
   }
   if (text.startsWith('UPDATE clients SET auth_token_attempts = COALESCE(auth_token_attempts, 0) + 1')) {
     if (params[0] !== row.id) return { rows: [], rowCount: 0 };
-    if (text.includes('auth_token IS NOT NULL') && row.auth_token === null) return { rows: [], rowCount: 0 };
-    if (text.includes('< 5') && (row.auth_token_attempts ?? 0) >= 5) return { rows: [], rowCount: 0 };
+    if (!claimPredicateHolds(text)) return { rows: [], rowCount: 0 };
     row.auth_token_attempts = (row.auth_token_attempts ?? 0) + 1;
     const returned = text.includes('RETURNING') ? [{ auth_token: row.auth_token, auth_token_expires_at: row.auth_token_expires_at }] : [];
     return { rows: returned, rowCount: 1 };
