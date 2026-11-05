@@ -95,6 +95,9 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
 
   // ── Transaction: upsert agreement row + mark onboarding step ──────
   let saved;
+  // The immutable history row for THIS signing (audit 2026-11-05, M6); its
+  // pdf_storage_key is stamped once, post-upload, below.
+  let signatureRowId = null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -154,6 +157,32 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
       );
       saved = ins.rows[0];
     }
+
+    // One append-only row per signing, in the same transaction as the
+    // `agreements` upsert, so the history can never miss a signing the
+    // live row recorded (or record one the live row rolled back).
+    const hist = await client.query(
+      `INSERT INTO agreement_signatures
+         (user_id, agreement_id, full_name, email, phone, sms_consent, acknowledgments,
+          signature_data, signature_method, signature_ip, signature_user_agent,
+          signature_document_version, signed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING id`,
+      [
+        req.user.id, saved.id, saved.full_name, saved.email, saved.phone, saved.sms_consent,
+        JSON.stringify({
+          ack_ic_status: saved.ack_ic_status,
+          ack_commitment: saved.ack_commitment,
+          ack_non_solicit: saved.ack_non_solicit,
+          ack_damage_recoupment: saved.ack_damage_recoupment,
+          ack_legal_protections: saved.ack_legal_protections,
+          ack_field_guide: saved.ack_field_guide,
+        }),
+        saved.signature_data, saved.signature_method, saved.signature_ip, saved.signature_user_agent,
+        saved.signature_document_version, saved.signed_at,
+      ]
+    );
+    signatureRowId = hist.rows[0].id;
 
     await ensureOnboardingProgress(req.user.id, client);
     await client.query(
@@ -218,6 +247,14 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
         WHERE user_id=$2`,
       [storageKey, req.user.id]
     );
+    // The history row keeps ITS OWN PDF key, so an older signing's PDF stays
+    // reachable after the live row moves on to the next one.
+    if (signatureRowId) {
+      await pool.query(
+        'UPDATE agreement_signatures SET pdf_storage_key = $1 WHERE id = $2 AND pdf_storage_key IS NULL',
+        [storageKey, signatureRowId]
+      );
+    }
 
     const pdfUrl = await getSignedUrl(storageKey);
 

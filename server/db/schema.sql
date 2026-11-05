@@ -165,6 +165,35 @@ ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_storage_key VARCHAR(500);
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_generated_at TIMESTAMPTZ;
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_email_sent_at TIMESTAMPTZ;
 
+-- Immutable signing history (audit 2026-11-05, M6). `agreements` is one row
+-- per user and every re-sign rewrote it in place, so the record of WHAT a
+-- contractor agreed to, as WHOM and WHEN was lost on their next signing (the
+-- older PDF stayed in R2 with nothing pointing at it). POST /api/agreement now
+-- also INSERTs one row here per signing. Nothing updates or deletes a row,
+-- except the one post-upload stamp of pdf_storage_key on the row just written.
+-- acknowledgments is the six ack_* booleans as JSON, so a future ack never
+-- needs a column here.
+CREATE TABLE IF NOT EXISTS agreement_signatures (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  agreement_id INTEGER REFERENCES agreements(id) ON DELETE SET NULL,
+  full_name VARCHAR(255),
+  email VARCHAR(255),
+  phone VARCHAR(50),
+  sms_consent BOOLEAN,
+  acknowledgments JSONB,
+  signature_data TEXT,
+  signature_method VARCHAR(10),
+  signature_ip VARCHAR(45),
+  signature_user_agent TEXT,
+  signature_document_version VARCHAR(50),
+  signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pdf_storage_key VARCHAR(500),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agreement_signatures_user
+  ON agreement_signatures(user_id, signed_at DESC);
+
 CREATE TABLE IF NOT EXISTS payment_profiles (
   id SERIAL PRIMARY KEY,
   user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -1003,6 +1032,19 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS balance_due_date DATE;
 -- A 24h TTL on 'in_progress' lets us recover if the webhook never lands.
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_status TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_attempted_at TIMESTAMPTZ;
+-- Declines so far on the current balance (audit 2026-11-05, M1). The claim
+-- re-selects a 'failed' row only while this is under the cap in
+-- balanceScheduler.js and at least 24h after the last attempt; the webhook
+-- resets it to 0 when the balance settles. Also rides the Stripe idempotency
+-- key, so an admin retry after a decline reaches the card instead of
+-- replaying Stripe's cached first answer for 24h (L1).
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_attempts INTEGER NOT NULL DEFAULT 0;
+-- Open Stripe dispute on one of this proposal's payments (audit 2026-11-05,
+-- H1). Set by charge.dispute.created (or funds_withdrawn as the backstop),
+-- cleared by charge.dispute.closed / funds_reinstated. While set: autopay and
+-- the admin balance charge skip the row, refunds and cancellation refuse, and
+-- the admin payment panel says so. The dispute id lives in the activity log.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS dispute_open_at TIMESTAMPTZ;
 -- Lock the autopay_status enum so a typo at any of the 5 write sites
 -- (scheduler claim/release, admin charge-balance claim/release, webhook clear)
 -- fails loudly instead of silently breaking the claim gate.

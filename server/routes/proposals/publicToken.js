@@ -528,7 +528,13 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       client_signature_ip = $4,
       client_signature_user_agent = $5,
       client_signature_document_version = $6,
-      status = 'accepted',
+      -- A pre-payment row becomes 'accepted'. A row that is ALREADY paid keeps
+      -- its payment status (audit 2026-11-05, M4): the PaymentIntent exists
+      -- before /sign is posted, so a confirmation that lands first, or an
+      -- admin payment link, leaves a booked row with no signature, and this
+      -- route used to refuse it for good. A late signature on a paid row is
+      -- still gated on client_signed_at IS NULL and on the acknowledged total.
+      status = CASE WHEN status IN ('draft', 'sent', 'viewed', 'modified') THEN 'accepted' ELSE status END,
       -- Stamp acceptance time so the financial dashboard (metricsQueries filters
       -- accepted_at IS NOT NULL) counts public sign-and-pay bookings. COALESCE so
       -- a re-sign never moves the original acceptance timestamp.
@@ -541,9 +547,9 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       event_location = COALESCE($13, event_location)
     WHERE id = $7
       AND client_signed_at IS NULL
-      AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')
+      AND status NOT IN ('completed', 'archived')
       AND ABS(total_price - $14::numeric) < 0.005
-    RETURNING id
+    RETURNING id, status
   `, [
     client_signed_name, client_signature_data, client_signature_method, ip, userAgent,
     documentVersion, lookup.rows[0].id,
@@ -567,7 +573,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     );
     const r = re.rows[0];
     const stillSignable = r && !r.client_signed_at
-      && !['accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
+      && !['completed', 'archived'].includes(r.status);
     if (stillSignable) {
       code = 'TOTAL_CHANGED';
       message = 'The total for this proposal has changed. Please review the updated price and sign again.';
@@ -596,6 +602,9 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     throw new ConflictError(message, code);
   }
   const proposal = { id: lookup.rows[0].id };
+  const signedStatus = upd.rows[0].status;
+  // A signature recorded AFTER money landed (see the status CASE above).
+  const lateSignature = ['deposit_paid', 'balance_paid', 'confirmed'].includes(signedStatus);
 
   // Phone write is gated on the sign UPDATE having returned a row (the
   // client_signed_at IS NULL TOCTOU gate above): a replayed sign POST that hit
@@ -626,7 +635,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
 
   await pool.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackTotal })]
+    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated, acknowledged_total: ackTotal, late_signature: lateSignature })]
   );
 
   // Email notifications (non-blocking)
@@ -672,7 +681,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     }
   }
 
-  res.json({ success: true, status: 'accepted' });
+  res.json({ success: true, status: signedStatus, late_signature: lateSignature });
 }));
 
 module.exports = router;

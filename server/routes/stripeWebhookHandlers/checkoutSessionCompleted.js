@@ -15,6 +15,7 @@ const { matchTipToEvent } = require('../../utils/payrollTips');
 const { UUID_RE } = require('../../utils/tokens');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { notifyUnsignedPayment } = require('../../utils/unsignedPaymentAlert');
 
 // B3: email-first admin alert when a payment settles onto a cancelled (archived)
 // proposal. Fire-and-forget from the post-commit tail; notifyAdminCategory self-
@@ -414,6 +415,14 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             );
           }
           notifyPaymentOnArchived(proposalId, session.amount_total || 0, linkPaymentType, archivedSettle.archiveReason);
+        }
+
+        // Unsigned booking (audit 2026-11-05, M4): a Payment Link never asks
+        // for a signature, so this is the common way a paid, unsigned booking
+        // comes to exist. Breadcrumb + admin email; the credit stands.
+        if (!groupChoice.conflict && !archivedSettle) {
+          notifyUnsignedPayment({ proposalId, amountCents: session.amount_total || 0, paymentType: linkPaymentType, source: 'checkout.session.completed' })
+            .catch((err) => console.error('unsigned-payment alert failed (non-blocking):', err && err.message));
         }
 
         // ≤72h booking: admin + broad-net staff SMS blast. Fire-and-forget;

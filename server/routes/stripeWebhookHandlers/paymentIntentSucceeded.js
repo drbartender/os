@@ -14,6 +14,7 @@ const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { notifyUnsignedPayment } = require('../../utils/unsignedPaymentAlert');
 const { recomputeSnapshotGratuity, GRATUITY_FLOOR_RATE, GRATUITY_SANITY_MAX_RATE } = require('../../utils/pricingEngine');
 
 // B3: email-first admin alert when a payment settles onto a cancelled (archived)
@@ -676,6 +677,14 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             );
           }
           notifyPaymentOnArchived(proposalId, intent.amount, paymentType, archivedSettle.archiveReason);
+        }
+
+        // Unsigned booking (audit 2026-11-05, M4): the credit above stands;
+        // this is the breadcrumb + admin email when no signature is on file.
+        // Fire-and-forget, own connection, never masks sibling tail work.
+        if ((paymentType === 'deposit' || paymentType === 'full') && !groupChoice.conflict && !archivedSettle) {
+          notifyUnsignedPayment({ proposalId, amountCents: intent.amount, paymentType, source: 'payment_intent.succeeded' })
+            .catch((err) => console.error('unsigned-payment alert failed (non-blocking):', err && err.message));
         }
 
         // ─── Service extension: settle AFTER the commit AND after release ───
