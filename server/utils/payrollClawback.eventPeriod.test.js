@@ -2,22 +2,22 @@ require('dotenv').config();
 process.env.NODE_ENV = 'test';
 
 /**
- * A tip clawback lands in the EVENT's own pay period while that period is
- * still open, and only falls through to today's period when the event's
- * period is frozen (audit 2026-11-05, POUT-03).
+ * A tip clawback lands in the open period containing TODAY, keyed by the
+ * original shift, even while the event's own period is still open (audit
+ * 2026-11-05, POUT-03 verify: the main-branch behavior, kept on purpose).
  *
- * clawbackTip always picked "the open period containing today". For a tip on
- * an event whose own period was still open, that minted a synthetic debt row
- * (hours 0, wage 0, negative adjustment) in a LATER period, keyed by the
- * event's shift, instead of netting into the wage line that sits in the
- * event's period. Accrual then found two rows for one contractor+shift and
- * could seed the event period's wage line from the stub (wage lost, claw
- * booked twice), and the debt sat in a period that may never collect it.
+ * The POUT-03 lane briefly booked the claw in the event's own period while it
+ * was open, so that it netted into the wage line. The verify pass showed that
+ * widened a pre-existing hazard: a refund before completion then left a pure
+ * debt stub (hours 0, rate 0) in the event's period, which accrual read as the
+ * worker's prior line and seeded a 0 wage from (H1). The period-keyed prior
+ * lookup already closes the cross-period case on its own, so the landing rule
+ * went back to main's: today's open period, the stub kept out of the wage
+ * line's way, and accrual told to never seed from a stub.
  *
  * Harness: clawbackTip over an in-memory client stub keyed on the SQL text
  * (the stripePayoutSync.unconfigured.test.js pattern), recording which period
- * each payout upsert targets. The DB-backed sibling in payrollClawback.test.js
- * asserts the merged line against Postgres.
+ * each payout upsert targets. No database.
  *
  * Run: node --test server/utils/payrollClawback.eventPeriod.test.js
  */
@@ -39,9 +39,9 @@ const EVENT_PERIOD = 41;
 const TODAY_PERIOD = 42;
 
 const realConnect = pool.connect;
-let eventPeriodRows;   // what the event-period lookup answers with
-let payoutPeriods;     // the pay_period_id of every ensurePayout call
-let todayLookups;      // how many times the "period containing today" SELECT ran
+let eventPeriodLookups; // how many times a lookup of the event's own period ran (none expected)
+let payoutPeriods;      // the pay_period_id of every ensurePayout call
+let todayLookups;       // how many times the "period containing today" SELECT ran
 
 function answer(text, params = []) {
   const sql = String(text).replace(/\s+/g, ' ').trim();
@@ -57,9 +57,11 @@ function answer(text, params = []) {
   if (sql.startsWith('SELECT sr.user_id, (u.cc_id LIKE')) {
     return { rows: [{ user_id: BARTENDER_A, is_stub: false }, { user_id: BARTENDER_B, is_stub: false }], rowCount: 2 };
   }
-  // The event's own period, through the shift's proposal.
+  // A lookup of the event's own period through the shift's proposal: the
+  // event's period is OPEN here, and it must still not be chosen.
   if (sql.includes('FROM shifts s') && sql.includes('JOIN pay_periods pp')) {
-    return { rows: eventPeriodRows, rowCount: eventPeriodRows.length };
+    eventPeriodLookups += 1;
+    return { rows: [{ id: EVENT_PERIOD, status: 'open' }], rowCount: 1 };
   }
   // payrollProcessing.findOpenPeriodForDate: the period containing today.
   if (sql.startsWith('SELECT id, start_date, end_date, payday, status FROM pay_periods WHERE status = \'open\'')) {
@@ -89,25 +91,17 @@ before(() => {
 beforeEach(() => {
   payoutPeriods = [];
   todayLookups = 0;
-  eventPeriodRows = [];
+  eventPeriodLookups = 0;
 });
 
 after(() => { pool.connect = realConnect; });
 
-test('the event period is open: the claw lands there, on both bartenders, and today is never consulted', async () => {
-  eventPeriodRows = [{ id: EVENT_PERIOD, status: 'open' }];
+test('the claw lands in the open period containing today, keyed by the original shift, and the event period is never consulted', async () => {
   const result = await clawbackTip(TIP_ID, 4000);
   assert.equal(result.delta, 4000);
   assert.equal(result.bartenders, 2);
-  assert.equal(result.period_id, EVENT_PERIOD, 'the claw is booked in the period that holds the wage line');
-  assert.deepEqual(payoutPeriods, [EVENT_PERIOD, EVENT_PERIOD]);
-  assert.equal(todayLookups, 0, 'no stray row in a later period');
-});
-
-test('the event period is frozen: the claw falls through to the open period containing today', async () => {
-  eventPeriodRows = [];
-  const result = await clawbackTip(TIP_ID, 4000);
-  assert.equal(result.period_id, TODAY_PERIOD);
+  assert.equal(result.period_id, TODAY_PERIOD, 'today, as on main: never the event period, open or not');
   assert.deepEqual(payoutPeriods, [TODAY_PERIOD, TODAY_PERIOD]);
   assert.equal(todayLookups, 1);
+  assert.equal(eventPeriodLookups, 0, 'no lookup of the event period exists on this path');
 });

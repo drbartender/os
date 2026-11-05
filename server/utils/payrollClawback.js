@@ -2,10 +2,8 @@
  * Auto-clawback for a card tip that was already paid out and is now being
  * refunded (or chargeback funds were withdrawn during a dispute). The
  * bartender's pro-rata share of the clawback amount lands as a NEGATIVE
- * adjustment_cents on the payout_events row keyed by the ORIGINAL shift: in
- * the event's own period while it is still open (netted into the wage line),
- * otherwise as a synthetic row in the bartender's payout for the open period
- * containing today. Either way the line labels back to its true event.
+ * adjustment_cents on a synthetic payout_events row in the bartender's
+ * open-period payout, keyed by the ORIGINAL shift so the line labels back.
  *
  * Idempotent via tips.refunded_amount_cents: the function only ever moves
  * the delta beyond what was already clawed, so a webhook replay with the
@@ -119,43 +117,23 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
     const netDelta = delta - feeDelta;
     const perBartenderShares = splitEvenly(netDelta, bartenders.length);
 
-    // The event's own period, while it is still open, is where the claw lands:
-    // the wage line for this shift sits there, the ON CONFLICT arm below nets
-    // the debt into it, and that period's total absorbs it. Minting the debt
-    // in a later period instead left two rows for one contractor+shift, which
-    // accrual could misread as the wage line (audit 2026-11-05, POUT-03). Pure
-    // DATE arithmetic in SQL: the proposal's event_date against the period
-    // bounds, never CURRENT_DATE. A frozen event period (the usual chargeback
-    // timing, weeks later) or a standalone shift falls through to today's.
-    const eventPeriodRes = await client.query(
-      `SELECT pp.id, pp.status
-         FROM shifts s
-         JOIN proposals p ON p.id = s.proposal_id
-         JOIN pay_periods pp ON p.event_date BETWEEN pp.start_date AND pp.end_date
-        WHERE s.id = $1 AND pp.status = 'open'
-        LIMIT 1`,
-      [tip.shift_id]
-    );
-    let period = eventPeriodRes.rows[0] || null;
+    // Find/create the open period containing today. "Today" is the business day
+    // in America/Chicago, not the server's UTC/GMT day: a late-evening clawback
+    // in Chicago must land in the CURRENT Tue-Mon period, not next week's (which
+    // the UTC day would pick once past ~6-7pm Central).
+    const todayYmd = chicagoTodayYmd();
+    let period = await findOpenPeriodForDate(client, todayYmd);
     if (!period) {
-      // Find/create the open period containing today. "Today" is the business
-      // day in America/Chicago, not the server's UTC/GMT day: a late-evening
-      // clawback in Chicago must land in the CURRENT Tue-Mon period, not next
-      // week's (which the UTC day would pick once past ~6-7pm Central).
-      const todayYmd = chicagoTodayYmd();
-      period = await findOpenPeriodForDate(client, todayYmd);
-      if (!period) {
-        const { startDate, endDate } = payPeriodForDate(todayYmd);
-        const payday = computePayday(endDate);
-        const ins = await client.query(
-          `INSERT INTO pay_periods (start_date, end_date, payday, status)
-           VALUES ($1, $2, $3, 'open')
-           ON CONFLICT (start_date) DO UPDATE SET status = pay_periods.status
-           RETURNING id, status`,
-          [startDate, endDate, payday]
-        );
-        period = ins.rows[0];
-      }
+      const { startDate, endDate } = payPeriodForDate(todayYmd);
+      const payday = computePayday(endDate);
+      const ins = await client.query(
+        `INSERT INTO pay_periods (start_date, end_date, payday, status)
+         VALUES ($1, $2, $3, 'open')
+         ON CONFLICT (start_date) DO UPDATE SET status = pay_periods.status
+         RETURNING id, status`,
+        [startDate, endDate, payday]
+      );
+      period = ins.rows[0];
     }
     if (period.status !== 'open') {
       // Defer: don't move the cumulative; persist a marker (with the target) so a
