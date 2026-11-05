@@ -37,6 +37,9 @@ import TipPageTab from './tabs/TipPageTab';
 // mirrors the TabButton set below. `application` renders conditionally, so it
 // is clamped out when the record has no application. Module scope = stable id.
 const USER_DETAIL_DEFAULTS = { tab: 'overview' };
+// The tabs whose reads and writes are admin-only on the server (payouts and
+// payment history, the tip page, messages): a manager does not see them.
+const ADMIN_ONLY_TABS = ['payouts', 'tip-page', 'messages'];
 const USER_DETAIL_TABS = [
   'overview', 'shifts', 'certifications', 'payouts',
   'tip-page', 'documents', 'messages', 'application',
@@ -55,6 +58,14 @@ function UserDetailBody() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user: viewer } = useAuth();
+  // A manager can open this page, but the server keeps a manager out of pay
+  // data (the read sends payment {} and no pay rate) and out of every action
+  // here (status, profile, permissions, seniority, messages, the tip page, the
+  // payouts reads are admin-only) except Assign to event, which a manager with
+  // can_staff may use (requireStaffing). So a manager sees only what they can
+  // read and do.
+  const isAdmin = viewer?.role === 'admin';
+  const canStaff = isAdmin || !!viewer?.can_staff;
   const toast = useToast();
 
   const [data, setData] = useState(null);
@@ -64,9 +75,10 @@ function UserDetailBody() {
   // Clamp the URL tab to the real set; drop `application` when this record has
   // none, so ?tab=application on an application-less user falls to overview.
   const hasApplicationTab = !!data?.application?.id;
-  const allowedTabs = hasApplicationTab
-    ? USER_DETAIL_TABS
-    : USER_DETAIL_TABS.filter((t) => t !== 'application');
+  // An admin-only tab is dropped for a manager the same way, so a ?tab= deep
+  // link to one falls to overview.
+  const allowedTabs = USER_DETAIL_TABS.filter((t) =>
+    (t !== 'application' || hasApplicationTab) && (isAdmin || !ADMIN_ONLY_TABS.includes(t)));
   const tab = allowedTabs.includes(tabState.tab) ? tabState.tab : USER_DETAIL_DEFAULTS.tab;
 
   const [statusLoading, setStatusLoading] = useState(false);
@@ -180,6 +192,9 @@ function UserDetailBody() {
   );
 
   const { user, progress, profile, agreement, payment, application } = data;
+  // The status and permissions writes also refuse an admin's own row, so an
+  // admin viewing an admin's record gets no control for them either.
+  const canChangeAccess = isAdmin && user.role !== 'admin';
   const isDeactivated = user.onboarding_status === 'deactivated';
   const isOnboarding = !progress?.onboarding_completed && !isDeactivated;
   const displayName = profile?.display_name || profile?.preferred_name || user.email;
@@ -408,7 +423,7 @@ function UserDetailBody() {
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
-            {isDeactivated ? (
+            {!canChangeAccess ? null : isDeactivated ? (
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -432,10 +447,12 @@ function UserDetailBody() {
                 Deactivate
               </button>
             )}
-            <button type="button" className="btn btn-ghost" onClick={() => setTab('messages')}>
-              <Icon name="mail" size={12} />Message
-            </button>
-            {!isDeactivated && (
+            {isAdmin && (
+              <button type="button" className="btn btn-ghost" onClick={() => setTab('messages')}>
+                <Icon name="mail" size={12} />Message
+              </button>
+            )}
+            {!isDeactivated && canStaff && (
               <button type="button" className="btn btn-primary" onClick={() => setAssignOpen(true)}>
                 <Icon name="plus" size={12} />Assign to event
               </button>
@@ -460,13 +477,16 @@ function UserDetailBody() {
               <span>{seniority?.tenure_months ? `${seniority.tenure_months}mo tenure · ` : ''}{seniority?.events_worked ?? 0} events worked</span>
             </div>
           </div>
-          <div className="stat">
-            <div className="stat-label">YTD earnings · est.</div>
-            <div className="stat-value" style={{ color: 'hsl(var(--ok-h) var(--ok-s) 52%)' }}>{fmt$(ytdEarningsEst)}</div>
-            <div className="stat-sub">
-              <span>{ytdShifts} shifts × {DEFAULT_HOURS_PER_SHIFT}hr × ${hourlyRate}/hr</span>
+          {/* Built on the pay rate, which the server withholds from a manager. */}
+          {isAdmin && (
+            <div className="stat">
+              <div className="stat-label">YTD earnings · est.</div>
+              <div className="stat-value" style={{ color: 'hsl(var(--ok-h) var(--ok-s) 52%)' }}>{fmt$(ytdEarningsEst)}</div>
+              <div className="stat-sub">
+                <span>{ytdShifts} shifts × {DEFAULT_HOURS_PER_SHIFT}hr × ${hourlyRate}/hr</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -474,7 +494,7 @@ function UserDetailBody() {
           Only renders when this user co-participated on a proposal with a
           legacy CC stub user. The endpoint is idempotent (UPSERT semantics);
           accruePayoutsForProposal returns 'skipped' when nothing changed. */}
-      {viewer?.role === 'admin' && stubCoProposals.length > 0 && (
+      {isAdmin && stubCoProposals.length > 0 && (
         <section className="card" style={{ marginBottom: 'var(--gap)', padding: '1.25rem 1.5rem' }}>
           <h3 style={{ fontSize: 16, margin: '0 0 6px' }}>Re-accrue payouts</h3>
           <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '0 0 12px' }}>
@@ -525,10 +545,10 @@ function UserDetailBody() {
         <TabButton active={tab === 'overview'} onClick={() => setTab('overview')}>Overview</TabButton>
         <TabButton active={tab === 'shifts'} onClick={() => setTab('shifts')} count={totalShifts}>Shifts</TabButton>
         <TabButton active={tab === 'certifications'} onClick={() => setTab('certifications')}>Certifications</TabButton>
-        <TabButton active={tab === 'payouts'} onClick={() => setTab('payouts')}>Payouts</TabButton>
-        <TabButton active={tab === 'tip-page'} onClick={() => setTab('tip-page')}>Tip Page</TabButton>
+        {isAdmin && <TabButton active={tab === 'payouts'} onClick={() => setTab('payouts')}>Payouts</TabButton>}
+        {isAdmin && <TabButton active={tab === 'tip-page'} onClick={() => setTab('tip-page')}>Tip Page</TabButton>}
         <TabButton active={tab === 'documents'} onClick={() => setTab('documents')}>Documents</TabButton>
-        <TabButton active={tab === 'messages'} onClick={() => setTab('messages')} count={userMessages.length || null}>Messages</TabButton>
+        {isAdmin && <TabButton active={tab === 'messages'} onClick={() => setTab('messages')} count={userMessages.length || null}>Messages</TabButton>}
         {application?.id && (
           <TabButton active={tab === 'application'} onClick={() => setTab('application')}>Application</TabButton>
         )}
@@ -537,6 +557,8 @@ function UserDetailBody() {
       {/* ── OVERVIEW ───────────────────────────────────── */}
       {tab === 'overview' && (
         <OverviewTab
+          canEdit={isAdmin}
+          canChangeAccess={canChangeAccess}
           user={user}
           profile={profile}
           legalName={agreement?.full_name || application?.full_name || null}
@@ -568,6 +590,7 @@ function UserDetailBody() {
 
       {tab === 'payouts' && (
         <PayoutsTab
+          canEdit={isAdmin}
           profile={profile}
           payment={payment}
           seniority={seniority}
@@ -607,7 +630,7 @@ function UserDetailBody() {
       )}
 
       {tab === 'documents' && (
-        <DocumentsTab agreement={agreement} payment={payment} profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
+        <DocumentsTab showTax={isAdmin} agreement={agreement} payment={payment} profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
       )}
 
       {tab === 'messages' && (
@@ -626,7 +649,7 @@ function UserDetailBody() {
       )}
 
       {tab === 'application' && application?.id && (
-        <ApplicationTab application={application} userId={user.id} />
+        <ApplicationTab application={application} userId={user.id} canOpenFull={isAdmin} />
       )}
 
       {/* Assign-to-event modal */}

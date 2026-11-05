@@ -8,7 +8,7 @@ import EntityLink from '../../../../components/EntityLink';
 // `userId` keys the standalone application page: /staffing/applications/:userId
 // resolves AdminApplicationDetail (route param is the USER id, not the
 // application row pk). Linking there is a cross-reference, not a self-link.
-export default function ApplicationTab({ application, userId }) {
+export default function ApplicationTab({ application, userId, canOpenFull = true }) {
   let positions = [];
   try { positions = JSON.parse(application.positions_interested || '[]'); } catch { positions = []; }
 
@@ -17,9 +17,12 @@ export default function ApplicationTab({ application, userId }) {
       <div className="card">
         <div className="card-head">
           <h3>Original application</h3>
-          <EntityLink to={userId ? `/staffing/applications/${userId}` : null} className="tiny">
-            Open full application
-          </EntityLink>
+          {/* The full application page's read is admin-only. */}
+          {canOpenFull && (
+            <EntityLink to={userId ? `/staffing/applications/${userId}` : null} className="tiny">
+              Open full application
+            </EntityLink>
+          )}
         </div>
         <div className="card-body">
           <dl className="dl">

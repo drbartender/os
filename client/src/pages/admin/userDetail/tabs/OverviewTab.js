@@ -17,7 +17,7 @@ import EquipmentDisplay from '../components/EquipmentDisplay';
 export default function OverviewTab(props) {
   const {
     user, profile, legalName, upcoming, recent, eventsLoading,
-    editing, editForm, setEditForm, startEditing, cancelEditing,
+    canEdit, canChangeAccess, editing, editForm, setEditForm, startEditing, cancelEditing,
     saveProfile, saving, profileError, profileFieldErrors,
     permsSaving, updatePermission,
   } = props;
@@ -175,7 +175,7 @@ export default function OverviewTab(props) {
                   {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
-            ) : (
+            ) : canEdit && (
               <button type="button" className="btn btn-ghost btn-sm" onClick={startEditing}>
                 <Icon name="pen" size={11} />Edit
               </button>
@@ -269,7 +269,7 @@ export default function OverviewTab(props) {
                   type="button"
                   className={user.role === r ? 'active' : ''}
                   style={{ flex: 1 }}
-                  disabled={permsSaving}
+                  disabled={permsSaving || !canChangeAccess}
                   onClick={() => updatePermission('role', r)}
                 >
                   {r.charAt(0).toUpperCase() + r.slice(1)}
@@ -280,7 +280,7 @@ export default function OverviewTab(props) {
               <input
                 type="checkbox"
                 checked={!!user.can_hire}
-                disabled={permsSaving}
+                disabled={permsSaving || !canChangeAccess}
                 onChange={(e) => updatePermission('can_hire', e.target.checked)}
                 style={{ marginTop: 3 }}
               />
@@ -293,7 +293,7 @@ export default function OverviewTab(props) {
               <input
                 type="checkbox"
                 checked={!!user.can_staff}
-                disabled={permsSaving}
+                disabled={permsSaving || !canChangeAccess}
                 onChange={(e) => updatePermission('can_staff', e.target.checked)}
                 style={{ marginTop: 3 }}
               />
@@ -302,6 +302,13 @@ export default function OverviewTab(props) {
                 <div className="tiny muted">View roster + manage shift requests</div>
               </div>
             </label>
+            {/* The controls above do not look disabled on their own (no disabled
+                style on .seg buttons), so say why they do nothing. */}
+            {!canChangeAccess && (
+              <div className="tiny muted">
+                {canEdit ? 'An admin\'s role and permissions are fixed.' : 'Only an admin can change these.'}
+              </div>
+            )}
           </div>
         </div>
 

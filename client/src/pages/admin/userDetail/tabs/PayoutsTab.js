@@ -25,7 +25,7 @@ const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
 
 export default function PayoutsTab(props) {
   const {
-    profile, payment, seniority, seniorityLoading,
+    canEdit, profile, payment, seniority, seniorityLoading,
     seniorityForm, setSeniorityForm, saveSeniority, senioritySaving, seniorityError, seniorityFieldErrors,
     editing, editForm, setEditForm, startEditing, cancelEditing, saveProfile, saving, profileError, profileFieldErrors,
   } = props;
@@ -185,6 +185,7 @@ export default function PayoutsTab(props) {
                       className="input"
                       type="date"
                       value={seniorityForm.hire_date}
+                      disabled={!canEdit}
                       onChange={(e) => setSeniorityForm(f => ({ ...f, hire_date: e.target.value }))}
                     />
                   </div>
@@ -194,6 +195,7 @@ export default function PayoutsTab(props) {
                       className="input num"
                       type="number"
                       value={seniorityForm.seniority_adjustment}
+                      disabled={!canEdit}
                       onChange={(e) => setSeniorityForm(f => ({ ...f, seniority_adjustment: e.target.value }))}
                     />
                     <FieldError error={seniorityFieldErrors?.seniority_adjustment} />
@@ -206,6 +208,7 @@ export default function PayoutsTab(props) {
                       type="number"
                       min="0"
                       value={seniorityForm.historical_events_worked}
+                      disabled={!canEdit}
                       onChange={(e) => setSeniorityForm(f => ({ ...f, historical_events_worked: e.target.value }))}
                     />
                     <FieldError error={seniorityFieldErrors?.historical_events_worked} />
@@ -213,11 +216,13 @@ export default function PayoutsTab(props) {
                   </div>
                 </div>
                 <FormBanner error={seniorityError} fieldErrors={seniorityFieldErrors} />
-                <div className="hstack" style={{ marginTop: 12, gap: 8 }}>
-                  <button type="button" className="btn btn-primary btn-sm" disabled={senioritySaving} onClick={saveSeniority}>
-                    {senioritySaving ? 'Saving…' : 'Save seniority'}
-                  </button>
-                </div>
+                {canEdit && (
+                  <div className="hstack" style={{ marginTop: 12, gap: 8 }}>
+                    <button type="button" className="btn btn-primary btn-sm" disabled={senioritySaving} onClick={saveSeniority}>
+                      {senioritySaving ? 'Saving…' : 'Save seniority'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -235,7 +240,7 @@ export default function PayoutsTab(props) {
                   {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
-            ) : (
+            ) : canEdit && (
               <button type="button" className="btn btn-ghost btn-sm" onClick={startEditing}>
                 <Icon name="pen" size={11} />Edit
               </button>

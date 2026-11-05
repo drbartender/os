@@ -1,4 +1,4 @@
-// /contractors/:userId/tip-page admin actions
+// /contractors/:userId/tip-page admin actions, admin-only
 // (patch/rotate-token/generate-stripe/regenerate-stripe/activate/deactivate) + /tips +
 // /tip-feedback review
 
@@ -6,9 +6,9 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../../db');
-const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
+const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError, PermissionError } = require('../../utils/errors');
+const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const {
   createTipPaymentLink,
   deactivateTipPaymentLink,
@@ -22,28 +22,20 @@ const { validatePreferredNameChange } = require('../../utils/staffDisplayName.va
 const router = express.Router();
 
 // ─── Per-Contractor Tip Page Actions ─────────────────────────────
-// Admin/manager surface for managing a contractor's tip page: edit handles,
-// rotate or generate the Stripe Payment Link, and toggle the page on/off.
+// Admin surface for managing a contractor's tip page: edit handles, rotate or
+// generate the Stripe Payment Link, and toggle the page on/off. Admin-only: the
+// handles and the payroll method are what the pay run pays to, and the staff
+// record read (GET /api/admin/users/:id) withholds that row from a manager, so a
+// manager writing it would change where a staffer is paid without seeing it.
 // `regenerate-stripe` preserves tip_page_token so existing printed QRs keep
 // working — only the Stripe link rotates.
 
 const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other'];
 
-// Managers shouldn't be able to mutate an admin's tip page (rotate their Stripe
-// link, change their handles, or deactivate them). Admins can mutate anyone.
-async function ensureNonAdminTargetForManager(req, userId) {
-  if (req.user.role === 'admin') return;
-  const r = await pool.query('SELECT role FROM users WHERE id = $1', [userId]);
-  if (r.rows[0]?.role === 'admin') {
-    throw new PermissionError('Managers cannot modify an admin user tip page');
-  }
-}
-
 // PATCH — admin override of handles + payroll preference + preferred_name
-router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.patch('/contractors/:userId/tip-page', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
-  await ensureNonAdminTargetForManager(req, userId);
 
   const fields = {};
   for (const k of ['venmo_handle', 'cashapp_handle', 'paypal_url', 'preferred_payment_method']) {
@@ -108,10 +100,9 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
 // longer pay through it. In-flight Stripe sessions on the old link will fail
 // or, if completed in the brief gap, get dropped at the webhook because the
 // metadata token won't match the rotated DB token.
-router.post('/contractors/:userId/tip-page/rotate-token', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/contractors/:userId/tip-page/rotate-token', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
-  await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
     SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name, cp.display_name
@@ -162,10 +153,9 @@ router.post('/contractors/:userId/tip-page/rotate-token', auth, requireAdminOrMa
 }));
 
 // POST — rotate the Stripe Payment Link (deactivate old, create new). Token unchanged.
-router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
-  await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
     SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name, cp.display_name
@@ -207,10 +197,9 @@ router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdmi
 
 // POST — create a Stripe link when one is missing (and ensure a token exists).
 // Fails 409 if a link already exists — forces an explicit regenerate call.
-router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/contractors/:userId/tip-page/generate-stripe', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
-  await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
     SELECT pp.tip_page_token, pp.stripe_payment_link_url, cp.preferred_name, cp.display_name
@@ -244,19 +233,17 @@ router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminO
 }));
 
 // POST — disable the page + deactivate Stripe link
-router.post('/contractors/:userId/tip-page/deactivate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/contractors/:userId/tip-page/deactivate', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
-  await ensureNonAdminTargetForManager(req, userId);
   await deactivateTipPage(userId);
   res.json({ ok: true });
 }));
 
 // POST — re-enable the page + reactivate Stripe link
-router.post('/contractors/:userId/tip-page/activate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/contractors/:userId/tip-page/activate', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
-  await ensureNonAdminTargetForManager(req, userId);
   await activateTipPage(userId);
   res.json({ ok: true });
 }));

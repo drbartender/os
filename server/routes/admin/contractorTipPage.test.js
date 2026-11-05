@@ -68,6 +68,37 @@ function get(path, token) {
   });
 }
 
+function send(method, path, token, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(baseUrl + path);
+    const payload = body ? JSON.stringify(body) : '';
+    const req = http.request(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          let json = null;
+          try { json = data ? JSON.parse(data) : null; } catch { /* non-JSON */ }
+          resolve({ status: res.statusCode, body: json });
+        });
+      }
+    );
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
 async function makeUser(role, tag) {
   const passwordHash = await bcrypt.hash('x', 4);
   const r = await pool.query(
@@ -199,4 +230,41 @@ test('an unfiltered tip-feedback read still sees both bartenders', async () => {
   const ids = all.body.feedback.map((f) => f.target_user_id);
   assert.ok(ids.includes(bartenderId), 'the filter is opt-in, not always-on');
   assert.ok(ids.includes(otherId));
+});
+
+// The tip page's handles and payroll method are what the pay run pays to, and
+// GET /api/admin/users/:id withholds that row from a manager, so every
+// tip-page action is admin-only: a manager could otherwise change where a
+// staffer is paid without seeing what was stored. The guard refuses before any
+// Stripe call, so the Stripe-backed routes are safe to hit here.
+test('every tip-page action is admin-only: a manager is denied and the stored handles stay', async () => {
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, preferred_payment_method, venmo_handle)
+     VALUES ($1, 'venmo', 'ctp-fixture-venmo')
+     ON CONFLICT (user_id) DO UPDATE SET preferred_payment_method = 'venmo', venmo_handle = 'ctp-fixture-venmo'`,
+    [bartenderId]
+  );
+  const base = `/api/admin/contractors/${bartenderId}/tip-page`;
+  const calls = [
+    ['PATCH', base, { venmo_handle: 'someone-else', preferred_payment_method: 'cashapp' }],
+    ['POST', `${base}/rotate-token`],
+    ['POST', `${base}/regenerate-stripe`],
+    ['POST', `${base}/generate-stripe`],
+    ['POST', `${base}/deactivate`],
+    ['POST', `${base}/activate`],
+  ];
+  for (const [method, path, body] of calls) {
+    const res = await send(method, path, managerToken, body);
+    assert.equal(res.status, 403, `${method} ${path} as a manager`);
+  }
+  const row = await pool.query('SELECT preferred_payment_method, venmo_handle FROM payment_profiles WHERE user_id = $1', [bartenderId]);
+  assert.equal(row.rows[0].preferred_payment_method, 'venmo');
+  assert.equal(row.rows[0].venmo_handle, 'ctp-fixture-venmo');
+});
+
+test('an admin still saves a staffer tip page', async () => {
+  const res = await send('PATCH', `/api/admin/contractors/${otherId}/tip-page`, adminToken, { venmo_handle: 'ctp-admin-set' });
+  assert.equal(res.status, 200);
+  const row = await pool.query('SELECT venmo_handle FROM payment_profiles WHERE user_id = $1', [otherId]);
+  assert.equal(row.rows[0].venmo_handle, 'ctp-admin-set');
 });

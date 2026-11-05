@@ -6,7 +6,7 @@ import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { ctDay, fmtDateFull } from '../../../../components/adminos/format';
 
-export default function DocumentsTab({ agreement, payment, profile, application, previewFile, previewLoading }) {
+export default function DocumentsTab({ showTax = true, agreement, payment, profile, application, previewFile, previewLoading }) {
   // url + filename are derived as a PAIR from the same source (profile vs
   // application). Mixing a profile URL with an application filename would let
   // the extension used for preview-type detection mismatch the file served.
@@ -30,6 +30,8 @@ export default function DocumentsTab({ agreement, payment, profile, application,
     },
     {
       name: 'W-9 (current year)',
+      // Withheld from a manager with the rest of the payment row.
+      tax: true,
       sub: payment?.w9_file_url ? (payment.w9_filename || 'Submitted') : 'Missing',
       kind: payment?.w9_file_url ? 'ok' : 'danger',
       url: payment?.w9_file_url || null,
@@ -63,7 +65,7 @@ export default function DocumentsTab({ agreement, payment, profile, application,
       <div className="card">
         <div className="card-head"><h3>Documents</h3></div>
         <div className="card-body vstack" style={{ gap: 6 }}>
-          {items.map((it) => (
+          {items.filter((it) => showTax || !it.tax).map((it) => (
             <div
               key={it.name}
               className="hstack"
