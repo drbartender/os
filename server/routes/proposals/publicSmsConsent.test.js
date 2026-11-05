@@ -237,7 +237,14 @@ test('public submit > cannot flip an EXISTING client\'s SMS preference', async (
     sms_consent_version: SMS_CONSENT_VERSION,
   }));
   assert.equal(second.status, 201, 'the submit itself still succeeds');
-  await clientFor(ctx.email, second.body.token);
+  // A submit that resolved to an existing client withholds the token (audit
+  // 2026-11-05 AUTH-12), so clientFor cannot track this proposal by token;
+  // collect every proposal of the client for the cleanup instead, or each run
+  // leaves a sent proposal, its invoice and its drip rows behind.
+  assert.equal(second.body.token, null, 'a submit onto an existing client withholds the token');
+  const mine = await pool.query('SELECT id FROM proposals WHERE client_id = $1', [client.id]);
+  for (const r of mine.rows) createdProposalIds.add(r.id);
+  assert.equal(mine.rows.length, 2, 'both submits created a proposal under the one client');
 
   const after = await pool.query('SELECT communication_preferences AS p FROM clients WHERE id = $1', [client.id]);
   assert.equal(after.rows[0].p.sms_enabled, true, 'preference survived the second submit');
