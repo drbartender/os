@@ -1,13 +1,13 @@
 ---
 spec: docs/superpowers/specs/2026-08-13-mobile-admin-design.md, section 5 (Detail) and section 3's Visual contract, with its "Plan decisions of 2026-11-05" block (written with this plan; it records where the build departs from the benchmark and why). The owner asked on 2026-11-05 to start the plan for the phone proposal detail, the last unbuilt phase 1 screen, designed in the design tool on 2026-09-15.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 2 (2026-11-05; the plan fleet's findings folded, fidelity and decomposition)
+revision: 3 (2026-11-05; the plan fleet's findings folded, fidelity and decomposition; Send reminder left off by the owner)
 status: >
   Four lanes, each cut from current main, built by Claude in its own worktree, reviewed at the tier it
   computes, merged through scripts/merge-lane.sh from os, and each shipping on its own. The list trim
   stands alone. The other three run in order (detail, then the two action sheets, then the edit sheet),
-  because each later lane edits the page the first one creates. Send reminder awaits the owner's answer
-  (spec, Plan decisions of 2026-11-05) and is in no lane.
+  because each later lane edits the page the first one creates. Send reminder is left off
+  (the owner, 2026-11-05: "leave it off").
 visual contract: >
   Benchmark: docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html, the snapshot of
   "Phone Admin Shell.dc.html" in the design project the spec's Visual contract names, byte-identical
@@ -346,10 +346,9 @@ The last unbuilt phase 1 screen. Tapping a proposal on the phone, from the list,
 **Why this split.** Each piece ships and reverts alone, and the two that write get a review that reads only them. The last three run in order because each edits the page the read view creates. A merge in another order would hit an ordinary conflict on that page and a stale-base overlap pass.
 
 **What the plan leaves out.**
-- **Send reminder.** It waits for the owner, because nothing exists to send it (spec decisions).
+- **Send reminder.** Left off by the owner on 2026-11-05 ("leave it off"); nothing exists to send it (spec decisions).
 - **Desktop-view cases.** The whole-set archive, editing a resend's words, the first send of a draft or a modified proposal (it runs the remote staffing fee check), adding or removing an add-on, and anything in an options group stay on the desktop.
 
 **Found while planning, for the owner's list.**
-- **Send reminder.** The benchmark draws it, and nothing in the system can send one for an unsigned proposal.
 - **Legal-hold gaps on the server.** The archive route and the proposal resend do not call isLegalHold. This plan's actions lane adds both refusals, because the phone newly drives those paths. The 2026-11-05 legal-hold coverage plan names neither path, though its legal-hold-admin lane edits actions.js and comms.js.
 - **Route restore on a cold launch.** Read from AdminLayout.js and not run: the restore does not check that the launch path is the manifest's start_url, so a cold launch from a push may land on the saved route instead of the pushed one.
