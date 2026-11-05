@@ -203,14 +203,16 @@ function AdminLayoutInner() {
   // proved the effect-ordered version dead on arrival). consumeRestoredRoute
   // memoizes per JS load, so StrictMode's double-invoked initializer gets the
   // same answer twice. Both gates live HERE so a non-qualifying launch never
-  // consumes the one-shot.
+  // consumes the one-shot. Only a launch from the app icon (the manifest's
+  // start page) restores; a push alert or a link opened in the app keeps its
+  // page (routeRestore.js).
   const [restoreTarget] = useState(() => {
     const standalone =
       typeof window !== 'undefined' &&
       window.matchMedia &&
       window.matchMedia('(display-mode: standalone)').matches;
     if (!standalone || !isPhone) return null;
-    return consumeRestoredRoute(location.pathname);
+    return consumeRestoredRoute(location.pathname, location.search);
   });
   useEffect(() => {
     if (restoreTarget) navigate(restoreTarget, { replace: true });

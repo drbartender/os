@@ -2,6 +2,7 @@ import {
   recordRoute,
   consumeRestoredRoute,
   resetRestoreCaptureForTests,
+  LAUNCH_PATH,
 } from './routeRestore';
 
 beforeEach(() => {
@@ -48,6 +49,28 @@ test('rejects non-path and protocol-relative junk', () => {
     JSON.stringify({ pathname: '//evil.example', search: '' })
   );
   expect(consumeRestoredRoute('/events')).toBe(null);
+});
+
+test('a launch at any page but the start page restores nothing: a push alert or a link opened in the app lands where it points', () => {
+  recordRoute('/proposals/42', '');
+  // A tapped push alert opens the closed app at its own page (admin-sw.js openWindow).
+  expect(consumeRestoredRoute('/events/7', '')).toBe(null);
+  // The launch still uses up this window's one restore: signing in again later in
+  // the same window does not throw the admin back to the saved route.
+  resetRestoreCaptureForTests();
+  expect(consumeRestoredRoute('/events', '')).toBe(null);
+});
+
+test('the start page with a query is a link, not the icon: it restores nothing', () => {
+  recordRoute('/proposals/42', '');
+  expect(consumeRestoredRoute('/events', '?tab=past')).toBe(null);
+});
+
+test('the start page the restore waits for is the admin manifest start_url', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../../public/admin-manifest.json'), 'utf8'));
+  expect(manifest.start_url).toBe(LAUNCH_PATH);
 });
 
 test('the search screen is never recorded: the screen before it stays the resume target', () => {

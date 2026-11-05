@@ -351,4 +351,4 @@ The last unbuilt phase 1 screen. Tapping a proposal on the phone, from the list,
 
 **Found while planning, for the owner's list.**
 - **Legal-hold gaps on the server.** The archive route and the proposal resend do not call isLegalHold. This plan's actions lane adds both refusals, because the phone newly drives those paths. The 2026-11-05 legal-hold coverage plan names neither path, though its legal-hold-admin lane edits actions.js and comms.js.
-- **Route restore on a cold launch.** Read from AdminLayout.js and not run: the restore does not check that the launch path is the manifest's start_url, so a cold launch from a push may land on the saved route instead of the pushed one.
+- **Route restore on a cold launch.** A push alert tapped while the app was closed landed on the last screen, not the alert's page. It was fixed on main on 2026-11-05 as its own quick fix (routeRestore.js: only the icon's launch restores).

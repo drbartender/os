@@ -275,7 +275,7 @@ Max-effort area; 5-agent pre-prod fleet before merge. **Library:** `@simplewebau
 
 ## 9. Resume Where I Left Off
 
-- Current route persisted on navigation; cold standalone launch restores it (behind the lock when the lock applies; unlock lands exactly where you were, including a held push deep link).
+- Current route persisted on navigation; a cold standalone launch from the app icon restores it (behind the lock when the lock applies; unlock lands exactly where you were, including a held push deep link). Only the icon's launch restores, which is the manifest's start_url (`/events` with no query). A cold launch anywhere else keeps its page and still uses up the window's one restore. That covers a tapped push alert, which opens the closed app at its own page, and a link Android opens in the installed app. Found 2026-11-05: until then every cold launch was sent to the saved route, so a push alert tapped on a closed app landed on the last screen instead of its own.
 - **Never persisted:** `/login` and the auth/reset pages (the expiry handler navigates there; persisting it would defeat resume), and `/search`, the phone search takeover (its term lives in history state, which a cold launch does not have, and an empty field with the keyboard up is not where you left off; the screen before it stays the resume target; lane ma-f3, 2026-10-15).
 - **Restore fallback:** a saved route that now 404s or is denied (a deleted proposal, a role change; an archived proposal opens read-only, section 3, Plan decisions of 2026-11-05) falls back to `/events` instead of stranding on an error screen.
 - Events and Proposals lists remember scroll position.

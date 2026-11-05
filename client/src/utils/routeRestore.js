@@ -1,11 +1,19 @@
-// Resume-where-I-left-off (spec section 9). The admin manifest's start_url is
-// /events; on a cold standalone launch the shell restores the last recorded
-// admin route instead. sessionStorage guards once-per-launch. Half-finished
-// edit sheets are deliberately NOT restored; this is route-level only.
-// recordRoute is only ever called from inside the AdminLayout route element,
-// so /login and the auth/reset pages can never be recorded (spec section 9).
+// Resume-where-I-left-off (spec section 9). A cold standalone launch from the
+// app icon opens the admin manifest's start_url (/events), and the shell
+// restores the last recorded admin route instead. A launch anywhere else is
+// not the icon: a tapped push alert opens the closed app at its own page
+// (admin-sw.js openWindow), and a link Android opens in the installed app lands
+// where it points, so those restore nothing. sessionStorage guards
+// once-per-launch, and every launch uses it up. Half-finished edit sheets are
+// deliberately NOT restored; this is route-level only. recordRoute is only ever
+// called from inside the AdminLayout route element, so /login and the
+// auth/reset pages can never be recorded (spec section 9).
 const LAST_ROUTE_KEY = 'adminLastRoute';
 const RESTORED_KEY = 'adminRouteRestoredThisLaunch';
+
+// The admin manifest's start_url (client/public/admin-manifest.json); a test
+// keeps the two equal.
+export const LAUNCH_PATH = '/events';
 
 // Same-load memo: consumeRestoredRoute is called from a lazy useState
 // initializer, and React StrictMode invokes initializers twice keeping the
@@ -37,15 +45,18 @@ export function recordRoute(pathname, search) {
   }
 }
 
-export function consumeRestoredRoute(currentPathname) {
+export function consumeRestoredRoute(currentPathname, currentSearch = '') {
   if (capturedThisLoad !== undefined) return capturedThisLoad;
   try {
     if (window.sessionStorage.getItem(RESTORED_KEY)) {
       capturedThisLoad = null;
       return null;
     }
+    // Used up before the launch is judged, so a launch that restores nothing
+    // still ends this window's chance to restore.
     window.sessionStorage.setItem(RESTORED_KEY, '1');
-    const raw = window.localStorage.getItem(LAST_ROUTE_KEY);
+    const fromIcon = currentPathname === LAUNCH_PATH && !currentSearch;
+    const raw = fromIcon ? window.localStorage.getItem(LAST_ROUTE_KEY) : null;
     const saved = raw ? JSON.parse(raw) : null;
     const valid =
       saved &&
