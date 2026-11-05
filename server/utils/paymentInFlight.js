@@ -222,13 +222,43 @@ async function assertNoPaymentInFlight({ proposalId, stripe, timeZone, db = pool
   return { intents };
 }
 
+// A card confirmation that may be landing: the intent minted (a pending
+// stripe_sessions row from create-intent), nothing reported by Stripe yet (the
+// seconds before payment_intent.succeeded, or a 3DS challenge holding the
+// intent). A card never produces a processing row, so findInFlightPayments
+// cannot see this window. ONE definition, shared by the sign route (which
+// skips its sign-only email because the webhook's signed-and-paid email is
+// about to cover it) and the signature void (which keeps the signature while
+// a credit may be landing); a pending row older than the window is a stale
+// intent and counts for neither.
+const PENDING_PAYMENT_WINDOW_MINUTES = 30;
+
+async function findPendingPayments(proposalId, db = pool) {
+  const { rows } = await db.query(
+    `SELECT stripe_payment_intent_id, amount AS amount_cents, created_at
+       FROM stripe_sessions
+      WHERE proposal_id = $1
+        AND status = 'pending'
+        AND created_at > NOW() - make_interval(mins => $2::int)
+      ORDER BY created_at DESC`,
+    [proposalId, PENDING_PAYMENT_WINDOW_MINUTES]
+  );
+  return rows.map((r) => ({
+    stripe_payment_intent_id: r.stripe_payment_intent_id,
+    amount_cents: Number(r.amount_cents),
+    created_at: r.created_at,
+  }));
+}
+
 module.exports = {
   IN_FLIGHT_MAX_AGE_DAYS,
   STALE_PROCESSING_DAYS,
   STRIPE_RETRIEVE_OPTS,
   IN_FLIGHT_LATERAL_SQL,
+  PENDING_PAYMENT_WINDOW_MINUTES,
   pendingFromLateralRow,
   findInFlightPayments,
+  findPendingPayments,
   findStaleProcessingPayments,
   toPublicPending,
   inFlightMessage,
