@@ -525,7 +525,7 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
   const client = db(dbClient);
 
   const invRes = await client.query(
-    `SELECT id, proposal_id, label, amount_due, amount_paid, status
+    `SELECT id, proposal_id, label, amount_due, amount_paid, status, folded_into_total
        FROM invoices WHERE id = $1`,
     [invoiceId]
   );
@@ -558,16 +558,19 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
   );
 
   if (reconcileTotalPrice) {
-    // An extras invoice with ANY add-on or bar-rental line went through the submit
-    // transaction path, where calculateProposal folded the ENTIRE extras (add-ons
-    // + bar + new syrups) into total_price — so the whole invoice comes back out.
-    // A syrup-only invoice took the fast path (no calculateProposal), so nothing
-    // was folded (subtract 0). Derived from PERSISTED line items, never a recompute.
+    // The stored fold fact decides (invoices.folded_into_total, round 3 H1):
+    // the submit transaction path folded the ENTIRE extras (new add-on rows,
+    // a bar, the new syrups) into total_price, so the whole invoice comes
+    // back out, whatever its lines look like (an already-sold upgrade beside
+    // new syrups mints a syrup-only-looking invoice whose 6000 is folded); the
+    // fast path folded nothing (subtract 0). A row minted before the column
+    // keeps the line-shape read. The cents come from PERSISTED line items,
+    // never a recompute.
     const lines = await client.query(
       'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
       [invoiceId]
     );
-    const foldedCents = extrasLinesAreFolded(lines.rows)
+    const foldedCents = extrasLinesAreFolded(lines.rows, inv)
       ? lines.rows.reduce((sum, r) => sum + Number(r.line_total), 0)
       : 0;
     if (foldedCents > 0) {
