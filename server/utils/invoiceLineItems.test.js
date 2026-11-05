@@ -133,6 +133,47 @@ test('a hidden surcharge raises the package line by its amount', () => {
   assert.equal(fold.unexplainedCents, 0);
 });
 
+// The printed unit price multiplies to the line total (audit PRC-04). The
+// engine stores the display quantity (law 6): a per-guest add-on with a count
+// above one stores the guest count and folds the count into line_total; the
+// additional bartender stores hours and folds its sub-100-guest surcharge into
+// line_total. Printing the catalog rate beside them read 100 x $2.50 = $500
+// and 4 x $40 = $260.
+test('a unit price that would not multiply to the line total is derived from it, so every add-on row multiplies', () => {
+  const { items, fold } = buildInvoiceLineItems({
+    snapshot: snap({ base: 350, subtotal: 1110, total: 1110 }),
+    addonRows: [
+      // Champagne Toast, 100 guests, count 2: engine quantity 100, line 500 (engine case L).
+      { addon_id: 7, addon_name: 'Champagne Toast', billing_type: 'per_guest', rate: '2.50', quantity: '100', line_total: '500.00' },
+      // Additional bartender on a 60-guest hosted 4h booking: quantity 4 (hours), line 260 = 4 x (40 + 25) (engine case I).
+      { addon_id: 8, addon_name: 'Additional Bartender', billing_type: 'per_hour', rate: '40.00', quantity: '4', line_total: '260.00' },
+    ],
+    totalPriceCents: 111000,
+  });
+  assert.deepEqual(lines(items), [['The Core Reaction', 35000], ['Champagne Toast', 50000], ['Additional Bartender', 26000]]);
+  assert.equal(items[1].quantity, 100);
+  assert.equal(items[1].unit_price, 500, '$5.00 a guest: the count of two folded into the rate');
+  assert.equal(items[2].quantity, 4);
+  assert.equal(items[2].unit_price, 6500, '$65.00 an hour: the surcharge folded into the rate');
+  for (const it of items) assert.equal(it.quantity * it.unit_price, it.line_total, it.description);
+  assert.equal(sum(items), 111000, 'the fold is by line_total, unchanged');
+  assert.equal(fold.applied, null);
+});
+
+test('an add-on whose rate multiplies to its line total keeps the catalog rate as its unit price', () => {
+  const { items } = buildInvoiceLineItems({
+    snapshot: snap({ base: 350, subtotal: 935, total: 935 }),
+    addonRows: [
+      { addon_id: 7, addon_name: 'Champagne Toast', billing_type: 'per_guest', rate: '2.50', quantity: '100', line_total: '250.00' },
+      { addon_id: 9, addon_name: 'Banquet Server', billing_type: 'per_hour', rate: '75.00', quantity: '4.5', line_total: '337.50' },
+      { addon_id: 10, addon_name: 'Parking Fee', billing_type: 'per_staff', rate: '20.00', quantity: '3', line_total: '60.00' },
+    ],
+    totalPriceCents: 93500,
+  });
+  assert.deepEqual(items.slice(1).map((i) => [i.quantity, i.unit_price, i.line_total]),
+    [[100, 250, 25000], [4.5, 7500, 33750], [3, 2000, 6000]]);
+});
+
 test('a null addonRows is treated as none', () => {
   const { items } = buildInvoiceLineItems({ snapshot: snap({ subtotal: 350, total: 350 }), addonRows: null, totalPriceCents: 35000 });
   assert.deepEqual(lines(items), [['The Core Reaction', 35000]]);
