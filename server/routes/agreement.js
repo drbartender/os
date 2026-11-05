@@ -89,7 +89,13 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     throw new ValidationError({ signature: 'Invalid signature method.' });
   }
 
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+  // req.ip is the proxy-validated client address (trust proxy is set in
+  // index.js) and is bounded to the VARCHAR(45) column; the leftmost
+  // X-Forwarded-For entry is signer-forgeable and could overflow it into a
+  // 22001 500. A signature IP is dispute evidence (it prints on the archived
+  // PDF), so it must be the one the proxy saw. Matches publicAccept.js and
+  // the proposal sign route.
+  const ip = (req.ip || '').replace(/^::ffff:/, '').slice(0, 45) || null;
   const userAgent = req.headers['user-agent'] || null;
 
   // ── Transaction: upsert agreement row + mark onboarding step ──────

@@ -126,7 +126,9 @@ router.post('/proposals/:token/change-requests', requireUuidToken('token', 'Prop
 
     const { requested, baseline } = await buildDiff(proposal, proposed, dbClient);
     const editWindow = computeEditWindow(proposal);
-    const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || null;
+    // Proxy-validated and bounded to VARCHAR(45) (publicAccept.js pattern): the
+    // first X-Forwarded-For entry is client-forgeable, and this is a consent record.
+    const ip = (req.ip || '').replace(/^::ffff:/, '').slice(0, 45) || null;
     const ua = req.headers['user-agent'] || null;
 
     let inserted;
