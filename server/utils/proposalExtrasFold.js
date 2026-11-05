@@ -344,4 +344,7 @@ async function computeCatalogSnapshot(client, proposal, { adjustments } = {}) {
   }));
 }
 
-module.exports = { foldExtrasIntoProposal, loadRepriceAddons, withRepriceQuantities, computeCatalogSnapshot };
+// catalogEngineArgs is exported for drinkPlanExtras.js (audit PRC-03): the
+// pay-now extras are priced through the fold's own two legs so the charge, the
+// invoice and the contract delta agree to the cent.
+module.exports = { foldExtrasIntoProposal, loadRepriceAddons, withRepriceQuantities, computeCatalogSnapshot, catalogEngineArgs };

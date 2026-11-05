@@ -198,6 +198,11 @@ async function handleSubmit(req, res) {
       // separate `if (proposal)` scopes. proposal.total_price is the pre-UPDATE
       // dollar value (the DB UPDATE never mutates this JS object).
       const oldTotalCents = Math.round(Number(proposal?.total_price || 0) * 100);
+      // Pay-now extras (audit PRC-03): priced BEFORE this transaction moves the
+      // row, through the two engine legs the fold below prices with, and the
+      // fold's own delta is checked against them before the invoice is minted.
+      let payNowBreakdown = null;
+      let foldDeltaCents = null;
 
       if (proposal) {
         // Pull the package so we can validate autoAdded addons against its coverage.
@@ -304,6 +309,13 @@ async function handleSubmit(req, res) {
         // with the Enhancement Lab via loadRepriceAddons.
         const preAddonsRes = { rows: await loadRepriceAddons(client, proposal.id) };
         const preSyrups = proposal.pricing_snapshot?.syrups?.selections || [];
+        // The pay-now breakdown from the pre-mutation row (the bar increment and
+        // the add-on upsert come next; proposal.pricing_snapshot is the pre-fold
+        // snapshot). A proposal the fold cannot price refuses here, before any
+        // write, with EXTRAS_NOT_PRICEABLE.
+        if (paidSeparately) {
+          payNowBreakdown = await computeExtrasBreakdown({ selections, proposal }, client);
+        }
 
         // Reconcile a PRE-EXISTING opposite-pair mocktail row on the proposal
         // (security-review + database-review 2026-07-18): the upsert loop only
@@ -473,6 +485,8 @@ async function handleSubmit(req, res) {
             numBarsAfter: proposal.num_bars ?? 0,
             statusChangeReason: 'drink_plan_extras_reconciled',
           });
+          // What the contract absorbed, for the pay-now agreement check below.
+          foldDeltaCents = Math.round(snapshot.total * 100) - oldTotalCents;
 
           // The upsert above already wrote the right SHAPE; this settles the
           // figures only the full engine pass knows: additional-bartender's
@@ -577,10 +591,19 @@ async function handleSubmit(req, res) {
       // rolls back the plan UPDATE, so the client retries cleanly.
       if (proposal) {
         if (paidSeparately) {
-          const bd = await computeExtrasBreakdown(
-            { selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: numBarsAtIntent },
-            client
-          );
+          const bd = payNowBreakdown || await computeExtrasBreakdown({ selections, proposal }, client);
+          // The fold's delta must be what the intent charged and the invoice
+          // bills (audit PRC-03). A server-derived slug the client's selection
+          // did not carry, a covered add-on the fold dropped, or a contract that
+          // drifted from the catalog each make the two differ, and a half-billed
+          // add-on is worse than a refused pay-now: add-to-balance bills the
+          // whole new total through the Balance invoice instead.
+          if (foldDeltaCents !== null && bd.totalCents !== foldDeltaCents) {
+            throw new ConflictError(
+              'These extras priced differently from the payment, so they can\'t be paid separately. Choose "add to my balance" and they will be billed with your event.',
+              'EXTRAS_PRICE_CHANGED'
+            );
+          }
           if (bd.totalCents > 0) {
             await findOrRefreshExtrasInvoice(
               { proposalId: proposal.id, drinkPlanId: updatedPlan.id, breakdown: bd,
@@ -670,15 +693,14 @@ async function handleSubmit(req, res) {
 
       if (result.rows[0]) {
         const propRes = await client.query(
-          'SELECT id, guest_count, pricing_snapshot, num_bars FROM proposals WHERE id = $1 FOR UPDATE',
+          'SELECT * FROM proposals WHERE id = $1 FOR UPDATE',
           [result.rows[0].proposal_id]
         );
         const proposal = propRes.rows[0];
         if (proposal) {
-          const bd = await computeExtrasBreakdown(
-            { selections, guestCount: proposal.guest_count, pricingSnapshot: proposal.pricing_snapshot, numBars: proposal.num_bars },
-            client
-          );
+          // Syrup-only here (no add-on, no bar: no financial side effects), so
+          // the helper prices the syrups directly (audit PRC-03).
+          const bd = await computeExtrasBreakdown({ selections, proposal }, client);
           if (bd.totalCents > 0) {
             await findOrRefreshExtrasInvoice(
               { proposalId: proposal.id, drinkPlanId: result.rows[0].id, breakdown: bd,

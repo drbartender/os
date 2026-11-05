@@ -57,6 +57,8 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
            p.total_price, p.amount_paid, p.event_date,
            p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
            p.event_type, p.event_type_custom, p.pricing_snapshot, p.event_timezone,
+           p.package_id, p.event_duration_hours, p.num_bartenders,
+           p.gratuity_rate, p.tip_jar, p.gratuity_floor_rate, p.adjustments,
            c.email AS client_email, c.name AS client_name
     FROM drink_plans dp
     JOIN proposals p ON p.id = dp.proposal_id
@@ -83,11 +85,21 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
 
   // Extras amount via the shared helper — the SAME math the submit handler uses
   // to build the "Drink Plan Extras" invoice, so the invoice amount_due can
-  // never drift from what Stripe charges. numBars is the client's current count
-  // (the first-vs-additional bar fee is priced pre-submit here, exactly as the
-  // invoice prices it at submit).
+  // never drift from what Stripe charges. The row as it stands now is the
+  // helper's "before" leg (audit PRC-03): the submit prices the same two legs
+  // from the same pre-mutation row, so the first-vs-additional bar fee and
+  // every add-on's engine figure are the ones the invoice carries.
   const bd = await computeExtrasBreakdown(
-    { selections, guestCount: data.guest_count, pricingSnapshot: data.pricing_snapshot, numBars: data.num_bars },
+    {
+      selections,
+      proposal: {
+        id: data.proposal_id, package_id: data.package_id, guest_count: data.guest_count,
+        event_duration_hours: data.event_duration_hours, num_bars: data.num_bars,
+        num_bartenders: data.num_bartenders, gratuity_rate: data.gratuity_rate, tip_jar: data.tip_jar,
+        gratuity_floor_rate: data.gratuity_floor_rate, adjustments: data.adjustments,
+        pricing_snapshot: data.pricing_snapshot,
+      },
+    },
     pool
   );
   const extrasAmount = bd.totalCents / 100;

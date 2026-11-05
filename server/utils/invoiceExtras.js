@@ -31,13 +31,23 @@ const { readSnapshot } = require('./pricingSnapshot');
  * @param {object} dbClient — must be a transaction client
  * @returns {Promise<Array>} the line items written
  */
-async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricingSnapshot, numBars, totalCents }, dbClient) {
+async function writeExtrasLineItems(invoiceId, { lines, selections, guestCount, pricingSnapshot, numBars, totalCents }, dbClient) {
   const client = db(dbClient);
   const sel = selections || {};
   const snap = pricingSnapshot || {};
   const items = [];
 
-  const addonSlugs = Object.keys(sel.addOns || {}).filter(
+  // Pre-priced lines (audit PRC-03): computeExtrasBreakdown now prices the
+  // add-ons, the bar and the syrups through the fold's own engine legs and
+  // hands the lines over, so the invoice shows the figures the contract
+  // absorbed, not a flat catalog rate. The selection-derived builder below
+  // stays for the one caller with no breakdown in hand, the out-of-order
+  // webhook mint (createDrinkPlanExtrasInvoice without lineItemState).
+  if (Array.isArray(lines)) {
+    for (const line of lines) items.push({ ...line });
+  }
+
+  const addonSlugs = Array.isArray(lines) ? [] : Object.keys(sel.addOns || {}).filter(
     (slug) => sel.addOns[slug]?.enabled
   );
   if (addonSlugs.length > 0) {
@@ -65,7 +75,7 @@ async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricing
     }
   }
 
-  if (sel.logistics?.addBarRental === true) {
+  if (!Array.isArray(lines) && sel.logistics?.addBarRental === true) {
     const barRental = snap.bar_rental || {};
     const isAdditional = (numBars || 0) >= 1;
     const feeDollars = isAdditional
@@ -97,7 +107,7 @@ async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricing
   const newSyrupIds = allSyrupIds
     .filter((id) => !selfProvided.includes(id))
     .filter((id) => !proposalSyrups.includes(id));
-  const syrupCost = calculateSyrupCost(newSyrupIds, guestCount);
+  const syrupCost = Array.isArray(lines) ? { total: 0 } : calculateSyrupCost(newSyrupIds, guestCount);
   if (syrupCost.total > 0) {
     const syrupCents = toCents(syrupCost.total);
     const bottleSuffix = syrupCost.totalBottles > 1 ? ` (${syrupCost.totalBottles} bottles)` : '';
@@ -163,8 +173,9 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
   let guestCount;
   let pricingSnapshot;
   let numBars;
+  let lines;
   if (lineItemState) {
-    ({ selections, guestCount, pricingSnapshot, numBars } = lineItemState);
+    ({ selections, guestCount, pricingSnapshot, numBars, lines } = lineItemState);
   } else {
     const [dpRes, propRes] = await Promise.all([
       dbClient.query('SELECT selections FROM drink_plans WHERE id = $1', [drinkPlanId]),
@@ -193,7 +204,7 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
   );
   await writeExtrasLineItems(
     invoice.id,
-    { selections, guestCount, pricingSnapshot, numBars, totalCents: extrasAmountCents },
+    { lines, selections, guestCount, pricingSnapshot, numBars, totalCents: extrasAmountCents },
     dbClient
   );
   return invoice;
@@ -253,7 +264,7 @@ async function findOrRefreshExtrasInvoice(
       );
       await writeExtrasLineItems(
         inv.id,
-        { selections, guestCount, pricingSnapshot, numBars, totalCents: breakdown.totalCents },
+        { lines: breakdown.lines, selections, guestCount, pricingSnapshot, numBars, totalCents: breakdown.totalCents },
         dbClient
       );
     }
@@ -266,8 +277,9 @@ async function findOrRefreshExtrasInvoice(
       drinkPlanId,
       extrasAmountCents: breakdown.totalCents,
       // Pre-mutation state so the fresh invoice's line LABELS match amount_due
-      // (the submit tx already incremented num_bars / recalced the snapshot).
-      lineItemState: { selections, guestCount, pricingSnapshot, numBars },
+      // (the submit tx already incremented num_bars / recalced the snapshot),
+      // and the breakdown's own priced lines (audit PRC-03).
+      lineItemState: { lines: breakdown.lines, selections, guestCount, pricingSnapshot, numBars },
     },
     dbClient
   );
