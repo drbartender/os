@@ -2,7 +2,7 @@
 // migrate-headers on 2026-10-27; replace with what it does.
 
 import React from 'react';
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
+import { fmt, formatDateShort, DEFAULT_DEPOSIT_DOLLARS } from './helpers';
 import styles from './styles';
 
 const NONE = { kind: 'none', amountPaid: 0, total: 0, remaining: 0, completed: false };
@@ -20,6 +20,9 @@ const NONE = { kind: 'none', amountPaid: 0, total: 0, remaining: 0, completed: f
 // `state` defaults to the none shape so the component is safe on its own.
 export default function PaymentTermsBox({
   state = NONE, settling = false, pending = false, fullPaymentRequired, snapshotTotal, balanceAmount, balanceDueDate,
+  // The row's deposit (audit PAY-06), as the server charges it; the schema
+  // default when the caller passes none.
+  depositDollars = DEFAULT_DEPOSIT_DOLLARS,
 }) {
   let rows;
   if (settling) {
@@ -71,7 +74,7 @@ export default function PaymentTermsBox({
       <>
         <div style={styles.paymentRow}>
           <span style={styles.paymentLabel}>Deposit Due at Signing</span>
-          <span style={styles.paymentValue}>{fmt(DEPOSIT_DOLLARS)}</span>
+          <span style={styles.paymentValue}>{fmt(depositDollars)}</span>
         </div>
         <div style={styles.paymentRow}>
           <span style={styles.paymentLabel}>Remaining Balance</span>

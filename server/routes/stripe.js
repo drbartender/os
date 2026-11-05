@@ -24,7 +24,7 @@ const {
 
 // Shared helpers extracted to a sibling module (also used by the create-intent
 // sub-router) so create-intent's gratuity logic doesn't grow this over-cap file.
-const { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { depositCentsFor, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('../utils/autopayDurableCharge');
 const { assertNoPaymentInFlight } = require('../utils/paymentInFlight');
 
@@ -202,7 +202,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
   }
 
   const result = await pool.query(
-    'SELECT id, token, event_type, event_type_custom, event_date, event_start_time, total_price FROM proposals WHERE id = $1',
+    'SELECT id, token, event_type, event_type_custom, event_date, event_start_time, total_price, deposit_amount FROM proposals WHERE id = $1',
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
@@ -221,7 +221,8 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     eventStartTime: proposal.event_start_time,
   });
   const isFullPay = bookingWindow.fullPaymentRequired;
-  const amount = isFullPay ? Math.round(Number(proposal.total_price) * 100) : DEPOSIT_AMOUNT;
+  // The row's deposit (audit PAY-06), as create-intent charges it.
+  const amount = isFullPay ? Math.round(Number(proposal.total_price) * 100) : depositCentsFor(proposal);
   const linkPaymentType = isFullPay ? 'full' : 'deposit';
   const productName = isFullPay ? `Full Payment — ${eventLabel}` : `Event Deposit — ${eventLabel}`;
 

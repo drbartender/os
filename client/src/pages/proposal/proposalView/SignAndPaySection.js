@@ -5,7 +5,7 @@ import React, { useMemo } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
+import { fmt, formatDateShort, DEFAULT_DEPOSIT_DOLLARS } from './helpers';
 import { gratuityFloorMessage } from './gratuityFloor';
 import PaymentForm from './PaymentForm';
 import VenueAddressFields, { formatVenue } from '../../../components/VenueAddressFields';
@@ -90,6 +90,8 @@ export default function SignAndPaySection({
   // Display
   totalPrice,
   balanceAmount,
+  // The row's deposit (audit PAY-06), as the server charges it.
+  depositDollars = DEFAULT_DEPOSIT_DOLLARS,
   balanceDueDate,
   // Payment intent
   loadingIntent,
@@ -360,8 +362,8 @@ export default function SignAndPaySection({
               selected={depositSelected}
               onSelect={() => setPaymentOption('deposit')}
               value="deposit"
-              label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
-              amount={fmt(DEPOSIT_DOLLARS)}
+              label={`Pay ${fmt(depositDollars)} Deposit`}
+              amount={fmt(depositDollars)}
               desc={`Remaining ${fmt(balanceAmount)} due before your event`}
               showAutopay={depositSelected && balanceAmount > 0}
               autopayChecked={autopayChecked}
@@ -460,8 +462,8 @@ export default function SignAndPaySection({
             selected={depositSelected}
             onSelect={() => setPaymentOption('deposit')}
             value="deposit"
-            label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
-            amount={fmt(DEPOSIT_DOLLARS)}
+            label={`Pay ${fmt(depositDollars)} Deposit`}
+            amount={fmt(depositDollars)}
             desc={`Remaining ${fmt(balanceAmount)} due before your event`}
             showAutopay={depositSelected && balanceAmount > 0}
             autopayChecked={autopayChecked}

@@ -28,6 +28,17 @@ function eventLabelFor(row) {
   return getEventTypeLabel({ event_type: row?.event_type, event_type_custom: row?.event_type_custom });
 }
 
+// The deposit a proposal charges, in cents (audit PAY-06): the row's stated
+// deposit_amount, which the Deposit invoice, the cancellation retainer and the
+// compare page already read, with STRIPE_DEPOSIT_AMOUNT only for a row whose
+// column is NULL or non-positive (the schema defaults it to 100.00). Both
+// checkout rails (create-intent, the admin Payment Link) charge this, so the
+// figure the client pays is the figure the invoice and the retainer hold.
+function depositCentsFor(proposal) {
+  const dollars = Number(proposal && proposal.deposit_amount);
+  return Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : DEPOSIT_AMOUNT;
+}
+
 // ─── Helper: get or create Stripe Customer for a proposal ────────
 async function getOrCreateCustomer(proposal) {
   const stripe = getStripe();
@@ -70,4 +81,4 @@ async function getOrCreateCustomer(proposal) {
   return customer.id;
 }
 
-module.exports = { DEPOSIT_AMOUNT, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer };
+module.exports = { DEPOSIT_AMOUNT, depositCentsFor, CHECKOUT_PAYMENT_METHOD_TYPES, PAYMENT_LINK_METHOD_TYPES, eventLabelFor, getOrCreateCustomer };
