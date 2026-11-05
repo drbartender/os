@@ -74,3 +74,24 @@ test('the booking window still names its own reason', async () => {
   assert.equal(p.payment_policy.full_payment_required, true);
   assert.equal(p.payment_policy.full_payment_reason, 'booking_window');
 });
+
+// Round 2 L2: the page read the deposit off the row and fell back to a literal
+// 100 while the server fell back to STRIPE_DEPOSIT_AMOUNT, so a row whose
+// deposit_amount is NULL or 0 under a non-default env value quoted one figure
+// and charged another. The payload now carries the effective deposit the
+// server will charge (depositCentsFor), and the PAY-09 flag compares against
+// that same figure.
+test('L2: the payload carries deposit_amount_effective, the figure create-intent charges, and the flag reads it', async () => {
+  const { DEPOSIT_AMOUNT } = require('../../utils/stripeRouteHelpers');
+  const stated = base({ total_price: '1000.00', pricing_snapshot: { total: 1000 }, deposit_amount: '500.00' });
+  assert.equal((await buildPublicProposalPayload(stated.token, scriptedDb(stated))).deposit_amount_effective, 500);
+
+  const bare = base({ total_price: '1000.00', pricing_snapshot: { total: 1000 }, deposit_amount: null });
+  const p = await buildPublicProposalPayload(bare.token, scriptedDb(bare));
+  assert.equal(p.deposit_amount_effective, DEPOSIT_AMOUNT / 100, 'a NULL row deposit reads the server default, never a client literal');
+
+  const small = base({ total_price: '75.00', pricing_snapshot: { total: 75 }, deposit_amount: '0' });
+  const q = await buildPublicProposalPayload(small.token, scriptedDb(small));
+  assert.equal(q.deposit_amount_effective, DEPOSIT_AMOUNT / 100);
+  assert.equal(q.payment_policy.full_payment_required, DEPOSIT_AMOUNT >= 7500, 'the flag and the figure agree on a 0 row deposit');
+});

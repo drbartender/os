@@ -270,7 +270,12 @@ async function buildPublicProposalPayload(token, db = pool) {
   // the full option on it); full_payment_reason picks the explainer copy.
   // create-intent refuses the deposit option for such a row as the backstop.
   const totalCents = Math.round(Number(proposal.total_price || 0) * 100);
-  const totalAtOrBelowDeposit = totalCents > 0 && totalCents <= depositCentsFor(proposal);
+  // The deposit the server will charge (stripeRouteHelpers.depositCentsFor:
+  // the row's figure, or the server default for a NULL or 0 row). The page
+  // reads it off the payload as deposit_amount_effective (round 2 L2) instead
+  // of keeping a literal of its own, and the flag compares the same cents.
+  const depositCents = depositCentsFor(proposal);
+  const totalAtOrBelowDeposit = totalCents > 0 && totalCents <= depositCents;
 
   // Optional-phone prefill (spec 2026-06-11 Component 4). A Thumbtack proxy
   // number must never show in the signing form: blank it so the client is
@@ -367,6 +372,9 @@ async function buildPublicProposalPayload(token, db = pool) {
     drink_plan_token: drinkPlanToken,
     // Signed dollars, as shapeFocus reports it on the portal; the page clamps.
     balance_due: balanceDueCents / 100,
+    // The deposit create-intent charges, in dollars (round 2 L2): the client's
+    // only source for the figure it quotes.
+    deposit_amount_effective: depositCents / 100,
     pending_payment: toPublicPending(inFlight),
     venue_complete: isVenueComplete(proposal),
     client_phone_prefill: clientPhonePrefill,

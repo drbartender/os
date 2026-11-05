@@ -5,7 +5,7 @@ import React, { useMemo } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
-import { fmt, formatDateShort, DEFAULT_DEPOSIT_DOLLARS } from './helpers';
+import { fmt, formatDateShort } from './helpers';
 import { gratuityFloorMessage } from './gratuityFloor';
 import PaymentForm from './PaymentForm';
 import VenueAddressFields, { formatVenue } from '../../../components/VenueAddressFields';
@@ -95,8 +95,9 @@ export default function SignAndPaySection({
   // Display
   totalPrice,
   balanceAmount,
-  // The row's deposit (audit PAY-06), as the server charges it.
-  depositDollars = DEFAULT_DEPOSIT_DOLLARS,
+  // The deposit as the server charges it (audit PAY-06, round 2 L2: the
+  // payload's effective figure); null labels the tablet without an amount.
+  depositDollars = null,
   balanceDueDate,
   // Payment intent
   loadingIntent,
@@ -368,8 +369,8 @@ export default function SignAndPaySection({
               selected={depositSelected}
               onSelect={() => setPaymentOption('deposit')}
               value="deposit"
-              label={`Pay ${fmt(depositDollars)} Deposit`}
-              amount={fmt(depositDollars)}
+              label={depositDollars == null ? 'Pay Deposit' : `Pay ${fmt(depositDollars)} Deposit`}
+              amount={depositDollars == null ? '' : fmt(depositDollars)}
               desc={`Remaining ${fmt(balanceAmount)} due before your event`}
               showAutopay={depositSelected && balanceAmount > 0}
               autopayChecked={autopayChecked}
@@ -468,8 +469,8 @@ export default function SignAndPaySection({
             selected={depositSelected}
             onSelect={() => setPaymentOption('deposit')}
             value="deposit"
-            label={`Pay ${fmt(depositDollars)} Deposit`}
-            amount={fmt(depositDollars)}
+            label={depositDollars == null ? 'Pay Deposit' : `Pay ${fmt(depositDollars)} Deposit`}
+            amount={depositDollars == null ? '' : fmt(depositDollars)}
             desc={`Remaining ${fmt(balanceAmount)} due before your event`}
             showAutopay={depositSelected && balanceAmount > 0}
             autopayChecked={autopayChecked}

@@ -20,7 +20,7 @@ test('with no state prop at all it renders the pre-payment rows (safe before the
 });
 
 test('unpaid deposit terms render the pre-payment rows exactly as before', () => {
-  const { container } = render(<PaymentTermsBox state={none} {...base} />);
+  const { container } = render(<PaymentTermsBox state={none} {...base} depositDollars={100} />);
   expect(container.textContent).toMatch(/Deposit Due at Signing/);
   expect(container.textContent).toMatch(/\$100\.00/);
   expect(container.textContent).toMatch(/Remaining Balance/);
@@ -78,4 +78,14 @@ test('the deposit row quotes the proposal deposit when it is given', () => {
   expect(container.textContent).toMatch(/Deposit Due at Signing/);
   expect(container.textContent).toMatch(/\$500\.00/);
   expect(container.textContent).not.toMatch(/\$100\.00/);
+});
+
+
+// Round 2 L2: no literal deposit lives in the client. Without the server's
+// effective figure the box names the deposit and quotes no amount.
+test('no deposit figure from the server: the row shows no literal amount', () => {
+  const { container } = render(<PaymentTermsBox state={none} {...base} depositDollars={null} />);
+  expect(container.textContent).toMatch(/Deposit Due at Signing/);
+  expect(container.textContent).not.toMatch(/\$100\.00/);
+  expect(container.textContent).not.toMatch(/NaN/);
 });
