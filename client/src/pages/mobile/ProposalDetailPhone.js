@@ -29,7 +29,9 @@ import { Caret, ContactsSection, EditRow } from './EventDetailSections';
 // read, puts a "Change request · desktop view" row at the top, since the
 // request is reviewed and applied only on the desktop page, and every way to a
 // request (the Review link, the Overview queue item, the admin email) links to
-// the bare proposal. A failed request read shows no row.
+// the bare proposal. A request read that fails, or is still out 4 seconds
+// after a fresh proposal answer, shows no row, and a stored copy never waits
+// for it.
 // A booked proposal opens the event detail at the same id, with history
 // replaced, unless a change request is pending (it stays here to show the row)
 // or the event detail is in Desktop view: then this visit shows the desktop
@@ -49,6 +51,15 @@ import { Caret, ContactsSection, EditRow } from './EventDetailSections';
 const LOAD_FAILED = 'Network error. Check your connection.';
 const HOLD_NOTE = 'This proposal is on legal hold. Nothing is changed or sent from here.';
 const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
+// The change-requests read is live and the worker never races it, so on weak
+// signal it could hang for minutes. It is never aborted: an answer that comes
+// before the proposal's always counts. Once a fresh proposal is in, the screen
+// waits at most this long more for it, then counts it as no request.
+const REQUEST_GRACE_MS = 4000;
+const withinGrace = (read) => new Promise((resolve) => {
+  const timer = setTimeout(() => resolve(null), REQUEST_GRACE_MS);
+  read.then((value) => { clearTimeout(timer); resolve(value); });
+});
 // An id the database can hold. Anything else can never load, all digits or not.
 const validId = (id) => /^\d+$/.test(String(id)) && Number(id) >= 1 && Number(id) <= 2147483647;
 // A link into desktop-only work on a proposal: the editor (?edit=1, the
@@ -143,10 +154,12 @@ export default function ProposalDetailPhone() {
     let gone = false;
     // Clear first: a different proposal must never render over the last one.
     setLoading(true); setError(null); setDead(false); setProposal(null); setStaleAt(null); setRequestPending(false);
-    Promise.all([
-      offlineGet(`/proposals/${id}`),
-      api.get(`/proposals/${id}/change-requests`).then((r) => r.data, () => null),
-    ])
+    // Both reads start together. A stored copy shows no request row, so it never
+    // waits on the request read: on weak signal the worker serves the copy at its
+    // stall window, and the screen shows it then (spec section 7).
+    const requestRead = api.get(`/proposals/${id}/change-requests`).then((r) => r.data, () => null);
+    offlineGet(`/proposals/${id}`)
+      .then((res) => (res.staleAt ? [res, null] : withinGrace(requestRead).then((requests) => [res, requests])))
       .then(([res, requests]) => {
         if (gone) return;
         const pending = !res.staleAt && !!res.data && res.data.legal_hold === false && hasPendingRequest(requests);

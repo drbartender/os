@@ -28,12 +28,30 @@ const PROPOSAL = {
 };
 const OFFLINE_OK = { headers: { 'X-Offline-Ok': '1' } };
 
-// Each value is a payload entry ({ data } or { data, staleAt }), or { reject }.
+// Each value is a payload entry ({ data } or { data, staleAt }, with an
+// optional delay in ms before it answers), or { reject }, or { hang: true }: a
+// read on a stalled connection, which never answers and gives up only at the
+// timeout the caller set, as axios does.
 function serve(over = {}) {
   const table = { '/proposals/41': { data: PROPOSAL }, '/proposals/41/change-requests': { data: { requests: [] } }, ...over };
-  api.get.mockImplementation((url) => {
+  api.get.mockImplementation((url, config) => {
     const entry = typeof table[url] === 'function' ? table[url]() : table[url];
     if (!entry) return Promise.reject({ status: 404, message: 'Not found' });
+    if (entry.hang) {
+      return new Promise((resolve, reject) => {
+        if (config && config.timeout) setTimeout(() => reject({ status: 0, code: 'ECONNABORTED', message: 'timeout' }), config.timeout);
+      });
+    }
+    if (entry.delay) {
+      // A caller's timeout shorter than the answer aborts it, as axios does.
+      return new Promise((resolve, reject) => {
+        if (config && config.timeout && config.timeout < entry.delay) {
+          setTimeout(() => reject({ status: 0, code: 'ECONNABORTED', message: 'timeout' }), config.timeout);
+        } else {
+          setTimeout(() => resolve(entry), entry.delay);
+        }
+      });
+    }
     return entry.reject ? Promise.reject(entry.reject) : Promise.resolve(entry);
   });
 }
@@ -318,6 +336,51 @@ test('archived: its chip and reason, and no action, no Edit details and no Clien
   for (const name of ['Edit details', 'Client link', 'Resend proposal', 'Archive']) {
     expect(screen.queryByRole('button', { name: new RegExp(`^${name}`) })).not.toBeInTheDocument();
   }
+});
+
+describe('a change-request read on a stalled connection', () => {
+  test('never holds back a stored copy: the copy shows with its stale line and no row', async () => {
+    serve({
+      '/proposals/41': { data: PROPOSAL, staleAt: '2026-11-05T15:00:00Z' },
+      '/proposals/41/change-requests': { hang: true },
+    });
+    mount();
+    expect(await screen.findByText(/offline copy/)).toBeInTheDocument();
+    expect(screen.getByText('Contacts')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Change request/ })).not.toBeInTheDocument();
+  });
+  test('after a fresh answer it waits at most 4 more seconds, then shows the screen with no row', async () => {
+    jest.useFakeTimers();
+    try {
+      serve({ '/proposals/41/change-requests': { hang: true } });
+      mount();
+      await act(async () => {});
+      expect(screen.getByText('Loading the proposal')).toBeInTheDocument();
+      await act(async () => { jest.advanceTimersByTime(3900); });
+      expect(screen.getByText('Loading the proposal')).toBeInTheDocument();
+      await act(async () => { jest.advanceTimersByTime(100); });
+      expect(screen.getByText('Contacts')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Change request/ })).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  test('a request answered before a slow fresh proposal still counts: a booked proposal stays to show it', async () => {
+    jest.useFakeTimers();
+    try {
+      serve({
+        '/proposals/41': { data: { ...PROPOSAL, status: 'deposit_paid', amount_paid: '500.00' }, delay: 6000 },
+        '/proposals/41/change-requests': { data: { requests: [{ id: 4, status: 'pending' }] }, delay: 4500 },
+      });
+      mount();
+      await act(async () => { jest.advanceTimersByTime(6000); });
+      await act(async () => {});
+      expect(screen.getByRole('button', { name: /^Change request/ })).toBeInTheDocument();
+      expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals\/41$/);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe('a pending change request', () => {
