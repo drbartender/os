@@ -249,6 +249,11 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
               {preview.status_will_change && (
                 <div className="tiny muted">Payment status changes to {preview.new_status.replace(/_/g, ' ')}.</div>
               )}
+              {preview.signature_voided && (
+                <div className="tiny" style={{ color: 'var(--warn, inherit)' }}>
+                  Removing this line voids the client's signature; they will be asked to sign again before paying.
+                </div>
+              )}
               {preview.gratuity?.staff_notice && (
                 <div className="tiny muted">Staff will be emailed that they can set out a tip jar.</div>
               )}

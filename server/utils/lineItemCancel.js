@@ -673,6 +673,10 @@ async function applyLineItemCancel(client, {
     proposalId: proposal.id, old: rowBefore, snapshot, actorId, reason: 'line_item_cancelled',
   });
   if (signatureVoid.voided) proposal.status = signatureVoid.row.status;
+  // The status moved when the fold's reconcile moved it OR the void sent the
+  // row back to 'sent': the preview's status line keys on this flag, so the
+  // operator sees the move before confirming (audit round 3, L9).
+  const statusMoved = statusChanged || (signatureVoid.voided && signatureVoid.row.status !== rowBefore.status);
 
   // 5. Partial-quantity removal: the fold has now repriced, so re-sync the row
   // from the snapshot entry. Writing BOTH figures is correct and is what the
@@ -768,7 +772,7 @@ async function applyLineItemCancel(client, {
     newTotal: Number(snapshot.total),
     externalPaid: Number(proposal.external_paid) || 0,
     snapshot,
-    statusChanged,
+    statusChanged: statusMoved,
     newStatus: proposal.status,
     // The void of step 4b, so the preview can say the client will sign again.
     signatureVoided: signatureVoid.voided === true,

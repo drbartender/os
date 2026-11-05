@@ -156,6 +156,8 @@ test('removing the add-on from a signed, unpaid booking voids the signature afte
   assert.equal(row.client_signed_total, null);
   assert.equal(row.status, 'sent');
   assert.equal(result.newStatus, 'sent', 'the result reports the status the void set');
+  // Round 3 (L9): the dialog's existing status line keys on statusChanged, so the void's move must set it.
+  assert.equal(result.statusChanged, true, 'the status move the void made is reported as a status change');
   assert.equal(result.signatureVoided, true);
 });
 
