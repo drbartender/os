@@ -47,15 +47,24 @@ test('an SVG data URL, a declared type whose bytes are another image, and non-im
   }
 });
 
-test('a typed signature is a 2 to 120 character name, stored trimmed', () => {
+test('a typed signature is a 2 to 120 character printable string, stored trimmed', () => {
   assert.deepEqual(typed('  Test Signer '), { value: 'Test Signer', error: null });
   assert.deepEqual(typed("Ana-María O'Neil, 3rd"), { value: "Ana-María O'Neil, 3rd", error: null });
+  // Round 2 (L7): names carry ampersands, slashes and parentheses; the audit
+  // asked for a bounded printable string, not a letters-only alphabet.
+  for (const ok of ['Jane & John Doe', 'Smith/Jones', 'Name (jr)', "Dr. O'Neil-Smith, III", 'José Ñandú 3rd', 'Ngā Tāngata Trust']) {
+    assert.equal(typed(ok).error, null, ok);
+    assert.equal(typed(ok).value, ok, ok);
+  }
   assert.equal(typed('A'.repeat(TYPED_MAX)).error, null);
   assert.match(typed('x').error, /2 to 120/);
   assert.match(typed('   ').error, /2 to 120/);
   assert.match(typed('A'.repeat(TYPED_MAX + 1)).error, /2 to 120/);
-  for (const bad of ['javascript:alert(1)', '<b>Name</b>', 'https://example.com', 'Name (jr)']) {
-    assert.match(typed(bad).error, /letters only/, bad);
+  // Control characters are never part of a name; leading and trailing
+  // whitespace is trimmed away, an inner tab or newline is refused.
+  for (const bad of ['Jane\u0000Doe', 'Jane\nDoe', 'Jane\tDoe', 'Jane\u001bDoe', 'Jane\u007fDoe']) {
+    assert.match(typed(bad).error, /printable/, JSON.stringify(bad));
+    assert.equal(typed(bad).value, null);
   }
 });
 
