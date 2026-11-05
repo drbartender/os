@@ -75,7 +75,8 @@ const SECRET_SUBTOTAL = '777.77';   // the pre-fold subtotal
 const SECRETS = [SECRET_LABEL, SECRET_AMOUNT, SECRET_SUBTOTAL];
 // client_signed_snapshot is the signed record (audit ESIG-02): sanitized when
 // stored, but admin-only; the public payload prints client_signed_total alone.
-const FORBIDDEN_KEYS = ['total_price_override', 'subtotal', 'breakdown', 'client_signed_snapshot'];
+// client_signature_data is the signer's image (audit ESIG-09): no page reads it.
+const FORBIDDEN_KEYS = ['total_price_override', 'subtotal', 'breakdown', 'client_signed_snapshot', 'client_signature_data'];
 
 let server;
 let baseUrl;

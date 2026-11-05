@@ -157,9 +157,11 @@ async function buildPublicProposalPayload(token, db = pool) {
       p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
       p.balance_due_date,
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
-      p.client_signature_document_version, p.client_signature_data,
-      -- The total the signature acknowledged (the pay-only card prints it);
-      -- the signed snapshot stays off the public payload.
+      p.client_signature_document_version,
+      -- Never the signature image column: it is the signer's own and no page
+      -- reads it (audit ESIG-09; publicToken.signatureData.test.js). The total
+      -- the signature acknowledged rides (the pay-only card prints it); the
+      -- signed snapshot stays off the public payload.
       p.client_signed_total,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
