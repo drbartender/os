@@ -320,6 +320,12 @@ export default function Agreement() {
                 setForm(f => ({ ...f, signature_data: data, signature_method: method }));
               }}
             />
+            {/* The electronic-signature statement under the pad in both modes
+                (audit ESIG-12). A recorded acknowledgment needs a new frozen
+                agreement version (contractorAgreement.js), the owner's call. */}
+            <p className="form-helper" style={{ marginTop: '0.4rem' }}>
+              By signing, you agree to sign this agreement electronically and to receive your signed copy by email.
+            </p>
             <FieldError error={fieldErrors?.signature} />
           </div>
 
