@@ -31,6 +31,19 @@ const { validatePhone } = require('./phone');
  * overwrites the matched row's email. The public wizard and every other caller
  * never pass it, so the guard above holds.
  *
+ * `phoneMatch` (default true) is the opposite dial: false skips the phone + name
+ * match entirely, so an existing row is resolved by email or not at all, and no
+ * match inserts the submitted identity. The public quote wizard passes it
+ * (audit 2026-11-05 AUTH-02): the wizard is unauthenticated, and the phone +
+ * name match used to stamp the submitted email onto the matched email-less row,
+ * which let anyone who knew a phone-only client's name and mobile (both visible
+ * in a Thumbtack thread) attach their own address to that client, take over
+ * their portal (clientAuth.js resolves the OTP login by email) and receive
+ * every lifecycle email for their bookings. A returning phone-only lead who
+ * uses the wizard now gets a second row that carries their email, so the
+ * proposal's own mail reaches them; the admin merges the pair. The admin
+ * proposal-create (crud.js) keeps the default and the backfill it exists for.
+ *
  * Runs inside the caller's transaction — pass the caller's pg client.
  *
  * `created` distinguishes "this call inserted the row" from "this call resolved
@@ -40,10 +53,10 @@ const { validatePhone } = require('./phone');
  * matched. See recordSmsConsent in utils/smsConsent.js.
  *
  * @param {import('pg').PoolClient} db
- * @param {{name:string,email?:string|null,phone?:string|null,source?:string,notes?:string|null,trustedPhoneMatch?:boolean}} args
+ * @param {{name:string,email?:string|null,phone?:string|null,source?:string,notes?:string|null,trustedPhoneMatch?:boolean,phoneMatch?:boolean}} args
  * @returns {Promise<{id:number, created:boolean}>}
  */
-async function findOrCreateClientDetailed(db, { name, email, phone, source = 'direct', notes = null, trustedPhoneMatch = false }) {
+async function findOrCreateClientDetailed(db, { name, email, phone, source = 'direct', notes = null, trustedPhoneMatch = false, phoneMatch = true }) {
   const cleanName = String(name || '').trim();
   if (!cleanName) throw new Error('findOrCreateClient: name is required');
   const cleanEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : null;
@@ -61,7 +74,7 @@ async function findOrCreateClientDetailed(db, { name, email, phone, source = 'di
     if (r.rows[0]) return { id: r.rows[0].id, created: false };
   }
 
-  if (phone10) {
+  if (phone10 && phoneMatch) {
     // Phone + name resolves an EMAIL-LESS row only (the anti-takeover guard: this
     // helper serves the unauthenticated public wizard, and a stranger who knows a
     // name + phone must not be handed a row that already has an identity). The

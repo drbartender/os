@@ -2,12 +2,12 @@ require('dotenv').config();
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { pool } = require('../db');
-const { findOrCreateClient } = require('./clientDedup');
+const { findOrCreateClient, findOrCreateClientDetailed } = require('./clientDedup');
 
 // Each test runs inside its own BEGIN/ROLLBACK, so nothing it inserts is
 // committed to the shared dev DB — no cleanup needed beyond the rollback.
 
-test('phone-only row then email proposal-create resolves to ONE client (the Jim case)', async () => {
+test('phone-only row then the ADMIN proposal-create (default phoneMatch) resolves to ONE client (the Jim case)', async () => {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -18,6 +18,29 @@ test('phone-only row then email proposal-create resolves to ONE client (the Jim 
     assert.strictEqual(b, a, 'should reuse the phone-only row, not create a second');
     const row = await db.query('SELECT email FROM clients WHERE id = $1', [a]);
     assert.strictEqual(row.rows[0].email, 'dupetest@example.com', 'email backfilled onto the phone-only row');
+  } finally {
+    await db.query('ROLLBACK');
+    db.release();
+  }
+});
+
+// Audit 2026-11-05 AUTH-02: the public wizard passes phoneMatch: false, so a
+// stranger who knows a phone-only client's name and mobile is never handed that
+// row, and its email stays NULL for the Thumbtack harvester or an admin to fill.
+// The pure companion is clientDedup.phoneMatch.test.js.
+test('phoneMatch: false (the public wizard) leaves the phone-only row alone and inserts a second client', async () => {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const a = await findOrCreateClient(db, { name: 'Wizard Match', phone: '555-010-2930', source: 'thumbtack' });
+    const b = await findOrCreateClientDetailed(db, {
+      name: 'Wizard Match', email: 'stranger@example.com', phone: '(555) 010-2930', source: 'website', phoneMatch: false,
+    });
+    assert.notStrictEqual(b.id, a, 'the wizard never resolves a row by phone + name');
+    assert.strictEqual(b.created, true, 'the submitter gets a row of their own');
+    const rows = await db.query('SELECT id, email FROM clients WHERE id = ANY($1::int[]) ORDER BY id', [[a, b.id]]);
+    assert.strictEqual(rows.rows[0].email, null, 'the phone-only row keeps email NULL');
+    assert.strictEqual(rows.rows[1].email, 'stranger@example.com', 'the new row carries the submitted email');
   } finally {
     await db.query('ROLLBACK');
     db.release();

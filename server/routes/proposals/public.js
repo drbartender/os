@@ -294,14 +294,18 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   try {
     await dbClient.query('BEGIN');
 
-    // Find-or-create the client (dedupes on email OR phone). This endpoint is
-    // UNAUTHENTICATED: findOrCreateClient backfills NULL fields only and never
-    // overwrites an existing client's name/email/phone, so a stranger who
-    // guesses an email cannot rewrite a real client's identity.
+    // Find-or-create the client, de-duped on EMAIL only. This endpoint is
+    // UNAUTHENTICATED: an email match resolves the row as-is and stamps
+    // nothing, and phoneMatch: false keeps a phone + name from resolving a
+    // stranger's email-less row at all (audit 2026-11-05 AUTH-02: that match
+    // used to backfill the submitted email onto the matched row, which handed
+    // the submitter the client's portal login and lifecycle mail). A returning
+    // phone-only lead gets a second row carrying their email, so this
+    // proposal's mail reaches them; the admin merges the pair.
     // `created` gates the SMS consent write below: a submitter proves nothing
     // about a row they did not create on this unauthenticated endpoint.
     const { id: finalClientId, created: clientIsNew } = await findOrCreateClientDetailed(dbClient, {
-      name: client_name, email: client_email, phone: client_phone, source: 'website',
+      name: client_name, email: client_email, phone: client_phone, source: 'website', phoneMatch: false,
     });
     // Recorded SMS consent from the quote wizard checkbox (A2P 10DLC).
     // Inside the transaction on purpose: a consent record that outlived a
