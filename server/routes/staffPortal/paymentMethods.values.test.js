@@ -188,11 +188,52 @@ test('PATCH /api/me/tip-page accepts zelle (now in the set) when its handle is o
   assert.equal(paymentWrites().length, 1);
 });
 
-test('PATCH /api/me/tip-page never blocks a resend of the stored method, even one no longer payable', async () => {
+// A stored or resent method is never a 400 on its own account, but it is never
+// stored unpayable either: when the row as it will be after this write cannot
+// pay it, it is cleared to NULL and the response says so (L1 of the verify
+// pass; the staff portal PATCH's own rule).
+test('PATCH /api/me/tip-page clears, and reports, a resent stored method the row can no longer pay', async () => {
   paymentRow.preferred_payment_method = 'direct_deposit'; // stored before the rule, no bank data
   const r = await req('PATCH', '/api/me/tip-page', tokenFor(STAFF_ID),
     { venmo_handle: '@sam-tips', preferred_payment_method: 'direct_deposit' });
   assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.preferred_cleared, true);
+  const upsert = paymentWrites()[0];
+  assert.ok(upsert.sql.includes('preferred_payment_method'), 'the method column is written');
+  assert.equal(upsert.params[upsert.params.length - 1], null, 'written as NULL, never as direct_deposit');
+});
+
+test('PATCH /api/me/tip-page clears a resent venmo when its handle is cleared in the same request', async () => {
+  paymentRow.venmo_handle = 'sam-tips';
+  paymentRow.preferred_payment_method = 'venmo';
+  const r = await req('PATCH', '/api/me/tip-page', tokenFor(STAFF_ID),
+    { venmo_handle: '', preferred_payment_method: 'venmo' });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.preferred_cleared, true);
+  const upsert = paymentWrites()[0];
+  assert.ok(upsert.sql.includes('venmo_handle') && upsert.sql.includes('preferred_payment_method'));
+  assert.deepEqual(upsert.params.slice(1), [null, null], 'the handle and the method both go to NULL');
+});
+
+test('PATCH /api/me/tip-page clears the stored method when the handle it depends on is cleared alone', async () => {
+  paymentRow.venmo_handle = 'sam-tips';
+  paymentRow.preferred_payment_method = 'venmo';
+  const r = await req('PATCH', '/api/me/tip-page', tokenFor(STAFF_ID), { venmo_handle: '' });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.preferred_cleared, true);
+  const upsert = paymentWrites()[0];
+  assert.ok(upsert.sql.includes('preferred_payment_method'), 'the method is cleared with the handle');
+  assert.deepEqual(upsert.params.slice(1), [null, null]);
+});
+
+test('PATCH /api/me/tip-page leaves a payable stored method alone when another handle is cleared', async () => {
+  paymentRow.venmo_handle = 'sam-tips';
+  paymentRow.preferred_payment_method = 'venmo';
+  const r = await req('PATCH', '/api/me/tip-page', tokenFor(STAFF_ID), { cashapp_handle: '' });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.preferred_cleared, false);
+  const upsert = paymentWrites()[0];
+  assert.ok(!upsert.sql.includes('preferred_payment_method'), 'the method column is not touched');
 });
 
 test('PATCH /api/admin/contractors/:id/tip-page refuses a method outside the set and an unpayable new election', async () => {
@@ -222,11 +263,38 @@ test('PUT /api/admin/users/:id/profile refuses a method outside the set and an u
   assert.deepEqual(writes, [], 'nothing written on a refused save');
 });
 
-test('PUT /api/admin/users/:id/profile accepts a payable election and a resend of the stored one', async () => {
+// The profile upsert's params: user_id, preferred_payment_method, payment_username,
+// routing_number, account_number, keep routing, keep account.
+const profileUpsert = () => writes.find((w) => w.sql.includes('INSERT INTO payment_profiles'));
+
+test('PUT /api/admin/users/:id/profile accepts a payable election, and clears, reporting it, a resent one the row can no longer pay', async () => {
   const zelle = await req('PUT', `/api/admin/users/${STAFF_ID}/profile`, tokenFor(ADMIN_ID), { preferred_payment_method: 'zelle' });
   assert.equal(zelle.status, 200, zelle.raw);
+  assert.equal(zelle.body.preferred_cleared, false);
+  assert.equal(profileUpsert().params[1], 'zelle');
   writes = [];
   paymentRow.preferred_payment_method = 'direct_deposit'; // stored before the rule, no bank data
   const resend = await req('PUT', `/api/admin/users/${STAFF_ID}/profile`, tokenFor(ADMIN_ID), { preferred_payment_method: 'direct_deposit' });
-  assert.equal(resend.status, 200, resend.raw);
+  assert.equal(resend.status, 200, resend.raw, 'a resend never blocks the save');
+  assert.equal(resend.body.preferred_cleared, true, 'but the unpayable method is not kept');
+  assert.equal(profileUpsert().params[1], null, 'stored as NULL, never as direct_deposit');
+});
+
+// L1 of the verify pass: direct_deposit resent beside blanked bank numbers used
+// to be stored with NULL numbers, because the rule only ran when the method
+// changed. Eligibility now reads the row as it will be after the write.
+test('PUT /api/admin/users/:id/profile clears a resent direct_deposit when the bank numbers are blanked in the same save', async () => {
+  paymentRow.preferred_payment_method = 'direct_deposit';
+  paymentRow.routing_number = 'enc:routing';
+  paymentRow.account_number = 'enc:account';
+  const r = await req('PUT', `/api/admin/users/${STAFF_ID}/profile`, tokenFor(ADMIN_ID),
+    { preferred_payment_method: 'direct_deposit', routing_number: '', account_number: '' });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.preferred_cleared, true);
+  const up = profileUpsert();
+  assert.equal(up.params[1], null, 'the method goes to NULL with the numbers');
+  assert.equal(up.params[3], null, 'routing cleared');
+  assert.equal(up.params[4], null, 'account cleared');
+  assert.equal(up.params[5], false, 'not kept');
+  assert.equal(up.params[6], false, 'not kept');
 });

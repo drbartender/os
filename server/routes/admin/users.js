@@ -392,12 +392,15 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     Object.assign(fieldErrors, err.fieldErrors);
   }
 
-  // preferred_payment_method: the shared allowed set, and payable when it
-  // CHANGES (POUT-10): the admin form resends the stored value on every save,
-  // so an already-stored method never blocks an unrelated edit, while a new
-  // election needs its handle or bank data on the row as it will be after
-  // this write ('' from the form clears, as before).
-  const nextMethod = preferred_payment_method || null;
+  // preferred_payment_method: the shared allowed set, and payable against the
+  // row as it will be after this write, blanked bank fields included (POUT-10
+  // and L1 of its verify pass). The admin form resends the stored value on
+  // every save: a NEW election that is not payable is a 400, while a stored
+  // method that this very save makes unpayable (direct_deposit resent beside
+  // blanked bank numbers) is cleared to NULL and reported, never silently
+  // stored ('' from the form clears, as before).
+  let nextMethod = preferred_payment_method || null;
+  let preferredCleared = false;
   if (nextMethod !== null && !PAYMENT_METHOD_VALUES.has(nextMethod)) {
     fieldErrors.preferred_payment_method = `Payment method must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')}.`;
   } else if (nextMethod !== null && bank) {
@@ -408,14 +411,17 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       [userId]
     );
     const row = cur.rows[0] || {};
-    if (nextMethod !== row.preferred_payment_method) {
-      const merged = {
-        ...row,
-        routing_number: bank.routing_number.keep ? row.routing_number : bank.routing_number.value,
-        account_number: bank.account_number.keep ? row.account_number : bank.account_number.value,
-      };
-      if (!isPreferredEligible(nextMethod, merged)) {
+    const merged = {
+      ...row,
+      routing_number: bank.routing_number.keep ? row.routing_number : bank.routing_number.value,
+      account_number: bank.account_number.keep ? row.account_number : bank.account_number.value,
+    };
+    if (!isPreferredEligible(nextMethod, merged)) {
+      if (nextMethod !== row.preferred_payment_method) {
         fieldErrors.preferred_payment_method = `Add a ${nextMethod} handle before setting it as preferred.`;
+      } else {
+        nextMethod = null;
+        preferredCleared = true;
       }
     }
   }
@@ -473,7 +479,7 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
         preferred_payment_method=$2, payment_username=$3,
         routing_number = CASE WHEN $6::boolean THEN payment_profiles.routing_number ELSE EXCLUDED.routing_number END,
         account_number = CASE WHEN $7::boolean THEN payment_profiles.account_number ELSE EXCLUDED.account_number END
-    `, [userId, preferred_payment_method || null, payment_username || null,
+    `, [userId, nextMethod, payment_username || null,
       bank.routing_number.value, bank.account_number.value, bank.routing_number.keep, bank.account_number.keep]);
 
     await client.query('COMMIT');
@@ -515,7 +521,7 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
   if (payment.routing_number) payment.routing_number = maskBankNumber(payment.routing_number, { userId, column: 'routing_number' });
   if (payment.account_number) payment.account_number = maskBankNumber(payment.account_number, { userId, column: 'account_number' });
 
-  res.json({ profile: profileRow, payment });
+  res.json({ profile: profileRow, payment, preferred_cleared: preferredCleared });
 }));
 
 // Update user permissions (role + flags)
