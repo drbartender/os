@@ -9,7 +9,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const {
-  LEGACY_AGREEMENT_VERSION, CURRENT_AGREEMENT_VERSION, KNOWN_AGREEMENT_VERSIONS,
+  LEGACY_AGREEMENT_VERSION, CURRENT_AGREEMENT_VERSION, KNOWN_AGREEMENT_VERSIONS, AGREEMENT_REVISED_DATES,
 } = require('./agreementVersions');
 
 const CLIENT_MODULE = pathToFileURL(
@@ -73,4 +73,20 @@ test('every agreement version is pinned byte for byte', async () => {
     const sha = createHash('sha256').update(entry.markdown).digest('hex');
     assert.equal(sha, SHIPPED_SHA256[key], `${key} text changed after it shipped`);
   }
+});
+
+// The revised date the sign-time emails print (audit ESIG-05) is the client
+// module's revisedDate, kept by hand in both places like the version strings.
+test('every shipped version carries the client module\'s revised date, and legacy v2 none', async () => {
+  const m = await loadClient();
+  assert.deepEqual(
+    Object.keys(AGREEMENT_REVISED_DATES).sort(),
+    Object.keys(m.AGREEMENT_VERSIONS).sort(),
+    'a version was added without its revised date (or a date without its version)'
+  );
+  for (const [key, entry] of Object.entries(m.AGREEMENT_VERSIONS)) {
+    assert.equal(AGREEMENT_REVISED_DATES[key], entry.revisedDate, `${key} revised date differs from the client module`);
+    assert.match(AGREEMENT_REVISED_DATES[key], /^\d{4}-\d{2}-\d{2}$/);
+  }
+  assert.equal(AGREEMENT_REVISED_DATES[LEGACY_AGREEMENT_VERSION], undefined);
 });

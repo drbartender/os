@@ -5,6 +5,7 @@
 
 const { esc } = require('./htmlEscape');
 const { firstNameOf } = require('./firstName');
+const { signedRecordBlock } = require('./signedRecordEmail');
 
 const BRAND = {
   dark: '#2d1810',
@@ -92,8 +93,14 @@ function proposalOptionsSent({ clientName, eventTypeLabel = 'event', compareUrl 
   };
 }
 
-function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
+// `signedRecord` (signedRecordEmail.js signedRecordFromRow, from the row the
+// sign wrote) adds the "what you signed" block: version, revised date, signer,
+// time, the rows the page drew, the gratuity line and the acknowledged total,
+// so the client holds a copy of the terms as signed (audit ESIG-05). Null
+// keeps the short body.
+function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event', signedRecord = null }) {
   const name = clientName || 'there';
+  const record = signedRecordBlock(signedRecord);
   return {
     subject: `Proposal Signed: your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
@@ -101,10 +108,11 @@ function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
       <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We've received your signed proposal for your <strong>${esc(eventTypeLabel)}</strong>. We're excited to work with you!</p>
       <p><strong>Next step:</strong> Submit your deposit to lock in your date. You'll receive payment instructions shortly, or you can pay directly from the proposal page.</p>
+      ${record.html}
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${firstNameOf(name)}, thank you for signing the proposal for your ${eventTypeLabel}! Next step: submit your deposit to lock in your date. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, thank you for signing the proposal for your ${eventTypeLabel}! Next step: submit your deposit to lock in your date.${record.text ? `\n\n${record.text}\n\n` : ' '}Cheers, Dallas`,
   };
 }
 
