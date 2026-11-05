@@ -14,6 +14,7 @@ const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { AppError, NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { findOpenPeriodForDate } = require('../../utils/payrollProcessing');
+const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 const { rollForwardLateTip } = require('../../utils/payrollLateTip');
 const { clawbackTip } = require('../../utils/payrollClawback');
@@ -151,12 +152,30 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   // today's period and the claw nets into that same line right after, which
   // needs today's period open: a deferred roll-forward and a deferred claw
   // cannot both be remembered (one deferral marker per tip), so the placement
-  // waits for the period instead.
+  // waits for the period instead. Resolved the way the roll-forward and the
+  // clawback resolve it: the week's row is created open when it does not
+  // exist yet (the first accrual of a week is what normally creates it, so a
+  // Tuesday before any event has completed has no row at all), and only a
+  // row that exists and is frozen refuses (round 3, M1: the bare lookup
+  // answered 409 for a week with no row).
   if (priorRefunded > 0 && frozen) {
-    const todayOpen = await findOpenPeriodForDate(pool, chicagoTodayYmd());
-    if (!todayOpen) {
+    const todayYmd = chicagoTodayYmd();
+    let today = await findOpenPeriodForDate(pool, todayYmd);
+    if (!today) {
+      const { startDate, endDate } = payPeriodForDate(todayYmd);
+      const payday = computePayday(endDate);
+      const ins = await pool.query(
+        `INSERT INTO pay_periods (start_date, end_date, payday, status)
+         VALUES ($1, $2, $3, 'open')
+         ON CONFLICT (start_date) DO UPDATE SET status = pay_periods.status
+         RETURNING id, status`,
+        [startDate, endDate, payday]
+      );
+      today = ins.rows[0];
+    }
+    if (today.status !== 'open') {
       throw new ConflictError(
-        'a partly refunded tip on a frozen event can be placed only while the current pay period is open',
+        `the current pay period is ${today.status}; a partly refunded tip on a frozen event can be placed once it is open`,
         'PERIOD_NOT_OPEN'
       );
     }

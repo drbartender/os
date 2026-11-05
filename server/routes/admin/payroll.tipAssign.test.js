@@ -50,13 +50,17 @@ const PROPOSAL_ID = 4301;
 let server, baseUrl;
 const realQuery = pool.query;
 const realConnect = pool.connect;
-let tipRow;        // what the tip read answers with (null = no such tip)
-let onRoster;      // whether the recipient is an approved, non-dropped bartender on the shift
-let tipUpdates;    // every UPDATE tips SET shift_id the route issued
-let periodStatus;  // the event period's status
-let todayOpen;     // whether an open period contains today (the clawback's landing period)
-let clawLines;     // payout_events upserts the clawback wrote (params)
-let markerWrites;  // the clawback's final cumulative-marker writes (params)
+let tipRow;          // the tips row as the scripted statements leave it (null = no such tip)
+let onRoster;        // whether the recipient is an approved, non-dropped bartender on the shift
+let tipUpdates;      // every UPDATE tips SET shift_id the route issued (params)
+let periodStatus;    // the event period's status
+let todayRowExists;  // whether the current week's pay_periods row has been materialized
+let todayStatus;     // its status when it exists
+let periodInserts;   // the find-or-create INSERTs into pay_periods (params)
+let rollLines;       // payout_events upserts the roll-forward wrote (params)
+let clawLines;       // payout_events upserts the clawback wrote (params)
+let markerWrites;    // the clawback's final cumulative-marker writes (params)
+let log;             // the order of the statements that matter, by name
 const TODAY_PERIOD = 55;
 
 function answer(text, params = []) {
@@ -82,25 +86,63 @@ function answer(text, params = []) {
   if (sql.startsWith('SELECT status FROM pay_periods')) {
     return { rows: [{ status: periodStatus }], rowCount: 1 };
   }
-  // payrollProcessing.findOpenPeriodForDate: the open period containing today.
+  // payrollProcessing.findOpenPeriodForDate: the open period containing today,
+  // a bare SELECT that finds nothing until the week's row is materialized.
   if (sql.startsWith('SELECT id, start_date, end_date, payday, status FROM pay_periods WHERE status = \'open\'')) {
-    return todayOpen
+    return todayRowExists && todayStatus === 'open'
       ? { rows: [{ id: TODAY_PERIOD, start_date: '2026-10-20', end_date: '2026-10-26', payday: '2026-10-27', status: 'open' }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
+  // The find-or-create of the week's row (payrollLateTip / payrollClawback
+  // shape): a new row is born open; an existing one keeps its status.
+  if (sql.startsWith('INSERT INTO pay_periods')) {
+    periodInserts.push(params);
+    if (!todayRowExists) { todayRowExists = true; todayStatus = 'open'; }
+    return { rows: [{ id: TODAY_PERIOD, status: todayStatus }], rowCount: 1 };
+  }
   if (sql.startsWith('UPDATE tips SET shift_id')) {
     tipUpdates.push(params);
-    // The row as the statement leaves it: placed, marker reset.
-    tipRow = { ...tipRow, shift_id: SHIFT_ID, refunded_amount_cents: 0 };
+    log.push('assign');
+    // The row as the statement leaves it: placed, marker reset, a clawback
+    // deferral armed for a partial refund.
+    const refunded = Number(params[2]);
+    tipRow = {
+      ...tipRow, shift_id: SHIFT_ID, refunded_amount_cents: 0,
+      ...(refunded > 0 ? { deferred_at: 'assign-time', defer_kind: 'clawback', defer_target_cents: refunded } : {}),
+    };
     return { rows: [{ id: TIP_ID, shift_id: SHIFT_ID, amount_cents: 6000, tipped_at: '2026-10-17T23:30:00Z' }], rowCount: 1 };
+  }
+  // payrollLateTip.rollForwardLateTip, on its own client.
+  if (sql.startsWith('SELECT id, shift_id, amount_cents, fee_cents, rolled_forward_at')) {
+    log.push('rollforward:read');
+    return {
+      rows: [{
+        id: TIP_ID, shift_id: tipRow.shift_id, amount_cents: 6000, fee_cents: 204,
+        rolled_forward_at: tipRow.rolled_forward_at, target_user_id: BARTENDER_ID,
+      }],
+      rowCount: 1,
+    };
+  }
+  if (sql.startsWith('UPDATE tips SET rolled_forward_at = NOW()')) {
+    log.push('rollforward:success');
+    tipRow = { ...tipRow, rolled_forward_at: 'rolled', deferred_at: null, defer_kind: null };
+    return { rows: [], rowCount: 1 };
+  }
+  // The re-armed clawback deferral between the roll-forward and the claw.
+  if (sql.startsWith('UPDATE tips SET deferred_at = NOW(), defer_kind = \'clawback\'')) {
+    log.push('rearm');
+    markerWrites.push({ rearm: params });
+    tipRow = { ...tipRow, deferred_at: 'rearm-time', defer_kind: 'clawback', defer_target_cents: Number(params[1]) };
+    return { rows: [], rowCount: 1 };
   }
   // payrollClawback.clawbackTip, on its own client.
   if (sql.startsWith('SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents')) {
+    log.push('claw:read');
     return {
       rows: [{
         id: TIP_ID, shift_id: tipRow.shift_id, amount_cents: 6000, fee_cents: 204,
         refunded_amount_cents: tipRow.refunded_amount_cents, target_user_id: BARTENDER_ID,
-        deferred_at: null, defer_kind: null,
+        deferred_at: tipRow.deferred_at || null, defer_kind: tipRow.defer_kind || null,
       }],
       rowCount: 1,
     };
@@ -112,11 +154,15 @@ function answer(text, params = []) {
     return { rows: [{ id: 900 + Number(params[1]) }], rowCount: 1 };
   }
   if (sql.startsWith('INSERT INTO payout_events')) {
-    clawLines.push(params);
+    // The clawback's column list names adjustment_note; the roll-forward's names
+    // card_tip_gross_cents (both ON CONFLICT arms mention adjustment_cents).
+    if (sql.includes('adjustment_note')) clawLines.push(params); else rollLines.push(params);
     return { rows: [{ held_state: null }], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE tips SET refunded_amount_cents')) {
+    log.push('claw:final');
     markerWrites.push(params);
+    tipRow = { ...tipRow, refunded_amount_cents: Number(params[0]), deferred_at: null, defer_kind: null };
     return { rows: [], rowCount: 1 };
   }
   // The accrual's proposal read (skipped as missing) and anything else.
@@ -181,7 +227,11 @@ beforeEach(() => {
   markerWrites = [];
   onRoster = true;
   periodStatus = 'open';
-  todayOpen = true;
+  todayRowExists = true;
+  todayStatus = 'open';
+  periodInserts = [];
+  rollLines = [];
+  log = [];
   tipRow = {
     id: TIP_ID, shift_id: null, rolled_forward_at: null, refunded_amount_cents: 0,
     amount_cents: 6000, target_user_id: BARTENDER_ID,
@@ -255,13 +305,40 @@ test('a tip partly refunded while unplaced is placed, its marker reset in the sa
   assert.equal(r.body.refund_clawed_cents, 600);
 });
 
-test('a partly refunded tip on a frozen event is refused while today period is frozen too, and nothing moves', async () => {
+test('a partly refunded tip on a frozen event is refused while today period EXISTS and is frozen, with the reason named, and nothing moves', async () => {
   tipRow.refunded_amount_cents = 600;
   periodStatus = 'paid';
-  todayOpen = false;
+  todayRowExists = true;
+  todayStatus = 'processing';
   const r = await patch(PATH, { shift_id: SHIFT_ID });
   assert.equal(r.status, 409, r.raw);
   assert.equal(r.body.code, 'PERIOD_NOT_OPEN');
+  assert.match(r.body.error, /processing/, 'the message names the period state that blocks the placement');
   assert.deepEqual(tipUpdates, []);
   assert.deepEqual(clawLines, []);
+  assert.deepEqual(rollLines, []);
 });
+
+// Round 3, M1: the week's pay_periods row is created by the first accrual (or
+// by a roll-forward or a clawback), so on a Tuesday before any event of the
+// new week has completed there is no row at all. The pre-check must then
+// create it open the way the roll-forward and the clawback do, not refuse.
+test('a partly refunded tip on a frozen event is placed when today period row does not exist yet: the row is created open, the gross rolls forward and the claw is booked', async () => {
+  tipRow.refunded_amount_cents = 600;
+  periodStatus = 'paid';
+  todayRowExists = false;
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.frozen_period, true);
+  assert.ok(periodInserts.length >= 1, 'the week row was materialized by the find-or-create path');
+  assert.deepEqual(tipUpdates[0], [SHIFT_ID, TIP_ID, 600], 'placed');
+  assert.equal(rollLines.length, 1, 'the gross rolled forward into the new open week');
+  assert.equal(rollLines[0][0], 900 + BARTENDER_ID);
+  assert.equal(rollLines[0][1], SHIFT_ID);
+  assert.equal(clawLines.length, 1, 'and the refund was clawed right after');
+  assert.equal(clawLines[0][2], -580);
+  assert.equal(r.body.refund_clawed_cents, 600);
+  assert.equal(tipRow.rolled_forward_at, 'rolled');
+  assert.equal(tipRow.refunded_amount_cents, 600, 'the cumulative marker is back at the refunded total');
+});
+
