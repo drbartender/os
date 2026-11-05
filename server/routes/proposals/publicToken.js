@@ -21,7 +21,7 @@ const { additionalTimeRate } = require('../../utils/additionalTimeRate');
 const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
 const { validateSignaturePayload } = require('../../utils/signaturePayload');
-const { findInFlightPayments, findPendingPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
+const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
 const { publicPriceView, signedPriceRecord } = require('../../utils/publicSnapshot');
 const { signedRecordFromRow } = require('../../utils/signedRecordEmail');
 const { isLegalHold } = require('../../utils/legalHold');
@@ -694,10 +694,13 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   // Skip sign-only emails when a payment intent is already in-flight for this
   // proposal — the Stripe webhook will send a combined "Signed & Paid" email
   // once the payment succeeds, so we avoid back-to-back sign + payment emails.
-  // The pending window is paymentInFlight.js's (the signature void keeps a
-  // signature over the same window), never a copy of it here.
-  const pendingPayments = await findPendingPayments(proposal.id);
-  if (pendingPayments.length === 0) {
+  const pendingPayment = await pool.query(
+    `SELECT 1 FROM stripe_sessions
+     WHERE proposal_id = $1 AND status = 'pending' AND created_at > NOW() - INTERVAL '30 minutes'
+     LIMIT 1`,
+    [proposal.id]
+  );
+  if (pendingPayment.rowCount === 0) {
     try {
       // The signed record the email prints (audit ESIG-05) is read back from
       // the row the UPDATE above wrote, never from the request.
