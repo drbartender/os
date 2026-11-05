@@ -90,6 +90,16 @@ router.patch('/contractors/:userId/tip-page', auth, adminOnly, asyncHandler(asyn
       VALUES ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')})
       ON CONFLICT (user_id) DO UPDATE SET ${setClause}, updated_at = NOW()
     `, [userId, ...cols.map(c => fields[c] || null)]);
+    // Field names only: a handle is where a person's money goes and never
+    // belongs in a log row. Awaited (rotate-token pattern) so the row exists
+    // when the caller sees 200; the helper takes its own pooled connection and
+    // this handler holds none (audit 2026-11-05, POUT-01).
+    await logAdminAction({
+      actorUserId: req.user.id,
+      targetUserId: userId,
+      action: 'tip_handles_change',
+      metadata: { fields_changed: cols },
+    });
   }
   res.json({ ok: true });
 }));
