@@ -2,9 +2,12 @@
 'use strict';
 // The comp path of voidExtrasInvoiceWithReconcile (audit PRC-01) over a
 // scripted transaction client, so it runs with no database: a comp must leave
-// as a protected comp line written with the snapshot and the totals in ONE
+// as a protected comp line, written with the snapshot and the totals in ONE
 // proposals UPDATE, never as the bare `total_price = total_price - $1` that
-// left pricing_snapshot.total and the add-on row behind; the payment ladder
+// left pricing_snapshot.total and the add-on row behind; the line names what
+// it comps by the identity each kind carries (the add-on by catalog id off the
+// invoice line, the bar off its line, the syrup flavors off the drink plan)
+// and is written at those items' price in the snapshot; the payment ladder
 // still runs on the returned columns; the path-switch mode (reconcileTotalPrice
 // false) and a syrup-only comp touch the proposal not at all. The DB-backed
 // sibling, server/routes/invoices.extrasVoid.test.js, drives the real route.
@@ -12,30 +15,35 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { voidExtrasInvoiceWithReconcile } = require('./invoiceExtras');
 const { COMP_LABEL } = require('./adjustmentRules');
+const { calculateProposal } = require('./pricingEngine');
 
-// source_id is service_addons.id on an addon line and null on a fee line, as
-// writeExtrasLineItems writes them.
+// A flat test package at $1,000, a $2-a-guest test toast, one bar, one syrup
+// flavor at 75 guests (two bottles, $60): the fold's own snapshot.
+const PKG = {
+  id: 1, slug: 'test-flat', name: 'Test Package', category: 'byob', pricing_type: 'flat', bar_type: 'service_only',
+  base_rate_4hr: 1000, base_rate_3hr: null, extra_hour_rate: 100, min_guests: 0, bartenders_included: 1,
+  guests_per_bartender: 100, extra_bartender_hourly: 40, first_bar_fee: 50, additional_bar_fee: 100, min_total: null,
+};
+const TOAST = { id: 42, slug: 'test-toast', name: 'Test Toast', billing_type: 'per_guest', rate: 2, extra_hour_rate: null };
+const snapshot = () => calculateProposal({
+  pkg: PKG, guestCount: 75, durationHours: 4, numBars: 1, numBartenders: null,
+  addons: [{ ...TOAST, quantity: 1 }], syrupSelections: ['mint'], adjustments: [],
+  totalPriceOverride: null, gratuityRate: 0, tipJar: true, gratuityFloorRate: null,
+});
+
+// The invoice's lines as writeExtrasLineItems writes them: source_id is
+// service_addons.id on an addon line and null on a fee line.
 const MIXED_LINES = [
-  { description: 'Champagne Toast (75 guests)', line_total: 20000, source_type: 'addon', source_id: 42 },
+  { description: 'Test Toast (75 guests)', line_total: 15000, source_type: 'addon', source_id: 42 },
   { description: 'Portable Bar Rental', line_total: 5000, source_type: 'fee', source_id: null },
   { description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee', source_id: null },
 ];
 const SYRUP_ONLY = [{ description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee', source_id: null }];
-
-const snapshot = () => ({
-  package: { name: 'Test Package', base_cost: 1000 },
-  breakdown: [{ label: 'Test Package (4hrs, 75 guests)', amount: 1000 }, { label: 'Champagne Toast (75 guests)', amount: 200 },
-    { label: 'Bar Rental (1 bar)', amount: 50 }, { label: 'Handcrafted Syrups (2 bottles)', amount: 60 }],
-  adjustments: [],
-  addons: [{ id: 42, slug: 'champagne-toast', name: 'Champagne Toast', billing_type: 'per_guest', rate: 2.5, quantity: 75, line_total: 200 }],
-  gratuity: { total: 0 },
-  subtotal: 1310,
-  total: 1310,
-});
+const PLAN = { selections: { syrupSelections: { drink1: ['mint', 'ginger'] }, syrupSelfProvided: ['ginger'] } };
 
 // Scripted by statement shape, so the fake answers the old code's statements
 // too and the assertions, not a missing script, say what changed.
-function scriptedClient({ lines, invoice, proposal, totalPrice }) {
+function scriptedClient({ lines, invoice, proposal, totalPrice, plan = PLAN }) {
   const calls = [];
   return {
     calls,
@@ -46,6 +54,7 @@ function scriptedClient({ lines, invoice, proposal, totalPrice }) {
       if (/UPDATE invoices SET status = 'void'/.test(sql)) return answer({ rowCount: 1 });
       if (/INSERT INTO proposal_activity_log/.test(sql)) return answer({ rowCount: 1 });
       if (/FROM invoice_line_items WHERE invoice_id = \$1/.test(sql)) return answer({ rows: lines });
+      if (/FROM drink_plans WHERE proposal_id = \$1/.test(sql)) return answer({ rows: plan ? [plan] : [] });
       if (/SELECT id, adjustments, pricing_snapshot FROM proposals WHERE id = \$1 FOR UPDATE/.test(sql)) return answer({ rows: [proposal] });
       if (/UPDATE proposals SET status = \$1/.test(sql)) return answer({ rowCount: 1 });
       if (/UPDATE proposals SET autopay_status = NULL/.test(sql)) return answer({ rowCount: 1 });
@@ -62,7 +71,7 @@ function scriptedClient({ lines, invoice, proposal, totalPrice }) {
 }
 
 const invoiceRow = (overrides = {}) => ({
-  id: 501, proposal_id: 77, label: 'Drink Plan Extras', amount_due: 31000, amount_paid: 0, status: 'sent',
+  id: 501, proposal_id: 77, label: 'Drink Plan Extras', amount_due: 26000, amount_paid: 0, status: 'sent',
   invoice_number: 'INV0501', ...overrides,
 });
 const proposalRow = (overrides = {}) => ({
@@ -70,8 +79,10 @@ const proposalRow = (overrides = {}) => ({
 });
 const proposalUpdates = (calls) => calls.filter((c) => /UPDATE proposals/.test(c.sql));
 
-test('comp (reconcile mode): the folded cents leave as a comp line in one UPDATE with the snapshot and the totals, never a bare subtraction', async () => {
-  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1310 });
+test('comp (reconcile mode): the comp leaves as a line naming the toast, the bar and the flavor, at their price, in one UPDATE with the snapshot and the totals', async () => {
+  const snap = snapshot();
+  assert.equal(Math.round(snap.total * 100), 126000, 'fixture: 1000 + 150 toast + 50 bar + 60 syrup');
+  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1260 });
   const out = await voidExtrasInvoiceWithReconcile(501, 9, client, {});
   assert.equal(out.id, 501);
 
@@ -84,37 +95,37 @@ test('comp (reconcile mode): the folded cents leave as a comp line in one UPDATE
   assert.match(upd.sql, /adjustments = \$2::jsonb/);
   assert.match(upd.sql, /pricing_snapshot = COALESCE\(\$3::jsonb, pricing_snapshot\)/);
   assert.equal(upd.params[0], 77);
-  assert.equal(upd.params[3], 31000, 'the WHOLE folded extras (add-on + bar + syrup), as cents');
+  assert.equal(upd.params[3], 26000, 'the items\' price in the snapshot: toast 15000 + bar 5000 + mint 6000, as cents');
   const lineRead = client.calls.find((c) => /FROM invoice_line_items WHERE invoice_id = \$1/.test(c.sql));
   assert.match(lineRead.sql, /source_id/, 'the add-on identity is read off the invoice lines');
 
-  // The comp is tied to the add-on it waived (audit round 2, H1): the invoice's
-  // addon line's catalog id and cents; the bar and syrup lines name none.
+  // The identity by kind: the add-on's catalog id, the bar, the flavor the
+  // plan charged for (ginger was self-provided and is not named).
   const line = {
-    type: 'discount', label: `${COMP_LABEL} (INV0501)`, amount: 310, visible: true, source: 'comp',
-    comped_addons: [{ addon_id: 42, cents: 20000 }],
+    type: 'discount', label: `${COMP_LABEL} (INV0501)`, amount: 260, visible: true, source: 'comp',
+    comped: { addons: [42], bar: true, syrups: ['mint'] },
   };
   assert.deepEqual(JSON.parse(upd.params[1]), [line]);
-  const snap = JSON.parse(upd.params[2]);
-  assert.deepEqual(snap.adjustments, [line]);
-  assert.equal(snap.total, 1000, 'snapshot total moves with total_price: 1310 - 310');
-  assert.deepEqual(snap.breakdown[4], { label: line.label, amount: -310, visible: true });
-  assert.equal(snap.addons.length, 1, 'the comped add-on stays on the snapshot');
+  const written = JSON.parse(upd.params[2]);
+  assert.deepEqual(written.adjustments, [line]);
+  assert.equal(written.total, 1000, 'snapshot total moves with total_price: 1260 - 260');
+  assert.deepEqual(written.breakdown[written.breakdown.length - 1], { label: line.label, amount: -260, visible: true });
+  assert.equal(written.addons.length, 1, 'the comped add-on stays on the snapshot');
 
   // The ladder ran on the returned columns: paid 1000 now covers total 1000.
   const status = client.calls.find((c) => /UPDATE proposals SET status = \$1/.test(c.sql));
   assert.ok(status, 'the payment ladder re-ran');
   assert.deepEqual(status.params, ['balance_paid', 77]);
 
-  // The void and the audit row are as before.
+  // The void and the audit row are as before: the audit records what the invoice demanded.
   assert.ok(client.calls.some((c) => /UPDATE invoices SET status = 'void'/.test(c.sql) && c.params[0] === 501));
   const audit = client.calls.find((c) => /INSERT INTO proposal_activity_log/.test(c.sql));
-  assert.deepEqual(JSON.parse(audit.params[3]), { amount_cents: 31000, invoice_id: 501, reason: 'comp' });
+  assert.deepEqual(JSON.parse(audit.params[3]), { amount_cents: 26000, invoice_id: 501, reason: 'comp' });
   assert.equal(audit.params[1], 'admin');
 });
 
 test('comp: the proposals row is locked before the money moves', async () => {
-  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1310 });
+  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1260 });
   await voidExtrasInvoiceWithReconcile(501, 9, client, {});
   const idx = (re) => client.calls.findIndex((c) => re.test(c.sql));
   const lock = idx(/FROM proposals WHERE id = \$1 FOR UPDATE/);
@@ -124,15 +135,25 @@ test('comp: the proposals row is locked before the money moves', async () => {
   assert.deepEqual(lockCall.params, [77]);
 });
 
+test('comp without a drink plan row: the syrup portion names no flavor and the comp is the toast and the bar', async () => {
+  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1260, plan: null });
+  await voidExtrasInvoiceWithReconcile(501, 9, client, {});
+  const upd = proposalUpdates(client.calls).find((c) => /total_price = GREATEST/.test(c.sql));
+  const line = JSON.parse(upd.params[1])[0];
+  assert.deepEqual(line.comped, { addons: [42], bar: true, syrups: [] });
+  assert.equal(upd.params[3], 20000);
+});
+
 test('syrup-only comp: void and audit only, the proposal is not touched', async () => {
   const client = scriptedClient({ lines: SYRUP_ONLY, invoice: invoiceRow({ amount_due: 6000 }), proposal: proposalRow(), totalPrice: 1000 });
   await voidExtrasInvoiceWithReconcile(501, 9, client, {});
   assert.equal(proposalUpdates(client.calls).length, 0);
   assert.ok(!client.calls.some((c) => /FROM proposals WHERE id = \$1 FOR UPDATE/.test(c.sql)));
+  assert.ok(!client.calls.some((c) => /FROM drink_plans/.test(c.sql)));
 });
 
 test('path-switch mode (reconcileTotalPrice false): a pure void, no comp line, no proposal write', async () => {
-  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1310 });
+  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow(), totalPrice: 1260 });
   await voidExtrasInvoiceWithReconcile(501, null, client, { reconcileTotalPrice: false, reason: 'resubmit_add_to_balance' });
   assert.equal(proposalUpdates(client.calls).length, 0);
   assert.ok(!client.calls.some((c) => /FROM proposals WHERE id = \$1 FOR UPDATE/.test(c.sql)));
@@ -143,7 +164,7 @@ test('path-switch mode (reconcileTotalPrice false): a pure void, no comp line, n
 
 test('a comp on a row whose lines cannot be read throws, so the caller rolls the void back', async () => {
   const client = scriptedClient({
-    lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow({ adjustments: 'junk' }), totalPrice: 1310,
+    lines: MIXED_LINES, invoice: invoiceRow(), proposal: proposalRow({ adjustments: 'junk' }), totalPrice: 1260,
   });
   await assert.rejects(() => voidExtrasInvoiceWithReconcile(501, 9, client, {}), (e) => e.code === 'COMP_LINE_UNWRITABLE');
   assert.equal(proposalUpdates(client.calls).length, 0, 'no money moved');
@@ -157,7 +178,7 @@ test('an already-void invoice is idempotent: nothing is written', async () => {
 });
 
 test('a paid invoice is refused before any write', async () => {
-  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow({ amount_paid: 100 }), proposal: proposalRow(), totalPrice: 1310 });
+  const client = scriptedClient({ lines: MIXED_LINES, invoice: invoiceRow({ amount_paid: 100 }), proposal: proposalRow(), totalPrice: 1260 });
   await assert.rejects(() => voidExtrasInvoiceWithReconcile(501, 9, client, {}), (e) => e.code === 'INVOICE_HAS_PAYMENTS');
   assert.equal(client.calls.length, 1);
 });

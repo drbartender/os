@@ -3,13 +3,12 @@
 // archive/complete
 
 const { pool } = require('../db');
-const { calculateProposal } = require('./pricingEngine');
 const { loadSettledExtensions, contractHoursFrom } = require('./contractDuration');
 const { validateProposalRules, stripIncludedAddons } = require('./proposalRules');
 const { ValidationError } = require('./errors');
 const { safeAddonQty } = require('./proposalMoneyShared');
 const { readSnapshot } = require('./pricingSnapshot');
-const { netCompLinesAgainstAddons } = require('./compLine');
+const { calculateProposalWithComps } = require('./compLine');
 
 const { BOOKED_SET: BOOKED } = require('./proposalStatus');
 
@@ -127,7 +126,9 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null,
     clientProvidesGlassware: proposal.client_provides_glassware,
   });
 
-  return calculateProposal({
+  // The comp lines at their items' price in the proposed state (compLine.js;
+  // a package switch can drop a comped add-on), as every other pricer does.
+  return calculateProposalWithComps({
     pkg,
     guestCount,
     durationHours: contractHoursFrom(
@@ -141,9 +142,7 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null,
     numBartenders: proposed.num_bartenders ?? overrideOnlyBartenders(proposal),
     addons,
     syrupSelections: readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.syrups?.selections || [],
-    // A comp line loses what it comped for an add-on the proposed state drops
-    // (compLine.js; a package switch can drop one), as every other pricer does.
-    adjustments: netCompLinesAgainstAddons(proposal.adjustments || [], strippedIds).lines,
+    adjustments: proposal.adjustments || [],
     totalPriceOverride: proposal.total_price_override ?? null,
     // Election-at-payment: carry the STORED gratuity so a change-request preview
     // on a paid proposal doesn't silently drop the client's paid gratuity line.
@@ -151,7 +150,7 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null,
     tipJar: proposal.tip_jar !== false,
     // Admin mandate (spec 2026-08-10): keep the preview consistent with the row.
     gratuityFloorRate: Number(proposal.gratuity_floor_rate) > 0 ? Number(proposal.gratuity_floor_rate) : null,
-  });
+  }).snapshot;
 }
 
 // Build the { current, estimated, delta, staffing } preview (DOLLARS).

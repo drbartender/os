@@ -1088,7 +1088,7 @@ test('cancelling a comped add-on drops its comp line with it: the total holds an
     assert.equal(toCentsLocal(comped.total_price), toCentsLocal(snapshot.total) - toastCents, 'the comp took the toast off the total');
     assert.equal(comped.adjustments.length, 1);
     assert.equal(comped.adjustments[0].source, 'comp');
-    assert.deepEqual(comped.adjustments[0].comped_addons, [{ addon_id: toast.id, cents: toastCents }]);
+    assert.deepEqual(comped.adjustments[0].comped, { addons: [toast.id], bar: false, syrups: [] });
 
     const result = await applyLineItemCancel(client, { proposalId, actorId: null, target: `addon:${SLUGS.champagne}` });
     assert.equal(toCentsLocal(result.newTotal), toCentsLocal(result.oldTotal), 'the comp left with the add-on: the total holds');

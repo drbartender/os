@@ -3,9 +3,9 @@
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
-const { calculateProposal, computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
+const { computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
 const { assertPricingInputs } = require('./pricingInputs');
-const { netCompLinesAgainstAddons } = require('../../utils/compLine');
+const { calculateProposalWithComps } = require('../../utils/compLine');
 const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -123,7 +123,9 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
     }
   }
 
-  const snapshot = calculateProposal({
+  // As the PATCH prices them: a comp line is priced at its items' price in
+  // this preview (compLine.js), so preview and save agree.
+  const { snapshot } = calculateProposalWithComps({
     pkg: pkgResult.rows[0],
     guestCount: guest_count || 50,
     durationHours: pricedHours,
@@ -131,9 +133,7 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
     numBartenders: num_bartenders,
     addons,
     syrupSelections: syrup_selections || [],
-    // As the PATCH prices them: a comp line loses what it comped for an add-on
-    // this preview leaves out (compLine.js), so preview and save agree.
-    adjustments: netCompLinesAgainstAddons(adjustments || [], addons.map((a) => a.id)).lines,
+    adjustments: adjustments || [],
     totalPriceOverride: total_price_override ?? null,
     gratuityRate: previewRate, tipJar: previewTipJar, gratuityFloorRate: previewFloorRate,
   });

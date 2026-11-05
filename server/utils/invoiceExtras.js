@@ -363,6 +363,17 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
 
 // ─── 11c. voidExtrasInvoiceWithReconcile ─────────────────────────────────────
 
+// The syrup flavors a drink plan charged for, read the way writeExtrasLineItems
+// reads them: `syrupSelections` (an array, or a map of arrays) less the
+// self-provided ones, strings only. The comp line names them (compLine.js).
+function planSyrupIds(selections) {
+  const sel = selections && typeof selections === 'object' ? selections : {};
+  const raw = sel.syrupSelections || {};
+  const all = Array.isArray(raw) ? raw : [...new Set(Object.values(raw).flat())];
+  const selfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
+  return [...new Set(all.filter((id) => typeof id === 'string' && id.trim() !== '' && !selfProvided.includes(id)))];
+}
+
 /**
  * Void an unpaid "Drink Plan Extras" invoice and (for a comp) reconcile the
  * proposal total. Shared by the invoices PATCH comp route and the submit
@@ -447,27 +458,38 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
       ? lines.rows.reduce((sum, r) => sum + Number(r.line_total), 0)
       : 0;
     if (foldedCents > 0) {
-      // The add-ons this comp waives, by catalog id with each one's cents off
-      // the invoice's own addon lines (source_id is service_addons.id, as
-      // proposal_addons.addon_id is). The comp line carries them so a later
-      // cancel-line, lab save, re-submit or editor save that removes a comped
-      // add-on takes its comped cents off the line with it instead of netting
-      // the comp a second time (compLine.js netCompLinesAgainstAddons). The
-      // bar and syrup portions name no add-on and stay on the line.
-      const centsByAddon = new Map();
-      for (const r of lines.rows) {
-        if (r.source_type !== 'addon' || r.source_id === null || r.source_id === undefined) continue;
-        const id = Number(r.source_id);
-        centsByAddon.set(id, (centsByAddon.get(id) || 0) + Math.max(0, Number(r.line_total) || 0));
+      // What this comp waives, by the identity each kind carries on the
+      // booking (compLine.js): the add-ons by catalog id off the invoice's
+      // addon lines (source_id is service_addons.id, as proposal_addons.addon_id
+      // is), the bar the drink plan added when the invoice carries a bar line,
+      // and the syrup flavors the plan charged for (a syrup line carries no
+      // ids, so they are read from the newest drink plan exactly as
+      // writeExtrasLineItems read them: the plan's selections less the
+      // self-provided ones; the writer keeps only the flavors the booking
+      // carries). The comp line's amount then follows those items' current
+      // price at every pricing, so a comped item stays free while it is on
+      // the booking and the comp leaves with it.
+      const addons = [...new Set(lines.rows
+        .filter((r) => r.source_type === 'addon' && r.source_id !== null && r.source_id !== undefined)
+        .map((r) => Number(r.source_id)))];
+      const bar = lines.rows.some((r) => r.description === 'Portable Bar Rental' || r.description === 'Additional Portable Bar');
+      let syrups = [];
+      if (lines.rows.some((r) => r.source_type === 'fee' && /^Hand-Crafted Syrups/.test(r.description || ''))) {
+        const plan = await client.query(
+          'SELECT selections FROM drink_plans WHERE proposal_id = $1 ORDER BY id DESC LIMIT 1',
+          [inv.proposal_id]
+        );
+        syrups = planSyrupIds(plan.rows[0] && plan.rows[0].selections);
       }
-      const compedAddons = [...centsByAddon].map(([addon_id, cents]) => ({ addon_id, cents }));
       // The waived cents leave as a comp line, never a bare subtraction: the
       // line lands in proposals.adjustments and the snapshot with the snapshot
       // total, total_price and any override lowered by the same cents, under
       // the proposals row lock (compLine.js). A row whose lines cannot be read,
-      // or a held booking, throws and rolls the void back with it.
+      // a snapshot that prices none of the comped items, or a held booking
+      // throws and rolls the void back with it.
       const { proposal: p } = await appendCompLine(client, {
-        proposalId: inv.proposal_id, compCents: foldedCents, invoiceNumber: inv.invoice_number, compedAddons,
+        proposalId: inv.proposal_id, compCents: foldedCents, invoiceNumber: inv.invoice_number,
+        comped: { addons, bar, syrups },
       });
       if (p) {
         const rec = reconcileProposalPaymentStatus({

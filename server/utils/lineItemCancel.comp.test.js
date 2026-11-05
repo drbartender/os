@@ -1,20 +1,20 @@
 // server/utils/lineItemCancel.comp.test.js
 'use strict';
-// Cancelling a comped add-on (audit round 2, H1) through the REAL cancel core
-// over a scripted transaction client, so it runs with no database. The
-// scenario the verify pass traced: a booking paid in full at $1,000, a $100
-// toast added through the drink plan and then comped (the comp line carries
-// the toast's cents under the toast's catalog id), then the toast removed
-// through cancel-line. Before this round the fold kept the comp line in both
-// legs, priced Before = 1100 - 100 = 1000 and After = 1000 - 100 = 900, and
-// applyLineItemCancel returned a 10000-cent overpayment the route then
-// refunded. Now the fold's After leg drops the toast's comped cents with the
-// toast: Before 1000, After 1000, overpayment 0, and the comp line leaves the
-// row and the snapshot. The DB-backed sibling, in lineItemCancel.test.js,
-// drives the same scenario against the shared dev DB.
+// Cancelling a comped item (audit PRC-01, rounds 2 and 3) through the REAL
+// cancel core over a scripted transaction client, so it runs with no
+// database. A booking paid in full at $1,000, items added through the drink
+// plan and comped (the comp line names them: the toast by catalog id, the bar,
+// the syrups by flavor), then one of them removed through cancel-line. The
+// fold's After leg prices the comp at the price of the comped items still
+// present (compLine.js), so Before and After agree, the total holds,
+// applyLineItemCancel reports no overpayment and the route refunds nothing.
+// Before round 2 the comp line was netted in both legs (After priced $100
+// lower, a 10000-cent refund of money never paid); before round 3 a comped
+// bar or syrup had no identity and did the same. The DB-backed sibling, in
+// lineItemCancel.test.js, drives the toast case against the shared dev DB.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { calculateProposal } = require('./pricingEngine');
+const { calculateProposal, calculateSyrupCost } = require('./pricingEngine');
 const { applyLineItemCancel } = require('./lineItemCancel');
 
 // A flat test package at $1,000 and a $1-a-guest test toast: engine fixtures
@@ -28,46 +28,47 @@ const TOAST = {
   id: 42, slug: 'test-toast', name: 'Test Toast', billing_type: 'per_guest', rate: 1, extra_hour_rate: null,
   applies_to: 'all', is_active: true, minimum_hours: null,
 };
+const cents = (n) => Math.round(Number(n) * 100);
 // The comp line as compLine.js writes it, spelled out here so this suite
 // reads the stored shape and not the writer.
-const COMP = {
-  type: 'discount', label: 'Drink Plan Extras comped (INV0042)', amount: 100, visible: true, source: 'comp',
-  comped_addons: [{ addon_id: 42, cents: 10000 }],
-};
+const comp = (amount, comped) => ({
+  type: 'discount', label: 'Drink Plan Extras comped (INV0042)', amount, visible: true, source: 'comp',
+  comped: { addons: [], bar: false, syrups: [], ...comped },
+});
 
-function engine({ addons, adjustments }) {
+function engine({ addons = [], adjustments = [], numBars = 0, syrups = [] }) {
   return calculateProposal({
-    pkg: PKG, guestCount: 100, durationHours: 4, numBars: 0, numBartenders: null,
-    addons, syrupSelections: [], adjustments, totalPriceOverride: null,
+    pkg: PKG, guestCount: 100, durationHours: 4, numBars, numBartenders: null,
+    addons, syrupSelections: syrups, adjustments, totalPriceOverride: null,
     gratuityRate: 0, tipJar: true, gratuityFloorRate: null,
   });
 }
 
-// The row as the comp left it: total 1000 (1100 less the comp), paid in full.
-function proposalRow() {
-  const snapshot = engine({ addons: [{ ...TOAST, quantity: 1 }], adjustments: [COMP] });
-  assert.equal(snapshot.total, 1000, 'fixture: 1000 + 100 toast - 100 comp');
+// The row as the comp left it: paid in full at the comped total.
+function proposalRow({ addons = [], numBars = 0, syrups = [], adjustments }) {
+  const snapshot = engine({ addons: addons.map((a) => ({ ...a, quantity: 1 })), adjustments, numBars, syrups });
   return {
-    id: 77, client_id: 5, package_id: 1, status: 'balance_paid', total_price: '1000.00', amount_paid: '1000.00',
-    external_paid: 0, total_price_override: null, guest_count: 100, event_duration_hours: '4.0', num_bars: 0,
-    num_bartenders: null, gratuity_rate: 0, tip_jar: true, gratuity_floor_rate: null, event_date: '2027-06-12',
-    event_start_time: '18:00', event_timezone: 'America/Chicago', adjustments: [COMP], pricing_snapshot: snapshot,
-    updated_at: new Date('2026-11-01T12:00:00Z'),
+    id: 77, client_id: 5, package_id: 1, status: 'balance_paid', total_price: snapshot.total.toFixed(2),
+    amount_paid: snapshot.total.toFixed(2), external_paid: 0, total_price_override: null, guest_count: 100,
+    event_duration_hours: '4.0', num_bars: numBars, num_bartenders: null, gratuity_rate: 0, tip_jar: true,
+    gratuity_floor_rate: null, event_date: '2027-06-12', event_start_time: '18:00', event_timezone: 'America/Chicago',
+    adjustments, pricing_snapshot: snapshot, updated_at: new Date('2026-11-01T12:00:00Z'),
   };
 }
 
-// The toast row as REPRICE_ADDON_SQL returns it (sa.* plus the pa_ aliases).
-const repriceToast = () => ({
-  ...TOAST, pa_quantity: '100', pa_line_total: '100.00', pa_rate: '1.00', pa_duration_hours: '4.0',
-  pa_settled_added_hours: 0, pa_min_contracted_hours: null,
+// An add-on row as REPRICE_ADDON_SQL returns it (sa.* plus the pa_ aliases),
+// priced at 100 guests.
+const repriceRow = (addon) => ({
+  ...addon, pa_quantity: '100', pa_line_total: (100 * addon.rate).toFixed(2), pa_rate: Number(addon.rate).toFixed(2),
+  pa_duration_hours: '4.0', pa_settled_added_hours: 0, pa_min_contracted_hours: null,
 });
 
 // A scripted transaction client for the cancel core's whole cascade. Matched
 // by statement shape, specific before generic; an unknown statement rejects,
 // so a new query in the core shows up here as a failure, never a silent pass.
-function scriptedClient(row) {
+function scriptedClient(row, { addons = [] } = {}) {
   const calls = [];
-  let toastDeleted = false;
+  let present = addons.map((a) => a.slug);
   let totalPrice = row.total_price;
   const answer = (v) => Promise.resolve(v);
   return {
@@ -78,15 +79,20 @@ function scriptedClient(row) {
       if (/FROM service_extensions/.test(sql)) return answer({ rows: [] });
       if (/FROM service_packages WHERE id = \$1/.test(sql)) return answer({ rows: [PKG] });
       if (/sa\.slug = \$2/.test(sql)) {
-        return answer({ rows: toastDeleted ? [] : [{
-          id: 9001, addon_id: 42, addon_name: 'Test Toast', billing_type: 'per_guest', quantity: '100',
-          slug: 'test-toast', minimum_hours: null,
-        }] });
+        const a = addons.find((x) => x.slug === params[1] && present.includes(x.slug));
+        return answer({ rows: a ? [{
+          id: 9000 + a.id, addon_id: a.id, addon_name: a.name, billing_type: a.billing_type, quantity: '100',
+          slug: a.slug, minimum_hours: null,
+        }] : [] });
       }
       if (/FROM proposal_addons pa/.test(sql) && /JOIN service_addons sa/.test(sql)) {
-        return answer({ rows: toastDeleted ? [] : [repriceToast()] });
+        return answer({ rows: addons.filter((a) => present.includes(a.slug)).map(repriceRow) });
       }
-      if (/DELETE FROM proposal_addons WHERE id = \$1/.test(sql)) { toastDeleted = true; return answer({ rowCount: 1 }); }
+      if (/DELETE FROM proposal_addons WHERE id = \$1/.test(sql)) {
+        present = present.filter((slug) => 9000 + addons.find((a) => a.slug === slug).id !== params[0]);
+        return answer({ rowCount: 1 });
+      }
+      if (/UPDATE proposals SET num_bars = \$1/.test(sql)) return answer({ rowCount: 1 });
       if (/FROM drink_plans/.test(sql)) return answer({ rows: [] });
       if (/UPDATE proposals/.test(sql) && /total_price = \$1/.test(sql)) {
         totalPrice = Number(params[0]).toFixed(2);
@@ -105,9 +111,17 @@ function scriptedClient(row) {
   };
 }
 
-test('cancelling the comped toast drops its comp with it: the total holds and nothing is overpaid', async () => {
-  const row = proposalRow();
-  const client = scriptedClient(row);
+function foldWrite(client) {
+  const fold = client.calls.find((c) => /UPDATE proposals/.test(c.sql) && /total_price = \$1/.test(c.sql));
+  assert.ok(fold, 'the fold wrote the row');
+  assert.match(fold.sql, /adjustments = COALESCE\(\$5::jsonb, adjustments\)/);
+  return { total: Number(fold.params[0]), lines: fold.params[4] === null ? null : JSON.parse(fold.params[4]) };
+}
+
+test('H1: cancelling the comped toast drops its comp with it: the total holds and nothing is overpaid', async () => {
+  const row = proposalRow({ addons: [TOAST], adjustments: [comp(100, { addons: [42] })] });
+  assert.equal(cents(row.total_price), 100000, 'fixture: 1000 + 100 toast - 100 comp');
+  const client = scriptedClient(row, { addons: [TOAST] });
   const result = await applyLineItemCancel(client, { proposalId: 77, target: 'addon:test-toast', actorId: 9 });
 
   assert.equal(result.oldTotal, 1000);
@@ -116,42 +130,54 @@ test('cancelling the comped toast drops its comp with it: the total holds and no
   assert.equal(result.removedLabel, 'Test Toast');
   assert.deepEqual(result.snapshot.adjustments, [], 'the comp left the snapshot with the toast');
   assert.equal(result.snapshot.addons.length, 0);
-
-  // The fold wrote the column with the comp gone, in the same UPDATE as the total.
-  const fold = client.calls.find((c) => /UPDATE proposals/.test(c.sql) && /total_price = \$1/.test(c.sql));
-  assert.ok(fold, 'the fold wrote the row');
-  assert.equal(Number(fold.params[0]), 1000);
-  assert.match(fold.sql, /adjustments = COALESCE\(\$5::jsonb, adjustments\)/);
-  assert.deepEqual(JSON.parse(fold.params[4]), []);
+  const wrote = foldWrite(client);
+  assert.equal(wrote.total, 1000);
+  assert.deepEqual(wrote.lines, [], 'the column follows, in the same UPDATE as the total');
   assert.deepEqual(row.adjustments, [], 'the in-memory row follows');
   assert.equal(result.newStatus, 'balance_paid', 'still paid in full at the unchanged total');
   assert.ok(!client.calls.some((c) => /UPDATE proposals SET status/.test(c.sql)), 'no status move');
 });
 
-test('a comp whose add-on stays is kept whole, and a mixed comp keeps its bar and syrup remainder', async () => {
-  // Two add-ons comped on one invoice with a $50 bar remainder; removing the
-  // toast leaves the other add-on's cents and the remainder on the line.
-  const OTHER = { ...TOAST, id: 43, slug: 'test-other', name: 'Test Other', rate: 0.5 };
-  const mixed = {
-    ...COMP, amount: 200, comped_addons: [{ addon_id: 42, cents: 10000 }, { addon_id: 43, cents: 5000 }],
-  };
-  const snapshot = engine({ addons: [{ ...TOAST, quantity: 1 }, { ...OTHER, quantity: 1 }], adjustments: [mixed] });
-  const row = { ...proposalRow(), adjustments: [mixed], pricing_snapshot: snapshot, total_price: String(snapshot.total), amount_paid: String(snapshot.total) };
-  const client = scriptedClient(row);
-  // The reprice answer must carry both rows, the toast gone after its delete.
-  let toastDeleted = false;
-  const base = client.query;
-  client.query = (sql, params) => {
-    if (/DELETE FROM proposal_addons WHERE id = \$1/.test(sql)) toastDeleted = true;
-    if (/FROM proposal_addons pa/.test(sql) && /JOIN service_addons sa/.test(sql)) {
-      client.calls.push({ sql, params });
-      const other = { ...repriceToast(), ...OTHER, pa_line_total: '50.00', pa_rate: '0.50' };
-      return Promise.resolve({ rows: toastDeleted ? [other] : [repriceToast(), other] });
-    }
-    return base(sql, params);
-  };
+test('a mixed comp (toast and bar) keeps the bar comped when the toast is cancelled', async () => {
+  const row = proposalRow({ addons: [TOAST], numBars: 1, adjustments: [comp(150, { addons: [42], bar: true })] });
+  assert.equal(cents(row.total_price), 100000, 'fixture: 1000 + 100 toast + 50 bar - 150 comp');
+  const client = scriptedClient(row, { addons: [TOAST] });
   const result = await applyLineItemCancel(client, { proposalId: 77, target: 'addon:test-toast', actorId: 9 });
-  assert.equal(result.newTotal, result.oldTotal, 'the toast and its comped cents leave together');
+  assert.equal(result.newTotal, result.oldTotal, 'the toast and its comped price leave together');
   assert.equal(result.overpaymentCents, 0);
-  assert.deepEqual(result.snapshot.adjustments, [{ ...mixed, amount: 100, comped_addons: [{ addon_id: 43, cents: 5000 }] }]);
+  assert.deepEqual(result.snapshot.adjustments, [comp(50, { addons: [42], bar: true })], 'the bar is still comped, at its fee');
+  assert.deepEqual(foldWrite(client).lines, [comp(50, { addons: [42], bar: true })]);
+});
+
+test('H2 bar: cancelling the comped bar drops its comp with it: the total holds and nothing is overpaid', async () => {
+  const row = proposalRow({ numBars: 1, adjustments: [comp(50, { bar: true })] });
+  assert.equal(cents(row.total_price), 100000, 'fixture: 1000 + 50 bar - 50 comp');
+  const client = scriptedClient(row);
+  const result = await applyLineItemCancel(client, { proposalId: 77, target: 'bar', actorId: 9 });
+  assert.equal(result.oldTotal, 1000);
+  assert.equal(result.newTotal, 1000, 'Before 1050 - 50 comp; After no bar, no comp');
+  assert.equal(result.overpaymentCents, 0, 'no 5000-cent refund');
+  assert.deepEqual(result.snapshot.adjustments, []);
+  assert.equal(result.snapshot.bar_rental.total, 0);
+  assert.ok(client.calls.some((c) => /UPDATE proposals SET num_bars = \$1/.test(c.sql) && c.params[0] === 0));
+  assert.deepEqual(foldWrite(client).lines, []);
+});
+
+test('H2 syrups: cancelling one of two comped flavors takes exactly that flavor\'s price off the comp: the total holds', async () => {
+  // At 100 guests two bottles a flavor: mint and ginger are 4 bottles, a
+  // 3-pack and a single, $105; ginger alone is 2 singles, $60.
+  const both = cents(calculateSyrupCost(['mint', 'ginger'], 100).total);
+  const gingerAlone = cents(calculateSyrupCost(['ginger'], 100).total);
+  assert.equal(both, 10500);
+  assert.equal(gingerAlone, 6000);
+  const row = proposalRow({ syrups: ['mint', 'ginger'], adjustments: [comp(both / 100, { syrups: ['mint', 'ginger'] })] });
+  assert.equal(cents(row.total_price), 100000, 'fixture: 1000 + 105 syrups - 105 comp');
+  const client = scriptedClient(row);
+  const result = await applyLineItemCancel(client, { proposalId: 77, target: 'syrup:mint', actorId: 9 });
+  assert.equal(result.newTotal, 1000, 'Before 1105 - 105; After 1060 - 60');
+  assert.equal(result.overpaymentCents, 0);
+  assert.deepEqual(result.snapshot.syrups.selections, ['ginger']);
+  assert.deepEqual(result.snapshot.adjustments, [comp(gingerAlone / 100, { syrups: ['mint', 'ginger'] })],
+    'the comp dropped by exactly mint\'s price in the set (105 - 60 = 45)');
+  assert.deepEqual(foldWrite(client).lines, result.snapshot.adjustments);
 });

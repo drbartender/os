@@ -14,10 +14,12 @@
 // `source` ('agreed_price' for a Set agreed price line or a converted
 // override, 'refund' for a refund line, 'comp' for a comped Drink Plan Extras
 // invoice, compLine.js), `refund_id` (proposal_refunds.id, only with source
-// 'refund') and `comped_addons` (only with source 'comp': the catalog add-ons
-// the comp waived, [{ addon_id, cents }], so the comp leaves with them,
-// compLine.js netCompLinesAgainstAddons). Protection keys on `source`, never
-// on a label an admin can edit.
+// 'refund') and `comped` (only with source 'comp': what the comp waived, by
+// the identity each kind carries on the booking, { addons: [catalog ids],
+// bar: boolean, syrups: [flavor ids] }; a comp line's amount is DERIVED from
+// those items' current price at every pricing, compLine.js applyCompLines,
+// so an edited amount is overwritten and is refused nowhere). Protection
+// keys on `source`, never on a label an admin can edit.
 
 const { GRATUITY_LABEL } = require('./gratuityLabels');
 
@@ -30,7 +32,8 @@ const MAX_ADJUSTMENT_DOLLARS = 1000000; // exclusive; the bound TOTAL_PRICE_OVER
 const MAX_ADJUSTMENT_LABEL = 255;      // invoice_line_items.description
 const MAX_REFUND_ID = 2147483647;      // proposal_refunds.id is SERIAL (int4)
 const MAX_ADDON_ID = 2147483647;       // service_addons.id is SERIAL (int4)
-const MAX_COMPED_ADDONS = 50;          // one extras invoice names far fewer add-ons
+const MAX_COMPED_ITEMS = 50;           // one extras invoice names far fewer add-ons or flavors
+const MAX_SYRUP_ID = 64;               // a syrup flavor id (client/src/data/syrups.js)
 
 const adjVisible = (adj) => !!(adj && adj.visible);
 const adjAmount = (adj) => Math.abs(Number(adj && adj.amount) || 0);
@@ -48,26 +51,33 @@ const isWholeCents = (dollars) => {
   return Number.isFinite(cents) && Math.abs(cents - Math.round(cents)) < 1e-6;
 };
 
-// The comped add-ons of a comp line as stored: [{ addon_id, cents }] with
-// integer ids inside int4, whole non-negative cents, no id twice, and the
-// cents summing to no more than the line (what is left is the comp's bar and
-// syrup portion, which names no add-on). null for any other shape.
-function readCompedAddons(raw, amountDollars) {
-  if (!Array.isArray(raw) || raw.length > MAX_COMPED_ADDONS) return null;
-  const out = [];
-  const seen = new Set();
-  let sum = 0;
-  for (const c of raw) {
-    if (!c || typeof c !== 'object') return null;
-    const { addon_id: id, cents } = c;
-    if (!Number.isInteger(id) || id < 1 || id > MAX_ADDON_ID || seen.has(id)) return null;
-    if (!Number.isInteger(cents) || cents < 0) return null;
-    seen.add(id);
-    sum += cents;
-    out.push({ addon_id: id, cents });
+// What a comp line comped, as stored: { addons: [catalog ids], bar: boolean,
+// syrups: [flavor ids] } with integer ids inside int4 and no id twice, flavor
+// ids as non-blank strings and no flavor twice; a missing list reads as
+// empty, a missing bar as false, any other key is dropped. null for any
+// other shape. The amount is checked nowhere here: it is derived.
+function readComped(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const addonsRaw = raw.addons === undefined || raw.addons === null ? [] : raw.addons;
+  const syrupsRaw = raw.syrups === undefined || raw.syrups === null ? [] : raw.syrups;
+  if (!Array.isArray(addonsRaw) || addonsRaw.length > MAX_COMPED_ITEMS) return null;
+  if (!Array.isArray(syrupsRaw) || syrupsRaw.length > MAX_COMPED_ITEMS) return null;
+  if (raw.bar !== undefined && raw.bar !== null && typeof raw.bar !== 'boolean') return null;
+  const addons = [];
+  const seenAddons = new Set();
+  for (const id of addonsRaw) {
+    if (!Number.isInteger(id) || id < 1 || id > MAX_ADDON_ID || seenAddons.has(id)) return null;
+    seenAddons.add(id);
+    addons.push(id);
   }
-  if (sum > Math.round(amountDollars * 100)) return null;
-  return out;
+  const syrups = [];
+  const seenSyrups = new Set();
+  for (const id of syrupsRaw) {
+    if (typeof id !== 'string' || id.trim() === '' || id.length > MAX_SYRUP_ID || seenSyrups.has(id)) return null;
+    seenSyrups.add(id);
+    syrups.push(id);
+  }
+  return { addons, bar: raw.bar === true, syrups };
 }
 
 function validateAdjustments(input) {
@@ -104,13 +114,13 @@ function validateAdjustments(input) {
       return fail('Only a refund line can name a refund.');
     }
     if (line.source === 'comp') {
-      if (adj.comped_addons !== undefined && adj.comped_addons !== null) {
-        const comped = readCompedAddons(adj.comped_addons, n);
-        if (comped === null) return fail('A comp line must name the add-ons it comps with whole cents each, within the line.');
-        line.comped_addons = comped;
+      if (adj.comped !== undefined && adj.comped !== null) {
+        const comped = readComped(adj.comped);
+        if (comped === null) return fail('A comp line must name what it comps: add-ons by id, the bar, syrups by flavor.');
+        line.comped = comped;
       }
-    } else if (adj.comped_addons !== undefined && adj.comped_addons !== null) {
-      return fail('Only a comp line can name comped add-ons.');
+    } else if (adj.comped !== undefined && adj.comped !== null) {
+      return fail('Only a comp line can name comped items.');
     }
     value.push(line);
   }

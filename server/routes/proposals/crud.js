@@ -24,7 +24,7 @@ const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
 const { resolvePatchHours } = require('./patchContractHours');
 const { assertPricingInputs } = require('./pricingInputs');
-const { netCompLinesAgainstAddons } = require('../../utils/compLine');
+const { calculateProposalWithComps } = require('../../utils/compLine');
 const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
@@ -444,11 +444,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       proposalId: id, old, bodyDuration: event_duration_hours,
     });
     const nb = num_bars ?? old.num_bars;
-    // The lines this save prices and writes: the stored or validated body
-    // lines, less what a comp line comped for an add-on this save removes
-    // (compLine.js): otherwise the comp nets a second time against a price
-    // that no longer carries the add-on, and the row reads as overpaid.
-    const adj = netCompLinesAgainstAddons(linesToWrite(normalizeAdjustmentsOrThrow(adjustments), old), strippedIds).lines;
+    // The stored or validated body lines; a comp line among them is priced at
+    // its items' price in THIS save (compLine.js), and `adj` below is what the
+    // save writes, so the column and the snapshot show the current comp.
+    const adjStored = linesToWrite(normalizeAdjustmentsOrThrow(adjustments), old);
     const tpo = overrideToWrite(req.body, old); // the stored value (guarded above), or null to clear
 
     // 2:00 AM insurance curfew (serviceCurfew.js). Checked against the times
@@ -562,13 +561,15 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         numBartenders: num_bartenders, addons,
       });
 
-    const snapshot = calculateProposal({
+    const priced = calculateProposalWithComps({
       pkg, guestCount: gc, durationHours: contractHours, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
-      adjustments: adj, totalPriceOverride: tpo,
+      adjustments: adjStored, totalPriceOverride: tpo,
       gratuityRate: resolvedGratuityRate, tipJar: persistTipJar,
       gratuityFloorRate: resolvedFloorRate,
     });
+    const snapshot = priced.snapshot;
+    const adj = priced.lines;
 
     // Flag a staffing-driven post-payment gratuity rise for a client notice (§7).
     const { origin: gratuityOrigin, notify: staffingNotify } = staffingGratuityOrigin({

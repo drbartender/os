@@ -11,9 +11,11 @@
 // `source` marks a line the system wrote ('agreed_price' for Set agreed price
 // and converted overrides, 'refund' for a refund line, 'comp' for a comped
 // Drink Plan Extras invoice); protection keys on it, never on a label an admin
-// can edit. `refund_id` rides only with 'refund'; `comped_addons` (the add-ons
-// a comp waived, [{ addon_id, cents }]) only with 'comp'. The editor sends a
-// line back with every marker it loaded (an edit spreads the line).
+// can edit. `refund_id` rides only with 'refund'; `comped` (what a comp
+// waived: { addons: [catalog ids], bar, syrups: [flavor ids] }) only with
+// 'comp', and a comp line's amount is derived from those items' current
+// price at every pricing, so the editor shows it read-only. The editor sends
+// a line back with every marker it loaded (an edit spreads the line).
 
 export const ADJUSTMENT_SOURCES = Object.freeze(['agreed_price', 'refund', 'comp']);
 export const AGREED_PRICE_LABEL = 'Agreed price adjustment';

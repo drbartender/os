@@ -151,6 +151,7 @@ after(async () => {
     await pool.query('DELETE FROM invoice_line_items WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id = ANY($1::int[]))', [ids]);
     await pool.query('DELETE FROM invoices WHERE proposal_id = ANY($1::int[])', [ids]);
     await pool.query('DELETE FROM proposal_addons WHERE proposal_id = ANY($1::int[])', [ids]);
+    await pool.query('DELETE FROM drink_plans WHERE proposal_id = ANY($1::int[])', [ids]);
     await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = ANY($1::int[])', [ids]);
     await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [ids]);
   }
@@ -175,44 +176,60 @@ test('comp syrup-only: voids, total_price unchanged, logs extras_comped', async 
   assert.equal(log[0].actor_type, 'admin');
 });
 
-test('comp mixed add-on/bar/syrup: removes the FULL extras from total_price as a comp line the snapshot carries too', async () => {
+test('comp mixed add-on/bar/syrup: the FULL extras leave total_price as a comp line naming the toast, the bar and the flavor, at their price', async () => {
   // A pay-now submit WITH add-ons runs calculateProposal, which folds add-ons,
   // bar AND new syrups into total_price (pricingEngine.js:366). So the whole
-  // invoice must come back out on comp, not just addon+bar. Seed total_price =
-  // base 1000 + the $310 extras that submit folded in, with the snapshot the
-  // fold wrote (its total agrees with total_price).
-  const snapshot = {
-    package: { name: 'Test Package', base_cost: 1000 },
-    breakdown: [{ label: 'Test Package (4hrs, 75 guests)', amount: 1000 }, { label: 'Champagne Toast (75 guests)', amount: 200 },
-      { label: 'Bar Rental (1 bar)', amount: 50 }, { label: 'Handcrafted Syrups (2 bottles)', amount: 60 }],
-    adjustments: [], addons: [{ id: 42, name: 'Champagne Toast', billing_type: 'per_guest', rate: 2.5, quantity: 75, line_total: 200 }],
-    gratuity: { total: 0 }, subtotal: 1310, total: 1310,
-  };
-  const p = await seedProposal({ totalPrice: 1310, snapshot, adjustments: [] });
-  const inv = await seedExtrasInvoice(p, { amountDue: 31000, lines: [
-    { description: 'Champagne Toast (75 guests)', line_total: 20000, source_type: 'addon', source_id: 42 },
-    { description: 'Portable Bar Rental', line_total: 5000, source_type: 'fee' },
-    { description: 'Hand-Crafted Syrups (2 bottles)', line_total: 6000, source_type: 'fee' },
+  // invoice must come back out on comp, not just addon+bar. The snapshot is
+  // the fold's own (the real catalog: The Core Reaction, the Champagne Toast,
+  // one bar, one syrup flavor at 75 guests), and the drink plan that charged
+  // for the flavor is seeded, since the comp reads the flavors off it.
+  const pkg = (await pool.query("SELECT * FROM service_packages WHERE slug = 'the-core-reaction'")).rows[0];
+  const toast = (await pool.query("SELECT * FROM service_addons WHERE slug = 'champagne-toast'")).rows[0];
+  assert.ok(pkg && toast, 'dev catalog is missing The Core Reaction or the Champagne Toast');
+  const snapshot = calculateProposal({
+    pkg, guestCount: 75, durationHours: 4, numBars: 1, numBartenders: null,
+    addons: [{ ...toast, quantity: 1 }], syrupSelections: ['mint'], adjustments: [], totalPriceOverride: null,
+    gratuityRate: 0, tipJar: true, gratuityFloorRate: null,
+  });
+  const toastCents = Math.round(snapshot.addons[0].line_total * 100);
+  const barCents = Math.round(snapshot.bar_rental.total * 100);
+  const syrupCents = Math.round(snapshot.syrups.total * 100);
+  const extrasCents = toastCents + barCents + syrupCents;
+  const p = await seedProposal({ totalPrice: snapshot.total, snapshot, adjustments: [], packageId: pkg.id, guestCount: 75, hours: 4, numBars: 1 });
+  await pool.query(
+    `INSERT INTO drink_plans (proposal_id, status, selections, client_name, client_email)
+     VALUES ($1, 'submitted', $2::jsonb, 'Void Test', $3)`,
+    [p, JSON.stringify({ signatureDrinks: [], addOns: {}, syrupSelections: { drink1: ['mint'] }, syrupSelfProvided: [] }),
+      `void-plan-${NONCE}@example.com`]
+  );
+  const inv = await seedExtrasInvoice(p, { amountDue: extrasCents, lines: [
+    { description: 'Champagne Toast (75 guests)', line_total: toastCents, source_type: 'addon', source_id: toast.id },
+    { description: 'Portable Bar Rental', line_total: barCents, source_type: 'fee' },
+    { description: 'Hand-Crafted Syrups (2 bottles)', line_total: syrupCents, source_type: 'fee' },
   ] });
   const r = await request('PATCH', `/api/invoices/${inv}`, { token: adminToken, body: { status: 'void' } });
   assert.equal(r.status, 200, r.raw);
   assert.equal(await statusOf(inv), 'void');
-  // Whole $310 (addon 200 + bar 50 + syrup 60) comes back out: 1310 -> 1000.
-  assert.equal(await totalPriceOf(p), 1000);
+  // The whole extras come back out: the total is the package alone.
+  assert.equal(Math.round((await totalPriceOf(p)) * 100), Math.round(snapshot.total * 100) - extrasCents);
   const log = await compLog(p);
-  assert.equal(Number(log[0].amt), 31000);
+  assert.equal(Number(log[0].amt), extrasCents);
 
   // The comp line (audit PRC-01): in the adjustments column and the snapshot,
-  // protected by source, visible to the client, the snapshot total moved by
-  // the same cents, the add-on row still on the snapshot, and the row's status
-  // restored (paid 100 against 1000 stays deposit_paid, so no move here).
+  // protected by source, visible to the client, naming what it comps, the
+  // snapshot total moved by the same cents, the add-on row still on the
+  // snapshot, and the row's status as it was (paid 100 stays deposit_paid).
   const row = await rowOf(p);
   const invoiceNumber = (await pool.query('SELECT invoice_number FROM invoices WHERE id = $1', [inv])).rows[0].invoice_number;
-  const line = { type: 'discount', label: `${COMP_LABEL} (${invoiceNumber})`, amount: 310, visible: true, source: 'comp' };
+  const line = {
+    type: 'discount', label: `${COMP_LABEL} (${invoiceNumber})`, amount: extrasCents / 100, visible: true, source: 'comp',
+    comped: { addons: [toast.id], bar: true, syrups: ['mint'] },
+  };
   assert.deepEqual(row.adjustments, [line]);
   assert.deepEqual(row.pricing_snapshot.adjustments, [line]);
-  assert.equal(Number(row.pricing_snapshot.total), 1000, 'snapshot.total equals total_price after the comp');
-  assert.deepEqual(row.pricing_snapshot.breakdown[4], { label: line.label, amount: -310, visible: true });
+  assert.equal(Math.round(Number(row.pricing_snapshot.total) * 100), Math.round((await totalPriceOf(p)) * 100), 'snapshot.total equals total_price after the comp');
+  const rows = row.pricing_snapshot.breakdown;
+  assert.deepEqual(rows[rows.length - 1], { label: line.label, amount: -line.amount, visible: true });
   assert.equal(row.pricing_snapshot.addons.length, 1, 'the comped add-on is still delivered');
   assert.equal(row.status, 'deposit_paid');
 });
@@ -229,8 +246,8 @@ test('comp on a legacy row (the {} snapshot the column defaults to): total_price
   const row = await rowOf(p);
   assert.equal(row.adjustments.length, 1);
   assert.equal(row.adjustments[0].source, 'comp');
-  assert.equal(row.adjustments[0].amount, 250);
-  assert.deepEqual(row.adjustments[0].comped_addons, [{ addon_id: 42, cents: 20000 }]);
+  assert.equal(row.adjustments[0].amount, 250, 'a legacy row takes the invoice\'s folded cents');
+  assert.deepEqual(row.adjustments[0].comped, { addons: [42], bar: true, syrups: [] });
   // {} is an object: it takes the line, and nothing else (no total, no
   // breakdown row) is written into a snapshot that never had them.
   assert.deepEqual(row.pricing_snapshot, { adjustments: row.adjustments });

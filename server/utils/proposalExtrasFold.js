@@ -39,13 +39,14 @@
  * adjustments pass BOTH legs AND persist the new num_bartenders/adjustments
  * column values themselves; the fold writes only total_price /
  * pricing_snapshot / total_price_override. The final snapshot always prices
- * at the After legs. One exception, since the 2026-11-05 audit (round 2, H1):
- * a comp line (compLine.js) names the add-ons it comped, and when the After
- * add-on set no longer holds one of them the fold takes that add-on's comped
- * cents off the line (the whole line when nothing is left) in the After leg
- * and writes proposals.adjustments too, so the comp leaves with the add-on
- * instead of being netted a second time against a price that no longer
- * carries it; `proposal.adjustments` is updated in memory with it.
+ * at the After legs. One exception, since the 2026-11-05 audit (PRC-01): a
+ * comp line (compLine.js) names the items it comped, and its amount is
+ * DERIVED from those items' price in the After leg (an item that left the
+ * booking contributes nothing; a line whose items all left is dropped), so
+ * the fold prices the After leg through calculateProposalWithComps and
+ * writes proposals.adjustments too when a comp line moved, with
+ * `proposal.adjustments` updated in memory; the Before leg keeps the stored
+ * line, it prices what the booking was.
  *
  * computeCatalogSnapshot (below) prices a booking's current inputs at today's
  * catalog through the same engine-args builder the fold uses; the override
@@ -62,7 +63,7 @@ const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { storedToInputCount } = require('./addonQuantity');
 const { readSnapshot } = require('./pricingSnapshot');
 const { contractDurationHours, contractHoursFromAggregate, SETTLED_EXTENSION_COLUMNS } = require('./contractDuration');
-const { netCompLinesAgainstAddons } = require('./compLine');
+const { calculateProposalWithComps } = require('./compLine');
 
 // SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
 // per-proposal stored quantity AND the event duration needed to convert it.
@@ -178,14 +179,7 @@ async function foldExtrasIntoProposal({
   }
 
   const adjBefore = adjustmentsBefore ?? (proposal.adjustments || []);
-  // The After lines, less what a comp line comped for an add-on the After set
-  // no longer holds (compLine.js). Before keeps the line as it stands: it
-  // prices what the booking was, comp included.
-  const afterNet = netCompLinesAgainstAddons(
-    adjustmentsAfter ?? (proposal.adjustments || []),
-    (addonsAfter || []).map((a) => a && a.id)
-  );
-  const adjAfter = afterNet.lines;
+  const adjAfterStored = adjustmentsAfter ?? (proposal.adjustments || []);
   const bartendersBefore = numBartendersBefore ?? proposal.num_bartenders;
   const bartendersAfter = numBartendersAfter ?? proposal.num_bartenders;
 
@@ -219,6 +213,14 @@ async function foldExtrasIntoProposal({
     numBars: numBarsBefore, numBartenders: bartendersBefore,
     addons: addonsBefore, syrups: syrupsBefore, adjustments: adjBefore,
   };
+  // The After lines: every comp line at the price of its comped items in the
+  // After leg (compLine.js). Before keeps the stored line: it prices what the
+  // booking was, comp included.
+  const afterNet = calculateProposalWithComps(legArgs({
+    numBars: numBarsAfter, numBartenders: bartendersAfter,
+    addons: addonsAfter, syrups: syrupsAfter, adjustments: adjAfterStored,
+  }));
+  const adjAfter = afterNet.lines;
   const afterLeg = {
     numBars: numBarsAfter, numBartenders: bartendersAfter,
     addons: addonsAfter, syrups: syrupsAfter, adjustments: adjAfter,
@@ -351,7 +353,7 @@ async function computeCatalogSnapshot(client, proposal, { adjustments } = {}) {
   const addons = await loadRepriceAddons(client, proposal.id);
   const contractHours = await contractDurationHours(client, proposal.id, proposal.event_duration_hours);
   const stored = readSnapshot(proposal.pricing_snapshot, { context: 'proposalExtrasFold.catalog' });
-  return calculateProposal(catalogEngineArgs({
+  const args = catalogEngineArgs({
     proposal,
     pkg,
     contractHours,
@@ -359,9 +361,10 @@ async function computeCatalogSnapshot(client, proposal, { adjustments } = {}) {
     numBartenders: proposal.num_bartenders,
     addons,
     syrups: stored?.syrups?.selections || [],
-    // A comp line for an add-on no longer on the booking is not a current input.
-    adjustments: netCompLinesAgainstAddons(adjustments ?? proposal.adjustments ?? [], addons.map((a) => a.id)).lines,
-  }));
+    adjustments: adjustments ?? proposal.adjustments ?? [],
+  });
+  // The comp lines at the price of their items in this compute (compLine.js).
+  return calculateProposalWithComps(args).snapshot;
 }
 
 module.exports = { foldExtrasIntoProposal, loadRepriceAddons, withRepriceQuantities, computeCatalogSnapshot };
