@@ -334,7 +334,7 @@ async function stripLabSelection(client, proposalId, mutate) {
  */
 async function reconcileOpenDeltaInvoices(client, proposal, snapshot) {
   const open = (await client.query(
-    `SELECT id, label, amount_due, amount_paid FROM invoices
+    `SELECT id, label, amount_due, amount_paid, folded_into_total FROM invoices
       WHERE proposal_id = $1 AND locked = false AND status IN ('sent', 'partially_paid')
         AND label = ANY($2)
       ORDER BY id DESC
@@ -385,12 +385,14 @@ async function reconcileOpenDeltaInvoices(client, proposal, snapshot) {
     // claim on it. Collapsing an unfolded one destroys an uncollected charge
     // that nothing re-mints, while the shopping list still buys the syrup.
     // Skipping before the headroom walk also keeps it out of that arithmetic.
+    // The stored fact (folded_into_total) decides; the lines only on a NULL row.
     if (inv.label === 'Drink Plan Extras') {
-      const lines = (await client.query(
+      const stored = inv.folded_into_total === true || inv.folded_into_total === false;
+      const lines = stored ? [] : (await client.query(
         'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
         [inv.id]
       )).rows;
-      if (!extrasLinesAreFolded(lines)) continue;
+      if (!extrasLinesAreFolded(lines, inv)) continue;
     }
     const due = Number(inv.amount_due);
     const paid = Number(inv.amount_paid) || 0;

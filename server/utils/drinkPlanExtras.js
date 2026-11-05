@@ -33,8 +33,10 @@
  * bills it with the event.
  *
  * Money in / money out is INTEGER CENTS. `lines` are the invoice's line items
- * (cents) and sum to totalCents; an 'addon' line or a bar line marks the
- * invoice as folded (invoiceExtras.extrasLinesAreFolded).
+ * (cents) and sum to totalCents. Whether the invoice's money folded into
+ * total_price is the submit path's fact, stored on the invoice
+ * (invoices.folded_into_total, round 2 H1); `folded` here only says which leg
+ * priced the figures, and the line shape classifies a row with no stored fact.
  */
 
 'use strict';

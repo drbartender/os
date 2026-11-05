@@ -180,6 +180,9 @@ async function main(args = process.argv.slice(2)) {
       if (race) {
         console.log(`Extras invoice appeared concurrently (id ${race.id}) — skipping create.`);
       } else {
+        // The fold fact (invoices.folded_into_total) is the submit's and is
+        // unknown this long after it: the column stays NULL and the readers
+        // classify the row by its line shape.
         const inv = await createDrinkPlanExtrasInvoice(
           { proposalId, drinkPlanId: primary.drinkPlanId, extrasAmountCents: primary.extrasCents },
           client

@@ -85,10 +85,11 @@ async function lockInvoice(invoiceId, dbClient) {
 // into amount_paid but never into total_price, so counting a locked, paid one
 // here shrank the Balance invoice by money the contract never contained
 // (audit PAY-01, 2026-11-05: a 6000-cent syrup pack cut a 90000 Balance to
-// 84000). A folded Drink Plan Extras invoice (an add-on or bar line, read
-// from its persisted lines) IS contract money and counts, as lab and
-// Additional Services invoices do. Lazy require: invoiceExtras requires this
-// module at load (createInvoice).
+// 84000). A folded Drink Plan Extras invoice (its stored fact,
+// invoices.folded_into_total, or on a row minted before the column an add-on
+// or bar line read from its persisted lines) IS contract money and counts, as
+// lab and Additional Services invoices do. Lazy require: invoiceExtras
+// requires this module at load (createInvoice).
 async function lockedContractTotal(lockedRows, client) {
   const { IN_TOTAL_PRICE_LABELS, extrasLinesAreFolded } = require('./invoiceExtras');
   let total = 0;
@@ -96,11 +97,12 @@ async function lockedContractTotal(lockedRows, client) {
     if (IN_TOTAL_PRICE_LABELS.includes(inv.label)) {
       total += Number(inv.amount_due);
     } else if (inv.label === 'Drink Plan Extras') {
-      const lines = await client.query(
+      const stored = inv.folded_into_total === true || inv.folded_into_total === false;
+      const lines = stored ? [] : (await client.query(
         'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
         [inv.id]
-      );
-      if (extrasLinesAreFolded(lines.rows)) total += Number(inv.amount_due);
+      )).rows;
+      if (extrasLinesAreFolded(lines, inv)) total += Number(inv.amount_due);
     }
   }
   return total;
@@ -137,7 +139,7 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
       [proposalId]
     ),
     client.query(
-      `SELECT id, label, amount_due FROM invoices
+      `SELECT id, label, amount_due, folded_into_total FROM invoices
         WHERE proposal_id = $1 AND locked = true AND status != 'void'
         ORDER BY id`,
       [proposalId]

@@ -2338,6 +2338,14 @@ CREATE INDEX IF NOT EXISTS idx_invoices_token ON invoices(token);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_invoice_number ON invoices(invoice_number);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 
+-- Whether a Drink Plan Extras invoice's money was folded into
+-- proposals.total_price (audit round 2 H1, 2026-11-05): stored provenance,
+-- written by the submit path that decides it (the transaction path true, the
+-- fast path false). NULL on a row minted before the column or by the
+-- out-of-order webhook mint; the readers classify such a row by its line shape
+-- until the submit stamps it.
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS folded_into_total BOOLEAN;
+
 DROP TRIGGER IF EXISTS update_invoices_updated_at ON invoices;
 CREATE TRIGGER update_invoices_updated_at BEFORE UPDATE ON invoices
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

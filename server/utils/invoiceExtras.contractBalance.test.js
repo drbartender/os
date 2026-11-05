@@ -111,8 +111,56 @@ test('the SQL twin carries the same partition: the bound skip list, the extras l
   assert.match(sql, /ANY\(\$2::text\[\]\)/);
   assert.match(sql, /oc\.status <> 'void'/);
   assert.match(sql, /oc\.amount_paid > 0/);
-  assert.match(sql, /oc\.label = 'Drink Plan Extras' AND EXISTS/);
+  assert.match(sql, /oc\.label = 'Drink Plan Extras' AND COALESCE\(oc\.folded_into_total, EXISTS/);
   assert.match(sql, /ocl\.source_type = 'addon'/);
   assert.match(sql, /'Portable Bar Rental', 'Additional Portable Bar'/);
   assert.match(sql, /COALESCE\(\(/);
+});
+
+// ── The stored fold fact (round 2, H1) ────────────────────────────────────────
+// A pay-now submit on the transaction path that adds no new add-on row (an
+// upgrade already sold, plus two new syrups) folds the syrups into total_price
+// yet mints an invoice with only a syrup line, which the line-shape heuristic
+// reads as unfolded: the helper then added the 6000 back on top of a total that
+// already held it (106000 - 16000 + 6000 = 96000 against 90000 owed). The
+// submit now stores the fact on the invoice (invoices.folded_into_total) and
+// the readers take it first, falling back to the line shape only on NULL.
+
+test('H1: a paid extras invoice stored as folded, with only a syrup line, is contract money: 106000 - 16000 -> 90000, lines unread', async () => {
+  const client = scriptedClient({
+    invoices: [{ id: 80, label: 'Drink Plan Extras', amount_paid: 6000, folded_into_total: true }],
+    linesByInvoice: { 80: SYRUP_LINES },
+  });
+  assert.equal(await contractBalanceDueCents({ id: 4242, total_price: '1060.00', amount_paid: '160.00' }, client), 90000);
+  assert.ok(!client.calls.some((c) => /FROM invoice_line_items/.test(c.text)), 'the stored fact answers; no lines read');
+});
+
+test('H1: a paid extras invoice stored as NOT folded (the fast path) is netted even when its lines look folded', async () => {
+  const client = scriptedClient({
+    invoices: [{ id: 81, label: 'Drink Plan Extras', amount_paid: 6000, folded_into_total: false }],
+    linesByInvoice: { 81: FOLDED_LINES },
+  });
+  assert.equal(await contractBalanceDueCents(ROW, client), 90000);
+  assert.ok(!client.calls.some((c) => /FROM invoice_line_items/.test(c.text)), 'the stored fact answers; no lines read');
+});
+
+test('H1: a row minted before the column (NULL) is classified by its line shape, as before', async () => {
+  const unfolded = scriptedClient({
+    invoices: [{ id: 82, label: 'Drink Plan Extras', amount_paid: 6000, folded_into_total: null }],
+    linesByInvoice: { 82: SYRUP_LINES },
+  });
+  assert.equal(await contractBalanceDueCents(ROW, unfolded), 90000);
+  const folded = scriptedClient({
+    invoices: [{ id: 83, label: 'Drink Plan Extras', amount_paid: 10500, folded_into_total: null }],
+    linesByInvoice: { 83: FOLDED_LINES },
+  });
+  assert.equal(await contractBalanceDueCents({ ...ROW, amount_paid: '205.00' }, folded), 79500);
+});
+
+test('H1: the netting read carries the stored fact and the SQL twin reads it first, the line shape only on NULL', async () => {
+  const client = scriptedClient();
+  await sumOffContractPaidCents(4242, client);
+  assert.match(client.calls[0].text, /folded_into_total/, 'the invoice read selects the stored fact');
+  const sql = offContractPaidCentsSql('p.id', '$2');
+  assert.match(sql, /oc\.label = 'Drink Plan Extras' AND COALESCE\(oc\.folded_into_total, EXISTS/);
 });

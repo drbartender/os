@@ -125,11 +125,13 @@ test('a pay-now submit with a per_hour server: the extras invoice equals the tot
   const deltaCents = Math.round(Number(row.total_price) * 100) - 100000;
   assert.equal(deltaCents, 10000, 'the fold added 4h x 25');
   const inv = (await pool.query(
-    `SELECT id, amount_due, status FROM invoices WHERE proposal_id = $1 AND label = 'Drink Plan Extras' AND status <> 'void'`,
+    `SELECT id, amount_due, status, folded_into_total FROM invoices WHERE proposal_id = $1 AND label = 'Drink Plan Extras' AND status <> 'void'`,
     [f.proposalId]
   )).rows;
   assert.equal(inv.length, 1);
   assert.equal(Number(inv[0].amount_due), deltaCents, 'invoiced at the contract delta, to the cent');
+  // Round 2 H1: the transaction path stores the fold fact on the row it minted.
+  assert.equal(inv[0].folded_into_total, true, 'the invoice records that its money is inside total_price');
   const lines = (await pool.query('SELECT description, quantity::float8 AS quantity, line_total, source_type, source_id FROM invoice_line_items WHERE invoice_id = $1', [inv[0].id])).rows;
   assert.equal(lines.length, 1);
   assert.equal(lines[0].source_type, 'addon');
