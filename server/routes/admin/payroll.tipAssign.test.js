@@ -33,7 +33,9 @@ const jwt = require('jsonwebtoken');
 
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
-const payrollRouter = require('./payroll');
+// The tip-placement routes live in payrollTips.js (split out of payroll.js on
+// 2026-11-05 when the assign guards took that file past the 1000-line ratchet).
+const payrollTipsRouter = require('./payrollTips');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payroll.tipAssign.test.js refuses to run against production');
@@ -50,7 +52,12 @@ const realQuery = pool.query;
 const realConnect = pool.connect;
 let tipRow;        // what the tip read answers with (null = no such tip)
 let onRoster;      // whether the recipient is an approved, non-dropped bartender on the shift
-let tipUpdates;    // every UPDATE tips the route issued
+let tipUpdates;    // every UPDATE tips SET shift_id the route issued
+let periodStatus;  // the event period's status
+let todayOpen;     // whether an open period contains today (the clawback's landing period)
+let clawLines;     // payout_events upserts the clawback wrote (params)
+let markerWrites;  // the clawback's final cumulative-marker writes (params)
+const TODAY_PERIOD = 55;
 
 function answer(text, params = []) {
   const sql = String(text).replace(/\s+/g, ' ').trim();
@@ -73,11 +80,44 @@ function answer(text, params = []) {
     return onRoster ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (sql.startsWith('SELECT status FROM pay_periods')) {
-    return { rows: [{ status: 'open' }], rowCount: 1 };
+    return { rows: [{ status: periodStatus }], rowCount: 1 };
+  }
+  // payrollProcessing.findOpenPeriodForDate: the open period containing today.
+  if (sql.startsWith('SELECT id, start_date, end_date, payday, status FROM pay_periods WHERE status = \'open\'')) {
+    return todayOpen
+      ? { rows: [{ id: TODAY_PERIOD, start_date: '2026-10-20', end_date: '2026-10-26', payday: '2026-10-27', status: 'open' }], rowCount: 1 }
+      : { rows: [], rowCount: 0 };
   }
   if (sql.startsWith('UPDATE tips SET shift_id')) {
     tipUpdates.push(params);
+    // The row as the statement leaves it: placed, marker reset.
+    tipRow = { ...tipRow, shift_id: SHIFT_ID, refunded_amount_cents: 0 };
     return { rows: [{ id: TIP_ID, shift_id: SHIFT_ID, amount_cents: 6000, tipped_at: '2026-10-17T23:30:00Z' }], rowCount: 1 };
+  }
+  // payrollClawback.clawbackTip, on its own client.
+  if (sql.startsWith('SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents')) {
+    return {
+      rows: [{
+        id: TIP_ID, shift_id: tipRow.shift_id, amount_cents: 6000, fee_cents: 204,
+        refunded_amount_cents: tipRow.refunded_amount_cents, target_user_id: BARTENDER_ID,
+        deferred_at: null, defer_kind: null,
+      }],
+      rowCount: 1,
+    };
+  }
+  if (sql.startsWith('SELECT sr.user_id, (u.cc_id LIKE')) {
+    return { rows: [{ user_id: BARTENDER_ID, is_stub: false }], rowCount: 1 };
+  }
+  if (sql.startsWith('INSERT INTO payouts')) {
+    return { rows: [{ id: 900 + Number(params[1]) }], rowCount: 1 };
+  }
+  if (sql.startsWith('INSERT INTO payout_events')) {
+    clawLines.push(params);
+    return { rows: [{ held_state: null }], rowCount: 1 };
+  }
+  if (sql.startsWith('UPDATE tips SET refunded_amount_cents')) {
+    markerWrites.push(params);
+    return { rows: [], rowCount: 1 };
   }
   // The accrual's proposal read (skipped as missing) and anything else.
   return { rows: [], rowCount: 0 };
@@ -121,7 +161,7 @@ before(async () => {
   });
   const app = express();
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api/admin', payrollRouter);
+  app.use('/api/admin', payrollTipsRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -137,8 +177,15 @@ before(async () => {
 
 beforeEach(() => {
   tipUpdates = [];
+  clawLines = [];
+  markerWrites = [];
   onRoster = true;
-  tipRow = { id: TIP_ID, shift_id: null, rolled_forward_at: null, refunded_amount_cents: 0, target_user_id: BARTENDER_ID };
+  periodStatus = 'open';
+  todayOpen = true;
+  tipRow = {
+    id: TIP_ID, shift_id: null, rolled_forward_at: null, refunded_amount_cents: 0,
+    amount_cents: 6000, target_user_id: BARTENDER_ID,
+  };
 });
 
 after(async () => {
@@ -152,7 +199,7 @@ const PATH = `/api/admin/payroll/tips/${TIP_ID}/assign`;
 for (const [why, patchRow] of [
   ['already placed on a shift', { shift_id: 4299 }],
   ['already rolled forward', { rolled_forward_at: '2026-10-21T15:00:00Z' }],
-  ['already refunded', { refunded_amount_cents: 600 }],
+  ['refunded in full', { refunded_amount_cents: 6000 }],
 ]) {
   test(`a tip ${why} is refused with 409 and never moved`, async () => {
     Object.assign(tipRow, patchRow);
@@ -182,6 +229,39 @@ test('an unplaced tip for a bartender on the shift is placed, and the UPDATE its
   const r = await patch(PATH, { shift_id: SHIFT_ID });
   assert.equal(r.status, 200, r.raw);
   assert.equal(r.body.tip.shift_id, SHIFT_ID);
+  assert.equal(r.body.refund_clawed_cents, 0);
   assert.equal(tipUpdates.length, 1, 'one UPDATE tips');
-  assert.deepEqual(tipUpdates[0], [SHIFT_ID, TIP_ID]);
+  assert.deepEqual(tipUpdates[0], [SHIFT_ID, TIP_ID, 0], 'the refunded marker it read rides along as a guard');
+  assert.deepEqual(clawLines, [], 'nothing to claw');
+});
+
+// M2 (verify pass): a tip partly refunded while it was unplaced is placed, and
+// the refunded cents are booked as a clawback at placement, so the bartender
+// receives the gross minus the refunded part instead of nothing forever.
+test('a tip partly refunded while unplaced is placed, its marker reset in the same statement, and the refund clawed net of fee', async () => {
+  tipRow.refunded_amount_cents = 600;
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.body.tip.shift_id, SHIFT_ID);
+  assert.deepEqual(tipUpdates[0], [SHIFT_ID, TIP_ID, 600], 'placed with the marker it read as the guard, reset to 0 by the statement');
+  // clawbackTip ran with the refunded total as the cumulative: delta 600, fee
+  // share round(204 x 600 / 6000) = 20, net 580 on the one bartender, in the
+  // open period containing today.
+  assert.equal(clawLines.length, 1, 'one clawback line');
+  assert.equal(clawLines[0][0], 900 + BARTENDER_ID, 'the bartender payout in today period');
+  assert.equal(clawLines[0][1], SHIFT_ID, 'keyed by the placed shift');
+  assert.equal(clawLines[0][2], -580, 'the refunded cents net of their fee share');
+  assert.deepEqual(markerWrites.map((p) => p[0]), [600], 'the cumulative marker is back at the refunded total');
+  assert.equal(r.body.refund_clawed_cents, 600);
+});
+
+test('a partly refunded tip on a frozen event is refused while today period is frozen too, and nothing moves', async () => {
+  tipRow.refunded_amount_cents = 600;
+  periodStatus = 'paid';
+  todayOpen = false;
+  const r = await patch(PATH, { shift_id: SHIFT_ID });
+  assert.equal(r.status, 409, r.raw);
+  assert.equal(r.body.code, 'PERIOD_NOT_OPEN');
+  assert.deepEqual(tipUpdates, []);
+  assert.deepEqual(clawLines, []);
 });

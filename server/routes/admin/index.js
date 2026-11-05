@@ -14,6 +14,7 @@ router.use('/', require('./settings'));
 router.use('/', require('./hiring'));
 router.use('/', require('./search'));
 router.use('/', require('./payroll'));
+router.use('/', require('./payrollTips'));
 router.use('/', require('./payrollDuty'));
 router.use('/', require('./payrollTax'));
 // Contest mounts BEFORE the review log so the literal /staff-reviews/leaderboard

@@ -9,6 +9,10 @@ const { AppError } = require('../../utils/errors');
 const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
 const payrollRouter = require('./payroll');
+// The tip-placement routes (unassigned-tips, tips/:id/assign, deferred-tips)
+// live in payrollTips.js since 2026-11-05; both mount under /api/admin here as
+// they do in routes/admin/index.js.
+const payrollTipsRouter = require('./payrollTips');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payroll.test.js refuses to run against production');
@@ -126,6 +130,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/admin', payrollRouter);
+  app.use('/api/admin', payrollTipsRouter);
   app.use((err, req, res, _next) => {
     if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message });
     res.status(500).json({ error: err.message });
