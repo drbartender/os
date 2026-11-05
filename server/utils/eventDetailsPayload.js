@@ -21,7 +21,8 @@
 // What loosening the read does NOT do: contact details stay gated. A viewer who
 // is not approved-and-active on the event gets `client.phone = null` and null
 // teammate phones, so a brand-new staffer cannot harvest the crew's numbers.
-// The WRITE path (acknowledge) is unchanged and still assigned-only.
+// The drink plan's admin_notes sit behind the same gate (audit 2026-11-05
+// AUTH-05). The WRITE path (acknowledge) is unchanged and still assigned-only.
 
 const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
@@ -330,7 +331,11 @@ async function buildEventDetailsPayload(req, proposalId) {
       // release so a staff tab opened before the deploy keeps today's card
       // until it reloads; dropping it is a follow-up on the ledger.
       consult_recap: dp.consult_recap ?? null,
-      admin_notes: dp.admin_notes,
+      // The admin's internal remarks about the client and the event ride the
+      // contact gate (audit 2026-11-05 AUTH-05): a browsing staffer decides
+      // whether to request the shift from the brief, not from these. The
+      // staff page renders nothing for a null (NotesCard).
+      admin_notes: canSeeContact ? dp.admin_notes : null,
       has_logo: dp.has_logo === true,
     } : null,
     shopping_list_status: dp ? dp.shopping_list_status : null,
