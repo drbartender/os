@@ -126,3 +126,34 @@ test('the admin Payment Link prices the row deposit: deposit_amount 500 -> a 500
   assert.equal(priceCalls[0].unit_amount, 50000);
   assert.match(priceCalls[0].product_data.name, /Event Deposit/);
 });
+
+// Audit PAY-09 (2026-11-05): a contract at or below the deposit is paid in
+// full in one payment; offering the deposit charged more than the contract and
+// left an overpayment to refund. create-intent refuses the deposit option for
+// such a row (the booking-window code, which the page already honours by
+// locking the full tablet); the full option stays.
+test('PAY-09: the deposit option is refused on a 75 total (409 FULL_PAYMENT_REQUIRED, no Stripe call)', async () => {
+  seed({ total_price: '75.00', pricing_snapshot: { total: 75, staffing: { actual: 1 }, staff_noun: 'bartender' } });
+  const r = await post(`/api/stripe/create-intent/${TOKEN}`, { payment_option: 'deposit' });
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'FULL_PAYMENT_REQUIRED');
+  assert.match(r.body.error, /not more than the deposit/);
+  assert.equal(createCalls.length, 0);
+});
+
+test('PAY-09: the full option on the same row charges the 7500 total', async () => {
+  seed({ total_price: '75.00', pricing_snapshot: { total: 75, staffing: { actual: 1 }, staff_noun: 'bartender' } });
+  const r = await post(`/api/stripe/create-intent/${TOKEN}`, { payment_option: 'full' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(createCalls[0].amount, 7500);
+  assert.equal(createCalls[0].metadata.payment_type, 'full');
+});
+
+test('PAY-09: the yardstick is the row deposit: a 300 total is refused against a 500 deposit and allowed against 100', async () => {
+  seed({ total_price: '300.00', pricing_snapshot: { total: 300, staffing: { actual: 1 }, staff_noun: 'bartender' }, deposit_amount: '500.00' });
+  assert.equal((await post(`/api/stripe/create-intent/${TOKEN}`, { payment_option: 'deposit' })).status, 409);
+  seed({ total_price: '300.00', pricing_snapshot: { total: 300, staffing: { actual: 1 }, staff_noun: 'bartender' }, deposit_amount: '100.00' });
+  const r = await post(`/api/stripe/create-intent/${TOKEN}`, { payment_option: 'deposit' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(createCalls[createCalls.length - 1].amount, 10000);
+});

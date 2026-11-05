@@ -86,6 +86,11 @@ export default function SignAndPaySection({
   gratuityMandated = false,
   // Booking-window policy (server-computed; never re-derived here)
   fullPaymentRequired,
+  // Why full payment is required (audit PAY-09): 'booking_window' (the event
+  // is within 14 days) or 'total_at_or_below_deposit' (the contract is not
+  // more than the deposit, so one payment covers it). An older payload with
+  // no reason reads as the booking window, which is what the flag meant then.
+  fullPaymentReason = null,
   lastMinuteHold,
   // Display
   totalPrice,
@@ -132,8 +137,9 @@ export default function SignAndPaySection({
   // card is charged.
   const fullRequiredNotice = fullPaymentRequired ? (
     <p className="payment-policy-note">
-      Because your event is within 2 weeks, the full event total is due now to confirm
-      your booking. This is the complete cost, there is no separate deposit and no balance later.
+      {fullPaymentReason === 'total_at_or_below_deposit'
+        ? 'Your event total is not more than the deposit, so it is paid in full in one payment. This is the complete cost, there is no separate deposit and no balance later.'
+        : 'Because your event is within 2 weeks, the full event total is due now to confirm your booking. This is the complete cost, there is no separate deposit and no balance later.'}
     </p>
   ) : null;
 
