@@ -6,19 +6,20 @@ process.env.SEND_NOTIFICATIONS = 'false';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'shifts-roster-reaccrue-test';
 
 /**
- * Every admin roster removal hands the proposal to payroll re-accrual, lock or
- * no lock (audit 2026-11-05, POUT-02).
+ * Every admin roster removal of ONE staffer hands the proposal to payroll
+ * re-accrual, lock or no lock (audit 2026-11-05, POUT-02); a cancel of the
+ * whole shift keeps its lock gate (L4 of the verify pass, see its tests).
  *
  * Remove (DELETE /shifts/requests/:id) learned this on prod 2026-08-24: a
  * no-show Removed after completion kept a quarter of the card tip because her
  * shift carried no out-of-area bonus, so the lock-release branch, the only
- * payroll hook on that path, never fired. Three sibling paths still gated the
+ * payroll hook on that path, never fired. Two sibling paths still gated the
  * same hook on `releaseOutOfAreaLock` returning true: the roster's unassign
- * (POST /shifts/:id/cancel-or-unassign mode=unassign), the cancel mode of the
- * same handler, and an approved request set to denied (PUT /shifts/requests/
- * :id). The cover-swap cascade gated it on a lock moving. On a completed event
- * the no-show's wage and tip line stays payable and the teammate's gratuity is
- * never re-split, exactly the Remove defect in a different button.
+ * (POST /shifts/:id/cancel-or-unassign mode=unassign) and an approved request
+ * set to denied (PUT /shifts/requests/:id). The cover-swap cascade gated it on
+ * a lock moving. On a completed event the no-show's wage and tip line stays
+ * payable and the teammate's gratuity is never re-split, exactly the Remove
+ * defect in a different button.
  *
  * The hook is reaccrueDutyForProposal (serviceArea.js): a full accrual on a
  * recently-completed proposal and one SELECT otherwise, fire-and-forget. As in
@@ -65,6 +66,7 @@ let server, baseUrl;
 const realQuery = pool.query;
 const realConnect = pool.connect;
 let lockUpdates = 0;
+let lockHeld = false; // when true the shift carries a lock, so a release moves it
 
 // One answer table for pool.query and the fake transaction client.
 function answer(text, params = []) {
@@ -113,10 +115,10 @@ function answer(text, params = []) {
     return { rows: [row(REQUEST_ID, STAFF_ID), row(CLAIM_REQUEST_ID, CLAIMER_ID)], rowCount: 2 };
   }
   // THE PREMISE: the shift carries no out-of-area lock, so neither the release
-  // nor the stamp moves anything.
+  // nor the stamp moves anything (lockHeld flips that for the cancel case).
   if (sql.startsWith('UPDATE shifts SET out_of_area_locked_at')) {
     lockUpdates += 1;
-    return { rows: [], rowCount: 0 };
+    return lockHeld ? { rows: [{ id: SHIFT_ID }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   return { rows: [], rowCount: 0 };
 }
@@ -174,7 +176,7 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
-beforeEach(() => { reaccrueCalls.length = 0; lockUpdates = 0; });
+beforeEach(() => { reaccrueCalls.length = 0; lockUpdates = 0; lockHeld = false; });
 
 after(async () => {
   pool.query = realQuery;
@@ -190,11 +192,22 @@ test('unassign with NO out-of-area lock still hands the proposal to re-accrual',
     'unassign must re-accrue regardless of the lock, exactly as Remove does');
 });
 
-test('cancel with NO out-of-area lock still hands the proposal to re-accrual', async () => {
+// A cancel keeps its lock gate (verify pass of POUT-02, L4): it empties the
+// roster, and on a completed shift the empty-roster sweep deletes every
+// zero-adjustment line, admin hour edits included, so a mistaken cancel then
+// re-approve would re-mint the lines from contract hours.
+test('cancel with NO out-of-area lock does NOT re-accrue', async () => {
   const r = await req('POST', `/api/shifts/${SHIFT_ID}/cancel-or-unassign`, { mode: 'cancel' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.ok(lockUpdates >= 1, 'premise: the lock release ran and released nothing');
-  assert.deepEqual(reaccrueCalls, [PROPOSAL_ID]);
+  assert.deepEqual(reaccrueCalls, [], 'a cancel without a lock move leaves payroll alone');
+});
+
+test('cancel that releases an out-of-area lock still re-derives the duty lines', async () => {
+  lockHeld = true;
+  const r = await req('POST', `/api/shifts/${SHIFT_ID}/cancel-or-unassign`, { mode: 'cancel' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(reaccrueCalls, [PROPOSAL_ID], 'the lock moved, so the bonus duty line must be re-derived');
 });
 
 test('denying an approved request with NO out-of-area lock still hands the proposal to re-accrual', async () => {
