@@ -7,6 +7,9 @@ const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { computeExtrasBreakdown } = require('../utils/drinkPlanExtras');
 const { contractBalanceDueCents } = require('../utils/invoiceExtras');
+const { CONTRACT_LABELS } = require('../utils/proposalMoneyShared');
+const { BOOKED_SET } = require('../utils/proposalStatus');
+const { proposalUrl } = require('../utils/urls');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -600,7 +603,9 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
 
   const invRes = await pool.query(`
     SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
-           p.id AS proposal_id, p.status AS proposal_status, p.event_type, p.event_type_custom, p.stripe_customer_id,
+           i.label,
+           p.id AS proposal_id, p.status AS proposal_status, p.token AS proposal_token,
+           p.event_type, p.event_type_custom, p.stripe_customer_id,
            p.event_timezone,
            c.email AS client_email, c.name AS client_name
     FROM invoices i
@@ -622,6 +627,24 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
     throw new ConflictError(
       'This event was cancelled, so this invoice can no longer be paid online. If you think this is a mistake, email contact@drbartender.com.',
       'EVENT_CANCELLED'
+    );
+  }
+
+  // A contract invoice (Deposit, Balance, Full Payment) is payable here only
+  // once the booking exists (audit PAY-02). The Deposit invoice is minted
+  // 'sent' the moment the proposal goes out, so this page took the deposit
+  // before the agreement was signed, and the webhook's invoice branch then
+  // credited it without converting the row. Before booking, the proposal page
+  // is the rail: it takes the deposit with the signature, the gratuity
+  // election and the autopay enrolment. A BOOKED row stays payable with no
+  // online signature on purpose: an admin-recorded deposit or a Payment Link
+  // deposit books a proposal with client_signed_at NULL, and the Balance
+  // invoice is the only online rail for its balance. 409, not 404: signing on
+  // the proposal page books the row and the same link then works.
+  if (CONTRACT_LABELS.includes(inv.label) && !BOOKED_SET.has(inv.proposal_status)) {
+    throw new ConflictError(
+      `This invoice is settled when you sign and book on your proposal page: ${proposalUrl(inv.proposal_token)}`,
+      'CONTRACT_INVOICE_NOT_BOOKED'
     );
   }
 

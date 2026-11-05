@@ -23,6 +23,8 @@ const { checkEmailDomain } = require('../../emailValidation');
 const { getEventTypeLabel } = require('../../../utils/eventTypes');
 const { PUBLIC_SITE_URL } = require('../../urls');
 const { NotFoundError } = require('../../errors');
+const { CONTRACT_LABELS } = require('../../proposalMoneyShared');
+const { BOOKED_SET } = require('../../proposalStatus');
 
 const key = 'invoice_send';
 const messageType = 'invoice_sent';
@@ -34,6 +36,7 @@ async function load(invoiceId) {
     `SELECT i.id, i.token, i.proposal_id, i.status,
             i.amount_due, i.amount_paid, i.invoice_number, i.label,
             p.event_type, p.event_type_custom,
+            p.status AS proposal_status, p.client_signed_at,
             c.id AS client_id, c.name AS client_name, c.email AS live_email,
             c.email_status
        FROM invoices i
@@ -62,6 +65,12 @@ function resolveFromRow(row) {
   }
   if (!email) warnings.push('No email on file for this client.');
   if (isPlaceholder) warnings.push('Address is a CC-import placeholder (.invalid); no real email exists for this client.');
+  // Audit PAY-02: a contract invoice of a proposal nobody has booked yet. Its
+  // pay link refuses the payment (CONTRACT_INVOICE_NOT_BOOKED) and points the
+  // client at the proposal page, where the deposit is taken with the signature.
+  if (CONTRACT_LABELS.includes(row.label) && !BOOKED_SET.has(row.proposal_status)) {
+    warnings.push(`This is the ${row.label} invoice of a proposal the client has not booked${row.client_signed_at ? '' : ' or signed'}. Its pay link refuses the payment and sends the client to the proposal page, where the deposit is taken with the signature. Send the proposal link instead.`);
+  }
 
   const emailReason = !email
     ? 'No email on file.'
