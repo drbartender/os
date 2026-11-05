@@ -14,8 +14,6 @@ import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 // it is shown but every control is off and nothing PATCHes.
 // - Client brief, read-only; a field the client edited since the draft is
 //   tinted and labeled "Edited by client" (no time: the plan stores none).
-//   A change to the bar picks prints "The bar picks changed since this draft."
-//   under it (spec 2026-10-19 section 17).
 // - Client image: Logo / Style ref / Ignore; under Logo, Placement and Backing,
 //   which are draft content, so they wait for the words and say so.
 // - Style reference, one at most: the planner image as Style ref, a held new
@@ -113,7 +111,6 @@ export default function BriefTab({
             </BriefField>
           ))}
         </div>
-        {live && live.bar_changed === true && <div className="md-brief-edited">The bar picks changed since this draft.</div>}
       </Section>
 
       <Section label="Client image">

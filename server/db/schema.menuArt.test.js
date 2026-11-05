@@ -137,15 +137,6 @@ test('menu_drafts: every column, one row per proposal, approved_planner_image_ke
   assert.match(ddl, /CREATE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts\n\s+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column\(\);/);
 });
 
-// Lane menu-bar-baseline: the Saved time moves only on a real edit. The trigger
-// is swapped in place, once, for one whose WHEN skips a write that changes only
-// plan_fingerprint or dismissed_plan_hash.
-test('menu_drafts: the updated_at trigger skips a fingerprint-only or dismissal-only write, swapped in place once', () => {
-  const ddl = menuArtDdl();
-  assert.match(ddl, /AND pg_get_triggerdef\(oid\) LIKE '%dismissed_plan_hash%'\n\s+\) THEN\n\s+CREATE OR REPLACE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts/);
-  assert.match(ddl, /WHEN \(\(to_jsonb\(OLD\) - ARRAY\['plan_fingerprint', 'dismissed_plan_hash', 'updated_at'\]\)\n\s+IS DISTINCT FROM \(to_jsonb\(NEW\) - ARRAY\['plan_fingerprint', 'dismissed_plan_hash', 'updated_at'\]\)\)/);
-});
-
 test('menu_draft_pieces: every column, the status/tone/provider CHECKs, NOT NULL provider and model, drawn_count, one row per piece', () => {
   const { columns, constraints } = parseBody(tableBody(menuArtDdl(), 'menu_draft_pieces'));
   assert.deepEqual(columns, COLUMNS.menu_draft_pieces);
@@ -265,7 +256,7 @@ dbTest('live: the two ledger indexes and the two updated_at triggers exist', asy
     `SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger
       WHERE tgrelid = 'menu_drafts'::regclass AND tgname = 'update_menu_drafts_updated_at' AND NOT tgisinternal`);
   assert.equal(trg.length, 1);
-  assert.match(trg[0].def, /BEFORE UPDATE ON (public\.)?menu_drafts FOR EACH ROW WHEN \(.*dismissed_plan_hash.*\) EXECUTE FUNCTION update_updated_at_column\(\)/);
+  assert.match(trg[0].def, /BEFORE UPDATE ON (public\.)?menu_drafts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column\(\)/);
 });
 
 dbTest('live: the constraints enforce, the defaults fill and the trigger fires (all rolled back)', async (t) => {
@@ -340,11 +331,4 @@ dbTest('live: the constraints enforce, the defaults fill and the trigger fires (
     await client.query('ROLLBACK').catch(() => {});
     client.release();
   }
-});
-
-dbTest('live: the menu_drafts updated_at trigger carries the WHEN clause after the block is applied', async () => {
-  const { rows } = await pool.query(
-    "SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'update_menu_drafts_updated_at' AND tgrelid = 'menu_drafts'::regclass");
-  assert.equal(rows.length, 1);
-  assert.match(rows[0].def, /WHEN .*to_jsonb\(old\.\*\).*dismissed_plan_hash.*IS DISTINCT FROM.*to_jsonb\(new\.\*\)/s);
 });

@@ -15,7 +15,6 @@
 const crypto = require('crypto');
 const { buildGeneratorInputFromConsult } = require('./shoppingList');
 const { recipeRowLabel } = require('./potionCatalog');
-const { buildAlsoAtBar } = require('./menuAlsoAtBar');
 const {
   matchKey, matchCustomNames, loadRecipeCandidates, plannerServiceStyle,
 } = require('./shoppingListGen');
@@ -112,17 +111,17 @@ async function loadEventPlan(proposalId, db = defaultDb()) {
 
 // Every catalog drink, active or not, keyed 'cocktail:<id>' / 'mocktail:<id>'
 // (the raw id: a lookup map, never an emitted key), plus the matcher's
-// candidate pool. Callers inside a transaction pass their client, never the
-// pool default (Update draft does), so the two queries run one after the
-// other: a pg client must never get a second query while one is running (pg 8
-// queues it with a deprecation warning; pg 9 refuses it).
+// candidate pool. The two queries run together; a pg Client queues them.
+// Callers inside a transaction must pass their client, never the pool default.
 async function loadCatalogMaps(db = defaultDb()) {
-  const result = await db.query(
-    `SELECT 'cocktail' AS kind, id, name, description, ingredients FROM cocktails
-     UNION ALL
-     SELECT 'mocktail' AS kind, id, name, description, ingredients FROM mocktails`
-  );
-  const candidates = await loadRecipeCandidates(db);
+  const [result, candidates] = await Promise.all([
+    db.query(
+      `SELECT 'cocktail' AS kind, id, name, description, ingredients FROM cocktails
+       UNION ALL
+       SELECT 'mocktail' AS kind, id, name, description, ingredients FROM mocktails`
+    ),
+    loadRecipeCandidates(db),
+  ]);
   const catalogById = new Map();
   for (const row of result.rows) catalogById.set(`${row.kind}:${row.id}`, row);
   return { catalogById, candidates };
@@ -317,56 +316,8 @@ function normalizeBriefField(value) {
   return asText(value).replace(/\s+/g, ' ').trim();
 }
 
-// The bar part of the fingerprint is what the menu prints, line by line (spec
-// 2026-10-19 section 17). The words step stores keyedBarLines(normalized.bar)
-// as content.also_at_bar: each line carries the builder's label as its key
-// beside a label the owner may rename, and the owner adds brand names to the
-// lines by hand. bar_lines keeps one baseline per line, keyed by the builder's
-// label (the stored line's key, never its renameable label): that label to the
-// hash of the text the picks build. Update draft then refreshes only the lines
-// whose picks moved. The order the client picked in, a pick that prints
-// nothing (None, Other, a stale key family) and no bar at all are no change.
-// bar_hash is one hash over bar_lines (any key order), for fingerprintHash, so
-// a dismissal covers the bar it saw.
-function barLinesOf(bar) {
-  const out = {};
-  for (const line of buildAlsoAtBar(bar)) out[line.label] = sha256(asText(line.text));
-  return out;
-}
-function hashBarLines(barLines) {
-  const b = isObject(barLines) ? barLines : {};
-  return sha256(JSON.stringify(Object.keys(b).sort().map((k) => [k, asText(b[k])])));
-}
-
-// The baseline for a draft fingerprinted before bar_lines existed (lane
-// menu-bar-baseline): today's picks, except where its stored lines prove the
-// bar moved since Generate. Lines are written only by the words step and keep
-// their count and order (a PATCH edits words, never lines), so once every
-// stored line carries a key (keyBarLines), a stored key the picks no longer
-// build reads as gone and a built label with no stored line reads as new: the
-// card flags them and Update draft repairs them. A change inside a line (Red
-// for White) cannot be told from the owner's hand edit, so it is taken as the
-// baseline (spec section 17). With a line no key could be found for, the count
-// still proves a change when the stored list and today's picks differ in
-// length, or a keyed category is gone: then every built category no keyed line
-// stands for reads as new, and Update draft replaces the unkeyed lines with
-// built ones. Otherwise, or with no list at all, it takes today's picks.
-function legacyBarBaseline(storedLines, normalized) {
-  const current = barLinesOf((normalized || {}).bar);
-  const today = { bar_lines: current, bar_hash: hashBarLines(current) };
-  if (!Array.isArray(storedLines)) return today;
-  const hasOwnKey = (key) => Object.prototype.hasOwnProperty.call(current, key);
-  const keys = storedLines.map((l) => (isObject(l) && typeof l.key === 'string' ? l.key : ''));
-  const keyed = keys.filter(Boolean);
-  if (keyed.length < keys.length && keys.length === Object.keys(current).length && keyed.every(hasOwnKey)) return today;
-  const barLines = {};
-  for (const key of keyed) barLines[key] = hasOwnKey(key) ? current[key] : sha256(`gone:${key}`);
-  return { bar_lines: barLines, bar_hash: hashBarLines(barLines) };
-}
-
 function buildFingerprint(normalized) {
   const n = normalized || {};
-  const barLines = barLinesOf(n.bar);
   const brief = n.brief || {};
   const theme = normalizeBriefField(brief.theme);
   const naming = normalizeBriefField(brief.naming);
@@ -376,27 +327,20 @@ function buildFingerprint(normalized) {
     brief_hash: sha256(JSON.stringify([theme, naming, notes])),
     brief_fields: { theme: sha256(theme), naming: sha256(naming), notes: sha256(notes) },
     planner_image_key: n.plannerImageKey || null,
-    bar_lines: barLines,
-    bar_hash: hashBarLines(barLines),
   };
 }
 
 // One hash over a fingerprint (the dismissed_plan_hash value, spec 9), built
 // from a canonical array so a fingerprint read back from JSONB (which reorders
 // object keys) hashes the same as a freshly built one. brief_hash already
-// covers the three brief fields. bar_hash joins the array only when the
-// fingerprint has one, so a fingerprint stored before it existed hashes
-// exactly as it always did and an old dismissed_plan_hash still matches it
-// (computeDiff relies on this).
+// covers the three brief fields.
 function fingerprintHash(fingerprint) {
   const f = fingerprint || {};
-  const parts = [
+  return sha256(JSON.stringify([
     asArray(f.drink_keys).map(String).sort(),
     f.brief_hash || null,
     f.planner_image_key || null,
-  ];
-  if (typeof f.bar_hash === 'string' && f.bar_hash) parts.push(f.bar_hash);
-  return sha256(JSON.stringify(parts));
+  ]));
 }
 
 module.exports = {
@@ -404,9 +348,7 @@ module.exports = {
   loadCatalogMaps,
   normalizePlan,
   buildFingerprint,
-  legacyBarBaseline,
   fingerprintHash,
-  hashBarLines,
   drinkKey,
   slugifyTyped,
   plannerImageKeyOf,
