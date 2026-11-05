@@ -12,6 +12,7 @@
 // proven mechanism.
 const { visibleAddonsFor } = require('../../utils/proposalRules');
 const { storedToInputCount } = require('../../utils/addonQuantity');
+const { overrideOnlyBartenders } = require('../../utils/changeRequests');
 
 // Everything priceProposedState reads off the proposal. A column missed here
 // prices as undefined and silently drops a discount, the syrups, or the
@@ -55,27 +56,12 @@ function computeOwnHidden({ catalog, currentPkg, guestCount, currentAddonIds, se
     .filter(Boolean);
 }
 
-/** num_bartenders holds persisted DERIVATIONS as well as true overrides (crud
- *  writes staffing.actual back into the column after every admin edit).
- *  Carrying a derivation onto a package with a different ratio, or a STALE
- *  derivation from an edited event, prices phantom over-ratio bartenders that
- *  quote and commit AGREE on, so the acknowledged-total gate cannot catch it.
- *  Strip the column ONLY when the stored snapshot proves it is a derivation
- *  (staffing.actual === staffing.required === the column). Anything unprovable
- *  keeps carrying: that is the pre-existing behavior, and the safe direction
- *  for a hand-set crew. */
-function overrideOnlyBartenders(proposal) {
-  const nb = proposal.num_bartenders;
-  if (nb === null || nb === undefined) return null;
-  const snap = proposal.pricing_snapshot;
-  const st = snap && typeof snap === 'object' ? snap.staffing : null;
-  if (st && st.actual !== undefined && st.required !== undefined
-      && Number(st.actual) === Number(st.required)
-      && Number(nb) === Number(st.actual)) {
-    return null;
-  }
-  return nb;
-}
+/** overrideOnlyBartenders (the stored crew kept only when it is a real
+ *  override, never a persisted derivation) now lives beside priceProposedState
+ *  in utils/changeRequests.js, which applies it whenever a request carries no
+ *  num_bartenders, so the quote, the switch and the change-request preview
+ *  price the crew by one rule (audit PRC-02). Re-exported here so the quote
+ *  and the switch keep their explicit pass and their import. */
 
 /** Integer ids only: the body is public input that selects priced rows. */
 function safeIds(raw) {
