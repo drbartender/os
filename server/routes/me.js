@@ -255,10 +255,16 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
   // The preferred payroll method must be payable: a method whose handle or
   // bank data is missing leaves the admin's Pay panel with nothing to pay to
   // (POUT-10; direct_deposit used to be accepted here with no bank numbers on
-  // file). Checked only when the method CHANGES, against the row as it will
-  // be after this write, so a form that resends the stored value never blocks
-  // a handle edit and a handle saved in the same request counts.
-  if (updates.preferred_payment_method) {
+  // file). Evaluated against the row as it will be after this write, cleared
+  // handles included, whenever the method or a handle is in the request. A
+  // NEW election that is not payable is a 400; a stored or resent method that
+  // this very request makes unpayable (a venmo handle cleared beside a resent
+  // venmo) is cleared to NULL and reported, the staff portal PATCH's rule,
+  // never silently stored (L1 of the verify pass).
+  let preferredCleared = false;
+  const touchesMethod = 'preferred_payment_method' in updates;
+  const touchesHandle = ['venmo_handle', 'cashapp_handle', 'paypal_url'].some((k) => k in updates);
+  if (touchesMethod || touchesHandle) {
     const cur = await pool.query(
       `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
               routing_number, account_number
@@ -266,9 +272,13 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
       [req.user.id]
     );
     const row = cur.rows[0] || {};
-    const method = updates.preferred_payment_method;
-    if (method !== row.preferred_payment_method && !isPreferredEligible(method, { ...row, ...updates })) {
-      throw new ValidationError({ preferred_payment_method: `Add a ${method} handle before setting it as preferred.` });
+    const method = touchesMethod ? updates.preferred_payment_method : (row.preferred_payment_method || null);
+    if (method && !isPreferredEligible(method, { ...row, ...updates })) {
+      if (method !== row.preferred_payment_method) {
+        throw new ValidationError({ preferred_payment_method: `Add a ${method} handle before setting it as preferred.` });
+      }
+      updates.preferred_payment_method = null;
+      preferredCleared = true;
     }
   }
 
@@ -304,7 +314,7 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
     `, [req.user.id, ...cols.map(c => updates[c] || null)]);
   }
 
-  res.json({ ok: true });
+  res.json({ ok: true, preferred_cleared: preferredCleared });
 }));
 
 // Paginated list of recent successful tips for the current bartender (amount, source, created_at).
