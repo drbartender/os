@@ -60,3 +60,33 @@ test('confirmed proposal STAYS confirmed when a guest bump outruns amount_paid (
   // Additional Services invoice rather than by reverting the status.
   assert.equal(res.body.status, 'confirmed');
 });
+
+// Round 3 M1 (2026-11-05): the PATCH ladder nets the off-contract money. The
+// M2 shape, a deposit_paid row holding 16000 of which 6000 is a paid
+// syrup-only Drink Plan Extras invoice against a 15000 contract, stayed
+// deposit_paid on the webhook and now stays deposit_paid on an admin save too.
+test('M1: a save on a row holding paid syrup money beside the deposit stays deposit_paid (the ladder nets the term)', async () => {
+  const c = await pool.query('INSERT INTO clients (name, email) VALUES ($1,$2) RETURNING id', ['CR Netted', `cr-demote-net-${NONCE}@example.com`]);
+  const pr = await pool.query(
+    `INSERT INTO proposals (client_id, status, package_id, guest_count, event_duration_hours, num_bars, total_price, amount_paid, pricing_snapshot)
+     VALUES ($1,'deposit_paid',$2,100,4,1,4800,4850,'{}') RETURNING id`, [c.rows[0].id, pkgId]);
+  const inv = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked, folded_into_total)
+     VALUES ($1, $2, 'Drink Plan Extras', 6000, 6000, 'paid', true, false) RETURNING id`,
+    [pr.rows[0].id, `INV${crypto.randomBytes(5).toString('hex')}`]
+  );
+  try {
+    // A same-count save: the engine prices 100 guests again, and the flag is
+    // judged against the total it commits. 4850 paid, 60 of it syrup money.
+    const res = await req('PATCH', `/api/proposals/${pr.rows[0].id}`, adminToken, { guest_count: 100 });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const row = (await pool.query('SELECT status, total_price FROM proposals WHERE id = $1', [pr.rows[0].id])).rows[0];
+    const totalCents = Math.round(Number(row.total_price) * 100);
+    assert.ok(485000 >= totalCents, 'premise: the raw read (4850 >= total) would promote; re-seed if the package price moved');
+    assert.equal(row.status, 479000 >= totalCents ? 'balance_paid' : 'deposit_paid', 'the flag follows 4790 of contract money, not 4850');
+    assert.equal(res.body.status, row.status);
+  } finally {
+    await pool.query('DELETE FROM invoice_line_items WHERE invoice_id = $1', [inv.rows[0].id]);
+    await pool.query('DELETE FROM invoices WHERE id = $1', [inv.rows[0].id]);
+  }
+});

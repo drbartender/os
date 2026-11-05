@@ -619,8 +619,15 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // also demoted 'confirmed' here; we keep the shared reconcile helper's rule —
     // confirmed/completed are lifecycle states, left untouched — and collect any
     // price delta via createAdditionalInvoiceIfNeeded (post-commit) instead.
+    // Net of the off-contract money (round 3 M1, money law 8 with laws 5 and
+    // 7): the term is read on the held client, under the row lock, and handed
+    // to the ladder as its every other caller does, so a save on a row holding
+    // a paid syrup-only invoice beside the deposit no longer promotes it.
+    const { offContractPaidCents: readOffContractPaidCents } = require('../../utils/refundHelpers');
+    const offContractCentsForLadder = await readOffContractPaidCents(id, dbClient);
     const rec = reconcileProposalPaymentStatus({
       status: old.status, amountPaid: old.amount_paid, totalPrice: snapshot.total,
+      offContractPaidCents: offContractCentsForLadder,
     });
     if (rec.changed) {
       const reconciled = await dbClient.query(
@@ -643,12 +650,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     }
     if (rec.overpaid) {
       // Net out money that is in amount_paid but never in total_price (a paid
-      // Drink Plan Extras or manual invoice) before calling it an overpayment.
-      // reconcileProposalPaymentStatus is pure and its STATUS decision stays on
-      // the raw columns, deliberately: a proposal whose paid figure covers the
-      // total is fully paid whatever the money was for. Only the "we are
-      // holding too much" claim needs the netting, and it is the same figure
-      // the panel chip and the cancel-line preview report (spec 2026-09-15).
+      // Drink Plan Extras or manual invoice) before calling it an overpayment:
+      // the same figure the ladder above was handed (round 3 M1), the panel
+      // chip and the cancel-line preview report (spec 2026-09-15).
       const { offContractPaidCents } = require('../../utils/refundHelpers');
       const offContract = await offContractPaidCents(id, dbClient);
       const nettedOverpaidCents = Math.max(0, rec.overpaidCents - offContract);

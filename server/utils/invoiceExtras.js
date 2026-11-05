@@ -582,10 +582,12 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
       );
       const p = prop.rows[0];
       if (p) {
+        // Net of the off-contract money (round 3 M1), read on the held client.
         const rec = reconcileProposalPaymentStatus({
           status: p.status,
           amountPaid: p.amount_paid,
           totalPrice: p.total_price,
+          offContractPaidCents: await sumOffContractPaidCents(inv.proposal_id, client),
         });
         if (rec.changed) {
           await client.query('UPDATE proposals SET status = $1 WHERE id = $2', [rec.status, inv.proposal_id]);
