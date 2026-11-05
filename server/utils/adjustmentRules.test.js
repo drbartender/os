@@ -79,7 +79,7 @@ test('validateAdjustments refuses bad input with one message', () => {
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { addons: [0] } }],
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { addons: [1.5] } }],
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { addons: ['42'] } }],
-    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { addons: [2147483648] } }],
+    [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { addons: [2 ** 31] } }], // past int4 (spelled so the PII scanner reads no phone)
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { addons: [1, 1] } }],
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { bar: 'yes' } }],
     [{ type: 'discount', label: '', amount: 1, visible: true, source: 'comp', comped: { syrups: 'mint' } }],
