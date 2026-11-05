@@ -36,18 +36,30 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 // The two key shapes the admin uploaders write at the bucket root for these
 // public images (admin/blog.js, emailMarketing/designer.js and the archived
 // importer): `blog_<uuid v4>` and `email_<uuid v4>`, each followed by the
-// uploaded file's own extension, which may be absent or oddly cased. The root
-// also holds the staff headshots (`<userId>_headshot_<uuid>`) and other
-// private objects, and this route is unauthenticated, so any other key is a
-// 404 before any signing (audit 2026-11-05 AUTH-06). Nothing is moved: the
-// stored cover_image_url values keep their basenames. r2Proxy's assertKeyUnder
-// is a single-prefix check (and pulls in sharp), so the shape is pinned here.
-const PUBLIC_IMAGE_KEY_RE = /^(?:blog|email)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:$|\.[A-Za-z0-9]{1,16}$)/;
+// uploaded file's extension. The prefix and the lowercase uuid are the
+// security: no other writer produces them, the root also holds the staff
+// headshots (`<userId>_headshot_<uuid>`) and other private objects, and this
+// route is unauthenticated, so any other key is a 404 before any signing
+// (audit 2026-11-05 AUTH-06). The extension is the loose part: admin/blog.js
+// stored path.extname(file.name) unsanitized until 2026-11-05, so a stored
+// cover may carry any shape, and the reader accepts up to 32 characters after
+// the dot that are not a slash, a backslash, whitespace or a parent step.
+// Nothing is moved: the stored cover_image_url values keep their basenames.
+// r2Proxy's assertKeyUnder is a single-prefix check (and pulls in sharp), so
+// the shape is pinned here.
+const PUBLIC_IMAGE_KEY_RE = /^(?:blog|email)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(.*)$/;
+function isPublicImageKey(key) {
+  const m = PUBLIC_IMAGE_KEY_RE.exec(key);
+  if (!m) return false;
+  const tail = m[1];
+  if (tail === '') return true;
+  return tail.startsWith('.') && tail.length <= 33 && !/[/\\\s]/.test(tail) && !tail.includes('..');
+}
 
 // Serve blog images via R2 signed URL
 router.get('/images/:filename', publicReadLimiter, asyncHandler(async (req, res) => {
   const filename = path.basename(req.params.filename);
-  if (!PUBLIC_IMAGE_KEY_RE.test(filename)) throw new NotFoundError('Image not found');
+  if (!isPublicImageKey(filename)) throw new NotFoundError('Image not found');
   let url;
   try {
     url = await getSignedUrl(filename);

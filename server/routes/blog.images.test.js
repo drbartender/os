@@ -100,6 +100,29 @@ test('every other root object is refused the same way', async () => {
   assert.deepEqual(fetched, []);
 });
 
+test('a stored key with an exotic extension still passes: the prefix and uuid are the security', async () => {
+  // admin/blog.js stored path.extname(file.name) unsanitized until the
+  // writer fix, so a cover's basename may carry any extension shape.
+  const keys = [`blog_${uuid()}.final-v2`, `blog_${uuid()}.`, `blog_${uuid()}.${'x'.repeat(27)}`, `blog_${uuid()}.${'y'.repeat(32)}`, `email_${uuid()}.PNG`];
+  for (const key of keys) {
+    signedCalls.length = 0; fetched.length = 0;
+    const res = await get(`/api/blog/images/${encodeURIComponent(key)}`);
+    assert.equal(res.status, 200, `${key} must pass, got ${res.status}`);
+    assert.deepEqual(signedCalls, [key]);
+  }
+});
+
+test('an extension tail with a slash, backslash, whitespace, a parent step or over 32 characters is refused', async () => {
+  signedCalls.length = 0; fetched.length = 0;
+  const keys = [`blog_${uuid()}.jpg\\x`, `blog_${uuid()}.a\tb`, `blog_${uuid()}.jpg (1)`, `blog_${uuid()}.jpg\n`, `blog_${uuid()}..jpg`, `blog_${uuid()}.a..b`, `blog_${uuid()}.${'z'.repeat(33)}`];
+  for (const key of keys) {
+    const res = await get(`/api/blog/images/${encodeURIComponent(key)}`);
+    assert.equal(res.status, 404, `${JSON.stringify(key)} must be refused, got ${res.status}`);
+  }
+  assert.deepEqual(signedCalls, []);
+  assert.deepEqual(fetched, []);
+});
+
 test('a blog image and an email-designer image pass through to the signed URL and are proxied', async () => {
   for (const key of [`blog_${uuid()}.png`, `email_${uuid()}.jpg`, `blog_${uuid()}.JPEG`, `blog_${uuid()}`]) {
     signedCalls.length = 0; fetched.length = 0;
