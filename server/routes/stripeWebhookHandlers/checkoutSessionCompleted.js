@@ -4,6 +4,7 @@
 // early-acks and the delayed-settlement guard; otherwise falls through to the ack.
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
+const { sumOffContractPaidCents } = require('../../utils/invoiceExtras');
 const { createEventShifts } = require('../../utils/eventCreation');
 const { getBookingWindow } = require('../../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
@@ -254,6 +255,15 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             sweptAlternativeIds = sweep.sweptIds;
           }
 
+          // The money collected outside the contract (round 3 L2, money law 8
+          // with laws 5 and 7): a paid unfolded Drink Plan Extras invoice or a
+          // manual invoice paid before booking rolls into amount_paid and never
+          // into total_price, so each rail's CASE subtracts it, bound as one
+          // extra parameter in cents (divided in SQL, exact NUMERIC). Read on
+          // the transaction client; sumOffContractPaidCents is the partition
+          // every other paid-flag site reads.
+          const offContractCents = await sumOffContractPaidCents(proposalId, dbClient);
+
           if (linkPaymentType === 'full') {
             // Full payment via link → additive + DERIVED status (mirrors the 'full'
             // branch of payment_intent.succeeded). Credit session.amount_total (what
@@ -272,10 +282,10 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             await dbClient.query(
               `UPDATE proposals
                SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
-                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                   status = CASE WHEN COALESCE(amount_paid,0) + $2 - ($3 / 100.0) >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
                    accepted_at = COALESCE(accepted_at, NOW())
                WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
-              [proposalId, session.amount_total / 100]
+              [proposalId, session.amount_total / 100, offContractCents]
             );
           } else {
             // Deposit via link → additive + derived status (same rationale): credit what
@@ -285,10 +295,10 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             await dbClient.query(
               `UPDATE proposals
                SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
-                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                   status = CASE WHEN COALESCE(amount_paid,0) + $2 - ($3 / 100.0) >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
                    accepted_at = COALESCE(accepted_at, NOW())
                WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
-              [proposalId, session.amount_total / 100]
+              [proposalId, session.amount_total / 100, offContractCents]
             );
           }
 

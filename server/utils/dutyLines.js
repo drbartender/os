@@ -14,6 +14,7 @@ const { isHostedPackage } = require('./pricingEngine');
 const { isBartender } = require('./staffingRoles');
 const { readSnapshot } = require('./pricingSnapshot');
 const { chicagoTodayYmd } = require('./businessTime');
+const { offContractPaidCentsSql, NOT_OFF_CONTRACT_LABELS } = require('./invoiceExtras');
 // No cycle: payrollProcessing imports nothing from this module.
 const { findOpenPeriodForDate, recomputePayoutTotal, ensurePayout } = require('./payrollProcessing');
 
@@ -57,12 +58,31 @@ const EQUIPMENT_THRESHOLD_CENTS = 5000;
 
 const cents = (x) => Math.round(Number(x || 0) * 100);
 
-/** Funded gate — the exact predicate payrollAccrual uses for gratuity. */
+/** Funded gate: the contract money paid covers total_price. Net of the money
+ *  collected outside the contract (round 3 L2, money law 8 with laws 5 and 7):
+ *  the duty context carries off_contract_paid_cents from the netting's SQL twin
+ *  (a paid unfolded Drink Plan Extras invoice, a manual invoice), so on a 15000
+ *  contract holding the 10000 deposit and a paid 6000 syrup-only invoice the
+ *  gate stays shut with 5000 owed. A row loaded without the column reads raw.
+ *  An unreadable term reads as not funded (NaN compares false).
+ *  payrollAccrual's gratuity gate keeps its own raw compare. */
 function isFundedProposal(proposal) {
   const totalCents = cents(proposal.total_price);
-  const paidCents = cents(proposal.amount_paid);
+  const offContractCents = proposal.off_contract_paid_cents === undefined || proposal.off_contract_paid_cents === null
+    ? 0 : Number(proposal.off_contract_paid_cents);
+  const paidCents = cents(proposal.amount_paid) - offContractCents;
   return paidCents >= totalCents;
 }
+
+// The duty context's proposal read, with the off-contract term the funded gate
+// nets (the netting's SQL twin; $2 binds NOT_OFF_CONTRACT_LABELS). Composed
+// here, as balanceInvoiceMonitor composes its scan, and passed to query() as
+// text with its bindings.
+const DUTY_CONTEXT_SQL = `SELECT p.id, p.event_date, p.status, p.total_price, p.amount_paid,
+            p.pricing_snapshot, p.num_bars, p.menu_print_key, p.menu_not_required,
+            p.package_id,
+            ${offContractPaidCentsSql('p.id', '$2')} AS off_contract_paid_cents
+       FROM proposals p WHERE p.id = $1`;
 
 /** Eligible attribution targets for a kind, from the accrual worker rows. */
 function eligibleWorkers(kind, workers) {
@@ -198,13 +218,7 @@ function neededAttributedKinds(ctx) {
  * a transaction client (executor).
  */
 async function loadProposalDutyContext(executor, proposalId) {
-  const propRes = await executor.query(
-    `SELECT p.id, p.event_date, p.status, p.total_price, p.amount_paid,
-            p.pricing_snapshot, p.num_bars, p.menu_print_key, p.menu_not_required,
-            p.package_id
-       FROM proposals p WHERE p.id = $1`,
-    [proposalId]
-  );
+  const propRes = await executor.query(DUTY_CONTEXT_SQL, [proposalId, NOT_OFF_CONTRACT_LABELS]);
   const proposal = propRes.rows[0];
   if (!proposal) return null;
 

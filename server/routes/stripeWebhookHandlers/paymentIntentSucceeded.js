@@ -10,7 +10,7 @@ const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
 const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, linkOpenContractInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance, upgradeDepositInvoiceToFull, notifyLinkOverflow } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { OFF_LEDGER_INVOICE_LABELS, CONTRACT_LABELS } = require('../../utils/proposalMoneyShared');
-const { contractPaidCents } = require('../../utils/invoiceExtras');
+const { contractPaidCents, sumOffContractPaidCents } = require('../../utils/invoiceExtras');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
@@ -273,6 +273,15 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             }
           }
 
+          // The money collected outside the contract (round 3 L2, money law 8
+          // with laws 5 and 7): a paid unfolded Drink Plan Extras invoice or a
+          // manual invoice paid before booking rolls into amount_paid and never
+          // into total_price, so each rail's CASE subtracts it, bound as one
+          // extra parameter in cents (divided in SQL, exact NUMERIC). Read on
+          // the transaction client; sumOffContractPaidCents is the partition
+          // every other paid-flag site reads.
+          const offContractCents = await sumOffContractPaidCents(proposalId, dbClient);
+
           // Determine new status and amount_paid based on payment type
           if (paymentType === 'full') {
             // Additive + DERIVED status, never a flat "= total_price": credit what was actually charged so a mid-flight total change (admin edit / second-tab gratuity) can't mark paid-in-full at an amount the client never paid (DrB would eat the gap). Mirrors the invoice/drink-plan branches.
@@ -289,11 +298,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             const fullRes = await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 - ($3 / 100.0) >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
                   accepted_at = COALESCE(accepted_at, NOW())
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
               RETURNING client_signed_at
-            `, [proposalId, intent.amount / 100]);
+            `, [proposalId, intent.amount / 100, offContractCents]);
             await noteUnsigned(fullRes.rows[0]);
           } else if (paymentType === 'balance') {
             // M3 (phantom-Outstanding fix): credit the balance monotonically across
@@ -315,11 +324,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
               SET amount_paid = COALESCE(amount_paid, 0) + $2, autopay_status = NULL,
                   status = CASE
                     WHEN status IN ('confirmed', 'completed') THEN status
-                    WHEN COALESCE(amount_paid, 0) + $2 >= total_price THEN 'balance_paid'
+                    WHEN COALESCE(amount_paid, 0) + $2 - ($3 / 100.0) >= total_price THEN 'balance_paid'
                     ELSE 'deposit_paid'
                   END
               WHERE id = $1 AND status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
-            `, [proposalId, intent.amount / 100]);
+            `, [proposalId, intent.amount / 100, offContractCents]);
           } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
             // Drink plan extras payment — increment amount_paid. The paid flag
             // is derived below, after this payment's invoice credit lands, net
@@ -409,11 +418,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             const depRes = await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 - ($3 / 100.0) >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END,
                   accepted_at = COALESCE(accepted_at, NOW())
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
               RETURNING client_signed_at
-            `, [proposalId, intent.amount / 100]);
+            `, [proposalId, intent.amount / 100, offContractCents]);
             await noteUnsigned(depRes.rows[0]);
           }
 
