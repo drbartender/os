@@ -4,6 +4,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal, computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
+const { assertPricingInputs } = require('./pricingInputs');
 const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -40,6 +41,10 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
   if (!package_id) {
     throw new ValidationError({ package_id: 'Package is required' });
   }
+  // The same input gate the create and the PATCH run (pricingInputs.js), so the
+  // preview refuses what the save would refuse; this route reads the duration
+  // as duration_hours.
+  assertPricingInputs({ guest_count, num_bars, num_bartenders, duration_hours }, { durationField: 'duration_hours' });
   // Editing an existing booking: price the CONTRACT's hours, which a settled
   // on-site extension can make shorter than the form's worked hours
   // (contractDuration.js), so the preview equals what the PATCH will save.

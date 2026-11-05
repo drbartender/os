@@ -1,0 +1,86 @@
+// The one input gate for a proposal's pricing inputs (guest_count, num_bars, num_bartenders and the
+// duration), shared by the admin create, the editor PATCH and the /calculate preview: a value that is
+// present must be a whole number inside the bounds the forms already enforce, and the duration a
+// tenth of an hour the contract column can hold, else a 400 naming the field (audit PRC-05).
+'use strict';
+// Before this gate the three admin routes read these four inputs raw into
+// calculateProposal and the row: a negative guest count priced every per-guest
+// line negative (Core Reaction, -100 guests, a champagne toast: -25000 cents
+// on a 10000-cent total), a zero or blank guest count on the editor's PATCH
+// stored a 0-guest contract with every per-guest line at $0 (the editor sends
+// Number('') = 0), a fractional num_bartenders reached the INTEGER column and
+// 500ed, and a negative num_bars was stored and carried onto the shifts. The
+// public quote wizard (public.js) keeps its own gate and is not touched.
+//
+// Pure: a function of the body only, so it runs before any connection is
+// checked out, and a malformed body never opens a transaction. It asserts and
+// never coerces: each route keeps reading the values the way it did (a numeric
+// string is accepted here, as every route's Number() reading accepts it), and
+// an absent or null value keeps the route's own default or stored value
+// (`guest_count || 50` on create, `?? old.guest_count` on the PATCH, the
+// `/calculate` preview's defaults).
+//
+// Bounds: the editor and the create form cap guests at 1000, bars at 5 and the
+// duration at 12 hours in half-hour steps (ProposalEditorForm.js, EventSection.js),
+// so nothing an admin can enter is refused here. The server bounds are those,
+// with room for a hand-built event, never looser than sane: the duration
+// column is NUMERIC(4,1), so a value off the tenths grid would be rounded
+// silently on write; MIN_HOURS is contractDuration's own floor, below which a
+// contract is corrupt data; the 2:00 AM curfew gate decides what is sellable
+// above that and runs after this one.
+
+const { ValidationError } = require('../../utils/errors');
+const { MIN_HOURS } = require('../../utils/contractDuration');
+
+const MAX_GUESTS = 1000;    // the forms' own input max
+const MAX_BARS = 10;        // the forms allow 5
+const MAX_BARTENDERS = 50;  // a 1000-guest event at the 1:100 ratio needs 10
+const MAX_HOURS = 24;       // a calendar day; the curfew gate is the real ceiling
+
+const present = (v) => v !== undefined && v !== null;
+// A number, or a non-blank numeric string, the way the routes' Number() reads
+// them; anything else (a boolean, an object, a blank) is NaN and refused.
+const asNumber = (v) => {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && v.trim() !== '') return Number(v);
+  return NaN;
+};
+const wholeInRange = (v, min, max) => {
+  const n = asNumber(v);
+  return Number.isInteger(n) && n >= min && n <= max;
+};
+const onTenths = (n) => Math.abs(n * 10 - Math.round(n * 10)) < 1e-6;
+
+/**
+ * 400 naming every field whose present value is out of shape; absent and
+ * null pass through to the route's own default or stored value.
+ *
+ * @param {object} body  the request body (the four fields are read by name)
+ * @param {{ durationField?: 'event_duration_hours' | 'duration_hours' }} [opts]
+ *   which key the route reads the duration from (/calculate reads duration_hours)
+ */
+function assertPricingInputs(body = {}, { durationField = 'event_duration_hours' } = {}) {
+  const b = body && typeof body === 'object' ? body : {};
+  const duration = durationField === 'duration_hours' ? b.duration_hours : b.event_duration_hours;
+  const errors = {};
+  if (present(b.guest_count) && !wholeInRange(b.guest_count, 1, MAX_GUESTS)) {
+    errors.guest_count = `Guest count must be a whole number from 1 to ${MAX_GUESTS}.`;
+  }
+  if (present(b.num_bars) && !wholeInRange(b.num_bars, 0, MAX_BARS)) {
+    errors.num_bars = `Bars must be a whole number from 0 to ${MAX_BARS}.`;
+  }
+  if (present(b.num_bartenders) && !wholeInRange(b.num_bartenders, 0, MAX_BARTENDERS)) {
+    errors.num_bartenders = `Bartenders must be a whole number from 0 to ${MAX_BARTENDERS}, or left blank to use the guest ratio.`;
+  }
+  if (present(duration)) {
+    const h = asNumber(duration);
+    if (!Number.isFinite(h) || h < MIN_HOURS || h > MAX_HOURS || !onTenths(h)) {
+      const message = `Duration must be between ${MIN_HOURS} and ${MAX_HOURS} hours, in tenths of an hour.`;
+      if (durationField === 'duration_hours') errors.duration_hours = message;
+      else errors.event_duration_hours = message;
+    }
+  }
+  if (Object.keys(errors).length > 0) throw new ValidationError(errors);
+}
+
+module.exports = { assertPricingInputs, MAX_GUESTS, MAX_BARS, MAX_BARTENDERS, MAX_HOURS };
