@@ -532,9 +532,13 @@ async function approveOrDenyRequestHandler(req, res) {
       // Denying an approved staffer takes them off the shift, so it releases
       // their Out-of-Area lock exactly like a drop does. The amount stays and
       // re-arms for the next approval (spec §6).
-      if (await releaseOutOfAreaLock(pool, srShiftId, srUserId)) {
-        reaccrueDutyForProposal(srProposalId);
-      }
+      await releaseOutOfAreaLock(pool, srShiftId, srUserId);
+      // Payroll re-accrual is deliberately NOT gated on that release (the
+      // Remove rule, shifts.js): on a completed event only accrual's orphan
+      // sweep removes the denied staffer's line and re-splits the tips, and a
+      // shift with no bonus never released a lock (audit 2026-11-05, POUT-02).
+      // One cheap SELECT on anything but a recently-completed proposal.
+      reaccrueDutyForProposal(srProposalId);
       if (srProposalId) {
         await suppressBeoNudgesForStaffers(srProposalId, [srUserId], pool, 'staffer_unassigned: PUT request denied');
       }

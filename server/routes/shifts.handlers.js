@@ -176,7 +176,6 @@ async function cancelOrUnassignShiftHandler(req, res) {
 
   const dbClient = await pool.connect();
   let affectedUserIds = [];
-  let bonusReleased = false;
   let proposalIdForDuty = null;
   const kind = mode === 'cancel' ? 'cancelled' : 'unassigned';
   try {
@@ -212,7 +211,7 @@ async function cancelOrUnassignShiftHandler(req, res) {
       // Out-of-Area lock: a cancel denies EVERY request, so nobody is left to
       // hold the bonus. Unscoped release (no user filter) — whoever held it is
       // off the shift by definition.
-      bonusReleased = await releaseOutOfAreaLock(dbClient, shiftId);
+      await releaseOutOfAreaLock(dbClient, shiftId);
     } else {
       const upd = await dbClient.query(
         "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' RETURNING id",
@@ -232,7 +231,7 @@ async function cancelOrUnassignShiftHandler(req, res) {
       );
       // Holder-scoped: unassigning one staffer must never release a bonus that
       // belongs to a teammate still working the shift.
-      bonusReleased = await releaseOutOfAreaLock(dbClient, shiftId, unassignUserId);
+      await releaseOutOfAreaLock(dbClient, shiftId, unassignUserId);
     }
 
     // BEO: suppress pending nudges for affected staffers on the proposal.
@@ -250,9 +249,17 @@ async function cancelOrUnassignShiftHandler(req, res) {
     dbClient.release();
   }
 
-  // Post-commit (pooled client released): re-derive duty lines only when a
-  // bonus lock actually moved.
-  if (bonusReleased) reaccrueDutyForProposal(proposalIdForDuty);
+  // Post-commit (pooled client released). Payroll re-accrual is deliberately
+  // NOT gated on `bonusReleased`, the same rule as Remove (shifts.js): on a
+  // completed event the wage and tip lines were minted at auto-completion,
+  // and only accrual's orphan sweep removes an off-roster line and re-splits
+  // the tips. Gated on the lock, a no-show unassigned or cancelled after
+  // completion kept her wage and a share of the tips whenever the shift
+  // carried no bonus (audit 2026-11-05, POUT-02; the Remove precedent is prod
+  // 2026-08-24). The hook is a full re-accrual on a recently-completed
+  // proposal and one cheap SELECT on anything else (maybeReaccrueForDuty), so
+  // a pre-event unassign costs nothing.
+  reaccrueDutyForProposal(proposalIdForDuty);
 
   if (notify_assigned_staff === true && (notify_sms === true || notify_email === true)) {
     try {
