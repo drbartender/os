@@ -666,6 +666,7 @@ export default function ProposalView() {
   // lastMinuteHold → also show the pre-payment cancellation-consent warning.
   const policy = proposal.payment_policy || {};
   const fullPaymentRequired = !!policy.full_payment_required;
+  const fullPaymentReason = policy.full_payment_reason || null;
   const lastMinuteHold = !!policy.last_minute_hold;
 
   // ROW truth only. The URL opens the settling state; it never renders the
@@ -791,6 +792,7 @@ export default function ProposalView() {
                 gratuityStaffNoun={gratuityStaffNoun}
                 gratuityBelowFloor={gratuityBelowFloor}
                 fullPaymentRequired={fullPaymentRequired}
+                fullPaymentReason={fullPaymentReason}
                 lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
                 balanceAmount={balanceAmount}
@@ -826,6 +828,7 @@ export default function ProposalView() {
                 autopayChecked={autopayChecked}
                 setAutopayChecked={setAutopayChecked}
                 fullPaymentRequired={fullPaymentRequired}
+                fullPaymentReason={fullPaymentReason}
                 lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
                 balanceAmount={balanceAmount}

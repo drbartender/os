@@ -25,6 +25,7 @@ const { publicPriceView } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
 const { contractBalanceDueCents } = require('../../utils/invoiceExtras');
 const { bookedStatusSqlList } = require('../../utils/proposalStatus');
+const { depositCentsFor } = require('../../utils/stripeRouteHelpers');
 
 const router = express.Router();
 
@@ -263,6 +264,13 @@ async function buildPublicProposalPayload(token, db = pool) {
     eventDate: proposal.event_date,
     eventStartTime: proposal.event_start_time,
   });
+  // A contract at or below the row's deposit is paid in full by one payment
+  // (audit PAY-09): the deposit tablet would charge more than the contract.
+  // Same flag the booking window raises (the page hides the tablet and locks
+  // the full option on it); full_payment_reason picks the explainer copy.
+  // create-intent refuses the deposit option for such a row as the backstop.
+  const totalCents = Math.round(Number(proposal.total_price || 0) * 100);
+  const totalAtOrBelowDeposit = totalCents > 0 && totalCents <= depositCentsFor(proposal);
 
   // Optional-phone prefill (spec 2026-06-11 Component 4). A Thumbtack proxy
   // number must never show in the signing form: blank it so the client is
@@ -370,7 +378,9 @@ async function buildPublicProposalPayload(token, db = pool) {
     // but the flip is a display convention here, not a row guarantee.
     status: proposal.status === 'sent' ? 'viewed' : proposal.status,
     payment_policy: {
-      full_payment_required: win.fullPaymentRequired,
+      full_payment_required: win.fullPaymentRequired || totalAtOrBelowDeposit,
+      full_payment_reason: win.fullPaymentRequired ? 'booking_window'
+        : (totalAtOrBelowDeposit ? 'total_at_or_below_deposit' : null),
       last_minute_hold: win.lastMinuteHold,
       hours_until_event: win.hoursUntilEvent,
     },

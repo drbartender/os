@@ -118,6 +118,18 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
   const amount = isFullPay
     ? Math.round(Number(effTotal) * 100)   // the ONE dollars->cents seam in this flow
     : depositCents;
+  // A contract at or below the deposit is paid in full in one payment (audit
+  // PAY-09): offering the deposit charged more than the whole contract and
+  // left a netted overpayment to refund. The public payload flags the same
+  // row full_payment_required (reason total_at_or_below_deposit), so the page
+  // never shows the tablet; this is the server-side backstop, under the code
+  // the page already handles by locking the full option.
+  if (!isFullPay && Math.round(Number(effTotal) * 100) <= depositCents) {
+    throw new ConflictError(
+      'Your event total is not more than the deposit, so it is paid in full in one payment.',
+      'FULL_PAYMENT_REQUIRED'
+    );
+  }
 
   // Bank debit in flight (spec 2026-09-14 section 5.1). Runs BEFORE the reuse
   // and stale-cancel logic below, so a settling intent is never reused, never
