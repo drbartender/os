@@ -45,18 +45,29 @@ let statements = [];
 const realQuery = pool.query;
 const realCompare = bcrypt.compare;
 let compares = 0;
+// One-shot hook run after a request's SELECT has been answered and before the
+// answer is returned: it lets a test change the row between that read and the
+// request's claim, the interleaving the claim's predicates exist for.
+let afterSelect = null;
+
+// The claim in either spelling: the COALESCE the route writes today, or a
+// bare `auth_token_attempts + 1` a refactor could reasonably use.
+const CLAIM_RE = /^UPDATE clients SET auth_token_attempts = (?:COALESCE\(auth_token_attempts, 0\)|auth_token_attempts) \+ 1\b/;
 
 // The claim's WHERE, evaluated from the SQL rather than matched as a string:
-// `auth_token IS [NOT] NULL` and `COALESCE(auth_token_attempts, 0) <op> N`
-// against the row, so an inverted or loosened predicate fails the test as it
-// would in Postgres. A claim with neither is the old unconditional increment.
+// `auth_token IS [NOT] NULL` and `auth_token_attempts <op> N` (with or without
+// the COALESCE) against the row, so an inverted or loosened predicate fails the
+// test as it would in Postgres. Only the WHERE clause is read, so the SET
+// clause's own `auth_token_attempts` cannot be mistaken for a predicate. A
+// claim with neither predicate is the old unconditional increment.
 function claimPredicateHolds(text) {
-  const nul = /auth_token IS (NOT )?NULL/.exec(text);
+  const where = text.split(' WHERE ')[1] || '';
+  const nul = /auth_token IS (NOT )?NULL/.exec(where);
   if (nul) {
     const wantsNull = !nul[1];
     if ((row.auth_token === null) !== wantsNull) return false;
   }
-  const cmp = /COALESCE\(auth_token_attempts, 0\) (<=|>=|<|>|=) (\d+)/.exec(text);
+  const cmp = /(?:COALESCE\(auth_token_attempts, 0\)|\bauth_token_attempts) (<=|>=|<|>|=) (\d+)/.exec(where);
   if (cmp) {
     const a = row.auth_token_attempts ?? 0;
     const n = Number(cmp[2]);
@@ -72,9 +83,11 @@ function answer(raw, params) {
   const text = String(raw).replace(/\s+/g, ' ').trim();
   statements.push(text);
   if (text.startsWith('SELECT') && text.includes('FROM clients WHERE LOWER(email) = LOWER($1)')) {
-    return String(params[0]).toLowerCase() === row.email ? { rows: [{ ...row }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    const result = String(params[0]).toLowerCase() === row.email ? { rows: [{ ...row }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    if (afterSelect) { const f = afterSelect; afterSelect = null; f(); }
+    return result;
   }
-  if (text.startsWith('UPDATE clients SET auth_token_attempts = COALESCE(auth_token_attempts, 0) + 1')) {
+  if (CLAIM_RE.test(text)) {
     if (params[0] !== row.id) return { rows: [], rowCount: 0 };
     if (!claimPredicateHolds(text)) return { rows: [], rowCount: 0 };
     row.auth_token_attempts = (row.auth_token_attempts ?? 0) + 1;
@@ -182,6 +195,21 @@ test('the right code within the ceiling still logs in and clears the token', asy
   assert.equal(r.status, 200, r.raw);
   assert.ok(r.body.token, 'a JWT is issued');
   assert.deepEqual(r.body.client, { id: 1, name: 'OTP Race', email: EMAIL, phone: null });
+  assert.equal(row.auth_token, null);
+  assert.equal(row.auth_token_attempts, 0);
+});
+
+test('a token invalidated between a request\'s SELECT and its claim: no row claimed, no compare, the neutral 400', async () => {
+  resetRow();
+  compares = 0;
+  // The handler reads a live token, then the OTP goes away (another request
+  // hit the ceiling) before this request's claim runs. The right code is sent
+  // on purpose: only the claim's `auth_token IS NOT NULL` keeps it out.
+  afterSelect = () => { row.auth_token = null; row.auth_token_expires_at = null; row.auth_token_attempts = 0; };
+  const r = await verify({ email: EMAIL, otp: '654321' }, '203.0.113.80');
+  assert.equal(r.status, 400, r.raw);
+  assert.deepEqual(r.body.fieldErrors, NEUTRAL.fieldErrors);
+  assert.equal(compares, 0, 'no compare without a claimed row');
   assert.equal(row.auth_token, null);
   assert.equal(row.auth_token_attempts, 0);
 });
