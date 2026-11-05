@@ -490,13 +490,25 @@ async function accruePayoutsForProposal(proposalId) {
       // held state below (the upsert writes held_state = NULL); the tracked
       // adjustment and note ride along untouched.
       const priorHeld = !!(prior && prior.held_state);
+      // A pure clawback debt stub (the payrollClawback INSERT shape: no
+      // contracted hours, no hours, no rate; the same discriminator the sweep
+      // uses) is debt, not an admin's hours. A card tip refunded in the
+      // event's own week, before completion, leaves exactly that row in this
+      // period, and seeding from it paid every bartender on the shift a 0 wage
+      // (audit 2026-11-05, POUT-03 verify, H1). Hours and rate come from the
+      // contract as for a first accrual; the stub's adjustment and note ride
+      // along below, so the claw survives the write.
+      const priorStub = !!(prior
+        && Number(prior.contracted_hours || 0) === 0
+        && Number(prior.hours || 0) === 0
+        && Number(prior.rate_cents || 0) === 0);
       // First accrual seeds contracted_hours/hours/rate from the contract;
       // afterwards the admin owns them, so re-accrual preserves the prior row.
-      const contractedHrs = prior
+      const contractedHrs = prior && !priorStub
         ? Number(prior.contracted_hours)
         : contractedHours(Number(proposal.event_duration_hours) || 0);
-      const hours = prior && !priorHeld ? Number(prior.hours) : contractedHrs;
-      const rateCents = prior
+      const hours = prior && !priorHeld && !priorStub ? Number(prior.hours) : contractedHrs;
+      const rateCents = prior && !priorStub
         ? Number(prior.rate_cents)
         : Math.round(Number(w.hourly_rate) * 100);
       const late = prior ? prior.late : false;

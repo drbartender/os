@@ -2,9 +2,10 @@ require('dotenv').config();
 process.env.NODE_ENV = 'test';
 
 /**
- * Accrual's prior-line lookup is scoped to the period being written, and a
- * wage line that already lives in ANOTHER period is a hard stop, never a seed
- * (audit 2026-11-05, POUT-03).
+ * Accrual's prior-line lookup is scoped to the period being written; a wage
+ * line that already lives in ANOTHER period is a hard stop, never a seed; and
+ * a pure clawback stub in THIS period never seeds the hours (audit 2026-11-05,
+ * POUT-03 and its verify pass).
  *
  * `existing` was keyed by contractor:shift across every pay period, so:
  *   A. after an event-date move, a PAID line in the frozen period seeded a
@@ -12,7 +13,11 @@ process.env.NODE_ENV = 'test';
  *   B. a clawback stub that landed in a later open period (hours 0, wage 0,
  *      a negative adjustment) could win the key and rewrite the event's own
  *      wage line to 0 hours, 0 wage and the debt, booking the claw twice and
- *      losing the wage, and which row won depended on SELECT order.
+ *      losing the wage, and which row won depended on SELECT order;
+ *   C. a clawback stub already in the event's own period (a card tip refunded
+ *      in the event's week, before completion) was read as the worker's prior
+ *      line, so the first accrual seeded 0 hours and a 0 rate and paid no
+ *      wage at all (the verify pass's H1).
  *
  * Harness: accruePayoutsForProposal over an in-memory pool stub keyed on the
  * SQL text (the stripePayoutSync.unconfigured.test.js pattern), recording the
@@ -35,6 +40,7 @@ if (process.env.NODE_ENV === 'production') {
 const PROPOSAL_ID = 7001;
 const SHIFT_ID = 7101;
 const WORKER_ID = 7201;
+const WORKER_B = 7202;
 const P1 = 31; // the event's own period
 const P2 = 32; // the next period
 
@@ -44,8 +50,12 @@ const realConnect = pool.connect;
 // Per-test knobs.
 let thisPeriod;        // { id, status } ensurePayPeriod answers with
 let existingRows;      // what the existing-lines SELECT answers with
+let workerRows;        // the roster the workers SELECT answers with
+let tipPool;           // the card-tip pool SELECT answers with
 let payoutInserts;     // ensurePayout calls (params)
 let lineInserts;       // payout_events upserts (params)
+
+const worker = (userId) => ({ user_id: userId, position: 'Bartender', shift_id: SHIFT_ID, hourly_rate: '20.00' });
 
 function line(overrides) {
   return {
@@ -56,6 +66,15 @@ function line(overrides) {
     contractor_id: WORKER_ID, pay_period_id: P1,
     ...overrides,
   };
+}
+
+// The payrollClawback INSERT shape: every payable zero, the debt tracked.
+function clawStub(overrides) {
+  return line({
+    contracted_hours: '0.00', hours: '0.00', rate_cents: 0, wage_cents: 0,
+    adjustment_note: 'Chargeback on tip 5: +$40.00 (cumulative $40.00)',
+    ...overrides,
+  });
 }
 
 function answer(text, params = []) {
@@ -73,18 +92,18 @@ function answer(text, params = []) {
   if (sql.startsWith('INSERT INTO pay_periods')) {
     return { rows: [thisPeriod], rowCount: 1 };
   }
-  if (sql.startsWith('SELECT sr.user_id, sr.position, s.id AS shift_id')) {
-    return { rows: [{ user_id: WORKER_ID, position: 'Bartender', shift_id: SHIFT_ID, hourly_rate: '20.00' }], rowCount: 1 };
+  if (sql.startsWith('SELECT sr.user_id, sr.position, s.id AS shift_id, COALESCE(cp.hourly_rate')) {
+    return { rows: workerRows, rowCount: workerRows.length };
   }
   if (sql.includes('FROM service_extensions')) return { rows: [{ cents: 0 }], rowCount: 1 };
   if (sql.includes('FROM proposal_payments pp')) return { rows: [{ fee: 0 }], rowCount: 1 };
-  if (sql.startsWith('SELECT COALESCE(SUM(t.amount_cents), 0) AS gross')) return { rows: [{ gross: 0, fee: 0 }], rowCount: 1 };
+  if (sql.startsWith('SELECT COALESCE(SUM(t.amount_cents), 0) AS gross')) return { rows: [tipPool], rowCount: 1 };
   if (sql.startsWith('SELECT pe.*, po.contractor_id, po.pay_period_id')) {
     return { rows: existingRows, rowCount: existingRows.length };
   }
   if (sql.startsWith('INSERT INTO payouts')) {
     payoutInserts.push(params);
-    return { rows: [{ id: 500 + Number(params[0]) }], rowCount: 1 };
+    return { rows: [{ id: 500 + Number(params[1]) }], rowCount: 1 };
   }
   if (sql.startsWith('INSERT INTO payout_events')) {
     lineInserts.push(params);
@@ -108,6 +127,8 @@ beforeEach(() => {
   lineInserts = [];
   thisPeriod = { id: P1, status: 'open' };
   existingRows = [];
+  workerRows = [worker(WORKER_ID)];
+  tipPool = { gross: 0, fee: 0 };
   mock.restoreAll();
 });
 
@@ -123,7 +144,7 @@ after(() => {
 function written(params) {
   return {
     contracted_hours: params[2], hours: params[3], rate_cents: params[4], wage_cents: params[5],
-    adjustment_cents: params[11], line_total_cents: params[13],
+    tip_net_cents: params[10], adjustment_cents: params[11], line_total_cents: params[13],
   };
 }
 
@@ -151,23 +172,45 @@ for (const order of ['wage line first', 'claw stub first']) {
     const sentry = mock.method(Sentry, 'captureMessage');
     thisPeriod = { id: P1, status: 'open' };
     const wage = line({ pay_period_id: P1, id: 11, payout_id: 91 });
-    const claw = line({
-      pay_period_id: P2, id: 12, payout_id: 92, contracted_hours: '0.00', hours: '0.00',
-      rate_cents: 0, wage_cents: 0, adjustment_cents: -1936,
-      adjustment_note: 'Chargeback on tip 5: +$40.00 (cumulative $40.00)', line_total_cents: -1936,
-    });
+    const claw = clawStub({ pay_period_id: P2, id: 12, payout_id: 92, adjustment_cents: -1936, line_total_cents: -1936 });
     existingRows = order === 'wage line first' ? [wage, claw] : [claw, wage];
 
     await accruePayoutsForProposal(PROPOSAL_ID);
     assert.equal(lineInserts.length, 1, 'the P1 line is rewritten once');
     assert.deepEqual(written(lineInserts[0]), {
       contracted_hours: 5.5, hours: 5.5, rate_cents: 2000, wage_cents: 11000,
-      adjustment_cents: 0, line_total_cents: 11000,
+      tip_net_cents: 0, adjustment_cents: 0, line_total_cents: 11000,
     }, 'seeded from P1 own line: the claw stub in P2 is neither a seed nor a stop');
     assert.equal(payoutInserts[0][0], P1, 'written to the event period payout');
     assert.equal(sentry.mock.calls.length, 0, 'a pure debt stub elsewhere is not a cross-period wage line');
   });
 }
+
+test('C: a clawback stub already in THIS period never seeds the hours: the wage comes from the contract and the claw survives', async () => {
+  // A 4,000c card tip (fee 128) on the shift was refunded in full in the
+  // event's own week, before completion: clawbackTip left a stub per bartender
+  // (-1,936 each) in P1. The first accrual must still pay 5.5h x 2000 to each,
+  // split the (still gross-summed) tip, and carry the claw: the stub is debt,
+  // not an admin's hours.
+  const sentry = mock.method(Sentry, 'captureMessage');
+  thisPeriod = { id: P1, status: 'open' };
+  workerRows = [worker(WORKER_ID), worker(WORKER_B)];
+  tipPool = { gross: 4000, fee: 128 };
+  existingRows = [
+    clawStub({ pay_period_id: P1, id: 11, payout_id: 91, contractor_id: WORKER_ID, adjustment_cents: -1936, line_total_cents: -1936 }),
+    clawStub({ pay_period_id: P1, id: 12, payout_id: 92, contractor_id: WORKER_B, adjustment_cents: -1936, line_total_cents: -1936 }),
+  ];
+
+  await accruePayoutsForProposal(PROPOSAL_ID);
+  assert.equal(lineInserts.length, 2, 'one line per bartender');
+  for (const params of lineInserts) {
+    assert.deepEqual(written(params), {
+      contracted_hours: 5.5, hours: 5.5, rate_cents: 2000, wage_cents: 11000,
+      tip_net_cents: 1936, adjustment_cents: -1936, line_total_cents: 11000,
+    }, 'contract hours and rate, the tip share, and the claw merged');
+  }
+  assert.equal(sentry.mock.calls.length, 0, 'a stub in this period is not a cross-period line either');
+});
 
 test('a held reimbursement line in another period is not a stop: the worker still accrues here', async () => {
   // Held = hours and every payable zeroed, the reimbursement tracked. The
@@ -182,6 +225,6 @@ test('a held reimbursement line in another period is not a stop: the worker stil
   assert.equal(lineInserts.length, 1);
   assert.deepEqual(written(lineInserts[0]), {
     contracted_hours: 5.5, hours: 5.5, rate_cents: 2000, wage_cents: 11000,
-    adjustment_cents: 0, line_total_cents: 11000,
+    tip_net_cents: 0, adjustment_cents: 0, line_total_cents: 11000,
   }, 'a first accrual for this period, seeded from the contract');
 });
