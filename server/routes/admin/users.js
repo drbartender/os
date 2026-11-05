@@ -97,15 +97,25 @@ router.get('/users/:id', auth, requireAdminOrManager, asyncHandler(async (req, r
   const isManager = req.user.role !== 'admin';
   const profile = profileRes.rows[0] || {};
   const application = appRes.rows[0] || {};
+  const agreement = agreementRes.rows[0] || {};
+  // The signature's forensic columns (the signer's IP and user agent) are
+  // read by no client surface, so they never leave the server; the signature
+  // itself (the drawn image or the typed name) is what the admin Documents
+  // tab renders, so it is withheld from a manager only, like the payment row
+  // (audit 2026-11-05, AUTH-10: the whole agreements row, signature image, IP
+  // and user agent included, reached every manager).
+  delete agreement.signature_ip;
+  delete agreement.signature_user_agent;
   if (isManager) {
     if ('hourly_rate' in profile) delete profile.hourly_rate;
+    delete agreement.signature_data;
   }
 
   res.json({
     user: userRes.rows[0],
     progress: progressRes.rows[0] || {},
     profile,
-    agreement: agreementRes.rows[0] || {},
+    agreement,
     payment: isManager ? {} : payment,
     application
   });
