@@ -1,0 +1,327 @@
+// ProposalDetailPhone: the phone proposal detail at /proposals/:id, inside the phone chrome
+// (spec 2026-08-13-mobile-admin section 5 Detail; benchmark Proposal detail, 2026-10-14 shell).
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import api from '../../utils/api';
+import { offlineGet } from '../../utils/offlineRead';
+import { useMobileView } from '../../context/MobileViewContext';
+import { useToast } from '../../context/ToastContext';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import { formatStaleTime } from '../../utils/staleTime';
+import { whenOf } from '../../utils/eventDetailView';
+import {
+  bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, gatesOf,
+} from '../../utils/proposalDetailView';
+import { Caret, ContactsSection, EditRow } from './EventDetailSections';
+
+// Benchmark: docs/design-artifacts/2026-10-14-mobile-admin-shell.dc.html,
+// Proposal detail; where the spec's Plan decisions of 2026-11-05 differ, they
+// are the contract. Renders INSIDE AdminLayout's scrolling .m-main; the rich
+// header is the chrome's, handed over through the outlet context.
+//
+// GET /proposals/:id through offlineGet: the screen renders the staleness
+// line, and on a stored copy every row that acts reads "needs connection". The
+// Client link needs no server, so it works on a stored copy. Beside it,
+// GET /proposals/:id/change-requests through api.get, never stored (a request
+// holds the client's own words): a pending request, on a fresh and unheld
+// read, puts a "Change request · desktop view" row at the top, since the
+// request is reviewed and applied only on the desktop page, and every way to a
+// request (the Review link, the Overview queue item, the admin email) links to
+// the bare proposal. A failed request read shows no row.
+// A booked proposal opens the event detail at the same id, with history
+// replaced, unless a change request is pending (it stays here to show the row)
+// or the event detail is in Desktop view: then this visit shows the desktop
+// proposal page, where the desktop event page's link to it leads. A link into
+// desktop-only work (?edit=1 from the Alternatives panel, a change_request_id)
+// also opens the desktop page for the visit. A visit ends when the user leaves
+// or taps Phone view. A malformed id, a 404 or a 403 shows "This proposal
+// isn't available" with Back to Proposals when an in-app page is behind it; on
+// a cold launch or a resume, with nothing behind it, it dispatches
+// mobile-route-dead and the chrome falls back to /events (spec section 9).
+//
+// Edit details, Resend proposal and Archive open desktop view until the phone
+// sheets land; Send proposal (a draft or a modified proposal: the first send
+// runs the remote staffing fee check) and anything in an options group stay
+// on desktop view for good. No Send reminder row (the owner, 2026-11-05:
+// "leave it off").
+const LOAD_FAILED = 'Network error. Check your connection.';
+const HOLD_NOTE = 'This proposal is on legal hold. Nothing is changed or sent from here.';
+const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
+// An id the database can hold. Anything else can never load, all digits or not.
+const validId = (id) => /^\d+$/.test(String(id)) && Number(id) >= 1 && Number(id) <= 2147483647;
+// A link into desktop-only work on a proposal: the editor (?edit=1, the
+// Alternatives panel's new-option link) or a change request being applied.
+const wantsDesktop = (search) => {
+  const params = new URLSearchParams(search || '');
+  return params.get('edit') === '1' || params.has('change_request_id');
+};
+const hasPendingRequest = (payload) => !!payload && Array.isArray(payload.requests)
+  && payload.requests.some((r) => !!r && r.status === 'pending');
+
+// The fork in ProposalDetail.js: whether /proposals/:id renders this screen.
+// At phone width it does, unless the screen is in Desktop view (sticky, or for
+// one visit).
+export function usePhoneFork() {
+  const { isPhone, desktopView } = useMobileView();
+  return isPhone && !desktopView('proposal-detail');
+}
+// Whether an in-app page sits behind this one in history (the router's index).
+const pageBehind = () => !!(window.history.state && window.history.state.idx > 0);
+
+// A row of the action card. 'offline' takes no tap and says why.
+function ActionRow({ icon, label, mode, sep, onDesktop }) {
+  return (
+    <button type="button" className={`m-section-row${sep ? ' m-section-row-sep' : ''}`}
+      disabled={mode === 'offline'} onClick={onDesktop}>
+      <Icon name={icon} size={20} />
+      <span className="m-section-name m-row-label">{label}</span>
+      {mode === 'offline' ? (
+        <span className="m-edit-note m-edit-note-locked m-row-note"><span className="m-stale-dot" aria-hidden="true" />needs connection</span>
+      ) : (
+        <>
+          <span className="m-edit-note">desktop view</span>
+          <span className="m-section-caret" aria-hidden="true"><Icon name="right" size={16} /></span>
+        </>
+      )}
+    </button>
+  );
+}
+
+export default function ProposalDetailPhone() {
+  const { id } = useParams();
+  const { setHeaderDetail } = useOutletContext() || {};
+  const mobileView = useMobileView();
+  const { setDesktopView } = mobileView;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const toast = useToast();
+  // Read inside the load's answer, which must not re-run when they change.
+  const latest = useRef({ mobileView, location });
+  latest.current = { mobileView, location };
+
+  const [proposal, setProposal] = useState(null);
+  const [staleAt, setStaleAt] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [dead, setDead] = useState(false);
+  const [panes, setPanes] = useState({ contact: false, pay: false });
+  const [attempt, setAttempt] = useState(0);
+  const [requestPending, setRequestPending] = useState(false);
+
+  // The desktop proposal page for this visit only: armed before the navigation
+  // it is for, the visit starts on the replaced entry, which the fork draws as
+  // the desktop body (MobileViewContext's setDesktopForVisit). It ends when the
+  // user leaves the page or taps Phone view.
+  const openDesktopHere = useCallback(() => {
+    const { mobileView: mv, location: here } = latest.current;
+    mv.setDesktopForVisit('proposal-detail');
+    navigate(`${here.pathname}${here.search}`, { replace: true });
+  }, [navigate]);
+
+  // The chrome listens from a layout effect and sends a dead route to /events.
+  // With an in-app page behind, the screen says so itself and offers Back to
+  // Proposals; with nothing behind (a cold launch, a resume) the chrome is
+  // told. The screen renders its way back either way, for when nobody hears.
+  const declareDead = useCallback(() => {
+    setDead(true);
+    if (!pageBehind()) window.dispatchEvent(new CustomEvent('mobile-route-dead'));
+  }, []);
+
+  useEffect(() => {
+    if (!validId(id)) {
+      setLoading(false);
+      setProposal(null);
+      declareDead();
+      return undefined;
+    }
+    if (wantsDesktop(latest.current.location.search)) {
+      openDesktopHere();
+      return undefined;
+    }
+    let gone = false;
+    // Clear first: a different proposal must never render over the last one.
+    setLoading(true); setError(null); setDead(false); setProposal(null); setStaleAt(null); setRequestPending(false);
+    Promise.all([
+      offlineGet(`/proposals/${id}`),
+      api.get(`/proposals/${id}/change-requests`).then((r) => r.data, () => null),
+    ])
+      .then(([res, requests]) => {
+        if (gone) return;
+        const pending = !res.staleAt && !!res.data && res.data.legal_hold === false && hasPendingRequest(requests);
+        const target = bookedTarget(res.data);
+        if (target && !pending) {
+          if (latest.current.mobileView.desktopView('event-detail')) openDesktopHere();
+          else navigate(target, { replace: true });
+          return;
+        }
+        setProposal(res.data);
+        setStaleAt(res.staleAt || null);
+        setRequestPending(pending);
+      })
+      .catch((err) => {
+        if (gone) return;
+        if (isDead(err)) { declareDead(); return; }
+        setError((err && err.message) || LOAD_FAILED);
+      })
+      .finally(() => { if (!gone) setLoading(false); });
+    return () => { gone = true; };
+  }, [id, attempt, declareDead, navigate, openDesktopHere]);
+
+  useEffect(() => {
+    if (!setHeaderDetail) return undefined;
+    setHeaderDetail(proposal ? proposalHeaderOf(proposal) : null);
+    return () => setHeaderDetail(null);
+  }, [proposal, setHeaderDetail]);
+
+  const view = useMemo(() => (proposal ? {
+    when: whenOf(proposal),
+    status: statusLineOf(proposal),
+    chip: chipOf(proposal),
+    contacts: proposalContactsOf(proposal),
+    pkg: packageOf(proposal),
+    gates: gatesOf(proposal, { stale: !!staleAt }),
+  } : null), [proposal, staleAt]);
+
+  const toDesktop = () => setDesktopView('proposal-detail', true);
+  const toggle = (key) => setPanes((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  // The Android share sheet, else the clipboard. Dismissing the share sheet is
+  // not a failure.
+  const shareLink = (url) => {
+    const copy = () => {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        toast.error("Couldn't copy the link.");
+        return;
+      }
+      navigator.clipboard.writeText(url)
+        .then(() => toast.success('Link copied.'))
+        .catch(() => toast.error("Couldn't copy the link."));
+    };
+    if (typeof navigator.share !== 'function') { copy(); return; }
+    // Called in the tap itself: the share sheet needs the tap's activation.
+    let shared;
+    try { shared = navigator.share({ url }); } catch { copy(); return; }
+    Promise.resolve(shared).catch((err) => { if (!err || err.name !== 'AbortError') copy(); });
+  };
+
+  if (dead) {
+    return (
+      <div className="m-empty">
+        <div className="m-empty-title">This proposal isn't available</div>
+        <div className="m-empty-body">It may have been removed, or your access may have changed.</div>
+        <button type="button" className="m-retry-btn" onClick={() => navigate('/proposals', { replace: true })}>Back to Proposals</button>
+      </div>
+    );
+  }
+  if (loading && !proposal) return <div className="m-sheet-state">Loading the proposal</div>;
+  if (error && !proposal) {
+    return (
+      <div className="m-empty" role="alert">
+        <div className="m-empty-title">Couldn't load this proposal</div>
+        <div className="m-empty-body">{error}</div>
+        <button type="button" className="m-retry-btn" onClick={() => setAttempt((n) => n + 1)}>Retry</button>
+      </div>
+    );
+  }
+  if (!proposal || !view) return null;
+
+  const cachedTime = formatStaleTime(staleAt);
+  const { gates, pkg } = view;
+
+  return (
+    <div>
+      {cachedTime && (
+        <div className="m-stale">
+          <span className="m-stale-dot" aria-hidden="true" />
+          <span>offline copy · as of <span className="m-stale-time">{cachedTime}</span></span>
+          <button type="button" className="m-fail-retry" onClick={() => setAttempt((n) => n + 1)}>Refresh</button>
+        </div>
+      )}
+
+      <div className="m-detail-when">
+        <div className="m-detail-whenline">
+          {view.when.text}
+          <StatusChip kind={view.chip.kind}>{view.chip.label}</StatusChip>
+        </div>
+        <div className="m-detail-status">{view.status}</div>
+      </div>
+
+      {gates.held && (
+        <div className="m-sheet-note m-hold-note" role="note">
+          <span className="m-sheet-note-dot" aria-hidden="true" />
+          <span className="m-sheet-note-text">{HOLD_NOTE}</span>
+        </div>
+      )}
+
+      {requestPending && (
+        <section className="m-section">
+          <ActionRow icon="alert" label="Change request" mode="desktop" onDesktop={toDesktop} />
+        </section>
+      )}
+
+      <ContactsSection
+        open={panes.contact}
+        onToggle={() => toggle('contact')}
+        contacts={view.contacts}
+        planState="none"
+        clientName={proposal.client_name}
+        dayOf={false}
+      />
+
+      <section className="m-section">
+        <button type="button" className="m-section-row" aria-expanded={panes.pay} onClick={() => toggle('pay')}>
+          <Icon name="dollar" size={20} />
+          <span className="m-section-name">Package &amp; extras</span>
+          <span className="m-section-num">{pkg.total}</span>
+          <Caret open={panes.pay} />
+        </button>
+        {panes.pay && (
+          <>
+            {pkg.lines.map((line, i) => (
+              <div className="m-money-row m-money-line" key={`${line.label}-${i}`}>
+                <span className="m-money-main">
+                  <span className="m-money-label">{line.label}</span>
+                  {line.hidden && <span className="chip muted m-money-tag">hidden from client</span>}
+                </span>
+                <span className="m-money-amt">{line.amount}</span>
+              </div>
+            ))}
+            <div className="m-money-row m-money-total">
+              <span className="m-money-main"><span className="m-money-label">Total</span></span>
+              <span className="m-money-amt">{pkg.total}</span>
+            </div>
+          </>
+        )}
+      </section>
+
+      {gates.edit && (
+        <EditRow mode={gates.edit.mode} sub="date · guests · add-ons" onEdit={toDesktop} onDesktop={toDesktop}>
+          {gates.link && (
+            <button type="button" className="m-section-row m-section-row-sep" disabled={!gates.link.url}
+              onClick={() => shareLink(gates.link.url)}>
+              <Icon name="external" size={20} />
+              <span className="m-section-name m-row-label">Client link</span>
+              {gates.link.url ? (
+                <span className="m-link-text">
+                  <span className="m-link-host">{gates.link.host}</span>
+                  <span className="m-link-path">{gates.link.path}</span>
+                </span>
+              ) : <span className="m-link-text">{gates.link.text}</span>}
+            </button>
+          )}
+        </EditRow>
+      )}
+
+      {(gates.send || gates.archive) && (
+        <section className="m-section">
+          {gates.send && <ActionRow icon="mail" label={gates.send.label} mode={gates.send.mode} onDesktop={toDesktop} />}
+          {gates.archive && (
+            <ActionRow icon="clipboard" label={gates.archive.label} mode={gates.archive.mode} sep={!!gates.send} onDesktop={toDesktop} />
+          )}
+        </section>
+      )}
+    </div>
+  );
+}

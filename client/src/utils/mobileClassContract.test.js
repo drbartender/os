@@ -11,6 +11,7 @@ const SOURCES = [
   'components/mobile/NoteSheet.js',
   'pages/mobile/EventDetailPhone.js',
   'pages/mobile/EventDetailSections.js',
+  'pages/mobile/ProposalDetailPhone.js',
   'pages/mobile/InboxPhone.js',
   'pages/mobile/NotificationsPhone.js',
   'pages/mobile/ProposalsListPhone.js',

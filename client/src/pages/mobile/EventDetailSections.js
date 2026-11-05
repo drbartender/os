@@ -31,13 +31,15 @@ function PhoneLine({ label, links, who }) {
   );
 }
 
-export function ContactsSection({ open, onToggle, contacts, planState, clientName }) {
+// dayOf false: the proposal detail's Contacts, the client alone (a proposal
+// has no day-of contact), with no summary in the head.
+export function ContactsSection({ open, onToggle, contacts, planState, clientName, dayOf = true }) {
   return (
     <section className="m-section">
       <button type="button" className="m-section-row" aria-expanded={open} onClick={onToggle}>
         <Icon name="users" size={20} />
         <span className="m-section-name">Contacts</span>
-        {(planState === 'ready' || planState === 'none') && <span className="m-section-sum">{contacts.summary}</span>}
+        {dayOf && (planState === 'ready' || planState === 'none') && <span className="m-section-sum">{contacts.summary}</span>}
         <Caret open={open} />
       </button>
       {open && (
@@ -57,20 +59,20 @@ export function ContactsSection({ open, onToggle, contacts, planState, clientNam
               <div className="m-section-note">No phone or email on file.</div>
             )}
           </div>
-          <div className="m-section-label">Day-of contact</div>
-          {contacts.dayOf && (
+          {dayOf && <div className="m-section-label">Day-of contact</div>}
+          {dayOf && contacts.dayOf && (
             <div className="m-contact">
               <div className="m-contact-name">{contacts.dayOf.name}</div>
               <PhoneLine label={contacts.dayOf.phone} links={contacts.dayOf} who={contacts.dayOf.name} />
             </div>
           )}
-          {!contacts.dayOf && planState === 'failed' && (
+          {dayOf && !contacts.dayOf && planState === 'failed' && (
             <div className="m-section-note">The day-of contact needs a connection.</div>
           )}
-          {!contacts.dayOf && planState === 'loading' && (
+          {dayOf && !contacts.dayOf && planState === 'loading' && (
             <div className="m-section-note">Loading the day-of contact</div>
           )}
-          {!contacts.dayOf && (planState === 'ready' || planState === 'none') && (
+          {dayOf && !contacts.dayOf && (planState === 'ready' || planState === 'none') && (
             <div className="m-section-note">
               <Icon name="clock" size={16} />
               <span>Not received yet. Collected with the drink plan; often the client themselves.</span>
@@ -176,7 +178,9 @@ export function MoneySection({ open, onToggle, fin, moneyState }) {
 // held: a read the edit sheet waits for is still loading. The row keeps its
 // label and takes no tap until it settles, so no tap can push an entry for a
 // sheet that is not showing yet; it says so with aria-busy and a dimmed note.
-export function EditRow({ mode, held = false, onEdit, onDesktop }) {
+// sub: the note the 'edit' mode shows (the proposal detail's names add-ons).
+// children: rows that share the card under it (the proposal's Client link).
+export function EditRow({ mode, held = false, onEdit, onDesktop, sub = 'date · time · guests', children = null }) {
   return (
     <section className="m-section">
       <button type="button" className="m-section-row" disabled={mode === 'offline' || held}
@@ -189,11 +193,12 @@ export function EditRow({ mode, held = false, onEdit, onDesktop }) {
           </span>
         ) : (
           <>
-            <span className="m-edit-note">{mode === 'edit' ? 'date · time · guests' : 'desktop view'}</span>
+            <span className="m-edit-note">{mode === 'edit' ? sub : 'desktop view'}</span>
             <span className="m-section-caret" aria-hidden="true"><Icon name="right" size={16} /></span>
           </>
         )}
       </button>
+      {children}
     </section>
   );
 }

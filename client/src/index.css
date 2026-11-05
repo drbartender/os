@@ -21780,7 +21780,8 @@ html[data-app="admin-os"] .m-dhead-town-after::before { content: ','; position: 
 /* When and setup lines */
 html[data-app="admin-os"] .m-detail-when { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
 html[data-app="admin-os"] .m-detail-whenline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2); }
-html[data-app="admin-os"] .m-detail-setup { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3); }
+html[data-app="admin-os"] .m-detail-setup,
+html[data-app="admin-os"] .m-detail-status { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; color: var(--ink-3); }
 
 /* Accordion sections */
 html[data-app="admin-os"] .m-section {
@@ -22228,6 +22229,29 @@ html[data-app="admin-os"][data-skin="light"] .m-money-bal.m-money-flight .m-mone
   html[data-app="admin-os"] .m-notif-skel-bar,
   html[data-app="admin-os"] .m-notif-skel-pill { animation: none; }
 }
+
+/* The proposal detail (spec section 5 Detail; benchmark 2026-10-14, Proposal
+   detail). It reuses the event detail's sections, rows and money rows; these
+   are what the benchmark draws beyond them. */
+/* A second row inside one card (Client link under Edit details, Archive under
+   the send row), with the card's hairline between, as drawn. */
+html[data-app="admin-os"] .m-section-row.m-section-row-sep { border-top: 1px solid var(--line-1); }
+/* On a narrow phone the label keeps its line and what trails it gives way: a
+   note wraps, and the Client link's host shortens while its path, which
+   carries the token's six characters, stays whole. */
+html[data-app="admin-os"] .m-section-name.m-row-label { flex: 1 0 auto; white-space: nowrap; }
+html[data-app="admin-os"] .m-section-row > svg { flex: none; }
+html[data-app="admin-os"] .m-edit-note.m-row-note { flex: 0 1 auto; min-width: 0; }
+html[data-app="admin-os"] .m-link-text {
+  flex: 0 1 auto; min-width: 0; display: flex; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3);
+}
+html[data-app="admin-os"] .m-link-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+html[data-app="admin-os"] .m-link-path { flex: none; }
+/* Package & extras: each line under its own hairline, 8px by 16px. */
+html[data-app="admin-os"] .m-money-row.m-money-line { border-top: 1px solid var(--line-1); padding: 8px 16px; }
+/* The legal-hold note: the sheets' note box, at the page's own inset. */
+html[data-app="admin-os"] .m-sheet-note.m-hold-note { margin: 0 0 10px; }
 /* ---- end: event detail and assignment sheet ---- */
 
 /* ==========================================================================

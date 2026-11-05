@@ -34,6 +34,7 @@ import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import RemoteStaffingFeePrompt from './RemoteStaffingFeePrompt';
+import ProposalDetailPhone, { usePhoneFork } from '../mobile/ProposalDetailPhone';
 
 // Lead call bridge outcome, one read-only line for TT-drafted proposals
 // (spec 2026-07-18 §5.3). Absent lead_call renders nothing at the call site.
@@ -71,8 +72,11 @@ function firstReplyLabel(fr) {
 // palette, a link on the page), so the key gives each proposal a new mount:
 // without it an open editor kept the form seeded from the first proposal and
 // saved it onto the second, and a late answer for the first replaced the second.
+// At phone width the phone detail renders instead, keyed the same way, unless this screen
+// is in Desktop view (spec 2026-08-13 section 3); the phone detail hands desktop-only links here.
 export default function ProposalDetail() {
   const { id } = useParams();
+  if (usePhoneFork()) return <ProposalDetailPhone key={id} />;
   return <ProposalDetailBody key={id} />;
 }
 

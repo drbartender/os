@@ -4,7 +4,7 @@
 // Pure: no React, no fetch, no clock unless the caller passes one. Lane ma-f1.
 import { railParts } from './eventCards';
 import { getEventTypeLabel } from './eventTypes';
-import { fmt$ } from '../components/adminos/format';
+import { fmt$, ctDay } from '../components/adminos/format';
 import { proposalStatusMeta } from './proposalStatusMap';
 
 // event_date is a DATE column; pg hands it over as a timestamp at the server's
@@ -30,6 +30,22 @@ export function agoLabel(ts, now = new Date()) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+// The detail's status line times (spec section 3, Plan decisions of
+// 2026-11-05): within the last 7 days an age, as agoLabel writes it; older,
+// the rail's date in Chicago ("AUG 10"), with the year when it is not this
+// year's. A stamp in the future reads as an age ("just now").
+const WEEK_MS = 7 * 24 * 3600000;
+export function whenLabel(ts, now = new Date()) {
+  if (!ts) return '';
+  const t = new Date(ts).getTime();
+  if (Number.isNaN(t)) return '';
+  if (now.getTime() - t < WEEK_MS) return agoLabel(ts, now);
+  const ymd = ctDay(ts);
+  const rail = railParts(ymd);
+  const year = ymd.slice(0, 4) !== String(ctDay(now)).slice(0, 4) ? ` ${ymd.slice(0, 4)}` : '';
+  return `${rail.mon} ${Number(rail.day)}${year}`;
+}
+
 const dot = (parts) => parts.filter(Boolean).join(' · ');
 
 // One line per pipeline stage, from the real timestamps (sent_at, last_viewed_at
@@ -38,9 +54,12 @@ const dot = (parts) => parts.filter(Boolean).join(' · ');
 // last_viewed_at and view_count, so that row reads its view count instead and
 // never contradicts the Unviewed chip (the route's unviewed predicate is
 // last_viewed_at IS NULL AND status = 'sent'). The list card carries no
-// accepted time, as the benchmark draws it; the detail's status line (lane
-// ma-f2) reads accepted_at. No expiry exists on a proposal, so nothing
-// "expiring" is shown.
+// accepted time, as the benchmark draws it; the detail's status line
+// (proposalDetailView.js) reads accepted_at. No expiry exists on a proposal,
+// so nothing "expiring" is shown. Modified reads the sent time and never "by
+// client": only an admin sets that status, no column records a client's edit,
+// and updated_at moves on every write, a client's page view included (spec
+// section 3, Plan decisions of 2026-11-05).
 export function proposalMeta(row, now = new Date()) {
   const ago = (ts) => agoLabel(ts, now);
   const views = Number(row.view_count || 0);
@@ -58,7 +77,7 @@ export function proposalMeta(row, now = new Date()) {
         views > 0 ? `${views} ${views === 1 ? 'view' : 'views'}` : '',
       ]);
     case 'modified':
-      return row.updated_at ? `modified by client ${ago(row.updated_at)}` : 'modified by client';
+      return dot(['modified', row.sent_at ? `sent ${ago(row.sent_at)}` : '']);
     case 'accepted': {
       const paid = Number(row.amount_paid || 0);
       return paid > 0 ? `accepted · ${fmt$(paid)} paid` : 'accepted · awaiting deposit';

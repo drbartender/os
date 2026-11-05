@@ -1,4 +1,4 @@
-import { ymdOf, agoLabel, proposalMeta, proposalCard } from './proposalCards';
+import { ymdOf, agoLabel, whenLabel, proposalMeta, proposalCard } from './proposalCards';
 
 const NOW = new Date('2026-10-14T18:00:00Z');
 const hoursAgo = (h) => new Date(NOW.getTime() - h * 3600000).toISOString();
@@ -36,6 +36,24 @@ describe('agoLabel', () => {
   });
 });
 
+describe('whenLabel', () => {
+  test('an age within the last 7 days', () => {
+    expect(whenLabel(hoursAgo(5), NOW)).toBe('5h ago');
+    expect(whenLabel(hoursAgo(6 * 24 + 23), NOW)).toBe('6d ago');
+  });
+  test("the rail's date in Chicago beyond 7 days, the year only when it is not this one", () => {
+    expect(whenLabel(hoursAgo(7 * 24), NOW)).toBe('OCT 7');
+    expect(whenLabel('2026-08-10T15:00:00Z', NOW)).toBe('AUG 10');
+    // 03:00 UTC on Aug 11 is still Aug 10 in Chicago.
+    expect(whenLabel('2026-08-11T03:00:00Z', NOW)).toBe('AUG 10');
+    expect(whenLabel('2025-12-30T18:00:00Z', NOW)).toBe('DEC 30 2025');
+  });
+  test('empty for nothing and for garbage', () => {
+    expect(whenLabel(null, NOW)).toBe('');
+    expect(whenLabel('not a date', NOW)).toBe('');
+  });
+});
+
 describe('proposalMeta', () => {
   test('draft: created ago', () => {
     expect(proposalMeta(row({ status: 'draft', created_at: hoursAgo(72), sent_at: null }), NOW)).toBe('draft · created 3d ago');
@@ -53,8 +71,11 @@ describe('proposalMeta', () => {
     expect(proposalMeta(row({ status: 'viewed', last_viewed_at: hoursAgo(1), view_count: 1 }), NOW)).toBe('viewed 1h ago · 1 view');
     expect(proposalMeta(row({ status: 'viewed', last_viewed_at: null, view_count: 0 }), NOW)).toBe('viewed');
   });
-  test('modified by the client', () => {
-    expect(proposalMeta(row({ status: 'modified', updated_at: hoursAgo(24) }), NOW)).toBe('modified by client 1d ago');
+  test('modified: the sent time, never "by client" and never updated_at', () => {
+    const meta = proposalMeta(row({ status: 'modified', sent_at: hoursAgo(48), updated_at: hoursAgo(1) }), NOW);
+    expect(meta).toBe('modified · sent 2d ago');
+    expect(meta).not.toMatch(/client/);
+    expect(proposalMeta(row({ status: 'modified', sent_at: null }), NOW)).toBe('modified');
   });
   test('accepted: awaiting deposit, or the amount paid', () => {
     expect(proposalMeta(row({ status: 'accepted', amount_paid: '0' }), NOW)).toBe('accepted · awaiting deposit');
