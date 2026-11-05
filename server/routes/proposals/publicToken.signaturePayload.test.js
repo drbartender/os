@@ -33,7 +33,7 @@ const ROW = {
 };
 function answer(sql, params) {
   calls.push({ sql, params });
-  if (/FROM proposals WHERE token = \$1/.test(sql)) return { rows: [ROW], rowCount: 1 };
+  if (/FROM proposals\b[\s\S]*WHERE p?\.?token = \$1/.test(sql) && /^\s*SELECT/i.test(sql)) return { rows: [ROW], rowCount: 1 };
   if (/UPDATE proposals SET/.test(sql) && /client_signed_name = \$1/.test(sql)) return { rows: [{ id: ROW.id }], rowCount: 1 };
   return { rows: [], rowCount: 0 };
 }

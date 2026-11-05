@@ -22,7 +22,7 @@ const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
 const { validateSignaturePayload } = require('../../utils/signaturePayload');
 const { findInFlightPayments, toPublicPending, IN_FLIGHT_LATERAL_SQL, pendingFromLateralRow } = require('../../utils/paymentInFlight');
-const { publicPriceView } = require('../../utils/publicSnapshot');
+const { publicPriceView, signedPriceRecord } = require('../../utils/publicSnapshot');
 const { isLegalHold } = require('../../utils/legalHold');
 
 const router = express.Router();
@@ -157,6 +157,9 @@ async function buildPublicProposalPayload(token, db = pool) {
       p.balance_due_date,
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
       p.client_signature_document_version, p.client_signature_data,
+      -- The total the signature acknowledged (the pay-only card prints it);
+      -- the signed snapshot stays off the public payload.
+      p.client_signed_total,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
@@ -465,9 +468,14 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     throw new ValidationError({ document_version: 'Please refresh the page and try again.' });
   }
 
+  // The venue gate's inputs, and the snapshot and package name the signed
+  // record below is built from.
   const lookup = await pool.query(
-    `SELECT id, venue_name, venue_street, venue_city, venue_state, venue_zip
-       FROM proposals WHERE token = $1`,
+    `SELECT p.id, p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
+            p.pricing_snapshot, sp.name AS package_name
+       FROM proposals p
+       LEFT JOIN service_packages sp ON sp.id = p.package_id
+      WHERE p.token = $1`,
     [req.params.token]
   );
   if (!lookup.rows[0]) throw new NotFoundError('This proposal is no longer available');
@@ -523,6 +531,16 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   }
   const ackTotal = ackRaw;
 
+  // The configuration being signed, stored beside the signature in the same
+  // UPDATE (audit ESIG-02): the public price view the page rendered and the
+  // document version, so an edit after the signature can never rewrite the
+  // only record of what was signed (the editor PATCH voids the signature
+  // instead, patchGuards.js). The stored total is the row's own, which the
+  // WHERE below asserts equals the acknowledged figure (law 2).
+  const signedRecord = signedPriceRecord(lookup.rows[0].pricing_snapshot, {
+    packageName: lookup.rows[0].package_name, documentVersion, total: ackTotal,
+  });
+
   // Make the UPDATE itself the gate: WHERE clause re-asserts both that no
   // signature has been recorded yet AND that the status is still in a signable
   // state. This collapses the SELECT-then-UPDATE TOCTOU window so two parallel
@@ -542,6 +560,8 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       client_signature_ip = $4,
       client_signature_user_agent = $5,
       client_signature_document_version = $6,
+      client_signed_total = total_price,
+      client_signed_snapshot = $15::jsonb,
       status = 'accepted',
       -- Stamp acceptance time so the financial dashboard (metricsQueries filters
       -- accepted_at IS NOT NULL) counts public sign-and-pay bookings. COALESCE so
@@ -568,6 +588,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     venueToPersist ? (vStr(venue_zip) || null) : null,
     venueToPersist ? composedLocation : null,
     ackTotal,
+    JSON.stringify(signedRecord),
   ]);
   if (!upd.rows[0]) {
     // Disambiguate: a still-signable row can only have failed the total

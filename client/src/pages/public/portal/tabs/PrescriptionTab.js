@@ -89,7 +89,7 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
       {focus.balance_due > 0 && <div className="cp-leader"><span>Balance due</span><span>{formatDollars(focus.balance_due)}</span></div>}
     </div>
     <div className="cp-rx-sig">{p.client_signed_at
-      ? <>Signed by {p.client_signed_name} on {new Date(p.client_signed_at).toLocaleDateString('en-US')}</>
+      ? <>Signed by {p.client_signed_name} on {new Date(p.client_signed_at).toLocaleDateString('en-US')}{p.client_signed_total != null ? <> for {formatDollars(p.client_signed_total)}</> : null}</>
       : <>Not yet signed</>}</div>
     {p.payments?.length > 0 && (<div className="cp-rx-payments"><h4>Payment history</h4>
       {p.payments.map(pay => <div key={pay.id} className="cp-leader"><span>{pay.payment_type}</span><span>{formatCents(pay.amount)}</span></div>)}</div>)}

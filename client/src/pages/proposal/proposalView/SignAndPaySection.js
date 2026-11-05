@@ -111,6 +111,8 @@ export default function SignAndPaySection({
   proposalVenue,
   // payOnly: when the client signed (ISO timestamp) — for the reference line.
   clientSignedAt,
+  // payOnly: the total the signature acknowledged (the row's client_signed_total).
+  clientSignedTotal = null,
 }) {
   const depositSelected = paymentOption === 'deposit';
   const fullSelected = paymentOption === 'full';
@@ -449,7 +451,10 @@ export default function SignAndPaySection({
 
       {clientSignedAt && (
         <p className="sign-pay-accept-note">
-          You accepted the Service Agreement when you signed on {formatDateShort(clientSignedAt)}.
+          You accepted the Service Agreement when you signed on {formatDateShort(clientSignedAt)}
+          {clientSignedTotal != null && Number.isFinite(Number(clientSignedTotal))
+            ? ` for a total of ${fmt(Number(clientSignedTotal))}`
+            : ''}.
         </p>
       )}
 

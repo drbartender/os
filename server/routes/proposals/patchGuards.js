@@ -25,6 +25,7 @@
 const { ValidationError, ConflictError } = require('../../utils/errors');
 const { validateAdjustments, isWholeCents } = require('../../utils/adjustmentRules');
 const { isLegalHold } = require('../../utils/legalHold');
+const { normalizeVenueState } = require('../../utils/venueAddress');
 
 const PLAIN_DIGITS = /^[0-9]+$/;
 const MAX_INT4 = 2147483647; // proposals.id is SERIAL
@@ -192,6 +193,95 @@ function adjustmentsAudit(oldRow, newLines) {
     : { old_adjustments: before, new_adjustments: newLines };
 }
 
+// ─── The signed terms (audit ESIG-02) ───────────────────────────────────────
+// A signature never stands against terms admin changed afterward
+// (gratuityMandate.js states it for one field; this is the rule for all of
+// them). The decision is pure; signatureVoid.js writes it.
+
+// The statuses a client can sign or pay from. A lifecycle status an admin
+// forced onto an unpaid signed row (confirmed, completed) keeps its signature
+// like a paid row does: voiding it would leave a row the client can never
+// sign again (the sign UPDATE refuses those statuses).
+const VOIDABLE_STATUSES = ['sent', 'viewed', 'modified', 'accepted'];
+
+// Dollars to integer cents, null when the value is not money.
+function centsOf(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
+}
+const numOf = (v) => (v === null || v === undefined || v === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+const pick = (a, b) => (a === null || a === undefined || a === '' ? b : a);
+
+/**
+ * The priced terms a booking's snapshot describes, as the signed terms are
+ * compared: package, guests, hours, bars, billed bartenders, the add-on set
+ * (name, variant, quantity, line total), syrups, the lines and the override.
+ * Row columns stand in where a legacy snapshot lacks a field. The total is
+ * compared apart, against the total the signature acknowledged.
+ */
+function pricedTermsOf(snapshot, row = {}) {
+  const s = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot : {};
+  const inputs = s.inputs && typeof s.inputs === 'object' ? s.inputs : {};
+  return {
+    package_id: numOf(pick(s.package && s.package.id, row.package_id)),
+    guest_count: numOf(pick(inputs.guestCount, row.guest_count)),
+    hours: numOf(pick(inputs.durationHours, row.event_duration_hours)),
+    bars: numOf(pick(inputs.numBars, row.num_bars)),
+    bartenders: numOf(pick(s.staffing && s.staffing.actual, row.num_bartenders)),
+    addons: (Array.isArray(s.addons) ? s.addons : [])
+      .map((a) => JSON.stringify([(a && a.name) || null, (a && a.variant) || null, numOf(a && a.quantity) ?? 1, centsOf(a && a.line_total)]))
+      .sort(),
+    syrups: (s.syrups && Array.isArray(s.syrups.selections) ? s.syrups.selections : []).map(String).sort(),
+    adjustments: canonicalLines(pick(s.adjustments, row.adjustments)),
+    override: centsOf(pick(s.total_price_override, row.total_price_override)),
+  };
+}
+
+// The venue the Event-Specific Agreement names (section 1.3: "location"):
+// any structured venue field the body sends that differs from the stored one
+// (state compared canonical, so 'IL' and 'Illinois' agree), else a free-text
+// event_location that differs. A field the body leaves out is not a change.
+function venueChanged(body, row) {
+  if (!body || typeof body !== 'object') return false;
+  const norm = (v) => (v === null || v === undefined ? '' : String(v).trim().toLowerCase());
+  const keys = ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip'];
+  const provided = keys.filter((k) => body[k] !== undefined);
+  if (provided.length > 0) {
+    return provided.some((k) => {
+      const next = k === 'venue_state' ? normalizeVenueState(body[k]) : body[k];
+      const prev = k === 'venue_state' ? normalizeVenueState(row[k]) : row[k];
+      return norm(next) !== norm(prev);
+    });
+  }
+  if (body.event_location !== undefined && body.event_location !== null) {
+    return norm(body.event_location) !== norm(row.event_location);
+  }
+  return false;
+}
+
+/**
+ * Why a save must void the client's signature, as the moved terms, or null
+ * when the signature stands: the row is signed, unpaid and in a status the
+ * client can sign or pay from, and the save moves a priced term (the new
+ * engine snapshot against the stored one), the total the signature
+ * acknowledged (client_signed_total, else the row total), or the venue. A
+ * paid row keeps its signature (the additional-services flow); its signed
+ * snapshot keeps the record either way.
+ */
+function signatureVoidReason({ old, snapshot, body }) {
+  if (!old || old.client_signed_at === null || old.client_signed_at === undefined) return null;
+  if (Number(old.amount_paid || 0) > 0) return null;
+  if (!VOIDABLE_STATUSES.includes(old.status)) return null;
+  const before = pricedTermsOf(old.pricing_snapshot, old);
+  const after = pricedTermsOf(snapshot, {});
+  const reasons = Object.keys(before).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  const signedTotal = centsOf(pick(old.client_signed_total, old.total_price));
+  if (signedTotal !== null && centsOf(snapshot && snapshot.total) !== signedTotal) reasons.push('total');
+  if (venueChanged(body, old)) reasons.push('venue');
+  return reasons.length ? reasons : null;
+}
+
 module.exports = {
   parseProposalId,
   assertNotLegalHold,
@@ -204,4 +294,7 @@ module.exports = {
   linesToWrite,
   adjustmentsColumn,
   adjustmentsAudit,
+  pricedTermsOf,
+  signatureVoidReason,
+  VOIDABLE_STATUSES,
 };

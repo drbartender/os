@@ -73,7 +73,9 @@ const SECRET_LABEL = 'Test leak label';
 const SECRET_AMOUNT = '123.45';     // the hidden discount
 const SECRET_SUBTOTAL = '777.77';   // the pre-fold subtotal
 const SECRETS = [SECRET_LABEL, SECRET_AMOUNT, SECRET_SUBTOTAL];
-const FORBIDDEN_KEYS = ['total_price_override', 'subtotal', 'breakdown'];
+// client_signed_snapshot is the signed record (audit ESIG-02): sanitized when
+// stored, but admin-only; the public payload prints client_signed_total alone.
+const FORBIDDEN_KEYS = ['total_price_override', 'subtotal', 'breakdown', 'client_signed_snapshot'];
 
 let server;
 let baseUrl;
