@@ -578,7 +578,9 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       event_location = COALESCE($13, event_location)
     WHERE id = $7
       AND client_signed_at IS NULL
-      AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')
+      -- 'accepted' is signable while unsigned (audit ESIG-14): an admin can
+      -- mark a sent proposal accepted by hand, and the client still signs it.
+      AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')
       AND ABS(total_price - $14::numeric) < 0.005
     RETURNING id
   `, [
@@ -605,7 +607,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     );
     const r = re.rows[0];
     const stillSignable = r && !r.client_signed_at
-      && !['accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
+      && !['deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
     if (stillSignable) {
       code = 'TOTAL_CHANGED';
       message = 'The total for this proposal has changed. Please review the updated price and sign again.';

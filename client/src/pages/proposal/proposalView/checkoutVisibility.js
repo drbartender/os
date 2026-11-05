@@ -30,7 +30,9 @@ export function checkoutVisibility({ proposal, paid, settlePhase, isPaid, pendin
   const settling = !isPaid && (pending || blocked || settlePhase === 'fallback' || (paid && isAlreadySigned));
   const isPayableStatus = !!proposal && !paid && !pending && !blocked
     && !LIFECYCLE_PAID.includes(status) && PAYABLE.includes(status);
-  const showSignAndPay = !isPaid && !settling && !isAlreadySigned && ['sent', 'viewed'].includes(status);
+  // An unsigned 'accepted' row (an admin marked a phone acceptance) still needs
+  // the client's signature, so it gets Sign & Pay, not pay-only (audit ESIG-14).
+  const showSignAndPay = !isPaid && !settling && !isAlreadySigned && ['sent', 'viewed', 'accepted'].includes(status);
   const showPayOnly = !isPaid && !settling && isAlreadySigned && status === 'accepted';
   const showPaidCard = settling || isPaid;
   const paidCardPhase = isPaid ? 'paid'
