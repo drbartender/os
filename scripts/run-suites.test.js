@@ -317,7 +317,7 @@ test('a reused --log-dir is claimed and loses its old summary.json, .log and .ou
 
 test('a suite that outlives the per-suite timeout is killed and is a failure', () => {
   const { runSuite, SUITE_TIMEOUT_MS } = require(RUNNER);
-  assert.strictEqual(SUITE_TIMEOUT_MS, 180000);
+  assert.strictEqual(SUITE_TIMEOUT_MS, 300000);
   const root = tmp('timeout-');
   writeTree(root, { 'server/utils/hang.test.js': HANG_SUITE });
   const logDir = path.join(root, 'logs');

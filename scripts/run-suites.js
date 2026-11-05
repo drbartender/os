@@ -34,7 +34,7 @@
  * <timestamp>/), is the TAP record that
  * Node's reporter alone writes; what the suite itself prints to stdout and
  * stderr goes to the sibling .out. A suite runs under GNU coreutils timeout
- * (flockExec.boundedNodeSync), which at 180 s KILLs the suite and every
+ * (flockExec.boundedNodeSync), which at 300 s KILLs the suite and every
  * process in its process group, even after a kill -9 of the runner; a
  * timed-out suite reads as a failure, and without a GNU timeout the runner
  * refuses to run (one line, exit 1). After each suite the locked run kills
@@ -115,7 +115,10 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const ROOTS = ['server/', 'scripts/'];
 const REQUIRE_RE = /require\(\s*(['"])(\.{1,2}\/[^'"]+)\1\s*\)/g;
 const GUARD = 'DRB_DEVDB_LOCKED';
-const SUITE_TIMEOUT_MS = 180_000;
+// 300 s, raised from 180 s on 2026-11-04: the bound only stops a hung suite from
+// holding the dev-suite lock, and menuDrafts.test.js runs about 164 s on a quiet
+// shared dev database and past 180 s on a loaded one.
+const SUITE_TIMEOUT_MS = 300_000;
 
 function norm(root, p) {
   return path.relative(root, path.resolve(root, p)).split(path.sep).join('/');
