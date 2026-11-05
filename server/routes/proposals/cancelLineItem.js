@@ -92,6 +92,9 @@ function previewBody(req, result, plan) {
     },
     status_will_change: result.statusChanged,
     new_status: result.newStatus,
+    // The client's signature is voided by this removal (signatureVoid.js):
+    // they sign the new terms again before paying.
+    signature_voided: result.signatureVoided === true,
     locked_invoices: result.lockedInvoices.map((i) => ({
       id: i.id, label: i.label, amount_due_cents: i.amount_due,
     })),
