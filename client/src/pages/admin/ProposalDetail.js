@@ -18,7 +18,7 @@ import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { ctDay, fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
+import { ctDay, fmt$2dp, fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
 import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import useCancelTargets from './proposalEditor/useCancelTargets';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
@@ -629,6 +629,10 @@ function ProposalDetailBody() {
                       <dt>Signed by</dt><dd>{proposal.client_signed_name || '—'}</dd>
                       <dt>Signed on</dt>
                       <dd>{fmtDateFull(ctDay(proposal.client_signed_at))}</dd>
+                      {/* The total the signature acknowledged (client_signed_total),
+                          which an edit after the signature never rewrites. */}
+                      <dt>Signed total</dt>
+                      <dd className="num">{fmt$2dp(proposal.client_signed_total)}</dd>
                       <dt>Agreement version</dt>
                       <dd className="muted">{proposal.client_signature_document_version || '—'}</dd>
                     </dl>

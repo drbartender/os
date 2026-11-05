@@ -28,7 +28,8 @@ const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 const { parseProposalId, assertNotLegalHold, assertLinesFresh, assertOverrideUnchanged, overrideToWrite,
   normalizeAdjustmentsOrThrow, assertRefundMarkersBound, linesToWrite, adjustmentsColumn,
-  adjustmentsAudit } = require('./patchGuards');
+  adjustmentsAudit, signatureVoidReason } = require('./patchGuards');
+const { voidClientSignature } = require('./signatureVoid');
 
 const router = express.Router();
 
@@ -560,6 +561,17 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       oldSnapshot: old.pricing_snapshot, newSnapshot: snapshot,
     });
     if (staffingNotify) notifyStaffingGratuity = true;
+
+    // A signature never stands against terms admin changed afterward: an
+    // unpaid signed booking whose priced terms, total or venue move here is
+    // voided inside this transaction (patchGuards.js decides, signatureVoid.js
+    // writes), so the page shows Sign & Pay again and the prior record survives
+    // in the activity log. A paid row keeps its signature (the
+    // additional-services flow); its signed snapshot keeps the record.
+    const voidReason = signatureVoidReason({ old, snapshot, body: req.body });
+    if (voidReason) {
+      await voidClientSignature(dbClient, { proposalId: id, row: old, actorId: req.user.id, reason: voidReason, resetStatus: true });
+    }
 
     const updatedRow = await dbClient.query(`
       UPDATE proposals SET

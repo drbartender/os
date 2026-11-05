@@ -951,6 +951,15 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_method VARCHAR(1
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_ip VARCHAR(45);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_user_agent TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_document_version VARCHAR(50);
+-- The configuration the client signed (audit ESIG-02): the row's total_price at
+-- sign time and the public price view the page rendered (document version,
+-- folded rows, gratuity, total, sanitized snapshot; utils/publicSnapshot.js
+-- signedPriceRecord). Written only by the sign UPDATE (routes/proposals/
+-- publicToken.js); cleared with the signature when it is voided
+-- (routes/proposals/signatureVoid.js), the prior record going to the
+-- signature_voided activity row.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_total NUMERIC(10,2);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_snapshot JSONB;
 
 -- ─── Proposal origin (intake source) ───────────────────────────────
 -- NULL means manual / direct (the contract, permanently — never "unknown").

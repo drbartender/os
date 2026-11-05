@@ -1309,6 +1309,7 @@ tests omitted
 │   │   │   ├── publicSwitch.js # POST /api/proposals/t/:token/switch - the ONE write behind the proposal page's package drawer (spec 2026-08-14-proposal-options-drawer-design.md).
 │   │   │   ├── publicToken.js # /t/:token view + sign (the payload sends price_rows and the sanitized pricing_snapshot; exports reportPriceRowsFold, the price rows' Sentry report, for the client portal too)
 │   │   │   ├── remoteStaffing.js # Remote Staffing Fee support (spec 2026-08-06-contractor-duty-pay-design.md §6).
+│   │   │   ├── signatureVoid.js # Voids a proposal's client signature inside the caller's transaction (audit ESIG-02, ESIG-14): clears the client_signature_* columns, the signed total and the signed snapshot, puts a signable unpaid row back to 'sent' when asked, and writes a signature_voided activity row carrying the prior record (name, time, method, version, IP, signed total, signed snapshot). Called by the editor PATCH (crud.js) when a signed unpaid booking's terms move, and by the status route (lifecycle.js) on archived -> draft.
 │   │   │   └── stopDrip.js   # POST /api/proposals/:id/stop-drip - admin "Stop follow-ups" (2026-09-22).
 │   │   ├── serviceExtensions/
 │   │   │   ├── admin.js      # Admin surfaces for service extensions (spec sections 5.6, 8).

@@ -136,7 +136,7 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
       p.balance_due_date,
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
-      p.client_signature_document_version,
+      p.client_signature_document_version, p.client_signed_total,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       p.venue_name, p.venue_city, p.venue_state, p.pricing_snapshot,
       dp.token AS drink_plan_token, COALESCE(dp.submitted_at, dp.finalized_at) AS drink_plan_submitted_at,
