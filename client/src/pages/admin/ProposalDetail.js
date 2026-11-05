@@ -1,7 +1,7 @@
 // ProposalDetail: the admin proposal page at /proposals/:id, mounted fresh per proposal
 // so no open editor, dialog or late response carries over to the next one.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
@@ -130,18 +130,30 @@ function ProposalDetailBody() {
   const [pendingCr, setPendingCr] = useState(null);
   const [appliedCrId] = useState(() => searchParams.get('change_request_id'));
 
+  // False once this body has unmounted (a move to another proposal or any other
+  // route): a read that answers after that, success or failure, does nothing, so
+  // it cannot toast over the next page or navigate away from it. Set true in the
+  // effect too, because StrictMode's development remount runs the cleanup first.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+
   const loadProposal = useCallback(() => {
     return api.get(`/proposals/${id}`).then(res => {
+      if (!alive.current) return;
       setProposal(res.data);
       setNotes(res.data.admin_notes || '');
     }).catch(err => {
+      if (!alive.current) return;
       if (err.status === 404) {
         toast.error('Proposal not found.');
         navigate('/proposals');
       } else {
         toast.error(err.message || 'Failed to load proposal. Try refreshing.');
       }
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (alive.current) setLoading(false); });
   }, [id, navigate, toast]);
 
   useEffect(() => { loadProposal(); }, [loadProposal]);

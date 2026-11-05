@@ -608,7 +608,7 @@ tests omitted
 │       │   │   ├── CancelEventDialog.js # CancelEventDialog (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── CancelLineDialog.js # CancelLineDialog (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── ChangeRequestsDashboard.js # ChangeRequestsDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   │   ├── ClientDetail.js # ClientDetail (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── ClientDetail.js # ClientDetail: the admin client page at /clients/:id, mounted fresh per client so no open edit form, draft or late response carries over to the next one.
 │       │   │   ├── ClientsDashboard.js # ClientsDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── CocktailMenuDashboard.js # CocktailMenuDashboard (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── DrinkPlanDetail.js # DrinkPlanDetail (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.

@@ -1,5 +1,5 @@
-// ClientDetail (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// ClientDetail: the admin client page at /clients/:id, mounted fresh per client so no
+// open edit form, draft or late response carries over to the next one.
 
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -36,7 +36,16 @@ function initialsOf(name) {
   return name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
 
+// The route keeps its element when only :id changes (global search, the
+// palette, a link on the page), so the key gives each client a new mount:
+// without it an open edit form kept the first client's values and Save wrote
+// them onto the second.
 export default function ClientDetail() {
+  const { id } = useParams();
+  return <ClientDetailBody key={id} />;
+}
+
+function ClientDetailBody() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
@@ -51,9 +60,14 @@ export default function ClientDetail() {
   const [harvestBusy, setHarvestBusy] = useState(false);
   const [harvestError, setHarvestError] = useState('');
 
+  // A read that answers after this page unmounted, success or failure, does
+  // nothing: it must not replace the next client or toast and navigate away
+  // from it.
   useEffect(() => {
+    let cancelled = false;
     api.get(`/clients/${id}`)
       .then(res => {
+        if (cancelled) return;
         setClient(res.data);
         setForm({
           name: res.data.name,
@@ -64,10 +78,12 @@ export default function ClientDetail() {
         });
       })
       .catch(() => {
+        if (cancelled) return;
         toast.error('Failed to load client. Try refreshing.');
         navigate('/clients');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [id, navigate, toast]);
 
   const clearServerFieldError = (name) => {

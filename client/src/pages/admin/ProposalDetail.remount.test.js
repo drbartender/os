@@ -1,14 +1,14 @@
 import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import api from '../../utils/api';
 import ProposalDetail from './ProposalDetail';
 
 // The route keeps its element when only :id changes. These tests move the page
 // from one proposal to another the way global search does and check that
-// nothing of the first proposal acts on the second: an open editor, and a
-// record request for the first that answers late.
+// nothing of the first proposal acts on the second: an open editor, a
+// record request for the first that answers late, and one that fails late.
 
 jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn(), put: jest.fn(), patch: jest.fn() } }));
 // Stable identities: the page's load callback depends on toast.
@@ -64,7 +64,7 @@ beforeEach(() => {
   pending = {};
   api.get.mockImplementation((url) => {
     const m = url.match(/^\/proposals\/(\d+)$/);
-    if (m) return new Promise((resolve) => { pending[m[1]] = resolve; });
+    if (m) return new Promise((resolve, reject) => { pending[m[1]] = resolve; pending[`${m[1]}:fail`] = reject; });
     if (url.endsWith('/group')) return Promise.resolve({ data: { grouped: false } });
     if (url.endsWith('/change-requests')) return Promise.resolve({ data: { requests: [] } });
     return Promise.reject(Object.assign(new Error('not found'), { status: 404 }));
@@ -76,9 +76,16 @@ function Go() {
   return <button type="button" onClick={() => navigate('/proposals/2')}>go to 2</button>;
 }
 
+function Where() {
+  return <div data-testid="where">{useLocation().pathname}</div>;
+}
+
 const mount = (path) => render(
   <MemoryRouter initialEntries={[path]}>
-    <Routes><Route path="/proposals/:id" element={<><ProposalDetail /><Go /></>} /></Routes>
+    <Routes>
+      <Route path="/proposals/:id" element={<><ProposalDetail /><Go /><Where /></>} />
+      <Route path="/proposals" element={<Where />} />
+    </Routes>
   </MemoryRouter>
 );
 
@@ -107,4 +114,15 @@ test('the first proposal answering late never replaces the second', async () => 
   expect(screen.getAllByText('Client Two').length).toBeGreaterThan(0);
   expect(screen.queryByText('Client One')).toBeNull();
   expect(screen.getByDisplayValue('notes for two')).toBeInTheDocument();
+});
+
+test('the first proposal failing late with a 404 leaves the admin on the second, with no toast', async () => {
+  mount('/proposals/1');
+  fireEvent.click(screen.getByRole('button', { name: 'go to 2' }));
+  await answer('2', 'Client Two', 'notes for two');
+  await act(async () => { pending['1:fail'](Object.assign(new Error('Not found'), { status: 404 })); });
+
+  expect(screen.getByTestId('where')).toHaveTextContent('/proposals/2');
+  expect(screen.getAllByText('Client Two').length).toBeGreaterThan(0);
+  expect(mockToast.error).not.toHaveBeenCalled();
 });
