@@ -1,15 +1,67 @@
 // Voids a proposal's client signature inside the caller's transaction (audit ESIG-02, ESIG-14):
 // clears the client_signature_* columns, the signed total and the signed snapshot, puts a
-// signable unpaid row back to 'sent' when asked, and writes a signature_voided activity row
-// carrying the prior record (name, time, method, version, IP, signed total, signed snapshot).
-// Called by the editor PATCH (crud.js) when a signed unpaid booking's terms move, and by the
-// status route (lifecycle.js) on archived -> draft.
+// signable row back to 'sent' when asked, and writes a signature_voided activity row carrying
+// the prior record (name, time, method, version, IP, signed total, signed snapshot). The rule
+// the editor PATCH (crud.js) and the cancel-line writer (lineItemCancel.js) share is
+// voidSignatureIfTermsMoved: a signature never stands against terms admin changed afterward,
+// unless money sits on the row or is still settling; the status route (lifecycle.js) keys on
+// the transition out of archived and uses the same money guard (rowHoldsMoney).
+//
+// Why money keeps a signature: a paid booking's edits go through the additional-services flow
+// and its signed snapshot keeps the record; a debit still in flight (paymentInFlight.js, the one
+// definition of "settling") credits the row at payment_intent.succeeded, so clearing the
+// signature meanwhile would leave a paid row the client can never sign again; and a retainer a
+// cancelled booking kept (money law 1) rests on the signature it was forfeited under.
 //
 // The caller holds the row FOR UPDATE and passes its transaction client (one pooled connection
-// per request); this writes through that client only. Nothing here decides whether to void:
-// patchGuards.js signatureVoidReason does, and lifecycle.js keys on the transition.
+// per request); everything here reads and writes through that client only. The pure decision
+// (which terms moved) lives in patchGuards.js signatureVoidReason.
 
 'use strict';
+
+const { signatureVoidReason } = require('./patchGuards');
+const { findInFlightPayments } = require('../../utils/paymentInFlight');
+
+// The statuses a restore out of archived may land on that still precede money.
+const PRE_PAYMENT_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
+
+/**
+ * True when the row holds money or a payment is still settling on it:
+ * amount_paid or external_paid above zero, or a processing bank debit
+ * (findInFlightPayments on the caller's client). The row is the one read
+ * under the caller's lock.
+ */
+async function rowHoldsMoney(db, row, proposalId) {
+  if (Number(row.amount_paid || 0) > 0 || Number(row.external_paid || 0) > 0) return true;
+  const inFlight = await findInFlightPayments(proposalId, db);
+  return inFlight.length > 0;
+}
+
+/**
+ * The editor PATCH's and the cancel-line writer's rule in one call: when the
+ * locked row is signed and its priced terms, acknowledged total or venue
+ * moved (signatureVoidReason, pure) and no money sits on the row or in flight
+ * (rowHoldsMoney), void it and send a signable row back to 'sent'; otherwise
+ * leave the signature exactly as it is. The in-flight read runs only once a
+ * reason exists, so a save that moves nothing costs no query.
+ *
+ * @param {import('pg').PoolClient} db  the caller's transaction client
+ * @param {object} args
+ * @param {number|string} args.proposalId
+ * @param {object} args.old  the row as read under the lock, before the save's writes
+ * @param {object} args.snapshot  the engine snapshot the save is writing
+ * @param {object} [args.body]  the request body, for the venue compare (PATCH); omit for a cancel
+ * @param {number|null} args.actorId
+ * @param {string} [args.reason]  the caller's own word for the audit row ('line_item_cancelled')
+ * @returns {Promise<{ voided: boolean, row: object|null, kept?: 'money' }>}
+ */
+async function voidSignatureIfTermsMoved(db, { proposalId, old, snapshot, body = {}, actorId, reason: callerReason = null }) {
+  const moved = signatureVoidReason({ old, snapshot, body });
+  if (!moved) return { voided: false, row: null };
+  if (await rowHoldsMoney(db, old, proposalId)) return { voided: false, row: null, kept: 'money' };
+  const reason = callerReason ? [...moved, callerReason] : moved;
+  return voidClientSignature(db, { proposalId, row: old, actorId, reason, resetStatus: true });
+}
 
 /**
  * @param {import('pg').PoolClient} db  the caller's transaction client
@@ -66,4 +118,5 @@ async function voidClientSignature(db, { proposalId, row, actorId, reason, reset
   return { voided: true, row: upd.rows[0] };
 }
 
-module.exports = { voidClientSignature };
+module.exports = { voidClientSignature, voidSignatureIfTermsMoved, rowHoldsMoney, PRE_PAYMENT_STATUSES };
+
