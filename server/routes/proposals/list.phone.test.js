@@ -173,6 +173,32 @@ test('paging: has_more follows page * limit against total', async () => {
   assert.equal(p3.body.has_more, false);
 });
 
+// At rest (spec section 3, Plan decisions of 2026-11-05): the phone's stored
+// list holds no public token and no client contact, and the desktop's bare
+// array keeps all three.
+const AT_REST = ['token', 'client_email', 'client_phone'];
+
+test('envelope rows carry no token, client_email or client_phone', async () => {
+  const res = await request(`/api/proposals?search=${TAG}&envelope=1`);
+  assert.equal(res.status, 200, res.raw);
+  assert.equal(res.body.rows.length, 5);
+  for (const row of res.body.rows) {
+    for (const key of AT_REST) assert.ok(!(key in row), `envelope row ${row.id} must not carry ${key}`);
+    assert.ok('client_name' in row && 'status' in row && 'total_price' in row, 'the other columns stay');
+  }
+});
+
+test('the bare array still carries token, client_email and client_phone', async () => {
+  const res = await request(`/api/proposals?search=${TAG}`);
+  assert.equal(res.status, 200, res.raw);
+  assert.equal(res.body.length, 5);
+  for (const row of res.body) {
+    for (const key of AT_REST) assert.ok(key in row, `bare row ${row.id} keeps ${key}`);
+    assert.match(row.token, /^[0-9a-f-]{36}$/);
+    assert.match(row.client_email, /@example\.test$/);
+  }
+});
+
 test('an envelope with an empty bucket reports zeros, not nulls', async () => {
   const res = await request(`/api/proposals?search=${TAG}-nothing-matches&envelope=1`);
   assert.equal(res.status, 200, res.raw);

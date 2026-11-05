@@ -46,6 +46,14 @@ const SORT_COLUMNS = {
   created_at: 'p.created_at',
 };
 
+// The columns the phone's stored list must not hold (the envelope rows below).
+const AT_REST_OMIT = ['token', 'client_email', 'client_phone'];
+function withoutAtRestFields(row) {
+  const out = { ...row };
+  for (const key of AT_REST_OMIT) delete out[key];
+  return out;
+}
+
 /** GET /api/proposals — list all proposals. Explicit column list — do NOT ship
  *  pricing_snapshot / admin_notes / questionnaire_data / signature_data / stripe_*
  *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
@@ -217,8 +225,12 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   // ?envelope=1 (the phone list, lane ma-f1) answers an object: the service
   // worker's stored copy is read by body, so the phone's totals travel in the
   // body, never in the header. Nothing that does not send it sees a change.
+  // The worker keeps that body on the phone, so its rows leave out the public
+  // token and the client's contact (spec 2026-08-13-mobile-admin section 3,
+  // Plan decisions of 2026-11-05, At rest); nothing the phone list draws reads
+  // them, and the bare array above keeps every column for the desktop.
   res.json({
-    rows: result.rows,
+    rows: result.rows.map(withoutAtRestFields),
     total,
     bucket_total: Number(bucketResult.rows[0]?.count) || 0,
     unviewed_total: Number(unviewedResult.rows[0]?.count) || 0,
