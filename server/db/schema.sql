@@ -168,6 +168,37 @@ ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_email_sent_at TIMESTAMPTZ;
 -- version object (server/data/contractorAgreement.js agreementVersionSha256),
 -- written by the sign route beside signature_document_version.
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_document_sha256 VARCHAR(64);
+-- The first signing date (audit ESIG-08): stamped on the first sign and
+-- COALESCEd on every re-sign, so the current view keeps the date the
+-- contractor first signed while signed_at moves with the latest signature.
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS first_signed_at TIMESTAMPTZ;
+
+-- Append-only history of every staff agreement signature (audit ESIG-08): the
+-- agreements row above is the CURRENT view that a re-sign rewrites; this table
+-- keeps each signature as made (version, content hash, method, IP, UA, time,
+-- the legal name, email, phone and SMS consent given, the image) plus the PDF
+-- key it superseded and, once uploaded, its own. Written by routes/agreement.js
+-- in the sign transaction; nothing updates a row but its pdf_storage_key.
+CREATE TABLE IF NOT EXISTS agreement_signatures (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  signature_document_version VARCHAR(50),
+  signature_document_sha256 VARCHAR(64),
+  signature_method VARCHAR(10),
+  signature_ip VARCHAR(45),
+  signature_user_agent TEXT,
+  signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  full_name VARCHAR(255),
+  email VARCHAR(255),
+  phone VARCHAR(50),
+  sms_consent BOOLEAN,
+  signature_data TEXT,
+  superseded_pdf_storage_key VARCHAR(500),
+  pdf_storage_key VARCHAR(500),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agreement_signatures_user_signed_at
+  ON agreement_signatures(user_id, signed_at DESC);
 
 CREATE TABLE IF NOT EXISTS payment_profiles (
   id SERIAL PRIMARY KEY,
