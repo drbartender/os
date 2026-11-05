@@ -22,8 +22,16 @@ const PAYMENT_METHOD_ALLOWED_KEYS = new Set([
   'routing_number', 'account_number', 'payment_username',
 ]);
 
+// THE allowed set for payment_profiles.preferred_payment_method and for the
+// payouts.payment_method the admin records at mark-paid: one constant for
+// every writer (this file, me.js, admin/contractorTipPage.js,
+// admin/payroll.js, admin/users.js), mirrored by the client's PayPanel.js
+// METHODS, and the superset every reader handles (the Pay panel pays by any
+// of these; tipMethods.js renders venmo, cashapp, paypal and zelle). Three
+// writers used to carry their own lists that disagreed on zelle and other
+// (audit 2026-11-05, POUT-10).
 const PAYMENT_METHOD_VALUES = new Set([
-  'venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check',
+  'venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check', 'other',
 ]);
 
 // The ABA routing checksum and the 4 to 17 digit account rule, shared with the
@@ -56,9 +64,11 @@ function last4OrNull(plaintext) {
   return plaintext.slice(-4);
 }
 
-// Single resolver shared by PATCH (auto-NULL after a handle clear) and PUT
-// (eligibility check). Returns true if the user has the data needed to use
-// `method` as their preferred payroll target.
+// Single resolver shared by PATCH (auto-NULL after a handle clear), PUT
+// (eligibility check) and every other writer of preferred_payment_method
+// (me.js, admin/contractorTipPage.js, admin/users.js). Returns true if the
+// user has the data needed to use `method` as their preferred payroll target.
+// check and other need nothing on file: the admin pays those by hand.
 function isPreferredEligible(method, row) {
   if (!row) return false;
   switch (method) {
@@ -67,6 +77,7 @@ function isPreferredEligible(method, row) {
     case 'paypal':        return !!row.paypal_url;
     case 'zelle':         return !!row.zelle_handle;
     case 'check':         return true;
+    case 'other':         return true;
     case 'direct_deposit': return !!row.routing_number && !!row.account_number;
     default: return false;
   }
@@ -321,4 +332,4 @@ function register(router) {
   }));
 }
 
-module.exports = { register };
+module.exports = { register, PAYMENT_METHOD_VALUES, isPreferredEligible };

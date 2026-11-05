@@ -140,7 +140,9 @@ router.get('/payroll/periods/:id', auth, adminOnly, asyncHandler(async (req, res
 }));
 
 const EDITABLE_FIELDS = ['hours', 'rate_cents', 'late', 'adjustment_cents', 'adjustment_note'];
-const ALLOWED_PAY_METHODS = new Set(['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other']);
+// The one allowed set for a payout's recorded payment_method, shared with
+// every writer of preferred_payment_method (audit 2026-11-05, POUT-10).
+const { PAYMENT_METHOD_VALUES: ALLOWED_PAY_METHODS } = require('../staffPortal/paymentMethods');
 
 // pg returns DATE columns as JS Date objects. String(Date) yields
 // "Fri May 29 2026 ..." which breaks both `.slice(0,10)` formatting and

@@ -9,6 +9,10 @@ const emailTemplates = require('../../utils/emailTemplates');
 const { STAFF_URL } = require('../../utils/urls');
 const { geocodeAddress, buildAddressString } = require('../../utils/geocode');
 const { resolveBankFields, maskBankNumber } = require('../../utils/bankNumbers');
+// The one allowed set and the one eligibility rule for the preferred payroll
+// method, shared with every other writer (audit 2026-11-05, POUT-10; the
+// profile PUT used to store any string).
+const { PAYMENT_METHOD_VALUES, isPreferredEligible } = require('../staffPortal/paymentMethods');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError } = require('../../utils/errors');
 const { validatePhone } = require('../../utils/phone');
@@ -376,6 +380,34 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
   } catch (err) {
     if (!(err instanceof ValidationError)) throw err;
     Object.assign(fieldErrors, err.fieldErrors);
+  }
+
+  // preferred_payment_method: the shared allowed set, and payable when it
+  // CHANGES (POUT-10): the admin form resends the stored value on every save,
+  // so an already-stored method never blocks an unrelated edit, while a new
+  // election needs its handle or bank data on the row as it will be after
+  // this write ('' from the form clears, as before).
+  const nextMethod = preferred_payment_method || null;
+  if (nextMethod !== null && !PAYMENT_METHOD_VALUES.has(nextMethod)) {
+    fieldErrors.preferred_payment_method = `Payment method must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')}.`;
+  } else if (nextMethod !== null && bank) {
+    const cur = await pool.query(
+      `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
+              routing_number, account_number
+         FROM payment_profiles WHERE user_id = $1`,
+      [userId]
+    );
+    const row = cur.rows[0] || {};
+    if (nextMethod !== row.preferred_payment_method) {
+      const merged = {
+        ...row,
+        routing_number: bank.routing_number.keep ? row.routing_number : bank.routing_number.value,
+        account_number: bank.account_number.keep ? row.account_number : bank.account_number.value,
+      };
+      if (!isPreferredEligible(nextMethod, merged)) {
+        fieldErrors.preferred_payment_method = `Add a ${nextMethod} handle before setting it as preferred.`;
+      }
+    }
   }
 
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
