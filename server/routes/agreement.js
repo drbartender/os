@@ -141,13 +141,18 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
   const documentSha256 = agreementVersionSha256(getCurrentAgreement());
 
   // ── Transaction: upsert agreement row + mark onboarding step ──────
+  // The agreements row is the CURRENT view; every sign also appends an
+  // agreement_signatures row (audit ESIG-08), so a re-sign never erases the
+  // prior signature, consent, name or PDF key: the history row keeps the key
+  // it superseded, and first_signed_at never moves.
   let saved;
+  let historyId = null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const existing = await client.query(
-      'SELECT id FROM agreements WHERE user_id = $1',
+      'SELECT id, pdf_storage_key FROM agreements WHERE user_id = $1',
       [req.user.id]
     );
 
@@ -156,7 +161,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
       'ack_ic_status','ack_commitment','ack_non_solicit',
       'ack_damage_recoupment','ack_legal_protections','ack_field_guide',
       'signature_data','signature_method','signature_ip','signature_user_agent',
-      'signature_document_version','signature_document_sha256','signed_at',
+      'signature_document_version','signature_document_sha256','signed_at','first_signed_at',
     ];
 
     if (existing.rows[0]) {
@@ -171,7 +176,8 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
            ack_ic_status=$5, ack_commitment=$6, ack_non_solicit=$7,
            ack_damage_recoupment=$8, ack_legal_protections=$9, ack_field_guide=$10,
            signature_data=$11, signature_method=$12, signature_ip=$13, signature_user_agent=$14,
-           signature_document_version=$15, signature_document_sha256=$17, signed_at=NOW()
+           signature_document_version=$15, signature_document_sha256=$17, signed_at=NOW(),
+           first_signed_at = COALESCE(first_signed_at, NOW())
          WHERE user_id=$16
          RETURNING *`,
         [
@@ -187,7 +193,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
         `INSERT INTO agreements
            (user_id, ${cols.join(', ')})
          VALUES
-           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
          RETURNING *`,
         [
           req.user.id,
@@ -199,6 +205,24 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
       );
       saved = ins.rows[0];
     }
+
+    // The append-only record of this signature, in the same transaction as
+    // the current view. signed_at is the same NOW() as the row's. The PDF key
+    // is written onto it post-commit, once the upload succeeds.
+    const history = await client.query(
+      `INSERT INTO agreement_signatures
+         (user_id, signature_document_version, signature_document_sha256, signature_method,
+          signature_ip, signature_user_agent, signed_at, full_name, email, phone, sms_consent,
+          signature_data, superseded_pdf_storage_key)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [
+        req.user.id, CURRENT_VERSION, documentSha256, signature_method, ip, userAgent,
+        fullName, emailValue, phoneCheck.value, sms_consent === true, signatureValue,
+        existing.rows[0] ? (existing.rows[0].pdf_storage_key || null) : null,
+      ]
+    );
+    historyId = history.rows[0] ? history.rows[0].id : null;
 
     await ensureOnboardingProgress(req.user.id, client);
     await client.query(
@@ -265,6 +289,12 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
         WHERE user_id=$2`,
       [storageKey, req.user.id]
     );
+    if (historyId) {
+      await pool.query(
+        'UPDATE agreement_signatures SET pdf_storage_key = $1 WHERE id = $2',
+        [storageKey, historyId]
+      );
+    }
 
     const pdfUrl = await getSignedUrl(storageKey);
 
