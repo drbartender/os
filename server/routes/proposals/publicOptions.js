@@ -227,14 +227,15 @@ async function buildOptionsQuote(token, body = {}) {
           addon_ids: addonIds,
           addon_quantities: currentQuantities,
           addon_variants: currentVariants,
-          // priceProposedState does NOT fall back to the stored column for this
-          // one field (unlike guests/hours/bars), so an admin staffing override
-          // would be silently re-derived from the 1:100 ratio and the quote
-          // would drop the extra-bartender charge AND the gratuity that rides
-          // on the crew size. Pass it explicitly, but only when it is a real
-          // override: a provable derivation must re-derive per package or a
-          // stale crew count prices phantom over-ratio bartenders that the
-          // switch's acknowledged-total gate would AGREE with.
+          // priceProposedState applies this same rule when the field is absent
+          // (utils/changeRequests.js, audit PRC-02); it is passed explicitly here
+          // so the quote states what it prices: an admin staffing override must
+          // not be re-derived from the 1:100 ratio, or the quote drops the
+          // extra-bartender charge AND the gratuity that rides on the crew size,
+          // and only a real override carries: a provable derivation must
+          // re-derive per package or a stale crew count prices phantom
+          // over-ratio bartenders that the switch's acknowledged-total gate
+          // would AGREE with.
           num_bartenders: overrideOnlyBartenders(proposal),
         }, pool, catalog);
         return {
