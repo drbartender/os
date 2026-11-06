@@ -336,14 +336,22 @@ lanes:
       the stored drink, brief and image parts of the fingerprint and re-stamps a dismissal that matched before
       it; the notice drops the dismissed-changes clause, since the bar-only rebuild applies none of them. And
       a dismissal covers a gone line: the dismissal hash takes the gone keys, so a Dismiss stored after the
-      change holds.
+      change holds. Third, the chain's verify pass (on Opus, 2026-11-06) found two more on the same drafts.
+      A renamed line renamed back to its builder label after the boot stamp leaves the stamp's entries from
+      that day's picks for the categories no keyed line covered, so a category the client added before the
+      deploy reads unchanged and Update draft never builds it (the same draft unstamped reads it as new);
+      round 2's gone-line rule gets its mirror, so a stamped category no stored line stands for reads as new
+      once no unkeyed line is left. And while a piece paints the notice is hidden but the editor's Plan
+      changed banner still offers Update draft, so the click rebuilds a renamed line with no warning; that
+      button waits while a piece paints, or the banner keeps the notice's sentence.
     footprint:
       - server/routes/proposals/menuDraftSync.js  (the scope bar request: validated, rebuilds bar lines only, under the same row lock and version check)
       - server/routes/proposals/menuDraftSync.test.js
       - server/utils/menuDraftRead.js  (the dismissal hash covers gone keys; the lineGone refusal goes)
       - server/utils/menuDraftRead.test.js
-      - server/utils/menuDrinkSource.js  (fingerprintHash takes the gone keys, if that is where they live)
-      - client/src/pages/admin/menuDesigner/menuCardState.js  (the notice's Update draft sends scope bar; the dismissed-changes clause goes)
+      - server/utils/menuDrinkSource.js  (fingerprintHash takes the gone keys, if that is where they live; computeDiff reads a stamped category no stored line stands for as new once no unkeyed line is left)
+      - server/utils/menuDrinkSource.test.js
+      - client/src/pages/admin/menuDesigner/menuCardState.js  (the notice's Update draft sends scope bar; the dismissed-changes clause goes; the Plan changed banner's Update draft waits while a piece paints when the draft holds an unchecked line)
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.js  (sync takes a scope)
       - client/src/pages/admin/menuDesigner/MenuDesignerCard.js, MenuEditor.js  (the notice's action passes the scope)
@@ -352,8 +360,8 @@ lanes:
     lenses: tier A (menuDraftSync.js is sensitive); money, lifecycle, concurrency, outcomes-providers, access-egress, seams, client; verify; the externals; the money smoke; the client build.
     laws: money law 15 (Update draft's legal-hold refusal runs first for either scope); a bar-only rebuild reserves nothing and calls no provider; one pooled connection per request.
     seams: the full Update draft is unchanged; the scope is a closed value the server validates; the card, the editor banner and the Brief tab read one notice.
-    acceptance: Suites, the money smoke and the client build pass; each leftover shape of menu-bar-chain's re-pass 2 (a dismissed added drink with drawing off, a reviewed notes edit, a Dismiss on a renamed-back gone line) fails on menu-bar-chain's merge and passes here.
-    test plan: menuDraftSync.test.js: scope bar rebuilds only unkeyed and gone lines, applies no drink change, needs no key, keeps a dismissal and a reviewed notes edit; refuses the held proposal; refuses an unknown scope. menuDraftRead.test.js: a Dismiss stored after a gone line holds. menuCardState.test.js: the notice's button sends scope bar and names no dismissed changes.
+    acceptance: Suites, the money smoke and the client build pass; each leftover shape of menu-bar-chain's re-pass 2 (a dismissed added drink with drawing off, a reviewed notes edit, a Dismiss on a renamed-back gone line, a renamed-back line beside a category added before the stamp, an Update draft offered while a piece paints) fails on menu-bar-chain's merge and passes here.
+    test plan: menuDraftSync.test.js: scope bar rebuilds only unkeyed and gone lines, applies no drink change, needs no key, keeps a dismissal and a reviewed notes edit; refuses the held proposal; refuses an unknown scope. menuDraftRead.test.js: a Dismiss stored after a gone line holds; a stamped draft whose renamed line is renamed back reads a category added before the stamp as new. menuDrinkSource.test.js: computeDiff on that baseline. menuCardState.test.js: the notice's button sends scope bar and names no dismissed changes; while a piece paints the Plan changed banner offers no live Update draft on a draft with an unchecked line.
     revert: revert the one squash commit; nothing is stored in a new shape.
 
   - id: menu-legal-hold-guards
