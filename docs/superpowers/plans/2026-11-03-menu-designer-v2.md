@@ -321,6 +321,41 @@ lanes:
       in the same change, or that suite fails). A Dismiss or Mark reviewed made while the lane was live hashed
       bar_hash, which the reverted code's fingerprintHash omits, so those drafts show their banner again once.
 
+  - id: menu-bar-rebuild-only
+    scope: >
+      Split from menu-bar-chain by its second fix re-pass (2026-11-06, the review cap reached). Three display
+      leftovers on drafts made before bar tracking, none of which prints a wrong line or touches money. First,
+      the unchecked notice offers the full Update draft, which also applies every dismissed drink change and
+      needs the art keys, so with drawing off and a dismissed added drink the click is refused with 503 and
+      the renamed line cannot be rebuilt; and it clears dismissed_plan_hash while keeping the stored brief
+      parts, so a notes edit already marked reviewed asks for review again. Second, round 2 of the chain makes
+      no dismissal cover a stored keyed line the picks no longer build that the baseline never named, so on
+      that state the Plan changed Dismiss and Mark reviewed do nothing. This lane adds a bar-only rebuild:
+      Update draft with scope bar (the notice's own button) rebuilds and keys only the unkeyed lines and the
+      keyed lines whose category the picks no longer build, applies no drink change, needs no AI key, keeps
+      the stored drink, brief and image parts of the fingerprint and re-stamps a dismissal that matched before
+      it; the notice drops the dismissed-changes clause, since the bar-only rebuild applies none of them. And
+      a dismissal covers a gone line: the dismissal hash takes the gone keys, so a Dismiss stored after the
+      change holds.
+    footprint:
+      - server/routes/proposals/menuDraftSync.js  (the scope bar request: validated, rebuilds bar lines only, under the same row lock and version check)
+      - server/routes/proposals/menuDraftSync.test.js
+      - server/utils/menuDraftRead.js  (the dismissal hash covers gone keys; the lineGone refusal goes)
+      - server/utils/menuDraftRead.test.js
+      - server/utils/menuDrinkSource.js  (fingerprintHash takes the gone keys, if that is where they live)
+      - client/src/pages/admin/menuDesigner/menuCardState.js  (the notice's Update draft sends scope bar; the dismissed-changes clause goes)
+      - client/src/pages/admin/menuDesigner/menuCardState.test.js
+      - client/src/pages/admin/menuDesigner/useMenuDraft.js  (sync takes a scope)
+      - client/src/pages/admin/menuDesigner/MenuDesignerCard.js, MenuEditor.js  (the notice's action passes the scope)
+      - README.md, ARCHITECTURE.md  (generated sections and the Update draft route row)
+    blockedBy: [menu-bar-chain]
+    lenses: tier A (menuDraftSync.js is sensitive); money, lifecycle, concurrency, outcomes-providers, access-egress, seams, client; verify; the externals; the money smoke; the client build.
+    laws: money law 15 (Update draft's legal-hold refusal runs first for either scope); a bar-only rebuild reserves nothing and calls no provider; one pooled connection per request.
+    seams: the full Update draft is unchanged; the scope is a closed value the server validates; the card, the editor banner and the Brief tab read one notice.
+    acceptance: Suites, the money smoke and the client build pass; each leftover shape of menu-bar-chain's re-pass 2 (a dismissed added drink with drawing off, a reviewed notes edit, a Dismiss on a renamed-back gone line) fails on menu-bar-chain's merge and passes here.
+    test plan: menuDraftSync.test.js: scope bar rebuilds only unkeyed and gone lines, applies no drink change, needs no key, keeps a dismissal and a reviewed notes edit; refuses the held proposal; refuses an unknown scope. menuDraftRead.test.js: a Dismiss stored after a gone line holds. menuCardState.test.js: the notice's button sends scope bar and names no dismissed changes.
+    revert: revert the one squash commit; nothing is stored in a new shape.
+
   - id: menu-legal-hold-guards
     scope: >
       Split from menu-bar-fingerprint by its review (2026-11-04, the review cap reached): no menu art path
@@ -332,7 +367,7 @@ lanes:
       legal-hold proposal before it reads the plan, calls a provider or writes, with 409 LEGAL_HOLD through the
       patchGuards.js assertNotLegalHold precedent (isLegalHold, which fails closed). Generate and re-roll
       refusing first also keeps the held booking's plan away from the AI (money law 15: never read by the AI).
-      Follows menu-bar-chain and ships on its own (it changes no stored data).
+      Follows menu-bar-rebuild-only (both edit menuDraftSync.js) and ships on its own (it changes no stored data).
     footprint:
       - server/routes/proposals/menuDrafts.js  (Generate, PATCH, re-roll, Dismiss)
       - server/routes/proposals/menuDraftSync.js  (Update draft)
@@ -342,7 +377,7 @@ lanes:
       - server/routes/proposals/menuDraftApprove.test.js
       - server/routes/proposals/menuPrint.test.js
       - README.md, ARCHITECTURE.md  (generated sections)
-    blockedBy: [menu-bar-chain]
+    blockedBy: [menu-bar-rebuild-only]
     lenses: tier A (menuDraftSync.js, menuDraftApprove.js, menuPrint.js are sensitive); money (law 15), access-egress, seams, verify, the externals, the money smoke.
     laws: Money law 15 and CLAUDE.md's legal-hold rule: the held proposal keeps its database state exactly and is never read by the AI; every guard calls server/utils/legalHold.js isLegalHold, which fails closed; a refusal writes nothing and calls no provider.
     seams: assertNotLegalHold's 409 LEGAL_HOLD body is the one the proposal PATCH already answers, so the card shows the server's message like any other refused write; the next lanes that add menu writers (menu-no-menu-mark, menu-proof-page, menu-approve-send, menu-auto-start) already name isLegalHold in their laws.
@@ -1054,7 +1089,7 @@ The spec, `docs/superpowers/specs/2026-10-19-menu-designer-v2-design.md` rev 2, 
 
 ```
 menu-out-of-credit ─────────────────────────────┐
-menu-bar-chain ── menu-legal-hold-guards ── menu-no-menu-mark ──┤
+menu-bar-chain ── menu-bar-rebuild-only ── menu-legal-hold-guards ── menu-no-menu-mark ──┤
 menu-mark-placement ── menu-fonts-twelve ───────┴── menu-brief-tab ── menu-house-card ──┐
             menu-no-menu-mark ── menu-proof-page ── menu-inbox-tasks ───────────────────┴── menu-approve-send ──┬── menu-events-dashboard
                                                                                                              └── menu-auto-start
@@ -1069,7 +1104,7 @@ menu-mark-placement ── menu-fonts-twelve ───────┴── menu
 
 ## Revert order
 
-Revert in reverse merge order; each lane's `revert` names the later lanes that must go first. In short: menu-auto-start first, then menu-events-dashboard, menu-approve-send, menu-inbox-tasks, menu-proof-page, menu-house-card, menu-brief-tab, menu-fonts-twelve, menu-mark-placement, menu-no-menu-mark, menu-legal-hold-guards, menu-bar-chain and menu-out-of-credit. After a bad ship the fastest lever is still `git revert` of the one squash that caused it, when no later lane builds on it (CLAUDE.md).
+Revert in reverse merge order; each lane's `revert` names the later lanes that must go first. In short: menu-auto-start first, then menu-events-dashboard, menu-approve-send, menu-inbox-tasks, menu-proof-page, menu-house-card, menu-brief-tab, menu-fonts-twelve, menu-mark-placement, menu-no-menu-mark, menu-legal-hold-guards, menu-bar-rebuild-only, menu-bar-chain and menu-out-of-credit. After a bad ship the fastest lever is still `git revert` of the one squash that caused it, when no later lane builds on it (CLAUDE.md).
 
 ## Owner steps (not lanes)
 
