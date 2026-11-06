@@ -547,3 +547,33 @@ test('an index that cannot be written after the receipt moved exits 3, naming th
   assert.strictEqual(readReceipt(receiptDir(key, { cwd: repo })).state, 'final');
   assert.ok(ok(cli(repo, 'show', key)).stdout.includes(`receipt ${key}`), 'show finds it by key');
 });
+
+test('a fix is re-read by the lens that raised it; another lens pass on the file stands, but a change no lens re-read is stale (2026-11-06)', (t) => {
+  const { repo, base, files } = laneRepo(t);
+  ok(cli(repo, 'init', '--branch', 'lane'));
+  const dir = tmpDir(t, 'reports');
+  const two = { lenses: [{ name: 'seams', fired_because: ['floor'], forecast: true }, { name: 'business-time', fired_because: ['business-time.current-date'], forecast: false }] };
+  let at = position(repo, 'lane');
+  ok(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 'seams.md', report([[files[0], 'finding', 'H1'], [files[1], 'pass']], [
+    `- H1 \`${files[0]}:1\` One ${MARK}. Failure path: x. Check: SEAM-1.`,
+  ]))));
+  ok(cli(repo, 'verdicts', 'lane', '--position', at, 'business-time', writeFile(dir, 'bt.md', report([[files[0], 'pass'], [files[1], 'pass']]))));
+  // The fix: a commit to the file seams raised, re-read by seams alone.
+  commit(repo, 'fix H1', { [files[0]]: 'a v3\n' });
+  at = position(repo, 'lane');
+  ok(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 'seams2.md', report([[files[0], 'pass']])), '--pass', '1'));
+  ok(cli(repo, 'triage', 'lane', 'seams.md', 'H1', 'fixed', '--reason', `the fix commit ${MARK}`));
+  ok(cli(repo, 'tests', 'lane', '--position', at, '--suites', suitesRun(t)));
+  const fin = () => finalize(repo, 'lane', base, 'B', '--not-a-fix', 'x', '--select', selectFile(repo, 'B', two));
+  // A later change to the other file, which no lens re-read, is stale for both lenses.
+  commit(repo, 'unreviewed', { [files[1]]: 'b v3\n' });
+  at = position(repo, 'lane');
+  ok(cli(repo, 'tests', 'lane', '--position', at, '--suites', suitesRun(t)));
+  const lines = problems(refused(fin()));
+  assert.ok(lines.some((l) => /^ {2}- stale: business-time read .*server\/b\.js/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => /^ {2}- stale: seams read .*server\/b\.js/.test(l)), lines.join('\n'));
+  assert.ok(!lines.some((l) => /stale: business-time read .*server\/a\.js/.test(l)), 'the fixed file stands for the lens that passed it');
+  // seams re-reads b: business-time's pass on b now stands too.
+  ok(cli(repo, 'verdicts', 'lane', '--position', at, 'seams', writeFile(dir, 'seams3.md', report([[files[1], 'pass']])), '--pass', '2'));
+  ok(fin());
+});

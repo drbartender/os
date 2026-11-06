@@ -16,8 +16,10 @@
 // moved there from a constant in this file by the flip commit (plan 2026-10-28
 // step 5, decision 4); the docs allowlist stays a constant here.
 //
-// Tier, per file: A when the path is in a money, auth-and-pii or
-// client-money-surfaces section, or the content rule fires on its added lines.
+// Tier, per file: A when the path is in a money or auth-and-pii section, or the
+// content rule fires on its added lines (server/ and scripts/ code only: the
+// server is where money moves, so a client screen that shows a price is
+// reviewed by the client lens at its own tier, 2026-11-06).
 // hinge for a path in the list's hinge section (the D11 set) with no content
 // hit and no heavier section, for every unclassified path
 // (.claude/**, root files, a path outside the repo), and for every unlisted file
@@ -49,7 +51,7 @@ const { execFileSync } = require('child_process');
 const DEFAULT_LIST = path.join(__dirname, 'sensitive-paths.txt');
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-const A_SECTIONS = Object.freeze(['money', 'auth-and-pii', 'client-money-surfaces']);
+const A_SECTIONS = Object.freeze(['money', 'auth-and-pii']);
 const SECTIONS = Object.freeze([...A_SECTIONS, 'hinge']);
 const TIER_ORDER = Object.freeze(['A', 'hinge', 'B', 'C', 'docs']);
 
@@ -445,16 +447,24 @@ function parseDiff(diffText) {
 // In an armed hunk the hit is an added line that names the write (the UPDATE,
 // the upsert's INSERT INTO or DO UPDATE SET) or writes or guards a status;
 // any other added line takes the first of the other rules that matches. A code
-// section reported as binary, and a section with no readable path (file null),
-// are 'diff-unparsed' (line 0, text ''): the rule cannot see them, so they fail
-// closed.
+// section the rule reads (contentRuleReads: server/ and scripts/) reported as
+// binary, and a section with no readable path (file null), are 'diff-unparsed'
+// (line 0, text ''): the rule cannot see them, so they fail closed. A client/
+// code file is never read, binary or not (2026-11-06), so it keeps its path
+// tier; the brief's Established still names a binary section for the lenses.
 const unparsedHit = (file) => ({ file, line: 0, text: '', rule: 'diff-unparsed' });
+
+// The content rule reads server/ and scripts/ code only (2026-11-06): client
+// code shows and sends money but never moves it, and the server routes it
+// calls are where the money review belongs. A client file that writes a
+// status still lifts to B through statusWrites.
+const contentRuleReads = (p) => isCodePath(p) && !normalize(p).startsWith('client/');
 
 function hitsFromSections(sections) {
   const hits = [];
   for (const f of sections) {
     if (!f.path) { hits.push(unparsedHit(null)); continue; }
-    if (!isCodePath(f.path)) continue;
+    if (!contentRuleReads(f.path)) continue;
     if (f.binary && !f.deleted) { hits.push(unparsedHit(f.path)); continue; }
     for (const hunk of f.hunks) {
       const added = hunk.added.map((a) => a.text).join('\n');
@@ -560,7 +570,7 @@ function tier({ paths = [], diffText = '', newPaths = [], deletedPaths = [], lis
   const sectionByPath = new Map(detailed.map((h) => [normalize(h.path), h.section]));
   const hits = hitsFromSections(sections);
   for (const p of list) {
-    if (isCodePath(p) && !sectioned.has(p) && !deleted.has(p)) hits.push(unparsedHit(p));
+    if (contentRuleReads(p) && !sectioned.has(p) && !deleted.has(p)) hits.push(unparsedHit(p));
   }
   // A diff with content that parses to no section (coloured, a plain diff -u, a
   // combined diff) and no path to pin it to says nothing this module can read:

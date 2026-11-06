@@ -14,6 +14,8 @@ Each check is two sentences and a trigger line: the diff shapes that send you to
 
 Read the cited code for every finding, and state the failure path from the code, never from a check's wording.
 
+Raise a finding only for a failure the ordinary flow reaches: a client, a staff member, the admin or a job doing what the plan describes. A path that needs a rare action inside a window of seconds, two people acting on one record at once (one owner runs the admin side), or a hand edit to a row is a deferred minor: write it as one prose line that opens with the words Deferred minor, above the table and under no heading of its own (a collapsed report carries it inside its Lens section), with no id, so it goes to the owner's list and opens no fix round. A path that can charge, refund or pay twice, or expose a client's or staff member's data, is never deferred. [Claude default 2026-11-06]
+
 ## The shape
 
 Seams exists for one shape: one value written in one place and read in many, traced from its writer to every reader rather than found by grepping a table name. A step added to one entrance and not its siblings, a constant defined twice with different members, a figure shown in two places from two functions, a key renamed on one side of a helper, a recipient read from a creation-time copy, and copy that drifts from the row it bills from; all 50 copy defects in the record were drift, none were taste. Every check here runs on the floor, so read the diff for the shapes in each trigger line and start with the checks those shapes name.

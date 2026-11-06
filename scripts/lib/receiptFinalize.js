@@ -219,22 +219,55 @@ function lensSummary(state, texts, lens) {
   return out;
 }
 
+// A report read on a base the lane has since been rebased off (readBase, as
+// receiptBase.changedFor reads it): main's changes under the lane are not the
+// lane's own fix, so every verdict of that report is held to the stale rule.
+function readOnOlderBase(e, g) {
+  const b = e.main && e.tip ? (g.readBase || {})[`${e.main} ${e.tip}`] : null;
+  return Boolean(b) && b !== g.base;
+}
+
 // A verdict holds for the content its lens read (spec 3.8 and 3.9). Each
 // stored report records where it was read: the branch tip in a lane, the
-// staged tree in a quick fix (`posOf`). A file whose merged verdict came from
-// a report read before a later change to that file is stale until a later
-// report of the same lens lists it. What changed since a report is
+// staged tree in a quick fix (`posOf`). A file whose merged verdict is a
+// finding or an escalation, from a report read before a later change to that
+// file, is stale until a later report of the same lens lists it. A pass
+// verdict stands through the lane's own later fix (2026-11-06): the lens that
+// raised the finding re-reads the fix (the fixed rule in checkTriage) and tier
+// A's verify re-reads the whole lane after the last fix; re-running every lens
+// that passed a file cost hours and found nothing those two do not. A pass
+// read before a rebase is still stale on the files main or the rebase changed. What changed since a report is
 // receiptBase.changedFor: the files changed between its position and `final`,
 // and, read on an older base, the files main changed since that base; git
 // unable to say leaves every file that report gave a verdict stale.
-function staleFiles(s, diffFiles, final, g, posOf) {
+function staleFiles(s, diffFiles, final, g, posOf, fresh = new Set()) {
   const byFile = new Map(s.entries.map((e) => [e.file, e]));
   return diffFiles.filter((f) => {
     const m = s.merged[f];
     if (!m || m.verdict === 'not reached') return false;
-    const changed = changedFor(byFile.get(m.report) || {}, final, g, posOf);
+    const e = byFile.get(m.report) || {};
+    if (m.verdict === 'pass' && fresh.has(f) && !readOnOlderBase(e, g)) return false;
+    const changed = changedFor(e, final, g, posOf);
     return !changed || changed.includes(f);
   });
+}
+
+// The diff files some lens's merged verdict read as they stand at `final`
+// (not reached aside): a pass of another lens on such a file stands, since the
+// file's final bytes were read (2026-11-06).
+function freshFiles(summaries, diffFiles, final, g, posOf) {
+  const fresh = new Set();
+  for (const [, s] of summaries) {
+    if (!s) continue;
+    const byFile = new Map(s.entries.map((e) => [e.file, e]));
+    for (const f of diffFiles) {
+      const m = s.merged[f];
+      if (!m || m.verdict === 'not reached') continue;
+      const changed = changedFor(byFile.get(m.report) || {}, final, g, posOf);
+      if (changed && !changed.includes(f)) fresh.add(f);
+    }
+  }
+  return fresh;
 }
 
 // The review mode and the kind: {ok, problems}. ok means the CLI may gather
@@ -463,9 +496,10 @@ function checkStale(c) {
   const final = { lane: g.tip, 'quick-fix': g.tree }[state.mode];
   const posOf = state.mode === 'quick-fix' ? (e) => e.tree : (e) => e.tip;
   if (!commentOnly && (state.mode === 'lane' || state.mode === 'quick-fix')) {
+    const fresh = state.mode === 'lane' ? freshFiles(summaries, diffFiles, final, g, posOf) : new Set();
     for (const [lens, s] of summaries) {
       if (!s) continue;
-      const stale = staleFiles(s, diffFiles, final, g, posOf);
+      const stale = staleFiles(s, diffFiles, final, g, posOf, fresh);
       const it = stale.length === 1 ? 'it' : 'them';
       if (stale.length) problems.push(`stale: ${lens} read ${listed(stale)} before a later change to ${it}; re-pass ${lens} on ${it} (--pass <n>)`);
     }
@@ -485,7 +519,9 @@ function checkStale(c) {
     if (stale.length) problems.push(`stale: verify's latest pass (${latest.file}) read the lane before a later change to ${listed(stale)}; re-pass verify (--pass <n>)`);
   }
   // A quick fix keys the staged tree (spec 3.7): every lens's latest stored
-  // report, and verify's, must have read that tree.
+  // report, and verify's, must have read that tree. This stays strict after
+  // 2026-11-06: the index is shared, so a hunk restaged after a lens read it
+  // may be another window's, and the receipt would vouch for it unread.
   if (!commentOnly && state.mode === 'quick-fix') {
     for (const [lens, s] of [...summaries, ['verify', v]]) {
       if (!s) continue;

@@ -14,6 +14,8 @@ Each check is two sentences and a trigger line: the diff shapes that send you to
 
 Read the cited code for every finding, and state the failure path from the code, never from a check's wording.
 
+Raise a finding only for a failure the ordinary flow reaches: a client, a staff member, the admin or a job doing what the plan describes. A path that needs a rare action inside a window of seconds, two people acting on one record at once (one owner runs the admin side), or a hand edit to a row is a deferred minor: write it as one prose line that opens with the words Deferred minor, above the table and under no heading of its own (a collapsed report carries it inside its Lens section), with no id, so it goes to the owner's list and opens no fix round. A path that can charge, refund or pay twice, or expose a client's or staff member's data, is never deferred. [Claude default 2026-11-06]
+
 ## The shape
 
 Money exists for one shape: a proposal's money fact lives in at least six stores, the proposal row, the `proposal_addons` rows, the invoice sub-ledger, the payment ledger, payroll, and the client's rendered copy, and no transaction owns it end to end. The defects are almost never wrong arithmetic: a writer moves one store and skips the step that moves the others, a reader reconstructs truth from a label or a live catalog row instead of the stored row, a re-derivation destroys rows it did not author, and a second entrance never gets the tail its sibling has. The Money laws section of the brief is the row truth these checks judge against.

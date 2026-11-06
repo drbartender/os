@@ -6,8 +6,8 @@
 # and the review's overlap pass (spec 3.8: every diff file needs a seams
 # verdict) also fire when a hinge path lands on main, both stricter for it.
 #
-# Four sections, each opened by a header line of the form '# section: <name>':
-#   auth-and-pii, client-money-surfaces, money: tier A, the six lenses, verify,
+# Three sections, each opened by a header line of the form '# section: <name>':
+#   auth-and-pii, money: tier A, the six lenses, verify,
 #     the externals and the money smoke.
 #   hinge: tier hinge (spec 3.3), seams and access-egress, the pre-steps and
 #     the suites the change reaches; tier A when the content rule fires.
@@ -125,34 +125,6 @@ client/src/components/SessionExpiryHandler.js
 client/public/admin-sw.js
 client/public/admin-manifest.json
 client/src/utils/installAdminPwaMeta.js
-
-# section: client-money-surfaces
-# Client code that writes or shows money, in blocks whose every path is under
-# client/. A block that explains server and client paths together stays in the
-# money section with its comment.
-
-# Shared proposal-editor payload, preview and notice builders (lane ma-e3a): the money PATCH and what reaches a client
-client/src/pages/admin/proposalEditor/patchBody.js
-client/src/pages/admin/proposalEditor/editorCore.js
-client/src/components/comms/notifyDrafts.js
-
-# Phone edit sheet (lane ma-e3): the money write surface
-# useEditSheet.js writes; editSheetView.js holds the stale-save guard's basis (sheetBasis:
-# what the save rests on, never updated_at alone),
-# the curfew acknowledgement trigger and which reprice lines show; EditSheet.js holds
-# Confirm's priced-preview gate and the client-send buttons with their arm delay;
-# repriceSummary.js writes the confirm's money lines and the one disclosure of the
-# automatic gratuity email, on both surfaces.
-client/src/components/mobile/useEditSheet.js
-client/src/utils/editSheetView.js
-client/src/components/mobile/EditSheet.js
-client/src/pages/admin/proposalEditor/repriceSummary.js
-
-# Phone proposal action sheets (lane proposal-actions-phone): ResendSheet.js sends the
-# proposal to a real client through /comms/send; ArchiveSheet.js archives, which voids
-# the unpaid invoice, cancels the shifts and stops the follow-ups.
-client/src/components/mobile/ResendSheet.js
-client/src/components/mobile/ArchiveSheet.js
 
 # section: money
 # Payroll, pricing, Stripe, payouts, invoices, refunds, bank PII, webhooks,
@@ -490,11 +462,10 @@ server/routes/proposals/cancelLineItem.js
 server/utils/cancellationMath.js
 # Price adjustment lines (spec 2026-10-16, price override removal): the one
 # definition of a money line, its source/refund_id markers and the validation
-# bound, plus the client twin the admin views read to tell a protected line
-# (a refund or an agreed price) from an ordinary one. A wrong coercion here
-# moves what every client view and invoice shows.
+# bound. A wrong coercion here moves what every client view and invoice shows.
+# Its client twin (client/src/utils/adjustmentRules.js) came off this list on
+# 2026-11-06: the server re-validates every line it accepts.
 server/utils/adjustmentRules.js
-client/src/utils/adjustmentRules.js
 # The legal-hold seam every re-pricing and line-writing guard asks (spec
 # 2026-10-16 section 5.3). A wrong answer re-prices a booking under legal hold.
 server/utils/legalHold.js
@@ -605,37 +576,29 @@ server/utils/adminPush.js
 server/utils/adminNotifications.js
 # mePush.js: sends to devices on request (POST /api/me/push-test).
 server/routes/mePush.js
-# client adminPush.js: subscribes and unsubscribes a device.
-client/src/utils/adminPush.js
 
 # Phone staffing (lane ma-e2): `position` keys payroll's tip split. The role a
 # plain Approve writes is resolved by classifyRequest (staffingRoles.js) and
-# allowed by roleStep (staffingSheet.js); useSheetWrites.js is the only phone
-# code that writes it, and server/routes/shifts.js holds the routes it calls
-# and the guard on who may Remove. server/utils/staffingRoles.js is what the
-# assign and approve handlers resolve `position` with. EventDetailPhone.js and
-# EventsListPhone.js decide which shift's sheet a link may open. Remove awaits
+# allowed by the client's roleStep; server/routes/shifts.js holds the routes
+# the phone calls and the guard on who may Remove, and it is what decides.
+# server/utils/staffingRoles.js is what the assign and approve handlers
+# resolve `position` with (the phone screens came off this list 2026-11-06,
+# since the server is the gate). Remove awaits
 # adminAuditLog.js after a hard delete and depends on its never throwing.
-client/src/utils/staffingSheet.js
-client/src/utils/staffingRoles.js
-client/src/components/mobile/AssignmentSheet.js
-client/src/components/mobile/useSheetWrites.js
-client/src/pages/mobile/EventDetailPhone.js
-client/src/pages/mobile/EventsListPhone.js
 server/routes/shifts.js
 server/utils/staffingRoles.js
 server/utils/adminAuditLog.js
 # offlineGet is the gate on what the admin service worker may store on a
-# device and serve as a stale copy (ProposalsListPhone.js and
-# ProposalDetailPhone.js are listed here for their offlineGet reads; the
-# detail's stored copy holds one proposal's token and its client's contact,
-# the accepted limit of spec 2026-08-13 section 7); staffingMeta reads home coordinates and seniority and
-# decides how precisely a distance leaves the server. SearchPhone.js is listed
-# because it must never opt in: its rows carry client emails and phones, and
-# the phone stores nothing from search.
+# device and serve as a stale copy (a stored proposal detail holds one
+# proposal's token and its client's contact, the accepted limit of spec
+# 2026-08-13 section 7); staffingMeta reads home coordinates and seniority and
+# decides how precisely a distance leaves the server. The phone screens that
+# call offlineGet came off this list on 2026-11-06, since they can opt in only
+# to paths the tier A worker allowlists. SearchPhone.js stays: admin-sw.js
+# allowlists /api/admin/search, so the screen's api.get (never offlineGet) is
+# the one thing that keeps search rows, which carry client emails and phones,
+# off the phone.
 client/src/utils/offlineRead.js
-client/src/pages/mobile/ProposalsListPhone.js
-client/src/pages/mobile/ProposalDetailPhone.js
 client/src/pages/mobile/SearchPhone.js
 server/utils/staffingMeta.js
 
@@ -653,21 +616,12 @@ server/utils/notificationChannelResolver.js
 
 # Price override removal, the editor (spec 2026-10-16 sections 5 and 5.1): the
 # money PATCH's guards (the strict id parse, the legal hold, the stale-lines
-# token, the retired override, line validation, refund markers), the agreed-
-# price math and its control (they compute and gate a money line), and the
-# rows that confirm before a refund line is removed or lowered. A wrong guard
-# writes over a refund line or re-prices a held booking; a wrong line bills
-# the wrong price.
+# token, the retired override, line validation, refund markers). A wrong guard
+# writes over a refund line or re-prices a held booking. The editor's client
+# files (the agreed-price math and control, the Remote Staffing Fee prompt,
+# the cancel targets) came off this list on 2026-11-06: this guard is what
+# decides.
 server/routes/proposals/patchGuards.js
-client/src/pages/admin/proposalEditor/agreedPrice.js
-client/src/pages/admin/proposalEditor/AgreedPriceControl.js
-client/src/pages/admin/proposalEditor/AdjustmentsSection.js
-# Fix round 1: the Remote Staffing Fee prompt writes a money line through the
-# same PATCH with a full editor body, and useCancelTargets decides which line a
-# breakdown remove button removes (and may refund): a stale positional set
-# removed the wrong line.
-client/src/pages/admin/RemoteStaffingFeePrompt.js
-client/src/pages/admin/proposalEditor/useCancelTargets.js
 
 # Browser Sentry scrub (spec 2026-10-06 Inbox, section 17 item 42; lane
 # inbox-page). An Inbox p- person key is ten phone digits in the page URL and
@@ -744,15 +698,6 @@ server/db/index.js
 server/scripts/**
 scripts/cc-*.js
 server/routes/serviceExtensions/*
-client/src/pages/proposal/proposalView/*
-client/src/pages/admin/proposalEditor/*
-client/src/pages/admin/ProposalDetail.js
-client/src/pages/admin/ProposalDetailPaymentPanel.js
-client/src/components/PricingBreakdown.js
-client/src/pages/admin/overview/*
-client/src/pages/admin/payroll/*
-client/src/pages/staff/PayPage.js
 server/utils/paystubData.js
 client/src/data/eventServicesAgreement.js
 server/data/contractorAgreement.js
-client/src/pages/website/ServicesPage.js

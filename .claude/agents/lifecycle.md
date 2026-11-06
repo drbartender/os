@@ -14,6 +14,8 @@ Each check is two sentences and a trigger line: the diff shapes that send you to
 
 Read the cited code for every finding, and state the failure path from the code, never from a check's wording.
 
+Raise a finding only for a failure the ordinary flow reaches: a client, a staff member, the admin or a job doing what the plan describes. A path that needs a rare action inside a window of seconds, two people acting on one record at once (one owner runs the admin side), or a hand edit to a row is a deferred minor: write it as one prose line that opens with the words Deferred minor, above the table and under no heading of its own (a collapsed report carries it inside its Lens section), with no id, so it goes to the owner's list and opens no fix round. A path that can charge, refund or pay twice, or expose a client's or staff member's data, is never deferred. [Claude default 2026-11-06]
+
 ## The shape
 
 Lifecycle exists for one shape: the OS is a set of state machines, proposal, invoice, pay period, shift, drink plan, scheduled message, consult chain, opt-out, whose status columns are written in many places and owned by none. A terminal transition does not fan out to its dependents, a late writer acts without re-reading the row, a money write a state predicate refuses vanishes, a predicate such as frozen is inlined four ways, a state or flag has no exit, and a scheduler's first tick reaches further than its author pictured.

@@ -42,6 +42,8 @@ The id is H, M or L followed by a number, never V or any other letter: the store
 
 When you find nothing, write the line No findings by itself, with nothing else on it. On the lines after it, name each fix and each money expression you tried to break, one per line, with its id or its file inside the sentence (for example: Checked the fix for H2 at `server/routes/example.js:120`: a partial refund already taken still nets once.). Never open one of these lines with an id, with the word Finding, or with a bullet, number or heading mark followed by an id, and never write Against: on them: a line in any of those forms is read as a finding or makes the report malformed. When you find anything, leave the No findings line out and write each finding in the form above.
 
+Report only a failure the ordinary flow reaches. Leave out a path that needs a rare action inside a window of seconds, two people acting on one record at once, or a hand edit to a row, unless it can charge, refund or pay twice or expose a person's data. [Claude default 2026-11-06]
+
 Budget: finish within roughly the N tool calls the brief's Budget section names; if you run out, cut breadth and say which fixes or expressions you did not reach.
 
 Print no real person's phone number; fixtures and the business lines are fine; refer to people by role.

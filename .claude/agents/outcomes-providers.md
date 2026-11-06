@@ -14,6 +14,8 @@ Each check is two sentences and a trigger line: the diff shapes that send you to
 
 Read the cited code for every finding, and state the failure path from the code, never from a check's wording.
 
+Raise a finding only for a failure the ordinary flow reaches: a client, a staff member, the admin or a job doing what the plan describes. A path that needs a rare action inside a window of seconds, two people acting on one record at once (one owner runs the admin side), or a hand edit to a row is a deferred minor: write it as one prose line that opens with the words Deferred minor, above the table and under no heading of its own (a collapsed report carries it inside its Lens section), with no id, so it goes to the owner's list and opens no fix round. A path that can charge, refund or pay twice, or expose a client's or staff member's data, is never deferred. [Claude default 2026-11-06]
+
 ## The shape
 
 Outcomes and providers exist for one shape: a caught or designed-in non-success reported upward as success, and code that believes a provider's remembered behavior instead of its observed one. Helpers signal failure by return value, the Resend SDK never rejects, a skip branch fires a Sentry message and returns normally at about 110 sites, an absent input resolves to the permissive branch, side effects run before COMMIT, an SDK silently drops a key it does not know, a webhook branch exists for an event the endpoint never subscribed, and a flag that gates an outbound side effect defaults on.

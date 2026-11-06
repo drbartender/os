@@ -14,6 +14,8 @@ Each check is two sentences and a trigger line: the diff shapes that send you to
 
 Read the cited code for every finding, and state the failure path from the code, never from a check's wording.
 
+Raise a finding only for a failure the ordinary flow reaches: a client, a staff member, the admin or a job doing what the plan describes. A path that needs a rare action inside a window of seconds, two people acting on one record at once (one owner runs the admin side), or a hand edit to a row is a deferred minor: write it as one prose line that opens with the words Deferred minor, above the table and under no heading of its own (a collapsed report carries it inside its Lens section), with no id, so it goes to the owner's list and opens no fix round. A path that can charge, refund or pay twice, or expose a client's or staff member's data, is never deferred. [Claude default 2026-11-06]
+
 ## The shape
 
 Business-time exists for one shape: the business runs on a Chicago wall clock, the database session runs GMT, the browser runs wherever the viewer is, and a DATE column is a day while a TIMESTAMPTZ is an instant. Every defect resolves one of those four in the wrong frame: SQL asked for today and got the GMT day after 19:00 Chicago, a UTC slice of an instant printed the next day, a formatter fed the wrong shape swallowed it into a dash, a calendar-day predicate disagreed with the end instant twice a day. The UTC and Chicago days agree about 19 hours in 24, so a fix proven only by a daytime test stays green against the bug.

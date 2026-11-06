@@ -145,7 +145,7 @@ test('the content rule fires on added lines in code paths only', () => {
   assert.strictEqual(sm.contentRuleHits(diffFor('.claude/agents/money.md', [line])).length, 0);
   assert.strictEqual(sm.contentRuleHits(diffFor('server/utils/y.js', ['const r = await stripe.refunds.create({ payment_intent: id });'])).length, 1);
   assert.strictEqual(sm.contentRuleHits(diffFor('server/utils/y.js', ['await applyRefundReconciliation(client, proposalId);'])).length, 1);
-  assert.strictEqual(sm.contentRuleHits(diffFor('client/src/pages/P.js', ['const owed = Number(p.total_price) - Number(p.amount_paid);'])).length, 1);
+  assert.strictEqual(sm.contentRuleHits(diffFor('client/src/pages/P.js', ['const owed = Number(p.total_price) - Number(p.amount_paid);'])).length, 0, 'client code never fires (2026-11-06)');
   assert.strictEqual(sm.contentRuleHits(diffFor('server/routes/x.js', ['UPDATE proposals SET notes = $1 WHERE id = $2'])).length, 0, 'a non-money column is not a hit');
   assert.strictEqual(sm.contentRuleHits(diffFor('server/routes/blog.js', ["const title = 'hello';"])).length, 0);
   assert.strictEqual(sm.contentRuleHits(diffFor('server/utils/payrollAccrual.js', ['const shares = splitEvenly(netGratuity, n);'])).length, 1, 'the money-word rule');
@@ -213,13 +213,11 @@ test('a path under each section header reports that section and its tier', () =>
   const list = fixtureList([
     '# The role sentence stays a comment above the first section.',
     '# section: auth-and-pii', 'server/middleware/guard.js',
-    '# section: client-money-surfaces', 'client/src/pages/Sheet.js',
     '# section: money', 'server/utils/ledger.js',
     '# section: hinge', 'scripts/tool.sh', 'docs/laws.md', 'server/utils/ledger.js', '',
   ].join('\n'));
   for (const [p, section, tierName] of [
     ['server/middleware/guard.js', 'auth-and-pii', 'A'],
-    ['client/src/pages/Sheet.js', 'client-money-surfaces', 'A'],
     ['server/utils/ledger.js', 'money', 'A'],
     ['scripts/tool.sh', 'hinge', 'hinge'],
     ['docs/laws.md', 'hinge', 'hinge'],
@@ -248,12 +246,12 @@ test('a path under each section header reports that section and its tier', () =>
   assert.strictEqual(sm.isDocsOnly(['docs/laws.md'], none), true);
 });
 
-test('the real list: each of the four section headers exactly once, hinge first and money last', () => {
+test('the real list: each of the three section headers exactly once, hinge first and money last', () => {
   const realList = fs.readFileSync(path.join(__dirname, 'sensitive-paths.txt'), 'utf8').split('\n');
   const headers = realList.filter((l) => /^#\s*section\s*:/i.test(l.trim()));
-  assert.deepStrictEqual(headers, ['# section: hinge', '# section: auth-and-pii', '# section: client-money-surfaces', '# section: money'], 'each header exactly once, in this order');
+  assert.deepStrictEqual(headers, ['# section: hinge', '# section: auth-and-pii', '# section: money'], 'each header exactly once, in this order');
   const runs = sm.loadPatterns().map((p) => p.section).filter((s, i, all) => i === 0 || all[i - 1] !== s);
-  assert.deepStrictEqual(runs, ['hinge', 'auth-and-pii', 'client-money-surfaces', 'money'], 'one run of patterns per section, in the same order');
+  assert.deepStrictEqual(runs, ['hinge', 'auth-and-pii', 'money'], 'one run of patterns per section, in the same order');
 });
 
 test('a pattern appended at the end of a copy of the real list lands in money, never in hinge', () => {
@@ -267,8 +265,6 @@ test('the real list: a path in each section reports that section and tier', () =
   for (const [p, section, tierName] of [
     ['server/middleware/auth.js', 'auth-and-pii', 'A'],
     ['server/routes/webauthn.js', 'auth-and-pii', 'A'],
-    ['client/src/components/mobile/EditSheet.js', 'client-money-surfaces', 'A'],
-    ['client/src/pages/admin/proposalEditor/editorCore.js', 'client-money-surfaces', 'A'],
     ['server/db/schema.sql', 'money', 'A'],
     ['server/scripts/archive/x.js', 'money', 'A'],
     ['scripts/merge-lane.sh', 'hinge', 'hinge'],
@@ -535,8 +531,8 @@ test('M5: the content rule sees .jsx, .cjs and .sql code; tests stay out', () =>
   for (const p of ['client/src/pages/TipPage.jsx', 'server/scripts/repairX.sql', 'server/utils/x.cjs', 'scripts/x.mjs', 'scripts/x.sh', 'server/x.js']) assert.ok(sm.isCodePath(p), p);
   for (const p of ['client/src/pages/TipPage.test.jsx', 'server/x.test.js', 'scripts/content-rule-calibrate.js', 'client/src/index.css', 'client/public/x.js', 'docs/x.sql']) assert.ok(!sm.isCodePath(p), p);
   const jsx = diffFor('client/src/pages/TipPage.jsx', ['const owed = Number(p.total_price) - Number(p.amount_paid);']);
-  assert.strictEqual(sm.contentRuleHits(jsx).length, 1, '.jsx');
-  assert.strictEqual(sm.tier({ paths: ['client/src/pages/TipPage.jsx'], diffText: jsx }).tier, 'A');
+  assert.strictEqual(sm.contentRuleHits(jsx).length, 0, 'a client .jsx is a code path the content rule does not read (2026-11-06)');
+  assert.strictEqual(sm.tier({ paths: ['client/src/pages/TipPage.jsx'], diffText: jsx }).tier, 'C');
   assert.strictEqual(sm.tier({ paths: ['client/src/pages/TipPage.jsx'], diffText: plain(['client/src/pages/TipPage.jsx']) }).tier, 'C');
   assert.ok(!sm.isSensitive(['server/db/fixX.sql']), 'fixture is unlisted (server/scripts/*.sql is listed)');
   const sql = diffFor('server/db/fixX.sql', ['UPDATE proposals SET total_price = 0 WHERE id = 1;']);
@@ -962,5 +958,27 @@ test('the --tier CLI prints no hit text: a value on a money line never reaches t
     assert.ok(out.contentRuleHits.every((h) => h.text === undefined), 'hits carry file, line and rule only');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the content rule reads server and scripts code, never a client screen (2026-11-06)', () => {
+  const none = fixtureList('# A list with nothing in it.\n');
+  const money = ['const total = proposal.total_price + gratuityLine;', 'await api.post(`/proposals/${id}/refund`, { amount_cents });'];
+  const screen = 'client/src/pages/admin/proposalEditor/Screen.js';
+  const t = sm.tier({ paths: [screen], diffText: diffFor(screen, money), listFile: none });
+  assert.strictEqual(t.tier, 'C', 'a client screen naming money columns is the client tier');
+  assert.deepStrictEqual(t.contentRuleHits || [], [], 'no content hit on client code');
+  const route = 'server/routes/thing.js';
+  assert.strictEqual(sm.tier({ paths: [route], diffText: diffFor(route, money), listFile: none }).tier, 'A', 'the same lines in a server route are tier A');
+  const status = sm.tier({ paths: [screen], diffText: diffFor(screen, ["const body = `UPDATE x SET status = 'archived'`;"]), listFile: none });
+  assert.strictEqual(status.tier, 'B', 'a client status write still lifts to B');
+});
+
+test('the real list: the client screens are off the money list, the device and PII gates stay on it', () => {
+  for (const p of ['client/src/components/mobile/EditSheet.js', 'client/src/pages/admin/proposalEditor/editorCore.js', 'client/src/pages/mobile/ProposalDetailPhone.js', 'client/src/pages/admin/payroll/PayrollPage.js']) {
+    assert.strictEqual(sm.tier({ paths: [p], diffText: plain([p]) }).tier, 'C', p);
+  }
+  for (const p of ['client/src/utils/offlineRead.js', 'client/src/pages/mobile/SearchPhone.js', 'client/src/utils/sentryScrub.js', 'client/src/index.js']) {
+    assert.strictEqual(sm.tier({ paths: [p], diffText: plain([p]) }).tier, 'A', p);
   }
 });

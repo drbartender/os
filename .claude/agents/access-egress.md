@@ -14,6 +14,8 @@ Each check is two sentences and a trigger line: the diff shapes that send you to
 
 Read the cited code for every finding, and state the failure path from the code, never from a check's wording.
 
+Raise a finding only for a failure the ordinary flow reaches: a client, a staff member, the admin or a job doing what the plan describes. A path that needs a rare action inside a window of seconds, two people acting on one record at once (one owner runs the admin side), or a hand edit to a row is a deferred minor: write it as one prose line that opens with the words Deferred minor, above the table and under no heading of its own (a collapsed report carries it inside its Lens section), with no id, so it goes to the owner's list and opens no fix round. A path that can charge, refund or pay twice, or expose a client's or staff member's data, is never deferred. [Claude default 2026-11-06]
+
 ## The shape
 
 Access and egress exist for one shape: a guard that is present but wrong for the decision, in both directions, and data or messages leaving the system for a place nobody inventoried. Managers rejected from a shared dashboard and admitted to admin-only money, a public form resolving a stranger's row by email or phone and writing onto it, a raw provider error stored with the row quoted in it, adversarial text walking past a scrubber into a model, a limiter sized below its own surface's traffic, and a link built on the wrong origin or with the wrong token. The mechanical security greps run before this lens and their results are in Established; this lens reads for the decisions a grep cannot see.

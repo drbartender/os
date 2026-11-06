@@ -619,11 +619,13 @@ test('a post-review commit needs a re-pass of the files it changed; then finaliz
     assert.doesNotMatch(l, /\bb\.js\b/, 'b.js did not change after its verdict');
   }
   // The re-passes read the new tip: a new snapshot first. A re-pass that does
-  // not list a.js leaves it stale.
+  // not list a.js leaves it stale while no lens has read a.js at the new tip.
   at = position();
   ok(cli(repo, ['verdicts', 'lane', '--position', at, 'seams', rep('seams2.md', [['b.js', 'pass']]), '--pass', '1']));
+  assert.deepStrictEqual(stale(fin()).map((l) => /stale: (\S+) read a\.js /.exec(l)[1]), ['access-egress', 'seams']);
+  // Once one lens reads a.js at the new tip, the other lens's pass on it stands (2026-11-06).
   ok(cli(repo, ['verdicts', 'lane', '--position', at, 'access-egress', rep('access2.md', [['a.js', 'pass']]), '--pass', '1']));
-  assert.deepStrictEqual(stale(fin()).map((l) => /stale: (\S+) read a\.js /.exec(l)[1]), ['seams']);
+  assert.deepStrictEqual(stale(fin()), []);
   ok(cli(repo, ['verdicts', 'lane', '--position', at, 'seams', rep('seams3.md', [['a.js', 'pass']]), '--pass', '2']));
   // The suites ran before the fix: they run again on the final tip.
   assert.ok(fin().stderr.includes(`tests: the suites entry tests/suites-1/summary.json ran at ${reviewedTip.slice(0, 7)}, the tip is ${newTip.slice(0, 7)}`));
