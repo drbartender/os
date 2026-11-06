@@ -359,3 +359,25 @@ test('a sheet opened before an earlier send ended unseen is held at its tap, onc
   expect(screen.getByRole('alert')).toHaveTextContent(EARLIER_SEND);
   expect(sends()).toHaveLength(1);
 });
+
+test('Back after a refusal has the page read the proposal again; Done after one tells it through onClose only', async () => {
+  serve();
+  api.get.mockResolvedValue(fresh({ status: 'deposit_paid' }));
+  const onLateAnswer = jest.fn();
+  const first = render(<ResendSheet proposal={PROPOSAL} onClose={() => {}} onLateAnswer={onLateAnswer} />);
+  await act(async () => {});
+  await act(async () => { fireEvent.click(sendBtn()); });
+  expect(screen.getByRole('alert')).toHaveTextContent(SHEET_MOVED);
+  first.unmount();   // Android Back: no onClose
+  expect(onLateAnswer).toHaveBeenCalledTimes(1);
+
+  const onClose = jest.fn();
+  const second = render(<ResendSheet proposal={PROPOSAL} onClose={onClose} onLateAnswer={onLateAnswer} />);
+  await act(async () => {});
+  await act(async () => { fireEvent.click(sendBtn()); });
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(onClose).toHaveBeenCalledWith({ moved: true });
+  second.unmount();
+  expect(onLateAnswer).toHaveBeenCalledTimes(1);
+  expect(sends()).toHaveLength(0);
+});

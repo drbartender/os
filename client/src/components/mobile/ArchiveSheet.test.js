@@ -289,3 +289,88 @@ test('Back during the fresh read posts nothing', async () => {
   expect(api.post).not.toHaveBeenCalled();
   expect(onLateAnswer).not.toHaveBeenCalled();
 });
+
+test('after a post with no answer, an archive found on Retry under a reason this sheet never posted is someone else', async () => {
+  api.get.mockResolvedValueOnce(fresh());
+  api.post.mockRejectedValueOnce({ status: 0, code: 'NETWORK_ERROR' });
+  mount();
+  pick('We cancelled');
+  await act(async () => { fireEvent.click(confirmBtn()); });
+  expect(screen.getByRole('alert')).toHaveTextContent(ARCHIVE_UNSURE);
+  // Meanwhile a client paid a sibling option, which archives this one.
+  api.get.mockResolvedValueOnce(fresh({ status: 'archived', archive_reason: 'option_not_chosen' }));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry' })); });
+  expect(screen.getByRole('alert')).toHaveTextContent(`${SHEET_MOVED} It is archived now: Option not chosen.`);
+  expect(mockToast.success).not.toHaveBeenCalled();
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals\/41$/);
+  expect(api.post).toHaveBeenCalledTimes(1);
+});
+
+test('a post with no answer stays possible after a later post is refused, so Retry then counts its archive as done', async () => {
+  // The first post lands late: the second, sent on Retry, finds it archived and is refused.
+  api.get.mockResolvedValueOnce(fresh());
+  api.post.mockRejectedValueOnce({ status: 0, code: 'NETWORK_ERROR' });
+  mount();
+  pick('We cancelled');
+  await act(async () => { fireEvent.click(confirmBtn()); });
+  api.get.mockResolvedValueOnce(fresh());
+  api.post.mockRejectedValueOnce({ status: 409, code: 'NOT_ARCHIVABLE', message: 'Only unpaid, unconverted proposals can be archived.' });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry' })); });
+  expect(screen.getByRole('alert')).toHaveTextContent('Only unpaid, unconverted proposals can be archived.');
+  api.get.mockResolvedValueOnce(fresh({ status: 'archived', archive_reason: 'we_cancelled' }));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry' })); });
+  expect(mockToast.success).toHaveBeenCalledWith('Proposal archived.');
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals$/);
+  expect(api.post).toHaveBeenCalledTimes(2);
+});
+
+test('after a post with no answer, a Retry whose read fails still says it may have been archived', async () => {
+  api.get.mockResolvedValueOnce(fresh());
+  api.post.mockRejectedValueOnce({ status: 0, code: 'NETWORK_ERROR' });
+  mount();
+  pick('No hire');
+  await act(async () => { fireEvent.click(confirmBtn()); });
+  for (const answer of [() => Promise.reject({ status: 0, code: 'NETWORK_ERROR' }), () => Promise.resolve({ ...fresh(), staleAt: '2026-11-05T15:00:00Z' })]) {
+    api.get.mockImplementationOnce(answer);
+    // eslint-disable-next-line no-await-in-loop
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry' })); });
+    expect(screen.getByRole('alert')).toHaveTextContent(ARCHIVE_UNSURE);
+    expect(screen.getByRole('alert')).not.toHaveTextContent(ARCHIVE_OFFLINE);
+  }
+  expect(api.post).toHaveBeenCalledTimes(1);
+});
+
+test('Back after a post that ended while the sheet was open, or after a refusal, has the page read again; a close it already said does not', async () => {
+  const onLateAnswer = jest.fn();
+  api.get.mockResolvedValueOnce(fresh());
+  api.post.mockRejectedValueOnce({ status: 0, code: 'NETWORK_ERROR' });
+  const a = render(<MemoryRouter><ArchiveSheet proposal={PROPOSAL} onClose={() => {}} onLateAnswer={onLateAnswer} /></MemoryRouter>);
+  pick('No hire');
+  await act(async () => { fireEvent.click(confirmBtn()); });
+  expect(screen.getByRole('alert')).toHaveTextContent(ARCHIVE_UNSURE);
+  a.unmount();   // Android Back: no onClose
+  expect(onLateAnswer).toHaveBeenCalledTimes(1);
+
+  api.get.mockResolvedValueOnce(fresh({ amount_paid: '250.00' }));
+  const b = render(<MemoryRouter><ArchiveSheet proposal={PROPOSAL} onClose={() => {}} onLateAnswer={onLateAnswer} /></MemoryRouter>);
+  pick('No hire');
+  await act(async () => { fireEvent.click(confirmBtn()); });
+  b.unmount();
+  expect(onLateAnswer).toHaveBeenCalledTimes(2);
+
+  const onClose = jest.fn();
+  api.get.mockResolvedValueOnce(fresh({ amount_paid: '250.00' }));
+  const c = render(<MemoryRouter><ArchiveSheet proposal={PROPOSAL} onClose={onClose} onLateAnswer={onLateAnswer} /></MemoryRouter>);
+  pick('No hire');
+  await act(async () => { fireEvent.click(confirmBtn()); });
+  fireEvent.click(screen.getByText('Close'));
+  expect(onClose).toHaveBeenCalledWith({ moved: true });
+  c.unmount();
+  expect(onLateAnswer).toHaveBeenCalledTimes(2);
+
+  // Untouched, Back says nothing.
+  const d = render(<MemoryRouter><ArchiveSheet proposal={PROPOSAL} onClose={() => {}} onLateAnswer={onLateAnswer} /></MemoryRouter>);
+  d.unmount();
+  expect(onLateAnswer).toHaveBeenCalledTimes(2);
+  expect(api.post).toHaveBeenCalledTimes(1);
+});

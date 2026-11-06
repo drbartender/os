@@ -50,8 +50,12 @@ import { Caret, ContactsSection, EditRow } from './EventDetailSections';
 // ArchiveSheet) as pushed history entries, so Android's Back closes them. A
 // sheet opens only on a fresh read whose row offers it, and a parameter that
 // can open none here is dropped once the read settles; each sheet reads the
-// proposal fresh again before it writes. A sheet that refused because the
-// proposal changed has the page read it again as it closes. Edit details opens
+// proposal fresh again before it writes. A sheet that posted or refused has the
+// page read the proposal again once it is gone, Back included, and an archive
+// whose answer comes after Back does too. A read waits while a sheet is open:
+// the read clears the screen, which would unmount the sheet and mount it
+// fresh, and a resend sheet that came back fresh would offer Send again for a
+// message already sent. It runs as the sheet closes. Edit details opens
 // desktop view until the phone's edit sheet lands; Send proposal (a draft or a
 // modified proposal: the first send runs the remote staffing fee check) and
 // anything an options group sends stay on desktop view for good. No Send
@@ -222,12 +226,28 @@ export default function ProposalDetailPhone() {
   }, [loading, drawer.kind, resendOpen, archiveOpen, closeDrawer]);
   // A sheet's closer acts only while the URL still shows that sheet: if Back
   // closed it meanwhile, a second close would pop the page itself.
-  const live = useRef({ kind: null, close: null });
-  live.current = { kind: drawer.kind, close: drawer.close };
-  const sheetClosed = useCallback((kind, { moved = false } = {}) => {
-    if (live.current.kind === kind) live.current.close();
-    if (moved) setAttempt((n) => n + 1);
+  const sheetOpen = resendOpen || archiveOpen;
+  const live = useRef({ kind: null, close: null, sheetOpen: false });
+  live.current = { kind: drawer.kind, close: drawer.close, sheetOpen };
+  // A read asked for while a sheet is open waits for it to close (header).
+  const readDue = useRef(false);
+  const readAgain = useCallback(() => {
+    if (live.current.sheetOpen) readDue.current = true;
+    else setAttempt((n) => n + 1);
   }, []);
+  useEffect(() => {
+    if (sheetOpen || !readDue.current) return;
+    readDue.current = false;
+    setAttempt((n) => n + 1);
+  }, [sheetOpen]);
+  const sheetClosed = useCallback((kind, { moved = false } = {}) => {
+    if (live.current.kind === kind) {
+      live.current.close();
+      if (moved) readDue.current = true;
+    } else if (moved) {
+      readAgain();
+    }
+  }, [readAgain]);
 
   const toDesktop = () => setDesktopView('proposal-detail', true);
   const toggle = (key) => setPanes((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -373,12 +393,11 @@ export default function ProposalDetailPhone() {
       )}
 
       {resendOpen && (
-        <ResendSheet proposal={proposal} onClose={(how) => sheetClosed('resend', how)}
+        <ResendSheet proposal={proposal} onClose={(how) => sheetClosed('resend', how)} onLateAnswer={readAgain}
           onDesktop={() => { sheetClosed('resend'); toDesktop(); }} />
       )}
       {archiveOpen && (
-        <ArchiveSheet proposal={proposal} onClose={(how) => sheetClosed('archive', how)}
-          onLateAnswer={() => setAttempt((n) => n + 1)} />
+        <ArchiveSheet proposal={proposal} onClose={(how) => sheetClosed('archive', how)} onLateAnswer={readAgain} />
       )}
     </div>
   );

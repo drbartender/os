@@ -19,28 +19,34 @@ import { holdTaps } from '../../utils/tapGuard';
 // whole-set choice stays on the desktop.
 //
 // BEFORE THE WRITE the proposal is read fresh (api.get with the read timeout,
-// never the stored copy). A row already archived counts as done after a post
-// of this sheet's that got no answer, so a Retry after a lost answer never
-// archives twice; otherwise someone else archived it, and the sheet says so
-// with that reason. Otherwise nothing is posted when
-// the proposal went on legal hold, money landed on it, or its status left the
-// archivable set (sheetRefusal); the sheet says why, and the page reads the
-// proposal again when it closes.
+// never the stored copy). A row already archived counts as done when its
+// stored reason is one this sheet posted with no answer (WHOSE ARCHIVE), so a
+// Retry after a lost answer never archives twice; otherwise someone else
+// archived it, and the sheet says so with that reason. Otherwise nothing is
+// posted when the proposal went on legal hold, money landed on it, or its
+// status left the archivable set (sheetRefusal); the sheet says why.
 // AFTER A FAILURE the pick is kept, and Retry repeats the whole step, read
 // first. A refusal from the server (a 409 among them) reads in its words.
+// Once a post got no answer, a Retry whose read fails keeps saying it may
+// have been archived, never that it didn't.
 // ONE WRITE AT A TIME: a ref holds the step, as useSheetWrites does, so a
 // double tap posts once; and the step is also held by proposal outside the
 // sheet for as long as it runs, so a sheet opened again after Back while an
 // archive is still going through says so and posts nothing. A sheet that
 // Back closed during its read posts nothing at all.
-// WHOSE ARCHIVE: an archived fresh read counts as done only after a post of
-// this sheet's whose answer never came (no connection, or a server failure
-// past the payment check); a definite refusal means the post did not land.
+// WHOSE ARCHIVE: an archived fresh read counts as done only when its stored
+// reason is one this sheet posted and got no answer for (no connection, or a
+// server failure past the payment check). A post with no answer stays
+// possible for the life of the sheet, since it can land after a later post is
+// refused; a reason this sheet never posted, the route-only ones among them
+// (option_not_chosen, event_passed, event_completed), is someone else's.
 // ON SUCCESS: "Proposal archived." and the Proposals list, in place of this
 // page, unless Back closed the sheet before the answer came: then the toast,
-// and the page is told (onLateAnswer) so it reads the proposal again rather
-// than leave Archive live under it; a page the user has moved on from is not
-// replaced. A sheet closed after its post went out has the page read again.
+// and a page the user has moved on from is not replaced.
+// THE PAGE READS AGAIN after a sheet that posted or refused closes, however it
+// closed: Cancel, Close or the scrim say so through onClose; Back, which
+// unmounts the sheet with no onClose, through onLateAnswer, at the unmount
+// when no step is running, else when the running step ends.
 export const ARCHIVE_OFFLINE = "No connection, didn't archive.";
 export const ARCHIVE_UNSURE = 'No answer. It may have been archived. Retry checks first.';
 export const ARCHIVE_EARLIER = 'An archive from an earlier tap is still going through. Close this and look at the proposal again.';
@@ -61,7 +67,8 @@ const refusalText = (err) => {
 // proposal: the proposal the page showed when the sheet opened.
 // onClose({ moved }): the sheet closed; moved when it refused because the
 // proposal changed, or a post went out, so the page reads it again.
-// onLateAnswer(): a post's step ended after Back closed the sheet.
+// onLateAnswer(): the sheet is gone without onClose (Back) after a post or a
+// refusal, so the page reads the proposal again.
 export default function ArchiveSheet({ proposal, onClose, onLateAnswer }) {
   const navigate = useNavigate();
   const toast = useToast();
@@ -69,16 +76,23 @@ export default function ArchiveSheet({ proposal, onClose, onLateAnswer }) {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState(null);
-  const [refused, setRefused] = useState(() => (ARCHIVES_OUT.has(proposal.id) ? ARCHIVE_EARLIER : null));
+  const [refused, setRefusedState] = useState(() => (ARCHIVES_OUT.has(proposal.id) ? ARCHIVE_EARLIER : null));
   const sheetRef = useRef(null);
-  // wrote: a post went out from this sheet. maybeOurs: one whose answer never came.
-  const wrote = useRef(false);
-  const maybeOurs = useRef(false);
+  // dirty: a post went out from this sheet, or it refused, so the page reads
+  // the proposal again once it is gone. unknownReasons: the reasons of its
+  // posts whose answer never came.
+  const dirty = useRef(refused !== null);
+  const unknownReasons = useRef(new Set());
+  const setRefused = (why) => { dirty.current = true; setRefusedState(why); };
+  // told: onClose ran, so the page already knows; the unmount says nothing more.
+  const told = useRef(false);
   const closers = useRef({});
-  closers.current = { onClose: () => { if (!busyRef.current && onClose) onClose({ moved: !!refused || wrote.current }); } };
+  closers.current = { onClose: () => { if (!busyRef.current && onClose) { told.current = true; onClose({ moved: dirty.current }); } } };
   useSheetFocus(sheetRef, closers);
   const mounted = useRef(false);
   const openedAt = useRef(Date.now());
+  const lateAnswer = useRef(onLateAnswer);
+  lateAnswer.current = onLateAnswer;
   // The hold after close waits one tick, and the effect running again cancels
   // it: StrictMode runs this cleanup once right after mount in development.
   const pendingHold = useRef(null);
@@ -88,6 +102,9 @@ export default function ArchiveSheet({ proposal, onClose, onLateAnswer }) {
     return () => {
       mounted.current = false;
       pendingHold.current = setTimeout(() => holdTaps(TAP_HOLD_MS), 0);
+      // Gone with no step running (Back after a post or a refusal): the page
+      // reads again now. A running step tells it as it ends.
+      if (!busyRef.current && !told.current && dirty.current && lateAnswer.current) lateAnswer.current();
     };
   }, []);
 
@@ -103,36 +120,37 @@ export default function ArchiveSheet({ proposal, onClose, onLateAnswer }) {
     setBusy(true);
     setError(null);
     ARCHIVES_OUT.add(proposal.id);
-    let postedNow = false;
     try {
+      // An earlier post of this sheet's may have landed: a read that fails
+      // cannot say it didn't.
+      const mayHave = unknownReasons.current.size > 0;
       let fresh;
       try {
         fresh = await api.get(`/proposals/${proposal.id}`, READ);
       } catch (err) {
-        setError(isTransport(err) ? ARCHIVE_OFFLINE : refusalText(err));
+        setError(mayHave ? ARCHIVE_UNSURE : isTransport(err) ? ARCHIVE_OFFLINE : refusalText(err));
         return;
       }
-      if (fresh.staleAt) { setError(ARCHIVE_OFFLINE); return; }
+      if (fresh.staleAt) { setError(mayHave ? ARCHIVE_UNSURE : ARCHIVE_OFFLINE); return; }
       // Back closed the sheet during the read: the admin left, and nothing is posted.
       if (!mounted.current) return;
       if (fresh.data && fresh.data.status === 'archived') {
-        if (maybeOurs.current) { done(); return; }
+        if (unknownReasons.current.has(fresh.data.archive_reason)) { done(); return; }
         const label = archiveReasonLabel(fresh.data.archive_reason);
         setRefused(`${SHEET_MOVED} It is archived now${label ? `: ${label}` : ''}.`);
         return;
       }
       const why = sheetRefusal('archive', fresh.data, proposal);
       if (why) { setRefused(why); return; }
-      wrote.current = true;
-      postedNow = true;
+      dirty.current = true;
+      const posting = reason;
       try {
-        await api.post(`/proposals/${proposal.id}/archive`, { scope: 'one', archive_reason: reason });
+        await api.post(`/proposals/${proposal.id}/archive`, { scope: 'one', archive_reason: posting });
       } catch (err) {
         // No answer, or a server failure past the payment check (which runs
         // before any write): the archive may have landed.
         const unknown = isTransport(err) || (err.status >= 500 && err.code !== 'EXTERNAL_SERVICE_ERROR');
-        maybeOurs.current = unknown;
-        if (unknown) setError(ARCHIVE_UNSURE);
+        if (unknown) { unknownReasons.current.add(posting); setError(ARCHIVE_UNSURE); }
         else if (err.code === 'LEGAL_HOLD') setRefused(HOLD_NOTE);
         else setError(refusalText(err));
         return;
@@ -142,7 +160,8 @@ export default function ArchiveSheet({ proposal, onClose, onLateAnswer }) {
       ARCHIVES_OUT.delete(proposal.id);
       busyRef.current = false;
       setBusy(false);
-      if (postedNow && !mounted.current && onLateAnswer) onLateAnswer();
+      // The step ended after Back closed the sheet: the page reads again.
+      if (!mounted.current && dirty.current && lateAnswer.current) lateAnswer.current();
     }
   };
 

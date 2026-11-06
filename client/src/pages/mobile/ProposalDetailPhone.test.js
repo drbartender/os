@@ -327,6 +327,65 @@ describe('the action card and its sheets', () => {
   });
 });
 
+describe('a read the sheets ask for', () => {
+  test('an archive answer that comes while a resend sheet shows its result waits: the sheet stays, with no second Send', async () => {
+    let reads = 0;
+    serve({ '/proposals/41': () => { reads += 1; return { data: PROPOSAL }; } });
+    let failArchive;
+    api.post.mockImplementation((url) => {
+      if (url === '/comms/preview') return Promise.resolve({ data: PREVIEW });
+      if (url === '/comms/send') return Promise.resolve({ data: { ok: true, email: 'sent', skip_reasons: {}, recipient_email: 'client41@example.test' } });
+      if (url.endsWith('/archive')) return new Promise((resolve, reject) => { failArchive = reject; });
+      return Promise.reject({ status: 404 });
+    });
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    // An archive goes out, and Back closes its sheet while it says Archiving.
+    await act(async () => { fireEvent.click(row('Archive')); });
+    fireEvent.click(screen.getByRole('button', { name: 'No hire' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Archive proposal' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(sheet('Archive proposal')).not.toBeInTheDocument();
+    // A resend goes out and its sheet shows the answer.
+    await act(async () => { fireEvent.click(row('Resend proposal')); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    const readsBefore = reads;
+    // The archive then fails at the payment check, nothing archived.
+    await act(async () => { failArchive({ status: 502, code: 'EXTERNAL_SERVICE_ERROR', message: "Couldn't check this proposal's payments with Stripe, so nothing was archived. Try again." }); });
+    expect(sheet('Resend proposal')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+    expect(api.post.mock.calls.filter((c) => c[0] === '/comms/preview')).toHaveLength(1);
+    expect(reads).toBe(readsBefore);
+    // The read runs as the sheet closes.
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Done' })); });
+    await waitFor(() => expect(reads).toBe(readsBefore + 1));
+    expect(sheet('Resend proposal')).not.toBeInTheDocument();
+    expect(api.post.mock.calls.filter((c) => c[0] === '/comms/send')).toHaveLength(1);
+  });
+  test('Back after an archive whose answer never came, while its sheet was open, has the page read again', async () => {
+    let reads = 0;
+    serve({
+      '/proposals/41': () => {
+        reads += 1;
+        return { data: reads <= 2 ? PROPOSAL : { ...PROPOSAL, status: 'archived', archive_reason: 'no_hire' } };
+      },
+    });
+    api.post.mockImplementation((url) => (url.endsWith('/archive') ? Promise.reject({ status: 0, code: 'NETWORK_ERROR' }) : Promise.reject({ status: 404 })));
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    await act(async () => { fireEvent.click(row('Archive')); });
+    fireEvent.click(screen.getByRole('button', { name: 'No hire' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Archive proposal' })); });
+    expect(screen.getByRole('alert')).toHaveTextContent('It may have been archived.');
+    expect(reads).toBe(2);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(await screen.findByText('archived · No hire')).toBeInTheDocument();
+    expect(reads).toBe(3);
+  });
+});
+
 test('a draft reads Send proposal on desktop view, and its Client link is not sent yet', async () => {
   serve({ '/proposals/41': { data: { ...PROPOSAL, status: 'draft', sent_at: null } } });
   mount();

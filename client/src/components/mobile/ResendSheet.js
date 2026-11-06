@@ -27,7 +27,8 @@ import { holdTaps } from '../../utils/tapGuard';
 // BEFORE EACH SEND (the first and every Retry) the proposal is read fresh
 // (api.get with the read timeout, never the stored copy), and nothing is sent
 // when it went on legal hold, money landed on it, or it no longer offers
-// Resend here (sheetRefusal); the page reads it again when the sheet closes.
+// Resend here (sheetRefusal); the page reads it again when the sheet closes,
+// through onClose, or through onLateAnswer when Back unmounted it.
 // ONE MESSAGE PER TAP: a ref holds the send, as useSheetWrites does, and the
 // send is also held for the life of its request, by proposal, outside the
 // sheet: Back can close the sheet while a send is out, and a sheet opened again
@@ -86,8 +87,10 @@ function channelResult(results, ch) {
 // proposal: the proposal the page showed when the sheet opened.
 // onClose({ moved }): the sheet closed; moved when it refused because the
 // proposal changed, so the page reads it again.
+// onLateAnswer(): Back unmounted the sheet after it refused, so the page reads
+// the proposal again.
 // onDesktop(): the resend belongs to desktop view (the fee question).
-export default function ResendSheet({ proposal, onClose, onDesktop }) {
+export default function ResendSheet({ proposal, onClose, onLateAnswer, onDesktop }) {
   const [phase, setPhase] = useState('loading');   // loading | failed | fee | ready | result
   const [attempt, setAttempt] = useState(0);
   const [preview, setPreview] = useState(null);
@@ -102,11 +105,17 @@ export default function ResendSheet({ proposal, onClose, onDesktop }) {
   const [results, setResults] = useState(null);
   const [submitted, setSubmitted] = useState([]);
   const sheetRef = useRef(null);
+  // told: onClose ran, so the page already knows; the unmount says nothing more.
+  const told = useRef(false);
   const closers = useRef({});
-  closers.current = { onClose: () => { if (!busyRef.current && onClose) onClose({ moved: !!refused }); } };
+  closers.current = { onClose: () => { if (!busyRef.current && onClose) { told.current = true; onClose({ moved: !!refused }); } } };
   useSheetFocus(sheetRef, closers);
   const mounted = useRef(false);
   const openedAt = useRef(Date.now());
+  const refusedRef = useRef(false);
+  refusedRef.current = !!refused;
+  const lateAnswer = useRef(onLateAnswer);
+  lateAnswer.current = onLateAnswer;
   // The earlier send's warning is said once. The hold after close waits one
   // tick, and the effect running again cancels it: StrictMode runs this
   // cleanup once right after mount in development, and that is not a close.
@@ -118,6 +127,8 @@ export default function ResendSheet({ proposal, onClose, onDesktop }) {
     return () => {
       mounted.current = false;
       pendingHold.current = setTimeout(() => holdTaps(TAP_HOLD_MS), 0);
+      // Back after a refusal: the proposal changed, so the page reads it again.
+      if (refusedRef.current && !told.current && lateAnswer.current) lateAnswer.current();
     };
   }, [proposal.id]);
   // A failure or a refusal is said at the top of the body and brought into
