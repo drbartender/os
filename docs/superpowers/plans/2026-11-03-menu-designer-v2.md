@@ -16,8 +16,8 @@ status: >
   lane, menu-bar-chain (2026-11-06): the receipt binds a lane to a review of main..tip, so a lane stacked on
   another unmerged lane cannot keep its receipt once the lower one merges. menu-bar-chain re-applies both
   squashes, carries the menu-bar-legacy-keys commits and builds menu-bar-renamed-lines' scope on top; it is
-  reviewed once as one change and ships on its own. The four lane entries stay below as the record of their
-  scope. menu-legal-hold-guards changes no stored data, so it leaves the chain: it follows menu-bar-chain
+  reviewed once as one change and ships on its own; it merged as 4b5ef352 on 2026-11-06. The four lane
+  entries stay below as the record of their scope. menu-legal-hold-guards changes no stored data, so it leaves the chain: it follows menu-bar-chain
   and ships on its own.
 lanes:
   - id: menu-out-of-credit
@@ -375,6 +375,9 @@ lanes:
       legal-hold proposal before it reads the plan, calls a provider or writes, with 409 LEGAL_HOLD through the
       patchGuards.js assertNotLegalHold precedent (isLegalHold, which fails closed). Generate and re-roll
       refusing first also keeps the held booking's plan away from the AI (money law 15: never read by the AI).
+      The boot stamp's SELECT_SQL also leaves the held proposal out through heldProposalIds() (lane
+      legal-hold-auto of plan 2026-11-05), so the stamp never reads the held draft's row; today it reads the
+      row and skips it through isLegalHold before any plan read or write.
       Follows menu-bar-rebuild-only (both edit menuDraftSync.js) and ships on its own (it changes no stored data).
     footprint:
       - server/routes/proposals/menuDrafts.js  (Generate, PATCH, re-roll, Dismiss)

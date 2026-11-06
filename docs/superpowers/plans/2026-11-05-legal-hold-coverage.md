@@ -1,15 +1,18 @@
 ---
 spec: none. The gap was found on 2026-11-05 by the money lens of the menu-bar-legacy-keys overlap pass (the balance charge has no legal-hold refusal) and widened by a read-only code audit of server/ the same night; money law 15 (docs/money-laws.md section 15) is the rule and spec 2026-10-16 section 5.3 the seam's design (server/utils/legalHold.js isLegalHold, the id list LEGAL_HOLD_PROPOSAL_IDS in server/utils/staleProposalSweep.js). The owner asked on 2026-11-05 for the lane to be built. This plan body records the design.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 5 (2026-11-06; rev 5 adds two more operator scripts and the release procedure's last step; rev 2 folded in the design-stage plan review; rev 3 and rev 4 add the paths the legal-hold-auto build and its review found the audit had missed, a release procedure and a third owner question)
+revision: 6 (2026-11-06; rev 6 records legal-hold-auto's verify and overlap passes: the footprint's last test file, which scripts gate a write on the count, and two paths no lane claimed, the gratuity reset script and the sign page's refused-sign row; rev 5 adds two more operator scripts and the release procedure's last step; rev 2 folded in the design-stage plan review; rev 3 and rev 4 add the paths the legal-hold-auto build and its review found the audit had missed, a release procedure and a third owner question)
 status: >
   Five lanes. legal-hold-auto, legal-hold-admin-money, legal-hold-admin-ops and legal-hold-client are
   built by Claude, one at a time in that order, each cut from current main in its own worktree,
   reviewed at the tier it computes (tier A), merged through scripts/merge-lane.sh from os. They share
   no file, so none waits on another. legal-hold-money-in is not cuttable: it waits on two owner
   decisions (below), and a plan revision fills its fields and runs /review-plan again first. Each lane
-  ships on its own once merged: the menu bar work that once had to ship first was reverted from main
-  by 7882775a (shipped 2026-11-05).
+  ships on its own once merged: the menu bar work, reverted from main by 7882775a (shipped 2026-11-05),
+  came back as one lane, menu-bar-chain (4b5ef352), which ships on its own and needs nothing from these
+  lanes (its Update draft refuses the held proposal itself; the menu legal-hold guards lane in plan
+  2026-11-03 covers the other menu routes and gives the boot stamp's SELECT the heldProposalIds()
+  exclusion; the stamp already skips the held draft through isLegalHold before any plan read or write).
 lanes:
   - id: legal-hold-auto
     scope: >
@@ -54,6 +57,7 @@ lanes:
       - server/scripts/healBalanceReminderTimes.js, server/scripts/backfillExtrasInvoices.js, server/scripts/backfillFullPaymentInvoices.js
       - server/utils/staleProposalSweep.js  (its held check through isLegalHold and its two SELECTs through heldProposalIds(); the list itself unchanged)
       - server/utils/staleProposalSweep.test.js  (its poisoned-row case uses an out-of-range integer, since an unreadable id now reads as held)
+      - server/utils/preEventScheduling.test.js  (its fixture id is a positive int4 for the same reason)
       - server/utils/clientAutomationSuspension.js and its sibling-suppression path  (never flips or suppresses a row tied to the held proposal)
       - server/scripts/backfillShiftClosures.js  (leaves it out, prints the count, refuses a write run without it)
       - docs/money-laws.md  (law 15's Code line names heldProposalIds())
@@ -82,9 +86,14 @@ lanes:
       and unsent and still processes the twin's; the monitor writes no activity row and sends no email
       for it; the autopay claim and the completion UPDATE skip it; the shift-closure, auto-assign and
       extension sweeps skip its rows; scheduleBalanceReminders schedules nothing for it and does not
-      throw, also with the list missing; the geocode backfill leaves its shifts out; the four scripts leave it out, print
-      the excluded count, and refuse a write run without the dry run's count; with the list missing each job
-      throws before any write.
+      throw, also with the list missing; the geocode backfill leaves its shifts out; every operator script leaves it out
+      and prints the excluded count; healBalanceReminderTimes.js, backfillExtrasInvoices.js,
+      backfillShiftClosures.js, backfill-positions-needed.js and backfill-duty-lines.js refuse a write run
+      unless --held-excluded gives the dry run's count, backfillFullPaymentInvoices.js refuses one unless
+      --expect names the dry run's ids, and the two Check Cherry scripts (cc-balance-invoice.js,
+      cc-transfer-events.js) print the count and never write for it; with the list missing each job
+      throws before any write. Left for the lane report: the Check Cherry transfer case runs --resume
+      as a dry run, so it never reaches the resume's DELETE that its fix protects.
     revert: revert the one squash commit; no data is written by the change.
 
   - id: legal-hold-admin-money
@@ -97,10 +106,15 @@ lanes:
       (POST /api/invoices/proposal/:proposalId), invoice edit or void (PATCH /api/invoices/:id, through
       its proposal_id), the balance due date (PATCH /api/proposals/:id/balance-due-date) and send-reminder
       (POST /api/proposals/:id/send-reminder). The refund route is not here (legal-hold-money-in).
+      Also the one-off gratuity reset (scripts/reset-unpaid-gratuity.js, spec 2026-08-03, run once by
+      hand): it reprices every proposal with nothing paid, which the held proposal is not, so it cannot
+      reach it today; it gains the bound heldProposalIds() exclusion and the held count so a bulk price
+      edit never rests on a shape filter (legal-hold-auto's verify pass, 2026-11-06).
     footprint:
       - server/routes/stripe.js  (charge-balance and payment-link only)
       - server/routes/proposals/cancel.js, server/routes/proposals/lifecycle.js (status only), server/routes/proposals/crud.js (DELETE only), server/routes/proposals/actions.js (balance-due-date, send-reminder)
       - server/routes/invoices.js  (create and PATCH)
+      - scripts/reset-unpaid-gratuity.js  (the held exclusion and count only)
       - server/routes/legalHold.adminMoney.test.js  (new: every route above, one suite)
       - scripts/money-smoke-list.txt  (the new suite joins it)
       - README.md, ARCHITECTURE.md  (generated sections)
@@ -139,6 +153,9 @@ lanes:
     scope: >
       The client routes spec 2026-10-16 section 5.3 already decided: the change-request calculate and
       create refuse a held id (they price against the catalog, not the contract, and notify an admin);
+      the public sign POST writes no sign_failed activity row and sends no Sentry message tagged with the
+      held id when its status guard refuses a sign on the held proposal's token (old behavior that no lane
+      claimed, found by legal-hold-auto's money overlap pass, 2026-11-06);
       the drink plan submit's extras paths (the syrup pay-now invoice and the fold-skipped writes of
       num_bars, add-ons and invoices) refuse it before writing; and the public proposal page stops
       counting views for it. The spec put the change-request refusals in lane override-removal (plan
@@ -147,7 +164,7 @@ lanes:
     footprint:
       - server/routes/clientPortal/changeRequests.js
       - server/routes/drinkPlans/submit.js  (the extras paths only)
-      - server/routes/proposals/publicToken.js  (the view counter only)
+      - server/routes/proposals/publicToken.js  (the view counter and the sign POST's refused-sign row only)
       - server/routes/legalHold.client.test.js  (new: every route above, one suite)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: []
@@ -155,7 +172,7 @@ lanes:
     laws: Money law 15; a refusal writes nothing, sends nothing and reaches no provider; a client sees the same message any refused write gives.
     seams: the client portal and the drink plan pages show the server's message as they do for any refused write.
     acceptance: Suites and the money smoke pass; legalHold.client.test.js fails on main (on main each route writes for a synthetic held id).
-    test plan: legalHold.client.test.js, with a synthetic held id: the change-request calculate and create answer the refusal and insert nothing; the drink plan submit creates no invoice and writes no proposal column; the public GET leaves view_count and last_viewed_at alone; an unheld twin still works.
+    test plan: legalHold.client.test.js, with a synthetic held id: the change-request calculate and create answer the refusal and insert nothing; the drink plan submit creates no invoice and writes no proposal column; the public GET leaves view_count and last_viewed_at alone; a sign POST on the held token writes no activity row; an unheld twin still works.
     revert: revert the one squash commit; no data is written by the change.
 
   - id: legal-hold-money-in
