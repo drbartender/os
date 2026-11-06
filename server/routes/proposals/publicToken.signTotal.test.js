@@ -188,9 +188,15 @@ test('a TOTAL_CHANGED 409 writes a sign_failed activity row carrying the code an
   const r = await request('POST', `/api/proposals/t/${p.token}/sign`, { body: signBody({ acknowledged_total: 999 }) });
   assert.equal(r.status, 409);
   assert.equal(r.body.code, 'TOTAL_CHANGED');
-  const rows = (await pool.query(
-    "SELECT details FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sign_failed'", [p.id]
-  )).rows;
+  // The route writes this row fire-and-forget after it answers, so under a
+  // loaded full run the insert can land just after the 409: wait for it.
+  let rows = [];
+  for (let i = 0; i < 60 && rows.length === 0; i++) {
+    if (i) await new Promise((resolve) => { setTimeout(resolve, 50); });
+    rows = (await pool.query(
+      "SELECT details FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'sign_failed'", [p.id]
+    )).rows;
+  }
   assert.equal(rows.length, 1, 'exactly one sign_failed row');
   assert.equal(rows[0].details.code, 'TOTAL_CHANGED');
   assert.equal(Number(rows[0].details.acknowledged_total), 999);
