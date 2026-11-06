@@ -387,6 +387,8 @@ lanes:
       - server/routes/proposals/menuDrafts.test.js
       - server/routes/proposals/menuDraftApprove.test.js
       - server/routes/proposals/menuPrint.test.js
+      - server/utils/menuBarBaselineStamp.js  (SELECT_SQL and PENDING_SQL leave the held proposal out through heldProposalIds(); the comment on its isLegalHold check says it also throws on an id it cannot read)
+      - server/utils/menuBarBaselineStamp.test.js  (a synthetic held draft is never selected and still counts under legal hold)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-bar-rebuild-only]
     lenses: tier A (menuDraftSync.js, menuDraftApprove.js, menuPrint.js are sensitive); money (law 15), access-egress, seams, verify, the externals, the money smoke.
