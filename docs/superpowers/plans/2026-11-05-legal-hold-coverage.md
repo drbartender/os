@@ -115,6 +115,7 @@ lanes:
       - server/routes/proposals/cancel.js, server/routes/proposals/lifecycle.js (status only), server/routes/proposals/crud.js (DELETE only), server/routes/proposals/actions.js (balance-due-date, send-reminder)
       - server/routes/invoices.js  (create and PATCH)
       - scripts/reset-unpaid-gratuity.js  (the held exclusion and count only)
+      - server/utils/legalHold.scripts.test.js  (the gratuity script's case, and the four assertion gaps legal-hold-auto's outcomes pass left for the next lane here: a dry run's error and exit code are checked, a held count must print before two counts are subtracted, an in-process --yes run checks its error, and the no-write check reads the rows, not the transaction id)
       - server/routes/legalHold.adminMoney.test.js  (new: every route above, one suite)
       - scripts/money-smoke-list.txt  (the new suite joins it)
       - README.md, ARCHITECTURE.md  (generated sections)

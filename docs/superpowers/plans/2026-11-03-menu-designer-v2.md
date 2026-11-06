@@ -375,8 +375,8 @@ lanes:
       legal-hold proposal before it reads the plan, calls a provider or writes, with 409 LEGAL_HOLD through the
       patchGuards.js assertNotLegalHold precedent (isLegalHold, which fails closed). Generate and re-roll
       refusing first also keeps the held booking's plan away from the AI (money law 15: never read by the AI).
-      The boot stamp's SELECT_SQL also leaves the held proposal out through heldProposalIds() (lane
-      legal-hold-auto of plan 2026-11-05), so the stamp never reads the held draft's row; today it reads the
+      The boot stamp's SELECT_SQL and PENDING_SQL also leave the held proposal out through heldProposalIds()
+      (lane legal-hold-auto of plan 2026-11-05, merged 552093c7), so the stamp never reads the held draft's row; today it reads the
       row and skips it through isLegalHold before any plan read or write.
       Follows menu-bar-rebuild-only (both edit menuDraftSync.js) and ships on its own (it changes no stored data).
     footprint:
@@ -390,7 +390,7 @@ lanes:
       - server/utils/menuBarBaselineStamp.js  (SELECT_SQL and PENDING_SQL leave the held proposal out through heldProposalIds(); the comment on its isLegalHold check says it also throws on an id it cannot read)
       - server/utils/menuBarBaselineStamp.test.js  (a synthetic held draft is never selected and still counts under legal hold)
       - README.md, ARCHITECTURE.md  (generated sections)
-    blockedBy: [menu-bar-rebuild-only]
+    blockedBy: [menu-bar-rebuild-only, legal-hold-auto]
     lenses: tier A (menuDraftSync.js, menuDraftApprove.js, menuPrint.js are sensitive); money (law 15), access-egress, seams, verify, the externals, the money smoke.
     laws: Money law 15 and CLAUDE.md's legal-hold rule: the held proposal keeps its database state exactly and is never read by the AI; every guard calls server/utils/legalHold.js isLegalHold, which fails closed; a refusal writes nothing and calls no provider.
     seams: assertNotLegalHold's 409 LEGAL_HOLD body is the one the proposal PATCH already answers, so the card shows the server's message like any other refused write; the next lanes that add menu writers (menu-no-menu-mark, menu-proof-page, menu-approve-send, menu-auto-start) already name isLegalHold in their laws.
@@ -494,7 +494,8 @@ lanes:
       - server/utils/menuImageProvider.js  (MenuArtOutOfCredit keeps the kind)
       - server/utils/menuArtJob.test.js  (the limit sentences on the words, piece and Update draft paths)
       - server/utils/menuArtSentences.test.js  (new, the parity test that the client mirror equals SENTENCES)
-      - README.md, ARCHITECTURE.md  (generated sections)
+      - server/utils/menuArtJob.js  (its header only: a spend or usage limit ends the run too, not only a spent balance)
+      - README.md, ARCHITECTURE.md  (generated sections; README's hand-written menuDesigner folder note names menuArtSentences.js)
     blockedBy: [menu-out-of-credit, menu-bar-chain]
     lenses: the computed tier; client (captures of the Words failed state and the multi-failure banner), seams (the mirrored sentence set), access-egress (no provider text reaches the client).
     laws: only the fixed sentences are shown; a words_error that is not one of them shows the generic sub line, so no provider text can reach the screen.
