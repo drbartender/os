@@ -14,15 +14,18 @@ const router = express.Router();
 
 // List published posts (includes chapter_number)
 router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
+  // published_at is a calendar day, so two posts can share it: id breaks the tie
+  // the same way here and in the single-post read below, so a post's number
+  // matches on its index card and its own page.
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const offset = (page - 1) * limit;
   const result = await pool.query(`
     SELECT id, slug, title, excerpt, cover_image_url, published_at,
-           ROW_NUMBER() OVER (ORDER BY published_at ASC) as chapter_number
+           ROW_NUMBER() OVER (ORDER BY published_at ASC, id ASC) as chapter_number
     FROM blog_posts
     WHERE published = true
-    ORDER BY published_at DESC
+    ORDER BY published_at DESC, id DESC
     LIMIT $1 OFFSET $2
   `, [limit, offset]);
   res.json(result.rows);
@@ -77,7 +80,7 @@ router.get('/:slug', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT bp.*, cn.chapter_number FROM blog_posts bp
      JOIN (
-       SELECT id, ROW_NUMBER() OVER (ORDER BY published_at ASC) as chapter_number
+       SELECT id, ROW_NUMBER() OVER (ORDER BY published_at ASC, id ASC) as chapter_number
        FROM blog_posts WHERE published = true
      ) cn ON cn.id = bp.id
      WHERE bp.slug = $1 AND bp.published = true`,

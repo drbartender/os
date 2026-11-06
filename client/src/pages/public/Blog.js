@@ -14,9 +14,12 @@ function resolveImageUrl(url) {
   return url;
 }
 
+// published_at is a calendar day stored at UTC midnight (the typed date, or
+// today's Chicago date when none was typed: server/routes/admin/blog.js), so
+// format it in UTC; the reader's local zone would show the day before in the US.
 function formatDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
 export default function Blog() {

@@ -11,6 +11,7 @@ const { uploadFile } = require('../../utils/storage');
 const { isValidUpload } = require('../../utils/fileValidation');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
 
 const DOMPurify = createDOMPurify(new JSDOM('').window);
 
@@ -22,6 +23,15 @@ const BLOG_SANITIZE_OPTIONS = {
 const router = express.Router();
 
 // ─── Blog Posts (admin CRUD) ─────────────────────────────────────
+
+// published_at holds a calendar day at UTC midnight: the date the admin typed
+// (new Date('YYYY-MM-DD') parses as UTC midnight), or, when none was typed,
+// today's Chicago date in the same shape. Stamping the raw moment instead would
+// put an evening publish on the next UTC day, and the public pages format the
+// UTC day.
+function todayPublishDate() {
+  return new Date(chicagoTodayYmd());
+}
 
 function slugify(title) {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -150,7 +160,7 @@ router.post('/blog', auth, adminOnly, asyncHandler(async (req, res) => {
   if (published_at) {
     published_at = new Date(published_at);
   } else {
-    published_at = published ? new Date() : null;
+    published_at = published ? todayPublishDate() : null;
   }
 
   try {
@@ -227,7 +237,7 @@ router.put('/blog/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   if (reqPublishedAt) {
     published_at = new Date(reqPublishedAt);
   } else if (published && !post.published && !post.published_at) {
-    published_at = new Date();
+    published_at = todayPublishDate();
   } else {
     published_at = post.published_at;
   }
