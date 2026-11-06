@@ -1,7 +1,7 @@
 ---
 spec: none. The gap was found on 2026-11-05 by the money lens of the menu-bar-legacy-keys overlap pass (the balance charge has no legal-hold refusal) and widened by a read-only code audit of server/ the same night; money law 15 (docs/money-laws.md section 15) is the rule and spec 2026-10-16 section 5.3 the seam's design (server/utils/legalHold.js isLegalHold, the id list LEGAL_HOLD_PROPOSAL_IDS in server/utils/staleProposalSweep.js). The owner asked on 2026-11-05 for the lane to be built. This plan body records the design.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 3 (2026-11-06; rev 2 folded in the design-stage plan review; rev 3 adds the paths the legal-hold-auto build found the audit had missed)
+revision: 4 (2026-11-06; rev 2 folded in the design-stage plan review; rev 3 and rev 4 add the paths the legal-hold-auto build and its review found the audit had missed, a release procedure and a third owner question)
 status: >
   Five lanes. legal-hold-auto, legal-hold-admin-money, legal-hold-admin-ops and legal-hold-client are
   built by Claude, one at a time in that order, each cut from current main in its own worktree,
@@ -57,6 +57,11 @@ lanes:
       - server/utils/clientAutomationSuspension.js and its sibling-suppression path  (never flips or suppresses a row tied to the held proposal)
       - server/scripts/backfillShiftClosures.js  (leaves it out, prints the count, refuses a write run without it)
       - docs/money-laws.md  (law 15's Code line names heldProposalIds())
+      - server/utils/paymentInFlight.js  (findStaleProcessingPayments leaves the held proposal out, so the monitor's stale-payment report never reads it)
+      - server/utils/preEventScheduling.js  (schedulePreEventReminders skips a held id silently, like the balance ladder, since the payment webhooks reach it)
+      - server/routes/thumbtackAgent.js  (rearmDripForClient never flips a held proposal's suppressed rows)
+      - scripts/cc-balance-invoice.js  (leaves it out, prints the count, prints ids only)
+      - scripts/backfill-positions-needed.js  (leaves the held proposal's shifts out and prints the count)
       - server/utils/legalHold.jobs.test.js  (new: every job and script above, one suite)
       - scripts/money-smoke-list.txt  (legalHold.jobs.test.js joins it, beside the other legal-hold suites)
       - README.md, ARCHITECTURE.md  (generated sections)
@@ -159,7 +164,12 @@ lanes:
       payout lines to its payments; either the pay pages refuse it up front, or the payment is taken and
       recorded as today. Second, refunds: spec 2026-10-16 section 5.3 lets the refund route's
       reconciliation run for a held id, and the stale pending-refund sweep is the only thing that adopts
-      a refund Stripe has already made; keep both, or refuse the refund route up front.
+      a refund Stripe has already made; keep both, or refuse the refund route up front. Third (found by the
+      legal-hold-auto review): the consult call clock (server/utils/consultCallSweep.js) rings the booker of
+      any scheduled consult and alerts the admin with the proposal's link, so a consult the held client books
+      themselves on the public page, linked to the held proposal by server/routes/calcom.js, would ring them;
+      either the clock leaves a consult tied to the held proposal out, or a consult the client booked rings
+      as today.
     footprint: filled by the plan revision after the owner's answers.
     blockedBy: [the owner's two decisions]
     lenses: tier A.
@@ -177,5 +187,7 @@ Money law 15 keeps the held proposal exactly as it is. The guard seam exists, bu
 The AI reads of booking data are the Inbox (server/utils/inbox/, already guarded) and the menu designer (lane menu-legal-hold-guards, plan 2026-11-03); no other server path calls an AI wrapper.
 
 No step here reads the held proposal's row: law 15 forbids an AI read of it, so every test uses synthetic held ids.
+
+Releasing the hold. These lanes leave every row tied to the held proposal exactly where it was, so its pending, deferred and claimed scheduled messages wait through the hold with their original send times. Taking its id off LEGAL_HOLD_PROPOSAL_IDS releases them all on the next five-minute tick, overdue and built for their original dates, and a claimed row that had already sent before a crash could send twice. So the release is a procedure, not an edit: first suppress the held proposal's pending, deferred and processing scheduled messages (a reviewed one-time script, ids and counts only, with the owner's yes), then remove the id from the list, then let the normal lifecycle reschedule what still applies.
 
 Three older lane branches touch these files: override-removal (crud.js, the change-request routes), gv-post-server (comms.js) and rewrite-step5-lint-errors (crud.js, shift and balanceScheduler tests). All three are stale; whichever lane merges second re-cuts from its plan.
