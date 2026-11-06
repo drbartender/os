@@ -1,7 +1,7 @@
 ---
 spec: none. The gap was found on 2026-11-05 by the money lens of the menu-bar-legacy-keys overlap pass (the balance charge has no legal-hold refusal) and widened by a read-only code audit of server/ the same night; money law 15 (docs/money-laws.md section 15) is the rule and spec 2026-10-16 section 5.3 the seam's design (server/utils/legalHold.js isLegalHold, the id list LEGAL_HOLD_PROPOSAL_IDS in server/utils/staleProposalSweep.js). The owner asked on 2026-11-05 for the lane to be built. This plan body records the design.
 format: lane map without code (spec 2026-10-19 D12)
-revision: 2 (2026-11-06; the design-stage plan review folded in: plan-fidelity and plan-decomposition, 2 blockers and 13 warnings, each answered below)
+revision: 3 (2026-11-06; rev 2 folded in the design-stage plan review; rev 3 adds the paths the legal-hold-auto build found the audit had missed)
 status: >
   Five lanes. legal-hold-auto, legal-hold-admin-money, legal-hold-admin-ops and legal-hold-client are
   built by Claude, one at a time in that order, each cut from current main in its own worktree,
@@ -52,7 +52,11 @@ lanes:
       - server/utils/balanceReminderScheduling.js  (scheduleBalanceReminders' entry)
       - server/routes/admin/settings.js  (backfill-geocodes' SELECT only)
       - server/scripts/healBalanceReminderTimes.js, server/scripts/backfillExtrasInvoices.js, server/scripts/backfillFullPaymentInvoices.js
-      - server/utils/staleProposalSweep.js  (its held check through isLegalHold; the list itself unchanged)
+      - server/utils/staleProposalSweep.js  (its held check through isLegalHold and its two SELECTs through heldProposalIds(); the list itself unchanged)
+      - server/utils/staleProposalSweep.test.js  (its poisoned-row case uses an out-of-range integer, since an unreadable id now reads as held)
+      - server/utils/clientAutomationSuspension.js and its sibling-suppression path  (never flips or suppresses a row tied to the held proposal)
+      - server/scripts/backfillShiftClosures.js  (leaves it out, prints the count, refuses a write run without it)
+      - docs/money-laws.md  (law 15's Code line names heldProposalIds())
       - server/utils/legalHold.jobs.test.js  (new: every job and script above, one suite)
       - scripts/money-smoke-list.txt  (legalHold.jobs.test.js joins it, beside the other legal-hold suites)
       - README.md, ARCHITECTURE.md  (generated sections)
@@ -70,8 +74,8 @@ lanes:
       and unsent and still processes the twin's; the monitor writes no activity row and sends no email
       for it; the autopay claim and the completion UPDATE skip it; the shift-closure, auto-assign and
       extension sweeps skip its rows; scheduleBalanceReminders schedules nothing for it and does not
-      throw, also with the list missing; the geocode backfill and the three scripts leave it out, print
-      the excluded count, and refuse a write run without the dry run; with the list missing each job
+      throw, also with the list missing; the geocode backfill leaves its shifts out; the four scripts leave it out, print
+      the excluded count, and refuse a write run without the dry run's count; with the list missing each job
       throws before any write.
     revert: revert the one squash commit; no data is written by the change.
 
