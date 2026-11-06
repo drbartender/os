@@ -15,6 +15,7 @@
 const { pool } = require('../db');
 const { ConflictError, ExternalServiceError } = require('./errors');
 const { isValidTimezone, DEFAULT_TZ } = require('./eventTimezone');
+const { heldProposalIds } = require('./legalHold');
 
 const IN_FLIGHT_MAX_AGE_DAYS = 14;
 // Mirrors publicSwitch.js: the SDK default is 80s with retries, far too long
@@ -86,16 +87,20 @@ async function findInFlightPayments(proposalId, db = pool) {
 // Processing rows that have outlived any bank debit's window. Alert-only
 // input for balanceInvoiceMonitor; a lost payment_failed event is the usual
 // cause, and until the row expires it blocks every checkout on the proposal.
-async function findStaleProcessingPayments(db = pool) {
+// A legal-hold proposal's rows are left out (money law 15), so the monitor
+// never reads, logs or reports them; `held` is the list the caller already
+// read, and a missing list throws before the read.
+async function findStaleProcessingPayments(db = pool, held = heldProposalIds()) {
   const { rows } = await db.query(
     `SELECT proposal_id, stripe_payment_intent_id, amount AS amount_cents, processing_at
        FROM stripe_sessions
       WHERE status = 'processing'
         AND processing_at < NOW() - make_interval(days => $1::int)
         AND processing_at > NOW() - make_interval(days => $2::int)
+        AND (proposal_id IS NULL OR proposal_id <> ALL($3::int[]))
       ORDER BY processing_at ASC
       LIMIT 50`,
-    [STALE_PROCESSING_DAYS, IN_FLIGHT_MAX_AGE_DAYS]
+    [STALE_PROCESSING_DAYS, IN_FLIGHT_MAX_AGE_DAYS, held]
   );
   return rows.map((r) => ({
     proposal_id: Number(r.proposal_id),

@@ -8,6 +8,7 @@ const { geocodeAddress, buildAddressString, delay } = require('../../utils/geoco
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
 const { getStripPayload } = require('../../utils/presenceStore');
+const { heldProposalIds } = require('../../utils/legalHold');
 // THE shift-visibility predicate, shared with GET /api/shifts/unstaffed-upcoming.
 const { shiftNotFinishedSql } = require('../../utils/shiftEndInstant');
 const { openSlotsSql } = require('../../utils/positionsNeeded');
@@ -79,6 +80,9 @@ router.put('/settings', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // Geocode all staff/shift addresses and backfill hire dates
 router.post('/backfill-geocodes', auth, adminOnly, asyncHandler(async (req, res) => {
+  // Money law 15: a legal-hold proposal's shifts are never geocoded or
+  // written. Read first, so a missing list fails the request before any write.
+  const held = heldProposalIds();
   // Backfill contractor_profiles
   const profiles = await pool.query(`
     SELECT user_id, street_address, city, state, zip_code
@@ -101,7 +105,8 @@ router.post('/backfill-geocodes', auth, adminOnly, asyncHandler(async (req, res)
   // Backfill shifts
   const shifts = await pool.query(`
     SELECT id, location FROM shifts WHERE lat IS NULL AND location IS NOT NULL
-  `);
+      AND (proposal_id IS NULL OR proposal_id <> ALL($1::int[]))
+  `, [held]);
 
   let shiftCount = 0;
   for (const s of shifts.rows) {

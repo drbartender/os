@@ -167,6 +167,11 @@ server/routes/proposals/cancelLineItem.legalHold.test.js
 server/routes/proposals/publicSwitch.legalHold.test.js
 server/utils/proposalExtrasFold.catalog.test.js
 server/routes/drinkPlans.legalHold.test.js
+# Legal hold, the automatic jobs and bulk scripts (plan 2026-11-05, lane
+# legal-hold-auto): every job runs inside a rolled-back transaction, so the
+# DB-wide jobs leave ci-smoke as they found it.
+server/utils/legalHold.jobs.test.js
+server/utils/legalHold.scripts.test.js
 server/utils/foldDecision.test.js
 server/utils/clientPriceLines.test.js
 server/utils/publicSnapshot.test.js

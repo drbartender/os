@@ -6,6 +6,11 @@
  * once per tick, after the main drain. Leaf module: it requires the pool /
  * resolver / sms it needs directly and never requires the dispatcher back, so
  * there is no require cycle.
+ *
+ * It also holds notHeldMessageSql, the one predicate that leaves a row tied to
+ * a legal-hold proposal out of every dispatcher statement that picks rows
+ * (money law 15); the dispatcher imports it from here, since this module can
+ * never require the dispatcher.
  */
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
@@ -15,14 +20,43 @@ const {
 } = require('./notificationChannelResolver');
 // Module-level (not destructured) so tests can monkey-patch sms.sendAndLogSms.
 const sms = require('./sms');
+const { heldProposalIds } = require('./legalHold');
+
+/**
+ * Money law 15: a scheduled message belongs to a held proposal when it names
+ * the proposal, or names a shift or a consult whose proposal_id is held (the
+ * entities lookupEntity resolves; a client-entity row names no proposal).
+ * `t` is the scheduled_messages table name or alias in the calling statement,
+ * `n` the number of the parameter bound to heldProposalIds() as one int[].
+ *
+ * NULL-safe on purpose: entity_type and entity_id are NOT NULL and the array
+ * holds no NULL, so the first arm is never NULL, and a shift or consult whose
+ * proposal_id IS NULL matches nothing inside NOT EXISTS, so a row with no
+ * proposal is never dropped.
+ */
+function notHeldMessageSql(t, n) {
+  return `((${t}.entity_type <> 'proposal' OR ${t}.entity_id <> ALL($${n}::int[]))
+        AND NOT EXISTS (SELECT 1 FROM shifts lh_s
+                         WHERE ${t}.entity_type = 'shift' AND lh_s.id = ${t}.entity_id
+                           AND lh_s.proposal_id = ANY($${n}::int[]))
+        AND NOT EXISTS (SELECT 1 FROM consults lh_c
+                         WHERE ${t}.entity_type = 'consult' AND lh_c.id = ${t}.entity_id
+                           AND lh_c.proposal_id = ANY($${n}::int[])))`;
+}
 
 async function resolveCriticalDeadLetters() {
+  // Read before the first statement: a missing list throws here, so the pass
+  // fails before it re-queues or dead-letters a row.
+  const held = heldProposalIds();
   // One row per group, GROUP BY suppression_key. Only consider groups where:
   //   - All rows are terminal (sent / failed / suppressed / suppressed_by_sibling / dead_letter)
   //   - NO sibling is 'sent', 'pending', or 'deferred' (no live retry in flight)
   //   - The category (from payload->>'category') is in CRITICAL_CATEGORIES
   //   - The group's max re_resolve_count is < 2
+  //   - No row of it is tied to a held proposal (money law 15): a held group
+  //     is never re-queued, dead-lettered or alerted on, and stays as it is
   // For each group, increment counter + re-resolve + enqueue OR dead-letter all rows.
+  // static-checks: allow parameterized-sql (notHeldMessageSql is a fixed clause from a table name and a parameter number; the held ids are bound)
   const { rows: groups } = await pool.query(
     `SELECT suppression_key,
             recipient_id AS user_id,
@@ -39,8 +73,10 @@ async function resolveCriticalDeadLetters() {
            WHERE sm2.suppression_key = scheduled_messages.suppression_key
              AND sm2.status IN ('sent','pending','deferred','processing')
         )
+        AND ${notHeldMessageSql('scheduled_messages', 1)}
       GROUP BY suppression_key, recipient_id, entity_type, entity_id, message_type
-      HAVING MAX(COALESCE((payload->>'re_resolve_count')::int, 0)) < 99`
+      HAVING MAX(COALESCE((payload->>'re_resolve_count')::int, 0)) < 99`,
+    [held]
   );
 
   for (const group of groups) {
@@ -152,4 +188,4 @@ async function resolveCriticalDeadLetters() {
   }
 }
 
-module.exports = { resolveCriticalDeadLetters };
+module.exports = { resolveCriticalDeadLetters, notHeldMessageSql };

@@ -14,8 +14,9 @@ const { dispatchPushRow } = require('./pushDispatch');
 // Dead-letter recovery + the balance-reminder email handlers were extracted to
 // keep this file under the size cap. Both are leaf modules that never require
 // the dispatcher back, so requiring them here creates no cycle.
-const { resolveCriticalDeadLetters } = require('./dispatcherDeadLetters');
+const { resolveCriticalDeadLetters, notHeldMessageSql } = require('./dispatcherDeadLetters');
 const { registerBalanceReminderHandlers } = require('./balanceReminderHandlers');
+const { heldProposalIds } = require('./legalHold');
 
 // ─── Handler registry ──────────────────────────────────────────
 // Keyed by message_type. Handler signature:
@@ -239,8 +240,9 @@ async function shouldDeferForOverlap(row) {
 //
 // Returns { proceed: true } when dispatch should continue (the row's `channel`
 // field may have been rewritten), or { proceed: false } when the row was
-// terminal-marked (suppressed) and dispatch must stop.
-async function resolveDelivery(row, recipient) {
+// terminal-marked (suppressed) and dispatch must stop. `held` is the tick's
+// heldProposalIds(): the suspension cascade below never touches a held row.
+async function resolveDelivery(row, recipient, held) {
   // Staff/admin rows: Phase 4a owns their suppression in checkSuppression.
   // Phase 4b's substitution rule is a client rule only.
   if (row.recipient_type !== 'client' || !recipient) return { proceed: true };
@@ -286,7 +288,7 @@ async function resolveDelivery(row, recipient) {
       [row.id, 'suppressed: no working contact channel for client (spec 7.5)']
     );
     try {
-      await suspendClientAutomation(row.recipient_id);
+      await suspendClientAutomation(row.recipient_id, held);
       await alertNoWorkingChannel(row.recipient_id, recipient);
     } catch (suspendErr) {
       Sentry.captureException(suspendErr, {
@@ -418,16 +420,20 @@ async function lookupRecipient(recipientType, recipientId) {
 // Sibling-suppression cascade: when one row in a suppression_key group sends
 // successfully, mark the remaining pending siblings 'suppressed_by_sibling' so
 // the user doesn't receive the same notification on push AND SMS AND email.
-async function markSiblingsSuppressed(suppressionKey, currentRowId) {
+// A sibling tied to a held proposal is never touched (money law 15; `held` is
+// the tick's heldProposalIds()).
+async function markSiblingsSuppressed(suppressionKey, currentRowId, held) {
   if (!suppressionKey) return;
+  // static-checks: allow parameterized-sql (notHeldMessageSql is a fixed clause from a table name and a parameter number; the held ids are bound)
   await pool.query(
     `UPDATE scheduled_messages
         SET status = 'suppressed_by_sibling',
             error_message = $3
       WHERE suppression_key = $1
         AND id <> $2
-        AND status = 'pending'`,
-    [suppressionKey, currentRowId, `sibling_sent: row ${currentRowId} delivered first`]
+        AND status = 'pending'
+        AND ${notHeldMessageSql('scheduled_messages', 4)}`,
+    [suppressionKey, currentRowId, `sibling_sent: row ${currentRowId} delivered first`, held]
   );
 }
 
@@ -448,7 +454,9 @@ async function releaseClaim(rowId) {
   }
 }
 
-async function dispatchRow(row) {
+// `held` is the tick's heldProposalIds(); a direct caller reads it here, so a
+// missing list rejects before the claim writes anything.
+async function dispatchRow(row, held = heldProposalIds()) {
   let entity, recipient;
   try {
     // Atomic per-row claim (supersedes the old stale-row SELECT guard). Flip
@@ -480,7 +488,7 @@ async function dispatchRow(row) {
       // If push sent, cascade-suppress siblings in the same logical group.
       const after = await pool.query("SELECT status FROM scheduled_messages WHERE id = $1", [row.id]);
       if (after.rows[0] && after.rows[0].status === 'sent') {
-        await markSiblingsSuppressed(row.suppression_key, row.id);
+        await markSiblingsSuppressed(row.suppression_key, row.id, held);
       }
       return;
     }
@@ -563,7 +571,7 @@ async function dispatchRow(row) {
     // distinct suppression reason this gate exists to leave behind.
     // Delivery resolution (spec 7.3 / 7.5): channel substitution + both-bad
     // suspension. May rewrite row.channel, or terminal-mark the row and stop.
-    const delivery = await resolveDelivery(row, recipient);
+    const delivery = await resolveDelivery(row, recipient, held);
     if (!delivery.proceed) {
       return;
     }
@@ -606,7 +614,7 @@ async function dispatchRow(row) {
     // Sibling-suppression cascade (Phase 2 Task 7): collapse other rows in the
     // same suppression_key group so the staffer doesn't get the same
     // notification through multiple channels when one was enough.
-    await markSiblingsSuppressed(row.suppression_key, row.id);
+    await markSiblingsSuppressed(row.suppression_key, row.id, held);
   } catch (err) {
     // SuppressMessageError must be handled FIRST, before any Sentry / console call.
     // Suppressions are expected dispatch outcomes for handler-side gates (e.g.,
@@ -698,15 +706,24 @@ async function dispatchPending() {
   }
   _dispatchInFlight = true;
   try {
+    // Money law 15: a row tied to a held proposal (directly, or through its
+    // shift or consult) is never reactivated, reaped, selected or sent; each
+    // statement below leaves it out (notHeldMessageSql), so it stays exactly as
+    // it is. Read before the first write: a missing list throws here and the
+    // tick fails before it touches a row.
+    const held = heldProposalIds();
     // Reactivate deferred rows (spec 7.4): a row deferred by the overlap rule
     // had its scheduled_for bumped 24h. Flip any deferred row that is now due
     // back to 'pending' so the drain loop below re-evaluates it (it may defer
     // again if another touch fired in the new 24h window, or fire if clear).
+    // static-checks: allow parameterized-sql (notHeldMessageSql is a fixed clause from a table name and a parameter number; the held ids are bound)
     await pool.query(
       `UPDATE scheduled_messages
           SET status = 'pending'
         WHERE status = 'deferred'
-          AND scheduled_for <= NOW()`
+          AND scheduled_for <= NOW()
+          AND ${notHeldMessageSql('scheduled_messages', 1)}`,
+      [held]
     );
     // Reap stranded claims: a crash or deploy SIGTERM between the claim and its
     // terminal write leaves a row in 'processing' that nothing re-selects (the
@@ -714,11 +731,14 @@ async function dispatchPending() {
     // Ten minutes is far beyond any legitimate in-flight handler, and the
     // claimed_at age guard means a concurrent instance's fresh claims are never
     // stolen.
+    // static-checks: allow parameterized-sql (notHeldMessageSql is a fixed clause from a table name and a parameter number; the held ids are bound)
     await pool.query(
       `UPDATE scheduled_messages
           SET status = 'pending', claimed_at = NULL
         WHERE status = 'processing'
-          AND claimed_at < NOW() - INTERVAL '10 minutes'`
+          AND claimed_at < NOW() - INTERVAL '10 minutes'
+          AND ${notHeldMessageSql('scheduled_messages', 1)}`,
+      [held]
     );
     // Drain fully: keep pulling batches while the last one was full, so a
     // backlog larger than BATCH_LIMIT clears within this tick instead of
@@ -729,14 +749,16 @@ async function dispatchPending() {
     let batchSize;
     let passes = 0;
     do {
+      // static-checks: allow parameterized-sql (notHeldMessageSql is a fixed clause from a table name and a parameter number; the held ids are bound)
       const { rows } = await pool.query(
         `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel,
                 scheduled_for, suppression_key, payload
          FROM scheduled_messages
          WHERE status = 'pending' AND scheduled_for <= NOW()
+           AND ${notHeldMessageSql('scheduled_messages', 2)}
          ORDER BY scheduled_for ASC
          LIMIT $1`,
-        [BATCH_LIMIT]
+        [BATCH_LIMIT, held]
       );
       batchSize = rows.length;
 
@@ -760,7 +782,7 @@ async function dispatchPending() {
         // Sequential dispatch — keeps a single SMTP burst from blowing past
         // Resend's rate limit. If volume grows, swap to a concurrency-limited
         // Promise queue.
-        await dispatchRow(row);
+        await dispatchRow(row, held);
       }
       passes += 1;
     } while (batchSize === BATCH_LIMIT && passes < MAX_DRAIN_PASSES);

@@ -12,30 +12,91 @@
  * PIs so they can't surprise-charge later.
  *
  * Scope is one proposal per run (passed as an argument). Post-deploy this is run
- * for the live/future affected client (Shiralee, proposal 527). The past event
- * (Julia) and the owner-handled one (Anna) are left to manual judgment.
+ * for the live/future affected client (proposal 527). A past event and an
+ * owner-handled one are left to manual judgment.
  *
  * Idempotent:
  *   - creates NOTHING if a non-void extras invoice already exists (findExtrasInvoice);
  *   - a re-run after cancel finds the PIs no longer `requires_payment_method` and skips them.
  *
- *   node server/scripts/backfillExtrasInvoices.js <proposalId> [--dry-run]
+ * Money law 15: a legal-hold proposal is left out before anything is read
+ * (isLegalHold; a missing list throws there), and every run prints the held
+ * count it left out (1 when the given proposal is held, else 0). A write run
+ * (no --dry-run) refuses unless --held-excluded <n> gives that count from a
+ * dry run, so a write always follows a dry run that confirmed it.
+ *
+ *   node server/scripts/backfillExtrasInvoices.js <proposalId> --dry-run
+ *   node server/scripts/backfillExtrasInvoices.js <proposalId> --held-excluded <n>
+ *
+ * Exit codes: 0 clean; 1 bad arguments, a write run with no held count, or a
+ * failure; 2 the held count did not match and nothing was read or written.
  */
 
 require('dotenv').config();
 const { pool } = require('../db');
 const { getStripe } = require('../utils/stripeClient');
 const { findExtrasInvoice, createDrinkPlanExtrasInvoice } = require('../utils/invoiceHelpers');
+const { isLegalHold } = require('../utils/legalHold');
 
 const DRINK_PLAN_TYPES = new Set(['drink_plan_extras', 'drink_plan_with_balance']);
+const HELD_FLAG = '--held-excluded';
+const USAGE = 'Usage: node server/scripts/backfillExtrasInvoices.js <proposalId> (--dry-run | --held-excluded <n>)';
 
-async function main() {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes('--dry-run');
-  const proposalId = Number(args.find((a) => /^\d+$/.test(a)));
-  if (!proposalId) {
-    console.error('Usage: node server/scripts/backfillExtrasInvoices.js <proposalId> [--dry-run]');
+// The proposal id (the first bare number that is not the flag's value),
+// --dry-run, and the count after --held-excluded (null when absent). Throws on
+// a missing or malformed count, so a typo never reads as one.
+function parseArgs(args) {
+  let proposalId = null;
+  let heldFlag = null;
+  let dryRun = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '--dry-run') {
+      dryRun = true;
+    } else if (a === HELD_FLAG) {
+      const raw = args[i + 1];
+      if (raw === undefined || !/^\d+$/.test(raw)) {
+        throw new Error(`${HELD_FLAG} needs the legal-hold count a dry run printed (a whole number)`);
+      }
+      heldFlag = Number(raw);
+      i += 1;
+    } else if (proposalId === null && /^\d+$/.test(a)) {
+      proposalId = Number(a);
+    }
+  }
+  return { proposalId, heldFlag, dryRun };
+}
+
+async function main(args = process.argv.slice(2)) {
+  let parsed;
+  try {
+    parsed = parseArgs(args);
+  } catch (err) {
+    console.error(`REFUSING: ${err.message}. Nothing was read or written.`);
     process.exitCode = 1;
+    return;
+  }
+  const { proposalId, heldFlag, dryRun } = parsed;
+  if (!proposalId) {
+    console.error(USAGE);
+    process.exitCode = 1;
+    return;
+  }
+  if (!dryRun && heldFlag === null) {
+    console.error(`REFUSING: a write run needs ${HELD_FLAG} <n>, the legal-hold count a --dry-run printed. Nothing was read or written.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const heldCount = isLegalHold(proposalId) ? 1 : 0;
+  console.log(`[backfill-extras] legal hold: ${heldCount} held proposal(s) left out (money law 15). A write run needs ${HELD_FLAG} ${heldCount}.`);
+  if (!dryRun && heldFlag !== heldCount) {
+    console.error(`REFUSING: ${HELD_FLAG} ${heldFlag} does not match the ${heldCount} held proposal(s) this run leaves out. Re-run the dry run first. Nothing was read or written.`);
+    process.exitCode = 2;
+    return;
+  }
+  if (heldCount) {
+    console.log(`[backfill-extras] proposal ${proposalId} is on legal hold: nothing is read, written or cancelled.`);
     return;
   }
 
@@ -68,6 +129,7 @@ async function main() {
       pi = await stripe.paymentIntents.retrieve(piId);
     } catch (e) {
       console.warn(`  could not retrieve ${piId}: ${e.message}`);
+      process.exitCode = 1; // a failure, per the header; the loop still finishes
       continue;
     }
     const type = pi.metadata?.payment_type;
@@ -144,12 +206,17 @@ async function main() {
       console.log(`Canceled PaymentIntent ${a.piId}.`);
     } catch (e) {
       console.warn(`  could not cancel ${a.piId}: ${e.message}`);
+      process.exitCode = 1; // a failure, per the header; the loop still finishes
     }
   }
 
   console.log('[backfill-extras] done.');
 }
 
-main()
-  .catch((err) => { console.error('Backfill failed:', err); process.exitCode = 1; })
-  .finally(async () => { await pool.end(); });
+module.exports = { main, parseArgs };
+
+if (require.main === module) {
+  main()
+    .catch((err) => { console.error('Backfill failed:', err); process.exitCode = 1; })
+    .finally(async () => { await pool.end(); });
+}

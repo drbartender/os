@@ -76,15 +76,40 @@
 // was wrong; the claim is corrected here rather than deleted, because "nothing
 // reads this column" is exactly the kind of assertion that gets copied forward.)
 //
+// LEGAL HOLD (money law 15). A shift on a legal-hold proposal is never planned,
+// closed or reported: the plan's SELECT and the UPDATE both leave it out
+// (heldProposalIds, the one list, read before any row is), and every run prints
+// how many held shifts it left out. --apply refuses unless --held-excluded <n>
+// gives that count from a dry run and it still matches, so a write always
+// follows a dry run that confirmed the held rows. A missing list throws before
+// any row is read. No line names a client: shifts and proposals are named by id.
+//
 // Usage:
-//   node -r dotenv/config server/scripts/backfillShiftClosures.js           (dry run, default)
-//   node -r dotenv/config server/scripts/backfillShiftClosures.js --apply   (write)
+//   node -r dotenv/config server/scripts/backfillShiftClosures.js                               (dry run, default)
+//   node -r dotenv/config server/scripts/backfillShiftClosures.js --apply --held-excluded <n>   (write)
+//
+// Exit codes: 0 clean; 1 bad arguments, a write run with no held count, a plan
+// that moved before the write, or a failure; 2 the held count did not match
+// and nothing was written.
 
 require('dotenv').config();
 const { pool } = require('../db');
 const { shiftEndInstantSql, shiftFinishedSql } = require('../utils/shiftEndInstant');
+const { heldProposalIds } = require('../utils/legalHold');
 
-const APPLY = process.argv.includes('--apply');
+const HELD_FLAG = '--held-excluded';
+
+// The count after --held-excluded, or null when the flag is absent. Throws on
+// a missing or malformed value, so a typo never reads as a count.
+function parseHeldExcluded(args) {
+  const i = args.indexOf(HELD_FLAG);
+  if (i < 0) return null;
+  const raw = args[i + 1];
+  if (raw === undefined || !/^\d+$/.test(raw)) {
+    throw new Error(`${HELD_FLAG} needs the legal-hold count a dry run printed (a whole number)`);
+  }
+  return Number(raw);
+}
 
 // Name the database this run will touch, BEFORE touching it (same banner as
 // refreshDisplayNames.js / applySeniorityBackfill.js dbTarget). Host + database
@@ -100,8 +125,44 @@ function dbTarget() {
   }
 }
 
-async function main() {
-  console.log(`[backfillShiftClosures] ${APPLY ? 'APPLY' : 'DRY RUN'}  db=${dbTarget()}`);
+async function main(args = process.argv.slice(2)) {
+  const apply = args.includes('--apply');
+  let heldFlag;
+  try {
+    heldFlag = parseHeldExcluded(args);
+  } catch (err) {
+    console.error(`REFUSING: ${err.message}. Nothing was written.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (apply && heldFlag === null) {
+    console.error(`REFUSING: --apply needs ${HELD_FLAG} <n>, the legal-hold count a dry run printed. Nothing was written.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Read before any row is: a missing list throws here.
+  const held = heldProposalIds();
+
+  console.log(`[backfillShiftClosures] ${apply ? 'APPLY' : 'DRY RUN'}  db=${dbTarget()}`);
+
+  // The held shifts are counted, never listed: the count is what the operator
+  // confirms, and a write run must carry it. Same filter as the plan below.
+  const heldRes = await pool.query(`
+    SELECT count(*)::int AS n
+      FROM shifts s
+      JOIN proposals p ON p.id = s.proposal_id
+     WHERE p.status = 'completed'
+       AND s.status NOT IN ('completed', 'cancelled', 'closed')
+       AND p.id = ANY($1::int[])
+  `, [held]);
+  const heldCount = heldRes.rows[0].n;
+  console.log(`[backfillShiftClosures] legal hold: ${heldCount} shift(s) on held proposals left out (money law 15). A write run needs ${HELD_FLAG} ${heldCount}.`);
+  if (apply && heldFlag !== heldCount) {
+    console.error(`REFUSING: ${HELD_FLAG} ${heldFlag} does not match the ${heldCount} held shift(s) this run leaves out. Re-run the dry run first. Nothing was written.`);
+    process.exitCode = 2;
+    return;
+  }
 
   // Every open/filled shift on a completed proposal, tagged with whether it has
   // finished. Unfinished rows are carried through so the run can SAY it left
@@ -112,7 +173,6 @@ async function main() {
            s.start_time, s.end_time,
            ${shiftEndInstantSql('s', 'p')} AS end_instant,
            ${shiftFinishedSql('s', 'p')} AS finished,
-           COALESCE(c.name, s.client_name, '(no client)') AS client_name,
            COALESCE(p.total_price, 0) AS total_price,
            COALESCE(p.amount_paid, 0) AS amount_paid,
            EXISTS (SELECT 1 FROM shift_requests sr
@@ -123,7 +183,6 @@ async function main() {
                     WHERE pe.shift_id = s.id) AS has_payouts
       FROM shifts s
       JOIN proposals p ON p.id = s.proposal_id
-      LEFT JOIN clients c ON c.id = p.client_id
      WHERE p.status = 'completed'
        -- Exclude the TERMINAL values rather than allowlisting the live ones, and
        -- keep this IDENTICAL to shiftClosureSweep.js. An allowlist silently drops
@@ -135,8 +194,9 @@ async function main() {
        -- install on dev for as long as those out-of-range rows existed, silently,
        -- which is why shiftClosureSweep.js's header now argues from that instead.
        AND s.status NOT IN ('completed', 'cancelled', 'closed')
+       AND p.id <> ALL($1::int[])
      ORDER BY s.id
-  `);
+  `, [held]);
 
   const candidates = rows.filter((r) => r.finished);
   const notYet = rows.filter((r) => !r.finished);
@@ -152,7 +212,6 @@ async function main() {
 
   if (candidates.length === 0) {
     console.log('Nothing to do: no FINISHED open/filled shifts on completed proposals.');
-    await pool.end();
     return;
   }
 
@@ -174,16 +233,15 @@ async function main() {
     console.log('it. The shift still closes \'completed\' (the event happened), but somebody');
     console.log('should find out who actually worked it — payroll has no record.');
     for (const r of rosterGaps) {
-      console.log(`  shift #${r.id}  proposal #${r.proposal_id}  ${r.event_date}  ${r.client_name}  total ${r.total_price}  paid ${r.amount_paid}${r.has_payouts ? '  [has payout_events]' : ''}`);
+      console.log(`  shift #${r.id}  proposal #${r.proposal_id}  ${r.event_date}  total ${r.total_price}  paid ${r.amount_paid}${r.has_payouts ? '  [has payout_events]' : ''}`);
     }
     console.log(`${'!'.repeat(72)}\n`);
   } else {
     console.log('No roster gaps: every unworked candidate is on a $0 proposal.\n');
   }
 
-  if (!APPLY) {
-    console.log('DRY RUN — nothing written. Re-run with --apply to write.');
-    await pool.end();
+  if (!apply) {
+    console.log(`DRY RUN — nothing written. Re-run with --apply ${HELD_FLAG} ${heldCount} to write.`);
     return;
   }
 
@@ -196,10 +254,13 @@ async function main() {
     // SELECT (closed by the sweep, reaped, hand-edited) is skipped — and then
     // FAIL on any skip: a count mismatch means the plan printed above is not the
     // write that would happen, so nothing is written at all.
+    // The held exclusion is repeated here too: a held shift that reached the id
+    // list would skip, and the count mismatch below refuses the whole write.
     const done = await client.query(
       `UPDATE shifts SET status = 'completed'
-        WHERE id = ANY($1) AND status NOT IN ('completed', 'cancelled', 'closed')`,
-      [ids]
+        WHERE id = ANY($1) AND status NOT IN ('completed', 'cancelled', 'closed')
+          AND (proposal_id IS NULL OR proposal_id <> ALL($2::int[]))`,
+      [ids, held]
     );
     if (done.rowCount !== ids.length) {
       await client.query('ROLLBACK');
@@ -216,11 +277,16 @@ async function main() {
   } finally {
     client.release();
   }
-  await pool.end();
   if (mismatch !== null) {
     console.error(`REFUSING: counts moved between plan and write (completed ${mismatch}/${ids.length}). Rolled back — nothing written. Re-run to re-plan.`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+module.exports = { main };
+
+if (require.main === module) {
+  main()
+    .catch((e) => { console.error(e); process.exitCode = 1; })
+    .finally(async () => { await pool.end(); });
+}

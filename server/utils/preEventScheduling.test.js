@@ -11,7 +11,7 @@ const preEventHandlers = require('./preEventHandlers');
 const { registerDrinkPlanNudgeHandlers } = require('./drinkPlanNudge');
 
 const TEST_CLIENT_ID = -1;
-const TEST_PROPOSAL_ID = -101;
+const TEST_PROPOSAL_ID = 2 ** 31 - 101; // a positive int4 id no real proposal reaches (a negative id now reads as held)
 
 // Register dispatcher handlers (and their offset metadata) ONCE so
 // getHandlerMeta('event_week_reminder') / 'long_lead_t30_recap' / the

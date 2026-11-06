@@ -345,10 +345,13 @@ test('one poisoned row does not stop the batch, and the run still rethrows', asy
   //
   // The poison must genuinely THROW. An id of -1 would not: archiveOne's peek
   // returns no row, so it ROLLBACKs and resolves null — a clean skip, not a
-  // failure. A non-integer id forces 22P02 on the peek query instead.
+  // failure. Nor would a non-integer id any more: archiveOne's legal-hold check
+  // (isLegalHold) reads an id it cannot read as a positive integer as held and
+  // skips it. An out-of-range integer passes that check (it is a positive safe
+  // integer, and not held) and forces 22003 on the peek query instead.
   const healthy = await fixture({ status: 'viewed', eventDate: daysAgo(5) });
   _setSelectCandidatesForTests(async () => ([
-    { id: 'poison', status: 'viewed' },
+    { id: 2 ** 31, status: 'viewed' },
     { id: healthy.proposalId, status: 'viewed' },
   ]));
   await assert.rejects(() => processStaleProposals(), /1 row\(s\) failed/);

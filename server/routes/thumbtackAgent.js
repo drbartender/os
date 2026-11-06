@@ -14,6 +14,8 @@ const { AppError, ValidationError } = require('../utils/errors');
 const { logAdminAction } = require('../utils/adminAuditLog');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { triggerLeadCall } = require('../utils/leadCallTrigger');
+const { notHeldMessageSql } = require('../utils/dispatcherDeadLetters');
+const { heldProposalIds } = require('../utils/legalHold');
 
 // Test seam (thumbtack.js precedent): the replies suite stubs triggerLeadCall to
 // prove the sent-callback constructs the camelCase lead shape, without dialing.
@@ -169,16 +171,20 @@ async function isInternalAddress(email) {
 // on its OWN pooled connection AFTER the writeback commit (never inside that tx). Keys
 // on the BARE error_message='client_no_email' value the dispatcher stores (NOT a
 // 'suppressed: ...' prefix); never resurrects a past-window touch (scheduled_for >
-// now()); leaves suppressed_by_sibling / dead_letter rows alone.
+// now()); leaves suppressed_by_sibling / dead_letter rows alone. Never flips a row
+// tied to a legal-hold proposal (money law 15): it stays suppressed. A missing
+// list throws before the write, into the caller's catch.
 async function rearmDripForClient(clientId) {
+  // static-checks: allow parameterized-sql (notHeldMessageSql is a fixed clause from a table name and a parameter number; the held ids are bound)
   await pool.query(
     `UPDATE scheduled_messages SET status='pending'
       WHERE entity_type='proposal'
         AND status='suppressed'
         AND error_message='client_no_email'
         AND scheduled_for > now()
-        AND entity_id IN (SELECT id FROM proposals WHERE client_id = $1)`,
-    [clientId]
+        AND entity_id IN (SELECT id FROM proposals WHERE client_id = $1)
+        AND ${notHeldMessageSql('scheduled_messages', 2)}`,
+    [clientId, heldProposalIds()]
   );
 }
 

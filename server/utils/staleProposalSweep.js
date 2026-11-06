@@ -37,13 +37,18 @@ const { pool } = require('../db');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('./invoiceVoid');
 const { reapShiftsForProposal } = require('./shiftReap');
 const { notifyAdminCategory } = require('./adminNotifications');
+// legalHold.js requires nothing at load (it reads the list below at call
+// time), so this require forms no cycle.
+const { isLegalHold, heldProposalIds } = require('./legalHold');
 
 const SWEEP_STATUSES = Object.freeze(['draft', 'sent', 'viewed', 'modified']);
 
 // Proposal 600 is on indefinite legal hold: never archive, reap, void, chase or
 // sweep it. It is already excluded twice over (it is 'confirmed', and it carries
 // a payment), but the rule must not depend on a status filter that a future edit
-// could widen. Applied to BOTH the sweep query and the accepted-skip query.
+// could widen. Applied to BOTH the sweep query and the accepted-skip query,
+// which read it through heldProposalIds() (legalHold.js) at call time, so the
+// list, any test ids included, comes from one place. This constant is THE list.
 const LEGAL_HOLD_PROPOSAL_IDS = Object.freeze([600]);
 
 const ARCHIVE_REASON = 'event_passed';
@@ -121,13 +126,13 @@ const SKIP_CANDIDATE_SQL = `
    ORDER BY p.id`;
 
 /** Rows the sweep would archive right now. Pure read. */
-async function selectCandidates(db = pool, excludeIds = LEGAL_HOLD_PROPOSAL_IDS) {
+async function selectCandidates(db = pool, excludeIds = heldProposalIds()) {
   const { rows } = await db.query(CANDIDATE_SQL, [SWEEP_STATUSES, excludeIds, SWEEP_EXEMPT_ACTION, SWEEP_EXEMPT_DAYS]);
   return rows;
 }
 
 /** Past-dated 'accepted' proposals not yet reported to an admin. Pure read. */
-async function selectSkipCandidates(db = pool, excludeIds = LEGAL_HOLD_PROPOSAL_IDS) {
+async function selectSkipCandidates(db = pool, excludeIds = heldProposalIds()) {
   const { rows } = await db.query(SKIP_CANDIDATE_SQL, [excludeIds, SKIP_ACTION]);
   return rows;
 }
@@ -197,7 +202,9 @@ async function notifySkipped() {
 async function archiveOne(proposalId) {
   // Defense in depth. Both queries already exclude these, but archiveOne is
   // exported and a future direct caller must not be able to route around the hold.
-  if (LEGAL_HOLD_PROPOSAL_IDS.includes(Number(proposalId))) {
+  // Through the seam, so the list is read in one place and an id it cannot
+  // read as a positive integer reads as held (fails closed).
+  if (isLegalHold(proposalId)) {
     console.warn(`[stale_proposal_sweep] refusing legal-hold proposal #${proposalId}`);
     return null;
   }
@@ -435,6 +442,9 @@ async function processStaleProposals() {
   }
   inFlight = true;
   try {
+    // Read first: a missing legal-hold list throws here, before the heal pass
+    // or any archive writes a row (fails closed).
+    const held = heldProposalIds();
     const dryRun = process.env.STALE_PROPOSAL_SWEEP_DRY_RUN === 'true';
 
     // Heal BEFORE this tick's work, never after: a just-failed intent must get a
@@ -448,7 +458,7 @@ async function processStaleProposals() {
       }
     }
 
-    const candidates = await (_selectCandidates || selectCandidates)();
+    const candidates = await (_selectCandidates || selectCandidates)(pool, held);
 
     if (candidates.length > MAX_ARCHIVES_PER_RUN) {
       console.error(`[stale_proposal_sweep] RUNAWAY GUARD: ${candidates.length} candidates exceeds MAX_ARCHIVES_PER_RUN=${MAX_ARCHIVES_PER_RUN}; archiving nothing`);

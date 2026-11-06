@@ -4,16 +4,20 @@ const { pool } = require('../db');
 const { autoAssignShift } = require('./autoAssign');
 const { getEventTypeLabel } = require('./eventTypes');
 const { chicagoTodayYmd } = require('./businessTime');
+const { heldProposalIds } = require('./legalHold');
 
 /**
  * Process scheduled auto-assign for shifts approaching their event date.
  * Finds shifts where event_date - auto_assign_days_before <= today (the
  * Chicago business day, bound as a parameter)
  * and auto_assigned_at IS NULL, then runs the auto-assign algorithm.
+ * A shift on a legal-hold proposal is never picked (money law 15); a shift
+ * with no proposal still is.
  *
  * Runs hourly via setInterval in server/index.js.
  */
 async function processScheduledAutoAssigns() {
+  const held = heldProposalIds(); // a missing list throws before any assignment
   try {
     const result = await pool.query(`
       SELECT s.id, s.event_type, s.event_type_custom, s.client_name, s.event_date, s.auto_assign_days_before
@@ -28,7 +32,8 @@ async function processScheduledAutoAssigns() {
         -- to be filled.
         AND s.event_date - (s.auto_assign_days_before * INTERVAL '1 day') <= $1::date
         AND (p.id IS NULL OR p.status != 'archived')
-    `, [chicagoTodayYmd()]);
+        AND (s.proposal_id IS NULL OR s.proposal_id <> ALL($2::int[]))
+    `, [chicagoTodayYmd(), held]);
 
     if (result.rows.length === 0) return;
 

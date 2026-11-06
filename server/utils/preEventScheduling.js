@@ -5,6 +5,7 @@
 const { pool } = require('../db');
 const { resolveEventTimezone } = require('./eventTimezone');
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');
+const { isLegalHold } = require('./legalHold');
 
 /**
  * Constant for "10am event-local" used as the morning send hour for the
@@ -137,7 +138,16 @@ function shouldScheduleLongLeadRecap(proposal) {
  * applicable to this proposal. Idempotent: if a row for the same (entity,
  * message_type, recipient, channel) already exists, the insert is skipped.
  *
- * Skips entirely for archived proposals.
+ * Skips entirely for archived proposals, and silently for a legal-hold
+ * proposal (money law 15), before its row is read: only the pre-event ladder
+ * this function schedules (event-week, T-30, and the nudge and event-eve rows
+ * it delegates) is skipped here. When a payment lands, createEventShifts can
+ * still queue the drink-plan nudge for a held proposal through createDrinkPlan;
+ * that landed-payment event-creation tail belongs to the money-in lane
+ * (legal-hold-money-in), not this guard.
+ * NEVER THROWS for the hold: the payment webhooks reach this through
+ * depositPaidSchedulers.js, and the reschedule cascade runs it inside its
+ * transaction. A missing legal-hold list schedules nothing and logs once.
  *
  * Called from two anchor points:
  *   1. The Stripe `payment_intent.succeeded` post-commit notifier when the
@@ -157,6 +167,14 @@ function shouldScheduleLongLeadRecap(proposal) {
  *        - pg PoolClient or pool; defaults to `pool` if not supplied
  */
 async function schedulePreEventReminders(proposalId, executor) {
+  let held;
+  try {
+    held = isLegalHold(proposalId);
+  } catch (holdErr) {
+    console.error('schedulePreEventReminders: the legal-hold list is unreadable, scheduling nothing (fails closed):', holdErr.message);
+    return;
+  }
+  if (held) return;
   const exec = executor || pool;
   const { rows } = await exec.query(
     `SELECT p.id, p.client_id, p.status, p.event_date, p.event_start_time,

@@ -4,8 +4,14 @@
 // the full paid roster (bartenders + banquet servers + barbacks), per-role
 // shrink-capped so an approved-active assignment is NEVER dropped.
 //
-//   node -r dotenv/config scripts/backfill-positions-needed.js            # DRY RUN (default, no writes)
-//   node -r dotenv/config scripts/backfill-positions-needed.js --apply    # write (gated ops step)
+//   node -r dotenv/config scripts/backfill-positions-needed.js                               # DRY RUN (default, no writes)
+//   node -r dotenv/config scripts/backfill-positions-needed.js --apply --held-excluded <n>   # write (gated ops step)
+//
+// Money law 15: a legal-hold proposal's shifts are left out of the selection and
+// the write (heldProposalIds, the one list; a missing list throws before any row
+// is read), and every run prints how many it left out. --apply refuses (exit 1)
+// without --held-excluded, and (exit 2) unless it equals the count this run
+// computes, so a write always follows a dry run that confirmed the held rows.
 //
 // Mirrors syncShiftsFromProposal's reconciliation exactly: grow freely; on a
 // shrink never go below approved-active per role (Math.max(desired, approved)).
@@ -23,9 +29,23 @@ const { pool } = require('../server/db');
 const { deriveStaffingRoster, loadStaffingAddons } = require('../server/utils/eventCreation');
 const { parsePositionsNeeded, rosterCounts } = require('../server/utils/positionsNeeded');
 const { canonicalizeRole } = require('../server/utils/staffingRoles');
+const { heldProposalIds } = require('../server/utils/legalHold');
+const { chicagoTodayYmd } = require('../server/utils/businessTime');
 
-const apply = process.argv.includes('--apply');
 const ROLES = ['Bartender', 'Banquet Server', 'Barback'];
+const HELD_FLAG = '--held-excluded';
+
+// The count after --held-excluded, or null when the flag is absent. Throws on
+// a missing or malformed value, so a typo never reads as a count.
+function parseHeldExcluded(args) {
+  const i = args.indexOf(HELD_FLAG);
+  if (i < 0) return null;
+  const raw = args[i + 1];
+  if (raw === undefined || !/^\d+$/.test(raw)) {
+    throw new Error(`${HELD_FLAG} needs the legal-hold count a dry run printed (a whole number)`);
+  }
+  return Number(raw);
+}
 
 function fmtDate(d) {
   if (!d) return 'no-date';
@@ -72,8 +92,51 @@ function plannedPositions(desired, approvedByRole) {
   return final;
 }
 
-async function main() {
+async function main(args = process.argv.slice(2)) {
+  const apply = args.includes('--apply');
+  let heldFlag;
+  try {
+    heldFlag = parseHeldExcluded(args);
+  } catch (err) {
+    console.error(`REFUSING: ${err.message}. Nothing was written.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (apply && heldFlag === null) {
+    console.error(`REFUSING: --apply needs ${HELD_FLAG} <n>, the legal-hold count a dry run printed. Nothing was written.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Read before any row is: a missing list throws here.
+  const held = heldProposalIds();
+
   console.log(`backfill-positions-needed: ${apply ? 'APPLYING (writes)' : 'DRY RUN (no writes)'}`);
+
+  // "Upcoming" is from the Chicago business day, bound as $2, never the GMT
+  // CURRENT_DATE, which is already tomorrow from 18:00 or 19:00 Chicago and
+  // would drop that evening's events.
+  const today = chicagoTodayYmd();
+
+  // The held shifts are counted, never read, under the same filter as the plan
+  // below; the count is what the operator confirms, and a write run carries it.
+  const heldRes = await pool.query(`
+    SELECT count(*)::int AS n
+      FROM proposals p
+      JOIN shifts s ON s.proposal_id = p.id
+     WHERE s.event_date >= $2::date
+       AND s.status NOT IN ('cancelled', 'completed')
+       AND (SELECT COUNT(*) FROM shifts s2 WHERE s2.proposal_id = p.id) = 1
+       AND s.proposal_id = ANY($1::int[])
+  `, [held, today]);
+  const heldCount = heldRes.rows[0].n;
+  console.log(`legal hold: ${heldCount} shift(s) on held proposals left out (money law 15). A write run needs ${HELD_FLAG} ${heldCount}.`);
+  if (apply && heldFlag !== heldCount) {
+    console.error(`REFUSING: ${HELD_FLAG} ${heldFlag} does not match the ${heldCount} held shift(s) this run leaves out. Re-run the dry run first. Nothing was written.`);
+    process.exitCode = 2;
+    return;
+  }
+
   const client = await pool.connect();
   const gained = []; // recruiting list
   const lost = [];   // server/barback shrink red flags
@@ -86,16 +149,18 @@ async function main() {
     // Exclude cancelled AND completed: a roster re-derive is only meaningful for
     // events still being staffed (a completed shift, even if future-dated by a
     // data anomaly, must keep its historical roster). The single-shift COUNT
-    // guard is unfiltered, exactly mirroring syncShiftsFromProposal.
+    // guard is unfiltered, exactly mirroring syncShiftsFromProposal. A held
+    // proposal's shift is left out (NULL-safe on shifts.proposal_id).
     const { rows: events } = await client.query(`
       SELECT p.*, s.id AS shift_id, s.positions_needed AS current_positions
         FROM proposals p
         JOIN shifts s ON s.proposal_id = p.id
-       WHERE s.event_date >= CURRENT_DATE
+       WHERE s.event_date >= $2::date
          AND s.status NOT IN ('cancelled', 'completed')
          AND (SELECT COUNT(*) FROM shifts s2 WHERE s2.proposal_id = p.id) = 1
+         AND (s.proposal_id IS NULL OR s.proposal_id <> ALL($1::int[]))
        ORDER BY s.event_date ASC
-    `);
+    `, [held, today]);
 
     if (apply) await client.query('BEGIN');
 
@@ -159,7 +224,11 @@ async function main() {
       if (apply) {
         await client.query('SAVEPOINT ev');
         try {
-          await client.query('UPDATE shifts SET positions_needed = $1 WHERE id = $2', [plannedJson, ev.shift_id]);
+          // The held exclusion again at the write, as a second line of defense.
+          await client.query(
+            'UPDATE shifts SET positions_needed = $1 WHERE id = $2 AND (proposal_id IS NULL OR proposal_id <> ALL($3::int[]))',
+            [plannedJson, ev.shift_id, held]
+          );
           await client.query('RELEASE SAVEPOINT ev');
           changed += 1;
         } catch (e) {
@@ -184,15 +253,20 @@ async function main() {
     }
 
     console.log(`\nscanned ${scanned} single-shift upcoming events; ${apply ? 'wrote' : 'would write'} ${changed}; errors ${errors}.`);
-    if (!apply) console.log('DRY RUN — no writes. Re-run with --apply to write (gated ops step; review the two reports first).');
+    if (!apply) console.log(`DRY RUN — no writes. Re-run with --apply ${HELD_FLAG} ${heldCount} to write (gated ops step; review the two reports first).`);
   } catch (err) {
     if (apply) { try { await client.query('ROLLBACK'); } catch { /* ignore */ } }
     console.error('backfill-positions-needed FAILED:', err.message);
     process.exitCode = 1;
   } finally {
     client.release();
-    await pool.end();
   }
 }
 
-main();
+module.exports = { main };
+
+if (require.main === module) {
+  main()
+    .catch((err) => { console.error('backfill-positions-needed FAILED:', err.message); process.exitCode = 1; })
+    .finally(async () => { await pool.end(); });
+}

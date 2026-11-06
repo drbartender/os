@@ -21,8 +21,16 @@
 // Suites ADD synthetic ids through __setLegalHoldIdsForTest. A test list
 // never replaces the real one, so no process can read a real hold as unheld
 // through the seam, and no suite reads or writes a real held booking.
+//
+// heldProposalIds() is the same list for a job's SQL (money law 15; plan
+// 2026-11-05 lane legal-hold-auto): every automatic job and bulk script binds
+// it as ONE int[] parameter at the query that picks its rows, and calls it
+// before its first write, so a missing list, or an id it cannot bind as a
+// Postgres integer, stops the run before it touches a row. A per-id check
+// stays isLegalHold.
 
 const PLAIN_DIGITS = /^[0-9]+$/;
+const PG_INT_MAX = 2147483647; // proposals.id is a Postgres integer
 
 let testIds = null; // ids added by a suite; null = none
 
@@ -34,12 +42,20 @@ function readId(id) {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
+// The held list (the real one plus any test ids) as positive safe integers.
+// Every real entry is read the way an id is read, and one it cannot read
+// throws: a malformed list never answers "not held", so isLegalHold and
+// heldProposalIds fail closed alike.
 function heldIds() {
   const real = require('./staleProposalSweep').LEGAL_HOLD_PROPOSAL_IDS;
   if (!Array.isArray(real)) {
     throw new Error('legalHold: LEGAL_HOLD_PROPOSAL_IDS is missing from staleProposalSweep.js');
   }
-  return testIds ? [...real, ...testIds] : real;
+  const ids = real.map(readId);
+  if (ids.some((n) => n === null)) {
+    throw new Error('legalHold: LEGAL_HOLD_PROPOSAL_IDS holds an id that is not a positive integer');
+  }
+  return testIds ? [...ids, ...testIds] : ids;
 }
 
 /**
@@ -49,7 +65,21 @@ function heldIds() {
 function isLegalHold(id) {
   const n = readId(id);
   if (n === null) return true;
-  return heldIds().some((held) => Number(held) === n);
+  return heldIds().some((held) => held === n);
+}
+
+/**
+ * The held proposal ids (the real list plus any test ids) as positive
+ * integers, read at call time, each once: bind them as one int[] parameter.
+ * Throws when the list is missing or holds an id that does not read as a
+ * positive integer within the Postgres integer range (fails closed).
+ */
+function heldProposalIds() {
+  const ids = heldIds();
+  if (ids.some((n) => n > PG_INT_MAX)) {
+    throw new Error('legalHold: LEGAL_HOLD_PROPOSAL_IDS holds an id that is not a positive integer');
+  }
+  return [...new Set(ids)];
 }
 
 /**
@@ -75,4 +105,4 @@ function __setLegalHoldIdsForTest(ids) {
   testIds = Object.freeze(read);
 }
 
-module.exports = { isLegalHold, __setLegalHoldIdsForTest };
+module.exports = { isLegalHold, heldProposalIds, __setLegalHoldIdsForTest };

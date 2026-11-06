@@ -22,18 +22,25 @@ const { closeExtension } = require('./serviceExtensionSettle');
 const { applyExtensionHours, maybeAlertPayroll } = require('./serviceExtensionPayroll');
 const { cancelOpenInvoiceIntents } = require('./invoiceVoid');
 const notify = require('./serviceExtensionNotify');
+const { heldProposalIds } = require('./legalHold');
 
 // Cap per tick so a backlog cannot make one run unbounded. At real volume
 // (a handful of events a night) this is never reached.
 const SWEEP_LIMIT = 50;
 
+// Both passes leave a legal-hold proposal's requests out at the SELECT that
+// picks them (money law 15): never expired, voided, healed or messaged about.
+// service_extensions.proposal_id is NOT NULL, so the plain <> ALL is exact. A
+// missing list throws before either pass reads or writes a row.
 async function sweepExpiredExtensions() {
+  const held = heldProposalIds();
   const { rows } = await pool.query(
     `SELECT id FROM service_extensions
       WHERE status = 'pending' AND expires_at < NOW()
+        AND proposal_id <> ALL($2::int[])
       ORDER BY expires_at ASC
       LIMIT $1`,
-    [SWEEP_LIMIT]
+    [SWEEP_LIMIT, held]
   );
   if (rows.length === 0) return { expired: 0, notified: 0, stranded: 0 };
 
@@ -153,6 +160,7 @@ async function sweepExpiredExtensions() {
  * legitimately mid-tail.
  */
 async function healUnfinalizedExtensions() {
+  const held = heldProposalIds();
   const { rows } = await pool.query(
     `SELECT se.id, se.proposal_id, se.requested_duration_hours, se.contracted_end_time,
             se.requested_end_time, se.status, se.invoice_id,
@@ -162,9 +170,10 @@ async function healUnfinalizedExtensions() {
       WHERE se.finalized_at IS NULL
         AND se.status IN ('paid', 'overridden')
         AND se.updated_at < NOW() - INTERVAL '2 minutes'
+        AND se.proposal_id <> ALL($2::int[])
       ORDER BY se.updated_at ASC
       LIMIT $1`,
-    [SWEEP_LIMIT]
+    [SWEEP_LIMIT, held]
   );
   if (rows.length === 0) return { healed: 0 };
 

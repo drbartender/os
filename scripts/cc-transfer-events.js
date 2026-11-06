@@ -52,6 +52,9 @@
  * --resume is for IMMEDIATE crash recovery (post-commit artifact failure).
  * A resume run days later could re-enqueue a balance rung that already SENT
  * (scheduleMessage dedupes pending only) — do not use it as a re-sync tool.
+ * A legal-hold proposal (money law 15, heldProposalIds) is never a resume
+ * row: finishTransfer and its post-checks never run for it, and every run
+ * prints how many held rows it left out, naming them by cc id only.
  *
  * If a payment slides through CC before shutdown (Sid due 7/9, Cody 7/17):
  *   UPDATE proposals SET external_paid = external_paid + <dollars>,
@@ -69,6 +72,7 @@ const { calculateProposal } = require('../server/utils/pricingEngine');
 const { createEventShifts, createDrinkPlan } = require('../server/utils/eventCreation');
 const { scheduleBalanceReminders } = require('../server/utils/balanceReminderScheduling');
 const { schedulePreEventReminders } = require('../server/utils/preEventScheduling');
+const { heldProposalIds } = require('../server/utils/legalHold');
 
 // The scheduling helpers resolve message-type metadata from the dispatcher
 // registry, which the SERVER wires at boot (server/index.js ~463-475). A
@@ -309,8 +313,7 @@ async function postChecks(proposalId) {
   return { p, pending, badPending, payRows };
 }
 
-async function run() {
-  const args = process.argv.slice(2);
+async function run(args = process.argv.slice(2)) {
   const getArg = (flag) => {
     const i = args.indexOf(flag);
     return i >= 0 ? args[i + 1] : null;
@@ -329,6 +332,11 @@ async function run() {
   if (only.length) events = events.filter((e) => only.includes(e.cc_id));
 
   try {
+    // Money law 15: read before any row is (a missing list throws here). A
+    // held proposal stays "already transferred", so it is never re-created,
+    // and it is never a resume row, so finishTransfer and the post-checks
+    // never run for it.
+    const held = heldProposalIds();
     const [pkgs, addons, admin] = await Promise.all([
       pool.query('SELECT * FROM service_packages WHERE is_active = true'),
       pool.query('SELECT * FROM service_addons WHERE is_active = true'),
@@ -348,17 +356,26 @@ async function run() {
 
     // Idempotency + ledger presence, per event.
     const { rows: doneRows } = await pool.query(
-      'SELECT transferred_from_cc_id FROM proposals WHERE transferred_from_cc_id IS NOT NULL'
+      `SELECT transferred_from_cc_id, (id = ANY($1::int[])) AS held
+         FROM proposals WHERE transferred_from_cc_id IS NOT NULL`,
+      [held]
     );
     const done = new Set(doneRows.map((r) => r.transferred_from_cc_id));
+    const heldCc = new Set(doneRows.filter((r) => r.held).map((r) => r.transferred_from_cc_id));
     const { rows: ledgerRows } = await pool.query(
       'SELECT cc_id FROM legacy_cc_proposals WHERE cc_id = ANY($1)', [events.map((e) => e.cc_id)]
     );
     const inLedger = new Set(ledgerRows.map((r) => r.cc_id));
 
     let failures = 0;
+    let heldExcluded = 0;
     const plan = [];
     for (const ev of events) {
+      if (heldCc.has(ev.cc_id)) {
+        heldExcluded += 1;
+        plan.push({ ev, held: true, skip: 'legal hold' });
+        continue;
+      }
       if (done.has(ev.cc_id)) {
         plan.push(resume ? { ev, resume: true } : { ev, skip: 'already transferred' });
         continue;
@@ -375,6 +392,8 @@ async function run() {
     console.log(`Transfer plan (${events.length} events):`);
     for (const row of plan) {
       const { ev } = row;
+      // A held row is named by its cc id only, never its client.
+      if (row.held) { console.log(`  HELD  ${ev.cc_id}: on legal hold (money law 15), never resumed`); continue; }
       if (row.skip) { console.log(`  SKIP  ${ev.cc_id} ${ev.client_name}: ${row.skip}`); continue; }
       if (row.resume) { console.log(`  RESUME ${ev.cc_id} ${ev.client_name}: already transferred, will re-run post-commit artifacts`); continue; }
       if (row.error) { console.log(`  FAIL  ${ev.cc_id} ${ev.client_name}: ${row.error}`); continue; }
@@ -388,6 +407,7 @@ async function run() {
     console.log(`Ready: ${ready.length}, skipped: ${plan.filter((r) => r.skip).length}, failed: ${failures}`
       + ` | totals $${sum((e) => e.total)}, CC-paid $${sum((e) => e.external_paid)},`
       + ` balances $${sum((e) => e.total) - sum((e) => e.external_paid)}`);
+    console.log(`legal hold: ${heldExcluded} held proposal(s) left out, never resumed (money law 15).`);
 
     if (!apply) {
       console.log('\nDRY RUN - nothing written. Re-run with --apply to transfer.');
@@ -437,7 +457,7 @@ async function run() {
   }
 }
 
-module.exports = { validateManifest, resolveAddons, SUPPRESSED_TYPES };
+module.exports = { validateManifest, resolveAddons, SUPPRESSED_TYPES, run };
 
 if (require.main === module) {
   run().catch((err) => {

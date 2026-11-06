@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { scheduleMessage } = require('./messageScheduling');
 const { resolveEventTimezone } = require('./eventTimezone');
 const { eventLocalToUtc, chicagoTodayYmd } = require('./businessTime');
+const { isLegalHold } = require('./legalHold');
 const Sentry = require('@sentry/node');
 
 // Each balance-reminder message_type fires at 10:00am LOCAL (event timezone) on a
@@ -60,13 +61,21 @@ function reminderAnchorInstant(baseYmd, offsetDays, tz) {
  *   (balance_reminder_non_autopay_t3, balance_due_today, balance_late_t1, balance_late_t3)
  *
  * Skips entirely if balance <= 0, balance_due_date not set, or balance_due_date in the past.
+ * Skips a legal-hold proposal silently, before its row is read (money law 15).
  *
  * Idempotent — scheduleMessage no-ops on duplicate pending rows.
+ *
+ * NEVER THROWS: the Stripe webhooks call this through depositPaidSchedulers.js
+ * (its one caller) after a payment lands, and a throw would stop the payment
+ * being recorded. So a held id returns as if nothing were due, and a
+ * missing legal-hold list (isLegalHold throws) lands in the catch below:
+ * nothing is scheduled and it logs once.
  */
 async function scheduleBalanceReminders(proposalId) {
   try {
     const id = Number(proposalId);
     if (!Number.isInteger(id)) return;
+    if (isLegalHold(id)) return;
     const r = await pool.query(
       `SELECT id, client_id, status, total_price, amount_paid, balance_due_date, autopay_enrolled, event_timezone
        FROM proposals WHERE id = $1`,

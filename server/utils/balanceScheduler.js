@@ -8,6 +8,7 @@ const { notifyAdminCategory } = require('./adminNotifications');
 const { accruePayoutsForProposal } = require('./payrollAccrual');
 const { recordBalanceIntent, priorBalanceChargeSettling } = require('./autopayDurableCharge');
 const { chicagoTodayYmd } = require('./businessTime');
+const { heldProposalIds } = require('./legalHold');
 
 // Injection seam for the business day — see routes/staffPortal.js.
 let _deps = { today: chicagoTodayYmd };
@@ -22,6 +23,9 @@ const STRIPE_ALERT_INTERVAL_MS = 60 * 60 * 1000; // once per hour
  * Runs hourly via setInterval in server/index.js.
  */
 async function processAutopayCharges() {
+  // Money law 15: a legal-hold proposal is never claimed or charged. Read
+  // first, so a missing list fails the run before the claim writes a row.
+  const held = heldProposalIds();
   const stripe = getStripe();
   if (!stripe) {
     const now = Date.now();
@@ -60,9 +64,10 @@ async function processAutopayCharges() {
           OR autopay_status = 'failed'
           OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '72 hours')
         )
+        AND id <> ALL($2::int[])
       RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
                 event_type, event_type_custom, balance_due_date
-    `, [_deps.today()]);
+    `, [_deps.today(), held]);
 
     if (result.rows.length === 0) return;
 
@@ -216,6 +221,9 @@ async function processAutopayCharges() {
  * when event_date + duration has passed and no outstanding balance remains.
  */
 async function processEventCompletions() {
+  // Money law 15: a legal-hold proposal is never completed (nor enrolled in
+  // marketing, accrued or reaped below). A missing list throws before the write.
+  const held = heldProposalIds();
   try {
     const result = await pool.query(`
       UPDATE proposals
@@ -240,8 +248,9 @@ async function processEventCompletions() {
         AND ((event_date + event_start_time::time + (event_duration_hours || ' hours')::interval)
               AT TIME ZONE event_timezone) < NOW()
         AND (COALESCE(total_price, 0) - COALESCE(amount_paid, 0)) <= 0
+        AND id <> ALL($1::int[])
       RETURNING id, event_type, event_type_custom
-    `);
+    `, [held]);
 
     if (result.rows.length > 0) {
       console.log(`[BalanceScheduler] Auto-completed ${result.rows.length} event(s): ${result.rows.map(r => `#${r.id}`).join(', ')}`);

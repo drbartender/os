@@ -11,30 +11,89 @@
  *
  * Doubles as the period-open catch-up: safe to re-run any time.
  *
- *   node -r dotenv/config scripts/backfill-duty-lines.js          # dev
- *   node -r dotenv/config scripts/backfill-duty-lines.js --yes    # required in prod
+ * Money law 15: a legal-hold proposal is left out of the selection
+ * (heldProposalIds, the one list; a missing list throws before any row is
+ * read), so accruePayoutsForProposal never runs for it, and every run prints
+ * how many it left out. A --yes run refuses (exit 1) without --held-excluded,
+ * and (exit 2) unless it equals the count this run computes; a run without
+ * --yes prints that count first (in prod it then refuses, as before).
+ *
+ *   node -r dotenv/config scripts/backfill-duty-lines.js                               # dev
+ *   node -r dotenv/config scripts/backfill-duty-lines.js --yes --held-excluded <n>     # required in prod
  */
 const { pool } = require('../server/db');
 const { accruePayoutsForProposal } = require('../server/utils/payrollAccrual');
 const { materializePendingReviewLines } = require('../server/utils/dutyLines');
 const { findOpenPeriodForDate } = require('../server/utils/payrollProcessing');
 const { chicagoTodayYmd } = require('../server/utils/businessTime');
+const { heldProposalIds } = require('../server/utils/legalHold');
 
-async function main() {
-  if (process.env.NODE_ENV === 'production' && !process.argv.includes('--yes')) {
-    console.error('Refusing to run against production without --yes');
-    process.exit(1);
+const HELD_FLAG = '--held-excluded';
+
+// The count after --held-excluded, or null when the flag is absent. Throws on
+// a missing or malformed value, so a typo never reads as a count.
+function parseHeldExcluded(args) {
+  const i = args.indexOf(HELD_FLAG);
+  if (i < 0) return null;
+  const raw = args[i + 1];
+  if (raw === undefined || !/^\d+$/.test(raw)) {
+    throw new Error(`${HELD_FLAG} needs the legal-hold count a run printed (a whole number)`);
+  }
+  return Number(raw);
+}
+
+async function main(args = process.argv.slice(2)) {
+  const yes = args.includes('--yes');
+  let heldFlag;
+  try {
+    heldFlag = parseHeldExcluded(args);
+  } catch (err) {
+    console.error(`REFUSING: ${err.message}. Nothing was written.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (yes && heldFlag === null) {
+    console.error(`REFUSING: --yes needs ${HELD_FLAG} <n>, the legal-hold count a run without --yes printed. Nothing was written.`);
+    process.exitCode = 1;
+    return;
   }
 
+  // Read before any row is: a missing list throws here.
+  const held = heldProposalIds();
   const period = await findOpenPeriodForDate(pool, chicagoTodayYmd());
+
+  // The held proposals are counted, never read: the count is what the operator
+  // confirms, and a --yes run carries it.
+  const heldCount = period
+    ? (await pool.query(
+      `SELECT count(*)::int AS n FROM proposals
+        WHERE status = 'completed' AND event_date BETWEEN $1 AND $2
+          AND id = ANY($3::int[])`,
+      [period.start_date, period.end_date, held]
+    )).rows[0].n
+    : 0;
+  console.log(`legal hold: ${heldCount} proposal(s) on legal hold left out (money law 15). A --yes run needs ${HELD_FLAG} ${heldCount}.`);
+  if (yes && heldFlag !== heldCount) {
+    console.error(`REFUSING: ${HELD_FLAG} ${heldFlag} does not match the ${heldCount} held proposal(s) this run leaves out. Nothing was written.`);
+    process.exitCode = 2;
+    return;
+  }
+
+  if (process.env.NODE_ENV === 'production' && !yes) {
+    console.error('Refusing to run against production without --yes');
+    process.exitCode = 1;
+    return;
+  }
+
   if (!period) {
     console.log('No open pay period contains today; nothing to backfill.');
   } else {
     const { rows } = await pool.query(
       `SELECT id, event_date FROM proposals
         WHERE status = 'completed' AND event_date BETWEEN $1 AND $2
+          AND id <> ALL($3::int[])
         ORDER BY event_date, id`,
-      [period.start_date, period.end_date]
+      [period.start_date, period.end_date, held]
     );
     console.log(`Open period ${period.id}: ${rows.length} completed proposal(s) to re-derive.`);
     for (const { id, event_date } of rows) {
@@ -61,8 +120,12 @@ async function main() {
   } finally {
     client.release();
   }
-
-  await pool.end();
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+module.exports = { main };
+
+if (require.main === module) {
+  main()
+    .catch((err) => { console.error(err); process.exitCode = 1; })
+    .finally(() => pool.end());
+}

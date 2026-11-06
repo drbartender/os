@@ -99,9 +99,14 @@
 //
 // A shift with no proposal is never a candidate: "the event happened" is a fact
 // about the proposal, and there is nothing to read it from.
+//
+// A shift on a legal-hold proposal is never closed (money law 15): the UPDATE
+// binds heldProposalIds() and leaves those proposals out, and a missing list
+// throws before the write.
 
 const { pool } = require('../db');
 const { shiftFinishedSql } = require('./shiftEndInstant');
+const { heldProposalIds } = require('./legalHold');
 
 /**
  * Close every shift that has finished on a completed proposal.
@@ -116,6 +121,7 @@ const { shiftFinishedSql } = require('./shiftEndInstant');
  * @returns {Promise<Array<{id:number, proposal_id:number}>>} rows actually closed
  */
 async function sweepFinishedShiftClosures(db = pool) {
+  const held = heldProposalIds();
   const { rows } = await db.query(
     `UPDATE shifts s
         SET status = 'completed'
@@ -136,7 +142,9 @@ async function sweepFinishedShiftClosures(db = pool) {
         -- never be resurrected. See WHAT IS AND IS NOT A CANDIDATE above.
         AND s.status NOT IN ('completed', 'cancelled', 'closed')
         AND ${shiftFinishedSql('s', 'p')}
-    RETURNING s.id, s.proposal_id`
+        AND p.id <> ALL($1::int[])
+    RETURNING s.id, s.proposal_id`,
+    [held]
   );
   return rows;
 }

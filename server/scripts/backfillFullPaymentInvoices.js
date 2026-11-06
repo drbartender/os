@@ -20,9 +20,11 @@
  *   proposal moved since, and a receipt for a number nobody paid is worse than stale lines
  *   one proposal_activity_log breadcrumb per proposal carrying the FULL before-state
  *
- * Selection is by SHAPE, not a hand-typed list. Exclusions, each a SKIP line on
- * the dry run: external_paid > 0 (the CC-transfer cohort), proposal 600 (legal
- * hold), any proposal_refunds row, a cancelled or archived proposal (its refund
+ * Selection is by SHAPE, not a hand-typed list. A legal-hold proposal is never
+ * selected at all (heldProposalIds, the one list, bound in the query; the run
+ * prints how many of that shape it left out, and excludeReason keeps a second
+ * check). Exclusions, each a SKIP line on
+ * the dry run: external_paid > 0 (the CC-transfer cohort), any proposal_refunds row, a cancelled or archived proposal (its refund
  * figure was computed from the row as it was), a payment whose type is not a
  * contract type, any other succeeded payment on the proposal (the repair is
  * for ONE payment), and a payment above the contract (a hand repair). Line items regenerate only when total_price still equals the
@@ -51,10 +53,15 @@
 const { pool } = require('../db');
 const { toCents } = require('../utils/invoiceShared');
 const { generateLineItemsFromProposal, writeLineItems } = require('../utils/invoiceLineItems');
+// The one legal-hold list (money law 15), read at call time; a missing list
+// throws before the selection, so nothing is written.
+const { heldProposalIds } = require('../utils/legalHold');
 
-const LEGAL_HOLD_PROPOSAL_IDS = new Set([600]);
-
-const SELECT_SQL = `
+// The selection by shape. `heldClause` is one of the two fixed clauses below,
+// never input: the candidates leave every legal-hold proposal out, and the
+// held count counts the ones that matched, each with heldProposalIds() bound
+// as $1 (money law 15). excludeReason keeps a second legal_hold check.
+const shapeSql = (heldClause) => `
   WITH contract AS (
     SELECT i.proposal_id, count(*) AS n, min(i.id) AS invoice_id
       FROM invoices i
@@ -70,7 +77,7 @@ const SELECT_SQL = `
       FROM invoice_payments ip
      GROUP BY ip.invoice_id
   )
-  SELECT p.id AS proposal_id, c.name AS client_name,
+  SELECT p.id AS proposal_id,
          p.total_price, p.amount_paid, p.external_paid, p.cancelled_at, p.status AS proposal_status,
          i.id AS invoice_id, i.invoice_number, i.label, i.amount_due,
          i.amount_paid AS invoice_amount_paid,
@@ -88,18 +95,20 @@ const SELECT_SQL = `
     -- (schema.sql uq_invoice_payments_positive_link, payrollAccrual.js).
     JOIN invoice_payments ip ON ip.id = l.link_id AND ip.amount > 0
     JOIN proposal_payments pp ON pp.id = ip.payment_id AND pp.status = 'succeeded'
-    LEFT JOIN clients c ON c.id = p.client_id
    WHERE p.amount_paid >= p.total_price AND p.total_price > 0
      AND pp.amount > i.amount_due
+     AND ${heldClause}
    ORDER BY p.id`;
+const SELECT_SQL = shapeSql('p.id <> ALL($1::int[])');
+const HELD_COUNT_SQL = `SELECT count(*)::int AS n FROM (${shapeSql('p.id = ANY($1::int[])')}) held_shape`;
 
-async function selectCandidates(db) {
-  const { rows } = await db.query(SELECT_SQL);
+async function selectCandidates(db, held = heldProposalIds()) {
+  const { rows } = await db.query(SELECT_SQL, [held]);
   return rows;
 }
 
-function excludeReason(c) {
-  if (LEGAL_HOLD_PROPOSAL_IDS.has(Number(c.proposal_id))) return 'legal_hold';
+function excludeReason(c, held = heldProposalIds()) {
+  if (held.includes(Number(c.proposal_id))) return 'legal_hold';
   if (Number(c.external_paid || 0) > 0) return 'external_paid';
   if (Number(c.refund_count || 0) > 0) return 'has_refund';
   // A cancelled booking's refund figure and audit note were computed from the
@@ -150,9 +159,11 @@ function parseArgs(argv) {
   return { apply, expect };
 }
 
+// A plan line names the proposal by id, never by a client's name: the dry run is
+// read off a terminal and pasted, and the repo's rule is ids, not people.
 function describe(c) {
   const regen = toCents(c.total_price) === Number(c.payment_amount);
-  return `#${c.proposal_id} ${c.client_name || '(no client)'}: ${c.invoice_number} ${c.label} `
+  return `#${c.proposal_id} ${c.invoice_number} ${c.label} `
     + `[${c.payment_type || '?'}] `
     + `due ${Number(c.amount_due) / 100} paid ${Number(c.invoice_amount_paid) / 100} `
     + `-> Full Payment due ${Number(c.payment_amount) / 100} paid ${Number(c.payment_amount) / 100}; `
@@ -333,11 +344,15 @@ async function main(argv = process.argv, deps = {}) {
   try { host = new URL(process.env.DATABASE_URL).host; } catch { /* leave unknown */ }
   console.log(`backfillFullPaymentInvoices: host=${host} mode=${apply ? 'APPLY' : 'dry run'}`);
 
-  const candidates = await selectCandidates(db);
+  const held = heldProposalIds();
+  const heldCount = (await db.query(HELD_COUNT_SQL, [held])).rows[0].n;
+  console.log(`legal hold: ${heldCount} proposal(s) of this shape left out of the selection (money law 15).`);
+  const candidates = await selectCandidates(db, held);
   const todo = [];
   for (const c of candidates) {
-    const why = excludeReason(c);
-    if (why) { console.log(`SKIP  ${describe(c)}  [${why}]`); continue; }
+    const why = excludeReason(c, held);
+    // A SKIP line is the id and the reason only.
+    if (why) { console.log(`SKIP  #${c.proposal_id}  [${why}]`); continue; }
     // WOULD even under --apply: nothing is decided until --expect matches.
     console.log(`WOULD ${describe(c)}`);
     todo.push(c);

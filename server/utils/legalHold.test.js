@@ -6,8 +6,9 @@
 // no suite reads or writes a real held booking, and no test list can unhold one.
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { isLegalHold, __setLegalHoldIdsForTest } = require('./legalHold');
-const { LEGAL_HOLD_PROPOSAL_IDS } = require('./staleProposalSweep');
+const { isLegalHold, heldProposalIds, __setLegalHoldIdsForTest } = require('./legalHold');
+const sweep = require('./staleProposalSweep');
+const { LEGAL_HOLD_PROPOSAL_IDS } = sweep;
 
 afterEach(() => __setLegalHoldIdsForTest(null));
 
@@ -78,4 +79,58 @@ test('the setter refuses production, anything but a list or null, and an unreada
     assert.throws(() => __setLegalHoldIdsForTest([badId]), TypeError, String(badId));
   }
   assert.equal(isLegalHold(999999), false);
+});
+
+test('heldProposalIds: the real list plus the test ids, as integers, read at call time', () => {
+  const real = LEGAL_HOLD_PROPOSAL_IDS.map(Number);
+  assert.deepEqual(heldProposalIds(), real);
+  assert.ok(heldProposalIds().includes(600));
+  __setLegalHoldIdsForTest([999999, '999998']);
+  const withTest = heldProposalIds();
+  assert.deepEqual(withTest, [...real, 999999, 999998]);
+  assert.ok(withTest.every((n) => typeof n === 'number' && Number.isSafeInteger(n) && n > 0));
+  withTest.push(999997); // a caller's copy, never the list itself
+  assert.equal(heldProposalIds().includes(999997), false);
+  __setLegalHoldIdsForTest(null);
+  assert.deepEqual(heldProposalIds(), real);
+});
+
+test('heldProposalIds fails closed: a missing list or an id it cannot bind as an integer throws', () => {
+  const real = sweep.LEGAL_HOLD_PROPOSAL_IDS;
+  try {
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = undefined;
+    assert.throws(() => heldProposalIds(), /LEGAL_HOLD_PROPOSAL_IDS/);
+    // 2 ** 31 is a safe integer but not a Postgres integer: bound as int[] it
+    // would fail inside the job's query instead of before it.
+    for (const bad of [[600, '6_00'], [600, 0], [600, -1], [600, 1.5], [600, null], [600, '600 '], [600, 2 ** 31]]) {
+      sweep.LEGAL_HOLD_PROPOSAL_IDS = bad;
+      assert.throws(() => heldProposalIds(), /LEGAL_HOLD_PROPOSAL_IDS/, JSON.stringify(bad));
+    }
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = ['600', 600]; // plain digits read as the integer; one id once
+    assert.deepEqual(heldProposalIds(), [600]);
+  } finally {
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = real;
+  }
+  assert.deepEqual(heldProposalIds(), LEGAL_HOLD_PROPOSAL_IDS.map(Number));
+});
+
+test('isLegalHold fails closed on a malformed list exactly as heldProposalIds does: an unreadable entry throws', () => {
+  const real = sweep.LEGAL_HOLD_PROPOSAL_IDS;
+  try {
+    for (const bad of [[600, '6_00'], [600, 0], [600, -1], [600, 1.5], [600, null], [600, '600 '], ['abc']]) {
+      sweep.LEGAL_HOLD_PROPOSAL_IDS = bad;
+      const what = JSON.stringify(bad);
+      // Never "not held" off a list it cannot read: the old seam answered
+      // false for 999999 here, while heldProposalIds threw.
+      assert.throws(() => isLegalHold(999999), /LEGAL_HOLD_PROPOSAL_IDS/, what);
+      assert.throws(() => isLegalHold(600), /LEGAL_HOLD_PROPOSAL_IDS/, what);
+      assert.throws(() => heldProposalIds(), /LEGAL_HOLD_PROPOSAL_IDS/, what);
+    }
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = ['600']; // plain digits are a readable entry
+    assert.equal(isLegalHold(600), true);
+    assert.equal(isLegalHold(601), false);
+  } finally {
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = real;
+  }
+  assert.equal(isLegalHold(600), true);
 });

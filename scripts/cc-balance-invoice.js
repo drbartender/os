@@ -31,28 +31,47 @@
 //   line items summing exactly to amount_due, deposit shown as a credit.
 //
 // Delete this script once Check Cherry is cancelled (2026-07-21).
+//
+// Money law 15: a legal-hold proposal is never selected (heldProposalIds, the
+// one list, bound in the query; a missing list throws before any row is read),
+// and every run prints how many it left out. Lines name a proposal by id,
+// never by its client.
 
 const { pool } = require('../server/db');
-
-const args = process.argv.slice(2);
-const APPLY = args.includes('--apply');
-const onlyIdx = args.indexOf('--only');
-const ONLY = onlyIdx !== -1 ? parseInt(args[onlyIdx + 1], 10) : null;
-
-// `--only` with a missing or malformed value parses to NaN, which is falsy, so
-// the id filter below would silently vanish and --apply would mint EVERY
-// eligible proposal instead of the one asked for. Fail loudly instead.
-if (onlyIdx !== -1 && !(Number.isInteger(ONLY) && ONLY > 0)) {
-  console.error(`--only requires a positive integer proposal id (got: ${args[onlyIdx + 1] ?? '<missing>'})`);
-  process.exit(1);
-}
+const { heldProposalIds } = require('../server/utils/legalHold');
 
 const usd = (cents) => `$${(cents / 100).toFixed(2)}`;
 const ymd = (d) => (d ? new Date(d).toISOString().slice(0, 10) : 'n/a');
 
-async function main() {
+async function main(args = process.argv.slice(2)) {
+  const APPLY = args.includes('--apply');
+  const onlyIdx = args.indexOf('--only');
+  const ONLY = onlyIdx !== -1 ? parseInt(args[onlyIdx + 1], 10) : null;
+
+  // `--only` with a missing or malformed value parses to NaN, which is falsy, so
+  // the id filter below would silently vanish and --apply would mint EVERY
+  // eligible proposal instead of the one asked for. Fail loudly instead.
+  if (onlyIdx !== -1 && !(Number.isInteger(ONLY) && ONLY > 0)) {
+    console.error(`--only requires a positive integer proposal id (got: ${args[onlyIdx + 1] ?? '<missing>'})`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // $1 is the held list, $2 the --only id or NULL. The held proposals are
+  // counted, never read.
+  const held = heldProposalIds();
+  const heldRes = await pool.query(
+    `SELECT count(*)::int AS n FROM proposals p
+      WHERE p.transferred_from_cc_id IS NOT NULL
+        AND p.status = 'confirmed'
+        AND ($2::int IS NULL OR p.id = $2::int)
+        AND p.id = ANY($1::int[])`,
+    [held, ONLY]
+  );
+  console.log(`legal hold: ${heldRes.rows[0].n} held proposal(s) left out (money law 15).`);
+
   const { rows } = await pool.query(
-    `SELECT p.id, c.name AS client_name, p.event_date, p.balance_due_date,
+    `SELECT p.id, p.event_date, p.balance_due_date,
             p.total_price, p.total_price_override, p.amount_paid,
             sp.name AS package_name, p.event_duration_hours, p.guest_count,
             (SELECT COUNT(*)::int FROM invoices i
@@ -60,13 +79,13 @@ async function main() {
             (SELECT COUNT(*)::int FROM proposal_addons pa
               WHERE pa.proposal_id = p.id) AS addon_rows
        FROM proposals p
-       LEFT JOIN clients c ON c.id = p.client_id
        LEFT JOIN service_packages sp ON sp.id = p.package_id
       WHERE p.transferred_from_cc_id IS NOT NULL
         AND p.status = 'confirmed'
-        ${ONLY ? 'AND p.id = $1' : ''}
+        AND ($2::int IS NULL OR p.id = $2::int)
+        AND p.id <> ALL($1::int[])
       ORDER BY p.balance_due_date NULLS LAST, p.id`,
-    ONLY ? [ONLY] : []
+    [held, ONLY]
   );
 
   if (rows.length === 0) {
@@ -82,7 +101,7 @@ async function main() {
     const totalCents = Math.round(Number(r.total_price) * 100);
     const paidCents = Math.round(Number(r.amount_paid) * 100);
     const dueCents = totalCents - paidCents;
-    const label = `#${r.id} ${r.client_name} (${ymd(r.event_date)})`;
+    const label = `#${r.id}`; // ids only: never a client's name
 
     // Every SKIP is a case a human must look at, never a silent pass.
     if (r.live_invoices > 0) { console.log(`SKIP ${label}: already has a non-void invoice`); skipped++; continue; }
@@ -164,6 +183,10 @@ async function main() {
   );
 }
 
-main()
-  .then(() => pool.end())
-  .catch((e) => { console.error(e); pool.end(); process.exit(1); });
+module.exports = { main };
+
+if (require.main === module) {
+  main()
+    .then(() => pool.end())
+    .catch((e) => { console.error(e); pool.end(); process.exit(1); });
+}

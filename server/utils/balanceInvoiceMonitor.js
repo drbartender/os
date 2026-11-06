@@ -30,6 +30,7 @@ const { pool } = require('../db');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 const { findStaleProcessingPayments, STALE_PROCESSING_DAYS } = require('./paymentInFlight');
+const { heldProposalIds } = require('./legalHold');
 
 const OVER_ACTION = 'invoice_over_bill';
 const UNDER_ACTION = 'balance_invoice_missing';
@@ -43,7 +44,8 @@ const usd = (cents) => '$' + (Number(cents) / 100).toFixed(2);
 // the invariant in either direction. $1 is the OFF_LEDGER_INVOICE_LABELS
 // array; every query interpolating this fragment must bind it at the call
 // site. invoices.label is NOT NULL DEFAULT 'Invoice', so there is no
-// NULL-label trap in the ANY().
+// NULL-label trap in the ANY(). Both directions bind $2 to heldProposalIds():
+// a legal-hold proposal is never reconciled, logged or emailed (money law 15).
 const PAYABLE_SUM = `
   COALESCE((
     SELECT SUM(i.amount_due - i.amount_paid)
@@ -72,7 +74,7 @@ const LABELS = `
 // `PAYABLE_SUM > 0` is load-bearing, not belt-and-braces. An OVERPAID proposal
 // has a negative owed, so `0 > -6000` is true and a proposal with NO open
 // invoice at all would be reported as over-billed, with "$0.00 payable" and
-// email copy claiming the pay button works. Prod proposal 599 (Emiline, paid
+// email copy claiming the pay button works. Prod proposal 599 (paid
 // $360 against a $300 total) is exactly that shape and would otherwise alert
 // every 24h forever. Its $60 is a paid Drink Plan Extras invoice, so its NETTED
 // overpayment is zero (refundHelpers.overpaymentCents, 2026-09-15) and the
@@ -83,11 +85,11 @@ const LABELS = `
 // bespoke labels the derivation leaves alone (syrup-only extras, manual fees)
 // whose money is additive to total_price. That over-reports on the rare
 // abandoned-card syrup-only shape. Deliberate: a false alert is cheap and
-// throttled, while excluding those labels would have missed Eve Thornton,
+// throttled, while excluding those labels would have missed a client
 // whose stranded $155 extras invoice WAS folded into total_price and
 // self-cleared through amount_paid. Off-ledger labels ('Service Extension')
 // are the one exception: their money NEVER enters amount_paid, so unlike
-// Eve's invoice they can never self-clear, and a pending extension invoice on
+// that invoice they can never self-clear, and a pending extension invoice on
 // a paid-up event (the stranded-paid shape the expiry sweep deliberately
 // leaves pending) would alert every 24h forever.
 const OVER_SQL = `
@@ -101,6 +103,7 @@ const OVER_SQL = `
    WHERE p.status NOT IN ('draft', 'archived')
      AND ${PAYABLE_SUM} > 0
      AND ${PAYABLE_SUM} > (${OWED_CENTS})
+     AND p.id <> ALL($2::int[])
    ORDER BY p.id`;
 
 // ── Direction 2: UNDER-COVERED ──────────────────────────────────────────────
@@ -108,7 +111,8 @@ const OVER_SQL = `
 // filter come VERBATIM from docs/superpowers/specs/2026-07-21-balance-invoice-
 // reconciler-design.md: it is tuned money SQL, verified at zero rows against
 // the prod branch, and the status filter is precisely what excludes the
-// legitimate deposit-stage case. Do not re-derive it.
+// legitimate deposit-stage case. Do not re-derive it. The one addition since
+// is the legal-hold exclusion (money law 15), beside the spec's clauses.
 const UNDER_SQL = `
   SELECT p.id, c.name AS client_name, p.status, p.event_date, p.balance_due_date,
          ${OWED_CENTS} AS balance_cents,
@@ -118,6 +122,7 @@ const UNDER_SQL = `
     JOIN clients c ON c.id = p.client_id
    WHERE p.status IN ('confirmed', 'deposit_paid')
      AND ${OWED_CENTS} > ${PAYABLE_SUM}
+     AND p.id <> ALL($2::int[])
    ORDER BY p.id`;
 
 /**
@@ -212,9 +217,11 @@ function renderEmail(over, under) {
  * @returns {Promise<{candidates:number, alerted:number, throttled:number}>}
  */
 async function monitorMissingBalanceInvoices() {
+  // A missing legal-hold list throws here, before any read or write.
+  const held = heldProposalIds();
   const [overRes, underRes] = await Promise.all([
-    pool.query(OVER_SQL, [OFF_LEDGER_INVOICE_LABELS]),
-    pool.query(UNDER_SQL, [OFF_LEDGER_INVOICE_LABELS]),
+    pool.query(OVER_SQL, [OFF_LEDGER_INVOICE_LABELS, held]),
+    pool.query(UNDER_SQL, [OFF_LEDGER_INVOICE_LABELS, held]),
   ]);
 
   const candidates = overRes.rows.length + underRes.rows.length;
@@ -260,8 +267,9 @@ async function monitorMissingBalanceInvoices() {
   // has outlived any bank debit's window means the payment_failed event was
   // lost or never subscribed. Until the row expires it blocks every checkout
   // on that proposal and defers every reminder, and nothing else would say so.
-  // Sentry only (it groups repeats); the row itself is never touched.
-  const stale = await findStaleProcessingPayments();
+  // Sentry only (it groups repeats); the row itself is never touched. The held
+  // list read above leaves a legal-hold proposal's rows out here too.
+  const stale = await findStaleProcessingPayments(pool, held);
   for (const row of stale) {
     const line = `stale_processing_payment: proposal ${row.proposal_id}, $${(row.amount_cents / 100).toFixed(2)} processing since ${new Date(row.processing_at).toISOString()} (over ${STALE_PROCESSING_DAYS} days)`;
     console.warn(`[balance_invoice_monitor] ${line}`);

@@ -182,13 +182,13 @@ Checked against code 2026-10-20: pass (verify pass, Fable; `deriveGratuityRate` 
 
 Rule: proposal 600 is under a legal hold and its database state is preserved exactly. Never archive it, reap or close its shift, void or re-send its invoice, chase its balance, edit its price, or include it in any sweep, backfill, reconciliation, cleanup or AI read. Any bulk operation over past events, open shifts or unpaid invoices excludes it and confirms its row count first. The guard fails closed: an id the seam cannot read as a positive integer reads as held.
 
-Code: `server/utils/staleProposalSweep.js:LEGAL_HOLD_PROPOSAL_IDS` (the one list, read at call time); `server/utils/legalHold.js:isLegalHold` (the seam every writer guard calls); `server/utils/inbox/readJob.js` never reads the held client.
+Code: `server/utils/staleProposalSweep.js:LEGAL_HOLD_PROPOSAL_IDS` (the one list, read at call time); `server/utils/legalHold.js:isLegalHold` (the seam every writer guard calls) and `server/utils/legalHold.js:heldProposalIds` (the same list for a SQL exclusion, bound as one int[]); `server/utils/inbox/readJob.js` never reads the held client.
 
 Source: memory `reference-proposal-600-legal-hold`; spec 2026-10-16 section 5.3.
 
 Provenance: `[Dallas 2026-08-11]`
 
-Checked against code 2026-10-20: pass (verify pass, Fable; the list holds the one id, `isLegalHold` reads it at call time and treats an unreadable id as held, the Inbox read job excludes the held client's keys).
+Checked against code 2026-10-20: pass, covering `isLegalHold` (verify pass, Fable; the list holds the one id, `isLegalHold` reads it at call time and treats an unreadable id as held, the Inbox read job excludes the held client's keys). The `heldProposalIds` pointer on the Code line was added 2026-11-06 and is not yet verify-checked.
 
 ## Who reads this file
 
