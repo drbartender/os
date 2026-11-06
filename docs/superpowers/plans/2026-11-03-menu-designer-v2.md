@@ -316,15 +316,19 @@ lanes:
     revert: >
       Revert the one squash. A ship followed by a revert leaves the stamped bar_lines in plan_fingerprint and
       the stored line keys in content, which the reverted code ignores, and the narrowed trigger, which a later
-      replay leaves in place (harmless: the Saved time then moves only on a real edit).
+      replay leaves in place (harmless in production: the Saved time then moves only on a real edit; but the
+      reverted schema.menuArt.test.js pins the unnarrowed trigger, so a revert restores it by hand on dev and
+      in the same change, or that suite fails). A Dismiss or Mark reviewed made while the lane was live hashed
+      bar_hash, which the reverted code's fingerprintHash omits, so those drafts show their banner again once.
 
   - id: menu-legal-hold-guards
     scope: >
       Split from menu-bar-fingerprint by its review (2026-11-04, the review cap reached): no menu art path
       guards the legal-hold proposal. Its money pass found the GET's one-time bar baseline stamp writes
       plan_fingerprint with no isLegalHold call (that stamp leaves the GET in lane menu-bar-baseline, whose
-      script skips the held proposal), and Generate, the draft PATCH, re-roll, Update draft, Dismiss, Approve
-      and the menu print POST, PATCH and DELETE have none either (older gaps). Every one of them now refuses the
+      script skips the held proposal), and Generate, the draft PATCH, re-roll, Dismiss, Approve
+      and the menu print POST, PATCH and DELETE have none either (older gaps; Update draft's refusal landed in
+      menu-bar-chain, whose card offers it more often). Every one of them now refuses the
       legal-hold proposal before it reads the plan, calls a provider or writes, with 409 LEGAL_HOLD through the
       patchGuards.js assertNotLegalHold precedent (isLegalHold, which fails closed). Generate and re-roll
       refusing first also keeps the held booking's plan away from the AI (money law 15: never read by the AI).
