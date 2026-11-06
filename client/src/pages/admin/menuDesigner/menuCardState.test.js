@@ -37,6 +37,10 @@ const approved = (p) => {
 };
 const run = (payload, local = {}) => menuCardState({ payload, local: { now: NOW, ...local } });
 const lines = (s) => [s.chip && s.chip.kind, s.chip && s.chip.text, s.message, s.sub];
+// Spec 2026-10-19 section 17: the notice for n bar lines renamed before bar picks were tracked.
+const UNCHECKED = (n) => (n === 1
+  ? "A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it from the client's picks."
+  : `${n} bar lines renamed before bar picks were tracked can't be checked against them. Update draft rebuilds them from the client's picks.`);
 const ids = (s) => [s.primary && s.primary.id, s.secondary && s.secondary.id];
 
 describe('table C, one row each', () => {
@@ -140,6 +144,81 @@ describe('table C, one row each', () => {
     s = run(P((p) => { p.diff.added = [{ key: 'a', name: 'A' }]; p.diff.dropped = [{ key: 'b', name: 'B' }]; }));
     expect(s.message).toBe('2 drinks changed on the plan.');
     expect(run(P((p) => { p.diff.added = [{ key: 'a', name: 'A' }]; p.diff.dismissed = true; })).id).toBe('draft');
+  });
+
+  test('Plan changed by the bar picks: the bar line, Update draft and a ghost Dismiss; with a drink change, both', () => {
+    let s = run(P((p) => { p.diff.bar_changed = true; }));
+    expect(lines(s)).toEqual(['info', 'Plan changed', 'The bar picks changed since this draft.', 'Update draft refreshes the changed "Also at the bar" lines.']);
+    expect(ids(s)).toEqual(['update', 'dismiss']);
+    s = run(P((p) => { approved(p); p.diff.bar_changed = true; }));
+    expect([s.id, s.sub]).toEqual(['plan-changed', `Staff still get the ${OCT_9} version.`]);
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; }));
+    expect([s.message, s.sub]).toEqual(['Cucumber Mule was added to the plan. The bar picks changed since this draft.',
+      'Update draft adds the drink and refreshes the changed "Also at the bar" lines.']);
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }]; }));
+    expect(s.sub).toBe('Update draft removes the drink and refreshes the changed "Also at the bar" lines.');
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.added = [{ key: 'a', name: 'A' }]; p.diff.dropped = [{ key: 'b', name: 'B' }]; }));
+    expect([s.message, s.sub]).toEqual(['2 drinks changed on the plan. The bar picks changed since this draft.',
+      'Update draft updates the drinks and refreshes the changed "Also at the bar" lines.']);
+    s = run(P((p) => { approved(p); p.diff.bar_changed = true; p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; }));
+    expect(s.sub).toBe(`Staff still get the ${OCT_9} version.`);
+    expect(run(P((p) => { p.diff.bar_changed = true; p.diff.dismissed = true; })).id).toBe('draft');
+    expect(run(P((p) => { p.diff.bar_changed = false; })).id).toBe('draft');
+  });
+
+  // Spec 2026-10-19 section 17, lane menu-bar-renamed-lines: a bar line renamed
+  // before bar picks were tracked is unchecked, never a pick change.
+  test('a renamed pre-deploy bar line: the card keeps its state and its message, the sub says it, and a ghost Update draft fills a free slot', () => {
+    const same = (mut, n = 1) => {
+      const plain = run(P(mut));
+      const s = run(P((p) => { mut(p); p.diff.bar_unchecked = n; }));
+      expect([s.id, s.chip, s.message, s.primary]).toEqual([plain.id, plain.chip, plain.message, plain.primary]);
+      // Two sentences: a sub that ends in no stop gets a period before the notice.
+      expect(s.sub).toBe(plain.sub ? `${/[.!?]$/.test(plain.sub) ? plain.sub : `${plain.sub}.`} ${UNCHECKED(n)}` : UNCHECKED(n));
+      // The Update draft the notice names is offered: the state's own, or a ghost one beside its primary.
+      const own = [plain.primary, plain.secondary].some((a) => a && a.id === 'update');
+      expect(s.secondary).toEqual(own ? plain.secondary : { id: 'update', label: 'Update draft', style: 'ghost' });
+      return s;
+    };
+    const draft = same(() => {});
+    expect([draft.id, draft.message, draft.sub]).toEqual(['draft', 'Ready to review.', `Saved. ${UNCHECKED(1)}`]);
+    expect(`${draft.message} ${draft.sub}`).not.toContain('The bar picks changed since this draft.');
+    expect(same(approved).sub).toBe(`Approved ${OCT_9} by Dallas. ${UNCHECKED(1)}`);
+    expect(same((p) => { p.diff.brief_edited = ['notes']; }).id).toBe('notes-edited');
+    expect(same((p) => { p.print.state = 'removed'; }).id).toBe('removed');
+    expect(same((p) => { approved(p); p.print.state = 'edited_since_approval'; }).id).toBe('edited');
+    const s = same((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; }, 2);
+    expect([s.id, s.message, s.sub]).toEqual(['plan-changed', 'Cucumber Mule was added to the plan.', `Update the draft to include it. ${UNCHECKED(2)}`]);
+    expect(same((p) => { approved(p); p.diff.bar_changed = true; }).sub).toBe(`Staff still get the ${OCT_9} version. ${UNCHECKED(1)}`);
+    // A dismissal never covers an unchecked line: the notice and the ghost Update draft stay.
+    const dismissed = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.dismissed = true; p.diff.bar_unchecked = 1; }));
+    expect([dismissed.id, dismissed.message, dismissed.sub, dismissed.secondary])
+      .toEqual(['draft', 'Ready to review.',
+        "Saved. A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it from the client's picks and also applies the changes you dismissed: Cucumber Mule added.",
+        { id: 'update', label: 'Update draft', style: 'ghost' }]);
+    // Nothing from the draft prints on No menu needed or a manual upload; read-only or busy drafting says nothing either.
+    for (const mut of [(p) => { p.print.state = 'not_required'; }, (p) => { p.print.state = 'replaced'; }, (p) => { p.draft.read_only = true; },
+      (p) => { p.pieces[1] = piece('cocktail:1', 'working', { heartbeat_at: new Date(NOW).toISOString() }); }]) {
+      const plain = run(P(mut));
+      const quiet = run(P((p) => { mut(p); p.diff.bar_unchecked = 1; }));
+      expect([quiet.id, quiet.message, quiet.sub, quiet.secondary]).toEqual([plain.id, plain.message, plain.sub, plain.secondary]);
+    }
+    expect(run(P((p) => { p.diff.bar_unchecked = 0; })).sub).toBe('Saved');
+  });
+
+  test('Plan changed with a notes edit or a new client image names them too, so a Dismiss never hides what the card did not show', () => {
+    let s = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.brief_edited = ['notes']; }));
+    expect([s.id, s.message, s.sub]).toEqual(['plan-changed', 'Cucumber Mule was added to the plan. Client edited their menu notes.',
+      'Update the draft to include it.']);
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.brief_edited = ['theme']; p.diff.image_changed = true; }));
+    expect(s.message).toBe('The bar picks changed since this draft. Client edited their menu notes. The client image changed.');
+    s = run(P((p) => { p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }]; p.diff.image_changed = true; }));
+    expect(s.message).toBe('Old Fashioned was dropped from the plan. The client image changed.');
+  });
+
+  test('a bar change with a notes edit shows Plan changed first; Notes edited once Update draft has applied the bar', () => {
+    expect(run(P((p) => { p.diff.bar_changed = true; p.diff.brief_edited = ['notes']; })).id).toBe('plan-changed');
+    expect(run(P((p) => { p.diff.brief_edited = ['notes']; })).id).toBe('notes-edited');
   });
 
   test('Notes edited: Review opens the Brief tab; the client image changing says so', () => {
@@ -324,12 +403,68 @@ describe('table B, the editor banners', () => {
       p.diff.brief_edited = ['theme', 'notes'];
     }));
     expect(banner(s, 'plan-changed')).toEqual({ id: 'plan-changed', tone: 'info', title: 'Plan changed since this draft.',
-      text: 'Cucumber Mule was added. Old Fashioned was dropped. Updating paints only the new drinks.',
+      text: 'Cucumber Mule was added. Old Fashioned was dropped. Client edited their menu notes. Updating paints only the new drinks.',
       buttons: [{ id: 'dismiss', label: 'Dismiss', style: 'ghost' }, { id: 'update', label: 'Update draft', style: 'secondary' }] });
     expect(banner(s, 'notes-edited')).toMatchObject({ title: 'Client edited their menu notes.',
       text: "Theme & colors and Design notes changed. The draft hasn't been updated.", buttons: [{ id: 'mark-reviewed', label: 'Mark reviewed' }] });
     const img = run(P((p) => { p.diff.image_changed = true; }));
     expect(banner(img, 'notes-edited')).toMatchObject({ title: 'The client image changed since this draft.' });
+  });
+
+  test('plan changed by the bar picks: the bar line alone, or after the drinks', () => {
+    let s = run(P((p) => { p.diff.bar_changed = true; }));
+    expect(banner(s, 'plan-changed')).toEqual({ id: 'plan-changed', tone: 'info', title: 'Plan changed since this draft.',
+      text: 'The bar picks changed since this draft.',
+      buttons: [{ id: 'dismiss', label: 'Dismiss', style: 'ghost' }, { id: 'update', label: 'Update draft', style: 'secondary' }] });
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; }));
+    expect(banner(s, 'plan-changed').text)
+      .toBe('Cucumber Mule was added. The bar picks changed since this draft. Updating paints only the new drinks.');
+    expect(banner(run(P((p) => { p.diff.bar_changed = true; p.diff.dismissed = true; })), 'plan-changed')).toBeUndefined();
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.image_changed = true; }));
+    expect(banner(s, 'plan-changed').text).toBe('The bar picks changed since this draft. The client image changed since this draft.');
+  });
+
+  test('a renamed pre-deploy bar line rides in the plan-changed banner; without that banner it has its own, with Update draft', () => {
+    let s = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.bar_unchecked = 2; }));
+    expect(banner(s, 'plan-changed').text).toBe(`Cucumber Mule was added. ${UNCHECKED(2)} Updating paints only the new drinks.`);
+    expect(banner(s, 'bar-unchecked')).toBeUndefined();
+    s = run(P((p) => { p.diff.bar_changed = true; p.diff.bar_unchecked = 1; p.diff.image_changed = true; }));
+    expect(banner(s, 'plan-changed').text)
+      .toBe(`The bar picks changed since this draft. The client image changed since this draft. ${UNCHECKED(1)}`);
+    const own = { id: 'bar-unchecked', tone: 'info',
+      title: "A bar line renamed before bar picks were tracked can't be checked against them.",
+      text: "Update draft rebuilds it from the client's picks.", buttons: [{ id: 'update', label: 'Update draft', style: 'secondary' }] };
+    expect(banner(run(P((p) => { p.diff.bar_unchecked = 1; })), 'bar-unchecked')).toEqual(own);
+    expect(banner(run(P((p) => { approved(p); p.diff.brief_edited = ['notes']; p.diff.bar_unchecked = 1; })), 'bar-unchecked')).toEqual(own);
+    // A dismissed plan change hides its banner, never the unchecked line's.
+    s = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.dismissed = true; p.diff.bar_unchecked = 3; }));
+    expect(banner(s, 'plan-changed')).toBeUndefined();
+    expect(banner(s, 'bar-unchecked')).toEqual({ ...own,
+      title: "3 bar lines renamed before bar picks were tracked can't be checked against them.",
+      text: "Update draft rebuilds them from the client's picks and also applies the changes you dismissed: Cucumber Mule added." });
+    for (const mut of [(p) => { p.draft.read_only = true; }, (p) => { p.pieces[1] = piece('cocktail:1', 'working', { heartbeat_at: new Date(NOW).toISOString() }); }]) {
+      expect(banner(run(P((p) => { mut(p); p.diff.bar_unchecked = 1; })), 'bar-unchecked')).toBeUndefined();
+    }
+  });
+
+  test('the unchecked notice names the dismissed changes the Update draft it offers would also apply', () => {
+    const first = "A bar line renamed before bar picks were tracked can't be checked against them.";
+    const all = "Update draft rebuilds it from the client's picks and also applies the changes you dismissed: "
+      + 'Cucumber Mule added, Old Fashioned dropped, the bar picks.';
+    let s = run(P((p) => {
+      p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }];
+      p.diff.bar_changed = true; p.diff.dismissed = true; p.diff.bar_unchecked = 1;
+    }));
+    expect(s.sub).toBe(`Saved. ${first} ${all}`);
+    expect(banner(s, 'bar-unchecked')).toMatchObject({ title: first, text: all, buttons: [{ id: 'update', label: 'Update draft' }] });
+    s = run(P((p) => { p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }]; p.diff.dismissed = true; p.diff.bar_unchecked = 2; }));
+    expect(banner(s, 'bar-unchecked').text)
+      .toBe("Update draft rebuilds them from the client's picks and also applies the changes you dismissed: Old Fashioned dropped.");
+    // A dismissed notes edit is not applied by Update draft, and an undismissed change shows as its own Plan changed.
+    s = run(P((p) => { p.diff.brief_edited = ['notes']; p.diff.dismissed = true; p.diff.bar_unchecked = 1; }));
+    expect(banner(s, 'bar-unchecked').text).toBe("Update draft rebuilds it from the client's picks.");
+    s = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.bar_unchecked = 1; }));
+    expect(s.sub).toBe(`Update the draft to include it. ${UNCHECKED(1)}`);
   });
 
   test('the print states, no plan and couldnt load', () => {

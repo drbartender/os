@@ -2,14 +2,31 @@
 // mounted by menuDrafts.js). Body { version, image_model }. Brings the draft in
 // line with the plan: adds the drinks the plan gained (catalog fields
 // directly; a client-typed drink's name and description from one words call),
-// removes the ones it lost with their pieces, resets plan_fingerprint, clears
-// dismissed_plan_hash, and reserves and queues the added drinks' art, drawn by
-// image_model. 202 with the new version.
+// removes the ones it lost with their pieces, refreshes only the "Also at the
+// bar" lines whose picks moved and rebuilds and keys every line renamed before
+// bar picks were tracked (spec 2026-10-19 section 17; every other line keeps
+// its stored text, the owner's words included), clears dismissed_plan_hash,
+// and reserves and queues the added drinks' art, drawn by image_model. 202
+// with the new version. The plan_fingerprint it stores is what it applied: the
+// plan's drink keys and bar baseline (bar_lines, bar_hash), with the stored
+// brief and planner image parts kept (it applies neither, so a notes edit or a
+// new client image still reads after it).
+//
+// The keys are checked up front, before anything is reserved or spent,
+// whenever the sync adds a drink: the OpenAI key for a client-typed one (its
+// words call), and the image model's key (Gemini's for Gemini art) for any
+// added drink, since one the first read leaves without art can still draw it
+// when a slot frees by the main transaction, which checks again. A bar-only or
+// drop-only update calls nothing, so it works without either key (503
+// MENU_ART_NOT_CONFIGURED or MENU_ART_GEMINI_NOT_CONFIGURED otherwise).
 //
 // Order, so nothing paid or written outlives a refusal:
-//   1. checks with no transaction: the OpenAI key, the body, the draft and its
-//      version, the words landed, the plan (fresh catalog maps, never the read
-//      model's cache);
+//   0. the legal-hold proposal is refused first, 409 LEGAL_HOLD
+//      (assertNotLegalHold, isLegalHold failing closed), before any read,
+//      provider call, reservation or write (money law 15);
+//   1. checks with no transaction: the body, the draft and its version, the
+//      words landed, the plan (fresh catalog maps, never the read model's
+//      cache), then the keys when a words call or art will follow;
 //   2. when client-typed drinks were added: a short transaction (lockCalls,
 //      the draft row, the image-cap headroom for the added drinks that will
 //      get art, reserveText under the draft's CURRENT run_id, COMMIT), then
@@ -18,10 +35,14 @@
 //      written to the draft, and a sync at the image cap spends no words call;
 //   3. ONE transaction (lockCalls, the draft row FOR UPDATE, then pieces): the
 //      version and words checks again, the plan and catalog reloaded through
-//      the client, each dropped drink's reserved ledger rows released and its
-//      piece deleted, the added drinks appended (art while fewer than 8
-//      visible drinks have it), their art reserved under one new piece run,
-//      version + 1, COMMIT;
+//      the client (loadCatalogMaps sends one query at a time, never two on the
+//      held client at once), each dropped drink's reserved ledger rows
+//      released and its piece deleted, the added drinks appended (art while
+//      fewer than 8 visible drinks have it), the bar lines refreshed (the
+//      changed ones, and every line with no key rebuilt and keyed),
+//      their art reserved under one new piece run (the keys
+//      checked again first, for art the first pass did not see), the applied
+//      fingerprint, version + 1, COMMIT;
 //   4. after the client is released: one queued task draws the added art one
 //      piece at a time (runPieceReroll, awaited in turn, never side by side).
 
@@ -36,7 +57,9 @@ const job = require('../../utils/menuArtJob');
 const { computeDiff } = require('../../utils/menuDraftRead');
 const { validateImageModel, LIMITS } = require('../../utils/menuDraftValidation');
 const { loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint } = require('../../utils/menuDrinkSource');
+const { keyedBarLines, keyBarLines, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
+const { assertNotLegalHold } = require('./patchGuards');
 const {
   isObject, capList, parseId, parseVersion, requireProposal, noDraft, draftChanged, noPlan, requireWords,
   upsertPendingPieces, requireOpenAI, requireImageModel, imageModelId, inLockedTx, queue,
@@ -45,15 +68,69 @@ const {
 const router = express.Router();
 
 const NAME_MAX = 60;
+// The builder's print order of the bar lines.
+const BAR_ORDER = Object.values(LINE_LABELS);
 
-// computeDiff over capped copies of the stored lists.
+const hasKey = (line) => typeof line.key === 'string' && line.key !== '';
+
+// computeDiff over capped copies of the stored lists: the diff the GET shows,
+// read against the legacy bar baseline when the draft has no bar_lines yet
+// (no list stays no list, which reads as today's picks).
 function diffOf(draft, normalized) {
   const fp = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
+  const content = isObject(draft.content) ? draft.content : {};
   return computeDiff({
     ...draft,
     plan_fingerprint: { ...fp, drink_keys: capList(fp.drink_keys) },
-    content: { drinks: capList(isObject(draft.content) ? draft.content.drinks : null) },
+    content: {
+      drinks: capList(content.drinks),
+      also_at_bar: Array.isArray(content.also_at_bar) ? capList(content.also_at_bar) : undefined,
+    },
   }, normalized);
+}
+
+// The "Also at the bar" lines after Update draft, in the builder's print order.
+// A stored line is found by its server-written key (the builder's label), never
+// by the label the owner can rename (lane menu-bar-baseline), so a renamed
+// keyed line is refreshed in place. A keyed line keeps its stored text, the
+// owner's words included, unless its own category changed (the diff's
+// bar_changed_labels), when it is rebuilt from the current picks (a hand edit
+// on it, its label included, is replaced, since the picks under it moved); a
+// keyed line whose category the picks no longer build goes; a changed label no
+// kept line covers is built. A line with no key, renamed before bar picks were
+// tracked (keyBarLines), is never matched to a category (lane
+// menu-bar-renamed-lines): every such line gives way, and every category no
+// kept keyed line covers is built from the picks and keyed, so one Update
+// draft rebuilds it and the result holds no unkeyed line.
+function refreshBarLines(stored, built, changedLabels) {
+  const changed = new Set(changedLabels);
+  const lines = capList(stored).filter(isObject);
+  const keyed = lines.filter(hasKey);
+  const unkeyedHeld = keyed.length < lines.length;
+  const builtKeys = new Set(built.map((line) => line.key));
+  const kept = keyed.filter((line) => builtKeys.has(line.key) && !changed.has(line.key));
+  const covered = new Set(kept.map((line) => line.key));
+  const fresh = built.filter((line) => !covered.has(line.key) && (unkeyedHeld || changed.has(line.key)));
+  const rank = (line) => { const i = BAR_ORDER.indexOf(line.key); return i === -1 ? BAR_ORDER.length : i; };
+  return [...kept, ...fresh].map((line, i) => ({ line, i }))
+    .sort((a, b) => rank(a.line) - rank(b.line) || a.i - b.i)
+    .map(({ line }) => line);
+}
+
+// The fingerprint of what Update draft applied: the plan's drink keys and bar
+// baseline. The brief and the planner image it does not apply, so their stored
+// parts stay and their flags (Notes edited, the client image changed) survive.
+function appliedFingerprint(stored, normalized) {
+  const fp = isObject(stored) ? stored : {};
+  const current = buildFingerprint(normalized);
+  return {
+    drink_keys: current.drink_keys,
+    brief_hash: fp.brief_hash,
+    brief_fields: fp.brief_fields,
+    planner_image_key: fp.planner_image_key,
+    bar_lines: current.bar_lines,
+    bar_hash: current.bar_hash,
+  };
 }
 
 const addedDrinks = (diff, normalized) => {
@@ -92,6 +169,14 @@ function catalogEntry(d) {
   };
 }
 
+// Only a sync that will call a provider needs one set up ("set up" means the
+// OpenAI key, which the words step always needs); art needs its model's too.
+function requireProviders(provider, { words, art }) {
+  if (!words && !art) return;
+  requireOpenAI();
+  if (art) requireImageModel(provider);
+}
+
 // Step 2: the words for the added client-typed drinks. -> Map key -> entry.
 // artCount: the added drinks that will get art, checked against the image
 // cap before the words call is reserved (and so before it is spent).
@@ -111,12 +196,11 @@ async function typedWords({ id, draft, proposal, typed, brief, artCount }) {
 }
 
 router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  requireOpenAI();
   const id = parseId(req.params.id);
+  assertNotLegalHold(id);
   const body = isObject(req.body) ? req.body : {};
   const version = parseVersion(body.version);
   const provider = validateImageModel(body.image_model);
-  requireImageModel(provider);
   const proposal = await requireProposal(id);
   const draft = (await pool.query(
     'SELECT id, run_id, version, content, plan_fingerprint, NOW() AS db_now FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
@@ -129,6 +213,9 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
   const firstDiff = diffOf(draft, first);
   const typed = addedDrinks(firstDiff, first).filter((d) => d.source !== 'catalog');
   const artCount = layout(draft.content, firstDiff, first).added.filter((a) => a.hasArt).length;
+  // Any added drink could draw art (a slot freed during the words call hands it
+  // one), so its image model's key is needed before the words call spends.
+  requireProviders(provider, { words: typed.length > 0, art: firstDiff.added.length > 0 });
   const words = typed.length ? await typedWords({ id, draft, proposal, typed, brief: first.brief, artCount }) : new Map();
 
   const model = imageModelId(provider);
@@ -142,7 +229,8 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
     const current = await loadEventPlan(id, client);
     if (!current) throw noPlan();
     const normalized = normalizePlan(current, await loadCatalogMaps(client));
-    const { dropped, kept, added: plannedAdds } = layout(locked.content, diffOf(locked, normalized), normalized);
+    const diff = diffOf(locked, normalized);
+    const { dropped, kept, added: plannedAdds } = layout(locked.content, diff, normalized);
     const added = plannedAdds.map(({ drink, hasArt }) => {
       const entry = drink.source === 'catalog' ? catalogEntry(drink) : words.get(drink.key);
       // A typed drink the plan gained after the words call: nothing to write it with.
@@ -150,6 +238,7 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
       return { ...entry, has_art: hasArt, added_by_sync: true };
     });
     const artKeys = added.filter((d) => d.has_art).map((d) => d.key);
+    requireProviders(provider, { words: false, art: artKeys.length > 0 });
 
     // Dropped drinks: their unspent reservations stop counting, then their
     // pieces go (the draft row is already locked, so pieces lock after it).
@@ -163,11 +252,26 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
       await reserveImages(client, { proposalId: id, runId: pieceRunId, pieceKeys: artKeys, provider, model });
       await upsertPendingPieces(client, { draftId: locked.id, runId: pieceRunId, pieceKeys: artKeys, provider, model });
     }
+    const content = { ...locked.content, drinks: [...kept, ...added] };
+    // A line stored before keys existed that still carries a builder label is
+    // keyed by it here, under the row lock (keyBarLines, lane
+    // menu-bar-legacy-keys). The diff is the one the GET shows: for a draft
+    // with no baseline yet it reads the one the boot stamp would give it
+    // (menuBarBaselineStamp.js), so a category its stored lines prove came or
+    // went since Generate is repaired in this same Update draft. Each line
+    // left unkeyed (renamed before bar picks were tracked, or with no key
+    // since) is the diff's bar_unchecked count, the card's notice, and is
+    // rebuilt and keyed whatever else this applies.
+    content.also_at_bar = keyBarLines(content.also_at_bar).lines;
+    if (diff.bar_changed || diff.bar_unchecked > 0) {
+      content.also_at_bar = refreshBarLines(content.also_at_bar, keyedBarLines(normalized.bar), diff.bar_changed_labels);
+    }
+    const applied = appliedFingerprint(locked.plan_fingerprint, normalized);
     const { rows } = await client.query(
       `UPDATE menu_drafts SET content = $2::jsonb, plan_fingerprint = $3::jsonb, dismissed_plan_hash = NULL,
               drink_plan_id = $4, version = version + 1
         WHERE id = $1 RETURNING version`,
-      [locked.id, { ...locked.content, drinks: [...kept, ...added] }, buildFingerprint(normalized), current.id]);
+      [locked.id, content, applied, current.id]);
     return { version: rows[0].version, artKeys };
   });
 

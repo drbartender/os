@@ -15,11 +15,39 @@
 //   approveError, tooLong: [data-mc-k keys], imageModel, activityKeys, now }.
 // Table D: no removal date, no upload name or date, no client image filename and
 // no "who marked no menu needed" is ever shown; the system does not store them.
+// A bar line renamed before bar picks were tracked (the diff's bar_unchecked)
+// changes no state: the sub line of a draft at rest says it (uncheckedNotice,
+// never "The bar picks changed since this draft."), a free secondary slot
+// offers Update draft, and the editor gets the plan-changed banner's copy of
+// the sentence or a banner of its own. A dismissal never covers it (spec
+// 2026-10-19 section 17).
 
 const OPEN = new Set(['pending', 'working']);
 const MODEL_NAME = { openai: 'GPT Image', gemini: 'Gemini' };
 const FIELD_NAME = { theme: 'Theme & colors', naming: 'Drink naming', notes: 'Design notes' };
 const ART_MAX = 8;
+export const BAR_LINE = 'The bar picks changed since this draft.';
+const NOTES_LINE = 'Client edited their menu notes.';
+const BAR_SUB = 'refreshes the changed "Also at the bar" lines.';
+// A bar line renamed before bar picks were tracked has no key, so nothing can
+// say which category it stands for: the diff counts the stored lines left
+// unkeyed as bar_unchecked, never bar_changed (spec 2026-10-19 section 17,
+// lane menu-bar-renamed-lines). Its two sentences, for n such lines; the Brief
+// tab prints them too. `also` names the dismissed changes the Update draft it
+// offers would apply as well, so that click is an informed one.
+function uncheckedSentences(n, also = []) {
+  const first = n === 1
+    ? "A bar line renamed before bar picks were tracked can't be checked against them."
+    : `${n} bar lines renamed before bar picks were tracked can't be checked against them.`;
+  const rebuild = `Update draft rebuilds ${n === 1 ? 'it' : 'them'} from the client's picks`;
+  return [first, also.length ? `${rebuild} and also applies the changes you dismissed: ${also.join(', ')}.` : `${rebuild}.`];
+}
+// Two sentences side by side: one with no stop of its own gets a period.
+const sentences = (a, b) => (a ? `${/[.!?]$/.test(a) ? a : `${a}.`} ${b}` : b);
+// The states whose sub carries it: a draft at rest whose lines print. Busy or
+// failed states keep their own; No menu needed and a manual upload print
+// nothing from this draft.
+const UNCHECKED_STATES = new Set(['plan-changed', 'notes-edited', 'removed', 'edited', 'approved', 'draft']);
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v.filter((x) => x !== null && x !== undefined) : []);
@@ -60,6 +88,33 @@ export function savedAgo(savedAt, now = Date.now()) {
 
 const andList = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 
+// The dismissed changes Update draft applies, by the diff's own names: drinks
+// added or dropped and the bar picks (a notes edit or a new client image it
+// never applies).
+function dismissedChanges(diff) {
+  if (diff.dismissed !== true) return [];
+  const name = (d) => (isObj(d) && (d.name || d.key)) || '';
+  return [
+    ...list(diff.added).map(name).filter(Boolean).map((n) => `${n} added`),
+    ...list(diff.dropped).map(name).filter(Boolean).map((n) => `${n} dropped`),
+    ...(diff.bar_changed === true ? ['the bar picks'] : []),
+  ];
+}
+
+// The notice for a payload's draft, pieces and diff, or null: the ONE
+// predicate the card, the banners and the Brief tab read. A dismissal never
+// covers an unchecked line; a read-only draft, words not written or a piece
+// painting say nothing.
+export function uncheckedNotice({ draft, pieces, diff, readOnly = false } = {}) {
+  if (!isObj(draft) || draft.read_only === true || readOnly === true || !isObj(diff)) return null;
+  if (!isObj(draft.content) || draft.content.words_status !== 'done') return null;
+  if (list(pieces).some((pc) => isObj(pc) && OPEN.has(pc.status))) return null;
+  const count = Number(diff.bar_unchecked);
+  if (!Number.isInteger(count) || count <= 0) return null;
+  const [title, text] = uncheckedSentences(count, dismissedChanges(diff));
+  return { count, title, text, line: `${title} ${text}` };
+}
+
 function readFacts(p) {
   const draft = isObj(p.draft) ? p.draft : null;
   const content = draft && isObj(draft.content) ? draft.content : {};
@@ -73,15 +128,19 @@ function readFacts(p) {
   const diff = isObj(p.diff) && !p.diff.dismissed && draft && !draft.read_only ? p.diff : null;
   const open = pieces.filter((pc) => OPEN.has(pc.status));
   const print = isObj(p.print) ? p.print : {};
+  const drafting = !!draft && (wordsOpen || open.length > 0);
+  const notice = uncheckedNotice({ draft, pieces, diff: p.diff });
   return {
-    draft, pieces, drinks, wordsOpen, wordsFailed, open, print,
+    draft, pieces, drinks, wordsOpen, wordsFailed, open, print, drafting,
     hasDraft: !!draft && !wordsFailed,
-    drafting: !!draft && (wordsOpen || open.length > 0),
     failed: wordsFailed ? [] : pieces.filter((pc) => pc.status === 'failed' && used(pc)),
     added: diff ? list(diff.added) : [],
     dropped: diff ? list(diff.dropped) : [],
     edited: diff ? list(diff.brief_edited) : [],
     imageChanged: !!(diff && diff.image_changed),
+    barChanged: !!(diff && diff.bar_changed === true),
+    unchecked: notice ? notice.count : 0,
+    notice,
     plan: isObj(p.plan) ? p.plan : null,
     cap: isObj(p.cap) ? p.cap : null,
     configured: isObj(p.configured) ? p.configured : {},
@@ -106,13 +165,29 @@ const S = (id, kind, text, message, sub = null, primary = null, secondary = null
 const act = (id, label, style = 'primary') => ({ id, label, style });
 const ed = (id, label, style = 'primary', editor = {}) => ({ id, label, style, editor });
 
+// The Plan changed card: the drink lines, then the bar line when the bar
+// picks changed too, then a notes edit or a new client image riding along
+// (spec 2026-10-19 section 17), so a Dismiss never hides an edit the card did
+// not show. The sub says what Update draft does: the drinks, and only the
+// "Also at the bar" lines whose picks moved.
+const briefLines = (f, image) => [...(f.edited.length ? [NOTES_LINE] : []), ...(f.imageChanged ? [image] : [])];
+
 function changeLines(f) {
   const all = [...f.added.map((d) => [d, 'added']), ...f.dropped.map((d) => [d, 'dropped'])];
-  if (all.length !== 1) return { message: `${all.length} drinks changed on the plan.`, sub: 'Update the draft to match.' };
+  const say = (first) => [first, ...briefLines(f, 'The client image changed.')].join(' ');
+  if (!all.length) return { message: say(BAR_LINE), sub: `Update draft ${BAR_SUB}` };
+  const withBar = (line) => say(f.barChanged ? `${line} ${BAR_LINE}` : line);
+  if (all.length !== 1) {
+    return { message: withBar(`${all.length} drinks changed on the plan.`),
+      sub: f.barChanged ? `Update draft updates the drinks and ${BAR_SUB}` : 'Update the draft to match.' };
+  }
   const [d, how] = all[0];
-  return how === 'added'
-    ? { message: `${d.name} was added to the plan.`, sub: 'Update the draft to include it.' }
-    : { message: `${d.name} was dropped from the plan.`, sub: 'Update the draft to remove it.' };
+  if (how === 'added') {
+    return { message: withBar(`${d.name} was added to the plan.`),
+      sub: f.barChanged ? `Update draft adds the drink and ${BAR_SUB}` : 'Update the draft to include it.' };
+  }
+  return { message: withBar(`${d.name} was dropped from the plan.`),
+    sub: f.barChanged ? `Update draft removes the drink and ${BAR_SUB}` : 'Update the draft to remove it.' };
 }
 
 // Table C, the first state that applies.
@@ -134,7 +209,7 @@ function pickState(f, L) {
       n === 1 ? `${pieceName(f, f.failed[0].piece_key)} didn't draw.` : `${n} drawings didn't come through.`,
       n === 1 ? 'Re-roll it in the editor.' : 'Re-roll them in the editor.', ed('fix', 'Fix', 'primary', editor));
   }
-  if (f.added.length || f.dropped.length) {
+  if (f.added.length || f.dropped.length || f.barChanged) {
     const { message, sub } = changeLines(f);
     return S('plan-changed', 'info', 'Plan changed', message, sub, act('update', 'Update draft'), act('dismiss', 'Dismiss', 'ghost'));
   }
@@ -237,10 +312,15 @@ function bannerList(f, L, tooLong) {
       `${f.cap.used} of ${f.cap.limit} images used in the last 24 hours. Re-rolls resume ${resumeTime(f.cap.resets_at, L.now)}. Text, type and color still work.`);
   }
   if (f.draft && !f.configured.openai) B('drawing-off', 'neutral', 'Drawing is off.', "The AI key isn't on the server. Text, type, color and Approve still work.");
-  if (f.added.length || f.dropped.length) {
-    const lines = [...f.added.map((d) => `${d.name} was added.`), ...f.dropped.map((d) => `${d.name} was dropped.`)];
-    B('plan-changed', 'info', 'Plan changed since this draft.', `${lines.join(' ')} Updating paints only the new drinks.`,
+  if (f.added.length || f.dropped.length || f.barChanged) {
+    const drinks = [...f.added.map((d) => `${d.name} was added.`), ...f.dropped.map((d) => `${d.name} was dropped.`)];
+    const lines = [...drinks, ...(f.barChanged ? [BAR_LINE] : []), ...briefLines(f, 'The client image changed since this draft.'),
+      ...(f.notice ? [f.notice.line] : []), ...(drinks.length ? ['Updating paints only the new drinks.'] : [])];
+    B('plan-changed', 'info', 'Plan changed since this draft.', lines.join(' '),
       [btn('dismiss', 'Dismiss', 'ghost'), btn('update', 'Update draft')]);
+  } else if (f.notice) {
+    // Its own banner, with the Update draft it names; no Dismiss, which could not cover it.
+    B('bar-unchecked', 'info', f.notice.title, f.notice.text, [btn('update', 'Update draft')]);
   }
   if (f.edited.length || f.imageChanged) {
     const fields = andList(f.edited.map((k) => FIELD_NAME[k] || k));
@@ -289,6 +369,15 @@ export default function menuCardState({ payload, local } = {}) {
   const tooLong = list(L.tooLong).length > 0;
   const state = { progress: null, ...pickState(f, L) };
   if (STAFF_SUB.has(state.id) && f.print.approved_file_in_use) state.sub = `Staff still get the ${f.date} version.`;
+  // An unchecked bar line changes no state; the muted sub says it after its own
+  // words, and a state with no Update draft of its own offers it in a free
+  // slot, since that is what the sentence names (the sync rebuilds an
+  // unchecked line whatever else changed).
+  if (f.unchecked && UNCHECKED_STATES.has(state.id)) {
+    state.sub = sentences(state.sub, f.notice.line);
+    const offersUpdate = [state.primary, state.secondary].some((a) => a && a.id === 'update');
+    if (!offersUpdate && !state.secondary) state.secondary = act('update', 'Update draft', 'ghost');
+  }
   // The vendored rule: with a draft, a ghost View joins whenever the row has room for it.
   if (f.hasDraft && !state.secondary && state.id !== 'approving' && (!state.primary || state.primary.id !== 'view')) {
     state.secondary = ed('view', 'View', 'ghost');

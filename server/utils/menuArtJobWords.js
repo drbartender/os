@@ -6,8 +6,12 @@
 //   Generate's words step. One heartbeat UPDATE (content.words_heartbeat_at
 //   and the run's pending pieces), authorizeCall on the run's text
 //   reservation, draftMenuCopy, parseWords, then ONE conditional UPDATE
-//   (draft id and run_id, words still pending) writing the content fill and
-//   words_status 'done' (words_heartbeat_at kept). has_art goes on exactly
+//   (draft id and run_id, words still pending) writing the content fill,
+//   words_status 'done' (words_heartbeat_at kept) and the bar baseline
+//   (plan_fingerprint's bar_lines and bar_hash) from the same plan read the
+//   "Also at the bar" lines were built from, so a bar pick changed between
+//   Generate's read and this one is neither a false flag nor a lost one;
+//   Generate's drinks, brief and image parts stay. has_art goes on exactly
 //   the drinks the run holds image reservations for (Generate's pieces),
 //   never on a drink by its position on a plan edited since. A failure writes
 //   words_status 'failed' and a fixed words_error sentence; the descriptor
@@ -31,6 +35,7 @@ const { pool } = require('../db');
 const openaiClient = require('./openaiClient');
 const { wordsRequest, parseWords } = require('./menuArtPrompts');
 const { authorizeCall, markCall } = require('./menuArtCap');
+const { buildFingerprint } = require('./menuDrinkSource');
 const { AppError, ConflictError } = require('./errors');
 const E = require('./menuArtJobErrors');
 const S = require('./menuArtJobSteps');
@@ -52,12 +57,15 @@ async function beatWords(ctx) {
   return rows[0].drafts === 1;
 }
 
-// The one content fill (spec 6, Writers); words_heartbeat_at is kept.
-async function writeWords(ctx, fill) {
+// The one content fill (spec 6, Writers); words_heartbeat_at is kept. The bar
+// baseline lands with it, from the plan read the lines were built from.
+async function writeWords(ctx, fill, normalized) {
+  const { bar_lines: barLines, bar_hash: barHash } = buildFingerprint(normalized);
   const result = await pool.query(
-    `UPDATE menu_drafts SET content = content || $3::jsonb
+    `UPDATE menu_drafts SET content = content || $3::jsonb,
+            plan_fingerprint = plan_fingerprint || jsonb_build_object('bar_lines', $4::jsonb, 'bar_hash', $5::text)
       WHERE id = $1 AND run_id = $2::uuid AND content->>'words_status' = 'pending'`,
-    [ctx.draftId, ctx.draftRun, { ...fill, words_status: 'done', words_error: null }]);
+    [ctx.draftId, ctx.draftRun, { ...fill, words_status: 'done', words_error: null }, barLines, barHash]);
   return result.rowCount === 1;
 }
 
@@ -87,7 +95,7 @@ async function wordsStep(ctx, { textId, model, normalized, eventTypeLabel }) {
     requestId = out.requestId;
     const artKeys = [...ctx.reservations.keys()].filter((k) => k !== 'background');
     const content = parseWords(out.json, normalized, { artKeys });
-    if (!(await writeWords(ctx, content))) {
+    if (!(await writeWords(ctx, content, normalized))) {
       await markCall(textId, 'failed', E.failedCall({ ...E.SUPERSEDED, requestId }, { model }));
       return { stopped: true };
     }

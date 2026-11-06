@@ -9,7 +9,8 @@
 //     ground_rgb, provider, model, drawn_count, started_at, finished_at }],
 //   brief: null | { theme, naming, notes, has_planner_image, planner_image_rev },
 //   diff: null | { added: [{ key, name }], dropped: [{ key, name }],
-//     brief_edited: ['theme' | 'naming' | 'notes'], image_changed, dismissed },
+//     brief_edited: ['theme' | 'naming' | 'notes'], image_changed, bar_changed,
+//     bar_changed_labels: [label], bar_unchecked, dismissed },
 //   print: { state, approved_at, approved_by_name, print_key, approved_file_in_use },
 //   cap: { used, limit, remaining, resets_at }, configured: { openai, gemini },
 //   plan: null | { id, menu_style, drink_count, drinks: [{ name, mock }],
@@ -34,6 +35,20 @@
 // - diff is null without a draft or without a plan (a draft with no plan is
 //   read_only). dropped names come from the draft's own display names.
 //   dismissed is true when the current plan hash equals dismissed_plan_hash.
+//   bar_changed is true when an "Also at the bar" line the plan would print
+//   differs from its baseline (bar_lines), or a line appears or goes (spec
+//   2026-10-19 section 17); bar_changed_labels names those lines by builder
+//   label, for Update draft, and a stored keyed line the picks no longer
+//   build reads as one of them. bar_unchecked counts the stored lines no key
+//   can be found for (keyBarLines), renamed before bar picks were tracked or
+//   with no key since, which nothing can check against the picks (lane
+//   menu-bar-renamed-lines), with or without a stored baseline: never a
+//   change, so it neither raises Plan changed nor undoes a dismissal; the card
+//   says Update draft rebuilds them, and Update draft rebuilds exactly those.
+//   A fingerprint with no bar_lines is read against the baseline the boot
+//   stamp would give it (legacyBarBaseline), until the server stamps it at
+//   boot (menuBarBaselineStamp.js) or Update draft writes one, so the card
+//   shows what Update draft does. The read model writes nothing.
 // - menu_style is selections.menuStyle ('custom' | 'house' | 'none') or null.
 //   bar_summary counts the plan's bar picks for the phone's "+ 5 beer and wine,
 //   3 spirits, 2 NA" line ("None" and "Other" picks are not counted).
@@ -50,8 +65,9 @@ const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
 const { readEnvInt } = require('./envInt');
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, plannerImageRev,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, plannerImageRev, legacyBarBaseline,
 } = require('./menuDrinkSource');
+const { keyBarLines } = require('./menuAlsoAtBar');
 const { capUsage } = require('./menuArtCap');
 const { derivePrintState, PRINT_STATES } = require('./menuPrintState');
 const openaiClient = require('./openaiClient');
@@ -64,11 +80,14 @@ const OPEN_STATUSES = new Set(['pending', 'working']);
 const BRIEF_FIELDS = ['theme', 'naming', 'notes'];
 const MENU_STYLES = new Set(['custom', 'house', 'none']);
 const NOT_COUNTED = new Set(['none', 'other']);
+// A bar baseline entry for a line renamed before bar picks were tracked (legacyBarBaseline).
+const UNKEYED = 'unkeyed:';
 // The draft columns computeDiff and derivePrintState read (internal only).
 const DRAFT_STATE = ['version', 'art_version', 'approved_version', 'approved_art_version', 'approved_print_key',
   'approved_planner_image_key', 'inputs', 'content', 'plan_fingerprint', 'dismissed_plan_hash'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const asArray = (v) => (Array.isArray(v) ? v : []);
 const toMs = (v) => (v instanceof Date ? v.getTime() : (typeof v === 'string' || typeof v === 'number') ? new Date(v).getTime() : NaN);
 const toIso = (v) => { const ms = toMs(v); return Number.isFinite(ms) ? new Date(ms).toISOString() : null; };
@@ -103,15 +122,64 @@ function _resetCatalogCacheForTest() {
 
 // The staleness diff (spec 9) of a stored draft ({ plan_fingerprint, content,
 // dismissed_plan_hash }) against a normalized plan. Pure.
+// The bar, line by line: each builder label's built hash against its baseline,
+// plus a label that appears or goes. The baseline is the stored bar_lines, or
+// for a fingerprint with none (every draft made before them, and a dev draft
+// carrying only an earlier bar_hash) the one the boot stamp would give it,
+// legacyBarBaseline over the stored lines (lane menu-bar-renamed-lines), so the
+// GET and Update draft read one diff. A stored line keyed (keyBarLines, the
+// rule Update draft keys by) to a category the picks no longer build reads
+// gone too, whatever the baseline says. bar_unchecked counts the stored lines
+// keyBarLines leaves unkeyed, whatever the baseline holds, so a line renamed
+// with no key after the stamp is counted and one renamed back to its builder
+// label is not; an unkeyed:<place> baseline entry is never a change.
+// bar_changed and its labels name builder labels only. The GET itself writes
+// nothing.
+// Dismissed: the hash matches the current fingerprint, or the current one
+// with no bar (a dismissal stored before the deploy hashed none, and
+// fingerprintHash keeps that hash), but that one only while the bar has not
+// changed: a bar-less dismissal cannot have covered a bar change, while an
+// unchecked line is no change, so it never undoes one. A stored keyed line the
+// picks no longer build that the baseline does not name (one renamed back to
+// its builder label after the stamp) is in no bar_hash, so no dismissal can
+// have covered it: it undoes any. One stored since hashes
+// the bar, so a later bar move undoes it; either way the banner comes back
+// with bar_changed saying why.
+function barBaseline(stored, content, normalized) {
+  if (isObject(stored.bar_lines)) return stored.bar_lines;
+  return legacyBarBaseline(content.also_at_bar, normalized).bar_lines;
+}
+
+function barChangedLabels(before, now) {
+  return [
+    ...Object.keys(now).filter((label) => !hasOwn(before, label) || before[label] !== now[label]),
+    ...Object.keys(before).filter((label) => !label.startsWith(UNKEYED) && !hasOwn(now, label)),
+  ];
+}
+
 function computeDiff(draft, normalized) {
   if (!isObject(draft) || !normalized) return null;
   const stored = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
   const current = buildFingerprint(normalized);
+  const content = isObject(draft.content) ? draft.content : {};
+  const baseline = barBaseline(stored, content, normalized);
+  const lines = keyBarLines(Array.isArray(content.also_at_bar) ? content.also_at_bar : []);
+  const changedLabels = barChangedLabels(baseline, current.bar_lines);
+  let lineGone = false;
+  for (const line of lines.lines) {
+    const key = isObject(line) && typeof line.key === 'string' ? line.key : '';
+    if (key && !hasOwn(current.bar_lines, key) && !changedLabels.includes(key)) {
+      changedLabels.push(key);
+      lineGone = true;
+    }
+  }
+  const barChanged = changedLabels.length > 0;
+  const dismissedHash = typeof draft.dismissed_plan_hash === 'string' ? draft.dismissed_plan_hash : null;
   const storedKeys = asArray(stored.drink_keys).map(String);
   const storedSet = new Set(storedKeys);
   const currentSet = new Set(current.drink_keys);
   const names = new Map();
-  for (const d of asArray(isObject(draft.content) ? draft.content.drinks : null)) {
+  for (const d of asArray(content.drinks)) {
     if (isObject(d) && typeof d.key === 'string' && typeof d.display_name === 'string' && d.display_name) {
       names.set(d.key, d.display_name);
     }
@@ -122,8 +190,11 @@ function computeDiff(draft, normalized) {
     dropped: storedKeys.filter((k) => !currentSet.has(k)).map((key) => ({ key, name: names.get(key) || key })),
     brief_edited: BRIEF_FIELDS.filter((f) => storedFields[f] !== current.brief_fields[f]),
     image_changed: (stored.planner_image_key || null) !== (current.planner_image_key || null),
-    dismissed: typeof draft.dismissed_plan_hash === 'string'
-      && draft.dismissed_plan_hash === fingerprintHash(current),
+    bar_changed: barChanged,
+    bar_changed_labels: changedLabels,
+    bar_unchecked: lines.unkeyed,
+    dismissed: !lineGone && dismissedHash !== null && (dismissedHash === fingerprintHash(current)
+      || (!barChanged && dismissedHash === fingerprintHash({ ...current, bar_hash: null }))),
   };
 }
 

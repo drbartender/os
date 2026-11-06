@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { performance } = require('node:perf_hooks');
 
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, legacyBarBaseline, fingerprintHash, hashBarLines,
   drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev,
 } = require('./menuDrinkSource');
 const { buildAlsoAtBar } = require('./menuAlsoAtBar');
@@ -71,21 +71,33 @@ test('loadCatalogMaps keys every row by kind and id and ignores is_active', asyn
   assert.match(db.calls[1].sql, /request_aliases/);
 });
 
-test('loadCatalogMaps sends both queries before either one answers', async () => {
+// Update draft passes its held transaction client, and a pg client must never
+// get a second query while one is running (pg 8 queues it with a deprecation
+// warning; pg 9 refuses it). So the second query waits for the first answer.
+test('loadCatalogMaps sends one query at a time, so a held client never runs two at once', async () => {
   const pending = [];
+  let active = 0;
+  let overlaps = 0;
   const db = {
     calls: [],
     query(sql) {
       this.calls.push(sql);
+      if (active > 0) overlaps += 1;
+      active += 1;
       return new Promise((resolve) => {
-        pending.push(() => resolve({ rows: sql.includes('request_aliases') ? CANDIDATE_ROWS : CATALOG_ROWS }));
+        pending.push(() => { active -= 1; resolve({ rows: sql.includes('request_aliases') ? CANDIDATE_ROWS : CATALOG_ROWS }); });
       });
     },
   };
   const loading = loadCatalogMaps(db);
-  assert.equal(db.calls.length, 2);   // one after the other would show 1 here
-  for (const release of pending) release();
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(db.calls.length, 1, 'the second query waits for the first to answer');
+  pending.shift()();
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(db.calls.length, 2);
+  pending.shift()();
   const m = await loading;
+  assert.equal(overlaps, 0);
   assert.equal(m.catalogById.size, CATALOG_ROWS.length);
   assert.equal(m.candidates, CANDIDATE_ROWS);
 });
@@ -651,6 +663,7 @@ test('fingerprintHash is stable across a JSONB round trip and moves with any par
   const fp = buildFingerprint(briefPlan({ theme: 'Speakeasy', naming: '', notes: '' }, 'drink-plan-logos/1-1.png'));
   // JSONB hands keys back reordered; the hash must not care.
   const reordered = {
+    bar_hash: fp.bar_hash,
     planner_image_key: fp.planner_image_key,
     brief_fields: { notes: fp.brief_fields.notes, theme: fp.brief_fields.theme, naming: fp.brief_fields.naming },
     drink_keys: [...fp.drink_keys].reverse(),
@@ -660,6 +673,148 @@ test('fingerprintHash is stable across a JSONB round trip and moves with any par
   assert.match(fingerprintHash(fp), /^[0-9a-f]{64}$/);
   assert.notEqual(fingerprintHash({ ...fp, drink_keys: [...fp.drink_keys, 'custom:new'] }), fingerprintHash(fp));
   assert.notEqual(fingerprintHash({ ...fp, brief_hash: 'other' }), fingerprintHash(fp));
+  assert.notEqual(fingerprintHash({ ...fp, bar_hash: 'other' }), fingerprintHash(fp));
+});
+
+// ─── Bar picks in the fingerprint (spec 2026-10-19 section 17) ───────────────
+
+const barPlan = (over = {}) => normalizePlan({
+  ...PLANNER_PLAN, selections: { ...PLANNER_PLAN.selections, ...over },
+}, maps);
+
+test('bar_hash: a changed wine pick moves it and the fingerprint hash; the drinks and the brief stay', () => {
+  const before = buildFingerprint(barPlan());
+  const after = buildFingerprint(barPlan({ wineFromFullBar: ['White', 'Other'] }));
+  assert.match(before.bar_hash, /^[0-9a-f]{64}$/);
+  assert.notEqual(after.bar_hash, before.bar_hash);
+  assert.notEqual(fingerprintHash(after), fingerprintHash(before));
+  assert.deepEqual([after.drink_keys, after.brief_hash, after.planner_image_key],
+    [before.drink_keys, before.brief_hash, before.planner_image_key]);
+  // Beer, spirits and the spirits "Other" text count too.
+  for (const over of [{ beerFromFullBar: ['IPA'] }, { spirits: ['Vodka', 'Other'] }, { spiritsOther: 'Pisco' }]) {
+    assert.notEqual(buildFingerprint(barPlan(over)).bar_hash, before.bar_hash, JSON.stringify(over));
+  }
+});
+
+test('bar_hash: list order and repeats do not move it; a stale key family is not in it', () => {
+  const a = buildFingerprint(barPlan({ wineFromFullBar: ['Red', 'White'], spirits: ['Vodka', 'Gin'] }));
+  const b = buildFingerprint(barPlan({ wineFromFullBar: ['White', 'Red', 'White'], spirits: ['Gin', 'Vodka'] }));
+  assert.match(a.bar_hash, /^[0-9a-f]{64}$/);
+  assert.equal(b.bar_hash, a.bar_hash);
+  assert.equal(fingerprintHash(b), fingerprintHash(a));
+  // A full bar does not pour the beer-and-wine family, so a pick left there is not a change.
+  assert.equal(buildFingerprint(barPlan({ wineFromBeerWine: ['Rose'] })).bar_hash, buildFingerprint(barPlan()).bar_hash);
+});
+
+// The menu prints content.also_at_bar, which Generate builds with
+// buildAlsoAtBar, so the bar part of the fingerprint is those lines, one
+// baseline hash per line so Update draft can refresh only the lines that moved.
+test('bar_lines: each printed line\'s text hash keyed by its label, in print order; bar_hash covers them', () => {
+  const n = barPlan();
+  const lines = buildAlsoAtBar(n.bar);
+  const fp = buildFingerprint(n);
+  const sha = (t) => crypto.createHash('sha256').update(t, 'utf8').digest('hex');
+  assert.ok(lines.length > 1);
+  assert.deepEqual(fp.bar_lines, Object.fromEntries(lines.map((l) => [l.label, sha(l.text)])));
+  assert.deepEqual(Object.keys(fp.bar_lines), lines.map((l) => l.label));
+  assert.equal(fp.bar_hash, hashBarLines(fp.bar_lines));
+  const swapped = buildFingerprint(barPlan({ wineFromFullBar: ['White', 'Other'] }));
+  assert.notEqual(swapped.bar_lines['Beer and Wine'], fp.bar_lines['Beer and Wine']);
+  assert.equal(swapped.bar_lines.Spirits, fp.bar_lines.Spirits, 'a wine swap moves only its own line');
+  assert.notEqual(swapped.bar_hash, fp.bar_hash);
+  const reordered = Object.fromEntries(Object.entries(fp.bar_lines).reverse());
+  assert.equal(hashBarLines(reordered), fp.bar_hash, 'JSONB key order does not matter');
+});
+
+// Lane menu-bar-baseline: a draft fingerprinted before bar_lines takes today's
+// picks as its baseline, except where its keyed stored lines prove a category
+// came or went since Generate; those read as a bar change.
+test('legacyBarBaseline: today\'s picks, with a stored category that went and a built one that is new left reading changed', () => {
+  const n = barPlan();
+  const today = buildFingerprint(n).bar_lines;
+  const labels = Object.keys(today);
+  const keyed = (keys) => keys.map((k) => ({ key: k, label: `${k} renamed`, text: 'hand edited.' }));
+  // Every built category stored: the baseline is today's, a hand edit or an in-line swap reads unchanged.
+  let base = legacyBarBaseline(keyed(labels), n);
+  assert.deepEqual(base.bar_lines, today);
+  assert.equal(base.bar_hash, hashBarLines(today));
+  // A stored category the picks no longer build stays in the baseline, so it reads gone.
+  base = legacyBarBaseline(keyed([...labels, 'Ghost Category']), n);
+  assert.deepEqual(Object.keys(base.bar_lines).sort(), [...labels, 'Ghost Category'].sort());
+  assert.notEqual(base.bar_lines['Ghost Category'], undefined);
+  // A built category with no stored line is left out, so it reads new.
+  base = legacyBarBaseline(keyed(labels.slice(1)), n);
+  assert.deepEqual(Object.keys(base.bar_lines), labels.slice(1));
+  // An empty stored list proves every built category new.
+  assert.deepEqual(legacyBarBaseline([], n).bar_lines, {});
+});
+
+// Lane menu-bar-renamed-lines (spec 17): a renamed pre-deploy line is never
+// matched to a category. It always gets its own unkeyed:<place> entry, which
+// the diff reports as bar_unchecked, and the categories no keyed line covers
+// take today's picks, since which of them a renamed line stood for cannot be told.
+const barOnly = (bar) => ({ drinks: [], brief: {}, plannerImageKey: null, bar });
+const builtLines = (bar) => buildFingerprint(barOnly(bar)).bar_lines;
+const unkeyedEntry = (i) => crypto.createHash('sha256').update(`unkeyed:${i}`, 'utf8').digest('hex');
+const renamedLine = (label, text) => ({ label, text });
+
+test('legacyBarBaseline: every renamed line has its unkeyed:<place> entry, whatever the count, order or words; the categories no keyed line covers take today\'s picks', () => {
+  const shapes = [
+    // A sparkling NA line, picks as at Generate: its words name wine.
+    ['sparkling NA', [renamedLine('Beer and Wine', 'Red.'), renamedLine('Zero Proof', 'Sparkling cider, mocktails.')],
+      { wine: ['Red'], na: ['Non-Alcoholic'] }, [1]],
+    // A Spirits line naming a whisky called Red, picks as at Generate.
+    ['whisky named Red', [renamedLine('Beer and Wine', 'Red.'), renamedLine('Liquor', 'Tito\'s, Johnnie Walker Red.')],
+      { wine: ['Red'], spirits: ['Vodka'] }, [1]],
+    // A brand-only Spirits line; before the deploy the client dropped spirits and added NA.
+    ['brand-only swap', [renamedLine('Beer and Wine', 'Red.'), renamedLine('Liquor', 'Tito\'s.')],
+      { wine: ['Red'], na: ['Non-Alcoholic'] }, [1]],
+    // A beer line naming a bourbon stout; the client dropped beer and wine and added Vodka.
+    ['bourbon stout swap', [renamedLine('Beer & Wine', 'Bourbon Barrel Stout, Stella.'), renamedLine('Non-Alcoholic', 'Athletic Brewing NA.')],
+      { spirits: ['Vodka'], na: ['Non-Alcoholic'] }, [0]],
+    // More renamed lines than categories, and a renamed line ahead of a keyed one.
+    ['count differs', [renamedLine('Beer and Wine', 'Red.'), renamedLine('House pours', 'x.'), renamedLine('Specials', 'y.')],
+      { wine: ['Red'] }, [1, 2]],
+    ['out of order', [renamedLine('Zero Proof', 'Run Wild.'), renamedLine('Spirits', 'Vodka.')],
+      { spirits: ['Vodka'], na: ['Non-Alcoholic'] }, [0]],
+  ];
+  for (const [name, stored, bar, places] of shapes) {
+    const base = legacyBarBaseline(stored, barOnly(bar));
+    const expected = { ...builtLines(bar) };
+    for (const i of places) expected[`unkeyed:${i}`] = unkeyedEntry(i);
+    assert.deepEqual(base.bar_lines, expected, name);
+    assert.equal(base.bar_hash, hashBarLines(expected), name);
+    assert.equal(base.unkeyed, places.length, name);
+  }
+  // With a renamed line held, a keyed category the picks no longer build still reads gone.
+  const gone = legacyBarBaseline([renamedLine('Beer and Wine', 'Red.'), renamedLine('Liquor', 'x.'), renamedLine('Non-Alcoholic', 'Athletic Brewing NA.')],
+    barOnly({ wine: ['Red'] }));
+  assert.deepEqual(Object.keys(gone.bar_lines).sort(), ['Beer and Wine', 'Non-Alcoholic', 'unkeyed:1']);
+  assert.notEqual(gone.bar_lines['Non-Alcoholic'], builtLines({ na: ['Non-Alcoholic'] })['Non-Alcoholic']);
+  // No renamed line: a category with no stored line reads as new; no list takes today's picks.
+  const today = builtLines({ wine: ['Red'], spirits: ['Vodka'] });
+  assert.deepEqual(legacyBarBaseline([renamedLine('Beer and Wine', 'Red.')], barOnly({ wine: ['Red'], spirits: ['Vodka'] })).bar_lines,
+    { 'Beer and Wine': today['Beer and Wine'] });
+  assert.deepEqual(legacyBarBaseline(undefined, barOnly({ wine: ['Red'], spirits: ['Vodka'] })).bar_lines, today);
+  assert.equal(legacyBarBaseline(undefined, barOnly({ wine: ['Red'] })).unkeyed, 0);
+});
+
+test('bar_hash: None and Other print nothing, so they hash as no picks at all', () => {
+  const fp = (bar) => buildFingerprint({ drinks: [], brief: {}, bar, plannerImageKey: null }).bar_hash;
+  const nothing = fp({ beer: [], wine: [], spirits: [], na: [] });
+  assert.equal(fp({ beer: ['None'], wine: ['Other'], spirits: ['None', 'Other'], na: [] }), nothing);
+  assert.equal(fp(undefined), nothing, 'no bar reads as an empty one');
+  assert.notEqual(fp({ beer: [], wine: ['Red'], spirits: [], na: [] }), nothing);
+});
+
+test('fingerprintHash: a fingerprint stored before bar_hash existed hashes exactly as it always did', () => {
+  const { bar_hash: barHash, ...legacy } = buildFingerprint(barPlan());
+  assert.match(barHash, /^[0-9a-f]{64}$/);
+  const old = crypto.createHash('sha256').update(JSON.stringify([
+    [...legacy.drink_keys].sort(), legacy.brief_hash, legacy.planner_image_key,
+  ]), 'utf8').digest('hex');
+  assert.equal(fingerprintHash(legacy), old, 'a dismissed_plan_hash stored before the deploy still matches');
+  assert.notEqual(fingerprintHash({ ...legacy, bar_hash: barHash }), old);
 });
 
 // The ONE planner image key rule (normalizePlan, Approve's stamp, the planner

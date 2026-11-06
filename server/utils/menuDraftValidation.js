@@ -19,6 +19,7 @@
 const { isDeepStrictEqual } = require('node:util');
 const { ValidationError } = require('./errors');
 const { isFontPairingId } = require('./menuFontPairings');
+const { keyBarLines } = require('./menuAlsoAtBar');
 
 const IMAGE_MODELS = ['openai', 'gemini'];
 const PLANNER_IMAGE_ROLES = ['logo', 'reference', 'ignore'];
@@ -218,10 +219,19 @@ function checkHeadings(value, stored) {
 }
 
 // The lines are fixed (none added or removed); each label and text is editable.
+// A line stored before keys existed that still sits under a builder label is
+// keyed by that label here when this PATCH edits it, before the edit can
+// rename it (lane menu-bar-legacy-keys), so a rename never costs a line its
+// key; a line the PATCH leaves as it was is stored as it was, so an unchanged
+// PATCH stays unchanged. The key is server-written: a body that sends one is
+// refused below.
 function checkAlsoAtBar(value, stored) {
   if (!Array.isArray(value)) return { error: 'Send the Also at the bar lines as a list.' };
   const prev = Array.isArray(stored) ? stored : [];
   if (value.length !== prev.length) return { error: 'The Also at the bar lines are fixed. Edit their words instead.' };
+  const keyedPrev = keyBarLines(prev).lines;
+  const keyOf = prev.map((l, i) => (isPlainObject(l) && !(typeof l.key === 'string' && l.key)
+    && isPlainObject(keyedPrev[i]) && keyedPrev[i].key ? keyedPrev[i].key : null));
   const out = [];
   for (const [i, line] of value.entries()) {
     const was = isPlainObject(prev[i]) ? prev[i] : {};
@@ -232,7 +242,8 @@ function checkAlsoAtBar(value, stored) {
     if (label.error) return label;
     const text = checkText(hasOwn(line, 'text') ? line.text : was.text, was.text, { min: 0, max: 120, nullable: true, message: 'Each line must be 120 characters or fewer.' });
     if (text.error) return text;
-    out.push({ ...was, label: label.value, text: text.value });
+    const edited = label.value !== was.label || text.value !== was.text;
+    out.push({ ...was, ...(keyOf[i] && edited ? { key: keyOf[i] } : {}), label: label.value, text: text.value });
   }
   return { value: out };
 }

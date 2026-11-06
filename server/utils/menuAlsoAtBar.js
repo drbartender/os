@@ -194,4 +194,40 @@ function buildAlsoAtBar(bar) {
   return lines;
 }
 
-module.exports = { buildAlsoAtBar, LINE_LABELS, HOUSE_BEER_MIX, TEXT_MAX };
+// The lines as a draft stores them (spec 2026-10-19 section 17, lane
+// menu-bar-baseline): each carries a server-written key, the builder's label,
+// beside the label the owner may rename on the canvas. Update draft finds the
+// line to refresh by its key, so a renamed line is still rewritten or removed
+// in place; the PATCH keeps the stored key and never takes one. buildAlsoAtBar
+// stays keyless, since the fingerprint hashes only the label and text.
+function keyedBarLines(bar) {
+  return buildAlsoAtBar(bar).map((line) => ({ key: line.label, label: line.label, text: line.text }));
+}
+
+const BAR_ORDER = Object.values(LINE_LABELS);
+const isLine = (l) => l !== null && typeof l === 'object' && !Array.isArray(l);
+const hasKey = (l) => isLine(l) && typeof l.key === 'string' && l.key !== '';
+
+// Keys the lines of a draft stored before keys existed (pure; lanes
+// menu-bar-baseline and menu-bar-legacy-keys). A line still under a builder
+// label takes that label as its key, exactly (the draft PATCH keys such a line
+// too, before an edit can rename it). A line the owner renamed before that
+// stays unkeyed and is never matched to a category: guessing it from its place
+// or its words proved unreliable both ways (lane menu-bar-renamed-lines).
+// legacyBarBaseline gives it an unkeyed:<place> entry, which the diff counts as
+// bar_unchecked, and the next Update draft rebuilds and keys it from the picks
+// (refreshBarLines). Lines already keyed are left alone.
+function keyBarLines(lines) {
+  if (!Array.isArray(lines)) return { lines, byLabel: 0, unkeyed: 0 };
+  const taken = new Set(lines.filter(hasKey).map((l) => l.key));
+  let byLabel = 0;
+  const out = lines.map((l) => {
+    if (!isLine(l) || hasKey(l) || !BAR_ORDER.includes(l.label) || taken.has(l.label)) return l;
+    taken.add(l.label);
+    byLabel += 1;
+    return { key: l.label, ...l };
+  });
+  return { lines: out, byLabel, unkeyed: out.filter((l) => isLine(l) && !hasKey(l)).length };
+}
+
+module.exports = { buildAlsoAtBar, keyedBarLines, keyBarLines, LINE_LABELS, HOUSE_BEER_MIX, TEXT_MAX };

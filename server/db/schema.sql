@@ -4995,6 +4995,27 @@ DO $$ BEGIN
       FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
   END IF;
 END $$;
+-- updated_at is the Saved time the menu card prints, so it moves only on a real
+-- edit: a write that changes nothing but plan_fingerprint or dismissed_plan_hash
+-- (the one-time bar baseline stamp, Dismiss, Mark reviewed) leaves it alone
+-- (spec 2026-10-19 section 17, lane menu-bar-baseline). CREATE OR REPLACE
+-- swaps the definition in one statement, with no window without a trigger, and
+-- runs only while the live trigger still lacks the clause, so a boot replay
+-- after the first one runs no DDL.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_menu_drafts_updated_at'
+      AND tgrelid = 'menu_drafts'::regclass
+      AND pg_get_triggerdef(oid) LIKE '%dismissed_plan_hash%'
+  ) THEN
+    CREATE OR REPLACE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts
+      FOR EACH ROW
+      WHEN ((to_jsonb(OLD) - ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'updated_at'])
+            IS DISTINCT FROM (to_jsonb(NEW) - ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'updated_at']))
+      EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
 
 -- menu_draft_pieces: one per image, piece_key 'background' or a drink key.
 -- provider and model are stamped when the piece is asked for and the job draws

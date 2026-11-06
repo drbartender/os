@@ -30,7 +30,7 @@
 //   anything the draft PATCH would refuse.
 
 const { FONT_PAIRING_IDS, isFontPairingId } = require('./menuFontPairings');
-const { buildAlsoAtBar } = require('./menuAlsoAtBar');
+const { keyedBarLines } = require('./menuAlsoAtBar');
 const { LIMITS } = require('./menuDraftValidation');
 
 const BRIEF_MAX = 1000;
@@ -240,7 +240,7 @@ function parseWords(json, normalized, { artSlots = LIMITS.art_drinks, artKeys = 
     title: clamp(json.title, OUT.title) || DEFAULT_TITLE,
     headings: { ...DEFAULT_HEADINGS },
     drinks: drinks.map((d, i) => parseDrink(d, byKey.get(d.key), i, opts)),
-    also_at_bar: buildAlsoAtBar(normalized && normalized.bar),
+    also_at_bar: keyedBarLines(normalized && normalized.bar),
     palette, font_pairing: json.font_pairing, font_pairing_suggested: json.font_pairing, ink_color: null,
     accent_color: palette.some((p) => p.hex === accentHex) ? accentHex : null,
     text_backing: 'soft', logo_mode: 'above_title', logo_badge: false, mark_color: 'ink',

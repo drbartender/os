@@ -53,6 +53,54 @@ test('a field the client edited is tinted and labeled; the client image changed 
   expect(screen.queryByText('The client image changed since this draft.')).toBeNull();
 });
 
+test('the bar picks changed note shows until dismissed', () => {
+  const line = 'The bar picks changed since this draft.';
+  const diff = { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: true, dismissed: false };
+  const { rerender } = render(<BriefTab {...props({ diff })} />);
+  expect(screen.getByText(line)).toHaveClass('md-brief-edited');
+  rerender(<BriefTab {...props({ diff: { ...diff, dismissed: true } })} />);
+  expect(screen.queryByText(line)).toBeNull();
+  rerender(<BriefTab {...props({ diff: { ...diff, bar_changed: false } })} />);
+  expect(screen.queryByText(line)).toBeNull();
+});
+
+test('a renamed pre-deploy bar line: the unchecked note shows whether or not the diff is dismissed, never the bar picks changed note; plural for several', () => {
+  const one = "A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it from the client's picks.";
+  const two = "2 bar lines renamed before bar picks were tracked can't be checked against them. Update draft rebuilds them from the client's picks.";
+  const diff = { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_unchecked: 1, dismissed: false };
+  const { rerender } = render(<BriefTab {...props({ diff })} />);
+  expect(screen.getByText(one)).toHaveClass('md-brief-edited');
+  expect(screen.queryByText('The bar picks changed since this draft.')).toBeNull();
+  rerender(<BriefTab {...props({ diff: { ...diff, bar_changed: true } })} />);
+  expect(screen.getByText(one)).toBeInTheDocument();
+  expect(screen.getByText('The bar picks changed since this draft.')).toBeInTheDocument();
+  rerender(<BriefTab {...props({ diff: { ...diff, dismissed: true } })} />);
+  expect(screen.getByText(one)).toBeInTheDocument();
+  rerender(<BriefTab {...props({ diff: { ...diff, bar_unchecked: 2 } })} />);
+  expect(screen.getByText(two)).toBeInTheDocument();
+  rerender(<BriefTab {...props({ diff: { ...diff, bar_unchecked: 0 } })} />);
+  expect(screen.queryByText(one)).toBeNull();
+  rerender(<BriefTab {...props({ diff, draft: { ...DRAFT(), read_only: true } })} />);
+  expect(screen.queryByText(one)).toBeNull();
+});
+
+test('the unchecked note names the dismissed changes Update draft would also apply', () => {
+  const diff = { added: [{ key: 'custom:mule', name: 'Cucumber Mule' }], dropped: [], brief_edited: [], image_changed: false,
+    bar_changed: true, bar_unchecked: 1, dismissed: true };
+  render(<BriefTab {...props({ diff })} />);
+  expect(screen.getByText("A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it "
+    + "from the client's picks and also applies the changes you dismissed: Cucumber Mule added, the bar picks.")).toBeInTheDocument();
+});
+
+test('the unchecked note hides while a piece is painting, as the card and the banner do', () => {
+  const one = "A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it from the client's picks.";
+  const diff = { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_unchecked: 1, dismissed: false };
+  const { rerender } = render(<BriefTab {...props({ diff, pieces: [{ piece_key: 'background', status: 'working' }] })} />);
+  expect(screen.queryByText(one)).toBeNull();
+  rerender(<BriefTab {...props({ diff, pieces: [{ piece_key: 'background', status: 'done' }] })} />);
+  expect(screen.getByText(one)).toBeInTheDocument();
+});
+
 describe('the client image', () => {
   const roles = () => screen.getByRole('group', { name: 'Client image use' });
 

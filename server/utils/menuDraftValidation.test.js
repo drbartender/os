@@ -260,7 +260,8 @@ test('a stored description over the limit (catalog text) passes when sent back u
 // ---- also_at_bar[].text: 0 to 120; the lines are fixed ----
 test('also_at_bar text: empty and 120 characters pass', () => {
   const next = content({ also_at_bar: [{ label: 'Beer and Wine', text: '' }, { label: 'Spirits', text: str(120) }] });
-  assert.deepEqual(next.also_at_bar, [{ label: 'Beer and Wine', text: '' }, { label: 'Spirits', text: str(120) }]);
+  // Each edited line stored before keys is keyed by its builder label (lane menu-bar-legacy-keys).
+  assert.deepEqual(next.also_at_bar, [{ key: 'Beer and Wine', label: 'Beer and Wine', text: '' }, { key: 'Spirits', label: 'Spirits', text: str(120) }]);
 });
 test('also_at_bar text: 121 characters, or adding or removing a line, fail', () => {
   fails(() => content({ also_at_bar: [{ label: 'Beer and Wine', text: str(121) }, { label: 'Spirits', text: 'Vodka.' }] }), 'also_at_bar');
@@ -298,6 +299,38 @@ test('headings: empty, 41 characters, or a missing or extra key fail', () => {
   fails(() => content({ headings: { ...ok, mock: str(41) } }), 'headings');
   fails(() => content({ headings: { sig: 'A', mock: 'B', more: 'C' } }), 'headings');
   fails(() => content({ headings: { ...ok, extra: 'D' } }), 'headings');
+});
+
+// ---- also_at_bar[].key: server-written, kept through every PATCH (lane menu-bar-baseline) ----
+const keyedStored = () => {
+  const s = storedDraft();
+  s.content.also_at_bar = s.content.also_at_bar.map((l) => ({ key: l.label, ...l }));
+  return s;
+};
+test('also_at_bar key: a renamed label or edited text keeps the stored key', () => {
+  const next = content({ also_at_bar: [{ label: 'Beer & Wine', text: 'IPA, Red, house pinot.' }, { label: 'Liquor', text: 'Vodka.' }] }, keyedStored());
+  assert.deepEqual(next.also_at_bar, [
+    { key: 'Beer and Wine', label: 'Beer & Wine', text: 'IPA, Red, house pinot.' },
+    { key: 'Spirits', label: 'Liquor', text: 'Vodka.' },
+  ]);
+});
+test('also_at_bar key: a PATCH never sets one, whatever the value', () => {
+  for (const key of ['Spirits', 'Beer and Wine', '']) {
+    fails(() => content({ also_at_bar: [{ key, label: 'Beer and Wine', text: 'IPA.' }, { label: 'Spirits', text: 'Vodka.' }] }, keyedStored()), 'also_at_bar');
+  }
+});
+
+test('also_at_bar key: a line stored before keys under a builder label is keyed by it as the PATCH renames it; a renamed one stays unkeyed', () => {
+  const stored = storedDraft();
+  stored.content.also_at_bar = [{ label: 'Beer and Wine', text: 'IPA, Red.' }, { label: 'Liquor', text: 'Vodka.' }];
+  const next = content({ also_at_bar: [{ label: 'Beer & Wine', text: 'IPA, Red.' }, { label: 'Liquor', text: 'Vodka, local.' }] }, stored);
+  assert.deepEqual(next.also_at_bar, [
+    { key: 'Beer and Wine', label: 'Beer & Wine', text: 'IPA, Red.' },
+    { label: 'Liquor', text: 'Vodka, local.' },
+  ]);
+  // A line the PATCH leaves as it was is stored as it was, with no key added.
+  const same = content({ also_at_bar: [{ label: 'Beer and Wine', text: 'IPA, Red.' }, { label: 'Liquor', text: 'Vodka.' }] }, stored);
+  assert.deepEqual(same.also_at_bar, stored.content.also_at_bar);
 });
 
 // ---- also_at_bar[].label: 1 to 30 ----

@@ -3,10 +3,11 @@
 
 import React, { useRef, useState } from 'react';
 import { ART_DIRECTION_MAX } from './menuEdits';
+import { BAR_LINE, uncheckedNotice } from './menuCardState';
 import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 
 // The editor's Brief tab (spec 2026-10-01 sections 4.3 and 9; 11.1, Brief tab).
-// Props (the editor's panel contract): draft, content, inputs (the draft's, or
+// Props (the editor's panel contract): draft, content, pieces, inputs (the draft's, or
 // the hook's pre-draft brief), brief (the GET's), diff, plannerImage (null or
 // { url }), referenceFile and onReferenceFile(file | null) (the hook's held
 // upload), onPatch({ content?, inputs? }), wordsDone and readOnly. Never inert:
@@ -14,6 +15,12 @@ import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 // it is shown but every control is off and nothing PATCHes.
 // - Client brief, read-only; a field the client edited since the draft is
 //   tinted and labeled "Edited by client" (no time: the plan stores none).
+//   A change to the bar picks prints the card's BAR_LINE under it (spec
+//   2026-10-19 section 17); a bar line renamed before bar picks were tracked,
+//   which nothing can check (the diff's bar_unchecked), prints
+//   the card's notice instead (uncheckedNotice, the card's and the banners'
+//   one predicate: shown whether or not the diff is dismissed, hidden while
+//   read-only, before the words land or while a piece is painting).
 // - Client image: Logo / Style ref / Ignore; under Logo, Placement and Backing,
 //   which are draft content, so they wait for the words and say so.
 // - Style reference, one at most: the planner image as Style ref, a held new
@@ -58,7 +65,7 @@ function Palette({ palette }) {
 }
 
 export default function BriefTab({
-  draft, content, inputs, brief, diff, plannerImage = null, referenceFile = null, onReferenceFile, onPatch, wordsDone = false,
+  draft, content, pieces = [], inputs, brief, diff, plannerImage = null, referenceFile = null, onReferenceFile, onPatch, wordsDone = false,
   readOnly,
 }) {
   const fileRef = useRef(null);
@@ -70,6 +77,7 @@ export default function BriefTab({
   const b = isObj(brief) ? brief : {};
   const live = isObj(diff) && !diff.dismissed && !(hasDraft && draft.read_only) ? diff : null;
   const edited = new Set(live && Array.isArray(live.brief_edited) ? live.brief_edited : []);
+  const unchecked = uncheckedNotice({ draft, pieces, diff, readOnly: isReadOnly(draft, readOnly) });
   const hasImage = b.has_planner_image === true;
   const role = ROLES.some(([v]) => v === inp.planner_image_role) ? inp.planner_image_role : 'logo';
   const locked = isReadOnly(draft, readOnly);
@@ -111,6 +119,8 @@ export default function BriefTab({
             </BriefField>
           ))}
         </div>
+        {live && live.bar_changed === true && <div className="md-brief-edited">{BAR_LINE}</div>}
+        {unchecked && <div className="md-brief-edited">{unchecked.line}</div>}
       </Section>
 
       <Section label="Client image">

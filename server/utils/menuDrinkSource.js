@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const { buildGeneratorInputFromConsult } = require('./shoppingList');
 const { recipeRowLabel } = require('./potionCatalog');
+const { buildAlsoAtBar, keyBarLines } = require('./menuAlsoAtBar');
 const {
   matchKey, matchCustomNames, loadRecipeCandidates, plannerServiceStyle,
 } = require('./shoppingListGen');
@@ -111,17 +112,17 @@ async function loadEventPlan(proposalId, db = defaultDb()) {
 
 // Every catalog drink, active or not, keyed 'cocktail:<id>' / 'mocktail:<id>'
 // (the raw id: a lookup map, never an emitted key), plus the matcher's
-// candidate pool. The two queries run together; a pg Client queues them.
-// Callers inside a transaction must pass their client, never the pool default.
+// candidate pool. Callers inside a transaction pass their client, never the
+// pool default (Update draft does), so the two queries run one after the
+// other: a pg client must never get a second query while one is running (pg 8
+// queues it with a deprecation warning; pg 9 refuses it).
 async function loadCatalogMaps(db = defaultDb()) {
-  const [result, candidates] = await Promise.all([
-    db.query(
-      `SELECT 'cocktail' AS kind, id, name, description, ingredients FROM cocktails
-       UNION ALL
-       SELECT 'mocktail' AS kind, id, name, description, ingredients FROM mocktails`
-    ),
-    loadRecipeCandidates(db),
-  ]);
+  const result = await db.query(
+    `SELECT 'cocktail' AS kind, id, name, description, ingredients FROM cocktails
+     UNION ALL
+     SELECT 'mocktail' AS kind, id, name, description, ingredients FROM mocktails`
+  );
+  const candidates = await loadRecipeCandidates(db);
   const catalogById = new Map();
   for (const row of result.rows) catalogById.set(`${row.kind}:${row.id}`, row);
   return { catalogById, candidates };
@@ -316,8 +317,66 @@ function normalizeBriefField(value) {
   return asText(value).replace(/\s+/g, ' ').trim();
 }
 
+// The bar part of the fingerprint is what the menu prints, line by line (spec
+// 2026-10-19 section 17). The words step stores keyedBarLines(normalized.bar)
+// as content.also_at_bar: each line carries the builder's label as its key
+// beside a label the owner may rename, and the owner adds brand names to the
+// lines by hand. bar_lines keeps one baseline per line, keyed by the builder's
+// label (the stored line's key, never its renameable label): that label to the
+// hash of the text the picks build. Update draft then refreshes only the lines
+// whose picks moved. The order the client picked in, a pick that prints
+// nothing (None, Other, a stale key family) and no bar at all are no change.
+// bar_hash is one hash over bar_lines (any key order), for fingerprintHash, so
+// a dismissal covers the bar it saw.
+function barLinesOf(bar) {
+  const out = {};
+  for (const line of buildAlsoAtBar(bar)) out[line.label] = sha256(asText(line.text));
+  return out;
+}
+function hashBarLines(barLines) {
+  const b = isObject(barLines) ? barLines : {};
+  return sha256(JSON.stringify(Object.keys(b).sort().map((k) => [k, asText(b[k])])));
+}
+
+// The baseline for a draft fingerprinted before bar_lines existed (lanes
+// menu-bar-baseline, menu-bar-legacy-keys and menu-bar-renamed-lines): the boot
+// stamp stores it (menuBarBaselineStamp.js), and until then the GET and Update
+// draft read the draft against it (menuDraftRead.computeDiff), so the card
+// shows what Update draft does. Each stored line still under a builder label
+// (keyBarLines) takes today's picks, so a hand edit or a change inside a line
+// (Red for White, which cannot be told from the owner's edit) is taken as the
+// baseline (spec section 17). Lines are written only by the words step and a
+// PATCH never adds, removes or reorders one, so the stored lines are the
+// categories Generate built: a keyed category the picks no longer build reads
+// as gone, and with no renamed line a built category no stored line stands for
+// reads as new. A line renamed before keys is never matched to a category: it
+// gets an entry of its own, unkeyed:<place>, whatever the count, order or
+// words, which the diff counts as bar_unchecked and never as a pick change, and
+// the next Update draft rebuilds and keys it. With one held, the categories no
+// keyed line covers take today's picks, since which of them it stood for
+// cannot be told. No list at all takes today's picks. `unkeyed` counts the
+// renamed lines.
+function legacyBarBaseline(storedLines, normalized) {
+  const current = barLinesOf((normalized || {}).bar);
+  if (!Array.isArray(storedLines)) return { bar_lines: current, bar_hash: hashBarLines(current), unkeyed: 0 };
+  const lines = keyBarLines(storedLines).lines;
+  const keyOf = (line) => (typeof line.key === 'string' ? line.key : '');
+  const keyed = lines.filter(isObject).map(keyOf).filter(Boolean);
+  const unkeyedAt = lines.map((line, i) => (isObject(line) && !keyOf(line) ? i : -1)).filter((i) => i !== -1);
+  const barLines = {};
+  for (const key of keyed) {
+    barLines[key] = Object.prototype.hasOwnProperty.call(current, key) ? current[key] : sha256(`gone:${key}`);
+  }
+  if (unkeyedAt.length) {
+    for (const key of Object.keys(current)) if (!keyed.includes(key)) barLines[key] = current[key];
+    for (const i of unkeyedAt) barLines[`unkeyed:${i}`] = sha256(`unkeyed:${i}`);
+  }
+  return { bar_lines: barLines, bar_hash: hashBarLines(barLines), unkeyed: unkeyedAt.length };
+}
+
 function buildFingerprint(normalized) {
   const n = normalized || {};
+  const barLines = barLinesOf(n.bar);
   const brief = n.brief || {};
   const theme = normalizeBriefField(brief.theme);
   const naming = normalizeBriefField(brief.naming);
@@ -327,20 +386,27 @@ function buildFingerprint(normalized) {
     brief_hash: sha256(JSON.stringify([theme, naming, notes])),
     brief_fields: { theme: sha256(theme), naming: sha256(naming), notes: sha256(notes) },
     planner_image_key: n.plannerImageKey || null,
+    bar_lines: barLines,
+    bar_hash: hashBarLines(barLines),
   };
 }
 
 // One hash over a fingerprint (the dismissed_plan_hash value, spec 9), built
 // from a canonical array so a fingerprint read back from JSONB (which reorders
 // object keys) hashes the same as a freshly built one. brief_hash already
-// covers the three brief fields.
+// covers the three brief fields. bar_hash joins the array only when the
+// fingerprint has one, so a fingerprint stored before it existed hashes
+// exactly as it always did and an old dismissed_plan_hash still matches it
+// (computeDiff relies on this).
 function fingerprintHash(fingerprint) {
   const f = fingerprint || {};
-  return sha256(JSON.stringify([
+  const parts = [
     asArray(f.drink_keys).map(String).sort(),
     f.brief_hash || null,
     f.planner_image_key || null,
-  ]));
+  ];
+  if (typeof f.bar_hash === 'string' && f.bar_hash) parts.push(f.bar_hash);
+  return sha256(JSON.stringify(parts));
 }
 
 module.exports = {
@@ -348,7 +414,9 @@ module.exports = {
   loadCatalogMaps,
   normalizePlan,
   buildFingerprint,
+  legacyBarBaseline,
   fingerprintHash,
+  hashBarLines,
   drinkKey,
   slugifyTyped,
   plannerImageKeyOf,

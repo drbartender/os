@@ -1,10 +1,12 @@
 process.env.NODE_ENV = 'test';
 require('dotenv').config();
 // Route tests for the menu art drafts (spec 2026-10-01 sections 5.5, 7, 7.1
-// and 9; plan Task E6): menuDrafts.js with its mounted siblings menuDraftSync.js
-// and menuDraftImages.js. The menuPrint.test.js harness: a minimal express app,
-// the real router, the real express-fileupload, hand-built multipart, requests
-// over real HTTP.
+// and 9; plan Task E6): menuDrafts.js with its mounted sibling
+// menuDraftImages.js. Update draft (menuDraftSync.js) has its own suite,
+// menuDraftSync.test.js, split out with this harness (lane
+// menu-bar-renamed-lines) so each suite stays well under the runner's bound.
+// The menuPrint.test.js harness: a minimal express app, the real router, the
+// real express-fileupload, hand-built multipart, requests over real HTTP.
 //
 // Nothing paid and nothing remote is ever reached:
 // - BOTH provider wrappers are stubbed at the SDK-client level
@@ -413,7 +415,7 @@ test('ids: not digits is 400, an unknown proposal or one past int4 is 404, on re
 
 // ── Generate ────────────────────────────────────────────────────────────────
 
-test('generate, re-roll and sync answer 503 MENU_ART_NOT_CONFIGURED without the OpenAI key, writing nothing', async () => {
+test('generate and re-roll answer 503 MENU_ART_NOT_CONFIGURED without the OpenAI key, writing nothing', async () => {
   const { id } = await newEvent();
   delete process.env.OPENAI_API_KEY;
   const gen = await generate(id);
@@ -421,8 +423,9 @@ test('generate, re-roll and sync answer 503 MENU_ART_NOT_CONFIGURED without the 
   assert.equal(gen.body.code, 'MENU_ART_NOT_CONFIGURED');
   const reroll = await request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'openai' } });
   assert.equal(reroll.body.code, 'MENU_ART_NOT_CONFIGURED');
+  // Update draft checks the key only where it will call a provider; with no draft there is nothing to update.
   const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
-  assert.equal(sync.body.code, 'MENU_ART_NOT_CONFIGURED');
+  assert.equal(sync.status, 404);
   assert.equal(await draftOf(id), undefined);
   assert.deepEqual(await ledgerOf(id), []);
   const read = await request('GET', base(id));
@@ -608,6 +611,42 @@ test('generate: two concurrent Generates leave exactly one run, and the supersed
   assert.ok(ledger.filter((r) => r.run_id === draft.run_id).every((r) => r.status === 'ok'));
   assert.equal(calls.openai.length, 3, 'images for the surviving run only');
   assert.ok(calls.words.length <= 2);
+});
+
+// Fix round 1 of lane menu-bar-chain: the words step builds the "Also at the
+// bar" lines from its own plan read, so it stamps the bar baseline from that
+// same read; Generate's earlier read keeps the drinks, brief and image parts.
+test('generate: a bar pick changed between Generate\'s plan read and the words step\'s is no bar change, and removing it later is one', async () => {
+  const ev = await newEvent({ extra: { spirits: ['Vodka'] } });
+  const steps = require('../../utils/menuArtJobSteps');
+  const realFresh = steps.freshPlan;
+  let fired = false;
+  // The client adds Gin and edits the notes after Generate read the plan, before the job reads it.
+  steps.freshPlan = async (pid) => {
+    if (pid === ev.id && !fired) {
+      fired = true;
+      await setPlan(ev.planId, selections(2, { spirits: ['Vodka', 'Gin'], menuDesignNotes: 'Now with gold foil' }));
+    }
+    return realFresh(pid);
+  };
+  try {
+    const res = await generate(ev.id);
+    assert.equal(res.status, 202, JSON.stringify(res.body));
+    await idle();
+  } finally {
+    steps.freshPlan = realFresh;
+  }
+  assert.equal(fired, true);
+  const draft = await draftOf(ev.id);
+  assert.deepEqual(draft.content.also_at_bar.find((l) => l.key === 'Spirits'), { key: 'Spirits', label: 'Spirits', text: 'Vodka, Gin.' });
+  let diff = (await request('GET', base(ev.id))).body.diff;
+  assert.deepEqual([diff.bar_changed, diff.bar_changed_labels], [false, []], 'the lines print what the baseline holds');
+  assert.deepEqual(diff.brief_edited, ['notes'], 'the brief part is the one Generate read');
+  assert.deepEqual(draft.plan_fingerprint.drink_keys, buildFingerprint(normalizePlan(await loadEventPlan(ev.id), await loadCatalogMaps())).drink_keys);
+  // The client removes Gin again: the menu prints it, so that is a change.
+  await setPlan(ev.planId, selections(2, { spirits: ['Vodka'], menuDesignNotes: 'Now with gold foil' }));
+  diff = (await request('GET', base(ev.id))).body.diff;
+  assert.deepEqual([diff.bar_changed, diff.bar_changed_labels], [true, ['Spirits']]);
 });
 
 // ── PATCH ───────────────────────────────────────────────────────────────────
@@ -943,107 +982,6 @@ test('planner image: streams the lowest-id plan\'s image with ?w=; 404 when it h
   assert.equal((await request('GET', `${base(id)}/planner-image?w=999`)).status, 400);
 });
 
-// ── Update draft (sync) ─────────────────────────────────────────────────────
-
-test('sync: adds a typed and a catalog drink, removes a dropped one with its piece and reserved row, and draws the added art one at a time', async (t) => {
-  if (!catalog) { t.skip('no catalog cocktail with a description on this database'); return; }
-  const { id, planId } = await ready();
-  await pool.query("UPDATE menu_drafts SET dismissed_plan_hash = 'dismissed-before' WHERE proposal_id = $1", [id]);
-  const stranded = await reservedRow(id, KEYS[1]);
-  await setPlan(planId, selections(0, { customCocktails: [NAMES[0], NAMES[2]], signatureDrinks: [catalog.id] }));
-  const catalogKey = `cocktail:${catalog.id}`;
-
-  const res = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'gemini' } });
-  assert.equal(res.status, 202, JSON.stringify(res.body));
-  assert.equal(res.body.version, 2);
-  assert.equal(calls.words.length, 1, 'one words call, for the typed drink only');
-  assert.deepEqual(JSON.parse(calls.words[0].input).drinks.map((d) => d.key), [KEYS[2]]);
-  assert.equal(await statusOfRow(stranded), 'released', 'the dropped drink\'s unspent reservation stops counting');
-  await idle();
-
-  const draft = await draftOf(id);
-  assert.deepEqual(draft.content.drinks.map((d) => [d.key, d.has_art, d.added_by_sync]),
-    [[KEYS[0], true, false], [catalogKey, true, true], [KEYS[2], true, true]]);
-  const cat = draft.content.drinks[1];
-  assert.equal(cat.display_name, catalog.name.slice(0, 60).trim());
-  assert.equal(cat.description, catalog.description);
-  assert.equal(cat.source, 'catalog');
-  assert.equal(Object.keys(cat).length, 13);
-  assert.equal(Object.keys(draft.content.drinks[2]).length, 13);
-  assert.equal(draft.dismissed_plan_hash, null);
-  const current = normalizePlan(await loadEventPlan(id), await loadCatalogMaps());
-  assert.deepEqual(draft.plan_fingerprint, buildFingerprint(current));
-
-  const pieces = await piecesOf(id);
-  assert.equal(pieces[KEYS[1]], undefined, 'the dropped drink\'s piece is gone');
-  for (const key of [catalogKey, KEYS[2]]) {
-    assert.deepEqual([pieces[key].status, pieces[key].provider, pieces[key].model], ['done', 'gemini', MODEL.gemini], key);
-  }
-  assert.equal(pieces[catalogKey].run_id, pieces[KEYS[2]].run_id, 'one piece run for the added art');
-  assert.equal(calls.gemini.length, 2);
-  assert.equal(geminiMaxActive, 1, 'the added drinks are drawn one after another');
-  const read = await request('GET', base(id));
-  assert.deepEqual([read.body.diff.added, read.body.diff.dropped], [[], []]);
-});
-
-test('sync: a stale version is 409, words still pending is 409, and neither writes or calls anything', async () => {
-  const { id, planId } = await ready();
-  await setPlan(planId, selections(3));
-  const stale = await request('POST', `${base(id)}/sync`, { json: { version: 5, image_model: 'openai' } });
-  assert.equal(stale.status, 409);
-  assert.equal(stale.body.code, 'MENU_DRAFT_CHANGED');
-  await setContent(id, { words_status: 'pending' });
-  const pending = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
-  assert.equal(pending.status, 409);
-  assert.equal(pending.body.code, 'MENU_WORDS_PENDING');
-  const bad = await request('POST', `${base(id)}/sync`, { json: { version: 1 } });
-  assert.equal(bad.status, 400);
-  assert.equal((await draftOf(id)).version, 1);
-  assert.equal(calls.words.length + imageCalls(), 0);
-});
-
-test('sync: failed or interrupted words answer MENU_WORDS_NOT_WRITTEN, never "still being written"', async () => {
-  const { id, planId } = await ready();
-  await setPlan(planId, selections(3));
-  await setContent(id, { words_status: 'failed' });
-  const failed = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
-  assert.deepEqual([failed.status, failed.body.code], [409, 'MENU_WORDS_NOT_WRITTEN']);
-  assert.ok(!/still being written/.test(failed.body.error));
-  await setContent(id, { words_status: 'pending', words_heartbeat_at: new Date(Date.now() - 3600000).toISOString() });
-  const stuck = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
-  assert.deepEqual([stuck.status, stuck.body.code], [409, 'MENU_WORDS_NOT_WRITTEN']);
-  assert.equal(calls.words.length + imageCalls(), 0);
-});
-
-test('sync: at the image cap a sync whose added drink gets art answers 429 before its words call is reserved or spent', async () => {
-  const { id, planId } = await ready();
-  await setPlan(planId, selections(3));
-  const before = await draftOf(id);
-  const textBefore = await openCount('text');
-  process.env.MENU_ART_DAILY_IMAGE_CAP = String(await openCount('image'));
-  const res = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
-  assert.deepEqual([res.status, res.body.code], [429, 'MENU_ART_CAP_REACHED']);
-  assert.equal(calls.words.length, 0, 'no words call was spent');
-  assert.equal(await openCount('text'), textBefore, 'no words row was reserved');
-  const after = await draftOf(id);
-  assert.deepEqual([after.version, after.content], [before.version, before.content]);
-  assert.equal(imageCalls(), 0);
-});
-
-test('sync: a 429 at the text cap refuses before anything is written', async () => {
-  const { id, planId } = await ready();
-  await setPlan(planId, selections(3));
-  const before = await draftOf(id);
-  process.env.MENU_ART_DAILY_TEXT_CAP = String(await openCount('text'));
-  const res = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
-  assert.equal(res.status, 429);
-  assert.equal(res.body.code, 'MENU_ART_TEXT_CAP_REACHED');
-  const after = await draftOf(id);
-  assert.equal(after.version, before.version);
-  assert.deepEqual(after.content, before.content);
-  assert.equal(calls.words.length + imageCalls(), 0);
-});
-
 // ── Dismiss ─────────────────────────────────────────────────────────────────
 
 test('dismiss: stores the plan hash under the version check, never bumps the version, and an approved draft stays approved', async () => {
@@ -1075,4 +1013,29 @@ test('dismiss: stores the plan hash under the version check, never bumps the ver
   await setPlan(planId, selections(2, { menuDesignNotes: 'Fireworks and sparklers' }));
   assert.equal((await request('GET', base(id))).body.diff.dismissed, false);
   assert.equal(calls.words.length + imageCalls(), 0, 'dismiss works without calling anything');
+});
+
+test('dismiss: the stored hash covers the bar picks, so a later bar change shows again', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'] }));
+  const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  assert.deepEqual([res.status, res.body.version], [200, 1]);
+  let diff = (await request('GET', base(id))).body.diff;
+  assert.deepEqual([diff.bar_changed, diff.dismissed], [true, true]);
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red', 'White'] }));
+  diff = (await request('GET', base(id))).body.diff;
+  assert.deepEqual([diff.bar_changed, diff.dismissed], [true, false]);
+});
+
+test('dismiss: leaves the Saved time alone, while an edit moves it (lane menu-bar-baseline)', async () => {
+  const { id, planId } = await ready();
+  const savedAt = async () => (await pool.query('SELECT updated_at FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0].updated_at.toISOString();
+  await pool.query("UPDATE menu_drafts SET updated_at = NOW() - interval '5 days' WHERE proposal_id = $1", [id]);
+  const before = await savedAt();
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'] }));
+  const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  assert.equal(res.status, 200);
+  assert.equal(await savedAt(), before, 'a dismissal is no save');
+  await setContent(id, { title: `Edited ${NONCE}` });
+  assert.notEqual(await savedAt(), before);
 });

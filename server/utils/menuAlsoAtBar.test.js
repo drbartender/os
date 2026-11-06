@@ -4,7 +4,8 @@ process.env.NODE_ENV = 'test';
 //   node --test server/utils/menuAlsoAtBar.test.js
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildAlsoAtBar, LINE_LABELS, HOUSE_BEER_MIX, TEXT_MAX } = require('./menuAlsoAtBar');
+const alsoAtBar = require('./menuAlsoAtBar');
+const { buildAlsoAtBar, keyedBarLines, keyBarLines, LINE_LABELS, HOUSE_BEER_MIX, TEXT_MAX } = alsoAtBar;
 const { FONT_PAIRING_IDS, isFontPairingId } = require('./menuFontPairings');
 const { BEER_STYLE_MAP } = require('./shoppingList');
 
@@ -168,4 +169,58 @@ test('FONT_PAIRING_IDS are the twelve fixed ids (spec 10.3; menu designer v2 spe
   assert.equal(isFontPairingId('black-tie'), true);
   assert.equal(isFontPairingId('script'), false);
   assert.equal(isFontPairingId(null), false);
+});
+
+// v2 spec 17, lane menu-bar-baseline: the lines a draft stores carry the builder's
+// label as a key, so a line the owner renamed is still found by Update draft.
+test('keyedBarLines: each built line carries its builder label as its key', () => {
+  const bar = { beer: ['IPA'], wine: ['Red'], spirits: ['Vodka'], na: ['Non-Alcoholic'] };
+  const keyed = keyedBarLines(bar);
+  assert.deepEqual(keyed, buildAlsoAtBar(bar).map((l) => ({ key: l.label, ...l })));
+  assert.deepEqual(keyed.map((l) => l.key), [LINE_LABELS.beerWine, LINE_LABELS.spirits, LINE_LABELS.na]);
+  assert.deepEqual(keyedBarLines({}), []);
+});
+
+test('no resolver gives a line with no key its label as a key: keyBarLines is the one keying rule', () => {
+  // A resolver falling back to the label would key a renamed line by a name the owner chose.
+  assert.equal(alsoAtBar.barLineKey, undefined);
+});
+
+// keyBarLines keys lines stored before keys existed by their builder label,
+// exactly; a renamed line stays unkeyed (lane menu-bar-legacy-keys).
+const BWL = 'Beer and Wine';
+const SPL = 'Spirits';
+const NAL = 'Non-Alcoholic';
+const ln = (label, key, text = 'x.') => (key ? { key, label, text } : { label, text });
+const tx = (label, text) => ({ label, text });
+const keysOf = (r) => r.lines.map((l) => l.key || null);
+
+test('keyBarLines: a line still under its builder label takes it; a keyed line is left alone', () => {
+  const r = keyBarLines([ln(BWL), ln('Liquor', SPL)]);
+  assert.deepEqual(r.lines, [ln(BWL, BWL), ln('Liquor', SPL)]);
+  assert.deepEqual([r.byLabel, r.unkeyed], [1, 0]);
+});
+
+test('keyBarLines: a renamed line stays unkeyed whatever its place or its words', () => {
+  let r = keyBarLines([ln('Beer & Wine'), ln(SPL), ln('Zero Proof')]);
+  assert.deepEqual([keysOf(r), r.unkeyed], [[null, SPL, null], 2], 'its place would allow one label, still unkeyed');
+  r = keyBarLines([tx('Liquor', 'Vodka, Gin.'), tx(NAL, 'Athletic Brewing NA.')]);
+  assert.deepEqual(keysOf(r), [null, NAL], 'its words name a category, still unkeyed');
+  r = keyBarLines([tx('Drafts', 'Bud Light, Goose Island Bourbon County Stout.')]);
+  assert.deepEqual([keysOf(r), r.unkeyed], [[null], 1], 'a brand carrying another category\'s word cannot mis-key it');
+  // The shapes the match by place got wrong (lane menu-bar-renamed-lines): each stays unkeyed.
+  r = keyBarLines([tx(BWL, 'Red.'), tx('Zero Proof', 'Sparkling cider, mocktails.')]);
+  assert.deepEqual([keysOf(r), r.unkeyed], [[BWL, null], 1], 'a sparkling NA line');
+  r = keyBarLines([tx(BWL, 'Red.'), tx('Liquor', 'Tito\'s, Johnnie Walker Red.')]);
+  assert.deepEqual([keysOf(r), r.unkeyed], [[BWL, null], 1], 'a whisky named Red');
+  r = keyBarLines([tx('Beer & Wine', 'Bourbon Barrel Stout, Stella.'), tx(NAL, 'Athletic Brewing NA.')]);
+  assert.deepEqual([keysOf(r), r.unkeyed], [[null, NAL], 1], 'a stout named for bourbon');
+  assert.deepEqual(keysOf(keyBarLines([ln(BWL), ln(BWL)])), [BWL, null], 'a builder label is taken once');
+});
+
+test('keyBarLines: an empty list, a non-list and a list of keyed lines come back as they were', () => {
+  assert.deepEqual(keyBarLines([]).lines, []);
+  assert.equal(keyBarLines(undefined).lines, undefined);
+  const keyed = [ln('Liquor', SPL)];
+  assert.deepEqual(keyBarLines(keyed).lines, keyed);
 });
