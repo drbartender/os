@@ -56,7 +56,7 @@
  * row: finishTransfer and its post-checks never run for it, and every run
  * prints how many held rows it left out, naming them by cc id only.
  *
- * If a payment slides through CC before shutdown (Sid due 7/9, Cody 7/17):
+ * If a payment slides through CC before shutdown:
  *   UPDATE proposals SET external_paid = external_paid + <dollars>,
  *          amount_paid = amount_paid + <dollars>
  *    WHERE transferred_from_cc_id = '<cc_id>';
