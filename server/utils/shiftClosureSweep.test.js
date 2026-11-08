@@ -51,12 +51,12 @@ let completedProposalId, livePropo14dId;
 // away.
 let tx;
 
-async function seedShift(key, { date, endTime, status = 'open', proposal }) {
+async function seedShift(key, { date, endTime, startTime = null, status = 'open', proposal }) {
   const r = await pool.query(
     `INSERT INTO shifts (event_date, start_time, end_time, status, location, client_name,
                          positions_needed, proposal_id)
-     VALUES ($1::date, NULL, $2, $3, '1 Test St', $4, '["Bartender"]', $5) RETURNING id`,
-    [date, endTime, status, `${LABEL} ${key}`, proposal]
+     VALUES ($1::date, $6, $2, $3, '1 Test St', $4, '["Bartender"]', $5) RETURNING id`,
+    [date, endTime, status, `${LABEL} ${key}`, proposal, startTime]
   );
   F[key] = r.rows[0].id;
   return F[key];
@@ -77,6 +77,13 @@ before(async () => {
                             date_trunc('day', n) + INTERVAL '1 minute'), 'YYYY-MM-DD') AS ended_d,
            to_char(GREATEST(n - INTERVAL '30 minutes',
                             date_trunc('day', n) + INTERVAL '1 minute'), 'HH24:MI')    AS ended_t,
+           -- An end before 06:00 with no start reads as an overnight wrap to
+           -- tomorrow (shiftEndInstant.js WRAP_CUTOFF_HOUR), so in the small
+           -- hours the ended fixtures carry a midnight start: still today,
+           -- still ended. NULL the rest of the day, so daytime coverage of the
+           -- no-start shape is unchanged (2026-11-08).
+           CASE WHEN GREATEST(n - INTERVAL '30 minutes', date_trunc('day', n) + INTERVAL '1 minute')::time < TIME '06:00'
+                THEN '00:00' END                                      AS ended_start,
            to_char(LEAST(n + INTERVAL '30 minutes',
                          date_trunc('day', n) + INTERVAL '23 hours 59 minutes'), 'YYYY-MM-DD') AS soon_d,
            to_char(LEAST(n + INTERVAL '30 minutes',
@@ -106,10 +113,10 @@ before(async () => {
   livePropo14dId = await mkProposal('confirmed');
 
   // The main candidate: finished, on a completed proposal.
-  await seedShift('finishedCompleted', { date: clock.ended_d, endTime: clock.ended_t, proposal: completedProposalId });
+  await seedShift('finishedCompleted', { date: clock.ended_d, endTime: clock.ended_t, startTime: clock.ended_start, proposal: completedProposalId });
   // Same, but 'filled' — the status that has never been used in prod but is a
   // legal non-terminal value.
-  await seedShift('filledCompleted', { date: clock.ended_d, endTime: clock.ended_t, status: 'filled', proposal: completedProposalId });
+  await seedShift('filledCompleted', { date: clock.ended_d, endTime: clock.ended_t, startTime: clock.ended_start, status: 'filled', proposal: completedProposalId });
   // On a completed proposal but NOT finished — the future-dated case the
   // completion-door hook had to gate for and then never revisited. shifts
   // .event_date is independent of the proposal's, so this is real.
@@ -117,13 +124,13 @@ before(async () => {
   // Ends in half an hour, on a completed proposal: still running, hands off.
   await seedShift('runningOnCompleted', { date: clock.soon_d, endTime: clock.soon_t, proposal: completedProposalId });
   // Finished, but the event was never completed: not our business.
-  await seedShift('finishedNotCompleted', { date: clock.ended_d, endTime: clock.ended_t, proposal: livePropo14dId });
+  await seedShift('finishedNotCompleted', { date: clock.ended_d, endTime: clock.ended_t, startTime: clock.ended_start, proposal: livePropo14dId });
   // Finished with NO proposal: "the event happened" is a fact about the
   // proposal, and there is nothing to read it from.
-  await seedShift('finishedNoProposal', { date: clock.ended_d, endTime: clock.ended_t, proposal: null });
+  await seedShift('finishedNoProposal', { date: clock.ended_d, endTime: clock.ended_t, startTime: clock.ended_start, proposal: null });
   // Already cancelled on a completed proposal: a genuinely reaped shift must
   // never be resurrected or restamped.
-  await seedShift('alreadyCancelled', { date: clock.ended_d, endTime: clock.ended_t, status: 'cancelled', proposal: completedProposalId });
+  await seedShift('alreadyCancelled', { date: clock.ended_d, endTime: clock.ended_t, startTime: clock.ended_start, status: 'cancelled', proposal: completedProposalId });
   // NOTE 2026-08-14: two fixtures were removed here, and the reason matters.
   // They seeded status='confirmed' and status='closed' — values
   // `shifts_status_check` REJECTS. This suite only ever passed because that

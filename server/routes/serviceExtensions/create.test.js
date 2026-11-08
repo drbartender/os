@@ -21,7 +21,7 @@ const router = require('./index');
 
 const NONCE = `sxc-${Date.now()}`;
 let app, server, baseUrl;
-let clientId, pkgId, onStaffId, otherStaffId, proposalId, shiftId;
+let clientId, pkgId, onStaffId, otherStaffId, proposalId, shiftId, eventZone;
 const tokens = {};
 const cleanup = { proposals: [], shifts: [], users: [] };
 
@@ -90,22 +90,34 @@ before(async () => {
 
   // Event happening RIGHT NOW so the request window is open: start 1 hour ago,
   // 4 hour duration. event_start_time is free text, as in production.
+  // The tests ask for up to 5 hours from a start an hour ago, so the event
+  // needs 5 hours before its 2:00 AM local curfew (eventEndInstant.js). In
+  // Chicago that holds only from about 03:00 to 21:00; outside it the curfew
+  // refuses every request by design, so the event runs in the first zone
+  // where it is daytime (2026-11-08). Nothing here depends on the zone.
   const now = new Date();
-  const startLocal = new Date(now.getTime() - 60 * 60 * 1000);
-  const hh = startLocal.getHours();
+  const startInstant = new Date(now.getTime() - 60 * 60 * 1000);
+  const localParts = (zone, at) => Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+      .formatToParts(at).map((p) => [p.type, p.value])
+  );
+  eventZone = ['America/Chicago', 'Asia/Tokyo', 'Europe/London']
+    .find((z) => { const h = Number(localParts(z, startInstant).hour); return h >= 3 && h <= 20; });
+  const startLocal = localParts(eventZone, startInstant);
+  const hh = Number(startLocal.hour);
   const startDisplay = `${hh % 12 === 0 ? 12 : hh % 12}:00 ${hh >= 12 ? 'PM' : 'AM'}`;
-  // Local-frame date to match the local-frame hour above. toISOString() is the
-  // UTC date: after 7pm CDT it rolls to tomorrow, storing a future event and
-  // turning every in-window test into a too_early 409.
-  const dateStr = `${startLocal.getFullYear()}-${String(startLocal.getMonth() + 1).padStart(2, '0')}-${String(startLocal.getDate()).padStart(2, '0')}`;
+  // The date in the event's own zone, to match the hour above. toISOString()
+  // is the UTC date: after 7pm CDT it rolls to tomorrow, storing a future
+  // event and turning every in-window test into a too_early 409.
+  const dateStr = `${startLocal.year}-${startLocal.month}-${startLocal.day}`;
 
   const pr = await pool.query(
     `INSERT INTO proposals
        (client_id, package_id, status, guest_count, event_duration_hours, num_bars,
         total_price, amount_paid, event_date, event_start_time, event_timezone, pricing_snapshot, adjustments)
-     VALUES ($1,$2,'balance_paid',100,4,1,350,350,$3,$4,'America/Chicago','{}','[]')
+     VALUES ($1,$2,'balance_paid',100,4,1,350,350,$3,$4,$5,'{}','[]')
      RETURNING id`,
-    [clientId, pkgId, dateStr, startDisplay]
+    [clientId, pkgId, dateStr, startDisplay, eventZone]
   );
   proposalId = pr.rows[0].id;
   cleanup.proposals.push(proposalId);

@@ -121,6 +121,13 @@ before(async () => {
                             date_trunc('day', n) + INTERVAL '1 minute'), 'YYYY-MM-DD') AS ended_d,
            to_char(GREATEST(n - INTERVAL '30 minutes',
                             date_trunc('day', n) + INTERVAL '1 minute'), 'HH24:MI')    AS ended_t,
+           -- An end before 06:00 with no start reads as an overnight wrap to
+           -- tomorrow (shiftEndInstant.js WRAP_CUTOFF_HOUR), so in the small
+           -- hours the ended fixtures carry a midnight start: still today,
+           -- still ended. NULL the rest of the day, so daytime coverage of the
+           -- no-start shape is unchanged (2026-11-08).
+           CASE WHEN GREATEST(n - INTERVAL '30 minutes', date_trunc('day', n) + INTERVAL '1 minute')::time < TIME '06:00'
+                THEN '00:00' END                                      AS ended_start,
            to_char(LEAST(n + INTERVAL '30 minutes',
                          date_trunc('day', n) + INTERVAL '23 hours 59 minutes'), 'YYYY-MM-DD') AS soon_d,
            to_char(LEAST(n + INTERVAL '30 minutes',
@@ -148,7 +155,7 @@ before(async () => {
 
   // ENDED: finished about half an hour ago. The row every previous round got
   // wrong in one direction or the other.
-  await seedShift('ended', { date: clock.ended_d, endTime: clock.ended_t, visible: false });
+  await seedShift('ended', { date: clock.ended_d, endTime: clock.ended_t, startTime: clock.ended_start, visible: false });
   // SOON: ends about half an hour from now.
   await seedShift('soon', { date: clock.soon_d, endTime: clock.soon_t, visible: true });
   // TONIGHT_NULL: no end_time at all (14 of 78 prod shifts). Visible until
