@@ -4,7 +4,7 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
-const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { publicReadLimiter, signLimiter, adminWriteLimiter } = require('../middleware/rateLimiters');
 const { ValidationError, NotFoundError, ConflictError, ExternalServiceError } = require('../utils/errors');
@@ -111,8 +111,12 @@ async function sendSignedCopyEmail({ userId, email, fullName, pdfBuf }) {
   );
 }
 
-// ── GET /api/agreement/admin/:userId/pdf — admin/manager: signed R2 URL to a contractor's PDF ──
-router.get('/admin/:userId/pdf', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+// ── GET /api/agreement/admin/:userId/pdf — admin only: signed R2 URL to a contractor's PDF ──
+// Admin-only (owner's decision, 2026-11-11): the PDF shows the signature, the
+// IP and the user agent, which the staff record read (GET /api/admin/users/:id)
+// withholds from a manager. The resend below stays open to a manager: it mails
+// the signer's own copy to the signer and hands the caller nothing.
+router.get('/admin/:userId/pdf', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = parseUserId(req.params.userId);
   const result = await pool.query(
     'SELECT pdf_storage_key FROM agreements WHERE user_id = $1',

@@ -630,7 +630,7 @@ function UserDetailBody() {
       )}
 
       {tab === 'documents' && (
-        <DocumentsTab showTax={isAdmin} agreement={agreement} payment={payment} profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
+        <DocumentsTab showTax={isAdmin} canOpenAgreement={isAdmin} agreement={agreement} payment={payment} profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
       )}
 
       {tab === 'messages' && (

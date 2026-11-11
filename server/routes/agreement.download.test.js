@@ -1,9 +1,11 @@
 // The signed staff agreement is retrievable from the app (audit ESIG-04):
 // the signer through GET /api/agreement/download (own key only, 404 without
-// one), an admin or manager through GET /api/agreement/admin/:userId/pdf
-// (the stored key must sit under agreements/<userId>/), and an admin can
-// resend the signer's copy through POST /api/agreement/admin/:userId/resend-copy
-// when the sign-time email never went out (pdf_email_sent_at stays NULL).
+// one), an admin through GET /api/agreement/admin/:userId/pdf (the stored key
+// must sit under agreements/<userId>/; admin-only, since the PDF shows the
+// signature, IP and user agent the user record withholds from a manager), and
+// an admin or manager can resend the signer's copy through
+// POST /api/agreement/admin/:userId/resend-copy when the sign-time email never
+// went out (pdf_email_sent_at stays NULL); the resend shows the caller nothing.
 //
 // Harness of agreement.signatureIp.test.js: no database, the pool's query
 // answered by a recorder (users by id, agreements by user_id), R2 and email
@@ -49,6 +51,7 @@ const { AppError } = require('../utils/errors');
 
 const STAFF = { id: 4248, email: 'signer@example.com', role: 'staff', onboarding_status: 'approved', can_hire: false, can_staff: false, token_version: 0, pre_hired: false, presence_lead_rank: null };
 const ADMIN = { id: 7, email: 'admin@example.com', role: 'admin', onboarding_status: 'approved', can_hire: true, can_staff: true, token_version: 0, pre_hired: false, presence_lead_rank: null };
+const MANAGER = { id: 8, email: 'manager@example.com', role: 'manager', onboarding_status: 'approved', can_hire: false, can_staff: true, token_version: 0, pre_hired: false, presence_lead_rank: null };
 const OTHER_STAFF_ID = 4249;
 const KEY = `agreements/${STAFF.id}/contractor-agreement-v3-1700000000000.pdf`;
 
@@ -58,7 +61,7 @@ const calls = [];
 function answer(sql, params) {
   calls.push({ sql, params });
   if (/FROM users WHERE id = \$1/.test(sql)) {
-    const u = [STAFF, ADMIN].find((x) => x.id === Number(params[0]));
+    const u = [STAFF, ADMIN, MANAGER].find((x) => x.id === Number(params[0]));
     return u ? { rows: [u], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (/FROM agreements WHERE user_id = \$1/.test(sql) && /^\s*SELECT/i.test(sql)) {
@@ -148,6 +151,22 @@ test('an admin opens a contractor\'s PDF; a staff account cannot', async () => {
 
   const denied = await request('GET', `/api/agreement/admin/${STAFF.id}/pdf`, STAFF);
   assert.equal(denied.status, 403, denied.raw);
+});
+
+test('a manager cannot open a contractor\'s PDF, and nothing is read or presigned; a manager can still resend the signer\'s copy', async () => {
+  const denied = await request('GET', `/api/agreement/admin/${STAFF.id}/pdf`, MANAGER);
+  assert.equal(denied.status, 403, denied.raw);
+  assert.equal(denied.body.code, 'PERMISSION_DENIED');
+  assert.equal(signed.length, 0, 'nothing is presigned for a manager');
+  assert.ok(!calls.some((c) => /FROM agreements WHERE user_id = \$1/.test(c.sql)), 'the agreements row is never read for a manager');
+
+  // The resend mails the stored PDF to the signer's own address and hands
+  // the caller nothing, so it stays open to a manager.
+  const resent = await request('POST', `/api/agreement/admin/${STAFF.id}/resend-copy`, MANAGER);
+  assert.equal(resent.status, 200, resent.raw);
+  assert.equal(emails.length, 1);
+  assert.equal(emails[0].to, STAFF.email);
+  assert.equal(signed.length, 0, 'the resend presigns nothing either');
 });
 
 test('the admin route refuses a key outside agreements/<userId>/, a missing row and a malformed id', async () => {

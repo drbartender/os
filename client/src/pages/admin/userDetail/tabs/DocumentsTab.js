@@ -1,7 +1,7 @@
 // The admin staff record's Documents tab: the contractor agreement (its signed PDF through the
-// prefix-checked admin route, a resend of the signer's copy when the sign-time email never went
-// out), the W-9, the alcohol certification, the resume and the headshot, each opened in the
-// document lightbox, plus the signature and acknowledgments cards.
+// prefix-checked admin-only route when the viewer is an admin, a resend of the signer's copy when
+// the sign-time email never went out), the W-9, the alcohol certification, the resume and the
+// headshot, each opened in the document lightbox, plus the signature and acknowledgments cards.
 
 import React, { useState } from 'react';
 import api from '../../../../utils/api';
@@ -10,7 +10,7 @@ import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { ctDay, fmtDateFull } from '../../../../components/adminos/format';
 
-export default function DocumentsTab({ showTax = true, agreement, payment, profile, application, previewFile, previewLoading }) {
+export default function DocumentsTab({ showTax = true, canOpenAgreement = false, agreement, payment, profile, application, previewFile, previewLoading }) {
   const toast = useToast();
   // The signer's copy of the agreement (audit ESIG-04): the PDF exists but the
   // sign-time email never went out, until an admin resends it here.
@@ -50,10 +50,13 @@ export default function DocumentsTab({ showTax = true, agreement, payment, profi
         ? `Signed ${fmtDateFull(ctDay(agreement.signed_at))}${copyNotEmailed ? ' · Copy not emailed' : ''}`
         : 'Not signed yet',
       kind: agreement?.signed_at ? (copyNotEmailed ? 'warn' : 'ok') : 'warn',
-      // The stored PDF through the admin route (prefix-checked, 15-minute URL);
-      // previewFile fetches it and the lightbox renders the PDF.
-      url: agreement?.pdf_storage_key && agreement?.user_id ? `/agreement/admin/${agreement.user_id}/pdf` : null,
-      filename: agreement?.pdf_storage_key ? 'contractor-agreement.pdf' : null,
+      // The stored PDF through the admin-only route (prefix-checked, 15-minute
+      // URL); previewFile fetches it and the lightbox renders the PDF. Offered
+      // only when the parent says the viewer may open it (an admin): the route
+      // refuses a manager, since the PDF shows the signature, IP and user agent
+      // the staff record withholds from one. Refuses by default.
+      url: canOpenAgreement && agreement?.pdf_storage_key && agreement?.user_id ? `/agreement/admin/${agreement.user_id}/pdf` : null,
+      filename: canOpenAgreement && agreement?.pdf_storage_key ? 'contractor-agreement.pdf' : null,
       action: copyNotEmailed ? (
         <button type="button" className="btn btn-ghost btn-sm" onClick={resendCopy} disabled={resending}>
           <Icon name="mail" size={11} />{resending ? 'Sending…' : 'Resend copy'}
