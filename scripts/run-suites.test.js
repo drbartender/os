@@ -152,9 +152,9 @@ function runIn(root, args, extraEnv = {}) {
 }
 
 test('parseArgs: one mode, an optional --log-dir, and a usage error for anything else', () => {
-  assert.deepStrictEqual(parseArgs(['--changed', 'a..b']), { mode: 'changed', range: 'a..b', files: [], logDir: null });
-  assert.deepStrictEqual(parseArgs(['--staged', '--log-dir', 'out']), { mode: 'staged', range: null, files: [], logDir: 'out' });
-  assert.deepStrictEqual(parseArgs(['x.test.js', 'y.js']), { mode: 'files', range: null, files: ['x.test.js', 'y.js'], logDir: null });
+  assert.deepStrictEqual(parseArgs(['--changed', 'a..b']), { mode: 'changed', range: 'a..b', files: [], logDir: null, workers: null });
+  assert.deepStrictEqual(parseArgs(['--staged', '--log-dir', 'out']), { mode: 'staged', range: null, files: [], logDir: 'out', workers: null });
+  assert.deepStrictEqual(parseArgs(['x.test.js', 'y.js']), { mode: 'files', range: null, files: ['x.test.js', 'y.js'], logDir: null, workers: null });
   for (const bad of [[], ['--log-dir'], ['--log-dir', '--staged'], ['--bogus'], ['--changed'], ['--changed', 'abc'], ['--changed', 'a..b', '--staged'], ['--staged', 'x.test.js'], ['--staged', '--staged']]) {
     assert.throws(() => parseArgs(bad), /usage/, JSON.stringify(bad));
   }
@@ -883,4 +883,115 @@ test('stagedPaths reads HEAD under an env that ignores replace refs: a replaced 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- Parallel workers (2026-11-08) ----
+
+test('parseArgs takes --workers 1 to 8; workerCount reads the flag, then RUN_SUITES_WORKERS, and stays 1 under a root override', () => {
+  const { workerCount } = require(RUNNER);
+  assert.strictEqual(parseArgs(['--workers', '3', 'x.test.js']).workers, 3);
+  for (const bad of [['--workers'], ['--workers', '0', 'x.test.js'], ['--workers', '9', 'x.test.js'], ['--workers', '2.5', 'x.test.js'], ['--workers', '2', '--workers', '2', 'x.test.js']]) {
+    assert.throws(() => parseArgs(bad), /usage/, JSON.stringify(bad));
+  }
+  assert.strictEqual(workerCount({ workers: 2 }, { RUN_SUITES_ROOT: '/x' }), 2, 'the flag wins');
+  assert.strictEqual(workerCount({ workers: null }, { RUN_SUITES_WORKERS: '3' }), 3);
+  assert.strictEqual(workerCount({ workers: null }, { RUN_SUITES_ROOT: '/x' }), 1, 'a fixture repo never creates Neon branches');
+  assert.strictEqual(workerCount({ workers: null }, { RUN_SUITES_ROOT: '/x', RUN_SUITES_WORKERS: '4' }), 1, 'the env knob never reaches a root override');
+  assert.strictEqual(workerCount({ workers: null }, {}), 4, 'the default for this repo');
+});
+
+test('queueOrder puts the slowest known suites first and unknown suites ahead of them', () => {
+  const { queueOrder } = require(RUNNER);
+  assert.deepStrictEqual(queueOrder(['a', 'b', 'c', 'd'], { a: 10, b: 900, d: 50 }), ['c', 'b', 'd', 'a']);
+});
+
+test('neonBranches touches only ci-suites-<n> branches', () => {
+  const NB = require('./lib/neonBranches');
+  for (const ok of ['ci-suites-1', 'ci-suites-12']) assert.doesNotThrow(() => NB.guardName(ok));
+  for (const bad of ['dev', 'production', 'ci-smoke', 'ci-suites-', 'ci-suites-1x', 'x-ci-suites-1']) assert.throws(() => NB.guardName(bad), /refusing/, bad);
+});
+
+test('--workers 2 with RUN_SUITES_DB_URLS: initDb runs once per worker database, every suite runs once on a worker database, and the summary keeps the suite order', () => {
+  const SEEN = "const { test } = require('node:test');\ntest('db', () => { console.log('DB=' + process.env.DATABASE_URL); });\n";
+  const root = gitRepo('rs-par-', {
+    'server/db/index.js': "module.exports = { initDb: async () => { require('fs').appendFileSync(require('path').join(__dirname, 'initdb.log'), process.env.DATABASE_URL + '\\n'); } };\n",
+    'server/a.test.js': SEEN,
+    'server/b.test.js': SEEN,
+    'server/c.test.js': SEEN,
+  });
+  const logDir = path.join(tmp('rs-par-logs-'), 'run');
+  const r = runIn(root, ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js', 'server/c.test.js'], { RUN_SUITES_DB_URLS: 'db-one,db-two', DATABASE_URL: 'the-dev-db' });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /3 suite\(s\) across 2 workers/);
+  const summary = JSON.parse(fs.readFileSync(path.join(logDir, 'summary.json'), 'utf8'));
+  assert.deepStrictEqual(summary.suites.map((s) => [s.file, s.ok]), [['server/a.test.js', true], ['server/b.test.js', true], ['server/c.test.js', true]]);
+  const used = ['a', 'b', 'c'].map((n) => /DB=(\S+)/.exec(fs.readFileSync(path.join(logDir, outName(`server/${n}.test.js`)), 'utf8'))[1]);
+  for (const u of used) assert.ok(['db-one', 'db-two'].includes(u), `a suite ran on ${u}, never the dev database`);
+  assert.deepStrictEqual(fs.readFileSync(path.join(root, 'server/db/initdb.log'), 'utf8').trim().split('\n').sort(), ['db-one', 'db-two']);
+});
+
+test('a worker database whose initDb fails sends the run to the serial path', () => {
+  const root = gitRepo('rs-par-fail-', {
+    'server/db/index.js': 'module.exports = { initDb: async () => { throw new Error("schema broke"); } };\n',
+    'server/a.test.js': PASSING_SUITE,
+    'server/b.test.js': PASSING_SUITE,
+  });
+  const logDir = path.join(tmp('rs-par-fail-logs-'), 'run');
+  const r = runIn(root, ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js'], { RUN_SUITES_DB_URLS: 'db-one,db-two' });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stderr, /initDb on worker \d failed .*running serially on the dev database/);
+  assert.doesNotMatch(r.stdout, /across 2 workers/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(logDir, 'summary.json'), 'utf8')).total_pass, 4);
+});
+
+const SEEN_DB = "const { test } = require('node:test');\ntest('db', () => { console.log('DB=' + process.env.DATABASE_URL + ' W=' + (process.env.RUN_SUITES_WORKERS || '') + ' U=' + (process.env.RUN_SUITES_DB_URLS || '')); });\n";
+const OK_INITDB = "module.exports = { initDb: async () => {} };\n";
+
+test('a second run into the same --log-dir after a parallel run is not refused, and a suite never sees the worker knobs', () => {
+  const root = gitRepo('rs-par-reuse-', { 'server/db/index.js': OK_INITDB, 'server/a.test.js': SEEN_DB, 'server/b.test.js': SEEN_DB });
+  const logDir = path.join(tmp('rs-par-reuse-logs-'), 'run');
+  const env = { RUN_SUITES_DB_URLS: 'db-one,db-two', RUN_SUITES_WORKERS: '2' };
+  const args = ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js'];
+  const first = runIn(root, args, env);
+  assert.strictEqual(first.status, 0, first.stdout + first.stderr);
+  assert.match(first.stdout, /across 2 workers/);
+  assert.deepStrictEqual(fs.readdirSync(logDir).filter((f) => /^initdb/.test(f)), [], 'initDb output stays out of the run dir');
+  const second = runIn(root, args, env);
+  assert.strictEqual(second.status, 0, second.stdout + second.stderr);
+  const out = fs.readFileSync(path.join(logDir, outName('server/a.test.js')), 'utf8');
+  assert.match(out, /DB=db-(one|two) W= U=\n/, 'the suite got its worker database and none of the knobs');
+});
+
+test('an initDb that logs an UNEXPECTED schema failure refuses the run with did_not_run', () => {
+  const root = gitRepo('rs-par-half-', {
+    'server/db/index.js': "module.exports = { initDb: async () => { console.error('✗ Database schema initialized with 1 UNEXPECTED failure(s) — review immediately'); } };\n",
+    'server/a.test.js': PASSING_SUITE,
+    'server/b.test.js': PASSING_SUITE,
+  });
+  const logDir = path.join(tmp('rs-par-half-logs-'), 'run');
+  const r = runIn(root, ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js'], { RUN_SUITES_DB_URLS: 'db-one,db-two' });
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /could not apply part of schema\.sql/);
+  const summary = JSON.parse(fs.readFileSync(path.join(logDir, 'summary.json'), 'utf8'));
+  assert.strictEqual(summary.total_fail, 1);
+  assert.match(summary.did_not_run, /half-built/);
+});
+
+test('RUN_SUITES_DB_URLS with one database says so and runs serially', () => {
+  const root = gitRepo('rs-par-one-', { 'server/db/index.js': OK_INITDB, 'server/a.test.js': PASSING_SUITE, 'server/b.test.js': PASSING_SUITE });
+  const logDir = path.join(tmp('rs-par-one-logs-'), 'run');
+  const r = runIn(root, ['--workers', '2', '--log-dir', logDir, 'server/a.test.js', 'server/b.test.js'], { RUN_SUITES_DB_URLS: 'db-one' });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stderr, /names 1 database\(s\).*running serially/);
+  assert.doesNotMatch(r.stdout, /across/);
+});
+
+test('a root with no git dir still writes its summary (no durations record to keep)', () => {
+  const root = tmp('rs-nogit-');
+  writeTree(root, { 'server/a.test.js': PASSING_SUITE });
+  const logDir = path.join(root, 'logs');
+  const r = runIn(root, ['server/a.test.js', '--log-dir', logDir]);
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stderr, /durations/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(logDir, 'summary.json'), 'utf8')).total_pass, 2);
 });

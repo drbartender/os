@@ -26,7 +26,19 @@
  * dies at its bound. An override of RUN_SUITES_ROOT or DRB_DEVDB_LOCK_FILE is
  * named in one stderr line.
  *
- * Each suite runs serially as `node -r dotenv/config --test-reporter=tap
+ * Parallel workers (2026-11-08): a run reaching two or more server/ suites
+ * forks up to 4 workers (--workers <n>, RUN_SUITES_WORKERS; 1 under a
+ * RUN_SUITES_ROOT override), each with DATABASE_URL set to its own
+ * ci-suites-<n> Neon branch, reset to dev and given initDb
+ * (scripts/lib/neonBranches.js, scripts/lib/suiteWorker.js;
+ * RUN_SUITES_DB_URLS names the databases instead, for a test or by hand). The
+ * workers pull suites from one queue, slowest first by the durations the last
+ * runs recorded in <git-common-dir>/drb-review/_suite-durations.json, and each
+ * suite runs exactly as below. The session is swept once after every worker
+ * ends, not between suites. No Neon key, a failed Neon step or initDb, or one
+ * worker runs the serial path below on the dev database.
+ *
+ * Each suite runs as `node -r dotenv/config --test-reporter=tap
  * --test-reporter-destination=<log> <file>` (tapSummary.suiteArgv, the argv
  * testdb-smoke uses too) with cwd at the repo root. Its log,
  * <log-dir>/<path with slashes as dashes>.<6 hex of the path's sha1>.log
@@ -103,8 +115,9 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { spawnSync, execFileSync } = require('child_process');
+const { spawnSync, execFileSync, spawn, fork } = require('child_process');
 // git runs under sensitive-match's env: no replace refs, no diff driver, no
 // diff options from the environment (review-tooling security, run-suites L4).
 const SM = require('./sensitive-match');
@@ -119,6 +132,13 @@ const GUARD = 'DRB_DEVDB_LOCKED';
 // holding the dev-suite lock, and menuDrafts.test.js runs about 164 s on a quiet
 // shared dev database and past 180 s on a loaded one.
 const SUITE_TIMEOUT_MS = 300_000;
+// Parallel workers (2026-11-08): each runs on its own ci-suites-<n> Neon
+// branch reset to dev, so the suites of one run cannot collide and no run
+// touches the dev database the local server uses. The default is 4; --workers
+// 1, RUN_SUITES_WORKERS=1, no Neon key, fewer than two server suites, or a
+// Neon step that fails runs the serial path on the dev database, as before.
+const DEFAULT_WORKERS = 4;
+const INITDB_TIMEOUT_MS = 180_000;
 
 function norm(root, p) {
   return path.relative(root, path.resolve(root, p)).split(path.sep).join('/');
@@ -263,7 +283,7 @@ function verifyRange(root, range) {
 // --log-dir. Anything else is a usage error, so a typo never runs a narrower
 // set than was asked for.
 function parseArgs(argv) {
-  const opts = { mode: null, range: null, files: [], logDir: null };
+  const opts = { mode: null, range: null, files: [], logDir: null, workers: null };
   const setMode = (m) => {
     if (opts.mode && opts.mode !== m) throw usage('one mode only: --changed, --staged or files');
     if (opts.mode === m && m !== 'files') throw usage(`${m} given twice`);
@@ -275,7 +295,12 @@ function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--log-dir') {
+    if (a === '--workers') {
+      if (opts.workers !== null) throw usage('--workers given twice');
+      const n = Number(value(a, argv[++i]));
+      if (!Number.isInteger(n) || n < 1 || n > 8) throw usage('--workers takes a whole number from 1 to 8');
+      opts.workers = n;
+    } else if (a === '--log-dir') {
       if (opts.logDir !== null) throw usage('--log-dir given twice');
       opts.logDir = value(a, argv[++i]);
     } else if (a === '--changed') {
@@ -332,7 +357,7 @@ function runSuite(root, file, logDir, { timeoutMs = SUITE_TIMEOUT_MS, quiet = fa
     r = boundedNodeSync(suiteArgv(file, { tapFile: logPath }), {
       timeoutMs,
       cwd: root,
-      env: suiteEnv(),
+      env: runnerFreeEnv(suiteEnv()),
       stdio: ['ignore', fd, fd],
       lockFd,
     });
@@ -353,6 +378,180 @@ function runSuite(root, file, logDir, { timeoutMs = SUITE_TIMEOUT_MS, quiet = fa
   const line = `${file} ${counts}${exit}`;
   if (!quiet) console.log(failed ? `${line}  (log: ${logPath}; output: ${outPath})` : line);
   return { file, text, exitOk, failed, line };
+}
+
+// ---- Parallel workers (2026-11-08) -------------------------------------------
+
+// A suite's environment never carries the runner's own worker knobs: a fixture
+// run nested inside a suite (run-suites.test.js) would otherwise inherit them
+// and reset the shared ci-suites branches under the outer run's workers.
+function runnerFreeEnv(env) {
+  delete env.RUN_SUITES_WORKERS;
+  delete env.RUN_SUITES_DB_URLS;
+  delete env.RUN_SUITES_WORKER_LOCK_FD;
+  return env;
+}
+
+// Suite durations from earlier runs, <git-common-dir>/drb-review/_suite-durations.json
+// ({file: ms}), so the queue starts with the slowest suites; an unknown suite
+// counts as slow. A file that cannot be read is an empty record.
+// null when the root has no git dir (a fixture repo): nowhere to record.
+function durationsFile(root) {
+  try {
+    return path.join(gitCommonDir(root), 'drb-review', '_suite-durations.json');
+  } catch {
+    return null;
+  }
+}
+function readDurations(root) {
+  const file = durationsFile(root);
+  if (!file) return {};
+  try {
+    const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return d && typeof d === 'object' ? d : {};
+  } catch {
+    return {};
+  }
+}
+function writeDurations(root, results) {
+  const file = durationsFile(root);
+  if (!file) return;
+  const d = readDurations(root);
+  for (const r of results) {
+    const m = /^# duration_ms ([\d.]+)/m.exec(r.text || '');
+    if (m) d[r.file] = Math.round(Number(m[1]));
+  }
+  try {
+    fs.writeFileSync(file, `${JSON.stringify(d, null, 2)}\n`);
+  } catch (err) {
+    // a record we cannot write only costs ordering next time
+    console.error(`run-suites: could not record suite durations (${err.code || err.message}); the next run orders its queue without them`);
+  }
+}
+function queueOrder(suites, durations) {
+  const slow = Number.MAX_SAFE_INTEGER;
+  return [...suites].sort((a, b) => (durations[b] ?? slow) - (durations[a] ?? slow) || a.localeCompare(b));
+}
+
+// The worker count: --workers, else 1 under a RUN_SUITES_ROOT override (a
+// test's fixture repo, the old-code proof, the merge re-run), so no
+// environment knob makes such a run create Neon branches, else
+// RUN_SUITES_WORKERS, else the default.
+function workerCount(opts, env = process.env) {
+  if (opts.workers !== null) return opts.workers;
+  if (env.RUN_SUITES_ROOT) return 1;
+  const n = Number(env.RUN_SUITES_WORKERS);
+  return Number.isInteger(n) && n >= 1 && n <= 8 ? n : DEFAULT_WORKERS;
+}
+
+// The worker databases: RUN_SUITES_DB_URLS (comma-separated, a test and a
+// hand override) or n fresh ci-suites branches; null with one stderr line
+// when there is no Neon key or a Neon step fails, so the run goes serial.
+async function workerDbUrls(n) {
+  if (process.env.RUN_SUITES_DB_URLS) {
+    const urls = process.env.RUN_SUITES_DB_URLS.split(',').filter(Boolean).slice(0, n);
+    if (urls.length < 2) {
+      console.error(`run-suites: RUN_SUITES_DB_URLS names ${urls.length} database(s), and a parallel run needs two or more; running serially on the dev database`);
+      return null;
+    }
+    return urls;
+  }
+  const NB = require('./lib/neonBranches');
+  const key = NB.discoverApiKey();
+  if (!key) {
+    console.error('run-suites: no Neon key (NEON_API_KEY or ~/.secrets/neon_api_key); running serially on the dev database');
+    return null;
+  }
+  try {
+    return await NB.workerDatabases(key, n);
+  } catch (err) {
+    console.error(`run-suites: the worker branches could not be prepared (${NB.mask(err.message)}); running serially on the dev database`);
+    return null;
+  }
+}
+
+// initDb on one worker database, bounded like a suite, its output to
+// <outDir>/initdb-<n>.out (a temp dir, never the run dir: a run dir holds only
+// the runner's own files, or the next run on it refuses). Resolves to
+// { failed } (no connection, a crash, the bound: the run goes serial) or
+// { unexpected } (initDb resolves after logging a schema statement it could
+// not apply, so a branch would run half-built: the run refuses), else {}.
+function initWorkerDb(root, dbUrl, n, outDir, lockFd) {
+  return new Promise((resolve) => {
+    const outPath = path.join(outDir, `initdb-${n}.out`);
+    const out = fs.openSync(outPath, 'w');
+    const argv = ['--signal=KILL', '--kill-after=5', String(INITDB_TIMEOUT_MS / 1000), process.execPath, '-r', require.resolve('dotenv/config'), '-e',
+      "require('./server/db/index.js').initDb().then(() => process.exit(0)).catch((e) => { console.error(e && e.message ? e.message : e); process.exit(1); });"];
+    const child = spawn(gnuTimeout(), argv, {
+      cwd: root,
+      env: suiteEnv({ DATABASE_URL: dbUrl }),
+      stdio: ['ignore', out, out, ...(lockFd === null || lockFd === undefined ? [] : [lockFd])],
+    });
+    child.on('error', (err) => { fs.closeSync(out); resolve({ failed: `initDb ${n} could not start: ${err.code || err.message}` }); });
+    child.on('exit', (code, signal) => {
+      fs.closeSync(out);
+      if (code !== 0) return resolve({ failed: `initDb on worker ${n} failed (${signal || `exit ${code}`}; see ${outPath})` });
+      let text = '';
+      try {
+        text = fs.readFileSync(outPath, 'utf8');
+      } catch (err) {
+        return resolve({ failed: `initDb on worker ${n}: its output could not be read (${err.code || err.message})` });
+      }
+      if (/UNEXPECTED failure/.test(text)) return resolve({ unexpected: `initDb on worker ${n} could not apply part of schema.sql (see ${outPath}); a half-built database runs no suite` });
+      return resolve({});
+    });
+  });
+}
+
+// Runs `suites` across one worker per URL, slowest first, printing each
+// result line as it lands. Resolves to the results in the order of `suites`.
+function runParallel(root, suites, urls, logDir, lockFd, launcherGone = () => false) {
+  const queue = queueOrder(suites, readDurations(root));
+  const results = new Map();
+  return new Promise((resolve, reject) => {
+    let live = urls.length;
+    const workers = urls.map((url) => {
+      const w = fork(path.join(__dirname, 'lib', 'suiteWorker.js'), [root, logDir], {
+        cwd: root,
+        env: { ...runnerFreeEnv(suiteEnv({ DATABASE_URL: url })), RUN_SUITES_WORKER_LOCK_FD: lockFd === null || lockFd === undefined ? '' : '3' },
+        stdio: ['ignore', 'inherit', 'inherit', lockFd === null || lockFd === undefined ? 'ignore' : lockFd, 'ipc'],
+      });
+      // A launcher gone (kill -9) hands out no further suite, as the serial
+      // loop stops before its next one.
+      const next = () => {
+        const file = launcherGone() ? null : queue.shift();
+        try {
+          w.send(file ? { file } : { done: true });
+        } catch {
+          // the worker is gone; its exit settles the run below
+          if (file) queue.unshift(file);
+        }
+      };
+      w.on('error', () => {
+        // a send to a worker that has gone; its exit settles the run below
+      });
+      w.on('message', (msg) => {
+        if (msg && msg.result) {
+          const r = msg.result;
+          results.set(r.file, r);
+          console.log(r.failed ? `${r.line}  (log: ${path.join(logDir, logName(r.file))}; output: ${path.join(logDir, outName(r.file))})` : r.line);
+        }
+        if (msg && (msg.ready || msg.result)) next();
+      });
+      w.on('exit', () => {
+        live -= 1;
+        if (live === 0) {
+          const missing = suites.filter((f) => !results.has(f));
+          if (missing.length) reject(new Error(`a worker stopped before ${missing.length} suite(s) ran (${missing[0]} first)`));
+          else resolve(suites.map((f) => results.get(f)));
+        }
+      });
+      return w;
+    });
+    process.on('exit', () => {
+      for (const w of workers) if (w.exitCode === null) w.kill('SIGKILL');
+    });
+  });
 }
 
 // <git-common-dir>/drb-review/_runs/<timestamp>/, the default --log-dir.
@@ -503,6 +702,49 @@ async function cli(argv) {
     refuse(oneLine(err));
   }
 
+  const nWorkers = Math.min(workerCount(opts), suites.length);
+  const serverSuites = suites.filter((f) => f.startsWith('server/')).length;
+  let urls = nWorkers > 1 && serverSuites >= 2 ? await workerDbUrls(nWorkers) : null;
+  if (urls) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'drb-initdb-'));
+    const res = await Promise.all(urls.map((u, i) => initWorkerDb(root, u, i + 1, outDir, lock.lockFd)));
+    const unexpected = res.find((r) => r.unexpected);
+    const failed = res.find((r) => r.failed);
+    if (unexpected) refuse(unexpected.unexpected);
+    if (failed) {
+      console.error(`run-suites: ${failed.failed}; running serially on the dev database`);
+      urls = null;
+    } else {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  }
+  if (urls && urls.length > 1) {
+    // A sweep between suites would kill the other workers' suites, so the
+    // session is swept once, after every worker has ended (a stated limit: a
+    // stray child a suite leaves lives until the run ends).
+    process.on('exit', () => sweepSession(lock.session));
+    console.log(`run-suites: ${suites.length} suite(s) across ${urls.length} workers, each on its own ci-suites branch`);
+    const gone = () => parentGone(lock.parentPid);
+    let results;
+    try {
+      results = await runParallel(root, suites, urls, logDir, lock.lockFd, gone);
+    } catch (err) {
+      if (gone()) {
+        console.error(`run-suites: the process that launched this run (pid ${lock.parentPid}) is gone; stopped handing out suites, no summary written.`);
+        process.exit(1);
+      }
+      refuse(oneLine(err));
+    }
+    const left = sweepSession(lock.session);
+    if (left.length) console.error(`run-suites: the suites left ${left.length} process(es) in the run's session, outside GNU timeout's groups; killed them`);
+    writeDurations(root, results);
+    const summary = smokeSummary(results.map((r) => ({ file: r.file, text: r.text, exitOk: r.exitOk })));
+    writeSummary(logDir, summary);
+    const failed = results.filter((r) => r.failed).length;
+    console.log(`run-suites: ${results.length} suite(s), pass ${summary.total_pass} fail ${summary.total_fail}, ${failed} failed; logs in ${logDir}`);
+    process.exit(failed ? 1 : 0);
+  }
+
   const results = [];
   for (const f of suites) {
     await yieldToSignals();
@@ -514,6 +756,7 @@ async function cli(argv) {
     const left = sweepSession(lock.session);
     if (left.length) console.error(`run-suites: ${f} left ${left.length} process(es) in the run's session, outside GNU timeout's group, after it ended; killed them`);
   }
+  writeDurations(root, results);
   const summary = smokeSummary(results.map((r) => ({ file: r.file, text: r.text, exitOk: r.exitOk })));
   writeSummary(logDir, summary);
   const failed = results.filter((r) => r.failed).length;
@@ -523,4 +766,4 @@ async function cli(argv) {
 
 if (require.main === module) cli(process.argv.slice(2));
 
-module.exports = { reachedSuites, stagedPaths, parseArgs, runSuite, SUITE_TIMEOUT_MS };
+module.exports = { reachedSuites, stagedPaths, parseArgs, runSuite, queueOrder, workerCount, SUITE_TIMEOUT_MS };
