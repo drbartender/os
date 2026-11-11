@@ -1,6 +1,8 @@
 # Audit 2026-11-05: payments, payouts, auth, e-signatures, pricing
 
-**Base:** `main` at `13f2645` (2026-11-05). **Result:** 53 findings raised by five domain audits plus two raised by the verify passes; 47 fixed on six branches (one per domain, one for the split-out comp work), 5 moved between lanes and fixed there, 1 deferred, 1 open for the owner's decision; every branch pushed; nothing merged.
+**Base:** `main` at `13f2645` (2026-11-05). **Result:** 53 findings raised by five domain audits plus two raised by the verify passes; of those 55, 53 are fixed on the lane branches (46 in their own lane, 7 moved to another lane and fixed there), 1 is deferred and 1 is open for the owner's decision; every branch pushed; nothing merged.
+
+**Update 2026-11-11:** main has moved since the audit. The three lanes that conflicted with it (payouts, e-signatures, payments) were rebased and pushed as `audit-payouts-rebased`, `audit-esign-rebased` and `audit-payments-rebased`; `rebase-2026-11-11.md` has the detail. An earlier copy of this paragraph gave the split as 47 and 5; 46 and 7 is the count the register shows.
 
 **Method:** five read-only domain auditors at max effort, one per domain, each writing a report with evidence, failure scenarios in cents, proposed fixes and verification plans (`reports/`); the orchestrator triaged every finding into one of five fix lanes, cut from the same main with footprints kept apart so the lanes merge without clobbering each other; a fixer per lane re-verified each finding before touching it, wrote the failing test first, fixed at the root with every consumer, and committed through the pre-commit hook; the repo's static pre-step (`scripts/static-checks.js`: eslint, the idiom rules, the PII shapes) ran on every lane's range; the verify lens (`.claude/agents/verify.md`) then read each lane's diff adversarially, recomputing the money math by hand, and each lane got at most two fix re-passes, as the review rule allows; a reachable money defect still open after the second re-pass split its lane (`fixes/`).
 
@@ -20,32 +22,46 @@ The audit ran in a cloud container with no database, no `.env`, no provider cred
 | Branch | Domain | Fixes carried | Commits | Verify outcome | State |
 |---|---|---|---|---|---|
 | `audit-auth` | auth | AUTH-01..07, 11, 12, 13 | 16 | full pass, two re-passes, a confirmation read; residual: one copy nuance | pushed, ready for dev-box review |
-| `audit-payouts` | payouts | POUT-01..03, 05, 07..12, AUTH-10 | 20 | full pass, two re-passes, a confirmation read; the cross-period accrual rule narrowed after the first re-pass; residuals listed in the register | pushed, ready for dev-box review |
+| `audit-payouts` | payouts | POUT-01..03, 05, 07..12, AUTH-10 | 20 | full pass, two re-passes, a confirmation read; the cross-period accrual rule narrowed after the first re-pass; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-payouts-rebased` (use that one); ready for dev-box review |
 | `audit-pricing` | pricing | PRC-02, 04, 05, 06 | 6 | the four fixes passed every pass; the comp fix split out | pushed, ready for dev-box review |
 | `audit-pricing-comp` | pricing (split) | PRC-01 (the extras-invoice comp), on top of the six commits above | 13 | two reachable money defects still open after the second re-pass | pushed for the owner's decision; do not merge as is |
-| `audit-esign` | e-signatures | ESIG-01, 02, 04..14, AUTH-08, AUTH-09 | 26 (three are reverts of round-3 changes the confirmation read refuted) | full pass, two re-passes, a confirmation read; residuals listed in the register | pushed, ready for dev-box review |
-| `audit-payments` | payments | PAY-01..09, PRC-03, ESIG-03, POUT-06 | 23 | full pass, two re-passes, a deciding read; residuals listed in the register | pushed, ready for dev-box review |
-| `audit-docs` | this folder | docs only | 4 | none needed | pushed |
+| `audit-esign` | e-signatures | ESIG-01, 02, 04..14, AUTH-08, AUTH-09 | 26 (three are reverts of round-3 changes the confirmation read refuted) | full pass, two re-passes, a confirmation read; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-esign-rebased` (use that one); ready for dev-box review |
+| `audit-payments` | payments | PAY-01..09, PRC-03, ESIG-03, POUT-06 | 23 | full pass, two re-passes, a deciding read; residuals listed in the register | rebased onto main `03f8da2` on 2026-11-11 and pushed as `audit-payments-rebased` (use that one); ready for dev-box review |
+| `audit-docs` | this folder | docs only | docs only | none needed | pushed |
 
 Every commit on every branch carries its finding id on an `Audit:` line and passed the pre-commit hook (docs check, file-size ratchet, eslint on the staged server files, the main guard), with one exception the payments fixer recorded (its first commit ran the checks by hand). The lane squash folds the checkpoint history into one `merge(lane <branch>)` commit per lane, so a checkpoint message that overstates its own content (two are noted in the fixer reports) does not survive the merge.
 
 ## How to take a lane onto the dev box
 
-From `os` on `main`:
+From `os` on `main`. A lane that was not rebased (`audit-auth`, `audit-pricing`, `audit-docs`):
 
 ```bash
-git fetch origin audit-payouts
+git fetch origin audit-auth
 ```
 
 ```bash
-git worktree add ../worktrees/audit-payouts audit-payouts
+git worktree add ../worktrees/audit-auth audit-auth
+```
+
+```bash
+npm run worktree:new -- audit-auth
+```
+
+A rebased lane (payouts, e-signatures, payments) comes from its `-rebased` branch, under the lane's own name:
+
+```bash
+git fetch origin audit-payouts-rebased
+```
+
+```bash
+git worktree add -b audit-payouts ../worktrees/audit-payouts origin/audit-payouts-rebased
 ```
 
 ```bash
 npm run worktree:new -- audit-payouts
 ```
 
-(`worktree:new` on an existing worktree only refreshes the links; it cannot create one from an existing branch itself.) Then, in the lane: apply `schema.sql` to the dev database by booting the server once (the payments, payouts and e-signature lanes add idempotent columns, tables and backfills), run the DB-backed suites the lane's `fixes/<domain>-fixes.md` names under "could not run", run the review skill on the lane, and ship it with `bash scripts/merge-lane.sh ship <branch> docs/audit-2026-11-05/README.md` from `os` on `main` (the plan link is this folder). The payments, payouts and e-signature lanes touch sensitive paths and review at tier A; the gate runs the money smoke for them.
+(`worktree:new` on an existing worktree only refreshes the links; it cannot create one from an existing branch itself.) Then, in the lane: apply `schema.sql` to the dev database by booting the server once (the payments, payouts and e-signature lanes add idempotent columns, tables and backfills), run the DB-backed suites the lane's `fixes/<domain>-fixes.md` names under "could not run", run the review skill on the lane (it rebases onto main first, as standing practice), and ship it with `bash scripts/merge-lane.sh ship <branch> docs/audit-2026-11-05/README.md` from `os` on `main` (the plan link is this folder). The payments, payouts and e-signature lanes touch sensitive paths and review at tier A; the gate runs the money smoke for them. One lane at a time; `audit-auth` first, since the staff-data read it closes is live.
 
 ## Merge order and the overlaps between lanes
 
@@ -61,7 +77,9 @@ A working order: `audit-auth`, `audit-pricing`, `audit-payments`, `audit-payouts
 1. **The comp model (`audit-pricing-comp`).** The original defect (PRC-01: comping a Drink Plan Extras invoice lowered `total_price` only, so the next re-price billed the waived add-on again) is real and still open on `main`. Three rounds built a protected comp line that follows the current price of the items it comps; the deciding read found two reachable money defects left (the planner pre-fills the plan with the booking's contract syrups, so a comp waives those too; a departed item re-added beside a surviving comped item is free again). Options: a new lane from the comp branch that closes those two, or the other root the auditor named (the comp removes the add-on through the cancel-line core, which already keeps `total_price`, the snapshot and `proposal_addons` together). The register has the cents.
 2. **The quote wizard on a known email (AUTH-12).** A submit that resolves to an existing client now gets no token; the link is delivered only to the address on file. A returning client re-quoting with their own email reads "Check your email" instead of landing on the proposal page. The security reason is in the register; the trade is product-visible.
 3. **Returning phone-only Thumbtack leads (AUTH-02).** The wizard no longer attaches a stranger to a phone-only client row, so such a lead who re-quotes on the website becomes a second row to merge by hand, and the harvester then marks that lead's harvest failed until merged.
-4. **The deferred items:** POUT-13 (a local-date helper for four `ymd()` copies, or `TZ=UTC` in the start script), ESIG-05's stored proposal PDF and signed-copy route, ESIG-07's server-side W-9 rendering, ESIG-08's re-sign policy, ESIG-12's recorded e-sign consent (needs a new frozen agreement version), and the two one-line sites left raw by the payments lane (the auto-complete sweep in `balanceScheduler.js` and the gratuity funded gate in `payrollAccrual.js`, the latter in the payouts lane's file), plus a one-off look for legacy rows the old balance rail short-charged (the register's PAY-01 row).
+4. **Managers and the signed staff agreement.** The e-signature lane lets an admin or a manager open a contractor's signed agreement PDF, which shows the signature, IP and user agent that the payouts lane withholds from a manager on the user record. Decide whether the PDF route should be admin-only (a one-line guard).
+5. **The three pre-rebase branches** (`audit-payouts`, `audit-esign`, `audit-payments`) are superseded by their `-rebased` copies and can be deleted once those lanes merge.
+6. **The deferred items:** POUT-13 (a local-date helper for four `ymd()` copies, or `TZ=UTC` in the start script), ESIG-05's stored proposal PDF and signed-copy route, ESIG-07's server-side W-9 rendering, ESIG-08's re-sign policy, ESIG-12's recorded e-sign consent (needs a new frozen agreement version), and the two one-line sites left raw by the payments lane (the auto-complete sweep in `balanceScheduler.js` and the gratuity funded gate in `payrollAccrual.js`, the latter in the payouts lane's file), plus a one-off look for legacy rows the old balance rail short-charged (the register's PAY-01 row).
 
 ## Checked and sound (the posture the auditors recorded)
 
