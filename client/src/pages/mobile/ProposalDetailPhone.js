@@ -11,9 +11,11 @@ import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
 import ResendSheet from '../../components/mobile/ResendSheet';
 import ArchiveSheet from '../../components/mobile/ArchiveSheet';
+import EditSheet from '../../components/mobile/EditSheet';
 import StatusChip from '../../components/adminos/StatusChip';
 import { formatStaleTime } from '../../utils/staleTime';
 import { whenOf } from '../../utils/eventDetailView';
+import { READ_TIMEOUT_MS } from '../../utils/editSheetView';
 import {
   bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, gatesOf, HOLD_NOTE,
 } from '../../utils/proposalDetailView';
@@ -55,14 +57,21 @@ import { Caret, ContactsSection, EditRow } from './EventDetailSections';
 // whose answer comes after Back does too. A read waits while a sheet is open:
 // the read clears the screen, which would unmount the sheet and mount it
 // fresh, and a resend sheet that came back fresh would offer Send again for a
-// message already sent. It runs as the sheet closes. Edit details opens
-// desktop view until the phone's edit sheet lands; Send proposal (a draft or a
-// modified proposal: the first send runs the remote staffing fee check) and
-// anything an options group sends stay on desktop view for good. No Send
-// reminder row (the owner, 2026-11-05: "leave it off").
+// message already sent. It runs as the sheet closes. Edit details opens the
+// phone edit sheet in its proposal variant (EditSheet) on a fresh read the gate
+// allows (an open, unheld, ungrouped proposal dated today or later), and
+// desktop view otherwise. Once the sheet's write has gone out (answered or
+// not), or the sheet refused because the row moved, the page reads the proposal
+// again as the sheet closes, Back included, with a plain read that gives up
+// after the sheets' read timeout, never the stored copy, so the screen shows
+// what the save wrote; a failed read's Retry stays a plain read until one
+// lands. Send proposal (a draft or a modified proposal: the first send runs the
+// remote staffing fee check) and anything an options group sends stay on
+// desktop view for good. No Send reminder row (the owner, 2026-11-05: "leave it
+// off").
 const LOAD_FAILED = 'Network error. Check your connection.';
 // The kinds of drawer that are phone sheets here. Module scope: one identity.
-const SHEETS = ['resend', 'archive'];
+const SHEETS = ['resend', 'archive', 'edit'];
 const isDead = (err) => !!err && (err.status === 404 || err.status === 403);
 // The change-requests read is live and the worker never races it, so on weak
 // signal it could hang for minutes. It is never aborted: an answer that comes
@@ -136,6 +145,10 @@ export default function ProposalDetailPhone() {
   const [panes, setPanes] = useState({ contact: false, pay: false });
   const [attempt, setAttempt] = useState(0);
   const [requestPending, setRequestPending] = useState(false);
+  // The next read after the edit sheet wrote (or refused) is a plain fresh read
+  // until one lands: the stored copy the worker could serve on weak signal
+  // predates the save.
+  const freshNext = useRef(false);
 
   // The desktop proposal page for this visit only: armed before the navigation
   // it is for, the visit starts on the replaced entry, which the fork draws as
@@ -174,10 +187,13 @@ export default function ProposalDetailPhone() {
     // waits on the request read: on weak signal the worker serves the copy at its
     // stall window, and the screen shows it then (spec section 7).
     const requestRead = api.get(`/proposals/${id}/change-requests`).then((r) => r.data, () => null);
-    offlineGet(`/proposals/${id}`)
+    const fresh = freshNext.current;
+    const read = fresh ? (url) => api.get(url, { timeout: READ_TIMEOUT_MS }) : offlineGet;
+    read(`/proposals/${id}`)
       .then((res) => (res.staleAt ? [res, null] : withinGrace(requestRead).then((requests) => [res, requests])))
       .then(([res, requests]) => {
         if (gone) return;
+        if (fresh) freshNext.current = false;
         const pending = !res.staleAt && !!res.data && res.data.legal_hold === false && hasPendingRequest(requests);
         const target = bookedTarget(res.data);
         if (target && !pending) {
@@ -210,8 +226,8 @@ export default function ProposalDetailPhone() {
     chip: chipOf(proposal),
     contacts: proposalContactsOf(proposal),
     pkg: packageOf(proposal),
-    gates: gatesOf(proposal, { stale: !!staleAt }),
-  } : null), [proposal, staleAt]);
+    gates: gatesOf(proposal, { stale: !!staleAt, requestPending }),
+  } : null), [proposal, staleAt, requestPending]);
 
   // The sheets. Each opens only for this proposal, on a fresh read whose row
   // offers it; a parameter that can open neither (another proposal, a stored
@@ -219,14 +235,16 @@ export default function ProposalDetailPhone() {
   const forThis = drawer.id !== null && String(drawer.id) === String(id);
   const resendOpen = drawer.kind === 'resend' && forThis && !!view && !!view.gates.send && view.gates.send.mode === 'sheet';
   const archiveOpen = drawer.kind === 'archive' && forThis && !!view && !!view.gates.archive && view.gates.archive.mode === 'sheet';
+  const editOpen = drawer.kind === 'edit' && forThis && !!view && !!view.gates.edit && view.gates.edit.mode === 'edit';
   const closeDrawer = drawer.close;
   useEffect(() => {
     if (loading) return;
-    if ((drawer.kind === 'resend' && !resendOpen) || (drawer.kind === 'archive' && !archiveOpen)) closeDrawer();
-  }, [loading, drawer.kind, resendOpen, archiveOpen, closeDrawer]);
+    if ((drawer.kind === 'resend' && !resendOpen) || (drawer.kind === 'archive' && !archiveOpen)
+      || (drawer.kind === 'edit' && !editOpen)) closeDrawer();
+  }, [loading, drawer.kind, resendOpen, archiveOpen, editOpen, closeDrawer]);
   // A sheet's closer acts only while the URL still shows that sheet: if Back
   // closed it meanwhile, a second close would pop the page itself.
-  const sheetOpen = resendOpen || archiveOpen;
+  const sheetOpen = resendOpen || archiveOpen || editOpen;
   const live = useRef({ kind: null, close: null, sheetOpen: false });
   live.current = { kind: drawer.kind, close: drawer.close, sheetOpen };
   // A read asked for while a sheet is open waits for it to close (header).
@@ -362,7 +380,8 @@ export default function ProposalDetailPhone() {
       </section>
 
       {gates.edit && (
-        <EditRow mode={gates.edit.mode} sub="date · guests · add-ons" onEdit={toDesktop} onDesktop={toDesktop}>
+        <EditRow mode={gates.edit.mode} sub="date · guests · add-ons"
+          onEdit={() => drawer.open('edit', proposal.id)} onDesktop={toDesktop}>
           {gates.link && (
             <button type="button" className="m-section-row m-section-row-sep" disabled={!gates.link.url}
               onClick={() => shareLink(gates.link.url)}>
@@ -398,6 +417,17 @@ export default function ProposalDetailPhone() {
       )}
       {archiveOpen && (
         <ArchiveSheet proposal={proposal} onClose={(how) => sheetClosed('archive', how)} onLateAnswer={readAgain} />
+      )}
+      {editOpen && (
+        <EditSheet
+          variant="proposal"
+          proposalId={proposal.id}
+          clientName={proposal.client_name}
+          kind={proposalHeaderOf(proposal).kind}
+          onClose={() => sheetClosed('edit')}
+          onMoved={() => { freshNext.current = true; readAgain(); }}
+          onSaved={() => { freshNext.current = true; sheetClosed('edit', { moved: true }); }}
+        />
       )}
     </div>
   );

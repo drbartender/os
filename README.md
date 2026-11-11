@@ -519,7 +519,7 @@ tests omitted
 │       │   ├── mobile/
 │       │   │   ├── ArchiveSheet.js # ArchiveSheet: the phone's Archive for one proposal, a reason picked and then confirmed (spec 2026-08-13-mobile-admin section 3, Plan decisions of 2026-11-05; benchmark the archive sheet, 2026-10-14 shell).
 │       │   │   ├── AssignmentSheet.js # AssignmentSheet (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
-│       │   │   ├── EditSheet.js # EditSheet (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── EditSheet.js # EditSheet (React component, default export): the phone edit sheet, drawn for an event or, with variant 'proposal', a proposal; useEditSheet.js reads and writes.
 │       │   │   ├── MobileHeader.js # MobileHeader (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── MobileLockScreen.js # MobileLockScreen (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── MobileTabBar.js # MobileTabBar (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -527,7 +527,7 @@ tests omitted
 │       │   │   ├── NoteSheet.js # NoteSheet (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── PasskeyEnrollNudge.js # PasskeyEnrollNudge (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── ResendSheet.js # ResendSheet: the phone's Resend proposal, the server's drafted words sent read-only on the channels picked (spec 2026-08-13-mobile-admin section 3, Plan decisions of 2026-11-05; the edit sheet's notify idiom).
-│       │   │   ├── useEditSheet.js # useEditSheet (default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── useEditSheet.js # useEditSheet (default export): what the phone edit sheet reads and writes, for an event (EventDetailPhone) or, with variant 'proposal', a proposal (ProposalDetailPhone).
 │       │   │   └── useSheetWrites.js # useSheetWrites (default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   ├── potions/
 │       │   │   ├── RecipeEditor.js # RecipeEditor (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.

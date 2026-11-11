@@ -218,10 +218,15 @@ describe('the action card and its sheets', () => {
     expect(sheet('Archive proposal')).not.toBeInTheDocument();
     expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals\/41$/);
 
-    // Edit details opens desktop view until the phone's edit sheet lands.
-    fireEvent.click(row('Edit details'));
-    expect(mockMobileView.setDesktopView).toHaveBeenCalledTimes(1);
-    expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
+    // Edit details opens the phone edit sheet, a history entry too (lane proposal-edit-sheet).
+    expect(row('Edit details')).toHaveTextContent('date · guests · add-ons');
+    await act(async () => { fireEvent.click(row('Edit details')); });
+    expect(sheet('Edit details')).toBeInTheDocument();
+    expect(screen.getByTestId('search')).toHaveTextContent('?drawer=edit&drawerId=41');
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(sheet('Edit details')).not.toBeInTheDocument();
+    expect(screen.getByTestId('loc')).toHaveTextContent(/^\/proposals\/41$/);
+    expect(mockMobileView.setDesktopView).not.toHaveBeenCalled();
   });
   test('a draft and a modified proposal keep Send proposal on desktop view; their Archive opens its sheet', async () => {
     for (const status of ['draft', 'modified']) {
@@ -243,6 +248,8 @@ describe('the action card and its sheets', () => {
     serve({ '/proposals/41': { data: { ...PROPOSAL, group_id: 9 } } });
     mount();
     await screen.findByText('Contacts');
+    // Its Edit details stays on desktop view too (lane proposal-edit-sheet).
+    expect(row('Edit details')).toHaveTextContent(/desktop view/i);
     expect(row('Resend proposal')).toHaveTextContent(/desktop view/i);
     fireEvent.click(row('Resend proposal'));
     expect(sheet('Resend proposal')).not.toBeInTheDocument();
@@ -257,6 +264,10 @@ describe('the action card and its sheets', () => {
       ['money on the row', '/proposals/41?drawer=archive&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, status: 'accepted', amount_paid: '100.00' } } }],
       ['legal hold', '/proposals/41?drawer=archive&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, legal_hold: true } } }],
       ['another proposal', '/proposals/41?drawer=archive&drawerId=42', {}],
+      ['an edit on a stored copy', '/proposals/41?drawer=edit&drawerId=41', { '/proposals/41': { data: PROPOSAL, staleAt: '2026-11-05T15:00:00Z' } }],
+      ['an edit in an options group', '/proposals/41?drawer=edit&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, group_id: 9 } } }],
+      ['an edit on a past event', '/proposals/41?drawer=edit&drawerId=41', { '/proposals/41': { data: { ...PROPOSAL, event_date: '2001-01-01T00:00:00.000Z' } } }],
+      ['an edit with a change request pending', '/proposals/41?drawer=edit&drawerId=41', { '/proposals/41/change-requests': { data: { requests: [{ id: 7, status: 'pending' }] } } }],
     ];
     for (const [, path, over] of cases) {
       serve(over);
@@ -633,4 +644,106 @@ test('an options group keeps its send on desktop view, and Archive leaves with m
   await screen.findByText(/accepted .* · \$250\.00 paid/);
   expect(row('Resend proposal')).toHaveTextContent(/desktop view/i);
   expect(screen.queryByRole('button', { name: /^Archive/ })).not.toBeInTheDocument();
+});
+
+// Lane proposal-edit-sheet: a save from the phone edit sheet closes it, and the
+// page reads the proposal again with a plain read, never the stored copy.
+describe('the edit sheet', () => {
+  const PKG = { id: 1, slug: 'the-core-reaction', name: 'The Core Reaction', pricing_type: 'flat', bar_type: 'service_only', guests_per_bartender: 100 };
+  const EDITABLE = { ...PROPOSAL, package_id: 1, num_bartenders: 2, num_bars: 0, addons: [], adjustments: [], adjustments_token: 'tok-41', settled_extension_hours: 0 };
+  test('a save closes the sheet and the detail reads the proposal again, fresh', async () => {
+    let reads = 0;
+    serve({
+      '/proposals/41': () => { reads += 1; return { data: reads >= 4 ? { ...EDITABLE, guest_count: 125, total_price: '5000.00' } : EDITABLE }; },
+      '/proposals/packages': { data: [PKG] },
+      '/proposals/addons': { data: [] },
+    });
+    api.post.mockImplementation((url) => {
+      if (url === '/proposals/calculate') return Promise.resolve({ data: { total: 5000, gratuity: null } });
+      if (url === '/proposals/41/notify-preflight') return Promise.resolve({ data: { notices: [] } });
+      return new Promise(() => {});
+    });
+    api.patch.mockImplementation(() => Promise.resolve({ data: { notifications: [] } }));
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    await act(async () => { fireEvent.click(row('Edit details')); });
+    await screen.findByText('Duration');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'More guests' })).toBeEnabled(), { timeout: 3000 });
+    fireEvent.click(screen.getByRole('button', { name: 'More guests' }));
+    const confirm = () => screen.getByRole('button', { name: /^(Confirm new total|Done)$/ });
+    await waitFor(() => expect(confirm()).toHaveTextContent('Confirm new total'), { timeout: 3000 });
+    await waitFor(() => expect(confirm()).toBeEnabled(), { timeout: 3000 });
+    fireEvent.click(confirm());
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1));
+    expect(api.patch.mock.calls[0][1]).toMatchObject({ guest_count: 125 });
+    await waitFor(() => expect(sheet('Edit details')).not.toBeInTheDocument());
+    expect(screen.getByTestId('search')).toBeEmptyDOMElement();
+    expect(mockToast.success).toHaveBeenCalledWith('Proposal updated.');
+    // The page's read after the save carries no stored-copy header.
+    await waitFor(() => expect(reads).toBe(4));
+    const pageReads = api.get.mock.calls.filter(([u]) => u === '/proposals/41');
+    expect(pageReads[0]).toEqual(['/proposals/41', OFFLINE_OK]);
+    expect(pageReads[3]).toEqual(['/proposals/41', { timeout: 10000 }]);
+    expect(await screen.findByText('$5,000.00')).toBeInTheDocument();
+  });
+
+  // Outcomes findings fixed in this lane: a write with no answer may have
+  // landed, so the page reads again as the sheet closes; that read gives up
+  // after the read timeout, and its Retry stays a plain read until one lands.
+  test('a save with no answer still has the page read the proposal again, fresh, when the sheet closes', async () => {
+    let reads = 0;
+    let failNext = false;
+    serve({
+      '/proposals/41': () => {
+        reads += 1;
+        if (failNext) { failNext = false; return { reject: { status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' } }; }
+        return { data: reads >= 4 ? { ...EDITABLE, guest_count: 125, total_price: '5000.00' } : EDITABLE };
+      },
+      '/proposals/packages': { data: [PKG] },
+      '/proposals/addons': { data: [] },
+    });
+    api.post.mockImplementation((url) => {
+      if (url === '/proposals/calculate') return Promise.resolve({ data: { total: 5000, gratuity: null } });
+      if (url === '/proposals/41/notify-preflight') return Promise.resolve({ data: { notices: [] } });
+      return new Promise(() => {});
+    });
+    api.patch.mockImplementation(() => Promise.reject({ status: 0, code: 'NETWORK_ERROR', message: 'Network error. Check your connection.' }));
+    mount('/proposals/41', withBack);
+    await screen.findByText('Contacts');
+    await act(async () => { fireEvent.click(row('Edit details')); });
+    await screen.findByText('Duration');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'More guests' })).toBeEnabled(), { timeout: 3000 });
+    fireEvent.click(screen.getByRole('button', { name: 'More guests' }));
+    const confirm = () => screen.getByRole('button', { name: /^(Confirm new total|Done)$/ });
+    await waitFor(() => expect(confirm()).toHaveTextContent('Confirm new total'), { timeout: 3000 });
+    await waitFor(() => expect(confirm()).toBeEnabled(), { timeout: 3000 });
+    fireEvent.click(confirm());
+    expect(await screen.findByText('No connection. It may not have saved; reopen the proposal to check.')).toBeInTheDocument();
+    // The page waits while the sheet is open, then reads as Back closes it; that read fails once.
+    expect(reads).toBe(3);
+    failNext = true;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'history back' })); });
+    expect(await screen.findByText("Couldn't load this proposal")).toBeInTheDocument();
+    // Retry stays a plain read, never the stored copy, and the saved row shows.
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('$5,000.00')).toBeInTheDocument();
+    const pageReads = api.get.mock.calls.filter(([u]) => u === '/proposals/41');
+    expect(pageReads[3]).toEqual(['/proposals/41', { timeout: 10000 }]);
+    expect(pageReads[4]).toEqual(['/proposals/41', { timeout: 10000 }]);
+    expect(reads).toBe(5);
+  });
+});
+
+// Seams finding fixed in lane proposal-edit-sheet: a direct save cancels a
+// pending client change request on the server, so with one pending Edit details
+// opens desktop view, where the request is reviewed, never the phone sheet.
+test('a pending change request keeps Edit details on desktop view', async () => {
+  serve({ '/proposals/41/change-requests': { data: { requests: [{ id: 7, status: 'pending' }] } } });
+  mount();
+  await screen.findByText('Contacts');
+  expect(row('Change request')).toBeInTheDocument();
+  expect(row('Edit details')).toHaveTextContent(/desktop view/i);
+  fireEvent.click(row('Edit details'));
+  expect(screen.queryByRole('dialog', { name: 'Edit details' })).not.toBeInTheDocument();
+  expect(mockMobileView.setDesktopView).toHaveBeenLastCalledWith('proposal-detail', true);
 });

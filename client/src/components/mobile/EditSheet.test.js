@@ -1674,3 +1674,281 @@ test('a thin strip of scrim still closes the sheet while it loads, after a faile
     Element.prototype.getBoundingClientRect = realRect;
   }
 });
+
+// ---- The proposal variant (plan 2026-11-05, lane proposal-edit-sheet) ----
+// A sent proposal on The Core Reaction: 150 guests at 100 per bartender needs 2,
+// and 2 stored is no override. Two barbacks priced at 4 hours (quantity 8) and a
+// champagne toast in its non-alcoholic variant.
+describe('the proposal variant', () => {
+  const EXTRA = { id: 30, slug: 'additional-bartender', name: 'Additional Bartender', billing_type: 'per_hour', rate: '40.00' };
+  const BARBACK_ROW = { ...BARBACK, name: 'Barback', rate: '25.00' };
+  const TOAST = { id: 10, slug: 'champagne-toast', name: 'Champagne Toast', billing_type: 'flat', rate: '150.00' };
+  const PROP = {
+    ...PROPOSAL, id: 21, status: 'sent', legal_hold: false, group_id: null, amount_paid: '0.00', client_signed_at: null,
+    guest_count: 150, num_bartenders: 2, total_price: '1450.00',
+    addons: [
+      { addon_id: 7, quantity: 8, rate: 25, line_total: 200, variant: null },
+      { addon_id: 10, quantity: 1, rate: 150, line_total: 150, variant: 'non-alcoholic-bubbles' },
+    ],
+    pricing_snapshot: { total: 1450, gratuity: { rate: 0, tip_jar: true, total: 0 }, syrups: { selections: [] } },
+    adjustments_token: 'tok-21',
+  };
+  const calcBodies = () => api.post.mock.calls.filter(([u]) => u === '/proposals/calculate').map(([, b]) => b);
+  function serveProp({ proposal = PROP, packages = [PKG], catalog = [EXTRA, BARBACK_ROW, TOAST], calculate = () => ({ total: 1610, gratuity: null }) } = {}) {
+    api.get.mockImplementation((url) => {
+      if (url === '/proposals/21') return Promise.resolve({ data: proposal });
+      if (url === '/proposals/packages') return Promise.resolve({ data: packages });
+      if (url === '/proposals/addons') return Promise.resolve({ data: catalog });
+      return Promise.reject({ status: 404, message: 'Not found' });
+    });
+    api.post.mockImplementation((url) => {
+      if (url === '/proposals/calculate') return Promise.resolve({ data: calculate() });
+      if (url === '/proposals/21/notify-preflight') return Promise.resolve({ data: { notices: [] } });
+      return Promise.reject({ status: 404 });
+    });
+    api.patch.mockImplementation(() => Promise.resolve({ data: { ...proposal, notifications: [] } }));
+  }
+  function mountProp() {
+    const onClose = jest.fn();
+    const onSaved = jest.fn();
+    const onMoved = jest.fn();
+    render(<EditSheet variant="proposal" proposalId={21} clientName="Alexis Henderson" kind="Wedding Reception" onClose={onClose} onSaved={onSaved} onMoved={onMoved} previewDelayMs={0} armDelayMs={0} />);
+    return { onClose, onSaved, onMoved };
+  }
+  const rowNames = () => {
+    // eslint-disable-next-line testing-library/no-node-access
+    const rows = screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-edit-rows');
+    // eslint-disable-next-line testing-library/no-node-access
+    return [...rows.children].map((el) => (el.querySelector('.m-edit-label') ? el.querySelector('.m-edit-label').firstChild.textContent : el.textContent));
+  };
+  // The value in a named row's stepper.
+  const valueIn = (name) => {
+    // eslint-disable-next-line testing-library/no-node-access
+    const rows = [...screen.getByRole('dialog', { name: 'Edit details' }).querySelectorAll('.m-edit-rows .m-sheet-row')];
+    // eslint-disable-next-line testing-library/no-node-access
+    const found = rows.find((el) => el.querySelector('.m-edit-label').firstChild.textContent === name);
+    // eslint-disable-next-line testing-library/no-node-access
+    return found ? found.querySelector('.m-stepper-value').textContent : null;
+  };
+  const save = async () => {
+    await waitFor(() => expect(confirmBtn()).toBeEnabled());
+    fireEvent.click(confirmBtn());
+    await waitFor(() => expect(api.patch).toHaveBeenCalled());
+    return api.patch.mock.calls[0][1];
+  };
+
+  test('the proposal copy, then Bartenders, the Add-ons heading, the count add-ons and the note under Guests', async () => {
+    serveProp();
+    mountProp();
+    await ready();
+    expect(screen.getByText('proposal edit · pickers & steppers')).toBeInTheDocument();
+    expect(rowNames()).toEqual(['Date', 'Start', 'Duration', 'Guests', 'Bartenders', 'Add-ons', 'Barback', 'To add or remove an add-on, use desktop view.']);
+    // Bartenders is the package's 2; the barback shows its count and the desktop's rate words.
+    expect(screen.getByRole('button', { name: 'Fewer bartenders' })).toBeDisabled();
+    expect(screen.getByText('$25/hr')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Barback, one fewer' })).toBeEnabled();
+    expect(valueIn('Bartenders')).toBe('2');
+    expect(valueIn('Barback')).toBe('2');
+    expect(screen.queryByText('Champagne Toast')).toBeNull();
+  });
+
+  test('the loading line, a failed load and the locked read name a proposal', async () => {
+    api.get.mockImplementation(() => Promise.reject(NETWORK));
+    mountProp();
+    expect(screen.getByText('Loading the proposal')).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load this proposal. Editing needs a connection.")).toBeInTheDocument();
+    cleanup();
+    serveProp({ proposal: { ...PROP, group_id: 5 } });
+    mountProp();
+    expect(await screen.findByText('This proposal can no longer be edited here. Use desktop view.')).toBeInTheDocument();
+    cleanup();
+    serveProp({ proposal: { ...PROP, legal_hold: true } });
+    mountProp();
+    expect(await screen.findByText('This proposal is on legal hold. Nothing is changed or sent from here.')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+  });
+
+  test('adding a bartender adds the active catalog row; every other add-on and its variant ride as read; the toast names a proposal', async () => {
+    serveProp();
+    const { onSaved } = mountProp();
+    await ready();
+    more('More bartenders');
+    expect(valueIn('Bartenders')).toBe('3');
+    expect(screen.getByText('was 2')).toBeInTheDocument();
+    const body = await save();
+    expect(body.addon_ids).toEqual([7, 10, 30]);
+    expect(body.addon_quantities).toEqual({ 7: 2, 30: 1 });
+    expect(body.addon_variants).toEqual({ 10: 'non-alcoholic-bubbles' });
+    expect(body).not.toHaveProperty('num_bartenders');
+    expect(body).toMatchObject({ guest_count: 150, event_duration_hours: 4, package_id: 1, adjustments_token: 'tok-21', notify: [] });
+    for (const k of ['venue_name', 'gratuity_mandate_total', 'total_price_override']) expect(body).not.toHaveProperty(k);
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(mockToast.success).toHaveBeenCalledWith('Proposal updated.');
+  });
+
+  test('dropping the extras to none drops the add-on, and the row stays', async () => {
+    serveProp({ proposal: { ...PROP, addons: [...PROP.addons, { addon_id: 30, quantity: 8, rate: 40, line_total: 320, variant: null }] } });
+    mountProp();
+    await ready();
+    // 2 from the package and 2 extras (quantity 8 at 4 hours).
+    expect(valueIn('Bartenders')).toBe('4');
+    more('Fewer bartenders');
+    more('Fewer bartenders');
+    expect(screen.getByRole('button', { name: 'Fewer bartenders' })).toBeDisabled();
+    expect(rowNames()).toContain('Bartenders');
+    expect(rowNames()).toHaveLength(8);
+    const body = await save();
+    expect(body.addon_ids).toEqual([7, 10]);
+    expect(body.addon_quantities).toEqual({ 7: 2 });
+  });
+
+  test('an add-on count change saves only that count', async () => {
+    serveProp();
+    mountProp();
+    await ready();
+    more('Barback, one more');
+    expect(screen.getByText('was 2 · $25/hr')).toBeInTheDocument();
+    const body = await save();
+    expect(body.addon_ids).toEqual([7, 10]);
+    expect(body.addon_quantities).toEqual({ 7: 3 });
+  });
+
+  test('a standing override keeps travelling, and Bartenders counts from it', async () => {
+    serveProp({ proposal: { ...PROP, num_bartenders: 3 } });
+    mountProp();
+    await ready();
+    expect(valueIn('Bartenders')).toBe('3');
+    more('More guests');
+    // The override holds the package's count whatever the guests.
+    expect(valueIn('Bartenders')).toBe('3');
+    const body = await save();
+    expect(body.num_bartenders).toBe(3);
+    expect(body.guest_count).toBe(155);
+  });
+
+  test('without an override, Bartenders follows the guest ratio', async () => {
+    serveProp({ proposal: { ...PROP, guest_count: 200, num_bartenders: 2 } });
+    mountProp();
+    await ready();
+    expect(valueIn('Bartenders')).toBe('2');
+    more('More guests');
+    expect(valueIn('Bartenders')).toBe('3');
+    expect(screen.getByText('was 2')).toBeInTheDocument();
+  });
+
+  test('the preview is asked again after each step, with the add-on state in its body', async () => {
+    serveProp();
+    mountProp();
+    await ready();
+    await waitFor(() => expect(calcBodies()).toHaveLength(1));
+    expect(calcBodies()[0]).toMatchObject({ proposal_id: 21, addon_ids: [7, 10], addon_quantities: { 7: 2 } });
+    more('More bartenders');
+    await waitFor(() => expect(calcBodies()).toHaveLength(2));
+    expect(calcBodies()[1]).toMatchObject({ addon_ids: [7, 10, 30], addon_quantities: { 7: 2, 30: 1 }, addon_variants: { 10: 'non-alcoholic-bubbles' } });
+    expect(calcBodies()[1]).not.toHaveProperty('num_bartenders');
+    more('Barback, one more');
+    await waitFor(() => expect(calcBodies()).toHaveLength(3));
+    expect(calcBodies()[2].addon_quantities).toEqual({ 7: 3, 30: 1 });
+    // The readout is the server's figure, with no balance line on an unbooked proposal.
+    expect(await screen.findByText('$1,610.00')).toBeInTheDocument();
+    expect(screen.queryByText(/balance due/)).toBeNull();
+  });
+
+  test('the Bartenders row hides with no Additional Bartender in the catalog, and on a retired package', async () => {
+    serveProp({ catalog: [BARBACK_ROW, TOAST] });
+    mountProp();
+    await ready();
+    expect(rowNames()).toEqual(['Date', 'Start', 'Duration', 'Guests', 'Add-ons', 'Barback', 'To add or remove an add-on, use desktop view.']);
+    cleanup();
+    serveProp({ packages: [] });
+    mountProp();
+    await ready();
+    expect(rowNames()).not.toContain('Bartenders');
+  });
+
+  // Client finding fixed in this lane: at max height a notice above the rows
+  // moves the rows block's top; the block's content scrolls by the same amount,
+  // so the steppers stay where the finger is. (jsdom has no layout: the block's
+  // top and scroll are stood in for here; the dev run measures the real thing.)
+  test('a notice that moves the rows block keeps its steppers in place', async () => {
+    let calls = 0;
+    serveProp();
+    api.post.mockImplementation((url) => {
+      if (url === '/proposals/calculate') {
+        calls += 1;
+        return calls === 1 ? Promise.resolve({ data: { total: 1450, gratuity: null } }) : Promise.reject(NETWORK);
+      }
+      return Promise.reject({ status: 404 });
+    });
+    mountProp();
+    await ready();
+    // eslint-disable-next-line testing-library/no-node-access
+    const rows = screen.getByRole('dialog', { name: 'Edit details' }).querySelector('.m-edit-rows');
+    // jsdom draws every box at 0, which the sheet has already recorded.
+    let top = 0;
+    let scroll = 0;
+    rows.getBoundingClientRect = () => ({ top, bottom: top + 300, left: 0, right: 320, width: 320, height: 300 });
+    Object.defineProperty(rows, 'scrollTop', { configurable: true, get: () => scroll, set: (v) => { scroll = v; } });
+    // The figure asked at open lands first.
+    await waitFor(() => expect(calls).toBe(1));
+    more('More guests');
+    // The step re-renders with the block where it was: nothing to keep.
+    expect(scroll).toBe(0);
+    // The failed figure's notice pushes the block's top down 54px.
+    top = 54;
+    expect(await screen.findByText("Couldn't price the change.")).toBeInTheDocument();
+    expect(scroll).toBe(54);
+    // It leaves on the next step, the top rises back, and the content follows.
+    top = 0;
+    more('More guests');
+    await waitFor(() => expect(scroll).toBe(0));
+  });
+
+  test('an untouched proposal sheet says Done and sends nothing', async () => {
+    serveProp();
+    const { onClose, onMoved } = mountProp();
+    await ready();
+    await waitFor(() => expect(confirmBtn()).toHaveTextContent('Done'));
+    fireEvent.click(confirmBtn());
+    expect(onClose).toHaveBeenCalled();
+    expect(api.patch).not.toHaveBeenCalled();
+    expect(onMoved).not.toHaveBeenCalled();
+  });
+
+  // Outcomes finding fixed in this lane: the page must read the row again
+  // whenever it may have changed, not only after a confirmed save.
+  test('the page is told the row may have moved once a PATCH goes out, even with no answer', async () => {
+    serveProp();
+    api.patch.mockImplementation(() => Promise.reject(NETWORK));
+    const { onMoved, onSaved } = mountProp();
+    await ready();
+    more('More bartenders');
+    await save();
+    expect(await screen.findByText('No connection. It may not have saved; reopen the proposal to check.')).toBeInTheDocument();
+    expect(onMoved).toHaveBeenCalledTimes(1);
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  test('and when a save is refused because the row moved, or the opening read finds it locked', async () => {
+    let reads = 0;
+    serveProp();
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => {
+      if (url === '/proposals/21') { reads += 1; return Promise.resolve({ data: reads > 1 ? { ...PROP, adjustments_token: 'tok-moved' } : PROP }); }
+      return base(url);
+    });
+    const first = mountProp();
+    await ready();
+    more('More bartenders');
+    await waitFor(() => expect(confirmBtn()).toBeEnabled());
+    fireEvent.click(confirmBtn());
+    expect(await screen.findByText('This proposal changed since you opened it.')).toBeInTheDocument();
+    expect(api.patch).not.toHaveBeenCalled();
+    expect(first.onMoved).toHaveBeenCalledTimes(1);
+    cleanup();
+    serveProp({ proposal: { ...PROP, status: 'deposit_paid' } });
+    const second = mountProp();
+    expect(await screen.findByText('This proposal can no longer be edited here. Use desktop view.')).toBeInTheDocument();
+    expect(second.onMoved).toHaveBeenCalledTimes(1);
+  });
+});

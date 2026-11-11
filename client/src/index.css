@@ -22083,6 +22083,22 @@ html[data-app="admin-os"] .m-edit-notices .m-sheet-note,
 html[data-app="admin-os"] .m-edit-notices .m-confirm { margin: 0 0 10px; }
 html[data-app="admin-os"] .m-edit-rows { flex: none; }
 html[data-app="admin-os"] .m-edit-rows > .m-sheet-row:first-child { border-top-color: var(--line-2); }
+/* The proposal variant's rows (lane proposal-edit-sheet): Bartenders, the
+   Add-ons heading, the add-on rows and the note under Guests. When the sheet
+   outgrows its max height the readout gives way first (its shrink outweighs
+   this block's a thousandfold), down to its 58px floor; then these rows
+   scroll inside their own block, never under three rows tall, and the footer
+   stays pinned. The rows keep a shrink of 1: a flex column whose shrinking
+   items' factors sum below 1 hands them only that fraction of the overflow,
+   and the whole sheet scrolled instead. On a 390x844 phone with three add-on
+   rows nothing scrolls. */
+html[data-app="admin-os"] .m-sheet.m-edit-sheet.m-edit-sheet-more .m-edit-readout { flex-shrink: 1000; }
+html[data-app="admin-os"] .m-edit-rows.m-edit-rows-more { flex: 0 1 auto; min-height: 144px; overflow-y: auto; overscroll-behavior: contain; }
+html[data-app="admin-os"] .m-edit-sec {
+  padding: 10px 16px 4px; border-top: 1px solid var(--line-1);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+}
+html[data-app="admin-os"] .m-edit-addon-note { margin: 0; padding: 8px 16px 10px; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
 html[data-app="admin-os"] .m-stepper-ctl { display: flex; align-items: center; flex: none; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--radius); }
 html[data-app="admin-os"] .m-stepper-btn { min-width: 44px; min-height: 44px; padding: 0; background: none; border: none; color: var(--ink-1); font-size: 18px; font-family: var(--font-mono); cursor: pointer; }
 html[data-app="admin-os"] .m-stepper-btn:disabled { color: var(--ink-4); cursor: default; }

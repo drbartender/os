@@ -13,6 +13,7 @@ import { whenLabel } from './proposalCards';
 import { proposalStatusMeta } from './proposalStatusMap';
 import { headerOf, contactsOf, financialsOf, dollars } from './eventDetailView';
 import { archiveReasonLabel } from './archiveReasons';
+import { ctDay } from '../components/adminos/format';
 
 // A booking belongs to the event detail: these open /events/:id instead.
 export const BOOKED_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
@@ -116,19 +117,40 @@ export function clientLinkOf(proposal, base = PUBLIC_SITE_URL) {
   return { url: `${base}/proposal/${token}`, text: `${host}${path}`, host, path };
 }
 
+// Whether the phone edit sheet may open on this proposal (spec section 3, Plan
+// decisions of 2026-11-05): an open status, no legal hold (only an explicit
+// false reads as none), not in an options group, and an event date that is
+// today (Chicago) or later. The sheet judges its own fresh read by the same
+// rule (editSheetView.js proposalLockedReason).
+export function proposalEditable(proposal, todayYmd) {
+  const p = proposal || {};
+  if (p.legal_hold !== false || !OPEN_STATUSES.includes(p.status)) return false;
+  if (p.group_id !== null && p.group_id !== undefined) return false;
+  const ymd = String(p.event_date || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) && !!todayYmd && ymd >= todayYmd;
+}
+
 // Which rows the screen offers, and how each acts.
 //   mode 'offline'  a stored copy: the row reads "needs connection" and does nothing.
 //   mode 'sheet'    the row opens its phone sheet: Resend proposal (ResendSheet)
 //                   and Archive (ArchiveSheet).
+//   mode 'edit'     Edit details opens the phone edit sheet in its proposal
+//                   variant (EditSheet), for a proposal proposalEditable allows
+//                   and with no client change request pending (requestPending):
+//                   a direct save cancels a pending request on the server (the
+//                   PATCH's supersede sweep), which the desktop warns about and
+//                   the phone cannot, so with one pending the edit is desktop
+//                   view, where the request is reviewed.
 //   mode 'desktop'  the row opens desktop view: the first send of a draft or a
 //                   modified proposal (it runs the remote staffing fee check),
-//                   anything an options group sends, and Edit details until
-//                   the phone's edit sheet lands.
+//                   anything an options group sends, and Edit details on a
+//                   proposal the edit sheet does not take (an options group's,
+//                   or one whose event date has passed).
 // A legal-hold proposal offers nothing that writes or sends (law 15), and the
 // hold fails closed: only an explicit false from the server reads as no hold.
 // It also offers no client link, since a client's view writes to the row.
 // An archived proposal is read-only: no action, no Edit details, no link.
-export function gatesOf(proposal, { stale = false } = {}) {
+export function gatesOf(proposal, { stale = false, today = ctDay(new Date()), requestPending = false } = {}) {
   const p = proposal || {};
   const held = p.legal_hold !== false;
   const archived = p.status === 'archived';
@@ -153,7 +175,7 @@ export function gatesOf(proposal, { stale = false } = {}) {
     grouped,
     send,
     archive: archivable ? { label: 'Archive', mode: sheet } : null,
-    edit: open ? { mode } : null,
+    edit: open ? { mode: stale ? 'offline' : (proposalEditable(p, today) && !requestPending ? 'edit' : 'desktop') } : null,
     link: open ? clientLinkOf(p) : null,
   };
 }

@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom';
 import {
   detectNumBartendersOverride, storedGratuityOf, mandateLockedFor, isClassPackageFor, buildCalculateBody,
+  ratioBartenders, packageBartendersFor,
 } from './editorCore';
 
 const pkg = { id: 1, guests_per_bartender: 100, bar_type: 'service_only' };
@@ -74,5 +75,33 @@ describe('buildCalculateBody', () => {
     expect(buildCalculateBody({ ...form, gratuity_mandate_total: 0 }, { includeMandate: true })).not.toHaveProperty('gratuity_mandate_total');
     expect(buildCalculateBody({ ...form, gratuity_mandate_total: '' }, { includeMandate: true })).not.toHaveProperty('gratuity_mandate_total');
     expect(buildCalculateBody(form, { includeMandate: false })).not.toHaveProperty('gratuity_mandate_total');
+  });
+});
+
+// The phone edit sheet's Bartenders row (plan 2026-11-05, lane proposal-edit-sheet):
+// the package's count is the engine's staffing.actual, the override or the ratio.
+describe('packageBartendersFor', () => {
+  const packages = [pkg, { id: 2, guests_per_bartender: 50 }];
+  test('the ratio on both sides of a step', () => {
+    expect(packageBartendersFor({ package_id: '1', guest_count: 100 }, packages)).toBe(1);
+    expect(packageBartendersFor({ package_id: '1', guest_count: 101 }, packages)).toBe(2);
+    expect(packageBartendersFor({ package_id: 2, guest_count: 50 }, packages)).toBe(1);
+    expect(packageBartendersFor({ package_id: 2, guest_count: 51 }, packages)).toBe(2);
+  });
+  test('never fewer than one', () => {
+    expect(packageBartendersFor({ package_id: 1, guest_count: 0 }, packages)).toBe(1);
+    expect(ratioBartenders({}, '')).toBe(1);
+  });
+  test('a standing override is the count, whatever the guests', () => {
+    expect(packageBartendersFor({ package_id: 1, guest_count: 150 }, packages, 3)).toBe(3);
+    expect(packageBartendersFor({ package_id: 1, guest_count: 400 }, packages, 3)).toBe(3);
+  });
+  test('a retired package cannot be judged', () => {
+    expect(packageBartendersFor({ package_id: 9, guest_count: 150 }, packages)).toBeNull();
+    expect(packageBartendersFor({ package_id: 9, guest_count: 150 }, packages, 3)).toBeNull();
+  });
+  test('the override detection judges a stored count by the same ratio', () => {
+    expect(ratioBartenders(pkg, 150)).toBe(2);
+    expect(detectNumBartendersOverride({ num_bartenders: ratioBartenders(pkg, 150), package_id: 1, guest_count: 150 }, [pkg])).toBeNull();
   });
 });

@@ -5,6 +5,8 @@ import {
   sheetValuesOf, fieldsChanged, sheetBasis, basisMoved, confirmView, saveErrorText, curfewReason, noteFirstLine,
   confirmViewNow, curfewRidesLine, NO_CONNECTION, SAVE_UNCONFIRMED, LOCKED_NOTE, READ_TIMEOUT_MS,
   readoutView, wasLine, startSubLine, PENDING_FIGURE, LEGAL_HOLD_NOTE, STALE_EVENT,
+  proposalRowsOf, proposalSheetValuesOf, proposalFormOf, bartenderStepView, stepCount, countWasLine,
+  proposalLockedReason, PROPOSAL_LOCKED_NOTE, SHEET_COPY,
 } from './editSheetView';
 import { buildRepriceSummary } from '../pages/admin/proposalEditor/repriceSummary';
 
@@ -448,4 +450,132 @@ test('noteFirstLine is the first line with text, trimmed', () => {
   expect(noteFirstLine('\n  Gate code at the barn  \nsecond')).toBe('Gate code at the barn');
   expect(noteFirstLine('')).toBe('');
   expect(noteFirstLine(null)).toBe('');
+});
+
+// ---- The proposal variant (plan 2026-11-05, lane proposal-edit-sheet) ----
+describe('the proposal variant', () => {
+  const PKG = { id: 1, guests_per_bartender: 100 };
+  const EXTRA = { id: 30, slug: 'additional-bartender', name: 'Additional Bartender', billing_type: 'per_hour', rate: '40.00' };
+  const BARBACK = { id: 7, slug: 'barback', name: 'Barback', billing_type: 'per_hour', rate: '25.00' };
+  const BANQUET = { id: 8, slug: 'banquet-server', name: 'Banquet Server', billing_type: 'per_hour', rate: '30.00' };
+  const MOCKTAIL = { id: 9, slug: 'pre-batched-mocktail', name: 'Pre-Batched Mocktail', billing_type: 'per_guest', rate: '2.00' };
+  const TOAST = { id: 10, slug: 'champagne-toast', name: 'Champagne Toast', billing_type: 'flat', rate: '150.00' };
+  const CATALOG = [EXTRA, BARBACK, BANQUET, MOCKTAIL, TOAST];
+  const form = (over = {}) => ({
+    event_date: '2999-08-15', event_start_time: '18:00', event_duration_hours: 4, guest_count: 150, package_id: 1,
+    addon_ids: [10, 7], addon_variants: { 10: 'non-alcoholic-bubbles' }, addon_quantities: { 7: 2 }, ...over,
+  });
+
+  test('the rows: Bartenders when the catalog and the package allow it; the proposal\'s own count add-ons, in catalog order, with the desktop\'s rate words', () => {
+    const rows = proposalRowsOf(form({ addon_ids: [9, 10, 7] }), [PKG], CATALOG);
+    expect(rows.bartender).toEqual({ addonId: 30 });
+    expect(rows.addons).toEqual([
+      { id: 7, name: 'Barback', rate: '$25/hr' },
+      { id: 9, name: 'Pre-Batched Mocktail', rate: '$2/guest' },
+    ]);
+    // No Additional Bartender in the active catalog, or a retired package: no Bartenders row.
+    expect(proposalRowsOf(form(), [PKG], [BARBACK]).bartender).toBeNull();
+    expect(proposalRowsOf(form({ package_id: 9 }), [PKG], CATALOG).bartender).toBeNull();
+    // Only add-ons already on the proposal get a row; a flat one never does.
+    expect(proposalRowsOf(form({ addon_ids: [10] }), [PKG], CATALOG).addons).toEqual([]);
+  });
+
+  test('the values it opens with: the four fields, the extras on the add-on, each row\'s count', () => {
+    const f = form({ addon_ids: [10, 7, 30, 8], addon_quantities: { 7: 2, 30: 3 } });
+    const rows = proposalRowsOf(f, [PKG], CATALOG);
+    expect(proposalSheetValuesOf(f, rows)).toEqual({
+      event_date: '2999-08-15', event_start_time: '18:00', event_duration_hours: 4, guest_count: 150,
+      // banquet carries no recovered count: 1, as the desktop shows it and the server prices it.
+      extra_bartenders: 3, addon_counts: { 7: 2, 8: 1 },
+    });
+    expect(proposalSheetValuesOf(form(), proposalRowsOf(form(), [PKG], CATALOG)).extra_bartenders).toBe(0);
+  });
+
+  test('the change test sees a bartender or an add-on move, and ignores an untouched sheet', () => {
+    const rows = proposalRowsOf(form(), [PKG], CATALOG);
+    const opened = proposalSheetValuesOf(form(), rows);
+    expect(fieldsChanged(opened, { ...opened })).toBe(false);
+    expect(fieldsChanged(opened, { ...opened, addon_counts: { ...opened.addon_counts } })).toBe(false);
+    expect(fieldsChanged(opened, { ...opened, extra_bartenders: 1 })).toBe(true);
+    expect(fieldsChanged(opened, { ...opened, addon_counts: { 7: 3 } })).toBe(true);
+    // A step back to where it opened is no change.
+    expect(fieldsChanged(opened, { ...opened, addon_counts: { 7: 2 }, extra_bartenders: 0 })).toBe(false);
+  });
+
+  test('the form for the preview and the save: the add-on is added at the first extra and dropped at none; every other add-on rides as read', () => {
+    const rows = proposalRowsOf(form(), [PKG], CATALOG);
+    const opened = proposalSheetValuesOf(form(), rows);
+    const added = proposalFormOf(form(), { ...opened, extra_bartenders: 2 }, rows);
+    expect(added.addon_ids).toEqual([10, 7, 30]);
+    expect(added.addon_quantities).toEqual({ 7: 2, 30: 2 });
+    expect(added.addon_variants).toEqual({ 10: 'non-alcoholic-bubbles' });
+    const had = form({ addon_ids: [30, 10, 7], addon_quantities: { 7: 2, 30: 3 } });
+    const dropped = proposalFormOf(had, { ...proposalSheetValuesOf(had, rows), extra_bartenders: 0 }, rows);
+    expect(dropped.addon_ids).toEqual([10, 7]);
+    expect(dropped.addon_quantities).toEqual({ 7: 2 });
+    const kept = proposalFormOf(had, { ...proposalSheetValuesOf(had, rows), extra_bartenders: 4 }, rows);
+    expect(kept.addon_ids).toEqual([30, 10, 7]);
+    expect(kept.addon_quantities).toEqual({ 7: 2, 30: 4 });
+    const counted = proposalFormOf(form(), { ...opened, addon_counts: { 7: 5 }, guest_count: 175 }, rows);
+    expect(counted.addon_quantities).toEqual({ 7: 5 });
+    expect(counted.guest_count).toBe(175);
+    // A count for an add-on not on the proposal is never written.
+    expect(proposalFormOf(form(), { ...opened, addon_counts: { 8: 4 } }, rows).addon_quantities).toEqual({ 7: 2 });
+    // With no Bartenders row the add-on is left exactly as read.
+    const noRow = { bartender: null, addons: rows.addons };
+    expect(proposalFormOf(had, { ...opened, extra_bartenders: 0 }, noRow).addon_ids).toEqual([30, 10, 7]);
+  });
+
+  test('Bartenders\' minus is disabled at the package\'s count, its plus at ten extras', () => {
+    expect(bartenderStepView(2, 0)).toEqual({ shown: 2, canLess: false, canMore: true });
+    expect(bartenderStepView(2, 1)).toEqual({ shown: 3, canLess: true, canMore: true });
+    expect(bartenderStepView(2, 10)).toEqual({ shown: 12, canLess: true, canMore: false });
+    expect(stepCount(0, -1, 0, 10)).toBe(0);
+    expect(stepCount(10, 1, 0, 10)).toBe(10);
+    expect(stepCount(1, -1, 1, 10)).toBe(1);
+    expect(stepCount(3, 1, 1, 10)).toBe(4);
+  });
+
+  test('the was lines', () => {
+    expect(countWasLine(3, 3)).toBeNull();
+    expect(countWasLine(3, 4)).toBe('was 3');
+    expect(countWasLine('2', 1)).toBe('was 2');
+  });
+
+  test('its fresh read is locked unless the detail would open the sheet, the hold in the detail\'s words', () => {
+    const p = { status: 'sent', legal_hold: false, group_id: null, event_date: '2999-08-15T00:00:00.000Z' };
+    expect(proposalLockedReason(p, '2999-08-01')).toBeNull();
+    expect(proposalLockedReason({ ...p, legal_hold: true }, '2999-08-01')).toBe('This proposal is on legal hold. Nothing is changed or sent from here.');
+    expect(proposalLockedReason({ ...p, legal_hold: undefined }, '2999-08-01')).toBe('This proposal is on legal hold. Nothing is changed or sent from here.');
+    for (const over of [{ status: 'deposit_paid' }, { status: 'archived' }, { group_id: 4 }, { event_date: '2999-07-31T00:00:00.000Z' }]) {
+      expect(proposalLockedReason({ ...p, ...over }, '2999-08-01')).toBe(PROPOSAL_LOCKED_NOTE);
+    }
+  });
+
+  test('the basis takes the variant\'s lock, so a proposal that joined a group moved', () => {
+    const p = {
+      status: 'sent', legal_hold: false, group_id: null, event_date: '2999-08-15T00:00:00.000Z',
+      total_price: '100.00', amount_paid: '0', guest_count: 50, event_duration_hours: '4', package_id: 1,
+    };
+    const lockOf = (x) => proposalLockedReason(x, '2999-08-01');
+    const opened = sheetBasis(p, { a: 1 }, { lockOf });
+    expect(basisMoved(opened, sheetBasis({ ...p, status: 'viewed' }, { a: 1 }, { lockOf }))).toBe(false);
+    expect(basisMoved(opened, sheetBasis({ ...p, group_id: 4 }, { a: 1 }, { lockOf }))).toBe(true);
+    // The event variant's basis is as it was.
+    expect(sheetBasis(p, { a: 1 })).toBe(sheetBasis(p, { a: 1 }, { lockOf: editLockedReason }));
+  });
+
+  test('its words name a proposal; the event\'s stay', () => {
+    const P = SHEET_COPY.proposal;
+    expect(P.note).toBe('proposal edit · pickers & steppers');
+    expect(P.loadFailed).toBe("Couldn't load this proposal. Editing needs a connection.");
+    expect(P.stale).toBe('This proposal changed since you opened it.');
+    expect(P.saved).toBe('Proposal updated.');
+    expect(PROPOSAL_LOCKED_NOTE).toBe('This proposal can no longer be edited here. Use desktop view.');
+    expect(saveErrorText({ code: 'STALE_EDIT' }, true, P)).toBe(P.stale);
+    expect(saveErrorText({ status: 0 }, true, P)).toBe('No connection. It may not have saved; reopen the proposal to check.');
+    expect(saveErrorText({ code: 'LEGAL_HOLD' }, true, P)).toBe(P.hold);
+    expect(saveErrorText({ code: 'STALE_EDIT' }, true)).toBe(STALE_EVENT);
+    expect(saveErrorText({ status: 0 }, true)).toBe(SAVE_UNCONFIRMED);
+  });
 });

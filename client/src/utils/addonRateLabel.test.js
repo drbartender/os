@@ -1,4 +1,4 @@
-import { TIMED_PER_GUEST, isTimedPerGuestAddon, timedPerGuestRateLabel } from './addonRateLabel';
+import { TIMED_PER_GUEST, isTimedPerGuestAddon, timedPerGuestRateLabel, addonRateWords } from './addonRateLabel';
 
 // Catalog rows as seeded in server/db/schema.sql (service_addons).
 const FULL_COMPOUND = { billing_type: TIMED_PER_GUEST, rate: '8.00', extra_hour_rate: '2.00' };
@@ -66,4 +66,21 @@ test('every produced label carries the four-hour qualifier', () => {
 test('no add-on returns an empty string rather than throwing', () => {
   expect(timedPerGuestRateLabel(null)).toBe('');
   expect(timedPerGuestRateLabel(undefined)).toBe('');
+});
+
+// The desktop editor's add-on rate words, one copy for the desktop add-on list
+// and the phone edit sheet's add-on rows (plan 2026-11-05, lane proposal-edit-sheet).
+describe('addonRateWords', () => {
+  test('each billing type in the desktop editor\'s words', () => {
+    expect(addonRateWords({ billing_type: 'per_guest', rate: '2.00' })).toBe('$2/guest');
+    expect(addonRateWords({ billing_type: 'per_guest', rate: '1.50' })).toBe('$1.5/guest');
+    expect(addonRateWords({ billing_type: 'per_hour', rate: '25.00', name: 'Barback' })).toBe('$25/hr');
+    expect(addonRateWords({ billing_type: 'per_hour', rate: '30.00', name: 'Banquet Server' })).toBe('$30/hr · 4hr min');
+    expect(addonRateWords({ billing_type: 'flat', rate: '150.00' })).toBe('$150 flat');
+    expect(addonRateWords(FULL_COMPOUND)).toBe(timedPerGuestRateLabel(FULL_COMPOUND));
+  });
+  test('a billing type the desktop prints nothing for, and no row, have no words', () => {
+    expect(addonRateWords({ billing_type: 'per_staff', rate: '10.00' })).toBe('');
+    expect(addonRateWords(null)).toBe('');
+  });
 });

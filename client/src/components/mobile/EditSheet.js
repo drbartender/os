@@ -1,17 +1,18 @@
-// EditSheet (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// EditSheet (React component, default export): the phone edit sheet, drawn for an event or,
+// with variant 'proposal', a proposal; useEditSheet.js reads and writes.
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import useSheetFocus from '../../hooks/useSheetFocus';
 import Icon from '../adminos/Icon';
 import { ctDay } from '../adminos/format';
 import { humanizeReason } from '../comms/notifyDrafts';
-import useEditSheet, { LOAD_FAILED } from './useEditSheet';
+import useEditSheet from './useEditSheet';
 import {
-  SHEET_NOTE, STALE_EVENT, PREVIEW_FAILED, START_MIN, START_MAX,
+  PREVIEW_FAILED, START_MIN, START_MAX,
   stepHours, stepGuests, canStep, fmtHours, startInputValue, nextStartValue, nextDateValue,
   sheetDateText, extensionHint, multiShiftNote, curfewRidesLine,
   wasLine, startSubLine, PENDING_FIGURE, BALANCE_BECOMES,
+  stepCount, countWasLine, EXTRA_BARTENDERS_MAX, ADDON_COUNT_MIN, ADDON_COUNT_MAX, ADDONS_DESKTOP_NOTE,
 } from '../../utils/editSheetView';
 import { holdTaps } from '../../utils/tapGuard';
 
@@ -41,8 +42,17 @@ function bringIntoView(box, target) {
 // content, at most the screen less 12px, so when the copy changes only the
 // head moves. The notify step fills the max height, so a channel's message
 // showing or hiding moves nothing.
-export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0, onClose, onSaved, previewDelayMs, armDelayMs = 500, inFlight = false }) {
-  const sheet = useEditSheet({ proposalId, onSaved, previewDelayMs, inFlight });
+//
+// variant 'proposal' (plan 2026-11-05, lane proposal-edit-sheet; spec section
+// 3, Plan decisions of 2026-11-05): the same sheet on a proposal, its words
+// naming a proposal, with Bartenders, the Add-ons heading, the count-taking
+// add-ons already on the proposal and the note that adding or removing one is
+// desktop view, under Guests in the pinned rows. That set of rows is fixed when
+// the sheet opens. When the sheet outgrows its max height, the readout gives
+// way first, to its 58px floor, then the rows scroll inside their own block;
+// the footer stays pinned.
+export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0, onClose, onSaved, onMoved, previewDelayMs, armDelayMs = 500, inFlight = false, variant = 'event' }) {
+  const sheet = useEditSheet({ proposalId, onSaved, onMoved, previewDelayMs, inFlight, variant });
   // Which notify button sent the save, so that one reads "Saving".
   const [tapped, setTapped] = useState(null);
   const ready = sheet.phase === 'ready' && !!sheet.values;
@@ -185,6 +195,30 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
     return () => watch.disconnect();
   }, [editView, measureFade]);
 
+  // The proposal variant's rows scroll inside their own block, so on a phone
+  // where the sheet sits at its max height a notice coming or going above them
+  // (Couldn't price, a failed save, the stale note, the curfew confirm) moves
+  // the block's top, not the sheet's. Its content is scrolled by the same
+  // amount in the same frame, so every stepper stays under the finger and the
+  // second tap of a double tap lands where the first did (the design pass's
+  // nothing-below-the-readout-moves rule). A resize of the window is not a
+  // notice: it only re-reads where the block sits.
+  const rowsRef = useRef(null);
+  const rowsTop = useRef(null);
+  useLayoutEffect(() => {
+    const el = rowsRef.current;
+    if (!el || !sheet.rows) { rowsTop.current = null; return; }
+    const top = el.getBoundingClientRect().top;
+    const was = rowsTop.current;
+    rowsTop.current = top;
+    if (was !== null && top !== was) el.scrollTop += top - was;
+  });
+  useEffect(() => {
+    const note = () => { if (rowsRef.current) rowsTop.current = rowsRef.current.getBoundingClientRect().top; };
+    window.addEventListener('resize', note);
+    return () => window.removeEventListener('resize', note);
+  }, []);
+
   useEffect(() => {
     if (holding || !confirmFocusDue.current) return;
     confirmFocusDue.current = false;
@@ -218,6 +252,47 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
     </span>
   );
 
+  // A count stepper (the proposal variant's Bartenders and add-on rows).
+  const countRow = (key, name, sub, shown, canLess, canMore, onLess, onMore, lessName, moreName) => (
+    <div key={key} className="m-sheet-row m-edit-stepper-row">
+      {label(name, sub)}
+      <span className="m-stepper-ctl">
+        <button type="button" className="m-stepper-btn" aria-label={lessName}
+          disabled={sheet.busy || holding || !canLess} onClick={onLess}>{String.fromCharCode(0x2212)}</button>
+        <span className="m-stepper-value" aria-live="polite">{shown}</span>
+        <button type="button" className="m-stepper-btn" aria-label={moreName}
+          disabled={sheet.busy || holding || !canMore} onClick={onMore}>+</button>
+      </span>
+    </div>
+  );
+
+  // The proposal variant's rows under Guests.
+  const extraRows = () => {
+    if (!sheet.rows) return null;
+    const b = sheet.bartenders;
+    const extra = Number(v.extra_bartenders) || 0;
+    const counts = v.addon_counts || {};
+    const opened = (sheet.initial && sheet.initial.addon_counts) || {};
+    return (
+      <>
+        {b && countRow('bartenders', 'Bartenders', countWasLine(b.wasShown, b.shown), String(b.shown), b.canLess, b.canMore,
+          () => sheet.setValue('extra_bartenders', stepCount(extra, -1, 0, EXTRA_BARTENDERS_MAX)),
+          () => sheet.setValue('extra_bartenders', stepCount(extra, 1, 0, EXTRA_BARTENDERS_MAX)),
+          'Fewer bartenders', 'More bartenders')}
+        <div className="m-edit-sec">Add-ons</div>
+        {sheet.rows.addons.map((a) => {
+          const n = Number(counts[a.id]) || ADDON_COUNT_MIN;
+          const sub = [countWasLine(opened[a.id], n), a.rate].filter(Boolean).join(' · ') || null;
+          return countRow(`addon-${a.id}`, a.name, sub, String(n), n > ADDON_COUNT_MIN, n < ADDON_COUNT_MAX,
+            () => sheet.setAddonCount(a.id, stepCount(n, -1, ADDON_COUNT_MIN, ADDON_COUNT_MAX)),
+            () => sheet.setAddonCount(a.id, stepCount(n, 1, ADDON_COUNT_MIN, ADDON_COUNT_MAX)),
+            `${a.name}, one fewer`, `${a.name}, one more`);
+        })}
+        <p className="m-edit-addon-note">{ADDONS_DESKTOP_NOTE}</p>
+      </>
+    );
+  };
+
   const stepper = (name, value, text, step, field, lessName, moreName) => (
     <div className="m-sheet-row m-edit-stepper-row">
       {label(name, was(field))}
@@ -236,18 +311,18 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
   return (
     <>
       <button type="button" className="m-sheet-scrim" aria-label="Close" tabIndex={-1} onClick={scrimTap} />
-      <div className={`m-sheet m-edit-sheet${ready && sheet.pending ? ' m-edit-notifying' : ''}`} role="dialog" aria-modal="true" aria-label="Edit details" tabIndex={-1} ref={sheetRef}>
+      <div className={`m-sheet m-edit-sheet${sheet.rows ? ' m-edit-sheet-more' : ''}${ready && sheet.pending ? ' m-edit-notifying' : ''}`} role="dialog" aria-modal="true" aria-label="Edit details" tabIndex={-1} ref={sheetRef}>
         <div className="m-sheet-handle" />
         <div className="m-sheet-head">
-          <h2 className="m-sheet-title">{clientName || 'Event'}{kind ? <span className="m-sheet-kind">{` · ${kind}`}</span> : null}</h2>
-          <div className="m-sheet-mix">{SHEET_NOTE}</div>
+          <h2 className="m-sheet-title">{clientName || sheet.copy.title}{kind ? <span className="m-sheet-kind">{` · ${kind}`}</span> : null}</h2>
+          <div className="m-sheet-mix">{sheet.copy.note}</div>
         </div>
         {!ready && (
           <div className="m-sheet-body">
-            {sheet.phase === 'loading' && <div className="m-sheet-state">Loading the event</div>}
+            {sheet.phase === 'loading' && <div className="m-sheet-state">{sheet.copy.loading}</div>}
             {sheet.phase === 'failed' && (
               <div className="m-fail" role="alert">
-                <span className="m-fail-msg">{LOAD_FAILED}</span>
+                <span className="m-fail-msg">{sheet.copy.loadFailed}</span>
                 <button type="button" className="m-fail-retry" disabled={holding} onClick={sheet.reload}>Retry</button>
               </div>
             )}
@@ -301,7 +376,7 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
               {sheet.stale && (
                 <div className="m-sheet-note" role="alert" ref={staleRef}>
                   <span className="m-sheet-note-dot" aria-hidden="true" />
-                  <span className="m-sheet-note-text">{STALE_EVENT}</span>
+                  <span className="m-sheet-note-text">{sheet.copy.stale}</span>
                   <button type="button" className="m-fail-retry" ref={reloadRef} disabled={holding} onClick={sheet.reload}>Reload</button>
                 </div>
               )}
@@ -316,7 +391,7 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
                 </div>
               )}
             </div>
-            <div className="m-edit-rows">
+            <div className={`m-edit-rows${sheet.rows ? ' m-edit-rows-more' : ''}`} ref={rowsRef}>
               <label className="m-sheet-row m-edit-pick">
                 <Icon name="calendar" size={18} />
                 {label('Date', was('event_date'))}
@@ -340,6 +415,7 @@ export default function EditSheet({ proposalId, clientName, kind, shiftCount = 0
               </label>
               {stepper('Duration', v.event_duration_hours, fmtHours(v.event_duration_hours), stepHours, 'event_duration_hours', 'Shorter', 'Longer')}
               {stepper('Guests', v.guest_count, String(v.guest_count), stepGuests, 'guest_count', 'Fewer guests', 'More guests')}
+              {extraRows()}
             </div>
             <div className="m-acts m-edit-acts">
               <button type="button" className="m-act m-act-quiet" disabled={sheet.busy || holding} onClick={closeSheet}>Cancel</button>

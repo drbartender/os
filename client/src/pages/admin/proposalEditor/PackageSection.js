@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import { AddonQtyStepper } from '../../../components/AddonControls';
 import SyrupPicker from '../../../components/SyrupPicker';
 import { isQuantityCapable } from '../../../utils/proposalRules';
-import { isTimedPerGuestAddon, timedPerGuestRateLabel } from '../../../utils/addonRateLabel';
+import { addonRateWords } from '../../../utils/addonRateLabel';
 
 // Split the catalog into the loose remainder and the two folds. Exported so
 // the predicates live in ONE place: `hosted` is the same test the money code
@@ -162,12 +162,7 @@ export default function PackageSection({
                         {addon.name}
                         {isBanquet && <span className="tiny muted" style={{ marginLeft: 6 }}>(4hr min)</span>}
                       </div>
-                      <div className="tiny muted">
-                        {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
-                        {isTimedPerGuestAddon(addon) && timedPerGuestRateLabel(addon)}
-                        {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquet ? ' · 4hr min' : ''}`}
-                        {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
-                      </div>
+                      <div className="tiny muted">{addonRateWords(addon)}</div>
                     </div>
                   </label>
                   {addon.slug === 'champagne-toast' && checked && (

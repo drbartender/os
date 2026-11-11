@@ -69,3 +69,28 @@ export function timedPerGuestRateLabel(addon, options = {}) {
 
   return `${base} + ${money(extra)}${unit}/hr after`;
 }
+
+/**
+ * The admin rate words for any add-on: the desktop proposal editor's own
+ * (PackageSection's add-on list), one copy, which the phone edit sheet's
+ * add-on rows read too, so the two surfaces cannot drift.
+ *
+ *     per_guest        "$2/guest"
+ *     per_guest_timed  timedPerGuestRateLabel, "$8/guest (4hr) + $2/guest/hr after"
+ *     per_hour         "$25/hr", and "$25/hr · 4hr min" for a banquet server
+ *     flat             "$150 flat"
+ *
+ * Any other billing type has no words (''), as on the desktop. The rate prints
+ * as Number(rate) does ("$1.5"), the desktop's long-standing form.
+ */
+export function addonRateWords(addon) {
+  if (!addon) return '';
+  const rate = Number(addon.rate);
+  switch (addon.billing_type) {
+    case 'per_guest': return `$${rate}/guest`;
+    case TIMED_PER_GUEST: return timedPerGuestRateLabel(addon);
+    case 'per_hour': return `$${rate}/hr${/banquet/i.test(addon.name || '') ? ' · 4hr min' : ''}`;
+    case 'flat': return `$${rate} flat`;
+    default: return '';
+  }
+}

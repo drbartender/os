@@ -1,6 +1,6 @@
 import {
   BOOKED_STATUSES, bookedTarget, proposalHeaderOf, proposalContactsOf, statusLineOf, chipOf, packageOf, clientLinkOf, gatesOf,
-  sheetRefusal, HOLD_NOTE, SHEET_PAID, SHEET_MOVED,
+  sheetRefusal, HOLD_NOTE, SHEET_PAID, SHEET_MOVED, proposalEditable,
 } from './proposalDetailView';
 import { PUBLIC_SITE_URL } from './constants';
 
@@ -200,5 +200,44 @@ describe('sheetRefusal: the fresh read before a sheet writes', () => {
     for (const status of ['deposit_paid', 'confirmed', 'archived']) {
       expect(sheetRefusal('archive', prop({ status }), opened)).toBe(`${SHEET_MOVED} Nothing was archived.`);
     }
+  });
+});
+
+// Lane proposal-edit-sheet: Edit details opens the phone edit sheet for an open,
+// fresh, unheld, ungrouped proposal dated today (Chicago) or later, and desktop
+// view otherwise. The day is passed in, so these never rot with the calendar.
+describe('Edit details: the phone edit sheet or desktop view', () => {
+  const today = '2026-11-21';
+  test('an active, fresh, unheld, ungrouped, upcoming proposal opens the sheet', () => {
+    for (const status of ['draft', 'sent', 'viewed', 'modified', 'accepted']) {
+      expect(gatesOf(prop({ status }), { today }).edit).toEqual({ mode: 'edit' });
+    }
+    expect(gatesOf(prop({ event_date: '2027-01-02T00:00:00.000Z' }), { today }).edit.mode).toBe('edit');
+  });
+  test('an event dated today still opens it; the day before does not', () => {
+    expect(gatesOf(prop({ event_date: '2026-11-21T00:00:00.000Z' }), { today }).edit.mode).toBe('edit');
+    expect(gatesOf(prop({ event_date: '2026-11-20T00:00:00.000Z' }), { today }).edit.mode).toBe('desktop');
+  });
+  test('a pending client change request keeps desktop view, where the request is reviewed', () => {
+    expect(gatesOf(prop(), { today, requestPending: true }).edit).toEqual({ mode: 'desktop' });
+    expect(gatesOf(prop(), { today, requestPending: true, stale: true }).edit.mode).toBe('offline');
+    expect(gatesOf(prop(), { today, requestPending: false }).edit.mode).toBe('edit');
+  });
+  test('no event date, or an options group, keeps desktop view', () => {
+    expect(gatesOf(prop({ event_date: null }), { today }).edit.mode).toBe('desktop');
+    expect(gatesOf(prop({ group_id: 7 }), { today }).edit.mode).toBe('desktop');
+  });
+  test('a stored copy needs a connection; a hold, an archive or a booking offers no Edit details', () => {
+    expect(gatesOf(prop(), { today, stale: true }).edit.mode).toBe('offline');
+    expect(gatesOf(prop({ legal_hold: true }), { today }).edit).toBeNull();
+    expect(gatesOf(prop({ status: 'archived' }), { today }).edit).toBeNull();
+    expect(gatesOf(prop({ status: 'deposit_paid' }), { today }).edit).toBeNull();
+  });
+  test('proposalEditable fails closed on the hold and on a missing day', () => {
+    expect(proposalEditable(prop(), today)).toBe(true);
+    expect(proposalEditable(prop({ legal_hold: undefined }), today)).toBe(false);
+    expect(proposalEditable(prop({ legal_hold: null }), today)).toBe(false);
+    expect(proposalEditable(prop(), null)).toBe(false);
+    expect(proposalEditable(null, today)).toBe(false);
   });
 });

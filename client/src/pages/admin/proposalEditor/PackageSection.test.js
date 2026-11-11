@@ -2,6 +2,7 @@ import '@testing-library/jest-dom'; // per-file import: this repo has no setupTe
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import PackageSection, { partitionPackages } from './PackageSection';
+import { addonRateWords } from '../../../utils/addonRateLabel';
 
 // Shapes mirror live service_packages rows. Mixology 101 carries
 // category 'byob' on purpose: that is what the live class rows actually hold,
@@ -38,7 +39,7 @@ function renderSection(over = {}) {
   const props = {
     editForm: { ...baseForm, ...(over.editForm || {}) },
     packages: over.packages || ALL,
-    filteredAddons: [],
+    filteredAddons: over.filteredAddons || [],
     selectedPkg: over.selectedPkg ?? null,
     update,
     toggleAddon: jest.fn(),
@@ -82,4 +83,21 @@ test('picking a package inside an expanded group selects it', () => {
   fireEvent.click(screen.getByRole('button', { name: /Hosted packages/ }));
   fireEvent.click(screen.getByRole('radio', { name: /Formula No\. 5/ }));
   expect(update).toHaveBeenCalledWith('package_id', '6');
+});
+
+// The add-on list prints each add-on's rate in the one shared copy of the words,
+// which the phone edit sheet's add-on rows read too (lane proposal-edit-sheet).
+test('each add-on carries its rate words, the same words the phone shows', () => {
+  const addons = [
+    { id: 7, slug: 'barback', name: 'Barback', billing_type: 'per_hour', rate: '25.00' },
+    { id: 8, slug: 'banquet-server', name: 'Banquet Server', billing_type: 'per_hour', rate: '30.00' },
+    { id: 9, slug: 'pre-batched-mocktail', name: 'Pre-Batched Mocktail', billing_type: 'per_guest', rate: '2.00' },
+    { id: 10, slug: 'champagne-toast', name: 'Champagne Toast', billing_type: 'flat', rate: '150.00' },
+  ];
+  renderSection({ filteredAddons: addons });
+  expect(screen.getByText('$25/hr')).toBeInTheDocument();
+  expect(screen.getByText('$30/hr · 4hr min')).toBeInTheDocument();
+  expect(screen.getByText('$2/guest')).toBeInTheDocument();
+  expect(screen.getByText('$150 flat')).toBeInTheDocument();
+  addons.forEach((a) => expect(screen.getByText(addonRateWords(a))).toBeInTheDocument());
 });

@@ -7,6 +7,9 @@ import { buildRepriceSummary, BOOKED_STATUSES } from '../pages/admin/proposalEdi
 import { dollars, setupOf } from './eventDetailView';
 import { railParts } from './eventCards';
 import { fmtTime24 } from '../components/adminos/format';
+import { isQuantityCapable } from './proposalRules';
+import { addonRateWords } from './addonRateLabel';
+import { HOLD_NOTE, proposalEditable } from './proposalDetailView';
 
 export const HOURS_MIN = 1;
 export const HOURS_MAX = 12;
@@ -24,6 +27,26 @@ export const SAVE_UNCONFIRMED = 'No connection. It may not have saved; reopen th
 export const LOCKED_NOTE = 'This event can no longer be edited here. Use desktop view.';
 // Spec 2026-10-16 section 5.3: a held booking opens read-only, on both editors.
 export const LEGAL_HOLD_NOTE = "This booking is on legal hold and can't be edited here.";
+// The proposal variant (plan 2026-11-05, lane proposal-edit-sheet): the same
+// sheet on a proposal, its copy naming a proposal.
+export const PROPOSAL_SHEET_NOTE = 'proposal edit · pickers & steppers';
+export const STALE_PROPOSAL = 'This proposal changed since you opened it.';
+export const PROPOSAL_LOCKED_NOTE = 'This proposal can no longer be edited here. Use desktop view.';
+export const PROPOSAL_SAVE_UNCONFIRMED = 'No connection. It may not have saved; reopen the proposal to check.';
+export const ADDONS_DESKTOP_NOTE = 'To add or remove an add-on, use desktop view.';
+// The words each variant says, in one place.
+export const SHEET_COPY = Object.freeze({
+  event: Object.freeze({
+    note: SHEET_NOTE, title: 'Event', loading: 'Loading the event',
+    loadFailed: "Couldn't load this event. Editing needs a connection.",
+    stale: STALE_EVENT, unconfirmed: SAVE_UNCONFIRMED, hold: LEGAL_HOLD_NOTE, saved: 'Event updated.',
+  }),
+  proposal: Object.freeze({
+    note: PROPOSAL_SHEET_NOTE, title: 'Proposal', loading: 'Loading the proposal',
+    loadFailed: "Couldn't load this proposal. Editing needs a connection.",
+    stale: STALE_PROPOSAL, unconfirmed: PROPOSAL_SAVE_UNCONFIRMED, hold: HOLD_NOTE, saved: 'Proposal updated.',
+  }),
+});
 // Every read the two sheets make, and the read-only preview and preflight,
 // give up after this long. On weak signal a request hangs rather than fails,
 // and a hung read would show nothing at all. The writes have no timeout: a
@@ -167,12 +190,137 @@ export function sheetValuesOf(form) {
   };
 }
 
+// The proposal variant's two more values (extra_bartenders, addon_counts) count
+// too; the event variant has neither, so they never differ there.
 export function fieldsChanged(a, b) {
   if (!a || !b) return false;
   return a.event_date !== b.event_date
     || fmtTime24(a.event_start_time) !== fmtTime24(b.event_start_time)
     || Number(a.event_duration_hours) !== Number(b.event_duration_hours)
-    || Number(a.guest_count) !== Number(b.guest_count);
+    || Number(a.guest_count) !== Number(b.guest_count)
+    || Number(a.extra_bartenders || 0) !== Number(b.extra_bartenders || 0)
+    || countsDiffer(a.addon_counts, b.addon_counts);
+}
+
+function countsDiffer(x, y) {
+  const a = x || {};
+  const b = y || {};
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].some((k) => Number(a[k] || 0) !== Number(b[k] || 0));
+}
+
+// ---- The proposal variant (spec section 3, Plan decisions of 2026-11-05) ----
+//
+// Bartenders is the package's bartenders (editorCore.js packageBartendersFor: a
+// standing override, else the guest ratio) plus the Additional Bartender
+// add-on's count, the desktop's one control for an extra bartender, so the
+// money path is the desktop's: the engine charges the add-on at its rate on
+// hosted and BYOB packages and at $0 on a class (law 10). Its stepper moves
+// only the add-on, 0 to 10. The add-on rows are the count-taking add-ons
+// already on the proposal (barback, banquet server, pre-batched mocktail), 1 to
+// 10 as on the desktop. Adding or removing an add-on is desktop view. The set of
+// rows is fixed when the sheet opens.
+export const BARTENDER_ADDON_SLUG = 'additional-bartender';
+export const EXTRA_BARTENDERS_MAX = 10;
+export const ADDON_COUNT_MIN = 1;
+export const ADDON_COUNT_MAX = 10;
+
+// A count on the form: an add-on not on it is 0; one on it with no recovered
+// count is 1, as the desktop stepper shows it and the server prices it
+// (safeAddonQty).
+export function addonCountOf(form, addonId) {
+  const ids = ((form && form.addon_ids) || []).map(Number);
+  if (!ids.includes(Number(addonId))) return 0;
+  const q = Number(((form && form.addon_quantities) || {})[addonId]);
+  return Number.isFinite(q) && q >= 1 ? q : 1;
+}
+
+// Which extra rows the sheet draws, from its opening read. bartender is null
+// when the active catalog has no Additional Bartender or the proposal's package
+// is retired (absent from the active catalog); addons are the proposal's own
+// count-taking add-ons in catalog order, each with the desktop's rate words.
+export function proposalRowsOf(form, packages, catalog) {
+  const list = catalog || [];
+  const pkg = (packages || []).find((p) => p.id === Number(form && form.package_id));
+  const extra = list.find((a) => a && a.slug === BARTENDER_ADDON_SLUG);
+  const ids = ((form && form.addon_ids) || []).map(Number);
+  return {
+    bartender: pkg && extra ? { addonId: extra.id } : null,
+    addons: list
+      .filter((a) => a && a.slug !== BARTENDER_ADDON_SLUG && isQuantityCapable(a) && ids.includes(Number(a.id)))
+      .map((a) => ({ id: a.id, name: a.name, rate: addonRateWords(a) })),
+  };
+}
+
+// The values the proposal variant opens with: the event variant's four, the
+// extra bartenders and each add-on row's count.
+export function proposalSheetValuesOf(form, rows) {
+  const counts = {};
+  ((rows && rows.addons) || []).forEach((a) => { counts[a.id] = addonCountOf(form, a.id); });
+  return {
+    ...sheetValuesOf(form),
+    extra_bartenders: rows && rows.bartender ? addonCountOf(form, rows.bartender.addonId) : 0,
+    addon_counts: counts,
+  };
+}
+
+// The desktop form with the sheet's values in it, for the preview and the
+// save: the four fields, each add-on row's count, and the Additional Bartender
+// add-on added from the catalog at its first extra and dropped at none. Every
+// other add-on, its variant and its count ride as read.
+export function proposalFormOf(form, values, rows) {
+  const v = values || {};
+  const quantities = { ...(form.addon_quantities || {}) };
+  let ids = (form.addon_ids || []).slice();
+  Object.entries(v.addon_counts || {}).forEach(([id, n]) => {
+    if (ids.map(Number).includes(Number(id))) quantities[id] = Number(n);
+  });
+  if (rows && rows.bartender) {
+    const id = rows.bartender.addonId;
+    const n = Math.min(EXTRA_BARTENDERS_MAX, Math.max(0, Math.round(Number(v.extra_bartenders) || 0)));
+    const present = ids.map(Number).includes(Number(id));
+    if (n > 0) {
+      if (!present) ids = [...ids, id];
+      quantities[id] = n;
+    } else if (present) {
+      ids = ids.filter((x) => Number(x) !== Number(id));
+      delete quantities[id];
+    }
+  }
+  return {
+    ...form,
+    event_date: v.event_date,
+    event_start_time: v.event_start_time,
+    event_duration_hours: v.event_duration_hours,
+    guest_count: v.guest_count,
+    addon_ids: ids,
+    addon_quantities: quantities,
+  };
+}
+
+// A count stepper within its bounds.
+export function stepCount(value, dir, min, max) {
+  const v = Math.round(Number(value) || 0);
+  return Math.min(max, Math.max(min, v + (dir > 0 ? 1 : -1)));
+}
+
+// The Bartenders row: the package's count plus the extras; minus stops at the
+// package's count (no extras), plus at ten extras.
+export function bartenderStepView(packageCount, extra) {
+  const base = Number(packageCount) || 0;
+  const n = Number(extra) || 0;
+  return { shown: base + n, canLess: n > 0, canMore: n < EXTRA_BARTENDERS_MAX };
+}
+
+// "was 3" under a count that moved since the sheet opened.
+export function countWasLine(was, now) {
+  return Number(was) !== Number(now) ? `was ${Number(was)}` : null;
+}
+
+// The proposal variant's fresh read: locked unless the detail would open the
+// sheet on it (proposalEditable), with the hold said in the detail's words.
+export function proposalLockedReason(proposal, todayYmd) {
+  if (!proposal || proposal.legal_hold !== false) return HOLD_NOTE;
+  return proposalEditable(proposal, todayYmd) ? null : PROPOSAL_LOCKED_NOTE;
 }
 
 // What the sheet's save rests on, from one read. The sheet re-reads before every
@@ -191,14 +339,17 @@ export function fieldsChanged(a, b) {
 // Fails closed: a read missing what every admin GET carries is null.
 const BASIS_REQUIRED = ['status', 'total_price', 'amount_paid', 'guest_count', 'event_duration_hours', 'package_id'];
 const basisCents = (n) => (n === null || n === undefined || n === '' ? null : Math.round(Number(n) * 100));
-export function sheetBasis(proposal, payload) {
+// lockOf: the variant's lock (editLockedReason for an event,
+// proposalLockedReason for a proposal), so a proposal that joined an options
+// group or left the open statuses since the sheet opened refuses too.
+export function sheetBasis(proposal, payload, { lockOf = editLockedReason } = {}) {
   if (!proposal || !payload || BASIS_REQUIRED.some((k) => proposal[k] === undefined)) return null;
   const p = proposal;
   const g = (p.pricing_snapshot && p.pricing_snapshot.gratuity) || {};
   return JSON.stringify({
     payload,
     booked: BOOKED_STATUSES.includes(p.status),
-    locked: editLockedReason(p),
+    locked: lockOf(p),
     total: basisCents(p.total_price),
     paid: basisCents(p.amount_paid),
     overpaid: p.overpayment_cents ?? null,
@@ -340,10 +491,11 @@ export function curfewRidesLine(notify, staff) {
 // out, so no answer means it may have landed.
 // The server's two refusals of the lines (spec 2026-10-16 sections 5.1 and
 // 5.3) read in the sheet's own words.
-export function saveErrorText(err, sent = false) {
-  if (!err || err.status === 0 || err.code === 'NETWORK_ERROR') return sent ? SAVE_UNCONFIRMED : NO_CONNECTION;
-  if (err.code === 'STALE_EDIT') return STALE_EVENT;
-  if (err.code === 'LEGAL_HOLD') return LEGAL_HOLD_NOTE;
+// copy: the variant's words (SHEET_COPY), the event's by default.
+export function saveErrorText(err, sent = false, copy = SHEET_COPY.event) {
+  if (!err || err.status === 0 || err.code === 'NETWORK_ERROR') return sent ? copy.unconfirmed : NO_CONNECTION;
+  if (err.code === 'STALE_EDIT') return copy.stale;
+  if (err.code === 'LEGAL_HOLD') return copy.hold;
   const texts = Object.entries(err.fieldErrors || {})
     .filter(([k, v]) => k !== 'past_curfew' && typeof v === 'string' && v.trim())
     .map(([, v]) => v);

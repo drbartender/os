@@ -17,9 +17,28 @@ export function detectNumBartendersOverride(proposal, packages) {
   if (!stored) return null;
   const originalPkg = (packages || []).find((p) => p.id === Number(proposal.package_id));
   if (!originalPkg) return null;
-  const per = Number(originalPkg.guests_per_bartender) || 100;
-  const required = Math.max(1, Math.ceil((Number(proposal.guest_count) || 0) / per));
-  return stored !== required ? stored : null;
+  return stored !== ratioBartenders(originalPkg, proposal.guest_count) ? stored : null;
+}
+
+// The bartenders a package's guest ratio requires: one per guests_per_bartender
+// guests (100 when the row has none), never fewer than one. The engine's
+// calculateStaffing `required` (server/utils/pricingEngine.js), and the one
+// formula detectNumBartendersOverride judges a stored count against.
+export function ratioBartenders(pkg, guestCount) {
+  const per = Number(pkg?.guests_per_bartender) || 100;
+  return Math.max(1, Math.ceil((Number(guestCount) || 0) / per));
+}
+
+// The bartenders a form's package puts on the event before any Additional
+// Bartender add-on: a standing override (detectNumBartendersOverride) when
+// there is one, else the ratio at the form's guest count, the engine's
+// `staffing.actual`. Null for a retired package (absent from the active
+// catalog), which the phone edit sheet cannot judge.
+export function packageBartendersFor(form, packages, numBartendersOverride = null) {
+  const pkg = (packages || []).find((p) => p.id === Number(form?.package_id));
+  if (!pkg) return null;
+  if (numBartendersOverride != null) return Number(numBartendersOverride);
+  return ratioBartenders(pkg, form.guest_count);
 }
 
 // The gratuity is NOT editable in the editor (election-at-payment, spec
