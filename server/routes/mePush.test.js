@@ -30,7 +30,9 @@ function request(method, path, { token, body } = {}) {
 before(async () => {
   admin = (await pool.query(`INSERT INTO users (email, password_hash, role, staff_notification_preferences) VALUES ($1, 'x', 'admin', jsonb_build_object('push_subscriptions', '[{"endpoint":"https://push.example.test/t","keys":{"p256dh":"p","auth":"a"}}]'::jsonb)) RETURNING id`, [`me-push-a-${NONCE}@example.com`])).rows[0];
   admin2 = (await pool.query(`INSERT INTO users (email, password_hash, role) VALUES ($1, 'x', 'admin') RETURNING id`, [`me-push-a2-${NONCE}@example.com`])).rows[0];
-  staff = (await pool.query(`INSERT INTO users (email, password_hash, role) VALUES ($1, 'x', 'staff') RETURNING id`, [`me-push-s-${NONCE}@example.com`])).rows[0];
+  // Approved, so the 403s below come from the role guard this suite is about,
+  // not from the router-wide onboarding gate (staffPortal.onboardedGate.test.js).
+  staff = (await pool.query(`INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ($1, 'x', 'staff', 'approved') RETURNING id`, [`me-push-s-${NONCE}@example.com`])).rows[0];
   adminToken = mint(admin); admin2Token = mint(admin2); staffToken = mint(staff);
   const app = express();
   app.use(express.json());

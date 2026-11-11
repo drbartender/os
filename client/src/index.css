@@ -7091,7 +7091,12 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   box-shadow: 0 0 20px rgba(29, 140, 137, 0.2);
 }
 .wz-success h2 { margin-bottom: 0.75rem; color: var(--deep-brown); }
-.wz-success p { color: var(--deep-brown); font-size: 1.05rem; }
+.wz-success p { color: var(--deep-brown); font-size: 1.05rem; overflow-wrap: anywhere; }
+/* The delivery-failed state's business-line link: the default teal measures
+   2.18:1 on this parchment, under the 4.5:1 AA floor for body text, the same
+   pairing .wz-consent-text a and .sms-optin-done a fix. overflow-wrap above
+   lets a long masked address wrap at 320 wide instead of scrolling the page. */
+.wz-success p a { color: #0e3d3a; text-decoration: underline; padding: 3px 2px; }
 
 /* ── Class Wizard ───────────────────────────────────────── */
 .wz-class-page {

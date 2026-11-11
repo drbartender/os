@@ -166,8 +166,9 @@ router.post('/opt-in', publicLimiter, asyncHandler(async (req, res) => {
     // field, and `created` is the ownership gate recordSmsConsent needs. It is
     // NOT purely a reader, though — on a phone+name match against a row whose
     // email IS NULL it backfills the submitted email onto that EXISTING row (the
-    // wizard's "Jim fix"). That write is why the rollback below is not gated on
-    // `created`; see the note there. source stays 'website' rather than a new
+    // admin proposal-create's "Jim fix"; the wizard itself passes stampEmail:
+    // false since audit 2026-11-05 AUTH-02). That write is why the rollback
+    // below is not gated on `created`; see the note there. source stays 'website' rather than a new
     // enum value — clients.source carries a CHECK constraint whose live
     // definition is a migration block in schema.sql (a sensitive path), and
     // sms_consent_log.source_form already distinguishes these rows.
@@ -199,7 +200,7 @@ router.post('/opt-in', publicLimiter, asyncHandler(async (req, res) => {
     // address to that client's row and take over their portal. Rolling back on
     // any non-applied outcome closes it: the ordinary email-match case wrote
     // nothing, so the rollback is a no-op there, and this form has no use for
-    // the backfill (that exists for the wizard).
+    // the backfill (that exists for the admin proposal-create in crud.js).
     //
     // It also covers the created-row case, which matters because clients
     // defaults communication_preferences.sms_enabled to TRUE, clientDedup's

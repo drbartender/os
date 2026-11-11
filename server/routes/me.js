@@ -1,11 +1,16 @@
 // Authenticated self endpoints (tip page settings, my-tips listing, notification preferences: the
 // categories, the admin push kind switches and the server's VAPID public key)
+//
+// Gated router-wide by requireOnboarded alongside staffPortal.js (audit
+// 2026-11-05 AUTH-01): the tip page and tips are a staffer's own staff data, no
+// onboarding page calls /api/me, and admin and manager pass the gate whatever
+// their status, so the admin's notification and push routes are unaffected.
 
 const express = require('express');
 const path = require('path');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { auth, requireAdminOrManager, requireOnboarded } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -19,6 +24,7 @@ const { validatePreferredNameChange } = require('../utils/staffDisplayName.valid
 
 const router = express.Router();
 router.use(auth);
+router.use(requireOnboarded);
 
 // Notification categories (spec 8.3). The single source of truth for valid
 // keys is server/utils/adminNotifications.js VALID_CATEGORIES; mirrored here

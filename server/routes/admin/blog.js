@@ -8,7 +8,7 @@ const { JSDOM } = require('jsdom');
 const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
 const { uploadFile } = require('../../utils/storage');
-const { isValidUpload } = require('../../utils/fileValidation');
+const { isValidUpload, safeUploadExtension } = require('../../utils/fileValidation');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { chicagoTodayYmd } = require('../../utils/businessTime');
@@ -70,7 +70,10 @@ router.post('/blog/import', auth, adminOnly, asyncHandler(async (req, res) => {
     const fullPath = path.join(imagesDir, path.basename(filename));
     if (!fs.existsSync(fullPath)) return null;
     const data = fs.readFileSync(fullPath);
-    const ext = path.extname(filename);
+    // The stored extension comes from the sniffed bytes, never from the
+    // filename (audit 2026-11-05 AUTH-06 follow-up): the public reader
+    // (routes/blog.js) still accepts the older unsanitized shapes.
+    const ext = safeUploadExtension({ name: filename, data });
     const name = `blog_${uuidv4()}${ext}`;
     await uploadFile(data, name);
     return `/api/blog/images/${name}`;
@@ -194,7 +197,11 @@ router.post('/blog/upload-image', auth, adminOnly, asyncHandler(async (req, res)
     throw new ValidationError({ image: 'PDF files are not allowed for blog images.' });
   }
 
-  const ext = path.extname(file.name);
+  // The stored extension comes from the sniffed bytes (the file passed
+  // isValidUpload), never from the client's filename, so a new key is always
+  // `blog_<uuid>.jpg`, `.png` or `.webp` (audit 2026-11-05 AUTH-06 follow-up);
+  // the public reader (routes/blog.js) still accepts the older unsanitized shapes.
+  const ext = safeUploadExtension(file);
   const filename = `blog_${uuidv4()}${ext}`;
   await uploadFile(file.data, filename);
 

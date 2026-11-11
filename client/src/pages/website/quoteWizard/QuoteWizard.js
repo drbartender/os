@@ -19,8 +19,9 @@ import {
   enforceHostedMinimum,
   filterAddons,
 } from '../../../utils/proposalRules';
-import { getSteps, formatCurrency } from './helpers';
+import { getSteps } from './helpers';
 import PrescriptionCard from './PrescriptionCard';
+import SubmitSuccess from './SubmitSuccess';
 import WizardPriceBar from './WizardPriceBar';
 import EventDetailsStep from './steps/EventDetailsStep';
 import YourInfoStep from './steps/YourInfoStep';
@@ -599,23 +600,12 @@ export default function QuoteWizard() {
   };
 
   if (success) {
+    // token: null means the submit matched an existing client and the link
+    // went to the address on file (audit 2026-11-05 AUTH-12); the panel then
+    // offers no link.
     return (
       <section className="wz-section" id="quote">
-        <div className="wz-success">
-          <div className="wz-success-icon">&#10003;</div>
-          <h2>Your proposal is ready!</h2>
-          <p>
-            Estimated total: <strong>{formatCurrency(success.total)}</strong>
-          </p>
-          <p>We've sent the full proposal to your email. You can also view it now:</p>
-          <button
-            className="btn btn-primary"
-            onClick={() => navigate(`/proposal/${success.token}`)}
-            style={{ marginTop: '1rem' }}
-          >
-            View Your Proposal
-          </button>
-        </div>
+        <SubmitSuccess success={success} onView={() => navigate(`/proposal/${success.token}`)} />
       </section>
     );
   }

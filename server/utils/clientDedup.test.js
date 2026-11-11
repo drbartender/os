@@ -2,12 +2,12 @@ require('dotenv').config();
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { pool } = require('../db');
-const { findOrCreateClient } = require('./clientDedup');
+const { findOrCreateClient, findOrCreateClientDetailed } = require('./clientDedup');
 
 // Each test runs inside its own BEGIN/ROLLBACK, so nothing it inserts is
 // committed to the shared dev DB — no cleanup needed beyond the rollback.
 
-test('phone-only row then email proposal-create resolves to ONE client (the Jim case)', async () => {
+test('phone-only row then the ADMIN proposal-create (default stampEmail) resolves to ONE client (the Jim case)', async () => {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -18,6 +18,32 @@ test('phone-only row then email proposal-create resolves to ONE client (the Jim 
     assert.strictEqual(b, a, 'should reuse the phone-only row, not create a second');
     const row = await db.query('SELECT email FROM clients WHERE id = $1', [a]);
     assert.strictEqual(row.rows[0].email, 'dupetest@example.com', 'email backfilled onto the phone-only row');
+  } finally {
+    await db.query('ROLLBACK');
+    db.release();
+  }
+});
+
+// Audit 2026-11-05 AUTH-02: the public wizard passes stampEmail: false, so a
+// stranger who knows a phone-only client's name and mobile resolves that row
+// (the wizard then withholds the token and texts only the phone on file) but
+// never writes their email onto it; its email stays NULL for the Thumbtack
+// harvester or an admin to fill. The pure companion is
+// clientDedup.stampEmail.test.js.
+test('stampEmail: false (the public wizard) resolves the phone-only row and leaves its email NULL', async () => {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const a = await findOrCreateClient(db, { name: 'Wizard Match', phone: '555-010-2930', source: 'thumbtack' });
+    const b = await findOrCreateClientDetailed(db, {
+      name: 'Wizard Match', email: 'stranger@example.com', phone: '(555) 010-2930', source: 'website', stampEmail: false,
+    });
+    assert.strictEqual(b.id, a, 'one row per person: the match resolves the existing row');
+    assert.strictEqual(b.created, false);
+    const row = await db.query('SELECT email FROM clients WHERE id = $1', [a]);
+    assert.strictEqual(row.rows[0].email, null, 'the phone-only row keeps email NULL');
+    const others = await db.query('SELECT id FROM clients WHERE LOWER(email) = $1', ['stranger@example.com']);
+    assert.strictEqual(others.rows.length, 0, 'no second row carries the submitted email');
   } finally {
     await db.query('ROLLBACK');
     db.release();

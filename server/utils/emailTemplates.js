@@ -366,6 +366,24 @@ function clientSignedAdmin({ clientName, eventTypeLabel = 'event', proposalId, a
   };
 }
 
+// The website quote wizard's admin alert: a quote arrived and was sent, never
+// a signature (it borrowed clientSignedAdmin's body until 2026-11-11). note:
+// an optional plain-text line for the admin (a link that did not go out, a
+// contact the matched row does not hold).
+function websiteQuoteAdmin({ clientName, eventTypeLabel = 'event', proposalId, adminUrl, note = null }) {
+  const name = clientName || 'A client';
+  return {
+    subject: `New Website Quote: ${eventTypeLabel}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">New Website Quote</h2>
+      ${note ? `<p style="background:${BRAND.bg};padding:12px;border-radius:4px;"><strong>${esc(note)}</strong></p>` : ''}
+      <p><strong>${esc(name)}</strong> requested a quote for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}) through the website quote wizard.</p>
+      ${ctaButton(adminUrl, 'View Proposal')}
+    `),
+    text: `${note ? `${note}\n\n` : ''}${name} requested a quote for their ${eventTypeLabel} (#${proposalId}) through the website quote wizard. View it at: ${adminUrl}`,
+  };
+}
+
 function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, paymentType, proposalId, adminUrl }) {
   const name = clientName || 'A client';
   return {
@@ -392,7 +410,7 @@ function signedAndPaidAdmin({ clientName, eventTypeLabel = 'event', amount, paym
   };
 }
 
-function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiritCategory, guestCount, eventDate, eventLocation, proposalId, adminUrl }) {
+function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiritCategory, guestCount, eventDate, eventLocation, proposalId, adminUrl, note = null }) {
   const name = clientName || 'A client';
   const category = spiritCategory === 'whiskey_bourbon' ? 'Whiskey & Bourbon' : spiritCategory === 'tequila_mezcal' ? 'Tequila & Mezcal' : 'Spirits Tasting';
   return {
@@ -400,6 +418,7 @@ function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiri
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Top Shelf Class Request</h2>
       <p><strong>${esc(name)}</strong> has requested a Top Shelf <strong>${esc(category)}</strong> class. They expect a custom quote, the draft proposal has no pricing yet.</p>
+      ${note ? `<p><strong>${esc(note)}</strong></p>` : ''}
       <p style="background:${BRAND.bg};padding:12px;border-radius:4px;margin:16px 0;">
         <strong>Contact:</strong> ${esc(clientEmail || 'no email')}${clientPhone ? ` &middot; ${esc(clientPhone)}` : ''}<br/>
         <strong>Guests:</strong> ${esc(guestCount || '?')} &middot; <strong>Event:</strong> ${esc(eventDate || 'TBD')}${eventLocation ? ` &middot; ${esc(eventLocation)}` : ''}
@@ -407,7 +426,7 @@ function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiri
       <p>Open the draft, set the custom total, then send to the client.</p>
       ${ctaButton(adminUrl, 'Open Draft Proposal')}
     `),
-    text: `Top Shelf class request from ${name} (${clientEmail || 'no email'}${clientPhone ? `, ${clientPhone}` : ''}): ${category}, ${guestCount || '?'} guests, ${eventDate || 'date TBD'}. Draft #${proposalId}. Open: ${adminUrl}`,
+    text: `Top Shelf class request from ${name} (${clientEmail || 'no email'}${clientPhone ? `, ${clientPhone}` : ''}): ${category}, ${guestCount || '?'} guests, ${eventDate || 'date TBD'}. Draft #${proposalId}.${note ? ` ${note}` : ''} Open: ${adminUrl}`,
   };
 }
 
@@ -878,6 +897,7 @@ module.exports = {
   refundNotificationClient,
   paymentFailedClient,
   clientSignedAdmin,
+  websiteQuoteAdmin,
   paymentReceivedAdmin,
   disputeWonAdminNotification: payroll.disputeWonAdminNotification,
   signedAndPaidAdmin,

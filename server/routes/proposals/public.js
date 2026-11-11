@@ -234,6 +234,25 @@ router.put('/public/quote-draft/:token', publicReadLimiter, asyncHandler(async (
   res.json({ ok: true });
 }));
 
+// 'j***@example.com': the first character of the local part and the domain.
+// Echoed only for a submit that matched an existing row, and the submitter
+// typed the address themselves, so it reveals nothing to them; it tells a
+// returning client where to look.
+function maskEmail(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at < 1) return '';
+  return `${s[0]}***${s.slice(at)}`;
+}
+
+// '***-***-1234': the last four digits only, for a matched row whose link
+// went by text. The caller shows it only when the submitter typed that same
+// number, so it never hands a stranger digits they did not already have.
+function maskPhone(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  return d.length >= 4 ? `***-***-${d.slice(-4)}` : null;
+}
+
 /** POST /api/proposals/public/submit — create a proposal from the public website quote wizard */
 router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const {
@@ -291,17 +310,29 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const isTopShelfClass = !!cleanClassOptions && cleanClassOptions.top_shelf_requested;
 
   const dbClient = await pool.connect();
+  // Released right after COMMIT (audit 2026-11-05 AUTH-13), BEFORE the
+  // post-commit tail: sendProposalSentEmail, notifyAdminCategory and
+  // scheduleDripForProposal each query through the pool or take their own
+  // pooled connection, and a request holding one client while it waits for
+  // another is the shape that deadlocks the pool at max (SERVER-17; the
+  // one-connection rule in CLAUDE.md). `held` keeps the catch and the finally
+  // honest once the client is gone.
+  let held = true;
   try {
     await dbClient.query('BEGIN');
 
-    // Find-or-create the client (dedupes on email OR phone). This endpoint is
-    // UNAUTHENTICATED: findOrCreateClient backfills NULL fields only and never
-    // overwrites an existing client's name/email/phone, so a stranger who
-    // guesses an email cannot rewrite a real client's identity.
+    // Find-or-create the client. This endpoint is UNAUTHENTICATED, so every
+    // match resolves the row as-is and stamps nothing: an email match always
+    // did, and stampEmail: false makes the phone + name match (an email-less
+    // row only) resolve-only too (audit 2026-11-05 AUTH-02: that match used to
+    // backfill the submitted email onto the row, which handed the submitter
+    // the client's portal login and lifecycle mail). A returning phone-only
+    // client stays on their ONE row; the submitted email is not saved, and the
+    // admin alert below names it so the admin can add it once it is confirmed.
     // `created` gates the SMS consent write below: a submitter proves nothing
     // about a row they did not create on this unauthenticated endpoint.
     const { id: finalClientId, created: clientIsNew } = await findOrCreateClientDetailed(dbClient, {
-      name: client_name, email: client_email, phone: client_phone, source: 'website',
+      name: client_name, email: client_email, phone: client_phone, source: 'website', stampEmail: false,
     });
     // Recorded SMS consent from the quote wizard checkbox (A2P 10DLC).
     // Inside the transaction on purpose: a consent record that outlived a
@@ -372,8 +403,11 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       );
     }
 
+    // name, phone and email ride along: when the submit resolved to an
+    // EXISTING row they are the delivery address and the name the mail and
+    // the admin alert use (see the send below).
     const prefRow = await dbClient.query(
-      'SELECT communication_preferences, email_status, phone_status FROM clients WHERE id = $1',
+      'SELECT communication_preferences, email_status, phone_status, phone, email, name FROM clients WHERE id = $1',
       [finalClientId]
     );
 
@@ -491,10 +525,12 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       );
     }
 
-    // Log creation
+    // Log creation. client_matched records that the submit landed on an
+    // existing client row rather than creating one (audit 2026-11-05 AUTH-12),
+    // so the admin can tell a returning client's quote from a stranger's.
     const logDetails = snapshot
-      ? { source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name }
-      : { source: 'website_quote_wizard', top_shelf_requested: true, package: pkgResult.rows[0].name, spirit_category: cleanClassOptions?.spirit_category || null };
+      ? { source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name, client_matched: !clientIsNew }
+      : { source: 'website_quote_wizard', top_shelf_requested: true, package: pkgResult.rows[0].name, spirit_category: cleanClassOptions?.spirit_category || null, client_matched: !clientIsNew };
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'created', 'client', $2)`,
       [proposal.id, JSON.stringify(logDetails)]
@@ -526,6 +562,51 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     }
 
     await dbClient.query('COMMIT');
+    dbClient.release();
+    held = false;
+
+    // DELIVERY (audit 2026-11-05 AUTH-12, AUTH-02). A submit that resolved to
+    // an EXISTING client row (an email match, which clients.email's unique
+    // index forces, or a name + phone match on an email-less row) proves
+    // nothing about the submitter: a stranger who knows a client's email, or
+    // their name and mobile, can post the wizard with any other contact. So
+    // for a matched row the proposal link goes only to the address and phone
+    // ON FILE, never to a submitted one (a phone-matched row has no email on
+    // file, so its link goes by text alone), and the response below withholds
+    // the token. A row this submit created is the submitter's own, so their
+    // contact and the token are used as before.
+    const onFile = prefRow.rows[0] || {};
+    const deliveryEmail = clientIsNew
+      ? client_email.trim().toLowerCase()
+      : (onFile.email ? String(onFile.email).trim().toLowerCase() : null);
+    const deliveryPhone = clientIsNew ? (client_phone || null) : (onFile.phone || null);
+    // The name the mail greets and the admin alert shows: the row's own on a
+    // match, never one a stranger typed beside a client's email.
+    const displayName = clientIsNew ? client_name.trim() : String(onFile.name || client_name).trim();
+    // A contact the submitter typed that the matched row does not hold is
+    // never saved here; the admin alert names it, to add once it is confirmed.
+    const last10 = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+    // The number the panel may name for a texted link: its masked last four
+    // only when the submitter typed that same number (a name + phone match,
+    // or an email match whose typed phone is the one on file). An email match
+    // whose submitter typed another number gets words, never a client's
+    // digits they did not type.
+    const shownPhone = last10(client_phone) && last10(client_phone) === last10(deliveryPhone)
+      ? maskPhone(deliveryPhone)
+      : 'the number on file';
+    const unsaved = [];
+    if (!clientIsNew) {
+      const typedEmail = client_email.trim().toLowerCase();
+      if (typedEmail && typedEmail !== deliveryEmail) unsaved.push(`email ${typedEmail}`);
+      if (client_phone && last10(client_phone) !== last10(onFile.phone)) unsaved.push(`phone ${client_phone}`);
+    }
+    const unsavedNote = unsaved.length
+      ? `This quote matched an existing client, so the ${unsaved.join(' and ')} it was submitted with ${unsaved.length > 1 ? 'were' : 'was'} not saved. Add ${unsaved.length > 1 ? 'them' : 'it'} to the client once you confirm ${unsaved.length > 1 ? 'they are' : 'it is'} theirs.`
+      : null;
+    // Whether the proposal link went out, and how: on the matched path this
+    // send IS the delivery, so the response below claims only what happened.
+    let emailSent = false;
+    let smsSent = false;
 
     // Send email notifications (non-blocking)
     try {
@@ -535,9 +616,10 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
         // Top Shelf: admin-only alert (pricing is TBD). Client already saw
         // "we'll follow up with custom pricing" on the wizard success screen.
         const tpl = emailTemplates.topShelfClassRequestAdmin({
-          clientName: client_name.trim(),
-          clientEmail: client_email.trim().toLowerCase(),
-          clientPhone: client_phone || null,
+          clientName: displayName,
+          clientEmail: deliveryEmail,
+          clientPhone: deliveryPhone,
+          note: unsavedNote,
           spiritCategory: cleanClassOptions?.spirit_category || null,
           guestCount: gc,
           eventDate: event_date || null,
@@ -552,37 +634,55 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           emailText: tpl.text,
         });
       } else {
-        // Client email via the shared helper. sendProposalSentEmail early-returns
-        // unless the passed object has client_email — the INSERT ... RETURNING
-        // proposal row has none (client_email / client_name live on `clients`),
-        // so merge the request-body values onto it. token / event_type* come
-        // from the proposal row.
+        // Client email + SMS via the shared helper, to the delivery contact
+        // chosen above (the row's own on a match; with no email it sends the
+        // text alone). The INSERT ... RETURNING proposal row carries no client
+        // contact (it lives on `clients`), so it is merged on here; token /
+        // event_type* come from the proposal row.
         const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
-        await sendProposalSentEmail(
+        const delivery = await sendProposalSentEmail(
           {
             ...proposal,
-            client_name: client_name.trim(),
-            client_email: client_email.trim().toLowerCase(),
+            client_name: displayName,
+            client_email: deliveryEmail,
             client_id: finalClientId,
-            client_phone: client_phone || null,
+            client_phone: deliveryPhone,
             communication_preferences: prefRow.rows[0].communication_preferences,
             email_status: prefRow.rows[0].email_status,
             phone_status: prefRow.rows[0].phone_status,
           },
           { actorType: 'client' },
         );
+        emailSent = Boolean(delivery && delivery.emailSent);
+        smsSent = Boolean(delivery && delivery.smsSent);
 
-        const tpl2 = emailTemplates.clientSignedAdmin({
-          clientName: client_name.trim(),
+        // On a matched row this send is the only delivery (the token is
+        // withheld), so a link that went out by neither mail nor text is the
+        // admin's to follow up, as the client's panel promises: the alert
+        // says so.
+        const undelivered = !clientIsNew && !emailSent && !smsSent;
+        const notes = [
+          undelivered ? 'The proposal link did not go out: this quote matched an existing client, so its link goes only to the contact on file, and nothing could be sent there (the mail failed or there is no email on file, and the text failed or texts are off for them). Follow up with them directly, and add a confirmed contact before you resend.' : null,
+          unsavedNote,
+        ].filter(Boolean);
+        const tpl2 = emailTemplates.websiteQuoteAdmin({
+          clientName: displayName,
           eventTypeLabel,
           proposalId: proposal.id,
           adminUrl,
+          note: notes.length ? notes.join(' ') : null,
         });
         await notifyAdminCategory({
           category: 'urgent_booking',
-          subject: `New Website Quote: ${eventTypeLabel}`,
+          subject: `New Website Quote${undelivered ? ' (link not delivered, follow up)' : ''}: ${eventTypeLabel}`,
           emailHtml: tpl2.html,
           emailText: tpl2.text,
+          // The client's mail may have failed on a Resend outage or the daily
+          // cap, and this alert's email would fail the same way, so an
+          // undelivered link also texts the subscribed admins.
+          smsBody: undelivered
+            ? `Dr. Bartender: website quote #${proposal.id} matched an existing client and its link did not go out. Follow up: ${adminUrl}`
+            : undefined,
         });
       }
     } catch (emailErr) {
@@ -602,12 +702,40 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       }
     }
 
-    res.status(201).json({ token: proposal.token, total: snapshot ? snapshot.total : 0, top_shelf: isTopShelfClass });
+    // The token is withheld for a matched row (see DELIVERY above); the
+    // masked address or number tells a returning client where their link
+    // went. The wizard renders its "check your email" or "check your texts"
+    // state on a null token.
+    const total = snapshot ? snapshot.total : 0;
+    if (clientIsNew) {
+      res.status(201).json({ token: proposal.token, total, top_shelf: isTopShelfClass });
+    } else if (isTopShelfClass) {
+      // Top Shelf sends the client nothing by design (the admin follows up at
+      // the contact on file), so its promise stands on that contact alone.
+      res.status(201).json({
+        token: null,
+        delivered_to: deliveryEmail ? maskEmail(deliveryEmail) : null,
+        delivered_to_phone: deliveryEmail ? null : shownPhone,
+        total, top_shelf: true,
+      });
+    } else if (emailSent) {
+      res.status(201).json({ token: null, delivered_to: maskEmail(deliveryEmail), total, top_shelf: false });
+    } else if (smsSent) {
+      res.status(201).json({ token: null, delivered_to: null, delivered_to_phone: shownPhone, total, top_shelf: false });
+    } else {
+      // The link went out by neither mail nor text (sendProposalSentEmail
+      // swallowed and logged a failure, or the row has no email and its SMS
+      // is suppressed): say so rather than claim it. The admin alert above
+      // carries the follow-up.
+      res.status(201).json({ token: null, delivered_to: null, delivery_failed: true, total, top_shelf: false });
+    }
   } catch (err) {
-    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    if (held) {
+      try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    }
     throw err;
   } finally {
-    dbClient.release();
+    if (held) dbClient.release();
   }
 }));
 

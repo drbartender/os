@@ -31,6 +31,21 @@ const { validatePhone } = require('./phone');
  * overwrites the matched row's email. The public wizard and every other caller
  * never pass it, so the guard above holds.
  *
+ * `stampEmail` (default true) is the opposite dial: false keeps the phone + name
+ * match but makes it resolve-only, so a matched email-less row is returned as
+ * it is and the submitted email is never written onto it. The public quote
+ * wizard passes it (audit 2026-11-05 AUTH-02): the wizard is unauthenticated,
+ * and the stamp used to let anyone who knew a phone-only client's name and
+ * mobile (both visible in a Thumbtack thread) attach their own address to that
+ * client, take over their portal (clientAuth.js resolves the OTP login by
+ * email) and receive every lifecycle email for their bookings. Resolving the
+ * row (rather than skipping the match) keeps a returning phone-only client on
+ * ONE row, so the drip sibling check, the alternatives sweep and inbound SMS
+ * threading, all keyed on client_id, keep working; the wizard treats the match
+ * like an email match (token withheld, delivery only to the contact on file)
+ * and shows the admin the address it did not save. The admin proposal-create
+ * (crud.js) keeps the default and the backfill it exists for.
+ *
  * Runs inside the caller's transaction — pass the caller's pg client.
  *
  * `created` distinguishes "this call inserted the row" from "this call resolved
@@ -40,10 +55,10 @@ const { validatePhone } = require('./phone');
  * matched. See recordSmsConsent in utils/smsConsent.js.
  *
  * @param {import('pg').PoolClient} db
- * @param {{name:string,email?:string|null,phone?:string|null,source?:string,notes?:string|null,trustedPhoneMatch?:boolean}} args
+ * @param {{name:string,email?:string|null,phone?:string|null,source?:string,notes?:string|null,trustedPhoneMatch?:boolean,stampEmail?:boolean}} args
  * @returns {Promise<{id:number, created:boolean}>}
  */
-async function findOrCreateClientDetailed(db, { name, email, phone, source = 'direct', notes = null, trustedPhoneMatch = false }) {
+async function findOrCreateClientDetailed(db, { name, email, phone, source = 'direct', notes = null, trustedPhoneMatch = false, stampEmail = true }) {
   const cleanName = String(name || '').trim();
   if (!cleanName) throw new Error('findOrCreateClient: name is required');
   const cleanEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : null;
@@ -88,8 +103,8 @@ async function findOrCreateClientDetailed(db, { name, email, phone, source = 'di
       // Matched by normalized phone AND name. Stamp the email on (the "Jim fix")
       // so a later proposal-create resolves to it. The phone is already this
       // row's match key; we backfill ONLY the email, never overwriting a
-      // non-null value.
-      if (cleanEmail) {
+      // non-null value. stampEmail: false (the public wizard) resolves only.
+      if (cleanEmail && stampEmail) {
         await db.query('UPDATE clients SET email = COALESCE(email, $2) WHERE id = $1', [winnerId, cleanEmail]);
       }
       return { id: winnerId, created: false };

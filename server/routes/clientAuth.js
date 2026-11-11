@@ -83,7 +83,7 @@ router.post('/verify', otpLimiter, asyncHandler(async (req, res) => {
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   const result = await pool.query(
-    'SELECT id, name, email, phone, auth_token, auth_token_expires_at, auth_token_attempts, token_version FROM clients WHERE LOWER(email) = LOWER($1)',
+    'SELECT id, name, email, phone, auth_token, auth_token_expires_at, token_version FROM clients WHERE LOWER(email) = LOWER($1)',
     [email]
   );
   const client = result.rows[0];
@@ -99,13 +99,26 @@ router.post('/verify', otpLimiter, asyncHandler(async (req, res) => {
 
   // Per-account attempt ceiling. Defense-in-depth vs. distributed brute force
   // that the IP-based rate limiter can't see (e.g., attacker rotating IPs).
-  // On the 6th attempt, invalidate the OTP entirely — the user must request
-  // a new code.
-  if ((client.auth_token_attempts ?? 0) >= 5) {
+  // The increment IS the claim and runs BEFORE the compare, as one conditional
+  // UPDATE (audit 2026-11-05 AUTH-04): the old read-then-compare-then-increment
+  // order let N concurrent guesses all read the same count, all pass the
+  // ceiling and all get a ~250 ms compare, so a burst from enough addresses
+  // bypassed the limit entirely. Zero rows is the ceiling (or a token that went
+  // away under us): the 6th attempt invalidates the OTP entirely and the user
+  // must request a new code. The compare runs against the hash the claim
+  // returned, never the pre-claim read.
+  const claim = await pool.query(
+    `UPDATE clients
+        SET auth_token_attempts = COALESCE(auth_token_attempts, 0) + 1
+      WHERE id = $1 AND auth_token IS NOT NULL AND COALESCE(auth_token_attempts, 0) < 5
+      RETURNING auth_token, auth_token_expires_at`,
+    [client.id]
+  );
+  if (!claim.rows[0]) {
     // Invalidate the OTP entirely (the user must request a new code), but return
     // the SAME neutral 400 as the wrong/unknown/expired cases (F6). A distinct 409
     // RATE_LIMITED was a membership oracle — it revealed the email existed AND had
-    // a live OTP. The invalidation above still enforces the ceiling.
+    // a live OTP. The invalidation here still enforces the ceiling.
     await pool.query(
       'UPDATE clients SET auth_token = NULL, auth_token_expires_at = NULL, auth_token_attempts = 0 WHERE id = $1',
       [client.id]
@@ -113,13 +126,9 @@ router.post('/verify', otpLimiter, asyncHandler(async (req, res) => {
     throw new ValidationError({ otp: 'This code is invalid or has expired' });
   }
 
-  // Check OTP hash
-  const valid = await bcrypt.compare(otp, client.auth_token);
+  // Check OTP hash. A wrong code is already counted by the claim above.
+  const valid = await bcrypt.compare(otp, claim.rows[0].auth_token);
   if (!valid) {
-    await pool.query(
-      'UPDATE clients SET auth_token_attempts = COALESCE(auth_token_attempts, 0) + 1 WHERE id = $1',
-      [client.id]
-    );
     throw new ValidationError({ otp: 'This code is invalid or has expired' });
   }
 

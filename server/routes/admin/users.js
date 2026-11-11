@@ -151,10 +151,16 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     // able to auto-rehire themselves if later restored — they need fresh
     // admin review. The application-submit handler also defense-in-depth
     // gates the pre-hire branch on status==='in_progress'.
+    // The same UPDATE rotates calendar_token (audit 2026-11-05 AUTH-03): the
+    // iCal feed (calendar.js) is token-gated with no `auth`, and the feed now
+    // refuses these statuses, but a later re-activation must not resurrect the
+    // subscription a deactivated manager's calendar app still holds. Demotion
+    // (admin/managers.js) does not rotate: the feed re-reads the role per poll,
+    // so a demoted staffer's feed narrows to their own shifts on the next one.
     const clearPreHired = (status === 'rejected' || status === 'deactivated');
     result = clearPreHired
       ? await client.query(
-          "UPDATE users SET onboarding_status=$1, pre_hired=false WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
+          "UPDATE users SET onboarding_status=$1, pre_hired=false, calendar_token = gen_random_uuid(), calendar_token_created_at = NOW() WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
           [status, req.params.id]
         )
       : await client.query(

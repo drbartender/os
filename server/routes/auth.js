@@ -336,7 +336,10 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     } else {
       loginAttempts.set(normalizedEmail, { count: 1, firstAttempt: Date.now() });
     }
-    console.warn('Failed login attempt for', email, 'from IP', req.ip);
+    // The user id, never the submitted address: the line runs on every wrong
+    // password for a known account, so the address would land in third-party
+    // log retention on each attempt (audit 2026-11-05 AUTH-07).
+    console.warn('Failed login attempt for user', user.id, 'from IP', req.ip);
     throw new ConflictError('Invalid email or password', 'INVALID_CREDENTIALS');
   }
 

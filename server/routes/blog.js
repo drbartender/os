@@ -36,9 +36,35 @@ router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
+// The public images this unauthenticated route serves are keyed at the bucket
+// root by prefix: `blog_` (admin/blog.js and the archived importer write
+// `blog_<uuid v4><ext>`, and the live Lab Notes covers and inline images were
+// uploaded by hand as `blog_p8-cover.webp`, `blog_<uuid>-opt.webp` and the
+// like), `email_` (emailMarketing/designer.js) and `manual-art-` (the /vibes
+// team manual's art, client/public/vibes/index.html). The prefix is the
+// security (audit 2026-11-05 AUTH-06): every private object at the root
+// starts with its owner's user id (`<userId>_headshot_`, `_w9_`, `_alcohol_`,
+// `_resume_`, `_app_resume_`, `_basset_`), and every other private object
+// sits in a folder, which path.basename has already stripped, so any key
+// without one of the three prefixes is a 404 before any signing. The rest of
+// the key is loose on purpose (the hand-uploaded names carry no uuid, and
+// admin/blog.js stored path.extname(file.name) unsanitized until 2026-11-05):
+// 1 to 200 characters with no slash, backslash, whitespace or parent step.
+// Nothing is moved: every stored key keeps its basename. r2Proxy's
+// assertKeyUnder is a single-prefix check (and pulls in sharp), so the rule
+// is pinned here.
+const PUBLIC_IMAGE_PREFIXES = ['blog_', 'email_', 'manual-art-'];
+function isPublicImageKey(key) {
+  const prefix = PUBLIC_IMAGE_PREFIXES.find((p) => key.startsWith(p));
+  if (!prefix) return false;
+  const rest = key.slice(prefix.length);
+  return rest.length >= 1 && rest.length <= 200 && !/[/\\\s]/.test(rest) && !rest.includes('..');
+}
+
 // Serve blog images via R2 signed URL
 router.get('/images/:filename', publicReadLimiter, asyncHandler(async (req, res) => {
   const filename = path.basename(req.params.filename);
+  if (!isPublicImageKey(filename)) throw new NotFoundError('Image not found');
   let url;
   try {
     url = await getSignedUrl(filename);

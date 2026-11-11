@@ -7,11 +7,21 @@
 // /payment-methods, /preferred-payment-method, /tip-card-order, /profile,
 // /ui-preferences, /staff-notifications, /push-subscriptions, /documents/...,
 // /request-email-change, /cancel-pending-email-change.
+//
+// Gated router-wide by requireOnboarded (audit 2026-11-05 AUTH-01): every
+// route here is a staff-data surface, and no onboarding page calls any of
+// them (the application, agreement, contractor-profile and payment steps use
+// /api/application, /api/agreement, /api/contractor, /api/payment and
+// /api/progress; the staff pages that call /api/me sit behind RequirePortal in
+// client/src/App.js, whose status set is requireOnboarded's). Without it a
+// self-registered `in_progress` account (POST /api/auth/register is public)
+// read /staff-home, whose cover broadcasts carry other staffers' email
+// addresses and the clients' names and venues.
 
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireOnboarded } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, PayloadTooLargeError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
@@ -43,6 +53,9 @@ function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 const router = express.Router();
 router.use(auth);
+// Admin and manager pass whatever their status; staff must be submitted,
+// reviewed or approved (middleware/auth.js). See the header.
+router.use(requireOnboarded);
 
 // ─── Task 12: GET /staff-home (composite home payload) ─────────────────────
 //
