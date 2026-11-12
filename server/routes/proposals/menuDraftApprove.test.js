@@ -127,6 +127,7 @@ pool.connect = function connect(...args) {
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter, beoReadLimiter } = require('../../middleware/rateLimiters');
+const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
 const approveRouter = require('./menuDraftApprove');
 const menuDraftsRouter = require('./menuDrafts');
 const menuPrintRouter = require('./menuPrint');
@@ -815,4 +816,40 @@ test('file: complete canvas-style JPEGs pass the full decode, baseline and progr
     const res = await approve(ev, { file: await make(opts) });
     assert.equal(res.status, 200, `${JSON.stringify(opts)}: ${JSON.stringify(res.body)}`);
   }
+});
+
+// ── The legal-hold proposal (money law 15; lane menu-legal-hold-guards) ─────
+
+test('legal hold: Approve answers 409 LEGAL_HOLD before any read, upload or transaction, storing no print key; an unheld twin approves', async () => {
+  const held = await newEvent({ notRequired: true });
+  const twin = await newEvent({ notRequired: true });
+  const before = await draftOf(held.id);
+  __setLegalHoldIdsForTest([held.id]);
+  const seen = [];
+  const realQuery = pool.query;
+  pool.query = function watched(...args) {
+    seen.push(String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text) || ''));
+    return realQuery.apply(this, args);
+  };
+  let res;
+  try {
+    res = await approve(held);
+  } finally {
+    pool.query = realQuery;
+    __setLegalHoldIdsForTest(null);
+  }
+  assert.deepEqual([res.status, res.body && res.body.code], [409, 'LEGAL_HOLD'], JSON.stringify(res.body));
+  assert.deepEqual(seen.filter((q) => /menu_drafts|menu_draft_pieces|drink_plans|proposals/.test(q)), [],
+    'refused before the proposal, its draft or its plan is read');
+  assert.deepEqual(events, [], 'no upload, no transaction, no reaccrual');
+  assert.deepEqual(uploads, []);
+  await assertUntouched(held, { notRequired: true });
+  const after = await draftOf(held.id);
+  for (const col of ['version', 'art_version', 'content', 'inputs', 'updated_at']) {
+    assert.deepEqual(after[col], before[col], `${col} unchanged`);
+  }
+
+  const ok = await approve(twin);
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal((await keyRow(twin.id)).menu_print_key, uploads[0]);
 });

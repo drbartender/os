@@ -89,7 +89,7 @@ test('the stamp: today\'s baseline where nothing is provable, a gone category ke
   assert.deepEqual(r.changed, [drafts.spiritsGone.id], 'a category the stored lines prove went reads changed since Generate');
   assert.deepEqual([r.noPlan, r.raced], [[drafts.noPlan.id], []]);
   assert.equal(Object.prototype.hasOwnProperty.call(r, 'unkeyed'), false, 'no hand-check list');
-  assert.deepEqual(r.legalHold.sort(), [drafts.held.id, drafts.heldPending.id].sort(),
+  assert.equal(r.legalHold, 2,
     'the held proposal\'s drafts are counted as legal hold, the drafting one too, and listed by id nowhere (money law 15)');
   assert.deepEqual(r.pending, [drafts.wordsPending.id]);
 
@@ -118,7 +118,7 @@ test('the stamp: today\'s baseline where nothing is provable, a gone category ke
 
   // Idempotent: a second boot finds only the skipped ones.
   const again = await stampLegacyBarBaselines({ onlyDraftIds: allIds() });
-  assert.deepEqual([again.stamped, again.legalHold.sort(), again.noPlan], [[], [drafts.held.id, drafts.heldPending.id].sort(), [drafts.noPlan.id]]);
+  assert.deepEqual([again.stamped, again.legalHold, again.noPlan], [[], 2, [drafts.noPlan.id]]);
 });
 
 test('a dismissal made before the deploy survives the stamp of a draft whose only difference is a renamed line', async () => {
@@ -166,15 +166,16 @@ test('runAtBoot: one line of ids and counts, never content; a failure is logged 
   const lines = [];
   const logger = { log: (m) => lines.push(m), error: (m) => lines.push(`ERR ${m}`) };
   // (The startOver drafts above stay unstamped; this test stubs the stamp.)
-  const r = await runAtBoot({ logger, stamp: async () => ({ stamped: [7, 8], changed: [7], flagged: [8], raced: [], legalHold: [1], noPlan: [], failed: [], pending: [9] }) });
+  const r = await runAtBoot({ logger, stamp: async () => ({ stamped: [7, 8], changed: [7], flagged: [8], raced: [], legalHold: 1, noPlan: [], failed: [], pending: [9] }) });
   assert.deepEqual(r.stamped, [7, 8]);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^\[menu-bar-baseline\] stamped 2 draft\(s\) \[7,8\]; changed since Generate \[7\]; holding a bar line renamed before bar picks were tracked, which Update draft rebuilds \[8\]; /);
+  assert.match(lines[0], /skipped: legal hold 1, /);
   assert.match(lines[0], /words not done \[9\]; failed \[\]$/);
   assert.doesNotMatch(lines[0], /pinot|Vodka|by hand|matched by place/);
   const quiet = [];
   await runAtBoot({ logger: { log: (m) => quiet.push(m), error: (m) => quiet.push(m) },
-    stamp: async () => ({ stamped: [], changed: [], flagged: [], raced: [], legalHold: [], noPlan: [], failed: [], pending: [] }) });
+    stamp: async () => ({ stamped: [], changed: [], flagged: [], raced: [], legalHold: 0, noPlan: [], failed: [], pending: [] }) });
   assert.deepEqual(quiet, [], 'a boot that finds nothing says nothing');
   const failed = [];
   const out = await runAtBoot({ logger: { log: () => {}, error: (m) => failed.push(m) }, stamp: async () => { throw new Error('boom'); } });
@@ -182,7 +183,7 @@ test('runAtBoot: one line of ids and counts, never content; a failure is logged 
   assert.match(failed[0], /^\[menu-bar-baseline\] failed, nothing more stamped this boot: boom$/);
   const rowFailed = [];
   await runAtBoot({ logger: { log: (m) => rowFailed.push(m), error: (m) => rowFailed.push(`ERR ${m}`) },
-    stamp: async () => ({ stamped: [3], changed: [], flagged: [], raced: [], legalHold: [], noPlan: [], failed: [4], pending: [], error: new Error('pooler') }) });
+    stamp: async () => ({ stamped: [3], changed: [], flagged: [], raced: [], legalHold: 0, noPlan: [], failed: [4], pending: [], error: new Error('pooler') }) });
   assert.match(rowFailed[1], /^ERR \[menu-bar-baseline\] 1 draft\(s\) failed and stay unstamped until the next run: pooler$/);
 });
 
@@ -197,4 +198,36 @@ test('a row that fails is listed and the rest are still stamped; a legacy draft 
   assert.deepEqual([r.failed, r.stamped, r.pending], [[drafts.boom1.id], [drafts.boom2.id], [drafts.wordsPending.id]]);
   assert.equal(r.error.message, 'pooler reset');
   assert.equal(Object.prototype.hasOwnProperty.call((await rowOf('boom1')).plan_fingerprint, 'bar_lines'), false);
+});
+
+test('the held proposal\'s drafts are left out at the query: never selected, and still counted under legal hold, by count only', async () => {
+  const heldDrafts = [drafts.held.id, drafts.heldPending.id];
+  const heldProposals = [drafts.held.proposalId, drafts.heldPending.proposalId];
+  const rowsSeen = [];
+  const db = { query: async (sql, params) => { const r = await pool.query(sql, params); rowsSeen.push(...r.rows); return r; } };
+  const r = await stampLegacyBarBaselines({ db, onlyDraftIds: [...heldDrafts, drafts.noPlan.id] });
+  assert.deepEqual(rowsSeen.filter((row) => heldDrafts.includes(Number(row.draft_id)) || heldProposals.includes(Number(row.proposal_id))), [],
+    'no row of the held proposal is ever read (money law 15)');
+  assert.deepEqual([r.legalHold, r.noPlan, r.stamped], [2, [drafts.noPlan.id], []]);
+  assert.equal(Object.prototype.hasOwnProperty.call((await rowOf('held')).plan_fingerprint, 'bar_lines'), false, 'the held draft stays unstamped');
+});
+
+test('a missing held list fails closed: no query runs, nothing is stamped, and the boot logs one failure', async () => {
+  const sweep = require('./staleProposalSweep');
+  const real = sweep.LEGAL_HOLD_PROPOSAL_IDS;
+  const queries = [];
+  const db = { query: (sql, params) => { queries.push(sql); return pool.query(sql, params); } };
+  const lines = [];
+  const logger = { log: (m) => lines.push(m), error: (m) => lines.push(`ERR ${m}`) };
+  let out;
+  sweep.LEGAL_HOLD_PROPOSAL_IDS = undefined;
+  try {
+    out = await runAtBoot({ logger, stamp: () => stampLegacyBarBaselines({ db, onlyDraftIds: allIds() }) });
+  } finally {
+    sweep.LEGAL_HOLD_PROPOSAL_IDS = real;
+  }
+  assert.equal(out, null);
+  assert.deepEqual(queries, [], 'the list is read before the first query');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^ERR \[menu-bar-baseline\] failed, nothing more stamped this boot: legalHold: LEGAL_HOLD_PROPOSAL_IDS is missing/);
 });

@@ -41,6 +41,8 @@ require.cache[storagePath].exports = {
   getSignedUrl: async (key) => { signedCalls.push(key); return `https://r2.invalid/${key}`; },
 };
 
+const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
+const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const menuPrintRouter = require('./menuPrint');
 
 let server;
@@ -368,4 +370,62 @@ test('an id past int4 is a 404 on every verb, never a 500', async () => {
   assert.strictEqual(get.status, 404);
   const del = await request('DELETE', `/api/proposals/${huge}/menu-print`, { token: adminToken });
   assert.strictEqual(del.status, 404);
+});
+
+// ─── The legal-hold proposal (money law 15; lane menu-legal-hold-guards) ───
+
+test('legal hold: POST, PATCH and DELETE answer 409 LEGAL_HOLD before any read or upload and change no column; an unheld twin still writes', async () => {
+  const made = [];
+  const event = async (key) => {
+    const r = await pool.query(
+      `INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours, event_timezone, status, event_type,
+                              menu_print_key, menu_not_required)
+       VALUES ($1, CURRENT_DATE + 10, '18:00', 4, 'America/Chicago', 'confirmed', 'corporate', $2, false) RETURNING id`,
+      [clientId, key]);
+    made.push(r.rows[0].id);
+    return r.rows[0].id;
+  };
+  const columns = async (id) => (await pool.query(
+    'SELECT menu_print_key, menu_not_required, updated_at FROM proposals WHERE id = $1', [id])).rows[0];
+  try {
+    const held = await event(`menu-print/held-${NONCE}/x.pdf`);
+    const twin = await event(null);
+    const before = await columns(held);
+    uploadCalls.length = 0;
+    // The suite's earlier writes share this admin's write budget.
+    await adminWriteLimiter.resetKey(`admin-${adminUserId}`);
+    __setLegalHoldIdsForTest([held]);
+    const seen = [];
+    const realQuery = pool.query;
+    pool.query = function watched(...args) {
+      seen.push(String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text) || ''));
+      return realQuery.apply(this, args);
+    };
+    const out = {};
+    try {
+      out.post = await request('POST', `/api/proposals/${held}/menu-print`, { token: adminToken, file: { name: 'm.pdf', bytes: PDF_BYTES } });
+      out.patch = await request('PATCH', `/api/proposals/${held}/menu-print`, { token: adminToken, json: { not_required: false } });
+      out.del = await request('DELETE', `/api/proposals/${held}/menu-print`, { token: adminToken });
+    } finally {
+      pool.query = realQuery;
+      __setLegalHoldIdsForTest(null);
+    }
+    for (const [name, res] of Object.entries(out)) {
+      assert.deepEqual([res.status, res.body && res.body.code], [409, 'LEGAL_HOLD'], `${name}: ${JSON.stringify(res.body)}`);
+    }
+    assert.deepEqual(seen.filter((q) => /proposals/.test(q)), [], 'refused before the proposal is read');
+    assert.deepEqual(uploadCalls, [], 'nothing uploaded');
+    assert.deepEqual(await columns(held), before, 'no column changed');
+
+    await adminWriteLimiter.resetKey(`admin-${adminUserId}`);
+
+    const post = await request('POST', `/api/proposals/${twin}/menu-print`, { token: adminToken, file: { name: 'm.pdf', bytes: PDF_BYTES } });
+    assert.equal(post.status, 200, JSON.stringify(post.body));
+    const del = await request('DELETE', `/api/proposals/${twin}/menu-print`, { token: adminToken });
+    assert.deepEqual([del.status, del.body.menu_print.status], [200, 'pending']);
+    const patch = await request('PATCH', `/api/proposals/${twin}/menu-print`, { token: adminToken, json: { not_required: true } });
+    assert.deepEqual([patch.status, patch.body.menu_print.status], [200, 'not_required']);
+  } finally {
+    await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [made]);
+  }
 });

@@ -14,6 +14,11 @@
 //
 // Tri-state (`ready` / `not_required` / `pending`) is DERIVED from the two
 // columns, never stored, so the two can never disagree.
+//
+// Legal hold (money law 15): POST, PATCH and DELETE refuse the legal-hold
+// proposal with 409 LEGAL_HOLD (assertNotLegalHold, isLegalHold failing
+// closed) once the id is read, before any read, upload or write, so its
+// print file and flag keep their state exactly.
 
 const express = require('express');
 const crypto = require('crypto');
@@ -27,6 +32,7 @@ const { uploadFile } = require('../../utils/storage');
 // line keys on menu_print_key, so posting or unposting the file re-reconciles
 // it. Both writes below fire it only after their UPDATE has landed.
 const { sendMenuPrintFile, setMenuPrintKey, reaccrueDuty } = require('../../utils/menuPrintFile');
+const { assertNotLegalHold } = require('./patchGuards');
 
 const router = express.Router();
 
@@ -54,10 +60,23 @@ function statusOf(row) {
   return 'pending';
 }
 
+const INT4_MAX = 2147483647;
+
+// Bounded to int4: parseInt accepts '99999999999999999999', and pg would
+// raise 22003 on the compare, a 500 that pages Sentry instead of a 404.
+const inRange = (id) => Number.isInteger(id) && id > 0 && id <= INT4_MAX;
+
+// A write's id: the route id as parseInt reads it, a 404 out of range, then
+// the legal hold refused (409 LEGAL_HOLD) before anything is read.
+function writableId(raw) {
+  const id = parseInt(raw, 10);
+  if (!inRange(id)) throw new NotFoundError('Proposal not found.');
+  assertNotLegalHold(id);
+  return id;
+}
+
 async function getProposalRow(id) {
-  // Bounded to int4: parseInt accepts '99999999999999999999', and pg would
-  // raise 22003 on the compare, a 500 that pages Sentry instead of a 404.
-  if (!Number.isInteger(id) || id <= 0 || id > 2147483647) throw new NotFoundError('Proposal not found.');
+  if (!inRange(id)) throw new NotFoundError('Proposal not found.');
   const r = await pool.query(
     'SELECT id, menu_print_key, menu_not_required FROM proposals WHERE id = $1',
     [id]
@@ -78,7 +97,7 @@ router.get('/:id/menu-print', auth, requireAdminOrManager, beoReadLimiter, async
 
 // POST /:id/menu-print — upload or replace the print file.
 router.post('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = writableId(req.params.id);
   await getProposalRow(id);
 
   const file = req.files && req.files.file;
@@ -99,7 +118,7 @@ router.post('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, a
 
 // PATCH /:id/menu-print — flip the "no printed menu for this event" flag.
 router.patch('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = writableId(req.params.id);
   await getProposalRow(id);
   const notRequired = !!(req.body && req.body.not_required === true);
   // The "no file while not_required" invariant is enforced IN the write, not by
@@ -118,7 +137,7 @@ router.patch('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, 
 
 // DELETE /:id/menu-print — unpost the file (R2 object orphaned, see head).
 router.delete('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = writableId(req.params.id);
   await getProposalRow(id);
   // RETURNING the post-update row, so the reported status can never describe a
   // state that a concurrent write already replaced.

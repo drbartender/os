@@ -73,6 +73,7 @@ const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter } = require('../../middleware/rateLimiters');
 const { buildFingerprint, normalizePlan, loadEventPlan, loadCatalogMaps, fingerprintHash } = require('../../utils/menuDrinkSource');
+const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
 const menuDraftsRouter = require('./menuDrafts');
 const { queue } = require('./menuDraftShared');
 
@@ -1038,4 +1039,76 @@ test('dismiss: leaves the Saved time alone, while an edit moves it (lane menu-ba
   assert.equal(await savedAt(), before, 'a dismissal is no save');
   await setContent(id, { title: `Edited ${NONCE}` });
   assert.notEqual(await savedAt(), before);
+});
+
+// ── The legal-hold proposal (money law 15; lane menu-legal-hold-guards) ─────
+
+// Every query and connection a request makes, while it runs.
+async function watchedPool(send) {
+  const seen = [];
+  const realQuery = pool.query;
+  const realConnect = pool.connect;
+  pool.query = function watched(...args) {
+    seen.push(String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text) || ''));
+    return realQuery.apply(this, args);
+  };
+  pool.connect = function watchedConnect(...args) {
+    // pool.query checks out its own client through the callback form; only a held client counts.
+    if (!args.length) seen.push('pool.connect');
+    return realConnect.apply(this, args);
+  };
+  try {
+    return { out: await send(), seen };
+  } finally {
+    pool.query = realQuery;
+    pool.connect = realConnect;
+  }
+}
+
+test('legal hold: Generate, the draft PATCH, re-roll and Dismiss answer 409 LEGAL_HOLD before any read, upload, call, reservation or write; an unheld twin still works', async () => {
+  const held = await ready();
+  const twin = await ready();
+  for (const ev of [held, twin]) await setPlan(ev.planId, selections(2, { menuDesignNotes: `Changed ${NONCE}` }));
+  const before = await draftOf(held.id);
+  const piecesBefore = await piecesOf(held.id);
+  const ledgerBefore = (await ledgerOf(held.id)).map((r) => [r.id, r.status]);
+  const sends = (id) => ({
+    generate: () => generate(id, { reference_source: 'upload' }, { name: 'ref.png', bytes: img.reference }),
+    patch: () => request('PATCH', base(id), { json: { version: 1, content: { title: `Held ${NONCE}` } } }),
+    reroll: () => request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'openai' } }),
+    dismiss: () => request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } }),
+  });
+  __setLegalHoldIdsForTest([held.id]);
+  try {
+    for (const [name, send] of Object.entries(sends(held.id))) {
+      const { out, seen } = await watchedPool(send);
+      await idle();
+      assert.deepEqual([out.status, out.body && out.body.code], [409, 'LEGAL_HOLD'], `${name}: ${JSON.stringify(out.body)}`);
+      assert.deepEqual(seen.filter((q) => q === 'pool.connect' || /menu_drafts|menu_draft_pieces|drink_plans|proposals|menu_art_calls|cocktails/.test(q)), [],
+        `${name}: refused before the proposal, its draft or its plan is read and before any transaction opens`);
+    }
+    const after = await draftOf(held.id);
+    for (const col of ['version', 'art_version', 'run_id', 'content', 'inputs', 'plan_fingerprint', 'dismissed_plan_hash']) {
+      assert.deepEqual(after[col], before[col], `${col} unchanged`);
+    }
+    assert.equal(after.updated_at.toISOString(), before.updated_at.toISOString());
+    assert.deepEqual(await piecesOf(held.id), piecesBefore, 'no piece written');
+    assert.deepEqual((await ledgerOf(held.id)).map((r) => [r.id, r.status]), ledgerBefore, 'nothing reserved or released');
+    assert.deepEqual([calls.words.length, imageCalls(), uploads.length], [0, 0, 0], 'no provider call and no upload');
+  } finally {
+    __setLegalHoldIdsForTest(null);
+  }
+
+  const twinSends = sends(twin.id);
+  const patch = await twinSends.patch();
+  assert.deepEqual([patch.status, patch.body.version], [200, 2], JSON.stringify(patch.body));
+  const dismiss = await request('POST', `${base(twin.id)}/dismiss-plan-change`, { json: { version: 2 } });
+  assert.deepEqual([dismiss.status, dismiss.body.version], [200, 2], JSON.stringify(dismiss.body));
+  const reroll = await twinSends.reroll();
+  assert.equal(reroll.status, 202, JSON.stringify(reroll.body));
+  await idle();
+  const gen = await twinSends.generate();
+  assert.equal(gen.status, 202, JSON.stringify(gen.body));
+  await idle();
+  assert.ok(calls.words.length && imageCalls(), 'the twin still calls its providers');
 });

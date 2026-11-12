@@ -10,6 +10,9 @@
 // expected_planner_image_rev (the GET's brief.planner_image_rev the client
 // rendered with; empty means it rendered with no logo; ignored for any other
 // role). The order is the money rule (spec 8):
+//   0. the legal-hold proposal is refused first, 409 LEGAL_HOLD
+//      (assertNotLegalHold, isLegalHold failing closed), before any read,
+//      upload or write, so it never gets a print key (money law 15);
 //   1. the fields, then the file: JPEG by its magic bytes only, sharp reads the
 //      header as exactly 2400 x 3000, then one bounded full decode (failOn
 //      warning, sharp's strictest, and limitInputPixels at the print size) so
@@ -54,6 +57,7 @@ const { setMenuPrintKey, reaccrueDuty } = require('../../utils/menuPrintFile');
 const { mapDeadlock } = require('../../utils/menuArtCap');
 const { loadEventPlan, plannerImageKeyOf, plannerImageRev } = require('../../utils/menuDrinkSource');
 const { derivePrintState } = require('../../utils/menuPrintState');
+const { assertNotLegalHold } = require('./patchGuards');
 const {
   isObject, capList, parseId, parseVersion, requireProposal, noDraft, draftChanged, requireWords,
 } = require('./menuDraftShared');
@@ -220,6 +224,7 @@ function approvedBody({ stamped, plannerImageKey }, key) {
 
 router.post('/:id/menu-draft/approve', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
+  assertNotLegalHold(id);
   await requireProposal(id);
   // The role decides whether the planner image rev is required; the locked
   // row in the transaction is what the stamp trusts.

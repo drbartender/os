@@ -21,6 +21,13 @@
 // MENU_ART_GEMINI_NOT_CONFIGURED for image_model gemini without its key. The
 // GET, PATCH, dismiss and the image GETs work with neither key.
 //
+// Legal hold (money law 15): every write here (Generate, the PATCH, re-roll,
+// dismiss, and sync in menuDraftSync.js) refuses the legal-hold proposal with
+// 409 LEGAL_HOLD (assertNotLegalHold, isLegalHold failing closed) right after
+// the id is parsed, before the key checks and before any read, plan load,
+// upload, provider call, reservation or write, so the held booking's plan
+// never reaches the AI.
+//
 // Generate releases every reserved row of the proposal (the old run's, and any
 // re-roll or sync row stranded by a restart) BEFORE it reserves its own, and
 // upserts the draft in place (version, art_version and the approved_* stamps
@@ -46,6 +53,7 @@ const {
   validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, LIMITS,
 } = require('../../utils/menuDraftValidation');
 const { loadEventPlan, buildFingerprint } = require('../../utils/menuDrinkSource');
+const { assertNotLegalHold } = require('./patchGuards');
 const {
   LIST_CAP, isObject, capList, parseId, parseVersion, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan,
   requireWords, upsertPendingPieces, requireOpenAI, requireImageModel, imageModelId, inLockedTx, queue,
@@ -99,8 +107,9 @@ router.get('/:id/menu-draft', auth, requireAdminOrManager, menuDraftReadLimiter,
 }));
 
 router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  requireOpenAI();
   const id = parseId(req.params.id);
+  assertNotLegalHold(id);
+  requireOpenAI();
   await requireProposal(id);
   const stored = (await pool.query('SELECT inputs FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
   const storedKey = stored && isObject(stored.inputs) ? stored.inputs.reference_key : null;
@@ -157,6 +166,7 @@ router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteL
 
 router.patch('/:id/menu-draft', auth, requireAdminOrManager, menuDraftEditLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
+  assertNotLegalHold(id);
   await requireProposal(id);
   const body = req.body;
   const version = parseVersion(isObject(body) ? body.version : undefined);
@@ -184,8 +194,9 @@ router.patch('/:id/menu-draft', auth, requireAdminOrManager, menuDraftEditLimite
 }));
 
 router.post('/:id/menu-draft/pieces/:pieceKey/reroll', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  requireOpenAI();
   const id = parseId(req.params.id);
+  assertNotLegalHold(id);
+  requireOpenAI();
   const pieceKey = parsePieceKey(req.params.pieceKey);
   const body = isObject(req.body) ? req.body : {};
   const note = validateRerollNote(body.note);
@@ -229,6 +240,7 @@ router.post('/:id/menu-draft/pieces/:pieceKey/reroll', auth, requireAdminOrManag
 
 router.post('/:id/menu-draft/dismiss-plan-change', auth, requireAdminOrManager, menuDraftEditLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
+  assertNotLegalHold(id);
   await requireProposal(id);
   const version = parseVersion(isObject(req.body) ? req.body.version : undefined);
   const cur = (await pool.query('SELECT version, content, plan_fingerprint FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
