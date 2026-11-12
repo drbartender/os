@@ -414,7 +414,7 @@ lanes:
       triggerMenuAutoStart(planId), fire-and-forget in the triggerShoppingListAutoGen shape, called beside
       triggerShoppingListAutoGen at both submit tails; in this lane it applies the mark only (the auto-start
       step joins it in lane menu-auto-start), skipping an archived proposal and the legal-hold proposal,
-      treating customMenuDesign false with no menuStyle as none, and writing the menu_not_required activity
+      reading only an explicit menuStyle of none (a legacy customMenuDesign false is no choice; amended at review), and writing the menu_not_required activity
       row. The admin PATCH writes the provenance; setMenuPrintKey clears both columns; the designer read model
       selects the new column; the card's No menu needed sub line adds "The client chose Skip the Menu." for a
       planner mark. A one-time script, server/scripts/backfillMenuNotRequired.js, dry run by default, marks
@@ -458,7 +458,7 @@ lanes:
       Every writer of menu_not_required (the admin PATCH, setMenuPrintKey, the new planner path) keeps
       menu_not_required_by in step; every reader of menu_not_required is unchanged (eventDetailsPayload,
       shifts.queries, dutyLines, menuPrintState); the client's menuOwedFor rule (nextStepsCopy.js) and the
-      legacy customMenuDesign rule (PotionPlanningLab.js) are mirrored on the server, not imported.
+      menuStyle values are read on the server, not imported (the legacy customMenuDesign flag is no choice for the mark, spec 15 as amended).
     acceptance: >
       Suites pass (the drink plan submit suites among them) and the money smoke passes; the trigger test fails
       on main (a Skip the Menu submit leaves menu_not_required false on main); a read of information_schema on
@@ -467,7 +467,7 @@ lanes:
     test plan: >
       menuAutoStart.test.js: none marks with by planner and writes the activity row; a later custom submit
       clears a planner mark and leaves an admin mark; a proposal with a print key is never marked; archived and
-      the legal-hold proposal are skipped; the legacy customMenuDesign false counts as none; the trigger
+      the legal-hold proposal are skipped; the legacy customMenuDesign false sets no mark; the trigger
       swallows and reports its own failure. menuPrint.test.js: the PATCH writes admin when setting and null
       when clearing. menuPrintFile.test.js: setMenuPrintKey clears both columns. backfillMenuNotRequired.test.js:
       the dry run writes nothing; unsubmitted plans, a plan that is not the lowest-id one, non-booked, past,
