@@ -438,6 +438,7 @@ lanes:
       - server/utils/menuPrintFile.js  (setMenuPrintKey clears both columns)
       - server/utils/menuPrintFile.test.js
       - server/utils/menuDraftRead.js  (selects p.menu_not_required_by)
+      - server/utils/menuDraftRead.test.js, server/routes/proposals/menuDraftApprove.test.js  (their pins of the read shape and setMenuPrintKey's SQL; added at the build, 2026-11-12)
       - client/src/pages/admin/menuDesigner/menuCardState.js  (the sub line)
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - server/scripts/backfillMenuNotRequired.js  (new, with the header comment)
