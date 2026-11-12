@@ -355,6 +355,8 @@ lanes:
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.js  (sync takes a scope)
       - client/src/pages/admin/menuDesigner/MenuDesignerCard.js, MenuEditor.js  (the notice's action passes the scope)
+      - server/routes/proposals/menuDrafts.js  (Dismiss and Mark reviewed store dismissalHash, so a Dismiss on a renamed-back gone line holds; added at the build, 2026-11-12)
+      - client/src/pages/admin/menuDesigner/BriefTab.test.js  (its pin of the dismissed-changes clause the lane removes)
       - README.md, ARCHITECTURE.md  (generated sections and the Update draft route row)
     blockedBy: [menu-bar-chain]
     lenses: tier A (menuDraftSync.js is sensitive); money, lifecycle, concurrency, outcomes-providers, access-egress, seams, client; verify; the externals; the money smoke; the client build.
