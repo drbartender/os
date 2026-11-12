@@ -422,7 +422,12 @@ lanes:
       mark, and the designer's lowest-id plan submitted and saying none), prints counts, ids and the
       legal-hold excluded count, and writes in one transaction with an activity row per mark. Running it on
       production is an owner-approved step after the ship, not part of the lane.
+      Also, from menu-legal-hold-guards' review (2026-11-12, deferred there as client-side): the menu designer's
+      autosave reads every 409 as a version conflict, so on the legal-hold booking a refused PATCH shows "This
+      draft changed elsewhere. It was reloaded."; useMenuDraft.js shows the server's LEGAL_HOLD message instead
+      (the other menu actions already do).
     footprint:
+      - client/src/pages/admin/menuDesigner/useMenuDraft.js  (the autosave shows a 409 LEGAL_HOLD as its own message)
       - server/db/schema.sql  (menu_not_required_by, idempotent)
       - server/db/schema.menuArt.test.js  (the column and its CHECK)
       - server/utils/menuAutoStart.js  (new, with the header comment)
