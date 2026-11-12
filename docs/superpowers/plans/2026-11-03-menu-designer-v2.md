@@ -497,6 +497,7 @@ lanes:
       - server/utils/menuArtJob.js  (its header only: a spend or usage limit ends the run too, not only a spent balance)
       - server/utils/menuArtPrompts.js, server/utils/geminiClient.js, server/utils/menuKeyOut.js  (one export each: the MenuWordsInvalid REASONS, the Gemini refusal reasons, the key-out failure reasons, so the server's one list of every fixed text it can store imports them instead of copying; added by the lane's review, 2026-11-12)
       - client/src/pages/admin/menuDesigner/MenuDesignerCard.test.js, MenuEditor.test.js, MenuCanvas.edit.test.js  (their pins of the Words failed button label and the one-drawing banner text)
+      - client/src/pages/admin/menuDesigner/MenuDesignerCard.js, MenuEditor.js  (the Generate again busy label; the card's way to the Brief tab after a words refusal)
       - README.md, ARCHITECTURE.md  (generated sections; README's hand-written menuDesigner folder note names menuArtSentences.js)
     blockedBy: [menu-out-of-credit, menu-bar-chain]
     lenses: the computed tier; client (captures of the Words failed state and the multi-failure banner), seams (the mirrored sentence set), access-egress (no provider text reaches the client).
