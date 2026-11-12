@@ -48,7 +48,7 @@ Payouts residuals for the owner (from `fixes/payouts-fixes.md`): a duplicate lin
 | ID | Sev | Claim (short) | Outcome | Commits |
 |---|---|---|---|---|
 | AUTH-01 | high | `/api/me/staff-home` has no `requireOnboarded` (a self-registered account reads staffers' emails and client data) | fixed: router-wide gate on `staffPortal.js` and `me.js`, and on the cover claim; every onboarding page call checked (none hits `/api/me`) | 4dadd63, 9ffc365 |
-| AUTH-02 | high | The quote wizard backfills a stranger's email onto a phone+name-matched client row (portal takeover) | fixed: the public wizard never resolves or stamps a phone-only row (`phoneMatch: false`); the admin path keeps the backfill; product note: a returning phone-only Thumbtack lead who uses the wizard becomes a second row to merge by hand, and the harvester then marks that lead's harvest failed until merged | fc8f623 |
+| AUTH-02 | high | The quote wizard backfills a stranger's email onto a phone+name-matched client row (portal takeover) | fixed, as the owner chose on 2026-11-11: the public wizard still matches a phone-only row by name and phone but writes nothing onto it (`stampEmail: false`); the link goes by text to the phone on file, the token is withheld, and the admin alert names the typed email to add by hand; the admin path keeps the backfill (round 1's second-row design was replaced at review; `fixes/auth-fixes.md`, What shipped) | fc8f623, then the review's rebuild; shipped in 5dc598b |
 | AUTH-03 | high | The calendar feed ignores account status; deactivation never rotates the token | fixed: the feed fails closed like `auth.js`; deactivation and rejection rotate the token | 0972b24, 5222915 |
 | AUTH-04 | medium | The OTP attempt ceiling is read-then-written around the compare (parallel guesses pass it) | fixed: the increment is a conditional claim before the compare | 6db2451, 8dc5645 |
 | AUTH-05 | low | Drink-plan `admin_notes` reach any onboarded staffer | fixed: rides the contact gate | 4d0db81 |
@@ -90,7 +90,7 @@ Auth residual for the owner: when the proposal mail fails but the SMS half goes 
 | PRC-02 | medium | The portal change-request preview re-derives the crew, dropping an admin's extra bartender | fixed: one shared `overrideOnlyBartenders` rule | 7179c2f |
 | PRC-03 | medium | Pay-now drink-plan extras priced flat while the fold prices them with the engine | moved to payments | see payments |
 | PRC-04 | low | Invoice unit price does not multiply to the line total | fixed: derived only when the line total divides into whole cents | 1eff62d, d7fe1b7 |
-| PRC-05 | low | Unvalidated guest_count, num_bars, num_bartenders, duration on the admin routes | fixed: one input gate on create, PATCH and the preview; a stored out-of-bounds value re-sent unchanged still saves | 8c72fcb, 2a61b42 |
+| PRC-05 | low | Unvalidated guest_count, num_bars, num_bartenders, duration on the admin routes | fixed: one input gate on the admin create, PATCH and preview, and (from the review) on the public wizard submit and the portal change-request preview and create; guests 1 to 5000, a sanity bound; a stored out-of-bounds value re-sent unchanged still saves (`fixes/pricing-fixes.md`, After review) | 8c72fcb, 2a61b42, then the review's fixes |
 | PRC-06 | low | PACKAGES_REPORT.md contradicts the engine and seeds | fixed (docs) | 9186d8a |
 
 ## Observations the auditors recorded without a finding (for the owner's ledger)
