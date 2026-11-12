@@ -29,6 +29,8 @@ import { ExportCanvas, useApproveMenu } from './exportMenu';
 //   closes at once; the text being edited commits, then it flushes on unmount.
 // - Top bar, banners, empty card and Approve's gate come from menuCardState;
 //   Approve is useApproveMenu, through the replace confirm over a print file.
+//   A banner's Update draft passes its scope to sync, so the unchecked
+//   notice's own banner runs the bar-only rebuild.
 // Task D2's tabs get { draft, content, inputs, pieces, brief, diff, configured,
 // cap, imageModel, onPatch, onReroll(pieceKey, note), onSelectDrink(key | null),
 // selectedDrink, plannerImage, wordsDone, readOnly, referenceFile, onReferenceFile }.
@@ -169,7 +171,7 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
   }, [toast]);
   const ACTIONS = {
     reroll: (b) => (readOnly ? undefined : menu.reroll(b.pieceKey)),
-    update: () => menu.sync(),
+    update: (b) => (b.scope ? menu.sync({ scope: b.scope }) : menu.sync()),
     dismiss: () => menu.dismissPlanChange(),
     'mark-reviewed': () => menu.dismissPlanChange(),
     'retry-save': () => menu.retrySave(),

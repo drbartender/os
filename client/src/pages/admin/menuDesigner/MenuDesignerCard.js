@@ -23,7 +23,8 @@ import { CARD_SIZE } from './useMenuDraft';
 //                             lane passes it, the editor actions and the thumbnail's
 //                             click do not render
 // The in-place actions (Generate, Retry, Update draft, Dismiss, Undo) always draw
-// with GPT Image (section 4.1).
+// with GPT Image (section 4.1). An action passes itself to its handler, so the
+// unchecked notice's Update draft sends its scope (bar, the bar-only rebuild).
 
 const NARROW_PX = 900;
 const THUMB_SCALE = 0.12;
@@ -102,7 +103,7 @@ export default function MenuDesignerCard({
   const IN_PLACE = {
     generate: () => menu.generate({ imageModel: 'openai' }),
     'retry-words': () => menu.generate({ imageModel: 'openai' }),
-    update: () => menu.sync({ imageModel: 'openai' }),
+    update: (a) => menu.sync(a.scope ? { scope: a.scope } : { imageModel: 'openai' }),
     dismiss: () => menu.dismissPlanChange(),
     undo: async () => {
       await api.patch(`/proposals/${proposal.id}/menu-print`, { not_required: false });
@@ -118,7 +119,7 @@ export default function MenuDesignerCard({
     setActionError(null);
     setBusy(a.id);
     try {
-      await IN_PLACE[a.id]();
+      await IN_PLACE[a.id](a);
     } catch (err) {
       setActionError({ text: errorText(err, FALLBACK[a.id] || 'Something went wrong. Please try again.'), at: null });
     } finally {

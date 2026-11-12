@@ -39,7 +39,8 @@
 //   differs from its baseline (bar_lines), or a line appears or goes (spec
 //   2026-10-19 section 17); bar_changed_labels names those lines by builder
 //   label, for Update draft, and a stored keyed line the picks no longer
-//   build reads as one of them. bar_unchecked counts the stored lines no key
+//   build reads as one of them, as does, once no unkeyed line is left, a
+//   built category no stored line stands for. bar_unchecked counts the stored lines no key
 //   can be found for (keyBarLines), renamed before bar picks were tracked or
 //   with no key since, which nothing can check against the picks (lane
 //   menu-bar-renamed-lines), with or without a stored baseline: never a
@@ -59,7 +60,8 @@
 // seconds, so a 2-second poll does not reload them. A catalog drink created
 // in the last minute can read as client-typed here until the cache turns over.
 // Writers (Generate, sync, dismiss) never use this cache: they load fresh maps
-// through their own client. computeDiff is exported for them.
+// through their own client. computeDiff, barBaseline and dismissalHash (the
+// hash a dismissal of the draft as it stands stores) are exported for them.
 
 const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
@@ -129,25 +131,34 @@ function _resetCatalogCacheForTest() {
 // legacyBarBaseline over the stored lines (lane menu-bar-renamed-lines), so the
 // GET and Update draft read one diff. A stored line keyed (keyBarLines, the
 // rule Update draft keys by) to a category the picks no longer build reads
-// gone too, whatever the baseline says. bar_unchecked counts the stored lines
+// gone too, whatever the baseline says, and once no unkeyed line is left a
+// built category no stored line stands for reads new, whatever the baseline
+// says (the mirror: lines are written only by the words step and Update
+// draft, so such a category was never built). bar_unchecked counts the stored lines
 // keyBarLines leaves unkeyed, whatever the baseline holds, so a line renamed
 // with no key after the stamp is counted and one renamed back to its builder
 // label is not; an unkeyed:<place> baseline entry is never a change.
 // bar_changed and its labels name builder labels only. The GET itself writes
 // nothing.
-// Dismissed: the hash matches the current fingerprint, or the current one
-// with no bar (a dismissal stored before the deploy hashed none, and
-// fingerprintHash keeps that hash), but that one only while the bar has not
-// changed: a bar-less dismissal cannot have covered a bar change, while an
-// unchecked line is no change, so it never undoes one. A stored keyed line the
-// picks no longer build that the baseline does not name (one renamed back to
-// its builder label after the stamp) is in no bar_hash, so no dismissal can
-// have covered it: it undoes any. One stored since hashes
-// the bar, so a later bar move undoes it; either way the banner comes back
-// with bar_changed saying why.
+// Dismissed: the hash matches the dismissal hash of the draft as it stands
+// (dismissalHash: the current fingerprint and the bar drift), or the current
+// fingerprint with no bar (a dismissal stored before the deploy hashed none,
+// and fingerprintHash keeps that hash), but that one only while the bar has
+// not changed: a bar-less dismissal cannot have covered a bar change, while an
+// unchecked line is no change, so it never undoes one. The drift is the keys
+// where the stored lines and the baseline disagree, which no bar_hash shows: a
+// stored keyed line the picks no longer build that the baseline does not name
+// (one renamed back to its builder label after the stamp), and, once no
+// unkeyed line is left, a built category no stored line stands for that the
+// baseline reads unchanged (the stamp took today's picks for it beside a
+// renamed line since renamed back; the chain verify pass's M1). Each reads
+// changed and joins the dismissal hash, so a dismissal stored before it never
+// covers it and one stored after it does (lane menu-bar-rebuild-only). A
+// dismissal stored since the deploy hashes the bar, so a later bar move undoes
+// it; either way the banner comes back with bar_changed saying why.
 function barBaseline(stored, content, normalized) {
-  if (isObject(stored.bar_lines)) return stored.bar_lines;
-  return legacyBarBaseline(content.also_at_bar, normalized).bar_lines;
+  if (isObject(stored) && isObject(stored.bar_lines)) return stored.bar_lines;
+  return legacyBarBaseline(isObject(content) ? content.also_at_bar : undefined, normalized).bar_lines;
 }
 
 function barChangedLabels(before, now) {
@@ -157,23 +168,35 @@ function barChangedLabels(before, now) {
   ];
 }
 
+// The bar half of the diff, against `current` (buildFingerprint(normalized)):
+// { changed: [builder label], drift: [builder label], unchecked }. drift is the
+// part of changed only the stored lines show (above).
+function barState(stored, content, normalized, current) {
+  const listed = Array.isArray(content.also_at_bar);
+  const lines = keyBarLines(listed ? content.also_at_bar : []);
+  const changed = barChangedLabels(barBaseline(stored, content, normalized), current.bar_lines);
+  const drift = [];
+  const mark = (key) => { changed.push(key); drift.push(key); };
+  const keyed = new Set();
+  for (const line of lines.lines) {
+    const key = isObject(line) && typeof line.key === 'string' ? line.key : '';
+    if (!key) continue;
+    keyed.add(key);
+    if (!hasOwn(current.bar_lines, key) && !changed.includes(key)) mark(key);
+  }
+  if (listed && lines.unkeyed === 0) {
+    for (const key of Object.keys(current.bar_lines)) if (!keyed.has(key) && !changed.includes(key)) mark(key);
+  }
+  return { changed, drift, unchecked: lines.unkeyed };
+}
+
 function computeDiff(draft, normalized) {
   if (!isObject(draft) || !normalized) return null;
   const stored = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
   const current = buildFingerprint(normalized);
   const content = isObject(draft.content) ? draft.content : {};
-  const baseline = barBaseline(stored, content, normalized);
-  const lines = keyBarLines(Array.isArray(content.also_at_bar) ? content.also_at_bar : []);
-  const changedLabels = barChangedLabels(baseline, current.bar_lines);
-  let lineGone = false;
-  for (const line of lines.lines) {
-    const key = isObject(line) && typeof line.key === 'string' ? line.key : '';
-    if (key && !hasOwn(current.bar_lines, key) && !changedLabels.includes(key)) {
-      changedLabels.push(key);
-      lineGone = true;
-    }
-  }
-  const barChanged = changedLabels.length > 0;
+  const bar = barState(stored, content, normalized, current);
+  const barChanged = bar.changed.length > 0;
   const dismissedHash = typeof draft.dismissed_plan_hash === 'string' ? draft.dismissed_plan_hash : null;
   const storedKeys = asArray(stored.drink_keys).map(String);
   const storedSet = new Set(storedKeys);
@@ -191,11 +214,22 @@ function computeDiff(draft, normalized) {
     brief_edited: BRIEF_FIELDS.filter((f) => storedFields[f] !== current.brief_fields[f]),
     image_changed: (stored.planner_image_key || null) !== (current.planner_image_key || null),
     bar_changed: barChanged,
-    bar_changed_labels: changedLabels,
-    bar_unchecked: lines.unkeyed,
-    dismissed: !lineGone && dismissedHash !== null && (dismissedHash === fingerprintHash(current)
+    bar_changed_labels: bar.changed,
+    bar_unchecked: bar.unchecked,
+    dismissed: dismissedHash !== null && (dismissedHash === fingerprintHash({ ...current, bar_drift: bar.drift })
       || (!barChanged && dismissedHash === fingerprintHash({ ...current, bar_hash: null }))),
   };
+}
+
+// The hash a Dismiss or Mark reviewed of the stored draft ({ plan_fingerprint,
+// content }) stores against a normalized plan: the current fingerprint and the
+// bar drift, the one computeDiff's dismissed matches. Pure.
+function dismissalHash(draft, normalized) {
+  const d = isObject(draft) ? draft : {};
+  const stored = isObject(d.plan_fingerprint) ? d.plan_fingerprint : {};
+  const content = isObject(d.content) ? d.content : {};
+  const current = buildFingerprint(normalized);
+  return fingerprintHash({ ...current, bar_drift: barState(stored, content, normalized, current).drift });
 }
 
 function barSummary(bar) {
@@ -346,6 +380,8 @@ module.exports = {
   stuck,
   readStaleMs,
   computeDiff,
+  barBaseline,
+  dismissalHash,
   derivePrintState,
   cachedCatalogMaps,
   PRINT_STATES,

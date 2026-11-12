@@ -817,6 +817,46 @@ test('fingerprintHash: a fingerprint stored before bar_hash existed hashes exact
   assert.notEqual(fingerprintHash({ ...legacy, bar_hash: barHash }), old);
 });
 
+// Lane menu-bar-rebuild-only: the keys where the stored lines and the bar
+// baseline disagree (bar_drift, computeDiff's) join the dismissal hash, so a
+// dismissal covers the lines it saw. None hashes exactly as before.
+test('fingerprintHash: the drift keys join the hash only when there are some, in any order', () => {
+  const fp = buildFingerprint(barPlan());
+  assert.equal(fingerprintHash({ ...fp, bar_drift: [] }), fingerprintHash(fp), 'no drift keys: the hash is unchanged');
+  const drifted = fingerprintHash({ ...fp, bar_drift: ['Spirits', 'Non-Alcoholic'] });
+  assert.notEqual(drifted, fingerprintHash(fp), 'a drift key moves the hash');
+  assert.equal(fingerprintHash({ ...fp, bar_drift: ['Non-Alcoholic', 'Spirits', 'Spirits'] }), drifted, 'order and repeats do not');
+  assert.notEqual(fingerprintHash({ ...fp, bar_drift: ['Spirits'] }), drifted);
+});
+
+// The verify pass's M1 on menu-bar-chain: a renamed line renamed back to a
+// builder label after the boot stamp leaves the stamp's entries, today's picks,
+// for the categories no keyed line covered. Once no unkeyed line is left, a
+// stamped category no stored line stands for prints nothing, so it reads new.
+test('computeDiff on the stamped baseline: a renamed line renamed back reads each other category it might have stood for as new', () => {
+  const { computeDiff } = require('./menuDraftRead');
+  const lines = [{ label: 'Beer and Wine', text: 'Red, house pinot.' }, { label: 'Liquor', text: 'Tito\'s.' }];
+  const atStamp = barOnly({ wine: ['Red'], spirits: ['Vodka'], na: ['Non-Alcoholic'] });
+  const stamp = legacyBarBaseline(lines, atStamp);
+  assert.deepEqual(Object.keys(stamp.bar_lines).sort(), ['Beer and Wine', 'Non-Alcoholic', 'Spirits', 'unkeyed:1'],
+    'the two categories no keyed line covers take today\'s picks');
+  const generated = buildFingerprint(barOnly({ wine: ['Red'], spirits: ['Vodka'] }));
+  const draft = (second) => ({
+    plan_fingerprint: { ...generated, bar_lines: stamp.bar_lines, bar_hash: stamp.bar_hash },
+    content: { drinks: [], also_at_bar: [lines[0], second] }, dismissed_plan_hash: null,
+  });
+  const bar = (d) => [d.bar_changed, d.bar_changed_labels, d.bar_unchecked];
+  assert.deepEqual(bar(computeDiff(draft(lines[1]), atStamp)), [false, [], 1], 'still renamed: unchecked, no change');
+  assert.deepEqual(bar(computeDiff(draft({ label: 'Spirits', text: 'Tito\'s.' }), atStamp)), [true, ['Non-Alcoholic'], 0],
+    'renamed back to Spirits: the menu prints no NA line, so NA reads new');
+  assert.deepEqual(bar(computeDiff(draft({ label: 'Non-Alcoholic', text: 'Athletic Brewing NA.' }), atStamp)), [true, ['Spirits'], 0],
+    'renamed back to Non-Alcoholic: Spirits reads new');
+  // A category a stored line stands for is no change, and a list that is not one proves nothing.
+  const all = { ...draft(lines[1]), content: { drinks: [], also_at_bar: [lines[0], { label: 'Spirits', text: 'x.' }, { label: 'Non-Alcoholic', text: 'y.' }] } };
+  assert.deepEqual(bar(computeDiff(all, atStamp)), [false, [], 0]);
+  assert.deepEqual(bar(computeDiff({ ...draft(lines[1]), content: { drinks: [] } }, atStamp)), [false, [], 0]);
+});
+
 // The ONE planner image key rule (normalizePlan, Approve's stamp, the planner
 // image GET and the brief's planner_image_rev all read it), and its rev.
 test('plannerImageKeyOf: the plan row\'s _logoFilename when it is a non-empty string, else null; normalizePlan uses it', () => {

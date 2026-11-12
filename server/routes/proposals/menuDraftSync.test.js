@@ -74,7 +74,7 @@ const { pool } = require('../../db');
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter } = require('../../middleware/rateLimiters');
-const { buildFingerprint, normalizePlan, loadEventPlan, loadCatalogMaps } = require('../../utils/menuDrinkSource');
+const { buildFingerprint, normalizePlan, loadEventPlan, loadCatalogMaps, hashBarLines } = require('../../utils/menuDrinkSource');
 const { stampLegacyBarBaselines } = require('../../utils/menuBarBaselineStamp');
 const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
 const menuDraftsRouter = require('./menuDrafts');
@@ -981,4 +981,193 @@ test('sync: no held client ever runs two queries at once, and the catalog still 
     'the catalog query ran on the held client');
   assert.ok(queries.some((q) => /request_aliases/.test(q)), 'the matcher candidates too');
   assert.deepEqual(overlaps, []);
+});
+
+// ── The bar-only Update draft (lane menu-bar-rebuild-only, spec 17) ─────────
+// The unchecked notice's own Update draft posts scope bar. It rebuilds and
+// keys only the unkeyed lines and the keyed lines whose category the picks no
+// longer build, applies no drink change, needs no key, reserves nothing, keeps
+// the stored drink, brief and image parts and re-stamps a dismissal that held.
+
+const syncBar = (id, version) => request('POST', `${base(id)}/sync`, { json: { version, scope: 'bar' } });
+const ledgerRows = async (id) => (await ledgerOf(id)).map((r) => [r.id, r.status]);
+const KEPT_PARTS = ['drink_keys', 'brief_hash', 'brief_fields', 'planner_image_key'];
+// Every query text sent through pool.query while fn runs (the callback-form
+// connect pool.query makes passes through watchHeldClients untouched).
+async function pooledQueries(fn) {
+  const seen = [];
+  const realQuery = pool.query;
+  pool.query = function watched(...args) {
+    seen.push(String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text) || ''));
+    return realQuery.apply(this, args);
+  };
+  try {
+    return { seen, out: await fn() };
+  } finally {
+    pool.query = realQuery;
+  }
+}
+
+test('sync scope bar: rebuilds and keys the unkeyed line and removes the gone keyed line; a moved pick and a dropped drink wait for the full Update draft', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'], beerFromFullBar: ['Non-Alcoholic'] } });
+  await setContent(id, { also_at_bar: [BW('Red, house pinot.'), OLD('Liquor', 'Tito\'s.'), NA('Athletic Brewing NA, cold.')] });
+  // Since Generate the client swapped the wine, dropped the NA beer and dropped a drink.
+  await setPlan(planId, selections(1, { wineFromFullBar: ['White'], spirits: ['Vodka'] }));
+  const before = await draftOf(id);
+  const ledgerBefore = await ledgerRows(id);
+  const seen = await diffOf(id);
+  assert.deepEqual([...barOf(seen), seen.dropped.length], [true, ['Beer and Wine', 'Non-Alcoholic'], 1, 1]);
+  const res = await syncBar(id, 1);
+  assert.deepEqual([res.status, res.body.version], [202, 2], JSON.stringify(res.body));
+  const draft = await draftOf(id);
+  assert.deepEqual(draft.content.also_at_bar, [BW('Red, house pinot.'), SPIRITS('Vodka.')],
+    'the renamed line is rebuilt and keyed and the gone NA line removed; the wine line keeps its words');
+  assert.deepEqual(draft.content.drinks, before.content.drinks, 'no drink change is applied');
+  for (const part of KEPT_PARTS) assert.deepEqual(draft.plan_fingerprint[part], before.plan_fingerprint[part], part);
+  assert.deepEqual(draft.plan_fingerprint.bar_lines, {
+    'Beer and Wine': before.plan_fingerprint.bar_lines['Beer and Wine'], Spirits: buildFingerprint(await planNow(id)).bar_lines.Spirits,
+  }, 'the moved wine keeps its old baseline, the rebuilt line takes today\'s, the gone one leaves');
+  assert.equal(draft.plan_fingerprint.bar_hash, hashBarLines(draft.plan_fingerprint.bar_lines));
+  const after = await diffOf(id);
+  assert.deepEqual([...barOf(after), after.dropped.length], [true, ['Beer and Wine'], 0, 1], 'the wine swap and the dropped drink still read');
+  assert.deepEqual(await ledgerRows(id), ledgerBefore, 'nothing reserved');
+  assert.equal(calls.words.length + imageCalls(), 0, 'no provider call');
+  // The full Update draft, unchanged, then applies the rest.
+  const full = await syncAt(id, 2);
+  assert.equal(full.status, 202, JSON.stringify(full.body));
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('White.'), SPIRITS('Vodka.')]);
+  assert.deepEqual(barOf(await diffOf(id)), [false, [], 0]);
+});
+
+test('sync scope bar: with drawing off, a dismissed added drink and a reviewed notes edit stay dismissed while the renamed line is rebuilt', async () => {
+  const { id, planId, draftId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  await preDeploy(id, [OLD('Beer and Wine', 'Red, house pinot.'), OLD('Liquor', 'Tito\'s.')]);
+  await stampLegacyBarBaselines({ onlyDraftIds: [draftId] });
+  // The client adds a typed drink and edits the menu notes; the owner dismisses and reviews them.
+  await setPlan(planId, selections(3, { wineFromFullBar: ['Red'], spirits: ['Vodka'], menuDesignNotes: 'Now with gold foil' }));
+  const dismissed = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  assert.equal(dismissed.status, 200, JSON.stringify(dismissed.body));
+  let seen = await diffOf(id);
+  assert.deepEqual([seen.dismissed, seen.added.length, seen.brief_edited, seen.bar_unchecked], [true, 1, ['notes'], 1]);
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  const before = await draftOf(id);
+  const ledgerBefore = await ledgerRows(id);
+  const full = await syncAt(id, 1);
+  assert.deepEqual([full.status, full.body.code], [503, 'MENU_ART_NOT_CONFIGURED'], 'the full one applies the dismissed drink too');
+  const res = await syncBar(id, 1);
+  assert.deepEqual([res.status, res.body.version], [202, 2], JSON.stringify(res.body));
+  const draft = await draftOf(id);
+  assert.deepEqual(draft.content.also_at_bar, [BW('Red, house pinot.'), SPIRITS('Vodka.')]);
+  assert.deepEqual(draft.content.drinks, before.content.drinks);
+  for (const part of KEPT_PARTS) assert.deepEqual(draft.plan_fingerprint[part], before.plan_fingerprint[part], part);
+  seen = await diffOf(id);
+  assert.deepEqual([seen.dismissed, seen.added.length, seen.brief_edited, ...barOf(seen)], [true, 1, ['notes'], false, [], 0],
+    'neither the dismissed drink nor the reviewed notes edit comes back');
+  assert.deepEqual(await ledgerRows(id), ledgerBefore, 'nothing reserved');
+  assert.equal(calls.words.length + imageCalls(), 0, 'no provider call');
+});
+
+test('sync: an unknown scope is refused with 400 before anything is written or called', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'] } });
+  await setPlan(planId, selections(3, { wineFromFullBar: ['White'] }));
+  const before = await draftOf(id);
+  for (const scope of ['all', 'BAR', '', null, 1, ['bar'], { bar: true }]) {
+    const res = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai', scope } });
+    assert.deepEqual([res.status, Object.keys((res.body && res.body.fieldErrors) || {})], [400, ['scope']], JSON.stringify(scope));
+  }
+  const after = await draftOf(id);
+  assert.deepEqual([after.version, after.content, after.plan_fingerprint], [before.version, before.content, before.plan_fingerprint]);
+  assert.equal(calls.words.length + imageCalls(), 0);
+});
+
+test('sync scope bar: the legal-hold proposal is refused with 409 LEGAL_HOLD before any read, connection or write', async () => {
+  const held = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  await setContent(held.id, { also_at_bar: [BW('Red.'), OLD('Liquor', 'Tito\'s.')] });
+  const before = await draftOf(held.id);
+  __setLegalHoldIdsForTest([held.id]);
+  const watch = watchHeldClients();
+  let run;
+  try {
+    run = await pooledQueries(() => syncBar(held.id, 1));
+  } finally {
+    watch.restore();
+  }
+  try {
+    assert.deepEqual([run.out.status, run.out.body.code], [409, 'LEGAL_HOLD'], JSON.stringify(run.out.body));
+    assert.deepEqual(run.seen.filter((q) => /menu_drafts|drink_plans|proposals|menu_art_calls|cocktails/.test(q)), [],
+      'refused before the proposal, its draft or its plan is read');
+    assert.deepEqual(watch.seen.queries, [], 'no client was held');
+    const after = await draftOf(held.id);
+    assert.deepEqual([after.version, after.content, after.plan_fingerprint, after.dismissed_plan_hash, after.updated_at.toISOString()],
+      [before.version, before.content, before.plan_fingerprint, before.dismissed_plan_hash, before.updated_at.toISOString()]);
+  } finally {
+    __setLegalHoldIdsForTest(null);
+  }
+});
+
+test('sync scope bar: a stale version is 409 and writes nothing; the rebuild runs on one held client under the row lock, one query at a time', async () => {
+  const { id } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  await setContent(id, { also_at_bar: [BW('Red.'), OLD('Liquor', 'Tito\'s.')] });
+  const before = await draftOf(id);
+  const stale = await syncBar(id, 5);
+  assert.deepEqual([stale.status, stale.body.code], [409, 'MENU_DRAFT_CHANGED'], JSON.stringify(stale.body));
+  const unchanged = await draftOf(id);
+  assert.deepEqual([unchanged.version, unchanged.content], [before.version, before.content]);
+  const watch = watchHeldClients();
+  let run;
+  try {
+    run = await pooledQueries(() => syncBar(id, 1));
+  } finally {
+    watch.restore();
+  }
+  assert.deepEqual([run.out.status, run.out.body.version], [202, 2], JSON.stringify(run.out.body));
+  const { queries, overlaps } = watch.seen;
+  assert.ok(/^LOCK TABLE menu_art_calls/.test(queries[1] || ''), 'the full Update draft\'s lock order: the ledger lock, then the row');
+  assert.ok(queries.some((q) => /FROM menu_drafts WHERE proposal_id = \$1 FOR UPDATE/.test(q)), 'the draft row is locked');
+  assert.ok(queries.some((q) => /^UPDATE menu_drafts/.test(q)));
+  assert.deepEqual(overlaps, []);
+  assert.deepEqual(run.seen.filter((q) => /menu_drafts|drink_plans|proposals|cocktails/.test(q)), [], 'nothing outside the held client');
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('Red.'), SPIRITS('Vodka.')]);
+});
+
+// The verify pass's M1 on menu-bar-chain, through the GET and Update draft.
+test('sync: a renamed line renamed back beside a category added before the stamp is flagged on the GET and built by Update draft', async () => {
+  const { id, planId, draftId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  await preDeploy(id, [OLD('Beer and Wine', 'Red.'), OLD('Liquor', 'Tito\'s.')]);
+  // Before the deploy the client added an NA beer.
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'], spirits: ['Vodka'], beerFromFullBar: ['Non-Alcoholic'] }));
+  await stampLegacyBarBaselines({ onlyDraftIds: [draftId] });
+  assert.deepEqual(barOf(await diffOf(id)), [false, [], 1]);
+  const patch = await request('PATCH', base(id), { json: { version: 1, content: {
+    also_at_bar: [OLD('Beer and Wine', 'Red.'), OLD('Spirits', 'Tito\'s.')] } } });
+  assert.equal(patch.status, 200, JSON.stringify(patch.body));
+  assert.deepEqual(barOf(await diffOf(id)), [true, ['Non-Alcoholic'], 0], 'the menu prints no NA line, so the card flags it');
+  const res = await syncAt(id, patch.body.version);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  assert.deepEqual((await draftOf(id)).content.also_at_bar, [BW('Red.'), SPIRITS('Tito\'s.'), NA('Athletic Brewing NA.')]);
+  assert.deepEqual(barOf(await diffOf(id)), [false, [], 0]);
+});
+
+// A dismissal covers a gone line (lane menu-bar-rebuild-only): the Dismiss
+// writer stores dismissalHash, which takes the gone keys.
+test('dismiss: a Dismiss on a renamed-back gone line holds, and one stored before the rename back does not', async () => {
+  const { id, planId, draftId } = await ready({ extra: { wineFromFullBar: ['Red'], spirits: ['Vodka'] } });
+  await preDeploy(id, [OLD('Beer and Wine', 'Red.'), OLD('Liquor', 'Tito\'s.')]);
+  // Before the deploy the client dropped every spirit.
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'] }));
+  await stampLegacyBarBaselines({ onlyDraftIds: [draftId] });
+  let res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  let d = await diffOf(id);
+  assert.deepEqual([...barOf(d), d.dismissed], [false, [], 1, true]);
+  const patch = await request('PATCH', base(id), { json: { version: 1, content: {
+    also_at_bar: [OLD('Beer and Wine', 'Red.'), OLD('Spirits', 'Tito\'s.')] } } });
+  assert.equal(patch.status, 200, JSON.stringify(patch.body));
+  d = await diffOf(id);
+  assert.deepEqual([...barOf(d), d.dismissed], [true, ['Spirits'], 0, false], 'the dismissal from before never saw the gone line');
+  res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: patch.body.version } });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  d = await diffOf(id);
+  assert.deepEqual([d.bar_changed, d.dismissed], [true, true], 'the Dismiss stored after it holds');
 });

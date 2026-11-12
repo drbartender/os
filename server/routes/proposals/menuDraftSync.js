@@ -1,5 +1,7 @@
 // POST /:id/menu-draft/sync, Update draft (spec 2026-10-01 sections 7 and 9;
-// mounted by menuDrafts.js). Body { version, image_model }. Brings the draft in
+// mounted by menuDrafts.js). Body { version, image_model, scope? }. scope is a
+// closed value: absent, the full Update draft below; 'bar', the bar-only
+// rebuild (after the full one); anything else 400. The full one brings the draft in
 // line with the plan: adds the drinks the plan gained (catalog fields
 // directly; a client-typed drink's name and description from one words call),
 // removes the ones it lost with their pieces, refreshes only the "Also at the
@@ -45,18 +47,42 @@
 //      fingerprint, version + 1, COMMIT;
 //   4. after the client is released: one queued task draws the added art one
 //      piece at a time (runPieceReroll, awaited in turn, never side by side).
+//
+// The bar-only rebuild (scope bar; the unchecked notice's own Update draft,
+// spec 2026-10-19 section 17, lane menu-bar-rebuild-only) rebuilds and keys
+// only the lines no key can be found for and the keyed lines whose category
+// the picks no longer build: each such keyed line goes, and with an unkeyed
+// line held every category no kept keyed line covers is built from the picks
+// and keyed, as the full one does. Every other keyed line keeps its stored
+// text, a moved pick's line included, which keeps its old baseline so it still
+// reads changed for the full Update draft. It applies no drink change, needs
+// no AI key and no image_model, reserves nothing and calls no provider. It
+// keeps the stored drink, brief and planner image parts of the fingerprint;
+// the bar baseline takes today's picks for the lines it rebuilt, drops the
+// unkeyed:<place> entries and the categories that print nothing, and keeps
+// the rest. A dismissal that matched before it is re-stamped to the draft it
+// leaves (dismissalHash), so neither a dismissed drink change nor a reviewed
+// notes edit comes back; one that did not match is left as it was. Same
+// refusals and order as the full one, after the legal hold: 404, the version
+// (409), the words (409), the plan (422), all inside ONE transaction on one
+// pooled client (inLockedTx: lockCalls, then the draft row FOR UPDATE, then
+// the plan and catalog through the client), version + 1, COMMIT. With nothing
+// to rebuild it writes nothing and answers 202 with the version it holds.
 
 const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../../db');
+const { ValidationError } = require('../../utils/errors');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { reserveImages, reserveText, releasePieceReserved, requireImageHeadroom } = require('../../utils/menuArtCap');
 const job = require('../../utils/menuArtJob');
-const { computeDiff } = require('../../utils/menuDraftRead');
+const { computeDiff, barBaseline, dismissalHash } = require('../../utils/menuDraftRead');
 const { validateImageModel, LIMITS } = require('../../utils/menuDraftValidation');
-const { loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint } = require('../../utils/menuDrinkSource');
+const {
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, hashBarLines,
+} = require('../../utils/menuDrinkSource');
 const { keyedBarLines, keyBarLines, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { assertNotLegalHold } = require('./patchGuards');
@@ -70,8 +96,27 @@ const router = express.Router();
 const NAME_MAX = 60;
 // The builder's print order of the bar lines.
 const BAR_ORDER = Object.values(LINE_LABELS);
+// A bar baseline entry for a line renamed before bar picks were tracked (legacyBarBaseline).
+const UNKEYED = 'unkeyed:';
+const SCOPES = new Set(['bar']);
 
 const hasKey = (line) => typeof line.key === 'string' && line.key !== '';
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+// The body's scope: absent is the full Update draft; 'bar' the bar-only rebuild.
+function parseScope(raw) {
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string' || !SCOPES.has(raw)) throw new ValidationError({ scope: 'Update draft takes no scope, or scope bar.' });
+  return raw;
+}
+
+// Lines in the builder's print order, a line no label ranks last, ties kept.
+function inPrintOrder(lines) {
+  const rank = (line) => { const i = BAR_ORDER.indexOf(line.key); return i === -1 ? BAR_ORDER.length : i; };
+  return lines.map((line, i) => ({ line, i }))
+    .sort((a, b) => rank(a.line) - rank(b.line) || a.i - b.i)
+    .map(({ line }) => line);
+}
 
 // computeDiff over capped copies of the stored lists: the diff the GET shows,
 // read against the legacy bar baseline when the draft has no bar_lines yet
@@ -111,10 +156,31 @@ function refreshBarLines(stored, built, changedLabels) {
   const kept = keyed.filter((line) => builtKeys.has(line.key) && !changed.has(line.key));
   const covered = new Set(kept.map((line) => line.key));
   const fresh = built.filter((line) => !covered.has(line.key) && (unkeyedHeld || changed.has(line.key)));
-  const rank = (line) => { const i = BAR_ORDER.indexOf(line.key); return i === -1 ? BAR_ORDER.length : i; };
-  return [...kept, ...fresh].map((line, i) => ({ line, i }))
-    .sort((a, b) => rank(a.line) - rank(b.line) || a.i - b.i)
-    .map(({ line }) => line);
+  return inPrintOrder([...kept, ...fresh]);
+}
+
+// The bar-only rebuild (header) of stored lines already keyed by keyBarLines,
+// against the picks' keyed lines, the baseline the diff reads and today's
+// bar_lines. -> null when there is nothing to rebuild (no unkeyed line, no
+// keyed line whose category went), else { lines, barLines }: the new lines in
+// print order and the new baseline.
+function rebuildBarOnly(stored, built, before, current) {
+  const lines = capList(stored).filter(isObject);
+  const keyed = lines.filter(hasKey);
+  const builtKeys = new Set(built.map((line) => line.key));
+  const kept = keyed.filter((line) => builtKeys.has(line.key));
+  const unkeyedHeld = keyed.length < lines.length;
+  if (!unkeyedHeld && kept.length === keyed.length) return null;
+  const covered = new Set(kept.map((line) => line.key));
+  const fresh = unkeyedHeld ? built.filter((line) => !covered.has(line.key)) : [];
+  const rebuilt = new Set(fresh.map((line) => line.key));
+  // A kept line's entry stays (a moved pick still reads changed); a category
+  // with no line stays while the picks build it (it still reads new); the
+  // rebuilt lines take today's.
+  const held = Object.entries(isObject(before) ? before : {}).filter(([key]) => !key.startsWith(UNKEYED) && !rebuilt.has(key)
+    && (covered.has(key) || hasOwn(current, key)));
+  const today = Object.entries(current).filter(([key]) => rebuilt.has(key));
+  return { lines: inPrintOrder([...kept, ...fresh]), barLines: Object.fromEntries([...held, ...today]) };
 }
 
 // The fingerprint of what Update draft applied: the plan's drink keys and bar
@@ -195,11 +261,45 @@ async function typedWords({ id, draft, proposal, typed, brief, artCount }) {
   return new Map(capList(entries).filter(isObject).map((e) => [e.key, e]));
 }
 
+// Scope bar (header): one transaction, on one pooled client, under the row lock.
+function syncBarOnly(id, version) {
+  return inLockedTx(async (client) => {
+    await requireProposal(id, client);
+    const locked = (await client.query(
+      'SELECT id, version, content, plan_fingerprint, dismissed_plan_hash, NOW() AS db_now FROM menu_drafts WHERE proposal_id = $1 FOR UPDATE',
+      [id])).rows[0];
+    if (!locked) throw noDraft();
+    if (locked.version !== version) throw draftChanged();
+    requireWords(locked.content, locked.db_now);
+    const current = await loadEventPlan(id, client);
+    if (!current) throw noPlan();
+    const normalized = normalizePlan(current, await loadCatalogMaps(client));
+    const diff = diffOf(locked, normalized);
+    const stored = isObject(locked.plan_fingerprint) ? locked.plan_fingerprint : {};
+    const rebuilt = rebuildBarOnly(keyBarLines(capList(locked.content.also_at_bar)).lines, keyedBarLines(normalized.bar),
+      barBaseline(stored, locked.content, normalized), buildFingerprint(normalized).bar_lines);
+    if (!rebuilt) return { version: locked.version };
+    const content = { ...locked.content, also_at_bar: rebuilt.lines };
+    const fingerprint = { ...stored, bar_lines: rebuilt.barLines, bar_hash: hashBarLines(rebuilt.barLines) };
+    const dismissed = diff.dismissed ? dismissalHash({ plan_fingerprint: fingerprint, content }, normalized) : locked.dismissed_plan_hash;
+    const { rows } = await client.query(
+      `UPDATE menu_drafts SET content = $2::jsonb, plan_fingerprint = $3::jsonb, dismissed_plan_hash = $4, version = version + 1
+        WHERE id = $1 RETURNING version`,
+      [locked.id, content, fingerprint, dismissed]);
+    return { version: rows[0].version };
+  });
+}
+
 router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   assertNotLegalHold(id);
   const body = isObject(req.body) ? req.body : {};
+  const scope = parseScope(body.scope);
   const version = parseVersion(body.version);
+  if (scope === 'bar') {
+    res.status(202).json(await syncBarOnly(id, version));
+    return;
+  }
   const provider = validateImageModel(body.image_model);
   const proposal = await requireProposal(id);
   const draft = (await pool.query(

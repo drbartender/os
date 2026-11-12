@@ -176,9 +176,9 @@ describe('table C, one row each', () => {
       expect([s.id, s.chip, s.message, s.primary]).toEqual([plain.id, plain.chip, plain.message, plain.primary]);
       // Two sentences: a sub that ends in no stop gets a period before the notice.
       expect(s.sub).toBe(plain.sub ? `${/[.!?]$/.test(plain.sub) ? plain.sub : `${plain.sub}.`} ${UNCHECKED(n)}` : UNCHECKED(n));
-      // The Update draft the notice names is offered: the state's own, or a ghost one beside its primary.
+      // The Update draft the notice names is offered: the state's own, or a ghost bar-only one beside its primary.
       const own = [plain.primary, plain.secondary].some((a) => a && a.id === 'update');
-      expect(s.secondary).toEqual(own ? plain.secondary : { id: 'update', label: 'Update draft', style: 'ghost' });
+      expect(s.secondary).toEqual(own ? plain.secondary : { id: 'update', label: 'Update draft', style: 'ghost', scope: 'bar' });
       return s;
     };
     const draft = same(() => {});
@@ -191,12 +191,11 @@ describe('table C, one row each', () => {
     const s = same((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; }, 2);
     expect([s.id, s.message, s.sub]).toEqual(['plan-changed', 'Cucumber Mule was added to the plan.', `Update the draft to include it. ${UNCHECKED(2)}`]);
     expect(same((p) => { approved(p); p.diff.bar_changed = true; }).sub).toBe(`Staff still get the ${OCT_9} version. ${UNCHECKED(1)}`);
-    // A dismissal never covers an unchecked line: the notice and the ghost Update draft stay.
+    // A dismissal never covers an unchecked line: the notice and the ghost Update draft stay, and the
+    // bar-only rebuild it offers applies none of the dismissed changes, so it names none.
     const dismissed = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.dismissed = true; p.diff.bar_unchecked = 1; }));
     expect([dismissed.id, dismissed.message, dismissed.sub, dismissed.secondary])
-      .toEqual(['draft', 'Ready to review.',
-        "Saved. A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it from the client's picks and also applies the changes you dismissed: Cucumber Mule added.",
-        { id: 'update', label: 'Update draft', style: 'ghost' }]);
+      .toEqual(['draft', 'Ready to review.', `Saved. ${UNCHECKED(1)}`, { id: 'update', label: 'Update draft', style: 'ghost', scope: 'bar' }]);
     // Nothing from the draft prints on No menu needed or a manual upload; read-only or busy drafting says nothing either.
     for (const mut of [(p) => { p.print.state = 'not_required'; }, (p) => { p.print.state = 'replaced'; }, (p) => { p.draft.read_only = true; },
       (p) => { p.pieces[1] = piece('cocktail:1', 'working', { heartbeat_at: new Date(NOW).toISOString() }); }]) {
@@ -447,7 +446,7 @@ describe('table B, the editor banners', () => {
       .toBe(`The bar picks changed since this draft. The client image changed since this draft. ${UNCHECKED(1)}`);
     const own = { id: 'bar-unchecked', tone: 'info',
       title: "A bar line renamed before bar picks were tracked can't be checked against them.",
-      text: "Update draft rebuilds it from the client's picks.", buttons: [{ id: 'update', label: 'Update draft', style: 'secondary' }] };
+      text: "Update draft rebuilds it from the client's picks.", buttons: [{ id: 'update', label: 'Update draft', style: 'secondary', scope: 'bar' }] };
     expect(banner(run(P((p) => { p.diff.bar_unchecked = 1; })), 'bar-unchecked')).toEqual(own);
     expect(banner(run(P((p) => { approved(p); p.diff.brief_edited = ['notes']; p.diff.bar_unchecked = 1; })), 'bar-unchecked')).toEqual(own);
     // A dismissed plan change hides its banner, never the unchecked line's.
@@ -455,30 +454,61 @@ describe('table B, the editor banners', () => {
     expect(banner(s, 'plan-changed')).toBeUndefined();
     expect(banner(s, 'bar-unchecked')).toEqual({ ...own,
       title: "3 bar lines renamed before bar picks were tracked can't be checked against them.",
-      text: "Update draft rebuilds them from the client's picks and also applies the changes you dismissed: Cucumber Mule added." });
+      text: "Update draft rebuilds them from the client's picks." });
     for (const mut of [(p) => { p.draft.read_only = true; }, (p) => { p.pieces[1] = piece('cocktail:1', 'working', { heartbeat_at: new Date(NOW).toISOString() }); }]) {
       expect(banner(run(P((p) => { mut(p); p.diff.bar_unchecked = 1; })), 'bar-unchecked')).toBeUndefined();
     }
   });
 
-  test('the unchecked notice names the dismissed changes the Update draft it offers would also apply', () => {
+  // Lane menu-bar-rebuild-only: the notice's own Update draft is the bar-only
+  // rebuild (scope bar), which applies no dismissed change, so the notice names none.
+  test('the notice\'s own Update draft sends scope bar and names no dismissed changes; the Plan changed one stays the full Update draft', () => {
     const first = "A bar line renamed before bar picks were tracked can't be checked against them.";
-    const all = "Update draft rebuilds it from the client's picks and also applies the changes you dismissed: "
-      + 'Cucumber Mule added, Old Fashioned dropped, the bar picks.';
+    const rebuild = "Update draft rebuilds it from the client's picks.";
     let s = run(P((p) => {
       p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }];
       p.diff.bar_changed = true; p.diff.dismissed = true; p.diff.bar_unchecked = 1;
     }));
-    expect(s.sub).toBe(`Saved. ${first} ${all}`);
-    expect(banner(s, 'bar-unchecked')).toMatchObject({ title: first, text: all, buttons: [{ id: 'update', label: 'Update draft' }] });
+    expect(s.sub).toBe(`Saved. ${first} ${rebuild}`);
+    expect(s.secondary).toEqual({ id: 'update', label: 'Update draft', style: 'ghost', scope: 'bar' });
+    expect(banner(s, 'bar-unchecked')).toEqual({ id: 'bar-unchecked', tone: 'info', title: first, text: rebuild,
+      buttons: [{ id: 'update', label: 'Update draft', style: 'secondary', scope: 'bar' }] });
+    expect(JSON.stringify(s)).not.toContain('dismissed');
     s = run(P((p) => { p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }]; p.diff.dismissed = true; p.diff.bar_unchecked = 2; }));
-    expect(banner(s, 'bar-unchecked').text)
-      .toBe("Update draft rebuilds them from the client's picks and also applies the changes you dismissed: Old Fashioned dropped.");
-    // A dismissed notes edit is not applied by Update draft, and an undismissed change shows as its own Plan changed.
+    expect(banner(s, 'bar-unchecked').text).toBe("Update draft rebuilds them from the client's picks.");
     s = run(P((p) => { p.diff.brief_edited = ['notes']; p.diff.dismissed = true; p.diff.bar_unchecked = 1; }));
-    expect(banner(s, 'bar-unchecked').text).toBe("Update draft rebuilds it from the client's picks.");
+    expect(banner(s, 'bar-unchecked').text).toBe(rebuild);
+    // An undismissed change shows as its own Plan changed, whose Update draft applies it all: no scope.
     s = run(P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.bar_unchecked = 1; }));
     expect(s.sub).toBe(`Update the draft to include it. ${UNCHECKED(1)}`);
+    expect(s.primary).toEqual({ id: 'update', label: 'Update draft', style: 'primary' });
+    expect(banner(s, 'plan-changed').buttons).toEqual([{ id: 'dismiss', label: 'Dismiss', style: 'ghost' },
+      { id: 'update', label: 'Update draft', style: 'secondary' }]);
+  });
+
+  // The verify pass's M2 on menu-bar-chain: while a piece paints the notice is
+  // hidden, so the Plan changed banner's Update draft, which rebuilds the
+  // renamed line, waits on a draft that holds one.
+  test('while a piece paints, the Plan changed banner offers no live Update draft on a draft with an unchecked line', () => {
+    const painting = (p) => { p.pieces[1] = piece('cocktail:1', 'working', { heartbeat_at: new Date(NOW).toISOString() }); };
+    const changed = (p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; p.diff.bar_changed = true; };
+    const updates = (s) => banner(s, 'plan-changed').buttons.filter((b) => b.id === 'update');
+    const first = "A bar line renamed before bar picks were tracked can't be checked against them.";
+    let s = run(P((p) => { painting(p); changed(p); p.diff.bar_unchecked = 1; }), { activityKeys: ['cocktail:1'] });
+    expect(banner(s, 'plan-changed').buttons).toEqual([{ id: 'dismiss', label: 'Dismiss', style: 'ghost' }]);
+    expect(banner(s, 'plan-changed').text).not.toContain(first);
+    // The text never promises the button it holds back, and says when it returns.
+    expect(banner(s, 'plan-changed').text).not.toContain('Updating paints only the new drinks.');
+    expect(banner(s, 'plan-changed').text).toContain('Update draft returns when the drawing finishes.');
+    expect(s.banners.flatMap((b) => b.buttons).filter((b) => b.id === 'update')).toEqual([]);
+    expect([s.primary, s.secondary].filter((a) => a && a.id === 'update')).toEqual([]);
+    // No unchecked line: the banner keeps its Update draft while a piece paints.
+    s = run(P((p) => { painting(p); changed(p); }), { activityKeys: ['cocktail:1'] });
+    expect(updates(s)).toEqual([{ id: 'update', label: 'Update draft', style: 'secondary' }]);
+    // Once the piece is done the button is back, with the notice's sentence beside it.
+    s = run(P((p) => { changed(p); p.diff.bar_unchecked = 1; }));
+    expect(updates(s)).toEqual([{ id: 'update', label: 'Update draft', style: 'secondary' }]);
+    expect(banner(s, 'plan-changed').text).toContain(UNCHECKED(1));
   });
 
   test('the print states, no plan and couldnt load', () => {

@@ -17,6 +17,9 @@ import useMenuLayers, { CARD_SIZE, FULL_SIZE } from './useMenuLayers';
 // - An action (generate, sync, dismissPlanChange, reroll) resolves only once a
 //   GET made after it lands, so its caller stays busy until the card can show
 //   the new state, and the version it returns is kept for the next request.
+//   sync({ scope: 'bar' }) is the unchecked notice's bar-only Update draft: it
+//   posts scope bar and no image model, since it draws nothing; any other
+//   sync is the full Update draft, as before.
 // - edit({ content?, inputs? }) overlays top-level keys and PATCHes them 800 ms
 //   after the last edit, to the id they were made for. A 409 drops them,
 //   refetches and sets save.conflict; another failure keeps them (state
@@ -252,8 +255,10 @@ export default function useMenuDraft(proposalId) {
     return res.data;
   }), [action]);
 
-  const sync = useMemo(() => action(async (pid, { imageModel: model } = {}) => (
-    (await api.post(`/proposals/${pid}/menu-draft/sync`, { version: versions.current.get(pid), image_model: model || latest.current.imageModel })).data
+  const sync = useMemo(() => action(async (pid, { imageModel: model, scope } = {}) => (
+    (await api.post(`/proposals/${pid}/menu-draft/sync`, scope === 'bar'
+      ? { version: versions.current.get(pid), scope }
+      : { version: versions.current.get(pid), image_model: model || latest.current.imageModel })).data
   )), [action]);
 
   const dismissPlanChange = useMemo(() => action(async (pid) => (

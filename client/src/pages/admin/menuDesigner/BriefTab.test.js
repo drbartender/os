@@ -84,12 +84,13 @@ test('a renamed pre-deploy bar line: the unchecked note shows whether or not the
   expect(screen.queryByText(one)).toBeNull();
 });
 
-test('the unchecked note names the dismissed changes Update draft would also apply', () => {
+test('the unchecked note names no dismissed change, since the Update draft it names is the bar-only rebuild', () => {
   const diff = { added: [{ key: 'custom:mule', name: 'Cucumber Mule' }], dropped: [], brief_edited: [], image_changed: false,
     bar_changed: true, bar_unchecked: 1, dismissed: true };
   render(<BriefTab {...props({ diff })} />);
   expect(screen.getByText("A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it "
-    + "from the client's picks and also applies the changes you dismissed: Cucumber Mule added, the bar picks.")).toBeInTheDocument();
+    + "from the client's picks.")).toBeInTheDocument();
+  expect(screen.queryByText(/changes you dismissed/)).toBeNull();
 });
 
 test('the unchecked note hides while a piece is painting, as the card and the banner do', () => {

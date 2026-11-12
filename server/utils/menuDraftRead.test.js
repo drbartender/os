@@ -263,7 +263,7 @@ test('computeDiff: a draft with no bar_lines is read against its legacy baseline
   assert.equal(read.computeDiff(round1, spiritsGone).bar_changed, true, 'and it is read against its lines all the same');
 });
 
-test('computeDiff: a stored line renamed back to a category the picks no longer build reads changed, and no dismissal covers it', () => {
+test('computeDiff: a stored line renamed back to a category the picks no longer build reads changed, and no dismissal stored before it covers it', () => {
   // Stamped with the renamed Spirits line's entry while the picks build no spirits.
   const now = planWith({ wineFromFullBar: ['Red'] });
   const fp = buildFingerprint(now);
@@ -280,7 +280,63 @@ test('computeDiff: a stored line renamed back to a category the picks no longer 
   // Then the owner renames the line back to its builder label: it prints a spirit the picks do not carry.
   d = read.computeDiff(draft({ label: 'Spirits', text: 'Tito\'s.' }), now);
   assert.deepEqual([d.bar_changed, d.bar_changed_labels, d.bar_unchecked], [true, ['Spirits'], 0]);
-  assert.equal(d.dismissed, false, 'that change is not in bar_hash, so no dismissal could have covered it');
+  assert.equal(d.dismissed, false, 'that change is not in bar_hash, so a dismissal stored before it never saw it');
+});
+
+// Lane menu-bar-rebuild-only: a dismissal covers a gone line. The dismissal
+// hash takes the gone keys (the fingerprint's bar_drift), so a Dismiss or Mark
+// reviewed stored after the change holds, and one stored before it still does not.
+test('computeDiff: a Dismiss stored after a renamed-back gone line holds; one stored before it does not', () => {
+  const now = planWith({ wineFromFullBar: ['Red'] });
+  const fp = buildFingerprint(now);
+  const barLines = { ...fp.bar_lines, 'unkeyed:1': 'e'.repeat(64) };
+  const keyedBW = { key: 'Beer and Wine', label: 'Beer and Wine', text: 'Red, house pinot.' };
+  const draft = (second, hash) => ({
+    plan_fingerprint: { ...fp, bar_lines: barLines, bar_hash: hashBarLines(barLines) },
+    content: { drinks: [], also_at_bar: [keyedBW, second] }, dismissed_plan_hash: hash,
+  });
+  const renamed = { label: 'Liquor', text: 'Tito\'s.' };
+  const back = { label: 'Spirits', text: 'Tito\'s.' };
+  // The hash a Dismiss stores on the renamed-back state: the current fingerprint and the gone key.
+  const after = fingerprintHash({ ...fp, bar_drift: ['Spirits'] });
+  let d = read.computeDiff(draft(back, after), now);
+  assert.deepEqual([d.bar_changed, d.bar_changed_labels, d.dismissed], [true, ['Spirits'], true], 'the Dismiss stored after it holds');
+  assert.equal(read.dismissalHash(draft(back, null), now), after, 'the writers\' hash names the gone key');
+  d = read.computeDiff(draft(back, fingerprintHash(fp)), now);
+  assert.equal(d.dismissed, false, 'one stored while the line was still renamed never saw it');
+  // While the line is renamed there is no gone key: the dismissal hash is the plan's own, as before.
+  assert.equal(read.dismissalHash(draft(renamed, null), now), fingerprintHash(fp));
+  assert.equal(read.computeDiff(draft(renamed, fingerprintHash(fp)), now).dismissed, true);
+  // A later pick move undoes the one stored after.
+  assert.equal(read.computeDiff(draft(back, after), planWith({ wineFromFullBar: ['White'] })).dismissed, false);
+});
+
+// The verify pass's M1 on menu-bar-chain, the probe's shape: the line the
+// client's Spirits pick printed under was renamed before bar picks were
+// tracked; between Generate and the boot stamp the client added NA; after the
+// stamp the owner renames the line back to Spirits. No stored line stands for
+// NA, so once no unkeyed line is left it reads new, as the same draft read
+// unstamped does, and no dismissal stored before the rename covers it.
+test('computeDiff: a stamped draft whose renamed line is renamed back reads a category added before the stamp as new', () => {
+  const generated = planWith({ wineFromFullBar: ['Red'], spirits: ['Vodka'] });
+  const atStamp = planWith({ wineFromFullBar: ['Red'], spirits: ['Vodka'], beerFromFullBar: ['Non-Alcoholic'] });
+  const lines = [{ label: 'Beer and Wine', text: 'Red, house pinot.' }, { label: 'Liquor', text: 'Tito\'s.' }];
+  const stamp = legacyBarBaseline(lines, atStamp);
+  const stampedFp = { ...buildFingerprint(generated), bar_lines: stamp.bar_lines, bar_hash: stamp.bar_hash };
+  const dismissedBefore = fingerprintHash(buildFingerprint(atStamp));
+  const draft = (second, fingerprint = stampedFp) => ({
+    plan_fingerprint: fingerprint, content: { drinks: [], also_at_bar: [lines[0], second] }, dismissed_plan_hash: dismissedBefore,
+  });
+  const back = { label: 'Spirits', text: 'Tito\'s.' };
+  let d = read.computeDiff(draft(lines[1]), atStamp);
+  assert.deepEqual([d.bar_changed, d.bar_unchecked, d.dismissed], [false, 1, true], 'before the rename back: unchecked, dismissed');
+  d = read.computeDiff(draft(back), atStamp);
+  assert.deepEqual([d.bar_changed, d.bar_changed_labels, d.bar_unchecked], [true, ['Non-Alcoholic'], 0], 'NA reads new');
+  assert.equal(d.dismissed, false, 'the dismissal stored before the rename back never saw it');
+  const unstamped = read.computeDiff(draft(back, withoutBar(buildFingerprint(generated))), atStamp);
+  assert.deepEqual([unstamped.bar_changed, unstamped.bar_changed_labels], [true, ['Non-Alcoholic']], 'as the unstamped read says');
+  const now = read.dismissalHash(draft(back), atStamp);
+  assert.equal(read.computeDiff({ ...draft(back), dismissed_plan_hash: now }, atStamp).dismissed, true, 'a Dismiss stored since holds');
 });
 
 test('computeDiff: bar_unchecked counts the stored lines no key can be found for, baseline or not; an unkeyed:<place> entry is never a change', () => {

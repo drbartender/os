@@ -354,8 +354,10 @@ function hashBarLines(barLines) {
 // words, which the diff counts as bar_unchecked and never as a pick change, and
 // the next Update draft rebuilds and keys it. With one held, the categories no
 // keyed line covers take today's picks, since which of them it stood for
-// cannot be told. No list at all takes today's picks. `unkeyed` counts the
-// renamed lines.
+// cannot be told; once that line is renamed back to a builder label, the
+// others it might have stood for have no line, and computeDiff reads each as
+// new (lane menu-bar-rebuild-only). No list at all takes today's picks.
+// `unkeyed` counts the renamed lines.
 function legacyBarBaseline(storedLines, normalized) {
   const current = barLinesOf((normalized || {}).bar);
   if (!Array.isArray(storedLines)) return { bar_lines: current, bar_hash: hashBarLines(current), unkeyed: 0 };
@@ -397,7 +399,13 @@ function buildFingerprint(normalized) {
 // covers the three brief fields. bar_hash joins the array only when the
 // fingerprint has one, so a fingerprint stored before it existed hashes
 // exactly as it always did and an old dismissed_plan_hash still matches it
-// (computeDiff relies on this).
+// (computeDiff relies on this). bar_drift, never stored, is the dismissal's
+// view of the stored lines (menuDraftRead.dismissalHash, lane
+// menu-bar-rebuild-only): the builder labels where the lines and the bar
+// baseline disagree, a keyed line the picks no longer build or a built
+// category no line stands for, which no bar_hash shows. They join the array,
+// in any order, only when there are some, so a dismissal covers the lines it
+// saw and every other hash is unchanged.
 function fingerprintHash(fingerprint) {
   const f = fingerprint || {};
   const parts = [
@@ -406,6 +414,8 @@ function fingerprintHash(fingerprint) {
     f.planner_image_key || null,
   ];
   if (typeof f.bar_hash === 'string' && f.bar_hash) parts.push(f.bar_hash);
+  const drift = [...new Set(asArray(f.bar_drift).map(String))].sort();
+  if (drift.length) parts.push(['drift', ...drift]);
   return sha256(JSON.stringify(parts));
 }
 

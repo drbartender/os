@@ -41,11 +41,11 @@ const {
   reserveImages, reserveText, releaseReserved, releaseProposalReserved, releasePieceReserved,
 } = require('../../utils/menuArtCap');
 const job = require('../../utils/menuArtJob');
-const { readDraftPayload, stuck } = require('../../utils/menuDraftRead');
+const { readDraftPayload, stuck, dismissalHash } = require('../../utils/menuDraftRead');
 const {
   validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, LIMITS,
 } = require('../../utils/menuDraftValidation');
-const { loadEventPlan, buildFingerprint, fingerprintHash } = require('../../utils/menuDrinkSource');
+const { loadEventPlan, buildFingerprint } = require('../../utils/menuDrinkSource');
 const {
   LIST_CAP, isObject, capList, parseId, parseVersion, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan,
   requireWords, upsertPendingPieces, requireOpenAI, requireImageModel, imageModelId, inLockedTx, queue,
@@ -231,12 +231,14 @@ router.post('/:id/menu-draft/dismiss-plan-change', auth, requireAdminOrManager, 
   const id = parseId(req.params.id);
   await requireProposal(id);
   const version = parseVersion(isObject(req.body) ? req.body.version : undefined);
-  const cur = (await pool.query('SELECT version FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
+  const cur = (await pool.query('SELECT version, content, plan_fingerprint FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
   if (!cur) throw noDraft();
   if (version !== cur.version) throw draftChanged();
   const { normalized } = await job.freshPlan(id);
   if (!normalized) throw noPlan();
-  const hash = fingerprintHash(buildFingerprint(normalized));
+  // The draft as it stands at this version: the hash covers its bar lines'
+  // drift too (a renamed-back gone line), so this dismissal holds over it.
+  const hash = dismissalHash(cur, normalized);
   // Checked against version but never bumps it: the hash is not menu content,
   // so dismissing the banner on an approved draft leaves it approved (a bump
   // would read as edited since approval). Only dismissed_plan_hash is written,
