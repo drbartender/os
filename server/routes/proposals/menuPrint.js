@@ -125,8 +125,12 @@ router.patch('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, 
   // a read-then-check: two admins racing (an upload interleaved with this PATCH)
   // could otherwise land key-set AND not_required, which later reads back as
   // "no printed menu for this event" the moment the file is removed.
+  // The admin's decision carries its provenance (spec 2026-10-19 section 15):
+  // 'admin' whether it sets or clears the mark, so a client's later Custom or
+  // Standard submit never undoes a set (utils/menuAutoStart.js clears only
+  // 'planner'), and a later Skip the Menu never re-marks a cleared row.
   const upd = await pool.query(
-    `UPDATE proposals SET menu_not_required = $2
+    `UPDATE proposals SET menu_not_required = $2, menu_not_required_by = 'admin'
       WHERE id = $1 AND ($2 = false OR menu_print_key IS NULL)
       RETURNING menu_print_key, menu_not_required`,
     [id, notRequired]

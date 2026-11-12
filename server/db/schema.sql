@@ -4954,6 +4954,14 @@ CREATE INDEX IF NOT EXISTS idx_sms_consent_log_client
 -- not_required; else pending.
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_print_key TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NULL DEFAULT FALSE;
+-- menu_not_required_by: who set the mark (spec 2026-10-19 section 15). 'admin'
+-- from the menu-print PATCH, 'planner' from a Skip the Menu submit
+-- (server/utils/menuAutoStart.js) or the one-time backfill. An admin Undo
+-- leaves it unmarked with 'admin', so a later Skip the Menu never re-marks it;
+-- NULL for a mark set before this column. A Custom or Standard submit clears
+-- only a 'planner' mark; setMenuPrintKey clears both columns.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required_by TEXT
+  CHECK (menu_not_required_by IS NULL OR menu_not_required_by IN ('admin', 'planner'));
 
 -- ─── Menu art generator (spec 2026-10-01-menu-art-generator) ───────────────
 -- Spec: docs/superpowers/specs/2026-10-01-menu-art-generator-design.md, section 6.

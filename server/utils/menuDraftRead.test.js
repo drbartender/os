@@ -408,7 +408,7 @@ test('no plan and no draft, then a draft with no plan reads read-only', async ()
   proposalIds.push(bare);
   const empty = await read.readDraftPayload(bare);
   assert.deepEqual([empty.draft, empty.pieces, empty.brief, empty.diff, empty.plan], [null, [], null, null, null]);
-  assert.deepEqual(empty.print, { state: S.NONE, approved_at: null, approved_by_name: null, print_key: null, approved_file_in_use: false });
+  assert.deepEqual(empty.print, { state: S.NONE, approved_at: null, approved_by_name: null, print_key: null, approved_file_in_use: false, not_required_by: null });
   assert.deepEqual(Object.keys(empty.cap).sort(), ['limit', 'remaining', 'resets_at', 'used']);
   assert.deepEqual(Object.keys(empty.configured).sort(), ['gemini', 'openai']);
   assert.equal(typeof empty.configured.openai, 'boolean');
@@ -501,6 +501,26 @@ test('the print state read live: approved, edited by version and art_version, re
   assert.equal((await payload()).print.state, S.REMOVED);
   await pool.query('UPDATE proposals SET menu_not_required = true WHERE id = $1', [proposalId]);
   assert.equal((await payload()).print.state, S.NOT_REQUIRED);
+});
+
+// Spec 2026-10-19 section 15: not_required_by is sent only while the event is
+// marked, so an admin's Undo (unmarked, by 'admin') reads exactly as unmarked.
+test('not_required_by: the planner or admin while marked, null once the admin cleared the mark', async () => {
+  await reset();
+  try {
+    await pool.query("UPDATE proposals SET menu_not_required = true, menu_not_required_by = 'planner' WHERE id = $1", [proposalId]);
+    let out = await payload();
+    assert.deepEqual([out.print.state, out.print.not_required_by], [S.NOT_REQUIRED, 'planner']);
+    await pool.query("UPDATE proposals SET menu_not_required = true, menu_not_required_by = 'admin' WHERE id = $1", [proposalId]);
+    out = await payload();
+    assert.deepEqual([out.print.state, out.print.not_required_by], [S.NOT_REQUIRED, 'admin']);
+    await pool.query("UPDATE proposals SET menu_not_required = false, menu_not_required_by = 'admin' WHERE id = $1", [proposalId]);
+    out = await payload();
+    assert.notEqual(out.print.state, S.NOT_REQUIRED);
+    assert.equal(out.print.not_required_by, null);
+  } finally {
+    await pool.query('UPDATE proposals SET menu_not_required = false, menu_not_required_by = NULL WHERE id = $1', [proposalId]);
+  }
 });
 
 test('dismissed until the plan changes again', async () => {

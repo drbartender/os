@@ -85,8 +85,18 @@ test('setMenuPrintKey runs the one UPDATE on the executor it is given, with the 
   const out = await setMenuPrintKey(exec, 42, 'menu-print/42/abc.jpg');
   assert.deepEqual(out, { rowCount: 1 });
   assert.equal(exec.calls.length, 1, 'exactly one statement');
-  assert.equal(exec.calls[0].sql, 'UPDATE proposals SET menu_print_key = $1, menu_not_required = false WHERE id = $2');
+  assert.equal(exec.calls[0].sql,
+    'UPDATE proposals SET menu_print_key = $1, menu_not_required = false, menu_not_required_by = NULL WHERE id = $2');
   assert.deepEqual(exec.calls[0].params, ['menu-print/42/abc.jpg', 42]);
+});
+
+// Spec 2026-10-19 section 15: posting a file clears the mark AND who set it,
+// so no stale planner or admin provenance outlives the mark.
+test('setMenuPrintKey clears both no-menu columns in the one statement that posts the key', async () => {
+  const exec = stubExecutor(1);
+  await setMenuPrintKey(exec, 5, 'menu-print/5/k.pdf');
+  const set = exec.calls[0].sql.match(/\bSET (.*) WHERE\b/)[1].split(',').map((x) => x.trim());
+  assert.deepEqual(set, ['menu_print_key = $1', 'menu_not_required = false', 'menu_not_required_by = NULL']);
 });
 
 test('setMenuPrintKey throws NotFoundError on 0 rows (a proposal deleted in between)', async () => {

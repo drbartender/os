@@ -7,10 +7,11 @@
 //
 // It is also the ONE way the print key is set (spec 2026-10-01 section 8).
 // setMenuPrintKey(executor, proposalId, key) runs the one UPDATE that posts a
-// file (and clears menu_not_required) on the executor it is given: the pool for
-// the manual upload (POST /api/proposals/:id/menu-print), the transaction client
-// for Approve (POST /api/proposals/:id/menu-draft/approve). It never uploads and
-// never fires duty reaccrual. reaccrueDuty(proposalId) re-reconciles the $5
+// file (and clears menu_not_required and menu_not_required_by) on the
+// executor it is given: the pool for the manual upload
+// (POST /api/proposals/:id/menu-print), the transaction client for Approve
+// (POST /api/proposals/:id/menu-draft/approve). It never uploads and never
+// fires duty reaccrual. reaccrueDuty(proposalId) re-reconciles the $5
 // menu_print duty line; every caller fires it only AFTER its write is
 // committed, so the accrual always reads the committed key.
 const crypto = require('crypto');
@@ -77,14 +78,15 @@ async function sendMenuPrintFile(res, proposalId, key) {
 /**
  * Post `key` as proposal `proposalId`'s print file on `executor` (the pool, or
  * a transaction client whose COMMIT the caller owns). Uploading a file
- * necessarily means a menu IS needed, so the flag is cleared in the same
+ * necessarily means a menu IS needed, so the flag and who set it
+ * (menu_not_required_by, spec 2026-10-19 section 15) are cleared in the same
  * statement and the tri-state cannot land in a contradictory place. Throws
  * NotFoundError when no row matched: a proposal deleted in between must not
  * report a posted file. Does not upload, and does not fire reaccrueDuty.
  */
 async function setMenuPrintKey(executor, proposalId, key) {
   const upd = await executor.query(
-    'UPDATE proposals SET menu_print_key = $1, menu_not_required = false WHERE id = $2',
+    'UPDATE proposals SET menu_print_key = $1, menu_not_required = false, menu_not_required_by = NULL WHERE id = $2',
     [key, proposalId]
   );
   if (!upd.rowCount) throw new NotFoundError('Proposal not found.');

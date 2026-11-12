@@ -169,6 +169,21 @@ test('menu_drafts: the three JSONB columns must hold objects', () => {
   assert.match(ddl, /ADD CONSTRAINT menu_drafts_json_shape_check CHECK \(\n\s+jsonb_typeof\(inputs\) = 'object'\n\s+AND jsonb_typeof\(content\) = 'object'\n\s+AND jsonb_typeof\(plan_fingerprint\) = 'object'\n\s+\);/);
 });
 
+// Spec 2026-10-19 section 15 (lane menu-no-menu-mark): who set the no-menu
+// mark. One idempotent ADD COLUMN after menu_not_required, outside the menu
+// art block, with its CHECK inline, so a replay that finds the column skips
+// the whole statement.
+const NOT_REQUIRED_BY = "ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required_by TEXT\n"
+  + "  CHECK (menu_not_required_by IS NULL OR menu_not_required_by IN ('admin', 'planner'));";
+
+test('proposals.menu_not_required_by: one idempotent ADD COLUMN with its CHECK, after menu_not_required', () => {
+  const at = schemaSql.indexOf(NOT_REQUIRED_BY);
+  assert.ok(at !== -1, 'the menu_not_required_by statement is in schema.sql exactly as spec 15 writes it');
+  assert.equal(schemaSql.indexOf(NOT_REQUIRED_BY, at + 1), -1, 'once');
+  assert.ok(schemaSql.indexOf('ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN') < at, 'after menu_not_required');
+  assert.ok(at < schemaSql.indexOf(START), 'before the menu art block, outside it');
+});
+
 // ── Live: the block applied twice to the dev DB ─────────────────────────────
 // Skips when DATABASE_URL is unset. The three tables are net-new, so applying
 // the block is safe on the shared dev DB; every probe row below is written
@@ -347,4 +362,44 @@ dbTest('live: the menu_drafts updated_at trigger carries the WHEN clause after t
     "SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'update_menu_drafts_updated_at' AND tgrelid = 'menu_drafts'::regclass");
   assert.equal(rows.length, 1);
   assert.match(rows[0].def, /WHEN .*to_jsonb\(old\.\*\).*dismissed_plan_hash.*IS DISTINCT FROM.*to_jsonb\(new\.\*\)/s);
+});
+
+// The column applied twice (the boot replay is idempotent), then read back from
+// the catalog; the CHECK is probed inside a transaction that is rolled back.
+dbTest('live: proposals.menu_not_required_by is a nullable TEXT whose CHECK takes admin, planner or null', async () => {
+  await pool.query(NOT_REQUIRED_BY);
+  await pool.query(NOT_REQUIRED_BY);
+  const { rows: cols } = await pool.query(
+    `SELECT data_type, is_nullable, column_default FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'proposals' AND column_name = 'menu_not_required_by'`);
+  assert.equal(cols.length, 1);
+  assert.deepEqual(cols[0], { data_type: 'text', is_nullable: 'YES', column_default: null });
+  const def = (await constraintDefs('proposals')).proposals_menu_not_required_by_check;
+  assert.ok(def, 'proposals_menu_not_required_by_check exists');
+  assert.deepEqual(checkValues(def), ['admin', 'planner']);
+  assert.match(def, /menu_not_required_by IS NULL/);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Its own client and proposal, inside the rolled-back transaction: no real row is touched.
+    const { rows: [c] } = await client.query(
+      "INSERT INTO clients (name, email, phone) VALUES ('Schema Probe', 'schema-probe@example.com', '+15555550199') RETURNING id");
+    const { rows: [p] } = await client.query(
+      `INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours, event_timezone, status, event_type)
+       VALUES ($1, CURRENT_DATE + 10, '18:00', 4, 'America/Chicago', 'confirmed', 'corporate') RETURNING id`, [c.id]);
+    const id = p.id;
+    for (const ok of ['admin', 'planner', null]) {
+      await client.query('UPDATE proposals SET menu_not_required_by = $2 WHERE id = $1', [id, ok]);
+    }
+    await client.query('SAVEPOINT probe');
+    let err = null;
+    try { await client.query("UPDATE proposals SET menu_not_required_by = 'client' WHERE id = $1", [id]); } catch (e) { err = e; }
+    assert.ok(err, "'client' is refused");
+    assert.equal(err.code, '23514');
+    assert.equal(err.constraint, 'proposals_menu_not_required_by_check');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
 });

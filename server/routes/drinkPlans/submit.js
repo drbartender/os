@@ -16,6 +16,7 @@ const { contractDurationHours } = require('../../utils/contractDuration');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { AppError, NotFoundError, ConflictError } = require('../../utils/errors');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
+const { triggerMenuAutoStart } = require('../../utils/menuAutoStart');
 const { loadHostedCoverageContext, mocktailAddonFor } = require('./coverageContext');
 const { sanitizeSelections } = require('./submitSanitize');
 const {
@@ -636,6 +637,7 @@ async function handleSubmit(req, res) {
     // generate manually from the modal if this misses.
     if (newStatus === 'submitted') {
       triggerShoppingListAutoGen(updatedPlan?.id);
+      triggerMenuAutoStart(updatedPlan?.id);
       scheduleLabFollowupAfterSubmit(updatedPlan?.id);
     }
 
@@ -738,6 +740,7 @@ async function handleSubmit(req, res) {
   // branch above.
   if (newStatus === 'submitted') {
     triggerShoppingListAutoGen(result.rows[0]?.id);
+    triggerMenuAutoStart(result.rows[0]?.id);
     scheduleLabFollowupAfterSubmit(result.rows[0]?.id);
   }
 

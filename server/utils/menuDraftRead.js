@@ -11,7 +11,8 @@
 //   diff: null | { added: [{ key, name }], dropped: [{ key, name }],
 //     brief_edited: ['theme' | 'naming' | 'notes'], image_changed, bar_changed,
 //     bar_changed_labels: [label], bar_unchecked, dismissed },
-//   print: { state, approved_at, approved_by_name, print_key, approved_file_in_use },
+//   print: { state, not_required_by, approved_at, approved_by_name, print_key,
+//     approved_file_in_use },
 //   cap: { used, limit, remaining, resets_at }, configured: { openai, gemini },
 //   plan: null | { id, menu_style, drink_count, drinks: [{ name, mock }],
 //     bar_summary: { beer_wine, spirits, na } },
@@ -294,7 +295,7 @@ function publicPiece(piece, now, staleMs) {
 // send (a piece pending a re-roll keeps its old r2_key until the new art lands,
 // and the route 404s it).
 const DRAFT_SQL = `
-  SELECT p.id AS proposal_id, p.menu_print_key, p.menu_not_required, NOW() AS db_now,
+  SELECT p.id AS proposal_id, p.menu_print_key, p.menu_not_required, p.menu_not_required_by, NOW() AS db_now,
          d.id AS draft_id, d.drink_plan_id, d.inputs, d.content, d.plan_fingerprint,
          d.dismissed_plan_hash, d.version, d.art_version, d.approved_version,
          d.approved_art_version, d.approved_print_key, d.approved_planner_image_key,
@@ -364,6 +365,9 @@ async function readDraftPayload(proposalId) {
         draft: draftRow,
         plannerImageKey: normalized ? normalized.plannerImageKey : null,
       }),
+      // Who set the no-menu mark ('admin' | 'planner' | null; spec 2026-10-19
+      // section 15): the card says so for a planner mark.
+      not_required_by: row.menu_not_required === true ? row.menu_not_required_by || null : null,
       approved_at: hasDraft ? row.approved_at || null : null,
       approved_by_name: hasDraft ? row.approved_by_name || null : null,
       print_key: printKey,

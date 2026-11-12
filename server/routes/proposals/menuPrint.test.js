@@ -271,6 +271,99 @@ test('patch: not_required flips on and back off with no file posted', async () =
   assert.deepStrictEqual(off.body.menu_print, { status: 'pending' });
 });
 
+// Spec 2026-10-19 section 15: the admin's mark carries its provenance, so a
+// client's later Custom or Standard submit never undoes it.
+test('patch: setting the mark writes menu_not_required_by admin, and so does clearing it (the Undo stands)', async () => {
+  // The suite's earlier writes share this admin's write budget.
+  await adminWriteLimiter.resetKey(`admin-${adminUserId}`);
+  const by = async () => (await pool.query(
+    'SELECT menu_not_required, menu_not_required_by FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  await pool.query('UPDATE proposals SET menu_print_key = NULL, menu_not_required = false, menu_not_required_by = NULL WHERE id = $1', [proposalId]);
+  try {
+    const on = await request('PATCH', `/api/proposals/${proposalId}/menu-print`,
+      { token: adminToken, json: { not_required: true } });
+    assert.strictEqual(on.status, 200);
+    assert.deepStrictEqual(await by(), { menu_not_required: true, menu_not_required_by: 'admin' });
+
+    // A planner mark the admin sets again becomes the admin's.
+    await pool.query("UPDATE proposals SET menu_not_required_by = 'planner' WHERE id = $1", [proposalId]);
+    const again = await request('PATCH', `/api/proposals/${proposalId}/menu-print`,
+      { token: adminToken, json: { not_required: true } });
+    assert.strictEqual(again.status, 200);
+    assert.deepStrictEqual(await by(), { menu_not_required: true, menu_not_required_by: 'admin' });
+
+    const off = await request('PATCH', `/api/proposals/${proposalId}/menu-print`,
+      { token: adminToken, json: { not_required: false } });
+    assert.strictEqual(off.status, 200);
+    assert.deepStrictEqual(await by(), { menu_not_required: false, menu_not_required_by: 'admin' });
+  } finally {
+    await pool.query('UPDATE proposals SET menu_not_required = false, menu_not_required_by = NULL WHERE id = $1', [proposalId]);
+  }
+});
+
+// Spec 2026-10-19 section 15, amended 2026-11-12: an admin's Undo of a planner
+// mark stands; a later Skip the Menu submit never re-marks the row.
+test('patch: a planner mark the admin undoes stays unmarked through a later Skip the Menu submit', async () => {
+  await adminWriteLimiter.resetKey(`admin-${adminUserId}`);
+  const { triggerMenuAutoStart } = require('../../utils/menuAutoStart');
+  await pool.query('UPDATE proposals SET menu_print_key = NULL, menu_not_required = false, menu_not_required_by = NULL WHERE id = $1', [proposalId]);
+  const plan = await pool.query(
+    `INSERT INTO drink_plans (proposal_id, status, selections, client_name, client_email, planner_version)
+     VALUES ($1, 'submitted', '{"menuStyle":"none"}'::jsonb, $2, $3, 1) RETURNING id`,
+    [proposalId, `MenuPrint Route ${NONCE}`, `menuprint-route-client-${NONCE}@example.com`]);
+  const planId = plan.rows[0].id;
+  const state = async () => (await pool.query(
+    'SELECT menu_not_required, menu_not_required_by FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  try {
+    await triggerMenuAutoStart(planId);
+    assert.deepStrictEqual(await state(), { menu_not_required: true, menu_not_required_by: 'planner' });
+    const undo = await request('PATCH', `/api/proposals/${proposalId}/menu-print`,
+      { token: adminToken, json: { not_required: false } });
+    assert.strictEqual(undo.status, 200);
+    assert.deepStrictEqual(await state(), { menu_not_required: false, menu_not_required_by: 'admin' });
+    await triggerMenuAutoStart(planId);
+    assert.deepStrictEqual(await state(), { menu_not_required: false, menu_not_required_by: 'admin' }, 'the resubmit does not re-mark');
+  } finally {
+    await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM drink_plans WHERE id = $1', [planId]);
+    await pool.query('UPDATE proposals SET menu_not_required = false, menu_not_required_by = NULL WHERE id = $1', [proposalId]);
+  }
+});
+
+test('patch: a mark refused while a file is posted leaves menu_not_required_by untouched', async () => {
+  // The suite's earlier writes share this admin's write budget.
+  await adminWriteLimiter.resetKey(`admin-${adminUserId}`);
+  await pool.query("UPDATE proposals SET menu_print_key = 'menu-print/x/y.pdf', menu_not_required_by = NULL WHERE id = $1", [proposalId]);
+  try {
+    const res = await request('PATCH', `/api/proposals/${proposalId}/menu-print`,
+      { token: adminToken, json: { not_required: true } });
+    assert.strictEqual(res.status, 409);
+    const r = (await pool.query('SELECT menu_not_required_by FROM proposals WHERE id = $1', [proposalId])).rows[0];
+    assert.strictEqual(r.menu_not_required_by, null);
+  } finally {
+    await pool.query('UPDATE proposals SET menu_print_key = NULL WHERE id = $1', [proposalId]);
+  }
+});
+
+test('upload: posting a file over a planner mark clears the mark and who set it (setMenuPrintKey)', async () => {
+  // The suite's earlier writes share this admin's write budget.
+  await adminWriteLimiter.resetKey(`admin-${adminUserId}`);
+  await pool.query("UPDATE proposals SET menu_print_key = NULL, menu_not_required = true, menu_not_required_by = 'planner' WHERE id = $1", [proposalId]);
+  try {
+    uploadCalls.length = 0;
+    const res = await request('POST', `/api/proposals/${proposalId}/menu-print`,
+      { token: adminToken, file: { name: 'menu.pdf', bytes: PDF_BYTES } });
+    assert.strictEqual(res.status, 200);
+    const r = (await pool.query(
+      'SELECT menu_print_key, menu_not_required, menu_not_required_by FROM proposals WHERE id = $1', [proposalId])).rows[0];
+    assert.strictEqual(r.menu_print_key, uploadCalls[0].filename);
+    assert.strictEqual(r.menu_not_required, false);
+    assert.strictEqual(r.menu_not_required_by, null);
+  } finally {
+    await pool.query('UPDATE proposals SET menu_print_key = NULL, menu_not_required = false, menu_not_required_by = NULL WHERE id = $1', [proposalId]);
+  }
+});
+
 // ─── Auth ──────────────────────────────────────────────────────────────────
 
 test('auth: staff cannot upload, flag, or delete', async () => {

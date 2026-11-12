@@ -1336,6 +1336,7 @@ tests omitted
 │   │   ├── applyPackageLineup2026.js # One-time lineup application: writes the owner-decided 2026-07-18 package lineup (spec §5) into the DB as CONTENT - service_packages flags/slots, package_items contents rows (category pars with split-par eligible bottles), missing branded par_items, and the ingredient_class_addons gap-pricing map.
 │   │   ├── backfillExtrasInvoices.js # One-off, idempotent backfill for ABANDONED pay-now drink-plan extras.
 │   │   ├── backfillFullPaymentInvoices.js # backfillFullPaymentInvoices.js - one-time repair (spec 2026-08-28 §5).
+│   │   ├── backfillMenuNotRequired.js # One-time backfill of the client's no-menu mark (spec 2026-10-19 section 15): marks menu_not_required, by 'planner', on every upcoming booking whose plan says Skip the Menu.
 │   │   ├── backfillProposal54DepositInvoice.js # One-off, idempotent backfill - proposal 54.
 │   │   ├── backfillShiftClosures.js # Backfill: close shifts stranded on a NON-TERMINAL status on proposals that are already 'completed', and - the part that actually needs a human - report the PAID events with nobody recorded on the roster.
 │   │   ├── backfillStripePayouts.js # One-off backfill: full Stripe payout history into the read-side mirror. Safe to re-run (idempotent upserts). Refuses to run in test mode. Pass --full to force a full-history sweep even when the mirror table is already non-empty (recovers from a partial bootstrap that narrowed re-runs to 30 days).
@@ -1507,6 +1508,7 @@ tests omitted
 │       ├── menuArtJobSteps.js # The menu art job's piece writes and stored-image reads (menuArtJob.js; spec 2026-10-01 sections 5.4, 5.5 and 6, Writers and R2 keys; plan Task E4). Split from the job to keep each file short; only the job and its siblings call these.
 │       ├── menuArtJobWords.js # The words calls of the menu art job (menuArtJob.js; spec 2026-10-01 sections 5.3, 5.5 and 6, Writers; plan Task E4). Split from the job to keep each file short. Both always run on OpenAI.
 │       ├── menuArtPrompts.js # The words prompt and schema for the menu art generator (spec 2026-10-01 sections 5.1 and 5.3; plan Task E2). Pure: no database, no provider. The image prompts are menuArtImagePrompts.js, which reuses cut and the limits.
+│       ├── menuAutoStart.js  # The drink plan submit's bar menu step, triggerMenuAutoStart(planId): the client's no-menu mark (spec 2026-10-19 sections 8.1 and 15).
 │       ├── menuBackgroundTone.js # The tone of a menu background (spec 2026-10-01 section 5.4, Background tone; section 12; plan Task E3). Pure: sharp only, no database.
 │       ├── menuBarBaselineStamp.js # The one-time bar baseline for menu drafts made before the per-line bar check, stamped by the server itself at its first production boot after the deploy (spec 2026-10-19 section 17, lane menu-bar-baseline).
 │       ├── menuDraftRead.js  # The menu draft read model: the GET /api/proposals/:id/menu-draft payload (spec 2026-10-01 sections 7, 8 and 9; 5.5, Stuck rule). Admin and manager only.

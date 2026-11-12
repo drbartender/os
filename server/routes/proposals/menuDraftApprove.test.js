@@ -579,7 +579,7 @@ test('order: upload before any client, the key set inside the transaction, reacc
     connect: at((e) => e === 'connect'),
     begin: at((e) => e === 'sql:BEGIN'),
     lockDraft: at((e) => /^sql:SELECT .* FROM menu_drafts .*FOR UPDATE$/.test(e)),
-    setKey: at((e) => e.startsWith('sql:UPDATE proposals SET menu_print_key = $1, menu_not_required = false WHERE id = $2')),
+    setKey: at((e) => e.startsWith('sql:UPDATE proposals SET menu_print_key = $1, menu_not_required = false, menu_not_required_by = NULL WHERE id = $2')),
     stamp: at((e) => e.startsWith('sql:UPDATE menu_drafts SET approved_version')),
     activity: at((e) => e.startsWith('sql:INSERT INTO proposal_activity_log')),
     commit: at((e) => e === 'sql:COMMIT'),

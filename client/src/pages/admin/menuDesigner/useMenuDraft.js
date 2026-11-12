@@ -22,8 +22,10 @@ import useMenuLayers, { CARD_SIZE, FULL_SIZE } from './useMenuLayers';
 //   sync is the full Update draft, as before.
 // - edit({ content?, inputs? }) overlays top-level keys and PATCHes them 800 ms
 //   after the last edit, to the id they were made for. A 409 drops them,
-//   refetches and sets save.conflict; another failure keeps them (state
-//   'failed', retrySave()). flush() resolves once saved, rejects when it fails.
+//   refetches and sets save.conflict (saveConflictOf: true for a version
+//   conflict, the server's own sentence for a 409 LEGAL_HOLD, which no retry
+//   can get past); another failure keeps them (state 'failed', retrySave()).
+//   flush() resolves once saved, rejects when it fails.
 // - The brief inputs and a held reference file last the page visit; imageModel
 //   opens at 'openai' on every mount, never persisted, and rides each image
 //   request unless the caller passes one (the card always passes 'openai').
@@ -34,6 +36,22 @@ export const BACKOFF_MS = 10000;
 export const SAVE_DEBOUNCE_MS = 800;
 export { CARD_SIZE, FULL_SIZE };
 export const DEFAULT_BRIEF = Object.freeze({ planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true });
+
+// The legal-hold refusal's sentence when a 409 arrives without one
+// (server/routes/proposals/patchGuards.js assertNotLegalHold).
+const LEGAL_HOLD_TEXT = 'This booking is on legal hold and cannot be edited.';
+
+/**
+ * What a refused autosave sets as save.conflict: the server's message for a
+ * 409 LEGAL_HOLD (the booking can never be edited, so "changed elsewhere"
+ * would be wrong), true for any other 409, the version conflict.
+ */
+export function saveConflictOf(err) {
+  if (err && err.code === 'LEGAL_HOLD') {
+    return typeof err.message === 'string' && err.message.trim() ? err.message : LEGAL_HOLD_TEXT;
+  }
+  return true;
+}
 
 const OPEN = new Set(['pending', 'working']);
 const NO_EDITS = Object.freeze({ content: {}, inputs: {} });
@@ -149,7 +167,7 @@ export default function useMenuDraft(proposalId) {
           clearTimeout(saveTimer.current);
           saveTimer.current = null;
           setOverlay(NO_EDITS);
-          setSave({ ...IDLE, conflict: true });
+          setSave({ ...IDLE, conflict: saveConflictOf(err) });
           fetchDraft();
         } else {
           const newer = pending.current || { content: {}, inputs: {} };

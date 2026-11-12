@@ -1,4 +1,5 @@
 import menuCardState, { resumeTime, savedAgo, shortDate } from './menuCardState';
+import { saveConflictOf } from './useMenuDraft';
 
 // Spec 2026-10-01 section 11.1: table C and its precedence, tables B and E.
 const NOW = new Date('2026-10-16T17:00:00Z').getTime();
@@ -266,6 +267,51 @@ describe('table C, one row each', () => {
     s = run(P((p) => { p.print.state = 'not_required'; }));
     expect(s.sub).toBe('A draft exists; approving it posts a print file.');
     expect(ids(s)).toEqual([null, 'undo']);
+  });
+});
+
+// Spec 2026-10-19 section 15: who set the mark is stored now, and a planner
+// mark says so on the card's sub line.
+describe('the no-menu mark the client set', () => {
+  test("a planner mark adds 'The client chose Skip the Menu.' to the sub line, with or without a draft", () => {
+    let s = run(P((p) => { noDraft(p); p.print.state = 'not_required'; p.print.not_required_by = 'planner'; }));
+    expect(lines(s)).toEqual(['neutral', 'No menu needed', 'Marked no menu needed.', 'The client chose Skip the Menu.']);
+    s = run(P((p) => { p.print.state = 'not_required'; p.print.not_required_by = 'planner'; }));
+    expect(s.sub).toBe('The client chose Skip the Menu. A draft exists; approving it posts a print file.');
+  });
+
+  test('an admin mark, or one with no provenance, keeps the sub line it had', () => {
+    for (const by of ['admin', null, undefined]) {
+      expect(run(P((p) => { noDraft(p); p.print.state = 'not_required'; p.print.not_required_by = by; })).sub).toBeNull();
+      expect(run(P((p) => { p.print.state = 'not_required'; p.print.not_required_by = by; })).sub)
+        .toBe('A draft exists; approving it posts a print file.');
+    }
+  });
+});
+
+// Lane menu-no-menu-mark, from menu-legal-hold-guards' review: the autosave's
+// refusal on the legal-hold booking reads as the server's own message, never
+// as a version conflict.
+describe('the autosave refused by the legal hold', () => {
+  const HOLD = 'This booking is on legal hold and cannot be edited.';
+  test("a 409 LEGAL_HOLD shows the server's message, not 'This draft changed elsewhere.'", () => {
+    const conflict = saveConflictOf({ status: 409, code: 'LEGAL_HOLD', message: HOLD });
+    const s = run(P(), { conflict });
+    const texts = JSON.stringify(s.banners);
+    expect(texts).toContain(HOLD);
+    expect(texts).not.toContain('This draft changed elsewhere.');
+    expect(s.banners.find((b) => b.text === HOLD || b.title === HOLD).tone).toBe('danger');
+  });
+
+  test('any other 409 is still the version conflict', () => {
+    const conflict = saveConflictOf({ status: 409, code: 'CONFLICT', message: 'This draft changed. Reload it.' });
+    expect(conflict).toBe(true);
+    const s = run(P(), { conflict });
+    expect(s.banners.find((b) => b.id === 'save-conflict')).toMatchObject({ title: 'This draft changed elsewhere.', text: 'It was reloaded.' });
+  });
+
+  test('a LEGAL_HOLD with no message falls back to a fixed sentence', () => {
+    expect(saveConflictOf({ status: 409, code: 'LEGAL_HOLD' })).toBe(HOLD);
   });
 });
 

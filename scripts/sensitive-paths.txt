@@ -668,6 +668,9 @@ server/utils/menuPrintFile.js
 server/routes/proposals/menuPrint.js
 # Approve: posts the rendered menu into the print slot inside one transaction and fires duty reaccrual only after COMMIT.
 server/routes/proposals/menuDraftApprove.js
+# The submit's bar menu step (spec 2026-10-19 sections 8 and 15; lane menu-no-menu-mark): it writes the
+# no-menu mark the $5 menu_print duty line reads, and must skip the legal-hold proposal.
+server/utils/menuAutoStart.js
 
 # The override conversion (plan 2026-10-16-price-override-removal, lane
 # conversion-tooling): it renders the one guarded DO block that rewrites the

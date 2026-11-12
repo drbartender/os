@@ -13,8 +13,13 @@
 // An action with `editor` ({ tab?, select? }) opens the editor; any other acts in place.
 // local: { loading, loadError, saving, saveFailed, savedAt, conflict, approving,
 //   approveError, tooLong: [data-mc-k keys], imageModel, activityKeys, now }.
-// Table D: no removal date, no upload name or date, no client image filename and
-// no "who marked no menu needed" is ever shown; the system does not store them.
+// Table D: no removal date, no upload name or date and no client image filename
+// is ever shown; the system does not store them. Who marked no menu needed is
+// stored now (print.not_required_by, spec 2026-10-19 section 15), and only a
+// planner mark is named: "The client chose Skip the Menu."
+// local.conflict is true for a version conflict, or the server's own sentence
+// when the autosave was refused for another reason (a 409 LEGAL_HOLD), which
+// its banner shows in place of "This draft changed elsewhere.".
 // A bar line renamed before bar picks were tracked (the diff's bar_unchecked)
 // changes no state: the sub line of a draft at rest says it (uncheckedNotice,
 // never "The bar picks changed since this draft."), a free secondary slot
@@ -34,6 +39,8 @@ const FIELD_NAME = { theme: 'Theme & colors', naming: 'Drink naming', notes: 'De
 const ART_MAX = 8;
 export const BAR_LINE = 'The bar picks changed since this draft.';
 const NOTES_LINE = 'Client edited their menu notes.';
+// A planner mark's sub line (spec 2026-10-19 section 15).
+const SKIP_MENU = 'The client chose Skip the Menu.';
 const BAR_SUB = 'refreshes the changed "Also at the bar" lines.';
 // A bar line renamed before bar picks were tracked has no key, so nothing can
 // say which category it stands for: the diff counts the stored lines left
@@ -241,9 +248,11 @@ function pickState(f, L) {
   }
   const by = f.print.approved_by_name;
   switch (f.print.state) {
-    case 'not_required':
-      return S('no-menu', 'neutral', 'No menu needed', 'Marked no menu needed.',
-        f.draft ? 'A draft exists; approving it posts a print file.' : null, null, act('undo', 'Undo', 'ghost'));
+    case 'not_required': {
+      const draftNote = f.draft ? 'A draft exists; approving it posts a print file.' : null;
+      const sub = f.print.not_required_by === 'planner' ? (draftNote ? `${SKIP_MENU} ${draftNote}` : SKIP_MENU) : draftNote;
+      return S('no-menu', 'neutral', 'No menu needed', 'Marked no menu needed.', sub, null, act('undo', 'Undo', 'ghost'));
+    }
     case 'replaced':
       return S('replaced', 'neutral', 'Not in use', 'Print file is a manual upload.', "This draft isn't what staff print.", ed('view', 'View', 'secondary'));
     case 'removed':
@@ -359,7 +368,8 @@ function bannerList(f, L, tooLong) {
       fields ? `${fields} changed. The draft hasn't been updated.` : "The draft hasn't been updated.", [btn('mark-reviewed', 'Mark reviewed')]);
   }
   if (L.saveFailed) B('save-failed', 'danger', "Last change didn't save.", 'Your edits are kept in this tab.', [btn('retry-save', 'Retry')]);
-  if (L.conflict) B('save-conflict', 'warn', 'This draft changed elsewhere.', 'It was reloaded.');
+  if (typeof L.conflict === 'string') B('save-refused', 'danger', "Last change didn't save.", L.conflict);
+  else if (L.conflict) B('save-conflict', 'warn', 'This draft changed elsewhere.', 'It was reloaded.');
   if (tooLong) B('too-long', 'danger', 'Text too long to fit.', `${elementName(f, L.tooLong[0])} runs past the page. Shorten it to approve.`);
   if (L.approveError) B('approve-rejected', 'danger', "Couldn't approve.", L.approveError);
   if (f.hasDraft) {
