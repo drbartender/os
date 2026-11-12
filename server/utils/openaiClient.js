@@ -48,6 +48,13 @@ const OUT_OF_CREDIT_ANY_STATUS = new Set([
   'billing_hard_limit_reached', 'billing_not_active', 'project_spend_limit_exceeded',
   'organization_spend_limit_exceeded', 'usage_limit_exceeded', 'organization_usage_limit_exceeded',
 ]);
+// The limits among them: raised in OpenAI's limits settings, not fixed by
+// adding credit, so OpenAIOutOfCredit says which (kind 'limit'); the balance
+// codes and billing_not_active are kind 'balance' (spec 2026-10-19 section 16).
+const LIMIT_CODES = new Set([
+  'billing_hard_limit_reached', 'project_spend_limit_exceeded', 'organization_spend_limit_exceeded',
+  'usage_limit_exceeded', 'organization_usage_limit_exceeded',
+]);
 
 class OpenAIRefusal extends Error {
   constructor(reason, descriptor) {
@@ -63,12 +70,15 @@ class OpenAIRateLimited extends Error {
   }
 }
 
-// The account's balance is spent: waiting cannot help, so it carries no
-// retryAfterSec and the job never retries it.
+// The account cannot pay for the call: waiting cannot help, so it carries no
+// retryAfterSec and the job never retries it. kind is 'balance' (the balance
+// is spent or billing is not active) or 'limit' (a billing, spend or usage
+// limit was hit), read from the code by mapError; it rides on the error, never
+// on the descriptor the ledger stores.
 class OpenAIOutOfCredit extends Error {
-  constructor(descriptor) {
+  constructor(descriptor, kind = 'balance') {
     super('OpenAI is out of credit.');
-    Object.assign(this, { name: 'OpenAIOutOfCredit', descriptor });
+    Object.assign(this, { name: 'OpenAIOutOfCredit', kind: kind === 'limit' ? 'limit' : 'balance', descriptor });
   }
 }
 
@@ -210,7 +220,7 @@ function mapError(err, { words = false } = {}) {
     || err instanceof AppError) return err;
   const d = describeError(err);
   if (OUT_OF_CREDIT_ANY_STATUS.has(d.code) || (OUT_OF_CREDIT_STATUSES.has(d.status) && OUT_OF_CREDIT_CODES.has(d.code))) {
-    return new OpenAIOutOfCredit(d);
+    return new OpenAIOutOfCredit(d, LIMIT_CODES.has(d.code) ? 'limit' : 'balance');
   }
   if (d.status === 429) return new OpenAIRateLimited(retryAfterSeconds(err.headers), d);
   if (d.code && REFUSAL_CODES.has(d.code)) {

@@ -362,4 +362,4 @@ async function keyOutMagenta(buffer, { minKeyFraction = 0.25 } = {}) {
   return sharp(pixels, { ...SHARP_INPUT, raw: { width: SIZE, height: SIZE, channels: 4 } }).png().toBuffer();
 }
 
-module.exports = { keyOutMagenta, MenuKeyOutFailed };
+module.exports = { keyOutMagenta, MenuKeyOutFailed, FAILURE_REASONS };

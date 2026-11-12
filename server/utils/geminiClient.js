@@ -20,6 +20,7 @@ const RETRY_AFTER_DEFAULT_SEC = 20;
 const RETRY_AFTER_MAX_SEC = 60;
 const IMAGE_SIZES = new Set(['512', '1K', '2K', '4K']); // uppercase K; the API rejects '1k'
 const NO_SINGLE_IMAGE = 'Gemini answered without a single image.';
+const UNFINISHED = 'Gemini could not finish this image.';
 
 // The SDK's APIError family is not exported from its CommonJS entry, so the
 // class is read from err.name, which the SDK sets to the constructor name.
@@ -40,6 +41,11 @@ const REFUSAL_RULES = [
   [/^image_other$/, 'Gemini stopped drawing this image without saying why.'],
   [/^no_image$/, 'Gemini answered without an image.'],
 ];
+
+// Every reason a GeminiRefusal can carry: the rules', readImage's unmatched
+// failure and its no-single-image answer. The menu art job stores these and
+// the card shows them (menuArtJobErrors.js FIXED_TEXTS).
+const REFUSAL_REASONS = Object.freeze([...REFUSAL_RULES.map(([, reason]) => reason), UNFINISHED, NO_SINGLE_IMAGE]);
 
 class GeminiRefusal extends Error {
   constructor(reason, descriptor) {
@@ -239,7 +245,7 @@ function readImage(interaction) {
     const first = Array.isArray(interaction.errors) && interaction.errors[0] ? interaction.errors[0] : null;
     const code = codeSegment(first && first.code);
     const errorClass = status === 'failed' ? 'InteractionFailed' : 'InteractionIncomplete';
-    throw new GeminiRefusal(refusalReason(code) || 'Gemini could not finish this image.', descriptor(errorClass, { requestId: responseId, code }));
+    throw new GeminiRefusal(refusalReason(code) || UNFINISHED, descriptor(errorClass, { requestId: responseId, code }));
   }
   if (status && status !== 'completed') {
     throw externalError(descriptor('InteractionNotCompleted', { requestId: responseId, code: codeSegment(String(status)) }));
@@ -307,7 +313,7 @@ function _resetForTest() {
 
 module.exports = {
   GEMINI_API_BASE_URL, IMAGE_TIMEOUT_DEFAULT_MS, SDK_ERROR_NAMES,
-  GeminiRefusal, GeminiRateLimited,
+  GeminiRefusal, GeminiRateLimited, REFUSAL_REASONS,
   isConfigured, clientOptions, generateImage, describeError, formatError,
   __setTestStub, _getClientForTest, _resetForTest,
 };

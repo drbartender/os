@@ -22,6 +22,8 @@
 // the sentence or a banner of its own. A dismissal never covers it (spec
 // 2026-10-19 section 17).
 
+import { SENTENCES, BRIEF_FIX_TEXTS, isFixedSentence } from './menuArtSentences';
+
 const OPEN = new Set(['pending', 'working']);
 const MODEL_NAME = { openai: 'GPT Image', gemini: 'Gemini' };
 const FIELD_NAME = { theme: 'Theme & colors', naming: 'Drink naming', notes: 'Design notes' };
@@ -150,6 +152,27 @@ function readFacts(p) {
 
 const pieceName = (f, key) => (key === 'background' ? 'The background' : (f.drinks.get(key) || {}).display_name || key);
 
+// The job's own sentence, never provider text (spec 2026-10-19 section 16):
+// a stored error shows only when it is one of the fixed sentences
+// (menuArtSentences.js, the server's FIXED_TEXTS mirrored), else the generic
+// line. wordsReason: the Words failed state's. pieceReason: the one failed
+// piece that does not read "not attempted" speaks for the run only when its
+// sentence is one that stops a run (an empty balance or a spend limit, which
+// failed the rest unattempted); rows an earlier, cured stop left behind never
+// lend their count to an unrelated failure. Alone, a piece shows any fixed
+// sentence; two genuine failures keep the count.
+const wordsReason = (f) => {
+  const text = f.draft && isObj(f.draft.content) ? f.draft.content.words_error : null;
+  return isFixedSentence(text) ? text : null;
+};
+const NOT_TRIED = /^not attempted\b/;
+const RUN_STOPPING = new Set([SENTENCES.openaiOutOfCredit, SENTENCES.openaiLimit]);
+function pieceReason(f) {
+  const real = f.failed.filter((pc) => !(typeof pc.error === 'string' && NOT_TRIED.test(pc.error)));
+  if (real.length !== 1 || !isFixedSentence(real[0].error)) return null;
+  return f.failed.length === 1 || RUN_STOPPING.has(real[0].error) ? real[0].error : null;
+}
+
 // The pieces of the activity under way: the ones the hook saw open since it
 // began (local.activityKeys), or every piece when it saw none.
 function activity(f, L) {
@@ -200,14 +223,19 @@ function pickState(f, L) {
     return { ...S('generating', 'info', 'Drafting', message, 'About 2 min. Keep working.', null, ed('watch', 'Watch', 'ghost')),
       progress: Math.round((100 * ((f.wordsOpen ? 0 : 1) + a.done)) / (1 + a.n)) };
   }
-  if (f.wordsFailed) return S('words-failed', 'danger', 'Words failed', "Couldn't write the menu text.", 'No images were used.', act('retry-words', 'Retry'));
+  if (f.wordsFailed) {
+    // A refusal or an invalid reply repeats unless the brief changes, so the Brief tab is offered too.
+    const reason = wordsReason(f);
+    return S('words-failed', 'danger', 'Words failed', "Couldn't write the menu text.", reason || 'No images were used.', act('retry-words', 'Generate again'),
+      BRIEF_FIX_TEXTS.includes(reason) ? ed('edit-brief', 'Edit the brief', 'ghost', { tab: 'brief' }) : null);
+  }
   if (f.failed.length) {
     const n = f.failed.length;
     const drink = f.failed.find((pc) => pc.piece_key !== 'background');
     const editor = drink ? { tab: 'drinks', select: drink.piece_key } : { tab: 'design' };
     return S('drawing-failed', 'danger', n === 1 ? '1 drawing failed' : `${n} drawings failed`,
       n === 1 ? `${pieceName(f, f.failed[0].piece_key)} didn't draw.` : `${n} drawings didn't come through.`,
-      n === 1 ? 'Re-roll it in the editor.' : 'Re-roll them in the editor.', ed('fix', 'Fix', 'primary', editor));
+      pieceReason(f) || (n === 1 ? 'Re-roll it in the editor.' : 'Re-roll them in the editor.'), ed('fix', 'Fix', 'primary', editor));
   }
   if (f.added.length || f.dropped.length || f.barChanged) {
     const { message, sub } = changeLines(f);
@@ -302,11 +330,14 @@ function bannerList(f, L, tooLong) {
   }
   if (f.failed.length === 1) {
     const pc = f.failed[0];
-    const why = typeof pc.error === 'string' && pc.error.trim() ? `: ${pc.error.trim().replace(/\.+$/, '')}` : '';
-    B('drawing-failed', 'danger', 'One drawing failed.',
-      `${pieceName(f, pc.piece_key)} didn't draw${why}. ${pc.piece_key === 'background' ? 'Re-roll it.' : 'Re-roll it or hide it.'}`,
+    // The piece's name, then its fixed sentence; any other stored text is
+    // never printed. The background cannot be hidden, so it is only re-rolled.
+    const how = isFixedSentence(pc.error) ? pc.error : pc.piece_key === 'background' ? 'Re-roll it.' : 'Re-roll it or hide it.';
+    B('drawing-failed', 'danger', 'One drawing failed.', `${pieceName(f, pc.piece_key)} didn't draw. ${how}`,
       [btn('reroll', 'Re-roll', 'secondary', { pieceKey: pc.piece_key })]);
-  } else if (f.failed.length > 1) B('drawing-failed', 'danger', `${f.failed.length} drawings failed.`, 'Re-roll or hide the flagged drinks.');
+  } else if (f.failed.length > 1) {
+    B('drawing-failed', 'danger', `${f.failed.length} drawings failed.`, pieceReason(f) || 'Re-roll or hide the flagged drinks.');
+  }
   if (f.draft && f.cap && f.cap.remaining <= 0) {
     B('image-limit', 'warn', 'Daily image limit reached.',
       `${f.cap.used} of ${f.cap.limit} images used in the last 24 hours. Re-rolls resume ${resumeTime(f.cap.resets_at, L.now)}. Text, type and color still work.`);
@@ -347,7 +378,10 @@ function bannerList(f, L, tooLong) {
 function emptyCard(f) {
   const E = (id, title, text, button = null) => ({ id, title, text, button });
   if (f.hasDraft) return null;
-  if (f.wordsFailed) return E('words-failed', "Couldn't write the menu text", 'The words step failed, so no images were used. Try again.', btn('retry-words', 'Retry', 'primary'));
+  if (f.wordsFailed) {
+    return E('words-failed', "Couldn't write the menu text", wordsReason(f) || 'The words step failed, so no images were used. Try again.',
+      btn('retry-words', 'Generate again', 'primary'));
+  }
   if (f.print.state === 'not_required') return E('no-menu', 'No menu for this event', 'Undo to draft one.', btn('undo', 'Undo'));
   if (!f.configured.openai) return E('not-set-up', "Menu art isn't set up", "The AI key isn't on the server yet.");
   if (!f.plan) return E('no-plan', 'No drink plan on this event', 'Menus are built from the drink plan.');
@@ -368,7 +402,11 @@ export default function menuCardState({ payload, local } = {}) {
   const f = readFacts(payload);
   const tooLong = list(L.tooLong).length > 0;
   const state = { progress: null, ...pickState(f, L) };
-  if (STAFF_SUB.has(state.id) && f.print.approved_file_in_use) state.sub = `Staff still get the ${f.date} version.`;
+  if (STAFF_SUB.has(state.id) && f.print.approved_file_in_use) {
+    // A failure keeps its fixed reason ahead of the staff line (spec 2026-10-19 section 16).
+    const reason = state.id === 'words-failed' ? wordsReason(f) : state.id === 'drawing-failed' ? pieceReason(f) : null;
+    state.sub = sentences(reason, `Staff still get the ${f.date} version.`);
+  }
   // An unchecked bar line changes no state; the muted sub says it after its own
   // words, and a state with no Update draft of its own offers it in a free
   // slot, since that is what the sentence names (the sync rebuilds an

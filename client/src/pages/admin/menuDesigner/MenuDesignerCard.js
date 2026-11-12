@@ -31,7 +31,7 @@ const BTN = { primary: 'btn btn-primary btn-sm', secondary: 'btn btn-secondary b
 const isNarrow = () => typeof window !== 'undefined' && window.innerWidth < NARROW_PX;
 // Each in-place action's own busy label (11.1), and Undo's message (the old card's).
 const BUSY_LABEL = {
-  generate: 'Generating...', 'retry-words': 'Retrying...', update: 'Updating...', dismiss: 'Dismissing...',
+  generate: 'Generating...', 'retry-words': 'Generating...', update: 'Updating...', dismiss: 'Dismissing...',
   undo: 'Undoing...', 'retry-save': 'Retrying...', reload: 'Retrying...',
 };
 const FALLBACK = { undo: 'Failed to update the menu status.' };

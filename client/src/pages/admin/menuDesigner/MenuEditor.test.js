@@ -336,7 +336,7 @@ describe('table B banners', () => {
     ['generating a drink', (p) => { p.pieces[2].status = 'working'; },
       {}, { id: 'generating', tone: 'md-banner-info', title: 'Painting Old Fashioned...', text: '1 of 2 drinks done. Text is editable now.', buttons: [] }],
     ['one drawing failed', (p) => { p.pieces[2].status = 'failed'; p.pieces[2].error = 'Gemini refused it.'; },
-      {}, { id: 'drawing-failed', tone: 'md-banner-danger', title: 'One drawing failed.', text: "Old Fashioned didn't draw: Gemini refused it. Re-roll it or hide it.", buttons: ['Re-roll'] }],
+      {}, { id: 'drawing-failed', tone: 'md-banner-danger', title: 'One drawing failed.', text: "Old Fashioned didn't draw. Re-roll it or hide it.", buttons: ['Re-roll'] }],
     ['two drawings failed', (p) => { p.pieces[1].status = 'failed'; p.pieces[2].status = 'failed'; },
       {}, { id: 'drawing-failed', tone: 'md-banner-danger', title: '2 drawings failed.', text: 'Re-roll or hide the flagged drinks.', buttons: [] }],
     ['the image limit', (p) => { p.cap = { used: 60, limit: 60, remaining: 0, resets_at: null }; },
@@ -439,6 +439,15 @@ describe('table B banners', () => {
     expect(inBanners().getByRole('button', { name: 'Update draft' })).toBeEnabled();
   });
 
+  test('Generate again on the empty card says Generating... while it runs', async () => {
+    const menu = fakeMenu(P((p) => { p.draft.content = { words_status: 'failed' }; p.pieces = []; }), {
+      generate: jest.fn(() => new Promise(() => {})),
+    });
+    mountEditor(menu);
+    fireEvent.click(within(document.querySelector('.md-ed-empty')).getByRole('button', { name: 'Generate again' }));
+    expect(await within(document.querySelector('.md-ed-empty')).findByRole('button', { name: 'Generating...' })).toBeDisabled();
+  });
+
   test("the tones sit on StatusChip's fixed hues in index.css (table D, item 8)", () => {
     const css = fs.readFileSync(path.join(__dirname, '../../../index.css'), 'utf8');
     const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`)) || [])[1] || '';
@@ -493,7 +502,7 @@ describe('table E: the empty editor', () => {
   const none = (p) => { p.draft = null; p.pieces = []; p.diff = null; };
   test.each([
     ['never generated', none, 'No draft yet', 'Generate'],
-    ['words failed', (p) => { p.draft.content = { words_status: 'failed' }; p.pieces = []; }, "Couldn't write the menu text", 'Retry'],
+    ['words failed', (p) => { p.draft.content = { words_status: 'failed' }; p.pieces = []; }, "Couldn't write the menu text", 'Generate again'],
     ['no menu needed', (p) => { none(p); p.print.state = 'not_required'; }, 'No menu for this event', 'Undo'],
     ['not set up', (p) => { none(p); p.configured.openai = false; }, "Menu art isn't set up", null],
     ['no plan', (p) => { none(p); p.plan = null; }, 'No drink plan on this event', null],
@@ -509,7 +518,7 @@ describe('table E: the empty editor', () => {
     expect(screen.getByRole('tab', { name: 'Brief' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  test('Generate and Retry post Generate; Open drink plan closes the editor', async () => {
+  test('Generate and Generate again post Generate; Open drink plan closes the editor', async () => {
     const never = fakeMenu(P((p) => { p.draft = null; p.pieces = []; p.diff = null; }));
     const a = mountEditor(never);
     fireEvent.click(within(document.querySelector('.md-ed-empty')).getByRole('button', { name: 'Generate' }));
@@ -517,7 +526,7 @@ describe('table E: the empty editor', () => {
     a.unmount();
     const words = fakeMenu(P((p) => { p.draft.content = { words_status: 'failed' }; p.pieces = []; }));
     const b = mountEditor(words);
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate again' }));
     await waitFor(() => expect(words.generate).toHaveBeenCalledTimes(1));
     b.unmount();
     const empty = fakeMenu(P((p) => { p.draft = null; p.pieces = []; p.diff = null; p.plan.drink_count = 0; }));

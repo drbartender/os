@@ -25,9 +25,10 @@
 //   GeminiRefusal and MenuKeyOutFailed;
 // - MenuArtRateLimited (.retryAfterSec, at most 60, 20 when none was sent;
 //   .descriptor) for both providers' rate limits;
-// - MenuArtOutOfCredit (.descriptor) for OpenAIOutOfCredit, a spent balance,
-//   which the job never retries (spec 2026-10-19 section 16; Gemini cannot
-//   tell one apart, so its spent balance reads as a rate limit).
+// - MenuArtOutOfCredit (.descriptor; .kind, OpenAIOutOfCredit's own: 'balance'
+//   or 'limit') for OpenAIOutOfCredit, a spent balance or a spend or usage
+//   limit, which the job never retries (spec 2026-10-19 section 16; Gemini
+//   cannot tell one apart, so its spent balance reads as a rate limit).
 // Anything else passes through. A failure after the provider answered (the
 // image could not be processed) carries a descriptor with the request id.
 // Gemini without GEMINI_API_KEY throws AppError 503
@@ -75,9 +76,9 @@ class MenuArtRateLimited extends Error {
 }
 
 class MenuArtOutOfCredit extends Error {
-  constructor(descriptor) {
+  constructor(descriptor, kind = 'balance') {
     super('The image provider is out of credit.');
-    Object.assign(this, { name: 'MenuArtOutOfCredit', descriptor: descriptor || null });
+    Object.assign(this, { name: 'MenuArtOutOfCredit', kind: kind === 'limit' ? 'limit' : 'balance', descriptor: descriptor || null });
   }
 }
 
@@ -110,11 +111,11 @@ function retrySeconds(value) {
 function normalizeError(err) {
   if (err instanceof openaiClient.OpenAIRefusal) return new MenuArtRefusal(OPENAI_REFUSAL_REASON, err.descriptor);
   if (err instanceof geminiClient.GeminiRefusal) {
-    // The wrapper's reasons are its own fixed sentences (REFUSAL_RULES).
+    // The wrapper's reasons are its own fixed sentences (REFUSAL_REASONS).
     const reason = typeof err.reason === 'string' && err.reason && err.reason.length <= 200 ? err.reason : GEMINI_REFUSAL_FALLBACK;
     return new MenuArtRefusal(reason, err.descriptor);
   }
-  if (err instanceof openaiClient.OpenAIOutOfCredit) return new MenuArtOutOfCredit(err.descriptor);
+  if (err instanceof openaiClient.OpenAIOutOfCredit) return new MenuArtOutOfCredit(err.descriptor, err.kind);
   if (err instanceof openaiClient.OpenAIRateLimited || err instanceof geminiClient.GeminiRateLimited) {
     return new MenuArtRateLimited(retrySeconds(err.retryAfterSec), err.descriptor);
   }
@@ -256,5 +257,5 @@ async function drawImage({ provider, model, kind, prompt, references = [] } = {}
 
 module.exports = {
   drawImage, prepareReferences, retrySeconds, MenuArtRefusal, MenuArtRateLimited, MenuArtOutOfCredit,
-  BACKGROUND_SIZE_DEFAULT, OPENAI_REFUSAL_REASON, REFERENCE_MAX_EDGE,
+  BACKGROUND_SIZE_DEFAULT, OPENAI_REFUSAL_REASON, GEMINI_REFUSAL_FALLBACK, REFERENCE_MAX_EDGE,
 };

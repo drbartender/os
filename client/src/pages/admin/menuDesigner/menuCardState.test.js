@@ -124,13 +124,14 @@ describe('table C, one row each', () => {
     expect([s.message, s.primary.editor]).toEqual(["The background didn't draw.", { tab: 'design' }]);
   });
 
-  test('Words failed: Retry in place, no thumbnail and no ghost View', () => {
+  test('Words failed: Generate again in place, no thumbnail and no ghost View', () => {
     const s = run(P((p) => {
       p.draft.content = { words_status: 'failed', words_error: 'interrupted' };
       p.pieces = p.pieces.map((x) => piece(x.piece_key, 'failed', { error: 'not attempted' }));
     }));
     expect(lines(s)).toEqual(['danger', 'Words failed', "Couldn't write the menu text.", 'No images were used.']);
     expect(ids(s)).toEqual(['retry-words', null]);
+    expect(s.primary).toEqual({ id: 'retry-words', label: 'Generate again', style: 'primary' });
     expect(s.thumb).toBe(false);
   });
 
@@ -368,11 +369,24 @@ describe('table B, the editor banners', () => {
     expect(banner(s, 'generating')).toMatchObject({ title: 'Painting Old Fashioned...', text: '0 of 2 drinks done. Text is editable now.' });
   });
 
+  test('one drawing failed: the name, then a fixed sentence; anything else, never printed, reads as did not draw', () => {
+    const fixed = 'Gemini blocked this image for safety.';
+    let s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'failed', { error: fixed }); }));
+    expect(banner(s, 'drawing-failed')).toMatchObject({ title: 'One drawing failed.', text: `Old Fashioned didn't draw. ${fixed}` });
+    s = run(P((p) => { p.pieces[0] = piece('background', 'failed', { error: fixed }); }));
+    expect(banner(s, 'drawing-failed').text).toBe(`The background didn't draw. ${fixed}`);
+    s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'failed', { error: 'interrupted' }); }));
+    expect(banner(s, 'drawing-failed').text).toBe("Old Fashioned didn't draw. Re-roll it or hide it.");
+    // The background cannot be hidden.
+    s = run(P((p) => { p.pieces[0] = piece('background', 'failed', { error: 'interrupted' }); }));
+    expect(banner(s, 'drawing-failed').text).toBe("The background didn't draw. Re-roll it.");
+  });
+
   test('drawing failed: one with its reason and Re-roll, or several', () => {
     let s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'failed', { error: 'Gemini did not answer.' }); }));
     expect(banner(s, 'drawing-failed')).toEqual({
       id: 'drawing-failed', tone: 'danger', title: 'One drawing failed.',
-      text: "Old Fashioned didn't draw: Gemini did not answer. Re-roll it or hide it.",
+      text: "Old Fashioned didn't draw. Re-roll it or hide it.",
       buttons: [{ id: 'reroll', label: 'Re-roll', style: 'secondary', pieceKey: 'cocktail:2' }],
     });
     s = run(P((p) => { p.pieces[1] = piece('cocktail:1', 'failed'); p.pieces[2] = piece('cocktail:2', 'failed'); }));
@@ -505,7 +519,7 @@ describe('table E, the empty editor', () => {
       button: { id: 'generate', label: 'Generate', style: 'primary' } });
     expect(run(P((p) => { p.draft.content = { words_status: 'failed' }; })).empty).toEqual({ id: 'words-failed',
       title: "Couldn't write the menu text", text: 'The words step failed, so no images were used. Try again.',
-      button: { id: 'retry-words', label: 'Retry', style: 'primary' } });
+      button: { id: 'retry-words', label: 'Generate again', style: 'primary' } });
     expect(run(P((p) => { noDraft(p); p.print.state = 'not_required'; })).empty)
       .toEqual({ id: 'no-menu', title: 'No menu for this event', text: 'Undo to draft one.', button: { id: 'undo', label: 'Undo', style: 'secondary' } });
     expect(run(P()).empty).toBeNull();
@@ -549,6 +563,153 @@ describe('the review fixes', () => {
       p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }];
     }));
     expect([s.id, s.sub]).toEqual(['plan-changed', 'Update the draft to include it.']);
+  });
+});
+
+// Spec 2026-10-19 section 16 (lane menu-error-display): the card and the editor
+// show the job's fixed sentence, never provider text. Literal on purpose: these
+// pin what the admin reads, not the mirror's own values.
+describe('the fixed sentences on the card and in the editor', () => {
+  const banner = (s, id) => s.banners.find((b) => b.id === id);
+  const WORDS_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then Generate again.";
+  const WORDS_LIMIT = "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then Generate again.";
+  const PIECE_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then re-roll.";
+  const PIECE_LIMIT = "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then re-roll.";
+  const DRAW_FAILED = 'Something went wrong drawing this image. Re-roll it.';
+  const STOPPED = 'not attempted: the run stopped on an error';
+  const wordsFailed = (words_error) => P((p) => {
+    p.draft.content = { words_status: 'failed', words_error };
+    p.pieces = p.pieces.map((x) => piece(x.piece_key, 'failed', { error: 'not attempted: the words step failed' }));
+  });
+  const EMPTY = (text) => ({ id: 'words-failed', title: "Couldn't write the menu text", text, button: { id: 'retry-words', label: 'Generate again', style: 'primary' } });
+
+  test('Words failed with a fixed sentence in words_error shows it in place of the generic sub, on the card and in the editor', () => {
+    for (const sentence of [WORDS_OUT_OF_CREDIT, WORDS_LIMIT, 'OpenAI is busy right now. Try again in a minute.']) {
+      const s = run(wordsFailed(sentence));
+      expect(lines(s)).toEqual(['danger', 'Words failed', "Couldn't write the menu text.", sentence]);
+      expect(ids(s)).toEqual(['retry-words', null]);
+      expect(s.empty).toEqual(EMPTY(sentence));
+    }
+  });
+
+  test('Words failed with a refusal or an invalid-reply sentence shows it too', () => {
+    for (const sentence of ['OpenAI declined to write this menu. Try different art direction.', 'The menu words left out a drink. Try again.']) {
+      const s = run(wordsFailed(sentence));
+      expect(s.sub).toBe(sentence);
+      expect(s.empty.text).toBe(sentence);
+    }
+  });
+
+  test('Words failed on a refusal or an invalid reply also offers the Brief tab, beside Generate again', () => {
+    for (const sentence of ['OpenAI declined to write this menu. Try different art direction.', 'The menu words left out a drink. Try again.']) {
+      const s = run(wordsFailed(sentence));
+      expect(s.primary).toEqual({ id: 'retry-words', label: 'Generate again', style: 'primary' });
+      expect(s.secondary).toEqual({ id: 'edit-brief', label: 'Edit the brief', style: 'ghost', editor: { tab: 'brief' } });
+    }
+    // A balance, a limit or a busy provider is not cured in the brief.
+    expect(run(wordsFailed(WORDS_OUT_OF_CREDIT)).secondary).toBeNull();
+    expect(run(wordsFailed('interrupted')).secondary).toBeNull();
+  });
+
+  test('Words failed with any other words_error keeps the generic sub, so no provider text reaches the screen', () => {
+    const others = ['Error: 429 You exceeded your current quota for the Testerton wedding', 'interrupted', '', null, 42,
+      `${WORDS_OUT_OF_CREDIT} `, WORDS_OUT_OF_CREDIT.toUpperCase(), 'constructor'];
+    for (const other of others) {
+      const s = run(wordsFailed(other));
+      expect(lines(s)).toEqual(['danger', 'Words failed', "Couldn't write the menu text.", 'No images were used.']);
+      expect(s.empty).toEqual(EMPTY('The words step failed, so no images were used. Try again.'));
+    }
+  });
+
+  test('one out-of-credit piece and two not attempted: the banner and the card show that piece\'s sentence', () => {
+    const s = run(P((p) => {
+      p.pieces[1] = piece('cocktail:1', 'failed', { error: PIECE_OUT_OF_CREDIT });
+      p.pieces[2] = piece('cocktail:2', 'failed', { error: STOPPED });
+      p.pieces[3] = piece('mocktail:3', 'failed', { error: STOPPED });
+    }));
+    expect(banner(s, 'drawing-failed')).toEqual({ id: 'drawing-failed', tone: 'danger', title: '3 drawings failed.', text: PIECE_OUT_OF_CREDIT, buttons: [] });
+    expect(lines(s)).toEqual(['danger', '3 drawings failed', "3 drawings didn't come through.", PIECE_OUT_OF_CREDIT]);
+    expect(s.primary).toMatchObject({ id: 'fix', editor: { tab: 'drinks', select: 'cocktail:1' } });
+  });
+
+  test('the background on a spend or usage limit, every drink not attempted: the limit sentence', () => {
+    const s = run(P((p) => {
+      p.pieces = p.pieces.map((x) => piece(x.piece_key, 'failed', { error: x.piece_key === 'background' ? PIECE_LIMIT : STOPPED }));
+    }));
+    expect(banner(s, 'drawing-failed')).toMatchObject({ title: '4 drawings failed.', text: PIECE_LIMIT });
+    expect(s.sub).toBe(PIECE_LIMIT);
+  });
+
+  test('a single piece out of credit (a re-roll): the card shows its sentence, the one-drawing banner names the drink first', () => {
+    const s = run(P((p) => { p.pieces[2] = piece('cocktail:2', 'failed', { error: PIECE_OUT_OF_CREDIT }); }));
+    expect(lines(s)).toEqual(['danger', '1 drawing failed', "Old Fashioned didn't draw.", PIECE_OUT_OF_CREDIT]);
+    expect(banner(s, 'drawing-failed')).toMatchObject({ title: 'One drawing failed.',
+      text: `Old Fashioned didn't draw. ${PIECE_OUT_OF_CREDIT}` });
+  });
+
+  test('two genuine piece failures keep the count banner and the generic card, a not-attempted one beside them or not', () => {
+    for (const third of [null, STOPPED]) {
+      const s = run(P((p) => {
+        p.pieces[1] = piece('cocktail:1', 'failed', { error: PIECE_OUT_OF_CREDIT });
+        p.pieces[2] = piece('cocktail:2', 'failed', { error: DRAW_FAILED });
+        if (third) p.pieces[3] = piece('mocktail:3', 'failed', { error: third });
+      }));
+      const n = third ? 3 : 2;
+      expect(banner(s, 'drawing-failed')).toEqual({ id: 'drawing-failed', tone: 'danger', title: `${n} drawings failed.`, text: 'Re-roll or hide the flagged drinks.', buttons: [] });
+      expect(s.sub).toBe('Re-roll them in the editor.');
+    }
+  });
+
+  test('a lone failure speaks for not-attempted pieces only when its sentence stops a run; alone, any fixed sentence shows', () => {
+    // Rows left "not attempted" by an earlier stop, since cured, beside an unrelated later failure.
+    const s = run(P((p) => {
+      p.pieces[1] = piece('cocktail:1', 'failed', { error: DRAW_FAILED });
+      p.pieces[2] = piece('cocktail:2', 'failed', { error: STOPPED });
+    }));
+    expect(banner(s, 'drawing-failed')).toMatchObject({ title: '2 drawings failed.', text: 'Re-roll or hide the flagged drinks.' });
+    expect(s.sub).toBe('Re-roll them in the editor.');
+    // The limit sentence stops a run, so it does speak for them.
+    const limit = run(P((p) => {
+      p.pieces[1] = piece('cocktail:1', 'failed', { error: PIECE_LIMIT });
+      p.pieces[2] = piece('cocktail:2', 'failed', { error: STOPPED });
+    }));
+    expect([banner(limit, 'drawing-failed').text, limit.sub]).toEqual([PIECE_LIMIT, PIECE_LIMIT]);
+    // A single failed piece with no not-attempted siblings keeps its own fixed sentence.
+    expect(run(P((p) => { p.pieces[1] = piece('cocktail:1', 'failed', { error: DRAW_FAILED }); })).sub).toBe(DRAW_FAILED);
+  });
+
+  test('an approved file in use: Words failed and Drawing failed show the reason, then the staff line', () => {
+    const staff = `Staff still get the ${OCT_9} version.`;
+    let s = run(P((p) => { approved(p); p.draft.content = { words_status: 'failed', words_error: WORDS_OUT_OF_CREDIT }; }));
+    expect([s.id, s.sub]).toEqual(['words-failed', `${WORDS_OUT_OF_CREDIT} ${staff}`]);
+    s = run(P((p) => {
+      approved(p);
+      p.pieces[1] = piece('cocktail:1', 'failed', { error: PIECE_OUT_OF_CREDIT });
+      p.pieces[2] = piece('cocktail:2', 'failed', { error: STOPPED });
+    }));
+    expect([s.id, s.sub]).toEqual(['drawing-failed', `${PIECE_OUT_OF_CREDIT} ${staff}`]);
+    // With no fixed reason, the staff line alone, as before.
+    s = run(P((p) => { approved(p); p.draft.content = { words_status: 'failed', words_error: 'interrupted' }; }));
+    expect(s.sub).toBe(staff);
+  });
+
+  test('the one genuine failure shows only a fixed sentence: other text keeps the count banner and the generic card', () => {
+    for (const other of ['provider said: SECRET-42', 'interrupted', '', null]) {
+      const s = run(P((p) => {
+        p.pieces[1] = piece('cocktail:1', 'failed', { error: other });
+        p.pieces[2] = piece('cocktail:2', 'failed', { error: STOPPED });
+      }));
+      expect(banner(s, 'drawing-failed')).toMatchObject({ title: '2 drawings failed.', text: 'Re-roll or hide the flagged drinks.' });
+      expect(s.sub).toBe('Re-roll them in the editor.');
+    }
+    // A hidden drink is no failure at all, so its sentence never speaks for the rest.
+    const s = run(P((p) => {
+      p.draft.content.drinks[0].hidden = true;
+      p.pieces[1] = piece('cocktail:1', 'failed', { error: PIECE_OUT_OF_CREDIT });
+      p.pieces[2] = piece('cocktail:2', 'failed', { error: STOPPED });
+      p.pieces[3] = piece('mocktail:3', 'failed', { error: STOPPED });
+    }));
+    expect(banner(s, 'drawing-failed')).toMatchObject({ title: '2 drawings failed.', text: 'Re-roll or hide the flagged drinks.' });
   });
 });
 

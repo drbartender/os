@@ -41,9 +41,9 @@
 // fails "not attempted: <cause>" (conditional on the run), the run's own
 // reservations settle by their own status (reserved -> released, sent ->
 // failed), and an unexpected error goes to Sentry as its descriptor only. A
-// piece whose provider says the balance is spent (MenuArtOutOfCredit) ends
-// the run the same way, once: no further piece is drawn (spec 2026-10-19
-// section 16).
+// piece whose provider says the balance is spent or a spend or usage limit
+// is reached (MenuArtOutOfCredit, its kind balance or limit) ends the run the
+// same way, once: no further piece is drawn (spec 2026-10-19 section 16).
 
 const geminiClient = require('./geminiClient');
 const storage = require('./storage');

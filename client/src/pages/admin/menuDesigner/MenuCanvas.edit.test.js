@@ -402,7 +402,7 @@ describe("table E's empty cards", () => {
   };
   test.each([
     ['Words failed', base({ draft: { id: 1, version: 2, inputs: {}, content: { words_status: 'failed', words_error: 'interrupted' } } }),
-      "Couldn't write the menu text", 'The words step failed, so no images were used. Try again.', 'Retry'],
+      "Couldn't write the menu text", 'The words step failed, so no images were used. Try again.', 'Generate again'],
     ['Never generated', base(), 'No draft yet', 'Generate drafts the words in seconds, then paints the background and each drink. About 2 minutes.', 'Generate'],
     ['No drinks', base({ plan: { id: 7, menu_style: 'custom', drink_count: 0 } }), 'No drinks on the plan',
       'Menus are built from the drink plan. Add drinks there, then come back.', 'Open drink plan'],

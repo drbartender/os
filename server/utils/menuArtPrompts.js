@@ -250,5 +250,5 @@ function parseWords(json, normalized, { artSlots = LIMITS.art_drinks, artKeys = 
 
 module.exports = {
   wordsRequest, parseWords, MenuWordsInvalid, cut,
-  BRIEF_MAX, OUT, HEX_RE, DEFAULT_TITLE, DEFAULT_HEADINGS,
+  BRIEF_MAX, OUT, HEX_RE, DEFAULT_TITLE, DEFAULT_HEADINGS, REASONS,
 };

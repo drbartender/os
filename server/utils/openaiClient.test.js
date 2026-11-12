@@ -512,6 +512,43 @@ test('real SDK: the spend and usage limit codes the SDK documents are OpenAIOutO
   });
 });
 
+test('real SDK: OpenAIOutOfCredit carries its kind: balance for a spent balance or billing not active, limit for the hard limit and the four spend and usage limits', async () => {
+  // Spec 2026-10-19 section 16: a spend or usage limit is not an empty
+  // balance, so the admin is told to raise the limit, not to add credit.
+  const cases = [
+    [429, 'credit_balance_exhausted', 'balance'],
+    [429, 'insufficient_quota', 'balance'],
+    [403, 'insufficient_quota', 'balance'],
+    [400, 'billing_not_active', 'balance'],
+    [400, 'billing_hard_limit_reached', 'limit'],
+    [429, 'project_spend_limit_exceeded', 'limit'],
+    [429, 'organization_spend_limit_exceeded', 'limit'],
+    [429, 'usage_limit_exceeded', 'limit'],
+    [400, 'organization_usage_limit_exceeded', 'limit'],
+  ];
+  for (const [status, code, kind] of cases) {
+    const f = fakeFetch([jsonResponse(status, { error: { message: 'limit or balance for the Testerton wedding', type: 'requests', code } })]);
+    __setTestStub(sdkClientWith(f));
+    await assert.rejects(generateImage({ prompt: 'p', model: 'm' }), (err) => {
+      assert.ok(err instanceof OpenAIOutOfCredit, `${status} ${code}: out of credit`);
+      assert.equal(err.kind, kind, `${status} ${code}: ${kind}`);
+      assert.equal(err.descriptor.code, code, 'the descriptor keeps the code');
+      assert.deepEqual(Object.keys(err.descriptor).sort(), ['code', 'errorClass', 'provider', 'requestId', 'status'],
+        'the kind rides on the error, never on the descriptor the ledger stores');
+      return true;
+    });
+    assert.equal(f.calls.length, 1);
+  }
+  // The words call reads the same kind.
+  const f = fakeFetch([jsonResponse(429, { error: { message: 'limit', type: 'requests', code: 'project_spend_limit_exceeded' } })]);
+  __setTestStub(sdkClientWith(f));
+  await assert.rejects(draftMenuCopy({ system: 's', user: 'u', schema: SCHEMA, model: 'm' }), (err) => {
+    assert.ok(err instanceof OpenAIOutOfCredit);
+    assert.equal(err.kind, 'limit');
+    return true;
+  });
+});
+
 test('real SDK: the words call on an empty balance is OpenAIOutOfCredit too', async () => {
   const f = fakeFetch([jsonResponse(429, { error: { message: 'Your credit balance is too low', type: 'insufficient_quota', code: 'credit_balance_exhausted' } })]);
   __setTestStub(sdkClientWith(f));

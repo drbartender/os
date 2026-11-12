@@ -254,6 +254,10 @@ const WORDS_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's bil
 const SYNC_WORDS_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then try Update draft again.";
 const PIECE_OUT_OF_CREDIT = "OpenAI is out of credit. Add credit in OpenAI's billing settings, then re-roll.";
 const GEMINI_STILL_REFUSING = "Gemini is still refusing. If this keeps happening, check Gemini's billing.";
+// A spend or usage limit is not an empty balance (spec 16, lane menu-error-display).
+const WORDS_LIMIT = "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then Generate again.";
+const SYNC_WORDS_LIMIT = "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then try Update draft again.";
+const PIECE_LIMIT = "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then re-roll.";
 const imageCount = (body) => (Array.isArray(body.image) ? body.image.length : body.image ? 1 : 0);
 const openaiCallsFor = (kind) => calls.openai.filter((c) => (c.body.size === '1024x1024') === (kind === 'drink'));
 
@@ -707,6 +711,57 @@ test('a re-roll on an empty OpenAI balance, background or drink: the piece sente
     assert.equal(captured[0].context.tags.step, key === 'background' ? 'background' : 'drinks');
     assert.ok(!captured[0].err.message.includes(SECRET));
   }
+});
+
+test('words on an OpenAI spend or usage limit: the limit sentence, no retry, every piece not attempted; billing not active reads as the balance', async () => {
+  stubOpenAI({ words: () => { throw outOfCredit(429, 'project_spend_limit_exceeded'); } });
+  const g = await generate();
+  await run(g);
+  let draft = await draftRow();
+  assert.deepEqual([draft.content.words_status, draft.content.words_error], ['failed', WORDS_LIMIT]);
+  assert.equal(SENTENCES.wordsLimit, WORDS_LIMIT);
+  assert.deepEqual(sleeps, [], 'never retried');
+  assert.equal(calls.words.length, 1);
+  assert.equal(calls.openai.length, 0);
+  const pieces = await pieceMap();
+  for (const key of g.keys) assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', NOT_ATTEMPTED.words], key);
+  assert.equal(captured.length, 1, 'one Sentry event for the run');
+  assert.equal(captured[0].context.extra.descriptor.code, 'project_spend_limit_exceeded');
+  assert.ok(!captured[0].err.message.includes(SECRET));
+  await assertSettled(g.runId);
+
+  calls.words.length = 0;
+  stubOpenAI({ words: () => { throw outOfCredit(400, 'billing_not_active'); } });
+  const again = await generate();
+  await run(again);
+  draft = await draftRow();
+  assert.deepEqual([draft.content.words_status, draft.content.words_error], ['failed', WORDS_OUT_OF_CREDIT],
+    'billing not active is fixed in the billing settings, so it reads as the balance');
+});
+
+test('a piece on an OpenAI spend or usage limit, by Generate or a re-roll: the piece limit sentence, the run stopped, no retry', async () => {
+  // Call 1 is the background: the billing hard limit, as a 400 on the image endpoint.
+  stubOpenAI({ image: () => { throw outOfCredit(400, 'billing_hard_limit_reached'); } });
+  const g = await generate({ drinks: 3 });
+  await run(g);
+  let pieces = await pieceMap();
+  assert.deepEqual([pieces.background.status, pieces.background.error], ['failed', PIECE_LIMIT]);
+  assert.equal(SENTENCES.openaiLimit, PIECE_LIMIT);
+  for (const key of KEYS) assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', NOT_ATTEMPTED.error], key);
+  assert.equal(calls.openai.length, 1, 'no image call after the limit');
+  assert.deepEqual(sleeps, [], 'never retried');
+  assert.equal(captured.length, 1, 'one Sentry event for the run');
+  await assertSettled(g.runId);
+
+  for (const list of [calls.openai, captured, sleeps]) list.length = 0;
+  stubOpenAI({ image: () => { throw outOfCredit(429, 'organization_usage_limit_exceeded'); } });
+  const pieceRun = await reroll('background', { provider: 'openai' });
+  pieces = await pieceMap();
+  assert.deepEqual([pieces.background.status, pieces.background.error], ['failed', PIECE_LIMIT]);
+  assert.equal(calls.openai.length, 1);
+  assert.deepEqual(sleeps, []);
+  assert.deepEqual((await ledger(pieceRun)).map((r) => r.status), ['failed'], 'sent, so failed');
+  assert.equal(captured.length, 1);
 });
 
 test('a 500 fails its drink without a retry, and a refusal stores its fixed reason, never provider text', async () => {
@@ -1182,6 +1237,30 @@ test('runWordsForDrinks: an empty OpenAI balance throws the Update draft out-of-
   assert.deepEqual(sleeps, []);
   assert.equal((await ledger(g.runId)).find((r) => r.id === reservationId).status, 'failed');
   assert.deepEqual(captured.map((c) => c.context.tags.step), ['sync_words']);
+});
+
+test('runWordsForDrinks: a spend or usage limit throws the Update draft limit sentence at once, with no retry', async () => {
+  const g = await generate();
+  await run(g);
+  const normalized = normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps());
+  calls.words.length = 0;
+  captured.length = 0;
+  stubOpenAI({ words: () => { throw outOfCredit(429, 'usage_limit_exceeded'); } });
+  const reservationId = await inTx((client) => cap.reserveText(client, { proposalId, runId: g.runId, model: TEXT_MODEL }));
+  await assert.rejects(job.runWordsForDrinks({
+    normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party',
+    reservationId, draftId, runId: g.runId,
+  }), (err) => {
+    assert.equal(err.message, SYNC_WORDS_LIMIT, 'the limit, and Update draft, not Generate (Start over)');
+    assert.equal(SENTENCES.syncWordsLimit, SYNC_WORDS_LIMIT);
+    assert.deepEqual([err.statusCode, err.code], [502, 'MENU_WORDS_FAILED']);
+    assert.equal(err.descriptor.code, 'usage_limit_exceeded');
+    assert.ok(!JSON.stringify(err.descriptor).includes(SECRET));
+    return true;
+  });
+  assert.equal(calls.words.length, 1);
+  assert.deepEqual(sleeps, []);
+  assert.equal((await ledger(g.runId)).find((r) => r.id === reservationId).status, 'failed');
 });
 
 test('runWordsForDrinks: a 429 retries on the same row; a Start over during the wait is a 409 with no retried call', async () => {

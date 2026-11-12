@@ -35,7 +35,7 @@ import { ExportCanvas, useApproveMenu } from './exportMenu';
 
 const TABS = [['design', 'Design'], ['drinks', 'Drinks'], ['brief', 'Brief']];
 const BUSY = { reroll: 'Re-rolling...', update: 'Updating...', dismiss: 'Dismissing...', 'mark-reviewed': 'Saving...', 'retry-save': 'Retrying...',
-  reload: 'Retrying...', download: 'Downloading...', undo: 'Undoing...', generate: 'Generating...', 'retry-words': 'Retrying...' };
+  reload: 'Retrying...', download: 'Downloading...', undo: 'Undoing...', generate: 'Generating...', 'retry-words': 'Generating...' };
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 function useViewport() {

@@ -92,7 +92,7 @@ const ROWS = [
     'Drafting', 'Writing the words...', 'About 2 min. Keep working.', [], ['Watch']],
   ['Draft ready', P(), {}, 'Draft', 'Ready to review.', 'Saved', [], ['View']],
   ['Drawing failed', P((p) => { p.pieces[2] = piece('cocktail:2', 'failed'); }), {}, '1 drawing failed', "Old Fashioned didn't draw.", 'Re-roll it in the editor.', [], ['Fix', 'View']],
-  ['Words failed', P((p) => { p.draft.content = { words_status: 'failed' }; }), {}, 'Words failed', "Couldn't write the menu text.", 'No images were used.', ['Retry'], ['Retry']],
+  ['Words failed', P((p) => { p.draft.content = { words_status: 'failed' }; }), {}, 'Words failed', "Couldn't write the menu text.", 'No images were used.', ['Generate again'], ['Generate again']],
   ['Plan changed', P((p) => { p.diff.added = [{ key: 'custom:mule', name: 'Cucumber Mule' }]; }), {}, 'Plan changed', 'Cucumber Mule was added to the plan.',
     'Update the draft to include it.', ['Update draft', 'Dismiss'], ['Update draft', 'Dismiss']],
   ['Notes edited', P((p) => { p.diff.brief_edited = ['notes']; }), {}, 'Notes edited', 'Client edited their menu notes.', 'Review before approving.', [], ['Review', 'View']],
@@ -189,7 +189,7 @@ describe('the in-place actions draw with GPT Image', () => {
     unmount();
     menu = fakeMenu(P((p) => { p.draft.content = { words_status: 'failed' }; }));
     const retry = mount(menu);
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate again' }));
     await waitFor(() => expect(menu.generate).toHaveBeenCalledWith({ imageModel: 'openai' }));
     retry.unmount();
     menu = fakeMenu(P((p) => { p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }]; }));
@@ -288,7 +288,7 @@ describe('the review fixes', () => {
     const cases = [
       [P((p) => { p.diff.added = [{ key: 'x', name: 'X' }]; }), {}, 'Update draft', 'Updating...', 'sync'],
       [P((p) => { p.diff.added = [{ key: 'x', name: 'X' }]; }), {}, 'Dismiss', 'Dismissing...', 'dismissPlanChange'],
-      [P((p) => { p.draft.content = { words_status: 'failed' }; }), {}, 'Retry', 'Retrying...', 'generate'],
+      [P((p) => { p.draft.content = { words_status: 'failed' }; }), {}, 'Generate again', 'Generating...', 'generate'],
       [P(), { save: { state: 'failed', savedAt: null, conflict: false } }, 'Retry', 'Retrying...', 'retrySave'],
     ];
     for (const [payload, over, label, busy, fn] of cases) {
