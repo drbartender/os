@@ -1033,6 +1033,39 @@ lanes:
       tag still makes the owner you.
     revert: Revert the squash; the dashboard falls back to Menu Design, which is still the owner's move.
 
+  - id: menu-words-claude
+    scope: >
+      The owner's call (2026-11-11, "we are using gemini antigrav instead of open ai for now"; 2026-11-12,
+      a blind side-by-side): OpenAI gets no more credit, so the menu words step moves to Anthropic's Claude
+      Haiku 5.5 behind a setting, and the drawings stay on Gemini. In the blind test (four fixture events,
+      the OS's exact words prompt and schema, through anthropicClient.js) the owner picked Haiku's menu for
+      three events and Opus 5.5's for one, Sonnet 5.5's for none; measured cost per menu: Haiku about
+      $0.001, Sonnet $0.01, Opus $0.03. The owner found every model's descriptions overly dramatic, which
+      the prompt invites ("one appealing line"), so the description instruction becomes a plain line: the
+      main ingredients and one honest taste word, no hype words. The words call goes through
+      anthropicClient.js (one new draftMenuCopy-shaped helper with structured output), the model is a
+      setting (MENU_WORDS_MODEL, default claude-haiku-5-5; OpenAI stays selectable by the same setting),
+      the text cap and the ledger record the provider, and Anthropic's errors map to the fixed sentences
+      (an out-of-credit or spend-limit answer gets its own, naming Anthropic's billing). Before building,
+      check Gemini's current image pricing and free tier against Google's page and record the default
+      image model here.
+    footprint:
+      - server/utils/anthropicClient.js  (the menu words helper; its header names the rule)
+      - server/utils/menuArtJobWords.js  (the provider by setting)
+      - server/utils/menuArtPrompts.js  (the plain description instruction; the descriptor's provider)
+      - server/utils/menuArtJobErrors.js  (Anthropic's sentences)
+      - server/utils/menuArtCap.js  (the provider on the text row, if it is recorded there)
+      - .env.example  (MENU_WORDS_MODEL)
+      - their tests: anthropicClient.test.js, menuArtJobWords or menuArtJob.test.js, menuArtPrompts.test.js
+      - README.md, ARCHITECTURE.md  (generated sections)
+    blockedBy: [menu-error-display]
+    lenses: the computed tier; money (AI spend and the text cap), outcomes-providers, access-egress (what leaves for Anthropic: the payload rule of menuArtPrompts.js, no client name, contact, venue or date), seams.
+    laws: the AI providers only through their wrappers, each refusing a real call under NODE_ENV=test; menu art sends no client name, contact, venue, address or event date; the legal-hold proposal is never read by the AI.
+    seams: the words step's output shape and parseWords are unchanged, so the card, the editor and Update draft read the same content.
+    acceptance: Suites pass; the words suite fails on main (on main the words call goes to OpenAI and the description instruction asks for an appealing line).
+    test plan: anthropicClient.test.js, the helper refuses under NODE_ENV=test without a stub and passes the schema; the words job with a stubbed Anthropic client writes the content and records the provider; an Anthropic 402 or credit error stores the out-of-credit sentence; menuArtPrompts.test.js pins the plain description instruction.
+    revert: revert the squash; MENU_WORDS_MODEL unset falls back to the shipped OpenAI path.
+
   - id: menu-auto-start
     scope: >
       Spec section 8 (decisions 8 and 9). The Generate route's body is extracted to startGeneration({ proposalId,
@@ -1061,7 +1094,7 @@ lanes:
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - scripts/sensitive-paths.txt  (menuDraftGenerate.js)
       - README.md, ARCHITECTURE.md  (generated sections)
-    blockedBy: [menu-approve-send, menu-house-card, menu-out-of-credit, menu-no-menu-mark]
+    blockedBy: [menu-approve-send, menu-house-card, menu-out-of-credit, menu-no-menu-mark, menu-words-claude]
     lenses: tier A, the full floor plus schema-data, business-time and client; verify; the externals; the money smoke.
     laws: >
       A billed provider run starts from a public submit with no person in the loop: it starts at most once per
