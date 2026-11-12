@@ -9,8 +9,8 @@ status: >
   bar chain excepted (below): the
   public proof routes land with no proof to show, the Inbox reader and all four task kinds land before
   anything can hold a print file or raise a task, the events dashboard change lands after the reminders
-  it relies on, and auto-start lands last. menu-auto-start ships only after the owner adds OpenAI credit
-  (spec section 24). The ship of any merged lane waits for the owner's word.
+  it relies on, and auto-start lands last. menu-auto-start ships only after the owner puts the Anthropic and
+  Gemini keys in Render (spec section 24, amended 2026-11-12; OpenAI gets no more credit). The ship of any merged lane waits for the owner's word.
   The bar chain cannot ship lane by lane: menu-bar-fingerprint (8121cd78) and menu-bar-baseline (53d63688)
   merged, never shipped alone, and were reverted by 7882775a, which shipped 2026-11-05. The chain is now one
   lane, menu-bar-chain (2026-11-06): the receipt binds a lane to a review of main..tip, so a lane stacked on
@@ -649,7 +649,7 @@ lanes:
       - client/src/pages/admin/menuDesigner/useMenuDraft.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
       - README.md, ARCHITECTURE.md  (generated sections)
-    blockedBy: [menu-no-menu-mark, menu-fonts-twelve, menu-out-of-credit]
+    blockedBy: [menu-no-menu-mark, menu-fonts-twelve, menu-out-of-credit, menu-words-claude]
     lenses: tier A (menuArtJob.js, menuDraftSync.js); access-egress (what leaves the OS for a provider), outcomes-providers, seams, client (captures against the v1 artifact), verify, the externals.
     laws: >
       CLAUDE.md's AI rule: menu art sends no client name, contact, venue, address or event date
@@ -1047,35 +1047,89 @@ lanes:
   - id: menu-words-claude
     scope: >
       The owner's call (2026-11-11, "we are using gemini antigrav instead of open ai for now"; 2026-11-12,
-      a blind side-by-side): OpenAI gets no more credit, so the menu words step moves to Anthropic's Claude
-      Haiku 5.5 behind a setting, and the drawings stay on Gemini. In the blind test (four fixture events,
+      a blind side-by-side): OpenAI gets no more credit, so the menu designer runs with no OpenAI key: the
+      words on Anthropic's Claude Haiku 5.5, the drawings on Gemini. In the blind test (four fixture events,
       the OS's exact words prompt and schema, through anthropicClient.js) the owner picked Haiku's menu for
       three events and Opus 5.5's for one, Sonnet 5.5's for none; measured cost per menu: Haiku about
       $0.001, Sonnet $0.01, Opus $0.03. The owner found every model's descriptions overly dramatic, which
       the prompt invites ("one appealing line"), so the description instruction becomes a plain line: the
-      main ingredients and one honest taste word, no hype words. The words call goes through
-      anthropicClient.js (one new draftMenuCopy-shaped helper with structured output), the model is a
-      setting (MENU_WORDS_MODEL, default claude-haiku-5-5; OpenAI stays selectable by the same setting),
-      the text cap and the ledger record the provider, and Anthropic's errors map to the fixed sentences
-      (an out-of-credit or spend-limit answer gets its own, naming Anthropic's billing). Before building,
-      check Gemini's current image pricing and free tier against Google's page and record the default
-      image model here.
+      main ingredients and one honest taste word, no hype words.
+      (1) The words. The words call goes through anthropicClient.js (one new draftMenuCopy-shaped helper with
+      structured output and the words step's own timeout); the model stays the one existing setting,
+      MENU_ART_TEXT_MODEL, whose default becomes claude-haiku-5-5, and the provider follows the stamped model
+      id (claude- is Anthropic, gpt- keeps the OpenAI path selectable), so no new setting (amended 2026-11-12,
+      my call: the plan's rule is no new environment variables, and the words model already had one; an
+      explicit MENU_ART_TEXT_MODEL in Render would keep the old OpenAI model, so the owner confirms it unset
+      there); the text row in
+      menu_art_calls records the provider, so its provider CHECK takes 'anthropic' (an idempotent drop and
+      re-add in schema.sql); Anthropic's errors map to the fixed sentences, and an out-of-credit or
+      spend-limit answer gets its own, naming Anthropic's billing (the copy below).
+      (2) The set-up checks (widened 2026-11-12, my call, after the no-menu review found the gap): every check
+      looks for the key of the provider the call will use. requireOpenAI becomes a check of the words
+      provider's key at Generate and at Update draft's typed-drinks words call; a re-roll draws an image only,
+      so it checks the image provider's key alone; a bar-only Update draft checks none, as today. The read
+      model's configured block gains words (the words provider's key is set) beside openai and gemini, and
+      the card and the editor's Not set up and Drawing is off states read words for the words and the image
+      model's own flag for drawing, never configured.openai.
+      (3) The drawings. The image model defaults to Gemini when its key is set, else OpenAI: the editor's
+      toggle opens at that default (useMenuDraft's first value from the read model, no longer a fixed
+      'openai'), the card's Generate, Retry words and Update draft send it in place of the fixed 'openai'
+      (MenuDesignerCard.js), and PanelFooter's fallback follows it; OpenAI stays on the toggle. Gemini's
+      image model stays gemini-3-pro-image (checked 2026-11-12 against Google's pricing page: no Gemini
+      image model has a free tier; this one is $0.134 per 1K drink and $0.24 per 4K background, and the only
+      id the code supports, since it takes style references; the cheaper Nano Banana 2.1, $0.0336 per 1K and
+      $0.113 per 4K, is untested with style references).
+      Copy (spec section 28, added): "Anthropic is out of credit. Add credit in Anthropic's billing settings,
+      then Generate again."; "... then try Update draft again."; "Anthropic hit a spend limit. Raise it in
+      Anthropic's limits settings, then Generate again."; "... then try Update draft again."
     footprint:
       - server/utils/anthropicClient.js  (the menu words helper; its header names the rule)
+      - server/utils/anthropicClient.test.js
       - server/utils/menuArtJobWords.js  (the provider by setting)
+      - server/utils/menuArtJobSteps.js  (textModelId's default and the provider of a model id)
       - server/utils/menuArtPrompts.js  (the plain description instruction; the descriptor's provider)
+      - server/utils/menuArtPrompts.test.js
       - server/utils/menuArtJobErrors.js  (Anthropic's sentences)
-      - server/utils/menuArtCap.js  (the provider on the text row, if it is recorded there)
-      - .env.example  (MENU_WORDS_MODEL)
-      - their tests: anthropicClient.test.js, menuArtJobWords or menuArtJob.test.js, menuArtPrompts.test.js
+      - server/utils/menuArtCap.js  (the provider on the text row)
+      - server/utils/menuArtJob.test.js  (the words step with a stubbed Anthropic client)
+      - server/utils/menuArtCap.test.js  (the text row's provider)
+      - server/db/schema.sql  (menu_art_calls.provider takes 'anthropic', idempotent)
+      - server/db/schema.menuArt.test.js  (the widened CHECK)
+      - server/routes/proposals/menuDraftShared.js  (the set-up checks by provider)
+      - server/routes/proposals/menuDrafts.js  (Generate and re-roll call the right checks)
+      - server/routes/proposals/menuDraftSync.js  (requireProviders checks the words provider)
+      - server/routes/proposals/menuDrafts.test.js
+      - server/utils/menuDraftRead.js  (configured.words and the default image model)
+      - server/utils/menuDraftRead.test.js
+      - client/src/pages/admin/menuDesigner/useMenuDraft.js  (the toggle opens at the default)
+      - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
+      - client/src/pages/admin/menuDesigner/MenuDesignerCard.js  (no fixed 'openai')
+      - client/src/pages/admin/menuDesigner/MenuDesignerCard.test.js
+      - client/src/pages/admin/menuDesigner/PanelFooter.js  (the fallback follows the default)
+      - client/src/pages/admin/menuDesigner/PanelFooter.test.js
+      - client/src/pages/admin/menuDesigner/panelParts.js  (Drawing is off reads the image model's flag)
+      - client/src/pages/admin/menuDesigner/menuCardState.js  (Not set up reads configured.words)
+      - client/src/pages/admin/menuDesigner/menuCardState.test.js
+      - client/src/pages/admin/menuDesigner/menuArtSentences.js  (Anthropic's sentences, if the client mirrors them)
+      - client/src/pages/admin/menuDesigner/MenuEditor.test.js  (the editor's toggle and Drawing is off)
+      - .env.example  (MENU_ART_TEXT_MODEL's default; the Anthropic, OpenAI and Gemini comments say which call needs which key)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-error-display]
-    lenses: the computed tier; money (AI spend and the text cap), outcomes-providers, access-egress (what leaves for Anthropic: the payload rule of menuArtPrompts.js, no client name, contact, venue or date), seams.
-    laws: the AI providers only through their wrappers, each refusing a real call under NODE_ENV=test; menu art sends no client name, contact, venue, address or event date; the legal-hold proposal is never read by the AI.
-    seams: the words step's output shape and parseWords are unchanged, so the card, the editor and Update draft read the same content.
-    acceptance: Suites pass; the words suite fails on main (on main the words call goes to OpenAI and the description instruction asks for an appealing line).
-    test plan: anthropicClient.test.js, the helper refuses under NODE_ENV=test without a stub and passes the schema; the words job with a stubbed Anthropic client writes the content and records the provider; an Anthropic 402 or credit error stores the out-of-credit sentence; menuArtPrompts.test.js pins the plain description instruction.
-    revert: revert the squash; MENU_WORDS_MODEL unset falls back to the shipped OpenAI path.
+    lenses: the computed tier; money (AI spend and the text cap), outcomes-providers, access-egress (what leaves for Anthropic: the payload rule of menuArtPrompts.js, no client name, contact, venue or date), seams (every reader of configured and of the image model's default), schema-data, client.
+    laws: the AI providers only through their wrappers, each refusing a real call under NODE_ENV=test; menu art sends no client name, contact, venue, address or event date; the legal-hold proposal is never read by the AI; no provider is called that the set-up check did not just find a key for.
+    seams: the words step's output shape and parseWords are unchanged, so the card, the editor and Update draft read the same content; configured keeps openai and gemini with their meanings and gains words; the image model's default is computed once on the server and read by the hook and the card.
+    acceptance: Suites pass; the client build passes; the words suite fails on main (on main the words call goes to OpenAI and the description instruction asks for an appealing line); with OPENAI_API_KEY unset and the Anthropic and Gemini keys set, Generate and a re-roll on dev reach their providers' stubs and answer 202, and the card reads neither Not set up nor Drawing is off.
+    test plan: >
+      anthropicClient.test.js: the helper refuses under NODE_ENV=test without a stub and passes the schema.
+      menuArtJob.test.js: the words job with a stubbed Anthropic client writes the content and records
+      provider 'anthropic' on the text row; an Anthropic credit or spend-limit error stores its sentence and is
+      not retried. menuArtPrompts.test.js pins the plain description instruction. menuDrafts.test.js: Generate
+      with no OpenAI key and the words key set passes the check; a re-roll needs only the image provider's key;
+      a bar-only Update draft needs none. schema.menuArt.test.js: the CHECK takes 'anthropic'.
+      menuDraftRead.test.js: configured.words and the default image model. useMenuDraft, MenuDesignerCard,
+      PanelFooter and menuCardState tests: the toggle opens at Gemini when it is set up, the card sends the
+      default, and Not set up and Drawing is off follow the right flags.
+    revert: revert the squash; the old code reads MENU_ART_TEXT_MODEL as an OpenAI model and sends the words to OpenAI again, and the widened CHECK accepts every value the old code writes.
 
   - id: menu-auto-start
     scope: >
@@ -1083,7 +1137,8 @@ lanes:
       inputs, file }) in server/routes/proposals/menuDraftGenerate.js and the route calls it. The
       menu_auto_starts table (8.4, the run-once guard). triggerMenuAutoStart gains the auto-start step after the
       mark: the 8.2 conditions (a proposal, menu owed, booked, not legal hold, not past, no draft, no print file,
-      no mark, the guard insert), then startGeneration with OpenAI as the image model and the decided look,
+      no mark, the guard insert), then startGeneration with the default image model (Gemini when its key is set,
+      lane menu-words-claude) and the decided look,
       storing draft_id and run_id, or the error code and sentence, on the guard row, and calling
       inboxCache.invalidate() either way. readMenuTasks adds menu_ready and menu_failed (13.1, including the
       10-minute dead start for a row with no run_id; the kinds are already classified by menu-inbox-tasks). The
@@ -1120,8 +1175,8 @@ lanes:
       file or the mark closes them); the submit tails are the same two call sites menu-no-menu-mark added.
     acceptance: >
       Suites pass and the money smoke passes; the auto-start test fails on main (no draft starts on submit); a
-      read of information_schema on dev shows menu_auto_starts and its primary key; the owner has added OpenAI
-      credit; the live walk on dev (spec 25): submit a test plan for a dev birthday event and see "Menu ready to
+      read of information_schema on dev shows menu_auto_starts and its primary key; the owner has put the
+      Anthropic and Gemini keys in Render (amended 2026-11-12: OpenAI gets no more credit); the live walk on dev (spec 25): submit a test plan for a dev birthday event and see "Menu ready to
       review" in the Inbox, open it, approve and send, and follow the rest of the walk; a Skip the Menu submit
       marks the event; a December holiday party draws the gifts low and centres the footer.
     test plan: >
@@ -1148,15 +1203,16 @@ The spec, `docs/superpowers/specs/2026-10-19-menu-designer-v2-design.md` rev 2, 
 ```
 menu-out-of-credit ─────────────────────────────┐
 menu-bar-chain ── menu-bar-rebuild-only ── menu-legal-hold-guards ── menu-no-menu-mark ──┤
+menu-error-display ── menu-words-claude ────────┤
 menu-mark-placement ── menu-fonts-twelve ───────┴── menu-brief-tab ── menu-house-card ──┐
             menu-no-menu-mark ── menu-proof-page ── menu-inbox-tasks ───────────────────┴── menu-approve-send ──┬── menu-events-dashboard
                                                                                                              └── menu-auto-start
 ```
 
-(menu-auto-start also waits on menu-house-card, menu-out-of-credit and menu-no-menu-mark, all merged by then.)
+(menu-auto-start also waits on menu-house-card, menu-out-of-credit, menu-no-menu-mark and menu-words-claude, all merged by then.)
 
 - **Can start at once, in parallel:** menu-out-of-credit, menu-bar-fingerprint, menu-mark-placement. They share no file.
-- **Serialized only to keep footprints apart:** the legal-hold guards follow the bar chain (`menuDraftRead.js`, `menuDraftSync.js`), which is one lane (status); the no-menu mark follows the guards (`menuDraftRead.js`, `menuCardState.js`); fonts follow placement (`DesignTab.js`, `menuDraftValidation.js`); the Brief tab follows those and the out-of-credit lane (`menuArtJob.test.js`); the proof page follows the no-menu mark, because both edit `schema.sql` and `scripts/sensitive-paths.txt`, which are sensitive, and a conflict on a sensitive file stops a merge (CLAUDE.md). README and ARCHITECTURE never conflict: the merge regenerates them.
+- **Serialized only to keep footprints apart:** the legal-hold guards follow the bar chain (`menuDraftRead.js`, `menuDraftSync.js`), which is one lane (status); the no-menu mark follows the guards (`menuDraftRead.js`, `menuCardState.js`); fonts follow placement (`DesignTab.js`, `menuDraftValidation.js`); the Brief tab follows those, the out-of-credit lane (`menuArtJob.test.js`) and the words lane (`menuDraftRead.js`, `menuDraftSync.js`, `useMenuDraft.js`; amended 2026-11-12, when the words lane grew to run the designer with no OpenAI key, my call); the proof page follows the no-menu mark, because both edit `schema.sql` and `scripts/sensitive-paths.txt`, which are sensitive, and a conflict on a sensitive file stops a merge (CLAUDE.md). README and ARCHITECTURE never conflict: the merge regenerates them.
 - **Serialized by dependency:** the house card needs the Brief tab's stored-inputs rule; the Inbox tasks need the proof table and the release columns; approve and send needs the Inbox reminder live before it holds any file, and the house card's moved `layoutPieceKeys` and export; the dashboard needs the held state; auto-start needs everything it hands a draft to.
 - **Every merged lane is safe to ship alone.** The proof routes land with no proof to show; the Inbox reader and all four task kinds land while no proof exists; holding print files starts only when the reminder that catches an unanswered proof is already live; the dashboard's "Menu with client" lands after that; auto-start lands last.
 
@@ -1166,7 +1222,7 @@ Revert in reverse merge order; each lane's `revert` names the later lanes that m
 
 ## Owner steps (not lanes)
 
-1. **Add OpenAI credit** in OpenAI's billing settings before menu-auto-start ships (spec 24), and before any live walk that generates a custom menu. The plain-touch house card walks need none.
+1. **Put the Anthropic and Gemini keys in Render** before menu-auto-start ships (spec 24, amended 2026-11-12: OpenAI gets no more credit), and before any live walk that generates a custom menu: a workspace-scoped `ANTHROPIC_API_KEY` for the words and a billing-enabled `GEMINI_API_KEY` for the drawings. Claude cannot read Render, so the owner confirms both there. The plain-touch house card walks need none.
 2. **Say yes to the no-menu backfill's production run** after menu-no-menu-mark ships: Claude runs the dry run first and shows the counts and the excluded legal-hold count.
 3. **The fix list** (`docs/fix-list-remaining-2026-07-02.md`) is the owner's: each lane report names the lines it closes with its sha and the test that failed on main (bar picks and the one-client `Promise.all` by menu-bar-fingerprint; `approved_by` ON DELETE by menu-approve-send; the Potions notes items 1 to 5 and 7 by their lanes).
 
@@ -1182,7 +1238,7 @@ Revert in reverse merge order; each lane's `revert` names the later lanes that m
 - Providers only through their wrappers; menu art sends no client name, contact, venue, address or event date; every menu art suite sets `process.env.NODE_ENV = 'test'` on its first line.
 - No real client or staff name, phone or email in any fixture, commit or diff; fixtures use the PII scanner's allowed shapes.
 - The legal-hold proposal is never written by any path here; every writer calls `isLegalHold`, which fails closed; the Inbox skips the legal-hold client.
-- No new environment variables.
+- No new environment variables (menu-words-claude changes `MENU_ART_TEXT_MODEL`'s default rather than adding one).
 - Review runs at the tier the review skill computes (CLAUDE.md); the spec's section 26 levels are the floor the plan expects, not a ceiling.
 
 ## Review Focus
