@@ -39,10 +39,10 @@ export default function PasskeyEnrollNudge() {
   return (
     <div className="m-enroll-nudge" role="region" aria-label="Fingerprint unlock">
       <span className="m-enroll-copy">Unlock with your fingerprint next time</span>
-      <button type="button" className="m-enroll-yes" onClick={onEnroll} disabled={busy}>
+      <button type="button" className="m-act m-act-primary m-enroll-yes" onClick={onEnroll} disabled={busy}>
         {busy ? 'Setting up...' : 'Turn on'}
       </button>
-      <button type="button" className="m-enroll-no" onClick={onDismiss} disabled={busy}>
+      <button type="button" className="m-fail-retry m-fail-quiet m-enroll-no" onClick={onDismiss} disabled={busy}>
         Not now
       </button>
     </div>

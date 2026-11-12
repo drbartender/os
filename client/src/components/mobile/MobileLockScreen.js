@@ -86,14 +86,22 @@ export default function MobileLockScreen({ gate = false }) {
   // set yet; claim it so the .m-lock tokens resolve. AdminLayout re-claims
   // it the moment the unlock succeeds and the children mount. Layout effect:
   // a plain effect runs after first paint and shows one unstyled frame.
+  // With no user yet there is no skin either (UserPrefsContext strips it), and
+  // every surface and ink token is defined per skin, so a cold-launch lock drew
+  // on the browser's white page. It claims After Hours, the default skin, whose
+  // accent is the token default, unless a skin is already set; the user's own
+  // skin applies once the unlock succeeds (design-fit pass).
   useLayoutEffect(() => {
     if (!gate) return undefined;
     const root = document.documentElement;
     const prev = root.getAttribute('data-app');
+    const prevSkin = root.getAttribute('data-skin');
     root.setAttribute('data-app', 'admin-os');
+    if (!prevSkin) root.setAttribute('data-skin', 'dark');
     return () => {
       if (prev) root.setAttribute('data-app', prev);
       else root.removeAttribute('data-app');
+      if (!prevSkin && root.getAttribute('data-skin') === 'dark') root.removeAttribute('data-skin');
     };
   }, [gate]);
 
@@ -134,11 +142,11 @@ export default function MobileLockScreen({ gate = false }) {
       <div className="m-lock-brand" aria-hidden="true">&#8478;</div>
       <h1 className="m-lock-title">Locked</h1>
       <p className="m-lock-sub">Unlock to pick up where you left off.</p>
-      <button type="button" className="m-lock-unlock" onClick={onUnlock} disabled={busy}>
+      <button type="button" className="m-act m-act-primary m-lock-unlock" onClick={onUnlock} disabled={busy}>
         {busy ? 'Unlocking...' : 'Unlock'}
       </button>
       {error ? <p className="m-lock-error" role="alert">{error}</p> : null}
-      <button type="button" className="m-lock-password" onClick={onPassword} disabled={busy}>
+      <button type="button" className="m-fail-retry m-fail-quiet m-lock-password" onClick={onPassword} disabled={busy}>
         Use password instead
       </button>
     </div>

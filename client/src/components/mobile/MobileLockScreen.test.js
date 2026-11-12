@@ -52,6 +52,30 @@ test('overlay locks on mount after a 30-minute-old background stamp', () => {
   expect(screen.getByRole('dialog', { name: /locked/i })).toBeInTheDocument();
 });
 
+// Design-fit pass: with no user there is no skin, and the per-skin tokens left
+// the cold-launch lock on a white page; the gate claims After Hours meanwhile.
+test('gate mode claims the admin scope and After Hours when no skin is set, and gives both back', () => {
+  const root = document.documentElement;
+  root.removeAttribute('data-skin');
+  root.removeAttribute('data-app');
+  const { unmount } = render(<MemoryRouter><MobileLockScreen gate /></MemoryRouter>);
+  expect(root.getAttribute('data-app')).toBe('admin-os');
+  expect(root.getAttribute('data-skin')).toBe('dark');
+  unmount();
+  expect(root.hasAttribute('data-app')).toBe(false);
+  expect(root.hasAttribute('data-skin')).toBe(false);
+});
+
+test('gate mode keeps a skin that is already set', () => {
+  const root = document.documentElement;
+  root.setAttribute('data-skin', 'light');
+  const { unmount } = render(<MemoryRouter><MobileLockScreen gate /></MemoryRouter>);
+  expect(root.getAttribute('data-skin')).toBe('light');
+  unmount();
+  expect(root.getAttribute('data-skin')).toBe('light');
+  root.removeAttribute('data-skin');
+});
+
 test('gate mode always renders locked', () => {
   render(<MemoryRouter><MobileLockScreen gate /></MemoryRouter>);
   expect(screen.getByRole('dialog', { name: /locked/i })).toBeInTheDocument();
