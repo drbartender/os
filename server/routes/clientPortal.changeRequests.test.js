@@ -53,6 +53,32 @@ test('calculate returns a preview with current/estimated/delta', async () => {
   assert.ok(res.body.price_preview);
   assert.equal(typeof res.body.price_preview.estimated_total, 'number');
 });
+test('calculate and create refuse a value the admin editor would refuse, naming it; the stored values the form re-sends pass', async () => {
+  const calc = (body) => rq('POST', `/api/client-portal/proposals/${proposalToken}/calculate`, token, body);
+  // A blank guest field posts Number('') = 0; the inputs' max and step are HTML hints only.
+  for (const [field, value] of [['guest_count', 0], ['guest_count', 6000], ['event_duration_hours', 4.25], ['num_bars', -1]]) {
+    const res = await calc({ guest_count: 100, event_duration_hours: 4, num_bars: 1, [field]: value });
+    assert.equal(res.status, 400, `${field}=${value}`);
+    assert.deepEqual(Object.keys(res.body.fieldErrors), [field], `${field}=${value}`);
+    assert.match(res.body.error, /must be/, 'the message names what to change');
+  }
+  const kept = await calc({ guest_count: 100, event_duration_hours: 4, num_bars: 1 });
+  assert.equal(kept.status, 200, 'the stored values pass');
+  const create = await rq('POST', `/api/client-portal/proposals/${proposalToken}/change-requests`, token, { guest_count: 6000, acknowledged_total: 1 });
+  assert.equal(create.status, 400);
+  assert.deepEqual(Object.keys(create.body.fieldErrors), ['guest_count']);
+  // A booking already past the bound re-sends its stored count and passes; a change past it is judged.
+  await pool.query('UPDATE proposals SET guest_count = 6000 WHERE token = $1', [proposalToken]);
+  try {
+    const stored = await calc({ guest_count: 6000, event_duration_hours: 4, num_bars: 1 });
+    assert.equal(stored.status, 200, 'the stored count is not judged');
+    const moved = await calc({ guest_count: 6100, event_duration_hours: 4, num_bars: 1 });
+    assert.equal(moved.status, 400);
+    assert.deepEqual(Object.keys(moved.body.fieldErrors), ['guest_count']);
+  } finally {
+    await pool.query('UPDATE proposals SET guest_count = 100 WHERE token = $1', [proposalToken]);
+  }
+});
 test('create stores a pending request, second create is 409', async () => {
   const preview = (await rq('POST', `/api/client-portal/proposals/${proposalToken}/calculate`, token, { guest_count: 300 })).body.price_preview;
   // wrong acknowledged_total -> consent mismatch -> 409 PRICE_CHANGED

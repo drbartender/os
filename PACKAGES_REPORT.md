@@ -1,6 +1,6 @@
 # Dr. Bartender - Pricing System Tutorial & Reference
 
-**Prepared:** April 4, 2026
+**Prepared:** April 4, 2026. **Corrected 2026-11-05** against the pricing engine (`server/utils/pricingEngine.js`) and the catalog seeds, after the pricing audit found this tutorial contradicting them on the hosted bartender rule, the staffing surcharge, the hosted minimums, three add-on prices, two billing types and one worked example (audit PRC-06). Where this tutorial and [PRICING.md](PRICING.md) differ, **PRICING.md is the pricing reference**: it is verified against the live catalog, which admins can edit, and it carries the rules this tutorial only summarizes (the on-site extension, the client-elected gratuity, the surcharge table). Every number below was recomputed with the engine on 2026-11-05.
 
 ---
 
@@ -28,10 +28,10 @@
 Every Dr. Bartender proposal is built from four pricing components that are added together:
 
 ```
-TOTAL = Base Package Cost + Bar Rental + Extra Staffing + Add-Ons
+TOTAL = Base Package Cost + Bar Rental + Over-Ratio Staffing + Add-Ons
 ```
 
-The system calculates this automatically when a proposal is created or updated. Here's how each component works.
+The system calculates this automatically when a proposal is created or updated. Here's how each component works. Admin price adjustments (discounts and surcharges) net against that sum, and a client-elected gratuity is added on top of it and never reduced by a discount (PRICING.md section 3).
 
 ---
 
@@ -110,8 +110,17 @@ Hosted packages use **per-guest pricing**. The price scales with guest count.
 ### How Hosted Pricing Works
 
 ```
-If event <= 4 hours:  guest count x 4-hour rate per guest
-If event > 4 hours:   (guest count x 4-hour rate) + (guest count x extra hours x extra hour rate)
+If event <= 4 hours:  billed guests x 4-hour rate per guest
+If event > 4 hours:   (billed guests x 4-hour rate) + (billed guests x extra hours x extra hour rate)
+```
+
+### Hosted Minimums ($550 total, 25 billed guests)
+
+Every hosted package except the classes carries a **25-guest billing minimum** and a **$550 minimum total**: fewer than 25 guests bill as 25, and a total that still comes in under $550 is raised to $550. The guest count the rates and the bartender ratio key on stays the ACTUAL count.
+
+```
+The Base Compound, 20 guests, 4 hours:    25 billed x $23 (small-event rate) = $575   (the 25-guest minimum)
+The Primary Culture, 20 guests, 4 hours:  25 billed x $17 = $425, raised to $550       (the $550 minimum)
 ```
 
 ### Small Event Pricing (Under 50 Guests)
@@ -256,31 +265,42 @@ If the client has their own bar or doesn't need one, this fee is $0.
 
 ### How Bartender Count Is Determined
 
-The system recommends **1 bartender per 100 guests**:
+The system requires **1 bartender per 100 guests**:
 
-| Guests | Recommended Bartenders |
+| Guests | Required Bartenders |
 |--------|----------------------|
 | 1-100 | 1 |
 | 101-200 | 2 |
 | 201-300 | 3 |
 
-The admin can override this number when creating a proposal.
+The admin can override this number when creating or editing a proposal, and the client can add bartenders with the **Additional Bartender** add-on. Both are priced by the same rule below.
 
 ### Extra Bartender Costs
 
-Every package includes **1 bartender**. Extra bartenders are handled differently depending on the package category:
+What a package includes differs by category; what a bartender ABOVE that costs does not:
 
-| Category | Extra Bartender Cost |
-|----------|---------------------|
-| **BYOB** | $40/hr per extra bartender (charged as a separate line item) |
-| **Hosted** | **Included in the per-guest rate** (no additional charge) |
+| Category | Included | Each bartender above that |
+|----------|----------|---------------------------|
+| **BYOB** | 1 bartender | $40/hr, as a separate line item |
+| **Hosted** | every bartender within the 1:100 ratio (the per-guest rate pays for them) | $40/hr, as a separate line item |
+| **Classes** | every instructor | $0 (the one exception) |
 
-**BYOB Example:** 200 guests, 5-hour event, 2 bartenders needed:
-- 1 extra bartender x 5 hours x $40/hr = **$200 extra staffing charge**
+A bartender above what the guest count REQUIRES also carries a **"Shared Gratuity" surcharge** per hour, because tip volume is light at a small event: **$50/hr under 50 guests, $25/hr under 75, $15/hr under 100, $0 at 100 or more**. A BYOB second bartender that the ratio itself requires (101 or more guests) is charged the $40/hr with no surcharge.
 
-**Hosted Example:** 200 guests with The Base Compound:
-- 2 bartenders needed, but cost is already factored into the $18/guest rate
-- No separate staffing charge
+**BYOB Example:** 200 guests, 5-hour event, 2 bartenders required:
+- 1 bartender above the included one x 5 hours x $40/hr = **$200**; no surcharge, the ratio required the second
+
+**BYOB Example:** 40 guests, 4-hour event, the admin sets 2 bartenders:
+- 1 bartender above the required 1 x 4 hours x ($40 + $50 surcharge) = **$360**
+
+**Hosted Example:** 200 guests with The Base Compound, 4 hours:
+- 2 bartenders required and 2 included in the per-guest rate: **$0**
+
+**Hosted Example:** 250 guests with The Base Compound, 4 hours, the admin sets 4 bartenders:
+- 3 required and included, 1 above the ratio x 4 hours x $40/hr = **$160** (no surcharge at 100+ guests)
+
+**Hosted Example:** 60 guests with The Base Compound, 4 hours, one Additional Bartender add-on:
+- 1 above the ratio x 4 hours x ($40 + $25 surcharge) = **$260**, printed as 4 hours at $65/hr
 
 ---
 
@@ -311,7 +331,7 @@ For clients who only need specific items:
 | **Bottled Water Only** | $0.50/guest | Bottled water |
 | **Signature Mixers Only** | $2.00/guest | Mixers for signature cocktails (no Foundation items) |
 | **Full Mixers Only** | $4.50/guest | Complete mixer selection (no Foundation items) |
-| **Garnish Package Only** | $50.00 flat | Lemons, limes, oranges, cherries, olives |
+| **Garnish Package Only** | $50.00 per 100 guests (rounds up) | Lemons, limes, oranges, cherries, olives: 150 guests = 2 blocks = $100.00 |
 
 ---
 
@@ -322,20 +342,24 @@ Available for **all** package types (BYOB and Hosted).
 | Add-On | Billing | Rate | Extra Hr Rate | Description |
 |--------|---------|------|---------------|-------------|
 | **Champagne Toast** | Per guest | $2.50/guest | -- | Champagne toast for all guests |
-| **Single Pre-Batched Mocktail** | Per guest | $1.50/guest | -- | One pre-batched mocktail option |
-| **Soft Drink Add-On** | Per guest | $3.00/guest | -- | Soft drinks for all guests |
+| **Pre-Batched Mocktail** | Per guest | $2.00/guest | -- | One pre-batched mocktail option |
+| **Soft Drink Add-On** | Per guest | $3.50/guest | -- | Soft drinks for all guests |
 | **Mocktail Bar** | Per guest (timed) | $7.50/guest | +$2.00/guest/hr | Full mocktail bar with signature recipes |
-| **Banquet Server** | Per hour | $75.00/hr | -- | Professional banquet server |
+| **Banquet Server** | Per hour | $75.00/hr | -- | Professional banquet server, 4-hour minimum ($300.00) |
+| **Barback** | Per hour | $75.00/hr | -- | Bar support, 4-hour minimum ($300.00), gratuity included |
+| **Additional Bartender** | Per hour | $40.00/hr + surcharge | -- | Priced by the staffing rule above |
 | **Flavor Blaster Rental** | Flat | $150.00 | -- | Flavor blaster equipment rental |
 | **Handcrafted Syrups** | Flat | $30.00 | -- | Single 750ml bottle |
 | **Handcrafted Syrups 3-Pack** | Flat | $75.00 | -- | Three 750ml bottles |
-| **Parking Fee** | Flat | $20.00 | -- | Per bartender |
+| **Parking Fee** | Per staff member | $20.00 | -- | Every staff member on site: bartenders, additional bartenders, barbacks and banquet servers (3 staff = $60.00) |
+
+The full catalog, including the beverage, glassware, craft-ingredient, specialty-spirit and class add-ons this tutorial does not list, is in PRICING.md section 2.
 
 ---
 
 ## How Add-On Billing Types Work
 
-Each add-on uses one of four billing methods:
+Each add-on uses one of six billing methods:
 
 ### Flat Rate
 A single fixed fee. Guest count and duration don't matter.
@@ -378,6 +402,28 @@ Example: Banquet Server for 5 hours = $75.00 x 5 = $375.00
 
 Some per-hour add-ons have a minimum hours requirement -- if the event is shorter than the minimum, the minimum hours are used for billing.
 
+```
+Example: Banquet Server (4-hour minimum) on a 3-hour event = $75.00 x 4 = $300.00
+```
+
+### Per Staff Member
+
+Multiplied by the number of staff on site: the bartenders, any Additional Bartender add-on, barbacks and banquet servers.
+
+```
+Cost = rate x staff count
+Example: Parking Fee with 1 bartender + 1 additional bartender + 1 banquet server = $20.00 x 3 = $60.00
+```
+
+### Per 100 Guests
+
+One block per 100 guests, rounded up.
+
+```
+Cost = rate x ceil(guest count / 100)
+Example: Garnish Package for 150 guests = $50.00 x 2 = $100.00
+```
+
 ---
 
 ## How a Proposal Total Is Calculated
@@ -398,8 +444,10 @@ else:                                     base = 4hr rate + (duration - 4) x ext
 if guest count < 50:  use small event rates
 else:                 use standard rates
 
-if duration <= 4hrs:  base = guest count x 4hr rate
-else:                 base = (guest count x 4hr rate) + (guest count x (duration - 4) x extra hour rate)
+billed guests = max(guest count, 25)
+if duration <= 4hrs:  base = billed guests x 4hr rate
+else:                 base = (billed guests x 4hr rate) + (billed guests x (duration - 4) x extra hour rate)
+base = max(base, $550)                                   (classes: no minimums)
 ```
 
 ### Step 2: Bar Rental
@@ -408,21 +456,30 @@ if no bars needed:  $0
 else:               $50 (first bar) + $100 x (additional bars)
 ```
 
-### Step 3: Extra Staffing (BYOB Only)
+### Step 3: Over-Ratio Staffing (BYOB and Hosted)
 ```
 required bartenders = ceil(guest count / 100)
-extra bartenders = max(0, actual bartenders - 1 included)
+included            = 1 (BYOB)  or  required (hosted: the per-guest rate pays for them)
+actual              = the admin's override if set, else required
+over ratio          = max(0, actual - included)
 
-BYOB:   extra staffing = extra bartenders x duration x $40/hr
-Hosted: extra staffing = $0 (included in per-guest rate)
+surcharge per hour  = $50 under 50 guests, $25 under 75, $15 under 100, else $0
+                      (only when actual > required; never on a class)
+
+staffing = over ratio x duration x ($40/hr + surcharge per hour)
+classes  = $0
 ```
+
+An Additional Bartender add-on is priced the same way, as its own line.
 
 ### Step 4: Add-Ons
 Each selected add-on is calculated using its billing type (see above), then summed.
 
 ### Step 5: Total
 ```
-TOTAL = base cost + bar rental + extra staffing + sum of all add-ons
+TOTAL = base cost + bar rental + over-ratio staffing + sum of all add-ons + syrups
+        net of admin discounts and surcharges (never below $0)
+        + the client's elected gratuity (rate x staff x hours), added on top and never discounted
 ```
 
 ---
@@ -435,7 +492,7 @@ TOTAL = base cost + bar rental + extra staffing + sum of all add-ons
 |-----------|-------------|--------|
 | The Core Reaction (5hrs) | $350 + (5-4) x $100 | $450.00 |
 | Bar Rental (1 bar) | $50 | $50.00 |
-| Extra Staffing | 1 bartender needed, 1 included = 0 extra | $0.00 |
+| Over-Ratio Staffing | 1 bartender required, 1 included = 0 over | $0.00 |
 | The Foundation (supplies) | $3.00 x 100 guests + 1hr x $0.75 x 100 | $375.00 |
 | **TOTAL** | | **$875.00** |
 
@@ -445,7 +502,7 @@ TOTAL = base cost + bar rental + extra staffing + sum of all add-ons
 |-----------|-------------|--------|
 | The Midrange Reaction (5hrs, 150 guests) | (150 x $22) + (150 x 1 x $6) | $4,200.00 |
 | Bar Rental (2 bars) | $50 + $100 | $150.00 |
-| Extra Staffing | Hosted = included | $0.00 |
+| Over-Ratio Staffing | 2 required, 2 included in the per-guest rate | $0.00 |
 | Champagne Toast | $2.50 x 150 | $375.00 |
 | **TOTAL** | | **$4,725.00** |
 
@@ -455,14 +512,14 @@ TOTAL = base cost + bar rental + extra staffing + sum of all add-ons
 |-----------|-------------|--------|
 | Formula No. 5 (4hrs, 75 guests) | 75 x $33 | $2,475.00 |
 | Bar Rental (1 bar) | $50 | $50.00 |
-| Extra Staffing | Hosted = included | $0.00 |
-| Soft Drink Add-On | $3.00 x 75 | $225.00 |
+| Over-Ratio Staffing | 1 required, 1 included in the per-guest rate | $0.00 |
+| Soft Drink Add-On | $3.50 x 75 | $262.50 |
 | Flavor Blaster Rental | Flat | $150.00 |
-| **TOTAL** | | **$2,900.00** |
+| **TOTAL** | | **$2,937.50** |
 
 ### Example 4: Small Intimate Dinner (30 guests, 3 hours)
 
-Note: Under 50 guests triggers the small event rates.
+Note: Under 50 guests triggers the small event rates; 30 guests is above the 25-guest billing minimum and $690 above the $550 minimum total, so neither minimum binds.
 
 | Line Item | Calculation | Amount |
 |-----------|-------------|--------|

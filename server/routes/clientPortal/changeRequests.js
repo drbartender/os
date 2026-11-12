@@ -10,6 +10,7 @@ const {
 } = require('../../utils/changeRequests');
 const { requireUuidToken } = require('../../utils/tokens');
 const { checkCurfewForStart, curfewMessage } = require('../../utils/serviceCurfew');
+const { assertPricingInputs } = require('../proposals/pricingInputs');
 
 const router = express.Router();
 
@@ -60,6 +61,12 @@ router.post('/proposals/:token/calculate', requireUuidToken('token', 'Proposal n
   assertEditable(proposal);
   assertAddonPayloadBounded(req.body);
   const proposed = filterToAllowlist(req.body);
+  // The admin's pricing-input gate (proposals/pricingInputs.js), judged
+  // against the booking's own row: the form re-sends every stored value, and
+  // the editor PATCH that applies an approved request refuses a changed value
+  // out of these bounds, so a client is never shown, or asked to acknowledge,
+  // an estimate for one (a blank guest field posts 0; 4.25 hours; 1200 guests).
+  assertPricingInputs(proposed, { stored: proposal });
   const { price_preview } = await buildPreview(proposal, proposed);
   res.json({ price_preview });
 }));
@@ -77,6 +84,8 @@ router.post('/proposals/:token/change-requests', requireUuidToken('token', 'Prop
 
     const proposed = filterToAllowlist(req.body);
     if (Object.keys(proposed).length === 0) throw new ValidationError({ _: 'No changes requested.' }, 'Pick at least one change.');
+    // The same pricing-input gate as the preview above, under the row lock.
+    assertPricingInputs(proposed, { stored: proposal });
 
     // Lenient venue revalidation (spec 3.3), matching the admin PATCH
     // (requireStreet:false, requireCityState:false), so a client can correct one

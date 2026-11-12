@@ -4,6 +4,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal, computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
+const { assertPricingInputs } = require('./pricingInputs');
 const { loadSettledExtensions, contractHoursFrom } = require('../../utils/contractDuration');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -48,7 +49,25 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
   // 1); a preview never pages Sentry, the PATCH does that when it saves.
   const pid = (typeof proposal_id === 'number' || /^\d+$/.test(String(proposal_id ?? '')))
     ? Number(proposal_id) : NaN;
-  const pricedHours = Number.isInteger(pid) && pid > 0 && pid <= 2147483647
+  const existing = Number.isInteger(pid) && pid > 0 && pid <= 2147483647;
+  // The same input gate the create and the PATCH run (pricingInputs.js), so the
+  // preview refuses what the save would refuse. For an existing booking it
+  // judges against the stored row, as the PATCH does, so a booking already
+  // past the bounds (a wizard client typed 1200 guests) still previews the
+  // values the editor re-sends unchanged. This route reads the duration as
+  // duration_hours and names a refusal event_duration_hours, the field the
+  // editor renders it on.
+  const stored = existing
+    ? (await pool.query(
+        'SELECT guest_count, num_bars, num_bartenders, event_duration_hours FROM proposals WHERE id = $1',
+        [pid]
+      )).rows[0] || null
+    : null;
+  assertPricingInputs(
+    { guest_count, num_bars, num_bartenders, duration_hours },
+    { durationField: 'duration_hours', durationErrorField: 'event_duration_hours', stored }
+  );
+  const pricedHours = existing
     ? contractHoursFrom(duration_hours || 4, await loadSettledExtensions(pool, pid)).hours
     : (duration_hours || 4);
 

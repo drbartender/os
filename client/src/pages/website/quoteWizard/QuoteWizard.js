@@ -457,9 +457,19 @@ export default function QuoteWizard() {
 
   const getStepRules = () => {
     switch (currentStepKey) {
+      // The guest count and duration mirror the server's input gate
+      // (server/routes/proposals/pricingInputs.js: a whole number of guests up
+      // to MAX_GUESTS 5000, a duration on the tenths grid), so a value the
+      // submit would refuse is caught here, where it is typed, not at submit.
       case 'event': return [
-        { field: 'guest_count', label: 'Guest Count', test: v => Number(v) >= (form.alcohol_provider === 'hosted' ? 25 : 1) },
-        { field: 'event_duration_hours', label: 'Duration', test: v => Number(v) >= 1 },
+        { field: 'guest_count', label: 'Guest Count (a whole number up to 5000)', test: v => {
+          const n = Number(v);
+          return Number.isInteger(n) && n >= (form.alcohol_provider === 'hosted' ? 25 : 1) && n <= 5000;
+        } },
+        { field: 'event_duration_hours', label: 'Duration', test: v => {
+          const n = Number(v);
+          return n >= 1 && Math.abs(n * 10 - Math.round(n * 10)) < 1e-6;
+        } },
         { field: 'event_date', label: 'Event Date' },
         { field: 'event_city', label: 'City' },
         { field: 'event_state', label: 'State' },

@@ -14,6 +14,7 @@ const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { checkCurfewForStart, curfewMessage } = require('../../utils/serviceCurfew');
+const { assertPricingInputs } = require('./pricingInputs');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { findOrCreateClientDetailed } = require('../../utils/clientDedup');
@@ -272,6 +273,11 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   if (!package_id) fieldErrors.package_id = 'Package is required';
   if (!guest_count || guest_count < 1) fieldErrors.guest_count = 'Guest count is required';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+  // The admin routes' pricing-input gate (pricingInputs.js), so a wizard
+  // submit never stores a count, bar count or duration the editor PATCH would
+  // refuse to apply (the wizard's max="1000" is an HTML hint its scripted
+  // submit never enforced). Its message names the field, for the wizard's banner.
+  assertPricingInputs({ guest_count, num_bars, event_duration_hours });
 
   const venueInput = { venue_name, venue_street, venue_city, venue_state, venue_zip };
   const venueErrors = validateVenue(venueInput, { requireCityState: true });

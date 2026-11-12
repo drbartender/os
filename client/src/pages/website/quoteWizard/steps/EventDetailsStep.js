@@ -35,7 +35,7 @@ export default function EventDetailsStep({
       <div className="wz-grid">
         <div className={`form-group${fieldClass('guest_count')}`}>
           <label htmlFor="wz-guest_count" className="form-label">Guest Count *</label>
-          <input id="wz-guest_count" className={`form-input${inputClass('guest_count')}`} type="number" min={form.alcohol_provider === 'hosted' ? 25 : 1} max="1000"
+          <input id="wz-guest_count" className={`form-input${inputClass('guest_count')}`} type="number" min={form.alcohol_provider === 'hosted' ? 25 : 1} max="5000"
             value={form.guest_count} onChange={e => update('guest_count', e.target.value)}
             aria-invalid={!!fieldErrors?.guest_count} />
           <FieldError error={fieldErrors?.guest_count} />

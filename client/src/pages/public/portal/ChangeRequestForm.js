@@ -51,8 +51,13 @@ export default function ChangeRequestForm({ proposal, token, onSubmitted, onCanc
       setPreview(data.price_preview); setPreviewError(false);
     } catch (e) {
       if (mine !== seq.current) return;
-      setPreview(null); setPreviewError(true);
-      Sentry.captureException(e, { tags: { area: 'client-portal', surface: 'change-request-calculate' } });
+      // A 400 is the server refusing a value the client typed (a guest count
+      // past 5000, a duration off the tenths grid, a blank field): show its
+      // message, which names the field, and keep it out of Sentry, since it is
+      // an answer, not a fault.
+      const refused = e && e.status === 400 && e.message;
+      setPreview(null); setPreviewError(refused ? e.message : true);
+      if (!refused) Sentry.captureException(e, { tags: { area: 'client-portal', surface: 'change-request-calculate' } });
     }
   }, [token, proposed]);
 
@@ -96,7 +101,7 @@ export default function ChangeRequestForm({ proposal, token, onSubmitted, onCanc
         </select>
       </label>
       <label className="form-label">Guest count
-        <input type="number" min="1" max="1000" value={form.guest_count} onChange={e => set('guest_count', e.target.value)} />
+        <input type="number" min="1" max="5000" value={form.guest_count} onChange={e => set('guest_count', e.target.value)} />
       </label>
       <label className="form-label">Duration (hours)
         <input type="number" min="1" max="12" step="0.5" value={form.event_duration_hours} onChange={e => set('event_duration_hours', e.target.value)} />
@@ -112,7 +117,7 @@ export default function ChangeRequestForm({ proposal, token, onSubmitted, onCanc
       </label>
 
       <div className="cp-change-preview">
-        {previewError && <div className="client-alert client-alert-error">We could not price this change. Adjust and try again.</div>}
+        {previewError && <div className="client-alert client-alert-error" role="alert">{typeof previewError === 'string' ? previewError : 'We could not price this change. Adjust and try again.'}</div>}
         {preview && !previewError && (
           <>
             <div className="cp-leader"><span>Current total</span><span>{fmt(preview.current_total)}</span></div>

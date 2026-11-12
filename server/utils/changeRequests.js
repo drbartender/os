@@ -56,6 +56,36 @@ async function currentAddonIds(proposalId, db) {
   return r.rows.map(x => x.addon_id);
 }
 
+/** num_bartenders holds persisted DERIVATIONS as well as true overrides (crud
+ *  writes staffing.actual back into the column after every admin edit).
+ *  Carrying a derivation onto a package with a different ratio, or a STALE
+ *  derivation from an edited event, prices phantom over-ratio bartenders that
+ *  quote and commit AGREE on, so the acknowledged-total gate cannot catch it.
+ *  Strip the column ONLY when the stored snapshot proves it is a derivation
+ *  (staffing.actual === staffing.required === the column). Anything unprovable
+ *  keeps carrying: that is the pre-existing behavior, and the safe direction
+ *  for a hand-set crew.
+ *
+ *  The ONE rule for every priceProposedState caller (the options quote, the
+ *  switch commit and the change-request preview; audit PRC-02): a preview
+ *  that re-derived the crew from the ratio dropped an admin's over-ratio
+ *  bartender, its surcharge and the gratuity on the crew, so the client
+ *  acknowledged an estimate below the price the approval would keep. Lives
+ *  here, not in optionsPricingShared.js, because that module sits under
+ *  routes/ and this util must not require a route module; it re-exports it. */
+function overrideOnlyBartenders(proposal) {
+  const nb = proposal.num_bartenders;
+  if (nb === null || nb === undefined) return null;
+  const snap = proposal.pricing_snapshot;
+  const st = snap && typeof snap === 'object' ? snap.staffing : null;
+  if (st && st.actual !== undefined && st.required !== undefined
+      && Number(st.actual) === Number(st.required)
+      && Number(nb) === Number(st.actual)) {
+    return null;
+  }
+  return nb;
+}
+
 // Price a full proposed end-state. Preserves admin-locked fields (adjustments,
 // total_price_override, syrups) from the current proposal. Throws ValidationError
 // on a rule violation. Returns the pricing snapshot. db is a pool or in-tx client.
@@ -103,7 +133,11 @@ async function priceProposedState(proposal, proposed, db = pool, catalog = null,
       Number(proposed.event_duration_hours ?? proposal.event_duration_hours), settledRows || []
     ).hours,
     numBars: Number(proposed.num_bars ?? proposal.num_bars ?? 1),
-    numBartenders: proposed.num_bartenders ?? null,
+    // Absent from the request (the portal form never sends it): the stored
+    // crew, kept only when it is a real override (overrideOnlyBartenders), so
+    // an admin's over-ratio bartender, its surcharge and the gratuity on the
+    // crew stay in the estimate the client acknowledges (audit PRC-02).
+    numBartenders: proposed.num_bartenders ?? overrideOnlyBartenders(proposal),
     addons,
     syrupSelections: readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.syrups?.selections || [],
     adjustments: proposal.adjustments || [],
@@ -207,7 +241,7 @@ async function cancelPendingChangeRequestsForProposal(proposalId, db = pool) {
 
 module.exports = {
   BOOKED, EDITABLE_FIELDS, SIMPLE_FIELDS, safeAddonQty,
-  computeEditWindow, filterToAllowlist,
+  computeEditWindow, filterToAllowlist, overrideOnlyBartenders,
   priceProposedState, buildPreview, buildDiff,
   cancelPendingChangeRequestsForProposal,
 };

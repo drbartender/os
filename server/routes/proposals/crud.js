@@ -23,6 +23,7 @@ const { findOrCreateClient } = require('../../utils/clientDedup');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
 const { resolvePatchHours } = require('./patchContractHours');
+const { assertPricingInputs } = require('./pricingInputs');
 const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
@@ -75,6 +76,10 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
   }
+  // The pricing inputs' shape (pricingInputs.js), before any connection: a
+  // present guest count, bar count, bartender count or duration must be a
+  // whole number in bounds (the duration on the tenths grid), else 400.
+  assertPricingInputs({ guest_count, num_bars, num_bartenders, event_duration_hours });
 
   // Venue is optional at create-time (admin may add the address later via edit).
   // Validate only the shape — match PATCH's requireStreet:false, requireCityState:false.
@@ -375,6 +380,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     assertLinesFresh(req.body, old, old.adjustments_token);
     assertRefundMarkersBound(adjustments, old);
     assertOverrideUnchanged(req.body, old);
+    // The pricing inputs' shape (pricingInputs.js), judged against the locked
+    // row: a CHANGED guest count, bar or bartender count or duration must be a
+    // whole number in bounds (the duration on the tenths grid); a value the
+    // editor re-sends unchanged passes, so a booking saved before the bounds
+    // can still take a date or venue change. Before any write.
+    assertPricingInputs({ guest_count, num_bars, num_bartenders, event_duration_hours }, { stored: old });
 
     // Hoisted so the post-COMMIT reschedule-email block (outside this inner
     // try) can read whether the in-tx re-anchor decided an email is warranted.

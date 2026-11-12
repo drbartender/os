@@ -339,3 +339,21 @@ test('a submit matching a phone-only client by name and phone attaches to that r
   assert.match(sent.admin[0].emailText, /email someone@example\.com it was submitted with was not saved/, 'the admin sees the address to add once confirmed');
   assert.ok(!/not delivered/.test(sent.admin[0].subject));
 });
+
+test('a wizard submit with a guest count past 5000 is refused naming guest_count before any database work', async () => {
+  reset();
+  const res = await submit({ ...body('newcomer@example.com', '5555550900'), guest_count: 6000 });
+  assert.equal(res.status, 400, res.raw);
+  assert.deepEqual(Object.keys(res.body.fieldErrors), ['guest_count']);
+  assert.equal(statements.length, 0, 'no statement ran');
+  assert.ok(!timeline.includes('held:BEGIN'), 'no transaction was opened');
+});
+
+test('a real large event (1200 guests, past the forms\' 1000 input hint) still submits its quote', async () => {
+  reset();
+  const res = await submit({ ...body('newcomer@example.com', '5555550900'), guest_count: 1200 });
+  assert.equal(res.status, 201, res.raw);
+  assert.equal(res.body.token, TOKEN);
+  const insert = statements.find((s) => s.text.startsWith('INSERT INTO proposals'));
+  assert.ok(insert, 'the proposal was stored');
+});
