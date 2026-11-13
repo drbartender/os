@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../../utils/api';
 import useMenuLayers, { CARD_SIZE, FULL_SIZE } from './useMenuLayers';
+import { defaultImageModel } from './menuCardState';
 
 // The event page's menu draft hook (spec 2026-10-01 sections 4, 10.1 and 10.2;
 // decision 11). EventDetailPage calls it once and hands it to the card (and the
@@ -27,8 +28,11 @@ import useMenuLayers, { CARD_SIZE, FULL_SIZE } from './useMenuLayers';
 //   can get past); another failure keeps them (state 'failed', retrySave()).
 //   flush() resolves once saved, rejects when it fails.
 // - The brief inputs and a held reference file last the page visit; imageModel
-//   opens at 'openai' on every mount, never persisted, and rides each image
-//   request unless the caller passes one (the card always passes 'openai').
+//   opens at the read model's configured.default_image_model (Gemini when its
+//   key is set, else OpenAI; 'openai' until the first GET lands; spec
+//   2026-10-19 section 16) on every mount and event, never persisted, until
+//   setImageModel picks one, and rides each image request unless the caller
+//   passes one (the card passes that default, MenuDesignerCard).
 // - A proposalId change sends pending edits to the OLD id, then resets it all.
 
 export const POLL_MS = 2000;
@@ -86,7 +90,8 @@ export default function useMenuDraft(proposalId) {
   const [save, setSave] = useState(IDLE);
   const [brief, setBriefState] = useState(DEFAULT_BRIEF);
   const [referenceFile, setReferenceFile] = useState(null);
-  const [imageModel, setImageModel] = useState('openai');
+  // The owner's pick this visit; null reads the server's default.
+  const [chosenModel, setImageModel] = useState(null);
 
   const live = useRef(null);
   const fetchGen = useRef(0);
@@ -100,6 +105,7 @@ export default function useMenuDraft(proposalId) {
   const activity = useRef([]);
   const payloadFor = useRef(null);
   const latest = useRef({});
+  const imageModel = chosenModel || defaultImageModel(payload && payload.configured);
   latest.current = { payload, overlay, brief, referenceFile, imageModel };
 
   const fetchDraft = useCallback(async () => {
@@ -210,7 +216,7 @@ export default function useMenuDraft(proposalId) {
     payloadFor.current = null;
     setPayload(null); setLoadError(null); setReconnecting(false);
     setOverlay(NO_EDITS); setSave(IDLE);
-    setBriefState(DEFAULT_BRIEF); setReferenceFile(null); setImageModel('openai');
+    setBriefState(DEFAULT_BRIEF); setReferenceFile(null); setImageModel(null);
     fetchDraft();
     return () => {
       live.current = null;

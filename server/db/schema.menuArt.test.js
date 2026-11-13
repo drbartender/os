@@ -72,15 +72,21 @@ test('every statement in the block is idempotent', () => {
     assert.ok(guard !== -1 && guard < ddl.indexOf(stmt), `${name} is created only when absent`);
     assert.doesNotMatch(ddl, new RegExp(`DROP TRIGGER[^;]*${name}`));
   }
-  // The one ALTER is an ADD CONSTRAINT guarded by a pg_constraint lookup of the
-  // same name; nothing is ever dropped.
+  // Each ALTER ... ADD CONSTRAINT is guarded by a pg_constraint lookup of the
+  // same name. The only DROP is the provider CHECK's own, inside its guard,
+  // which runs it once on a database created before 'anthropic' (lane
+  // menu-words-claude); nothing else is ever dropped.
   const alters = [...ddl.matchAll(/ALTER TABLE (\w+) ADD CONSTRAINT (\w+)/g)];
-  assert.equal(alters.length, 1);
+  assert.deepEqual(alters.map(([, table, name]) => `${table}.${name}`),
+    ['menu_art_calls.menu_art_calls_provider_check', 'menu_drafts.menu_drafts_json_shape_check']);
   for (const [stmt, table, name] of alters) {
     const guard = ddl.indexOf(`WHERE conname = '${name}'\n      AND conrelid = '${table}'::regclass`);
     assert.ok(guard !== -1 && guard < ddl.indexOf(stmt), `${name} is added only when absent`);
   }
-  assert.doesNotMatch(ddl, /\bDROP\b/);
+  const drops = [...ddl.matchAll(/\bDROP\b[^;]*/g)].map((m) => m[0]);
+  assert.deepEqual(drops, ['DROP CONSTRAINT IF EXISTS menu_art_calls_provider_check']);
+  assert.ok(ddl.indexOf("AND pg_get_constraintdef(oid) LIKE '%anthropic%'") < ddl.indexOf(drops[0]),
+    'the drop runs only while the live CHECK lacks anthropic');
   assert.ok(!menuArtDdl().includes(String.fromCharCode(0x2014)), 'no em dash in the block');
 });
 
@@ -121,7 +127,7 @@ const COLUMNS = {
     piece_key: 'TEXT', run_id: 'UUID',
     kind: "TEXT NOT NULL CHECK (kind IN ('image','text'))",
     status: "TEXT NOT NULL CHECK (status IN ('reserved','sent','ok','failed','released'))",
-    provider: "TEXT NOT NULL CHECK (provider IN ('openai','gemini'))",
+    provider: "TEXT NOT NULL CHECK (provider IN ('openai','gemini','anthropic'))",
     model: 'TEXT', size: 'TEXT', error: 'TEXT', provider_request_id: 'TEXT',
     created_at: 'TIMESTAMPTZ NOT NULL DEFAULT NOW()',
     updated_at: 'TIMESTAMPTZ',
@@ -167,6 +173,35 @@ test('menu_art_calls: every column, the kind/status/provider CHECKs, no provider
 test('menu_drafts: the three JSONB columns must hold objects', () => {
   const ddl = menuArtDdl();
   assert.match(ddl, /ADD CONSTRAINT menu_drafts_json_shape_check CHECK \(\n\s+jsonb_typeof\(inputs\) = 'object'\n\s+AND jsonb_typeof\(content\) = 'object'\n\s+AND jsonb_typeof\(plan_fingerprint\) = 'object'\n\s+\);/);
+});
+
+// Spec 2026-10-19 section 16 (lane menu-words-claude): the words step runs on
+// Claude and its text row records provider 'anthropic'. A database created
+// before this change holds the narrow inline CHECK under the same name, so the
+// block widens it once, in place, to the inline CHECK's own list.
+const PROVIDER_WIDEN = `DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'menu_art_calls_provider_check'
+      AND conrelid = 'menu_art_calls'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%anthropic%'
+  ) THEN
+    ALTER TABLE menu_art_calls DROP CONSTRAINT IF EXISTS menu_art_calls_provider_check;
+    ALTER TABLE menu_art_calls ADD CONSTRAINT menu_art_calls_provider_check
+      CHECK (provider IN ('openai','gemini','anthropic'));
+  END IF;
+END $$;`;
+
+test('menu_art_calls.provider takes anthropic: the inline CHECK lists it and one guarded statement widens an older one', () => {
+  const ddl = menuArtDdl();
+  const at = ddl.indexOf(PROVIDER_WIDEN);
+  assert.ok(at !== -1, 'the widening is in the menu art block exactly as written here');
+  assert.equal(ddl.indexOf(PROVIDER_WIDEN, at + 1), -1, 'once');
+  assert.ok(ddl.indexOf('CREATE TABLE IF NOT EXISTS menu_art_calls (') < at, 'after the table it alters');
+  const { columns } = parseBody(tableBody(ddl, 'menu_art_calls'));
+  assert.ok(PROVIDER_WIDEN.includes(columns.provider.replace(/^TEXT NOT NULL /, '')), 'the same list as the inline CHECK');
+  const pieces = parseBody(tableBody(ddl, 'menu_draft_pieces')).columns;
+  assert.equal(pieces.provider, "TEXT NOT NULL CHECK (provider IN ('openai','gemini'))", 'the drawings never run on Anthropic');
 });
 
 // Spec 2026-10-19 section 15 (lane menu-no-menu-mark): who set the no-menu
@@ -259,7 +294,9 @@ dbTest('live: UNIQUE, foreign keys and CHECK value lists, read back from the cat
   assert.ok(Object.values(calls).includes('FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE SET NULL'));
   assert.deepEqual(checkValues(calls.menu_art_calls_kind_check), ['image', 'text']);
   assert.deepEqual(checkValues(calls.menu_art_calls_status_check), ['reserved', 'sent', 'ok', 'failed', 'released']);
-  assert.deepEqual(checkValues(calls.menu_art_calls_provider_check), ['openai', 'gemini']);
+  assert.deepEqual(checkValues(calls.menu_art_calls_provider_check), ['openai', 'gemini', 'anthropic']);
+  const providerChecks = Object.entries(calls).filter(([, def]) => /^CHECK/.test(def) && /\bprovider\b/.test(def));
+  assert.deepEqual(providerChecks.map(([name]) => name), ['menu_art_calls_provider_check'], 'one provider CHECK on the ledger');
 });
 
 dbTest('live: the two ledger indexes and the two updated_at triggers exist', async () => {
@@ -330,6 +367,7 @@ dbTest('live: the constraints enforce, the defaults fill and the trigger fires (
     await refuses(pieceSql, [draft.id, 'p1', run, 'queued', null, 'openai', 'm'], '23514', 'menu_draft_pieces_status_check');
     await refuses(pieceSql, [draft.id, 'p2', run, 'pending', 'grey', 'openai', 'm'], '23514', 'menu_draft_pieces_tone_check');
     await refuses(pieceSql, [draft.id, 'p3', run, 'pending', null, 'midjourney', 'm'], '23514', 'menu_draft_pieces_provider_check');
+    await refuses(pieceSql, [draft.id, 'p6', run, 'pending', null, 'anthropic', 'm'], '23514', 'menu_draft_pieces_provider_check');
     await refuses(pieceSql, [draft.id, 'p4', run, 'pending', null, null, 'm'], '23502', 'provider');
     await refuses(pieceSql, [draft.id, 'p5', run, 'pending', null, 'openai', null], '23502', 'model');
 
@@ -348,9 +386,35 @@ dbTest('live: the constraints enforce, the defaults fill and the trigger fires (
     assert.ok(moved.updated_at instanceof Date, 'the ledger trigger stamps updated_at on a status change');
     await refuses(callSql, ['video', 'reserved', 'openai'], '23514', 'menu_art_calls_kind_check');
     await refuses(callSql, ['text', 'pending', 'openai'], '23514', 'menu_art_calls_status_check');
-    await refuses(callSql, ['image', 'reserved', 'anthropic'], '23514', 'menu_art_calls_provider_check');
+    const { rows: [claude] } = await client.query(callSql, ['text', 'reserved', 'anthropic']);
+    assert.ok(claude.id, 'the ledger takes a text row on anthropic');
+    await refuses(callSql, ['text', 'reserved', 'midjourney'], '23514', 'menu_art_calls_provider_check');
     // Leaving provider out must fail: there is no default to fall back on.
     await refuses('INSERT INTO menu_art_calls (kind, status) VALUES ($1, $2)', ['image', 'reserved'], '23502', 'provider');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+});
+
+// The path dev and production take: the narrow CHECK an older boot left, then
+// the widening, twice, inside one transaction that is rolled back.
+dbTest('live: a ledger holding the narrow provider CHECK is widened once, in place, and a replay changes nothing', async () => {
+  const client = await pool.connect();
+  const providerDefs = async () => (await client.query(
+    `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+      WHERE conrelid = 'menu_art_calls'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%provider%'`)).rows;
+  try {
+    await client.query('BEGIN');
+    await client.query('ALTER TABLE menu_art_calls DROP CONSTRAINT IF EXISTS menu_art_calls_provider_check');
+    await client.query("ALTER TABLE menu_art_calls ADD CONSTRAINT menu_art_calls_provider_check CHECK (provider IN ('openai','gemini'))");
+    assert.deepEqual(checkValues((await providerDefs())[0].def), ['openai', 'gemini'], 'the old shape');
+    await client.query(PROVIDER_WIDEN);
+    const once = await providerDefs();
+    assert.deepEqual(once.map((r) => [r.conname, checkValues(r.def)]),
+      [['menu_art_calls_provider_check', ['openai', 'gemini', 'anthropic']]]);
+    await client.query(PROVIDER_WIDEN);
+    assert.deepEqual(await providerDefs(), once, 'a replay leaves it as it is');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();

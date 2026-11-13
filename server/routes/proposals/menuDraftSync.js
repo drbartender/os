@@ -15,11 +15,12 @@
 // new client image still reads after it).
 //
 // The keys are checked up front, before anything is reserved or spent,
-// whenever the sync adds a drink: the OpenAI key for a client-typed one (its
-// words call), and the image model's key (Gemini's for Gemini art) for any
+// whenever the sync adds a drink: the words provider's key for a client-typed
+// one (its words call, on the current words model's provider; spec 2026-10-19
+// section 16), and the image model's own key (OpenAI's or Gemini's) for any
 // added drink, since one the first read leaves without art can still draw it
 // when a slot frees by the main transaction, which checks again. A bar-only or
-// drop-only update calls nothing, so it works without either key (503
+// drop-only update calls nothing, so it works with no key at all (503
 // MENU_ART_NOT_CONFIGURED or MENU_ART_GEMINI_NOT_CONFIGURED otherwise).
 //
 // Order, so nothing paid or written outlives a refusal:
@@ -88,7 +89,7 @@ const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
   isObject, capList, parseId, parseVersion, requireProposal, noDraft, draftChanged, noPlan, requireWords,
-  upsertPendingPieces, requireOpenAI, requireImageModel, imageModelId, inLockedTx, queue,
+  upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inLockedTx, queue,
 } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -235,11 +236,10 @@ function catalogEntry(d) {
   };
 }
 
-// Only a sync that will call a provider needs one set up ("set up" means the
-// OpenAI key, which the words step always needs); art needs its model's too.
+// Only a sync that will call a provider needs its key: the words provider's
+// for a words call, the image model's own for art.
 function requireProviders(provider, { words, art }) {
-  if (!words && !art) return;
-  requireOpenAI();
+  if (words) requireWordsProvider();
   if (art) requireImageModel(provider);
 }
 

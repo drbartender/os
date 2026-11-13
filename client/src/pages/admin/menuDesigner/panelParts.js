@@ -2,6 +2,7 @@
 // generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 
 import React, { useLayoutEffect } from 'react';
+import { imageReady } from './menuCardState';
 
 // Small parts the editor's right panel shares (spec 2026-10-01 section 11.1,
 // Right panel): the section label, the .seg picker and the inert switch.
@@ -53,10 +54,13 @@ export function useInert(ref, off) {
   }, [ref, off]);
 }
 
-// Why no image can be drawn now ('' when one can): no key, or no image left
-// under the cap (table B's Drawing is off and Image limit).
-export function rerollWhy(configured, cap) {
-  if (!(isObj(configured) && configured.openai)) return "Drawing is off. The AI key isn't on the server.";
+// Why no image can be drawn now ('' when one can): no key for the image model
+// (imageModel, else the server's default_image_model; spec 2026-10-19 section
+// 16), or no image left under the cap (table B's Drawing is off and Image
+// limit). The editor keeps its toggle on a model whose key is set
+// (PanelFooter), so the default's key answers for it.
+export function rerollWhy(configured, cap, imageModel) {
+  if (!imageReady(configured, imageModel)) return "Drawing is off. The AI key isn't on the server.";
   if (isObj(cap) && Number(cap.remaining) <= 0) return 'Daily image limit reached.';
   return '';
 }

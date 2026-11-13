@@ -30,6 +30,13 @@
 // other change; the Plan changed one stays the full Update draft, and while a
 // piece paints it waits on a draft holding such a line, since the notice that
 // names the rebuild is hidden then (lane menu-bar-rebuild-only).
+// The set-up states read the read model's configured block by provider (spec
+// 2026-10-19 section 16, lane menu-words-claude): Not set up and the empty
+// card's not-set-up read configured.words (wordsReady), Drawing is off and
+// Generate's gate the flag of the image model in use (imageReady: local's
+// imageModel, else the server's default_image_model), never configured.openai
+// on its own. A payload without words comes from a server before that change,
+// whose words always went to OpenAI, so it reads the OpenAI key for them.
 
 import { SENTENCES, BRIEF_FIX_TEXTS, isFixedSentence } from './menuArtSentences';
 
@@ -65,6 +72,24 @@ const UNCHECKED_STATES = new Set(['plan-changed', 'notes-edited', 'removed', 'ed
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v.filter((x) => x !== null && x !== undefined) : []);
+
+const IMAGE_MODELS = Object.keys(MODEL_NAME);
+// The image model the server computed for the card and a new editor
+// (configured.default_image_model), or 'openai' when it sent none.
+export function defaultImageModel(configured) {
+  const m = isObj(configured) ? configured.default_image_model : null;
+  return IMAGE_MODELS.includes(m) ? m : 'openai';
+}
+// The words provider's key is on the server.
+export function wordsReady(configured) {
+  if (!isObj(configured)) return false;
+  return typeof configured.words === 'boolean' ? configured.words : configured.openai === true;
+}
+// The key of this image model (the default when none is named) is on the server.
+export function imageReady(configured, model) {
+  const m = IMAGE_MODELS.includes(model) ? model : defaultImageModel(configured);
+  return isObj(configured) && configured[m] === true;
+}
 // new Date(null) is the epoch, not "no date".
 const asDate = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -268,7 +293,7 @@ function pickState(f, L) {
     const ago = savedAgo(L.savedAt || f.draft.updated_at, L.now);
     return S('draft', 'warn', 'Draft', 'Ready to review.', L.saving ? 'Saving...' : ago ? `Saved ${ago}` : 'Saved', ed('view', 'View'));
   }
-  if (!f.configured.openai) return S('not-set-up', 'neutral', 'Not set up', "Menu art isn't set up.", "The AI key isn't on the server yet.");
+  if (!wordsReady(f.configured)) return S('not-set-up', 'neutral', 'Not set up', "Menu art isn't set up.", "The AI key isn't on the server yet.");
   if (!f.plan) return S('no-plan', 'neutral', 'No plan', 'No drink plan yet.', 'Menus are built from the drink plan.');
   if (!(Number(f.plan.drink_count) > 0)) return S('no-drinks', 'neutral', 'No drinks', 'Nothing to put on a menu yet.', 'Drafts are built from the drink plan.');
   const style = f.plan.menu_style;
@@ -284,9 +309,11 @@ const STAFF_SUB = new Set(['save-failed', 'generating', 'words-failed', 'drawing
 function generateGate(f, L) {
   const drinks = f.plan ? Number(f.plan.drink_count) || 0 : 0;
   const need = 1 + Math.min(ART_MAX, drinks);
-  const model = MODEL_NAME[L.imageModel] || MODEL_NAME.openai;
+  const imageModel = IMAGE_MODELS.includes(L.imageModel) ? L.imageModel : defaultImageModel(f.configured);
+  const model = MODEL_NAME[imageModel];
   const remaining = f.cap && Number.isFinite(f.cap.remaining) ? f.cap.remaining : null;
-  const blocked = !f.configured.openai || drinks === 0 || !!(f.draft && f.draft.read_only);
+  const ready = wordsReady(f.configured) && imageReady(f.configured, imageModel);
+  const blocked = !ready || drinks === 0 || !!(f.draft && f.draft.read_only);
   let disabled = blocked || f.drafting || !!L.approving;
   let hint;
   if (blocked) hint = 'Generate needs an AI key and drinks on the plan.';
@@ -345,7 +372,7 @@ function bannerList(f, L, tooLong) {
     B('image-limit', 'warn', 'Daily image limit reached.',
       `${f.cap.used} of ${f.cap.limit} images used in the last 24 hours. Re-rolls resume ${resumeTime(f.cap.resets_at, L.now)}. Text, type and color still work.`);
   }
-  if (f.draft && !f.configured.openai) B('drawing-off', 'neutral', 'Drawing is off.', "The AI key isn't on the server. Text, type, color and Approve still work.");
+  if (f.draft && !imageReady(f.configured, L.imageModel)) B('drawing-off', 'neutral', 'Drawing is off.', "The AI key isn't on the server. Text, type, color and Approve still work.");
   if (f.added.length || f.dropped.length || f.barChanged) {
     const drinks = [...f.added.map((d) => `${d.name} was added.`), ...f.dropped.map((d) => `${d.name} was dropped.`)];
     // Update draft rebuilds an unchecked line too; while a piece paints the
@@ -393,7 +420,7 @@ function emptyCard(f) {
       btn('retry-words', 'Generate again', 'primary'));
   }
   if (f.print.state === 'not_required') return E('no-menu', 'No menu for this event', 'Undo to draft one.', btn('undo', 'Undo'));
-  if (!f.configured.openai) return E('not-set-up', "Menu art isn't set up", "The AI key isn't on the server yet.");
+  if (!wordsReady(f.configured)) return E('not-set-up', "Menu art isn't set up", "The AI key isn't on the server yet.");
   if (!f.plan) return E('no-plan', 'No drink plan on this event', 'Menus are built from the drink plan.');
   if (!(Number(f.plan.drink_count) > 0)) {
     return E('no-drinks', 'No drinks on the plan', 'Menus are built from the drink plan. Add drinks there, then come back.', btn('open-plan', 'Open drink plan'));

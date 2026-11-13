@@ -16,10 +16,14 @@
 // inLockedTx (menuDraftShared.js): lockCalls first, then the draft row, then
 // piece rows, and a 40P01 anywhere answers 409 MENU_DRAFT_CHANGED. Any R2
 // upload runs before that transaction opens; the job is queued only after it
-// commits and its client is released. Those three answer 503
-// MENU_ART_NOT_CONFIGURED without OPENAI_API_KEY before any work, and 503
-// MENU_ART_GEMINI_NOT_CONFIGURED for image_model gemini without its key. The
-// GET, PATCH, dismiss and the image GETs work with neither key.
+// commits and its client is released. Each checks, before any work, the key
+// of every provider its calls will use (spec 2026-10-19 section 16): Generate
+// the words provider's (the current words model's, Claude's by default) and
+// the posted image model's; a re-roll the image model's alone, since it
+// draws and writes no words. A missing key is 503 MENU_ART_NOT_CONFIGURED, or
+// MENU_ART_GEMINI_NOT_CONFIGURED for Gemini, so no OpenAI key is needed when
+// neither call goes to OpenAI. The GET, PATCH, dismiss and the image GETs
+// work with no key at all.
 //
 // Legal hold (money law 15): every write here (Generate, the PATCH, re-roll,
 // dismiss, and sync in menuDraftSync.js) refuses the legal-hold proposal with
@@ -56,7 +60,7 @@ const { loadEventPlan, buildFingerprint } = require('../../utils/menuDrinkSource
 const { assertNotLegalHold } = require('./patchGuards');
 const {
   LIST_CAP, isObject, capList, parseId, parseVersion, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan,
-  requireWords, upsertPendingPieces, requireOpenAI, requireImageModel, imageModelId, inLockedTx, queue,
+  requireWords, upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inLockedTx, queue,
 } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -109,7 +113,7 @@ router.get('/:id/menu-draft', auth, requireAdminOrManager, menuDraftReadLimiter,
 router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   assertNotLegalHold(id);
-  requireOpenAI();
+  requireWordsProvider();
   await requireProposal(id);
   const stored = (await pool.query('SELECT inputs FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
   const storedKey = stored && isObject(stored.inputs) ? stored.inputs.reference_key : null;
@@ -196,7 +200,6 @@ router.patch('/:id/menu-draft', auth, requireAdminOrManager, menuDraftEditLimite
 router.post('/:id/menu-draft/pieces/:pieceKey/reroll', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   assertNotLegalHold(id);
-  requireOpenAI();
   const pieceKey = parsePieceKey(req.params.pieceKey);
   const body = isObject(req.body) ? req.body : {};
   const note = validateRerollNote(body.note);

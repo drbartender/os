@@ -15,6 +15,11 @@
 // assertKeyUnder for its prefix (spec 5.4): menu-art/<proposalId>/ for art,
 // menu-art/<proposalId>/ref- for an uploaded reference, and
 // drink-plan-logos/<planId>- for the planner image. A key outside is never read.
+//
+// textModelId() and textProvider(model) are the words model (MENU_ART_TEXT_MODEL,
+// default claude-haiku-5-5) and the provider a model id names: claude- is
+// Anthropic, any other id OpenAI (spec 2026-10-19 section 16). Beyond the job,
+// the routes, the ledger (menuArtCap.reserveText) and the read model read them.
 
 const crypto = require('crypto');
 const sharp = require('sharp');
@@ -28,7 +33,9 @@ const { SENTENCES, describe, report } = require('./menuArtJobErrors');
 
 const DRINK_REFERENCE_WIDTH = 1024;
 const SHARP_INPUT = { limitInputPixels: 50_000_000 };
-const TEXT_MODEL_DEFAULT = 'gpt-5.4-mini';
+// The words model since lane menu-words-claude (spec 2026-10-19 section 16):
+// Claude Haiku 5.5, the owner's pick in a blind side-by-side.
+const TEXT_MODEL_DEFAULT = 'claude-haiku-5-5';
 
 // The draft-run guard on a piece statement ($n is ctx.draftRun; null skips it).
 const guard = (n) => `($${n}::uuid IS NULL OR EXISTS (
@@ -224,14 +231,21 @@ function artKey(ctx, key, contentType) {
   return `menu-art/${Number(ctx.proposalId)}/${ctx.pieceRun}/${key.replace(/:/g, '-')}-${crypto.randomUUID()}.${ext}`;
 }
 
-// The words model (MENU_ART_TEXT_MODEL, default gpt-5.4-mini); the routes
+// The words model (MENU_ART_TEXT_MODEL, default claude-haiku-5-5); the routes
 // stamp it on reserveText and the job prefers the reservation's own.
 function textModelId() {
   return String(process.env.MENU_ART_TEXT_MODEL || '').trim() || TEXT_MODEL_DEFAULT;
 }
 
+// The words provider a model id names: claude- is Anthropic, any other id
+// (gpt-, o4-) keeps the OpenAI path. With no id, the current words model's.
+function textProvider(model) {
+  const id = typeof model === 'string' && model.trim() ? model.trim() : textModelId();
+  return id.toLowerCase().startsWith('claude-') ? 'anthropic' : 'openai';
+}
+
 module.exports = {
   claimPiece, beat, finishPiece, failPiece, sweep, draftRunIs, lost,
   loadDraft, freshPlan, currentDrink, findReservations, releaseCall,
-  loadReference, drinkReference, currentBackground, artKey, textModelId,
+  loadReference, drinkReference, currentBackground, artKey, textModelId, textProvider,
 };

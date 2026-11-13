@@ -71,6 +71,7 @@ require.cache[jobPath].exports = {
 const { pool } = require('../../db');
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
+const anthropicClient = require('../../utils/anthropicClient');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter } = require('../../middleware/rateLimiters');
 const { buildFingerprint, normalizePlan, loadEventPlan, loadCatalogMaps, fingerprintHash } = require('../../utils/menuDrinkSource');
 const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
@@ -81,7 +82,7 @@ const NONCE = `${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')
 const NAMES = Array.from({ length: 10 }, (_, i) => `Zq Drink ${i + 1} ${NONCE}`);
 const KEYS = NAMES.map((n) => `custom:${n.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`);
 const MODEL = { openai: 'route-test-gpt-image', gemini: 'route-test-gemini-image', text: 'route-test-text' };
-const ENV_KEYS = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'MENU_ART_DAILY_IMAGE_CAP', 'MENU_ART_DAILY_TEXT_CAP',
+const ENV_KEYS = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'MENU_ART_DAILY_IMAGE_CAP', 'MENU_ART_DAILY_TEXT_CAP',
   'MENU_ART_IMAGE_MODEL', 'MENU_ART_GEMINI_IMAGE_MODEL', 'MENU_ART_TEXT_MODEL', 'MENU_ART_STALE_MS'];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -95,7 +96,7 @@ const proposalIds = [];
 const planIds = [];
 let catalog = null;
 const img = {};
-const calls = { words: [], openai: [], gemini: [] };
+const calls = { words: [], claude: [], openai: [], gemini: [] };
 let wordsGate = null;
 let geminiActive = 0;
 let geminiMaxActive = 0;
@@ -191,7 +192,7 @@ async function newEvent({ drinks = 2, extra = {}, plan = true } = {}) {
 }
 const setPlan = (planId, sel) => pool.query('UPDATE drink_plans SET selections = $2 WHERE id = $1', [planId, sel]);
 
-const resetCalls = () => { for (const list of [calls.words, calls.openai, calls.gemini, uploads, reads]) list.length = 0; };
+const resetCalls = () => { for (const list of [calls.words, calls.claude, calls.openai, calls.gemini, uploads, reads]) list.length = 0; };
 async function resetLimits() {
   for (const uid of Object.values(users)) {
     await adminWriteLimiter.resetKey(`admin-${uid}`);
@@ -292,6 +293,20 @@ function stubGemini() {
   });
 }
 
+// The words as Claude answers them (anthropicClient.draftMenuCopy, lane menu-words-claude).
+function stubAnthropic() {
+  anthropicClient.__setTestStub({
+    messages: {
+      create: async (body) => {
+        calls.claude.push(body);
+        const reply = wordsReply({ input: body.messages[0].content });
+        return { type: 'message', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: reply.output[0].content[0].text }], _request_id: 'req_claude_words' };
+      },
+    },
+  });
+}
+const CLAUDE = 'claude-haiku-5-5';
+
 const imageCalls = () => calls.openai.length + calls.gemini.length;
 
 // ── Setup ───────────────────────────────────────────────────────────────────
@@ -310,6 +325,7 @@ before(async () => {
   process.env.MENU_ART_IMAGE_MODEL = MODEL.openai;
   process.env.MENU_ART_GEMINI_IMAGE_MODEL = MODEL.gemini;
   process.env.MENU_ART_TEXT_MODEL = MODEL.text;
+  delete process.env.ANTHROPIC_API_KEY;
   delete process.env.MENU_ART_STALE_MS;
   await headroom();
 
@@ -348,6 +364,7 @@ after(async () => {
   await idle();
   openaiClient._resetForTest();
   geminiClient._resetForTest();
+  anthropicClient._resetClientForTest();
   globalThis.fetch = realFetch;
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v === undefined) delete process.env[k];
@@ -382,6 +399,8 @@ afterEach(async () => {
   await idle();
   process.env.OPENAI_API_KEY = 'sk-test-not-real';
   process.env.GEMINI_API_KEY = 'gem-test-not-real';
+  process.env.MENU_ART_TEXT_MODEL = MODEL.text;
+  delete process.env.ANTHROPIC_API_KEY;
   delete process.env.MENU_ART_STALE_MS;
   await headroom();
   assert.equal(tripwire, 0, 'a request reached global fetch');
@@ -446,6 +465,93 @@ test('generate: gemini without its key is 503 MENU_ART_GEMINI_NOT_CONFIGURED whi
   await idle();
   assert.equal(calls.gemini.length, 0);
   assert.equal(calls.openai.length, 3);
+});
+
+// Spec 2026-10-19 section 16 (lane menu-words-claude): the designer runs with
+// no OpenAI key. Each check asks for the key of the provider its call uses.
+test('generate on Claude with no OpenAI key: the words key and Gemini pass, 202, the words on Anthropic and the art on Gemini', async () => {
+  const { id } = await newEvent();
+  delete process.env.OPENAI_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-real';
+  process.env.MENU_ART_TEXT_MODEL = CLAUDE;
+  stubAnthropic();
+  const read = await request('GET', base(id));
+  assert.deepEqual(read.body.configured, { openai: false, gemini: true, words: true, default_image_model: 'gemini' });
+  const gen = await generate(id, { image_model: 'gemini' });
+  assert.equal(gen.status, 202, JSON.stringify(gen.body));
+  await idle();
+  assert.deepEqual([calls.claude.length, calls.words.length, calls.openai.length, calls.gemini.length], [1, 0, 0, 3]);
+  assert.equal(calls.claude[0].model, CLAUDE);
+  const draft = await draftOf(id);
+  assert.equal(draft.content.words_status, 'done');
+  const text = (await ledgerOf(id)).find((r) => r.kind === 'text');
+  assert.deepEqual([text.status, text.provider, text.model], ['ok', 'anthropic', CLAUDE]);
+  assert.ok(Object.values(await piecesOf(id)).every((p) => p.status === 'done' && p.provider === 'gemini'));
+});
+
+test('generate checks the words provider key: a claude- model without the Anthropic key is 503 even with the OpenAI key', async () => {
+  const { id } = await newEvent();
+  process.env.MENU_ART_TEXT_MODEL = CLAUDE;
+  const gen = await generate(id, { image_model: 'openai' });
+  assert.deepEqual([gen.status, gen.body.code], [503, 'MENU_ART_NOT_CONFIGURED']);
+  assert.equal(await draftOf(id), undefined);
+  assert.deepEqual(await ledgerOf(id), []);
+  assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0);
+  const read = await request('GET', base(id));
+  assert.deepEqual([read.body.configured.openai, read.body.configured.words], [true, false]);
+  // The OpenAI image model without its key is refused too, whatever the words key.
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-real';
+  delete process.env.OPENAI_API_KEY;
+  const oa = await generate(id, { image_model: 'openai' });
+  assert.deepEqual([oa.status, oa.body.code], [503, 'MENU_ART_NOT_CONFIGURED']);
+  assert.equal(await draftOf(id), undefined);
+});
+
+test('a re-roll checks only its image model key: Gemini with no OpenAI or words key is 202; OpenAI art without its key is 503', async () => {
+  const { id } = await ready();
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  process.env.MENU_ART_TEXT_MODEL = CLAUDE;
+  const gem = await request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'gemini' } });
+  assert.equal(gem.status, 202, JSON.stringify(gem.body));
+  await idle();
+  assert.deepEqual([calls.gemini.length, calls.openai.length, calls.words.length + calls.claude.length], [1, 0, 0]);
+  assert.equal((await piecesOf(id)).background.status, 'done');
+  const oa = await request('POST', pieceUrl(id, KEYS[0], 'reroll'), { json: { image_model: 'openai' } });
+  assert.deepEqual([oa.status, oa.body.code], [503, 'MENU_ART_NOT_CONFIGURED']);
+  assert.equal((await piecesOf(id))[KEYS[0]].status, 'done', 'nothing written');
+});
+
+test('Update draft by provider: typed drinks need the words key, added art its image model key, a bar-only update none', async () => {
+  const { id, planId } = await ready({ extra: { wineFromFullBar: ['Red'] } });
+  delete process.env.OPENAI_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-real';
+  process.env.MENU_ART_TEXT_MODEL = CLAUDE;
+  stubAnthropic();
+  await setPlan(planId, selections(3, { wineFromFullBar: ['Red'] }));
+  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'gemini' } });
+  assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
+  await idle();
+  assert.deepEqual([calls.claude.length, calls.words.length, calls.gemini.length, calls.openai.length], [1, 0, 1, 0]);
+  assert.ok((await draftOf(id)).content.drinks.some((d) => d.key === KEYS[2] && d.added_by_sync === true));
+  const text = (await ledgerOf(id)).filter((r) => r.kind === 'text').pop();
+  assert.deepEqual([text.status, text.provider], ['ok', 'anthropic']);
+
+  // A typed drink with no words key is refused before anything is reserved.
+  resetCalls();
+  delete process.env.ANTHROPIC_API_KEY;
+  await setPlan(planId, selections(4, { wineFromFullBar: ['Red'] }));
+  const ledgerBefore = (await ledgerOf(id)).length;
+  const refused = await request('POST', `${base(id)}/sync`, { json: { version: 2, image_model: 'gemini' } });
+  assert.deepEqual([refused.status, refused.body.code], [503, 'MENU_ART_NOT_CONFIGURED']);
+  assert.equal((await ledgerOf(id)).length, ledgerBefore, 'nothing reserved');
+
+  // The bar alone: no key of any provider.
+  delete process.env.GEMINI_API_KEY;
+  await setPlan(planId, selections(3, { wineFromFullBar: ['White'] }));
+  const bar = await request('POST', `${base(id)}/sync`, { json: { version: 2, image_model: 'gemini' } });
+  assert.deepEqual([bar.status, bar.body.version], [202, 3], JSON.stringify(bar.body));
+  assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0);
 });
 
 test('generate: image_model is required (400) and nothing is written', async () => {

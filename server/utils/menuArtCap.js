@@ -39,11 +39,18 @@
 //
 // Caps are read at call time through readEnvInt (MENU_ART_DAILY_IMAGE_CAP,
 // default 60; MENU_ART_DAILY_TEXT_CAP, default 100). One image cap covers both
-// providers. A row counts when created in the last 24 hours and not released.
+// providers, one text cap both words providers. A row counts when created in
+// the last 24 hours and not released.
+//
+// A text row records the words provider its model names (textProvider:
+// claude- is anthropic, any other id openai; spec 2026-10-19 section 16), and
+// a reservation given no model stamps the current words model, so a row's
+// provider and model always agree.
 
 const { pool } = require('../db');
 const { AppError, ConflictError } = require('./errors');
 const { readEnvInt } = require('./envInt');
+const { textModelId, textProvider } = require('./menuArtJobSteps');
 
 const IMAGE_CAP_DEFAULT = 60;
 const TEXT_CAP_DEFAULT = 100;
@@ -141,7 +148,7 @@ async function reserveImages(client, { proposalId = null, runId, pieceKeys, prov
   return ids;
 }
 
-// -> the reservation id. The words step always runs on OpenAI.
+// -> the reservation id. The row's provider is the one its model names.
 async function reserveText(client, { proposalId = null, runId, model = null } = {}) {
   await assertLocked(client, 'reserveText');
   requireRunId(runId, 'reserveText');
@@ -149,11 +156,12 @@ async function reserveText(client, { proposalId = null, runId, model = null } = 
   if (used + 1 > capLimits().text) {
     throw new AppError('Daily menu text limit reached.', 429, 'MENU_ART_TEXT_CAP_REACHED');
   }
+  const stamped = model || textModelId();
   const { rows } = await client.query(
     `INSERT INTO menu_art_calls (proposal_id, piece_key, run_id, kind, status, provider, model)
-     VALUES ($1, NULL, $2::uuid, 'text', 'reserved', 'openai', $3)
+     VALUES ($1, NULL, $2::uuid, 'text', 'reserved', $3, $4)
      RETURNING id`,
-    [proposalId, runId, model]
+    [proposalId, runId, textProvider(stamped), stamped]
   );
   return rows[0].id;
 }

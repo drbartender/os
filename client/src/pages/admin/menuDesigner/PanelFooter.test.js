@@ -46,6 +46,31 @@ test('Gemini is disabled, with its title, without its key; a stale Gemini choice
   expect(onImageModel).toHaveBeenCalledWith('openai');
 });
 
+// Spec 2026-10-19 section 16 (lane menu-words-claude): a choice whose key is
+// gone falls back to the read model's default, and OpenAI stays on the toggle.
+test('with no OpenAI key, GPT Image stays on the toggle, disabled with its title, and a stale GPT Image choice falls back to the default', () => {
+  const onImageModel = jest.fn();
+  const configured = { openai: false, gemini: true, words: true, default_image_model: 'gemini' };
+  render(<PanelFooter draft={null} configured={configured} imageModel="openai" onImageModel={onImageModel} gate={{ disabled: false, hint: '' }} />);
+  const gpt = within(models()).getByRole('button', { name: 'GPT Image' });
+  expect(gpt).toBeDisabled();
+  expect(gpt).toHaveAttribute('title', "GPT Image isn't set up");
+  expect(within(models()).getByRole('button', { name: 'Gemini' })).toHaveClass('active');
+  expect(onImageModel).toHaveBeenCalledWith('gemini');
+});
+
+test('the editor\'s wiring opening at the default draws with Gemini, and the gate says so', () => {
+  const p = payload({ configured: { openai: false, gemini: true, words: true, default_image_model: 'gemini' } });
+  function AtDefault() {
+    const [model, setModel] = useState(p.configured.default_image_model);
+    return <PanelFooter draft={null} configured={p.configured} imageModel={model} onImageModel={setModel} gate={gateOf(p, { imageModel: model })} />;
+  }
+  render(<AtDefault />);
+  expect(within(models()).getByRole('button', { name: 'Gemini' })).toHaveClass('active');
+  expect(screen.getByRole('button', { name: /Generate/ })).toBeEnabled();
+  expect(screen.getByText('About 2 minutes, about 5 images, drawn by Gemini.')).toBeInTheDocument();
+});
+
 test('Generate (primary) with no draft, Start over (secondary) once one exists', () => {
   const onGenerate = jest.fn();
   const { rerender } = render(<Footer onGenerate={onGenerate} />);

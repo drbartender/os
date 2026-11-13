@@ -6,7 +6,7 @@ import api from '../../../utils/api';
 import StatusChip from '../../../components/adminos/StatusChip';
 import MenuCanvas from './MenuCanvas';
 import MenuCardFold, { errorText, isSafeLogoUrl } from './MenuCardFold';
-import menuCardState from './menuCardState';
+import menuCardState, { defaultImageModel } from './menuCardState';
 import { CARD_SIZE } from './useMenuDraft';
 
 // The Bar menu card on the event page's right column (spec 2026-10-01 section
@@ -22,9 +22,11 @@ import { CARD_SIZE } from './useMenuDraft';
 //   onOpenEditor              ({ tab?, select? }) opens the editor; until the editor
 //                             lane passes it, the editor actions and the thumbnail's
 //                             click do not render
-// The in-place actions (Generate, Retry, Update draft, Dismiss, Undo) always draw
-// with GPT Image (section 4.1). An action passes itself to its handler, so the
-// unchecked notice's Update draft sends its scope (bar, the bar-only rebuild).
+// The in-place actions (Generate, Retry, Update draft, Dismiss, Undo) draw with
+// the read model's default image model (configured.default_image_model, Gemini
+// when its key is set, else GPT Image; spec 2026-10-19 section 16), never the
+// editor's toggle. An action passes itself to its handler, so the unchecked
+// notice's Update draft sends its scope (bar, the bar-only rebuild).
 
 const NARROW_PX = 900;
 const THUMB_SCALE = 0.12;
@@ -68,6 +70,7 @@ export default function MenuDesignerCard({
   // state clears it (set after the action's own refetch, which lands first).
   const [actionError, setActionError] = useState(null);
   const { payload, draft } = menu;
+  const imageModel = defaultImageModel(payload && payload.configured);
   const st = menuCardState({
     payload: payload ? { ...payload, draft } : null,
     local: {
@@ -77,7 +80,7 @@ export default function MenuDesignerCard({
       saveFailed: menu.save.state === 'failed',
       savedAt: menu.save.savedAt,
       conflict: menu.save.conflict,
-      imageModel: 'openai',
+      imageModel,
       activityKeys: menu.activityKeys,
       now: Date.now(),
     },
@@ -101,9 +104,9 @@ export default function MenuDesignerCard({
   };
 
   const IN_PLACE = {
-    generate: () => menu.generate({ imageModel: 'openai' }),
-    'retry-words': () => menu.generate({ imageModel: 'openai' }),
-    update: (a) => menu.sync(a.scope ? { scope: a.scope } : { imageModel: 'openai' }),
+    generate: () => menu.generate({ imageModel }),
+    'retry-words': () => menu.generate({ imageModel }),
+    update: (a) => menu.sync(a.scope ? { scope: a.scope } : { imageModel }),
     dismiss: () => menu.dismissPlanChange(),
     undo: async () => {
       await api.patch(`/proposals/${proposal.id}/menu-print`, { not_required: false });

@@ -20,7 +20,7 @@ const rowIds = new Set();
 let proposalId = null;
 let draftId = null;
 let draftRun = null;
-const ENV_KEYS = ['MENU_ART_DAILY_IMAGE_CAP', 'MENU_ART_DAILY_TEXT_CAP'];
+const ENV_KEYS = ['MENU_ART_DAILY_IMAGE_CAP', 'MENU_ART_DAILY_TEXT_CAP', 'MENU_ART_TEXT_MODEL'];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 const newRun = () => { const id = crypto.randomUUID(); runs.add(id); return id; };
@@ -314,6 +314,30 @@ test('the text cap refuses at its limit and does not count image rows', async ()
   assert.deepEqual(rows.map((r) => [r.kind, r.provider]), [['text', 'openai'], ['image', 'openai']]);
   assert.equal(rows[0].id, textId);
   assert.equal(rows[0].model, 'text-model');
+});
+
+// Spec 2026-10-19 section 16 (lane menu-words-claude): the words provider
+// follows the stamped model id, and the text row says which one it reserved.
+test('the text row records the words provider of its model: claude- is anthropic, any other id openai, none stamps the default', async () => {
+  process.env.MENU_ART_DAILY_TEXT_CAP = String((await openCount('text')) + 10);
+  delete process.env.MENU_ART_TEXT_MODEL;
+  const runId = newRun();
+  await inTx(async (c) => {
+    await cap.reserveText(c, { proposalId, runId, model: 'claude-haiku-5-5' });
+    await cap.reserveText(c, { proposalId, runId, model: 'gpt-5.4-mini' });
+    await cap.reserveText(c, { proposalId, runId, model: 'o4-mini' });
+    await cap.reserveText(c, { proposalId, runId });
+  });
+  process.env.MENU_ART_TEXT_MODEL = 'gpt-5.4-mini';
+  await inTx((c) => cap.reserveText(c, { proposalId, runId }));
+  const rows = await rowsOf(runId);
+  assert.deepEqual(rows.map((r) => [r.kind, r.status, r.provider, r.model]), [
+    ['text', 'reserved', 'anthropic', 'claude-haiku-5-5'],
+    ['text', 'reserved', 'openai', 'gpt-5.4-mini'],
+    ['text', 'reserved', 'openai', 'o4-mini'],
+    ['text', 'reserved', 'anthropic', 'claude-haiku-5-5'],
+    ['text', 'reserved', 'openai', 'gpt-5.4-mini'],
+  ], 'a reservation with no model stamps the one it resolved, so its provider and model agree');
 });
 
 test('a cap env set to abc falls back to its default', async () => {

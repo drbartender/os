@@ -91,7 +91,9 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
   useEffect(() => {
     const m = menuRef.current;
     setSidebarOverride('rail');
-    m.setImageModel('openai');
+    // Back to the server's default image model on every open (Gemini when its
+    // key is set; spec 2026-10-19 section 16), never a fixed GPT Image.
+    m.setImageModel(null);
     ensureFontsLink(PAIRING_IDS);
     if (backRef.current) backRef.current.focus();
     const stopFull = m.wantSize(FULL_SIZE);

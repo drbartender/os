@@ -13,7 +13,8 @@
 //     bar_changed_labels: [label], bar_unchecked, dismissed },
 //   print: { state, not_required_by, approved_at, approved_by_name, print_key,
 //     approved_file_in_use },
-//   cap: { used, limit, remaining, resets_at }, configured: { openai, gemini },
+//   cap: { used, limit, remaining, resets_at },
+//   configured: { openai, gemini, words, default_image_model },
 //   plan: null | { id, menu_style, drink_count, drinks: [{ name, mock }],
 //     bar_summary: { beer_wine, spirits, na } },
 // }
@@ -55,6 +56,14 @@
 //   bar_summary counts the plan's bar picks for the phone's "+ 5 beer and wine,
 //   3 spirits, 2 NA" line ("None" and "Other" picks are not counted).
 //
+// - configured (spec 2026-10-19 section 16, lane menu-words-claude): openai
+//   and gemini are each provider's key; words is the key of the provider the
+//   words call will use (wordsConfigured: the current words model's,
+//   menuArtJobSteps.textProvider), which Generate and Update draft's words
+//   call check; default_image_model (defaultImageModel) is 'gemini' when its
+//   key is set, else 'openai', computed here once for the editor's toggle and
+//   the card's actions. The routes check through the same two functions.
+//
 // Print state: derivePrintState and PRINT_STATES (menuPrintState.js, spec 8).
 //
 // Polling cost: the catalog maps (two queries) are cached per process for 60
@@ -73,8 +82,10 @@ const {
 const { keyBarLines } = require('./menuAlsoAtBar');
 const { capUsage } = require('./menuArtCap');
 const { derivePrintState, PRINT_STATES } = require('./menuPrintState');
+const { textProvider } = require('./menuArtJobSteps');
 const openaiClient = require('./openaiClient');
 const geminiClient = require('./geminiClient');
+const anthropicClient = require('./anthropicClient');
 
 const STALE_MS_DEFAULT = 300000;
 const CATALOG_TTL_MS = 60000;
@@ -374,13 +385,30 @@ async function readDraftPayload(proposalId) {
       approved_file_in_use: Boolean(hasDraft && printKey && printKey === row.approved_print_key),
     },
     cap,
-    configured: { openai: openaiClient.isConfigured(), gemini: geminiClient.isConfigured() },
+    configured: {
+      openai: openaiClient.isConfigured(),
+      gemini: geminiClient.isConfigured(),
+      words: wordsConfigured(),
+      default_image_model: defaultImageModel(),
+    },
     plan: planPayload(planRow, normalized),
   };
 }
 
+// The words provider's key: the one the current words model names.
+function wordsConfigured() {
+  return textProvider() === 'anthropic' ? anthropicClient.isConfigured() : openaiClient.isConfigured();
+}
+
+// The image model the card and a new editor draw with: Gemini when its key is set.
+function defaultImageModel() {
+  return geminiClient.isConfigured() ? 'gemini' : 'openai';
+}
+
 module.exports = {
   readDraftPayload,
+  wordsConfigured,
+  defaultImageModel,
   stuck,
   readStaleMs,
   computeDiff,

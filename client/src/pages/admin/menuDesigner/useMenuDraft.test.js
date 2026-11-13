@@ -325,6 +325,32 @@ describe('the image model (decision 11)', () => {
     expect(again.result.current.imageModel).toBe('openai');
   });
 
+  // Spec 2026-10-19 section 16 (lane menu-words-claude): the toggle opens at
+  // the read model's default image model, Gemini when its key is set.
+  test('opens at the read model\'s default image model, which rides each image request until the owner picks another', async () => {
+    const withDefault = (model) => ({ ...payload(), configured: { openai: false, gemini: model === 'gemini', words: true, default_image_model: model } });
+    draftAnswers = [withDefault('gemini')];
+    const { result, rerender } = await mount();
+    expect(result.current.imageModel).toBe('gemini');
+    await act(async () => { await result.current.generate(); });
+    expect(api.post.mock.calls[0][1].get('image_model')).toBe('gemini');
+    await act(async () => { await result.current.reroll('cocktail:1'); });
+    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/pieces/cocktail%3A1/reroll', { image_model: 'gemini' });
+    act(() => { result.current.setImageModel('openai'); });
+    expect(result.current.imageModel).toBe('openai');
+    await act(async () => { await result.current.sync(); });
+    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/sync', { version: 3, image_model: 'openai' });
+    // Another event opens at its own default again.
+    draftAnswers = [withDefault('openai')];
+    rerender({ pid: 43 });
+    await settle();
+    expect(result.current.imageModel).toBe('openai');
+    draftAnswers = [withDefault('gemini')];
+    rerender({ pid: 44 });
+    await settle();
+    expect(result.current.imageModel).toBe('gemini');
+  });
+
   test('with no draft, Generate posts the brief and the held file, then lets the file go', async () => {
     draftAnswers = [{ ...payload(), draft: null, pieces: [] }];
     const { result } = await mount();

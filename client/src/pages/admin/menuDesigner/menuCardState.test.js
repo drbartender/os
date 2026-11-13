@@ -346,10 +346,53 @@ describe('the precedence', () => {
   });
 });
 
+// Spec 2026-10-19 section 16 (lane menu-words-claude): Not set up reads the
+// words provider's key, and Drawing is off the image model's own flag, never
+// configured.openai on its own.
+describe('the set-up flags by provider', () => {
+  const claudeOnGemini = (p) => { p.configured = { openai: false, gemini: true, words: true, default_image_model: 'gemini' }; };
+
+  test('with no OpenAI key, the words key and Gemini set: never Not set up, Generate open, no Drawing is off', () => {
+    let s = run(P((p) => { noDraft(p); claudeOnGemini(p); }), { imageModel: 'gemini' });
+    expect(s.id).toBe('never');
+    expect(s.generate).toEqual({ disabled: false, hint: 'About 2 minutes, about 4 images, drawn by Gemini.', need: 4 });
+    expect(s.empty.id).toBe('never');
+    // The card passes no imageModel of the editor's: the default is read.
+    s = run(P((p) => { noDraft(p); claudeOnGemini(p); }));
+    expect(s.generate.disabled).toBe(false);
+    expect(s.generate.hint).toBe('About 2 minutes, about 4 images, drawn by Gemini.');
+    s = run(P(claudeOnGemini), { imageModel: 'gemini' });
+    expect(s.banners.map((b) => b.id)).not.toContain('drawing-off');
+  });
+
+  test('Not set up and the empty card follow words, whatever the OpenAI key', () => {
+    const s = run(P((p) => { noDraft(p); p.configured = { openai: true, gemini: true, words: false, default_image_model: 'gemini' }; }));
+    expect(lines(s)).toEqual(['neutral', 'Not set up', "Menu art isn't set up.", "The AI key isn't on the server yet."]);
+    expect(s.empty.id).toBe('not-set-up');
+    expect(s.generate).toMatchObject({ disabled: true, hint: 'Generate needs an AI key and drinks on the plan.' });
+  });
+
+  test('Drawing is off follows the image model in use: OpenAI without its key is off, Gemini with its key is on', () => {
+    const p = P(claudeOnGemini);
+    expect(run(p, { imageModel: 'openai' }).banners.map((b) => b.id)).toContain('drawing-off');
+    expect(run(p, { imageModel: 'gemini' }).banners.map((b) => b.id)).not.toContain('drawing-off');
+    const noImage = P((x) => { x.configured = { openai: false, gemini: false, words: true, default_image_model: 'openai' }; });
+    expect(run(noImage).banners.map((b) => b.id)).toContain('drawing-off');
+    // A Generate whose image model has no key is held: it would be refused.
+    expect(run(P((x) => { noDraft(x); claudeOnGemini(x); }), { imageModel: 'openai' }).generate.disabled).toBe(true);
+  });
+
+  test('a payload from a server before words existed reads the OpenAI key for the words, as that server did', () => {
+    expect(run(P((p) => { noDraft(p); p.configured = { openai: false, gemini: true }; })).id).toBe('not-set-up');
+    expect(run(P((p) => { noDraft(p); p.configured = { openai: true, gemini: false }; })).id).toBe('never');
+  });
+});
+
 describe('Generate', () => {
   test('the hints, by model, draft and cap', () => {
     expect(run(P(noDraft)).generate).toEqual({ disabled: false, hint: 'About 2 minutes, about 4 images, drawn by GPT Image.', need: 4 });
-    expect(run(P(noDraft), { imageModel: 'gemini' }).generate.hint).toBe('About 2 minutes, about 4 images, drawn by Gemini.');
+    expect(run(P((p) => { noDraft(p); p.configured.gemini = true; }), { imageModel: 'gemini' }).generate.hint)
+      .toBe('About 2 minutes, about 4 images, drawn by Gemini.');
     expect(run(P()).generate.hint).toBe('Re-drafts words and art from scratch, drawn by GPT Image.');
     expect(run(P((p) => { noDraft(p); p.plan.drink_count = 11; })).generate.need).toBe(9);
   });
@@ -677,7 +720,7 @@ describe('the fixed sentences on the card and in the editor', () => {
   });
 
   test('Words failed on a refusal or an invalid reply also offers the Brief tab, beside Generate again', () => {
-    for (const sentence of ['OpenAI declined to write this menu. Try different art direction.', 'The menu words left out a drink. Try again.']) {
+    for (const sentence of ['OpenAI declined to write this menu. Try different art direction.', 'Anthropic declined to write this menu. Try a different brief.', 'The menu words left out a drink. Try again.']) {
       const s = run(wordsFailed(sentence));
       expect(s.primary).toEqual({ id: 'retry-words', label: 'Generate again', style: 'primary' });
       expect(s.secondary).toEqual({ id: 'edit-brief', label: 'Edit the brief', style: 'ghost', editor: { tab: 'brief' } });

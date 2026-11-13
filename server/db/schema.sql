@@ -5050,9 +5050,11 @@ CREATE TABLE IF NOT EXISTS menu_draft_pieces (
 );
 
 -- menu_art_calls: the cap's ledger, the cost record and the audit trail.
--- provider has no default, so a call can never be mislabeled. proposal_id goes
--- NULL rather than taking the row with it, so a deleted event's spend still
--- counts against the cap. error is sanitized before it is written (spec 5.1).
+-- provider has no default, so a call can never be mislabeled; a text row's is
+-- the words provider its model names, 'anthropic' for Claude (spec 2026-10-19
+-- section 16). proposal_id goes NULL rather than taking the row with it, so a
+-- deleted event's spend still counts against the cap. error is sanitized
+-- before it is written (spec 5.1).
 CREATE TABLE IF NOT EXISTS menu_art_calls (
   id SERIAL PRIMARY KEY,
   proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
@@ -5060,7 +5062,7 @@ CREATE TABLE IF NOT EXISTS menu_art_calls (
   run_id UUID,
   kind TEXT NOT NULL CHECK (kind IN ('image','text')),
   status TEXT NOT NULL CHECK (status IN ('reserved','sent','ok','failed','released')),
-  provider TEXT NOT NULL CHECK (provider IN ('openai','gemini')),
+  provider TEXT NOT NULL CHECK (provider IN ('openai','gemini','anthropic')),
   model TEXT,
   size TEXT,
   error TEXT,
@@ -5086,6 +5088,26 @@ DO $$ BEGIN
   ) THEN
     CREATE TRIGGER update_menu_art_calls_updated_at BEFORE UPDATE ON menu_art_calls
       FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
+
+-- menu_art_calls.provider takes 'anthropic' (spec 2026-10-19 section 16, lane
+-- menu-words-claude). The inline CHECK above lists it for a database created
+-- from here on; one created before holds the narrower inline CHECK under the
+-- same name, so it is dropped and re-added once, to the same list, guarded by
+-- the live definition: a replay that finds 'anthropic' runs no DDL. Every
+-- value the old code writes still passes. menu_draft_pieces keeps its own
+-- CHECK: the drawings never run on Anthropic.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'menu_art_calls_provider_check'
+      AND conrelid = 'menu_art_calls'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%anthropic%'
+  ) THEN
+    ALTER TABLE menu_art_calls DROP CONSTRAINT IF EXISTS menu_art_calls_provider_check;
+    ALTER TABLE menu_art_calls ADD CONSTRAINT menu_art_calls_provider_check
+      CHECK (provider IN ('openai','gemini','anthropic'));
   END IF;
 END $$;
 

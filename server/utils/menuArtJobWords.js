@@ -1,6 +1,10 @@
 // The words calls of the menu art job (menuArtJob.js; spec 2026-10-01
 // sections 5.3, 5.5 and 6, Writers; plan Task E4). Split from the job to keep
-// each file short. Both always run on OpenAI.
+// each file short. Both run on the provider the stamped model id names
+// (menuArtJobSteps.textProvider; spec 2026-10-19 section 16): a claude- model
+// through anthropicClient.draftMenuCopy, any other through
+// openaiClient.draftMenuCopy, the same request, retries and sentences either
+// way, and the descriptor stored and sent to Sentry names that provider.
 //
 // wordsStep(ctx, { textId, model, normalized, eventTypeLabel })
 //   Generate's words step. One heartbeat UPDATE (content.words_heartbeat_at
@@ -33,12 +37,19 @@
 
 const { pool } = require('../db');
 const openaiClient = require('./openaiClient');
+const anthropicClient = require('./anthropicClient');
 const { wordsRequest, parseWords } = require('./menuArtPrompts');
 const { authorizeCall, markCall } = require('./menuArtCap');
 const { buildFingerprint } = require('./menuDrinkSource');
 const { AppError, ConflictError } = require('./errors');
 const E = require('./menuArtJobErrors');
 const S = require('./menuArtJobSteps');
+
+// The one words call, on the provider the model id names.
+function draftWords(request, model) {
+  const wrapper = S.textProvider(model) === 'anthropic' ? anthropicClient : openaiClient;
+  return wrapper.draftMenuCopy({ ...request, model });
+}
 
 // The words step's heartbeat and the run's pending pieces, one statement.
 async function beatWords(ctx) {
@@ -90,8 +101,7 @@ async function wordsStep(ctx, { textId, model, normalized, eventTypeLabel }) {
   }
   let requestId = null;
   try {
-    const out = await E.withRetries(
-      () => openaiClient.draftMenuCopy({ ...request, model }), E.wordsLimited, () => beatWords(ctx));
+    const out = await E.withRetries(() => draftWords(request, model), E.wordsLimited, () => beatWords(ctx));
     requestId = out.requestId;
     const artKeys = [...ctx.reservations.keys()].filter((k) => k !== 'background');
     const content = parseWords(out.json, normalized, { artKeys });
@@ -102,7 +112,7 @@ async function wordsStep(ctx, { textId, model, normalized, eventTypeLabel }) {
     await markCall(textId, 'ok', { requestId, model });
     return { content };
   } catch (err) {
-    const d = E.describe(err, 'openai');
+    const d = E.describe(err, S.textProvider(model));
     if (!d.requestId) d.requestId = requestId;
     await markCall(textId, 'failed', E.failedCall(d, { model }));
     if (err instanceof E.RunLost) return { stopped: true };
@@ -128,14 +138,13 @@ async function runWordsForDrinks({
     // call (RunLost) instead of retrying on a run nobody will keep.
     const current = () => S.draftRunIs({ draftId, draftRun: runId });
     try {
-      const out = await E.withRetries(
-        () => openaiClient.draftMenuCopy({ ...request, model }), E.wordsLimited, current);
+      const out = await E.withRetries(() => draftWords(request, model), E.wordsLimited, current);
       requestId = out.requestId;
       const fill = parseWords(out.json, normalized, { artSlots: 0, addedBySync: true });
       await markCall(reservationId, 'ok', { requestId, model });
       return fill.drinks;
     } catch (err) {
-      const d = E.describe(err, 'openai');
+      const d = E.describe(err, S.textProvider(model));
       if (!d.requestId) d.requestId = requestId;
       await E.safely('sync_words', () => markCall(reservationId, 'failed', E.failedCall(d, { model })));
       if (err instanceof E.RunLost) throw new ConflictError('The draft changed. Try again.', 'MENU_DRAFT_CHANGED');

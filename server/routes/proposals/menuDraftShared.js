@@ -14,6 +14,14 @@
 // after it (the response, setImmediate) holds a connection. Nothing inside fn
 // may reach R2 or a provider: those run before it opens or after it returns.
 //
+// The set-up checks ask for the key of the provider each call uses (spec
+// 2026-10-19 section 16, lane menu-words-claude): requireWordsProvider the
+// words provider's (the current words model's, menuDraftRead.wordsConfigured),
+// for Generate and Update draft's typed-drinks words call; requireImageModel
+// the image model's own (OpenAI's or Gemini's), for Generate, a re-roll and
+// Update draft's added art. A missing key is 503 MENU_ART_NOT_CONFIGURED,
+// Gemini's MENU_ART_GEMINI_NOT_CONFIGURED, before any work.
+//
 // parseVersion bounds a posted draft version (a positive int4, else 400), and
 // every writer compares it with the stored version in JS (409) before SQL sees
 // it. requireWords and noPlan are the refusals re-roll and Update draft share;
@@ -23,7 +31,7 @@ const { pool } = require('../../db');
 const { AppError, ConflictError, ValidationError, NotFoundError } = require('../../utils/errors');
 const { lockCalls, mapDeadlock } = require('../../utils/menuArtCap');
 const { report, describe } = require('../../utils/menuArtJobErrors');
-const { stuck } = require('../../utils/menuDraftRead');
+const { stuck, wordsConfigured } = require('../../utils/menuDraftRead');
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 
@@ -98,16 +106,19 @@ function requireWords(content, now) {
   throw new ConflictError('The menu words were not written. Start over to write them.', 'MENU_WORDS_NOT_WRITTEN');
 }
 
-// Generate, re-roll and sync call this before any work. "Set up" means the
-// OpenAI key, which the words step always needs, whatever draws the images.
-function requireOpenAI() {
-  if (!openaiClient.isConfigured()) throw new AppError('Menu art is not set up.', 503, 'MENU_ART_NOT_CONFIGURED');
+const notSetUp = () => new AppError('Menu art is not set up.', 503, 'MENU_ART_NOT_CONFIGURED');
+
+// Generate and Update draft's typed-drinks words call, before any work.
+function requireWordsProvider() {
+  if (!wordsConfigured()) throw notSetUp();
 }
 
+// Every call that draws, before any work: the posted image model's own key.
 function requireImageModel(imageModel) {
   if (imageModel === 'gemini' && !geminiClient.isConfigured()) {
     throw new AppError('Gemini is not set up.', 503, 'MENU_ART_GEMINI_NOT_CONFIGURED');
   }
+  if (imageModel === 'openai' && !openaiClient.isConfigured()) throw notSetUp();
 }
 
 function imageModelId(provider) {
@@ -160,5 +171,5 @@ module.exports = {
   PIECE_KEY_RE, LIST_CAP, IMAGE_MODEL_DEFAULTS,
   isObject, capList,
   parseId, parseVersion, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan, requireWords,
-  requireOpenAI, requireImageModel, imageModelId, inLockedTx, upsertPendingPieces, queue,
+  requireWordsProvider, requireImageModel, imageModelId, inLockedTx, upsertPendingPieces, queue,
 };

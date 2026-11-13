@@ -114,6 +114,28 @@ after(async () => {
   await pool.end();
 });
 
+// Spec 2026-10-19 section 16 (lane menu-words-claude): configured.words is
+// the key of the provider the words call will use (the stamped model's), and
+// the default image model is Gemini when its key is set, else OpenAI,
+// computed here once for the editor's toggle and the card's actions. Each
+// case sets the env it reads and puts it back.
+const KEY_ENV = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'MENU_ART_TEXT_MODEL'];
+async function configuredWith(env) {
+  const saved = Object.fromEntries(KEY_ENV.map((k) => [k, process.env[k]]));
+  try {
+    for (const k of KEY_ENV) {
+      if (env[k] === undefined) delete process.env[k];
+      else process.env[k] = env[k];
+    }
+    return (await read.readDraftPayload(proposalId)).configured;
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 // ─── Pure ────────────────────────────────────────────────────────────────────
 
 test('stuck: the boundary at the stale age, for pending and working, pieces and the words step', () => {
@@ -402,6 +424,24 @@ test('computeDiff: on a stamped legacy draft a dismissal from before the deploy 
 
 // ─── Live ────────────────────────────────────────────────────────────────────
 
+test('configured: words reads the words provider key, and the default image model is Gemini when its key is set', async () => {
+  const ant = 'sk-ant-test-not-real';
+  const oai = 'sk-test-not-real';
+  const gem = 'gem-test-not-real';
+  // The default words model is Claude: words is the Anthropic key, whatever OpenAI's.
+  assert.deepEqual(await configuredWith({ ANTHROPIC_API_KEY: ant, GEMINI_API_KEY: gem }),
+    { openai: false, gemini: true, words: true, default_image_model: 'gemini' });
+  assert.deepEqual(await configuredWith({ OPENAI_API_KEY: oai }),
+    { openai: true, gemini: false, words: false, default_image_model: 'openai' });
+  // A gpt- model keeps the OpenAI path: words is then the OpenAI key.
+  assert.deepEqual(await configuredWith({ ANTHROPIC_API_KEY: ant, OPENAI_API_KEY: oai, MENU_ART_TEXT_MODEL: 'gpt-5.4-mini' }),
+    { openai: true, gemini: false, words: true, default_image_model: 'openai' });
+  assert.deepEqual(await configuredWith({ ANTHROPIC_API_KEY: ant, MENU_ART_TEXT_MODEL: 'gpt-5.4-mini', GEMINI_API_KEY: gem }),
+    { openai: false, gemini: true, words: false, default_image_model: 'gemini' });
+  assert.deepEqual(await configuredWith({ ANTHROPIC_API_KEY: '  ', MENU_ART_TEXT_MODEL: 'claude-sonnet-5-5' }),
+    { openai: false, gemini: false, words: false, default_image_model: 'openai' }, 'a blank key is no key');
+});
+
 test('no plan and no draft, then a draft with no plan reads read-only', async () => {
   const p = await pool.query("INSERT INTO proposals (status) VALUES ('draft') RETURNING id");
   const bare = p.rows[0].id;
@@ -410,8 +450,9 @@ test('no plan and no draft, then a draft with no plan reads read-only', async ()
   assert.deepEqual([empty.draft, empty.pieces, empty.brief, empty.diff, empty.plan], [null, [], null, null, null]);
   assert.deepEqual(empty.print, { state: S.NONE, approved_at: null, approved_by_name: null, print_key: null, approved_file_in_use: false, not_required_by: null });
   assert.deepEqual(Object.keys(empty.cap).sort(), ['limit', 'remaining', 'resets_at', 'used']);
-  assert.deepEqual(Object.keys(empty.configured).sort(), ['gemini', 'openai']);
+  assert.deepEqual(Object.keys(empty.configured).sort(), ['default_image_model', 'gemini', 'openai', 'words']);
   assert.equal(typeof empty.configured.openai, 'boolean');
+  assert.equal(typeof empty.configured.words, 'boolean');
 
   const d = await pool.query(
     `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint)

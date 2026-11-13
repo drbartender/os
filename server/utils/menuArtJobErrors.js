@@ -16,11 +16,17 @@
 // - withRetries retries a 429 at most twice on the same (still sent)
 //   reservation, waiting Retry-After (at most 60 s, 20 s when none was sent)
 //   in steps of 10 s with a heartbeat after each. A spent balance or a spend
-//   or usage limit (isOutOfCredit: OpenAIOutOfCredit, MenuArtOutOfCredit) is
-//   never retried; on the words step or on any piece it ends the run at once,
-//   so the run reports it to Sentry once, and its kind picks the sentence:
-//   add credit for a balance, raise the limit for a limit (spec 2026-10-19
-//   section 16).
+//   or usage limit (isOutOfCredit: OpenAIOutOfCredit, AnthropicOutOfCredit,
+//   MenuArtOutOfCredit) is never retried; on the words step or on any piece
+//   it ends the run at once, so the run reports it to Sentry once, and its
+//   kind picks the sentence: add credit for a balance, raise the limit for a
+//   limit (spec 2026-10-19 section 16).
+// - The words run on the provider the stamped model id names (lane
+//   menu-words-claude): Anthropic's spent balance and spend limit get their
+//   own sentences, its 429 and 529 retry like OpenAI's 429 (wordsLimited),
+//   a refusal (AnthropicRefusal) stores its own Brief-tab sentence and is
+//   never reported, as OpenAI's is, and any other Anthropic failure stores the
+//   plain wordsFailed sentence, never one that names OpenAI.
 // - __setTestHooks swaps the wait, the Sentry call and a seam run before each
 //   piece is claimed; it refuses under NODE_ENV=production.
 
@@ -28,6 +34,9 @@ const Sentry = require('@sentry/node');
 const { ExternalServiceError } = require('./errors');
 const { MenuArtRefusal, MenuArtRateLimited, MenuArtOutOfCredit, retrySeconds } = require('./menuImageProvider');
 const { OpenAIRefusal, OpenAIRateLimited, OpenAIOutOfCredit, WORDS_REFUSAL_REASON } = require('./openaiClient');
+const {
+  AnthropicRateLimited, AnthropicOutOfCredit, AnthropicRefusal, WORDS_REFUSAL_REASON: CLAUDE_WORDS_REFUSAL_REASON,
+} = require('./anthropicClient');
 const { MenuWordsInvalid, REASONS: WORDS_INVALID_REASONS } = require('./menuArtPrompts');
 const { OPENAI_REFUSAL_REASON, GEMINI_REFUSAL_FALLBACK } = require('./menuImageProvider');
 const { REFUSAL_REASONS: GEMINI_REFUSAL_REASONS } = require('./geminiClient');
@@ -49,6 +58,11 @@ const SENTENCES = Object.freeze({
   // is Start over, so this one names Update draft.
   syncWordsOutOfCredit: "OpenAI is out of credit. Add credit in OpenAI's billing settings, then try Update draft again.",
   syncWordsLimit: "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then try Update draft again.",
+  // The words on Claude (AnthropicOutOfCredit; spec 2026-10-19 section 28).
+  anthropicWordsOutOfCredit: "Anthropic is out of credit. Add credit in Anthropic's billing settings, then Generate again.",
+  anthropicSyncWordsOutOfCredit: "Anthropic is out of credit. Add credit in Anthropic's billing settings, then try Update draft again.",
+  anthropicWordsLimit: "Anthropic hit a spend limit. Raise it in Anthropic's limits settings, then Generate again.",
+  anthropicSyncWordsLimit: "Anthropic hit a spend limit. Raise it in Anthropic's limits settings, then try Update draft again.",
   openaiOutOfCredit: "OpenAI is out of credit. Add credit in OpenAI's billing settings, then re-roll.",
   openaiLimit: "OpenAI hit a spend or usage limit. Raise it in OpenAI's limits settings, then re-roll.",
   // Gemini's spent balance reads as a rate limit (geminiClient.mapError), so
@@ -83,6 +97,7 @@ const DEFAULT_WHO = 'The image service';
 const FIXED_TEXTS = Object.freeze([...new Set([
   ...Object.values(SENTENCES),
   WORDS_REFUSAL_REASON,
+  CLAUDE_WORDS_REFUSAL_REASON,
   ...WORDS_INVALID_REASONS.values(),
   OPENAI_REFUSAL_REASON,
   ...GEMINI_REFUSAL_REASONS,
@@ -92,7 +107,7 @@ const FIXED_TEXTS = Object.freeze([...new Set([
 ])]);
 // The words errors a new brief or art direction can cure (a refusal, an
 // invalid reply), where the card also offers the editor's Brief tab.
-const BRIEF_FIX_TEXTS = Object.freeze([WORDS_REFUSAL_REASON, ...WORDS_INVALID_REASONS.values()]);
+const BRIEF_FIX_TEXTS = Object.freeze([WORDS_REFUSAL_REASON, CLAUDE_WORDS_REFUSAL_REASON, ...WORDS_INVALID_REASONS.values()]);
 const NOT_ATTEMPTED = Object.freeze({
   words: 'not attempted: the words step failed',
   error: 'not attempted: the run stopped on an error',
@@ -161,7 +176,7 @@ async function safely(step, fn) {
   try { await fn(); } catch (err) { report(step, describe(err)); }
 }
 
-const isRefusal = (err) => err instanceof MenuArtRefusal || err instanceof OpenAIRefusal;
+const isRefusal = (err) => err instanceof MenuArtRefusal || err instanceof OpenAIRefusal || err instanceof AnthropicRefusal;
 
 function pieceSentence(err, provider) {
   const who = LABEL.get(provider) || DEFAULT_WHO;
@@ -182,12 +197,18 @@ function pieceSentence(err, provider) {
 
 // sync: the Update draft words call (runWordsForDrinks), not Generate's.
 function wordsSentence(err, { sync = false } = {}) {
-  if (err instanceof MenuWordsInvalid || err instanceof OpenAIRefusal) return err.reason;
+  if (err instanceof MenuWordsInvalid || err instanceof OpenAIRefusal || err instanceof AnthropicRefusal) return err.reason;
   if (err instanceof OpenAIOutOfCredit && err.kind === 'limit') return sync ? SENTENCES.syncWordsLimit : SENTENCES.wordsLimit;
   if (err instanceof OpenAIOutOfCredit) return sync ? SENTENCES.syncWordsOutOfCredit : SENTENCES.wordsOutOfCredit;
+  if (err instanceof AnthropicOutOfCredit && err.kind === 'limit') {
+    return sync ? SENTENCES.anthropicSyncWordsLimit : SENTENCES.anthropicWordsLimit;
+  }
+  if (err instanceof AnthropicOutOfCredit) return sync ? SENTENCES.anthropicSyncWordsOutOfCredit : SENTENCES.anthropicWordsOutOfCredit;
   if (err instanceof OpenAIRateLimited) return SENTENCES.wordsBusy;
   if (err && err.code === 'MENU_ART_NOT_CONFIGURED') return SENTENCES.notSetUp;
-  if (err instanceof ExternalServiceError) return SENTENCES.wordsProvider;
+  // wordsProvider names OpenAI, so Anthropic's own failures (a third busy
+  // answer included) read the plain sentence.
+  if (err instanceof ExternalServiceError && err.service !== 'anthropic') return SENTENCES.wordsProvider;
   return SENTENCES.wordsFailed;
 }
 
@@ -213,7 +234,8 @@ async function waitBeating(seconds, beat) {
   return true;
 }
 
-const isOutOfCredit = (err) => err instanceof OpenAIOutOfCredit || err instanceof MenuArtOutOfCredit;
+const isOutOfCredit = (err) => err instanceof OpenAIOutOfCredit || err instanceof AnthropicOutOfCredit
+  || err instanceof MenuArtOutOfCredit;
 
 // Any other error, a spent balance whatever isLimited says, or a third 429,
 // is thrown. RunLost: lost during a wait.
@@ -229,7 +251,7 @@ async function withRetries(call, isLimited, beat) {
 }
 
 const imageLimited = (err) => err instanceof MenuArtRateLimited;
-const wordsLimited = (err) => err instanceof OpenAIRateLimited;
+const wordsLimited = (err) => err instanceof OpenAIRateLimited || err instanceof AnthropicRateLimited;
 
 module.exports = {
   SENTENCES, FIXED_TEXTS, BRIEF_FIX_TEXTS, NOT_ATTEMPTED, SUPERSEDED, MAX_RETRIES, hooks, __setTestHooks,

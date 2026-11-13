@@ -42,8 +42,10 @@ require.cache[storagePath].exports = {
   getSignedUrl: async () => { throw new Error('menuArtJob.test: nothing may presign'); },
 };
 
+const { Anthropic } = require('@anthropic-ai/sdk');
 const { pool } = require('../db');
 const openaiClient = require('./openaiClient');
+const anthropicClient = require('./anthropicClient');
 const geminiClient = require('./geminiClient');
 const cap = require('./menuArtCap');
 const { loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint } = require('./menuDrinkSource');
@@ -51,6 +53,7 @@ const { OPENAI_REFUSAL_REASON, prepareReferences } = require('./menuImageProvide
 const { DRINK_MAGENTA_KEY, DRINK_TRANSPARENT, BACKGROUND_STYLE_REF } = require('./menuArtImagePrompts');
 const job = require('./menuArtJob');
 const steps = require('./menuArtJobSteps');
+const { FIXED_TEXTS, BRIEF_FIX_TEXTS } = require('./menuArtJobErrors');
 
 const { SENTENCES, NOT_ATTEMPTED } = job;
 const NONCE = crypto.randomBytes(4).toString('hex');
@@ -60,7 +63,9 @@ const MODEL = { openai: 'stamped-gpt-image', gemini: 'stamped-gemini-image' };
 const TEXT_MODEL = 'stamped-text-model';
 const KEYOUT_REASON = "Gemini didn't leave a clean background. Re-roll it.";
 const SECRET = `SECRET-${NONCE}`;
-const ENV_KEYS = ['GEMINI_API_KEY', 'MENU_ART_DAILY_IMAGE_CAP', 'MENU_ART_DAILY_TEXT_CAP'];
+const ENV_KEYS = ['GEMINI_API_KEY', 'MENU_ART_DAILY_IMAGE_CAP', 'MENU_ART_DAILY_TEXT_CAP', 'MENU_ART_TEXT_MODEL'];
+// The words model the routes stamp by default since lane menu-words-claude.
+const CLAUDE = 'claude-haiku-5-5';
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 const runIds = [];
@@ -72,7 +77,7 @@ let draftId = null;
 let realFetch = null;
 let tripwire = 0;
 const img = {};
-const calls = { words: [], openai: [], gemini: [] };
+const calls = { words: [], claude: [], openai: [], gemini: [] };
 const captured = [];
 const sleeps = [];
 let onSleep = null;
@@ -116,7 +121,7 @@ const newRun = () => { const id = crypto.randomUUID(); runIds.push(id); return i
 // run_id and the words reset to pending, the old pieces replaced by pending
 // ones (the background plus the first 8 drinks) stamped with the provider and
 // model, one text reservation and one image reservation per piece.
-async function generate({ provider = 'openai', drinks = 2, inputs = {}, planExtra = {} } = {}) {
+async function generate({ provider = 'openai', drinks = 2, inputs = {}, planExtra = {}, textModel = TEXT_MODEL } = {}) {
   await pool.query('UPDATE drink_plans SET selections = $2 WHERE id = $1', [planId, selections(drinks, planExtra)]);
   const normalized = normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps());
   const runId = newRun();
@@ -143,7 +148,7 @@ async function generate({ provider = 'openai', drinks = 2, inputs = {}, planExtr
       `INSERT INTO menu_draft_pieces (draft_id, piece_key, run_id, status, provider, model)
        SELECT $1, k, $2, 'pending', $3, $4 FROM unnest($5::text[]) AS k`,
       [draftId, runId, provider, MODEL[provider], keys]);
-    const textId = await cap.reserveText(client, { proposalId, runId, model: TEXT_MODEL });
+    const textId = await cap.reserveText(client, { proposalId, runId, model: textModel });
     const imageIds = await cap.reserveImages(client, { proposalId, runId, pieceKeys: keys, provider, model: MODEL[provider] });
     return { textId, imageIds };
   });
@@ -190,9 +195,8 @@ async function assertSettled(runId) {
 }
 
 // ── Provider stubs ──────────────────────────────────────────────────────────
-function wordsReply(body) {
-  const req = JSON.parse(body.input);
-  const json = {
+function wordsJson(req) {
+  return {
     title: 'Garden Bar',
     drinks: req.drinks.map((d) => ({
       key: d.key, display_name: d.name, name_ai_suggested: false,
@@ -201,8 +205,39 @@ function wordsReply(body) {
     font_pairing: 'elegant-script', palette: [{ name: 'sage', hex: '#9caf88' }], accent_color: '#9caf88',
     background_label: 'Pastel garden',
   };
+}
+function wordsReply(body) {
+  const json = wordsJson(JSON.parse(body.input));
   return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(json) }] }], _request_id: 'req_words' };
 }
+// The same words as Claude answers them (messages.create with output_config).
+function claudeReply(body) {
+  const json = wordsJson(JSON.parse(body.messages[0].content));
+  return { type: 'message', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(json) }], _request_id: 'req_claude_words' };
+}
+// Anthropic stubbed at the SDK-client level (anthropicClient.__setTestStub).
+function stubAnthropic(words) {
+  anthropicClient.__setTestStub({
+    messages: {
+      create: async (body, options) => {
+        calls.claude.push({ body, options });
+        return words ? words(body, calls.claude.length) : claudeReply(body);
+      },
+    },
+  });
+}
+// An Anthropic SDK error as the SDK builds it from an HTTP answer.
+function claudeError(status, type, message, { details, retryAfter } = {}) {
+  const error = { type, message: `${message} ${SECRET}` };
+  if (details) error.details = details;
+  const headers = new globalThis.Headers({ 'request-id': `req_claude_${status}`, ...(retryAfter ? { 'retry-after': String(retryAfter) } : {}) });
+  return Anthropic.APIError.generate(status, { type: 'error', error, request_id: `req_claude_${status}` }, undefined, headers);
+}
+const CLAUDE_OUT_OF_CREDIT = "Anthropic is out of credit. Add credit in Anthropic's billing settings, then Generate again.";
+const CLAUDE_LIMIT = "Anthropic hit a spend limit. Raise it in Anthropic's limits settings, then Generate again.";
+const SYNC_CLAUDE_OUT_OF_CREDIT = "Anthropic is out of credit. Add credit in Anthropic's billing settings, then try Update draft again.";
+const SYNC_CLAUDE_LIMIT = "Anthropic hit a spend limit. Raise it in Anthropic's limits settings, then try Update draft again.";
+const CLAUDE_REFUSAL = 'Anthropic declined to write this menu. Try a different brief.';
 
 function stubOpenAI({ words, image } = {}) {
   const reply = async (op, body) => {
@@ -300,6 +335,7 @@ before(async () => {
 after(async () => {
   job.__setTestHooks({});
   openaiClient._resetForTest();
+  anthropicClient._resetClientForTest();
   geminiClient._resetForTest();
   globalThis.fetch = realFetch;
   for (const [k, v] of Object.entries(savedEnv)) {
@@ -313,7 +349,7 @@ after(async () => {
 });
 
 beforeEach(() => {
-  for (const list of [calls.words, calls.openai, calls.gemini, captured, sleeps, uploads, reads]) list.length = 0;
+  for (const list of [calls.words, calls.claude, calls.openai, calls.gemini, captured, sleeps, uploads, reads]) list.length = 0;
   uploadFails = () => false;
   onSleep = null;
   tripwire = 0;
@@ -1195,7 +1231,7 @@ test('runWordsForDrinks: a superseded run is a 409 with no call and the row rele
   calls.words.length = 0;
   const staleRun = newRun();
   const stale = await inTx((client) => cap.reserveText(client, { proposalId, runId: staleRun, model: TEXT_MODEL }));
-  const args = { normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party', draftId };
+  const args = { normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party', draftId, model: TEXT_MODEL };
   await assert.rejects(job.runWordsForDrinks({ ...args, reservationId: stale, runId: staleRun }),
     (err) => err.statusCode === 409 && err.code === 'MENU_DRAFT_CHANGED');
   assert.equal(calls.words.length, 0);
@@ -1223,7 +1259,7 @@ test('runWordsForDrinks: an empty OpenAI balance throws the Update draft out-of-
   const reservationId = await inTx((client) => cap.reserveText(client, { proposalId, runId: g.runId, model: TEXT_MODEL }));
   await assert.rejects(job.runWordsForDrinks({
     normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party',
-    reservationId, draftId, runId: g.runId,
+    reservationId, draftId, runId: g.runId, model: TEXT_MODEL,
   }), (err) => {
     assert.equal(err.statusCode, 502);
     assert.equal(err.code, 'MENU_WORDS_FAILED');
@@ -1249,7 +1285,7 @@ test('runWordsForDrinks: a spend or usage limit throws the Update draft limit se
   const reservationId = await inTx((client) => cap.reserveText(client, { proposalId, runId: g.runId, model: TEXT_MODEL }));
   await assert.rejects(job.runWordsForDrinks({
     normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party',
-    reservationId, draftId, runId: g.runId,
+    reservationId, draftId, runId: g.runId, model: TEXT_MODEL,
   }), (err) => {
     assert.equal(err.message, SYNC_WORDS_LIMIT, 'the limit, and Update draft, not Generate (Start over)');
     assert.equal(SENTENCES.syncWordsLimit, SYNC_WORDS_LIMIT);
@@ -1267,7 +1303,7 @@ test('runWordsForDrinks: a 429 retries on the same row; a Start over during the 
   const g = await generate();
   await run(g);
   const normalized = normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps());
-  const args = { normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party', draftId, runId: g.runId };
+  const args = { normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party', draftId, runId: g.runId, model: TEXT_MODEL };
 
   calls.words.length = 0;
   stubOpenAI({ words: (body, n) => { if (n === 1) throw rateLimited(2); return wordsReply(body); } });
@@ -1287,4 +1323,199 @@ test('runWordsForDrinks: a 429 retries on the same row; a Start over during the 
     (err) => err.statusCode === 409 && err.code === 'MENU_DRAFT_CHANGED');
   assert.equal(calls.words.length, 1, 'never retried on the dead run');
   assert.equal((await ledger(g.runId)).find((r) => r.id === second).status, 'failed', 'it was sent');
+});
+
+// ── The words on Claude (spec 2026-10-19 section 16, lane menu-words-claude) ──
+// The provider follows the model id stamped on the text reservation: claude-
+// is Anthropic through anthropicClient.draftMenuCopy, anything else OpenAI.
+
+test('the words model defaults to Claude Haiku 5.5, and the provider follows the model id', () => {
+  delete process.env.MENU_ART_TEXT_MODEL;
+  assert.equal(steps.textModelId(), CLAUDE);
+  assert.equal(steps.textProvider(), 'anthropic');
+  assert.equal(steps.textProvider('claude-sonnet-5-5'), 'anthropic');
+  assert.equal(steps.textProvider('gpt-5.4-mini'), 'openai');
+  assert.equal(steps.textProvider('o4-mini'), 'openai', 'any other id keeps the OpenAI path');
+  process.env.MENU_ART_TEXT_MODEL = ' gpt-5.4-mini ';
+  assert.deepEqual([steps.textModelId(), steps.textProvider()], ['gpt-5.4-mini', 'openai']);
+  delete process.env.MENU_ART_TEXT_MODEL;
+});
+
+test('words on Claude: the stamped model goes to Anthropic with the schema, the content lands and the text row says anthropic', async () => {
+  stubAnthropic();
+  const g = await generate({ textModel: CLAUDE });
+  await run(g);
+  const draft = await draftRow();
+  assert.deepEqual([draft.content.words_status, draft.content.words_error, draft.content.title], ['done', null, 'Garden Bar']);
+  assert.deepEqual(draft.content.drinks.map((d) => [d.key, d.description, d.has_art]),
+    [[KEYS[0], `A bright pour of ${DRINKS[0]}`, true], [KEYS[1], `A bright pour of ${DRINKS[1]}`, true]]);
+
+  assert.equal(calls.words.length, 0, 'OpenAI never writes the words');
+  assert.equal(calls.claude.length, 1);
+  const { body, options } = calls.claude[0];
+  assert.equal(body.model, CLAUDE);
+  assert.deepEqual(Object.keys(body).sort(), ['max_tokens', 'messages', 'model', 'output_config', 'system']);
+  assert.equal(body.output_config.format.type, 'json_schema');
+  assert.deepEqual(body.output_config.format.schema.properties.drinks.items.properties.key.enum, [KEYS[0], KEYS[1]]);
+  assert.deepEqual(options, { timeout: 60000, maxRetries: 0 });
+  // The payload rule: the whitelisted fields only, never a client's details.
+  const sent = JSON.parse(body.messages[0].content);
+  assert.deepEqual(Object.keys(sent).sort(), ['brief', 'drinks', 'event_type']);
+  assert.equal(sent.event_type, 'Birthday Party');
+
+  const rows = await ledger(g.runId);
+  const text = rows.find((r) => r.kind === 'text');
+  assert.deepEqual([text.status, text.provider, text.model, text.provider_request_id], ['ok', 'anthropic', CLAUDE, 'req_claude_words']);
+  assert.ok(Object.values(await pieceMap()).every((p) => p.status === 'done'), 'the drawings follow as before');
+  assert.equal(captured.length, 0);
+});
+
+test('words on an empty Anthropic balance: its own sentence, no retry, every piece not attempted, one Sentry event', async () => {
+  for (const err of [
+    claudeError(402, 'billing_error', 'Billing problem.'),
+    claudeError(400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'),
+  ]) {
+    calls.claude.length = 0;
+    captured.length = 0;
+    stubAnthropic(() => { throw err; });
+    const g = await generate({ textModel: CLAUDE });
+    await run(g);
+    assert.deepEqual(sleeps, [], 'never retried');
+    assert.equal(calls.claude.length, 1);
+    const draft = await draftRow();
+    assert.deepEqual([draft.content.words_status, draft.content.words_error], ['failed', CLAUDE_OUT_OF_CREDIT]);
+    assert.ok(FIXED_TEXTS.includes(CLAUDE_OUT_OF_CREDIT), 'a fixed sentence the card shows');
+    const pieces = await pieceMap();
+    for (const key of g.keys) assert.deepEqual([pieces[key].status, pieces[key].error], ['failed', NOT_ATTEMPTED.words], key);
+    assert.equal(calls.openai.length + calls.gemini.length, 0, 'nothing is drawn');
+    const rows = await ledger(g.runId);
+    const text = rows.find((r) => r.kind === 'text');
+    assert.equal(text.status, 'failed');
+    assert.equal(text.provider, 'anthropic');
+    assert.equal(JSON.parse(text.error).provider, 'anthropic');
+    assert.ok(!text.error.includes(SECRET), 'never the API message');
+    assert.ok(rows.filter((r) => r.kind === 'image').every((r) => r.status === 'released'));
+    assert.equal(captured.length, 1, 'one Sentry event for the run');
+    assert.equal(captured[0].context.extra.descriptor.provider, 'anthropic');
+    assert.ok(!captured[0].err.message.includes(SECRET));
+  }
+});
+
+test('words on an Anthropic spend limit: the limit sentence, no retry, whichever limit answered', async () => {
+  for (const err of [
+    claudeError(400, 'invalid_request_error', 'You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.'),
+    claudeError(429, 'rate_limit_error', 'You have reached your API usage limits.', { details: { error_code: 'enforced_spend_limit_reached' } }),
+  ]) {
+    calls.claude.length = 0;
+    stubAnthropic(() => { throw err; });
+    const g = await generate({ textModel: CLAUDE });
+    await run(g);
+    assert.deepEqual(sleeps, [], 'never retried');
+    assert.equal(calls.claude.length, 1);
+    assert.deepEqual([(await draftRow()).content.words_status, (await draftRow()).content.words_error], ['failed', CLAUDE_LIMIT]);
+    assert.ok(FIXED_TEXTS.includes(CLAUDE_LIMIT));
+    await assertSettled(g.runId);
+  }
+});
+
+test('a Claude refusal stores the Brief-tab sentence, is never retried and never reported to Sentry', async () => {
+  const refusal = () => ({ type: 'message', role: 'assistant', stop_reason: 'refusal', content: [{ type: 'text', text: `No. ${SECRET}` }], _request_id: 'req_claude_refusal' });
+  stubAnthropic(refusal);
+  captured.length = 0;
+  const g = await generate({ textModel: CLAUDE });
+  await run(g);
+  assert.deepEqual(sleeps, [], 'never retried');
+  assert.equal(calls.claude.length, 1);
+  const draft = await draftRow();
+  assert.deepEqual([draft.content.words_status, draft.content.words_error], ['failed', CLAUDE_REFUSAL]);
+  assert.ok(FIXED_TEXTS.includes(CLAUDE_REFUSAL) && BRIEF_FIX_TEXTS.includes(CLAUDE_REFUSAL), 'a fixed sentence that offers the Brief tab');
+  const text = (await ledger(g.runId)).find((r) => r.kind === 'text');
+  assert.deepEqual([text.status, text.provider], ['failed', 'anthropic']);
+  assert.ok(!text.error.includes(SECRET), 'never the model text');
+  assert.equal(captured.length, 0, 'a refusal is not reported');
+  await assertSettled(g.runId);
+});
+
+test('an Anthropic 429 waits Retry-After and succeeds on the same reservation; two more busy answers end on the plain sentence', async () => {
+  stubAnthropic((body, n) => { if (n === 1) throw claudeError(429, 'rate_limit_error', 'Too many requests.', { retryAfter: 3 }); return claudeReply(body); });
+  let g = await generate({ textModel: CLAUDE });
+  await run(g);
+  assert.deepEqual(sleeps, [3000]);
+  assert.equal(calls.claude.length, 2);
+  assert.equal((await draftRow()).content.words_status, 'done');
+  assert.deepEqual((await ledger(g.runId)).filter((r) => r.kind === 'text').map((r) => r.status), ['ok'], 'one reservation, retried');
+
+  // Overloaded three times: two waits, then a sentence that names no OpenAI.
+  calls.claude.length = 0;
+  sleeps.length = 0;
+  stubAnthropic(() => { throw claudeError(529, 'overloaded_error', 'Overloaded.'); });
+  g = await generate({ textModel: CLAUDE });
+  await run(g);
+  assert.equal(calls.claude.length, 3);
+  assert.equal(sleeps.length, 4, 'two 20 s waits, each in two heartbeat steps');
+  assert.deepEqual([(await draftRow()).content.words_status, (await draftRow()).content.words_error], ['failed', SENTENCES.wordsFailed]);
+  assert.equal(calls.words.length, 0);
+});
+
+test('any other Claude failure, or words Claude got wrong, stores a fixed sentence that names no OpenAI', async () => {
+  stubAnthropic(() => { throw claudeError(400, 'invalid_request_error', 'messages.0: bad'); });
+  let g = await generate({ textModel: CLAUDE });
+  await run(g);
+  let draft = await draftRow();
+  assert.deepEqual([draft.content.words_status, draft.content.words_error], ['failed', SENTENCES.wordsFailed]);
+  assert.doesNotMatch(draft.content.words_error, /OpenAI/);
+
+  stubAnthropic((body) => {
+    const reply = claudeReply(body);
+    const json = JSON.parse(reply.content[0].text);
+    json.drinks.push({ ...json.drinks[0], key: 'custom:not-on-the-plan' });
+    reply.content[0].text = JSON.stringify(json);
+    return reply;
+  });
+  g = await generate({ textModel: CLAUDE });
+  await run(g);
+  draft = await draftRow();
+  assert.equal(draft.content.words_error, 'The menu words named a drink that is not on the plan. Try again.');
+  const text = (await ledger(g.runId)).find((r) => r.kind === 'text');
+  assert.deepEqual([JSON.parse(text.error).provider, JSON.parse(text.error).code, text.provider_request_id],
+    ['anthropic', 'words_extra_drink', 'req_claude_words'], 'the ledger names the provider that answered');
+});
+
+test('runWordsForDrinks on Claude: the Update draft words land; a spent balance or a limit throws its Update draft sentence at once', async () => {
+  const g = await generate();
+  await run(g);
+  const normalized = normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps());
+  const args = { normalizedDrinks: normalized.drinks.slice(0, 1), brief: normalized.brief, eventTypeLabel: 'Birthday Party', draftId, runId: g.runId, model: CLAUDE };
+
+  stubAnthropic();
+  calls.words.length = 0;
+  const ok = await inTx((client) => cap.reserveText(client, { proposalId, runId: g.runId, model: CLAUDE }));
+  const drinks = await job.runWordsForDrinks({ ...args, reservationId: ok });
+  assert.deepEqual(drinks.map((d) => [d.key, d.added_by_sync]), [[KEYS[0], true]]);
+  assert.deepEqual([calls.claude.length, calls.words.length], [1, 0]);
+  const okRow = (await ledger(g.runId)).find((r) => r.id === ok);
+  assert.deepEqual([okRow.status, okRow.provider], ['ok', 'anthropic']);
+
+  for (const [err, sentence] of [
+    [claudeError(402, 'billing_error', 'Billing problem.'), SYNC_CLAUDE_OUT_OF_CREDIT],
+    [claudeError(400, 'invalid_request_error', 'You have reached your specified workspace API usage limits.'), SYNC_CLAUDE_LIMIT],
+    ['refusal', CLAUDE_REFUSAL],
+  ]) {
+    calls.claude.length = 0;
+    captured.length = 0;
+    stubAnthropic(err === 'refusal'
+      ? () => ({ type: 'message', role: 'assistant', stop_reason: 'refusal', content: [{ type: 'text', text: 'No.' }], _request_id: 'req_claude_refusal' })
+      : () => { throw err; });
+    const id = await inTx((client) => cap.reserveText(client, { proposalId, runId: g.runId, model: CLAUDE }));
+    await assert.rejects(job.runWordsForDrinks({ ...args, reservationId: id }), (e) => {
+      assert.deepEqual([e.statusCode, e.code, e.message], [502, 'MENU_WORDS_FAILED', sentence]);
+      assert.equal(e.descriptor.provider, 'anthropic');
+      return true;
+    });
+    assert.equal(calls.claude.length, 1, 'never retried');
+    assert.deepEqual(sleeps, []);
+    assert.ok(FIXED_TEXTS.includes(sentence));
+    assert.equal((await ledger(g.runId)).find((r) => r.id === id).status, 'failed');
+    if (err === 'refusal') assert.equal(captured.length, 0, 'a refusal is not reported');
+  }
 });

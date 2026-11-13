@@ -3,7 +3,11 @@
 // image prompts are menuArtImagePrompts.js, which reuses cut and the limits.
 //
 // wordsRequest({ normalized, eventTypeLabel }) -> { system, user, schema }
-//   One structured-output call (openaiClient.draftMenuCopy, strict: true).
+//   One structured-output call, on the provider the stamped words model names
+//   (anthropicClient.draftMenuCopy for claude-, openaiClient.draftMenuCopy
+//   with strict: true otherwise; spec 2026-10-19 section 16). A description
+//   it writes is a plain line, the main ingredients and one honest taste word,
+//   never hype.
 //   user is JSON text built ONLY from whitelisted fields (the spec 5.1 payload
 //   rule): the event type label, the three brief fields (each cut to 1,000
 //   characters, plan Review Focus 2), and per drink its key, section, kind,
@@ -23,7 +27,9 @@
 //   Suggested after another pairing is chosen. The schema's enum is
 //   FONT_PAIRING_IDS, all twelve.
 //   Throws MenuWordsInvalid on a wrong shape or type, a missing, extra or
-//   repeated drink key, a font pairing outside FONT_PAIRING_IDS or a bad hex.
+//   repeated drink key, a font pairing outside FONT_PAIRING_IDS or a bad hex;
+//   its descriptor names no provider, so the words step fills in the one it
+//   called.
 //   A value that is only too long is cut to its limit at a word boundary
 //   rather than refused, so a long client-typed name cannot fail every
 //   Generate; the limits match menuDraftValidation, so the fill never holds
@@ -54,7 +60,7 @@ class MenuWordsInvalid extends Error {
     const known = REASONS.has(code) ? code : 'shape';
     const reason = REASONS.get(known);
     super(reason);
-    const descriptor = { provider: 'openai', errorClass: 'MenuWordsInvalid', status: null, requestId: null, code: `words_${known}` };
+    const descriptor = { provider: null, errorClass: 'MenuWordsInvalid', status: null, requestId: null, code: `words_${known}` };
     Object.assign(this, { name: 'MenuWordsInvalid', code: known, reason, descriptor });
   }
 }
@@ -124,7 +130,10 @@ function wordsSchema(keys) {
         key: { type: 'string', enum: keys },
         display_name: text(`The name printed on the menu, at most ${OUT.displayName} characters.`),
         name_ai_suggested: { type: 'boolean', description: 'True only when you invented the name.' },
-        description: { type: ['string', 'null'], description: `Only when needs_description is true: one line, at most ${OUT.description} characters. Otherwise null.` },
+        description: {
+          type: ['string', 'null'],
+          description: `Only when needs_description is true: one plain line naming the main ingredients and one honest taste word, at most ${OUT.description} characters, no hype. Otherwise null.`,
+        },
         visual_note: text('How the drink looks, for an illustrator: glass, liquid color, garnish.'),
       }),
     },
@@ -149,7 +158,7 @@ const WORDS_SYSTEM = [
   'drinks: exactly one entry for every drink listed, using its key.',
   `- display_name: the drink's name as given, unless the naming notes rename it or ask for themed names; then apply them. At most ${OUT.displayName} characters; shorten a longer name.`,
   '- name_ai_suggested: true when you invented the name, false when it is the given name or a rename the client wrote out.',
-  `- description: only for drinks with needs_description true, one appealing line from the name and ingredients, at most ${OUT.description} characters. null for every other drink.`,
+  `- description: only for drinks with needs_description true: one plain line, at most ${OUT.description} characters, naming the main ingredients and one honest taste word (such as tart, bitter, sweet, smoky, bright or herbal). No hype words such as perfect, ultimate, irresistible or magical, and no exclamation marks. null for every other drink.`,
   '- visual_note: what the drink looks like, for an illustrator: the glass, the liquid color and the garnish. No brand names.',
   `font_pairing: the pairing that best suits the theme, one of ${FONT_PAIRING_IDS.join(', ')}.`,
   `palette: up to ${OUT.palette} colors the theme names, each with the name as the client wrote it and a #rrggbb hex. Empty when the theme names no colors.`,

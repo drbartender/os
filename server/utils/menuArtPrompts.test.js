@@ -109,6 +109,36 @@ test('the payload names each drink with its key, kind, catalog text and whether 
   assert.equal(byKey['mocktail:3'].menu_section, 'mocktails');
 });
 
+// Spec 2026-10-19 section 16 (lane menu-words-claude): the owner found "one
+// appealing line" read as overly dramatic on every model tested, so a drink
+// description is a plain line: the main ingredients and one honest taste word.
+test('the description instruction asks for a plain line: the main ingredients and one honest taste word, no hype', () => {
+  const { system, schema } = wordsRequest({ normalized: normalized(), eventTypeLabel: 'Wedding' });
+  const lines = system.split('\n').filter((l) => l.startsWith('- description:'));
+  assert.equal(lines.length, 1, 'one description line');
+  const [line] = lines;
+  assert.match(line, /needs_description true/);
+  assert.match(line, /main ingredients/);
+  assert.match(line, /one honest taste word/);
+  assert.match(line, /no hype/i);
+  assert.match(line, /at most 200 characters/);
+  assert.match(line, /null for every other drink/);
+  assert.doesNotMatch(system, /appealing/i, 'the old "one appealing line" is gone');
+  const field = schema.properties.drinks.items.properties.description;
+  assert.deepEqual(field.type, ['string', 'null'], 'the output shape is unchanged');
+  assert.match(field.description, /main ingredients/);
+  assert.match(field.description, /one honest taste word/);
+  assert.doesNotMatch(field.description, /appealing/i);
+});
+
+test('an invalid reply names no provider of its own: the words step fills in the one it called', () => {
+  for (const code of ['shape', 'extra_drink', 'bad_palette']) {
+    const err = new MenuWordsInvalid(code);
+    assert.equal(err.descriptor.provider, null, code);
+    assert.equal(err.descriptor.code, `words_${code}`);
+  }
+});
+
 test('each brief field is cut to 1,000 characters (a 3,000-character theme does not blow up the prompt)', () => {
   const huge = (tag) => `${'a'.repeat(BRIEF_MAX - 3)}${tag}END${'b'.repeat(2000)}`;
   const norm = normalized({ menuTheme: huge('T'), drinkNaming: huge('N'), menuDesignNotes: huge('D') });

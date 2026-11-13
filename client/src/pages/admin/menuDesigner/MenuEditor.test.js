@@ -256,10 +256,12 @@ describe('the sidebar override (Review Focus 7)', () => {
     expect(mockPrefs.setPref).not.toHaveBeenCalled();
   });
 
-  test('on open: GPT Image is selected, full-size layers are asked for (released on unmount), all six pairings load', () => {
+  test('on open: the pick resets to the server default, full-size layers are asked for (released on unmount), all six pairings load', () => {
     const menu = fakeMenu(P());
     const { unmount } = mountEditor(menu);
-    expect(menu.setImageModel).toHaveBeenCalledWith('openai');
+    // null hands the toggle back to configured.default_image_model (spec 2026-10-19 section 16); never a fixed GPT Image.
+    expect(menu.setImageModel).toHaveBeenCalledWith(null);
+    expect(menu.setImageModel).not.toHaveBeenCalledWith('openai');
     expect(menu.wantSize).toHaveBeenCalledWith(FULL_SIZE);
     expect(document.head.querySelector('link[data-menu-fonts]').getAttribute('href')).toMatch(/Pinyon\+Script.*Pacifico/);
     unmount();
@@ -598,6 +600,23 @@ describe('the mounted panel (Task D2) and the canvas wiring', () => {
     unmount();
     const b = mountEditor(fakeMenu(P((p) => { p.configured.openai = false; })));
     expect(b.container.querySelector('.mc-fake')).toHaveAttribute('data-can-reroll', 'false');
+  });
+
+  // Spec 2026-10-19 section 16 (lane menu-words-claude): with no OpenAI key,
+  // the words key and Gemini set, the editor draws with Gemini and reads
+  // neither Not set up nor Drawing is off.
+  test('with no OpenAI key and Gemini as the default: no Drawing is off, the pill re-rolls, Gemini is the toggle, GPT Image disabled', () => {
+    const claudeOnGemini = (p) => { p.configured = { openai: false, gemini: true, words: true, default_image_model: 'gemini' }; };
+    const { container, unmount } = mountEditor(fakeMenu(P(claudeOnGemini), { imageModel: 'gemini' }));
+    expect(banners(container).map((b) => b.id)).not.toContain('drawing-off');
+    expect(container.querySelector('.mc-fake')).toHaveAttribute('data-can-reroll', 'true');
+    const foot = within(container.querySelector('.md-ed-panel'));
+    expect(foot.getByRole('button', { name: 'Gemini' })).toHaveAttribute('aria-pressed', 'true');
+    expect(foot.getByRole('button', { name: 'GPT Image' })).toBeDisabled();
+    unmount();
+    const none = mountEditor(fakeMenu(P((p) => { claudeOnGemini(p); p.draft = null; p.pieces = []; p.diff = null; }), { imageModel: 'gemini' }));
+    expect(within(none.container.querySelector('.md-ed-empty')).getByText('No draft yet')).toBeInTheDocument();
+    expect(within(none.container.querySelector('.md-ed-panel')).getByRole('button', { name: 'Generate' })).toBeEnabled();
   });
 
   test('a Design tab choice patches the draft content', () => {

@@ -53,6 +53,7 @@ test('each twin names the other in its header', () => {
 // in words_error or a piece's error, not SENTENCES alone.
 const E = require('./menuArtJobErrors');
 const { OpenAIRefusal, WORDS_REFUSAL_REASON } = require('./openaiClient');
+const { WORDS_REFUSAL_REASON: CLAUDE_WORDS_REFUSAL_REASON } = require('./anthropicClient');
 const { MenuArtRefusal, MenuArtRateLimited, MenuArtOutOfCredit, OPENAI_REFUSAL_REASON } = require('./menuImageProvider');
 const { MenuWordsInvalid } = require('./menuArtPrompts');
 const { MenuKeyOutFailed } = require('./menuKeyOut');
@@ -132,8 +133,8 @@ test('readImage\'s unmatched-failure and no-image paths store a reason in FIXED_
 });
 
 // Fix round 2, item 2: the words errors a new brief or art direction can cure.
-test('BRIEF_FIX_TEXTS is the words refusal and every invalid-reply reason, mirrored on the client', async () => {
-  const expected = [WORDS_REFUSAL_REASON, ...WORDS_CODES.map((c) => new MenuWordsInvalid(c).reason)];
+test('BRIEF_FIX_TEXTS is each words refusal (OpenAI and Claude) and every invalid-reply reason, mirrored on the client', async () => {
+  const expected = [WORDS_REFUSAL_REASON, CLAUDE_WORDS_REFUSAL_REASON, ...WORDS_CODES.map((c) => new MenuWordsInvalid(c).reason)];
   assert.ok(Array.isArray(E.BRIEF_FIX_TEXTS) && Object.isFrozen(E.BRIEF_FIX_TEXTS));
   assert.deepEqual([...E.BRIEF_FIX_TEXTS].sort(), [...new Set(expected)].sort());
   for (const t of E.BRIEF_FIX_TEXTS) assert.ok(E.FIXED_TEXTS.includes(t), t);

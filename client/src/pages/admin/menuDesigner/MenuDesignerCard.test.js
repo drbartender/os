@@ -180,7 +180,7 @@ describe('the editor actions', () => {
   });
 });
 
-describe('the in-place actions draw with GPT Image', () => {
+describe('the in-place actions draw with the default image model', () => {
   test('Generate, Retry, Update draft and Dismiss', async () => {
     let menu = fakeMenu(P(noDraft));
     const { unmount } = mount(menu);
@@ -200,6 +200,34 @@ describe('the in-place actions draw with GPT Image', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Dismiss' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => expect(menu.dismissPlanChange).toHaveBeenCalled());
+  });
+
+  // Spec 2026-10-19 section 16 (lane menu-words-claude): the card draws with
+  // the read model's default image model, and Not set up reads the words key.
+  test('with no OpenAI key, the words key and Gemini set: no Not set up, and every action draws with the default, Gemini', async () => {
+    const claudeOnGemini = (p) => { p.configured = { openai: false, gemini: true, words: true, default_image_model: 'gemini' }; };
+    let menu = fakeMenu(P((p) => { noDraft(p); claudeOnGemini(p); }));
+    const { container, unmount } = mount(menu);
+    expect(top(container).chip).toHaveTextContent('Not started');
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(menu.generate).toHaveBeenCalledWith({ imageModel: 'gemini' }));
+    unmount();
+    menu = fakeMenu(P((p) => { claudeOnGemini(p); p.draft.content = { words_status: 'failed' }; }));
+    const retry = mount(menu);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate again' }));
+    await waitFor(() => expect(menu.generate).toHaveBeenCalledWith({ imageModel: 'gemini' }));
+    retry.unmount();
+    menu = fakeMenu(P((p) => { claudeOnGemini(p); p.diff.dropped = [{ key: 'cocktail:2', name: 'Old Fashioned' }]; }));
+    mount(menu);
+    fireEvent.click(screen.getByRole('button', { name: 'Update draft' }));
+    await waitFor(() => expect(menu.sync).toHaveBeenCalledWith({ imageModel: 'gemini' }));
+  });
+
+  test('Not set up follows the words key, not the OpenAI key', () => {
+    const { container } = mount(fakeMenu(P((p) => { noDraft(p); p.configured = { openai: true, gemini: true, words: false, default_image_model: 'gemini' }; })));
+    expect(top(container).chip).toHaveTextContent('Not set up');
+    expect(top(container).buttons).toEqual([]);
   });
 
   test('a running action holds the row under its own label, and its refusal shows as one alert line', async () => {
