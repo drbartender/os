@@ -1081,7 +1081,9 @@ lanes:
       $0.113 per 4K, is untested with style references).
       Copy (spec section 28, added): "Anthropic is out of credit. Add credit in Anthropic's billing settings,
       then Generate again."; "... then try Update draft again."; "Anthropic hit a spend limit. Raise it in
-      Anthropic's limits settings, then Generate again."; "... then try Update draft again."
+      Anthropic's limits settings, then Generate again."; "... then try Update draft again."; and a refusal,
+      "Anthropic declined to write this menu. Try a different brief.", handled as OpenAI's words refusal is:
+      a Brief-tab sentence, never reported to Sentry (added 2026-11-12 by the lane's review, my call).
     footprint:
       - server/utils/anthropicClient.js  (the menu words helper; its header names the rule)
       - server/utils/anthropicClient.test.js
@@ -1111,6 +1113,7 @@ lanes:
       - client/src/pages/admin/menuDesigner/menuCardState.js  (Not set up reads configured.words)
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - client/src/pages/admin/menuDesigner/menuArtSentences.js  (Anthropic's sentences, if the client mirrors them)
+      - client/src/pages/admin/menuDesigner/MenuEditor.js  (its open effect stops forcing GPT Image; added by the lane's review)
       - client/src/pages/admin/menuDesigner/MenuEditor.test.js  (the editor's toggle and Drawing is off)
       - .env.example  (MENU_ART_TEXT_MODEL's default; the Anthropic, OpenAI and Gemini comments say which call needs which key)
       - README.md, ARCHITECTURE.md  (generated sections)
