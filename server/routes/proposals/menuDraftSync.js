@@ -12,7 +12,10 @@
 // with the new version. The plan_fingerprint it stores is what it applied: the
 // plan's drink keys and bar baseline (bar_lines, bar_hash), with the stored
 // brief and planner image parts kept (it applies neither, so a notes edit or a
-// new client image still reads after it).
+// new client image still reads after it). The words call for the added
+// client-typed drinks reads effectiveBrief(the plan's brief, the draft's
+// inputs.admin_brief) (spec 2026-10-19 section 7.2), the brief the words step
+// reads; the fingerprint never sees the admin brief.
 //
 // The keys are checked up front, before anything is reserved or spent,
 // whenever the sync adds a drink: the words provider's key for a client-typed
@@ -82,7 +85,7 @@ const job = require('../../utils/menuArtJob');
 const { computeDiff, barBaseline, dismissalHash } = require('../../utils/menuDraftRead');
 const { validateImageModel, LIMITS } = require('../../utils/menuDraftValidation');
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, hashBarLines,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, hashBarLines, effectiveBrief,
 } = require('../../utils/menuDrinkSource');
 const { keyedBarLines, keyBarLines, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
@@ -303,7 +306,7 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
   const provider = validateImageModel(body.image_model);
   const proposal = await requireProposal(id);
   const draft = (await pool.query(
-    'SELECT id, run_id, version, content, plan_fingerprint, NOW() AS db_now FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
+    'SELECT id, run_id, version, content, inputs, plan_fingerprint, NOW() AS db_now FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
   if (!draft) throw noDraft();
   if (draft.version !== version) throw draftChanged();
   requireWords(draft.content, draft.db_now);
@@ -316,7 +319,9 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
   // Any added drink could draw art (a slot freed during the words call hands it
   // one), so its image model's key is needed before the words call spends.
   requireProviders(provider, { words: typed.length > 0, art: firstDiff.added.length > 0 });
-  const words = typed.length ? await typedWords({ id, draft, proposal, typed, brief: first.brief, artCount }) : new Map();
+  const adminBrief = isObject(draft.inputs) ? draft.inputs.admin_brief : null;
+  const words = typed.length
+    ? await typedWords({ id, draft, proposal, typed, brief: effectiveBrief(first.brief, adminBrief), artCount }) : new Map();
 
   const model = imageModelId(provider);
   const pieceRunId = crypto.randomUUID();

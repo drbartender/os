@@ -15,6 +15,14 @@
 //   server wrote it (catalog descriptions have no cap; Generate or Update draft
 //   can leave more than 12 drinks visible), so the limits bind what Dallas
 //   changes, and a count over its limit may only go down.
+// - inputs.admin_brief (spec 2026-10-19 sections 7.2 and 21) is the owner's
+//   own { theme, naming, notes }, each a trimmed string of 0 to 1,000
+//   characters. A PATCH sends it as one object of those keys only, and a key
+//   it leaves out keeps the stored text (empty with none stored). Generate
+//   takes it as the multipart fields admin_brief_theme, admin_brief_naming and
+//   admin_brief_notes: a field left out keeps the stored text on Start over,
+//   else reads empty, and one posted empty clears it. validateGenerateInputs
+//   returns the full three-key object, so every Generate stores one.
 
 const { isDeepStrictEqual } = require('node:util');
 const { ValidationError } = require('./errors');
@@ -27,8 +35,9 @@ const REFERENCE_SOURCES = ['none', 'planner', 'upload'];
 const HEADING_KEYS = ['sig', 'mock', 'more', 'also'];
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const LIMITS = Object.freeze({
-  art_direction: 500, reroll_note: 200, art_drinks: 8, visible_drinks: 12, visible_without_art: 4,
+  art_direction: 500, reroll_note: 200, art_drinks: 8, visible_drinks: 12, visible_without_art: 4, admin_brief: 1000,
 });
+const ADMIN_BRIEF_FIELDS = ['theme', 'naming', 'notes'];
 
 const MSG = {
   unknown: 'Unknown field.',
@@ -39,6 +48,8 @@ const MSG = {
   boolean: 'Must be true or false.',
   imageModel: 'Pick GPT Image or Gemini.',
   role: 'Pick Logo, Style ref or Ignore.',
+  adminBrief: 'The admin brief has a theme, drink naming and design notes, each text.',
+  adminBriefLength: 'Each admin brief field must be 1,000 characters or fewer.',
 };
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -92,9 +103,47 @@ function referencePairError(role, source) {
   return null;
 }
 
+// The stored admin brief as its three strings; a missing or malformed one
+// (and any field that is not text) reads empty.
+function storedAdminBrief(stored) {
+  const s = isPlainObject(stored) ? stored : {};
+  return Object.fromEntries(ADMIN_BRIEF_FIELDS.map((k) => [k, typeof s[k] === 'string' ? s[k] : '']));
+}
+
+// One admin brief field, trimmed, kept as stored when it trims to the same text.
+function adminBriefField(value, stored) {
+  if (typeof value !== 'string') return { error: MSG.adminBrief };
+  const t = value.trim();
+  if (t === stored.trim()) return { value: stored };
+  return t.length > LIMITS.admin_brief ? { error: MSG.adminBriefLength } : { value: t };
+}
+
+// PATCH inputs.admin_brief: an object of the three keys only; an omitted key
+// keeps the stored text. With none stored, a brief of three empty fields is
+// no change (the key stays absent), so it never bumps the version.
+function checkAdminBrief(value, stored) {
+  if (!isPlainObject(value) || Object.keys(value).some((k) => !ADMIN_BRIEF_FIELDS.includes(k))) return { error: MSG.adminBrief };
+  const out = storedAdminBrief(stored);
+  for (const k of ADMIN_BRIEF_FIELDS) {
+    if (!hasOwn(value, k)) continue;
+    const r = adminBriefField(value[k], out[k]);
+    if (r.error) return r;
+    out[k] = r.value;
+  }
+  if (!isPlainObject(stored) && ADMIN_BRIEF_FIELDS.every((k) => out[k] === '')) return { value: stored };
+  return { value: out };
+}
+
 // Generate is multipart, so fields arrive as strings. An absent field takes the
 // editor's default. storedInputs lets Start over keep the stored upload when no
-// new file is attached and the source stays upload (spec 5.5).
+// new file is attached and the source stays upload (spec 5.5), and the stored
+// admin brief for each admin_brief_* field left out.
+// Generate's text fields arrive multipart (the hook posts FormData), whose
+// encoding sends each line feed as CRLF; they are read back as the plain line
+// feeds the JSON PATCH stores, so a line break counts once against the bound
+// and a note the PATCH stored still matches it (spec 2026-10-19 section 21).
+const multipartText = (v) => (typeof v === 'string' ? v.replace(/\r\n?/g, '\n') : v);
+
 function validateGenerateInputs(body, { hasFile = false, storedInputs = null } = {}) {
   const src = isPlainObject(body) ? body : {};
   const errors = Object.create(null);
@@ -105,12 +154,20 @@ function validateGenerateInputs(body, { hasFile = false, storedInputs = null } =
   if (!PLANNER_IMAGE_ROLES.includes(role)) errors.planner_image_role = MSG.role;
   const source = field('reference_source', 'none');
   if (!REFERENCE_SOURCES.includes(source)) errors.reference_source = 'Pick no reference, the client image or an upload.';
-  const art = checkArtDirection(field('art_direction', ''));
+  const art = checkArtDirection(multipartText(field('art_direction', '')));
   if (art.error) errors.art_direction = art.error;
   const rawMark = field('drb_mark', true);
   const drbMark = rawMark === 'true' ? true : rawMark === 'false' ? false : rawMark;
   if (typeof drbMark !== 'boolean') errors.drb_mark = MSG.boolean;
   if (hasOwn(src, 'reference_key')) errors.reference_key = 'The reference file comes only from the upload.';
+  const adminBrief = storedAdminBrief(isPlainObject(storedInputs) ? storedInputs.admin_brief : null);
+  for (const k of ADMIN_BRIEF_FIELDS) {
+    const name = `admin_brief_${k}`;
+    if (src[name] === undefined) continue;
+    const r = adminBriefField(multipartText(src[name]), adminBrief[k]);
+    if (r.error) errors[name] = r.error;
+    else adminBrief[k] = r.value;
+  }
   if (!errors.reference_source && !errors.planner_image_role) {
     const keepsStored = !!(storedInputs && storedInputs.reference_source === 'upload'
       && typeof storedInputs.reference_key === 'string' && storedInputs.reference_key);
@@ -119,7 +176,10 @@ function validateGenerateInputs(body, { hasFile = false, storedInputs = null } =
     else Object.assign(errors, referencePairError(role, source));
   }
   throwIfAny(errors);
-  return { planner_image_role: role, reference_source: source, art_direction: art.value, drb_mark: drbMark, image_model: imageModel };
+  return {
+    planner_image_role: role, reference_source: source, art_direction: art.value, drb_mark: drbMark, image_model: imageModel,
+    admin_brief: adminBrief,
+  };
 }
 
 // ---- PATCH: drinks ----
@@ -274,6 +334,7 @@ const INPUT_CHECKS = new Map([
     : { error: v === 'upload' ? 'An uploaded reference comes only with Start over.' : 'Pick no reference or the client image.' })],
   ['art_direction', checkArtDirection],
   ['drb_mark', booleanCheck],
+  ['admin_brief', checkAdminBrief],
 ]);
 const INPUT_SERVER_ONLY = new Map([
   ['reference_key', 'The reference file is set only by Generate.'],
@@ -288,7 +349,8 @@ function applyKeys(sent, stored, checks, serverOnly, errors) {
     if (!checks.has(key)) { errors[key] = MSG.unknown; continue; }
     const r = checks.get(key)(value, stored[key]);
     if (r.error) errors[key] = r.error;
-    else out[key] = r.value;
+    // A check answers undefined only to leave an absent key absent (checkAdminBrief).
+    else if (r.value !== undefined) out[key] = r.value;
   }
   return out;
 }

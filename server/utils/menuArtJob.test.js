@@ -1329,6 +1329,71 @@ test('runWordsForDrinks: a 429 retries on the same row; a Start over during the 
 // The provider follows the model id stamped on the text reservation: claude-
 // is Anthropic through anthropicClient.draftMenuCopy, anything else OpenAI.
 
+// ── The admin brief and the payload rule (spec 2026-10-19 section 7) ────────
+// effectiveBrief at the words, background and re-roll seams: the admin text
+// where it is non-empty, the client's where it is blank. The planner notes
+// (planner_reference's additional_notes and mocktail_notes) reach no provider.
+const ADMIN_BRIEF = { theme: `Navy and brass art deco ${NONCE}`, naming: '', notes: '   ' };
+const NOTE_MARK = `PLANNERNOTE${NONCE}`;
+const PLANNER_NOTES = { additionalNotes: `Side gate code ${NOTE_MARK} for the van`, mocktailNotes: `No grapefruit ${NOTE_MARK} please` };
+const backgroundPromptOf = (c) => (c.input ? c.input[0].text : c.body.prompt);
+
+test('the payload rule: the planner notes reach neither the words request, the background prompt nor a background re-roll', async () => {
+  stubAnthropic();
+  const g = await generate({ provider: 'gemini', textModel: CLAUDE, planExtra: PLANNER_NOTES, inputs: { admin_brief: ADMIN_BRIEF } });
+  await run(g);
+  await reroll('background', { provider: 'gemini', note: 'more gold' });
+  await reroll('background', { provider: 'openai' });
+  assert.equal(calls.claude.length, 1);
+  const sent = [
+    JSON.stringify(calls.claude[0].body),
+    ...calls.gemini.map((c) => c.input[0].text),
+    ...calls.openai.map((c) => c.body.prompt),
+  ];
+  assert.equal(sent.length, 1 + 4 + 1, 'the words, the background, two drinks and two background re-rolls');
+  for (const text of sent) {
+    assert.ok(!text.includes(NOTE_MARK), 'no planner note reaches a provider');
+    assert.ok(!/side gate|grapefruit/i.test(text), 'no planner note words reach a provider');
+  }
+  assert.deepEqual(Object.keys(JSON.parse(calls.claude[0].body.messages[0].content).brief).sort(), ['design_notes', 'drink_naming', 'theme']);
+});
+
+test('the admin brief is merged into the words request and the background prompt; the client fills the blanks', async () => {
+  stubAnthropic();
+  const g = await generate({ textModel: CLAUDE, inputs: { admin_brief: ADMIN_BRIEF } });
+  await run(g);
+  assert.equal((await draftRow()).content.words_status, 'done');
+  assert.deepEqual(JSON.parse(calls.claude[0].body.messages[0].content).brief,
+    { theme: ADMIN_BRIEF.theme, drink_naming: '', design_notes: 'Soft watercolor' });
+  const bg = backgroundPromptOf(openaiCallsFor('background')[0]);
+  assert.ok(bg.includes(ADMIN_BRIEF.theme), 'the admin theme leads the background');
+  assert.ok(!bg.includes('Garden party in sage and gold'), 'the client theme gives way to it');
+  assert.match(bg, /Soft watercolor/, 'the client notes fill the admin blank');
+  // The job never writes the admin brief, and the fingerprint keeps the client's brief.
+  const row = (await pool.query('SELECT inputs, plan_fingerprint FROM menu_drafts WHERE id = $1', [draftId])).rows[0];
+  assert.deepEqual(row.inputs.admin_brief, ADMIN_BRIEF);
+  const client = buildFingerprint(normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps()));
+  assert.deepEqual([row.plan_fingerprint.brief_hash, row.plan_fingerprint.brief_fields], [client.brief_hash, client.brief_fields]);
+});
+
+test('a background re-roll reads the admin brief as it stands now, merged over the client\'s', async () => {
+  const g = await generate();
+  await run(g);
+  await pool.query('UPDATE menu_drafts SET inputs = inputs || $2::jsonb WHERE id = $1',
+    [draftId, { admin_brief: { theme: '', naming: 'After the dogs', notes: `Keep it minimal ${NONCE}` } }]);
+  calls.openai.length = 0;
+  await reroll('background', { provider: 'openai' });
+  assert.equal(calls.openai.length, 1);
+  const prompt = calls.openai[0].body.prompt;
+  assert.ok(prompt.includes(`Keep it minimal ${NONCE}`), 'the admin notes');
+  assert.ok(!prompt.includes('Soft watercolor'), 'replace the client notes');
+  assert.match(prompt, /Garden party in sage and gold/, 'the client theme fills the admin blank');
+  // A drink re-roll draws from its own visual note: no brief at all.
+  calls.openai.length = 0;
+  await reroll(KEYS[0], { provider: 'openai' });
+  assert.ok(!/Keep it minimal|After the dogs|Garden party/.test(calls.openai[0].body.prompt));
+});
+
 test('the words model defaults to Claude Haiku 5.5, and the provider follows the model id', () => {
   delete process.env.MENU_ART_TEXT_MODEL;
   assert.equal(steps.textModelId(), CLAUDE);

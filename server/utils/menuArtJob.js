@@ -37,6 +37,14 @@
 // A background sent with a style reference says so in its prompt
 // (hasReference), whichever provider draws it.
 //
+// The brief a provider reads (spec 2026-10-19 section 7.2) is
+// effectiveBrief(the plan's brief, the draft's inputs.admin_brief): the words
+// step, Generate's background prompt and a background re-roll each merge it
+// from the draft as loaded for that run, and nothing else here reads the admin
+// brief. The plan's normalized brief stays the client's, so the bar baseline
+// the words step writes and every fingerprint are the plan's own. The
+// planner's notes (the read model's planner_reference) are never read here.
+//
 // The end of every run (finally): each pending or working piece of the run
 // fails "not attempted: <cause>" (conditional on the run), the run's own
 // reservations settle by their own status (reserved -> released, sent ->
@@ -52,6 +60,7 @@ const { backgroundPrompt, drinkPrompt } = require('./menuArtImagePrompts');
 const { readTone } = require('./menuBackgroundTone');
 const { authorizeCall, markCall, settleRun } = require('./menuArtCap');
 const { getEventTypeLabel } = require('./eventTypes');
+const { effectiveBrief } = require('./menuDrinkSource');
 const E = require('./menuArtJobErrors');
 const S = require('./menuArtJobSteps');
 const W = require('./menuArtJobWords');
@@ -191,9 +200,13 @@ async function runGeneration({ draftId, runId, proposalId } = {}) {
     const draft = await S.loadDraft(draftId, proposalId);
     if (!draft || draft.run_id !== runId) return;
     step = 'words';
+    const inputs = draft.inputs || {};
     const { plan, normalized } = await S.freshPlan(proposalId);
+    // The words request reads the merged brief; the bar baseline the step
+    // writes comes from the same plan read either way.
+    const forWords = normalized ? { ...normalized, brief: effectiveBrief(normalized.brief, inputs.admin_brief) } : normalized;
     const words = await W.wordsStep(ctx, {
-      textId, model: (text && text.model) || S.textModelId(), normalized, eventTypeLabel: getEventTypeLabel(draft),
+      textId, model: (text && text.model) || S.textModelId(), normalized: forWords, eventTypeLabel: getEventTypeLabel(draft),
     });
     if (words.stopped) return;
     if (!words.content) {
@@ -201,14 +214,13 @@ async function runGeneration({ draftId, runId, proposalId } = {}) {
       return;
     }
     step = 'reference';
-    const inputs = draft.inputs || {};
     Object.assign(ctx, await S.loadReference({ inputs, proposalId, plan, normalized }));
     step = 'background';
     const bg = await drawPiece(ctx, {
       key: 'background', kind: 'background',
       prompt: (p) => backgroundPrompt({
-        brief: normalized.brief, artDirection: withNote(inputs.art_direction, p.reroll_note), palette: words.content.palette,
-        hasReference: ctx.refs.length > 0,
+        brief: effectiveBrief(normalized.brief, inputs.admin_brief), artDirection: withNote(inputs.art_direction, p.reroll_note),
+        palette: words.content.palette, hasReference: ctx.refs.length > 0,
       }),
     });
     if (bg.status === 'stopped') return;
@@ -270,8 +282,8 @@ async function runPieceReroll({ draftId, pieceKey, pieceRunId, proposalId } = {}
       await drawPiece(ctx, {
         key: pieceKey, kind: 'background', prepare,
         prompt: (p) => backgroundPrompt({
-          brief: normalized ? normalized.brief : {}, artDirection: withNote(inputs.art_direction, p.reroll_note), palette: content.palette,
-          hasReference: ctx.refs.length > 0,
+          brief: effectiveBrief(normalized ? normalized.brief : {}, inputs.admin_brief),
+          artDirection: withNote(inputs.art_direction, p.reroll_note), palette: content.palette, hasReference: ctx.refs.length > 0,
         }),
       });
     } else {

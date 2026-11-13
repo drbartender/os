@@ -554,6 +554,64 @@ test('Update draft by provider: typed drinks need the words key, added art its i
   assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0);
 });
 
+// ── The admin brief (spec 2026-10-19 section 7.2, lane menu-brief-tab) ──────
+const clientFingerprint = async (id) => buildFingerprint(normalizePlan(await loadEventPlan(id), await loadCatalogMaps()));
+
+test('admin brief: Generate takes its three fields, PATCH saves it under the version check, Start over keeps it; the fingerprint stays the client\'s', async () => {
+  const { id } = await newEvent();
+  const res = await generate(id, { admin_brief_theme: `  Navy and brass ${NONCE}  `, admin_brief_naming: '', admin_brief_notes: 'Keep the title small' });
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  await idle();
+  let draft = await draftOf(id);
+  assert.deepEqual(draft.inputs.admin_brief, { theme: `Navy and brass ${NONCE}`, naming: '', notes: 'Keep the title small' });
+  assert.deepEqual(JSON.parse(calls.words[0].input).brief,
+    { theme: `Navy and brass ${NONCE}`, drink_naming: '', design_notes: 'Keep the title small' }, 'the words step reads it first');
+  const bg = calls.openai.find((c) => c.body.size !== '1024x1024').body.prompt;
+  assert.ok(bg.includes(`Navy and brass ${NONCE}`) && !bg.includes('Garden party in sage and gold'), 'so does the background');
+  const fingerprint = (await clientFingerprint(id));
+  assert.deepEqual([draft.plan_fingerprint.brief_hash, draft.plan_fingerprint.brief_fields], [fingerprint.brief_hash, fingerprint.brief_fields]);
+
+  const saved = await request('PATCH', base(id), { json: { version: 1, inputs: { admin_brief: { naming: 'After the dogs' } } } });
+  assert.deepEqual([saved.status, saved.body.version], [200, 2], JSON.stringify(saved.body));
+  draft = await draftOf(id);
+  assert.deepEqual(draft.inputs.admin_brief, { theme: `Navy and brass ${NONCE}`, naming: 'After the dogs', notes: 'Keep the title small' });
+  assert.equal(draft.content.words_status, 'done', 'an inputs PATCH never writes content');
+  const read = await request('GET', base(id));
+  assert.deepEqual(read.body.draft.inputs.admin_brief, draft.inputs.admin_brief);
+  assert.deepEqual(read.body.diff.brief_edited, [], 'an admin brief edit never reads as Edited by client');
+  const bad = await request('PATCH', base(id), { json: { version: 2, inputs: { admin_brief: { theme: 'x'.repeat(1001) } } } });
+  assert.equal(bad.status, 400);
+  assert.ok(bad.body.fieldErrors.admin_brief);
+  assert.equal((await draftOf(id)).version, 2, 'a refusal writes nothing');
+
+  resetCalls();
+  const again = await generate(id);
+  assert.equal(again.status, 202, JSON.stringify(again.body));
+  await idle();
+  draft = await draftOf(id);
+  assert.deepEqual(draft.inputs.admin_brief, { theme: `Navy and brass ${NONCE}`, naming: 'After the dogs', notes: 'Keep the title small' },
+    'Start over with no admin fields keeps the stored brief');
+  assert.equal(JSON.parse(calls.words[0].input).brief.drink_naming, 'After the dogs');
+});
+
+test('Update draft: the typed-drinks words call carries the admin brief merged over the client\'s, and the fingerprint keeps the client\'s', async () => {
+  const { id, planId } = await ready();
+  await pool.query('UPDATE menu_drafts SET inputs = inputs || $2::jsonb WHERE proposal_id = $1',
+    [id, { admin_brief: { theme: `Navy and brass ${NONCE}`, naming: 'Name them after the dogs', notes: '  ' } }]);
+  await setPlan(planId, selections(3));
+  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
+  assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
+  await idle();
+  assert.equal(calls.words.length, 1, 'one words call, for the typed drink');
+  const sent = JSON.parse(calls.words[0].input);
+  assert.deepEqual(sent.drinks.map((d) => d.key), [KEYS[2]]);
+  assert.deepEqual(sent.brief, { theme: `Navy and brass ${NONCE}`, drink_naming: 'Name them after the dogs', design_notes: 'Soft watercolor' });
+  const draft = await draftOf(id);
+  const fingerprint = await clientFingerprint(id);
+  assert.deepEqual([draft.plan_fingerprint.brief_hash, draft.plan_fingerprint.brief_fields], [fingerprint.brief_hash, fingerprint.brief_fields]);
+  assert.ok(draft.content.drinks.some((d) => d.key === KEYS[2] && d.added_by_sync === true));
+});
+
 test('generate: image_model is required (400) and nothing is written', async () => {
   const { id } = await newEvent();
   const res = await request('POST', `${base(id)}/generate`, { form: { fields: { planner_image_role: 'ignore' } } });

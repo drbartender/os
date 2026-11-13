@@ -1,26 +1,41 @@
-// BriefTab (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// The menu editor's Brief tab (React component, default export): the client brief, the admin
+// brief, the planner's own picks, the client image, the style reference and the art direction.
 
 import React, { useRef, useState } from 'react';
 import { ART_DIRECTION_MAX } from './menuEdits';
 import { BAR_LINE, uncheckedNotice } from './menuCardState';
 import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 
-// The editor's Brief tab (spec 2026-10-01 sections 4.3 and 9; 11.1, Brief tab).
-// Props (the editor's panel contract): draft, content, pieces, inputs (the draft's, or
-// the hook's pre-draft brief), brief (the GET's), diff, plannerImage (null or
-// { url }), referenceFile and onReferenceFile(file | null) (the hook's held
-// upload), onPatch({ content?, inputs? }), wordsDone and readOnly. Never inert:
-// the brief is set before the first Generate. On a read-only draft (no plan)
-// it is shown but every control is off and nothing PATCHes.
+// The editor's Brief tab (spec 2026-10-01 sections 4.3 and 9; 11.1, Brief tab;
+// spec 2026-10-19 section 7). Props (the editor's panel contract): draft,
+// content, pieces, inputs (the draft's, or the hook's pre-draft brief), brief
+// (the GET's), diff, plan (the GET's plan block, null with no plan),
+// plannerImage (null or { url }), referenceFile and onReferenceFile(file |
+// null) (the hook's held upload), onPatch({ content?, inputs? }), wordsDone and
+// readOnly. Never inert: the brief is set before the first Generate. On a
+// read-only draft (no plan) it is shown but every control is off and nothing
+// PATCHes.
 // - Client brief, read-only; a field the client edited since the draft is
 //   tinted and labeled "Edited by client" (no time: the plan stores none).
-//   A change to the bar picks prints the card's BAR_LINE under it (spec
-//   2026-10-19 section 17); a bar line renamed before bar picks were tracked,
-//   which nothing can check (the diff's bar_unchecked), prints
-//   the card's notice instead (uncheckedNotice, the card's and the banners'
-//   one predicate: shown whether or not the diff is dismissed, hidden while
-//   read-only, before the words land or while a piece is painting).
+// - Admin brief ("Yours · read first"): inputs.admin_brief, the owner's own
+//   Theme & colors, Drink naming and Design notes, three Art direction inputs
+//   of up to 1,000 characters each. An edit sends the whole three-field object
+//   through onPatch (the hook's debounced PATCH with a draft, its pre-draft
+//   brief without one, posted with Generate), whether or not the words have
+//   landed. The words step reads it first, the client's text filling each
+//   blank (the server's effectiveBrief), from the next Generate or Start over.
+// - From the planner ("Potion Planner · read-only"), with a plan: the plan's
+//   menu style and planner_reference, the planner's own picks whatever side
+//   the menu's drinks come from (a consult-side plan says so first): Drinks
+//   (n) as a list with mocktails marked, or that the client has not picked
+//   any; the bar as the server's labelled lines; the additional and mocktail
+//   notes when there are some. Display only. Under its Bar row, a change to
+//   the bar picks prints the card's BAR_LINE (spec 2026-10-19 section 17), and
+//   a bar line renamed before bar picks were tracked, which nothing can check
+//   (the diff's bar_unchecked), prints the card's notice (uncheckedNotice, the
+//   card's and the banners' one predicate: shown whether or not the diff is
+//   dismissed, hidden while read-only, before the words land or while a piece
+//   is painting).
 // - Client image: Logo / Style ref / Ignore; under Logo, Placement and Backing,
 //   which are draft content, so they wait for the words and say so.
 // - Style reference, one at most: the planner image as Style ref, a held new
@@ -40,6 +55,25 @@ const ROLES = [['logo', 'Logo'], ['reference', 'Style ref'], ['ignore', 'Ignore'
 const PLACEMENT = [['above_title', 'Above title'], ['replaces_title', 'Replace title']];
 const BADGE = [[false, 'None'], [true, 'Badge']];
 const FIELDS = [['theme', 'Theme & colors'], ['naming', 'Drink naming'], ['notes', 'Design notes']];
+// The admin brief's per-field limit (server/utils/menuDraftValidation.js LIMITS.admin_brief).
+const ADMIN_BRIEF_MAX = 1000;
+const ADMIN_PLACEHOLDERS = {
+  theme: 'e.g. navy and brass, art deco, a little playful',
+  naming: "e.g. name the cocktails after the couple's dogs",
+  notes: 'e.g. keep the title small, no florals',
+};
+const ADMIN_HINT = "Used first. Where you leave a field blank, the client's text is used. Use it for anything the client told you by email, "
+  + 'text or phone. Applies at the next Generate or Start over.';
+const MENU_STYLES = new Map([['custom', 'Custom'], ['house', 'Standard (house)'], ['none', 'Skip']]);
+const CONSULT_HINT = "This menu's drinks come from the consult form, which the shopping list uses. The planner picks below are what the "
+  + 'client chose on their own.';
+const NO_DRINKS = "The client hasn't picked drinks yet.";
+const list = (v) => (Array.isArray(v) ? v : []);
+const text = (v) => (typeof v === 'string' ? v : '');
+const adminBriefOf = (inp) => {
+  const a = isObj(inp.admin_brief) ? inp.admin_brief : {};
+  return { theme: text(a.theme), naming: text(a.naming), notes: text(a.notes) };
+};
 
 function BriefField({ label, value, edited, children }) {
   return (
@@ -64,9 +98,32 @@ function Palette({ palette }) {
   );
 }
 
+// The planner's own picks and notes (header), read-only.
+function FromPlanner({ plan, barNotes }) {
+  const ref = isObj(plan.planner_reference) ? plan.planner_reference : {};
+  const drinks = list(ref.drinks).filter((d) => isObj(d) && text(d.name));
+  const bar = list(ref.bar).filter((line) => text(line));
+  const none = (words) => <span className="md-brief-none">{words}</span>;
+  return (
+    <Section label="From the planner" note="Potion Planner · read-only">
+      {plan.side === 'consult' && <div className="md-brief-hint">{CONSULT_HINT}</div>}
+      <div className="md-brief-box">
+        <BriefField label="Menu style" value={MENU_STYLES.get(plan.menu_style) || none('not chosen')} />
+        <BriefField label={`Drinks (${drinks.length})`}
+          value={drinks.length ? drinks.map((d) => (d.mock ? `${d.name} (mocktail)` : d.name)).join(', ') : none(NO_DRINKS)} />
+        <BriefField label="Bar" value={bar.length ? bar.map((line, i) => <div key={`${i}-${line}`}>{line}</div>) : ''}>
+          {barNotes}
+        </BriefField>
+        {text(ref.additional_notes) && <BriefField label="Additional notes" value={ref.additional_notes} />}
+        {text(ref.mocktail_notes) && <BriefField label="Mocktail notes" value={ref.mocktail_notes} />}
+      </div>
+    </Section>
+  );
+}
+
 export default function BriefTab({
-  draft, content, pieces = [], inputs, brief, diff, plannerImage = null, referenceFile = null, onReferenceFile, onPatch, wordsDone = false,
-  readOnly,
+  draft, content, pieces = [], inputs, brief, diff, plan = null, plannerImage = null, referenceFile = null, onReferenceFile, onPatch,
+  wordsDone = false, readOnly,
 }) {
   const fileRef = useRef(null);
   const [over, setOver] = useState(false);
@@ -74,6 +131,7 @@ export default function BriefTab({
   const hasDraft = isObj(draft);
   const c = isObj(content) ? content : (hasDraft && isObj(draft.content) ? draft.content : {});
   const inp = isObj(inputs) ? inputs : (hasDraft && isObj(draft.inputs) ? draft.inputs : {});
+  const admin = adminBriefOf(inp);
   const b = isObj(brief) ? brief : {};
   const live = isObj(diff) && !diff.dismissed && !(hasDraft && draft.read_only) ? diff : null;
   const edited = new Set(live && Array.isArray(live.brief_edited) ? live.brief_edited : []);
@@ -119,9 +177,28 @@ export default function BriefTab({
             </BriefField>
           ))}
         </div>
-        {live && live.bar_changed === true && <div className="md-brief-edited">{BAR_LINE}</div>}
-        {unchecked && <div className="md-brief-edited">{unchecked.line}</div>}
       </Section>
+
+      <Section label="Admin brief" note="Yours · read first">
+        {FIELDS.map(([k, label]) => (
+          <label key={k} className="meta-item">
+            <span className="meta-k">{label}</span>
+            <textarea className="input md-brief-dir" rows={2} maxLength={ADMIN_BRIEF_MAX} aria-label={`Admin brief: ${label}`}
+              readOnly={locked} placeholder={ADMIN_PLACEHOLDERS[k]} value={admin[k]}
+              onChange={(e) => setInputs({ admin_brief: { ...admin, [k]: e.target.value } })} />
+          </label>
+        ))}
+        <div className="md-brief-hint">{ADMIN_HINT}</div>
+      </Section>
+
+      {isObj(plan) && (
+        <FromPlanner plan={plan} barNotes={(
+          <>
+            {live && live.bar_changed === true && <div className="md-brief-edited">{BAR_LINE}</div>}
+            {unchecked && <div className="md-brief-edited">{unchecked.line}</div>}
+          </>
+        )} />
+      )}
 
       <Section label="Client image">
         {hasImage ? (

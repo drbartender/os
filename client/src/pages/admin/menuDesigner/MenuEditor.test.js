@@ -578,6 +578,17 @@ describe('the mounted panel (Task D2) and the canvas wiring', () => {
     expect(container.querySelector('[aria-expanded="true"]')).toHaveTextContent('Paloma');
   });
 
+  test('the Brief tab gets the GET\'s plan block, so From the planner shows in the editor', () => {
+    const payload = P((p) => {
+      p.plan = { ...p.plan, side: 'planner', planner_reference: {
+        drinks: [{ name: 'Paloma', mock: false, typed: false }], bar: ['Beer and Wine: Light beer.'],
+        additional_notes: null, mocktail_notes: null } };
+    });
+    mountEditor(fakeMenu(payload), { editor: { view: { tab: 'brief' }, close: jest.fn() } });
+    expect(screen.getByText('From the planner')).toBeInTheDocument();
+    expect(screen.getByText('Beer and Wine: Light beer.')).toBeInTheDocument();
+  });
+
   test('a Fix view opens Drinks with that drink selected', () => {
     const { container } = mountEditor(fakeMenu(P()), { editor: { view: { tab: 'drinks', select: 'cocktail:2' }, close: jest.fn() } });
     expect(container.querySelector('.mc-fake')).toHaveAttribute('data-selected', 'cocktail:2');

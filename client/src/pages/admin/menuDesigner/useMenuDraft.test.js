@@ -302,6 +302,66 @@ describe('the brief and the event', () => {
   });
 });
 
+// Spec 2026-10-19 section 7.2: the admin brief is an input, held in the
+// page-visit brief before a draft, saved through the debounced PATCH with one,
+// and posted with Generate as three multipart fields.
+describe('the admin brief', () => {
+  const EMPTY = { theme: '', naming: '', notes: '' };
+  const fields = (form) => ['admin_brief_theme', 'admin_brief_naming', 'admin_brief_notes'].map((k) => form.get(k));
+
+  test('with no draft it starts empty, holds in the brief and rides Generate as three fields', async () => {
+    draftAnswers = [{ ...payload(), draft: null, pieces: [] }];
+    const { result } = await mount();
+    expect(result.current.brief.admin_brief).toEqual(EMPTY);
+    act(() => { result.current.setBrief({ admin_brief: { theme: 'Navy and brass', naming: '', notes: 'No florals' } }); });
+    expect(result.current.brief.admin_brief).toEqual({ theme: 'Navy and brass', naming: '', notes: 'No florals' });
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(fields(api.post.mock.calls[0][1])).toEqual(['Navy and brass', '', 'No florals']);
+    expect(api.patch).not.toHaveBeenCalled();
+  });
+
+  test('an empty brief posts its three fields empty, never left out', async () => {
+    draftAnswers = [{ ...payload(), draft: null, pieces: [] }];
+    const { result } = await mount();
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(fields(api.post.mock.calls[0][1])).toEqual(['', '', '']);
+  });
+
+  test('with a draft an edit PATCHes after the debounce, and Start over posts the brief as edited', async () => {
+    const stored = { theme: 'Navy', naming: 'After the dogs', notes: '' };
+    const withBrief = payload();
+    withBrief.draft.inputs = { ...withBrief.draft.inputs, admin_brief: stored };
+    draftAnswers = [withBrief];
+    const { result } = await mount();
+    act(() => { result.current.edit({ inputs: { admin_brief: { ...stored, notes: 'Keep the title small' } } }); });
+    expect(result.current.draft.inputs.admin_brief.notes).toBe('Keep the title small');
+    await advance(SAVE_DEBOUNCE_MS);
+    expect(api.patch).toHaveBeenCalledWith('/proposals/42/menu-draft',
+      { version: 3, inputs: { admin_brief: { theme: 'Navy', naming: 'After the dogs', notes: 'Keep the title small' } } });
+    // The GET after Start over answers at the saved version (the PATCH mock returns 4).
+    draftAnswers = [{ ...withBrief, draft: { ...withBrief.draft, version: 4 } }];
+    act(() => { result.current.edit({ inputs: { admin_brief: { ...stored, theme: 'Gold' } } }); });
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(api.patch).toHaveBeenCalledTimes(2);
+    expect(fields(api.post.mock.calls[0][1])).toEqual(['Gold', 'After the dogs', '']);
+  });
+
+  test('Start over on a draft with none stored leaves the fields out, so the server keeps what it holds', async () => {
+    const { result } = await mount();
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    const form = api.post.mock.calls[0][1];
+    expect(['admin_brief_theme', 'admin_brief_naming', 'admin_brief_notes'].map((k) => form.has(k))).toEqual([false, false, false]);
+  });
+
+  test('a proposalId change empties the held brief', async () => {
+    draftAnswers = [{ ...payload(), draft: null, pieces: [] }];
+    const { result, rerender } = await mount(42);
+    act(() => { result.current.setBrief({ admin_brief: { theme: 'Navy', naming: '', notes: '' } }); });
+    rerender({ pid: 43 });
+    expect(result.current.brief.admin_brief).toEqual(EMPTY);
+  });
+});
+
 describe('the image model (decision 11)', () => {
   test('rides each image request, the caller can pass its own, and it resets to openai on remount', async () => {
     const { result, unmount } = await mount();

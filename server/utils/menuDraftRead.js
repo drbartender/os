@@ -16,7 +16,9 @@
 //   cap: { used, limit, remaining, resets_at },
 //   configured: { openai, gemini, words, default_image_model },
 //   plan: null | { id, menu_style, drink_count, drinks: [{ name, mock }],
-//     bar_summary: { beer_wine, spirits, na } },
+//     bar_summary: { beer_wine, spirits, na }, side: 'planner' | 'consult',
+//     planner_reference: { drinks: [{ name, mock, typed }], bar: [line],
+//       additional_notes, mocktail_notes } },
 // }
 // Throws NotFoundError when the proposal does not exist.
 //
@@ -55,6 +57,17 @@
 // - menu_style is selections.menuStyle ('custom' | 'house' | 'none') or null.
 //   bar_summary counts the plan's bar picks for the phone's "+ 5 beer and wine,
 //   3 spirits, 2 NA" line ("None" and "Other" picks are not counted).
+// - side is the side the menu's drinks come from (normalizePlan's side: the
+//   one the shopping list uses). planner_reference (spec 2026-10-19 section
+//   7.1) is the planner's own picks whichever side that is, for the Brief
+//   tab's From the planner box: the selections normalized as the planner side
+//   (drinks with mock, and typed when the client typed the name), the bar as
+//   the menu's labelled lines ("<LINE_LABELS label>: <text>", buildAlsoAtBar),
+//   so the client needs no label table, and selections.additionalNotes and
+//   mocktailNotes, trimmed, each cut to 2,000 characters, null when empty. It
+//   is display only: it never joins the brief, and nothing in it reaches a
+//   provider (the words request, the background prompt and a re-roll are
+//   built from normalizePlan and inputs alone).
 //
 // - configured (spec 2026-10-19 section 16, lane menu-words-claude): openai
 //   and gemini are each provider's key; words is the key of the provider the
@@ -79,7 +92,7 @@ const { readEnvInt } = require('./envInt');
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, plannerImageRev, legacyBarBaseline,
 } = require('./menuDrinkSource');
-const { keyBarLines } = require('./menuAlsoAtBar');
+const { keyBarLines, buildAlsoAtBar } = require('./menuAlsoAtBar');
 const { capUsage } = require('./menuArtCap');
 const { derivePrintState, PRINT_STATES } = require('./menuPrintState');
 const { textProvider } = require('./menuArtJobSteps');
@@ -94,6 +107,8 @@ const OPEN_STATUSES = new Set(['pending', 'working']);
 const BRIEF_FIELDS = ['theme', 'naming', 'notes'];
 const MENU_STYLES = new Set(['custom', 'house', 'none']);
 const NOT_COUNTED = new Set(['none', 'other']);
+// planner_reference's notes are cut to this for display.
+const NOTES_MAX = 2000;
 // A bar baseline entry for a line renamed before bar picks were tracked (legacyBarBaseline).
 const UNKEYED = 'unkeyed:';
 // The draft columns computeDiff and derivePrintState read (internal only).
@@ -251,7 +266,35 @@ function barSummary(bar) {
   return { beer_wine: count(b.beer) + count(b.wine), spirits: count(b.spirits), na: count(b.na) };
 }
 
-function planPayload(planRow, normalized) {
+// A planner note for display: trimmed, cut to NOTES_MAX without splitting an
+// emoji, null when it is not text or is empty.
+function displayNote(value) {
+  if (typeof value !== 'string') return null;
+  let t = value.trim();
+  if (t.length > NOTES_MAX) {
+    t = t.slice(0, NOTES_MAX);
+    const last = t.charCodeAt(t.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) t = t.slice(0, -1);
+    t = t.trimEnd();
+  }
+  return t || null;
+}
+
+// The planner's own picks and notes (header). A planner-side plan is already
+// normalized from them; a consult-side one is normalized again as the planner.
+function plannerReference(planRow, normalized, maps) {
+  const planner = normalized.side === 'planner' ? normalized
+    : normalizePlan({ ...planRow, shopping_list_source: 'planner' }, maps);
+  const sel = isObject(planRow.selections) ? planRow.selections : {};
+  return {
+    drinks: planner.drinks.map((d) => ({ name: d.name, mock: d.group === 'mock', typed: d.typed_name !== null })),
+    bar: buildAlsoAtBar(planner.bar).map((line) => `${line.label}: ${line.text}`),
+    additional_notes: displayNote(sel.additionalNotes),
+    mocktail_notes: displayNote(sel.mocktailNotes),
+  };
+}
+
+function planPayload(planRow, normalized, maps) {
   if (!planRow || !normalized) return null;
   const style = isObject(planRow.selections) ? planRow.selections.menuStyle : null;
   const drinks = normalized.drinks.map((d) => ({ name: d.name, mock: d.group === 'mock' }));
@@ -261,6 +304,8 @@ function planPayload(planRow, normalized) {
     drink_count: drinks.length,
     drinks,
     bar_summary: barSummary(normalized.bar),
+    side: normalized.side,
+    planner_reference: plannerReference(planRow, normalized, maps),
   };
 }
 
@@ -391,7 +436,7 @@ async function readDraftPayload(proposalId) {
       words: wordsConfigured(),
       default_image_model: defaultImageModel(),
     },
-    plan: planPayload(planRow, normalized),
+    plan: planPayload(planRow, normalized, maps),
   };
 }
 

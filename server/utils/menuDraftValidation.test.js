@@ -182,6 +182,7 @@ test('reference_key and image_model: Generate records image_model; a PATCH leave
   const g = gen({ image_model: 'gemini', art_direction: 'moody' });
   assert.deepEqual(g, {
     planner_image_role: 'logo', reference_source: 'none', art_direction: 'moody', drb_mark: true, image_model: 'gemini',
+    admin_brief: { theme: '', naming: '', notes: '' },
   });
   const next = inputs({ drb_mark: false });
   assert.equal(next.reference_key, 'menu-art/5/ref-abc.png');
@@ -191,6 +192,72 @@ test('reference_key and image_model: refused from PATCH inputs (and reference_ke
   fails(() => inputs({ reference_key: 'w9/12_w9_x.png' }), 'reference_key');
   fails(() => inputs({ image_model: 'gemini' }), 'image_model');
   fails(() => gen({ reference_key: 'menu-art/5/ref-x.png' }), 'reference_key');
+});
+
+// ---- admin_brief: inputs, PATCH and Generate (v2 spec 7.2 and 21) ----
+const ADMIN = { theme: 'Navy and brass', naming: 'After the dogs', notes: 'No florals' };
+const withAdmin = (admin = ADMIN) => { const s = storedDraft(); s.inputs.admin_brief = { ...admin }; return s; };
+
+test('admin_brief on PATCH: the three fields trimmed, empty to 1,000 characters each, the rest of inputs as stored', () => {
+  const next = inputs({ admin_brief: { theme: '  Navy and brass  ', naming: '', notes: str(1000) } });
+  assert.deepEqual(next.admin_brief, { theme: 'Navy and brass', naming: '', notes: str(1000) });
+  assert.deepEqual({ ...next, admin_brief: undefined }, { ...storedDraft().inputs, admin_brief: undefined });
+});
+test('admin_brief on PATCH: an omitted key keeps the stored value, or reads empty with none stored', () => {
+  assert.deepEqual(inputs({ admin_brief: { notes: 'Keep the title small' } }, withAdmin()).admin_brief,
+    { theme: 'Navy and brass', naming: 'After the dogs', notes: 'Keep the title small' });
+  assert.deepEqual(inputs({ admin_brief: { theme: 'Navy' } }).admin_brief, { theme: 'Navy', naming: '', notes: '' });
+  assert.deepEqual(inputs({ admin_brief: {} }, withAdmin()).admin_brief, ADMIN);
+  assert.deepEqual(inputs({ admin_brief: { naming: '' } }, withAdmin()).admin_brief, { ...ADMIN, naming: '' }, 'empty clears a field');
+});
+test('admin_brief on PATCH: the same text sent back, spaces aside, is no change', () => {
+  assert.equal(patch({ inputs: { admin_brief: { theme: ' Navy and brass ', notes: 'No florals' } } }, withAdmin()).changed, false);
+  assert.equal(patch({ inputs: { admin_brief: { theme: 'Navy and gold' } } }, withAdmin()).changed, true);
+});
+test('admin_brief on PATCH: 1,001 characters, a non-string, an unknown key or a non-object fail', () => {
+  fails(() => inputs({ admin_brief: { theme: str(1001) } }), 'admin_brief');
+  fails(() => inputs({ admin_brief: { notes: `  ${str(1001)}` } }), 'admin_brief');
+  fails(() => inputs({ admin_brief: { naming: 5 } }), 'admin_brief');
+  fails(() => inputs({ admin_brief: { notes: null } }), 'admin_brief');
+  fails(() => inputs({ admin_brief: { theme: 'Navy', look: 'house' } }), 'admin_brief');
+  fails(() => inputs({ admin_brief: JSON.parse('{"__proto__": {"theme": "x"}}') }), 'admin_brief');
+  for (const bad of ['Navy', ['Navy'], null, 7]) fails(() => inputs({ admin_brief: bad }), 'admin_brief');
+});
+test('admin_brief on Generate: three multipart fields, trimmed, empty to 1,000 characters', () => {
+  assert.deepEqual(gen({ admin_brief_theme: '  Navy  ', admin_brief_naming: '', admin_brief_notes: str(1000) }).admin_brief,
+    { theme: 'Navy', naming: '', notes: str(1000) });
+});
+test('admin_brief on Generate: an absent field keeps the stored value on Start over, else reads empty; one posted empty clears it', () => {
+  assert.deepEqual(gen({}).admin_brief, { theme: '', naming: '', notes: '' });
+  const storedInputs = withAdmin().inputs;
+  assert.deepEqual(gen({}, { storedInputs }).admin_brief, ADMIN);
+  assert.deepEqual(gen({ admin_brief_naming: '' }, { storedInputs }).admin_brief, { ...ADMIN, naming: '' });
+  assert.deepEqual(gen({ admin_brief_theme: 'Gold' }, { storedInputs }).admin_brief, { ...ADMIN, theme: 'Gold' });
+  for (const bad of ['Navy', null, { theme: 5, naming: ['x'] }]) {
+    assert.deepEqual(gen({}, { storedInputs: { ...storedInputs, admin_brief: bad } }).admin_brief, { theme: '', naming: '', notes: '' },
+      `a stored brief of the wrong shape (${JSON.stringify(bad)}) reads as none`);
+  }
+});
+test('Generate counts a line break once: the multipart CRLF of a note the PATCH stored is accepted and kept as stored', () => {
+  // The hook posts Generate as FormData, whose multipart encoding sends each line feed as CRLF.
+  const lines = Array.from({ length: 21 }, () => str(47)).join('\n'); // 21 x 47 + 20 line feeds = 1,007
+  const note = lines.slice(0, 1000);
+  assert.equal(note.length, 1000);
+  const crlf = note.replace(/\n/g, '\r\n');
+  assert.ok(crlf.length > 1000, 'the CRLF form is longer than the cap');
+  // No stored brief: accepted, stored with plain line feeds.
+  assert.equal(gen({ admin_brief_notes: crlf }).admin_brief.notes, note);
+  // The same note already stored by the PATCH: Start over keeps it as stored.
+  const storedInputs = { ...withAdmin().inputs, admin_brief: { ...ADMIN, notes: note } };
+  assert.equal(gen({ admin_brief_notes: crlf }, { storedInputs }).admin_brief.notes, note);
+  // Art direction shares the cause at its 500 cap.
+  const dir = Array.from({ length: 11 }, () => str(44)).join('\n').slice(0, 500);
+  assert.equal(gen({ art_direction: dir.replace(/\n/g, '\r\n') }).art_direction, dir);
+});
+test('admin_brief on Generate: 1,001 characters or a repeated (non-string) field fail', () => {
+  fails(() => gen({ admin_brief_theme: str(1001) }), 'admin_brief_theme');
+  fails(() => gen({ admin_brief_naming: ` ${str(1001)} ` }), 'admin_brief_naming');
+  fails(() => gen({ admin_brief_notes: ['a', 'b'] }), 'admin_brief_notes');
 });
 
 // ---- added_by_sync: Update draft and Generate only ----

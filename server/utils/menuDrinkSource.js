@@ -10,6 +10,13 @@
 // - A typed name resolves to a catalog drink through the shopping list's own
 //   matcher (exact normalized name, then request_aliases, first wins). A picked
 //   drink always beats a typed one, and every drink appears once by key.
+// - effectiveBrief(clientBrief, adminBrief) is the one merge of the admin brief
+//   (inputs.admin_brief) over the client's (spec 2026-10-19 section 7.2): per
+//   field the admin text when non-empty after trim, else the client's, each cut
+//   to 1,000. Only the four provider seams apply it (the words step, the
+//   background prompt and a background re-roll in menuArtJob.js, and Update
+//   draft's typed-drinks words call); normalizePlan's brief stays the client's,
+//   so the fingerprint and the diff never see the admin brief.
 // All pure except loadEventPlan and loadCatalogMaps, which take the db.
 
 const crypto = require('crypto');
@@ -32,6 +39,9 @@ const MAX_TYPED_LEN = 200;
 const MAX_BAR_ITEMS = 50;
 const MAX_BAR_ITEM_LEN = 200;
 const SLUG_MAX = 60;
+// Each merged brief field is cut to BRIEF_MAX (the words step's own cut).
+const BRIEF_MAX = 1000;
+const BRIEF_FIELDS = ['theme', 'naming', 'notes'];
 // Spec 7's piece key allows [a-z0-9-]{1,100} after the kind. A catalog id
 // outside that (POST /api/cocktails stores a client-supplied id verbatim) is
 // sanitized to at most CATALOG_SLUG_MAX characters plus a hash suffix.
@@ -310,6 +320,32 @@ function normalizePlan(plan, { catalogById = new Map(), candidates = [] } = {}) 
   };
 }
 
+// ─── The admin brief ────────────────────────────────────────────────────────
+
+// Trimmed and cut to BRIEF_MAX; a high surrogate left alone at the cut is
+// dropped, so the cut never splits an emoji.
+function cutBriefField(text) {
+  const t = text.trim();
+  if (t.length <= BRIEF_MAX) return t;
+  const cut = t.slice(0, BRIEF_MAX);
+  const last = cut.charCodeAt(cut.length - 1);
+  return (last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut).trimEnd();
+}
+
+// The brief the providers read: per field the admin text when it is a
+// non-empty string after trim, else the client's. Pure; a new object, only
+// the three fields. A missing or malformed admin brief is the client's brief.
+function effectiveBrief(clientBrief, adminBrief) {
+  const client = isObject(clientBrief) ? clientBrief : {};
+  const admin = isObject(adminBrief) ? adminBrief : {};
+  const out = {};
+  for (const field of BRIEF_FIELDS) {
+    const own = typeof admin[field] === 'string' ? admin[field].trim() : '';
+    out[field] = cutBriefField(own || asText(client[field]));
+  }
+  return out;
+}
+
 // ─── Fingerprint ─────────────────────────────────────────────────────────────
 
 // Null, empty and whitespace-only are one value; internal runs collapse.
@@ -431,4 +467,5 @@ module.exports = {
   slugifyTyped,
   plannerImageKeyOf,
   plannerImageRev,
+  effectiveBrief,
 };

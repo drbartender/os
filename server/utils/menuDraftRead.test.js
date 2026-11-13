@@ -30,6 +30,8 @@ const KEY = {
   c: `custom:zq-charlie-${NONCE}`, mock: `custom:zq-mock-${NONCE}`,
 };
 const PRINT_KEY = (id) => `menu-print/${id}/approved-${NONCE}.jpg`;
+// The base plan's bar as the Brief tab's From the planner box lists it.
+const PLANNER_BAR = ['Beer and Wine: Light beer, IPA, Red, White.', 'Spirits: Vodka, Mezcal.', 'Non-Alcoholic: Athletic Brewing NA.'];
 
 const proposalIds = [];
 const draftIds = [];
@@ -473,6 +475,13 @@ test('the plan payload: drinks with the mock flag, the bar summary, a house menu
     id: planId, menu_style: 'custom', drink_count: 3,
     drinks: [{ name: DRINK_A, mock: false }, { name: DRINK_B, mock: false }, { name: MOCK_ID, mock: true }],
     bar_summary: { beer_wine: 4, spirits: 2, na: 1 },
+    side: 'planner',
+    planner_reference: {
+      drinks: [{ name: DRINK_A, mock: false, typed: true }, { name: DRINK_B, mock: false, typed: true }, { name: MOCK_ID, mock: true, typed: true }],
+      bar: PLANNER_BAR,
+      additional_notes: null,
+      mocktail_notes: null,
+    },
   });
   assert.equal(out.draft.read_only, false);
   assert.deepEqual(out.brief, {
@@ -485,6 +494,66 @@ test('the plan payload: drinks with the mock flag, the bar summary, a house menu
   await setPlan({ menuStyle: 'something-else', customCocktails: [], mocktails: [] });
   out = await payload();
   assert.deepEqual([out.plan.menu_style, out.plan.drink_count, out.plan.drinks], [null, 0, []]);
+});
+
+// ─── Planner data, read-only (spec 2026-10-19 section 7.1) ───────────────────
+// planner_reference is the planner's own picks and notes, for the Brief tab's
+// From the planner box: display only, never part of the brief.
+
+test('planner_reference: on a consult-side plan the planner picks and bar, with the side; the plan drinks stay the consult\'s', async () => {
+  await reset();
+  const { rows: [pick] } = await pool.query(
+    "SELECT id, name FROM cocktails WHERE id ~ '^[a-z0-9-]{1,100}$' AND name IS NOT NULL AND name <> '' ORDER BY id LIMIT 1");
+  const consult = { customCocktails: [{ name: DRINK_C }], beer: false, wine: ['white'], spirits: ['gin'] };
+  await setPlan(pick ? { signatureDrinks: [pick.id] } : {});
+  await pool.query("UPDATE drink_plans SET shopping_list_source = 'consult', consult_selections = $2 WHERE id = $1", [planId, consult]);
+  try {
+    const out = await payload();
+    assert.equal(out.plan.side, 'consult');
+    assert.deepEqual(out.plan.drinks, [{ name: DRINK_C, mock: false }], 'the menu reads the side the shopping list uses');
+    assert.equal(out.plan.drink_count, 1);
+    const planner = [{ name: DRINK_A, mock: false, typed: true }, { name: DRINK_B, mock: false, typed: true }, { name: MOCK_ID, mock: true, typed: true }];
+    assert.deepEqual(out.plan.planner_reference.drinks, pick ? [{ name: pick.name.trim(), mock: false, typed: false }, ...planner] : planner,
+      'the planner picks, a catalog pick not typed');
+    assert.deepEqual(out.plan.planner_reference.bar, PLANNER_BAR, 'the planner bar, not the consult form\'s');
+    assert.deepEqual(out.plan.bar_summary, { beer_wine: 1, spirits: 1, na: 0 }, 'the summary stays the menu side\'s');
+  } finally {
+    await pool.query('UPDATE drink_plans SET shopping_list_source = NULL, consult_selections = NULL WHERE id = $1', [planId]);
+  }
+});
+
+test('planner_reference: the bar as labelled lines, only what prints, and none with no picks', async () => {
+  await reset();
+  await setPlan({ beerFromFullBar: ['Seltzer', 'None'], wineFromFullBar: [], spirits: ['Other'], spiritsOther: '' });
+  assert.deepEqual((await payload()).plan.planner_reference.bar, ['Beer and Wine: Seltzer.']);
+  await setPlan({ beerFromFullBar: [], wineFromFullBar: [], spirits: [], spiritsOther: '' });
+  assert.deepEqual((await payload()).plan.planner_reference.bar, []);
+});
+
+test('planner_reference: the two notes trimmed, cut to 2,000 for display and null when empty; never in the brief', async () => {
+  await reset();
+  await setPlan({ additionalNotes: `  ${'n'.repeat(2100)}  `, mocktailNotes: '   ' });
+  let out = await payload();
+  assert.equal(out.plan.planner_reference.additional_notes, 'n'.repeat(2000));
+  assert.equal(out.plan.planner_reference.mocktail_notes, null);
+  await setPlan({ additionalNotes: `  Door code at the side gate ${NONCE}  `, mocktailNotes: `No grapefruit ${NONCE}` });
+  out = await payload();
+  assert.equal(out.plan.planner_reference.additional_notes, `Door code at the side gate ${NONCE}`);
+  assert.equal(out.plan.planner_reference.mocktail_notes, `No grapefruit ${NONCE}`);
+  assert.ok(!JSON.stringify(out.brief).includes(NONCE), 'the notes never join the brief');
+  await setPlan({ additionalNotes: 42, mocktailNotes: ['x'] });
+  out = await payload();
+  assert.deepEqual([out.plan.planner_reference.additional_notes, out.plan.planner_reference.mocktail_notes], [null, null]);
+});
+
+test('planner_reference: a planner side with no drinks reads an empty list; no plan, no plan block', async () => {
+  await reset();
+  await setPlan({ customCocktails: [], mocktails: [] });
+  const out = await payload();
+  assert.deepEqual([out.plan.side, out.plan.planner_reference.drinks], ['planner', []]);
+  const p = await pool.query("INSERT INTO proposals (status) VALUES ('draft') RETURNING id");
+  proposalIds.push(p.rows[0].id);
+  assert.equal((await read.readDraftPayload(p.rows[0].id)).plan, null);
 });
 
 test('the diff: added and dropped, by key, dropped named from the draft', async () => {

@@ -11,15 +11,28 @@ const DRAFT = (inputs = {}) => ({
   inputs: { planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true, has_reference: false, ...inputs },
   content: { words_status: 'done', logo_mode: 'above_title', logo_badge: false, palette: [{ name: 'Periwinkle', hex: '#8f9ee6' }, { name: 'Coral', hex: '#ee8a72' }] },
 });
+// The GET's plan block (spec 2026-10-19 section 7.1): planner_reference is the
+// planner's own picks, the bar as labelled lines, and the two notes.
+const PLAN = {
+  id: 7, menu_style: 'custom', drink_count: 3, drinks: [], bar_summary: { beer_wine: 2, spirits: 1, na: 0 }, side: 'planner',
+  planner_reference: {
+    drinks: [{ name: 'Lavender Fizz', mock: false, typed: true }, { name: 'Margarita', mock: false, typed: false }, { name: 'Nojito', mock: true, typed: false }],
+    bar: ['Beer and Wine: Light beer, Red.', 'Spirits: Vodka.'],
+    additional_notes: 'Two guests are allergic to nuts.',
+    mocktail_notes: null,
+  },
+};
 const props = (over = {}) => {
   const draft = over.draft === undefined ? DRAFT(over.inputs) : over.draft;
   return {
     draft, content: draft ? draft.content : undefined, inputs: draft ? draft.inputs : { planner_image_role: 'logo', reference_source: 'none', art_direction: '' },
-    brief: BRIEF, diff: { added: [], dropped: [], brief_edited: [], image_changed: false, dismissed: false },
+    brief: BRIEF, diff: { added: [], dropped: [], brief_edited: [], image_changed: false, dismissed: false }, plan: PLAN,
     plannerImage: { url: 'blob:planner' }, referenceFile: null, onReferenceFile: jest.fn(), onPatch: jest.fn(), wordsDone: true,
     ...over,
   };
 };
+// A section of the tab by its label.
+const section = (label) => screen.getByText(label, { selector: '.md-sec-label' }).closest('.md-sec');
 const png = (name = 'moodboard.png', type = 'image/png', size = 1000) => {
   const f = new File(['x'], name, { type });
   Object.defineProperty(f, 'size', { value: size });
@@ -29,10 +42,11 @@ const fileInput = (container) => container.querySelector('input[type="file"]');
 
 test('the client brief, read-only, with the palette', () => {
   render(<BriefTab {...props()} />);
-  expect(screen.getByText('Potion Planner · read-only')).toBeInTheDocument();
+  const client = within(section('Client brief'));
+  expect(client.getByText('Potion Planner · read-only')).toBeInTheDocument();
   expect(screen.getByText('Garden wedding, soft and romantic.')).toBeInTheDocument();
   expect(screen.getByText('Name two after us.')).toBeInTheDocument();
-  expect(screen.getByText('Design notes').parentElement).toHaveTextContent('None');
+  expect(client.getByText('Design notes').parentElement).toHaveTextContent('None');
   expect(screen.getByTitle('Periwinkle')).toHaveClass('md-dot');
   expect(screen.getByText('Periwinkle, Coral')).toBeInTheDocument();
   expect(screen.queryByText('Edited by client')).toBeNull();
@@ -109,7 +123,7 @@ describe('the client image', () => {
     const p = props();
     render(<BriefTab {...p} />);
     expect(screen.getByAltText('From the planner')).toHaveAttribute('src', 'blob:planner');
-    expect(screen.getByText('From the planner')).toBeInTheDocument();
+    expect(screen.getByText('From the planner', { selector: '.md-brief-img-label' })).toBeInTheDocument();
     expect(within(roles()).getByRole('button', { name: 'Logo' })).toHaveClass('active');
     fireEvent.click(within(screen.getByRole('group', { name: 'Logo placement' })).getByRole('button', { name: 'Replace title' }));
     expect(p.onPatch).toHaveBeenLastCalledWith({ content: { logo_mode: 'replaces_title' } });
@@ -224,9 +238,14 @@ describe('the style reference', () => {
 });
 
 test('a read-only draft (no plan): shown, but nothing PATCHes or is taken', () => {
-  const draft = { ...DRAFT(), read_only: true };
-  const p = props({ draft, content: draft.content, inputs: draft.inputs });
+  const draft = { ...DRAFT({ admin_brief: { theme: 'Navy and brass', naming: '', notes: '' } }), read_only: true };
+  const p = props({ draft, content: draft.content, inputs: draft.inputs, plan: null });
   const { container } = render(<BriefTab {...p} />);
+  for (const name of ['Admin brief: Theme & colors', 'Admin brief: Drink naming', 'Admin brief: Design notes']) {
+    expect(screen.getByLabelText(name)).toHaveAttribute('readonly');
+    fireEvent.change(screen.getByLabelText(name), { target: { value: 'changed' } });
+  }
+  expect(screen.getByLabelText('Admin brief: Theme & colors')).toHaveValue('Navy and brass');
   within(screen.getByRole('group', { name: 'Client image use' })).getAllByRole('button').forEach((b) => expect(b).toBeDisabled());
   within(screen.getByRole('group', { name: 'Logo placement' })).getAllByRole('button').forEach((b) => expect(b).toBeDisabled());
   expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
@@ -246,4 +265,118 @@ test('art direction, up to 500 characters, into the brief', () => {
   expect(box).toHaveAttribute('rows', '3');
   fireEvent.change(box, { target: { value: 'watercolor, airy' } });
   expect(p.onPatch).toHaveBeenCalledWith({ inputs: { art_direction: 'watercolor, airy' } });
+});
+
+// ── The admin brief and the planner data (spec 2026-10-19 section 7) ───────
+
+test('the sections in order: the client brief, the admin brief, from the planner, then the image, the reference and the art direction', () => {
+  const { container } = render(<BriefTab {...props()} />);
+  expect([...container.querySelectorAll('.md-sec-label')].map((el) => el.textContent))
+    .toEqual(['Client brief', 'Admin brief', 'From the planner', 'Client image', 'Style reference', 'Art direction']);
+  expect(within(section('Admin brief')).getByText('Yours · read first')).toHaveClass('md-sec-note');
+  expect(within(section('From the planner')).getByText('Potion Planner · read-only')).toHaveClass('md-sec-note');
+});
+
+describe('the admin brief', () => {
+  const ADMIN = { theme: 'Navy and brass', naming: '', notes: 'No florals' };
+  const FIELDS = [
+    ['Admin brief: Theme & colors', 'e.g. navy and brass, art deco, a little playful', 'theme'],
+    ['Admin brief: Drink naming', "e.g. name the cocktails after the couple's dogs", 'naming'],
+    ['Admin brief: Design notes', 'e.g. keep the title small, no florals', 'notes'],
+  ];
+
+  test('three Art direction inputs with their placeholders, 1,000 characters each, under the hint', () => {
+    render(<BriefTab {...props({ inputs: { admin_brief: ADMIN } })} />);
+    const box = within(section('Admin brief'));
+    for (const [name, placeholder, key] of FIELDS) {
+      const field = box.getByLabelText(name);
+      expect(field.tagName).toBe('TEXTAREA');
+      expect(field).toHaveClass('input');
+      expect(field).toHaveAttribute('placeholder', placeholder);
+      expect(field).toHaveAttribute('maxLength', '1000');
+      expect(field).toHaveValue(ADMIN[key]);
+      expect(field).not.toHaveAttribute('readonly');
+    }
+    expect(box.getByText('Theme & colors')).toHaveClass('meta-k');
+    expect(box.getByText('Used first. Where you leave a field blank, the client\'s text is used. Use it for anything the client told you '
+      + 'by email, text or phone. Applies at the next Generate or Start over.')).toHaveClass('md-brief-hint');
+  });
+
+  test('an edit saves the whole brief as one inputs object, the other fields as they stand', () => {
+    const p = props({ inputs: { admin_brief: ADMIN } });
+    render(<BriefTab {...p} />);
+    fireEvent.change(screen.getByLabelText('Admin brief: Drink naming'), { target: { value: 'After the dogs' } });
+    expect(p.onPatch).toHaveBeenLastCalledWith({ inputs: { admin_brief: { ...ADMIN, naming: 'After the dogs' } } });
+    fireEvent.change(screen.getByLabelText('Admin brief: Theme & colors'), { target: { value: '' } });
+    expect(p.onPatch).toHaveBeenLastCalledWith({ inputs: { admin_brief: { ...ADMIN, theme: '' } } });
+  });
+
+  test('before a draft, and on a draft that has none stored, the fields start empty and still save, words or no words', () => {
+    const p = props({ draft: null, wordsDone: false });
+    const { rerender } = render(<BriefTab {...p} />);
+    for (const [name] of FIELDS) expect(screen.getByLabelText(name)).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('Admin brief: Design notes'), { target: { value: 'Keep the title small' } });
+    expect(p.onPatch).toHaveBeenLastCalledWith({ inputs: { admin_brief: { theme: '', naming: '', notes: 'Keep the title small' } } });
+    const q = props({ wordsDone: false, draft: { ...DRAFT(), content: { words_status: 'pending' } } });
+    rerender(<BriefTab {...q} />);
+    fireEvent.change(screen.getByLabelText('Admin brief: Theme & colors'), { target: { value: 'Gold' } });
+    expect(q.onPatch).toHaveBeenLastCalledWith({ inputs: { admin_brief: { theme: 'Gold', naming: '', notes: '' } } });
+  });
+});
+
+describe('from the planner', () => {
+  const box = () => within(section('From the planner'));
+  const row = (label) => box().getByText(label, { selector: '.meta-k' }).closest('.md-brief-f');
+  const CONSULT = "This menu's drinks come from the consult form, which the shopping list uses. The planner picks below are what the client chose on their own.";
+
+  test('the menu style, the drinks with mocktails marked, the bar lines and the notes, in a client brief box', () => {
+    render(<BriefTab {...props()} />);
+    expect(row('Menu style')).toHaveTextContent('Custom');
+    expect(row('Menu style').closest('.md-brief-box')).not.toBeNull();
+    expect(row('Drinks (3)')).toHaveTextContent('Lavender Fizz, Margarita, Nojito (mocktail)');
+    expect(within(row('Bar')).getByText('Beer and Wine: Light beer, Red.')).toBeInTheDocument();
+    expect(within(row('Bar')).getByText('Spirits: Vodka.')).toBeInTheDocument();
+    expect(row('Additional notes')).toHaveTextContent('Two guests are allergic to nuts.');
+    expect(box().queryByText('Mocktail notes')).toBeNull();
+    expect(screen.queryByText(CONSULT)).toBeNull();
+    expect(screen.queryByText("The client hasn't picked drinks yet.")).toBeNull();
+  });
+
+  test('each menu style reads by its label, and an unset one reads not chosen', () => {
+    const { rerender } = render(<BriefTab {...props()} />);
+    for (const [style, label] of [['custom', 'Custom'], ['house', 'Standard (house)'], ['none', 'Skip'], [null, 'not chosen']]) {
+      rerender(<BriefTab {...props({ plan: { ...PLAN, menu_style: style } })} />);
+      expect(row('Menu style').querySelector('.md-brief-v')).toHaveTextContent(new RegExp(`^${label.replace(/[()]/g, '\\$&')}$`));
+    }
+  });
+
+  test('on the consult side the box says so above the planner picks; the mocktail notes show when present', () => {
+    render(<BriefTab {...props({ plan: { ...PLAN, side: 'consult', planner_reference: { ...PLAN.planner_reference, mocktail_notes: 'No grapefruit.' } } })} />);
+    const hint = box().getByText(CONSULT);
+    expect(hint).toHaveClass('md-brief-hint');
+    expect(hint.compareDocumentPosition(row('Drinks (3)')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row('Mocktail notes')).toHaveTextContent('No grapefruit.');
+  });
+
+  test('a planner side with no drinks says the client has not picked any; no bar lines read None', () => {
+    render(<BriefTab {...props({ plan: { ...PLAN, planner_reference: { ...PLAN.planner_reference, drinks: [], bar: [], additional_notes: null } } })} />);
+    expect(row('Drinks (0)')).toHaveTextContent("The client hasn't picked drinks yet.");
+    expect(row('Bar')).toHaveTextContent('None');
+    expect(box().queryByText('Additional notes')).toBeNull();
+  });
+
+  test('the bar picks changed line, and the unchecked bar line note beside it, sit under the Bar row, not the client brief', () => {
+    const line = 'The bar picks changed since this draft.';
+    const unchecked = "A bar line renamed before bar picks were tracked can't be checked against them. Update draft rebuilds it from the client's picks.";
+    render(<BriefTab {...props({ diff: { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: true, bar_unchecked: 1, dismissed: false } })} />);
+    expect(within(row('Bar')).getByText(line)).toHaveClass('md-brief-edited');
+    expect(within(row('Bar')).getByText(unchecked)).toHaveClass('md-brief-edited');
+    expect(within(section('Client brief')).queryByText(line)).toBeNull();
+    expect(within(section('Client brief')).queryByText(unchecked)).toBeNull();
+  });
+
+  test('no plan, no box', () => {
+    render(<BriefTab {...props({ plan: null })} />);
+    expect(screen.queryByText('From the planner', { selector: '.md-sec-label' })).toBeNull();
+  });
 });

@@ -1,5 +1,6 @@
-// useMenuDraft (default export). Header generated from the file's exports by migrate-headers on
-// 2026-10-27; replace with what it does.
+// useMenuDraft (default export): the event page's menu draft hook, the GET and its poll, the
+// debounced autosave, the visit's brief (the admin brief included) and the Generate, Update
+// draft, Dismiss and re-roll actions.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../../utils/api';
@@ -27,6 +28,12 @@ import { defaultImageModel } from './menuCardState';
 //   conflict, the server's own sentence for a 409 LEGAL_HOLD, which no retry
 //   can get past); another failure keeps them (state 'failed', retrySave()).
 //   flush() resolves once saved, rejects when it fails.
+// - The admin brief (spec 2026-10-19 section 7.2) is inputs.admin_brief: before
+//   a draft it lives in the brief (DEFAULT_BRIEF starts it empty), with one it
+//   is edited through edit() like any input, and generate() posts it as
+//   admin_brief_theme, admin_brief_naming and admin_brief_notes, all three,
+//   empty ones included. A draft with none stored and none edited posts none,
+//   so the server keeps what it holds.
 // - The brief inputs and a held reference file last the page visit; imageModel
 //   opens at the read model's configured.default_image_model (Gemini when its
 //   key is set, else OpenAI; 'openai' until the first GET lands; spec
@@ -39,7 +46,11 @@ export const POLL_MS = 2000;
 export const BACKOFF_MS = 10000;
 export const SAVE_DEBOUNCE_MS = 800;
 export { CARD_SIZE, FULL_SIZE };
-export const DEFAULT_BRIEF = Object.freeze({ planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true });
+export const DEFAULT_BRIEF = Object.freeze({
+  planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true,
+  admin_brief: Object.freeze({ theme: '', naming: '', notes: '' }),
+});
+const ADMIN_BRIEF_FIELDS = ['theme', 'naming', 'notes'];
 
 // The legal-hold refusal's sentence when a 409 arrives without one
 // (server/routes/proposals/patchGuards.js assertNotLegalHold).
@@ -272,6 +283,10 @@ export default function useMenuDraft(proposalId) {
     form.append('reference_source', file ? 'upload' : src.reference_source || 'none');
     form.append('art_direction', src.art_direction || '');
     form.append('drb_mark', String(src.drb_mark !== false));
+    const admin = src.admin_brief;
+    if (admin && typeof admin === 'object' && !Array.isArray(admin)) {
+      for (const k of ADMIN_BRIEF_FIELDS) form.append(`admin_brief_${k}`, typeof admin[k] === 'string' ? admin[k] : '');
+    }
     form.append('image_model', model || chosen);
     if (file) form.append('reference', file);
     const res = await api.post(`/proposals/${pid}/menu-draft/generate`, form, { headers: { 'Content-Type': 'multipart/form-data' } });

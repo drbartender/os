@@ -10,7 +10,7 @@ const { performance } = require('node:perf_hooks');
 
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, legacyBarBaseline, fingerprintHash, hashBarLines,
-  drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev,
+  drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev, effectiveBrief,
 } = require('./menuDrinkSource');
 const { buildAlsoAtBar } = require('./menuAlsoAtBar');
 
@@ -879,4 +879,48 @@ test('plannerImageRev: 16 hex of sha256 over planner:<key>; null without a key',
   assert.match(plannerImageRev(key), /^[0-9a-f]{16}$/);
   assert.notEqual(plannerImageRev(`${key}x`), plannerImageRev(key));
   for (const v of [null, undefined, '', 5]) assert.equal(plannerImageRev(v), null, String(v));
+});
+
+// ─── The admin brief merge (spec 2026-10-19 section 7.2) ────────────────────
+// effectiveBrief is the one merge the four provider seams apply; the brief
+// normalizePlan builds stays the client's, so the fingerprint hashes only it.
+
+test('effectiveBrief: per field the admin text when non-empty after trim, else the client\'s', () => {
+  const client = { theme: 'Garden party', naming: 'Name them after flowers', notes: 'Pastels' };
+  assert.deepEqual(effectiveBrief(client, { theme: '  Navy and brass  ', naming: '', notes: '   ' }),
+    { theme: 'Navy and brass', naming: 'Name them after flowers', notes: 'Pastels' });
+  assert.deepEqual(effectiveBrief(client, { notes: 'No florals' }),
+    { theme: 'Garden party', naming: 'Name them after flowers', notes: 'No florals' }, 'a missing admin key is a blank');
+  assert.deepEqual(effectiveBrief({ theme: '  ', naming: '', notes: '' }, { naming: 'After the dogs' }),
+    { theme: '', naming: 'After the dogs', notes: '' }, 'the admin text stands where the client left a blank');
+  for (const none of [undefined, null, 'Navy', ['Navy'], 5]) {
+    assert.deepEqual(effectiveBrief(client, none), client, `no admin brief (${JSON.stringify(none)}) is the client's`);
+  }
+  assert.deepEqual(effectiveBrief(client, { theme: 5, naming: null, notes: ['x'] }), client, 'only admin text counts');
+  assert.deepEqual(effectiveBrief(undefined, undefined), { theme: '', naming: '', notes: '' });
+  assert.deepEqual(Object.keys(effectiveBrief(client, { look: 'house', theme: 'Navy' })).sort(), ['naming', 'notes', 'theme'],
+    'only the three fields come out');
+});
+
+test('effectiveBrief: each field cut to 1,000 characters, the admin\'s and the client\'s alike, never splitting an emoji', () => {
+  const out = effectiveBrief({ theme: 'a'.repeat(1200), naming: 'ok', notes: 'client notes' }, { notes: `  ${'b'.repeat(1001)}  ` });
+  assert.equal(out.theme, 'a'.repeat(1000));
+  assert.equal(out.naming, 'ok');
+  assert.equal(out.notes, 'b'.repeat(1000));
+  const emoji = effectiveBrief({}, { theme: `x${'\u{1F600}'.repeat(600)}` }).theme;
+  assert.equal(emoji.length, 999, 'the half emoji at the cut is dropped');
+  assert.ok(!/[\uD800-\uDBFF]$/.test(emoji));
+});
+
+test('effectiveBrief: pure, and normalizePlan\'s brief and the fingerprint stay the client\'s', () => {
+  const plan = { selections: { menuTheme: 'Garden party', drinkNaming: '', menuDesignNotes: 'Pastels', customCocktails: ['Zq Fizz'] } };
+  const n = normalizePlan(plan);
+  const before = JSON.stringify(n);
+  const admin = { theme: 'Navy', naming: 'After the dogs', notes: '' };
+  const merged = effectiveBrief(n.brief, admin);
+  assert.notEqual(merged, n.brief, 'a new object');
+  assert.equal(JSON.stringify(n), before, 'the normalized plan is untouched');
+  assert.deepEqual(admin, { theme: 'Navy', naming: 'After the dogs', notes: '' }, 'the admin brief is untouched');
+  assert.deepEqual(n.brief, { theme: 'Garden party', naming: '', notes: 'Pastels' });
+  assert.equal(buildFingerprint(n).brief_hash, buildFingerprint(normalizePlan(plan)).brief_hash);
 });

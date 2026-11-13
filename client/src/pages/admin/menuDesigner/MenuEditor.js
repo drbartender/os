@@ -234,6 +234,8 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
     diff: (payload && payload.diff) || null, configured, cap, imageModel: menu.imageModel,
     onPatch, onReroll, onSelectDrink, selectedDrink: selected, plannerImage, wordsDone, readOnly, drinkPlan,
     referenceFile: menu.referenceFile, onReferenceFile: menu.setReferenceFile,
+    // The GET's plan block: the Brief tab's From the planner box (spec 2026-10-19 section 7.1).
+    plan: (payload && payload.plan) || null,
   };
   const Tab = { design: DesignTab, drinks: DrinksTab, brief: BriefTab }[activeTab];
 
