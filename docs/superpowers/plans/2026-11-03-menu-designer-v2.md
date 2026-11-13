@@ -1113,6 +1113,7 @@ lanes:
       - client/src/pages/admin/menuDesigner/menuCardState.js  (Not set up reads configured.words)
       - client/src/pages/admin/menuDesigner/menuCardState.test.js
       - client/src/pages/admin/menuDesigner/menuArtSentences.js  (Anthropic's sentences, if the client mirrors them)
+      - server/utils/menuArtSentences.test.js  (the Brief-tab list pin takes Claude's refusal; added by the lane's review)
       - client/src/pages/admin/menuDesigner/MenuEditor.js  (its open effect stops forcing GPT Image; added by the lane's review)
       - client/src/pages/admin/menuDesigner/MenuEditor.test.js  (the editor's toggle and Drawing is off)
       - .env.example  (MENU_ART_TEXT_MODEL's default; the Anthropic, OpenAI and Gemini comments say which call needs which key)
