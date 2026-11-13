@@ -648,6 +648,8 @@ lanes:
       - client/src/pages/admin/menuDesigner/BriefTab.test.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.js
       - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
+      - client/src/pages/admin/menuDesigner/MenuEditor.js  (tabProps passes the GET's plan block to the Brief tab; added by the build)
+      - client/src/pages/admin/menuDesigner/MenuEditor.test.js
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-no-menu-mark, menu-fonts-twelve, menu-out-of-credit, menu-words-claude]
     lenses: tier A (menuArtJob.js, menuDraftSync.js); access-egress (what leaves the OS for a provider), outcomes-providers, seams, client (captures against the v1 artifact), verify, the externals.
