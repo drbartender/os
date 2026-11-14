@@ -885,6 +885,8 @@ tests omitted
 │       │   │   ├── ClientShoppingList.js # ClientShoppingList (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── FeedbackPage.css
 │       │   │   ├── FeedbackPage.jsx # FeedbackPage (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
+│       │   │   ├── MenuProofPage.css # MenuProofPage: the client's menu proof page, phone first, on the client pages' paper, teal and brass.
+│       │   │   ├── MenuProofPage.jsx # MenuProofPage: the client's menu proof at /menu-proof/:token (spec 2026-10-19 section 12), where the client says Looks great or asks for changes once; public and token-gated, no client name, contact, event date or amounts.
 │       │   │   ├── TipPage.atoms.jsx # Exports VenmoMark, CashAppMark, PaypalMark, ZelleMark, CardNetworkRow, Chevron, StarIcon, Sparkle and 3 more. Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
 │       │   │   ├── TipPage.css # Tip Page - local styles Brand whispers: cream paper background, chalkboard only as hero band, IM Fell English SC reserved for H1 + "Tip {Name}".
 │       │   │   ├── TipPage.jsx # TipPage (React component, default export). Header generated from the file's exports by migrate-headers on 2026-10-27; replace with what it does.
@@ -1204,6 +1206,7 @@ tests omitted
 │   │   ├── marketingSend.js  # The campaign send.
 │   │   ├── me.js             # Authenticated self endpoints (tip page settings, my-tips listing, notification preferences: the categories, the admin push kind switches and the server's VAPID public key)
 │   │   ├── mePush.js         # POST /api/me/push-test: one banner to every subscription the caller holds, so the phone can prove a device works (spec 2026-08-13-mobile-admin section 7, 2026-10-14: the one new push endpoint). Admin or manager, the admin write limiter (10 a minute per user). Never throws over a push failure: the counts are the answer.
+│   │   ├── menuProof.js      # The client menu proof's public routes (spec 2026-10-19 sections 12, 18 and 20), gated by the proof's UUID token: the page state, the proof picture under menu-proof/<proposal_id>/, and the one answer.
 │   │   ├── messages.js       # SMS messaging to staff (per-recipient sends through utils/staffText.js)
 │   │   ├── mocktails.js      # Mocktail menu CRUD
 │   │   ├── packages.js       # Admin package-model API (potion planner v2, lane pp2-core): structured package contents (package_items category pars with split-par eligible bottles), signature-slot config, the makeability preview, and the DIRECTIONAL margin sketch. Pricing that bills clients lives in pricingEngine/proposals - nothing here touches money paths.
@@ -1519,6 +1522,7 @@ tests omitted
 │       ├── menuKeyOut.js     # Magenta key-out for Gemini drink art (spec 5.4 "Drinks, Gemini", plan Review Focus 6). Gemini cannot return alpha, so the drink prompt asks for a flat #FF00FF background and this turns it into a 1024x1024 PNG with real alpha. Pure: sharp decodes to raw RGBA, plain JS works the pixels, sharp encodes.
 │       ├── menuPrintFile.js  # The ONE way a bar menu print file leaves the server. Both downloads stream through here: assigned staff on GET /api/shifts/:shiftId/menu-print (routes/eventDetails.js) and admin/manager on GET /api/proposals/:id/menu-print (routes/proposals/menuPrint.js). Each route keeps its own authorization and key lookup; the traversal guard, the R2 proxy and the caching headers live only here so the two cannot drift apart.
 │       ├── menuPrintState.js # The menu print state of an event (spec 2026-10-01 section 8), split from the read model (menuDraftRead.js, which re-exports both). Pure.
+│       ├── menuProofs.js     # The client menu proof's token life, state and reads (spec 2026-10-19 sections 10.6 and 12): the one expiry expression every proof reader uses, the state derivation, and the by-token and latest-proof loaders.
 │       ├── messageLog.js     # Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET /proposals/:id
 │       ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │       ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths

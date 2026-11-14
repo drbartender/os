@@ -104,6 +104,7 @@ const TipPage = lazy(() => import('./pages/public/TipPage'));
 const TipPageThanks = lazy(() => import('./pages/public/TipPageThanks'));
 const TipSignDisplay = lazy(() => import('./pages/public/TipSignDisplay'));
 const FeedbackPage = lazy(() => import('./pages/public/FeedbackPage'));
+const MenuProofPage = lazy(() => import('./pages/public/MenuProofPage'));
 
 // Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site
 const Welcome = lazy(() => import('./pages/Welcome'));
@@ -396,6 +397,7 @@ function PublicWebsiteRoutes() {
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/tip/:token/display" element={<TipSignDisplay />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
+        <Route path="/menu-proof/:token" element={<MenuProofPage />} />
         <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="/labnotes" element={<Blog />} />
         <Route path="/labnotes/:slug" element={<BlogPost />} />
@@ -470,6 +472,7 @@ function HiringRoutes() {
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/tip/:token/display" element={<TipSignDisplay />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
+        <Route path="/menu-proof/:token" element={<MenuProofPage />} />
         <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -533,6 +536,7 @@ function StaffSiteRoutes() {
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/tip/:token/display" element={<TipSignDisplay />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
+        <Route path="/menu-proof/:token" element={<MenuProofPage />} />
         <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -565,6 +569,7 @@ function AppRoutes() {
       <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
       <Route path="/tip/:token/display" element={<TipSignDisplay />} />
       <Route path="/feedback/:token" element={<FeedbackPage />} />
+      <Route path="/menu-proof/:token" element={<MenuProofPage />} />
       <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />

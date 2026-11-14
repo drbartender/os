@@ -17,6 +17,31 @@ test('scrubUrl redacts every public token shape it knows', () => {
   assert.equal(scrubUrl(undefined), undefined);
 });
 
+// The client menu proof (spec 2026-10-19 section 18): the UUID in the path is
+// the page's only credential, on the page URL and on all three API routes.
+test('scrubUrl redacts the menu proof token on the page path and every API route, in either case', () => {
+  assert.equal(scrubUrl(`/api/menu-proof/${TOKEN}`), '/api/menu-proof/[redacted]');
+  assert.equal(scrubUrl(`/api/menu-proof/${TOKEN}/image`), '/api/menu-proof/[redacted]/image');
+  assert.equal(scrubUrl(`/api/menu-proof/${TOKEN}/answer`), '/api/menu-proof/[redacted]/answer');
+  assert.equal(scrubUrl(`https://api.drbartender.com/api/menu-proof/${TOKEN}/image?w=1`),
+    'https://api.drbartender.com/api/menu-proof/[redacted]/image?w=1');
+  assert.equal(scrubUrl(`https://drbartender.com/menu-proof/${TOKEN}`), 'https://drbartender.com/menu-proof/[redacted]');
+  // Express matches paths case-insensitively, and the UUID guard takes either case.
+  const shouted = scrubUrl(`/API/MENU-PROOF/${TOKEN.toUpperCase()}/IMAGE`);
+  assert.doesNotMatch(shouted, /[0-9A-F]{8}-[0-9A-F]{4}/i, 'no part of the token survives');
+  assert.match(shouted, /\/menu-proof\/\[redacted\]\/IMAGE$/i);
+});
+
+test('the menu proof token leaves neither pipeline: an error event\'s request and route tag, a transaction\'s spans', () => {
+  const url = `https://api.drbartender.com/api/menu-proof/${TOKEN}/image`;
+  const err = scrubErrorEvent({ request: { url, headers: { referer: `https://drbartender.com/menu-proof/${TOKEN}` } },
+    tags: { route: `/api/menu-proof/${TOKEN}/image` } });
+  assert.equal(JSON.stringify(err).includes(TOKEN), false, 'an error event');
+  const txn = scrubTransactionEvent({ transaction: `GET /api/menu-proof/${TOKEN}`, request: { url },
+    spans: [{ data: { 'http.url': url, url, 'http.target': `/api/menu-proof/${TOKEN}/image` } }] });
+  assert.equal(JSON.stringify(txn).includes(TOKEN), false, 'a transaction event');
+});
+
 // An unknown number's Inbox person key is p- plus the last ten digits of the
 // phone (spec 2026-10-06), and it sits in every /api/admin/inbox/:personKey
 // URL. A 555 fixture.

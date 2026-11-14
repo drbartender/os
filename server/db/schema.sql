@@ -5131,6 +5131,52 @@ DO $$ BEGIN
 END $$;
 -- ─── end Menu art generator ───
 
+-- ─── Menu proofs (spec 2026-10-19 sections 10.3 and 10.6) ───
+-- Spec: docs/superpowers/specs/2026-10-19-menu-designer-v2-design.md.
+-- menu_proofs: one row per Approve and send, the draft's history. token is the
+-- only key of the client's page (/menu-proof/:token). version and art_version
+-- are the pair the proof and the held print file were rendered from; r2_key
+-- sits under menu-proof/<proposal_id>/. There is no stored expiry: the link's
+-- life is computed live from the proposal's current event_date
+-- (server/utils/menuProofs.js), so moving the event moves the end. The latest
+-- proof of a draft is the row with superseded_at IS NULL. Writers: Approve
+-- (insert, supersede), the email step (email_status, sent_to), the answer
+-- route (answer, answer_note, answered_at, once), and Dallas's no-menu mark or
+-- upload (withdrawn_at, on an unanswered proof). answer_note is the client's
+-- plain-text note, never copied into an activity row.
+CREATE TABLE IF NOT EXISTS menu_proofs (
+  id SERIAL PRIMARY KEY,
+  draft_id INTEGER NOT NULL REFERENCES menu_drafts(id) ON DELETE CASCADE,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  token UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  version INTEGER NOT NULL,
+  art_version INTEGER NOT NULL,
+  r2_key TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  sent_to TEXT,
+  email_status TEXT NOT NULL CHECK (email_status IN ('pending', 'sent', 'failed', 'no_address', 'skipped', 'suppressed')),
+  withdrawn_at TIMESTAMPTZ,
+  superseded_at TIMESTAMPTZ,
+  answer TEXT CHECK (answer IS NULL OR answer IN ('approved', 'changes')),
+  answer_note TEXT,
+  answered_at TIMESTAMPTZ,
+  CHECK ((answer IS NULL) = (answered_at IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_menu_proofs_draft ON menu_proofs (draft_id, sent_at DESC);
+-- The release columns (spec 10.3): which held print file reached staff, when,
+-- by whom and how ('client' from Looks great, 'admin' from Release for
+-- printing). Unused until the approve-and-send lane writes them; a v1
+-- approval keeps them NULL (no backfill, the read model treats it as
+-- released). Each ADD COLUMN carries its FK or CHECK inline, so a replay that
+-- finds the column skips the whole statement.
+ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_print_key TEXT;
+ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
+ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_via TEXT
+  CHECK (released_via IS NULL OR released_via IN ('client', 'admin'));
+-- ─── end Menu proofs ───
+
 -- ─── Service extensions (on-site added bar time) ──────────────────────────
 -- One row per staff request for more bar time. Spec:
 -- docs/superpowers/specs/2026-07-25-service-extension-design.md

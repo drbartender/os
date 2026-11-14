@@ -413,6 +413,8 @@ app.use('/api/marketing', require('./routes/marketingOverview'));
 app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/public/feedback', require('./routes/publicFeedback'));
+// The client menu proof page's public routes (token-gated; spec 2026-10-19 section 12).
+app.use('/api/menu-proof', require('./routes/menuProof'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 // Public /sms page opt-in form. Mounted ahead of routes/sms.js (which is the
 // inbound webhook + the authed admin reply surface) so the one unauthenticated

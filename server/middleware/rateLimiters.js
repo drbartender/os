@@ -318,6 +318,35 @@ const menuDraftEditLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The client menu proof page (spec 2026-10-19 section 18). Reads: the page GET
+// and the proof picture share one bucket per token, the proposalCheckoutLimiter
+// shape, behind publicTokenIpLimiter's per-IP ceiling. A load spends two and a
+// refetch after a refused answer one or two, so 60 per 15 minutes is far above
+// a client and still bounds paid R2 egress per link. The key is the token in
+// lower case: the UUID guard and Postgres both take either case, so a raw key
+// would give one link a fresh bucket per spelling.
+const proofTokenKey = (req) => String(req.params?.token || '').toLowerCase();
+const menuProofReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => proofTokenKey(req) || req.ip,
+  message: { error: 'Too many requests. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// The answer POST (Looks great, Request changes), behind publicLimiter. A proof
+// takes one answer, so 5 an hour keyed by IP and token covers a retry after a
+// dropped connection and stops a script hammering one link. Lower case, as above.
+const menuProofAnswerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => `${req.ip}:${proofTokenKey(req)}`,
+  message: { error: 'Too many tries. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -343,4 +372,6 @@ module.exports = {
   inboxTextLimiter,
   menuDraftReadLimiter,
   menuDraftEditLimiter,
+  menuProofReadLimiter,
+  menuProofAnswerLimiter,
 };

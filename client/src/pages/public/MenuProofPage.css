@@ -1,0 +1,245 @@
+/* MenuProofPage: the client's menu proof page, phone first, on the client pages' paper, teal and brass.
+
+   Benchmark: docs/design-artifacts/2026-11-03-menu-proof/menu-proof-page.html
+   (screens 2 to 5). Token rule (spec 2026-10-19 section 22): every color and
+   face comes from client/src/styles/drb-tokens.css, no literal color here.
+   The ground --drb-paper, text --drb-deep-brown, secondary text
+   --drb-text-muted, the kicker and rules --drb-brass, the primary button
+   --drb-teal on --drb-cream-text, the secondary button's text
+   --drb-warm-brown, faces --drb-font-display and --drb-font-body. The sketch's
+   pressed Request changes and read-only note ground is --drb-card-bg; its
+   input border reads as a rule, --drb-brass. Every rule sits under
+   .menu-proof-page, two classes deep, so it outranks the global main, h1, p
+   and the admin-os element rules (html is 17px, so 1rem is 17px here). */
+
+.menu-proof-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 0 16px;
+  background: var(--drb-paper);
+  color: var(--drb-deep-brown);
+  font-family: var(--drb-font-body);
+  line-height: 1.45;
+}
+
+.menu-proof-page *,
+.menu-proof-page *::before,
+.menu-proof-page *::after {
+  box-sizing: border-box;
+}
+
+.menu-proof-page .menu-proof-sheet {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 28px 0 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.menu-proof-page .menu-proof-kicker {
+  margin: 0;
+  font-family: var(--drb-font-display);
+  font-size: 0.75rem;
+  letter-spacing: 0.22em;
+  text-align: center;
+  color: var(--drb-brass);
+}
+
+.menu-proof-page .menu-proof-heading {
+  margin: 0;
+  font-family: var(--drb-font-display);
+  font-weight: 400;
+  font-size: 1.6rem;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--drb-deep-brown);
+}
+
+/* A heading takes focus after a press swaps the screen, so a screen reader
+   announces it; it is not a control, so it draws no ring. */
+.menu-proof-page .menu-proof-heading:focus,
+.menu-proof-page .public-error h1:focus {
+  outline: none;
+}
+
+.menu-proof-page .menu-proof-line {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--drb-deep-brown);
+}
+
+.menu-proof-page .menu-proof-quiet,
+.menu-proof-page .menu-proof-missing {
+  color: var(--drb-text-muted);
+}
+
+.menu-proof-page .menu-proof-missing {
+  padding: 18px 12px;
+  border: 1px dashed var(--drb-brass);
+  border-radius: 6px;
+}
+
+/* The proof: full width (the sketch's 256 of 280), smaller once Request
+   changes opens or after an answer (the sketch's 180). */
+.menu-proof-page .menu-proof-picture {
+  display: block;
+  width: min(100%, 340px);
+  margin: 4px auto;
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: var(--drb-shadow-soft);
+}
+
+.menu-proof-page .menu-proof-picture.is-small {
+  width: min(64%, 240px);
+}
+
+.menu-proof-page .menu-proof-picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1200 / 1556;
+  background: var(--drb-card-bg);
+}
+
+.menu-proof-page .menu-proof-picture:focus-visible {
+  outline: 2px solid var(--drb-teal);
+  outline-offset: 3px;
+}
+
+.menu-proof-page .menu-proof-actions,
+.menu-proof-page .menu-proof-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.menu-proof-page .menu-proof-btn {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--drb-teal);
+  border-radius: 6px;
+  font-family: var(--drb-font-display);
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.menu-proof-page .menu-proof-btn.is-primary {
+  background: var(--drb-teal);
+  color: var(--drb-cream-text);
+}
+
+.menu-proof-page .menu-proof-btn.is-secondary {
+  background: transparent;
+  color: var(--drb-warm-brown);
+}
+
+.menu-proof-page .menu-proof-btn.is-secondary.is-pressed {
+  background: var(--drb-card-bg);
+}
+
+.menu-proof-page .menu-proof-btn:focus-visible {
+  outline: 2px solid var(--drb-teal);
+  outline-offset: 2px;
+}
+
+.menu-proof-page .menu-proof-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.menu-proof-page .menu-proof-textarea {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--drb-brass);
+  border-radius: 6px;
+  background: var(--drb-cream);
+  color: var(--drb-deep-brown);
+  font-family: var(--drb-font-body);
+  font-size: 1rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.menu-proof-page .menu-proof-textarea::placeholder {
+  color: var(--drb-text-muted);
+  opacity: 1;
+}
+
+.menu-proof-page .menu-proof-textarea:focus {
+  outline: 2px solid var(--drb-teal);
+  outline-offset: 1px;
+}
+
+/* The counter takes the mono token: the body face draws old-style figures, in
+   which 1000 reads as a letter and three rings. The sketch sets it in a plain
+   face with lining figures too. */
+.menu-proof-page .menu-proof-count {
+  margin: -6px 0 0;
+  font-family: var(--drb-font-mono);
+  font-size: 0.75rem;
+  text-align: right;
+  color: var(--drb-text-muted);
+}
+
+/* The client's note, read-only, as plain text that keeps its line breaks. */
+.menu-proof-page .menu-proof-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--drb-brass);
+  background: var(--drb-card-bg);
+  font-style: italic;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--drb-deep-brown);
+}
+
+.menu-proof-page .menu-proof-alert {
+  margin: 0;
+  font-size: 0.95rem;
+  text-align: center;
+  color: var(--drb-error);
+}
+
+.menu-proof-page .menu-proof-small {
+  margin: 0;
+  font-size: 0.8rem;
+  text-align: center;
+  color: var(--drb-text-muted);
+}
+
+/* The .public-error shell (a bad token) is drawn for the chalkboard; on this
+   paper ground its type takes the page's tokens. */
+.menu-proof-page .public-error {
+  padding: 3.5rem 0 4rem;
+}
+
+.menu-proof-page .public-error-eyebrow {
+  color: var(--drb-brass);
+}
+
+.menu-proof-page .public-error h1 {
+  font-size: 1.6rem;
+  color: var(--drb-deep-brown);
+}
+
+.menu-proof-page .public-error-actions .menu-proof-btn {
+  max-width: 340px;
+}

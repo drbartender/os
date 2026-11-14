@@ -219,10 +219,96 @@ test('proposals.menu_not_required_by: one idempotent ADD COLUMN with its CHECK, 
   assert.ok(at < schemaSql.indexOf(START), 'before the menu art block, outside it');
 });
 
+// ── The menu proofs block (spec 2026-10-19 sections 10.3 and 10.6; lane menu-proof-page) ──
+// Its own block after the menu art one: the menu_proofs table and the four
+// menu_drafts release columns, every statement idempotent, no data backfill.
+const PROOF_START = '-- ─── Menu proofs (spec 2026-10-19 sections 10.3 and 10.6) ───';
+const PROOF_END = '-- ─── end Menu proofs ───';
+
+function menuProofDdl() {
+  const a = schemaSql.indexOf(PROOF_START);
+  const b = schemaSql.indexOf(PROOF_END);
+  assert.ok(a !== -1 && b > a, 'the menu proofs block sits between its two markers in schema.sql');
+  return schemaSql.slice(a, b);
+}
+
+const PROOF_COLUMNS = {
+  id: 'SERIAL PRIMARY KEY',
+  draft_id: 'INTEGER NOT NULL REFERENCES menu_drafts(id) ON DELETE CASCADE',
+  proposal_id: 'INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE',
+  token: 'UUID NOT NULL UNIQUE DEFAULT gen_random_uuid()',
+  version: 'INTEGER NOT NULL',
+  art_version: 'INTEGER NOT NULL',
+  r2_key: 'TEXT NOT NULL',
+  sent_at: 'TIMESTAMPTZ NOT NULL DEFAULT NOW()',
+  sent_by: 'INTEGER REFERENCES users(id) ON DELETE SET NULL',
+  sent_to: 'TEXT',
+  email_status: "TEXT NOT NULL CHECK (email_status IN ('pending', 'sent', 'failed', 'no_address', 'skipped', 'suppressed'))",
+  withdrawn_at: 'TIMESTAMPTZ',
+  superseded_at: 'TIMESTAMPTZ',
+  answer: "TEXT CHECK (answer IS NULL OR answer IN ('approved', 'changes'))",
+  answer_note: 'TEXT',
+  answered_at: 'TIMESTAMPTZ',
+};
+
+// The release columns, each added by its own ADD COLUMN IF NOT EXISTS (a
+// replay that finds the column skips the whole statement, its FK or CHECK too).
+const RELEASE_ADDS = [
+  'ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_print_key TEXT;',
+  'ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;',
+  'ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_by INTEGER REFERENCES users(id) ON DELETE SET NULL;',
+  "ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_via TEXT\n  CHECK (released_via IS NULL OR released_via IN ('client', 'admin'));",
+];
+const RELEASE_COLUMNS = {
+  released_print_key: 'TEXT',
+  released_at: 'TIMESTAMPTZ',
+  released_by: 'INTEGER REFERENCES users(id) ON DELETE SET NULL',
+  released_via: "TEXT CHECK (released_via IS NULL OR released_via IN ('client', 'admin'))",
+};
+
+test('menu proofs: its own block, after the menu art block, every statement idempotent, no backfill', () => {
+  const at = schemaSql.indexOf(PROOF_START);
+  assert.ok(at > schemaSql.indexOf(END), 'after the end of the menu art block');
+  assert.equal(schemaSql.indexOf(PROOF_START, at + 1), -1, 'once');
+  const ddl = menuProofDdl().replace(/--[^\n]*/g, '');
+  assert.equal((ddl.match(/CREATE TABLE/g) || []).length, 1);
+  assert.equal((ddl.match(/CREATE TABLE IF NOT EXISTS menu_proofs \(/g) || []).length, 1);
+  assert.equal((ddl.match(/CREATE (UNIQUE )?INDEX/g) || []).length, 1);
+  assert.equal((ddl.match(/CREATE INDEX IF NOT EXISTS/g) || []).length, 1);
+  assert.equal((ddl.match(/ADD COLUMN/g) || []).length, 4);
+  assert.equal((ddl.match(/ADD COLUMN IF NOT EXISTS/g) || []).length, 4);
+  assert.doesNotMatch(ddl, /\bDROP\b/);
+  assert.doesNotMatch(ddl, /\b(INSERT INTO|UPDATE \w+ SET|DELETE FROM)\b/, 'no data backfill runs from schema.sql');
+  assert.doesNotMatch(ddl, /ADD CONSTRAINT/);
+  assert.ok(!menuProofDdl().includes(String.fromCharCode(0x2014)), 'no em dash in the block');
+});
+
+test('menu_proofs: every column exactly as spec 10.6 writes it, the answer pair CHECK, the draft index', () => {
+  const ddl = menuProofDdl();
+  const { columns, constraints } = parseBody(tableBody(ddl, 'menu_proofs'));
+  assert.deepEqual(columns, PROOF_COLUMNS);
+  assert.deepEqual(constraints, ['CHECK ((answer IS NULL) = (answered_at IS NULL))']);
+  assert.match(ddl, /CREATE INDEX IF NOT EXISTS idx_menu_proofs_draft ON menu_proofs \(draft_id, sent_at DESC\);/);
+  // No stored expiry: the link's life is computed live from the event date.
+  assert.doesNotMatch(tableBody(ddl, 'menu_proofs'), /expire/i);
+});
+
+test('menu_drafts: the four release columns, one idempotent ADD COLUMN each, released_by ON DELETE SET NULL', () => {
+  const ddl = menuProofDdl();
+  for (const stmt of RELEASE_ADDS) {
+    const at = ddl.indexOf(stmt);
+    assert.ok(at !== -1, `in the block exactly: ${stmt}`);
+    assert.equal(ddl.indexOf(stmt, at + 1), -1, 'once');
+  }
+  assert.ok(ddl.indexOf(RELEASE_ADDS[0]) > ddl.indexOf('CREATE TABLE IF NOT EXISTS menu_proofs ('));
+});
+
 // ── Live: the block applied twice to the dev DB ─────────────────────────────
 // Skips when DATABASE_URL is unset. The three tables are net-new, so applying
 // the block is safe on the shared dev DB; every probe row below is written
 // inside one transaction that is rolled back, so the suite leaves nothing.
+// The menu proofs block is applied the same way: one new table and four new
+// nullable columns, additive and idempotent.
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const dbTest = HAS_DB ? test : test.skip;
@@ -234,6 +320,9 @@ before(async () => {
   const ddl = menuArtDdl();
   await pool.query(ddl);
   await pool.query(ddl);
+  const proofs = menuProofDdl();
+  await pool.query(proofs);
+  await pool.query(proofs);
 });
 
 after(async () => { if (pool) await pool.end(); });
@@ -243,7 +332,8 @@ const PG_TYPE = new Map([['SERIAL', 'integer'], ['INTEGER', 'integer'], ['UUID',
   ['TEXT', 'text'], ['TIMESTAMPTZ', 'timestamp with time zone']]);
 
 dbTest('live: each table has exactly its columns, types, nullability and defaults', async () => {
-  for (const [table, expected] of Object.entries(COLUMNS)) {
+  const live = { ...COLUMNS, menu_drafts: { ...COLUMNS.menu_drafts, ...RELEASE_COLUMNS }, menu_proofs: PROOF_COLUMNS };
+  for (const [table, expected] of Object.entries(live)) {
     const { rows } = await pool.query(
       `SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = $1`, [table]);
@@ -462,6 +552,98 @@ dbTest('live: proposals.menu_not_required_by is a nullable TEXT whose CHECK take
     assert.ok(err, "'client' is refused");
     assert.equal(err.code, '23514');
     assert.equal(err.constraint, 'proposals_menu_not_required_by_check');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+});
+
+// The menu proofs block, read back from the catalog after it is applied twice.
+dbTest('live: menu_proofs keys, foreign keys and CHECKs, and the release columns, read back from the catalog', async () => {
+  const proofs = await constraintDefs('menu_proofs');
+  const defs = Object.values(proofs);
+  for (const def of [
+    'PRIMARY KEY (id)',
+    'UNIQUE (token)',
+    'FOREIGN KEY (draft_id) REFERENCES menu_drafts(id) ON DELETE CASCADE',
+    'FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE',
+    'FOREIGN KEY (sent_by) REFERENCES users(id) ON DELETE SET NULL',
+  ]) assert.ok(defs.includes(def), `menu_proofs: ${def}`);
+  assert.deepEqual(checkValues(proofs.menu_proofs_email_status_check),
+    ['pending', 'sent', 'failed', 'no_address', 'skipped', 'suppressed']);
+  assert.deepEqual(checkValues(proofs.menu_proofs_answer_check), ['approved', 'changes']);
+  assert.match(proofs.menu_proofs_answer_check, /answer IS NULL/);
+  assert.match(proofs.menu_proofs_check, /\(answer IS NULL\) = \(answered_at IS NULL\)/);
+
+  const { rows: idx } = await pool.query(
+    "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_menu_proofs_draft'");
+  assert.equal(idx.length, 1);
+  assert.match(idx[0].indexdef, /ON (public\.)?menu_proofs USING btree \(draft_id, sent_at DESC\)/);
+
+  const drafts = await constraintDefs('menu_drafts');
+  const releasedBy = Object.values(drafts).filter((d) => /FOREIGN KEY \(released_by\)/.test(d));
+  assert.deepEqual(releasedBy, ['FOREIGN KEY (released_by) REFERENCES users(id) ON DELETE SET NULL'], 'one released_by FK, SET NULL');
+  assert.deepEqual(checkValues(drafts.menu_drafts_released_via_check), ['client', 'admin']);
+  assert.match(drafts.menu_drafts_released_via_check, /released_via IS NULL/);
+});
+
+dbTest('live: menu_proofs defaults fill and its CHECKs, the unique token and the cascades enforce (all rolled back)', async () => {
+  const client = await pool.connect();
+  const refuses = async (sql, params, code, field) => {
+    await client.query('SAVEPOINT probe');
+    let err = null;
+    try { await client.query(sql, params); } catch (e) { err = e; }
+    await client.query('ROLLBACK TO SAVEPOINT probe');
+    assert.ok(err, `expected ${code}: ${sql}`);
+    assert.equal(err.code, code, `${sql}: ${err.message}`);
+    if (field) assert.equal(err.constraint || err.column, field, sql);
+  };
+  try {
+    await client.query('BEGIN');
+    // Its own client, proposal, user and draft, inside the rolled-back transaction: no real row is touched.
+    const { rows: [c] } = await client.query(
+      "INSERT INTO clients (name, email, phone) VALUES ('Schema Probe', 'schema-probe@example.com', '+15555550199') RETURNING id");
+    const { rows: [p] } = await client.query(
+      `INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours, event_timezone, status, event_type)
+       VALUES ($1, CURRENT_DATE + 10, '18:00', 4, 'America/Chicago', 'confirmed', 'corporate') RETURNING id`, [c.id]);
+    const { rows: [u] } = await client.query(
+      "INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ('schema-probe-admin@example.com', 'x', 'admin', 'approved') RETURNING id");
+    const { rows: [d] } = await client.query(
+      `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint)
+       VALUES ($1, '00000000-0000-4000-8000-000000000002', '{}', '{}', '{}') RETURNING id, released_print_key, released_at, released_by, released_via`, [p.id]);
+    assert.deepEqual([d.released_print_key, d.released_at, d.released_by, d.released_via], [null, null, null, null]);
+
+    const proofSql = `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, sent_by, email_status)
+                      VALUES ($1, $2, 3, 1, $3, $4, $5) RETURNING id, token, sent_at, answer, answered_at, withdrawn_at, superseded_at`;
+    const { rows: [proof] } = await client.query(proofSql, [d.id, p.id, `menu-proof/${p.id}/a.jpg`, u.id, 'pending']);
+    assert.match(proof.token, /^[0-9a-f-]{36}$/, 'the token fills from gen_random_uuid()');
+    assert.ok(proof.sent_at instanceof Date, 'sent_at fills');
+    assert.deepEqual([proof.answer, proof.answered_at, proof.withdrawn_at, proof.superseded_at], [null, null, null, null]);
+    for (const ok of ['sent', 'failed', 'no_address', 'skipped', 'suppressed']) {
+      await client.query(proofSql, [d.id, p.id, `menu-proof/${p.id}/${ok}.jpg`, null, ok]);
+    }
+    await refuses(proofSql, [d.id, p.id, 'k', null, 'bounced'], '23514', 'menu_proofs_email_status_check');
+    await refuses(proofSql, [d.id, p.id, 'k', null, null], '23502', 'email_status');
+    await refuses(`INSERT INTO menu_proofs (draft_id, proposal_id, token, version, art_version, r2_key, email_status)
+                   VALUES ($1, $2, $3, 1, 1, 'k', 'sent')`, [d.id, p.id, proof.token], '23505', 'menu_proofs_token_key');
+    await refuses("UPDATE menu_proofs SET answer = 'maybe', answered_at = NOW() WHERE id = $1", [proof.id], '23514', 'menu_proofs_answer_check');
+    await refuses("UPDATE menu_proofs SET answer = 'approved' WHERE id = $1", [proof.id], '23514', 'menu_proofs_check');
+    await refuses('UPDATE menu_proofs SET answered_at = NOW() WHERE id = $1', [proof.id], '23514', 'menu_proofs_check');
+    await client.query("UPDATE menu_proofs SET answer = 'changes', answer_note = 'x', answered_at = NOW() WHERE id = $1", [proof.id]);
+
+    for (const ok of ['client', 'admin', null]) {
+      await client.query('UPDATE menu_drafts SET released_via = $2 WHERE id = $1', [d.id, ok]);
+    }
+    await refuses("UPDATE menu_drafts SET released_via = 'system' WHERE id = $1", [d.id], '23514', 'menu_drafts_released_via_check');
+    await client.query('UPDATE menu_drafts SET released_by = $2 WHERE id = $1', [d.id, u.id]);
+    await client.query('DELETE FROM users WHERE id = $1', [u.id]);
+    const { rows: [after] } = await client.query(
+      'SELECT d.released_by, (SELECT sent_by FROM menu_proofs WHERE id = $2) AS sent_by FROM menu_drafts d WHERE d.id = $1', [d.id, proof.id]);
+    assert.deepEqual([after.released_by, after.sent_by], [null, null], 'deleting the user nulls released_by and sent_by');
+
+    await client.query('DELETE FROM menu_drafts WHERE id = $1', [d.id]);
+    const { rows: [left] } = await client.query('SELECT COUNT(*)::int AS n FROM menu_proofs WHERE proposal_id = $1', [p.id]);
+    assert.equal(left.n, 0, 'proofs cascade with their draft');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();

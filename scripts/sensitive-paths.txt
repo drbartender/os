@@ -513,6 +513,15 @@ server/utils/changeRequests.js
 server/routes/proposals/publicSwitch.js
 server/routes/proposals/optionsPricingShared.js
 server/routes/proposals/publicToken.js
+# The client menu proof (spec 2026-10-19 sections 10.3, 12 and 18; lane
+# menu-proof-page): an unauthenticated token-gated WRITE (the client's one
+# answer) that the approve-and-send lane extends to release the held print
+# file, which moves menu_print_key and starts the $5 menu_print duty re-accrual;
+# and the token-life expression every proof reader shares, which decides
+# whether a public link still works. A wrong guard here lets a stale or
+# withdrawn link answer, or a release land after the event.
+server/routes/menuProof.js
+server/utils/menuProofs.js
 # Client rows (spec 2026-10-16 section 4, price override removal): the fold
 # decision invoices and the proposal page share, the builder of the rows a
 # client sees (hidden lines folded on the server), and the sanitizer that strips

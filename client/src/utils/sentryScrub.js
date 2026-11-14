@@ -45,6 +45,11 @@ const BARE_P_KEY = /(^|[^0-9A-Za-z_-])p-\d{10}(?!\d)/gi;
 // second or a row id has that shape too.
 const DISPLAY_PHONE = /\(\d{3}\) \d{3}-\d{4}/g;
 const E164 = /\+\d{7,15}(?!\d)/g;
+// The client menu proof (spec 2026-10-19 section 18): the segment after
+// /menu-proof/ is a UUID that is the page's only credential, in the page URL,
+// the Referer and all three API calls. The server's rule, here also with
+// percent-encoded separators and in either case.
+const MENU_PROOF_PATH = /(?:\/|%2F)menu-proof(?:\/|%2F)[^/?#&%\s"'<>]+/gi;
 
 const MAX_DEPTH = 24;
 const MAX_NODES = 20000;
@@ -52,6 +57,7 @@ const MAX_NODES = 20000;
 export function scrubText(s) {
   return String(s)
     .replace(INBOX_P_PATH, '/inbox/p-[redacted]')
+    .replace(MENU_PROOF_PATH, '/menu-proof/[redacted]')
     .replace(BARE_P_KEY, '$1p-[redacted]')
     .replace(DISPLAY_PHONE, '[number]')
     .replace(E164, '[number]');

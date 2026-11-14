@@ -37,6 +37,12 @@ const scrubUrl = (u) => {
     .replace(/\/tip\/[^/?#]+/g, '/tip/[redacted]')
     .replace(/\/unsubscribe\/[^/?#]+/g, '/unsubscribe/[redacted]')
     .replace(/\/reset-password\/[^/?#]+/g, '/reset-password/[redacted]')
+    // The client menu proof (spec 2026-10-19 section 18): the UUID after
+    // /menu-proof/ is the page's only credential, on the page URL (a Referer)
+    // and on /api/menu-proof/<token>, its /image and its /answer. Whoever holds
+    // it can see the client's menu and note and give the one answer.
+    // Case-insensitive, because Express matches paths that way.
+    .replace(/\/menu-proof\/[^/?#]+/gi, '/menu-proof/[redacted]')
     // The listen token IS the auth on a route that streams a client's recorded
     // voice, so it must never come to rest in telemetry (spec 2026-08-10).
     .replace(/\/api\/voice\/vm\/[^/?#]+/g, '/api/voice/vm/[redacted]')

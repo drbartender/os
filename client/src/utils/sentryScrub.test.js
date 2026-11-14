@@ -26,6 +26,32 @@ test('a percent-encoded path is redacted too (a next= or redirect parameter carr
   expect(scrubText(`/x?r=/inbox%2Fp-${DIGITS}`)).toBe('/x?r=/inbox/p-[redacted]');
 });
 
+// The client menu proof page (spec 2026-10-19 section 18): the UUID in
+// /menu-proof/<token> is the page's only credential, and it rides in the page
+// URL, the Referer and all three API calls.
+const PROOF_TOKEN = '11111111-2222-4333-8444-555555555555';
+
+test('the menu proof token is redacted in the page path, the API paths and an encoded redirect, in either case', () => {
+  expect(scrubText(`https://drbartender.com/menu-proof/${PROOF_TOKEN}`)).toBe('https://drbartender.com/menu-proof/[redacted]');
+  expect(scrubText(`/api/menu-proof/${PROOF_TOKEN}`)).toBe('/api/menu-proof/[redacted]');
+  expect(scrubText(`/api/menu-proof/${PROOF_TOKEN}/image`)).toBe('/api/menu-proof/[redacted]/image');
+  expect(scrubText(`/api/menu-proof/${PROOF_TOKEN}/answer?x=1#y`)).toBe('/api/menu-proof/[redacted]/answer?x=1#y');
+  expect(scrubText(`/login?next=%2Fmenu-proof%2F${PROOF_TOKEN}&y=1`)).toBe('/login?next=/menu-proof/[redacted]&y=1');
+  expect(scrubText(`/MENU-PROOF/${PROOF_TOKEN.toUpperCase()}`)).toBe('/menu-proof/[redacted]');
+});
+
+test('the menu proof token leaves no hook: an error event, a transaction and a navigation crumb', () => {
+  const page = `https://drbartender.com/menu-proof/${PROOF_TOKEN}`;
+  const api = `https://api.drbartender.com/api/menu-proof/${PROOF_TOKEN}/image`;
+  const sent = [
+    beforeSend({ request: { url: page, headers: { Referer: page } }, exception: { values: [{ value: `GET ${api} failed` }] } }),
+    beforeSendTransaction({ transaction: `/menu-proof/${PROOF_TOKEN}`, spans: [{ description: `GET ${api}`, data: { url: api } }] }),
+    beforeBreadcrumb({ category: 'navigation', data: { from: '/', to: `/menu-proof/${PROOF_TOKEN}` } }),
+    beforeBreadcrumb({ category: 'xhr', data: { url: api, method: 'GET' } }),
+  ];
+  for (const item of sent) expect(JSON.stringify(item)).not.toContain(PROOF_TOKEN);
+});
+
 // Phone shapes by value (security review C1, 2026-10-09): a click crumb can
 // carry a label with a formatted number in it, and an error's extra can carry
 // a number. These fixtures are built from parts in code, never typed whole
