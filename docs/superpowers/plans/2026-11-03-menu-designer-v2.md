@@ -769,6 +769,15 @@ lanes:
       - client/src/pages/admin/menuDesigner/useMenuDraft.js  (look in the pre-draft brief)
       - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
       - client/src/index.css  (mc-house- rules)
+      - client/src/pages/admin/menuDesigner/DrinksTab.js  (a house draft offers only what the server takes: rename and hide; no description, no art, no four-drink cap; added 2026-11-13, the build found the tab still offered refused edits)
+      - client/src/pages/admin/menuDesigner/DrinksTab.test.js
+      - client/src/pages/admin/menuDesigner/menuEdits.js  (the text-only cap skipped on a house draft, the client mirror of the server rule)
+      - client/src/pages/admin/menuDesigner/menuEdits.test.js
+      - client/src/pages/admin/menuDesigner/MenuEditor.js  (the meta line on a house card)
+      - client/src/pages/admin/menuDesigner/MenuEditor.test.js
+      - server/utils/menuDraftRead.js  (plan.house_plain, so the Generate gate asks only for the keys this look will use)
+      - server/utils/menuDraftRead.test.js
+      - server/routes/proposals/menuDraftImages.js  (not needed: the re-roll route lives in menuDrafts.js, which holds the refusal)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-brief-tab, menu-error-display]
     lenses: tier A (menuDrafts, menuDraftShared, menuDraftSync, menuDraftImages, menuDraftApprove, the job files); seams (the hand-synced sections pair, layoutPieceKeys on both sides), outcomes-providers (a run with no provider call), access-egress (the house prompt's content), client (captures against MenuPreview, the house-touches sketch and the v1 artifact), business-time (the December rule), verify, the externals.
