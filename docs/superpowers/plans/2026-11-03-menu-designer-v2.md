@@ -737,7 +737,7 @@ lanes:
       - server/utils/menuEventTouches.test.js  (new)
       - server/utils/menuHouseSections.js  (new, with the header comment naming its client twin)
       - server/utils/menuHouseSections.test.js  (new; the parity test imports the client file)
-      - client/src/pages/plan/data/menuSections.js  (its header names the server twin; nothing else)
+      - client/src/pages/plan/data/menuSections.js  (its header names the server twin; and None as no pick, in step with the server port, added 2026-11-14 by the lane review)
       - server/utils/menuDraftValidation.js  (look, the house edit rules, the job-only keys, the text-only cap exemption, validateGenerateInputs)
       - server/utils/menuDraftValidation.test.js
       - server/routes/proposals/menuDrafts.js  (the upsert's content seed and the reservation)
@@ -778,6 +778,12 @@ lanes:
       - server/utils/menuDraftRead.js  (plan.house_plain, so the Generate gate asks only for the keys this look will use)
       - server/utils/menuDraftRead.test.js
       - server/routes/proposals/menuDraftImages.js  (not needed: the re-roll route lives in menuDrafts.js, which holds the refusal)
+      - client/src/pages/admin/menuDesigner/MenuDesignerCard.js  (the card passes the held brief its own Generate posts; added 2026-11-14 by the lane review)
+      - client/src/pages/admin/menuDesigner/MenuDesignerCard.test.js
+      - client/src/pages/admin/menuDesigner/ConfirmDialog.js  (the image-count and drawings sentences on a house card; same review)
+      - client/src/pages/admin/menuDesigner/ConfirmDialog.test.js  (new)
+      - client/src/pages/admin/menuDesigner/menuCardState.house.test.js  (new; the house look's copy)
+      - server/utils/menuDrinkSource.js  (comments only: planHash points at draftPlanHash)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-brief-tab, menu-error-display]
     lenses: tier A (menuDrafts, menuDraftShared, menuDraftSync, menuDraftImages, menuDraftApprove, the job files); seams (the hand-synced sections pair, layoutPieceKeys on both sides), outcomes-providers (a run with no provider call), access-egress (the house prompt's content), client (captures against MenuPreview, the house-touches sketch and the v1 artifact), business-time (the December rule), verify, the externals.
@@ -1019,6 +1025,9 @@ lanes:
       proofState; one client with two events that each hold a change request gets two thread links with one
       name (name the event); readMenuTasks.js's header already says the upload route withdraws the proof it
       settles, which item i makes true.
+      Moved 2026-11-14 (Claude's call): items (k), (l) and (o) are built in lane menu-inbox-followups, since
+      they sit in the Inbox's own files, outside this lane's footprint; items (m) and (n) are decided here,
+      with the card's states.
     footprint:
       - server/utils/menuProofs.js  (the state precedence; loadLatestProof's columns)
       - server/utils/menuProofs.test.js
@@ -1113,6 +1122,47 @@ lanes:
       stay in R2 and on menu_drafts.approved_print_key; the old Approve reads them as approved but unposted
       ("removed"), so before reverting, release or re-approve every held menu (the lane report gives the query
       that counts them). The schema rule stays.
+
+  - id: menu-inbox-followups
+    scope: >
+      Three Inbox items the menu-inbox-tasks review carried (2026-11-14), split out of menu-approve-send because
+      they sit in the Inbox's own files. (1) An event-date change must not leave a no-answer task hidden behind
+      a snooze: the due time is recomputed from the proposal's current event date, so a date moved earlier can
+      back-date it to before the snooze, which the snooze clause then reads as already seen; the lane picks the
+      smaller of two fixes after tracing both (the reader dates a no-answer task no earlier than the event
+      date's last change, or the snooze clause compares against when the task first became due) and amends
+      spec 13.2 with it. (2) A snooze on a row held only by tasks is judged by newer tasks, Wake and Reopen
+      alone, so a text the admin sends does not end it early; spec 13.2 says so. (3) The Done toast names the
+      person (act already holds the name), so two Dones in a row cannot be misread, and "Moved to Handled" is
+      said only when the read-back shows the item handled, a plain "Done." otherwise.
+    footprint:
+      - server/utils/inbox/rules.js
+      - server/utils/inbox/rules.menuTasks.test.js
+      - server/utils/inbox/rules.testkit.js
+      - server/utils/inbox/readMenuTasks.js  (only if fix 1 lands in the reader)
+      - server/utils/inbox/readers.test.js
+      - client/src/components/inbox/useInboxActions.js
+      - client/src/components/inbox/useInboxActions.test.js
+      - README.md, ARCHITECTURE.md  (generated sections, and the Menu tasks paragraph if a rule changes)
+    blockedBy: [menu-approve-send]
+    lenses: tier A (server/utils/inbox/** is sensitive); lifecycle, business-time (the due time against a snooze), seams, client (the toast), verify, the externals.
+    laws: >
+      A reply never closes a task and a task never closes a conversation; the legal-hold person has no task;
+      the AI never reads or closes a task. Due times in America/Chicago through businessTime.js; event dates
+      as text.
+    seams: >
+      The snooze clause is shared by every waiting row, so the conversation's own snooze rules stay as they
+      are (the existing rules suites pin them); the toast's read-back is the item GET the page already makes;
+      menu-approve-send edits readers.test.js too, so this lane is cut after it merges.
+    acceptance: >
+      Suites pass; the snooze test for a back-dated due time fails on main; the tasks-only snooze test fails on
+      main; the toast test for two Dones in a row fails on main.
+    test plan: >
+      rules.menuTasks.test.js: a no-answer task whose due time moves to before an existing snooze still ends
+      that snooze; a tasks-only row snoozed and then texted by the admin stays snoozed, and a newer task, Wake
+      or Reopen ends it; a row with a waiting conversation keeps today's snooze rules. useInboxActions.test.js:
+      each Done toast names its person; a read-back that shows the person waiting again says a plain Done.
+    revert: Reverts cleanly on its own; nothing is stored.
 
   - id: menu-events-dashboard
     scope: >
@@ -1233,6 +1283,26 @@ lanes:
     revert: revert the squash; the old code reads MENU_ART_TEXT_MODEL as an OpenAI model and sends the words to OpenAI again, and the widened CHECK accepts every value the old code writes.
 
   - id: menu-auto-start
+    carried: >
+      From the menu-house-card review (2026-11-14), for whichever of this lane's files they fall in, none blocking:
+      the Inbox reader compares content.words_finished_at inside SQL as a timestamptz (it is a JSON ISO string
+      with microseconds and an offset); an image-provider error on a house background reaches Sentry tagged
+      step words, since the house branch never advances the step; a failed house fill reads "Couldn't write the
+      menu text."; the Look control stores nothing on a click of the value it already shows, so a computed
+      House card cannot be pinned without pressing Custom design first; the Too long banner does not say the
+      look switch applies at Start over; before a draft the editor's meta line names the default pairing on a
+      house look; the Drawing is off banner says type and color still work on a card whose type and color are
+      fixed; the twelve-visible limit still binds a house draft, though the fill lists every drink; the house
+      card merges both beer and wine key families as the planner's preview does (spec 9.3), so a pick left in
+      the other family by a bar-style switch prints, kept because the client saw the same list in the planner;
+      Generate reads the stored inputs and the event before it takes the draft lock; layoutPieceKeys and
+      touchSetByKey part on a touch key outside the table (a hand edit only); the re-roll route checks the
+      image key before its house refusals; a PATCH on a house draft still takes the custom-only content keys
+      through the API, which change nothing on the card; the read model's diff helpers default the plan row to
+      null, which on a house draft reads every printed section as gone (every caller passes it today: make a
+      missing one throw); a custom draft made before the look existed stores no inputs.look, so for a client
+      with no instructions its Start over re-drafts the house card (spec 9.1 as worded; the hint and the
+      confirm say so before the click).
     scope: >
       Spec section 8 (decisions 8 and 9). The Generate route's body is extracted to startGeneration({ proposalId,
       inputs, file }) in server/routes/proposals/menuDraftGenerate.js and the route calls it. The
