@@ -1070,6 +1070,15 @@ lanes:
       - client/src/pages/admin/menuDesigner/BriefTab.js  (the Client review section)
       - client/src/pages/admin/menuDesigner/BriefTab.test.js
       - scripts/sensitive-paths.txt  (menuRelease.js, menuDraftRelease.js)
+      - As shipped, added by the build and its review (2026-11-14): client/src/index.css (the review row and banner rules);
+        client/src/pages/admin/menuDesigner/ConfirmDialog.js and its test (v1's replace confirm removed);
+        client/src/pages/admin/menuDesigner/menuCardState.review.test.js (new), MenuDesignerCard.test.js, MenuEditor.test.js and
+        menuCardState.house.test.js; client/src/pages/admin/ProposalDetail.activity.test.js (new);
+        client/src/utils/menuActivityLabels.js and its test (new, the shared activity labels);
+        client/src/pages/admin/EventDetailPage.js and EventDetailPage.activity.test.js (the Activity card's labels);
+        client/src/pages/admin/Inbox.test.js (a page test the Inbox tasks lane left failing, corrected);
+        server/utils/menuPrintFile.js (its header comment); scripts/sensitive-match.test.js; and
+        scripts/sensitive-paths.txt also lists server/utils/menuPrintState.js.
       - README.md, ARCHITECTURE.md  (generated sections, and the hold-and-release concept in ARCHITECTURE's hand-written prose)
     blockedBy: [menu-inbox-tasks, menu-house-card]
     lenses: tier A, the full floor (money, lifecycle, concurrency, outcomes-providers, access-egress, seams) plus schema-data, business-time and client (captures against the v1 artifact and the proof sketch's email screen); verify; the externals; the money smoke.
@@ -1305,6 +1314,24 @@ lanes:
       missing one throw); a custom draft made before the look existed stores no inputs.look, so for a client
       with no instructions its Start over re-drafts the house card (spec 9.1 as worded; the hint and the
       confirm say so before the click).
+      From the menu-approve-send review (2026-11-14), none blocking: the planner's own Skip the Menu mark
+      (menuAutoStart.js MARK_SQL) lands beside a held file and withdraws no open proof, so a Looks great can be
+      recorded under the mark and released by nothing: make it withdraw as the admin's mark does (the card
+      reads Client approved after an Undo meanwhile); setMenuPrintKey clears menu_not_required_by, so a
+      client's release erases the record of an admin's Undo; the awaited after-event re-accrual first reads
+      Stripe fees with the SDK's long default timeouts, so a hung Stripe holds that one response; a failed
+      email_status write after a real send leaves the proof reading as not sent; the Approve confirm promises
+      an email to a client whose address is marked bad (the send then reads blocked); the release route does
+      not refuse an archived proposal; the superseded screen reads the older proof's own email outcome; the
+      card's dates use the browser's zone (shortDate); a review write moves focus even when the owner has
+      clicked elsewhere meanwhile; the fold's Print file row is drawn from the proposal's key while Remove
+      posts the draft payload's; the send cap's sentence says "today" for a rolling 24 hours; KebabMenu items
+      cannot be reached by keyboard (older than this lane; each action has another keyboard path); an upload
+      pressed before the card's draft read has landed, beside an existing proof, is refused once with the
+      review-changed sentence though nothing changed (the refetch repairs it); the stale-page fields are
+      parsed in three places that agree today (menuPrint.js, menuDraftApprove.js, menuDraftRelease.js): one
+      shared parser in menuProofs.js would keep them together; the no-menu mark set from a card loaded before
+      the client asked for changes goes through, and the Inbox hides that task while the mark stands.
     scope: >
       Spec section 8 (decisions 8 and 9). The Generate route's body is extracted to startGeneration({ proposalId,
       inputs, file }) in server/routes/proposals/menuDraftGenerate.js and the route calls it. The
