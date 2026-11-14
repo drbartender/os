@@ -1,5 +1,6 @@
 // The menu editor's Design tab: twelve font pairings with the words step's pick tagged
-// Suggested, ink and accent, text backing, the background re-roll and the Dr. Bartender mark.
+// Suggested, ink and accent, text backing, the background re-roll and the Dr. Bartender mark;
+// on a house card, its note and the background re-roll alone.
 
 import React, { useEffect, useRef } from 'react';
 import { PAIRINGS, PAIRING_IDS, pairingFor, isPairingId, ensureFontsLink } from './fontPairings';
@@ -22,12 +23,17 @@ import { Section, Seg, useInert, rerollWhy, isReadOnly, OPEN, isObj, list } from
 //   while it is on, its Placement (v2 spec 5: Left / Center / Right, missing
 //   reads as right; the switch's sub line names it) and Wordmark color.
 // The editor loads all twelve pairings' faces on open, since this tab shows each.
+// On a house card (content.look 'house'; v2 spec 9.5) the pairings, colors,
+// text backing and mark controls do not apply: one line stands in their place,
+// HOUSE_NOTE, and the Background row with its Re-roll stays (the touches can
+// be re-drawn; a plain card has no background, so its Re-roll is off).
 
 const INKS = [['#6b3a6e', 'Plum'], ['#1f2a44', 'Navy'], ['#2a2a2a', 'Charcoal']];
 const BACKINGS = [['off', 'Off'], ['soft', 'Soft'], ['panel', 'Panel']];
 const MARK_POSITIONS = [['left', 'Left'], ['center', 'Center'], ['right', 'Right']];
 const MARK_COLORS = [['ink', 'Theme ink'], ['accent', 'Accent'], ['gold', 'Gold']];
 const SAMPLE_MAX = 26;
+const HOUSE_NOTE = 'This is the house card. Its fonts and colors are fixed. Switch the look to Custom design on the Brief tab to choose your own.';
 
 function Swatches({ label, options, value, onPick }) {
   const v = isHex(value) ? value.toLowerCase() : null;
@@ -79,6 +85,30 @@ export default function DesignTab({
   const markOn = inp.drb_mark !== false;
   const markPosition = c.mark_position === 'left' || c.mark_position === 'center' ? c.mark_position : 'right';
   const markColor = c.mark_color === 'accent' || c.mark_color === 'gold' ? c.mark_color : 'ink';
+  const house = c.look === 'house';
+
+  const background = (
+    <Section label="Background">
+      <div className="md-bg-row">
+        <div className="md-bg-text">
+          {typeof c.background_label === 'string' && c.background_label ? c.background_label : 'Background'}
+          <span className="md-bg-sub">{backgroundSub(bg)}</span>
+        </div>
+        <button type="button" className="btn btn-secondary btn-sm" disabled={!live || !!rollWhy || drafting || !bg}
+          title={rollWhy || undefined}
+          onClick={() => { if (live && typeof onReroll === 'function') onReroll('background'); }}>Re-roll</button>
+      </div>
+    </Section>
+  );
+
+  if (house) {
+    return (
+      <div ref={ref} className={live ? 'md-tabpane' : 'md-tabpane is-off'} role="tabpanel" aria-label="Design">
+        <div className="md-brief-hint">{HOUSE_NOTE}</div>
+        {background}
+      </div>
+    );
+  }
 
   return (
     <div ref={ref} className={live ? 'md-tabpane' : 'md-tabpane is-off'} role="tabpanel" aria-label="Design">
@@ -121,17 +151,7 @@ export default function DesignTab({
           onChange={(v) => patch({ text_backing: v })} />
       </Section>
 
-      <Section label="Background">
-        <div className="md-bg-row">
-          <div className="md-bg-text">
-            {typeof c.background_label === 'string' && c.background_label ? c.background_label : 'Background'}
-            <span className="md-bg-sub">{backgroundSub(bg)}</span>
-          </div>
-          <button type="button" className="btn btn-secondary btn-sm" disabled={!live || !!rollWhy || drafting || !bg}
-            title={rollWhy || undefined}
-            onClick={() => { if (live && typeof onReroll === 'function') onReroll('background'); }}>Re-roll</button>
-        </div>
-      </Section>
+      {background}
 
       <div className="md-mark">
         <button type="button" role="switch" aria-checked={markOn} className="md-switch"

@@ -285,3 +285,39 @@ describe('the Dr. Bartender mark', () => {
     expect(sub()).toHaveTextContent(/^Small, bottom left$/);
   });
 });
+
+// v2 spec 9.5: on a house card the pairing list, the colors, the text backing
+// and the mark controls give way to one line; the background re-roll stays.
+describe('the house card', () => {
+  const NOTE = 'This is the house card. Its fonts and colors are fixed. Switch the look to Custom design on the Brief tab to choose your own.';
+  const house = (over = {}) => CONTENT({ look: 'house', touch_key: 'balloons', font_pairing: null, background_label: 'Balloons and streamers', ...over });
+
+  test('the house-card note in place of the pairing, color, backing and mark controls; the background row stays', () => {
+    const p = props({ content: house(), draft: { id: 1, content: house(), inputs: { drb_mark: true } } });
+    const { container } = render(<DesignTab {...p} />);
+    expect(screen.getByText(NOTE)).toHaveClass('md-brief-hint');
+    for (const gone of ['Font pairing', 'Colors', 'Text backing']) expect(screen.queryByText(gone, { selector: '.md-sec-label' })).toBeNull();
+    expect(container.querySelector('.md-pair')).toBeNull();
+    expect(container.querySelector('.md-swatches')).toBeNull();
+    expect(screen.queryByRole('switch', { name: /Dr\. Bartender mark/ })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Mark placement' })).toBeNull();
+    const row = screen.getByText('Balloons and streamers').closest('.md-bg-row');
+    expect(row).toHaveTextContent('Version 2');
+    fireEvent.click(within(row).getByRole('button', { name: 'Re-roll' }));
+    expect(p.onReroll).toHaveBeenCalledWith('background');
+    expect([...container.querySelectorAll('.md-sec-label')].map((el) => el.textContent)).toEqual(['Background']);
+  });
+
+  test('a plain house card has no background to re-roll', () => {
+    render(<DesignTab {...props({ content: house({ touch_key: 'plain', background_label: 'Plain house card' }), pieces: [] })} />);
+    const row = screen.getByText('Plain house card').closest('.md-bg-row');
+    expect(row).toHaveTextContent('Not drawn');
+    expect(within(row).getByRole('button', { name: 'Re-roll' })).toBeDisabled();
+  });
+
+  test('a custom draft shows no house-card note', () => {
+    render(<DesignTab {...props()} />);
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(screen.getByText('Font pairing', { selector: '.md-sec-label' })).toBeInTheDocument();
+  });
+});

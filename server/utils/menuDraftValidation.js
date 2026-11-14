@@ -23,6 +23,24 @@
 //   admin_brief_notes: a field left out keeps the stored text on Start over,
 //   else reads empty, and one posted empty clears it. validateGenerateInputs
 //   returns the full three-key object, so every Generate stores one.
+//
+// The house card (lane menu-house-card):
+// - inputs.look (spec 2026-10-19 sections 9.1 and 21) is 'house' (the house
+//   card) or 'custom'. PATCH takes either; Generate takes it as a multipart
+//   field, and one left out keeps the stored look, else is decided by
+//   decideLook: the house card for a Standard Menu client (menuStyle
+//   'house'), or when the client's three brief fields, the admin brief's three
+//   (as Generate stores them), the art direction and the reference (an upload,
+//   or the planner image as the style ref) are all empty after trim; a client
+//   logo is no instruction. Otherwise custom. The Brief tab shows the same
+//   decision for an unchosen look (BriefTab.js lookOf, a display-only mirror).
+// - A house draft (content.look 'house', which only the job writes) lists
+//   drink names only: a drink's description may not change and has_art may
+//   not be true ("The house card lists drink names only."), while a rename
+//   and Hide save as on any draft; the four-drink cap on drinks without art
+//   is the custom layout's and does not apply. content.look, touch_key,
+//   house_bottom_corners, house_sections and words_finished_at are written by
+//   the job and refused from PATCH like the other server-written keys.
 
 const { isDeepStrictEqual } = require('node:util');
 const { ValidationError } = require('./errors');
@@ -38,6 +56,7 @@ const LIMITS = Object.freeze({
   art_direction: 500, reroll_note: 200, art_drinks: 8, visible_drinks: 12, visible_without_art: 4, admin_brief: 1000,
 });
 const ADMIN_BRIEF_FIELDS = ['theme', 'naming', 'notes'];
+const LOOKS = ['house', 'custom'];
 
 const MSG = {
   unknown: 'Unknown field.',
@@ -50,6 +69,8 @@ const MSG = {
   role: 'Pick Logo, Style ref or Ignore.',
   adminBrief: 'The admin brief has a theme, drink naming and design notes, each text.',
   adminBriefLength: 'Each admin brief field must be 1,000 characters or fewer.',
+  look: 'Pick House card or Custom design.',
+  houseNamesOnly: 'The house card lists drink names only.',
 };
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -134,6 +155,19 @@ function checkAdminBrief(value, stored) {
   return { value: out };
 }
 
+const blank = (v) => !(typeof v === 'string' && v.trim());
+
+// The look Generate decides when none is posted or stored (spec 2026-10-19
+// section 9.1). clientBrief and adminBrief are { theme, naming, notes }.
+function decideLook({ menuStyle, clientBrief, adminBrief, artDirection, referenceSource, plannerImageRole } = {}) {
+  if (menuStyle === 'house') return 'house';
+  const client = isPlainObject(clientBrief) ? clientBrief : {};
+  const admin = isPlainObject(adminBrief) ? adminBrief : {};
+  const texts = [...ADMIN_BRIEF_FIELDS.map((k) => client[k]), ...ADMIN_BRIEF_FIELDS.map((k) => admin[k]), artDirection];
+  const reference = (typeof referenceSource === 'string' && referenceSource !== 'none') || plannerImageRole === 'reference';
+  return texts.every(blank) && !reference ? 'house' : 'custom';
+}
+
 // Generate is multipart, so fields arrive as strings. An absent field takes the
 // editor's default. storedInputs lets Start over keep the stored upload when no
 // new file is attached and the source stays upload (spec 5.5), and the stored
@@ -144,7 +178,9 @@ function checkAdminBrief(value, stored) {
 // and a note the PATCH stored still matches it (spec 2026-10-19 section 21).
 const multipartText = (v) => (typeof v === 'string' ? v.replace(/\r\n?/g, '\n') : v);
 
-function validateGenerateInputs(body, { hasFile = false, storedInputs = null } = {}) {
+// plan: { menuStyle, brief } of the plan Generate read (the client's brief),
+// for the look decision.
+function validateGenerateInputs(body, { hasFile = false, storedInputs = null, plan = null } = {}) {
   const src = isPlainObject(body) ? body : {};
   const errors = Object.create(null);
   const field = (k, fallback) => (src[k] === undefined || src[k] === '' ? fallback : src[k]);
@@ -175,10 +211,18 @@ function validateGenerateInputs(body, { hasFile = false, storedInputs = null } =
     else if (source === 'upload' && !hasFile && !keepsStored) errors.reference_source = 'Choose an image to upload as the reference.';
     else Object.assign(errors, referencePairError(role, source));
   }
+  const posted = field('look');
+  if (posted !== undefined && !LOOKS.includes(posted)) errors.look = MSG.look;
   throwIfAny(errors);
+  const stored = isPlainObject(storedInputs) && LOOKS.includes(storedInputs.look) ? storedInputs.look : null;
+  const facts = isPlainObject(plan) ? plan : {};
+  const look = posted || stored || decideLook({
+    menuStyle: facts.menuStyle, clientBrief: facts.brief, adminBrief, artDirection: art.value,
+    referenceSource: source, plannerImageRole: role,
+  });
   return {
     planner_image_role: role, reference_source: source, art_direction: art.value, drb_mark: drbMark, image_model: imageModel,
-    admin_brief: adminBrief,
+    admin_brief: adminBrief, look,
   };
 }
 
@@ -203,7 +247,7 @@ function fixedDrinkError(sent, prev) {
   return null;
 }
 
-function nextDrink(sent, prev) {
+function nextDrink(sent, prev, house) {
   const fixed = fixedDrinkError(sent, prev);
   if (fixed) return { error: fixed };
   // Fixed keys come from the stored drink, so an omitted one is kept as stored.
@@ -213,6 +257,7 @@ function nextDrink(sent, prev) {
     if (typeof sent[f] !== 'boolean') return { error: MSG.boolean };
     out[f] = sent[f];
   }
+  if (house && out.has_art === true) return { error: MSG.houseNamesOnly };
   // Editing the text clears its AI flag. A flag sent back may echo the stored
   // value or drop to false (the client clears it as Dallas types), never rise.
   for (const [f, flag, rule] of DRINK_TEXT) {
@@ -220,6 +265,8 @@ function nextDrink(sent, prev) {
     if (hasOwn(sent, f)) {
       const r = checkText(sent[f], prev[f], rule);
       if (r.error) return r;
+      // A house draft prints names only; a description sent back as stored is no edit.
+      if (house && f === 'description' && r.changed) return { error: MSG.houseNamesOnly };
       out[f] = r.value;
       changed = r.changed;
     }
@@ -239,7 +286,8 @@ function drinkCounts(drinks) {
   return { visible: visible.length, art, noArt: visible.length - art };
 }
 
-function checkDrinks(value, storedDrinks) {
+function checkDrinks(value, storedDrinks, storedContent) {
+  const house = isPlainObject(storedContent) && storedContent.look === 'house';
   if (!Array.isArray(value)) return { error: 'Send the drinks as a list.' };
   const stored = Array.isArray(storedDrinks) ? storedDrinks : [];
   const byKey = new Map(stored.map((d) => [d.key, d]));
@@ -250,7 +298,7 @@ function checkDrinks(value, storedDrinks) {
   }
   const next = [];
   for (const d of value) {
-    const r = nextDrink(d, byKey.get(d.key));
+    const r = nextDrink(d, byKey.get(d.key), house);
     if (r.error) return r;
     next.push(r.value);
   }
@@ -260,7 +308,8 @@ function checkDrinks(value, storedDrinks) {
   const over = (k, limit) => after[k] > limit && after[k] > now[k];
   if (over('visible', LIMITS.visible_drinks)) return { error: 'At most 12 drinks can show on the menu. Hide the rest.' };
   if (over('art', LIMITS.art_drinks)) return { error: 'At most 8 visible drinks can have art.' };
-  if (over('noArt', LIMITS.visible_without_art)) return { error: 'At most 4 visible drinks can go without art.' };
+  // The text-only cap is the custom layout's; a house card lists every visible drink.
+  if (!house && over('noArt', LIMITS.visible_without_art)) return { error: 'At most 4 visible drinks can go without art.' };
   return { value: next };
 }
 
@@ -325,7 +374,9 @@ const CONTENT_CHECKS = new Map([
 ]);
 // font_pairing_suggested is the words step's pick (v2 spec 6); the chosen
 // pairing is font_pairing, which PATCH sets.
-const CONTENT_SERVER_ONLY = new Map(['palette', 'background_label', 'font_pairing_suggested', 'words_status', 'words_error', 'words_heartbeat_at']
+// The house card's keys and words_finished_at are the job's too (v2 spec 9).
+const CONTENT_SERVER_ONLY = new Map(['palette', 'background_label', 'font_pairing_suggested', 'words_status', 'words_error', 'words_heartbeat_at',
+  'words_finished_at', 'look', 'touch_key', 'house_bottom_corners', 'house_sections']
   .map((k) => [k, MSG.serverWritten]));
 
 const INPUT_CHECKS = new Map([
@@ -335,6 +386,7 @@ const INPUT_CHECKS = new Map([
   ['art_direction', checkArtDirection],
   ['drb_mark', booleanCheck],
   ['admin_brief', checkAdminBrief],
+  ['look', enumCheck(LOOKS, MSG.look)],
 ]);
 const INPUT_SERVER_ONLY = new Map([
   ['reference_key', 'The reference file is set only by Generate.'],
@@ -347,7 +399,7 @@ function applyKeys(sent, stored, checks, serverOnly, errors) {
   for (const [key, value] of Object.entries(sent)) {
     if (serverOnly.has(key)) { errors[key] = serverOnly.get(key); continue; }
     if (!checks.has(key)) { errors[key] = MSG.unknown; continue; }
-    const r = checks.get(key)(value, stored[key]);
+    const r = checks.get(key)(value, stored[key], stored);
     if (r.error) errors[key] = r.error;
     // A check answers undefined only to leave an absent key absent (checkAdminBrief).
     else if (r.value !== undefined) out[key] = r.value;
@@ -404,4 +456,6 @@ function validatePatch({ stored, body } = {}) {
   return { changed: differs('content') || differs('inputs'), ...result };
 }
 
-module.exports = { validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, IMAGE_MODELS, LIMITS };
+module.exports = {
+  validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, decideLook, IMAGE_MODELS, LIMITS, LOOKS,
+};

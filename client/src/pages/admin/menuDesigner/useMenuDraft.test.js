@@ -626,3 +626,41 @@ describe('the plan-hash echo and Mark reviewed', () => {
     expect(api.post).toHaveBeenLastCalledWith(DISMISS, { version: 3, plan_hash: HASH_B });
   });
 });
+
+// Spec 2026-10-19 section 9.1: the Look is an input. Before a draft it holds in
+// the page-visit brief and rides Generate; with one it PATCHes like any input
+// and Start over posts it; never chosen, nothing is posted and the server decides.
+describe('the look', () => {
+  test('with no draft it holds in the brief and rides Generate; never chosen, none is posted', async () => {
+    draftAnswers = [{ ...payload(), draft: null, pieces: [] }];
+    const { result } = await mount();
+    expect(result.current.brief.look).toBeUndefined();
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(api.post.mock.calls[0][1].has('look')).toBe(false);
+    act(() => { result.current.setBrief({ look: 'house' }); });
+    expect(result.current.brief.look).toBe('house');
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(api.post.mock.calls[1][1].get('look')).toBe('house');
+    expect(api.patch).not.toHaveBeenCalled();
+  });
+
+  test('with a draft the Look PATCHes as an input after the debounce, and Start over posts it', async () => {
+    const { result } = await mount();
+    act(() => { result.current.edit({ inputs: { look: 'house' } }); });
+    expect(result.current.draft.inputs.look).toBe('house');
+    await advance(SAVE_DEBOUNCE_MS);
+    expect(api.patch).toHaveBeenCalledWith('/proposals/42/menu-draft', { version: 3, inputs: { look: 'house' } });
+    draftAnswers = [{ ...payload(), draft: { ...payload().draft, version: 4, inputs: { ...payload().draft.inputs, look: 'house' } } }];
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(api.post.mock.calls[0][1].get('look')).toBe('house');
+  });
+
+  test('a stored look of the wrong shape is not posted', async () => {
+    const odd = payload();
+    odd.draft.inputs = { ...odd.draft.inputs, look: 'fancy' };
+    draftAnswers = [odd];
+    const { result } = await mount();
+    await act(async () => { await result.current.generate({ imageModel: 'openai' }); });
+    expect(api.post.mock.calls[0][1].has('look')).toBe(false);
+  });
+});

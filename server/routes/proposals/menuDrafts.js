@@ -57,6 +57,25 @@
 // survive; the bumped version reads as edited since approval). Its pieces are
 // the background plus the first 8 drinks in plan order, each stamped with the
 // posted image_model and that provider's model id from env.
+//
+// The house card (spec 2026-10-19 section 9; lane menu-house-card). Generate
+// reads the plan first, then validateGenerateInputs settles inputs.look (the
+// posted look, else the stored one, else decideLook from the plan and the
+// briefs), and the event's touch set comes from touchSetFor on the proposal's
+// event_type, event_type_custom and event_date (as text, spec 8.2; the date
+// goes to the December test and nowhere else). The upsert seeds content with
+// look, touch_key and house_bottom_corners, which the canvas reads and PATCH
+// refuses, and stamps the plan fingerprint through draftFingerprint
+// (menuHouseSections.js), the helper the fill, Update draft and the read
+// model share, so a house draft's bar baseline is its printed sections'. A
+// house Generate makes no words call, so it reserves no text row
+// and needs no words key; it reserves only the background, and nothing at all
+// on a plain card, which then needs no key of any kind. A custom Generate is
+// unchanged. A re-roll of a house drink answers 409 MENU_HOUSE_NO_DRINK_ART
+// ("The house card lists drink names only.") and a background re-roll on a
+// plain card 409 MENU_HOUSE_PLAIN, both before anything is reserved, so a
+// plain card spends no image; a house background re-roll keeps the stored
+// touch set (Start over reads the event again).
 
 const express = require('express');
 const crypto = require('crypto');
@@ -75,14 +94,16 @@ const { readDraftPayload, stuck, dismissalHash, reviewOf } = require('../../util
 const {
   validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, LIMITS,
 } = require('../../utils/menuDraftValidation');
+const { touchSetFor } = require('../../utils/menuEventTouches');
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, foldReviewed,
 } = require('../../utils/menuDrinkSource');
+const { draftFingerprint } = require('../../utils/menuHouseSections');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
   LIST_CAP, isObject, capList, parseId, parseVersion, parsePlanHash, parsePieceKey, requireProposal, noDraft, draftChanged,
   noPlan, requireWords, requireSamePlan, upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inTx,
-  inLockedTx, queue,
+  inLockedTx, queue, layoutPieceKeys,
 } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -93,10 +114,15 @@ const OPEN = new Set(['pending', 'working']);
 const PATCH_KEYS_MAX = 40;
 const noDrinks = () => new AppError('The drink plan has no drinks to put on a menu.', 422, 'MENU_NO_DRINKS');
 
+const HOUSE_ONLY_TEXT = 'The house card lists drink names only.';
+// The event the touches follow; the date as text (spec 8.2).
+const EVENT_SQL = 'SELECT event_type, event_type_custom, event_date::text AS event_date FROM proposals WHERE id = $1';
+
+// $6 is the content seed: look, touch_key and house_bottom_corners (spec 9.1).
 const UPSERT_DRAFT_SQL = `
   INSERT INTO menu_drafts (proposal_id, drink_plan_id, run_id, inputs, content, plan_fingerprint)
   VALUES ($1, $2, $3::uuid, $4::jsonb,
-          jsonb_build_object('words_status', 'pending', 'words_heartbeat_at', NOW()), $5::jsonb)
+          jsonb_build_object('words_status', 'pending', 'words_heartbeat_at', NOW()) || $6::jsonb, $5::jsonb)
   ON CONFLICT (proposal_id) DO UPDATE
      SET drink_plan_id = EXCLUDED.drink_plan_id, run_id = EXCLUDED.run_id, inputs = EXCLUDED.inputs,
          content = EXCLUDED.content, plan_fingerprint = EXCLUDED.plan_fingerprint,
@@ -132,17 +158,28 @@ router.get('/:id/menu-draft', auth, requireAdminOrManager, menuDraftReadLimiter,
   res.json(await readDraftPayload(parseId(req.params.id)));
 }));
 
+// What the look decision reads from the plan (validateGenerateInputs).
+const planFacts = (plan, normalized) => ({
+  menuStyle: plan && isObject(plan.selections) ? plan.selections.menuStyle : null,
+  brief: normalized ? normalized.brief : null,
+});
+
 router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   assertNotLegalHold(id);
-  requireWordsProvider();
   await requireProposal(id);
   const stored = (await pool.query('SELECT inputs FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
   const storedKey = stored && isObject(stored.inputs) ? stored.inputs.reference_key : null;
   const file = referenceFile(req.files);
-  const inputs = validateGenerateInputs(req.body, { hasFile: Boolean(file), storedInputs: stored ? stored.inputs : null });
-  requireImageModel(inputs.image_model);
   const { plan, normalized } = await job.freshPlan(id);
+  const inputs = validateGenerateInputs(req.body, {
+    hasFile: Boolean(file), storedInputs: stored ? stored.inputs : null, plan: planFacts(plan, normalized),
+  });
+  const touches = touchSetFor((await pool.query(EVENT_SQL, [id])).rows[0]);
+  const house = inputs.look === 'house';
+  // The keys of the providers this run calls, before any work (header).
+  if (!house) requireWordsProvider();
+  if (!house || !touches.plain) requireImageModel(inputs.image_model);
   if (!normalized || !normalized.drinks.length) throw noDrinks();
   if (inputs.reference_source === 'planner' && !normalized.plannerImageKey) {
     throw new ValidationError({ reference_source: 'The drink plan has no client image to use as the reference.' });
@@ -158,7 +195,9 @@ router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteL
 
   const provider = inputs.image_model;
   const model = imageModelId(provider);
-  const pieceKeys = ['background', ...normalized.drinks.slice(0, LIMITS.art_drinks).map((d) => d.key)];
+  const seed = { look: inputs.look, touch_key: touches.key, house_bottom_corners: touches.bottomCorners };
+  // A house card's background alone (none when plain); a custom one's background and first 8 drinks.
+  const pieceKeys = house ? layoutPieceKeys(seed) : ['background', ...normalized.drinks.slice(0, LIMITS.art_drinks).map((d) => d.key)];
   const runId = crypto.randomUUID();
   const draft = await inLockedTx(async (client) => {
     const cur = (await client.query('SELECT id, run_id, inputs FROM menu_drafts WHERE proposal_id = $1 FOR UPDATE', [id])).rows[0];
@@ -178,11 +217,12 @@ router.post('/:id/menu-draft/generate', auth, requireAdminOrManager, adminWriteL
     if (cur) await releaseReserved(client, { proposalId: id, runId: cur.run_id });
     await releaseProposalReserved(client, { proposalId: id });
     const { rows } = await client.query(UPSERT_DRAFT_SQL,
-      [id, plan.id, runId, { ...inputs, reference_key: referenceKey }, buildFingerprint(normalized)]);
+      [id, plan.id, runId, { ...inputs, reference_key: referenceKey }, draftFingerprint(seed, plan, normalized), seed]);
     await client.query('DELETE FROM menu_draft_pieces WHERE draft_id = $1', [rows[0].id]);
     await upsertPendingPieces(client, { draftId: rows[0].id, runId, pieceKeys, provider, model });
-    // The text row first: the job adopts the run's first text reservation.
-    await reserveText(client, { proposalId: id, runId, model: job.textModelId() });
+    // The text row first: the job adopts the run's first text reservation. A
+    // house run writes no words, so it reserves none.
+    if (!house) await reserveText(client, { proposalId: id, runId, model: job.textModelId() });
     await reserveImages(client, { proposalId: id, runId, pieceKeys, provider, model });
     return rows[0];
   });
@@ -234,6 +274,11 @@ router.post('/:id/menu-draft/pieces/:pieceKey/reroll', auth, requireAdminOrManag
     const draft = (await client.query(
       'SELECT id, content, NOW() AS db_now FROM menu_drafts WHERE proposal_id = $1 FOR UPDATE', [id])).rows[0];
     if (!draft) throw noDraft();
+    // A house card draws no drink and, when plain, no background (header).
+    if (isObject(draft.content) && draft.content.look === 'house') {
+      if (pieceKey !== 'background') throw new AppError(HOUSE_ONLY_TEXT, 409, 'MENU_HOUSE_NO_DRINK_ART');
+      if (!layoutPieceKeys(draft.content).length) throw new AppError('This house card has no background to draw.', 409, 'MENU_HOUSE_PLAIN');
+    }
     // Nothing is reserved for a draft whose words never landed, or for one
     // with no plan (the GET reads it read_only); Start over is the way on.
     requireWords(draft.content, draft.db_now);
@@ -290,7 +335,7 @@ router.post('/:id/menu-draft/dismiss-plan-change', auth, requireAdminOrManager, 
     if (!plan) throw noPlan();
     // loadCatalogMaps sends its two queries one after the other on the held client.
     const normalized = normalizePlan(plan, await loadCatalogMaps(client));
-    requireSamePlan(sentHash, normalized);
+    requireSamePlan(sentHash, normalized, cur.content, plan);
     // Each records what its banner named, as reviewed (the plan's part folded
     // into the fingerprint). Dismiss's banner lists the notes line and the
     // image line, so it folds both, and stores the review hash of the draft as
@@ -303,11 +348,11 @@ router.post('/:id/menu-draft/dismiss-plan-change', auth, requireAdminOrManager, 
     // change is never recorded unseen (with both changed, the banner returns
     // naming the image). It leaves the dismissal exactly as it was.
     const current = buildFingerprint(normalized);
-    const notesNamed = reviewOf(cur, normalized).diff.brief_edited.length > 0;
+    const notesNamed = reviewOf(cur, normalized, plan).diff.brief_edited.length > 0;
     const fingerprint = covers === 'notes'
       ? foldReviewed(cur.plan_fingerprint, current, { brief: notesNamed, image: !notesNamed })
       : foldReviewed(cur.plan_fingerprint, current);
-    const dismissed = covers === 'notes' ? cur.dismissed_plan_hash : dismissalHash(cur, normalized);
+    const dismissed = covers === 'notes' ? cur.dismissed_plan_hash : dismissalHash(cur, normalized, plan);
     // Never bumps the version: neither is menu content, so an approved draft
     // stays approved (a bump would read as edited since approval), and the
     // updated_at trigger skips a write of only these two columns.

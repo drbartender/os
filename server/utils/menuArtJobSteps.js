@@ -20,6 +20,18 @@
 // default claude-haiku-5-5) and the provider a model id names: claude- is
 // Anthropic, any other id OpenAI (spec 2026-10-19 section 16). Beyond the job,
 // the routes, the ledger (menuArtCap.reserveText) and the read model read them.
+//
+// fillHouse(ctx, { plan, normalized, touches }) is a house run's content fill
+// (spec 2026-10-19 section 9.2): no provider and no reservation. ONE
+// conditional UPDATE (draft id and run_id, words still pending), as the words
+// step's write, setting the title "The Bar Menu", each drink by its own name
+// with no description and no art (menuHouseSections.houseDrink),
+// house_sections, the "Also at the bar" lines (stored as on any draft, never
+// printed on the house card), font_pairing null, background_label from the
+// touch set, words_status 'done', words_finished_at, and the bar baseline
+// from the same plan read: the printed sections' (draftFingerprint), so a pick
+// the card does not print never reads as a plan change. -> true when it landed
+// (false: the run moved on).
 
 const crypto = require('crypto');
 const sharp = require('sharp');
@@ -30,6 +42,8 @@ const { NotFoundError } = require('./errors');
 const { prepareReferences } = require('./menuImageProvider');
 const { loadEventPlan, loadCatalogMaps, normalizePlan } = require('./menuDrinkSource');
 const { SENTENCES, describe, report } = require('./menuArtJobErrors');
+const { keyedBarLines } = require('./menuAlsoAtBar');
+const { houseSections, houseDrink, draftFingerprint, HOUSE_TITLE } = require('./menuHouseSections');
 
 const DRINK_REFERENCE_WIDTH = 1024;
 const SHARP_INPUT = { limitInputPixels: 50_000_000 };
@@ -125,7 +139,8 @@ async function loadDraft(draftId, proposalId) {
 }
 
 // The plan as it is now, with fresh catalog maps (never the read model's
-// cache). The job and the draft routes (Generate, dismiss) both read it here.
+// cache). The job and Generate read it here; dismiss reads the plan through
+// its own client inside its transaction instead.
 // -> { plan, normalized }, both null with no plan.
 async function freshPlan(proposalId) {
   const plan = await loadEventPlan(proposalId);
@@ -231,6 +246,28 @@ function artKey(ctx, key, contentType) {
   return `menu-art/${Number(ctx.proposalId)}/${ctx.pieceRun}/${key.replace(/:/g, '-')}-${crypto.randomUUID()}.${ext}`;
 }
 
+const HOUSE_FILL_SQL = `
+  UPDATE menu_drafts
+     SET content = content || $3::jsonb || jsonb_build_object('words_finished_at', NOW()),
+         plan_fingerprint = plan_fingerprint || jsonb_build_object('bar_lines', $4::jsonb, 'bar_hash', $5::text)
+   WHERE id = $1 AND run_id = $2::uuid AND content->>'words_status' = 'pending'`;
+
+// The house card's content fill (header).
+async function fillHouse(ctx, { plan, normalized, touches }) {
+  const { bar_lines: barLines, bar_hash: barHash } = draftFingerprint({ look: 'house' }, plan, normalized);
+  const fill = {
+    title: HOUSE_TITLE,
+    drinks: normalized.drinks.map((d) => houseDrink(d)),
+    house_sections: houseSections(plan, normalized),
+    also_at_bar: keyedBarLines(normalized.bar),
+    palette: [], font_pairing: null,
+    background_label: touches.label,
+    words_status: 'done', words_error: null,
+  };
+  const result = await pool.query(HOUSE_FILL_SQL, [ctx.draftId, ctx.draftRun, fill, barLines, barHash]);
+  return result.rowCount === 1;
+}
+
 // The words model (MENU_ART_TEXT_MODEL, default claude-haiku-5-5); the routes
 // stamp it on reserveText and the job prefers the reservation's own.
 function textModelId() {
@@ -247,5 +284,5 @@ function textProvider(model) {
 module.exports = {
   claimPiece, beat, finishPiece, failPiece, sweep, draftRunIs, lost,
   loadDraft, freshPlan, currentDrink, findReservations, releaseCall,
-  loadReference, drinkReference, currentBackground, artKey, textModelId, textProvider,
+  loadReference, drinkReference, currentBackground, artKey, textModelId, textProvider, fillHouse,
 };

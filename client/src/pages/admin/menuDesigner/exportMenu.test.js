@@ -266,3 +266,38 @@ describe('useApproveMenu', () => {
     expect(ref.current.approving).toBe(true);
   });
 });
+
+// v2 spec 9.3 and v1 11.3: a house draft prints in the house faces, so the
+// export waits on them (never on the default pairing its null font_pairing reads as).
+describe('the house card fonts', () => {
+  const HOUSE = "The Pirata One, IM Fell English SC, IM Fell English fonts didn't load.";
+
+  test("a house draft's export waits on the house link and each of its three faces", async () => {
+    const { faceSetFor } = require('./fontPairings');
+    const pairingId = faceSetFor({ look: 'house', font_pairing: null });
+    markLoaded('house');
+    const fonts = stubFonts();
+    await exportMenu({ node: nodeWith(''), pairingId });
+    expect(fonts.load.mock.calls.map((c) => c[0])).toEqual(['400 32px "Pirata One"', '400 32px "IM Fell English SC"', '400 32px "IM Fell English"']);
+    expect(document.head.querySelector('link[data-menu-fonts]').getAttribute('href')).toBe(fontsHref(['house']));
+  });
+
+  test('a house link that never loads fails at 10 s naming the house faces', async () => {
+    jest.useFakeTimers();
+    stubFonts();
+    const p = exportMenu({ node: nodeWith(''), pairingId: 'house' });
+    jest.advanceTimersByTime(10000);
+    await expect(p).rejects.toThrow(HOUSE);
+    expect(html2canvas).not.toHaveBeenCalled();
+  });
+
+  test('a house face that never loads is named', async () => {
+    jest.useFakeTimers();
+    markLoaded('house');
+    stubFonts((spec) => (spec.includes('Pirata One') ? new Promise(() => {}) : loaded()));
+    const p = exportMenu({ node: nodeWith(''), pairingId: 'house' });
+    await flush();
+    jest.advanceTimersByTime(10000);
+    await expect(p).rejects.toThrow("The Pirata One font didn't load.");
+  });
+});

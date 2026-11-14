@@ -380,3 +380,70 @@ describe('from the planner', () => {
     expect(screen.queryByText('From the planner', { selector: '.md-sec-label' })).toBeNull();
   });
 });
+
+// Spec 2026-10-19 section 9.1: the Look .seg (House card / Custom design), the
+// Wordmark color row's twin, PATCHes inputs.look; before a draft it holds in
+// the brief. Unchosen, it shows what Generate will decide.
+describe('the look', () => {
+  const HINT = 'House card: our apothecary card with small touches for the event. Custom design: drawn from the brief.';
+  const seg = () => screen.getByRole('group', { name: 'Look' });
+  const pressed = () => within(seg()).getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent);
+  const NONE = { theme: '', naming: '', notes: '', has_planner_image: false };
+
+  test('House card and Custom design in a twin of the Wordmark color row, under the admin brief, above the planner box, with its hint', () => {
+    const { container } = render(<BriefTab {...props({ inputs: { look: 'custom' } })} />);
+    expect(within(seg()).getAllByRole('button').map((b) => b.textContent)).toEqual(['House card', 'Custom design']);
+    expect(seg()).toHaveClass('seg');
+    const row = seg().closest('.md-mark-color');
+    expect(row).toHaveTextContent(/^LookHouse cardCustom design$/);
+    expect(screen.getByText(HINT)).toHaveClass('md-brief-hint');
+    const order = [...container.querySelectorAll('.md-sec-label, .md-mark-color > span')].map((el) => el.textContent);
+    expect(order.indexOf('Look')).toBe(order.indexOf('Admin brief') + 1);
+    expect(order.indexOf('From the planner')).toBe(order.indexOf('Look') + 1);
+    expect(pressed()).toEqual(['Custom design']);
+  });
+
+  test('a choice PATCHes inputs.look, with a draft and before one; the chosen one again sends nothing', () => {
+    const p = props({ inputs: { look: 'custom' } });
+    const { rerender } = render(<BriefTab {...p} />);
+    fireEvent.click(within(seg()).getByRole('button', { name: 'House card' }));
+    expect(p.onPatch).toHaveBeenLastCalledWith({ inputs: { look: 'house' } });
+    p.onPatch.mockClear();
+    fireEvent.click(within(seg()).getByRole('button', { name: 'Custom design' }));
+    expect(p.onPatch).not.toHaveBeenCalled();
+    const before = props({ draft: null, wordsDone: false, inputs: { planner_image_role: 'logo', reference_source: 'none', art_direction: '', look: 'house' } });
+    rerender(<BriefTab {...before} />);
+    expect(pressed()).toEqual(['House card']);
+    fireEvent.click(within(seg()).getByRole('button', { name: 'Custom design' }));
+    expect(before.onPatch).toHaveBeenLastCalledWith({ inputs: { look: 'custom' } });
+  });
+
+  test('unchosen, it shows what Generate decides: the house card for the Standard Menu or no instructions, else a custom design', () => {
+    const blank = { planner_image_role: 'logo', reference_source: 'none', art_direction: '' };
+    const { rerender } = render(<BriefTab {...props({ draft: null, inputs: blank, brief: NONE })} />);
+    expect(pressed()).toEqual(['House card']);
+    rerender(<BriefTab {...props({ draft: null, inputs: blank, brief: { ...NONE, notes: 'Teal' } })} />);
+    expect(pressed()).toEqual(['Custom design']);
+    rerender(<BriefTab {...props({ draft: null, inputs: blank, brief: { ...NONE, notes: 'Teal' }, plan: { ...PLAN, menu_style: 'house' } })} />);
+    expect(pressed()).toEqual(['House card']);
+    rerender(<BriefTab {...props({ draft: null, inputs: { ...blank, art_direction: 'moody' }, brief: NONE })} />);
+    expect(pressed()).toEqual(['Custom design']);
+    rerender(<BriefTab {...props({ draft: null, inputs: { ...blank, admin_brief: { theme: '', naming: 'Puns', notes: '' } }, brief: NONE })} />);
+    expect(pressed()).toEqual(['Custom design']);
+    rerender(<BriefTab {...props({ draft: null, inputs: blank, brief: NONE, referenceFile: png() })} />);
+    expect(pressed()).toEqual(['Custom design']);
+    rerender(<BriefTab {...props({ draft: null, inputs: { ...blank, planner_image_role: 'reference', reference_source: 'planner' }, brief: { ...NONE, has_planner_image: true } })} />);
+    expect(pressed()).toEqual(['Custom design']);
+    // A logo is not an instruction.
+    rerender(<BriefTab {...props({ draft: null, inputs: blank, brief: { ...NONE, has_planner_image: true } })} />);
+    expect(pressed()).toEqual(['House card']);
+  });
+
+  test('a read-only draft shows it, disabled, and sends nothing', () => {
+    const p = props({ readOnly: true, inputs: { look: 'house' } });
+    render(<BriefTab {...p} />);
+    expect(within(seg()).getByRole('button', { name: 'Custom design' })).toBeDisabled();
+    fireEvent.click(within(seg()).getByRole('button', { name: 'Custom design' }));
+    expect(p.onPatch).not.toHaveBeenCalled();
+  });
+});

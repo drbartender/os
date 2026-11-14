@@ -11,7 +11,11 @@
 // drinkCounts(drinks)       -> { visible, art, noArt } over the visible drinks
 // toggleHidden(content, key) -> { patch, why }: Hide, or Show within the limits
 //                              (a drink shown while 8 have art lists as text;
-//                              past 12 visible or 4 without art, why says so)
+//                              past 12 visible or 4 without art, why says so).
+//                              On a house card (content.look 'house'; v2 spec
+//                              9.2) every visible drink lists by name, so the
+//                              four-drink text-only cap does not apply; the 12
+//                              visible limit does, as on the server.
 
 export const TEXT_LIMITS = Object.freeze({
   title: { min: 1, max: 60 },
@@ -118,7 +122,8 @@ export function toggleHidden(content, key) {
   if (now.visible + 1 > MAX_VISIBLE) return { patch: null, why: 'At most 12 drinks can show on the menu. Hide another first.' };
   let next = { ...d, hidden: false };
   if (next.has_art === true && now.art + 1 > MAX_ART) next = { ...next, has_art: false };
-  if (next.has_art !== true && now.noArt + 1 > MAX_NO_ART) {
+  const house = isObj(content) && content.look === 'house';
+  if (!house && next.has_art !== true && now.noArt + 1 > MAX_NO_ART) {
     return { patch: null, why: 'At most 4 drinks can list without art. Hide another first.' };
   }
   return swap(next);

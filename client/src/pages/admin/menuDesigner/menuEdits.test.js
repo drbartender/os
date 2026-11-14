@@ -106,3 +106,24 @@ describe('toggleHidden', () => {
     expect(toggleHidden(content(), 'custom:nope')).toEqual({ patch: null, why: '' });
   });
 });
+
+// v2 spec 9.2: a house card lists every visible drink by name, so the
+// four-drink text-only cap (the custom layout's) does not apply; the twelve
+// visible limit does, as on the server.
+describe('toggleHidden on a house card', () => {
+  const names = (n) => Array.from({ length: n }, (_, i) => drink(`custom:h${i}`, { has_art: false, description: null }));
+
+  test('Show past four drinks without art lists it by name; art is never turned on', () => {
+    const drinks = [...names(6), drink('custom:x', { hidden: true, has_art: false, description: null })];
+    const { patch, why } = toggleHidden({ look: 'house', drinks }, 'custom:x');
+    expect(why).toBe('');
+    expect(patch.drinks[6]).toMatchObject({ hidden: false, has_art: false });
+    // The same draft without the house look keeps the custom cap.
+    expect(toggleHidden({ drinks }, 'custom:x').why).toBe('At most 4 drinks can list without art. Hide another first.');
+  });
+
+  test('the twelve visible limit still holds on a house card', () => {
+    const drinks = [...names(12), drink('custom:x', { hidden: true, has_art: false })];
+    expect(toggleHidden({ look: 'house', drinks }, 'custom:x')).toEqual({ patch: null, why: 'At most 12 drinks can show on the menu. Hide another first.' });
+  });
+});

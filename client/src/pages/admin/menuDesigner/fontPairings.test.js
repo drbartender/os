@@ -181,3 +181,41 @@ describe('ensureFontsLink', () => {
     expect(ensureFontsLink([])).toBeNull();
   });
 });
+
+// v2 spec 9.3: the house card's faces, which the canvas, its link and the
+// export's wait use for a house draft, never a pairing anyone can choose.
+describe('the house face set', () => {
+  // Imported here so a missing export fails these tests, not the file.
+  const F = require('./fontPairings');
+
+  test('Pirata One, IM Fell English SC and IM Fell English, in the link and the faces', () => {
+    expect(F.HOUSE_FACE_SET).toBe('house');
+    expect(familiesOf(F.fontsHref([F.HOUSE_FACE_SET]))).toEqual(['Pirata One', 'IM Fell English SC', 'IM Fell English']);
+    expect(F.faceSetFaces(F.HOUSE_FACE_SET)).toEqual([
+      { family: 'Pirata One', weight: 400 }, { family: 'IM Fell English SC', weight: 400 }, { family: 'IM Fell English', weight: 400 },
+    ]);
+    expect(F.faceSetFaces('rustic')).toEqual(pairingFaces('rustic'));
+  });
+
+  test('never a choosable pairing: not an id, not in the list, the default for pairingFor', () => {
+    expect(isPairingId('house')).toBe(false);
+    expect(PAIRING_IDS).not.toContain('house');
+    expect(PAIRINGS.house).toBeUndefined();
+    expect(pairingFor('house').id).toBe(DEFAULT_PAIRING_ID);
+  });
+
+  test('a house draft reads the house set, any other its pairing; spooky shares the IM Fell faces', () => {
+    expect(F.faceSetFor({ look: 'house', font_pairing: 'retro' })).toBe('house');
+    expect(F.faceSetFor({ look: 'custom', font_pairing: 'retro' })).toBe('retro');
+    expect(F.faceSetFor({ font_pairing: 'retro' })).toBe('retro');
+    expect(F.faceSetFor(null)).toBe(DEFAULT_PAIRING_ID);
+    expect(familiesOf(F.fontsHref(['spooky', 'house']))).toEqual(['Creepster', 'IM Fell English SC', 'IM Fell English', 'Pirata One']);
+  });
+
+  test('its link is its own, added once', () => {
+    const a = ensureFontsLink(['house']);
+    expect(a.getAttribute('href')).toBe(F.fontsHref(['house']));
+    expect(ensureFontsLink(['house'])).toBe(a);
+    a.remove();
+  });
+});

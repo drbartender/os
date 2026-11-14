@@ -1,7 +1,8 @@
 // Helpers shared by the four menu art draft route files (menuDrafts.js,
 // menuDraftSync.js, menuDraftImages.js and menuDraftApprove.js; spec 2026-10-01
 // sections 5.5, 7 and 8). Not a router. Approve uses the parses, the 404s, the
-// 409 builders and requireWords, never inLockedTx (it reserves nothing).
+// 409 builders, requireWords and layoutPieceKeys, never inLockedTx (it
+// reserves nothing).
 //
 // inLockedTx(fn) is the ONE way these routes open a reserving transaction:
 // BEGIN, then lockCalls (LOCK TABLE menu_art_calls IN EXCLUSIVE MODE) as the
@@ -32,17 +33,28 @@
 // The plan-hash echo (spec 2026-10-19 section 17, lane menu-plan-review-state):
 // parsePlanHash bounds the posted plan_hash (64 lowercase hex, else 400 "Reload
 // the page, then try again.", as the message and the field error both), and
-// requireSamePlan compares it with planHash of
+// requireSamePlan compares it with the draft's plan hash (draftPlanHash in
+// menuHouseSections.js, the form the GET's diff shows: planHash on a custom
+// draft, the printed sections' on a house draft) of
 // the plan the route read through its own client, under the draft row lock;
 // a different hash is 409 MENU_PLAN_MOVED and drops the read model's catalog
 // cache. Dismiss, Mark reviewed and Update draft (both scopes) share them.
+//
+// layoutPieceKeys(content) is the one rule for the pieces a printed draft
+// uses (spec 2026-10-19 section 9.2; moved here from menuDraftApprove.js by
+// lane menu-house-card): a custom draft's background and every visible drink
+// with art; a house draft's background alone, and none on a plain card (its
+// touch_key is 'plain', or missing), since the canvas then paints the ground.
+// Approve requires exactly these pieces done; the client's twin is
+// menuCardState.js layoutPieceKeys, which the card and the canvas read.
 
 const { pool } = require('../../db');
 const { AppError, ConflictError, ValidationError, NotFoundError } = require('../../utils/errors');
 const { lockCalls, mapDeadlock } = require('../../utils/menuArtCap');
 const { report, describe } = require('../../utils/menuArtJobErrors');
 const { stuck, wordsConfigured, dropCatalogCache } = require('../../utils/menuDraftRead');
-const { planHash } = require('../../utils/menuDrinkSource');
+const { draftPlanHash } = require('../../utils/menuHouseSections');
+const { PLAIN_KEY } = require('../../utils/menuEventTouches');
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 
@@ -102,12 +114,13 @@ function parsePlanHash(raw) {
   return raw;
 }
 
-// The plan-hash echo: the posted hash against planHash of the plan the route
+// The plan-hash echo: the posted hash against the draft's plan hash (content
+// is the draft's, plan the plan row normalized came from) of the plan the route
 // read through its own client. A different one is 409 MENU_PLAN_MOVED, and the
 // read model's catalog cache is dropped first, so the page's refetch shows the
 // plan as the route read it rather than a cached view it could never send back.
-function requireSamePlan(sentHash, normalized) {
-  if (planHash(normalized) === sentHash) return;
+function requireSamePlan(sentHash, normalized, content, plan) {
+  if (draftPlanHash(content, plan, normalized) === sentHash) return;
   dropCatalogCache();
   throw new ConflictError(PLAN_MOVED_TEXT, 'MENU_PLAN_MOVED');
 }
@@ -204,6 +217,20 @@ async function upsertPendingPieces(client, { draftId, runId, pieceKeys, provider
   );
 }
 
+// The pieces the printed layout uses (header). Zero illustrated drinks is a
+// real custom menu (beer and wine only).
+function layoutPieceKeys(content) {
+  const c = isObject(content) ? content : {};
+  if (c.look === 'house') {
+    return typeof c.touch_key === 'string' && c.touch_key !== '' && c.touch_key !== PLAIN_KEY ? ['background'] : [];
+  }
+  const keys = new Set(['background']);
+  for (const d of capList(c.drinks)) {
+    if (isObject(d) && d.hidden !== true && d.has_art === true && typeof d.key === 'string') keys.add(d.key);
+  }
+  return [...keys];
+}
+
 // Runs fn after the response, off the request. The job functions never
 // throw; this catch is the backstop so a rejection can never go unhandled.
 // Sentry gets the job's sanitized descriptor only, never the error itself
@@ -219,4 +246,5 @@ module.exports = {
   isObject, capList,
   parseId, parseVersion, parsePlanHash, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan, requireWords,
   requireSamePlan, requireWordsProvider, requireImageModel, imageModelId, inTx, inLockedTx, upsertPendingPieces, queue,
+  layoutPieceKeys,
 };

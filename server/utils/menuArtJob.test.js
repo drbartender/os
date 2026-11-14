@@ -1584,3 +1584,146 @@ test('runWordsForDrinks on Claude: the Update draft words land; a spent balance 
     if (err === 'refusal') assert.equal(captured.length, 0, 'a refusal is not reported');
   }
 });
+
+// ── The house card (spec 2026-10-19 section 9.2; lane menu-house-card) ──────
+// What a house Generate commits: the content seeded with look, touch_key and
+// house_bottom_corners, the background alone pending and reserved (none for a
+// plain set), and no text reservation.
+async function generateHouse({ touchKey = 'balloons', bottomCorners = false, provider = 'openai', drinks = 3, planExtra = {} } = {}) {
+  await pool.query('UPDATE drink_plans SET selections = $2 WHERE id = $1', [planId, selections(drinks, planExtra)]);
+  const normalized = normalizePlan(await loadEventPlan(proposalId), await loadCatalogMaps());
+  const runId = newRun();
+  const keys = touchKey === 'plain' ? [] : ['background'];
+  const content = {
+    words_status: 'pending', words_heartbeat_at: new Date().toISOString(), look: 'house', touch_key: touchKey, house_bottom_corners: bottomCorners,
+  };
+  const draftInputs = {
+    planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true, image_model: provider, look: 'house',
+  };
+  await inTx(async (client) => {
+    await cap.releaseProposalReserved(client, { proposalId });
+    const { rows } = await client.query(
+      `INSERT INTO menu_drafts (proposal_id, drink_plan_id, run_id, inputs, content, plan_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (proposal_id) DO UPDATE
+         SET run_id = EXCLUDED.run_id, inputs = EXCLUDED.inputs, content = EXCLUDED.content,
+             plan_fingerprint = EXCLUDED.plan_fingerprint, version = menu_drafts.version + 1
+       RETURNING id`,
+      [proposalId, planId, runId, draftInputs, content, buildFingerprint(normalized)]);
+    draftId = rows[0].id;
+    if (!draftIds.includes(draftId)) draftIds.push(draftId);
+    await client.query('DELETE FROM menu_draft_pieces WHERE draft_id = $1', [draftId]);
+    if (keys.length) {
+      await client.query(
+        `INSERT INTO menu_draft_pieces (draft_id, piece_key, run_id, status, provider, model)
+         SELECT $1, k, $2, 'pending', $3, $4 FROM unnest($5::text[]) AS k`, [draftId, runId, provider, MODEL[provider], keys]);
+      await cap.reserveImages(client, { proposalId, runId, pieceKeys: keys, provider, model: MODEL[provider] });
+    }
+  });
+  await pool.query('UPDATE menu_drafts SET art_version = 0 WHERE id = $1', [draftId]);
+  return { runId, keys };
+}
+
+test('a house run makes no words call: the content is filled from the plan, words_finished_at stamped, the background drawn as the house card', async () => {
+  stubAnthropic();
+  const g = await generateHouse({ planExtra: { beerFromFullBar: ['IPA'], wineFromFullBar: ['Red'], spirits: ['Vodka'], activeModules: { fullBar: true } } });
+  await run(g);
+  assert.deepEqual([calls.words.length, calls.claude.length], [0, 0], 'no words call on either provider');
+  const draft = await draftRow();
+  const c = draft.content;
+  assert.deepEqual([c.words_status, c.words_error, c.look, c.touch_key, c.house_bottom_corners], ['done', null, 'house', 'balloons', false]);
+  assert.ok(!Number.isNaN(Date.parse(c.words_finished_at)), 'words_finished_at is a time');
+  assert.equal(c.title, 'The Bar Menu');
+  assert.equal(c.font_pairing, null);
+  assert.equal(c.background_label, 'Balloons and streamers');
+  assert.deepEqual(c.drinks.map((d) => [d.key, d.display_name, d.description, d.has_art, d.hidden, d.added_by_sync]),
+    KEYS.map((k, i) => [k, DRINKS[i], null, false, false, false]), 'own names, no descriptions, no art');
+  // A full bar with no signature picks (these cocktails are typed) adds Call Drinks, as the Standard Menu card does; spirits never print.
+  assert.deepEqual(c.house_sections, [
+    { kind: 'beer-wine', title: 'Beer & Wine', items: ['Beer', 'Red'] }, { kind: 'bar-service', title: 'Bar Service', items: ['Call Drinks'] },
+  ]);
+  assert.ok(Array.isArray(c.also_at_bar), 'the bar lines are kept, so the bar flag and Update draft read as for any draft');
+  // The bar baseline lands with the fill, as the words step writes it.
+  const fp = (await pool.query('SELECT plan_fingerprint FROM menu_drafts WHERE id = $1', [draftId])).rows[0].plan_fingerprint;
+  assert.ok(fp.bar_hash && fp.bar_lines, 'the bar baseline');
+
+  assert.equal(calls.openai.length, 1, 'the background only');
+  const prompt = calls.openai[0].body.prompt;
+  assert.equal(calls.openai[0].op, 'generate', 'no reference rides with a house background');
+  assert.match(prompt, /#12161C/);
+  assert.match(prompt, /balloons in each top corner/);
+  assert.ok(!/Garden party|Soft watercolor|Birthday|Zq /.test(prompt), 'no brief, no drink and no event field');
+  const pieces = await pieceMap();
+  assert.deepEqual(Object.keys(pieces), ['background']);
+  assert.equal(pieces.background.status, 'done');
+  assert.equal(draft.art_version, 1);
+  const rows = await ledger(g.runId);
+  assert.deepEqual(rows.map((r) => [r.kind, r.piece_key, r.status]), [['image', 'background', 'ok']], 'no text row');
+  assert.equal(captured.length, 0);
+});
+
+test('a plain house run calls no provider at all: the content lands, nothing is drawn or reserved', async () => {
+  stubAnthropic();
+  const g = await generateHouse({ touchKey: 'plain', provider: 'gemini' });
+  await run(g);
+  assert.equal(calls.words.length + calls.claude.length + calls.openai.length + calls.gemini.length, 0);
+  const c = (await draftRow()).content;
+  assert.deepEqual([c.words_status, c.title, c.touch_key, c.background_label], ['done', 'The Bar Menu', 'plain', 'Plain house card']);
+  assert.ok(c.words_finished_at);
+  assert.deepEqual(await pieceMap(), {});
+  assert.deepEqual(await ledger(g.runId), []);
+  assert.deepEqual(uploads, []);
+});
+
+test('a house run on a plan with no drinks fails the words with the no-drinks sentence and draws nothing', async () => {
+  const g = await generateHouse({ drinks: 0 });
+  await run(g);
+  const c = (await draftRow()).content;
+  assert.deepEqual([c.words_status, c.words_error], ['failed', SENTENCES.noDrinks]);
+  assert.equal(calls.openai.length, 0);
+  assert.deepEqual((await ledger(g.runId)).map((r) => r.status), ['released']);
+});
+
+test('a house run superseded before its fill writes nothing and calls nothing', async () => {
+  const g = await generateHouse();
+  await pool.query('UPDATE menu_drafts SET run_id = $2 WHERE id = $1', [draftId, newRun()]);
+  await run(g);
+  assert.equal((await draftRow()).content.words_status, 'pending');
+  assert.equal(calls.openai.length, 0);
+  assert.deepEqual((await ledger(g.runId)).map((r) => r.status), ['released']);
+});
+
+test('the December holiday house run draws its gifts low, the touch set read from the stored key', async () => {
+  const g = await generateHouse({ touchKey: 'holiday', bottomCorners: true, provider: 'gemini' });
+  await run(g);
+  assert.equal(calls.gemini.length, 1);
+  assert.match(backgroundPromptOf(calls.gemini[0]), /gift boxes stacked in each bottom corner/);
+  const c = (await draftRow()).content;
+  assert.deepEqual([c.touch_key, c.house_bottom_corners, c.background_label], ['holiday', true, 'Gifts and holly']);
+});
+
+test('a house background re-roll keeps the touch set, carries its note and sends no reference or brief', async () => {
+  const g = await generateHouse();
+  await run(g);
+  await pool.query('UPDATE menu_drafts SET inputs = inputs || $2::jsonb WHERE id = $1',
+    [draftId, { art_direction: `Watercolor ${NONCE}`, admin_brief: { theme: `Navy ${NONCE}`, naming: '', notes: '' } }]);
+  calls.openai.length = 0;
+  const pieceRun = await reroll('background', { provider: 'openai', note: 'fewer balloons' });
+  assert.equal(calls.openai.length, 1);
+  const prompt = calls.openai[0].body.prompt;
+  assert.equal(calls.openai[0].op, 'generate');
+  assert.match(prompt, /balloons in each top corner/);
+  assert.match(prompt, /Change from the last version: fewer balloons/);
+  assert.ok(!prompt.includes(NONCE), 'neither the art direction nor the admin brief');
+  assert.equal((await pieceMap()).background.drawn_count, 2);
+  await assertSettled(pieceRun);
+});
+
+test('a custom run stamps words_finished_at when the words land', async () => {
+  const g = await generate();
+  await run(g);
+  const c = (await draftRow()).content;
+  assert.equal(c.words_status, 'done');
+  assert.ok(!Number.isNaN(Date.parse(c.words_finished_at)));
+  assert.equal(c.look, undefined, 'a custom fill writes no house key');
+});

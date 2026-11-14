@@ -387,3 +387,41 @@ test('an unsafe companyLogo is never the thumbnail fallback', () => {
   expect(container.innerHTML).not.toContain('javascript:');
 });
 
+
+// v2 spec 9.1 and 9.2 (lane menu-house-card): before a draft the card reads the
+// look its own Generate will post, from the page hook's held brief and
+// reference file (the look and the admin brief typed in the editor before a
+// draft exists), as the editor does, so its words, image count and gate match
+// the run it starts.
+describe('before a draft, the card reads the held brief its Generate posts', () => {
+  const held = { planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true };
+  const ready = (mut) => P((p) => { noDraft(p); p.plan.house_plain = true; if (mut) mut(p); });
+
+  test('a custom look chosen in the editor: the custom run, its image count holding Generate at the cap', () => {
+    const menu = fakeMenu(ready((p) => { p.cap.remaining = 2; }), { brief: { ...held, look: 'custom' } });
+    const { container } = mount(menu);
+    expect(top(container).msg).toHaveTextContent('Draft a custom 8×10 menu.');
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled();
+    expect(screen.getByText('Needs 3 images; 2 left in the last 24 hours.')).toHaveClass('md-card-note');
+  });
+
+  test('a house look chosen in the editor over a client brief: the plain house card, which needs no key', () => {
+    const menu = fakeMenu(ready((p) => { p.brief.theme = 'Navy and gold'; p.configured = { openai: false, gemini: false, words: false }; }),
+      { brief: { ...held, look: 'house' } });
+    const { container } = mount(menu);
+    expect(top(container).chip).toHaveTextContent('Not started');
+    expect(top(container).msg).toHaveTextContent('Draft the house card.');
+    const gen = screen.getByRole('button', { name: 'Generate' });
+    expect(gen).toBeEnabled();
+    fireEvent.click(gen);
+    expect(menu.generate).toHaveBeenCalledTimes(1);
+  });
+
+  test('art direction typed, or a reference file held, in the editor reads as the custom design', () => {
+    const { container, unmount } = mount(fakeMenu(ready(), { brief: { ...held, art_direction: 'Moody speakeasy' } }));
+    expect(top(container).msg).toHaveTextContent('Draft a custom 8×10 menu.');
+    unmount();
+    const file = mount(fakeMenu(ready(), { brief: held, referenceFile: { name: 'ref.png' } }));
+    expect(top(file.container).msg).toHaveTextContent('Draft a custom 8×10 menu.');
+  });
+});

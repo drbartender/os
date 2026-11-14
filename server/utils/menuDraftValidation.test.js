@@ -182,7 +182,7 @@ test('reference_key and image_model: Generate records image_model; a PATCH leave
   const g = gen({ image_model: 'gemini', art_direction: 'moody' });
   assert.deepEqual(g, {
     planner_image_role: 'logo', reference_source: 'none', art_direction: 'moody', drb_mark: true, image_model: 'gemini',
-    admin_brief: { theme: '', naming: '', notes: '' },
+    admin_brief: { theme: '', naming: '', notes: '' }, look: 'custom',
   });
   const next = inputs({ drb_mark: false });
   assert.equal(next.reference_key, 'menu-art/5/ref-abc.png');
@@ -657,4 +657,122 @@ test('unknown keys, an empty PATCH and a missing version fail; all field errors 
     assert.deepEqual(Object.keys(err.fieldErrors).sort(), ['mark_color', 'palette', 'title']);
     return true;
   });
+});
+
+// ---- the house card (v2 spec 9.1, 9.2 and 21; lane menu-house-card) ----
+const { decideLook } = require('./menuDraftValidation');
+
+const NO_INSTRUCTIONS = {
+  menuStyle: 'custom', clientBrief: { theme: '', naming: ' ', notes: '' }, adminBrief: { theme: '', naming: '', notes: '' },
+  artDirection: '', referenceSource: 'none', plannerImageRole: 'logo',
+};
+test('the look decision: the Standard Menu, or no instructions at all, is the house card', () => {
+  assert.equal(decideLook({ ...NO_INSTRUCTIONS, menuStyle: 'house' }), 'house');
+  assert.equal(decideLook(NO_INSTRUCTIONS), 'house');
+  for (const style of ['none', null, undefined]) assert.equal(decideLook({ ...NO_INSTRUCTIONS, menuStyle: style }), 'house', String(style));
+  assert.equal(decideLook({}), 'house', 'nothing known is no instruction');
+});
+test('the look decision: any instruction is a custom design, unless the client chose the Standard Menu', () => {
+  const instructions = [
+    ['client theme', { clientBrief: { theme: 'Navy and gold' } }],
+    ['client naming', { clientBrief: { naming: 'After the dogs' } }],
+    ['client notes', { clientBrief: { notes: 'No florals' } }],
+    ['admin theme', { adminBrief: { theme: 'Art deco' } }],
+    ['admin naming', { adminBrief: { naming: 'Puns' } }],
+    ['admin notes', { adminBrief: { notes: 'Small title' } }],
+    ['art direction', { artDirection: 'watercolor' }],
+    ['an uploaded reference', { referenceSource: 'upload' }],
+    ['the planner image as the reference', { referenceSource: 'planner', plannerImageRole: 'reference' }],
+    ['the reference role alone', { plannerImageRole: 'reference' }],
+  ];
+  for (const [name, over] of instructions) {
+    assert.equal(decideLook({ ...NO_INSTRUCTIONS, ...over }), 'custom', name);
+    assert.equal(decideLook({ ...NO_INSTRUCTIONS, ...over, menuStyle: 'house' }), 'house', `${name} on the Standard Menu`);
+  }
+  // A client logo (role logo) or an ignored image is not an instruction.
+  assert.equal(decideLook({ ...NO_INSTRUCTIONS, plannerImageRole: 'logo' }), 'house');
+  assert.equal(decideLook({ ...NO_INSTRUCTIONS, plannerImageRole: 'ignore' }), 'house');
+});
+
+const PLAN_FACTS = (over = {}) => ({ menuStyle: 'custom', brief: { theme: '', naming: '', notes: '' }, ...over });
+test('look on Generate: posted, else the stored look, else decided from the plan, the briefs, art direction and the reference', () => {
+  const blank = { art_direction: '', planner_image_role: 'logo' };
+  assert.equal(gen({ ...blank, look: 'custom' }, { plan: PLAN_FACTS() }).look, 'custom', 'posted wins');
+  assert.equal(gen({ ...blank, look: 'house' }, { plan: PLAN_FACTS({ brief: { theme: 'Gold' } }) }).look, 'house');
+  assert.equal(gen(blank, { storedInputs: { look: 'custom' }, plan: PLAN_FACTS() }).look, 'custom', 'absent means the stored value');
+  assert.equal(gen({ ...blank, look: '' }, { storedInputs: { look: 'house' }, plan: PLAN_FACTS({ menuStyle: 'custom', brief: { theme: 'x' } }) }).look, 'house');
+  assert.equal(gen(blank, { plan: PLAN_FACTS() }).look, 'house', 'no instructions');
+  assert.equal(gen(blank, { plan: PLAN_FACTS({ menuStyle: 'house', brief: { notes: 'x' } }) }).look, 'house', 'the Standard Menu');
+  assert.equal(gen(blank, { plan: PLAN_FACTS({ brief: { notes: 'Teal' } }) }).look, 'custom', 'the client brief');
+  assert.equal(gen({ ...blank, admin_brief_theme: 'Teal' }, { plan: PLAN_FACTS() }).look, 'custom', 'the posted admin brief');
+  assert.equal(gen(blank, { storedInputs: { admin_brief: { theme: '', naming: 'Puns', notes: '' } }, plan: PLAN_FACTS() }).look, 'custom',
+    'the stored admin brief Start over keeps');
+  assert.equal(gen({ ...blank, art_direction: 'moody' }, { plan: PLAN_FACTS() }).look, 'custom', 'art direction');
+  assert.equal(gen({ ...blank, reference_source: 'upload' }, { hasFile: true, plan: PLAN_FACTS() }).look, 'custom', 'an upload');
+  assert.equal(gen({ planner_image_role: 'reference', reference_source: 'planner' }, { plan: PLAN_FACTS() }).look, 'custom', 'the planner image as reference');
+  assert.equal(gen({ ...blank, look: undefined }, { storedInputs: { look: 'bogus' }, plan: PLAN_FACTS() }).look, 'house',
+    'a stored look of the wrong shape is no stored look');
+});
+test('look on Generate: anything but house or custom fails', () => {
+  fails(() => gen({ look: 'fancy' }), 'look');
+  fails(() => gen({ look: ['house'] }), 'look');
+});
+
+function houseDraft() {
+  const stored = storedDraft();
+  stored.content = {
+    ...stored.content, look: 'house', touch_key: 'balloons', house_bottom_corners: false,
+    house_sections: [{ kind: 'beer-wine', title: 'Beer & Wine', items: ['Beer', 'Red'] }],
+    font_pairing: null, palette: [], also_at_bar: [],
+    drinks: Array.from({ length: 7 }, (_, i) => drink(`cocktail:${i + 1}`, {
+      display_name: `House Drink ${i + 1}`, description: null, has_art: false, visual_note: '',
+    })),
+  };
+  return stored;
+}
+const HOUSE_ONLY = 'The house card lists drink names only.';
+const failsWith = (fn, field, message) => assert.throws(fn, (err) => {
+  assert.ok(err instanceof ValidationError);
+  assert.equal(err.fieldErrors[field], message);
+  return true;
+});
+test('a house draft PATCH takes a rename and Hide, and refuses art and a description', () => {
+  const stored = houseDraft();
+  const drinks = stored.content.drinks;
+  const renamed = content({ drinks: drinks.map((d, i) => (i === 0 ? { ...d, display_name: 'The Groom' } : d)) }, stored);
+  assert.equal(renamed.drinks[0].display_name, 'The Groom');
+  const hidden = content({ drinks: drinks.map((d, i) => (i === 1 ? { ...d, hidden: true } : d)) }, stored);
+  assert.equal(hidden.drinks[1].hidden, true);
+  // The whole list sent back with each description echoed (null, or empty) is no description edit.
+  assert.equal(patch({ content: { drinks: drinks.map((d) => ({ ...d, description: '' })) } }, stored).changed, false);
+  failsWith(() => content({ drinks: drinks.map((d, i) => (i === 2 ? { ...d, has_art: true } : d)) }, stored), 'drinks', HOUSE_ONLY);
+  failsWith(() => content({ drinks: drinks.map((d, i) => (i === 3 ? { ...d, description: 'Tequila and lime.' } : d)) }, stored), 'drinks', HOUSE_ONLY);
+  // has_art false sent back as stored is fine.
+  assert.equal(content({ drinks: drinks.map((d) => ({ ...d, has_art: false })) }, stored).drinks.every((d) => d.has_art === false), true);
+});
+test('the text-only cap does not apply to a house draft: every visible drink lists by name', () => {
+  const stored = houseDraft();
+  stored.content.drinks[6].hidden = true;
+  const shown = content({ drinks: stored.content.drinks.map((d) => ({ ...d, hidden: false })) }, stored);
+  assert.equal(shown.drinks.filter((d) => !d.hidden && !d.has_art).length, 7, 'seven without art, past the custom layout four');
+  // A custom draft still holds the cap.
+  const custom = manyDrinks(7, 0);
+  custom.content.drinks[6].hidden = true;
+  fails(() => content({ drinks: custom.content.drinks.map((d) => ({ ...d, hidden: false })) }, custom), 'drinks');
+});
+test('PATCH refuses the job-only house keys and words_finished_at as server-written', () => {
+  for (const [k, v] of [['look', 'custom'], ['touch_key', 'holiday'], ['house_bottom_corners', true],
+    ['house_sections', []], ['words_finished_at', '2026-11-13T12:00:00.000Z']]) {
+    failsWith(() => content({ [k]: v }, houseDraft()), k, 'This is written by the menu drafter and cannot be edited.');
+    failsWith(() => content({ [k]: v }), k, 'This is written by the menu drafter and cannot be edited.');
+  }
+});
+test('inputs.look on PATCH: house or custom, before or after the words; anything else fails', () => {
+  assert.equal(inputs({ look: 'house' }).look, 'house');
+  assert.equal(inputs({ look: 'custom' }, houseDraft()).look, 'custom');
+  const pending = storedDraft();
+  pending.content.words_status = 'pending';
+  assert.equal(inputs({ look: 'house' }, pending).look, 'house');
+  fails(() => inputs({ look: 'House card' }), 'look');
+  fails(() => inputs({ look: null }), 'look');
 });

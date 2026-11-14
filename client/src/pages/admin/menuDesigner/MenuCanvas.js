@@ -1,5 +1,5 @@
-// MenuCanvas (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// MenuCanvas (React component, default export): the printed 8 x 10 menu on the designer's
+// canvas, the custom layout, or the house card (HouseCard.js) for a house draft.
 
 import React, { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -12,6 +12,7 @@ import Ornament from './ornament';
 import { drawSoftBacking, drawBadgeShadow, BADGE } from './softBacking';
 import { useTintedWordmark } from './tintedWordmark';
 import { EditCtx, Text, Heading, DrinkText, Slot, useCanvasEdit, clearOnClick, tooLongKeys } from './MenuCanvasEdit';
+import HouseCard from './HouseCard';
 
 // The printed menu (spec 2026-10-01 sections 11.2, 11.3; plan Task C2): 800 x
 // 1000 canvas px, 100 px = 1 in, ported from the 2026-10-01 snapshot
@@ -43,6 +44,10 @@ import { EditCtx, Text, Heading, DrinkText, Slot, useCanvasEdit, clearOnClick, t
 // The ref is the 800 x 1000 .mc-menu node (what html2canvas renders). Every
 // layer image carries data-mc-layer; a layer the print needs and does not have
 // yet is a placeholder carrying data-mc-pending instead.
+// The look branch (v2 spec 9.3): content.look 'house' renders HouseCard with
+// the same props and ref; anything else, an old draft with no look included,
+// renders the custom layout below exactly as before. Two components, so a
+// Start over that switches the look remounts rather than changing hooks.
 
 export const AVATAR_SRC = `${process.env.PUBLIC_URL || ''}/images/menu-mark-avatar.png`;
 const FIT_SLACK = 1;
@@ -125,7 +130,7 @@ function Mark({ color, inPanel, position }) {
   );
 }
 
-const MenuCanvas = forwardRef(function MenuCanvas({
+const CustomCanvas = forwardRef(function CustomCanvas({
   content, inputs, pieces, layers, plannerImage = null, scale = 1, showStatus = false, onFit, className,
   editable = false, selectedDrink = null, onSelectDrink, onPatch, onReroll, canReroll = false, ...rest
 }, ref) {
@@ -291,6 +296,11 @@ const MenuCanvas = forwardRef(function MenuCanvas({
       </EditCtx.Provider>
     </div>
   );
+});
+
+const MenuCanvas = forwardRef(function MenuCanvas(props, ref) {
+  const house = isObject(props.content) && props.content.look === 'house';
+  return house ? <HouseCard ref={ref} {...props} /> : <CustomCanvas ref={ref} {...props} />;
 });
 
 export default MenuCanvas;

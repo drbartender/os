@@ -11,7 +11,9 @@
 //   and the run's pending pieces), authorizeCall on the run's text
 //   reservation, draftMenuCopy, parseWords, then ONE conditional UPDATE
 //   (draft id and run_id, words still pending) writing the content fill,
-//   words_status 'done' (words_heartbeat_at kept) and the bar baseline
+//   words_status 'done' (words_heartbeat_at kept), words_finished_at (the
+//   time the words landed, which the Inbox dates a finished run by; spec
+//   2026-10-19 section 9.2) and the bar baseline
 //   (plan_fingerprint's bar_lines and bar_hash) from the same plan read the
 //   "Also at the bar" lines were built from, so a bar pick changed between
 //   Generate's read and this one is neither a false flag nor a lost one;
@@ -68,12 +70,13 @@ async function beatWords(ctx) {
   return rows[0].drafts === 1;
 }
 
-// The one content fill (spec 6, Writers); words_heartbeat_at is kept. The bar
-// baseline lands with it, from the plan read the lines were built from.
+// The one content fill (spec 6, Writers); words_heartbeat_at is kept and
+// words_finished_at stamped. The bar baseline lands with it, from the plan
+// read the lines were built from.
 async function writeWords(ctx, fill, normalized) {
   const { bar_lines: barLines, bar_hash: barHash } = buildFingerprint(normalized);
   const result = await pool.query(
-    `UPDATE menu_drafts SET content = content || $3::jsonb,
+    `UPDATE menu_drafts SET content = content || $3::jsonb || jsonb_build_object('words_finished_at', NOW()),
             plan_fingerprint = plan_fingerprint || jsonb_build_object('bar_lines', $4::jsonb, 'bar_hash', $5::text)
       WHERE id = $1 AND run_id = $2::uuid AND content->>'words_status' = 'pending'`,
     [ctx.draftId, ctx.draftRun, { ...fill, words_status: 'done', words_error: null }, barLines, barHash]);

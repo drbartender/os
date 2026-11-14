@@ -172,3 +172,43 @@ test('visible drinks past the menu\'s limits are named', () => {
   expect(screen.getByText('8 of 8 illustrated')).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent("2 drinks won't fit on the menu. Hide 2 to fit.");
 });
+
+// v2 spec 9.2: on a house card the tab offers only what the server takes,
+// Hide and Show (a rename is on the canvas): no description, no art, no
+// re-roll, no illustrated count, no "won't fit" warning, no text-only cap.
+describe('on a house card', () => {
+  const names = (n) => Array.from({ length: n }, (_, i) => drink(`custom:h${i}`, `House ${i}`, { has_art: false, description: null }));
+  const house = (drinks, over = {}) => props({ content: { words_status: 'done', look: 'house', touch_key: 'balloons', drinks }, pieces: [piece('background', 'done')], ...over });
+
+  test('no illustrated count and no art note; a long list draws no "won\'t fit" warning', () => {
+    render(<DrinksTab {...house(names(7))} />);
+    expect(screen.queryByText(/of 8 illustrated/)).toBeNull();
+    expect(screen.queryByText(/Up to 8 are illustrated/)).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(7);
+  });
+
+  test('the open row offers Hide alone: no description, no re-roll note, no Re-roll art', () => {
+    const p = house(names(3), { selectedDrink: 'custom:h1' });
+    render(<DrinksTab {...p} />);
+    const row = rowOf('House 1');
+    expect(within(row).queryByLabelText('Description')).toBeNull();
+    expect(within(row).queryByLabelText('Note for the re-roll')).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Re-roll art' })).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Hide' }));
+    expect(p.onPatch).toHaveBeenCalledWith({ content: { drinks: expect.any(Array) } });
+    expect(p.onPatch.mock.calls[0][0].content.drinks[1]).toMatchObject({ key: 'custom:h1', hidden: true });
+  });
+
+  test('Show is not held by the four-drink cap, only by the twelve visible limit', () => {
+    const drinks = [...names(6), drink('custom:x', 'Extra', { hidden: true, has_art: false, description: null })];
+    const p = house(drinks, { selectedDrink: 'custom:x' });
+    const { rerender } = render(<DrinksTab {...p} />);
+    const show = within(rowOf('Extra')).getByRole('button', { name: 'Show' });
+    expect(show).toBeEnabled();
+    fireEvent.click(show);
+    expect(p.onPatch.mock.calls[0][0].content.drinks[6]).toMatchObject({ hidden: false, has_art: false });
+    rerender(<DrinksTab {...house([...names(12), drink('custom:x', 'Extra', { hidden: true, has_art: false })], { selectedDrink: 'custom:x' })} />);
+    expect(within(rowOf('Extra')).getByRole('button', { name: 'Show' })).toBeDisabled();
+  });
+});

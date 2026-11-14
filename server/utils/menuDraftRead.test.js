@@ -581,6 +581,7 @@ test('the plan payload: drinks with the mock flag, the bar summary, a house menu
     drinks: [{ name: DRINK_A, mock: false }, { name: DRINK_B, mock: false }, { name: MOCK_ID, mock: true }],
     bar_summary: { beer_wine: 4, spirits: 2, na: 1 },
     side: 'planner',
+    house_plain: true,
     planner_reference: {
       drinks: [{ name: DRINK_A, mock: false, typed: true }, { name: DRINK_B, mock: false, typed: true }, { name: MOCK_ID, mock: true, typed: true }],
       bar: PLANNER_BAR,
@@ -900,4 +901,36 @@ test('has_reference: an upload source with a stored key; a PATCH to none or plan
     assert.equal(out.has_reference, expected, JSON.stringify(inputs));
     assert.equal(out.reference_key, undefined);
   }
+});
+
+// ─── plan.house_plain (spec 2026-10-19 section 9.2; lane menu-house-card) ────
+// Whether the event's touch set (touchSetFor) is the plain card, from the
+// proposal's event_type, event_type_custom and event_date read as text, so the
+// Generate gate asks only for the keys the look will use.
+test('plan.house_plain: the event type and the December test, the date read as text; null with no plan', async () => {
+  await reset();
+  const setEvent = (type, custom, date) => pool.query(
+    'UPDATE proposals SET event_type = $2, event_type_custom = $3, event_date = $4::date WHERE id = $1', [proposalId, type, custom, date]);
+  try {
+    const cases = [
+      [null, null, null, true],
+      ['birthday-party', null, '2027-06-19', false],
+      ['Birthday Party', null, null, false],
+      ['celebration-of-life', null, '2027-06-19', true],
+      ['birthday-party', 'Dog adoption day', null, true],
+      ['holiday-party', null, '2026-12-31', false],
+      ['holiday-party', null, '2026-12-01', false],
+      ['holiday-party', null, '2026-11-30', true],
+      ['holiday-party', null, null, true],
+    ];
+    for (const [type, custom, date, plain] of cases) {
+      await setEvent(type, custom, date);
+      assert.equal((await payload()).plan.house_plain, plain, `${type} ${custom} ${date}`);
+    }
+  } finally {
+    await setEvent(null, null, null);
+  }
+  const p = await pool.query("INSERT INTO proposals (status, event_type) VALUES ('draft', 'birthday-party') RETURNING id");
+  proposalIds.push(p.rows[0].id);
+  assert.equal((await read.readDraftPayload(p.rows[0].id)).plan, null, 'no plan, no plan block');
 });

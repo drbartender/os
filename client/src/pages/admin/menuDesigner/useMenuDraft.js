@@ -1,7 +1,7 @@
 // useMenuDraft (default export): the event page's menu draft hook, the GET and its poll, the
-// debounced autosave, the visit's brief (the admin brief included) and the Generate, Update
-// draft, Dismiss, Mark reviewed and re-roll actions; the three review actions send back the
-// plan hash the page held when pressed.
+// debounced autosave, the visit's brief (the admin brief and the look included) and the
+// Generate, Update draft, Dismiss, Mark reviewed and re-roll actions; the three review actions
+// send back the plan hash the page held when pressed.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../../utils/api';
@@ -27,9 +27,10 @@ import { defaultImageModel } from './menuCardState';
 //   dismissPlanChange post plan_hash, the GET's diff.plan_hash as the page held
 //   it when the action was called (read before the save flush; the version is
 //   read after it). dismissPlanChange({ covers: 'notes' }) is Mark reviewed,
-//   which covers the notes and the client image only; with no covers it is
-//   Dismiss. A 409 (MENU_PLAN_MOVED when the plan moved since) refetches like
-//   every answer and reaches the caller, which prints the server's sentence.
+//   which records what its banner names: the edited notes while any notes
+//   field is edited, else the client image; with no covers it is Dismiss. A
+//   409 (MENU_PLAN_MOVED when the plan moved since) refetches like every
+//   answer and reaches the caller, which prints the server's sentence.
 // - edit({ content?, inputs? }) overlays top-level keys and PATCHes them 800 ms
 //   after the last edit, to the id they were made for. A 409 drops them,
 //   refetches and sets save.conflict (saveConflictOf: true for a version
@@ -42,6 +43,10 @@ import { defaultImageModel } from './menuCardState';
 //   admin_brief_theme, admin_brief_naming and admin_brief_notes, all three,
 //   empty ones included. A draft with none stored and none edited posts none,
 //   so the server keeps what it holds.
+// - The look (spec 2026-10-19 section 9.1) is inputs.look, 'house' or
+//   'custom': held in the brief before a draft (DEFAULT_BRIEF has none), edited
+//   through edit() with one, and posted with Generate as look only when one is
+//   chosen or stored, so an unchosen look is decided by the server.
 // - The brief inputs and a held reference file last the page visit; imageModel
 //   opens at the read model's configured.default_image_model (Gemini when its
 //   key is set, else OpenAI; 'openai' until the first GET lands; spec
@@ -300,6 +305,7 @@ export default function useMenuDraft(proposalId) {
     if (admin && typeof admin === 'object' && !Array.isArray(admin)) {
       for (const k of ADMIN_BRIEF_FIELDS) form.append(`admin_brief_${k}`, typeof admin[k] === 'string' ? admin[k] : '');
     }
+    if (src.look === 'house' || src.look === 'custom') form.append('look', src.look);
     form.append('image_model', model || chosen);
     if (file) form.append('reference', file);
     const res = await api.post(`/proposals/${pid}/menu-draft/generate`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
@@ -313,7 +319,8 @@ export default function useMenuDraft(proposalId) {
       : { version: versions.current.get(pid), image_model: model || latest.current.imageModel, plan_hash: planHash })).data
   )), [action]);
 
-  // Dismiss, or Mark reviewed with { covers: 'notes' } (the notes and the client image only).
+  // Dismiss, or Mark reviewed with { covers: 'notes' }, which records what its
+  // banner names: the edited notes, else the client image.
   const dismissPlanChange = useMemo(() => action(async ({ pid, planHash }, { covers } = {}) => {
     const body = { version: versions.current.get(pid), plan_hash: planHash };
     if (covers === 'notes') body.covers = 'notes';

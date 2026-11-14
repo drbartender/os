@@ -3,6 +3,11 @@
 // section structure from selections so both renderers stay in sync. Order is
 // fixed: Cocktails, Mocktails, Beer & Wine, Bar Service. Empty sections are
 // skipped. See spec section 5 for the rationale and full rule set.
+//
+// Hand-synced with its server twin, server/utils/menuHouseSections.js, which
+// the menu designer's house card reads (spec 2026-10-19 section 9.3): change
+// the rules in both, and server/utils/menuHouseSections.test.js runs the two
+// on the same fixtures.
 
 const BEER_WINE_DISPLAY_ORDER = ['Beer', 'Seltzer', 'Red', 'White', 'Sparkling'];
 
@@ -26,8 +31,9 @@ function collapseBeerWine(selections) {
   ];
 
   const labels = new Set();
-  // Any beer entry other than "Seltzer" rolls up to "Beer".
-  if (beerEntries.some((e) => e && e !== 'Seltzer')) labels.add('Beer');
+  // Any beer entry other than "Seltzer" rolls up to "Beer". "None" (the
+  // planner's None checkbox, stored as ['None']) is no pick and adds nothing.
+  if (beerEntries.some((e) => e && e !== 'Seltzer' && e !== 'None')) labels.add('Beer');
   if (beerEntries.includes('Seltzer')) labels.add('Seltzer');
   if (wineEntries.includes('Red')) labels.add('Red');
   if (wineEntries.includes('White')) labels.add('White');

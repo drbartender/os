@@ -1,9 +1,10 @@
 // The menu editor's Brief tab (React component, default export): the client brief, the admin
-// brief, the planner's own picks, the client image, the style reference and the art direction.
+// brief, the look, the planner's own picks, the client image, the style reference and the art
+// direction.
 
 import React, { useRef, useState } from 'react';
 import { ART_DIRECTION_MAX } from './menuEdits';
-import { BAR_LINE, uncheckedNotice } from './menuCardState';
+import { BAR_LINE, uncheckedNotice, lookOf } from './menuCardState';
 import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 
 // The editor's Brief tab (spec 2026-10-01 sections 4.3 and 9; 11.1, Brief tab;
@@ -24,6 +25,18 @@ import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 //   brief without one, posted with Generate), whether or not the words have
 //   landed. The words step reads it first, the client's text filling each
 //   blank (the server's effectiveBrief), from the next Generate or Start over.
+// - Look (spec 2026-10-19 section 9.1): a House card / Custom design .seg, the
+//   Design tab's Wordmark color row's twin, with its hint, PATCHing
+//   inputs.look through onPatch (held in the hook's brief before a draft);
+//   it applies at the next Generate or Start over, like every input, so it is
+//   never gated on the words and only a read-only draft turns it off. With
+//   none chosen or stored it shows what Generate will decide (menuCardState
+//   lookOf, which the Generate gate reads too: a display-only mirror of the
+//   server's decideLook in menuDraftValidation.js:
+//   the house card for a Standard Menu client or one with no instructions,
+//   the client's and the admin brief, the art direction and any style
+//   reference all empty; a logo is no instruction), and posts nothing, so the
+//   server decides.
 // - From the planner ("Potion Planner · read-only"), with a plan: the plan's
 //   menu style and planner_reference, the planner's own picks whatever side
 //   the menu's drinks come from (a consult-side plan says so first): Drinks
@@ -68,6 +81,8 @@ const MENU_STYLES = new Map([['custom', 'Custom'], ['house', 'Standard (house)']
 const CONSULT_HINT = "This menu's drinks come from the consult form, which the shopping list uses. The planner picks below are what the "
   + 'client chose on their own.';
 const NO_DRINKS = "The client hasn't picked drinks yet.";
+const LOOKS = [['house', 'House card'], ['custom', 'Custom design']];
+const LOOK_HINT = 'House card: our apothecary card with small touches for the event. Custom design: drawn from the brief.';
 const list = (v) => (Array.isArray(v) ? v : []);
 const text = (v) => (typeof v === 'string' ? v : '');
 const adminBriefOf = (inp) => {
@@ -190,6 +205,15 @@ export default function BriefTab({
         ))}
         <div className="md-brief-hint">{ADMIN_HINT}</div>
       </Section>
+
+      <div className="md-sec">
+        <div className="md-mark-color">
+          <span>Look</span>
+          <Seg label="Look" options={LOOKS} value={lookOf({ inputs: inp, brief: b, plan, referenceFile })} disabled={locked}
+            onChange={(v) => setInputs({ look: v })} />
+        </div>
+        <div className="md-brief-hint">{LOOK_HINT}</div>
+      </div>
 
       {isObj(plan) && (
         <FromPlanner plan={plan} barNotes={(

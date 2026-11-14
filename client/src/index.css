@@ -22994,6 +22994,59 @@ html[data-app="admin-os"] .ib-cp-links { display: flex; flex-wrap: wrap; gap: 6p
   .mc-menu .mc-sheen { animation: none; }
 }
 
+/* The house card (v2 spec 9.3, HouseCard.js): MenuPreview.js's print variant
+   (client/src/pages/plan/components/MenuPreview.js) at 800 x 1000, its 768 x
+   960 values scaled by 800 / 768 (48 -> 50, 107 -> 111.46, 72 -> 75 and so on),
+   in its own palette and faces: the ink ground #12161C, cream #F0E8D6, brass
+   #B8924A, bright brass #D6AE65; Pirata One, IM Fell English SC and IM Fell
+   English. Literal colors, as the menu's own (the image, not the OS). The
+   drink names read --mc-house-name, the fit's size (35 down to 24). The
+   diamonds sit 1 px up by top, never a transform, and nothing uses a shadow,
+   filter, mask or object-fit (html2canvas 1.4.1, v1 11.3). */
+.mc-menu.mc-house-card { color: #F0E8D6; font-family: 'IM Fell English', Georgia, serif; }
+.mc-menu .mc-house-ground { background: #12161C; overflow: hidden; }
+.mc-menu.mc-house-card .mc-ground-text { color: rgba(240, 232, 214, 0.6); }
+.mc-menu .mc-house-content { position: absolute; top: 50px; left: 50px; right: 50px; display: flex; flex-direction: column; }
+.mc-menu .mc-house-crest { margin-bottom: 39.58px; text-align: center; }
+.mc-menu .mc-house-rule { display: flex; align-items: center; justify-content: center; gap: 14.58px; }
+.mc-menu .mc-house-line { flex: 1; max-width: 166.67px; height: 1px; background: #B8924A; }
+.mc-menu .mc-house-dia { position: relative; top: -1px; color: #B8924A; font-size: 14.58px; line-height: 1; }
+.mc-menu .mc-house-title {
+  margin: 14.58px 0; color: #F0E8D6; font-family: 'Pirata One', 'IM Fell English SC', Georgia, serif;
+  font-weight: 400; font-size: 75px; line-height: 1; letter-spacing: 0.02em;
+}
+.mc-menu .mc-house-body { display: flex; flex-direction: column; gap: 31.25px; }
+.mc-menu .mc-house-section { display: flex; flex-direction: column; }
+.mc-menu .mc-house-label { padding-bottom: 12.5px; border-bottom: 1px solid #B8924A; }
+.mc-menu .mc-house-label-row {
+  display: flex; align-items: center; justify-content: center; gap: 14.58px; color: #D6AE65;
+  font-family: 'IM Fell English SC', Georgia, serif; font-size: 17.71px; letter-spacing: 0.22em; text-transform: uppercase; line-height: 1;
+}
+.mc-menu .mc-house-label-dia { position: relative; top: -1px; color: #B8924A; font-size: 11.46px; line-height: 1; }
+.mc-menu .mc-house-items { display: flex; flex-direction: column; margin-top: 18.75px; }
+.mc-menu .mc-house-inline {
+  color: #F0E8D6; font-family: 'IM Fell English SC', Georgia, serif; font-size: 21.88px;
+  letter-spacing: 0.18em; text-transform: uppercase; text-align: center;
+}
+.mc-menu .mc-house-name {
+  margin: 0; color: #F0E8D6; font-family: 'IM Fell English SC', Georgia, serif; font-size: var(--mc-house-name, 35px);
+  line-height: 1.4; letter-spacing: 0.04em; text-align: center;
+}
+.mc-menu .mc-house-foot {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 111.46px; box-sizing: border-box; padding: 0 50px;
+  display: flex; align-items: center; gap: 25px; border-top: 1px solid #B8924A;
+}
+.mc-menu .mc-house-foot.mc-house-foot-center { justify-content: center; }
+.mc-menu .mc-house-spacer { flex: 1; }
+.mc-menu .mc-house-lockup { display: flex; align-items: center; gap: 16.67px; flex: none; }
+.mc-menu .mc-house-lockup-logo { display: block; flex-shrink: 0; width: 66.67px; height: 66.67px; max-width: none; }
+.mc-menu .mc-house-lockup-text {
+  color: #F0E8D6; font-family: 'IM Fell English SC', Georgia, serif; font-size: 19.79px; letter-spacing: 0.32em;
+  line-height: 1; text-transform: uppercase; white-space: nowrap;
+}
+.mc-menu .mc-house-divider { flex: none; width: 1px; height: 66.67px; background: #B8924A; }
+.mc-menu .mc-house-logo { display: block; flex: none; }
+
 /* ==========================================================================
    Menu art generator: the Bar menu card on the event page (md-). Spec
    2026-10-01-menu-art-generator-design.md section 11.1 (the card, table C)

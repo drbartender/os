@@ -772,3 +772,52 @@ describe('while Approve runs', () => {
     expect(screen.getByRole('button', { name: LABEL })).toBeEnabled();
   });
 });
+
+// v2 spec 9.2 and 9.3 (lane menu-house-card): the meta line names the house
+// card in place of a pairing, and before a draft the Generate gate reads the
+// look the page will post, the held brief's.
+describe('the house card in the editor', () => {
+  const houseDraft = (p) => {
+    p.draft.content = { ...p.draft.content, look: 'house', touch_key: 'plain', font_pairing: null,
+      drinks: p.draft.content.drinks.map((d) => ({ ...d, has_art: false })) };
+    p.draft.inputs = { ...p.draft.inputs, look: 'house' };
+    p.pieces = [];
+    p.plan.house_plain = true;
+  };
+  const footGen = () => document.querySelector('.md-foot-gen');
+
+  test('the meta line reads House card where a pairing name stands, and claims no AI-written text', () => {
+    const { container } = mountEditor(fakeMenu(P(houseDraft)));
+    expect(container.querySelector('.md-ed-meta').textContent).toBe('8 × 10 in · House card · 2 drinksClick text to edit');
+  });
+
+  // A plain house card has no background, so Start over discards no drawings;
+  // a house card with touches has its background, and a custom draft its art.
+  test('Start over: a plain house card names no drawings; a touched one keeps them, with its one image', () => {
+    const startOver = () => { fireEvent.click(screen.getByRole('button', { name: 'Start over' })); return screen.getByRole('dialog'); };
+    const { unmount } = mountEditor(fakeMenu(P(houseDraft)));
+    expect(within(startOver()).getByText('This discards the draft and your text edits, then drafts again from the plan. Uses no images.')).toBeInTheDocument();
+    unmount();
+    const touched = (p) => {
+      houseDraft(p);
+      p.draft.content = { ...p.draft.content, touch_key: 'balloons' };
+      p.pieces = [piece('background')];
+      p.plan.house_plain = false;
+    };
+    mountEditor(fakeMenu(P(touched)));
+    expect(within(startOver()).getByText('This discards the draft, its drawings and your text edits, then drafts again from the plan. Uses about 1 image.')).toBeInTheDocument();
+  });
+
+  test('before a draft with no AI key: a held house look on a plain card can Generate; a held custom look cannot', () => {
+    const noKeys = (p) => { p.draft = null; p.pieces = []; p.diff = null; p.configured = { openai: false, gemini: false, words: false }; p.plan.house_plain = true; };
+    const held = { planner_image_role: 'logo', reference_source: 'none', art_direction: '', drb_mark: true };
+    const { unmount } = mountEditor(fakeMenu(P(noKeys), { brief: { ...held, look: 'house' } }));
+    expect(footGen()).toBeEnabled();
+    expect(screen.queryByText("Menu art isn't set up")).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Generate' })).toHaveLength(2);
+    unmount();
+    mountEditor(fakeMenu(P(noKeys), { brief: { ...held, look: 'custom' } }));
+    expect(footGen()).toBeDisabled();
+    expect(screen.getByText("Menu art isn't set up")).toBeInTheDocument();
+  });
+});

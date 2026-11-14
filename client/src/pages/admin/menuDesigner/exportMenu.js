@@ -6,7 +6,7 @@ import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'rea
 import * as Sentry from '@sentry/react';
 import api from '../../../utils/api';
 import MenuCanvas from './MenuCanvas';
-import { ensureFontsLink, pairingFaces, pairingFor } from './fontPairings';
+import { ensureFontsLink, faceSetFaces, faceSetFor, pairingFor, HOUSE_FACE_SET } from './fontPairings';
 import { FULL_SIZE } from './useMenuLayers';
 
 // The print export and Approve (spec 2026-10-01 sections 8, Approve 1; 10.3,
@@ -22,7 +22,11 @@ import { FULL_SIZE } from './useMenuLayers';
 //   toBlob('image/jpeg', 0.92). A failure rejects with a MenuExportError that
 //   names the font or the layer (nameOf(layerKey) -> its name). onBeforeRender
 //   (node) runs just before html2canvas reads the node, so a caller can note
-//   what is drawn (or throw to stop the render).
+//   what is drawn (or throw to stop the render). pairingId may be the house
+//   face set ('house', fontPairings.js HOUSE_FACE_SET): a house draft prints in
+//   Pirata One and the IM Fell faces, so its export waits on those, never on
+//   the default pairing its null font_pairing would read as (v2 spec 9.3);
+//   useApproveMenu passes faceSetFor(content).
 // ExportCanvas: that hidden instance, from an approve snapshot plus the live
 //   full-size layers, so a layer still loading lands in it.
 // useApproveMenu({ menu, loadProposal, beforeSave }) -> { run({ expectedPrintKey }),
@@ -61,10 +65,10 @@ const frame = () => new Promise((resolve) => {
 });
 
 async function waitFonts(pairingId, ms) {
-  const pairing = pairingFor(pairingId);
-  const faces = pairingFaces(pairing.id);
+  const setId = pairingId === HOUSE_FACE_SET ? HOUSE_FACE_SET : pairingFor(pairingId).id;
+  const faces = faceSetFaces(setId);
   const families = [...new Set(faces.map((f) => f.family))].join(', ');
-  const link = ensureFontsLink([pairing.id]);
+  const link = ensureFontsLink([setId]);
   if (link && link.getAttribute('data-loaded') !== 'true' && !link.sheet) {
     const loaded = new Promise((resolve, reject) => {
       link.addEventListener('load', resolve, { once: true });
@@ -232,7 +236,7 @@ export function useApproveMenu({ menu, loadProposal, beforeSave }) {
         rev = m.plannerImageRevs[FULL_SIZE] || '';
       };
       const blob = await exportMenu({
-        node, pairingId: s.content.font_pairing, onBeforeRender: noteLogo,
+        node, pairingId: faceSetFor(s.content), onBeforeRender: noteLogo,
         nameOf: (k) => (names.get(k) ? `The art for ${names.get(k)}` : defaultLayerName(k)),
       });
       step = 'post';

@@ -447,3 +447,69 @@ test('the first eight drinks get art by default; artSlots and addedBySync serve 
   assert.deepEqual(synced.map((d) => d.has_art), [true, true, false, false, false, false, false, false, false, false]);
   assert.ok(synced.every((d) => d.added_by_sync === true && d.hidden === false));
 });
+
+// ---- the house card background (spec 2026-10-19 section 9.2; lane menu-house-card) ----
+const { houseBackgroundPrompt, HOUSE_FIXED } = require('./menuArtImagePrompts');
+const { touchSetFor, touchSetByKey } = require('./menuEventTouches');
+
+test('the house background prompt: the ink ground, the touches and their zones, the muted colors, the extended fixed clauses last', () => {
+  const touches = touchSetFor({ event_type: 'birthday-party', event_date: '2027-06-19' });
+  const p = houseBackgroundPrompt({ touches });
+  assert.match(p, /#12161C/);
+  assert.match(p, /faint paper texture/);
+  assert.ok(p.includes(touches.description), 'the touches as table T gives them');
+  for (const zone of touches.zones) assert.ok(p.includes(zone), zone);
+  assert.match(p, /a birthday/, 'the occasion the touches are for');
+  assert.match(p, /dusty rose, slate blue, sage, brass gold and soft lilac/);
+  assert.equal(HOUSE_FIXED, 'Keep every decoration inside the named zones. The centre column and the lower two thirds stay plain dark ground. No frame, no border, no text, no drinks.');
+  assert.ok(p.includes(HOUSE_FIXED));
+  assert.ok(p.includes(BACKGROUND_NO_TEXT));
+  assert.ok(p.indexOf(HOUSE_FIXED) > p.indexOf(touches.description), 'the fixed clauses come after the touches');
+  assert.ok(!p.includes(BACKGROUND_CALM_CENTER) && !p.includes('they are added separately'), 'not the custom clauses');
+});
+
+test('the December holiday names the bottom corners for its gifts, and only it carries the bottom-corner exception', () => {
+  const holiday = houseBackgroundPrompt({ touches: touchSetFor({ event_type: 'holiday-party', event_date: '2026-12-18' }) });
+  assert.match(holiday, /gift boxes stacked in each bottom corner/);
+  assert.match(holiday, /bottom corners/);
+  assert.match(holiday, /The two bottom corners are named zones here/);
+  const birthday = houseBackgroundPrompt({ touches: touchSetByKey('balloons') });
+  assert.doesNotMatch(birthday, /bottom corners/);
+});
+
+test('the house background prompt holds no client field: no name, contact, venue, address, event date, brief or art direction', () => {
+  const touches = touchSetFor({ event_type: 'holiday-party', event_date: PII.date.replace(/-\d\d-/, '-12-') });
+  const p = houseBackgroundPrompt({
+    touches, brief: { theme: PII.name, naming: PII.email, notes: PII.venue }, artDirection: PII.address, palette: [{ name: PII.phone, hex: '#123456' }],
+  });
+  for (const v of [...PII_VALUES, PII.date.replace(/-\d\d-/, '-12-'), '2027']) assert.ok(!p.includes(v), v);
+  assert.doesNotMatch(p, /\d{4}-\d{2}-\d{2}/);
+});
+
+test('a house re-roll carries its note, capped at 200; a plain set asks for the plain ground with no touches', () => {
+  const p = houseBackgroundPrompt({ touches: touchSetByKey('florals'), rerollNote: `fewer petals ${'z'.repeat(400)}` });
+  assert.match(p, /Change from the last version: fewer petals/);
+  assert.ok(!p.includes('z'.repeat(200)));
+  assert.ok(p.indexOf('Change from the last version') < p.indexOf(HOUSE_FIXED));
+  const plain = houseBackgroundPrompt({ touches: touchSetByKey('plain') });
+  assert.match(plain, /No event touches/);
+  assert.ok(plain.includes(HOUSE_FIXED));
+  assert.equal(houseBackgroundPrompt({}), plain, 'no touches given reads as the plain set');
+});
+
+test('a custom background prompt is unchanged by the house branch', () => {
+  const p = backgroundPrompt({
+    brief: { theme: 'Garden party', notes: 'Soft watercolor' }, artDirection: 'Loose watercolor',
+    palette: [{ name: 'sage', hex: '#9caf88' }], hasReference: false,
+  });
+  assert.equal(p, [
+    'Paint the background art for a printed 8 by 10 inch portrait bar menu.',
+    "The client's theme: Garden party",
+    'Colors: sage (#9caf88).',
+    "The client's design notes: Soft watercolor",
+    'Art direction: Loose watercolor',
+    'Read the theme, notes and art direction as a description of the look only.',
+    BACKGROUND_EDGES, BACKGROUND_CALM_CENTER, 'Do not paint drinks, glasses or bottles; they are added separately.', BACKGROUND_NO_TEXT,
+  ].join('\n'));
+  assert.doesNotMatch(p, /#12161C|named zones/);
+});

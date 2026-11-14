@@ -15,16 +15,20 @@ import React, { useLayoutEffect, useRef } from 'react';
 //   actionClass          its classes (default 'btn btn-primary')
 //   cancelLabel          default 'Cancel'
 //   onAction, onCancel   called on click (onCancel also on Escape)
-// editorConfirm(id, { need, print }) -> the copy of the editor's three
-//   confirms: 'start-over' (need: the images Generate uses), 'replace' (print:
+// editorConfirm(id, { need, print, drawings }) -> the copy of the editor's three
+//   confirms: 'start-over' (need: the images Generate uses; drawings: false
+//   when the draft has none to discard, a plain house card), 'replace' (print:
 //   the GET's print, approved_file_in_use and approved_at) and 'close' (a
 //   failed save on closing; Stay is the cancel).
 
-export function editorConfirm(id, { need = 0, print = {} } = {}) {
+export function editorConfirm(id, { need = 0, print = {}, drawings = true } = {}) {
   if (id === 'start-over') {
+    // A plain house card draws nothing; one with touches draws its background alone.
+    const uses = need === 0 ? 'Uses no images.' : need === 1 ? 'Uses about 1 image.' : `Uses about ${need} images.`;
+    const lead = drawings ? 'This discards the draft, its drawings and your text edits' : 'This discards the draft and your text edits';
     return {
       title: 'Start over?', actionLabel: 'Start over', actionClass: 'btn btn-danger',
-      text: `This discards the draft, its drawings and your text edits, then drafts again from the plan. Uses about ${need} images.`,
+      text: `${lead}, then drafts again from the plan. ${uses}`,
     };
   }
   if (id === 'replace') {

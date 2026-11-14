@@ -22,8 +22,8 @@
 //   3. ONE transaction on one client: the draft row FOR UPDATE; 409
 //      MENU_DRAFT_CHANGED when version or art_version moved; requireWords (409
 //      MENU_WORDS_PENDING or MENU_WORDS_NOT_WRITTEN); 409 MENU_DRAFT_CHANGED
-//      when any piece the layout uses (the background and every visible
-//      has_art drink) is not done with a stored key, or, for the logo role
+//      when any piece the layout uses (layoutPieceKeys, menuDraftShared.js)
+//      is not done with a stored key, or, for the logo role
 //      only (the only time the plan is read), when the plan's planner image rev
 //      is not the posted one; the proposal row FOR UPDATE and 409
 //      MENU_PRINT_CHANGED when menu_print_key is not expected_print_key, so a
@@ -59,7 +59,7 @@ const { loadEventPlan, plannerImageKeyOf, plannerImageRev } = require('../../uti
 const { derivePrintState } = require('../../utils/menuPrintState');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
-  isObject, capList, parseId, parseVersion, requireProposal, noDraft, draftChanged, requireWords,
+  isObject, parseId, parseVersion, requireProposal, noDraft, draftChanged, requireWords, layoutPieceKeys,
 } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -130,16 +130,6 @@ async function menuImage(files) {
     throw new ValidationError({ file: 'The menu image could not be read.' });
   }
   return file.data;
-}
-
-// The pieces the printed layout uses: the background and every visible drink
-// with art. Zero illustrated drinks is a real menu (beer and wine only).
-function layoutPieceKeys(content) {
-  const keys = new Set(['background']);
-  for (const d of capList(isObject(content) ? content.drinks : null)) {
-    if (isObject(d) && d.hidden !== true && d.has_art === true && typeof d.key === 'string') keys.add(d.key);
-  }
-  return [...keys];
 }
 
 const STAMP_SQL = `

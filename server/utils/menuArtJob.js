@@ -45,6 +45,17 @@
 // the words step writes and every fingerprint are the plan's own. The
 // planner's notes (the read model's planner_reference) are never read here.
 //
+// The house card (spec 2026-10-19 section 9.2; lane menu-house-card): a
+// Generate run on a draft whose content.look is 'house' makes NO words call
+// and holds no text reservation. It fills the content itself from the plan
+// (fillHouse: the title, the drinks by their own names with no descriptions
+// and no art, house_sections, words_status done, words_finished_at), then
+// draws the background with houseBackgroundPrompt from the touch set the
+// content stores (touch_key, which Generate chose from the event), and
+// nothing for a plain set. A house background re-roll keeps that stored set
+// and carries its note. Neither sends a reference image, the brief, the art
+// direction or any event field: the prompt holds the set's fixed text only.
+//
 // The end of every run (finally): each pending or working piece of the run
 // fails "not attempted: <cause>" (conditional on the run), the run's own
 // reservations settle by their own status (reserved -> released, sent ->
@@ -56,7 +67,8 @@
 const geminiClient = require('./geminiClient');
 const storage = require('./storage');
 const { drawImage } = require('./menuImageProvider');
-const { backgroundPrompt, drinkPrompt } = require('./menuArtImagePrompts');
+const { backgroundPrompt, drinkPrompt, houseBackgroundPrompt } = require('./menuArtImagePrompts');
+const { touchSetByKey } = require('./menuEventTouches');
 const { readTone } = require('./menuBackgroundTone');
 const { authorizeCall, markCall, settleRun } = require('./menuArtCap');
 const { getEventTypeLabel } = require('./eventTypes');
@@ -185,6 +197,24 @@ function adopt(ctx, held) {
   return held.find((r) => r.kind === 'text' && r.piece_key === null) || null;
 }
 
+// A house Generate run (header), after the run's reservations are adopted
+// and the draft read. -> its cause for the sweep, or null.
+async function houseRun(ctx, draft) {
+  const { plan, normalized } = await S.freshPlan(ctx.proposalId);
+  if (!normalized || !normalized.drinks.length) {
+    await W.failWords(ctx, E.SENTENCES.noDrinks);
+    return E.NOT_ATTEMPTED.words;
+  }
+  const touches = touchSetByKey(draft.content.touch_key);
+  if (!(await S.fillHouse(ctx, { plan, normalized, touches }))) return null;
+  if (touches.plain) return null;
+  await drawPiece(ctx, {
+    key: 'background', kind: 'background',
+    prompt: (p) => houseBackgroundPrompt({ touches, rerollNote: p.reroll_note }),
+  });
+  return null;
+}
+
 async function runGeneration({ draftId, runId, proposalId } = {}) {
   const ctx = newContext(draftId, proposalId, runId, runId);
   let cause = E.NOT_ATTEMPTED.ended;
@@ -200,6 +230,10 @@ async function runGeneration({ draftId, runId, proposalId } = {}) {
     const draft = await S.loadDraft(draftId, proposalId);
     if (!draft || draft.run_id !== runId) return;
     step = 'words';
+    if (draft.content && draft.content.look === 'house') {
+      cause = (await houseRun(ctx, draft)) || cause;
+      return;
+    }
     const inputs = draft.inputs || {};
     const { plan, normalized } = await S.freshPlan(proposalId);
     // The words request reads the merged brief; the bar baseline the step
@@ -272,6 +306,12 @@ async function runPieceReroll({ draftId, pieceKey, pieceRunId, proposalId } = {}
     if (!draft || typeof pieceKey !== 'string') return;
     const inputs = draft.inputs || {};
     const content = draft.content || {};
+    if (content.look === 'house' && pieceKey === 'background') {
+      // The stored touch set, no reference and no brief (header).
+      const touches = touchSetByKey(content.touch_key);
+      await drawPiece(ctx, { key: pieceKey, kind: 'background', prompt: (p) => houseBackgroundPrompt({ touches, rerollNote: p.reroll_note }) });
+      return;
+    }
     const { plan, normalized } = await S.freshPlan(proposalId);
     // After the claim: the reference, and a drink's current background.
     const prepare = async () => {

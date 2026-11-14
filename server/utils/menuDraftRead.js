@@ -17,6 +17,7 @@
 //   configured: { openai, gemini, words, default_image_model },
 //   plan: null | { id, menu_style, drink_count, drinks: [{ name, mock }],
 //     bar_summary: { beer_wine, spirits, na }, side: 'planner' | 'consult',
+//     house_plain,
 //     planner_reference: { drinks: [{ name, mock, typed }], bar: [line],
 //       additional_notes, mocktail_notes } },
 // }
@@ -47,8 +48,9 @@
 //   is left to show. A dismissal stored before the lane (the old whole-plan
 //   hash) still reads as covering everything while the plan has not moved.
 //   The routes read the plan itself (computeDiff, the raw lists), never this.
-//   plan_hash is planHash of the plan read here, which Dismiss, Mark reviewed
-//   and Update draft send back; the catalog maps behind it may be up to a
+//   plan_hash is the draft's plan hash for the plan read here (draftPlanHash:
+//   planHash on a custom draft), which Dismiss, Mark reviewed and Update
+//   draft send back; the catalog maps behind it may be up to a
 //   minute old (Polling cost below), so a refusal drops them (dropCatalogCache).
 //   bar_changed is true when an "Also at the bar" line the plan would print
 //   differs from its baseline (bar_lines), or a line appears or goes (spec
@@ -65,7 +67,21 @@
 //   stamp would give it (legacyBarBaseline), until the server stamps it at
 //   boot (menuBarBaselineStamp.js) or Update draft writes one, so the card
 //   shows what Update draft does. The read model writes nothing.
+//   A house draft (content.look house; spec 2026-10-19 sections 9.2 and 17)
+//   prints its bar sections, never the "Also at the bar" lines, so its bar
+//   half reads the sections the card prints, through the one helper the fill
+//   and Update draft stamp with (menuHouseSections.draftFingerprint, built
+//   from the plan row): a spirit or any pick the card does not print never
+//   raises bar_changed or undoes a dismissal, and nothing is ever unchecked.
+//   Its plan_hash is over the same form (draftPlanHash), so a spirit moved
+//   while the page is open never refuses a write as MENU_PLAN_MOVED.
 // - menu_style is selections.menuStyle ('custom' | 'house' | 'none') or null.
+//   house_plain (spec 2026-10-19 section 9.2; lane menu-house-card) is whether
+//   the event's touch set is the plain house card (menuEventTouches
+//   touchSetFor on the proposal's event_type, event_type_custom and
+//   event_date read as text, never a JS Date), so the Generate gate asks only
+//   for the keys the look will use: none for a plain house card, the image
+//   model's for one with touches.
 //   bar_summary counts the plan's bar picks for the phone's "+ 5 beer and wine,
 //   3 spirits, 2 NA" line ("None" and "Other" picks are not counted).
 // - side is the side the menu's drinks come from (normalizePlan's side: the
@@ -103,13 +119,15 @@ const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
 const { readEnvInt } = require('./envInt');
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, reviewHash, planHash, plannerImageRev,
+  loadEventPlan, loadCatalogMaps, normalizePlan, fingerprintHash, reviewHash, plannerImageRev,
   legacyBarBaseline,
 } = require('./menuDrinkSource');
 const { keyBarLines, buildAlsoAtBar } = require('./menuAlsoAtBar');
+const { draftFingerprint, draftPlanHash } = require('./menuHouseSections');
 const { capUsage } = require('./menuArtCap');
 const { derivePrintState, PRINT_STATES } = require('./menuPrintState');
 const { textProvider } = require('./menuArtJobSteps');
+const { touchSetFor } = require('./menuEventTouches');
 const openaiClient = require('./openaiClient');
 const geminiClient = require('./geminiClient');
 const anthropicClient = require('./anthropicClient');
@@ -221,10 +239,18 @@ function barChangedLabels(before, now) {
   ];
 }
 
-// The bar half of the diff, against `current` (buildFingerprint(normalized)):
-// { changed: [builder label], drift: [builder label], unchecked }. drift is the
-// part of changed only the stored lines show (above).
+// The bar half of the diff, against `current` (draftFingerprint: on a custom
+// draft buildFingerprint(normalized)): { changed: [builder label], drift:
+// [builder label], unchecked }. drift is the part of changed only the stored
+// lines show (above). A house draft prints its bar sections, never the "Also
+// at the bar" lines, so its stored house baseline is read section by section
+// against the current one ('house:<title>' keys), with no drift and nothing
+// unchecked; one with no baseline stored reads as unchanged.
 function barState(stored, content, normalized, current) {
+  if (content.look === 'house') {
+    const before = isObject(stored.bar_lines) ? stored.bar_lines : current.bar_lines;
+    return { changed: barChangedLabels(before, current.bar_lines), drift: [], unchecked: 0 };
+  }
   const listed = Array.isArray(content.also_at_bar);
   const lines = keyBarLines(listed ? content.also_at_bar : []);
   const changed = barChangedLabels(barBaseline(stored, content, normalized), current.bar_lines);
@@ -257,12 +283,14 @@ function dismissalForm(dismissedHash, current, bar) {
 // without a draft or a plan, else { diff, dismissal }: diff is computeDiff's,
 // dismissal the form of the stored dismissal that holds ('review', 'whole' for
 // the old form, or null). The bar-only rebuild reads the form; the GET's
-// shownDiff presents the diff after it.
-function reviewOf(draft, normalized) {
+// shownDiff presents the diff after it. plan is the plan row normalized came
+// from, which a house draft's bar sections are built from (draftFingerprint);
+// every caller passes it, and a custom draft never reads it.
+function reviewOf(draft, normalized, plan = null) {
   if (!isObject(draft) || !normalized) return null;
   const stored = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
-  const current = buildFingerprint(normalized);
   const content = isObject(draft.content) ? draft.content : {};
+  const current = draftFingerprint(content, plan, normalized);
   const bar = barState(stored, content, normalized, current);
   const dismissedHash = typeof draft.dismissed_plan_hash === 'string' ? draft.dismissed_plan_hash : null;
   const storedKeys = asArray(stored.drink_keys).map(String);
@@ -294,22 +322,22 @@ function reviewOf(draft, normalized) {
 // The raw diff (header): every drink and bar change since the stored
 // fingerprint, and dismissed when a dismissal (either form) holds over them.
 // Update draft and the boot stamp read it; the GET shows shownDiff.
-function computeDiff(draft, normalized) {
-  const review = reviewOf(draft, normalized);
+function computeDiff(draft, normalized, plan = null) {
+  const review = reviewOf(draft, normalized, plan);
   return review ? review.diff : null;
 }
 
 // The GET's diff: what is left after the recorded review (spec 2026-10-19
-// section 17), plus plan_hash (planHash, the plan-hash echo). A review-form
+// section 17), plus plan_hash (draftPlanHash, the plan-hash echo). A review-form
 // dismissal hides the drink and bar changes it covers; the notes and the image
 // read against the stored parts, and dismissed is true only when neither is
 // left to show, so the notes banner shows alone. An old-form dismissal reads,
 // as it always did, as covering everything, the notes included. bar_unchecked
 // passes through: no review covers it. Pure; null without a draft or a plan.
-function shownDiff(draft, normalized) {
-  const review = reviewOf(draft, normalized);
+function shownDiff(draft, normalized, plan = null) {
+  const review = reviewOf(draft, normalized, plan);
   if (!review) return null;
-  const shown = { ...review.diff, plan_hash: planHash(normalized) };
+  const shown = { ...review.diff, plan_hash: draftPlanHash(draft.content, plan, normalized) };
   if (review.dismissal !== REVIEWED) return shown;
   const left = shown.brief_edited.length > 0 || shown.image_changed;
   return { ...shown, added: [], dropped: [], bar_changed: false, bar_changed_labels: [], dismissed: !left };
@@ -318,12 +346,13 @@ function shownDiff(draft, normalized) {
 // The hash a Dismiss of the stored draft ({ plan_fingerprint, content })
 // stores against a normalized plan: the review form, reviewHash over the
 // current drink keys, the bar hash and the bar drift, the one reviewOf reads
-// as 'review'. Pure.
-function dismissalHash(draft, normalized) {
+// as 'review'. Pure. plan as for reviewOf: a house draft's bar hash is its
+// printed sections', so a spirit never undoes its dismissal.
+function dismissalHash(draft, normalized, plan = null) {
   const d = isObject(draft) ? draft : {};
   const stored = isObject(d.plan_fingerprint) ? d.plan_fingerprint : {};
   const content = isObject(d.content) ? d.content : {};
-  const current = buildFingerprint(normalized);
+  const current = draftFingerprint(content, plan, normalized);
   return reviewHash({ ...current, bar_drift: barState(stored, content, normalized, current).drift });
 }
 
@@ -362,7 +391,7 @@ function plannerReference(planRow, normalized, maps) {
   };
 }
 
-function planPayload(planRow, normalized, maps) {
+function planPayload(planRow, normalized, maps, event) {
   if (!planRow || !normalized) return null;
   const style = isObject(planRow.selections) ? planRow.selections.menuStyle : null;
   const drinks = normalized.drinks.map((d) => ({ name: d.name, mock: d.group === 'mock' }));
@@ -373,6 +402,7 @@ function planPayload(planRow, normalized, maps) {
     drinks,
     bar_summary: barSummary(normalized.bar),
     side: normalized.side,
+    house_plain: touchSetFor(event).plain,
     planner_reference: plannerReference(planRow, normalized, maps),
   };
 }
@@ -420,6 +450,7 @@ function publicPiece(piece, now, staleMs) {
 // and the route 404s it).
 const DRAFT_SQL = `
   SELECT p.id AS proposal_id, p.menu_print_key, p.menu_not_required, p.menu_not_required_by, NOW() AS db_now,
+         p.event_type, p.event_type_custom, p.event_date::text AS event_date,
          d.id AS draft_id, d.drink_plan_id, d.inputs, d.content, d.plan_fingerprint,
          d.dismissed_plan_hash, d.version, d.art_version, d.approved_version,
          d.approved_art_version, d.approved_print_key, d.approved_planner_image_key,
@@ -481,7 +512,7 @@ async function readDraftPayload(proposalId) {
       has_planner_image: Boolean(normalized.plannerImageKey),
       planner_image_rev: plannerImageRev(normalized.plannerImageKey),
     } : null,
-    diff: shownDiff(draftRow, normalized),
+    diff: shownDiff(draftRow, normalized, planRow),
     print: {
       state: derivePrintState({
         menuPrintKey: printKey,
@@ -504,7 +535,7 @@ async function readDraftPayload(proposalId) {
       words: wordsConfigured(),
       default_image_model: defaultImageModel(),
     },
-    plan: planPayload(planRow, normalized, maps),
+    plan: planPayload(planRow, normalized, maps, row),
   };
 }
 

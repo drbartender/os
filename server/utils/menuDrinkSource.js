@@ -22,7 +22,8 @@
 //   image, and never equal to a fingerprintHash), foldReviewed the stored
 //   fingerprint with the plan's brief and image parts that Dismiss writes
 //   (Mark reviewed writes the one part its banner named), and planHash the
-//   plan-hash echo's one hash.
+//   plan-hash echo's hash on a custom draft (menuHouseSections.draftPlanHash
+//   reads it for either look).
 // All pure except loadEventPlan and loadCatalogMaps, which take the db.
 
 const crypto = require('crypto');
@@ -483,10 +484,11 @@ function reviewHash(fingerprint) {
   ]));
 }
 
-// The plan-hash echo's hash (spec 17): the hash of the plan's current
-// fingerprint. The GET hands it out as diff.plan_hash, and Dismiss, Mark
-// reviewed and Update draft compare the posted one with it, each through this
-// one function, so the page and the routes can never disagree on what it covers.
+// The plan-hash echo's hash (spec 17) for a custom draft: the hash of the
+// plan's current fingerprint. The GET and the write routes read the echo
+// through menuHouseSections.draftPlanHash, which is this on a custom draft and
+// the house card's printed form on a house draft, so the page and the routes
+// can never disagree on what it covers.
 function planHash(normalized) {
   return fingerprintHash(buildFingerprint(normalized));
 }

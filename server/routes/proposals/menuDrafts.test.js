@@ -1456,3 +1456,287 @@ test('legal hold: Generate, the draft PATCH, re-roll, Dismiss and Mark reviewed 
   await idle();
   assert.ok(calls.words.length && imageCalls(), 'the twin still calls its providers');
 });
+
+// ── The house card (spec 2026-10-19 section 9; lane menu-house-card) ────────
+const { layoutPieceKeys } = require('./menuDraftShared');
+
+const setEvent = (id, eventType, eventDate = null) => pool.query(
+  'UPDATE proposals SET event_type = $2, event_date = $3::date WHERE id = $1', [id, eventType, eventDate]);
+// A plan with no instructions at all: no client brief, and Generate posts no art direction.
+const NO_BRIEF = { menuTheme: '', drinkNaming: '', menuDesignNotes: '' };
+const plainFields = { art_direction: '', planner_image_role: 'ignore' };
+
+test('house: a Standard Menu Generate reserves only the background, makes no words call, and lists the drinks by name', async () => {
+  const { id } = await newEvent({ drinks: 3, extra: { menuStyle: 'house', wineFromFullBar: ['Red'], activeModules: { fullBar: true } } });
+  const res = await generate(id);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  await idle();
+  assert.deepEqual([calls.words.length, calls.claude.length], [0, 0], 'no words call');
+  const ledger = await ledgerOf(id);
+  assert.deepEqual(ledger.map((r) => [r.kind, r.piece_key, r.status]), [['image', 'background', 'ok']], 'the background alone, no text row');
+  assert.deepEqual(Object.keys(await piecesOf(id)), ['background']);
+  assert.equal(calls.openai.length, 1);
+  assert.match(calls.openai[0].body.prompt, /balloons in each top corner/, 'the birthday touches');
+  const draft = await draftOf(id);
+  assert.equal(draft.inputs.look, 'house', 'the Standard Menu decides the look over the brief and the art direction');
+  const c = draft.content;
+  assert.deepEqual([c.words_status, c.look, c.touch_key, c.house_bottom_corners, c.title], ['done', 'house', 'balloons', false, 'The Bar Menu']);
+  assert.deepEqual(c.drinks.map((d) => [d.key, d.display_name, d.description, d.has_art]), KEYS.slice(0, 3).map((k, i) => [k, NAMES[i], null, false]));
+  // A full bar with no signature picks (these cocktails are typed, not picked) adds Call Drinks, as the Standard Menu card does.
+  assert.deepEqual(c.house_sections, [
+    { kind: 'beer-wine', title: 'Beer & Wine', items: ['Red'] }, { kind: 'bar-service', title: 'Bar Service', items: ['Call Drinks'] },
+  ]);
+  assert.ok(c.words_finished_at);
+  assert.deepEqual(layoutPieceKeys(c), ['background']);
+});
+
+test('house: a plain Generate (a celebration of life) reserves nothing and calls nothing, even with no AI key on the server', async () => {
+  const { id } = await newEvent({ drinks: 2, extra: { menuStyle: 'house' } });
+  await setEvent(id, 'celebration-of-life', '2027-03-04');
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const res = await generate(id);
+  assert.equal(res.status, 202, JSON.stringify(res.body));
+  await idle();
+  assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0);
+  assert.deepEqual(await ledgerOf(id), [], 'nothing reserved');
+  assert.deepEqual(await piecesOf(id), {}, 'no piece');
+  const c = (await draftOf(id)).content;
+  assert.deepEqual([c.words_status, c.look, c.touch_key], ['done', 'house', 'plain']);
+  assert.deepEqual(layoutPieceKeys(c), []);
+});
+
+test('house: with no instructions the look is decided house; a posted look wins and Start over keeps the stored one', async () => {
+  const { id } = await newEvent({ drinks: 2, extra: NO_BRIEF });
+  const first = await generate(id, plainFields);
+  assert.equal(first.status, 202, JSON.stringify(first.body));
+  await idle();
+  assert.deepEqual([(await draftOf(id)).inputs.look, calls.words.length], ['house', 0]);
+  resetCalls();
+  const custom = await generate(id, { ...plainFields, look: 'custom' });
+  assert.equal(custom.status, 202, JSON.stringify(custom.body));
+  await idle();
+  assert.deepEqual([(await draftOf(id)).inputs.look, (await draftOf(id)).content.look, calls.words.length], ['custom', 'custom', 1]);
+  resetCalls();
+  const again = await generate(id, plainFields);
+  assert.equal(again.status, 202);
+  await idle();
+  assert.equal((await draftOf(id)).inputs.look, 'custom', 'absent means the stored look');
+  assert.equal(calls.words.length, 1);
+  const bad = await generate(id, { ...plainFields, look: 'fancy' });
+  assert.equal(bad.status, 400);
+  assert.ok(bad.body.fieldErrors.look);
+});
+
+test('house: a December holiday party centres the footer; Start over re-reads the event, November is the plain card', async () => {
+  const { id } = await newEvent({ drinks: 2, extra: { menuStyle: 'house' } });
+  await setEvent(id, 'holiday-party', '2026-12-18');
+  assert.equal((await generate(id)).status, 202);
+  await idle();
+  let c = (await draftOf(id)).content;
+  assert.deepEqual([c.touch_key, c.house_bottom_corners], ['holiday', true]);
+  assert.match(calls.openai[0].body.prompt, /gift boxes stacked in each bottom corner/);
+  assert.ok(!calls.openai[0].body.prompt.includes('2026'), 'the event date never reaches the prompt');
+  await setEvent(id, 'holiday-party', '2026-11-28');
+  resetCalls();
+  assert.equal((await generate(id)).status, 202);
+  await idle();
+  c = (await draftOf(id)).content;
+  assert.deepEqual([c.touch_key, c.house_bottom_corners], ['plain', false]);
+  assert.equal(imageCalls(), 0);
+  assert.deepEqual(await piecesOf(id), {}, 'the old background piece goes with Start over');
+});
+
+test('house: Update draft adds a drink by its own name with no words call and no art, and rewrites the house sections', async () => {
+  const { id, planId } = await ready({ drinks: 2, extra: { menuStyle: 'house', wineFromFullBar: ['Red'] } });
+  assert.equal((await draftOf(id)).content.look, 'house');
+  const ledgerBefore = (await ledgerOf(id)).length;
+  await setPlan(planId, selections(3, { menuStyle: 'house', wineFromFullBar: ['Red', 'Sparkling'] }));
+  const sync = await syncNow(id, { version: 1, image_model: 'openai' });
+  assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
+  await idle();
+  assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0, 'no words call and no art');
+  assert.equal((await ledgerOf(id)).length, ledgerBefore, 'nothing reserved');
+  const c = (await draftOf(id)).content;
+  const added = c.drinks.find((d) => d.key === KEYS[2]);
+  assert.deepEqual([added.display_name, added.description, added.has_art, added.added_by_sync], [NAMES[2], null, false, true]);
+  assert.deepEqual(c.house_sections, [{ kind: 'beer-wine', title: 'Beer & Wine', items: ['Red', 'Sparkling'] }]);
+  assert.deepEqual(Object.keys(await piecesOf(id)), ['background'], 'no drink piece');
+  // With no key at all, a house Update draft still works: it calls nothing.
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  await setPlan(planId, selections(2, { menuStyle: 'house', wineFromFullBar: ['Red', 'Sparkling'] }));
+  const drop = await syncNow(id, { version: 2, image_model: 'openai' });
+  assert.deepEqual([drop.status, drop.body.version], [202, 3], JSON.stringify(drop.body));
+  assert.ok(!(await draftOf(id)).content.drinks.some((d) => d.key === KEYS[2]));
+});
+
+test('house: a per-drink re-roll answers 409 MENU_HOUSE_NO_DRINK_ART and reserves nothing; the background re-roll draws the house card', async () => {
+  const { id } = await ready({ drinks: 2, extra: { menuStyle: 'house' } });
+  const ledgerBefore = (await ledgerOf(id)).length;
+  const drinkRoll = await request('POST', pieceUrl(id, KEYS[0], 'reroll'), { json: { image_model: 'openai' } });
+  assert.deepEqual([drinkRoll.status, drinkRoll.body.code, drinkRoll.body.error], [409, 'MENU_HOUSE_NO_DRINK_ART', 'The house card lists drink names only.']);
+  assert.equal((await ledgerOf(id)).length, ledgerBefore);
+  const bg = await request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'openai', note: 'more confetti' } });
+  assert.equal(bg.status, 202, JSON.stringify(bg.body));
+  await idle();
+  assert.equal(calls.openai.length, 1);
+  assert.match(calls.openai[0].body.prompt, /balloons in each top corner/);
+  assert.match(calls.openai[0].body.prompt, /Change from the last version: more confetti/);
+});
+
+test('house: a plain card spends no image on a background re-roll either', async () => {
+  const { id } = await newEvent({ drinks: 2, extra: { menuStyle: 'house' } });
+  await setEvent(id, 'celebration-of-life');
+  assert.equal((await generate(id)).status, 202);
+  await idle();
+  const roll = await request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'openai' } });
+  assert.deepEqual([roll.status, roll.body.code], [409, 'MENU_HOUSE_PLAIN'], JSON.stringify(roll.body));
+  assert.deepEqual(await ledgerOf(id), []);
+  assert.equal(imageCalls(), 0);
+});
+
+test('house: the PATCH takes a rename and Hide, refuses art and a description, and refuses the job-only keys', async () => {
+  const { id } = await ready({ drinks: 2, extra: { menuStyle: 'house' } });
+  const drinks = (await draftOf(id)).content.drinks;
+  const rename = await request('PATCH', base(id), { json: { version: 1, content: { drinks: drinks.map((d, i) => (i === 0 ? { ...d, display_name: 'The Groom' } : { ...d, hidden: true })) } } });
+  assert.deepEqual([rename.status, rename.body.version], [200, 2], JSON.stringify(rename.body));
+  for (const bad of [drinks.map((d, i) => (i === 0 ? { ...d, has_art: true } : d)), drinks.map((d, i) => (i === 1 ? { ...d, description: 'Lime.' } : d))]) {
+    const res = await request('PATCH', base(id), { json: { version: 2, content: { drinks: bad } } });
+    assert.deepEqual([res.status, res.body.fieldErrors.drinks], [400, 'The house card lists drink names only.']);
+  }
+  for (const k of ['look', 'touch_key', 'house_bottom_corners', 'house_sections']) {
+    const res = await request('PATCH', base(id), { json: { version: 2, content: { [k]: k === 'house_bottom_corners' ? true : 'x' } } });
+    assert.equal(res.status, 400, k);
+    assert.ok(res.body.fieldErrors[k], k);
+  }
+  const look = await request('PATCH', base(id), { json: { version: 2, inputs: { look: 'custom' } } });
+  assert.deepEqual([look.status, look.body.version], [200, 3], JSON.stringify(look.body));
+  const d = await draftOf(id);
+  assert.deepEqual([d.inputs.look, d.content.look], ['custom', 'house'], 'the look applies at the next Generate; the canvas reads content');
+});
+
+test('layoutPieceKeys: a custom draft uses the background and each visible drink with art; a house draft the background unless plain', () => {
+  const drinks = [{ key: 'a', has_art: true }, { key: 'b', has_art: true, hidden: true }, { key: 'c', has_art: false }];
+  assert.deepEqual(layoutPieceKeys({ drinks }), ['background', 'a']);
+  assert.deepEqual(layoutPieceKeys({ look: 'custom', drinks }), ['background', 'a']);
+  assert.deepEqual(layoutPieceKeys({ look: 'house', touch_key: 'balloons', drinks }), ['background']);
+  assert.deepEqual(layoutPieceKeys({ look: 'house', touch_key: 'plain', drinks }), []);
+  assert.deepEqual(layoutPieceKeys({ look: 'house', drinks }), [], 'a house draft with no touch key draws no background');
+  assert.deepEqual(layoutPieceKeys(null), ['background']);
+});
+
+// Spec 2026-10-19 sections 9.2 and 17: a house draft's plan-changed check
+// reads what the house card prints, its bar sections, never the "Also at the
+// bar" lines it does not print, so a spirit never raises Plan changed; a
+// printed pick does, and Update draft rebuilds the sections and re-stamps the
+// baseline so the notice clears. Dismiss and Mark reviewed still clear what
+// they name.
+test('house: a spirit never raises Plan changed; a printed pick does, Dismiss holds through a spirit, and Update draft clears it', async () => {
+  const bar = (over = {}) => ({ menuStyle: 'house', beerFromFullBar: ['IPA'], wineFromFullBar: ['Red'], spirits: ['Vodka'], activeModules: { fullBar: true }, ...over });
+  const { id, planId } = await ready({ drinks: 2, extra: bar() });
+  // The fill stamped the house card's bar, one entry per printed section.
+  assert.deepEqual(Object.keys((await draftOf(id)).plan_fingerprint.bar_lines).sort(), ['house:Bar Service', 'house:Beer & Wine']);
+  const flags = (d) => [d.bar_changed, d.added.length, d.dropped.length, d.bar_unchecked, d.dismissed];
+  assert.deepEqual(flags(await diffNow(id)), [false, 0, 0, 0, false]);
+  for (const spirits of [['Vodka', 'Gin'], []]) {
+    await setPlan(planId, selections(2, bar({ spirits })));
+    assert.deepEqual(flags(await diffNow(id)), [false, 0, 0, 0, false], `spirits ${JSON.stringify(spirits)}`);
+  }
+  // A printed pick: Sparkling joins the Beer & Wine line.
+  await setPlan(planId, selections(2, bar({ spirits: [], wineFromFullBar: ['Red', 'Sparkling'] })));
+  assert.equal((await diffNow(id)).bar_changed, true);
+  const dismiss = await dismissAt(id, 1);
+  assert.equal(dismiss.status, 200, JSON.stringify(dismiss.body));
+  assert.equal((await diffNow(id)).dismissed, true);
+  await setPlan(planId, selections(2, bar({ spirits: ['Rum'], wineFromFullBar: ['Red', 'Sparkling'] })));
+  assert.deepEqual(flags(await diffNow(id)), [false, 0, 0, 0, true], 'a spirit the card does not print keeps the dismissal');
+  // Mark reviewed clears the notes it names on a house draft.
+  await setPlan(planId, selections(2, bar({ spirits: ['Rum'], wineFromFullBar: ['Red', 'Sparkling'], menuDesignNotes: 'Gold foil edges' })));
+  assert.deepEqual((await diffNow(id)).brief_edited, ['notes']);
+  const marked = await dismissAt(id, 1, { covers: 'notes' });
+  assert.equal(marked.status, 200, JSON.stringify(marked.body));
+  assert.deepEqual([(await diffNow(id)).brief_edited, (await diffNow(id)).dismissed], [[], true]);
+  // Update draft rebuilds the sections and re-stamps the baseline: nothing left to show.
+  const sync = await syncNow(id, { version: 1, image_model: 'openai' });
+  assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
+  await idle();
+  const after = await draftOf(id);
+  assert.deepEqual(after.content.house_sections, [
+    { kind: 'beer-wine', title: 'Beer & Wine', items: ['Beer', 'Red', 'Sparkling'] }, { kind: 'bar-service', title: 'Bar Service', items: ['Call Drinks'] },
+  ]);
+  assert.deepEqual(flags(await diffNow(id)), [false, 0, 0, 0, false]);
+  assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0, 'a house Update draft calls nothing');
+  // The bar-only rebuild has nothing to rebuild on a house card, and writes nothing.
+  const barOnly = await syncNow(id, { version: 2, scope: 'bar' });
+  assert.deepEqual([barOnly.status, barOnly.body.version], [202, 2], JSON.stringify(barOnly.body));
+  assert.deepEqual((await draftOf(id)).plan_fingerprint, after.plan_fingerprint);
+  // A printed change after it raises Plan changed again: the beer goes.
+  await setPlan(planId, selections(2, bar({ spirits: ['Rum'], beerFromFullBar: [], wineFromFullBar: ['Red', 'Sparkling'], menuDesignNotes: 'Gold foil edges' })));
+  assert.equal((await diffNow(id)).bar_changed, true);
+});
+
+test('house, consult side: a consult spirit never raises Plan changed; the beer does', async () => {
+  const consult = (over = {}) => ({ customCocktails: [{ name: NAMES[0] }, { name: NAMES[1] }], beer: true, wine: ['red'], spirits: ['vodka'], ...over });
+  const setConsult = (planId, c) => pool.query(
+    "UPDATE drink_plans SET shopping_list_source = 'consult', consult_selections = $2 WHERE id = $1", [planId, c]);
+  const { id, planId } = await newEvent({ drinks: 0, extra: { menuStyle: 'house' } });
+  await setConsult(planId, consult());
+  assert.equal((await generate(id)).status, 202);
+  await idle();
+  const draft = await draftOf(id);
+  assert.equal(draft.content.look, 'house');
+  assert.deepEqual(Object.keys(draft.plan_fingerprint.bar_lines), ['house:Beer and Wine']);
+  await setConsult(planId, consult({ spirits: ['vodka', 'gin'] }));
+  const d = await diffNow(id);
+  assert.deepEqual([d.bar_changed, d.added.length, d.dropped.length], [false, 0, 0]);
+  await setConsult(planId, consult({ spirits: ['vodka', 'gin'], beer: false }));
+  assert.equal((await diffNow(id)).bar_changed, true);
+});
+
+// The plan-hash echo on a house draft is computed over the house card's form,
+// as the read shows it: a spirit moved after the page read the plan never
+// refuses Dismiss, Mark reviewed or Update draft; a printed pick still answers
+// 409 MENU_PLAN_MOVED. A custom draft's hash is planHash, unchanged.
+test('house: a spirit moved after the read never refuses a write; a printed pick still does; a custom draft is as today', async () => {
+  const { planHash } = require('../../utils/menuDrinkSource');
+  const bar = (over = {}) => ({ menuStyle: 'house', beerFromFullBar: ['IPA'], wineFromFullBar: ['Red'], spirits: ['Vodka'], activeModules: { fullBar: true }, ...over });
+  const { id, planId } = await ready({ drinks: 2, extra: bar() });
+  const post = (route, json) => request('POST', `${base(id)}/${route}`, { json });
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling'] })));
+  let held = await planHashOf(id);
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling'], spirits: ['Vodka', 'Gin'] })));
+  const dismiss = await post('dismiss-plan-change', { version: 1, plan_hash: held });
+  assert.equal(dismiss.status, 200, JSON.stringify(dismiss.body));
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling'], spirits: ['Rum'], menuDesignNotes: 'Gold foil edges' })));
+  held = await planHashOf(id);
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling'], spirits: ['Gin'], menuDesignNotes: 'Gold foil edges' })));
+  const marked = await post('dismiss-plan-change', { version: 1, plan_hash: held, covers: 'notes' });
+  assert.equal(marked.status, 200, JSON.stringify(marked.body));
+  // A printed pick between the read and the write still refuses, and nothing is written.
+  held = await planHashOf(id);
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling', 'White'], spirits: ['Gin'], menuDesignNotes: 'Gold foil edges' })));
+  const moved = await post('sync', { version: 1, image_model: 'openai', plan_hash: held });
+  assert.deepEqual([moved.status, moved.body.code], [409, 'MENU_PLAN_MOVED'], JSON.stringify(moved.body));
+  assert.equal((await draftOf(id)).version, 1);
+  // Update draft (both scopes) with a spirit moved after the read applies.
+  held = await planHashOf(id);
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling', 'White'], spirits: [], menuDesignNotes: 'Gold foil edges' })));
+  const sync = await post('sync', { version: 1, image_model: 'openai', plan_hash: held });
+  assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
+  await idle();
+  held = await planHashOf(id);
+  await setPlan(planId, selections(2, bar({ wineFromFullBar: ['Red', 'Sparkling', 'White'], spirits: ['Mezcal'], menuDesignNotes: 'Gold foil edges' })));
+  const barOnly = await post('sync', { version: 2, scope: 'bar', plan_hash: held });
+  assert.deepEqual([barOnly.status, barOnly.body.version], [202, 2], JSON.stringify(barOnly.body));
+
+  // A custom draft: the hash is planHash of the plan, and a spirit moved after the read refuses, as today.
+  const custom = await ready({ drinks: 2, extra: { spirits: ['Vodka'] } });
+  assert.equal((await draftOf(custom.id)).content.look, 'custom');
+  const customHash = await planHashOf(custom.id);
+  assert.equal(customHash, planHash(normalizePlan(await loadEventPlan(custom.id), await loadCatalogMaps())));
+  await setPlan(custom.planId, selections(2, { spirits: ['Vodka', 'Gin'] }));
+  const refused = await request('POST', `${base(custom.id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: customHash } });
+  assert.deepEqual([refused.status, refused.body.code], [409, 'MENU_PLAN_MOVED']);
+});

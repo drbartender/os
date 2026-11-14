@@ -12,7 +12,8 @@
 // }
 // An action with `editor` ({ tab?, select? }) opens the editor; any other acts in place.
 // local: { loading, loadError, saving, saveFailed, savedAt, conflict, approving,
-//   approveError, tooLong: [data-mc-k keys], imageModel, activityKeys, now }.
+//   approveError, tooLong: [data-mc-k keys], imageModel, activityKeys, now,
+//   heldInputs (the hook's pre-draft brief; the card and the editor pass it), referenceFile }.
 // Table D: no removal date, no upload name or date and no client image filename
 // is ever shown; the system does not store them. Who marked no menu needed is
 // stored now (print.not_required_by, spec 2026-10-19 section 15), and only a
@@ -30,6 +31,28 @@
 // other change; the Plan changed one stays the full Update draft, and while a
 // piece paints it waits on a draft holding such a line, since the notice that
 // names the rebuild is hidden then (lane menu-bar-rebuild-only).
+// layoutPieceKeys(content) is the client's copy of the server's one rule
+// (server/routes/proposals/menuDraftShared.js; spec 2026-10-19 section 9.2): the
+// pieces a printed draft uses, a custom draft's background and every visible
+// drink with art, a house draft's background alone and none on a plain card
+// (touch_key 'plain' or missing). A failed piece holds the card and Approve
+// only when the layout uses it, and the house card owes its background by it.
+// The look the page will post (spec 2026-10-19 section 9.1) is lookOf: the
+// draft's stored inputs.look, else the held brief's chosen look, else what
+// Generate decides (the house card for a Standard Menu client or one with no
+// instructions; a display-only mirror of the server's decideLook, which the
+// Brief tab shows too). Generate asks only for the keys that look uses (spec
+// 9.2): with the GET's plan.house_plain, a plain house card needs no key and
+// counts no image, one with touches needs the image model's key and counts
+// one, and neither needs the words key, so Not set up does not show for a
+// house look; a custom look is today's gate. The Not started card and the
+// empty editor card describe the run that look will start, and a house draft
+// (content.look house) is described as one: no words to write, no two-minute
+// wait, an Update draft that paints nothing, and a Too long naming the card. A
+// payload without house_plain
+// (a server before the change) reads today's gate whatever the look. Before a
+// draft the held brief and reference file are the page hook's, which the card
+// and the editor both pass, so both read the look their Generate will post.
 // The set-up states read the read model's configured block by provider (spec
 // 2026-10-19 section 16, lane menu-words-claude): Not set up and the empty
 // card's not-set-up read configured.words (wordsReady), Drawing is off and
@@ -49,6 +72,8 @@ const NOTES_LINE = 'Client edited their menu notes.';
 // A planner mark's sub line (spec 2026-10-19 section 15).
 const SKIP_MENU = 'The client chose Skip the Menu.';
 const BAR_SUB = 'refreshes the changed "Also at the bar" lines.';
+// A house card prints bar sections, never "Also at the bar" lines.
+const HOUSE_BAR_SUB = "refreshes the card's bar sections.";
 // A bar line renamed before bar picks were tracked has no key, so nothing can
 // say which category it stands for: the diff counts the stored lines left
 // unkeyed as bar_unchecked, never bar_changed (spec 2026-10-19 section 17,
@@ -72,6 +97,35 @@ const UNCHECKED_STATES = new Set(['plan-changed', 'notes-edited', 'removed', 'ed
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v.filter((x) => x !== null && x !== undefined) : []);
+const HOUSE_PLAIN = 'plain';
+const LOOKS = new Set(['house', 'custom']);
+const blank = (v) => !(typeof v === 'string' && v.trim());
+
+// The look the page will post (header): the chosen or stored one, else what Generate decides.
+export function lookOf({ inputs, brief, plan, referenceFile } = {}) {
+  const inp = isObj(inputs) ? inputs : {};
+  if (LOOKS.has(inp.look)) return inp.look;
+  if (isObj(plan) && plan.menu_style === 'house') return 'house';
+  const b = isObj(brief) ? brief : {};
+  const admin = isObj(inp.admin_brief) ? inp.admin_brief : {};
+  const reference = !!referenceFile || (typeof inp.reference_source === 'string' && inp.reference_source !== 'none')
+    || inp.planner_image_role === 'reference';
+  const texts = [b.theme, b.naming, b.notes, admin.theme, admin.naming, admin.notes, inp.art_direction];
+  return texts.every(blank) && !reference ? 'house' : 'custom';
+}
+
+// The pieces the printed layout uses (header); the server's rule, case for case.
+export function layoutPieceKeys(content) {
+  const c = isObj(content) ? content : {};
+  if (c.look === 'house') {
+    return typeof c.touch_key === 'string' && c.touch_key !== '' && c.touch_key !== HOUSE_PLAIN ? ['background'] : [];
+  }
+  const keys = new Set(['background']);
+  for (const d of list(c.drinks)) {
+    if (isObj(d) && d.hidden !== true && d.has_art === true && typeof d.key === 'string') keys.add(d.key);
+  }
+  return [...keys];
+}
 
 const IMAGE_MODELS = Object.keys(MODEL_NAME);
 // The image model the server computed for the card and a new editor
@@ -141,7 +195,18 @@ export function uncheckedNotice({ draft, pieces, diff, readOnly = false } = {}) 
   return { count, title, text, line: `${title} ${text}` };
 }
 
-function readFacts(p) {
+// What this look's Generate uses (header): null for a custom look, or for a
+// payload that does not say whether the house card is plain.
+function houseGen(p, draft, L) {
+  const plan = isObj(p.plan) ? p.plan : null;
+  if (!plan || typeof plan.house_plain !== 'boolean') return null;
+  const look = lookOf({
+    inputs: draft ? draft.inputs : L.heldInputs, brief: p.brief, plan, referenceFile: L.referenceFile,
+  });
+  return look === 'house' ? { plain: plan.house_plain } : null;
+}
+
+function readFacts(p, L = {}) {
   const draft = isObj(p.draft) ? p.draft : null;
   const content = draft && isObj(draft.content) ? draft.content : {};
   const pieces = list(p.pieces).filter(isObj);
@@ -149,8 +214,8 @@ function readFacts(p) {
   const wordsOpen = !!draft && OPEN.has(content.words_status);
   const wordsFailed = !!draft && !wordsOpen && content.words_status !== 'done';
   // A failed piece matters only when the layout uses it (Review Focus 3).
-  const used = (pc) => pc.piece_key === 'background'
-    || (drinks.has(pc.piece_key) && !drinks.get(pc.piece_key).hidden && drinks.get(pc.piece_key).has_art === true);
+  const usedKeys = new Set(layoutPieceKeys(content));
+  const used = (pc) => usedKeys.has(pc.piece_key);
   const diff = isObj(p.diff) && !p.diff.dismissed && draft && !draft.read_only ? p.diff : null;
   const open = pieces.filter((pc) => OPEN.has(pc.status));
   const print = isObj(p.print) ? p.print : {};
@@ -173,8 +238,14 @@ function readFacts(p) {
     cap: isObj(p.cap) ? p.cap : null,
     configured: isObj(p.configured) ? p.configured : {},
     date: shortDate(print.approved_at),
+    house: houseGen(p, draft, L),
+    // The draft the canvas draws as the house card (its content's look).
+    houseDraft: !!draft && content.look === 'house',
   };
 }
+
+// The words key is set, or this look's Generate needs none.
+const setUp = (f) => !!f.house || wordsReady(f.configured);
 
 const pieceName = (f, key) => (key === 'background' ? 'The background' : (f.drinks.get(key) || {}).display_name || key);
 
@@ -218,25 +289,27 @@ const ed = (id, label, style = 'primary', editor = {}) => ({ id, label, style, e
 // picks changed too, then a notes edit or a new client image riding along
 // (spec 2026-10-19 section 17), so a Dismiss never hides an edit the card did
 // not show. The sub says what Update draft does: the drinks, and only the
-// "Also at the bar" lines whose picks moved.
+// "Also at the bar" lines whose picks moved, or on a house draft its bar
+// sections.
 const briefLines = (f, image) => [...(f.edited.length ? [NOTES_LINE] : []), ...(f.imageChanged ? [image] : [])];
 
 function changeLines(f) {
   const all = [...f.added.map((d) => [d, 'added']), ...f.dropped.map((d) => [d, 'dropped'])];
   const say = (first) => [first, ...briefLines(f, 'The client image changed.')].join(' ');
-  if (!all.length) return { message: say(BAR_LINE), sub: `Update draft ${BAR_SUB}` };
+  const barSub = f.houseDraft ? HOUSE_BAR_SUB : BAR_SUB;
+  if (!all.length) return { message: say(BAR_LINE), sub: `Update draft ${barSub}` };
   const withBar = (line) => say(f.barChanged ? `${line} ${BAR_LINE}` : line);
   if (all.length !== 1) {
     return { message: withBar(`${all.length} drinks changed on the plan.`),
-      sub: f.barChanged ? `Update draft updates the drinks and ${BAR_SUB}` : 'Update the draft to match.' };
+      sub: f.barChanged ? `Update draft updates the drinks and ${barSub}` : 'Update the draft to match.' };
   }
   const [d, how] = all[0];
   if (how === 'added') {
     return { message: withBar(`${d.name} was added to the plan.`),
-      sub: f.barChanged ? `Update draft adds the drink and ${BAR_SUB}` : 'Update the draft to include it.' };
+      sub: f.barChanged ? `Update draft adds the drink and ${barSub}` : 'Update the draft to include it.' };
   }
   return { message: withBar(`${d.name} was dropped from the plan.`),
-    sub: f.barChanged ? `Update draft removes the drink and ${BAR_SUB}` : 'Update the draft to remove it.' };
+    sub: f.barChanged ? `Update draft removes the drink and ${barSub}` : 'Update the draft to remove it.' };
 }
 
 // Table C, the first state that applies.
@@ -245,8 +318,11 @@ function pickState(f, L) {
   if (L.saveFailed) return S('save-failed', 'danger', 'Not saved', "Last change didn't save.", 'Edits are kept until you retry.', act('retry-save', 'Retry'));
   if (f.drafting) {
     const a = activity(f, L);
-    const message = f.wordsOpen ? 'Writing the words...' : `Painting ${Math.min(a.done + 1, a.n)} of ${a.n}`;
-    return { ...S('generating', 'info', 'Drafting', message, 'About 2 min. Keep working.', null, ed('watch', 'Watch', 'ghost')),
+    // A house run writes no words and draws one background at most: seconds, not minutes.
+    const words = f.houseDraft ? 'Drafting the house card...' : 'Writing the words...';
+    const message = f.wordsOpen ? words : `Painting ${Math.min(a.done + 1, a.n)} of ${a.n}`;
+    const sub = f.houseDraft ? 'Keep working.' : 'About 2 min. Keep working.';
+    return { ...S('generating', 'info', 'Drafting', message, sub, null, ed('watch', 'Watch', 'ghost')),
       progress: Math.round((100 * ((f.wordsOpen ? 0 : 1) + a.done)) / (1 + a.n)) };
   }
   if (f.wordsFailed) {
@@ -293,12 +369,15 @@ function pickState(f, L) {
     const ago = savedAgo(L.savedAt || f.draft.updated_at, L.now);
     return S('draft', 'warn', 'Draft', 'Ready to review.', L.saving ? 'Saving...' : ago ? `Saved ${ago}` : 'Saved', ed('view', 'View'));
   }
-  if (!wordsReady(f.configured)) return S('not-set-up', 'neutral', 'Not set up', "Menu art isn't set up.", "The AI key isn't on the server yet.");
+  if (!setUp(f)) return S('not-set-up', 'neutral', 'Not set up', "Menu art isn't set up.", "The AI key isn't on the server yet.");
   if (!f.plan) return S('no-plan', 'neutral', 'No plan', 'No drink plan yet.', 'Menus are built from the drink plan.');
   if (!(Number(f.plan.drink_count) > 0)) return S('no-drinks', 'neutral', 'No drinks', 'Nothing to put on a menu yet.', 'Drafts are built from the drink plan.');
   const style = f.plan.menu_style;
-  const message = style === 'house' ? 'The client chose the house menu.' : style === 'none' ? 'The client asked for no menu.' : 'Draft a custom 8×10 menu.';
-  const sub = style === 'house' ? 'Draft a custom one anyway, or use the house menu below.' : "From the drink plan and the client's menu notes.";
+  const message = style === 'house' ? 'The client chose the house menu.' : style === 'none' ? 'The client asked for no menu.'
+    : f.house ? 'Draft the house card.' : 'Draft a custom 8×10 menu.';
+  // The look Generate will post (f.house: lookOf reads house) decides the sub.
+  const sub = f.house ? 'Generate drafts our house card. For a custom design, switch the look in the editor.'
+    : style === 'house' ? 'Draft a custom one anyway, or use the house menu below.' : "From the drink plan and the client's menu notes.";
   return S('never', 'neutral', 'Not started', message, sub,
     act('generate', 'Generate', style === 'house' || style === 'none' ? 'ghost' : 'primary'), ed('open-editor', 'Open editor', 'ghost'));
 }
@@ -306,20 +385,29 @@ function pickState(f, L) {
 // States that sit above the print states say so when staff still print the approved file.
 const STAFF_SUB = new Set(['save-failed', 'generating', 'words-failed', 'drawing-failed', 'plan-changed', 'notes-edited']);
 
+// The hint of a gate that is open: what Generate makes, and with which model.
+function openHint(f, need, model) {
+  if (f.house && f.house.plain) return f.draft ? 'Re-drafts the plain house card. No images.' : 'The plain house card. No images.';
+  if (f.house) return f.draft ? `Re-drafts the house card and its background, drawn by ${model}.` : `About a minute, 1 image, drawn by ${model}.`;
+  return f.draft ? `Re-drafts words and art from scratch, drawn by ${model}.` : `About 2 minutes, about ${need} images, drawn by ${model}.`;
+}
+
 function generateGate(f, L) {
   const drinks = f.plan ? Number(f.plan.drink_count) || 0 : 0;
-  const need = 1 + Math.min(ART_MAX, drinks);
+  // A house card draws its background alone, and nothing when plain (spec 9.2).
+  const need = f.house ? (f.house.plain ? 0 : 1) : 1 + Math.min(ART_MAX, drinks);
   const imageModel = IMAGE_MODELS.includes(L.imageModel) ? L.imageModel : defaultImageModel(f.configured);
   const model = MODEL_NAME[imageModel];
   const remaining = f.cap && Number.isFinite(f.cap.remaining) ? f.cap.remaining : null;
-  const ready = wordsReady(f.configured) && imageReady(f.configured, imageModel);
+  const ready = f.house ? (f.house.plain || imageReady(f.configured, imageModel))
+    : wordsReady(f.configured) && imageReady(f.configured, imageModel);
   const blocked = !ready || drinks === 0 || !!(f.draft && f.draft.read_only);
   let disabled = blocked || f.drafting || !!L.approving;
   let hint;
   if (blocked) hint = 'Generate needs an AI key and drinks on the plan.';
-  else if (remaining !== null && remaining <= 0) { hint = `Re-rolls resume ${resumeTime(f.cap.resets_at, L.now)}.`; disabled = true; }
+  else if (need > 0 && remaining !== null && remaining <= 0) { hint = `Re-rolls resume ${resumeTime(f.cap.resets_at, L.now)}.`; disabled = true; }
   else if (remaining !== null && need > remaining) { hint = `Needs ${need} images; ${remaining} left in the last 24 hours.`; disabled = true; }
-  else hint = f.draft ? `Re-drafts words and art from scratch, drawn by ${model}.` : `About 2 minutes, about ${need} images, drawn by ${model}.`;
+  else hint = openHint(f, need, model);
   return { disabled, hint, need };
 }
 
@@ -327,9 +415,14 @@ function approveGate(f, L, tooLong) {
   const st = f.print.state;
   const label = L.approving ? 'Approving...' : st === 'approved' ? 'Approved'
     : st === 'edited_since_approval' || st === 'removed' ? 'Approve again' : st === 'replaced' ? 'Use as print file' : 'Approve';
-  const why = tooLong ? 'Shorten the long description first' : f.failed.length ? 'Fix the failed drawing first' : '';
+  const long = f.houseDraft ? 'Make the card fit first' : 'Shorten the long description first';
+  const why = tooLong ? long : f.failed.length ? 'Fix the failed drawing first' : '';
   return { label, why, disabled: !f.hasDraft || f.drafting || !!L.approving || st === 'approved' || !!why };
 }
+
+// The house card lists names only beside fixed bar sections, so its Too long
+// names the card and the remedies (spec 2026-10-19 section 23), never one text.
+const HOUSE_LONG = 'The house card runs past the page. Hide a drink or shorten a name, or switch the look to Custom design on the Brief tab.';
 
 // "<element> runs past the page": a data-mc-k key named the way the editor reads it.
 function elementName(f, key) {
@@ -379,8 +472,10 @@ function bannerList(f, L, tooLong) {
     // notice saying so is hidden, so on such a draft the button waits, and the
     // text says when it returns instead of describing it.
     const waits = f.uncheckedHeld && f.open.length > 0;
+    // A house Update draft paints nothing: an added drink joins by its name.
+    const houseTail = f.added.length ? [`Updating adds ${f.added.length === 1 ? 'it' : 'them'} to the card. No images.`] : [];
     const tail = waits ? ['Update draft returns when the drawing finishes.']
-      : drinks.length ? ['Updating paints only the new drinks.'] : [];
+      : f.houseDraft ? houseTail : drinks.length ? ['Updating paints only the new drinks.'] : [];
     const lines = [...drinks, ...(f.barChanged ? [BAR_LINE] : []), ...briefLines(f, 'The client image changed since this draft.'),
       ...(f.notice ? [f.notice.line] : []), ...tail];
     B('plan-changed', 'info', 'Plan changed since this draft.', lines.join(' '),
@@ -397,7 +492,7 @@ function bannerList(f, L, tooLong) {
   if (L.saveFailed) B('save-failed', 'danger', "Last change didn't save.", 'Your edits are kept in this tab.', [btn('retry-save', 'Retry')]);
   if (typeof L.conflict === 'string') B('save-refused', 'danger', "Last change didn't save.", L.conflict);
   else if (L.conflict) B('save-conflict', 'warn', 'This draft changed elsewhere.', 'It was reloaded.');
-  if (tooLong) B('too-long', 'danger', 'Text too long to fit.', `${elementName(f, L.tooLong[0])} runs past the page. Shorten it to approve.`);
+  if (tooLong) B('too-long', 'danger', 'Text too long to fit.', f.houseDraft ? HOUSE_LONG : `${elementName(f, L.tooLong[0])} runs past the page. Shorten it to approve.`);
   if (L.approveError) B('approve-rejected', 'danger', "Couldn't approve.", L.approveError);
   if (f.hasDraft) {
     const st = f.print.state;
@@ -420,12 +515,15 @@ function emptyCard(f) {
       btn('retry-words', 'Generate again', 'primary'));
   }
   if (f.print.state === 'not_required') return E('no-menu', 'No menu for this event', 'Undo to draft one.', btn('undo', 'Undo'));
-  if (!wordsReady(f.configured)) return E('not-set-up', "Menu art isn't set up", "The AI key isn't on the server yet.");
+  if (!setUp(f)) return E('not-set-up', "Menu art isn't set up", "The AI key isn't on the server yet.");
   if (!f.plan) return E('no-plan', 'No drink plan on this event', 'Menus are built from the drink plan.');
   if (!(Number(f.plan.drink_count) > 0)) {
     return E('no-drinks', 'No drinks on the plan', 'Menus are built from the drink plan. Add drinks there, then come back.', btn('open-plan', 'Open drink plan'));
   }
-  return E('never', 'No draft yet', 'Generate drafts the words in seconds, then paints the background and each drink. About 2 minutes.', btn('generate', 'Generate', 'primary'));
+  const text = !f.house ? 'Generate drafts the words in seconds, then paints the background and each drink. About 2 minutes.'
+    : f.house.plain ? 'Generate drafts the house card from the drink plan in seconds. No images.'
+      : 'Generate drafts the house card from the drink plan, then draws its background. About a minute.';
+  return E('never', 'No draft yet', text, btn('generate', 'Generate', 'primary'));
 }
 
 export default function menuCardState({ payload, local } = {}) {
@@ -436,7 +534,7 @@ export default function menuCardState({ payload, local } = {}) {
     return { ...S('load-error', 'danger', 'Error', "Couldn't load the menu draft.", L.loadError, act('reload', 'Retry')), ...closed,
       banners: [{ id: 'load-error', tone: 'danger', title: "Couldn't load the menu.", text: L.loadError, buttons: [btn('reload', 'Retry')] }], empty: null };
   }
-  const f = readFacts(payload);
+  const f = readFacts(payload, L);
   const tooLong = list(L.tooLong).length > 0;
   const state = { progress: null, ...pickState(f, L) };
   if (STAFF_SUB.has(state.id) && f.print.approved_file_in_use) {

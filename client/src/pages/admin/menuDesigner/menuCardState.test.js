@@ -841,3 +841,128 @@ test('Saved on the previous calendar day, under a day ago, says yesterday; past 
   expect(savedAgo(NOW - 2 * 86400000, NOW)).toBe(shortDate(NOW - 2 * 86400000));
 });
 
+
+// v2 spec 9.2: layoutPieceKeys is one rule on both sides (server
+// menuDraftShared.js): a custom draft uses the background and each visible
+// drink with art; a house draft only the background, and none on a plain card.
+describe('layoutPieceKeys, the client rule', () => {
+  // Imported here so a missing export fails these tests, not the file.
+  const { layoutPieceKeys } = require('./menuCardState');
+  const drinks = [drink('a', 'A'), drink('b', 'B', { hidden: true }), drink('c', 'C', { has_art: false })];
+
+  test('the server rule, case for case', () => {
+    expect(layoutPieceKeys({ drinks })).toEqual(['background', 'a']);
+    expect(layoutPieceKeys({ look: 'custom', drinks })).toEqual(['background', 'a']);
+    expect(layoutPieceKeys({ look: 'house', touch_key: 'balloons', drinks })).toEqual(['background']);
+    expect(layoutPieceKeys({ look: 'house', touch_key: 'plain', drinks })).toEqual([]);
+    expect(layoutPieceKeys({ look: 'house', drinks })).toEqual([]);
+    expect(layoutPieceKeys(null)).toEqual(['background']);
+  });
+
+  const house = (touch) => (p) => {
+    p.draft.content = {
+      words_status: 'done', title: 'The Bar Menu', look: 'house', touch_key: touch, house_bottom_corners: false,
+      drinks: [drink('cocktail:1', 'Paloma', { has_art: false }), drink('cocktail:2', 'Old Fashioned', { has_art: false })],
+    };
+    p.pieces = touch === 'plain' ? [] : [piece('background')];
+  };
+
+  test('a house draft with its background done is a draft at rest, ready to approve', () => {
+    const s = run(P(house('balloons')));
+    expect(s.id).toBe('draft');
+    expect(s.approve.disabled).toBe(false);
+    const plain = run(P(house('plain')));
+    expect(plain.id).toBe('draft');
+    expect(plain.approve.disabled).toBe(false);
+  });
+
+  test("a house draft's failed background holds Approve; a stray drink piece left from a custom draft never counts", () => {
+    const failed = run(P((p) => { house('balloons')(p); p.pieces = [piece('background', 'failed')]; }));
+    expect(failed.id).toBe('drawing-failed');
+    expect(failed.approve.disabled).toBe(true);
+    const stray = run(P((p) => { house('balloons')(p); p.pieces.push(piece('cocktail:1', 'failed')); }));
+    expect(stray.id).toBe('draft');
+    const plainStray = run(P((p) => { house('plain')(p); p.pieces = [piece('background', 'failed')]; }));
+    // A plain card prints no background, so a failed one never holds it.
+    expect(plainStray.id).toBe('draft');
+  });
+});
+
+// v2 spec 9.2 (amended 2026-11-13): Generate asks only for the keys the look
+// the page will post uses: the stored inputs.look, else the editor's held
+// brief, else what Generate decides (lookOf, the Brief tab's mirror), with
+// plan.house_plain from the GET. A plain house card needs no key and counts no
+// image; one with touches needs the image model's key and counts one; a custom
+// look is today's gate. A payload without house_plain (a server before the
+// change) reads today's gate whatever the look.
+describe('the Generate gate by look', () => {
+  const { lookOf } = require('./menuCardState');
+  const noKeys = (p) => { p.configured = { openai: false, gemini: false, words: false }; };
+  const plainHouse = (p) => { noDraft(p); noKeys(p); p.plan.house_plain = true; };
+  const touchedHouse = (p) => { noDraft(p); p.plan.house_plain = false; p.configured = { openai: true, gemini: false, words: false }; };
+
+  test('a plain house card needs no key and counts no image; Not set up does not show', () => {
+    const s = run(P(plainHouse));
+    expect(s.id).toBe('never');
+    expect(s.generate).toEqual({ disabled: false, hint: 'The plain house card. No images.', need: 0 });
+    expect(s.empty.id).toBe('never');
+    // The cap never holds it: it draws nothing.
+    expect(run(P((p) => { plainHouse(p); p.cap.remaining = 0; })).generate.disabled).toBe(false);
+  });
+
+  test('a house card with touches needs the image key alone and counts one image', () => {
+    let s = run(P(touchedHouse));
+    expect(s.id).toBe('never');
+    expect(s.generate).toEqual({ disabled: false, hint: 'About a minute, 1 image, drawn by GPT Image.', need: 1 });
+    s = run(P((p) => { touchedHouse(p); p.configured.openai = false; }));
+    expect(s.generate).toMatchObject({ disabled: true, hint: 'Generate needs an AI key and drinks on the plan.' });
+    s = run(P((p) => { touchedHouse(p); p.cap.remaining = 1; p.plan.drink_count = 8; }));
+    expect(s.generate.disabled).toBe(false);
+    s = run(P((p) => { touchedHouse(p); p.cap.remaining = 0; }));
+    expect(s.generate.disabled).toBe(true);
+  });
+
+  test('with a draft: Start over keeps the stored look, and its hint names the house card', () => {
+    const stored = (look, plain) => (p) => {
+      p.draft.inputs = { ...p.draft.inputs, look };
+      p.plan.house_plain = plain;
+    };
+    expect(run(P(stored('house', false))).generate).toEqual({ disabled: false, hint: 'Re-drafts the house card and its background, drawn by GPT Image.', need: 1 });
+    expect(run(P(stored('house', true))).generate).toEqual({ disabled: false, hint: 'Re-drafts the plain house card. No images.', need: 0 });
+    // A stored custom look is today's gate, whatever the brief.
+    expect(run(P(stored('custom', true))).generate).toEqual({ disabled: false, hint: 'Re-drafts words and art from scratch, drawn by GPT Image.', need: 4 });
+    const custom = run(P((p) => { stored('custom', true)(p); noKeys(p); }));
+    expect(custom.generate.disabled).toBe(true);
+  });
+
+  test('before a draft the held brief decides: a chosen look, else its instructions, else the plan', () => {
+    const blank = { planner_image_role: 'logo', reference_source: 'none', art_direction: '' };
+    expect(run(P(plainHouse), { heldInputs: { ...blank, look: 'custom' } }).id).toBe('not-set-up');
+    expect(run(P(plainHouse), { heldInputs: { ...blank, art_direction: 'moody' } }).generate.disabled).toBe(true);
+    expect(run(P(plainHouse), { heldInputs: blank, referenceFile: { name: 'ref.png' } }).generate.disabled).toBe(true);
+    expect(run(P(plainHouse), { heldInputs: { ...blank, look: 'house', art_direction: 'moody' } }).generate.disabled).toBe(false);
+    // The client's own brief is an instruction, unless they chose the Standard Menu.
+    expect(run(P((p) => { plainHouse(p); p.brief.theme = 'Navy'; })).id).toBe('not-set-up');
+    expect(run(P((p) => { plainHouse(p); p.brief.theme = 'Navy'; p.plan.menu_style = 'house'; })).generate.disabled).toBe(false);
+  });
+
+  test('a payload without house_plain is read as today, whatever the look', () => {
+    const s = run(P((p) => { noDraft(p); noKeys(p); }));
+    expect(s.id).toBe('not-set-up');
+    expect(s.generate.disabled).toBe(true);
+    expect(run(P(noDraft)).generate.need).toBe(4);
+  });
+
+  test('lookOf: the chosen or stored look, else the Standard Menu, else no instructions is the house card', () => {
+    const blank = { planner_image_role: 'logo', reference_source: 'none', art_direction: '' };
+    const none = { theme: '', naming: '', notes: '' };
+    expect(lookOf({ inputs: { look: 'custom' }, brief: none, plan: { menu_style: 'house' } })).toBe('custom');
+    expect(lookOf({ inputs: blank, brief: none, plan: { menu_style: 'custom' } })).toBe('house');
+    expect(lookOf({ inputs: blank, brief: { ...none, naming: 'x' }, plan: null })).toBe('custom');
+    expect(lookOf({ inputs: { ...blank, admin_brief: { theme: 'x' } }, brief: none })).toBe('custom');
+    expect(lookOf({ inputs: { ...blank, reference_source: 'upload' }, brief: none })).toBe('custom');
+    expect(lookOf({ inputs: blank, brief: none, referenceFile: {} })).toBe('custom');
+    expect(lookOf({ inputs: { ...blank, look: 'fancy' }, brief: none })).toBe('house');
+    expect(lookOf({})).toBe('house');
+  });
+});

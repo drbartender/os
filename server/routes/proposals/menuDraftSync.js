@@ -24,6 +24,19 @@
 // inputs.admin_brief) (spec 2026-10-19 section 7.2), the brief the words step
 // reads; the fingerprint never sees the admin brief.
 //
+// A house draft (content.look 'house'; spec 2026-10-19 section 9.2, lane
+// menu-house-card) makes no words call and draws no art: an added drink joins
+// by its own name with no description and no art (menuHouseSections
+// .houseDrink), whether catalog or client-typed, so it needs no key of any
+// kind and reserves nothing; content.house_sections is rebuilt from the plan.
+// The card prints those sections and never the "Also at the bar" lines, so
+// its diff reads the sections (menuDraftRead, through
+// menuHouseSections.draftFingerprint) and the fingerprint it stores is the
+// printed sections' baseline from the same helper, which clears the flag; the
+// unprinted lines are rewritten from the plan as the fill wrote them. Drops
+// and the version are as for any draft. The bar-only rebuild has nothing to
+// rebuild on a house draft and answers 202 with the version it holds.
+//
 // The keys are checked up front, before anything is reserved or spent,
 // whenever the sync adds a drink: the words provider's key for a client-typed
 // one (its words call, on the current words model's provider; spec 2026-10-19
@@ -102,6 +115,7 @@ const {
 } = require('../../utils/menuDrinkSource');
 const { keyedBarLines, keyBarLines, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
+const { houseSections, houseDrink, draftFingerprint } = require('../../utils/menuHouseSections');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
   isObject, capList, parseId, parseVersion, parsePlanHash, requireProposal, noDraft, draftChanged, noPlan, requireWords,
@@ -119,6 +133,7 @@ const SCOPES = new Set(['bar']);
 
 const hasKey = (line) => typeof line.key === 'string' && line.key !== '';
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const isHouse = (content) => isObject(content) && content.look === 'house';
 
 // The body's scope: absent is the full Update draft; 'bar' the bar-only rebuild.
 function parseScope(raw) {
@@ -139,20 +154,23 @@ function inPrintOrder(lines) {
 // lists: { diff, dismissal }. diff is the raw diff (every drink and bar change,
 // never the GET's shown one), read against the legacy bar baseline when the
 // draft has no bar_lines yet (no list stays no list, which reads as today's
-// picks); dismissal is the form of the stored dismissal that holds.
-function reviewStateOf(draft, normalized) {
+// picks); dismissal is the form of the stored dismissal that holds. The look
+// rides along, so a house draft's bar reads its printed sections from the
+// plan row (menuHouseSections.draftFingerprint).
+function reviewStateOf(draft, normalized, plan) {
   const fp = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
   const content = isObject(draft.content) ? draft.content : {};
   return reviewOf({
     ...draft,
     plan_fingerprint: { ...fp, drink_keys: capList(fp.drink_keys) },
     content: {
+      look: content.look,
       drinks: capList(content.drinks),
       also_at_bar: Array.isArray(content.also_at_bar) ? capList(content.also_at_bar) : undefined,
     },
-  }, normalized);
+  }, normalized, plan);
 }
-const diffOf = (draft, normalized) => reviewStateOf(draft, normalized).diff;
+const diffOf = (draft, normalized, plan) => reviewStateOf(draft, normalized, plan).diff;
 
 // The "Also at the bar" lines after Update draft, in the builder's print order.
 // A stored line is found by its server-written key (the builder's label), never
@@ -204,11 +222,12 @@ function rebuildBarOnly(stored, built, before, current) {
 }
 
 // The fingerprint of what Update draft applied: the plan's drink keys and bar
-// baseline. The brief and the planner image it does not apply, so their stored
-// parts stay and their flags (Notes edited, the client image changed) survive.
-function appliedFingerprint(stored, normalized) {
+// baseline, from `current`, the draft's own (draftFingerprint: on a house
+// draft the printed sections'). The brief and the planner image it does not
+// apply, so their stored parts stay and their flags (Notes edited, the client
+// image changed) survive.
+function appliedFingerprint(stored, current) {
   const fp = isObject(stored) ? stored : {};
-  const current = buildFingerprint(normalized);
   return {
     drink_keys: current.drink_keys,
     brief_hash: fp.brief_hash,
@@ -226,8 +245,10 @@ const addedDrinks = (diff, normalized) => {
 
 // The drinks kept and the plan's added drinks in order, each added one with
 // whether it gets art (while fewer than LIMITS.art_drinks visible drinks have
-// it). The headroom check and the main transaction both read it.
+// it; never on a house draft). The headroom check and the main transaction
+// both read it.
 function layout(content, diff, normalized) {
+  const house = isHouse(content);
   const dropped = new Set(diff.dropped.map((d) => d.key));
   const kept = capList(isObject(content) ? content.drinks : null).filter((d) => isObject(d) && !dropped.has(d.key));
   const have = new Set(kept.map((d) => d.key));
@@ -235,7 +256,7 @@ function layout(content, diff, normalized) {
   const added = [];
   for (const drink of addedDrinks(diff, normalized)) {
     if (have.has(drink.key)) continue;
-    const hasArt = art < LIMITS.art_drinks;
+    const hasArt = !house && art < LIMITS.art_drinks;
     if (hasArt) art += 1;
     added.push({ drink, hasArt });
     have.add(drink.key);
@@ -293,8 +314,10 @@ function syncBarOnly(id, version, sentHash) {
     const current = await loadEventPlan(id, client);
     if (!current) throw noPlan();
     const normalized = normalizePlan(current, await loadCatalogMaps(client));
-    requireSamePlan(sentHash, normalized);
-    const { dismissal } = reviewStateOf(locked, normalized);
+    requireSamePlan(sentHash, normalized, locked.content, current);
+    // The house card prints no "Also at the bar" line, so there is none to rebuild.
+    if (isHouse(locked.content)) return { version: locked.version };
+    const { dismissal } = reviewStateOf(locked, normalized, current);
     const stored = isObject(locked.plan_fingerprint) ? locked.plan_fingerprint : {};
     const today = buildFingerprint(normalized);
     const rebuilt = rebuildBarOnly(keyBarLines(capList(locked.content.also_at_bar)).lines, keyedBarLines(normalized.bar),
@@ -305,7 +328,7 @@ function syncBarOnly(id, version, sentHash) {
     // An old-form dismissal covered the notes and the image too, which the
     // review form does not: fold them in, so a notes edit it covered stays reviewed.
     if (dismissal === DISMISSAL.WHOLE) fingerprint = foldReviewed(fingerprint, today);
-    const dismissed = dismissal ? dismissalHash({ plan_fingerprint: fingerprint, content }, normalized) : locked.dismissed_plan_hash;
+    const dismissed = dismissal ? dismissalHash({ plan_fingerprint: fingerprint, content }, normalized, current) : locked.dismissed_plan_hash;
     const { rows } = await client.query(
       `UPDATE menu_drafts SET content = $2::jsonb, plan_fingerprint = $3::jsonb, dismissed_plan_hash = $4, version = version + 1
         WHERE id = $1 RETURNING version`,
@@ -336,13 +359,15 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
   if (!plan) throw noPlan();
   const first = normalizePlan(plan, await loadCatalogMaps());
   // The echo, before the keys and the words call, so a moved plan spends nothing.
-  requireSamePlan(sentHash, first);
-  const firstDiff = diffOf(draft, first);
-  const typed = addedDrinks(firstDiff, first).filter((d) => d.source !== 'catalog');
+  requireSamePlan(sentHash, first, draft.content, plan);
+  const firstDiff = diffOf(draft, first, plan);
+  const house = isHouse(draft.content);
+  // A house draft names a typed drink by its own name: no words call.
+  const typed = house ? [] : addedDrinks(firstDiff, first).filter((d) => d.source !== 'catalog');
   const artCount = layout(draft.content, firstDiff, first).added.filter((a) => a.hasArt).length;
   // Any added drink could draw art (a slot freed during the words call hands it
   // one), so its image model's key is needed before the words call spends.
-  requireProviders(provider, { words: typed.length > 0, art: firstDiff.added.length > 0 });
+  requireProviders(provider, { words: typed.length > 0, art: !house && firstDiff.added.length > 0 });
   const adminBrief = isObject(draft.inputs) ? draft.inputs.admin_brief : null;
   const words = typed.length
     ? await typedWords({ id, draft, proposal, typed, brief: effectiveBrief(first.brief, adminBrief), artCount }) : new Map();
@@ -359,11 +384,13 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
     if (!current) throw noPlan();
     const normalized = normalizePlan(current, await loadCatalogMaps(client));
     // Again under the row lock, before any release, delete, reservation or write.
-    requireSamePlan(sentHash, normalized);
-    const diff = diffOf(locked, normalized);
+    requireSamePlan(sentHash, normalized, locked.content, current);
+    const diff = diffOf(locked, normalized, current);
     const { dropped, kept, added: plannedAdds } = layout(locked.content, diff, normalized);
+    const lockedHouse = isHouse(locked.content);
     const added = plannedAdds.map(({ drink, hasArt }) => {
-      const entry = drink.source === 'catalog' ? catalogEntry(drink) : words.get(drink.key);
+      let entry = drink.source === 'catalog' ? catalogEntry(drink) : words.get(drink.key);
+      if (lockedHouse) entry = houseDrink(drink, { addedBySync: true }); // its own name, no words call
       // A typed drink the plan gained after the words call: nothing to write it with.
       if (!entry) throw draftChanged('The drink plan changed. Try Update draft again.');
       return { ...entry, has_art: hasArt, added_by_sync: true };
@@ -394,10 +421,15 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
     // since) is the diff's bar_unchecked count, the card's notice, and is
     // rebuilt and keyed whatever else this applies.
     content.also_at_bar = keyBarLines(content.also_at_bar).lines;
-    if (diff.bar_changed || diff.bar_unchecked > 0) {
+    if (lockedHouse) {
+      // The house card prints its sections, rebuilt from the plan; its
+      // diff never reads the unprinted lines, which follow the plan as the fill wrote them.
+      content.house_sections = houseSections(current, normalized);
+      content.also_at_bar = keyedBarLines(normalized.bar);
+    } else if (diff.bar_changed || diff.bar_unchecked > 0) {
       content.also_at_bar = refreshBarLines(content.also_at_bar, keyedBarLines(normalized.bar), diff.bar_changed_labels);
     }
-    const applied = appliedFingerprint(locked.plan_fingerprint, normalized);
+    const applied = appliedFingerprint(locked.plan_fingerprint, draftFingerprint(locked.content, current, normalized));
     const { rows } = await client.query(
       `UPDATE menu_drafts SET content = $2::jsonb, plan_fingerprint = $3::jsonb, dismissed_plan_hash = NULL,
               drink_plan_id = $4, version = version + 1

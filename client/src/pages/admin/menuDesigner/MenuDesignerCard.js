@@ -26,7 +26,10 @@ import { CARD_SIZE } from './useMenuDraft';
 // the read model's default image model (configured.default_image_model, Gemini
 // when its key is set, else GPT Image; spec 2026-10-19 section 16), never the
 // editor's toggle. An action passes itself to its handler, so the unchecked
-// notice's Update draft sends its scope (bar, the bar-only rebuild).
+// notice's Update draft sends its scope (bar, the bar-only rebuild). The card
+// hands menuCardState the hook's held brief and reference file, as the editor
+// does, so before a draft its look, hint, image count and gate are those of
+// the run its own Generate posts (spec 2026-10-19 sections 9.1 and 9.2).
 
 const NARROW_PX = 900;
 const THUMB_SCALE = 0.12;
@@ -83,6 +86,10 @@ export default function MenuDesignerCard({
       imageModel,
       activityKeys: menu.activityKeys,
       now: Date.now(),
+      // The look this card's Generate posts before a draft is the held brief's,
+      // as in the editor (menuCardState lookOf), so its words and gate match the run.
+      heldInputs: menu.brief,
+      referenceFile: menu.referenceFile,
     },
   });
   useEffect(() => {

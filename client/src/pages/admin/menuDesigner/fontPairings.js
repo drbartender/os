@@ -1,7 +1,8 @@
-// The printed menu's twelve font pairings (spec 2026-10-01 section 11.2, table P,
-// and section 10.3; menu designer v2 spec 6). The ids are fixed and shared with
-// the server (server/utils/menuFontPairings.js, FONT_PAIRING_IDS): the server
-// knows only the ids, and the faces, sizes and default colors live here.
+// The printed menu's twelve font pairings and the house card's face set (spec
+// 2026-10-01 section 11.2, table P, and section 10.3; menu designer v2 spec 6
+// and 9.3). The ids are fixed and shared with the server
+// (server/utils/menuFontPairings.js, FONT_PAIRING_IDS): the server knows only
+// the ids, and the faces, sizes and default colors live here.
 //
 // The 2026-10-01 snapshot (menu-designer.html, PAIRINGS) keyed table P's six by
 // design name. Its keys map to the fixed ids like this:
@@ -24,6 +25,16 @@
 // useFontsRevision(pairingIds) -> ensures those pairings' link and returns a
 //   number that goes up when the link loads and whenever the document's fonts
 //   finish loading, so the canvas refits once real faces replace fallbacks.
+//
+// The house card's faces (v2 spec 9.3): HOUSE_FACE_SET ('house') names Pirata
+// One (title), IM Fell English SC (labels and names) and IM Fell English
+// (body), the Standard Menu card's three (MenuPreview.js). It is a face set,
+// never a pairing: isPairingId, PAIRING_IDS and the Design tab never offer it,
+// and pairingFor reads it as the default. fontsHref, ensureFontsLink and
+// useFontsRevision take it beside the pairing ids, faceSetFaces(id) lists its
+// faces (a pairing's otherwise), and faceSetFor(content) is the set a draft
+// prints in: the house set for a house draft (content.look 'house', whose
+// font_pairing is null), else its pairing. The export waits on that set.
 
 import { useEffect, useState } from 'react';
 
@@ -144,13 +155,38 @@ export function isPairingId(id) {
   return typeof id === 'string' && PAIRING_IDS.includes(id);
 }
 
+export const HOUSE_FACE_SET = 'house';
+// Sizes are the house canvas's own (HouseCard.js and the mc-house- rules); the
+// faces are what fontsHref and the export read.
+export const HOUSE_FACES = Object.freeze({
+  title: face('Pirata One', "'IM Fell English SC', Georgia, serif", 75, 400),
+  heading: face('IM Fell English SC', 'Georgia, serif', 35, 400),
+  body: face('IM Fell English', 'Georgia, serif', 22, 400),
+});
+
+// A pairing id or the house face set.
+const isFaceSet = (id) => id === HOUSE_FACE_SET || isPairingId(id);
+
 // An unknown or missing id reads as the default pairing.
 export function pairingFor(id) {
   return PAIRINGS[isPairingId(id) ? id : DEFAULT_PAIRING_ID];
 }
 
 export function pairingFaces(id) {
-  const p = pairingFor(id);
+  return distinctFaces(pairingFor(id));
+}
+
+export function faceSetFaces(id) {
+  return distinctFaces(id === HOUSE_FACE_SET ? HOUSE_FACES : pairingFor(id));
+}
+
+// The face set a draft prints in.
+export function faceSetFor(content) {
+  const c = content !== null && typeof content === 'object' ? content : {};
+  return c.look === 'house' ? HOUSE_FACE_SET : pairingFor(c.font_pairing).id;
+}
+
+function distinctFaces(p) {
   const seen = new Set();
   const out = [];
   for (const f of [p.title, p.heading, p.body]) {
@@ -168,10 +204,10 @@ export const FONTS_BASE = 'https://fonts.googleapis.com/css2';
 // Families in first-seen order, each with its weights ascending (the css2 API
 // refuses unsorted weights). A family used only at 400 needs no axis.
 export function fontsHref(pairingIds) {
-  const ids = (Array.isArray(pairingIds) ? pairingIds : [pairingIds]).filter(isPairingId);
+  const ids = (Array.isArray(pairingIds) ? pairingIds : [pairingIds]).filter(isFaceSet);
   const families = new Map();
   for (const id of ids) {
-    for (const f of pairingFaces(id)) {
+    for (const f of faceSetFaces(id)) {
       if (!families.has(f.family)) families.set(f.family, new Set());
       families.get(f.family).add(f.weight);
     }
@@ -201,7 +237,7 @@ export function ensureFontsLink(pairingIds, doc = typeof document !== 'undefined
 }
 
 export function useFontsRevision(pairingIds) {
-  const ids = (Array.isArray(pairingIds) ? pairingIds : [pairingIds]).filter(isPairingId).join(',');
+  const ids = (Array.isArray(pairingIds) ? pairingIds : [pairingIds]).filter(isFaceSet).join(',');
   const [rev, setRev] = useState(0);
   useEffect(() => {
     let live = true;

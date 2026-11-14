@@ -1,5 +1,5 @@
-// MenuEditor (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// MenuEditor (React component, default export): the bar menu editor in place of the event page
+// body, with the menu preview, the Design, Drinks and Brief tabs and Approve.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useUserPrefs } from '../../../context/UserPrefsContext';
@@ -15,7 +15,7 @@ import { rerollWhy, useInert } from './panelParts';
 import { textPatch } from './menuEdits';
 import EditorBanner, { EditorEmpty, EditorTopBar } from './EditorBanner';
 import ConfirmDialog, { editorConfirm } from './ConfirmDialog';
-import menuCardState from './menuCardState';
+import menuCardState, { layoutPieceKeys } from './menuCardState';
 import { ensureFontsLink, PAIRING_IDS, pairingFor } from './fontPairings';
 import { CARD_SIZE, FULL_SIZE, needsPoll } from './useMenuDraft';
 import { ExportCanvas, useApproveMenu } from './exportMenu';
@@ -30,7 +30,13 @@ import { ExportCanvas, useApproveMenu } from './exportMenu';
 // - Top bar, banners, empty card and Approve's gate come from menuCardState;
 //   Approve is useApproveMenu, through the replace confirm over a print file.
 //   A banner's Update draft passes its scope to sync, so the unchecked
-//   notice's own banner runs the bar-only rebuild.
+//   notice's own banner runs the bar-only rebuild. The held brief and file go
+//   to menuCardState too, so before a draft Generate asks only for the keys
+//   the look it will post uses (v2 spec 9.2).
+// - Start over's confirm leaves the drawings out on a draft whose layout uses
+//   none (a plain house card), with the image count of the run it starts.
+// - The meta line names the pairing, or "House card" on a house draft, where
+//   nothing is AI-written, so its edit hint drops the dotted-underline note.
 // Task D2's tabs get { draft, content, inputs, pieces, brief, diff, configured,
 // cap, imageModel, onPatch, onReroll(pieceKey, note), onSelectDrink(key | null),
 // selectedDrink, plannerImage, wordsDone, readOnly, referenceFile, onReferenceFile }.
@@ -146,6 +152,8 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
       saving: menu.save.state === 'saving', saveFailed: menu.save.state === 'failed', savedAt: menu.save.savedAt,
       conflict: menu.save.conflict, approving: approve.approving, approveError: approve.error,
       tooLong, imageModel: menu.imageModel, activityKeys: menu.activityKeys, now: Date.now(),
+      // The look Generate will post before a draft is the held brief's (menuCardState lookOf).
+      heldInputs: menu.brief, referenceFile: menu.referenceFile,
     },
   });
   const hasDraft = !!(st.thumb && draft);
@@ -262,8 +270,8 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
           <div className="md-ed-scroll scroll-thin">
             <div className="md-ed-col" style={{ width: Math.round(800 * scale) }}>
               <div className="md-ed-meta">
-                <span>{`8 × 10 in · ${pairingFor(content.font_pairing).name} · ${count} drinks`}</span>
-                {hasDraft && <span>Click text to edit · dotted = AI-written</span>}
+                <span>{`8 × 10 in · ${content.look === 'house' ? 'House card' : pairingFor(content.font_pairing).name} · ${count} drinks`}</span>
+                {hasDraft && <span>{content.look === 'house' ? 'Click text to edit' : 'Click text to edit · dotted = AI-written'}</span>}
               </div>
               {st.progress !== null && st.progress !== undefined && (
                 <div className="md-ed-prog" role="progressbar" aria-label="Drafting progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={st.progress}>
@@ -300,7 +308,7 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
       </div>
       <ExportCanvas {...approve.exportProps} />
       {confirm && (
-        <ConfirmDialog {...editorConfirm(confirm.id, { need: st.generate.need, print })}
+        <ConfirmDialog {...editorConfirm(confirm.id, { need: st.generate.need, print, drawings: layoutPieceKeys(content).length > 0 })}
           onAction={onConfirm} onCancel={() => setConfirm(null)} />
       )}
     </div>

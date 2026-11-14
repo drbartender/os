@@ -1,5 +1,5 @@
-// DrinksTab (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// DrinksTab (React component, default export): the editor's Drinks tab, one row per drink with
+// its status, re-roll, Hide and Show; on a house card, Hide and Show alone.
 
 import React, { useRef, useState } from 'react';
 import { partitionDrinks } from './layouts';
@@ -17,6 +17,10 @@ import { Section, useInert, rerollWhy, isReadOnly, READ_ONLY_WHY, OPEN, isObj, l
 // Re-roll art and Hide / Show, and, for a drink with no description (the
 // canvas prints none, so has nothing to click), "Add a description"; the rows
 // are the keyboard path to the canvas pills.
+// On a house card (content.look 'house'; v2 spec 9.2) the tab offers only what
+// the server takes: Hide and Show (a rename is on the canvas). No description,
+// no re-roll note or Re-roll art, no illustrated count, no art note and no
+// "won't fit" warning, and Show is held only by the twelve visible limit.
 
 const STATUS = {
   working: ['PAINTING', 'md-st-info'], pending: ['WAITING', ''], failed: ['FAILED', 'md-st-danger'],
@@ -36,8 +40,13 @@ function subLine(d, piece) {
 
 const enterBlurs = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } };
 
-function DrinkOpen({ d, piece, configured, cap, locked, onReroll, onToggle, onDescribe, hideWhy }) {
+function DrinkOpen({ d, piece, configured, cap, locked, onReroll, onToggle, onDescribe, hideWhy, house }) {
   const [note, setNote] = useState('');
+  const toggle = (
+    <button type="button" className="btn btn-ghost btn-sm" disabled={locked || !!hideWhy} title={(locked ? READ_ONLY_WHY : hideWhy) || undefined}
+      onClick={onToggle}>{d.hidden === true ? 'Show' : 'Hide'}</button>
+  );
+  if (house) return <div className="md-drink-open"><div className="md-drink-acts">{toggle}</div></div>;
   const why = (locked ? READ_ONLY_WHY : '') || rerollWhy(configured, cap)
     || (d.has_art !== true ? 'This drink lists as text, without art.' : '')
     || (piece && OPEN.has(piece.status) ? 'This drink is still being drawn.' : '');
@@ -53,8 +62,7 @@ function DrinkOpen({ d, piece, configured, cap, locked, onReroll, onToggle, onDe
       <div className="md-drink-acts">
         <button type="button" className="btn btn-secondary btn-sm" disabled={!!why} title={why || undefined}
           onClick={() => { if (typeof onReroll === 'function') onReroll(d.key, note.trim()); setNote(''); }}>Re-roll art</button>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={locked || !!hideWhy} title={(locked ? READ_ONLY_WHY : hideWhy) || undefined}
-          onClick={onToggle}>{d.hidden === true ? 'Show' : 'Hide'}</button>
+        {toggle}
       </div>
     </div>
   );
@@ -69,6 +77,7 @@ export default function DrinksTab({
   useInert(ref, !live);
   const c = isObj(content) ? content : (isObj(draft) && isObj(draft.content) ? draft.content : {});
   const drinks = list(c.drinks);
+  const house = c.look === 'house';
   const rows = [...drinks.filter((d) => d.group !== 'mock'), ...drinks.filter((d) => d.group === 'mock')];
   const byKey = new Map(list(pieces).map((p) => [p.piece_key, p]));
   const art = Math.min(MAX_ART, drinkCounts(drinks).art);
@@ -78,7 +87,7 @@ export default function DrinksTab({
 
   return (
     <div ref={ref} className={live ? 'md-tabpane md-tabpane-drinks' : 'md-tabpane md-tabpane-drinks is-off'} role="tabpanel" aria-label="Drinks">
-      <Section label="Drinks" note={`${art} of ${MAX_ART} illustrated`} num>
+      <Section label="Drinks" note={house ? undefined : `${art} of ${MAX_ART} illustrated`} num>
         <div className="md-drinks">
           {rows.map((d, i) => {
             const piece = byKey.get(d.key);
@@ -96,7 +105,7 @@ export default function DrinksTab({
                   <span className={st && st[1] ? `md-drink-st ${st[1]}` : 'md-drink-st'}>{st ? st[0] : ''}</span>
                 </button>
                 {open && (
-                  <DrinkOpen d={d} piece={piece} configured={configured} cap={cap} locked={locked} hideWhy={toggle.why}
+                  <DrinkOpen d={d} piece={piece} configured={configured} cap={cap} locked={locked} hideWhy={toggle.why} house={house}
                     onReroll={(key, note) => { if (live && typeof onReroll === 'function') onReroll(key, note); }}
                     onToggle={() => send(toggle.patch)}
                     onDescribe={(v) => send(textPatch(c, `drinks.${d.key}.description`, v))} />
@@ -105,8 +114,8 @@ export default function DrinksTab({
             );
           })}
         </div>
-        <div className="md-drinks-note">Up to 8 are illustrated. Drinks 9 to 12 list as text under “More from the bar”.</div>
-        {extra > 0 && (
+        {!house && <div className="md-drinks-note">Up to 8 are illustrated. Drinks 9 to 12 list as text under “More from the bar”.</div>}
+        {!house && extra > 0 && (
           <div className="md-drinks-note md-st-danger" role="status">
             {extra === 1 ? "1 drink won't fit on the menu. Hide one to fit." : `${extra} drinks won't fit on the menu. Hide ${extra} to fit.`}
           </div>
