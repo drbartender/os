@@ -521,42 +521,73 @@ lanes:
 
   - id: menu-plan-review-state
     scope: >
-      Split from menu-bar-fingerprint by its review (2026-11-03): what the admin has reviewed about a plan
-      change is kept as state, not as one hash. (1) Mark reviewed and Dismiss record what they cover:
-      Dismiss stores the reviewed parts (the brief and planner-image parts, the bar baseline, the drink
-      keys the admin chose not to add) so a later Update draft never brings back a notes edit already
-      reviewed, and a dismissed drink stays dismissed until the plan moves again. (2) The plan-hash echo:
-      the GET returns the current plan hash, and Dismiss and Update draft send back the hash the admin saw,
-      answering 409 MENU_PLAN_MOVED when the plan changed since, so a change that lands while the page sits
-      open is never dismissed or applied unseen. (3) Generate's two reads: the words step stamps the bar
-      baseline into plan_fingerprint from the same plan read it built also_at_bar from, so the stored
-      baseline always matches the printed lines. The spec section 17 text is amended with the lane.
+      Split from menu-bar-fingerprint by its review (2026-11-03); the design is spec section 17's review
+      bullet, amended 2026-11-13 (Claude's call): what the admin has reviewed about a plan change is kept
+      as state, not as one hash. (1) Mark reviewed and Dismiss record what they cover. Both store the
+      plan's current brief and planner-image parts in plan_fingerprint, so a reviewed notes edit or client
+      image never returns through a later Update draft or a drink or bar change. Dismiss also stores
+      dismissed_plan_hash, now a hash of the drink keys, the bar hash and the bar drift only, so a
+      dismissed drink or bar change stays dismissed until the plan's drinks or bar move again. Mark
+      reviewed posts covers notes and leaves the dismissal as it was. The GET's diff is what is left after
+      the recorded review; the routes read the plan itself. A dismissal stored in the old form still reads
+      as covering everything while the plan has not moved. (2) The plan-hash echo: the GET returns
+      diff.plan_hash, and Dismiss, Mark reviewed and Update draft (both scopes) send back the hash the
+      page held when the button was pressed, answering 409 MENU_PLAN_MOVED when the plan changed since, so
+      a change that lands while the page sits open is never dismissed or applied unseen; the refusal drops
+      the read model's catalog cache so the refetch shows what the route read. The former item (3), the
+      words step stamping the bar baseline from its own plan read, was built by menu-bar-chain and is
+      pinned by menuDrafts.test.js ("a bar pick changed between Generate's plan read and the words
+      step's"), so it left this lane on 2026-11-13.
     footprint:
-      - server/routes/proposals/menuDrafts.js  (Dismiss and Mark reviewed record what they cover; the echo check)
-      - server/routes/proposals/menuDraftSync.js  (the echo check; keeps a still-valid review)
+      - server/routes/proposals/menuDrafts.js  (Dismiss and Mark reviewed in one transaction under the row lock; covers; the echo check)
+      - server/routes/proposals/menuDraftSync.js  (the echo check on both scopes; the bar-only rebuild's re-stamp in the new form)
+      - server/routes/proposals/menuDraftShared.js  (the plan_hash parser and the MENU_PLAN_MOVED refusal the two route files share)
       - server/routes/proposals/menuDrafts.test.js
-      - server/utils/menuDraftRead.js  (the current plan hash in the GET; the diff against the recorded review)
+      - server/routes/proposals/menuDraftSync.test.js
+      - server/utils/menuDraftRead.js  (diff.plan_hash; the shown diff after the recorded review; the catalog cache drop)
       - server/utils/menuDraftRead.test.js
-      - server/utils/menuDrinkSource.js  (the review-state helpers)
+      - server/utils/menuDrinkSource.js  (the review-state helpers: reviewHash, planHash, the brief and image fold)
       - server/utils/menuDrinkSource.test.js
-      - server/utils/menuArtJobWords.js  (the words step stamps the bar baseline)
-      - server/utils/menuArtJob.test.js
-      - client/src/pages/admin/menuDesigner/useMenuDraft.js  (Dismiss and Update draft send the hash they saw; a 409 refetches)
+      - client/src/pages/admin/menuDesigner/useMenuDraft.js  (Dismiss, Mark reviewed and Update draft send the hash held at the press; covers; a 409 refetches)
       - client/src/pages/admin/menuDesigner/useMenuDraft.test.js
+      - client/src/pages/admin/menuDesigner/MenuEditor.js  (Mark reviewed passes covers notes; that one line)
+      - client/src/pages/admin/menuDesigner/MenuEditor.test.js
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-bar-chain, menu-brief-tab]
-    lenses: tier A (menuDrafts.js, menuDraftSync.js, menuArtJobWords.js); concurrency (the echo and the two-read stamp), lifecycle (what review state survives which action), seams (every writer and reader of plan_fingerprint and dismissed_plan_hash), client.
-    laws: one pooled connection per request; the echo check and the write it guards run in one transaction under the draft row lock; nothing here calls a provider.
-    seams: plan_fingerprint and dismissed_plan_hash keep one meaning each across Generate, the words step, Update draft, Dismiss, Mark reviewed and the GET's diff; the client hook is the one place that sends the echoed hash.
-    acceptance: Suites pass; the review-state tests fail on main (a reviewed notes edit returns after Update draft on main; a Dismiss sent from a stale page succeeds on main).
+    lenses: tier A (menuDrafts.js, menuDraftSync.js); concurrency (the echo under the row lock), lifecycle (what review state survives which action), seams (every writer and reader of plan_fingerprint and dismissed_plan_hash), access-egress, client.
+    laws: one pooled connection per request; the echo check and the write it guards run in one transaction under the draft row lock; the legal-hold refusal stays first on every write; nothing here calls a provider beyond what Update draft already calls, and the full Update draft's echo check comes before its words call.
+    seams: >
+      plan_fingerprint and dismissed_plan_hash keep one meaning each across Generate, the words step, the
+      boot stamp, Update draft (both scopes), Dismiss, Mark reviewed and the GET's diff: the fingerprint's
+      brief and image parts are the last reviewed ones (Generate's until a review), its drink keys and bar
+      baseline what the draft holds; the dismissal is the drinks and bar the admin chose not to apply. The
+      client reads the GET's shown diff unchanged (menuCardState.js and BriefTab.js are not touched); the
+      hook is the one place that sends plan_hash and covers. No new fingerprint key and no schema change.
+    acceptance: >
+      Suites pass, the money smoke passes and the client builds; the review-state tests fail on main (a
+      reviewed notes edit returns after a drink is added and Update draft runs; a notes edit brings a
+      dismissed drink back; Mark reviewed hides a drink change shown beside it; a Dismiss and an Update
+      draft sent from a stale page succeed).
     test plan: >
-      menuDrafts.test.js: Mark reviewed then a drink added then Update draft leaves the notes flag cleared; a
-      dismissed drink stays dismissed through a bar-only Update draft; Dismiss and Update draft with a stale
-      hash answer 409 MENU_PLAN_MOVED and write nothing; with the current hash they succeed.
-      menuArtJob.test.js: a plan change between Generate's read and the words step leaves the stored bar
-      baseline equal to the printed lines. menuDraftRead.test.js: the GET's hash equals the one the routes
-      compare. useMenuDraft.test.js: the hook sends the hash it holds and refetches on 409.
-    revert: Revert the squash; the review falls back to one dismissed hash, as before.
+      menuDrafts.test.js: Mark reviewed, then a drink added, then Update draft leaves the notes flag cleared;
+      Mark reviewed beside a drink change leaves the drink change showing; a dismissed drink stays dismissed
+      through a later notes edit and returns when the drinks move; Dismiss and Mark reviewed with a stale
+      plan_hash answer 409 MENU_PLAN_MOVED and write nothing, and with the current hash succeed; a missing
+      or malformed plan_hash and an unknown covers are 400; Dismiss bumps no version and leaves updated_at
+      alone; the legal-hold proposal is refused first. menuDraftSync.test.js: both scopes with a stale hash
+      answer 409 MENU_PLAN_MOVED, write nothing and reserve or spend nothing; a dismissed drink stays
+      dismissed through a bar-only Update draft; an old-form dismissal that held is re-stamped in the new
+      form with its notes still covered. menuDraftRead.test.js: the GET's diff.plan_hash equals the hash the
+      routes compare; the shown diff with a dismissal holding, with a later notes edit, and under an
+      old-form hash. menuDrinkSource.test.js: reviewHash ignores the brief and the image and never equals
+      an old-form hash; the fold keeps the drink keys and the bar baseline. useMenuDraft.test.js: the hook
+      sends the hash held at the press (not one a refetch brought during the save flush), sends covers for
+      Mark reviewed, and refetches on 409. MenuEditor.test.js: Mark reviewed calls the hook with covers
+      notes; Dismiss with none.
+    revert: >
+      Revert the squash; the review falls back to one dismissed hash, as before. A Dismiss made while the
+      lane was live stored the new-form hash, which the reverted code never matches, so those drafts show
+      their banner again once; notes reviewed while it was live stay reviewed (the stored brief parts).
 
   - id: menu-mark-placement
     scope: >
