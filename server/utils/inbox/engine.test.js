@@ -255,7 +255,31 @@ before(async () => {
      VALUES ($1, $2, 'out', 'message', 'dallas@drbartender.com', $3::text[], 'We do, here is a quote', $4, NOW() - INTERVAL '2 hours', true, $3::text[])`,
     [`${GM}-answer`, `${GM}-th-ask`, [`${GM}-stranger@example.com`], `<${GM}-ask@mail.example.com>`]
   );
+  await seedMenu();
 });
+
+// Menu tasks (spec 2026-10-19 section 13): a client who asked for menu
+// changes, and the held client's held proposal asking for changes too. The
+// proofs are inserted directly (nothing in the app creates one yet); deleting
+// the proposals cascades the drafts and the proofs.
+// Seeded at the end of before() above: Node runs a file's top-level before()
+// hooks side by side, so a second hook could not count on the held proposal.
+const MENU_NOTE = `Swap the margarita for a mojito ${TAG}`;
+async function seedMenu() {
+  const draft = async (proposalId) => (await pool.query(
+    `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint, version, art_version)
+     VALUES ($1, gen_random_uuid(), '{}', '{}', '{}', 4, 2) RETURNING id`, [proposalId])).rows[0].id;
+  const changes = async (proposalId, note) => pool.query(
+    `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, email_status, sent_at, answer, answer_note, answered_at)
+     VALUES ($1, $2, 4, 2, $3, 'sent', NOW() - INTERVAL '1 day', 'changes', $4, NOW() - INTERVAL '2 hours')`,
+    [await draft(proposalId), proposalId, `menu-proof/${proposalId}/${TAG}.jpg`, note]);
+  ids.menu = await addClient(`Menu Example ${TAG}`, null);
+  ids.menuProposal = (await pool.query(
+    "INSERT INTO proposals (client_id, status, event_date) VALUES ($1, 'confirmed', CURRENT_DATE + 20) RETURNING id", [ids.menu])).rows[0].id;
+  ids.proposals.push(ids.menuProposal);
+  await changes(ids.menuProposal, MENU_NOTE);
+  await changes(ids.proposals[0], `Held notes ${TAG}`); // the held proposal (before() above)
+}
 
 after(async () => {
   engine.__resetEngine();
@@ -985,4 +1009,33 @@ test('the client-row exemption: a held client whose own address is an admin\'s i
   assert.ok(keys.has(`e-${emailHash(`${TAG}-op2@example.com`)}`));
   assert.equal(addresses.has(engine.canonicalAddress(`${TAG}-admin@example.com`)), false, "an admin's address on a ledger row");
   assert.equal(keys.has(`e-${emailHash(`${TAG}-admin@example.com`)}`), false);
+});
+
+// ─── Menu tasks (spec 2026-10-19 section 13) ───
+
+test('menu tasks in the snapshot: the change request waits under the client, its note loaded in pass 2; the held client has none', async () => {
+  const snap = await engine.computeSnapshot({ now: new Date() });
+  const key = `c-${ids.menu}`;
+  assert.ok(snap.fullKeys.has(key), 'a task makes the client worth loading in full');
+  const tasks = (snap.eventsByPerson.get(key) || []).filter((e) => e.meta.source === 'menu_task');
+  assert.deepEqual(tasks.map((e) => [e.kind, e.text, e.meta.note, e.meta.link]),
+    [['menu_changes', 'Asked for menu changes', MENU_NOTE, `/events/${ids.menuProposal}?menu=1`]]);
+  const held = [...snap.eventsByPerson.values()].flat().filter((e) => e.meta.source === 'menu_task' && e.meta.proposalId === ids.proposals[0]);
+  assert.deepEqual(held, [], 'no task for the person the legal hold covers');
+});
+
+test('menu tasks on the list and the item: the task line and link, tasks_only, the note only in the thread, and nothing for the AI', async () => {
+  engine.invalidate();
+  const key = `c-${ids.menu}`;
+  const link = `/events/${ids.menuProposal}?menu=1`;
+  const body = await engine.getInbox({ viewerId: ids.admin });
+  const row = body.waiting.find((r) => r.person_key === key);
+  assert.deepEqual([row.need, row.link, row.tasks_only, row.channels], ['Asked for menu changes', link, true, []]);
+  assert.equal(JSON.stringify(body).includes(MENU_NOTE), false, 'the note never rides on the list');
+  const item = await engine.getItem({ personKey: key, viewerId: ids.admin });
+  assert.deepEqual([item.waiting, item.tasks_only], [true, true]);
+  assert.deepEqual(item.thread.map((r) => [r.direction, r.text, r.link, r.note]), [['system', 'Asked for menu changes', link, MENU_NOTE]]);
+  const subjects = await engine.getReadSubjects({ fresh: true });
+  assert.equal(subjects.some((s) => s.personKey === key), false, 'the AI reads nothing of a task');
+  assert.equal(JSON.stringify(subjects).includes(MENU_NOTE), false);
 });

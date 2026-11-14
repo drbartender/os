@@ -207,3 +207,45 @@ test('zola rows: the inquiry reads "Zola inquiry" over their words, a later mess
     ['system', 'zola', null, 'Closed their inquiry on Zola.', false],
   ]);
 });
+
+// ─── Menu tasks (spec 2026-10-19 section 13.2) ───
+
+test('an open menu task is a system line with its event link, kept however old; the change note rides on its row', () => {
+  const old = k.menuTask('c-630', ago(40 * DAY), 'menu_changes', { proposalId: 630, note: 'Fewer drinks, please' });
+  const rows = threadOf({ key: 'c-630', events: [old] });
+  assert.deepEqual(rows.map((r) => [r.ref, r.direction, r.channel, r.text, r.link, r.note]), [
+    [old.ref, 'system', null, 'Asked for menu changes', '/events/630?menu=1', 'Fewer drinks, please'],
+  ]);
+  const due = k.menuTask('c-631', ago(2 * HOUR), 'menu_no_answer', { proposalId: 631 });
+  const [line] = threadOf({ key: 'c-631', events: [due] });
+  assert.deepEqual([line.direction, line.text, line.link, line.note],
+    ['system', 'No answer on the menu yet. Release it for printing?', '/events/631?menu=1', null]);
+});
+
+test('a task line with a link that is not the event path carries none; an ordinary row carries no link', () => {
+  const bad = k.menuTask('c-632', ago(HOUR), 'menu_changes', { link: 'javascript:alert(1)' });
+  assert.equal(threadOf({ key: 'c-632', events: [bad] })[0].link, null);
+  const offsite = k.menuTask('c-633', ago(HOUR), 'menu_changes', { link: '//example.com/events/1?menu=1' });
+  assert.equal(threadOf({ key: 'c-633', events: [offsite] })[0].link, null);
+  const [ask] = threadOf({ key: 'c-634', events: [k.smsIn('c-634', ago(HOUR), 'Hi')] });
+  assert.equal(ask.link, undefined);
+});
+
+test('a task under a held person is never in the open set, so an old one is not kept past 30 days', () => {
+  const old = k.menuTask('c-635', ago(40 * DAY), 'menu_changes');
+  const proposals = [k.proposalRow('c-635', { legalHold: true, eventDate: '2026-12-01' })];
+  assert.deepEqual(threadOf({ key: 'c-635', events: [old], proposals }), []);
+});
+
+test('a conversation an event or the AI closed keeps its "Was closed" line beside an open task', () => {
+  const ask = k.smsIn('c-636', '2026-11-10T16:00:00.000Z', 'One more question');
+  const proposals = [k.proposalRow('c-636', { status: 'deposit_paid', eventDate: '2026-11-17' }), k.proposalRow('c-636', { eventDate: null })];
+  const task = k.menuTask('c-636', ago(HOUR), 'menu_no_answer');
+  assert.deepEqual(threadOf({ key: 'c-636', events: [ask, task], proposals }).map((r) => r.text),
+    ['One more question', 'Was closed: event happened Nov 17', 'No answer on the menu yet. Release it for printing?']);
+  const old = k.smsIn('c-637', ago(60 * DAY), 'An old question');
+  const oldRead = [k.readRow('inbound', old, { needs_reply: false, reason: 'just a thank-you' })];
+  const recentTask = k.menuTask('c-637', ago(HOUR), 'menu_changes');
+  assert.deepEqual(threadOf({ key: 'c-637', events: [old, recentTask], reads: oldRead }).map((r) => r.text),
+    ['An old question', 'Was closed: AI says just a thank-you', 'Asked for menu changes']);
+});

@@ -9,7 +9,8 @@
 //   pass 2: full rows (bodies, media, subjects) for those people only.
 // Pass 1 is a header scan, not SQL aggregates, so its cost grows with all the
 // traffic since the floor: a few thousand rows today. Past HEADER_WARN_ROWS
-// (every pass-1 row: the seven readers' headers, the AI reads and the taps) it
+// (every pass-1 row: the readers' headers, the menu tasks' proof rows
+// (readMenuTasks.js, spec 2026-10-19 section 13), the AI reads and the taps) it
 // warns once per process, in the log and in Sentry, the signal to move pass 1
 // to aggregates. A source query that fails fails the whole load: a partial
 // list that looks complete is the one thing Inbox must never show (spec 12).
@@ -33,6 +34,7 @@ const { PAL_HEADERS_SQL, mapProposalSendHeader } = require('./readProposalSends'
 const { CALL_HEADERS_SQL, mapCallHeader } = require('./readCalls');
 const { MAIL_HEADERS_SQL } = require('./readGmail');
 const { mapMailHeaders } = require('./readZola');
+const { MENU_TASKS_SQL, menuTaskParams, mapMenuTaskRows } = require('./readMenuTasks');
 const { loadDetails, mergeDetails } = require('./details');
 const { foldTaps } = require('./aliases');
 const { normalizeEvents } = require('./normalize');
@@ -320,7 +322,7 @@ function markMail(events, readRefs) {
 
 async function computeSnapshot({ now = new Date(), db = pool } = {}) {
   const floor = INBOX_HISTORY_START;
-  const [index, sms, tt, ml, pal, calls, mail, actions, seen, reads, feeds, hold] = await Promise.all([
+  const [index, sms, tt, ml, pal, calls, mail, menu, actions, seen, reads, feeds, hold] = await Promise.all([
     loadPeopleIndex(db),
     db.query(SMS_HEADERS_SQL, [floor]),
     db.query(TT_HEADERS_SQL, [floor]),
@@ -329,6 +331,7 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
     db.query(CALL_HEADERS_SQL, [floor]),
     // One scan of gmail_messages feeds both the email and the Zola reader.
     db.query(MAIL_HEADERS_SQL, [floor]),
+    db.query(MENU_TASKS_SQL, menuTaskParams({ floor, now, legalHoldIds: _deps.legalHoldIds || [] })),
     db.query(ACTIONS_SQL, [floor]),
     db.query(SEEN_SQL),
     db.query(READS_SQL, [floor]),
@@ -336,7 +339,7 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
     loadLegalHold(db, _deps.legalHoldIds || []),
   ]);
   warnHeaderRows(sms.rows.length + tt.rows.length + ml.rows.length + pal.rows.length + calls.rows.length
-    + mail.rows.length + reads.rows.length + actions.rows.length);
+    + mail.rows.length + menu.rows.length + reads.rows.length + actions.rows.length);
   const headers = normalizeEvents([
     ...sms.rows.map((r) => mapSmsHeader(r, index)),
     ...tt.rows.map((r) => mapThumbtackHeader(r, index)),
@@ -344,6 +347,9 @@ async function computeSnapshot({ now = new Date(), db = pool } = {}) {
     ...pal.rows.map((r) => mapProposalSendHeader(r)),
     ...calls.rows.map((r) => mapCallHeader(r, index)),
     ...mapMailHeaders(mail.rows, index),
+    // Never a task for anyone the hold covers: the query skips the held
+    // clients' proposals, and the mapper every key in the held set.
+    ...mapMenuTaskRows(menu.rows, { now, heldKeys: hold.keys }),
   ].filter(Boolean));
   // Taps stored under a person's alias keys fold onto their current key.
   const taps = foldTaps({ actions: actions.rows, seen: seen.rows, events: headers, index });

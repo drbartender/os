@@ -1,4 +1,10 @@
-import { threadModel } from './inboxThread';
+import '@testing-library/jest-dom';
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import MobileViewContext from '../../context/MobileViewContext';
+import Thread from './Thread';
+import { threadModel, taskLink, TASK_LINK_LABEL } from './inboxThread';
 
 // Tue Oct 6 2026, 2:40 PM Chicago.
 const NOW = Date.parse('2026-10-06T19:40:00.000Z');
@@ -107,4 +113,85 @@ test('mail rows: subject, attachment count, by email on our reply, the Zola inqu
   ]);
   // A row with an author keeps it; by_email never says "Auto".
   expect(threadModel([row({ ref: 'gm:9', direction: 'out', channel: 'email', author_name: 'Zul', by_email: true })], NOW)[1].meta).toBe('Zul · 10:00 AM');
+});
+
+// Spec 2026-10-19 section 13.2: an open menu task is a system line with a
+// plain text link to the event (the editor open, ?menu=1); a change request's
+// line carries the client's note. Only an in-app path is ever a link.
+const task = (o) => row({ direction: 'system', channel: null, line: null, ...o });
+
+test('a menu task line carries its event link and the client\'s note; any other row is unchanged', () => {
+  const items = threadModel([
+    task({ ref: 'mt:menu_changes:5', text: 'Asked for menu changes', link: '/events/42?menu=1', note: 'Fewer drinks, please' }),
+    task({ ref: 'mt:menu_no_answer:6', text: 'No answer on the menu yet. Release it for printing?', link: '/events/43?menu=1', note: null, at: '2026-10-06T15:01:00.000Z' }),
+  ], NOW);
+  expect(items[1]).toEqual({
+    type: 'sys', key: 'mt:menu_changes:5', text: 'Asked for menu changes', failure: null, link: '/events/42?menu=1', note: 'Fewer drinks, please',
+  });
+  expect(items[2]).toEqual({
+    type: 'sys', key: 'mt:menu_no_answer:6', text: 'No answer on the menu yet. Release it for printing?', failure: null, link: '/events/43?menu=1',
+  });
+  expect(TASK_LINK_LABEL).toBe('Open the menu');
+});
+
+test('a task link is an in-app path only: a javascript:, protocol-relative or outside URL is dropped', () => {
+  expect(taskLink('/events/42?menu=1')).toBe('/events/42?menu=1');
+  for (const bad of ['javascript:alert(1)', '//example.com/events/1', 'https://example.com/events/1', '/\\example.com', '', null, undefined, 42]) {
+    expect(taskLink(bad)).toBeNull();
+  }
+  const [, item] = threadModel([task({ ref: 'mt:menu_changes:7', text: 'Asked for menu changes', link: 'javascript:alert(1)' })], NOW);
+  expect(item.link).toBeUndefined();
+});
+
+test('the thread draws a task line with its link to the event, and the client\'s note under it', () => {
+  render(
+    <MemoryRouter>
+      <Thread items={threadModel([
+        row({ ref: 'sms:1', text: 'Is the bar outside?', at: '2026-10-06T15:00:00.000Z' }),
+        task({ ref: 'mt:menu_changes:5', text: 'Asked for menu changes', link: '/events/42?menu=1', note: 'Fewer drinks, please', at: '2026-10-06T15:10:00.000Z' }),
+      ], NOW)} />
+    </MemoryRouter>,
+  );
+  const link = screen.getByRole('link', { name: 'Open the menu: Asked for menu changes' });
+  expect(link).toHaveTextContent(/^Open the menu$/);
+  expect(link).toHaveAttribute('href', '/events/42?menu=1');
+  expect(link).toHaveClass('ib-task-link');
+  const line = link.closest('.ib-sys');
+  expect(line).toHaveTextContent('Asked for menu changes');
+  const note = screen.getByText('Fewer drinks, please');
+  expect(note).toHaveClass('ib-bubble-body');
+  expect(note.closest('.sms-bubble')).toHaveClass('sms-bubble-inbound');
+  fireEvent.click(link);
+});
+
+// Each task line's link is named for its task, so two never read alike; at
+// phone width a press opens the desktop event page for one visit, then
+// navigates (the phone event screen has no menu editor); at desktop width it
+// only navigates.
+function Where() {
+  const loc = useLocation();
+  return <div data-testid="where">{`${loc.pathname}${loc.search}`}</div>;
+}
+test('two task lines\' links read differently; a press on a phone opens the desktop event page for one visit, on a desktop it only navigates', () => {
+  const items = threadModel([
+    task({ ref: 'mt:menu_changes:5', text: 'Asked for menu changes', link: '/events/42?menu=1' }),
+    task({ ref: 'mt:menu_no_answer:6', text: 'No answer on the menu yet. Release it for printing?', link: '/events/43?menu=1', at: '2026-10-06T15:01:00.000Z' }),
+  ], NOW);
+  for (const isPhone of [true, false]) {
+    const setDesktopForVisit = jest.fn();
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/inbox/c-9']}>
+        <MobileViewContext.Provider value={{ isPhone, desktopView: () => false, setDesktopView: () => {}, setDesktopForVisit }}>
+          <Thread items={items} />
+          <Where />
+        </MobileViewContext.Provider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: 'Open the menu: Asked for menu changes' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: 'Open the menu: No answer on the menu yet. Release it for printing?' }));
+    expect(screen.getByTestId('where')).toHaveTextContent('/events/43?menu=1');
+    if (isPhone) expect(setDesktopForVisit).toHaveBeenCalledWith('event-detail');
+    else expect(setDesktopForVisit).not.toHaveBeenCalled();
+    unmount();
+  }
 });

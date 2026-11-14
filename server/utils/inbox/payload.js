@@ -3,6 +3,16 @@
 // HTTP bodies (snake_case) for GET /api/admin/inbox and GET /api/admin/inbox/:personKey
 // (contract). PURE: the engine hands in the rules result, the directory of
 // names and kinds, and whatever it loaded.
+//
+// Menu tasks (spec 2026-10-19 section 13.2): a waiting row carries `link`, the
+// open task's event link when its text is the row's need line (else null),
+// and `tasks_only`, true when only menu tasks hold the row (Done is hidden
+// there: Done never clears a task). The item carries `tasks_only` too, and
+// both carry it inside `state` as well, the object the item's actions read
+// (ItemActions.js draws no Done while it is true), beside `has_task`: an open
+// menu task holds this person, alone or beside a text (useInboxActions.js
+// then says Done leaves them waiting on the menu). The client's change note
+// is never on the list; it rides only on its thread row.
 
 const { buildThread } = require('./thread');
 
@@ -10,7 +20,9 @@ const iso = (d) => (d ? new Date(d).toISOString() : null);
 
 // The state object on every list row and on the item. since is the claim's
 // time on a claim chip (lane inbox-page: "since Mon 11:02 AM"), else null.
-function stateJson(s) {
+// tasks_only: only menu tasks hold the person; has_task: an open menu task
+// holds them (spec 2026-10-19 section 13.2).
+function stateJson(s, { tasksOnly = false, hasTask = false } = {}) {
   return {
     type: s ? s.type : null,
     by_user_id: s && s.byUserId !== undefined ? s.byUserId : null,
@@ -18,8 +30,13 @@ function stateJson(s) {
     mine: Boolean(s && s.mine),
     promised_by: s && s.promisedBy ? s.promisedBy : null,
     since: s && s.since ? iso(s.since) : null,
+    tasks_only: Boolean(tasksOnly),
+    has_task: Boolean(hasTask),
   };
 }
+
+// An open menu task holds a waiting or snoozed person (rules.js keeps them in internals.tasks).
+const holdsTask = (p) => Boolean(p && p.internals && Array.isArray(p.internals.tasks) && p.internals.tasks.length > 0);
 
 // Why a handled item closed (lane inbox-page). Null unless status is handled.
 function closedJson(state) {
@@ -37,8 +54,9 @@ function listPayload({ result, directory, feeds, aiStatus, generatedAt }) {
     // was read as a solicitation (decision 12), the row's "Pitch" chip.
     waiting: result.waiting.map((p) => ({
       person_key: p.personKey, name: directory.nameOf(p.personKey), kind: directory.kindOf(p.personKey),
-      need: p.need, waiting_since: iso(p.waitingSince), hot: p.hot, channels: p.channels, state: stateJson(p.state),
+      need: p.need, waiting_since: iso(p.waitingSince), hot: p.hot, channels: p.channels, state: stateJson(p.state, { tasksOnly: p.tasksOnly, hasTask: holdsTask(p) }),
       personal: Boolean(p.personal), pitch: Boolean(p.pitch),
+      link: p.link || null, tasks_only: Boolean(p.tasksOnly),
     })),
     snoozed: result.snoozed.map((p) => ({
       person_key: p.personKey, name: directory.nameOf(p.personKey), until: iso(p.snooze.until),
@@ -60,10 +78,11 @@ function itemPayload({ personKey, state, events, actions, reads, now, viewerId, 
     waiting: Boolean(state && state.status === 'waiting'),
     waiting_since: open ? iso(state.waitingSince) : null,
     need: state ? state.need : null,
-    state: stateJson(state ? state.state : null),
+    state: stateJson(state ? state.state : null, { tasksOnly: open && state.tasksOnly, hasTask: open && holdsTask(state) }),
     snooze: state && state.snooze ? { until: iso(state.snooze.until), by_name: state.snooze.byName, mine: state.snooze.mine } : null,
     closed: closedJson(state),
     legal_hold: Boolean(legalHold || (state && state.legalHold)),
+    tasks_only: Boolean(open && state.tasksOnly),
     context,
     thread: buildThread({ state, events, actions, reads, now, viewerId, users }),
     reply,

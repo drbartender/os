@@ -203,6 +203,28 @@ function zolaEvent(personKey, at, text, opts = {}) {
   };
 }
 
+// A menu task as readMenuTasks.js emits it (spec 2026-10-19 section 13.1): a
+// system event under the client, no channel, the fixed text, the event link.
+// opts.note is the client's change note as pass 2 loads it (meta.note).
+const MENU_TASK_TEXTS = {
+  menu_ready: 'Menu ready to review',
+  menu_failed: "Menu couldn't be generated: The menu couldn't be started. Generate it from the event page.",
+  menu_changes: 'Asked for menu changes',
+  menu_no_answer: 'No answer on the menu yet. Release it for printing?',
+};
+function menuTask(personKey, at, kind = 'menu_changes', opts = {}) {
+  const id = opts.id || nextId();
+  const proposalId = opts.proposalId || 77;
+  return {
+    ref: `mt:${kind}:${id}`, personKey, channel: null, line: null, direction: 'system', at: new Date(at), author: null,
+    kind, text: MENU_TASK_TEXTS[kind], // eslint-disable-line security/detect-object-injection -- kind is one of the four literal task kinds
+    meta: {
+      source: 'menu_task', id, proposalId, link: opts.link === undefined ? `/events/${proposalId}?menu=1` : opts.link,
+      ...(opts.note !== undefined ? { note: opts.note } : {}),
+    },
+  };
+}
+
 function act(personKey, action, at, opts = {}) {
   return {
     id: opts.id || nextId(), person_key: personKey, action, until_at: opts.until ? new Date(opts.until) : null,
@@ -244,6 +266,6 @@ const stateOf = (result, personKey) => result.people.get(personKey);
 
 module.exports = {
   NOW, SEC, MIN, HOUR, DAY, ago, plus, DALLAS, ZUL, USERS,
-  smsIn, optLine, smsOut, ttIn, ttOut, mlSend, palSend, call, relayNotice, gmIn, gmOut, zolaEvent,
+  smsIn, optLine, smsOut, ttIn, ttOut, mlSend, palSend, call, relayNotice, gmIn, gmOut, zolaEvent, menuTask, MENU_TASK_TEXTS,
   act, readRow, seenRow, proposalRow, run, stateOf,
 };

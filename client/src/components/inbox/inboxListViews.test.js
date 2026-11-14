@@ -3,6 +3,8 @@ import React from 'react';
 import fs from 'fs';
 import path from 'path';
 import { render, screen, fireEvent, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import MobileViewContext from '../../context/MobileViewContext';
 import { WaitingCard, WaitingRow, SnoozedRow } from './WaitingRows';
 import HandledList from './HandledList';
 import FeedsLine from './FeedsLine';
@@ -232,4 +234,105 @@ test('the error card announces its message, and Retry or Retrying sits outside t
   rerender(<ListError lastGood={{ at: '2026-10-06T19:12:00.000Z', waiting: 8 }} onRetry={() => {}} pending />);
   expect(screen.getByRole('button', { name: 'Retrying' })).toBeDisabled();
   expect(within(screen.getByRole('alert')).queryByRole('button')).toBeNull();
+});
+
+// Spec 2026-10-19 section 13.2: a menu task's row shows the task line as its
+// need and a plain text link to the event. The link sits beside the row's one
+// tap target, never inside it (a link inside a button is no link), so a press
+// on it opens the event and never the person. No row draws Done (Done lives
+// on the item, and a row held only by tasks says so with tasks_only).
+test('a menu task row: the task line as the need and a link to the event beside the tap target, on the phone card and the desktop row', () => {
+  const task = row({ person_key: 'c-9', need: 'Asked for menu changes', channels: [], link: '/events/42?menu=1', tasks_only: true });
+  const onOpen = jest.fn();
+  const { rerender } = render(<MemoryRouter><WaitingCard row={task} nowMs={NOW} onOpen={onOpen} /></MemoryRouter>);
+  const card = screen.getByRole('button');
+  const link = screen.getByRole('link', { name: 'Open the menu for Avery Example' });
+  expect(link).toHaveTextContent(/^Open the menu$/);
+  expect(link).toHaveAttribute('href', '/events/42?menu=1');
+  expect(link).toHaveClass('ib-task-link');
+  expect(link.parentElement).toHaveClass('ib-task-line');
+  expect(link.parentElement.previousElementSibling).toBe(card);
+  expect(card).not.toContainElement(link);
+  expect(within(card).getByText('Asked for menu changes')).toHaveClass('ib-need');
+  fireEvent.click(link);
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: /Done/ })).toBeNull();
+  rerender(<MemoryRouter><WaitingRow row={task} nowMs={NOW} selected={false} onOpen={onOpen} /></MemoryRouter>);
+  const desk = screen.getByRole('button');
+  const deskLink = screen.getByRole('link', { name: 'Open the menu for Avery Example' });
+  expect(deskLink).toHaveAttribute('href', '/events/42?menu=1');
+  expect(deskLink).toHaveClass('ib-task-link');
+  expect(deskLink.parentElement).toHaveClass('ib-dtask-line');
+  expect(deskLink.parentElement.previousElementSibling).toBe(desk);
+  expect(desk).not.toContainElement(deskLink);
+  expect(within(desk).getByText('Asked for menu changes')).toHaveClass('ib-drow-need');
+  fireEvent.click(deskLink);
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: /Done/ })).toBeNull();
+});
+
+test('a row with no task link, or one that is not an in-app path, draws no link', () => {
+  const { rerender } = render(<WaitingCard row={row()} nowMs={NOW} onOpen={() => {}} />);
+  expect(screen.queryByRole('link')).toBeNull();
+  rerender(<WaitingRow row={row({ link: null })} nowMs={NOW} selected={false} onOpen={() => {}} />);
+  expect(screen.queryByRole('link')).toBeNull();
+  rerender(<MemoryRouter><WaitingCard row={row({ link: 'javascript:alert(1)' })} nowMs={NOW} onOpen={() => {}} /></MemoryRouter>);
+  expect(screen.queryByRole('link')).toBeNull();
+});
+
+// The task link's own styles (spec 2026-10-19 section 22: the Inbox's row
+// styles, tokens only). On the phone the line's negative top margin cancels
+// the card's 0.5rem bottom margin, so the link sits against its own card,
+// indented to the card's text, with more room below it than above; on the
+// desktop the row gives its bottom border to the line, which follows the
+// row's hover and selected tones. Every rule names colors by token.
+test('the task link styles: its own ib- rules, tucked under its own card or row, tokens only', () => {
+  const rules = css.split('\n').filter((l) => /\.ib-(task-link|task-line|dtask-line)\b/.test(l));
+  expect(rules.length).toBeGreaterThan(0);
+  for (const rule of rules) expect(rule).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
+  expect(css).toContain('html[data-app="admin-os"] .ib-task-line { display: flex; margin: -2px 0 0.75rem; padding: 0 14px 0 58px; }');
+  expect(css).toMatch(/\.m-card \{[^}]*margin: 0 0 0\.5rem;/);
+  expect(css).toContain('html[data-app="admin-os"] .ib-drow:has(+ .ib-dtask-line) { border-bottom-color: transparent; padding-bottom: 0.2rem; }');
+  expect(css).toMatch(/\.ib-task-link \{[^}]*min-height: 44px;[^}]*color: var\(--ib-link\);/);
+  expect(css).toContain('html[data-app="admin-os"] .ib-dtask-line .ib-task-link { min-height: 32px; }');
+  expect(css).toContain('html[data-app="admin-os"] .ib-sys .ib-task-link { min-height: 44px;');
+  expect(css).toContain('html[data-app="admin-os"] .ib-thread-desk .ib-sys .ib-task-link { min-height: 28px; }');
+  expect(css).toContain('html[data-app="admin-os"] .ib-drow.is-selected + .ib-dtask-line { background: var(--row-active); box-shadow: inset 2px 0 0 var(--accent); }');
+});
+
+// At phone width the event page is the phone event screen, which has no menu
+// editor: the task link opens the desktop event page for that visit only
+// (MobileViewContext's setDesktopForVisit with the event page's screen key,
+// as the phone's search does), then navigates; ?menu=1 opens the editor. At
+// desktop width it only navigates.
+function Where() {
+  const loc = useLocation();
+  return <div data-testid="where">{`${loc.pathname}${loc.search}`}</div>;
+}
+function withView(ui, { isPhone, setDesktopForVisit }) {
+  return (
+    <MemoryRouter initialEntries={['/inbox']}>
+      <MobileViewContext.Provider value={{ isPhone, desktopView: () => false, setDesktopView: () => {}, setDesktopForVisit }}>
+        {ui}
+        <Where />
+      </MobileViewContext.Provider>
+    </MemoryRouter>
+  );
+}
+test('the row\'s task link on a phone opens the desktop event page for one visit, then navigates; on a desktop it only navigates', () => {
+  const task = row({ person_key: 'c-9', need: 'Asked for menu changes', channels: [], link: '/events/42?menu=1', tasks_only: true });
+  for (const [Row, props] of [[WaitingCard, {}], [WaitingRow, { selected: false }]]) {
+    const phoneVisit = jest.fn();
+    const { unmount } = render(withView(<Row row={task} nowMs={NOW} onOpen={() => {}} {...props} />, { isPhone: true, setDesktopForVisit: phoneVisit }));
+    fireEvent.click(screen.getByRole('link', { name: 'Open the menu for Avery Example' }));
+    expect(phoneVisit).toHaveBeenCalledWith('event-detail');
+    expect(screen.getByTestId('where')).toHaveTextContent('/events/42?menu=1');
+    unmount();
+    const deskVisit = jest.fn();
+    const desk = render(withView(<Row row={task} nowMs={NOW} onOpen={() => {}} {...props} />, { isPhone: false, setDesktopForVisit: deskVisit }));
+    fireEvent.click(screen.getByRole('link', { name: 'Open the menu for Avery Example' }));
+    expect(deskVisit).not.toHaveBeenCalled();
+    expect(screen.getByTestId('where')).toHaveTextContent('/events/42?menu=1');
+    desk.unmount();
+  }
 });

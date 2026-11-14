@@ -26,8 +26,11 @@
 // menu_proof_changes (actor 'client', details proof_id, version, art_version,
 // plus note_length for changes, never the note). The proposal under legal
 // hold is refused as not found before anything is written (isLegalHold, which
-// fails closed). No release runs here yet: the approve-and-send lane adds
-// releaseHeldPrint, reaccrueDuty and the Inbox invalidation to this route.
+// fails closed). After the commit an answer clears the Inbox cache
+// (inboxCache.invalidate), so a change request reaches the Inbox at once and
+// an answered proof's no-answer task goes (spec 2026-10-19 section 13.2). No
+// release runs here yet: the approve-and-send lane adds releaseHeldPrint and
+// reaccrueDuty to this route.
 
 const express = require('express');
 const { pool } = require('../db');
@@ -40,6 +43,7 @@ const { NotFoundError, ValidationError, ConflictError } = require('../utils/erro
 const { sendR2Object } = require('../utils/r2Proxy');
 const { isLegalHold } = require('../utils/legalHold');
 const { PROOF_IMAGE_STATES, proofExpiredSql, loadProofByToken } = require('../utils/menuProofs');
+const inboxCache = require('../utils/inbox/cache');
 
 const router = express.Router();
 
@@ -166,6 +170,7 @@ router.post('/:token/answer', requireUuidToken('token', NOT_FOUND), publicLimite
     } finally {
       client.release();
     }
+    inboxCache.invalidate();
     res.json(answered);
   }));
 

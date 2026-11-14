@@ -1,10 +1,25 @@
 'use strict';
 
-// The Inbox rules (spec 2026-10-06, sections 5.5 and 5.6). PURE: no I/O and
-// no clock read. computeInbox takes every event the readers produced plus the
-// stored taps, opens and AI reads, and says for each person whether they are
-// waiting, snoozed, recently handled, or quiet, and what the AI should read.
-// Every case in spec section 14 "Rules" is a test in rules.*.test.js.
+// The Inbox rules (spec 2026-10-06, sections 5.5 and 5.6, and spec 2026-10-19
+// section 13.2 for the menu tasks). PURE: no I/O and no clock read.
+// computeInbox takes every event the readers produced plus the stored taps,
+// opens and AI reads, and says for each person whether they are waiting,
+// snoozed, recently handled, or quiet, and what the AI should read. Every case
+// in spec section 14 "Rules" is a test in rules.*.test.js.
+//
+// Menu tasks (source menu_task, readMenuTasks.js) are kept apart from the
+// conversation: they are never in U, never a reply and never the anchor, so
+// the conversation's verdict is today's rule, untouched. A person then waits
+// when the conversation waits OR a task is open and they are not snoozed; a
+// task closes only when the reader stops emitting it, so a reply, a Done, the
+// AI's read or an event that happened never clears one. A row held only by
+// tasks (tasksOnly) hides Done. A task whose at is after a snooze's created_at
+// ends that snooze. The need line and its link are the newest reason's: the
+// task's text and event link when a task is newer than the conversation's
+// newest reason; a row held only by tasks carries no channel tag. The AI's
+// subjects are built from the conversation's own verdict, so a task never
+// brings a person to the AI. The legal-hold person has no tasks (the reader
+// emits none; the rules drop any as well).
 
 const { CLAIM_HOURS, HOT_HOURS, HANDLED_DAYS } = require('./constants');
 const { normalizeEvents } = require('./normalize');
@@ -69,11 +84,14 @@ function eventHappenedDate(personKey, ctx, refMs) {
 // after the anchor (a snooze defers the stretch it was made in, as a claim
 // does, so the latest real reply or Done ends it), and not ended by a later
 // Wake (or a Reopen, which also brings it back to Waiting).
-function activeSnooze(acts, newestInbound, anchorMs, ctx) {
+// A menu task that opened after the snooze was made ends it (spec 2026-10-19
+// section 13.2), so a task raised while Dallas snoozed the client surfaces.
+function activeSnooze(acts, newestInbound, anchorMs, ctx, tasks = []) {
   const s = last(acts.filter((a) => a.action === 'snooze'));
   if (!s || !s.until_at || ms(s.until_at) <= ctx.nowMs) return null;
   if (newestInbound && ms(s.created_at) <= ms(newestInbound.at)) return null;
   if (ms(s.created_at) <= anchorMs) return null;
+  if (tasks.some((t) => ms(t.at) > ms(s.created_at))) return null;
   if (acts.some((a) => (a.action === 'wake' || a.action === 'reopen') && ms(a.created_at) > ms(s.created_at))) return null;
   const by = Number(s.user_id) || null;
   return { until: new Date(s.until_at), byUserId: by, byName: by ? ctx.firstName(by) : null, mine: by !== null && by === ctx.viewerId };
@@ -170,6 +188,9 @@ function computePersonState(personKey, events, ctx) {
   const reads = ctx.readsByKey;
   const acts = ctx.actionsByPerson.get(personKey) || [];
   const legalHold = ctx.legalHoldPersons.has(personKey);
+  // The open menu tasks: every one the reader emitted is open now. None for
+  // the legal-hold person (money law 15; the reader already skips them).
+  const tasks = legalHold ? [] : events.filter(C.isMenuTask);
   const inboundRead = (e) => (e && !legalHold ? C.readOf(reads, 'inbound', e.ref, e.meta.readRef) : null);
   const needOf = (e) => {
     if (!e) return null;
@@ -233,7 +254,7 @@ function computePersonState(personKey, events, ctx) {
         type: 'event', at: eventLocalToUtc(eventYmd, 0, 0, 'America/Chicago'), eventYmd, stretchInbound: newestInbound, needOf,
       }, ctx);
     } else {
-      snooze = activeSnooze(acts, newestInbound, anchorMs, ctx);
+      snooze = activeSnooze(acts, newestInbound, anchorMs, ctx, tasks);
       status = snooze ? 'snoozed' : 'waiting';
     }
   } else {
@@ -244,6 +265,23 @@ function computePersonState(personKey, events, ctx) {
     }
   }
   if (status === 'handled' && ctx.nowMs - ms(closed.at) >= HANDLED_DAYS * DAY) status = 'quiet';
+
+  // Menu tasks (spec 2026-10-19 section 13.2): the conversation's verdict
+  // stands as the conversation's; an open task makes a person the
+  // conversation does not hold wait, unless a snooze (which a newer task
+  // ends) hides them. `closed` keeps describing the conversation's last close
+  // (the thread's "Was closed" line); the payload reads it only when handled.
+  const convStatus = status;
+  const convOpen = status === 'waiting' || status === 'snoozed';
+  const tasksOnly = tasks.length > 0 && !convOpen;
+  if (tasksOnly) {
+    snooze = activeSnooze(acts, newestInbound, anchorMs, ctx, tasks);
+    status = snooze ? 'snoozed' : 'waiting';
+  }
+  if (tasks.length) {
+    const firstTaskMs = Math.min(...tasks.map((t) => ms(t.at)));
+    waitingSince = new Date(convOpen && waitingSince ? Math.min(waitingSince.getTime(), firstTaskMs) : firstTaskMs);
+  }
 
   // 6 and 7: the chip
   const open = status === 'waiting' || status === 'snoozed';
@@ -257,15 +295,18 @@ function computePersonState(personKey, events, ctx) {
   // LAST use (U is in time order): a tag moves to the end each time it is used
   // again, so the newest channel is last (lane inbox-page reads the last entry
   // as their newest). Waiting only on a promise, it is their newest inbound's.
+  // A row held only by menu tasks has no waiting stretch of theirs, so no tag:
+  // a closed conversation's text still in U (the AI's cover, an event) never
+  // tags it.
   const channels = [];
-  for (const e of U) {
+  for (const e of tasksOnly ? [] : U) {
     const tag = C.channelTag(e);
     if (!tag) continue;
     const seenAt = channels.indexOf(tag);
     if (seenAt !== -1) channels.splice(seenAt, 1);
     channels.push(tag);
   }
-  if (!channels.length && newestInbound) {
+  if (!channels.length && newestInbound && !tasksOnly) {
     const tag = C.channelTag(newestInbound);
     if (tag) channels.push(tag);
   }
@@ -273,6 +314,13 @@ function computePersonState(personKey, events, ctx) {
   const needEvent = needsReply.length ? last(needsReply) : newestU;
   const waitingNeed = needOf(needEvent) || needOf(newestInbound)
     || (P.length ? 'Waiting on our follow-up' : null) || (reopenWaits ? 'Reopened' : null);
+  // The newest reason a person waits: a task newer than the conversation's
+  // newest reason gives the row its text and its event link.
+  const newestTask = tasks.reduce((a, t) => (!a || ms(t.at) >= ms(a.at) ? t : a), null);
+  const convNewestMs = convOpen
+    ? Math.max(newestU ? ms(newestU.at) : -Infinity, P.length ? ms(last(P).at) : -Infinity, reopenWaits ? ms(reopen.created_at) : -Infinity)
+    : -Infinity;
+  const taskLeads = open && Boolean(newestTask) && ms(newestTask.at) > convNewestMs;
   // The Pitch tag (spec 2026-10-14 decision 12): the newest counted inbound's
   // read says solicitation. The read job stored needs_reply true with it, so
   // the item already waits; this only names it.
@@ -288,10 +336,18 @@ function computePersonState(personKey, events, ctx) {
     pitch,
     waitingSince: open ? waitingSince : null,
     hot: status === 'waiting' && ctx.nowMs - waitingSince.getTime() >= HOT_HOURS * HOUR,
-    need: open ? waitingNeed : (closed ? closed.need : null),
+    need: open ? (taskLeads ? C.eventNeedText(newestTask) : waitingNeed) : (closed ? closed.need : null),
+    // The open task's event link when its text is the need line; a row held
+    // only by tasks hides Done (spec 2026-10-19 section 13.2).
+    link: taskLeads ? (newestTask.meta.link || null) : null,
+    tasksOnly,
     state, snooze, closed,
-    internals: { U, P, real, holding, dones, zolaClosed, anchorMs, newestInbound },
+    internals: { U, P, real, holding, dones, zolaClosed, anchorMs, newestInbound, tasks, convStatus },
   };
+}
+
+function conversationView(s) {
+  return s.internals.convStatus === s.status ? s : { ...s, status: s.internals.convStatus };
 }
 
 function computeInbox(input = {}) {
@@ -314,7 +370,9 @@ function computeInbox(input = {}) {
     waiting: states.filter((s) => s.status === 'waiting').sort((a, b) => (a.waitingSince - b.waitingSince) || byKey(a, b)),
     snoozed: states.filter((s) => s.status === 'snoozed').sort((a, b) => (a.snooze.until - b.snooze.until) || byKey(a, b)),
     handled: states.filter((s) => s.status === 'handled').sort((a, b) => (b.closed.at - a.closed.at) || byKey(a, b)),
-    subjects: buildSubjects(states, byPerson, ctx),
+    // The AI reads the conversation alone: a person a task brought back is
+    // handed over on the conversation's own verdict, never the task's.
+    subjects: buildSubjects(states.map(conversationView), byPerson, ctx),
     people,
   };
 }

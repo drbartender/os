@@ -1,10 +1,16 @@
 'use strict';
 
 // The opened item's message list (spec 4.2), PURE. Every event with the person
-// in the last 30 days plus anything older still unanswered, oldest first, with
-// system lines for proposal sends, calls, opt-outs, the taps, promises, and a
-// close the thread could not otherwise explain. Times stay ISO; the page
-// renders them in Chicago time. Clock words inside a line are Chicago time.
+// in the last 30 days plus anything older still unanswered or still open (an
+// open menu task), oldest first, with system lines for proposal sends, calls,
+// opt-outs, the taps, promises, the menu tasks, and a close the thread could
+// not otherwise explain. Times stay ISO; the page renders them in Chicago
+// time. Clock words inside a line are Chicago time.
+//
+// A menu task's line (spec 2026-10-19 section 13.2) is a system row with the
+// task's fixed text, its event link (`link`, only ever the in-app path
+// /events/<id>?menu=1) and, on a change request, the client's note (`note`,
+// loaded in pass 2). Only a task row carries those two fields.
 
 const { THREAD_DAYS, TT_MISSED_TEXT, ZOLA_UNREAD_TEXT } = require('./constants');
 const C = require('./classify');
@@ -59,7 +65,17 @@ function mailSystemText(e) {
 }
 const MAIL_SYSTEM_KINDS = new Set(['auto_reply', 'bounce', 'zola_closed']);
 
+// The only link a task row may carry: the event page with the menu editor open.
+const TASK_LINK_RE = /^\/events\/\d+\?menu=1$/;
+
+function taskRow(e) {
+  const link = typeof e.meta.link === 'string' && TASK_LINK_RE.test(e.meta.link) ? e.meta.link : null;
+  const note = e.kind === 'menu_changes' && typeof e.meta.note === 'string' ? e.meta.note : null;
+  return { ...blankRow(e.ref, e.at), text: e.text || null, link, note };
+}
+
 function eventRow(e, h) {
+  if (C.isMenuTask(e)) return taskRow(e);
   const row = { ...blankRow(e.ref, e.at), channel: e.channel || null, line: e.line || null };
   const mail = e.meta.source === 'gm';
   if (e.direction === 'in') {
@@ -143,10 +159,13 @@ function buildThread({ state = null, events = [], actions = [], reads = [], now 
   const readsByKey = new Map(reads.map((r) => [`${r.kind}:${r.subject_ref}`, r]));
   const legalHold = Boolean(state && state.legalHold);
   const open = new Set(state && state.internals ? [...state.internals.U, ...state.internals.P].map((e) => e.ref) : []);
+  // Kept however old: the open set (U, P) and the open menu tasks (spec
+  // 2026-10-19 section 13.2).
+  const kept = new Set([...open, ...(state && state.internals && state.internals.tasks ? state.internals.tasks : []).map((e) => e.ref)]);
   const fromMs = ms(now) - THREAD_DAYS * DAY;
   const rows = [];
   for (const e of events) {
-    if (ms(e.at) < fromMs && !open.has(e.ref)) continue;
+    if (ms(e.at) < fromMs && !kept.has(e.ref)) continue;
     rows.push(eventRow(e, h));
     if (C.countsAsReply(e) && C.isHolding(e, readsByKey, legalHold)) {
       rows.push(promiseRow(e, C.readOf(readsByKey, 'outbound', e.ref, e.meta.readRef), h));

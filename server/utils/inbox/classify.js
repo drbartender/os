@@ -1,9 +1,16 @@
 'use strict';
 
 // What counts, for the Inbox rules (spec 2026-10-06, sections 5.3 and 5.4,
-// and spec 2026-10-14 for email and Zola). PURE: every judgment reads facts
-// the readers copied off the source rows, so each one is a unit test over
-// invented fixtures.
+// spec 2026-10-14 for email and Zola, and spec 2026-10-19 section 13.2 for the
+// menu tasks). PURE: every judgment reads facts the readers copied off the
+// source rows, so each one is a unit test over invented fixtures.
+//
+// The menu tasks (menu_ready, menu_failed, menu_changes, menu_no_answer, all
+// four registered here up front, though the reader emits only the two proof
+// kinds until lane menu-auto-start adds the other two) are kept apart from
+// the conversation: never a counted inbound, never a reply (an explicit false
+// ahead of the user-id default), and in aiCannotClose for safety. Nothing
+// here hands one to the AI: subjects.js never slices a task's kind.
 
 const { ANSWERING_MESSAGE_TYPES } = require('../answeringMessageTypes');
 const { CALL_MIN_SECONDS, TT_MISSED_TEXT, ZOLA_UNREAD_TEXT } = require('./constants');
@@ -11,6 +18,18 @@ const { firstNameOf } = require('../firstName');
 
 const isUserId = (a) => Number.isInteger(a) && a > 0;
 const NOT_TEXT_SOURCES = new Set(['ml', 'pal', 'lc', 'cc']);
+
+// The menu tasks' source and kinds (spec 2026-10-19 section 13.1). A frozen
+// list outside, a private Set for the lookups: a frozen Set still takes add().
+const MENU_TASK_SOURCE = 'menu_task';
+const MENU_TASK_KINDS = Object.freeze(['menu_ready', 'menu_failed', 'menu_changes', 'menu_no_answer']);
+const MENU_KIND_SET = new Set(MENU_TASK_KINDS);
+
+// A menu task, by its source or by its kind: either one keeps it out of the
+// conversation.
+function isMenuTask(e) {
+  return Boolean(e) && ((e.meta && e.meta.source === MENU_TASK_SOURCE) || MENU_KIND_SET.has(e.kind));
+}
 
 // The user behind an outbound event, or null: automated, or a Thumbtack
 // Business message, whose author the OS cannot know. An SMS row whose ledger
@@ -27,21 +46,25 @@ function authorOf(e) {
 // notice the OS could not read. Auto-replies, bounces and a Zola closed
 // notice are system lines and never count.
 function isCountedInbound(e) {
+  if (isMenuTask(e)) return false;
   return e.direction === 'in' && !e.meta.skip
     && (e.kind === 'message' || e.kind === 'media' || e.kind === 'tt_missed' || e.kind === 'zola_unread');
 }
 
 // The AI may never close these (5.5 step 3): a picture or an attachment, an
 // empty message, or a Thumbtack or Zola message the OS never read. There is
-// nothing in them to read.
+// nothing in them to read. A menu task is here too: it closes only by its own
+// state (spec 2026-10-19 section 13.2).
 function aiCannotClose(e) {
   return Boolean(e) && (e.kind === 'media' || e.kind === 'tt_missed' || e.kind === 'zola_unread'
-    || (e.kind === 'message' && Boolean(e.meta.empty)));
+    || MENU_KIND_SET.has(e.kind) || (e.kind === 'message' && Boolean(e.meta.empty)));
 }
 
 // A reply (5.4): an outbound human action toward the person that is not known
 // to have failed. A holding reply is still a reply; isHolding sorts those out.
 function countsAsReply(e) {
+  // A menu task is never a reply, whatever it carries (spec 2026-10-19 13.2).
+  if (isMenuTask(e)) return false;
   if (e.direction !== 'out' || e.meta.failed) return false;
   switch (e.meta.source) {
     case 'sms':
@@ -108,6 +131,7 @@ function isHolding(e, reads, legalHold) {
 // The need line before the AI summary lands (4.1).
 function eventNeedText(e) {
   if (!e) return null;
+  if (isMenuTask(e)) return e.text || null; // the task's fixed text (spec 2026-10-19 section 28)
   if (e.kind === 'tt_missed') return TT_MISSED_TEXT;
   if (e.kind === 'zola_unread') return ZOLA_UNREAD_TEXT;
   const text = String(e.text || '').replace(/\s+/g, ' ').trim();
@@ -174,4 +198,5 @@ function makeNamer(users) {
 module.exports = {
   isUserId, authorOf, isCountedInbound, aiCannotClose, countsAsReply, isTextBearingReply,
   readOf, isHolding, eventNeedText, durationText, sliceText, channelTag, makeNamer, isPersonal,
+  MENU_TASK_SOURCE, MENU_TASK_KINDS, isMenuTask,
 };

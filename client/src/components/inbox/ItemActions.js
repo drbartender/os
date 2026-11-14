@@ -1,5 +1,5 @@
-// Exports PhoneActions, DesktopActions, ItemBanner. Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// The Inbox item's actions: PhoneActions and DesktopActions (On it, Snooze and Done, with no Done on a person
+// held only by menu tasks) and ItemBanner, the line an item shows when it is not waiting.
 
 import React, { useRef, useState } from 'react';
 import Icon from '../adminos/Icon';
@@ -11,9 +11,15 @@ import { SnoozeMenu } from './SnoozePickers';
 // shipped m-act); the desktop puts them in the thread header as btn
 // variants, with Snooze opening a panel of choices (a disclosure: the button
 // says expanded or not, and promises no ARIA menu).
+//
+// Done closes the conversation and never a menu task (spec 2026-10-19
+// section 13.2), so while only tasks hold the person (the server's
+// state.tasks_only) neither surface draws it; On it and Snooze stay. A
+// person with an unanswered text beside a task keeps Done.
 
 export function PhoneActions({ state, busy, onClaim, onSnooze, onDone }) {
   const c = claimButton(state);
+  const done = !(state && state.tasks_only);
   return (
     <div className="m-acts ib-acts">
       <button
@@ -28,9 +34,11 @@ export function PhoneActions({ state, busy, onClaim, onSnooze, onDone }) {
       <button type="button" className="m-act m-act-quiet ib-act" disabled={busy} onClick={onSnooze}>
         <Icon name="clock" size={16} />Snooze
       </button>
-      <button type="button" className="m-act m-act-quiet ib-act" disabled={busy} onClick={onDone}>
-        <Icon name="check" size={16} />Done
-      </button>
+      {done && (
+        <button type="button" className="m-act m-act-quiet ib-act" disabled={busy} onClick={onDone}>
+          <Icon name="check" size={16} />Done
+        </button>
+      )}
     </div>
   );
 }
@@ -41,6 +49,7 @@ export function DesktopActions({ state, busy, nowMs, onClaim, onSnooze, onDone }
   // hands focus back to it.
   const snoozeButton = useRef(null);
   const c = claimButton(state);
+  const done = !(state && state.tasks_only);
   return (
     <div className="ib-thead-acts">
       <button type="button" className="btn btn-secondary" aria-pressed={c.mine} disabled={busy} onClick={() => onClaim(c)}>
@@ -56,9 +65,11 @@ export function DesktopActions({ state, busy, nowMs, onClaim, onSnooze, onDone }
       >
         <Icon name="clock" />Snooze<Icon name="down" />
       </button>
-      <button type="button" className="btn btn-secondary" disabled={busy} onClick={onDone}>
-        <Icon name="check" />Done
-      </button>
+      {done && (
+        <button type="button" className="btn btn-secondary" disabled={busy} onClick={onDone}>
+          <Icon name="check" />Done
+        </button>
+      )}
       {menu && (
         <SnoozeMenu
           nowMs={nowMs}

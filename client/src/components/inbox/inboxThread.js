@@ -1,5 +1,5 @@
-// Exports threadModel. Header generated from the file's exports by migrate-headers on 2026-10-27;
-// replace with what it does.
+// The Inbox thread's view model (threadModel): day separators, bubbles and system lines, a menu task's line
+// with its event link and the client's change note; taskLink, the one check a task link passes.
 
 import { chicagoDay, chicagoTime, chicagoDayLabel } from '../../utils/chicagoDay';
 import { channelLabel, threadChannel } from './inboxFormat';
@@ -19,6 +19,19 @@ function authorOf(row) {
   if (row.auto) return 'Auto';
   if (row.author_name) return row.author_name;
   return row.by_email ? 'by email' : null;
+}
+
+// A menu task (spec 2026-10-19 section 13.2) is a system line whose row may
+// carry `link`, the event page with the menu editor open, and on a change
+// request `note`, the client's words. The link is drawn only when it is that
+// in-app path exactly (the server sends nothing else); the label is
+// TASK_LINK_LABEL. WaitingRows.js draws the row's link with the same check.
+export const TASK_LINK_LABEL = 'Open the menu';
+const TASK_LINK_RE = /^\/events\/\d+\?menu=1$/;
+
+/** The task's in-app event link, or null for anything else (a javascript:, protocol-relative or outside URL). */
+export function taskLink(link) {
+  return typeof link === 'string' && TASK_LINK_RE.test(link) ? link : null;
 }
 
 // "1 attachment", "3 attachments": a count, never a name or a link.
@@ -56,7 +69,11 @@ export function threadModel(thread, nowMs) {
     if (row.direction === 'system') {
       // A proposal send whose email and text both failed is a system line
       // that never arrived: it says so, like a failed bubble.
-      out.push({ type: 'sys', key: row.ref, text: row.text || '', failure: row.failed ? (row.failure_reason || 'Not delivered') : null });
+      const sys = { type: 'sys', key: row.ref, text: row.text || '', failure: row.failed ? (row.failure_reason || 'Not delivered') : null };
+      const link = taskLink(row.link);
+      if (link) sys.link = link;
+      if (typeof row.note === 'string' && row.note.trim()) sys.note = row.note;
+      out.push(sys);
       continue;
     }
     const isOut = row.direction === 'out';

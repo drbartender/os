@@ -135,6 +135,33 @@ test('phone actions: On it, Take over on someone else\'s claim, You\'re on it on
   expect(onClaim).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'release' }));
 });
 
+// Spec 2026-10-19 section 13.2: Done never clears a menu task, so an item
+// held only by tasks (the server's state.tasks_only) draws no Done; On it and
+// Snooze stay. A person with an unanswered text beside a task keeps Done (it
+// closes the text), and an ordinary item is unchanged.
+test('item actions: a tasks-only item draws no Done on the phone or the desktop; every other action stays', () => {
+  const actions = (state) => [
+    <PhoneActions key="p" state={state} busy={false} onClaim={() => {}} onSnooze={() => {}} onDone={() => {}} />,
+    <DesktopActions key="d" state={state} busy={false} nowMs={NOW} onClaim={() => {}} onSnooze={() => {}} onDone={() => {}} />,
+  ];
+  for (const el of actions({ type: null, tasks_only: true })) {
+    const { unmount } = render(el);
+    expect(screen.queryByRole('button', { name: /Done/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /On it/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Snooze/ })).toBeInTheDocument();
+    unmount();
+  }
+  for (const state of [{ type: null, tasks_only: false }, { type: 'unseen' }, { type: 'claim', mine: true, tasks_only: false }]) {
+    for (const el of actions(state)) {
+      const onDone = jest.fn();
+      const { unmount } = render(React.cloneElement(el, { onDone }));
+      fireEvent.click(screen.getByRole('button', { name: /Done/ }));
+      expect(onDone).toHaveBeenCalled();
+      unmount();
+    }
+  }
+});
+
 test('the banner on an item that is not waiting: Handled with Reopen, Snoozed with Wake', () => {
   const onReopen = jest.fn();
   const onWake = jest.fn();

@@ -22485,6 +22485,39 @@ html[data-app="admin-os"] .ib-dsnz {
 }
 html[data-app="admin-os"] .ib-dsnz-text { flex: 1; min-width: 0; }
 
+/* ---- Menu task links (spec 2026-10-19 sections 13.2 and 22): "Open the
+   menu", a plain text link in the Inbox's link color, beside a row's tap
+   target and never inside it. Phone: the line's -2px top margin trims the
+   card's 0.5rem bottom margin to a 6px gap between the card's press area and
+   the link's, so the link reads as its own card's, indented to the card's
+   text (10px padding, 44px rail, 8px gap, less the link's 4px), with 0.75rem
+   before the next card. Desktop: the row gives its bottom border to the line,
+   which takes the row's hover and selected tones. Thread: the end of the
+   task's system line; its dot and the link wrap together (ib-task-tail), so
+   the dot never hangs at a line's end. Press heights: 44px on the phone list
+   and the phone thread, 32px on the desktop list, 28px in the desktop thread.
+   On the phone list the link's text sits at the top of its 44px box, close
+   under its own card, and the box runs on below it. */
+html[data-app="admin-os"] .ib-task-link {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px;
+  font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; letter-spacing: 0; color: var(--ib-link);
+  white-space: nowrap;
+}
+html[data-app="admin-os"] .ib-task-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+html[data-app="admin-os"] .ib-task-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
+html[data-app="admin-os"] .ib-task-line { display: flex; margin: -2px 0 0.75rem; padding: 0 14px 0 58px; }
+html[data-app="admin-os"] .ib-task-line .ib-task-link { align-items: flex-start; padding-top: 5px; }
+html[data-app="admin-os"] .ib-task-tail { white-space: nowrap; }
+html[data-app="admin-os"] .ib-drow:has(+ .ib-dtask-line) { border-bottom-color: transparent; padding-bottom: 0.2rem; }
+html[data-app="admin-os"] .ib-dtask-line {
+  display: flex; padding: 0 1rem 0.35rem calc(1rem + 26px + 0.75rem - 4px); border-bottom: 1px solid var(--line-1);
+}
+html[data-app="admin-os"] .ib-dtask-line .ib-task-link { min-height: 32px; }
+html[data-app="admin-os"] .ib-drow:hover + .ib-dtask-line { background: var(--row-hover); }
+html[data-app="admin-os"] .ib-drow.is-selected + .ib-dtask-line { background: var(--row-active); box-shadow: inset 2px 0 0 var(--accent); }
+html[data-app="admin-os"] .ib-sys .ib-task-link { min-height: 44px; font-size: 11px; vertical-align: middle; }
+html[data-app="admin-os"] .ib-thread-desk .ib-sys .ib-task-link { min-height: 28px; }
+
 /* ---- Desktop Recently handled */
 html[data-app="admin-os"] .ib-dhgroup {
   padding: 0.7rem 1rem 0.3rem; font-size: 10.5px; font-weight: 600;

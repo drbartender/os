@@ -94,6 +94,8 @@ async function clean() {
   await pool.query('DELETE FROM email_webhook_events WHERE resend_id = $1', [`re_${TAG}`]);
   await pool.query('DELETE FROM sms_status_orphans WHERE twilio_sid LIKE $1', [`${SID}%`]);
   await pool.query('DELETE FROM proposals WHERE client_id = ANY($1::int[])', [clients]); // cascades the ledger and activity
+  // The menu tasks' proposal with no client, found by its marker; its draft and proof cascade.
+  await pool.query('DELETE FROM proposals WHERE client_id IS NULL AND admin_notes = $1', [TAG]);
   await pool.query(
     `DELETE FROM sms_messages
       WHERE RIGHT(REGEXP_REPLACE(recipient_phone, '\\D', '', 'g'), 10) = ANY($1::text[])
@@ -216,6 +218,7 @@ before(async () => {
   ids.cc = cc.rows[0].id;
 
   await seedMail();
+  await seedMenuTasks();
   const index = await loadPeopleIndex(pool);
   mailRows = (await pool.query(MAIL_HEADERS_SQL, [INBOX_HISTORY_START])).rows.filter((r) => r.gmail_id.startsWith(`${GM}-`));
   for (const e of mapGmailHeaders(mailRows, index)) gmByRef.set(e.ref, e);
@@ -813,5 +816,312 @@ test('the Zola feed time is the newest lead-linked row: a Zola notice counts, a 
     assert.equal(zola.last_at, notice.toISOString());
   } finally {
     await pool.query('DELETE FROM gmail_messages WHERE gmail_id = ANY($1::text[])', [[`${GM}-feedZola`, `${GM}-feedSent`]]);
+  }
+});
+
+// ─── Menu tasks (spec 2026-10-19 section 13.1) ───
+// Nothing in the app creates a proof yet (lane menu-approve-send does), so the
+// proofs here are inserted directly. Each case is its own invented client
+// (named with TAG, so clean() finds them), proposal and draft; deleting the
+// proposals cascades the drafts and the proofs.
+
+const {
+  MENU_TASKS_SQL, menuTaskParams, mapMenuTaskRows, __setMenuTaskDeps, __resetMenuTaskDeps,
+} = require('./readMenuTasks');
+const { chicagoTodayYmd } = require('../businessTime');
+const { legalHoldPersonKeys } = require('./engine');
+
+const M = {};
+let menuToday;
+
+async function menuEvent(label, { offset = 20, status = 'confirmed', noDate = false, mark = false, clientId, noClient = false } = {}) {
+  let client = clientId || null;
+  if (!client && !noClient) {
+    client = (await pool.query('INSERT INTO clients (name) VALUES ($1) RETURNING id', [`Menu ${label} ${TAG}`])).rows[0].id;
+    ids.clients.push(client);
+  }
+  const p = (await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, menu_not_required, admin_notes)
+     VALUES ($1, $2, CASE WHEN $3::boolean THEN NULL ELSE $4::date + $5::int END, $6, $7) RETURNING id`,
+    [client, status, noDate, menuToday, offset, mark, TAG]
+  )).rows[0].id;
+  ids.proposals.push(p);
+  const d = (await pool.query(
+    `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint, version, art_version)
+     VALUES ($1, gen_random_uuid(), '{}', '{}', '{}', 4, 2) RETURNING id`,
+    [p]
+  )).rows[0].id;
+  return { clientId: client, proposalId: p, draftId: d, personKey: client ? `c-${client}` : null };
+}
+
+// A proof of the draft's pair 4/2 unless cols say otherwise; sent and answered
+// some interval ago.
+async function menuProof(ev, cols = {}) {
+  const r = await pool.query(
+    `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, email_status, sent_at,
+                              answer, answer_note, answered_at, superseded_at, withdrawn_at)
+     VALUES ($1, $2, $3, $4, $5, 'sent', NOW() - $6::interval, $7, $8,
+             CASE WHEN $7::text IS NULL THEN NULL ELSE NOW() - $9::interval END,
+             CASE WHEN $10::boolean THEN NOW() ELSE NULL END, CASE WHEN $11::boolean THEN NOW() ELSE NULL END)
+     RETURNING id, sent_at, answered_at`,
+    [ev.draftId, ev.proposalId, cols.version || 4, cols.artVersion || 2, `menu-proof/${ev.proposalId}/${crypto.randomUUID()}.jpg`,
+      cols.sentAgo || '1 day', cols.answer || null, cols.note || null, cols.answeredAgo || '2 hours',
+      Boolean(cols.superseded), Boolean(cols.withdrawn)]
+  );
+  return r.rows[0];
+}
+
+// releasedAgo: how long ago the release happened (now by default).
+async function approveDraft(ev, { approved, released, releasedAgo = '0 seconds' }) {
+  await pool.query(
+    `UPDATE menu_drafts SET approved_version = 4, approved_art_version = 2, approved_print_key = $2, approved_at = NOW(),
+            released_print_key = $3, released_at = CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() - $4::interval END,
+            released_via = CASE WHEN $3::text IS NULL THEN NULL ELSE 'admin' END
+      WHERE id = $1`,
+    [ev.draftId, approved, released || null, releasedAgo]
+  );
+}
+
+// The proposal's live print file (proposals.menu_print_key).
+async function setPrintKey(ev, printKey) {
+  await pool.query('UPDATE proposals SET menu_print_key = $2 WHERE id = $1', [ev.proposalId, printKey]);
+}
+
+// Seeded at the end of before() above: Node runs a file's top-level before()
+// hooks side by side, so a second hook would race the first one's clean().
+async function seedMenuTasks() {
+  menuToday = chicagoTodayYmd();
+  const key = (p) => `menu-print/${p}/${crypto.randomUUID()}.jpg`;
+  M.changes = await menuEvent('Changes');
+  M.changesProof = await menuProof(M.changes, { answer: 'changes', note: 'Swap the margarita for a mojito, please', answeredAgo: '2 hours' });
+  M.due = await menuEvent('Due', { offset: 3 });
+  M.dueProof = await menuProof(M.due, { sentAgo: '2 days' });
+  M.early = await menuEvent('Early', { offset: 30 });
+  await menuProof(M.early, { sentAgo: '1 hour' });
+  // Three days out and sent two days ago: read as open, each of these would be
+  // due now, so only the answer, or the supersede, keeps the task away.
+  M.approved = await menuEvent('Approved', { offset: 3 });
+  await menuProof(M.approved, { answer: 'approved', sentAgo: '2 days' });
+  M.superseded = await menuEvent('Superseded', { offset: 3 });
+  await menuProof(M.superseded, { sentAgo: '3 days', superseded: true });
+  await menuProof(M.superseded, { answer: 'approved', sentAgo: '2 days' });
+  // An older change request superseded by a newer proof that is due: the one
+  // task is the newer proof's.
+  M.newerDue = await menuEvent('NewerDue', { offset: 3 });
+  await menuProof(M.newerDue, { answer: 'changes', note: 'Older notes', sentAgo: '3 days', answeredAgo: '50 hours', superseded: true });
+  M.newerDueProof = await menuProof(M.newerDue, { sentAgo: '2 days' });
+  M.withdrawn = await menuEvent('Withdrawn', { offset: 5 });
+  await menuProof(M.withdrawn, { sentAgo: '10 days', withdrawn: true });
+  M.released = await menuEvent('Released');
+  await menuProof(M.released, { answer: 'changes', note: 'Released anyway' });
+  const releasedKey = key(M.released.proposalId);
+  await approveDraft(M.released, { approved: releasedKey, released: releasedKey });
+  M.olderLive = await menuEvent('OlderLive');
+  M.olderLiveProof = await menuProof(M.olderLive, { answer: 'changes', note: 'Second round of notes' });
+  const olderKey = key(M.olderLive.proposalId);
+  await approveDraft(M.olderLive, { approved: key(M.olderLive.proposalId), released: olderKey });
+  await setPrintKey(M.olderLive, olderKey); // the older released file is live for staff: not an upload
+  // A release and an answer, in both orders (a release closes a no-answer
+  // task always, a change request only when it came at or after the answer).
+  M.releasedThenChanges = await menuEvent('ReleasedThenChanges');
+  M.releasedThenChangesProof = await menuProof(M.releasedThenChanges, { answer: 'changes', note: 'After the release', answeredAgo: '1 hour' });
+  const rtc = key(M.releasedThenChanges.proposalId);
+  await approveDraft(M.releasedThenChanges, { approved: rtc, released: rtc, releasedAgo: '3 hours' });
+  M.changesThenReleased = await menuEvent('ChangesThenReleased');
+  await menuProof(M.changesThenReleased, { answer: 'changes', note: 'Before the release', answeredAgo: '3 hours' });
+  const ctr = key(M.changesThenReleased.proposalId);
+  await approveDraft(M.changesThenReleased, { approved: ctr, released: ctr, releasedAgo: '1 hour' });
+  M.openThenReleased = await menuEvent('OpenThenReleased', { offset: 3 });
+  await menuProof(M.openThenReleased, { sentAgo: '2 days' });
+  const otr = key(M.openThenReleased.proposalId);
+  await approveDraft(M.openThenReleased, { approved: otr, released: otr, releasedAgo: '1 hour' });
+  // The admin's own upload live (a print key that is neither the approved nor
+  // the released one) hides nothing: no time is kept for a print key, so the
+  // reader cannot tell an upload made before the proof from one made after
+  // it. A proof's tasks close by the proof's own state alone.
+  M.changesUpload = await menuEvent('ChangesUpload');
+  M.changesUploadProof = await menuProof(M.changesUpload, { answer: 'changes', note: 'Beside an upload' });
+  await approveDraft(M.changesUpload, { approved: key(M.changesUpload.proposalId) });
+  await setPrintKey(M.changesUpload, key(M.changesUpload.proposalId));
+  M.openUpload = await menuEvent('OpenUpload', { offset: 3 });
+  M.openUploadProof = await menuProof(M.openUpload, { sentAgo: '2 days' });
+  await approveDraft(M.openUpload, { approved: key(M.openUpload.proposalId) });
+  await setPrintKey(M.openUpload, key(M.openUpload.proposalId));
+  M.printApproved = await menuEvent('PrintApproved');
+  M.printApprovedProof = await menuProof(M.printApproved, { answer: 'changes', note: 'The approved file is live' });
+  const pa = key(M.printApproved.proposalId);
+  await approveDraft(M.printApproved, { approved: pa });
+  await setPrintKey(M.printApproved, pa);
+  M.past = await menuEvent('Past', { offset: -1 });
+  await menuProof(M.past, { answer: 'changes', sentAgo: '3 days', answeredAgo: '2 days' });
+  M.today = await menuEvent('Today', { offset: 0 });
+  M.todayProof = await menuProof(M.today, { answer: 'changes', note: 'Today notes' });
+  M.archived = await menuEvent('Archived', { status: 'archived' });
+  await menuProof(M.archived, { answer: 'changes' });
+  M.marked = await menuEvent('Marked', { mark: true });
+  await menuProof(M.marked, { answer: 'changes' });
+  M.noClient = await menuEvent('NoClient', { noClient: true });
+  await menuProof(M.noClient, { answer: 'changes' });
+  M.noDate = await menuEvent('NoDate', { noDate: true });
+  M.noDateProof = await menuProof(M.noDate, { sentAgo: '2 days' });
+  M.noProof = await menuEvent('NoProof');
+  // The held client: the held proposal and another of theirs, each with a change request.
+  M.held = await menuEvent('Held');
+  await menuProof(M.held, { answer: 'changes' });
+  M.heldOther = await menuEvent('HeldOther', { clientId: M.held.clientId });
+  await menuProof(M.heldOther, { answer: 'changes' });
+}
+
+// The reader as the engine runs it, this suite's proposals only.
+async function readMenuTasksNow({ held = [], heldKeys = new Set() } = {}) {
+  const now = new Date();
+  const { rows } = await pool.query(MENU_TASKS_SQL, menuTaskParams({ floor: INBOX_HISTORY_START, now, legalHoldIds: held }));
+  const mine = new Set(ids.proposals);
+  return mapMenuTaskRows(rows.filter((r) => mine.has(r.proposal_id)), { now, heldKeys });
+}
+const tasksOf = (events, ev) => events.filter((e) => e.meta.proposalId === ev.proposalId);
+
+test('menu tasks: a change request on the latest proof is one task under the client, at the answer, with the fixed text and the event link', async () => {
+  const events = await readMenuTasksNow();
+  const [task, ...rest] = tasksOf(events, M.changes);
+  assert.deepEqual(rest, []);
+  assert.deepEqual(
+    [task.ref, task.personKey, task.channel, task.line, task.direction, task.author, task.kind, task.text],
+    [`mt:menu_changes:${M.changesProof.id}`, M.changes.personKey, null, null, 'system', null, 'menu_changes', 'Asked for menu changes']
+  );
+  assert.equal(task.at.toISOString(), M.changesProof.answered_at.toISOString());
+  assert.deepEqual(task.meta, { source: 'menu_task', id: M.changesProof.id, proposalId: M.changes.proposalId, link: `/events/${M.changes.proposalId}?menu=1` });
+  assert.equal(JSON.stringify(task).includes('mojito'), false, 'pass 1 never carries the note');
+});
+
+test('menu tasks: an unanswered proof comes back at its due time, and not before', async () => {
+  const events = await readMenuTasksNow();
+  const [due] = tasksOf(events, M.due);
+  assert.deepEqual([due.kind, due.text, due.ref], ['menu_no_answer', 'No answer on the menu yet. Release it for printing?', `mt:menu_no_answer:${M.dueProof.id}`]);
+  const dueAt = new Date(M.dueProof.sent_at.getTime() + 24 * 3600 * 1000);
+  assert.equal(due.at.toISOString(), dueAt.toISOString(), 'three to seven days out: a day after the send');
+  assert.deepEqual(tasksOf(events, M.early), [], 'thirty days out, sent an hour ago: not due for weeks');
+  const [noDate] = tasksOf(events, M.noDate);
+  assert.equal(noDate.at.toISOString(), new Date(M.noDateProof.sent_at.getTime() + 24 * 3600 * 1000).toISOString(), 'no event date: a day after');
+});
+
+test('menu tasks: none for an approved, superseded or withdrawn latest proof, a released held file, or a draft with no proofs', async () => {
+  const events = await readMenuTasksNow();
+  for (const label of ['approved', 'superseded', 'withdrawn', 'released', 'noProof']) {
+    assert.deepEqual(tasksOf(events, M[label]), [], label); // eslint-disable-line security/detect-object-injection -- a literal fixture label
+  }
+});
+
+test('menu tasks: an older live file never hides the latest proof\'s change request', async () => {
+  const [task] = tasksOf(await readMenuTasksNow(), M.olderLive);
+  assert.deepEqual([task.kind, task.meta.id], ['menu_changes', M.olderLiveProof.id]);
+});
+
+test('menu tasks: none after the event day, for an archived proposal, a marked one or one with no client; the event day itself still counts', async () => {
+  const events = await readMenuTasksNow();
+  for (const label of ['past', 'archived', 'marked', 'noClient']) {
+    assert.deepEqual(tasksOf(events, M[label]), [], label); // eslint-disable-line security/detect-object-injection -- a literal fixture label
+  }
+  assert.deepEqual(tasksOf(events, M.today).map((e) => e.meta.id), [M.todayProof.id]);
+});
+
+test('menu tasks: none for any proposal of the client the legal hold covers, by the SQL alone and by the held keys alone', async () => {
+  const heldKeys = await legalHoldPersonKeys(pool, [M.held.proposalId]);
+  assert.ok(heldKeys.has(M.held.personKey));
+  const both = await readMenuTasksNow({ held: [M.held.proposalId], heldKeys });
+  const sqlOnly = await readMenuTasksNow({ held: [M.held.proposalId] });
+  const keysOnly = await readMenuTasksNow({ heldKeys });
+  for (const events of [both, sqlOnly, keysOnly]) {
+    assert.deepEqual([...tasksOf(events, M.held), ...tasksOf(events, M.heldOther)], []);
+    assert.equal(tasksOf(events, M.changes).length, 1, 'everyone else keeps theirs');
+  }
+  const unheld = await readMenuTasksNow();
+  assert.equal(tasksOf(unheld, M.held).length + tasksOf(unheld, M.heldOther).length, 2, 'the fixture does raise two tasks unheld');
+});
+
+test('menu tasks: pass 2 loads the change note into meta.note and keeps the fixed text', async () => {
+  const events = await readMenuTasksNow();
+  const wanted = [...tasksOf(events, M.changes), ...tasksOf(events, M.due)];
+  const [changes, due] = mergeDetails(wanted, await loadDetails(wanted, pool));
+  assert.deepEqual([changes.text, changes.meta.note], ['Asked for menu changes', 'Swap the margarita for a mojito, please']);
+  assert.deepEqual([due.text, due.meta.note], ['No answer on the menu yet. Release it for printing?', undefined]);
+});
+
+test('menu tasks: a superseded change request gives way to the newer proof, whose own due task is the one shown', async () => {
+  const tasks = tasksOf(await readMenuTasksNow(), M.newerDue);
+  assert.deepEqual(tasks.map((e) => [e.kind, e.meta.id]), [['menu_no_answer', M.newerDueProof.id]]);
+});
+
+test('menu tasks: a release closes a no-answer task, and a change request only when it came first', async () => {
+  const events = await readMenuTasksNow();
+  assert.deepEqual(tasksOf(events, M.releasedThenChanges).map((e) => [e.kind, e.meta.id]),
+    [['menu_changes', M.releasedThenChangesProof.id]], 'changes asked after the release stay open');
+  assert.deepEqual(tasksOf(events, M.changesThenReleased), [], 'a release after the change request settles it');
+  assert.deepEqual(tasksOf(events, M.openThenReleased), [], 'a release closes the no-answer task');
+});
+
+test('menu tasks: the admin\'s own upload live never hides a proof\'s tasks, nor does the approved or the released file live', async () => {
+  const events = await readMenuTasksNow();
+  assert.deepEqual(tasksOf(events, M.changesUpload).map((e) => [e.kind, e.meta.id]), [['menu_changes', M.changesUploadProof.id]], 'a change request beside his upload');
+  assert.deepEqual(tasksOf(events, M.openUpload).map((e) => [e.kind, e.meta.id]), [['menu_no_answer', M.openUploadProof.id]], 'no answer beside his upload');
+  assert.deepEqual(tasksOf(events, M.printApproved).map((e) => e.meta.id), [M.printApprovedProof.id], 'the approved file live');
+  assert.deepEqual(tasksOf(events, M.olderLive).map((e) => e.meta.id), [M.olderLiveProof.id], 'the older released file live');
+});
+
+// Pure: rows as the query returns them, so a row no database would hold can
+// stand in for one the mapper cannot read.
+test('menu tasks: a row the mapper cannot read is skipped and reported once, by its proof id; the rest still show', () => {
+  const now = new Date();
+  const inThreeDays = new Date(Date.parse(`${chicagoTodayYmd()}T12:00:00Z`) + 3 * 86400000).toISOString().slice(0, 10);
+  const row = (id, answer) => ({
+    id, draft_id: id, proposal_id: id, client_id: id, sent_at: new Date(now.getTime() - 3 * 86400000),
+    answer, answered_at: answer ? new Date(now.getTime() - 3600000) : null, superseded_at: null, withdrawn_at: null,
+    expired: false, event_date: inThreeDays, released: false, released_at: null,
+  });
+  const bad = { ...row(91003, null), event_date: '2999-02-31' };
+  const reports = [];
+  const warn = console.warn;
+  __setMenuTaskDeps({ sentry: { captureMessage: (...args) => reports.push(args) } });
+  console.warn = () => {};
+  try {
+    const out = mapMenuTaskRows([row(91001, 'changes'), bad, row(91002, null)], { now });
+    assert.deepEqual(out.map((e) => [e.kind, e.meta.id]), [['menu_changes', 91001], ['menu_no_answer', 91002]]);
+    assert.equal(reports.length, 1);
+    assert.deepEqual(reports[0][1].extra, { proof_id: 91003 }, 'the proof id, and nothing else');
+    mapMenuTaskRows([bad, { ...row(91004, null), expired: null }], { now });
+    assert.equal(reports.length, 2, 'the same row is reported once per process; a new one once too');
+  } finally {
+    console.warn = warn;
+    __resetMenuTaskDeps();
+  }
+});
+
+// The close an upload owes a change request is the proof's own withdraw (the
+// upload route's, spec 10.3), which the mapper already honors.
+test('menu tasks: a withdrawn change request raises no task; one with no answer time is skipped and reported, never dated 1970', () => {
+  const now = new Date();
+  const row = (id, over) => ({
+    id, draft_id: id, proposal_id: id, client_id: id, sent_at: new Date(now.getTime() - 86400000), answer: 'changes',
+    answered_at: new Date(now.getTime() - 3600000), superseded_at: null, withdrawn_at: null, expired: false,
+    event_date: null, released: false, released_at: null, ...over,
+  });
+  const reports = [];
+  const warn = console.warn;
+  __setMenuTaskDeps({ sentry: { captureMessage: (...args) => reports.push(args) } });
+  console.warn = () => {};
+  try {
+    assert.deepEqual(mapMenuTaskRows([row(91011)], { now }).map((e) => [e.kind, e.meta.id]), [['menu_changes', 91011]]);
+    assert.deepEqual(mapMenuTaskRows([row(91012, { withdrawn_at: now })], { now }), []);
+    assert.deepEqual(mapMenuTaskRows([row(91013, { answered_at: null })], { now }), []);
+    assert.deepEqual(reports.map((r) => r[1].extra), [{ proof_id: 91013 }]);
+  } finally {
+    console.warn = warn;
+    __resetMenuTaskDeps();
+  }
+});
+
+test('menu tasks: a malformed legal-hold id still fails closed, before any row is read', () => {
+  for (const bad of [[600.5], ['6_00'], [0], [-1]]) {
+    assert.throws(() => menuTaskParams({ floor: INBOX_HISTORY_START, now: new Date(), legalHoldIds: bad }), /legal-hold/);
   }
 });

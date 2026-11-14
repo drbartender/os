@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
 
 if (process.env.NODE_ENV === 'production') throw new Error('inbox.test.js refuses to run against production');
 
-const { pool } = require('../../db');
+const { pool, initDb } = require('../../db');
 const { AppError } = require('../../utils/errors');
 const cache = require('../../utils/inbox/cache');
 const engine = require('../../utils/inbox/engine');
@@ -22,12 +22,15 @@ const { emailHash, personalEmailKey } = require('../../utils/inbox/people');
 const { PERSONAL_ALIAS } = require('../../utils/inbox/constants');
 const { GMAIL_MAILBOX } = require('../../utils/gmailClient');
 const inboxRouter = require('./inbox');
+// The client's proof page answer route (spec 2026-10-19 section 12): it
+// clears the Inbox cache, so a change request shows at once.
+const menuProofRouter = require('../menuProof');
 
 // Fixed identifiers, not per run, so before() also clears whatever a crashed
 // earlier run left behind. Invented numbers in the 555-01xx range.
 const TAG = 'inbox-routes-test';
 const phone = (i) => `+1773555${String(100 + i).padStart(4, '0')}`;
-const PHONES = [0, 1, 2, 3, 4].map((i) => phone(i).slice(-10));
+const PHONES = [0, 1, 2, 3, 4, 5].map((i) => phone(i).slice(-10));
 const ids = { users: [], clients: [], sms: [] };
 // Personal mail (spec 2026-10-14 decision 6, as decided 2026-10-15): a
 // friend wrote to the owner alias only and the sync stored that mail
@@ -117,11 +120,14 @@ async function clean() {
          OR client_id = ANY($2::int[]) OR sender_id = ANY($3::int[])`,
     [PHONES, clients, users]
   );
+  // The menu client's proposal; its draft, proof and activity rows cascade.
+  await pool.query('DELETE FROM proposals WHERE client_id = ANY($1::int[])', [clients]);
   await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [clients]);
   await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [users]);
 }
 
 before(async () => {
+  await initDb(); // the schema as this lane reads it (menu_proofs and the release columns)
   await clean();
   U.admin = await makeUser('admin', 'admin');
   U.other = await makeUser('admin', 'other');
@@ -146,10 +152,23 @@ before(async () => {
   );
   await mailIn(`${GM}-personal`, [PERSONAL_ALIAS], true, 'Dinner on Sunday?', '1 hour');
   await mailIn(`${GM}-business`, [GMAIL_MAILBOX], false, 'Do you do corporate events?', '30 minutes');
+  // Review Focus 3: a client with an unanswered text and an open menu proof.
+  C.menu = await addClient('Menu', phone(5));
+  C.menuSms = await addSms({ direction: 'inbound', clientId: C.menu, ph: phone(5), body: `Is the bar outside? ${TAG}`, ago: '2 hours' });
+  C.menuProposal = (await pool.query(
+    "INSERT INTO proposals (client_id, status, event_date) VALUES ($1, 'confirmed', CURRENT_DATE + 20) RETURNING id", [C.menu])).rows[0].id;
+  const draftId = (await pool.query(
+    `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint, version, art_version)
+     VALUES ($1, gen_random_uuid(), '{}', '{}', '{}', 4, 2) RETURNING id`, [C.menuProposal])).rows[0].id;
+  C.menuToken = (await pool.query(
+    `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, email_status, sent_at)
+     VALUES ($1, $2, 4, 2, $3, 'sent', NOW() - INTERVAL '1 hour') RETURNING token`,
+    [draftId, C.menuProposal, `menu-proof/${C.menuProposal}/${TAG}.jpg`])).rows[0].token;
 
   const app = express();
   app.use(express.json());
   app.use('/api/admin', inboxRouter);
+  app.use('/api/menu-proof', menuProofRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -190,7 +209,7 @@ test('the list: the waiting client with its need and state, and the answered one
   const body = await list();
   const row = rowOf(body, key(C.ask));
   assert.deepEqual([row.name, row.kind, row.need, row.channels, row.hot], [`Ask Example ${TAG}`, 'lead', `When can we talk? ${TAG}`, ['text_888'], false]);
-  assert.deepEqual(row.state, { type: 'unseen', by_user_id: null, by_name: null, mine: false, promised_by: null, since: null });
+  assert.deepEqual(row.state, { type: 'unseen', by_user_id: null, by_name: null, mine: false, promised_by: null, since: null, tasks_only: false, has_task: false });
   const handled = body.handled.find((r) => r.person_key === key(C.done));
   assert.deepEqual([handled.reason_code, handled.reason_text, handled.need], ['text', 'You texted back from 888', 'Is there parking?']);
   assert.equal(rowOf(body, key(C.done)), undefined);
@@ -390,4 +409,37 @@ test('the personal key never moves: the friend became a client, the personal key
   } finally {
     engine.__resetEngine();
   }
+});
+
+// Review Focus 3 through the routes (spec 2026-10-19 section 13.2): the
+// client's change request on the proof page clears the cache and shows under
+// the client at once; their unanswered text stays its own reason; Dallas's
+// reply clears the text and never the task, and Done never clears the task.
+test('a change request on the proof page shows under the client at once, apart from their unanswered text, and outlives a reply and Done', async () => {
+  cache.invalidate();
+  const first = rowOf(await list(), key(C.menu));
+  assert.deepEqual([first.need, first.link, first.tasks_only], [`Is the bar outside? ${TAG}`, null, false], 'an unanswered proof is not due yet');
+  await list(); // the cache is warm
+  const g0 = cache.generationNow();
+  const answered = await call('POST', `/api/menu-proof/${C.menuToken}/answer`, { body: { answer: 'changes', note: 'Swap the margarita, please' } });
+  assert.equal(answered.status, 200);
+  assert.ok(cache.generationNow() > g0, 'the answer route cleared the Inbox cache');
+  const link = `/events/${C.menuProposal}?menu=1`;
+  const row = rowOf(await list(), key(C.menu));
+  assert.deepEqual([row.need, row.link, row.tasks_only], ['Asked for menu changes', link, false]);
+  const opened = await item(key(C.menu));
+  assert.deepEqual(opened.thread.map((r) => [r.direction, r.text, r.link || null, r.note || null]), [
+    ['in', `Is the bar outside? ${TAG}`, null, null],
+    ['system', 'Asked for menu changes', link, 'Swap the margarita, please'],
+  ]);
+  assert.equal(opened.tasks_only, false);
+  // Dallas texts back (the row as the text route stores it): the text is answered, the task is not.
+  await addSms({ direction: 'outbound', clientId: C.menu, senderId: U.admin.id, ph: phone(5), body: 'It is, under the tent', ago: '1 minute' });
+  cache.invalidate();
+  const afterReply = rowOf(await list(), key(C.menu));
+  assert.deepEqual([afterReply.need, afterReply.link, afterReply.tasks_only, afterReply.state.tasks_only], ['Asked for menu changes', link, true, true]);
+  assert.equal((await item(key(C.menu))).state.tasks_only, true, 'the item\'s state says so: its actions draw no Done');
+  assert.equal((await act(key(C.menu), { action: 'done' })).status, 201);
+  const afterDone = rowOf(await list(), key(C.menu));
+  assert.deepEqual([afterDone.need, afterDone.tasks_only], ['Asked for menu changes', true], 'Done never clears a task');
 });

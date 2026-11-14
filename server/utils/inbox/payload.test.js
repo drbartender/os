@@ -22,8 +22,8 @@ test('list payload: snake_case rows, a state object on every waiting row, ISO ti
   assert.deepEqual(body.ai, { status: 'off' });
   assert.deepEqual(body.waiting, [{
     person_key: 'c-701', name: 'Name of c-701', kind: 'lead', need: 'Is Friday open?', waiting_since: ask.at.toISOString(),
-    hot: true, channels: ['text_1922'], state: { type: 'unseen', by_user_id: null, by_name: null, mine: false, promised_by: null, since: null },
-    personal: false, pitch: false,
+    hot: true, channels: ['text_1922'], state: { type: 'unseen', by_user_id: null, by_name: null, mine: false, promised_by: null, since: null, tasks_only: false, has_task: false },
+    personal: false, pitch: false, link: null, tasks_only: false,
   }]);
   assert.deepEqual(body.snoozed, [{ person_key: 'c-702', name: 'Name of c-702', until: plus(NOW, 3 * HOUR).toISOString(), by_name: 'Zul', mine: false }]);
   assert.deepEqual(body.handled, [{
@@ -172,19 +172,19 @@ function itemOf(key, events, actions = []) {
 test('item payload: the contract keys plus status, snooze and closed, and the legal-hold flag', () => {
   const ask = k.smsIn('c-721', ago(3 * HOUR), 'Is the 5th open?');
   const body = itemOf('c-721', [ask]);
-  assert.deepEqual(Object.keys(body), ['person', 'status', 'waiting', 'waiting_since', 'need', 'state', 'snooze', 'closed', 'legal_hold', 'context', 'thread', 'reply']);
+  assert.deepEqual(Object.keys(body), ['person', 'status', 'waiting', 'waiting_since', 'need', 'state', 'snooze', 'closed', 'legal_hold', 'tasks_only', 'context', 'thread', 'reply']);
   assert.deepEqual(body.person, { person_key: 'c-721', name: 'Name of c-721', kind: 'lead' });
   assert.deepEqual([body.status, body.waiting, body.waiting_since, body.need, body.state.type, body.snooze, body.closed, body.legal_hold],
     ['waiting', true, ask.at.toISOString(), 'Is the 5th open?', 'unseen', null, null, true]);
   assert.equal(body.thread.length, 1);
-  assert.deepEqual(stateJson(null), { type: null, by_user_id: null, by_name: null, mine: false, promised_by: null, since: null });
+  assert.deepEqual(stateJson(null), { type: null, by_user_id: null, by_name: null, mine: false, promised_by: null, since: null, tasks_only: false, has_task: false });
 });
 
 test('item payload: a claim carries since; a handled item carries closed; a quiet one carries neither', () => {
   const ask = k.smsIn('c-722', ago(3 * HOUR), 'Can we add a second bar?');
   const claim = k.act('c-722', 'claim', ago(2 * HOUR), { userId: ZUL });
   assert.deepEqual(itemOf('c-722', [ask], [claim]).state,
-    { type: 'claim', by_user_id: ZUL, by_name: 'Zul', mine: false, promised_by: null, since: claim.created_at.toISOString() });
+    { type: 'claim', by_user_id: ZUL, by_name: 'Zul', mine: false, promised_by: null, since: claim.created_at.toISOString(), tasks_only: false, has_task: false });
   const reply = k.smsOut('c-722', ago(1 * HOUR), 'Yes, we can', { sender: ZUL });
   const handled = itemOf('c-722', [ask, reply]);
   assert.deepEqual([handled.status, handled.waiting, handled.waiting_since, handled.state.type, handled.snooze],
@@ -203,4 +203,46 @@ test('the Gmail sync switch reads like the scheduler\'s: production or RUN_SCHED
   assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'development' }), false, 'a dev box runs no schedulers by default');
   assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'development', RUN_SCHEDULERS: 'true' }), true);
   assert.equal(gmailSchedulerEnabled({ NODE_ENV: 'development', RUN_SCHEDULERS: 'true', RUN_GMAIL_SYNC_SCHEDULER: 'false' }), false);
+});
+
+// ─── Menu tasks (spec 2026-10-19 section 13.2) ───
+
+test('a row held only by a menu task: the task line and its link on the list row, tasks_only on the row and the item', () => {
+  const task = k.menuTask('c-751', ago(3 * HOUR), 'menu_changes', { proposalId: 751, note: 'Fewer drinks, please' });
+  const result = run({ events: [task] });
+  const body = listPayload({ result, directory, feeds: [], aiStatus: 'on', generatedAt: NOW });
+  assert.deepEqual(body.waiting.map((r) => [r.person_key, r.need, r.link, r.tasks_only, r.state.tasks_only, r.channels]), [
+    ['c-751', 'Asked for menu changes', '/events/751?menu=1', true, true, []],
+  ]);
+  assert.equal(JSON.stringify(body).includes('Fewer drinks'), false, 'the note never rides on the list');
+  const item = itemOf('c-751', [task]);
+  assert.deepEqual([item.status, item.waiting, item.need, item.tasks_only, item.closed], ['waiting', true, 'Asked for menu changes', true, null]);
+  assert.equal(item.state.tasks_only, true, 'the flag rides in the state the item actions read, so they draw no Done');
+  assert.deepEqual(item.thread.map((r) => [r.text, r.link, r.note]), [['Asked for menu changes', '/events/751?menu=1', 'Fewer drinks, please']]);
+});
+
+test('a client text beside a task: the row is not tasks-only, and the line and link follow the newest reason', () => {
+  const task = k.menuTask('c-752', ago(5 * HOUR), 'menu_no_answer', { proposalId: 752 });
+  const ask = k.smsIn('c-752', ago(2 * HOUR), 'Is the bar outside?');
+  const textNewest = listPayload({ result: run({ events: [task, ask] }), directory, feeds: [], aiStatus: 'on', generatedAt: NOW });
+  assert.deepEqual(textNewest.waiting.map((r) => [r.need, r.link, r.tasks_only]), [['Is the bar outside?', null, false]]);
+  assert.deepEqual([itemOf('c-752', [task, ask]).tasks_only, itemOf('c-752', [task, ask]).state.tasks_only], [false, false]);
+  const later = k.menuTask('c-752', ago(1 * HOUR), 'menu_changes', { proposalId: 753 });
+  const taskNewest = listPayload({ result: run({ events: [task, ask, later] }), directory, feeds: [], aiStatus: 'on', generatedAt: NOW });
+  assert.deepEqual(taskNewest.waiting.map((r) => [r.need, r.link, r.tasks_only]), [['Asked for menu changes', '/events/753?menu=1', false]]);
+});
+
+test('state.has_task: an open task holds the person (alone or beside a text); never on an ordinary or a handled row', () => {
+  const only = k.menuTask('c-761', ago(3 * HOUR), 'menu_changes', { proposalId: 761 });
+  const mixedTask = k.menuTask('c-762', ago(3 * HOUR), 'menu_no_answer', { proposalId: 762 });
+  const mixedAsk = k.smsIn('c-762', ago(2 * HOUR), 'Is the bar outside?');
+  const plain = k.smsIn('c-763', ago(2 * HOUR), 'Hello?');
+  const answered = k.smsIn('c-764', ago(5 * HOUR), 'Thanks');
+  const reply = k.smsOut('c-764', ago(4 * HOUR), 'Any time', { sender: DALLAS });
+  const body = listPayload({ result: run({ events: [only, mixedTask, mixedAsk, plain, answered, reply] }), directory, feeds: [], aiStatus: 'on', generatedAt: NOW });
+  assert.deepEqual(body.waiting.map((r) => [r.person_key, r.state.has_task, r.state.tasks_only]).sort(), [
+    ['c-761', true, true], ['c-762', true, false], ['c-763', false, false],
+  ]);
+  assert.deepEqual([itemOf('c-761', [only]).state.has_task, itemOf('c-762', [mixedTask, mixedAsk]).state.has_task,
+    itemOf('c-763', [plain]).state.has_task, itemOf('c-764', [answered, reply]).state.has_task], [true, true, false, false]);
 });
