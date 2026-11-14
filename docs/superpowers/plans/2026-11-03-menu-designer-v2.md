@@ -1026,8 +1026,9 @@ lanes:
       name (name the event); readMenuTasks.js's header already says the upload route withdraws the proof it
       settles, which item i makes true.
       Moved 2026-11-14 (Claude's call): items (k), (l) and (o) are built in lane menu-inbox-followups, since
-      they sit in the Inbox's own files, outside this lane's footprint; items (m) and (n) are decided here,
-      with the card's states.
+      they sit in the Inbox's own files, outside this lane's footprint; items (m) and (n) are decided in the
+      spec and built here: Close request (spec 10.3, the proof/close route and its control on the card and the
+      Brief tab) and the no-answer task's text beside the admin's own upload (spec 13.1).
     footprint:
       - server/utils/menuProofs.js  (the state precedence; loadLatestProof's columns)
       - server/utils/menuProofs.test.js
@@ -1051,7 +1052,8 @@ lanes:
       - server/routes/menuProof.test.js
       - server/routes/proposals/menuPrint.js  (the withdraw on the mark and on upload; the invalidate)
       - server/routes/proposals/menuPrint.test.js
-      - server/utils/inbox/readers.test.js  (the upload-withdraw cases, carried item i)
+      - server/utils/inbox/readers.test.js  (the upload-withdraw cases, carried item i; the no-answer text beside an upload, item n)
+      - server/utils/inbox/readMenuTasks.js  (item n only: one boolean picks the no-answer text; it never closes a task)
       - server/utils/lifecycleEmailTemplates.js  (menuProofReady)
       - server/utils/lifecycleEmailTemplates.test.js
       - server/utils/urls.js  (menuProofUrl)
