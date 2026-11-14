@@ -918,6 +918,9 @@ lanes:
       - client/src/components/inbox/inboxThread.test.js
       - client/src/components/inbox/WaitingRows.js
       - client/src/components/inbox/inboxListViews.test.js  (the row's need line, link and hidden Done)
+      - client/src/components/inbox/ItemActions.js  (Done hidden on a row held only by tasks, read from the item's state; added 2026-11-13, the build found the buttons are drawn here)
+      - client/src/components/inbox/inboxItemViews.test.js
+      - client/src/index.css  (the task link's own ib- rules on the list row and in the thread, in place of borrowed ones; added 2026-11-13)
       - server/routes/menuProof.js  (inboxCache.invalidate only)
       - README.md, ARCHITECTURE.md  (generated sections, and the menu tasks in ARCHITECTURE's Inbox concept)
     blockedBy: [menu-proof-page]
