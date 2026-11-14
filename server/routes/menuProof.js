@@ -1,10 +1,12 @@
 // The client menu proof's public routes (spec 2026-10-19 sections 12, 18 and 20), gated by the proof's
 // UUID token: the page state, the proof picture under menu-proof/<proposal_id>/, and the one answer.
 //
-//   GET  /:token          { state, answer, answer_note, answered_at, image }; 404 for an
-//                         unknown token, an archived proposal or a cascaded row
+//   GET  /:token          { state, answer, answer_note, answered_at, image, emailed,
+//                         event_passed }; 404 for an unknown token, an archived
+//                         proposal or a cascaded row
 //   GET  /:token/image    the proof JPEG, only while the state is open, approved
-//                         or changes; Cache-Control private, no-cache
+//                         or changes and the link has not expired
+//                         (proofShowsImage); Cache-Control private, no-cache
 //   POST /:token/answer   { answer, note? } once; 200 { state, answered_at }
 //
 // The token is the only key: requireUuidToken runs before any query, then the
@@ -12,25 +14,40 @@
 // event date, venue or amounts: only the state and, in the approved and
 // changes states, the client's own answer, note and when (spec 18 lists those
 // fields plus image; spec 20 omits image, so the union is answered, image a
-// boolean that is true exactly where the picture is served). The picture is
+// boolean that is true exactly where the picture is served: an answered proof
+// past its link's life keeps its answer with the picture off), plus two
+// booleans for the page's wording (lane menu-approve-send, carried items d and
+// g): emailed, whether the proof's email went out, so a link sent by hand never
+// says "reply to our email"; and event_passed, whether the event day is before
+// today in Chicago, so the expired screen stops promising a fresh link once
+// Approve would refuse one. Neither carries the date or the address. The picture is
 // read only through sendR2Object with the prefix built from the row's own
 // proposal_id, never from input, so nothing under menu-print/ or another
 // event's prefix is reachable.
 //
-// The answer is one transaction on one pooled connection: the conditional
-// one-shot UPDATE (no answer yet, not superseded, not withdrawn, not expired
-// by the shared token-life expression, the proposal not archived) with a
-// rowCount guard; zero rows re-reads the proof and refuses with 409
-// MENU_PROOF_ANSWERED, MENU_PROOF_SUPERSEDED, MENU_PROOF_WITHDRAWN or
-// MENU_PROOF_EXPIRED, or 404; then the activity row menu_proof_approved or
-// menu_proof_changes (actor 'client', details proof_id, version, art_version,
-// plus note_length for changes, never the note). The proposal under legal
-// hold is refused as not found before anything is written (isLegalHold, which
-// fails closed). After the commit an answer clears the Inbox cache
-// (inboxCache.invalidate), so a change request reaches the Inbox at once and
-// an answered proof's no-answer task goes (spec 2026-10-19 section 13.2). No
-// release runs here yet: the approve-and-send lane adds releaseHeldPrint and
-// reaccrueDuty to this route.
+// The answer is one transaction on one pooled connection. It first takes the
+// proof's draft and then its proposal FOR UPDATE (the lock order Approve, the
+// mark, the upload, Release and Close request keep, so a client answer and an
+// admin write in the same instant queue rather than deadlock; lane
+// menu-approve-send, carried item a) and re-checks archived under that lock
+// (404); then the conditional one-shot UPDATE (no answer yet, not superseded,
+// not withdrawn, not expired by the shared token-life expression, the proposal
+// not archived) with a rowCount guard; zero rows re-reads the proof and
+// refuses with 409 MENU_PROOF_ANSWERED, MENU_PROOF_SUPERSEDED,
+// MENU_PROOF_WITHDRAWN, MENU_PROOF_EXPIRED or MENU_PROOF_CHANGED, or 404; then
+// the activity row menu_proof_approved or menu_proof_changes (actor 'client',
+// details proof_id, version, art_version, plus note_length for changes, never
+// the note). Looks great then runs menuRelease.releaseHeldPrint (via
+// 'client') in the same transaction: the token, the conditional UPDATE and
+// the helper's five guards are this public route's whole authority to move
+// menu_print_key. A refusal (released already, the mark, an admin upload, the
+// event passed) releases nothing and the answer stands. The proposal under
+// legal hold is refused as not found before anything is written (isLegalHold,
+// which fails closed). After the commit and the client's release:
+// reaccrueDuty when the file was released (the $5 menu_print duty line reads
+// the committed key), then inboxCache.invalidate, so a change request reaches
+// the Inbox at once and an answered proof's no-answer task goes (spec
+// 2026-10-19 section 13.2).
 
 const express = require('express');
 const { pool } = require('../db');
@@ -42,13 +59,19 @@ const { requireUuidToken } = require('../utils/tokens');
 const { NotFoundError, ValidationError, ConflictError } = require('../utils/errors');
 const { sendR2Object } = require('../utils/r2Proxy');
 const { isLegalHold } = require('../utils/legalHold');
-const { PROOF_IMAGE_STATES, proofExpiredSql, loadProofByToken } = require('../utils/menuProofs');
+const { proofShowsImage, proofExpiredSql, loadProofByToken } = require('../utils/menuProofs');
+const { releaseHeldPrint } = require('../utils/menuRelease');
+const { reaccrueDuty } = require('../utils/menuPrintFile');
 const inboxCache = require('../utils/inbox/cache');
 
 const router = express.Router();
 
 const NOT_FOUND = "We couldn't find that menu.";
 const NOTE_MAX = 1000;
+
+// The proof's draft, then its proposal, FOR UPDATE (header: the lock order).
+const DRAFT_LOCK_SQL = 'SELECT id FROM menu_drafts WHERE id = $1 FOR UPDATE';
+const PROPOSAL_LOCK_SQL = 'SELECT id, status FROM proposals WHERE id = $1 FOR UPDATE';
 
 // The one-shot answer: $1 the token, $2 the answer, $3 the note. Built once at
 // load from the shared token-life fragment (proofExpiredSql, fixed text over
@@ -78,7 +101,12 @@ const REFUSALS = {
   open: ['MENU_PROOF_CHANGED', "That didn't go through. Please try again."],
 };
 
-/** The public GET's body: the state, the client's own answer where it stands, and whether a picture is served. */
+/**
+ * The public GET's body: the state, the client's own answer where it stands,
+ * whether a picture is served, and two booleans for the page's wording
+ * (emailed: the email went out; event_passed: the event day is before today in
+ * Chicago). Booleans only: never the email's status, the address or the date.
+ */
 function publicProofView(proof) {
   const answered = proof.state === 'approved' || proof.state === 'changes';
   return {
@@ -86,7 +114,9 @@ function publicProofView(proof) {
     answer: answered ? proof.answer : null,
     answer_note: answered ? proof.answer_note : null,
     answered_at: answered ? proof.answered_at : null,
-    image: PROOF_IMAGE_STATES.includes(proof.state),
+    image: proofShowsImage(proof),
+    emailed: proof.email_status === 'sent',
+    event_passed: proof.event_passed === true,
   };
 }
 
@@ -129,7 +159,7 @@ router.get('/:token', requireUuidToken('token', NOT_FOUND), publicTokenIpLimiter
 router.get('/:token/image', requireUuidToken('token', NOT_FOUND), publicTokenIpLimiter, menuProofReadLimiter,
   asyncHandler(async (req, res) => {
     const proof = await loadProofByToken(pool, req.params.token);
-    if (!proof || !PROOF_IMAGE_STATES.includes(proof.state) || !Number.isInteger(proof.proposal_id)) {
+    if (!proof || !proofShowsImage(proof) || !Number.isInteger(proof.proposal_id)) {
       throw new NotFoundError(NOT_FOUND);
     }
     await sendR2Object(res, proof.r2_key, { prefix: `menu-proof/${proof.proposal_id}/` });
@@ -142,10 +172,18 @@ router.post('/:token/answer', requireUuidToken('token', NOT_FOUND), publicLimite
     const { token } = req.params;
     const client = await pool.connect();
     let answered;
+    let released = false;
+    let proposalId;
     try {
       await client.query('BEGIN');
       const proof = await loadProofByToken(client, token);
       if (!proof || isLegalHold(proof.proposal_id)) throw new NotFoundError(NOT_FOUND);
+      proposalId = proof.proposal_id;
+
+      // Locks before the one-shot UPDATE, and archived re-read under them.
+      if (!(await client.query(DRAFT_LOCK_SQL, [proof.draft_id])).rows.length) throw new NotFoundError(NOT_FOUND);
+      const locked = (await client.query(PROPOSAL_LOCK_SQL, [proposalId])).rows[0];
+      if (!locked || locked.status === 'archived') throw new NotFoundError(NOT_FOUND);
 
       const upd = await client.query(ANSWER_SQL, [token, answer, note]);
       if (upd.rowCount !== 1) {
@@ -162,6 +200,10 @@ router.post('/:token/answer', requireUuidToken('token', NOT_FOUND), publicLimite
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
          VALUES ($1, $2, 'client', $3)`,
         [row.proposal_id, answer === 'approved' ? 'menu_proof_approved' : 'menu_proof_changes', JSON.stringify(details)]);
+      if (answer === 'approved') {
+        const out = await releaseHeldPrint(client, { draftId: proof.draft_id, proposalId, via: 'client', actorId: null });
+        released = out.released === true;
+      }
       await client.query('COMMIT');
       answered = { state: answer, answered_at: row.answered_at };
     } catch (err) {
@@ -170,6 +212,7 @@ router.post('/:token/answer', requireUuidToken('token', NOT_FOUND), publicLimite
     } finally {
       client.release();
     }
+    if (released) reaccrueDuty(proposalId);
     inboxCache.invalidate();
     res.json(answered);
   }));

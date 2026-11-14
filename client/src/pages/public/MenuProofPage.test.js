@@ -341,3 +341,87 @@ test.each([
   await waitFor(() => expect(screen.getByRole('button', { name: 'Looks great' })).toBeEnabled());
   expect(screen.getByRole('heading', { name: 'Your bar menu' })).not.toHaveFocus();
 });
+
+// ── Carried items c, d, e and g (lane menu-approve-send) ───────────────────
+
+// c: an answered proof past its link's life keeps its Thanks lines; the GET
+// says image false there, so the page never asks for the picture.
+test.each([
+  ['approved', { state: 'approved', answer: 'approved', answer_note: null, answered_at: AT }, "Thanks! We've got it."],
+  ['changes', { state: 'changes', answer: 'changes', answer_note: 'Paloma first, please.', answered_at: AT }, "Thanks! We've got your notes."],
+])('an answered proof (%s) past its link: its Thanks lines, the picture off and never requested', async (_s, body, heading) => {
+  api.get.mockResolvedValue({ data: { ...body, image: false, emailed: true, event_passed: true } });
+  const { container } = render(<MenuProofPage />);
+  expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
+  expect(screen.queryByText('This link has expired.')).toBeNull();
+  expect(screen.queryByRole('img')).toBeNull();
+  expect(container.innerHTML).not.toContain('/image');
+  if (body.answer_note) expect(screen.getByText(body.answer_note)).toBeInTheDocument();
+});
+
+// d: before the event day the expired line offers a fresh link; after it,
+// Approve refuses one, so the line only invites a question.
+test.each([
+  [false, true, "Reply to our email and we'll send a fresh one."],
+  [true, true, 'If you have questions, just reply to our email.'],
+  [false, false, "Get in touch with us and we'll send a fresh one."],
+  [true, false, 'If you have questions, just get in touch with us.'],
+])('expired with event_passed %p and emailed %p: the second line', async (passed, emailed, line) => {
+  api.get.mockResolvedValue({ data: { state: 'expired', answer: null, answer_note: null, answered_at: null, image: false, emailed, event_passed: passed } });
+  render(<MenuProofPage />);
+  expect(await screen.findByRole('heading', { name: 'This link has expired.' })).toBeInTheDocument();
+  expect(screen.getByText(line)).toBeInTheDocument();
+});
+
+// g: a proof that was never emailed (no address, suppressed, skipped) points
+// the client to get in touch, never at an email they did not get.
+test.each([
+  ['withdrawn', { state: 'withdrawn', answer: null, answer_note: null, answered_at: null, image: false }, 'If you have questions, just get in touch with us.'],
+  ['changes', { state: 'changes', answer: 'changes', answer_note: 'More gin.', answered_at: AT, image: true },
+    "We'll make the changes and send you a fresh look. Get in touch with us if you think of anything else."],
+  ['superseded', { state: 'superseded', answer: null, answer_note: null, answered_at: null, image: false }, 'Get in touch with us for the latest link.'],
+])('never emailed, %s: the line says get in touch with us', async (_s, body, line) => {
+  api.get.mockResolvedValue({ data: { ...body, emailed: false, event_passed: false } });
+  const { container } = render(<MenuProofPage />);
+  expect(await screen.findByText(line)).toBeInTheDocument();
+  expect(container.textContent).not.toMatch(/our email|your email/i);
+});
+
+test('never emailed: the missing picture and the rate-limited post say get in touch with us', async () => {
+  api.get.mockResolvedValue({ data: { ...OPEN, emailed: false, event_passed: false } });
+  api.post.mockRejectedValue({ status: 429, code: undefined, message: 'x' });
+  render(<MenuProofPage />);
+  fireEvent.error(await screen.findByRole('img'));
+  expect(await screen.findByText("We couldn't load the menu picture. Get in touch with us and we'll send it again.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Looks great' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Too many tries. Please try again later, or get in touch with us.');
+});
+
+test('an emailed proof keeps every "our email" line as it was', async () => {
+  api.get.mockResolvedValue({ data: { state: 'withdrawn', answer: null, answer_note: null, answered_at: null, image: false, emailed: true, event_passed: false } });
+  render(<MenuProofPage />);
+  expect(await screen.findByText('If you have questions, just reply to our email.')).toBeInTheDocument();
+});
+
+test('a proof answered on this page keeps the wording facts the GET gave', async () => {
+  api.get.mockResolvedValue({ data: { ...OPEN, emailed: false, event_passed: false } });
+  api.post.mockResolvedValue({ data: { state: 'changes', answered_at: AT } });
+  render(<MenuProofPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'More gin.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send changes' }));
+  expect(await screen.findByText("We'll make the changes and send you a fresh look. Get in touch with us if you think of anything else.")).toBeInTheDocument();
+});
+
+// e: a refused answer whose refetch reads open again keeps the form, and says
+// the press did not go through instead of nothing.
+test('a 409 MENU_PROOF_CHANGED whose refetch reads open shows the retry alert, the form in place', async () => {
+  api.get.mockResolvedValue({ data: OPEN });
+  api.post.mockRejectedValue({ status: 409, code: 'MENU_PROOF_CHANGED', message: 'x' });
+  render(<MenuProofPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Looks great' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent("That didn't go through. Please try again.");
+  expect(api.get).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('button', { name: 'Looks great' })).toBeEnabled();
+  expect(screen.getByRole('heading', { name: 'Your bar menu' })).not.toHaveFocus();
+});

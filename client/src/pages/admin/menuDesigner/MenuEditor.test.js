@@ -117,7 +117,7 @@ const mountEditor = (menu, props = {}) => {
   const utils = render(<MenuEditor editor={editor} menu={menu} proposal={PROPOSAL} eventLabel={LABEL} loadProposal={resolved()} {...props} />);
   return { ...utils, editor };
 };
-const approveBtn = () => screen.getByRole('button', { name: /^(Approve|Approve again|Use as print file|Approving\.\.\.|Approved)$/ });
+const approveBtn = () => screen.getByRole('button', { name: /^(Approve and send|Approving\.\.\.|Approved)$/ });
 const saveText = (c) => c.querySelector('.md-ed-save').textContent;
 const banners = (c) => [...c.querySelectorAll('.md-banner')].map((b) => ({
   id: b.getAttribute('data-banner'), tone: [...b.classList].find((k) => k.startsWith('md-banner-')),
@@ -297,14 +297,17 @@ describe('the top bar', () => {
   });
 
   test.each([
-    ['a draft', (p) => p, 'Approve', false, ''],
-    ['no draft', (p) => { p.draft = null; p.pieces = []; p.diff = null; }, 'Approve', true, ''],
-    ['drafting', (p) => { p.pieces[2].status = 'pending'; }, 'Approve', true, ''],
-    ['a failed drawing', (p) => { p.pieces[2].status = 'failed'; }, 'Approve', true, 'Fix the failed drawing first'],
+    // Approve and send replaces every Approve label (spec 2026-10-19 section 10.5).
+    ['a draft', (p) => p, 'Approve and send', false, ''],
+    ['no draft', (p) => { p.draft = null; p.pieces = []; p.diff = null; }, 'Approve and send', true, ''],
+    ['drafting', (p) => { p.pieces[2].status = 'pending'; }, 'Approve and send', true, ''],
+    ['a failed drawing', (p) => { p.pieces[2].status = 'failed'; }, 'Approve and send', true, 'Fix the failed drawing first'],
     ['approved', (p) => { p.print.state = 'approved'; p.print.print_key = 'k'; }, 'Approved', true, ''],
-    ['edited since approval', (p) => { p.print.state = 'edited_since_approval'; p.print.print_key = 'k'; }, 'Approve again', false, ''],
-    ['print file removed', (p) => { p.print.state = 'removed'; }, 'Approve again', false, ''],
-    ['a manual upload', (p) => { p.print.state = 'replaced'; p.print.print_key = 'm'; }, 'Use as print file', false, ''],
+    ['edited since approval', (p) => { p.print.state = 'edited_since_approval'; p.print.print_key = 'k'; }, 'Approve and send', false, ''],
+    ['print file removed', (p) => { p.print.state = 'removed'; }, 'Approve and send', false, ''],
+    // A Looks great beside the admin's own upload could never release, and the server refuses Approve.
+    ['a manual upload', (p) => { p.print.state = 'replaced'; p.print.print_key = 'm'; }, 'Approve and send', true, 'Remove your uploaded file first'],
+    ['the no-menu mark', (p) => { p.print.state = 'not_required'; }, 'Approve and send', true, 'Undo the mark first'],
   ])("Approve with %s: its label, disabled state and reason", (_n, mut, label, disabled, why) => {
     mountEditor(fakeMenu(P(mut)));
     const b = approveBtn();
@@ -365,11 +368,11 @@ describe('table B banners', () => {
     ['edited since approval', (p) => { p.print = { state: 'edited_since_approval', approved_at: APPROVED_AT, print_key: 'k', approved_file_in_use: true }; },
       {}, { id: 'edited', tone: 'md-banner-warn', title: 'Edited since approval.', text: `Staff still get the ${at(APPROVED_AT)} version until you approve again.`, buttons: [] }],
     ['replaced by upload', (p) => { p.print = { state: 'replaced', print_key: 'm', approved_file_in_use: false }; },
-      {}, { id: 'replaced', tone: 'md-banner-neutral', title: 'Print file is a manual upload.', text: 'Approving replaces it with this draft.', buttons: [] }],
+      {}, { id: 'replaced', tone: 'md-banner-neutral', title: 'Print file is a manual upload.', text: 'Staff print the upload until you remove it.', buttons: [] }],
     ['print file removed', (p) => { p.print = { state: 'removed', print_key: null }; },
       {}, { id: 'removed', tone: 'md-banner-warn', title: 'Print file was removed.', text: 'Staff have nothing to print. Approve to restore it.', buttons: [] }],
     ['no menu needed', (p) => { p.print = { state: 'not_required', print_key: null }; },
-      {}, { id: 'no-menu', tone: 'md-banner-neutral', title: 'Marked no menu needed.', text: 'Approving still posts this menu and clears the mark.', buttons: ['Undo'] }],
+      {}, { id: 'no-menu', tone: 'md-banner-neutral', title: 'Marked no menu needed.', text: 'Undo the mark to approve and send this menu.', buttons: ['Undo'] }],
     ['no plan, with a draft', (p) => { p.draft.read_only = true; p.diff = null; p.plan = null; },
       {}, { id: 'no-plan', tone: 'md-banner-neutral', title: 'No drink plan on this event.', text: 'The draft is read-only.', buttons: [] }],
   ])('%s', (_n, mut, over, want) => {
@@ -759,7 +762,9 @@ describe('while Approve runs', () => {
     const { container, editor } = mountEditor(menu);
     const panel = container.querySelector('.md-ed-panel');
     expect(panel).not.toHaveAttribute('inert');
+    // Approve and send always confirms first (spec 2026-10-19 section 10.5).
     fireEvent.click(approveBtn());
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Approve and (send|create link)$/ }));
     expect(panel).toHaveAttribute('inert');
     expect(inBanners().getByRole('button', { name: 'Update draft' })).toBeDisabled();
     expect(screen.getByRole('button', { name: LABEL })).toBeDisabled();

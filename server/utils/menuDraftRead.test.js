@@ -3,7 +3,7 @@ require('dotenv').config();
 // menuDraftRead.js (spec 2026-10-01 sections 7, 8, 9; 5.5 Stuck rule). Pure
 // halves plus live reads on dev-DB fixtures: a temp proposal, its drink plan
 // and its draft, all removed by the ids recorded here (the draft before the
-// temp user, since approved_by has no ON DELETE action). Typed drink names
+// temp user, though approved_by now goes NULL on a user delete). Typed drink names
 // carry a nonce so the shopping-list matcher never resolves them to a catalog
 // drink. No provider is called.
 //
@@ -34,6 +34,9 @@ const PRINT_KEY = (id) => `menu-print/${id}/approved-${NONCE}.jpg`;
 // The base plan's bar as the Brief tab's From the planner box lists it.
 const PLANNER_BAR = ['Beer and Wine: Light beer, IPA, Red, White.', 'Spirits: Vodka, Mezcal.', 'Non-Alcoholic: Athletic Brewing NA.'];
 
+const { menuProofUrl } = require('./urls');
+const { chicagoTodayYmd } = require('./businessTime');
+
 const proposalIds = [];
 const draftIds = [];
 let userId = null;
@@ -63,11 +66,13 @@ async function reset() {
   await setPlan();
   await pool.query('UPDATE proposals SET menu_print_key = NULL, menu_not_required = false WHERE id = $1', [proposalId]);
   await pool.query('DELETE FROM menu_draft_pieces WHERE draft_id = $1', [draftId]);
+  await pool.query('DELETE FROM menu_proofs WHERE draft_id = $1', [draftId]);
   await pool.query(
     `UPDATE menu_drafts
         SET content = $2, inputs = $3, plan_fingerprint = $4, dismissed_plan_hash = NULL,
             version = 1, art_version = 0, approved_version = NULL, approved_art_version = NULL,
-            approved_print_key = NULL, approved_planner_image_key = NULL, approved_at = NULL, approved_by = NULL
+            approved_print_key = NULL, approved_planner_image_key = NULL, approved_at = NULL, approved_by = NULL,
+            released_print_key = NULL, released_at = NULL, released_by = NULL, released_via = NULL
       WHERE id = $1`,
     [draftId, {
       words_status: 'done', words_error: null, words_heartbeat_at: new Date().toISOString(), title: 'Bar Menu',
@@ -198,7 +203,7 @@ test('derivePrintState: every state of spec 8, first rule wins', () => {
   assert.equal(at({ menuNotRequired: true }, null), S.NOT_REQUIRED, 'no draft, marked');
   assert.equal(at({}, null), S.NONE, 'no draft');
   assert.deepEqual(Object.values(S).sort(),
-    ['approved', 'edited_since_approval', 'none', 'not_required', 'removed', 'replaced']);
+    ['approved', 'edited_since_approval', 'held', 'none', 'not_required', 'removed', 'replaced']);
 });
 
 test('the catalog maps are cached for 60 seconds, and a reset reloads them', async () => {
@@ -555,7 +560,12 @@ test('no plan and no draft, then a draft with no plan reads read-only', async ()
   proposalIds.push(bare);
   const empty = await read.readDraftPayload(bare);
   assert.deepEqual([empty.draft, empty.pieces, empty.brief, empty.diff, empty.plan], [null, [], null, null, null]);
-  assert.deepEqual(empty.print, { state: S.NONE, approved_at: null, approved_by_name: null, print_key: null, approved_file_in_use: false, not_required_by: null });
+  assert.deepEqual(empty.print, {
+    state: S.NONE, held: false, live: null, restorable: false, not_required_by: null, approved_at: null, approved_by_name: null,
+    approved_version: null, approved_art_version: null, released_at: null, released_via: null, released_by_name: null,
+    print_key: null, approved_file_in_use: false,
+  });
+  assert.equal(empty.proof, null);
   assert.deepEqual(Object.keys(empty.cap).sort(), ['limit', 'remaining', 'resets_at', 'used']);
   assert.deepEqual(Object.keys(empty.configured).sort(), ['default_image_model', 'gemini', 'openai', 'words']);
   assert.equal(typeof empty.configured.openai, 'boolean');
@@ -933,4 +943,142 @@ test('plan.house_plain: the event type and the December test, the date read as t
   const p = await pool.query("INSERT INTO proposals (status, event_type) VALUES ('draft', 'birthday-party') RETURNING id");
   proposalIds.push(p.rows[0].id);
   assert.equal((await read.readDraftPayload(p.rows[0].id)).plan, null, 'no plan, no plan block');
+});
+
+// ─── The proof and print blocks (spec 2026-10-19 sections 10.3, 10.5 and 14; lane menu-approve-send) ───
+
+// A proof of the draft's current pair unless cols say otherwise.
+async function addProof(cols = {}) {
+  const { rows: [d] } = await pool.query('SELECT version, art_version FROM menu_drafts WHERE id = $1', [draftId]);
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, email_status, sent_at, sent_to,
+                              answer, answer_note, answered_at, superseded_at, withdrawn_at)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()), $8, $9, $10, $11, $12, $13) RETURNING id, token, sent_at`,
+    [draftId, proposalId, cols.version || d.version, cols.art_version === undefined ? d.art_version : cols.art_version,
+      `menu-proof/${proposalId}/${crypto.randomUUID()}.jpg`, cols.email_status || 'sent', cols.sent_at || null, cols.sent_to || null,
+      cols.answer || null, cols.answer_note || null, cols.answer ? new Date() : null, cols.superseded_at || null, cols.withdrawn_at || null]);
+  return row;
+}
+
+// An approval of the current pair holding NEW_KEY (not posted for staff).
+const HELD_KEY = (id) => `menu-print/${id}/held-${NONCE}.jpg`;
+async function hold() {
+  await pool.query(
+    `UPDATE menu_drafts SET approved_version = version, approved_art_version = art_version, approved_print_key = $2,
+            approved_planner_image_key = $3, approved_at = NOW(), approved_by = $4 WHERE id = $1`,
+    [draftId, HELD_KEY(proposalId), logoKey, userId]);
+}
+
+test('the proof block: null with no proof; the latest proof with its link, its email, its end, stale and the history', async () => {
+  await reset();
+  assert.equal((await payload()).proof, null);
+  const first = await addProof({ sent_at: new Date(Date.now() - 7200000), answer: 'changes', answer_note: 'Round one notes', superseded_at: new Date() });
+  await pool.query('UPDATE menu_drafts SET version = version + 1 WHERE id = $1', [draftId]);
+  const latest = await addProof({ sent_to: 'block-reader@example.com' });
+  const { proof } = await payload();
+  assert.deepEqual(Object.keys(proof).sort(), ['answer', 'answer_note', 'answered_at', 'art_version', 'email_status', 'event_passed', 'expired',
+    'expires_at', 'history', 'id', 'sent_at', 'sent_to', 'stale', 'state', 'superseded_at', 'url', 'version', 'withdrawn_at']);
+  assert.equal(proof.event_passed, false, 'no event date never passed');
+  assert.equal(proof.id, latest.id);
+  assert.equal(proof.state, 'open');
+  assert.equal(proof.url, menuProofUrl(latest.token));
+  assert.equal(proof.email_status, 'sent');
+  assert.equal(proof.sent_to, 'block-reader@example.com');
+  assert.equal(proof.expired, false);
+  // No event date on this fixture: the link lives 30 days from sent_at.
+  assert.equal(new Date(proof.expires_at).toISOString(), new Date(latest.sent_at.getTime() + 30 * 86400000).toISOString());
+  assert.equal(proof.stale, false);
+  assert.deepEqual(proof.history.map((h) => [h.id, h.state, h.answer, h.answer_note]), [[first.id, 'superseded', 'changes', 'Round one notes']]);
+  await pool.query('UPDATE menu_drafts SET art_version = art_version + 1 WHERE id = $1', [draftId]);
+  assert.equal((await payload()).proof.stale, true, 'the draft moved since the proof');
+});
+
+// A dated link ends at the Chicago midnight after the event day, when Approve refuses a fresh one.
+test('the proof block: event_passed is the event day before today in Chicago, read as text, as the public page reads it', async () => {
+  await reset();
+  const setDate = (date) => pool.query('UPDATE proposals SET event_date = $2::date WHERE id = $1', [proposalId, date]);
+  const today = chicagoTodayYmd();
+  const shift = async (days) => (await pool.query('SELECT to_char($1::date + $2::int, \'YYYY-MM-DD\') AS d', [today, days])).rows[0].d;
+  try {
+    await addProof();
+    for (const [date, passed] of [[await shift(-1), true], [today, false], [await shift(3), false], [null, false]]) {
+      await setDate(date);
+      const { proof } = await payload();
+      assert.equal(proof.event_passed, passed, String(date));
+      assert.equal((await read.readReviewBlocks(proposalId)).proof.event_passed, passed, `the write responses too: ${date}`);
+    }
+  } finally {
+    await setDate(null);
+  }
+});
+
+test('the proof block: a pending email reads failed once 10 minutes have passed; under that it reads pending', async () => {
+  await reset();
+  await addProof({ email_status: 'pending', sent_at: new Date(Date.now() - 9 * 60000) });
+  assert.equal((await payload()).proof.email_status, 'pending');
+  await pool.query("UPDATE menu_proofs SET sent_at = NOW() - INTERVAL '11 minutes' WHERE draft_id = $1", [draftId]);
+  assert.equal((await payload()).proof.email_status, 'failed');
+  for (const status of ['no_address', 'skipped', 'suppressed', 'failed']) {
+    await pool.query('UPDATE menu_proofs SET email_status = $2 WHERE draft_id = $1', [draftId, status]);
+    assert.equal((await payload()).proof.email_status, status);
+  }
+});
+
+test('the print block: held with live none, then released by the client, then the GET reads Released with who and how', async () => {
+  await reset();
+  await hold();
+  await addProof();
+  let { print } = await payload();
+  assert.deepEqual([print.state, print.held, print.live, print.restorable], [S.HELD, true, 'none', false]);
+  assert.deepEqual([print.approved_version, print.approved_art_version], [1, 0]);
+  assert.equal(print.print_key, null, 'staff have nothing');
+  assert.equal(print.approved_file_in_use, false);
+  assert.deepEqual([print.released_at, print.released_via, print.released_by_name], [null, null, null]);
+  await pool.query('UPDATE proposals SET menu_print_key = $2 WHERE id = $1', [proposalId, HELD_KEY(proposalId)]);
+  await pool.query("UPDATE menu_drafts SET released_print_key = approved_print_key, released_at = NOW(), released_via = 'client' WHERE id = $1", [draftId]);
+  ({ print } = await payload());
+  assert.deepEqual([print.state, print.held, print.live, print.released_via, print.released_by_name], [S.APPROVED, false, null, 'client', null]);
+  assert.ok(print.released_at);
+  assert.equal(print.approved_file_in_use, true);
+  await pool.query("UPDATE menu_drafts SET released_via = 'admin', released_by = $2 WHERE id = $1", [draftId, userId]);
+  assert.equal((await payload()).print.released_by_name, `menudraftread-${NONCE}@example.com`);
+  await pool.query('UPDATE proposals SET menu_print_key = NULL WHERE id = $1', [proposalId]);
+  ({ print } = await payload());
+  assert.deepEqual([print.state, print.restorable], [S.REMOVED, true], 'the released file taken down: Put it back applies');
+});
+
+test('the print block: a new approval beside the older released file reads held with live previous', async () => {
+  await reset();
+  const older = `menu-print/${proposalId}/older-${NONCE}.jpg`;
+  await hold();
+  await pool.query("UPDATE menu_drafts SET released_print_key = $2, released_at = NOW() - INTERVAL '1 day', released_via = 'admin' WHERE id = $1", [draftId, older]);
+  await pool.query('UPDATE proposals SET menu_print_key = $2 WHERE id = $1', [proposalId, older]);
+  await addProof();
+  const { print } = await payload();
+  assert.deepEqual([print.state, print.held, print.live, print.print_key], [S.HELD, true, 'previous', older]);
+  assert.equal(print.released_via, 'admin', 'the older release is still on record');
+});
+
+test('the print block: a v1 approval (its file live, no release recorded) reads Released by the admin at its approval', async () => {
+  await reset();
+  await approve();
+  const { print } = await payload();
+  const { rows: [d] } = await pool.query('SELECT approved_at FROM menu_drafts WHERE id = $1', [draftId]);
+  assert.equal(print.state, S.APPROVED);
+  assert.equal(new Date(print.released_at).toISOString(), d.approved_at.toISOString());
+  assert.equal(print.released_via, 'admin');
+  assert.equal(print.released_by_name, `menudraftread-${NONCE}@example.com`);
+  await pool.query('UPDATE proposals SET menu_print_key = NULL WHERE id = $1', [proposalId]);
+  const removed = (await payload()).print;
+  assert.deepEqual([removed.state, removed.restorable, removed.released_at], [S.REMOVED, true, null], 'a v1 approval later removed reads removed, not held');
+});
+
+test('readReviewBlocks: the same two blocks the GET builds, read fresh', async () => {
+  await reset();
+  await hold();
+  await addProof({ answer: 'changes', answer_note: 'Fresh read' });
+  const [get, blocks] = await Promise.all([payload(), read.readReviewBlocks(proposalId)]);
+  assert.deepEqual(blocks, { proof: get.proof, print: get.print });
+  assert.equal(blocks.proof.answer_note, 'Fresh read');
+  await assert.rejects(read.readReviewBlocks(999999), NotFoundError);
 });

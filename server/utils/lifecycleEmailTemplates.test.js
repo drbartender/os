@@ -115,3 +115,47 @@ test('emailChangeConfirmed > shows old + new emails', () => {
   assertNoEmDash(out.subject, 'emailChangeConfirmed subject');
   assertNoEmDash(out.text, 'emailChangeConfirmed text');
 });
+
+// ─── The menu proof email (spec 2026-10-19 section 11; lane menu-approve-send) ───
+
+test('menuProofReady > the subject, the first name only, the event type, the button and the until-your-event line', () => {
+  const url = 'https://drbartender.com/menu-proof/11111111-2222-4333-8444-555555555555';
+  const out = t.menuProofReady({ clientName: 'Jordan Testperson', eventTypeLabel: 'Birthday Party', proofUrl: url, hasEventDate: true });
+  assert.strictEqual(out.subject, 'Your bar menu is ready for a look');
+  for (const body of [out.html, out.text]) {
+    assert.match(body, /Hi Jordan,/);
+    assert.ok(!body.includes('Testperson'), 'no surname');
+    assert.match(body, /Here's a first look at the bar menu for your Birthday Party\. Open it, and let us know if it looks great or if you'd like any changes\./);
+    assert.match(body, /The link works until your event\. If you have questions, just reply to this email\./);
+    assert.ok(!/30 days/.test(body));
+    assert.ok(body.includes(url), 'the proof link');
+  }
+  assert.match(out.html, />Review the menu</);
+  assert.match(out.html, /Cheers,<br>Dallas/);
+  assert.match(out.text, /Review the menu: https:\/\/drbartender\.com\/menu-proof\//);
+  assert.match(out.text, /Cheers,\nDallas$/);
+  assert.match(out.html, /<!DOCTYPE html>/i);
+  for (const [label, str] of [['subject', out.subject], ['html', out.html], ['text', out.text]]) assertNoEmDash(str, label);
+});
+
+test('menuProofReady > with no event date the link line reads 30 days', () => {
+  const out = t.menuProofReady({ clientName: 'Jordan', eventTypeLabel: 'event', proofUrl: 'https://x/menu-proof/t', hasEventDate: false });
+  for (const body of [out.html, out.text]) {
+    assert.match(body, /The link works for 30 days\. If you have questions, just reply to this email\./);
+    assert.ok(!/until your event/.test(body));
+  }
+});
+
+test('menuProofReady > carries no date, venue or amount, escapes the label, and greets a missing name generically', () => {
+  const out = t.menuProofReady({ clientName: null, eventTypeLabel: '<b>Party</b>', proofUrl: 'https://x/menu-proof/t' });
+  assert.match(out.text, /Hi there,/);
+  assert.ok(!out.html.includes('<b>Party</b>'), 'the label is escaped in the html');
+  assert.match(out.html, /&lt;b&gt;Party&lt;\/b&gt;/);
+  for (const body of [out.html, out.text]) {
+    assert.ok(!/\$\d/.test(body), 'no amount');
+    assert.ok(!/\b(19|20)\d\d\b/.test(body), 'no year, so no date');
+    assert.ok(!/venue/i.test(body), 'no venue');
+    assert.ok(!body.includes('undefined'));
+  }
+  assert.match(out.text, /The link works until your event\./, 'a date on file is the default');
+});

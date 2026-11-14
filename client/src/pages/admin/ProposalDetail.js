@@ -11,6 +11,7 @@ import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { formatPhone } from '../../utils/formatPhone';
 import { consultCallOutcomeLabel, consultCallSlotLabel } from '../../utils/consultCallLabel';
+import { activityLabel, clientSource } from '../../utils/menuActivityLabels';
 import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown, { matchCancelTargets } from '../../components/PricingBreakdown';
@@ -759,7 +760,7 @@ function ProposalDetailBody() {
                             } size={11} />
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div>{entry.action}</div>
+                            <div>{activityLabel(entry.action)}</div>
                             <div className="tiny muted">
                               {entry.actor_type} · {fmtDateTime(entry.created_at)}
                             </div>
@@ -959,11 +960,11 @@ function ProposalDetailBody() {
                     <div key={i} style={{ paddingBottom: 10, borderBottom: '1px solid var(--line-1)' }}>
                       <div className="hstack" style={{ alignItems: 'flex-start' }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 500, fontSize: 13 }}>{entry.action}</div>
+                          <div style={{ fontWeight: 500, fontSize: 13 }}>{activityLabel(entry.action)}</div>
                           <div className="tiny muted" style={{ marginTop: 2 }}>
                             <span style={{ textTransform: 'capitalize' }}>{entry.actor_type}</span>
                             {' · '}
-                            {entry.actor_type === 'client' ? 'Proposal page' :
+                            {entry.actor_type === 'client' ? clientSource(entry.action) :
                               entry.actor_type === 'admin' ? 'Admin panel' : 'System'}
                           </div>
                         </div>

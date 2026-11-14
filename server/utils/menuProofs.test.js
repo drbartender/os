@@ -20,8 +20,8 @@ if (process.env.NODE_ENV === 'production') throw new Error('menuProofs.test.js r
 const { pool } = require('../db');
 const { chicagoTodayYmd } = require('./businessTime');
 const {
-  PROOF_STATES, PROOF_IMAGE_STATES, proofLinkEndSql, proofExpiredSql, proofState,
-  loadProofByToken, loadLatestProof,
+  PROOF_STATES, PROOF_IMAGE_STATES, proofLinkEndSql, proofExpiredSql, proofState, proofShowsImage,
+  loadProofByToken, loadLatestProof, loadProofHistory, withdrawLatestProof,
 } = require('./menuProofs');
 
 const SCHEMA_SQL = fs.readFileSync(path.join(__dirname, '../db/schema.sql'), 'utf8');
@@ -152,13 +152,31 @@ test('state: each of the six states from its own row', () => {
   assert.deepEqual([...PROOF_IMAGE_STATES], ['open', 'approved', 'changes']);
 });
 
-test('state: precedence is expired, then superseded, then withdrawn, then the answer, then open', () => {
+// Carried item c (lane menu-approve-send): superseded ahead of expired, and an
+// answered proof keeps its answer past the link's life.
+test('state: precedence is superseded, then withdrawn, then the answer, then expired, then open', () => {
   const at = new Date();
-  assert.equal(proofState({ expired: true, superseded_at: at, withdrawn_at: at, answer: 'approved' }), 'expired');
-  assert.equal(proofState({ expired: false, superseded_at: at, withdrawn_at: at, answer: 'approved' }), 'superseded');
+  assert.equal(proofState({ expired: true, superseded_at: at, withdrawn_at: at, answer: 'approved' }), 'superseded');
+  assert.equal(proofState({ expired: true, superseded_at: at, withdrawn_at: null, answer: null }), 'superseded', 'superseded ahead of expired');
   assert.equal(proofState({ expired: false, superseded_at: at, withdrawn_at: null, answer: 'changes' }), 'superseded');
   assert.equal(proofState({ expired: false, superseded_at: null, withdrawn_at: at, answer: 'approved' }), 'withdrawn');
-  assert.equal(proofState({ expired: true, superseded_at: null, withdrawn_at: null, answer: 'approved' }), 'expired');
+  assert.equal(proofState({ expired: false, superseded_at: null, withdrawn_at: at, answer: 'changes' }), 'withdrawn', 'a closed change request reads withdrawn');
+  assert.equal(proofState({ expired: true, superseded_at: null, withdrawn_at: at, answer: null }), 'withdrawn', 'withdrawn ahead of expired');
+  assert.equal(proofState({ expired: true, superseded_at: null, withdrawn_at: null, answer: 'approved' }), 'approved', 'the answer outlives the link');
+  assert.equal(proofState({ expired: true, superseded_at: null, withdrawn_at: null, answer: 'changes' }), 'changes');
+  assert.equal(proofState({ expired: true, superseded_at: null, withdrawn_at: null, answer: null }), 'expired');
+});
+
+test('the picture shows only in open, approved or changes while the link is alive', () => {
+  const row = (state, expired) => ({ state, expired });
+  assert.equal(proofShowsImage(row('open', false)), true);
+  assert.equal(proofShowsImage(row('approved', false)), true);
+  assert.equal(proofShowsImage(row('changes', false)), true);
+  assert.equal(proofShowsImage(row('approved', true)), false, 'an answered proof past its life: thanks lines, no picture');
+  assert.equal(proofShowsImage(row('changes', true)), false);
+  for (const state of ['superseded', 'withdrawn', 'expired']) assert.equal(proofShowsImage(row(state, false)), false, state);
+  assert.equal(proofShowsImage(null), false);
+  assert.equal(proofShowsImage(row('open', null)), false, 'an unknown expiry never shows the picture');
 });
 
 test('state: an unreadable row fails closed (never open)', () => {
@@ -192,6 +210,8 @@ test('loadProofByToken: each state from the database, with the live expiry', asy
   const row = await loadProofByToken(pool, old.token);
   assert.equal(row.expired, true);
   assert.equal(row.state, 'expired', 'an event that ended yesterday in Chicago');
+  const answered = await loadProofByToken(pool, (await makeProof(past, { answer: 'approved', answered_at: now })).token);
+  assert.deepEqual([answered.expired, answered.state], [true, 'approved'], 'an answered proof past its life keeps its answer');
 });
 
 test('loadProofByToken: an event today in Chicago is still open; no event date counts 30 days', async () => {
@@ -244,4 +264,56 @@ test('loadLatestProof: the draft\'s one live proof (superseded_at IS NULL), with
   assert.equal(latest.version, 3);
   assert.equal(latest.state, 'changes');
   assert.equal(latest.expired, false);
+});
+
+// Carried item h: the admin's proof block reads the token, the email's outcome and address, and the link's end.
+test('loadLatestProof: the token, email_status, sent_to, the link\'s end and the database clock', async () => {
+  const ev = await makeProposal({ eventOffsetDays: 4 });
+  const p = await makeProof(ev, { email_status: 'pending' });
+  await pool.query("UPDATE menu_proofs SET sent_to = 'proof-reader@example.com' WHERE id = $1", [p.id]);
+  const latest = await loadLatestProof(pool, ev.draftId);
+  assert.equal(latest.token, p.token);
+  assert.equal(latest.email_status, 'pending');
+  assert.equal(latest.sent_to, 'proof-reader@example.com');
+  const { rows: [end] } = await pool.query(
+    "SELECT ((event_date + 1)::timestamp AT TIME ZONE 'America/Chicago') AS e FROM proposals WHERE id = $1", [ev.proposalId]);
+  assert.equal(latest.link_end.toISOString(), end.e.toISOString(), 'the Chicago midnight after the event day');
+  assert.ok(latest.db_now instanceof Date);
+  const undated = await makeProposal({ noDate: true });
+  const sentAt = new Date(Date.now() - 86400000);
+  await makeProof(undated, { sent_at: sentAt });
+  const u = await loadLatestProof(pool, undated.draftId);
+  assert.equal(u.link_end.toISOString(), new Date(sentAt.getTime() + 30 * 86400000).toISOString(), '30 days with no event date');
+  assert.equal(u.sent_to, null);
+});
+
+test('loadProofHistory: every proof of the draft, newest first, each with its state', async () => {
+  const ev = await makeProposal();
+  assert.deepEqual(await loadProofHistory(pool, ev.draftId), []);
+  const a = await makeProof(ev, { sent_at: new Date(Date.now() - 7200000), answer: 'changes', answer_note: 'Round one', answered_at: new Date() });
+  await pool.query('UPDATE menu_proofs SET superseded_at = NOW() WHERE id = $1', [a.id]);
+  const b = await makeProof(ev, { sent_at: new Date(Date.now() - 60000) });
+  const rows = await loadProofHistory(pool, ev.draftId);
+  assert.deepEqual(rows.map((r) => [r.id, r.state]), [[b.id, 'open'], [a.id, 'superseded']]);
+  assert.equal(rows[1].answer_note, 'Round one', 'an earlier note in full');
+});
+
+test('withdrawLatestProof: only the latest proof, unanswered, or answered changes when asked; never one answered approved', async () => {
+  const ev = await makeProposal();
+  const old = await makeProof(ev, { sent_at: new Date(Date.now() - 7200000) });
+  await pool.query('UPDATE menu_proofs SET superseded_at = NOW() WHERE id = $1', [old.id]);
+  const open = await makeProof(ev);
+  assert.equal(await withdrawLatestProof(pool, ev.draftId), open.id);
+  assert.equal(await withdrawLatestProof(pool, ev.draftId), null, 'already withdrawn');
+  const wd = (await pool.query('SELECT id, withdrawn_at FROM menu_proofs WHERE draft_id = $1 ORDER BY id', [ev.draftId])).rows;
+  assert.deepEqual(wd.map((r) => [r.id, r.withdrawn_at !== null]), [[old.id, false], [open.id, true]], 'the superseded one is left alone');
+
+  const ch = await makeProposal();
+  const changes = await makeProof(ch, { answer: 'changes', answer_note: 'x', answered_at: new Date() });
+  assert.equal(await withdrawLatestProof(pool, ch.draftId), null, 'the mark leaves a change request');
+  assert.equal(await withdrawLatestProof(pool, ch.draftId, { andChanges: true }), changes.id, 'the upload settles it');
+
+  const ok = await makeProposal();
+  await makeProof(ok, { answer: 'approved', answered_at: new Date() });
+  assert.equal(await withdrawLatestProof(pool, ok.draftId, { andChanges: true }), null, 'never one answered approved');
 });

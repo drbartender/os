@@ -23211,6 +23211,11 @@ html[data-app="admin-os"] .md-cf {
 html[data-app="admin-os"] .md-cf-title { font-size: 15px; font-weight: 600; color: var(--ink-1); }
 html[data-app="admin-os"] .md-cf-text { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
 html[data-app="admin-os"] .md-cf-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+/* The same dialog over the event page (the card's review confirms, spec
+   2026-10-19 section 10.3): a fixed layer the scrim fills. */
+html[data-app="admin-os"] .md-cf-page { position: fixed; inset: 0; z-index: var(--z-modal); }
+/* A review write's refusal under the editor's banners. */
+html[data-app="admin-os"] .md-ed-banners .md-alert { margin: 0; align-self: flex-start; }
 /* The export's hidden, unscaled canvas (11.3; the MenuPNG off-screen precedent). */
 .md-export { position: absolute; left: -99999px; top: 0; width: 800px; height: 1000px; pointer-events: none; }
 
@@ -23345,6 +23350,10 @@ html[data-app="admin-os"] .md-brief-logo {
   margin-top: 2px; font-size: 12px; color: var(--ink-3);
 }
 html[data-app="admin-os"] .md-brief-hint { font-size: 12px; color: var(--ink-3); }
+/* Client review (spec 2026-10-19 section 14): a change request's note, as the
+   client typed it, line breaks kept; Close request under the box. */
+html[data-app="admin-os"] .md-brief-note { margin-top: 4px; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+html[data-app="admin-os"] .md-brief-close { align-self: flex-start; }
 html[data-app="admin-os"] .md-ref-row {
   display: flex; align-items: center; gap: 8px; padding: 7px 10px;
   border: 1px solid var(--line-2); border-radius: 6px; background: var(--bg-2);

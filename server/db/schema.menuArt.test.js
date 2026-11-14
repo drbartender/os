@@ -104,7 +104,7 @@ const COLUMNS = {
     version: 'INTEGER NOT NULL DEFAULT 1', art_version: 'INTEGER NOT NULL DEFAULT 0',
     approved_version: 'INTEGER', approved_art_version: 'INTEGER',
     approved_print_key: 'TEXT', approved_planner_image_key: 'TEXT',
-    approved_at: 'TIMESTAMPTZ', approved_by: 'INTEGER REFERENCES users(id)',
+    approved_at: 'TIMESTAMPTZ', approved_by: 'INTEGER REFERENCES users(id) ON DELETE SET NULL',
     created_at: 'TIMESTAMPTZ DEFAULT NOW()', updated_at: 'TIMESTAMPTZ DEFAULT NOW()',
   },
   menu_draft_pieces: {
@@ -266,6 +266,40 @@ const RELEASE_COLUMNS = {
   released_via: "TEXT CHECK (released_via IS NULL OR released_via IN ('client', 'admin'))",
 };
 
+// The approved_by rule (lane menu-approve-send): once, in place, guarded by the
+// live rule, so a replay that finds SET NULL runs no DDL.
+const APPROVED_BY_SET_NULL = `DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'menu_drafts_approved_by_fkey'
+      AND conrelid = 'menu_drafts'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE menu_drafts DROP CONSTRAINT IF EXISTS menu_drafts_approved_by_fkey;
+    ALTER TABLE menu_drafts ADD CONSTRAINT menu_drafts_approved_by_fkey
+      FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;`;
+
+// The keys a write may change and still leave updated_at alone: the
+// fingerprint, the dismissal and the four release columns (a release is not an
+// edit), plus updated_at itself.
+const SKIPPED = "ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'released_print_key', 'released_at', 'released_by', 'released_via', 'updated_at']";
+const RELEASE_TRIGGER = `DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_menu_drafts_updated_at'
+      AND tgrelid = 'menu_drafts'::regclass
+      AND pg_get_triggerdef(oid) LIKE '%released_via%'
+  ) THEN
+    CREATE OR REPLACE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts
+      FOR EACH ROW
+      WHEN ((to_jsonb(OLD) - ${SKIPPED})
+            IS DISTINCT FROM (to_jsonb(NEW) - ${SKIPPED}))
+      EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;`;
+
 test('menu proofs: its own block, after the menu art block, every statement idempotent, no backfill', () => {
   const at = schemaSql.indexOf(PROOF_START);
   assert.ok(at > schemaSql.indexOf(END), 'after the end of the menu art block');
@@ -277,10 +311,36 @@ test('menu proofs: its own block, after the menu art block, every statement idem
   assert.equal((ddl.match(/CREATE INDEX IF NOT EXISTS/g) || []).length, 1);
   assert.equal((ddl.match(/ADD COLUMN/g) || []).length, 4);
   assert.equal((ddl.match(/ADD COLUMN IF NOT EXISTS/g) || []).length, 4);
-  assert.doesNotMatch(ddl, /\bDROP\b/);
+  // The one DROP and the one ADD CONSTRAINT are the approved_by rule's, inside
+  // its guard; the one trigger statement is the release swap's, inside its own.
+  const drops = [...ddl.matchAll(/\bDROP\b[^;]*/g)].map((m) => m[0]);
+  assert.deepEqual(drops, ['DROP CONSTRAINT IF EXISTS menu_drafts_approved_by_fkey']);
+  assert.deepEqual([...ddl.matchAll(/ADD CONSTRAINT (\w+)/g)].map((m) => m[1]), ['menu_drafts_approved_by_fkey']);
+  assert.ok(ddl.indexOf("AND confdeltype = 'n'") < ddl.indexOf(drops[0]), 'the drop runs only while the rule is not SET NULL');
+  assert.equal((ddl.match(/CREATE (OR REPLACE )?TRIGGER/g) || []).length, 1);
+  assert.ok(ddl.indexOf("LIKE '%released_via%'") < ddl.indexOf('CREATE OR REPLACE TRIGGER'), 'the swap runs only while the clause is missing');
+  assert.doesNotMatch(ddl, /DROP TRIGGER/);
   assert.doesNotMatch(ddl, /\b(INSERT INTO|UPDATE \w+ SET|DELETE FROM)\b/, 'no data backfill runs from schema.sql');
-  assert.doesNotMatch(ddl, /ADD CONSTRAINT/);
   assert.ok(!menuProofDdl().includes(String.fromCharCode(0x2014)), 'no em dash in the block');
+});
+
+test('menu_drafts.approved_by: ON DELETE SET NULL inline, and one guarded statement moves an older database to it', () => {
+  const ddl = menuProofDdl();
+  const at = ddl.indexOf(APPROVED_BY_SET_NULL);
+  assert.ok(at !== -1, 'the approved_by rule is in the menu proofs block exactly as written here');
+  assert.equal(ddl.indexOf(APPROVED_BY_SET_NULL, at + 1), -1, 'once');
+  assert.equal(parseBody(tableBody(menuArtDdl(), 'menu_drafts')).columns.approved_by, 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+});
+
+test('menu_drafts: the updated_at trigger also skips a write that changes only the four release columns, swapped in place once', () => {
+  const ddl = menuProofDdl();
+  const at = ddl.indexOf(RELEASE_TRIGGER);
+  assert.ok(at !== -1, 'the release swap is in the menu proofs block exactly as written here');
+  assert.equal(ddl.indexOf(RELEASE_TRIGGER, at + 1), -1, 'once');
+  assert.ok(at > ddl.indexOf(RELEASE_ADDS[3]), 'after the release columns it names');
+  // The swap keeps every key the menu art block's clause skips, so that
+  // block's own guard (LIKE dismissed_plan_hash) still reads it as done.
+  for (const key of ['plan_fingerprint', 'dismissed_plan_hash', 'updated_at']) assert.ok(SKIPPED.includes(`'${key}'`));
 });
 
 test('menu_proofs: every column exactly as spec 10.6 writes it, the answer pair CHECK, the draft index', () => {
@@ -364,7 +424,7 @@ dbTest('live: UNIQUE, foreign keys and CHECK value lists, read back from the cat
     'UNIQUE (proposal_id)',
     'FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE',
     'FOREIGN KEY (drink_plan_id) REFERENCES drink_plans(id) ON DELETE SET NULL',
-    'FOREIGN KEY (approved_by) REFERENCES users(id)',
+    'FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL',
   ]) assert.ok(drafts.includes(def), `menu_drafts: ${def}`);
   const shape = (await constraintDefs('menu_drafts')).menu_drafts_json_shape_check;
   assert.ok(shape, 'menu_drafts_json_shape_check exists');
@@ -644,6 +704,97 @@ dbTest('live: menu_proofs defaults fill and its CHECKs, the unique token and the
     await client.query('DELETE FROM menu_drafts WHERE id = $1', [d.id]);
     const { rows: [left] } = await client.query('SELECT COUNT(*)::int AS n FROM menu_proofs WHERE proposal_id = $1', [p.id]);
     assert.equal(left.n, 0, 'proofs cascade with their draft');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+});
+
+// ── Live: the approve-and-send lane's two statements (lane menu-approve-send) ──
+
+dbTest('live: approved_by is ON DELETE SET NULL, so deleting a user leaves the draft with approved_by null (rolled back)', async () => {
+  const fk = (await constraintDefs('menu_drafts')).menu_drafts_approved_by_fkey;
+  assert.equal(fk, 'FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [u] } = await client.query(
+      "INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ('schema-probe-approver@example.com', 'x', 'admin', 'approved') RETURNING id");
+    const { rows: [p] } = await client.query(
+      "INSERT INTO proposals (status, event_type) VALUES ('confirmed', 'corporate') RETURNING id");
+    const { rows: [d] } = await client.query(
+      `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint, approved_by, approved_at)
+       VALUES ($1, '00000000-0000-4000-8000-000000000003', '{}', '{}', '{}', $2, NOW()) RETURNING id`, [p.id, u.id]);
+    await client.query('DELETE FROM users WHERE id = $1', [u.id]);
+    const { rows: [after] } = await client.query('SELECT approved_by, approved_at FROM menu_drafts WHERE id = $1', [d.id]);
+    assert.equal(after.approved_by, null, 'the user is gone and the draft stays, approved_by null');
+    assert.ok(after.approved_at instanceof Date, 'the approval itself stays');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+});
+
+dbTest('live: a write that changes only the release columns leaves updated_at alone; an edit beside them still moves it (rolled back)', async () => {
+  const { rows: [trg] } = await pool.query(
+    "SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'update_menu_drafts_updated_at' AND tgrelid = 'menu_drafts'::regclass");
+  for (const key of ['plan_fingerprint', 'dismissed_plan_hash', 'released_print_key', 'released_at', 'released_by', 'released_via']) {
+    assert.match(trg.def, new RegExp(`'${key}'::text`), `the live clause skips ${key}`);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [p] } = await client.query(
+      "INSERT INTO proposals (status, event_type) VALUES ('confirmed', 'corporate') RETURNING id");
+    const stamp = new Date('2000-01-01T00:00:00Z');
+    const { rows: [d] } = await client.query(
+      `INSERT INTO menu_drafts (proposal_id, run_id, inputs, content, plan_fingerprint, approved_print_key, updated_at)
+       VALUES ($1, '00000000-0000-4000-8000-000000000004', '{}', '{}', '{}', 'menu-print/0/a.jpg', $2) RETURNING id`, [p.id, stamp]);
+    const { rows: [released] } = await client.query(
+      `UPDATE menu_drafts SET released_print_key = approved_print_key, released_at = NOW(), released_via = 'client'
+        WHERE id = $1 RETURNING updated_at`, [d.id]);
+    assert.equal(released.updated_at.toISOString(), stamp.toISOString(), 'a release is not an edit');
+    const { rows: [edited] } = await client.query(
+      "UPDATE menu_drafts SET released_via = 'admin', version = version + 1 WHERE id = $1 RETURNING updated_at", [d.id]);
+    assert.ok(edited.updated_at > new Date('2000-01-02T00:00:00Z'), 'a real edit beside a release column still restamps');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+});
+
+// The path dev and production take: the plain approved_by FK and the trigger
+// as the menu art block left it, then the two statements, twice, inside one
+// transaction that is rolled back.
+dbTest('live: a database holding the plain approved_by FK and the older trigger is moved once, and a replay changes nothing', async () => {
+  const client = await pool.connect();
+  const state = async () => ({
+    fk: (await client.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+        WHERE conrelid = 'menu_drafts'::regclass AND contype = 'f' AND pg_get_constraintdef(oid) LIKE '%(approved_by)%'`)).rows.map((r) => r.def),
+    trg: (await client.query(
+      "SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'update_menu_drafts_updated_at' AND tgrelid = 'menu_drafts'::regclass")).rows.map((r) => r.def),
+  });
+  try {
+    await client.query('BEGIN');
+    await client.query('ALTER TABLE menu_drafts DROP CONSTRAINT menu_drafts_approved_by_fkey');
+    await client.query('ALTER TABLE menu_drafts ADD CONSTRAINT menu_drafts_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES users(id)');
+    await client.query(`CREATE OR REPLACE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts FOR EACH ROW
+      WHEN ((to_jsonb(OLD) - ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'updated_at'])
+            IS DISTINCT FROM (to_jsonb(NEW) - ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'updated_at']))
+      EXECUTE FUNCTION update_updated_at_column()`);
+    const old = await state();
+    assert.deepEqual(old.fk, ['FOREIGN KEY (approved_by) REFERENCES users(id)'], 'the old rule');
+    assert.doesNotMatch(old.trg[0], /released_via/);
+    await client.query(APPROVED_BY_SET_NULL);
+    await client.query(RELEASE_TRIGGER);
+    const once = await state();
+    assert.deepEqual(once.fk, ['FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL'], 'one approved_by FK, SET NULL');
+    assert.equal(once.trg.length, 1);
+    assert.match(once.trg[0], /released_via/);
+    await client.query(APPROVED_BY_SET_NULL);
+    await client.query(RELEASE_TRIGGER);
+    assert.deepEqual(await state(), once, 'a replay leaves both as they are');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();

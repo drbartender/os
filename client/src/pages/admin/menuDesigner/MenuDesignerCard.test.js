@@ -14,6 +14,8 @@ jest.mock('./softBacking', () => ({
 // eslint-disable-next-line import/first
 import api from '../../../utils/api';
 // eslint-disable-next-line import/first
+import { downloadMenuPrint } from '../../../utils/downloadMenuPrint';
+// eslint-disable-next-line import/first
 import MenuDesignerCard from './MenuDesignerCard';
 // eslint-disable-next-line import/first
 import { shortDate } from './menuCardState';
@@ -98,7 +100,8 @@ const ROWS = [
   ['Notes edited', P((p) => { p.diff.brief_edited = ['notes']; }), {}, 'Notes edited', 'Client edited their menu notes.', 'Review before approving.', [], ['Review', 'View']],
   ['Saving', P(), { save: { state: 'saving', savedAt: null, conflict: false } }, 'Draft', 'Ready to review.', 'Saving...', [], ['View']],
   ['Save failed', P(), { save: { state: 'failed', savedAt: null, conflict: false } }, 'Not saved', "Last change didn't save.", 'Edits are kept until you retry.', ['Retry'], ['Retry', 'View']],
-  ['Approved', P(approved), {}, 'Approved', 'Print file ready for staff.', `Approved ${OCT_9} by Dallas`, [], ['View']],
+  // Released (spec 2026-10-19 table C): View, and a ghost Download that needs no editor.
+  ['Approved', P(approved), {}, 'Approved', 'Approved for print. Staff can download it.', `You released it ${OCT_9}.`, ['Download'], ['View', 'Download']],
   ['Edited since approval', P((p) => { approved(p); p.print.state = 'edited_since_approval'; }), {}, 'Edited since approval',
     `Staff still get the ${OCT_9} version.`, 'Approve again to update it.', [], ['Review & approve', 'View']],
   ['Replaced by upload', P((p) => { p.print = { state: 'replaced', print_key: 'up' }; }), {}, 'Not in use', 'Print file is a manual upload.', "This draft isn't what staff print.", [], ['View']],
@@ -423,5 +426,188 @@ describe('before a draft, the card reads the held brief its Generate posts', () 
     unmount();
     const file = mount(fakeMenu(ready(), { brief: held, referenceFile: { name: 'ref.png' } }));
     expect(top(file.container).msg).toHaveTextContent('Draft a custom 8×10 menu.');
+  });
+});
+
+// ── The client review on the card (spec 2026-10-19 sections 10.3, 10.5 and 14; lane menu-approve-send) ──
+
+describe('the client review on the card', () => {
+  const SENT = '2026-11-10T17:00:00Z';
+  const URL_ = 'https://drbartender.com/menu-proof/11111111-2222-4333-8444-555555555555';
+  const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const proof = (over = {}) => ({ id: 77, state: 'open', url: URL_, sent_at: SENT, email_status: 'sent', expired: false, stale: false,
+    answer: null, answer_note: null, answered_at: null, withdrawn_at: null, history: [], ...over });
+  const held = (over = {}) => (p) => {
+    p.print = { state: 'held', held: true, live: 'none', approved_at: SENT, approved_version: 3, approved_art_version: 4, print_key: null, approved_file_in_use: false };
+    p.proof = proof(over);
+  };
+  const dialog = () => screen.getByRole('dialog');
+  const proposalOn = (eventDate) => ({ ...PROPOSAL, event_date: eventDate });
+  const writeText = jest.fn();
+  beforeEach(() => {
+    writeText.mockReset();
+    writeText.mockResolvedValue();
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  });
+
+  test('Waiting on the client: Release for printing confirms, reads Releasing... while it posts the pair, then refetches', async () => {
+    let finish;
+    api.post.mockImplementation(() => new Promise((r) => { finish = r; }));
+    const menu = fakeMenu(P(held()));
+    const loadProposal = resolved();
+    const { container } = mount(menu, { proposal: proposalOn(day(10)), loadProposal });
+    expect(top(container).buttons).toEqual(['Release for printing', 'Copy link']);
+    expect(screen.getByRole('button', { name: 'Release for printing' })).toHaveClass('btn', 'btn-secondary', 'btn-sm');
+    fireEvent.click(screen.getByRole('button', { name: 'Release for printing' }));
+    expect(within(dialog()).getByText('Release for printing?')).toBeInTheDocument();
+    expect(within(dialog()).getByText('Staff will be able to download and print this menu now, without waiting for the client.')).toBeInTheDocument();
+    expect(dialog().closest('.md-cf-page')).not.toBeNull();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Release for printing' }));
+    // The approved pair and the proof the card showed (MENU_PROOF_CHANGED when the client answered since).
+    expect(api.post).toHaveBeenCalledWith('/proposals/42/menu-draft/release', { version: 3, art_version: 4, seen_proof_id: 77, seen_proof_answer: '' });
+    expect(screen.getByRole('button', { name: 'Releasing...' })).toBeDisabled();
+    expect(within(container.querySelector('.md-fold')).getByText('Releasing...')).toBeInTheDocument();
+    await act(async () => { finish({ data: {} }); });
+    await waitFor(() => expect(menu.refetch).toHaveBeenCalledTimes(1));
+    expect(loadProposal).toHaveBeenCalledTimes(1);
+  });
+
+  test('after the event day the confirm names the $5 duty and the post carries after_event true', async () => {
+    mount(fakeMenu(P(held())), { proposal: proposalOn(`${day(-3)}T00:00:00.000Z`) });
+    fireEvent.click(screen.getByRole('button', { name: 'Release for printing' }));
+    expect(within(dialog()).getByText('This event has passed. Releasing now adds the $5 print duty for the staff on it if its pay period is still open.'))
+      .toBeInTheDocument();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Release for printing' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/proposals/42/menu-draft/release',
+      { version: 3, art_version: 4, seen_proof_id: 77, seen_proof_answer: '', after_event: true }));
+  });
+
+  test('the landed after-event release says what happened to the duty in one status line, until the next action', async () => {
+    api.post.mockResolvedValue({ data: { duty: 'not_added' } });
+    const { container } = mount(fakeMenu(P(held())), { proposal: proposalOn(`${day(-3)}T00:00:00.000Z`) });
+    fireEvent.click(screen.getByRole('button', { name: 'Release for printing' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Release for printing' }));
+    const line = await screen.findByText("Released. This event's pay period is closed, so no print duty was added.");
+    expect(line).toHaveAttribute('role', 'status');
+    expect(line.closest('.md-card-text')).not.toBeNull();
+    await act(async () => { fireEvent.click(within(container.querySelector('.md-card-actions')).getByRole('button', { name: 'Copy link' })); });
+    expect(screen.queryByText("Released. This event's pay period is closed, so no print duty was added.")).toBeNull();
+  });
+
+  test.each([
+    ['LEGAL_HOLD', "This event is on hold and can't be changed."],
+    ['MENU_MARKED_NONE', 'This event is marked as needing no printed menu. Clear the mark first.'],
+    ['MENU_PRINT_CHANGED', 'A different print file is live now. Refresh to see it.'],
+    ['MENU_DRAFT_CHANGED', "That didn't go through. Try again."],
+    ['MENU_PROOF_CHANGED', "The client's review changed. Refresh to see it."],
+  ])('a 409 %s on release: its line in an alert, and the card refetches', async (code, line) => {
+    api.post.mockRejectedValue({ status: 409, code, message: 'server words' });
+    const menu = fakeMenu(P(held()));
+    mount(menu, { proposal: proposalOn(day(10)) });
+    fireEvent.click(screen.getByRole('button', { name: 'Release for printing' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Release for printing' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(line);
+    expect(menu.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('a 409 MENU_NOT_HELD refetches and says nothing', async () => {
+    api.post.mockRejectedValue({ status: 409, code: 'MENU_NOT_HELD', message: 'x' });
+    const menu = fakeMenu(P(held()));
+    mount(menu, { proposal: proposalOn(day(10)) });
+    fireEvent.click(screen.getByRole('button', { name: 'Release for printing' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Release for printing' }));
+    await waitFor(() => expect(menu.refetch).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test("the ghost Copy link copies the proof's link and reads Copied", async () => {
+    mount(fakeMenu(P(held())), { proposal: proposalOn(day(10)) });
+    await act(async () => { fireEvent.click(within(document.querySelector('.md-card-actions')).getByRole('button', { name: 'Copy link' })); });
+    expect(writeText).toHaveBeenCalledWith(URL_);
+    expect(within(document.querySelector('.md-card-actions')).getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  test("Client asked for changes: Read notes opens the editor's Brief tab; a ghost Release for printing", () => {
+    const onOpenEditor = jest.fn();
+    const { container } = mount(fakeMenu(P(held({ state: 'changes', answer: 'changes', answer_note: 'More gin.', answered_at: SENT }))), { onOpenEditor });
+    const t = top(container);
+    expect(t.chip).toHaveTextContent('Changes requested');
+    expect(t.sub).toHaveTextContent('More gin.');
+    expect(t.buttons).toEqual(['Read notes', 'Release for printing']);
+    expect(screen.getByRole('button', { name: 'Release for printing' })).toHaveClass('btn-ghost');
+    fireEvent.click(screen.getByRole('button', { name: 'Read notes' }));
+    expect(onOpenEditor).toHaveBeenCalledWith({ tab: 'brief' });
+  });
+
+  test('Released: the ghost Download reads the print file back', async () => {
+    downloadMenuPrint.mockResolvedValue();
+    mount(fakeMenu(P(approved)));
+    fireEvent.click(within(document.querySelector('.md-card-actions')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(downloadMenuPrint).toHaveBeenCalledWith('/proposals/42/menu-print'));
+  });
+
+  test('Print file removed: Put it back for staff confirms and posts the release route', async () => {
+    api.post.mockResolvedValue({ data: {} });
+    mount(fakeMenu(P((p) => { p.print = { state: 'removed', restorable: true, approved_version: 3, approved_art_version: 4, print_key: null }; })),
+      { proposal: proposalOn(day(10)) });
+    fireEvent.click(screen.getByRole('button', { name: 'Put it back for staff' }));
+    expect(within(dialog()).getByText('Put this menu back for staff?')).toBeInTheDocument();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Put it back for staff' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/proposals/42/menu-draft/release',
+      { version: 3, art_version: 4, seen_proof_id: '', seen_proof_answer: '' }));
+  });
+
+  test('a change request on a released menu: Close request from the Client review row, its confirm and Closing...', async () => {
+    let finish;
+    api.post.mockImplementation(() => new Promise((r) => { finish = r; }));
+    const menu = fakeMenu(P((p) => { approved(p); p.proof = proof({ state: 'changes', answer: 'changes', answer_note: 'x', answered_at: SENT }); }));
+    const { container } = mount(menu);
+    const row = screen.getByText('Client review').closest('.md-fold-row');
+    fireEvent.click(within(row).getByTitle('More actions'));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Close request' }));
+    expect(within(dialog()).getByText('Close this request?')).toBeInTheDocument();
+    expect(within(dialog()).getByText("The menu stays as it is for staff. The client's link will say the menu is no longer open for review.")).toBeInTheDocument();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close request' }));
+    expect(api.post).toHaveBeenCalledWith('/proposals/42/menu-draft/proof/close', { proof_id: 77 });
+    expect(within(container.querySelector('.md-fold')).getByText('Closing...')).toBeInTheDocument();
+    await act(async () => { finish({ data: {} }); });
+    await waitFor(() => expect(menu.refetch).toHaveBeenCalledTimes(1));
+  });
+
+  test("Close request that fails says That didn't go through. Try again.", async () => {
+    api.post.mockRejectedValue({ status: 500, code: 'INTERNAL_ERROR', message: 'x' });
+    mount(fakeMenu(P((p) => { approved(p); p.proof = proof({ state: 'changes', answer: 'changes', answered_at: SENT }); })));
+    const row = screen.getByText('Client review').closest('.md-fold-row');
+    fireEvent.click(within(row).getByTitle('More actions'));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Close request' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close request' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent("That didn't go through. Try again.");
+  });
+
+  test('the fold kebab Release for printing asks the same confirm', () => {
+    mount(fakeMenu(P(held())), { proposal: proposalOn(day(10)) });
+    const row = screen.getByText('Client review').closest('.md-fold-row');
+    expect(within(row).getByText(`Sent ${shortDate(SENT)}`)).toBeInTheDocument();
+    fireEvent.click(within(row).getByTitle('More actions'));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Release for printing' }));
+    expect(within(dialog()).getByText('Release for printing?')).toBeInTheDocument();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  // The pressed trigger is disabled, then gone, by the time the action lands.
+  test("after a review action settles, focus moves to the card's heading, never the page body", async () => {
+    let finish;
+    api.post.mockImplementation(() => new Promise((r) => { finish = r; }));
+    mount(fakeMenu(P(held())), { proposal: proposalOn(day(10)) });
+    const trigger = screen.getByRole('button', { name: 'Release for printing' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Release for printing' }));
+    await act(async () => { finish({ data: {} }); });
+    const heading = screen.getByRole('heading', { name: 'Bar menu' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(heading).toHaveAttribute('tabindex', '-1');
   });
 });

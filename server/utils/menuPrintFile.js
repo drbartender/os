@@ -8,9 +8,10 @@
 // It is also the ONE way the print key is set (spec 2026-10-01 section 8).
 // setMenuPrintKey(executor, proposalId, key) runs the one UPDATE that posts a
 // file (and clears menu_not_required and menu_not_required_by) on the
-// executor it is given: the pool for the manual upload
-// (POST /api/proposals/:id/menu-print), the transaction client for Approve
-// (POST /api/proposals/:id/menu-draft/approve). It never uploads and never
+// executor it is given: the transaction client for the manual upload
+// (POST /api/proposals/:id/menu-print) and for the held file's release and
+// Put it back (utils/menuRelease.js; Approve and send holds its file and never
+// calls it). It never uploads and never
 // fires duty reaccrual. reaccrueDuty(proposalId) re-reconciles the $5
 // menu_print duty line; every caller fires it only AFTER its write is
 // committed, so the accrual always reads the committed key.

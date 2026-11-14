@@ -1,12 +1,15 @@
-// MenuDesignerCard (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// MenuDesignerCard (React component, default export): the event page's Bar menu card, its draft thumbnail,
+// table C state and next action, the client review's writes and confirms, and the fold below it.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../../../utils/api';
+import { downloadMenuPrint } from '../../../utils/downloadMenuPrint';
 import StatusChip from '../../../components/adminos/StatusChip';
 import MenuCanvas from './MenuCanvas';
-import MenuCardFold, { errorText, isSafeLogoUrl } from './MenuCardFold';
+import MenuCardFold, { errorText, isSafeLogoUrl, useCopyLink } from './MenuCardFold';
+import ConfirmDialog from './ConfirmDialog';
 import menuCardState, { defaultImageModel } from './menuCardState';
+import { REVIEW_BUSY, reviewConfirm, useMenuReview } from './exportMenu';
 import { CARD_SIZE } from './useMenuDraft';
 
 // The Bar menu card on the event page's right column (spec 2026-10-01 section
@@ -30,6 +33,18 @@ import { CARD_SIZE } from './useMenuDraft';
 // hands menuCardState the hook's held brief and reference file, as the editor
 // does, so before a draft its look, hint, image count and gate are those of
 // the run its own Generate posts (spec 2026-10-19 sections 9.1 and 9.2).
+// The client review (spec 2026-10-19 sections 10.3, 10.5 and 14; lane
+// menu-approve-send): Release for printing and Put it back for staff (table
+// C's actions) and the fold's Release for printing and Close request go
+// through one useMenuReview, whose confirm draws over the page (the editor's
+// ConfirmDialog in a fixed layer), whose running label holds every action and
+// reads on the button and the Client review row, and whose refusal is the
+// card's alert line; a landed after-event release leaves one role="status"
+// line saying what happened to the $5 print duty until the card's next
+// action; once a write settles, focus moves to the card's heading.
+// Copy link copies the proof's link (Copied for 2 s), and
+// Released's ghost Download reads the print file back. The fold's Read the
+// client's notes opens the editor's Brief tab.
 
 const NARROW_PX = 900;
 const THUMB_SCALE = 0.12;
@@ -38,8 +53,10 @@ const isNarrow = () => typeof window !== 'undefined' && window.innerWidth < NARR
 // Each in-place action's own busy label (11.1), and Undo's message (the old card's).
 const BUSY_LABEL = {
   generate: 'Generating...', 'retry-words': 'Generating...', update: 'Updating...', dismiss: 'Dismissing...',
-  undo: 'Undoing...', 'retry-save': 'Retrying...', reload: 'Retrying...',
+  undo: 'Undoing...', 'retry-save': 'Retrying...', reload: 'Retrying...', download: 'Downloading...',
 };
+// Table C's actions that write through the review's confirm (exportMenu useMenuReview).
+const REVIEW_ACTIONS = new Set(['release', 'put-back']);
 const FALLBACK = { undo: 'Failed to update the menu status.' };
 
 function useNarrow() {
@@ -72,6 +89,14 @@ export default function MenuDesignerCard({
   // { text, at }: at is the card state the line first showed under; the next
   // state clears it (set after the action's own refetch, which lands first).
   const [actionError, setActionError] = useState(null);
+  const review = useMenuReview({ proposal, menu, loadProposal });
+  const link = useCopyLink();
+  // A settled review write leaves focus on the card's heading, a stable element,
+  // since the pressed trigger is disabled, then gone (review.settled).
+  const headingRef = useRef(null);
+  useEffect(() => {
+    if (review.settled && headingRef.current) headingRef.current.focus();
+  }, [review.settled]);
   const { payload, draft } = menu;
   const imageModel = defaultImageModel(payload && payload.configured);
   const st = menuCardState({
@@ -100,12 +125,15 @@ export default function MenuDesignerCard({
   const editorReady = typeof onOpenEditor === 'function';
   const canEdit = editorReady && !narrow;
 
-  // A print-file change moves the derived print state: reload both.
+  // A print-file change moves the derived print state: reload both. Any other
+  // action ends the after-event release's duty line (review.notice).
   const onPrintChange = async () => {
+    review.clearNotice();
     if (loadProposal) await loadProposal();
     await menu.refetch();
   };
   const onImageChange = () => {
+    review.clearNotice();
     menu.refetch();
     menu.refreshPlannerImage();
   };
@@ -121,12 +149,14 @@ export default function MenuDesignerCard({
     },
     'retry-save': () => menu.retrySave(),
     reload: () => menu.refetch(),
+    download: () => downloadMenuPrint(`/proposals/${proposal.id}/menu-print`),
   };
 
   // The hook's actions resolve only once a GET after them lands, so the row
   // stays held (no second paid Generate) until the card shows the new state.
   const run = async (a) => {
     setActionError(null);
+    review.clearNotice();
     setBusy(a.id);
     try {
       await IN_PLACE[a.id](a);
@@ -137,8 +167,23 @@ export default function MenuDesignerCard({
     }
   };
 
+  const held = !!busy || !!review.busy;
   const button = (a) => {
     if (!a) return null;
+    if (REVIEW_ACTIONS.has(a.id)) {
+      return (
+        <button key={a.id} type="button" className={BTN[a.style] || BTN.secondary} onClick={() => review.ask(a.id)} disabled={held}>
+          {review.busy === a.id ? REVIEW_BUSY[a.id] : a.label}
+        </button>
+      );
+    }
+    if (a.id === 'copy-link') {
+      const url = payload && payload.proof ? payload.proof.url : null;
+      const copy = () => { review.clearNotice(); link.copy(url); };
+      return (
+        <button key={a.id} type="button" className={BTN[a.style] || BTN.ghost} onClick={copy}>{link.copied ? 'Copied' : a.label}</button>
+      );
+    }
     if (a.editor) {
       return canEdit ? (
         <button key={a.id} type="button" className={BTN[a.style] || BTN.primary} onClick={() => onOpenEditor(a.editor)}>{a.label}</button>
@@ -147,7 +192,7 @@ export default function MenuDesignerCard({
     const gate = a.id === 'generate' && st.generate.disabled ? st.generate : null;
     return (
       <button key={a.id} type="button" className={BTN[a.style] || BTN.primary} onClick={() => run(a)}
-        disabled={!!busy || !!gate} title={gate ? gate.hint : undefined}>
+        disabled={held || !!gate} title={gate ? gate.hint : undefined}>
         {busy === a.id ? BUSY_LABEL[a.id] || 'Working...' : a.label}
       </button>
     );
@@ -178,7 +223,7 @@ export default function MenuDesignerCard({
     // (the fold's top rule runs edge to edge), not the legacy .card padding.
     <div className="card card-flush md-card">
       <div className="card-head">
-        <h3>Bar menu</h3>
+        <h3 ref={headingRef} tabIndex={-1}>Bar menu</h3>
         {st.chip && <StatusChip kind={st.chip.kind}>{st.chip.text}</StatusChip>}
       </div>
       {st.id === 'loading' ? <Skeleton /> : (
@@ -198,6 +243,9 @@ export default function MenuDesignerCard({
             {editorReady && narrow && hasEditorAction && <div className="md-card-note">Edit the menu on a wider screen.</div>}
             {menu.reconnecting && <div className="md-card-note" role="status">Reconnecting...</div>}
             {actionError && <p className="chip danger md-alert" role="alert">{actionError.text}</p>}
+            {review.error && <p className="chip danger md-alert" role="alert">{review.error.text}</p>}
+            {review.notice && <p className="chip info md-alert" role="status">{review.notice}</p>}
+            {link.error && <p className="chip danger md-alert" role="alert">{link.error}</p>}
           </div>
         </div>
       )}
@@ -213,7 +261,18 @@ export default function MenuDesignerCard({
         onImageChange={onImageChange}
         role={role}
         thumbUrl={menu.plannerImages[CARD_SIZE] || null}
+        review={payload ? {
+          proof: payload.proof || null, print: payload.print || null, narrow,
+          busyLabel: review.busy ? REVIEW_BUSY[review.busy] : null,
+          onRelease: () => review.ask('release'), onClose: () => review.ask('close'),
+          onReadNotes: canEdit ? () => onOpenEditor({ tab: 'brief' }) : null,
+        } : null}
       />
+      {review.confirm && (
+        <div className="md-cf-page">
+          <ConfirmDialog {...reviewConfirm(review.confirm.kind, review.confirm)} onAction={review.go} onCancel={review.cancel} />
+        </div>
+      )}
     </div>
   );
 }

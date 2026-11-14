@@ -272,7 +272,7 @@ test('art direction, up to 500 characters, into the brief', () => {
 test('the sections in order: the client brief, the admin brief, from the planner, then the image, the reference and the art direction', () => {
   const { container } = render(<BriefTab {...props()} />);
   expect([...container.querySelectorAll('.md-sec-label')].map((el) => el.textContent))
-    .toEqual(['Client brief', 'Admin brief', 'From the planner', 'Client image', 'Style reference', 'Art direction']);
+    .toEqual(['Client brief', 'Admin brief', 'From the planner', 'Client image', 'Style reference', 'Art direction', 'Client review']);
   expect(within(section('Admin brief')).getByText('Yours · read first')).toHaveClass('md-sec-note');
   expect(within(section('From the planner')).getByText('Potion Planner · read-only')).toHaveClass('md-sec-note');
 });
@@ -445,5 +445,76 @@ describe('the look', () => {
     expect(within(seg()).getByRole('button', { name: 'Custom design' })).toBeDisabled();
     fireEvent.click(within(seg()).getByRole('button', { name: 'Custom design' }));
     expect(p.onPatch).not.toHaveBeenCalled();
+  });
+});
+
+// ── The Client review section (spec 2026-10-19 sections 10.3 and 14; lane menu-approve-send) ──
+
+describe('the client review', () => {
+  const day = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const SENT = '2026-11-10T17:00:00Z';
+  const ANSWERED = '2026-11-12T17:00:00Z';
+  const EARLIER = '2026-11-03T17:00:00Z';
+  const NOTE = 'Can the title say Happy 40th?\nAnd put the Paloma first.';
+  const OLD_NOTE = 'Less pink, please.';
+  const proof = (over = {}) => ({
+    id: 77, state: 'changes', sent_at: SENT, email_status: 'sent', expired: false, answer: 'changes', answer_note: NOTE, answered_at: ANSWERED,
+    withdrawn_at: null, history: [
+      { id: 61, sent_at: EARLIER, state: 'superseded', answer: 'changes', answer_note: OLD_NOTE, answered_at: '2026-11-04T17:00:00Z', withdrawn_at: null, superseded_at: SENT },
+      { id: 55, sent_at: '2026-11-01T17:00:00Z', state: 'superseded', answer: null, answer_note: null, answered_at: null, withdrawn_at: null, superseded_at: EARLIER },
+    ], ...over,
+  });
+  const review = () => within(section('Client review'));
+
+  test('at the end, in a client brief box: the latest line with its note, then each earlier proof with its date, answer and note in full', () => {
+    const { container } = render(<BriefTab {...props({ proof: proof(), print: { state: 'held', held: true } })} />);
+    expect([...container.querySelectorAll('.md-sec-label')].pop().textContent).toBe('Client review');
+    const box = section('Client review').querySelector('.md-brief-box');
+    expect(box).not.toBeNull();
+    const fields = [...box.querySelectorAll('.md-brief-f')].map((f) => [f.querySelector('.meta-k').textContent, f.querySelector('.md-brief-v').textContent]);
+    expect(fields).toEqual([
+      ['Latest', `Changes requested ${day(ANSWERED)}`],
+      [`Sent ${day(EARLIER)}`, `Changes requested ${day('2026-11-04T17:00:00Z')}`],
+      [`Sent ${day('2026-11-01T17:00:00Z')}`, 'No answer'],
+    ]);
+    const notes = [...box.querySelectorAll('.md-brief-note')].map((n) => n.textContent);
+    expect(notes).toEqual([NOTE, OLD_NOTE]);
+  });
+
+  test("the client's note is plain text, never HTML", () => {
+    const { container } = render(<BriefTab {...props({ proof: proof({ answer_note: '<b>bold</b> <img src=x onerror=alert(1)>', history: [] }), print: { state: 'held', held: true } })} />);
+    expect(review().getByText('<b>bold</b> <img src=x onerror=alert(1)>')).toBeInTheDocument();
+    expect(container.querySelector('.md-brief-note b, .md-brief-note img')).toBeNull();
+  });
+
+  test('a change request with nothing held offers Close request; Closing... while it runs; its error as an alert', () => {
+    const onCloseRequest = jest.fn();
+    const p = { proof: proof(), print: { state: 'approved', held: false }, onCloseRequest };
+    const { rerender } = render(<BriefTab {...props(p)} />);
+    const close = review().getByRole('button', { name: 'Close request' });
+    expect(close).toHaveClass('btn', 'btn-secondary', 'btn-sm');
+    fireEvent.click(close);
+    expect(onCloseRequest).toHaveBeenCalledTimes(1);
+    rerender(<BriefTab {...props({ ...p, closing: true })} />);
+    expect(review().getByRole('button', { name: 'Closing...' })).toBeDisabled();
+    rerender(<BriefTab {...props({ ...p, closeError: "That didn't go through. Try again." })} />);
+    expect(review().getByRole('alert')).toHaveTextContent("That didn't go through. Try again.");
+  });
+
+  test('no Close request while the file is held, on an open proof or a closed one', () => {
+    for (const [pr, print] of [[proof(), { state: 'held', held: true }], [proof({ state: 'open', answer: null, answer_note: null }), { state: 'held', held: true }],
+      [proof({ state: 'withdrawn', withdrawn_at: ANSWERED }), { state: 'approved' }]]) {
+      const { unmount } = render(<BriefTab {...props({ proof: pr, print })} />);
+      expect(review().queryByRole('button', { name: 'Close request' })).toBeNull();
+      unmount();
+    }
+  });
+
+  test('a draft with no proof yet reads Not sent yet; with no draft and no proof there is no section', () => {
+    const { unmount } = render(<BriefTab {...props({ proof: null })} />);
+    expect(review().getByText('Not sent yet')).toBeInTheDocument();
+    unmount();
+    render(<BriefTab {...props({ draft: null, proof: null })} />);
+    expect(screen.queryByText('Client review')).toBeNull();
   });
 });

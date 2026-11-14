@@ -24,4 +24,10 @@ function proposalUrl(token) {
   return `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(token)}`;
 }
 
-module.exports = { PUBLIC_SITE_URL, ADMIN_URL, STAFF_URL, API_URL, proposalUrl };
+// The client's menu proof page (spec 2026-10-19 section 11), keyed by the
+// proof's UUID token, on the public domain like the proposal link.
+function menuProofUrl(token) {
+  return `${PUBLIC_SITE_URL}/menu-proof/${encodeURIComponent(token)}`;
+}
+
+module.exports = { PUBLIC_SITE_URL, ADMIN_URL, STAFF_URL, API_URL, proposalUrl, menuProofUrl };

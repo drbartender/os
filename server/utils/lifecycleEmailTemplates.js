@@ -274,6 +274,31 @@ function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListU
 }
 
 /**
+ * The menu proof email (spec 2026-10-19 section 11), sent when the admin taps
+ * Approve and send. The client's first name only, and no event date, venue or
+ * amounts: the link is the whole message. The link lives until the event
+ * (decision 15), or 30 days when no event date is on file, which hasEventDate
+ * says; the date itself is never printed.
+ */
+function menuProofReady({ clientName, eventTypeLabel = 'event', proofUrl, hasEventDate = true }) {
+  const first = firstNameOf(clientName || 'there');
+  const label = eventTypeLabel || 'event';
+  const life = hasEventDate ? 'The link works until your event.' : 'The link works for 30 days.';
+  const lede = `Here's a first look at the bar menu for your ${label}. Open it, and let us know if it looks great or if you'd like any changes.`;
+  return {
+    subject: 'Your bar menu is ready for a look',
+    html: wrapEmail(`
+      <p>Hi ${esc(first)},</p>
+      <p>${esc(lede)}</p>
+      ${ctaButton(esc(proofUrl), 'Review the menu')}
+      <p>${life} If you have questions, just reply to this email.</p>
+      <p>Cheers,<br>Dallas</p>
+    `),
+    text: `Hi ${first},\n\n${lede}\n\nReview the menu: ${proofUrl}\n\n${life} If you have questions, just reply to this email.\n\nCheers,\nDallas`,
+  };
+}
+
+/**
  * Event-eve EMAIL — the twin of smsTemplates.eventEveSms, sent at the same
  * T-24h instant. It exists so a client who declines SMS still gets the
  * day-before details: before this twin, event_eve was the only client touch
@@ -814,6 +839,7 @@ module.exports = {
   drinkPlanBalanceUpdate,
   drinkPlanEchoSection,
   shoppingListReady,
+  menuProofReady,
   eventEveEmail,
   shoppingListReadyParts,
   postConsultClient,

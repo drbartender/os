@@ -1,12 +1,13 @@
-// MenuCardFold (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// MenuCardFold (React component, default export): the Bar menu card's fold, its Print file, Client image and
+// Client review rows with each row's actions, and useCopyLink, the Copy link the card shares.
 
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import api from '../../../utils/api';
 import Icon from '../../../components/adminos/Icon';
 import KebabMenu from '../../../components/adminos/KebabMenu';
 import { downloadMenuPrint } from '../../../utils/downloadMenuPrint';
-import { shortDate } from './menuCardState';
+import { shortDate, reviewValue, canCopyLink, canCloseRequest } from './menuCardState';
+import { seenProof } from './exportMenu';
 
 // The Bar menu card's fold (spec 2026-10-01 section 11.1, decision 12): the
 // Print file and Client image rows, carrying every action of the two cards
@@ -26,6 +27,25 @@ import { shortDate } from './menuCardState';
 //   role           the planner image's role (Logo on top before any draft)
 //   thumbUrl       the planner image at ?w=240, or null (then the plan's
 //                  companyLogo, when isSafeLogoUrl allows it)
+//   review         the Client review row's facts, or null while the draft GET
+//                  has not landed (then the row is not drawn): { proof, print
+//                  (the GET's blocks), narrow, busyLabel (a review write's
+//                  running label, or null), onRelease, onClose, onReadNotes
+//                  (null when the editor cannot open) }
+// The Client review row (spec 2026-10-19 section 14, a third Print file row):
+// the latest proof's line (menuCardState reviewValue), Copy link while the
+// link is live (Copied for 2 s; a failure is the row's alert), and a kebab
+// with Release for printing while a file is held, Read the client's notes for
+// a change request, and Close request for one on a released menu (spec 10.3);
+// below 900 px it keeps Copy link and drops the kebab. A running review write
+// shows its label in place of the line. The card owns the writes and their
+// confirms (exportMenu useMenuReview); the row only asks.
+// The Print file row reads the menu's own released file as the approved menu
+// even beside a newer held one, never as an upload. Its Remove names the file
+// it showed (expected_print_key), and its Upload and Replace file name it with
+// the latest proof the review row showed (seen_proof_id, seen_proof_answer); a
+// 409 MENU_PRINT_CHANGED (Remove, the upload, the no-menu mark) or
+// MENU_PROOF_CHANGED (the upload) says so and reloads the proposal and the draft.
 
 // Defense in depth: even though the server sanitizes companyLogo on every PUT,
 // admins click `<a href={companyLogo}>` here. A historical `javascript:` value
@@ -67,11 +87,17 @@ export function errorText(err, fallback, field) {
   return err?.message || fallback;
 }
 
+// The print states in which the live file is the menu's own (menuPrintState.js).
+const OWN_FILE = new Set(['held', 'approved', 'edited_since_approval']);
+
 // The flag reads from the loaded proposal, so it never depends on the chip.
 function printValue(print, menuPrintKey, menuNotRequired) {
   if (menuPrintKey) {
-    const approved = print && print.print_key === menuPrintKey && print.approved_file_in_use;
-    return approved ? `Approved menu · ${shortDate(print.approved_at)}` : 'Uploaded file';
+    const p = print || {};
+    if (p.print_key === menuPrintKey && p.approved_file_in_use) return `Approved menu · ${shortDate(p.approved_at)}`;
+    // An older released file staff still have (a newer one held, or edited since): its release's day.
+    if (p.print_key === menuPrintKey && OWN_FILE.has(p.state)) return `Approved menu · ${shortDate(p.released_at || p.approved_at)}`;
+    return 'Uploaded file';
   }
   if (menuNotRequired) return 'No menu needed';
   return print && print.state === 'removed' ? 'Removed' : 'None yet';
@@ -90,7 +116,36 @@ function NamedKebab({ label, items }) {
 
 const Alert = ({ children }) => (children ? <p className="chip danger md-alert" role="alert">{children}</p> : null);
 
-function PrintFileRow({ proposalId, menuPrintKey, menuNotRequired, print, onPrintChange }) {
+const COPIED_MS = 2000;
+const COPY_FAILED = "Couldn't copy. Open the editor to approve again.";
+
+// Copy link (spec 14): the clipboard, "Copied" for 2 s, or the failure line.
+export function useCopyLink() {
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async (url) => {
+    setError('');
+    clearTimeout(timer.current);
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw new Error('no clipboard');
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+    } catch {
+      setCopied(false);
+      setError(COPY_FAILED);
+    }
+  };
+  return { copy, copied, error };
+}
+
+// The codes for a card that is stale (another file live, or a client answer it
+// never saw): each says its sentence and reloads the proposal and the draft.
+const STALE_CODES = new Set(['MENU_PRINT_CHANGED', 'MENU_PROOF_CHANGED']);
+
+function PrintFileRow({ proposalId, menuPrintKey, menuNotRequired, print, proof, onPrintChange }) {
   const fileInputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -99,7 +154,10 @@ function PrintFileRow({ proposalId, menuPrintKey, menuNotRequired, print, onPrin
   const path = `/proposals/${proposalId}/menu-print`;
 
   // Upload, replace, remove and the not-required flip share one busy flag and
-  // reload the proposal (and the draft's print state) after success.
+  // reload the proposal (and the draft's print state) after success. A 409
+  // MENU_PRINT_CHANGED (another file went live since the card loaded) or, for
+  // an upload, MENU_PROOF_CHANGED (the client answered since) says so and
+  // reloads them too, so the row shows what is true now.
   const run = async (work, fallback) => {
     setError('');
     setBusy(true);
@@ -108,6 +166,7 @@ function PrintFileRow({ proposalId, menuPrintKey, menuNotRequired, print, onPrin
       if (onPrintChange) await onPrintChange();
     } catch (err) {
       setError(errorText(err, fallback, 'file'));
+      if (err && err.status === 409 && STALE_CODES.has(err.code) && onPrintChange) await onPrintChange().catch(() => {});
     } finally {
       setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -122,11 +181,20 @@ function PrintFileRow({ proposalId, menuPrintKey, menuNotRequired, print, onPrin
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
+    // Upload and Replace file post what the card showed: the file, and the
+    // latest proof ('' each for none, or before the draft GET lands).
+    const seen = seenProof(proof);
     const form = new FormData();
     form.append('file', file);
+    form.append('expected_print_key', shownKey);
+    form.append('seen_proof_id', String(seen.seen_proof_id));
+    form.append('seen_proof_answer', seen.seen_proof_answer);
     run(() => api.post(path, form, { headers: { 'Content-Type': 'multipart/form-data' } }), 'Upload failed.');
   };
-  const remove = () => run(() => api.delete(path), 'Failed to remove the menu file.');
+  // Remove and the upload name the file the card showed (the print block's
+  // key, else the proposal's), so neither unposts one a client's Looks great just released.
+  const shownKey = print ? print.print_key || '' : menuPrintKey || '';
+  const remove = () => run(() => api.delete(path, { data: { expected_print_key: shownKey } }), 'Failed to remove the menu file.');
   const setNotRequired = (notRequired) => run(() => api.patch(path, { not_required: notRequired }), 'Failed to update the menu status.');
   const pick = () => fileInputRef.current?.click();
 
@@ -249,16 +317,41 @@ function ClientImageRow({ drinkPlan, planLoading, setDrinkPlan, onImageChange, r
   );
 }
 
+function ClientReviewRow({ proof, print, narrow = false, busyLabel = null, onRelease, onClose, onReadNotes }) {
+  const link = useCopyLink();
+  const value = busyLabel || reviewValue(proof);
+  const items = [];
+  if (print && print.held === true) items.push({ label: 'Release for printing', onClick: () => onRelease && onRelease(), disabled: !!busyLabel });
+  if (proof && proof.state === 'changes' && onReadNotes) items.push({ label: "Read the client's notes", onClick: onReadNotes });
+  if (canCloseRequest(proof, print)) items.push({ label: 'Close request', onClick: () => onClose && onClose(), disabled: !!busyLabel });
+  return (
+    <div className="md-fold-sec">
+      <div className="md-fold-row">
+        <div className="md-fold-main">
+          <div className="meta-k">Client review</div>
+          <div className="md-fold-v" title={value}>{value}</div>
+        </div>
+        {canCopyLink(proof) && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => link.copy(proof.url)}>{link.copied ? 'Copied' : 'Copy link'}</button>
+        )}
+        {!narrow && (items.length ? <NamedKebab label="Client review actions" items={items} /> : <span className="md-fold-kebab" aria-hidden="true" />)}
+      </div>
+      <Alert>{link.error}</Alert>
+    </div>
+  );
+}
+
 export default function MenuCardFold({
   proposalId, menuPrintKey = null, menuNotRequired = false, print = null,
-  drinkPlan = null, planLoading = false, setDrinkPlan, onPrintChange, onImageChange, role = 'logo', thumbUrl = null,
+  drinkPlan = null, planLoading = false, setDrinkPlan, onPrintChange, onImageChange, role = 'logo', thumbUrl = null, review = null,
 }) {
   return (
     <div className="md-fold">
       <PrintFileRow proposalId={proposalId} menuPrintKey={menuPrintKey} menuNotRequired={menuNotRequired}
-        print={print} onPrintChange={onPrintChange} />
+        print={print} proof={review ? review.proof : null} onPrintChange={onPrintChange} />
       <ClientImageRow drinkPlan={drinkPlan} planLoading={planLoading} setDrinkPlan={setDrinkPlan}
         onImageChange={onImageChange} role={role} thumbUrl={thumbUrl} />
+      {review && <ClientReviewRow {...review} />}
     </div>
   );
 }

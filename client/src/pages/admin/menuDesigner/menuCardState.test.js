@@ -185,7 +185,8 @@ describe('table C, one row each', () => {
     const draft = same(() => {});
     expect([draft.id, draft.message, draft.sub]).toEqual(['draft', 'Ready to review.', `Saved. ${UNCHECKED(1)}`]);
     expect(`${draft.message} ${draft.sub}`).not.toContain('The bar picks changed since this draft.');
-    expect(same(approved).sub).toBe(`Approved ${OCT_9} by Dallas. ${UNCHECKED(1)}`);
+    // Released's ghost Download gives the slot to the bar-only Update draft (the fold downloads too).
+    expect(same(approved).sub).toBe(`You released it ${OCT_9}. ${UNCHECKED(1)}`);
     expect(same((p) => { p.diff.brief_edited = ['notes']; }).id).toBe('notes-edited');
     expect(same((p) => { p.print.state = 'removed'; }).id).toBe('removed');
     expect(same((p) => { approved(p); p.print.state = 'edited_since_approval'; }).id).toBe('edited');
@@ -245,9 +246,10 @@ describe('table C, one row each', () => {
 
   test('the print states, in section 8 order', () => {
     let s = run(P(approved));
-    expect(lines(s)).toEqual(['ok', 'Approved', 'Print file ready for staff.', `Approved ${OCT_9} by Dallas`]);
+    // Released (spec 2026-10-19 table C), which is the Approved row.
+    expect(lines(s)).toEqual(['ok', 'Approved', 'Approved for print. Staff can download it.', `You released it ${OCT_9}.`]);
     expect(s.primary).toMatchObject({ id: 'view', style: 'secondary' });
-    expect(s.secondary).toBeNull();
+    expect(s.secondary).toEqual({ id: 'download', label: 'Download', style: 'ghost' });
     s = run(P((p) => { approved(p); p.print.state = 'edited_since_approval'; }));
     expect(lines(s)).toEqual(['warn', 'Edited since approval', `Staff still get the ${OCT_9} version.`, 'Approve again to update it.']);
     expect(ids(s)).toEqual(['review-approve', 'view']);
@@ -265,7 +267,8 @@ describe('table C, one row each', () => {
     expect(s.primary).toBeNull();
     expect(s.secondary).toEqual({ id: 'undo', label: 'Undo', style: 'ghost' });
     s = run(P((p) => { p.print.state = 'not_required'; }));
-    expect(s.sub).toBe('A draft exists; approving it posts a print file.');
+    // Approve refuses while the mark is set (spec 2026-10-19 lane menu-approve-send).
+    expect(s.sub).toBe('A draft exists; undo the mark to approve and send it.');
     expect(ids(s)).toEqual([null, 'undo']);
   });
 });
@@ -277,14 +280,14 @@ describe('the no-menu mark the client set', () => {
     let s = run(P((p) => { noDraft(p); p.print.state = 'not_required'; p.print.not_required_by = 'planner'; }));
     expect(lines(s)).toEqual(['neutral', 'No menu needed', 'Marked no menu needed.', 'The client chose Skip the Menu.']);
     s = run(P((p) => { p.print.state = 'not_required'; p.print.not_required_by = 'planner'; }));
-    expect(s.sub).toBe('The client chose Skip the Menu. A draft exists; approving it posts a print file.');
+    expect(s.sub).toBe('The client chose Skip the Menu. A draft exists; undo the mark to approve and send it.');
   });
 
   test('an admin mark, or one with no provenance, keeps the sub line it had', () => {
     for (const by of ['admin', null, undefined]) {
       expect(run(P((p) => { noDraft(p); p.print.state = 'not_required'; p.print.not_required_by = by; })).sub).toBeNull();
       expect(run(P((p) => { p.print.state = 'not_required'; p.print.not_required_by = by; })).sub)
-        .toBe('A draft exists; approving it posts a print file.');
+        .toBe('A draft exists; undo the mark to approve and send it.');
     }
   });
 });
@@ -416,20 +419,21 @@ describe('Generate', () => {
 });
 
 describe('Approve', () => {
+  // Approve and send replaces every Approve label (spec 2026-10-19 section 10.5): each one now emails the client.
   test('its label by print state', () => {
-    expect(run(P()).approve).toEqual({ label: 'Approve', disabled: false, why: '' });
+    expect(run(P()).approve).toEqual({ label: 'Approve and send', disabled: false, why: '' });
     expect(run(P(approved)).approve).toMatchObject({ label: 'Approved', disabled: true });
-    expect(run(P((p) => { approved(p); p.print.state = 'edited_since_approval'; })).approve.label).toBe('Approve again');
-    expect(run(P((p) => { p.print.state = 'removed'; })).approve.label).toBe('Approve again');
-    expect(run(P((p) => { p.print.state = 'replaced'; })).approve.label).toBe('Use as print file');
+    expect(run(P((p) => { approved(p); p.print.state = 'edited_since_approval'; })).approve.label).toBe('Approve and send');
+    expect(run(P((p) => { p.print.state = 'removed'; })).approve.label).toBe('Approve and send');
+    expect(run(P((p) => { p.print.state = 'replaced'; })).approve.label).toBe('Approve and send');
     expect(run(P(), { approving: true }).approve).toMatchObject({ label: 'Approving...', disabled: true });
   });
 
   test('blocked by text too long, a failed drawing, drafting and no draft, with the reason as its title', () => {
     expect(run(P(), { tooLong: ['drinks.cocktail:2.description'] }).approve)
-      .toEqual({ label: 'Approve', disabled: true, why: 'Shorten the long description first' });
+      .toEqual({ label: 'Approve and send', disabled: true, why: 'Shorten the long description first' });
     expect(run(P((p) => { p.pieces[1] = piece('cocktail:1', 'failed'); })).approve)
-      .toEqual({ label: 'Approve', disabled: true, why: 'Fix the failed drawing first' });
+      .toEqual({ label: 'Approve and send', disabled: true, why: 'Fix the failed drawing first' });
     expect(run(P((p) => { p.pieces[1] = piece('cocktail:1', 'working'); })).approve.disabled).toBe(true);
     expect(run(P(noDraft)).approve.disabled).toBe(true);
   });
@@ -607,11 +611,11 @@ describe('table B, the editor banners', () => {
     expect(one((p) => { approved(p); p.print.state = 'edited_since_approval'; }, 'edited'))
       .toMatchObject({ tone: 'warn', title: 'Edited since approval.', text: `Staff still get the ${OCT_9} version until you approve again.` });
     expect(one((p) => { p.print.state = 'replaced'; }, 'replaced'))
-      .toMatchObject({ tone: 'neutral', title: 'Print file is a manual upload.', text: 'Approving replaces it with this draft.' });
+      .toMatchObject({ tone: 'neutral', title: 'Print file is a manual upload.', text: 'Staff print the upload until you remove it.' });
     expect(one((p) => { p.print.state = 'removed'; }, 'removed'))
       .toMatchObject({ tone: 'warn', title: 'Print file was removed.', text: 'Staff have nothing to print. Approve to restore it.' });
     expect(one((p) => { p.print.state = 'not_required'; }, 'no-menu'))
-      .toMatchObject({ tone: 'neutral', title: 'Marked no menu needed.', text: 'Approving still posts this menu and clears the mark.', buttons: [{ id: 'undo' }] });
+      .toMatchObject({ tone: 'neutral', title: 'Marked no menu needed.', text: 'Undo the mark to approve and send this menu.', buttons: [{ id: 'undo' }] });
     expect(one((p) => { p.draft.read_only = true; p.plan = null; p.diff = null; }, 'no-plan'))
       .toMatchObject({ tone: 'neutral', title: 'No drink plan on this event.', text: 'The draft is read-only.' });
     expect(run(null, { loadError: 'Network error.' }).banners).toEqual([{ id: 'load-error', tone: 'danger',
@@ -651,7 +655,7 @@ describe('table D: facts the system does not store stay out', () => {
     expect(all(run(P((p) => { p.print = { state: 'removed', approved_at: APPROVED_AT }; })))).not.toContain(OCT_9);
     expect(all(run(P((p) => { p.print = { state: 'replaced', print_key: 'menu-print/1/monogram.pdf' }; })))).not.toMatch(/monogram|\.pdf/);
     expect(run(P((p) => { noDraft(p); p.print.state = 'not_required'; })).sub).toBeNull();
-    expect(run(P((p) => { approved(p); p.print.approved_by_name = null; })).sub).toBe(`Approved ${OCT_9}`);
+    expect(run(P((p) => { approved(p); p.print.approved_by_name = null; })).sub).toBe(`You released it ${OCT_9}.`);
   });
 });
 

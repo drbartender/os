@@ -1,5 +1,5 @@
-// ConfirmDialog (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// ConfirmDialog (React component, default export): the menu designer's confirm dialog, and editorConfirm, the
+// copy of the editor's own Start over and close-with-an-unsaved-change confirms.
 
 import React, { useLayoutEffect, useRef } from 'react';
 
@@ -15,13 +15,14 @@ import React, { useLayoutEffect, useRef } from 'react';
 //   actionClass          its classes (default 'btn btn-primary')
 //   cancelLabel          default 'Cancel'
 //   onAction, onCancel   called on click (onCancel also on Escape)
-// editorConfirm(id, { need, print, drawings }) -> the copy of the editor's three
+// editorConfirm(id, { need, drawings }) -> the copy of the editor's two own
 //   confirms: 'start-over' (need: the images Generate uses; drawings: false
-//   when the draft has none to discard, a plain house card), 'replace' (print:
-//   the GET's print, approved_file_in_use and approved_at) and 'close' (a
-//   failed save on closing; Stay is the cancel).
+//   when the draft has none to discard, a plain house card) and 'close' (a
+//   failed save on closing; Stay is the cancel), which any other id reads as.
+//   Approve and send's confirm is exportMenu.js approveConfirm, and the
+//   review's are reviewConfirm (spec 2026-10-19 sections 10.3 and 10.5).
 
-export function editorConfirm(id, { need = 0, print = {}, drawings = true } = {}) {
+export function editorConfirm(id, { need = 0, drawings = true } = {}) {
   if (id === 'start-over') {
     // A plain house card draws nothing; one with touches draws its background alone.
     const uses = need === 0 ? 'Uses no images.' : need === 1 ? 'Uses about 1 image.' : `Uses about ${need} images.`;
@@ -29,16 +30,6 @@ export function editorConfirm(id, { need = 0, print = {}, drawings = true } = {}
     return {
       title: 'Start over?', actionLabel: 'Start over', actionClass: 'btn btn-danger',
       text: `${lead}, then drafts again from the plan. ${uses}`,
-    };
-  }
-  if (id === 'replace') {
-    const day = print.approved_at ? new Date(print.approved_at) : null;
-    const date = day && !Number.isNaN(day.getTime()) ? day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-    return {
-      title: 'Replace the print file?', actionLabel: 'Replace and approve', actionClass: 'btn btn-primary',
-      text: print.approved_file_in_use
-        ? `Staff will download this version instead of the one approved ${date}.`
-        : 'Staff currently download a manual upload. Approving makes this draft the print file instead.',
     };
   }
   return {

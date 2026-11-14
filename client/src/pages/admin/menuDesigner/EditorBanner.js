@@ -1,5 +1,5 @@
-// EditorBanner (React component, default export). Header generated from the file's exports by
-// migrate-headers on 2026-10-27; replace with what it does.
+// EditorBanner (React component, default export): the bar menu editor's table B banners, its empty card in the
+// canvas's place (EditorEmpty) and its 56 px top bar with Approve and send (EditorTopBar).
 
 import React, { forwardRef } from 'react';
 import Icon from '../../../components/adminos/Icon';
@@ -19,7 +19,9 @@ import StatusChip from '../../../components/adminos/StatusChip';
 //   E's dashed card in the canvas's place; Generate waits on generate.disabled.
 // EditorTopBar (ref: the back button): the 56 px bar. The back button with the
 //   event's label (backDisabled while Approve runs), "Bar menu" and the chip, the save text (Not saved in danger,
-//   then Retry), and Approve with its label, disabled state and reason (title).
+//   then Retry), and Approve and send (spec 2026-10-19 section 10.5) with its label, disabled state and reason
+//   (title); the editor opens its confirm. A banner's buttons include the client review's Release for printing,
+//   Put it back for staff and Copy link, whose running labels come through busyLabel like any other.
 
 const TONES = new Set(['ok', 'warn', 'danger', 'info', 'neutral']);
 const STYLE = { ghost: 'btn btn-ghost btn-sm', secondary: 'btn btn-secondary btn-sm', primary: 'btn btn-primary btn-sm' };

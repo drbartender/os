@@ -17,14 +17,21 @@
 // for the proof's own pair) closes menu_no_answer always, and menu_changes
 // only when the release came at or after the answer (released_at against
 // answered_at), so a change request sent after a release still shows. A
-// superseded or withdrawn proof, an approved one, or (with no event date) a
-// link past its 30 days closes them; an older live file never does, so a
-// second proof's change request always shows. Nor does the admin's own upload
-// live on the proposal: no time is kept for a print key, so the reader cannot
-// tell an upload made after a change request from one made before the proof
-// was sent, and guessing would hide a later proof's tasks. The upload route
-// withdraws the proof it settles (spec 10.3, lane menu-approve-send), and a
-// withdrawn proof has no task. A row the
+// superseded or withdrawn proof, an approved one, or (with no event date) an
+// unanswered link past its 30 days closes them; a change request outlives its
+// link (proofState keeps an answer past the link's life, lane
+// menu-approve-send), so it waits on Dallas until he approves again, releases,
+// uploads or closes it. An older live file never closes them, so a second
+// proof's change request always shows. Nor does the admin's own upload live on
+// the proposal: no time is kept for a print key, so the reader cannot tell an
+// upload made after a change request from one made before the proof was sent,
+// and guessing would hide a later proof's tasks. The upload route withdraws
+// the proof it settles (spec 10.3, lane menu-approve-send), and a withdrawn
+// proof has no task. The upload changes only the no-answer task's words
+// (spec 13.1, item n): while the print key is the admin's own upload (set and
+// equal to neither the draft's released key nor its approved key, the
+// query's owner_upload), a release would be refused, so the text drops
+// "Release it for printing?"; owner_upload never closes or hides a task. A row the
 // mapper cannot read (proofState or menuReminderDueAt throws) is skipped and
 // reported once per process by its proof id alone (a Sentry warning and a
 // log line, readJob.js's pattern), so one bad row never takes the Inbox
@@ -56,6 +63,8 @@ const MENU_TASK_TEXTS = Object.freeze({
   menu_changes: 'Asked for menu changes',
   menu_no_answer: 'No answer on the menu yet. Release it for printing?',
 });
+// The no-answer text while the admin's own upload is live (spec 13.1, item n).
+const NO_ANSWER_BESIDE_UPLOAD = 'No answer on the menu yet.';
 
 // $1 the history floor, $2 today in Chicago (YYYY-MM-DD), $3 the held proposal
 // ids. Built once at load from the shared token-life fragment (fixed text over
@@ -70,7 +79,10 @@ const MENU_TASKS_SQL = `
                   AND d.released_print_key = d.approved_print_key
                   AND mp.version = d.approved_version
                   AND mp.art_version = d.approved_art_version, FALSE) AS released,
-         d.released_at
+         d.released_at,
+         COALESCE(p.menu_print_key IS NOT NULL
+                  AND p.menu_print_key IS DISTINCT FROM d.released_print_key
+                  AND p.menu_print_key IS DISTINCT FROM d.approved_print_key, FALSE) AS owner_upload
     FROM menu_proofs mp
     JOIN menu_drafts d ON d.id = mp.draft_id
     JOIN proposals p ON p.id = mp.proposal_id
@@ -119,12 +131,11 @@ function reportUnreadable(proofId) {
   });
 }
 
-function taskEvent(kind, row, personKey, at) {
+function taskEvent(kind, row, personKey, at, text = MENU_TASK_TEXTS[kind]) { // eslint-disable-line security/detect-object-injection -- kind is one of this file's two literal kinds
   const id = Number(row.id);
   const proposalId = Number(row.proposal_id);
   return {
-    ref: refOf(kind, id), personKey, channel: null, line: null, direction: 'system', at, author: null, kind,
-    text: MENU_TASK_TEXTS[kind], // eslint-disable-line security/detect-object-injection -- kind is one of this file's two literal kinds
+    ref: refOf(kind, id), personKey, channel: null, line: null, direction: 'system', at, author: null, kind, text,
     meta: { source: 'menu_task', id, proposalId, link: `/events/${proposalId}?menu=1` },
   };
 }
@@ -148,7 +159,10 @@ function taskOfRow(row, personKey, nowMs) {
   if (state === 'open') {
     if (row.released) return null;
     const due = menuReminderDueAt({ sentAt: row.sent_at, eventDate: row.event_date || null });
-    return due.getTime() <= nowMs ? taskEvent('menu_no_answer', row, personKey, due) : null;
+    if (due.getTime() > nowMs) return null;
+    return row.owner_upload === true
+      ? taskEvent('menu_no_answer', row, personKey, due, NO_ANSWER_BESIDE_UPLOAD)
+      : taskEvent('menu_no_answer', row, personKey, due);
   }
   return null;
 }
@@ -187,5 +201,5 @@ function __setMenuTaskDeps(overrides) { deps = { ...deps, ...overrides }; }
 function __resetMenuTaskDeps() { deps = { sentry: Sentry }; reported.clear(); }
 
 module.exports = {
-  MENU_TASKS_SQL, MENU_TASK_TEXTS, menuTaskParams, mapMenuTaskRows, loadMenuTaskDetails, __setMenuTaskDeps, __resetMenuTaskDeps,
+  MENU_TASKS_SQL, MENU_TASK_TEXTS, NO_ANSWER_BESIDE_UPLOAD, menuTaskParams, mapMenuTaskRows, loadMenuTaskDetails, __setMenuTaskDeps, __resetMenuTaskDeps,
 };

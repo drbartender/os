@@ -675,8 +675,18 @@ server/utils/menuArtJobErrors.js
 server/utils/menuPrintFile.js
 # The manual print-file upload, flag and remove: each sets or clears the key the duty line keys on, then re-accrues.
 server/routes/proposals/menuPrint.js
-# Approve: posts the rendered menu into the print slot inside one transaction and fires duty reaccrual only after COMMIT.
+# Approve and send: holds the rendered print file (never posts it), writes the proof and emails the client
+# (spec 2026-10-19 section 10.2; lane menu-approve-send).
 server/routes/proposals/menuDraftApprove.js
+# The held print file's release (spec 2026-10-19 section 10.3; lane menu-approve-send): the one place besides
+# the admin upload that posts menu_print_key, behind the five guards (legal hold, the no-menu mark, a held file,
+# never over an admin upload, the event day), reached from the public answer route; and the admin Release,
+# Put it back and Close request routes. Release and Put it back fire the $5 menu_print duty reaccrual after
+# COMMIT (an after-event one awaits it); Close request moves no key and fires none.
+server/utils/menuRelease.js
+server/routes/proposals/menuDraftRelease.js
+# The print state, and isHeldFile, the held-file test release guard 3 runs before a key is posted.
+server/utils/menuPrintState.js
 # The submit's bar menu step (spec 2026-10-19 sections 8 and 15; lane menu-no-menu-mark): it writes the
 # no-menu mark the $5 menu_print duty line reads, and must skip the legal-hold proposal.
 server/utils/menuAutoStart.js

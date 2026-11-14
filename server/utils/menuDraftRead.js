@@ -11,8 +11,13 @@
 //   diff: null | { added: [{ key, name }], dropped: [{ key, name }],
 //     brief_edited: ['theme' | 'naming' | 'notes'], image_changed, bar_changed,
 //     bar_changed_labels: [label], bar_unchecked, dismissed, plan_hash },
-//   print: { state, not_required_by, approved_at, approved_by_name, print_key,
-//     approved_file_in_use },
+//   print: { state, held, live, restorable, not_required_by, approved_at,
+//     approved_by_name, approved_version, approved_art_version, released_at,
+//     released_via, released_by_name, print_key, approved_file_in_use },
+//   proof: null | { id, state, version, art_version, url, sent_at, sent_to,
+//     email_status, expires_at, expired, event_passed, answer, answer_note, answered_at,
+//     withdrawn_at, stale, history: [{ id, version, art_version, sent_at,
+//     state, answer, answer_note, answered_at, withdrawn_at, superseded_at }] },
 //   cap: { used, limit, remaining, resets_at },
 //   configured: { openai, gemini, words, default_image_model },
 //   plan: null | { id, menu_style, drink_count, drinks: [{ name, mock }],
@@ -104,7 +109,28 @@
 //   key is set, else 'openai', computed here once for the editor's toggle and
 //   the card's actions. The routes check through the same two functions.
 //
-// Print state: derivePrintState and PRINT_STATES (menuPrintState.js, spec 8).
+// Print state: readPrintState, derivePrintState and PRINT_STATES
+// (menuPrintState.js, spec 8 as amended by spec 2026-10-19 section 10.3). The
+// print and proof blocks (spec 2026-10-19 sections 10.5 and 14; lane
+// menu-approve-send) are built by printBlock and proofBlock, the one pair of
+// builders the GET and the Approve, release and Close request responses share
+// (readReviewBlocks re-reads them after those writes commit):
+// - print.held is the held state (an approved file waiting on its release);
+//   live says whether staff still have an older released file ('previous')
+//   or nothing ('none'); restorable is the removed state, where Put it back
+//   for staff applies; approved_version and approved_art_version are the pair
+//   Release posts back. released_* name the recorded release, and for a menu
+//   approved under v1 whose file is live (no release recorded) they read the
+//   approval, released by the admin (spec 10.3).
+// - proof is the draft's latest proof (superseded_at IS NULL), null with
+//   none: its page state (menuProofs.proofState), url the client's link
+//   (menuProofUrl, an admin-only payload), the email's outcome, with a proof
+//   still pending PENDING_STALE_MS after sent_at read as failed (the process
+//   died before the send), expires_at the link's end (computed live),
+//   event_passed whether the event day is before today in Chicago (the public
+//   page's own comparison, menuProofs; false with no date), stale
+//   when the draft's pair moved since the proof, and history every earlier
+//   proof of the draft, newest first, notes in full, for the Brief tab.
 //
 // Polling cost: the catalog maps (two queries) are cached per process for 60
 // seconds, so a 2-second poll does not reload them. A catalog drink created
@@ -120,12 +146,14 @@ const { NotFoundError } = require('./errors');
 const { readEnvInt } = require('./envInt');
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, fingerprintHash, reviewHash, plannerImageRev,
-  legacyBarBaseline,
+  plannerImageKeyOf, legacyBarBaseline,
 } = require('./menuDrinkSource');
 const { keyBarLines, buildAlsoAtBar } = require('./menuAlsoAtBar');
 const { draftFingerprint, draftPlanHash } = require('./menuHouseSections');
 const { capUsage } = require('./menuArtCap');
-const { derivePrintState, PRINT_STATES } = require('./menuPrintState');
+const { derivePrintState, readPrintState, PRINT_STATES } = require('./menuPrintState');
+const { loadLatestProof, loadProofHistory } = require('./menuProofs');
+const { menuProofUrl } = require('./urls');
 const { textProvider } = require('./menuArtJobSteps');
 const { touchSetFor } = require('./menuEventTouches');
 const openaiClient = require('./openaiClient');
@@ -145,7 +173,9 @@ const NOTES_MAX = 2000;
 const UNKEYED = 'unkeyed:';
 // The draft columns computeDiff and derivePrintState read (internal only).
 const DRAFT_STATE = ['version', 'art_version', 'approved_version', 'approved_art_version', 'approved_print_key',
-  'approved_planner_image_key', 'inputs', 'content', 'plan_fingerprint', 'dismissed_plan_hash'];
+  'approved_planner_image_key', 'released_print_key', 'inputs', 'content', 'plan_fingerprint', 'dismissed_plan_hash'];
+// A proof still pending this long after sent_at reads as failed (spec 10.2 step 5).
+const PENDING_STALE_MS = 10 * 60 * 1000;
 // The form of a dismissed_plan_hash that holds (reviewOf): the review hash a
 // Dismiss stores since lane menu-plan-review-state, or the old whole-plan hash.
 // Exported as DISMISSAL, so the bar-only rebuild compares the one constant.
@@ -455,7 +485,9 @@ const DRAFT_SQL = `
          d.dismissed_plan_hash, d.version, d.art_version, d.approved_version,
          d.approved_art_version, d.approved_print_key, d.approved_planner_image_key,
          d.approved_at, d.created_at, d.updated_at,
+         d.released_print_key, d.released_at, d.released_via,
          COALESCE(cp.display_name, cp.preferred_name, u.email) AS approved_by_name,
+         COALESCE(rcp.display_name, rcp.preferred_name, ru.email) AS released_by_name,
          COALESCE((
            SELECT json_agg(json_build_object(
                     'piece_key', mp.piece_key, 'status', mp.status, 'error', mp.error,
@@ -472,7 +504,114 @@ const DRAFT_SQL = `
     LEFT JOIN menu_drafts d ON d.proposal_id = p.id
     LEFT JOIN users u ON u.id = d.approved_by
     LEFT JOIN contractor_profiles cp ON cp.user_id = d.approved_by
+    LEFT JOIN users ru ON ru.id = d.released_by
+    LEFT JOIN contractor_profiles rcp ON rcp.user_id = d.released_by
    WHERE p.id = $1`;
+
+// The print and proof blocks' own read (readReviewBlocks), for a write's
+// response after its commit: the same columns as DRAFT_SQL, no pieces.
+const REVIEW_SQL = `
+  SELECT p.id AS proposal_id, p.menu_print_key, p.menu_not_required, p.menu_not_required_by,
+         d.id AS draft_id, d.inputs, d.version, d.art_version, d.approved_version,
+         d.approved_art_version, d.approved_print_key, d.approved_planner_image_key, d.approved_at,
+         d.released_print_key, d.released_at, d.released_via,
+         COALESCE(cp.display_name, cp.preferred_name, u.email) AS approved_by_name,
+         COALESCE(rcp.display_name, rcp.preferred_name, ru.email) AS released_by_name
+    FROM proposals p
+    LEFT JOIN menu_drafts d ON d.proposal_id = p.id
+    LEFT JOIN users u ON u.id = d.approved_by
+    LEFT JOIN contractor_profiles cp ON cp.user_id = d.approved_by
+    LEFT JOIN users ru ON ru.id = d.released_by
+    LEFT JOIN contractor_profiles rcp ON rcp.user_id = d.released_by
+   WHERE p.id = $1`;
+
+const hasDraftRow = (row) => row.draft_id !== null && row.draft_id !== undefined;
+
+// The print block (header) from a DRAFT_SQL or REVIEW_SQL row.
+function printBlock(row, { latestProof = null, plannerImageKey = null } = {}) {
+  const hasDraft = hasDraftRow(row);
+  const printKey = row.menu_print_key || null;
+  const { state, live } = readPrintState({
+    menuPrintKey: printKey,
+    menuNotRequired: row.menu_not_required === true,
+    draft: hasDraft ? Object.fromEntries(DRAFT_STATE.map((k) => [k, row[k]])) : null,
+    plannerImageKey,
+    latestProof,
+  });
+  const releasedKey = hasDraft ? row.released_print_key || null : null;
+  const v1Live = hasDraft && !releasedKey && Boolean(row.approved_print_key) && printKey === row.approved_print_key;
+  const pick = (released, v1) => (releasedKey ? released || null : v1Live ? v1 || null : null);
+  return {
+    state,
+    held: state === PRINT_STATES.HELD,
+    live,
+    restorable: state === PRINT_STATES.REMOVED,
+    // Who set the no-menu mark ('admin' | 'planner' | null; spec 2026-10-19
+    // section 15): the card says so for a planner mark.
+    not_required_by: row.menu_not_required === true ? row.menu_not_required_by || null : null,
+    approved_at: hasDraft ? row.approved_at || null : null,
+    approved_by_name: hasDraft ? row.approved_by_name || null : null,
+    approved_version: hasDraft && Number.isInteger(row.approved_version) ? row.approved_version : null,
+    approved_art_version: hasDraft && Number.isInteger(row.approved_art_version) ? row.approved_art_version : null,
+    released_at: pick(row.released_at, row.approved_at),
+    released_via: pick(row.released_via, 'admin'),
+    released_by_name: pick(row.released_by_name, row.approved_by_name),
+    print_key: printKey,
+    approved_file_in_use: Boolean(hasDraft && printKey && printKey === row.approved_print_key),
+  };
+}
+
+// One proof row as the history lists it.
+function historyEntry(p) {
+  return {
+    id: p.id, version: p.version, art_version: p.art_version, sent_at: p.sent_at, state: p.state,
+    answer: p.answer || null, answer_note: p.answer_note || null, answered_at: p.answered_at || null,
+    withdrawn_at: p.withdrawn_at || null, superseded_at: p.superseded_at || null,
+  };
+}
+
+// The proof block (header) from loadLatestProof's row and loadProofHistory's
+// rows, against the draft's current pair.
+function proofBlock(latest, history, row) {
+  if (!latest) return null;
+  const sentMs = toMs(latest.sent_at);
+  const pendingFailed = latest.email_status === 'pending' && Number.isFinite(sentMs)
+    && toMs(latest.db_now || new Date()) - sentMs > PENDING_STALE_MS;
+  return {
+    ...historyEntry(latest),
+    url: menuProofUrl(latest.token),
+    sent_to: latest.sent_to || null,
+    email_status: pendingFailed ? 'failed' : latest.email_status,
+    expires_at: latest.link_end || null,
+    expired: latest.expired === true,
+    event_passed: latest.event_passed === true,
+    stale: latest.version !== row.version || latest.art_version !== row.art_version,
+    history: asArray(history).filter((p) => p.id !== latest.id).map(historyEntry),
+  };
+}
+
+// The draft's latest proof and its history, or nulls with no draft.
+async function loadProofs(row, db) {
+  if (!hasDraftRow(row)) return { latest: null, history: [] };
+  const [latest, history] = await Promise.all([loadLatestProof(db, row.draft_id), loadProofHistory(db, row.draft_id)]);
+  return { latest, history };
+}
+
+/**
+ * The GET's proof and print blocks for proposal `proposalId`, read fresh (a
+ * write's response, after its commit and its client's release). Throws
+ * NotFoundError when the proposal does not exist.
+ */
+async function readReviewBlocks(proposalId, db = pool) {
+  const [result, planRow] = await Promise.all([db.query(REVIEW_SQL, [proposalId]), loadEventPlan(proposalId, db)]);
+  const row = result.rows[0];
+  if (!row) throw new NotFoundError('Proposal not found.');
+  const { latest, history } = await loadProofs(row, db);
+  return {
+    proof: proofBlock(latest, history, row),
+    print: printBlock(row, { latestProof: latest, plannerImageKey: plannerImageKeyOf(planRow) }),
+  };
+}
 
 async function readDraftPayload(proposalId) {
   const id = Number(proposalId);
@@ -489,9 +628,9 @@ async function readDraftPayload(proposalId) {
   const now = row.db_now || new Date();
   const staleMs = readStaleMs();
   const normalized = planRow ? normalizePlan(planRow, maps) : null;
-  const hasDraft = row.draft_id !== null && row.draft_id !== undefined;
+  const hasDraft = hasDraftRow(row);
   const draftRow = hasDraft ? Object.fromEntries(DRAFT_STATE.map((k) => [k, row[k]])) : null;
-  const printKey = row.menu_print_key || null;
+  const { latest, history } = await loadProofs(row, pool);
 
   return {
     draft: hasDraft ? {
@@ -513,21 +652,8 @@ async function readDraftPayload(proposalId) {
       planner_image_rev: plannerImageRev(normalized.plannerImageKey),
     } : null,
     diff: shownDiff(draftRow, normalized, planRow),
-    print: {
-      state: derivePrintState({
-        menuPrintKey: printKey,
-        menuNotRequired: row.menu_not_required === true,
-        draft: draftRow,
-        plannerImageKey: normalized ? normalized.plannerImageKey : null,
-      }),
-      // Who set the no-menu mark ('admin' | 'planner' | null; spec 2026-10-19
-      // section 15): the card says so for a planner mark.
-      not_required_by: row.menu_not_required === true ? row.menu_not_required_by || null : null,
-      approved_at: hasDraft ? row.approved_at || null : null,
-      approved_by_name: hasDraft ? row.approved_by_name || null : null,
-      print_key: printKey,
-      approved_file_in_use: Boolean(hasDraft && printKey && printKey === row.approved_print_key),
-    },
+    print: printBlock(row, { latestProof: latest, plannerImageKey: normalized ? normalized.plannerImageKey : null }),
+    proof: proofBlock(latest, history, row),
     cap,
     configured: {
       openai: openaiClient.isConfigured(),
@@ -551,6 +677,10 @@ function defaultImageModel() {
 
 module.exports = {
   readDraftPayload,
+  readReviewBlocks,
+  printBlock,
+  proofBlock,
+  PENDING_STALE_MS,
   wordsConfigured,
   defaultImageModel,
   stuck,
@@ -561,6 +691,7 @@ module.exports = {
   barBaseline,
   dismissalHash,
   derivePrintState,
+  readPrintState,
   cachedCatalogMaps,
   dropCatalogCache,
   DISMISSAL,

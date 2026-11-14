@@ -14,9 +14,13 @@ process.env.SEND_NOTIFICATIONS = 'false';
 // express() app, the real router, the error handler shaped as server/index.js
 // shapes it, and requests over real HTTP. R2 is stubbed at the module boundary
 // (require.cache) before the router loads, so the image route never reaches
-// Cloudflare and each read is recorded. Proof rows are inserted directly
-// (nothing in the app creates one yet). The menu proofs block of schema.sql is
-// applied first, additive and idempotent (the calcom suite's precedent).
+// Cloudflare and each read is recorded. Proof rows are inserted directly (the
+// Approve suite covers how they are made). The menu proofs block of schema.sql
+// is applied first, additive and idempotent (the calcom suite's precedent).
+// Looks great can release the held print file (lane menu-approve-send):
+// reaccrueDuty is wrapped (require.cache on menuPrintFile, before the router
+// loads) over a fake payrollAccrual, and the admin's no-menu PATCH
+// (menuPrint.js) is mounted beside the public router for the race test.
 // publicLimiter allows 20 requests per IP per 15 minutes and every request here
 // comes from 127.0.0.1, so its bucket (and publicTokenIpLimiter's) is reset
 // before each test; the token-keyed limiters see a fresh token per test.
@@ -51,11 +55,32 @@ require.cache[storagePath].exports = {
   uploadFile: async () => { throw new Error('this suite never uploads'); },
 };
 
+// ── Duty reaccrual: recorded, over a fake accrual that reads the row it sees ──
+const Module = require('node:module');
+const accrualPath = require.resolve('../utils/payrollAccrual');
+const savedAccrual = require.cache[accrualPath];
+const keyRow = (id) => pool.query('SELECT menu_print_key, menu_not_required FROM proposals WHERE id = $1', [id]).then((r) => r.rows[0]);
+const fakeAccrual = new Module(accrualPath);
+fakeAccrual.filename = accrualPath;
+fakeAccrual.loaded = true;
+fakeAccrual.exports = { maybeReaccrueForDuty: (pid) => keyRow(pid).then(() => ({ skipped: true })) };
+require.cache[accrualPath] = fakeAccrual;
+const printFilePath = require.resolve('../utils/menuPrintFile');
+const realPrintFile = require('../utils/menuPrintFile');
+const reaccrued = [];
+require.cache[printFilePath].exports = {
+  ...realPrintFile,
+  reaccrueDuty: (id) => { reaccrued.push({ id, seen: keyRow(id) }); return realPrintFile.reaccrueDuty(id); },
+};
+
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { __setLegalHoldIdsForTest } = require('../utils/legalHold');
 const {
-  publicLimiter, publicTokenIpLimiter, menuProofReadLimiter, menuProofAnswerLimiter,
+  publicLimiter, publicTokenIpLimiter, menuProofReadLimiter, menuProofAnswerLimiter, adminWriteLimiter,
 } = require('../middleware/rateLimiters');
 const menuProofRouter = require('./menuProof');
+const menuPrintRouter = require('./proposals/menuPrint');
 
 const SCHEMA_SQL = fs.readFileSync(path.join(__dirname, '../db/schema.sql'), 'utf8');
 const PROOF_DDL = SCHEMA_SQL.slice(
@@ -72,7 +97,23 @@ let server;
 let baseUrl;
 let clientId;
 let todayYmd;
+let adminId;
+let adminToken;
 const proposalIds = [];
+const HELD = (id) => `menu-print/${id}/held-${NONCE}.jpg`;
+
+// The draft approved at the proof's pair (4/2 by default), its file held.
+async function holdFile(ev, { version = 4, artVersion = 2 } = {}) {
+  await pool.query(
+    `UPDATE menu_drafts SET approved_version = $2, approved_art_version = $3, approved_print_key = $4, approved_at = NOW()
+      WHERE id = $1`, [ev.draftId, version, artVersion, HELD(ev.proposalId)]);
+}
+
+async function releaseCols(ev) {
+  return (await pool.query(
+    `SELECT pr.menu_print_key, pr.menu_not_required, d.released_print_key, d.released_by, d.released_via
+       FROM menu_drafts d JOIN proposals pr ON pr.id = d.proposal_id WHERE d.id = $1`, [ev.draftId])).rows[0];
+}
 
 async function makeProposal({ eventOffsetDays = 10, status = 'confirmed' } = {}) {
   const { rows: [p] } = await pool.query(
@@ -92,9 +133,9 @@ async function makeProof(ev, cols = {}) {
   const { rows: [row] } = await pool.query(
     `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, email_status,
                               answer, answer_note, answered_at, superseded_at, withdrawn_at)
-     VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7, $8, $9, $10) RETURNING id, token, r2_key`,
+     VALUES ($1, $2, $3, $4, $5, $11, $6, $7, $8, $9, $10) RETURNING id, token, r2_key`,
     [ev.draftId, ev.proposalId, c.version, c.art_version, key, c.answer || null, c.answer_note || null,
-      c.answered_at || null, c.superseded_at || null, c.withdrawn_at || null]);
+      c.answered_at || null, c.superseded_at || null, c.withdrawn_at || null, c.email_status || 'sent']);
   if (c.stored !== false) r2Objects.set(row.r2_key, JPEG);
   return row;
 }
@@ -110,10 +151,10 @@ async function activity(proposalId) {
       WHERE proposal_id = $1 ORDER BY id`, [proposalId])).rows;
 }
 
-function request(method, urlPath, json) {
+function request(method, urlPath, json, token) {
   return new Promise((resolve, reject) => {
     const u = new URL(baseUrl + urlPath);
-    const headers = {};
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     let payload = null;
     if (json !== undefined) {
       payload = Buffer.from(typeof json === 'string' ? json : JSON.stringify(json));
@@ -145,10 +186,16 @@ before(async () => {
   const { rows: [c] } = await pool.query(
     "INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555553355') RETURNING id", [CLIENT_NAME, CLIENT_EMAIL]);
   clientId = c.id;
+  const { rows: [u] } = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'admin', 'approved', 0) RETURNING id`, [`menuproof-route-admin-${NONCE}@example.com`, await bcrypt.hash('x', 4)]);
+  adminId = u.id;
+  adminToken = jwt.sign({ userId: adminId, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
   const app = express();
   app.use(express.json());
   app.use('/api/menu-proof', menuProofRouter);
+  app.use('/api/proposals', menuPrintRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -165,27 +212,38 @@ before(async () => {
 beforeEach(async () => {
   await publicLimiter.resetKey('127.0.0.1');
   await publicTokenIpLimiter.resetKey('127.0.0.1');
+  if (adminId) await adminWriteLimiter.resetKey(`admin-${adminId}`);
+  reaccrued.length = 0;
 });
 
 after(async () => {
+  await Promise.allSettled(reaccrued.map((r) => r.seen));
+  await new Promise((resolve) => { setImmediate(resolve); });
   __setLegalHoldIdsForTest(null);
   if (proposalIds.length) await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [proposalIds]);
   if (clientId) await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
+  if (adminId) await pool.query('DELETE FROM users WHERE id = $1', [adminId]);
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
   require.cache[storagePath].exports = realStorage;
+  require.cache[printFilePath].exports = realPrintFile;
+  if (savedAccrual) require.cache[accrualPath] = savedAccrual;
+  else delete require.cache[accrualPath];
 });
 
 // ─── GET the state ─────────────────────────────────────────────────────────
 
-const BODY_KEYS = ['answer', 'answer_note', 'answered_at', 'image', 'state'];
+const BODY_KEYS = ['answer', 'answer_note', 'answered_at', 'emailed', 'event_passed', 'image', 'state'];
+// The two page booleans (lane menu-approve-send, carried items d and g), for an
+// emailed proof whose event day is still ahead, the makeProof default.
+const AHEAD = { emailed: true, event_passed: false };
 
 test('GET: an open proof answers its state and nothing else', async () => {
   const ev = await makeProposal();
   const p = await makeProof(ev);
   const res = await getState(p.token);
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { state: 'open', answer: null, answer_note: null, answered_at: null, image: true });
+  assert.deepEqual(res.body, { state: 'open', answer: null, answer_note: null, answered_at: null, image: true, ...AHEAD });
   assert.equal(res.headers['cache-control'], 'no-store', 'the state (and a note) is never cached');
   const text = res.raw.toString('utf8');
   for (const leak of [CLIENT_NAME, CLIENT_EMAIL, p.r2_key, 'menu-proof/', 'event_date', 'version']) {
@@ -199,12 +257,12 @@ test('GET: approved and changes carry the answer, its note and when', async () =
   const ok = await makeProof(ev, { answer: 'approved', answered_at: at });
   const res = await getState(ok.token);
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { state: 'approved', answer: 'approved', answer_note: null, answered_at: at.toISOString(), image: true });
+  assert.deepEqual(res.body, { state: 'approved', answer: 'approved', answer_note: null, answered_at: at.toISOString(), image: true, ...AHEAD });
 
   const ch = await makeProof(ev, { answer: 'changes', answer_note: 'Can the title say Happy 40th?', answered_at: at });
   const res2 = await getState(ch.token);
   assert.deepEqual(res2.body, {
-    state: 'changes', answer: 'changes', answer_note: 'Can the title say Happy 40th?', answered_at: at.toISOString(), image: true,
+    state: 'changes', answer: 'changes', answer_note: 'Can the title say Happy 40th?', answered_at: at.toISOString(), image: true, ...AHEAD,
   });
 });
 
@@ -213,13 +271,66 @@ test('GET: superseded, withdrawn and expired show no picture and no answer, even
   const now = new Date();
   const sup = await makeProof(ev, { superseded_at: now, answer: 'changes', answer_note: 'old note', answered_at: now });
   const wd = await makeProof(ev, { withdrawn_at: now });
+  const closed = await makeProof(ev, { withdrawn_at: now, answer: 'changes', answer_note: 'closed note', answered_at: now });
   const past = await makeProposal({ eventOffsetDays: -1 });
-  const exp = await makeProof(past, { answer: 'approved', answered_at: now });
-  for (const [p, state] of [[sup, 'superseded'], [wd, 'withdrawn'], [exp, 'expired']]) {
+  const exp = await makeProof(past);
+  const expSup = await makeProof(past, { superseded_at: now });
+  for (const [p, state, passed] of [[sup, 'superseded', false], [wd, 'withdrawn', false], [closed, 'withdrawn', false],
+    [exp, 'expired', true], [expSup, 'superseded', true]]) {
     const res = await getState(p.token);
     assert.equal(res.status, 200, state);
-    assert.deepEqual(res.body, { state, answer: null, answer_note: null, answered_at: null, image: false });
+    assert.deepEqual(res.body, { state, answer: null, answer_note: null, answered_at: null, image: false, emailed: true, event_passed: passed });
     assert.deepEqual(Object.keys(res.body).sort(), BODY_KEYS);
+  }
+});
+
+// Carried item c (lane menu-approve-send): an answered proof past its life
+// keeps its answer, so the page shows its thank-you lines with the picture off.
+test('GET: an answered proof past its link\'s life keeps its answer and its note, with the picture off', async () => {
+  const past = await makeProposal({ eventOffsetDays: -1 });
+  const at = new Date('2026-11-03T20:15:00Z');
+  const ok = await makeProof(past, { answer: 'approved', answered_at: at });
+  const after = { emailed: true, event_passed: true };
+  assert.deepEqual((await getState(ok.token)).body, { state: 'approved', answer: 'approved', answer_note: null, answered_at: at.toISOString(), image: false, ...after });
+  const ch = await makeProof(past, { answer: 'changes', answer_note: 'A late note', answered_at: at });
+  assert.deepEqual((await getState(ch.token)).body, { state: 'changes', answer: 'changes', answer_note: 'A late note', answered_at: at.toISOString(), image: false, ...after });
+  readCalls.length = 0;
+  for (const p of [ok, ch]) assert.equal((await request('GET', `/api/menu-proof/${p.token}/image`)).status, 404);
+  assert.deepEqual(readCalls, [], 'the picture is never read once the link has expired');
+  const again = await answer(ok.token, { answer: 'changes', note: 'too late' });
+  assert.deepEqual([again.status, again.body.code], [409, 'MENU_PROOF_ANSWERED']);
+});
+
+// Carried item d (lane menu-approve-send): the expired screen stops promising a
+// fresh link once the event day has passed (Approve refuses one then).
+test('GET: event_passed is true only once the event day is before today in Chicago, and false with no date', async () => {
+  for (const [offset, passed] of [[-1, true], [-30, true], [0, false], [1, false], [null, false]]) {
+    const ev = await makeProposal({ eventOffsetDays: offset });
+    const p = await makeProof(ev);
+    const res = await getState(p.token);
+    assert.equal(res.status, 200, String(offset));
+    assert.equal(res.body.event_passed, passed, `event day ${offset === null ? 'none' : offset} days from today`);
+  }
+  // A link with no date expires 30 days after it went out, the event never passed.
+  const undated = await makeProposal({ eventOffsetDays: null });
+  const old = await makeProof(undated);
+  await pool.query("UPDATE menu_proofs SET sent_at = NOW() - INTERVAL '31 days' WHERE id = $1", [old.id]);
+  const body = (await getState(old.token)).body;
+  assert.deepEqual([body.state, body.event_passed], ['expired', false]);
+});
+
+// Carried item g: a proof that was never emailed must not point the client at "our email".
+test('GET: emailed is true only for a proof whose email went out, and the status itself never leaves', async () => {
+  const ev = await makeProposal();
+  for (const [status, emailed] of [['sent', true], ['pending', false], ['failed', false], ['no_address', false],
+    ['skipped', false], ['suppressed', false]]) {
+    const p = await makeProof(ev, { email_status: status });
+    const res = await getState(p.token);
+    assert.equal(res.status, 200, status);
+    assert.equal(res.body.emailed, emailed, status);
+    assert.deepEqual(Object.keys(res.body).sort(), BODY_KEYS, 'booleans only');
+    const text = res.raw.toString('utf8');
+    assert.ok(!text.includes(`"${status}"`) && !text.includes(CLIENT_EMAIL), `the body never carries ${status} or the address`);
   }
 });
 
@@ -261,10 +372,11 @@ test('image: 404 outside open, approved and changes, before R2 is read', async (
   const wd = await makeProof(ev, { withdrawn_at: now });
   const past = await makeProposal({ eventOffsetDays: -1 });
   const exp = await makeProof(past);
+  const expOk = await makeProof(past, { answer: 'approved', answered_at: now });
   const archived = await makeProposal({ status: 'archived' });
   const arc = await makeProof(archived);
   readCalls.length = 0;
-  for (const p of [sup, wd, exp, arc]) {
+  for (const p of [sup, wd, exp, expOk, arc]) {
     const res = await request('GET', `/api/menu-proof/${p.token}/image`);
     assert.equal(res.status, 404);
     assert.deepEqual(res.body, NOT_FOUND);
@@ -302,7 +414,7 @@ test('image: a proof missing in R2 is a 404, not a 500', async () => {
 
 // ─── POST the answer ───────────────────────────────────────────────────────
 
-test('answer: Looks great records approved once, with the activity row and no release', async () => {
+test('answer: Looks great records approved once, with the activity row; with no held file nothing is released', async () => {
   const ev = await makeProposal();
   const p = await makeProof(ev, { version: 7, art_version: 3 });
   const res = await answer(p.token, { answer: 'approved' });
@@ -317,12 +429,13 @@ test('answer: Looks great records approved once, with the activity row and no re
     action: 'menu_proof_approved', actor_type: 'client', actor_id: null,
     details: { proof_id: p.id, version: 7, art_version: 3 },
   }]);
-  // No release in this lane: the print key and the release columns stay as they were.
+  // Nothing was approved, so nothing is held: the key and the release columns stay as they were.
   const { rows: [d] } = await pool.query(
     `SELECT pr.menu_print_key, d.released_print_key, d.released_at, d.released_by, d.released_via
        FROM menu_drafts d JOIN proposals pr ON pr.id = d.proposal_id WHERE d.id = $1`, [ev.draftId]);
   assert.deepEqual(d, { menu_print_key: null, released_print_key: null, released_at: null, released_by: null, released_via: null });
   assert.equal((await getState(p.token)).body.state, 'approved');
+  assert.deepEqual(reaccrued, [], 'no reaccrual');
 });
 
 test('answer: Request changes stores the trimmed note; the activity row has its length, never the note', async () => {
@@ -483,6 +596,204 @@ test('answer: one pooled connection for the whole request, no bare pool.query', 
   assert.equal(res.status, 200);
   assert.equal(bare, 0, 'every query went through the held client');
   assert.equal(connects, 1);
+});
+
+// ─── Looks great releases the held file (lane menu-approve-send) ──────────
+
+// Waits for the reaccruals fired so far to read their rows.
+const settled = () => Promise.allSettled(reaccrued.map((r) => r.seen));
+
+test('release: Looks great on the proof of the approved pair releases the held file, stamps via client and re-accrues after the commit', async () => {
+  const ev = await makeProposal();
+  const p = await makeProof(ev);
+  await holdFile(ev);
+  const res = await answer(p.token, { answer: 'approved' });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(await releaseCols(ev), {
+    menu_print_key: HELD(ev.proposalId), menu_not_required: false,
+    released_print_key: HELD(ev.proposalId), released_by: null, released_via: 'client',
+  });
+  const rows = await activity(ev.proposalId);
+  assert.deepEqual(rows.map((r) => [r.action, r.actor_type, r.actor_id]), [['menu_proof_approved', 'client', null], ['menu_released', 'client', null]]);
+  assert.deepEqual(rows[1].details, { draft_id: ev.draftId, version: 4, art_version: 2, via: 'client' });
+  assert.equal(reaccrued.length, 1);
+  assert.equal(reaccrued[0].id, ev.proposalId);
+  await settled();
+  assert.deepEqual(await reaccrued[0].seen, { menu_print_key: HELD(ev.proposalId), menu_not_required: false }, 'the accrual read the committed key');
+});
+
+test('release: only the matching held file; never over an upload, the mark, a file the admin released, or a proof of another pair; the answer always stands', async () => {
+  const upload = await makeProposal();
+  const up = await makeProof(upload);
+  await holdFile(upload);
+  await pool.query("UPDATE proposals SET menu_print_key = 'menu-print/0/admin-upload.pdf' WHERE id = $1", [upload.proposalId]);
+
+  const marked = await makeProposal();
+  const mk = await makeProof(marked);
+  await holdFile(marked);
+  await pool.query('UPDATE proposals SET menu_not_required = true WHERE id = $1', [marked.proposalId]);
+
+  const done = await makeProposal();
+  const dn = await makeProof(done);
+  await holdFile(done);
+  await pool.query("UPDATE menu_drafts SET released_print_key = approved_print_key, released_at = NOW(), released_via = 'admin' WHERE id = $1", [done.draftId]);
+  await pool.query('UPDATE proposals SET menu_print_key = $2 WHERE id = $1', [done.proposalId, HELD(done.proposalId)]);
+
+  const otherPair = await makeProposal();
+  const op = await makeProof(otherPair, { version: 4, art_version: 2 });
+  await holdFile(otherPair, { version: 5, artVersion: 2 });
+
+  for (const [ev, p, key, mark] of [
+    [upload, up, 'menu-print/0/admin-upload.pdf', false],
+    [marked, mk, null, true],
+    [done, dn, HELD(done.proposalId), false],
+    [otherPair, op, null, false],
+  ]) {
+    const res = await answer(p.token, { answer: 'approved' });
+    assert.equal(res.status, 200, 'the answer is recorded');
+    assert.equal((await proofRow(p.id)).answer, 'approved');
+    const cols = await releaseCols(ev);
+    assert.deepEqual([cols.menu_print_key, cols.menu_not_required], [key, mark], 'the key and the mark are as they were');
+    assert.deepEqual((await activity(ev.proposalId)).map((r) => r.action), ['menu_proof_approved'], 'no menu_released row');
+  }
+  assert.deepEqual(reaccrued, [], 'nothing moved, nothing re-accrued');
+});
+
+test('release: Request changes never releases', async () => {
+  const ev = await makeProposal();
+  const p = await makeProof(ev);
+  await holdFile(ev);
+  assert.equal((await answer(p.token, { answer: 'changes', note: 'Not yet' })).status, 200);
+  assert.equal((await releaseCols(ev)).menu_print_key, null);
+  assert.deepEqual(reaccrued, []);
+});
+
+test('lock order: the draft, then the proposal, FOR UPDATE, before the one-shot answer, all on the one connection', async () => {
+  const ev = await makeProposal();
+  const p = await makeProof(ev);
+  await holdFile(ev);
+  const seen = [];
+  const realConnect = pool.connect;
+  pool.connect = function wrapped(...args) {
+    if (args.length) return realConnect.apply(this, args);
+    return realConnect.call(this).then((client) => {
+      const q = client.query;
+      const release = client.release;
+      client.query = function logged(text, ...rest) { seen.push(String(text).replace(/\s+/g, ' ').trim()); return q.call(this, text, ...rest); };
+      client.release = function rel(...r) { client.query = q; client.release = release; return release.apply(client, r); };
+      return client;
+    });
+  };
+  let res;
+  try {
+    res = await answer(p.token, { answer: 'approved' });
+  } finally {
+    pool.connect = realConnect;
+  }
+  assert.equal(res.status, 200);
+  const at = (re) => seen.findIndex((s) => re.test(s));
+  const draftLock = at(/^SELECT id FROM menu_drafts WHERE id = \$1 FOR UPDATE$/);
+  const proposalLock = at(/^SELECT id, status FROM proposals WHERE id = \$1 FOR UPDATE$/);
+  const answerUpd = at(/^UPDATE menu_proofs mp SET answer/);
+  const setKey = at(/^UPDATE proposals SET menu_print_key/);
+  assert.ok(draftLock >= 0 && draftLock < proposalLock && proposalLock < answerUpd && answerUpd < setKey, JSON.stringify(seen));
+});
+
+test('archived under the lock: a proposal archived before the answer takes its lock is not found, and nothing is written', async () => {
+  const ev = await makeProposal();
+  const p = await makeProof(ev);
+  await holdFile(ev);
+  // Hold the proposal row, archive it, and let the answer queue behind the lock.
+  const blocker = await pool.connect();
+  await blocker.query('BEGIN');
+  await blocker.query('SELECT id FROM proposals WHERE id = $1 FOR UPDATE', [ev.proposalId]);
+  const pending = answer(p.token, { answer: 'approved' });
+  await new Promise((resolve) => { setTimeout(resolve, 300); });
+  await blocker.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [ev.proposalId]);
+  await blocker.query('COMMIT');
+  blocker.release();
+  const res = await pending;
+  assert.deepEqual([res.status, res.body], [404, NOT_FOUND]);
+  assert.equal((await proofRow(p.id)).answer, null, 'no answer on a just-archived proposal');
+  assert.equal((await releaseCols(ev)).menu_print_key, null);
+  assert.deepEqual(await activity(ev.proposalId), []);
+});
+
+// Review Focus 1: the client's Looks great and the admin's no-menu mark at the
+// same instant. The draft row is held here while the two requests queue on it,
+// one after the other (each seen waiting in pg_stat_activity before the next is
+// sent), then let go: the first in the queue commits first. Both orders run.
+// The mark is never cleared, the event never holds a key and the mark
+// together, and the duty line reads the final key.
+async function waitersOn(draftId, n) {
+  for (let i = 0; i < 100; i += 1) {
+    const { rows: [r] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND query ILIKE '%menu_drafts%FOR UPDATE%' AND datname = current_database()`);
+    if (r.n >= n) return;
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+  }
+  throw new Error(`fewer than ${n} requests ever waited on draft ${draftId}`);
+}
+
+test('race: Looks great and the no-menu PATCH at once, whichever commits first wins and the mark is never cleared', async (t) => {
+  const outcomes = [];
+  for (const first of ['answer', 'mark', 'answer', 'mark']) {
+    const ev = await makeProposal();
+    const p = await makeProof(ev);
+    await holdFile(ev);
+    reaccrued.length = 0;
+    await menuProofAnswerLimiter.resetKey(`127.0.0.1:${p.token}`);
+    await publicLimiter.resetKey('127.0.0.1');
+    await adminWriteLimiter.resetKey(`admin-${adminId}`);
+    const blocker = await pool.connect();
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT id FROM menu_drafts WHERE id = $1 FOR UPDATE', [ev.draftId]);
+    const sendAnswer = () => answer(p.token, { answer: 'approved' });
+    const sendMark = () => request('PATCH', `/api/proposals/${ev.proposalId}/menu-print`, { not_required: true }, adminToken);
+    let ans;
+    let patch;
+    try {
+      if (first === 'answer') {
+        ans = sendAnswer();
+        await waitersOn(ev.draftId, 1);
+        patch = sendMark();
+      } else {
+        patch = sendMark();
+        await waitersOn(ev.draftId, 1);
+        ans = sendAnswer();
+      }
+      await waitersOn(ev.draftId, 2);
+    } finally {
+      await blocker.query('COMMIT');
+      blocker.release();
+    }
+    [ans, patch] = await Promise.all([ans, patch]);
+    const cols = await releaseCols(ev);
+    const proof = await proofRow(p.id);
+    assert.ok(!(cols.menu_print_key && cols.menu_not_required), 'never a key and the mark together');
+    if (cols.menu_not_required) {
+      // The mark won: the proof was withdrawn first, so Looks great was refused and nothing was released.
+      outcomes.push('mark');
+      assert.deepEqual([patch.status, ans.status, ans.body.code], [200, 409, 'MENU_PROOF_WITHDRAWN']);
+      assert.ok(proof.withdrawn_at instanceof Date);
+      assert.equal(proof.answer, null);
+      assert.equal(cols.menu_print_key, null);
+      assert.deepEqual(reaccrued, []);
+    } else {
+      // Looks great won: the file was released, and the mark was refused (a file is posted).
+      outcomes.push('answer');
+      assert.deepEqual([ans.status, patch.status], [200, 409]);
+      assert.equal(cols.menu_print_key, HELD(ev.proposalId));
+      assert.equal(proof.answer, 'approved');
+      assert.equal(proof.withdrawn_at, null);
+      assert.equal(reaccrued.length, 1);
+      await settled();
+      assert.deepEqual(await reaccrued[0].seen, { menu_print_key: HELD(ev.proposalId), menu_not_required: false });
+    }
+  }
+  t.diagnostic(`winners in order: ${outcomes.join(', ')}`);
+  assert.deepEqual(outcomes, ['answer', 'mark', 'answer', 'mark'], 'the first in the queue commits first');
 });
 
 // ─── The limiters ──────────────────────────────────────────────────────────

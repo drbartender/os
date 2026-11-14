@@ -1,10 +1,10 @@
 // The menu editor's Brief tab (React component, default export): the client brief, the admin
-// brief, the look, the planner's own picks, the client image, the style reference and the art
-// direction.
+// brief, the look, the planner's own picks, the client image, the style reference, the art
+// direction and the client review.
 
 import React, { useRef, useState } from 'react';
 import { ART_DIRECTION_MAX } from './menuEdits';
-import { BAR_LINE, uncheckedNotice, lookOf } from './menuCardState';
+import { BAR_LINE, uncheckedNotice, lookOf, reviewValue, historyValue, canCloseRequest, shortDate } from './menuCardState';
 import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 
 // The editor's Brief tab (spec 2026-10-01 sections 4.3 and 9; 11.1, Brief tab;
@@ -57,6 +57,16 @@ import { Section, Seg, isObj, hasLiveDraft, isReadOnly } from './panelParts';
 //   reference flips it to Ignore, and so does removing it; a dropped file is
 //   taken like Upload.
 // - Art direction, up to 500 characters.
+// - Client review (spec 2026-10-19 section 14; lane menu-approve-send), at the
+//   end, a client brief box (.md-brief-box) shown with a draft or a proof:
+//   proof (the GET's proof block) as its latest line (menuCardState
+//   reviewValue) with its change request's note, then every earlier proof
+//   (proof.history, newest first) with its date and answer and each change
+//   request's note in full, read-only and as plain text (the notes live only
+//   on the proof rows, so this list is where they stay visible after a
+//   re-approve). Close request (spec 10.3) shows for a change request with
+//   nothing held (print: the GET's print block): onCloseRequest asks the
+//   editor's confirm, closing reads Closing... and closeError is its alert.
 // A role flip or a removal goes through onPatch at once (the hook saves it with
 // a draft and keeps it with the brief without one); PATCH may set the source
 // only to none or planner, so a stored upload is replaced only by Start over.
@@ -136,9 +146,33 @@ function FromPlanner({ plan, barNotes }) {
   );
 }
 
+// The client review (header): read-only, every note plain React text.
+function ClientReview({ proof, print, onCloseRequest, closing = false, closeError = '' }) {
+  const p = isObj(proof) ? proof : null;
+  const history = p ? list(p.history).filter(isObj) : [];
+  const note = (entry) => (entry.answer === 'changes' && text(entry.answer_note) ? <div className="md-brief-note">{entry.answer_note}</div> : null);
+  return (
+    <Section label="Client review">
+      <div className="md-brief-box">
+        <BriefField label="Latest" value={reviewValue(p)}>{p && note(p)}</BriefField>
+        {history.map((h) => (
+          <BriefField key={h.id} label={`Sent ${shortDate(h.sent_at)}`} value={historyValue(h)}>{note(h)}</BriefField>
+        ))}
+      </div>
+      {canCloseRequest(p, print) && (
+        <button type="button" className="btn btn-secondary btn-sm md-brief-close" disabled={closing}
+          onClick={() => { if (typeof onCloseRequest === 'function') onCloseRequest(); }}>
+          {closing ? 'Closing...' : 'Close request'}
+        </button>
+      )}
+      {closeError && <p className="chip danger md-alert" role="alert">{closeError}</p>}
+    </Section>
+  );
+}
+
 export default function BriefTab({
   draft, content, pieces = [], inputs, brief, diff, plan = null, plannerImage = null, referenceFile = null, onReferenceFile, onPatch,
-  wordsDone = false, readOnly,
+  wordsDone = false, readOnly, proof = null, print = null, onCloseRequest, closing = false, closeError = '',
 }) {
   const fileRef = useRef(null);
   const [over, setOver] = useState(false);
@@ -280,6 +314,10 @@ export default function BriefTab({
           placeholder="e.g. watercolor, moody, gold accents" value={typeof inp.art_direction === 'string' ? inp.art_direction : ''}
           onChange={(e) => setInputs({ art_direction: e.target.value })} />
       </Section>
+
+      {(hasDraft || isObj(proof)) && (
+        <ClientReview proof={proof} print={print} onCloseRequest={onCloseRequest} closing={closing} closeError={closeError} />
+      )}
     </div>
   );
 }

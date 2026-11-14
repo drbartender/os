@@ -319,7 +319,9 @@ describe('desktop', () => {
     expect(seenPosts()).toEqual([]);
   });
 
-  test('a Done re-reads the list but never the item it closed', async () => {
+  // Done reads the item it closed back once, for its toast (a menu task may still hold the person;
+  // useInboxActions.js), and the page itself never re-reads it.
+  test('a Done re-reads the list, and reads the item it closed back once for its toast and never again', async () => {
     serve();
     mount('/inbox/c-1');
     await screen.findByText('Hello from Avery Example');
@@ -329,7 +331,7 @@ describe('desktop', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(await screen.findByText('Hello from Jo Test')).toBeInTheDocument();
     expect(listGets()).toBeGreaterThan(listReads);
-    expect(itemGets()).toEqual(['/admin/inbox/c-1', '/admin/inbox/c-2']);
+    expect([...itemGets()].sort()).toEqual(['/admin/inbox/c-1', '/admin/inbox/c-1', '/admin/inbox/c-2']);
   });
 
   // Wake and Reopen in the list take the page's in-flight state, as the

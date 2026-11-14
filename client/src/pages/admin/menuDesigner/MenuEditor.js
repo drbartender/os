@@ -1,5 +1,6 @@
 // MenuEditor (React component, default export): the bar menu editor in place of the event page
-// body, with the menu preview, the Design, Drinks and Brief tabs and Approve.
+// body, with the menu preview, the Design, Drinks and Brief tabs, Approve and send, and the client
+// review's Release for printing, Put it back for staff and Close request.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useUserPrefs } from '../../../context/UserPrefsContext';
@@ -15,10 +16,13 @@ import { rerollWhy, useInert } from './panelParts';
 import { textPatch } from './menuEdits';
 import EditorBanner, { EditorEmpty, EditorTopBar } from './EditorBanner';
 import ConfirmDialog, { editorConfirm } from './ConfirmDialog';
+import { useCopyLink } from './MenuCardFold';
 import menuCardState, { layoutPieceKeys } from './menuCardState';
 import { ensureFontsLink, PAIRING_IDS, pairingFor } from './fontPairings';
 import { CARD_SIZE, FULL_SIZE, needsPoll } from './useMenuDraft';
-import { ExportCanvas, useApproveMenu } from './exportMenu';
+import {
+  ExportCanvas, useApproveMenu, useMenuReview, approveConfirm, hasClientEmail, reviewConfirm, seenProof, REVIEW_BUSY,
+} from './exportMenu';
 
 // The bar menu editor (spec 2026-10-01 sections 4.2, 10.1, 11.1; Tasks D1, D3),
 // in place of the event page body while ?menu=1 is set (useMenuEditorOpen.js).
@@ -28,11 +32,24 @@ import { ExportCanvas, useApproveMenu } from './exportMenu';
 //   flush(), close; a failed flush asks Close anyway or Stay. Browser Back
 //   closes at once; the text being edited commits, then it flushes on unmount.
 // - Top bar, banners, empty card and Approve's gate come from menuCardState;
-//   Approve is useApproveMenu, through the replace confirm over a print file.
+//   Approve and send is useApproveMenu, always through its confirm (spec
+//   2026-10-19 section 10.5; the no-email variant, Approve and create link,
+//   when the proposal has no mailable client email), posting the print key
+//   it confirmed over and the latest proof the page showed at the press.
 //   A banner's Update draft passes its scope to sync, so the unchecked
 //   notice's own banner runs the bar-only rebuild. The held brief and file go
 //   to menuCardState too, so before a draft Generate asks only for the keys
 //   the look it will post uses (v2 spec 9.2).
+// - The client review (lane menu-approve-send): the Waiting on the client
+//   banner's Release for printing and the removed banner's Put it back for
+//   staff, and the Brief tab's Close request, go through useMenuReview, each
+//   through its confirm; while one runs its button reads its label and every
+//   banner button waits; a refusal is an inline role="alert" under the
+//   banners (Close request's sits in the Brief tab), and a landed after-event
+//   release's duty line a role="status" there until the next action; once a
+//   write settles, focus moves to the banner region (tabIndex -1), else the
+//   back button. A banner's Copy link
+//   copies the proof's link (Copied for 2 s).
 // - Start over's confirm leaves the drawings out on a draft whose layout uses
 //   none (a plain house card), with the image count of the run it starts.
 // - The meta line names the pairing, or "House card" on a house draft, where
@@ -79,6 +96,16 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
     if (el && rootRef.current && rootRef.current.contains(el) && typeof el.blur === 'function') el.blur();
   }, []);
   const approve = useApproveMenu({ menu, loadProposal, beforeSave: blurInside });
+  const review = useMenuReview({ proposal, menu, loadProposal });
+  const link = useCopyLink();
+  // A settled review write leaves focus on the banner region (else the back
+  // button), since the pressed banner button is disabled, then gone.
+  const bannersRef = useRef(null);
+  useEffect(() => {
+    if (!review.settled) return;
+    const target = bannersRef.current || backRef.current;
+    if (target) target.focus();
+  }, [review.settled]);
   const approvingRef = useRef(false);
   approvingRef.current = approve.approving;
   // React 18 dispatches no events while a commit removes the editor, so on
@@ -195,23 +222,32 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
     'retry-words': () => menu.generate(),
     'open-plan': () => requestClose(),
   };
-  const onAction = (b) => { if (ACTIONS[b.id]) run(b.id, () => ACTIONS[b.id](b)); };
-  const busyLabel = (b) => BUSY[b.id] || 'Working...';
+  // Any action ends the after-event release's duty line (review.notice); ask clears it too.
+  const onAction = (b) => {
+    review.clearNotice();
+    if (b.id === 'release' || b.id === 'put-back') review.ask(b.id);
+    else if (b.id === 'copy-link') link.copy(payload && payload.proof ? payload.proof.url : null);
+    else if (ACTIONS[b.id]) run(b.id, () => ACTIONS[b.id](b));
+  };
+  const busyLabel = (b) => BUSY[b.id] || REVIEW_BUSY[b.id] || 'Working...';
   const onGenerate = () => (hasDraft ? setConfirm({ id: 'start-over' }) : onAction({ id: 'generate' }));
-  // The key confirmed over is the one Approve expects (MENU_PRINT_CHANGED otherwise).
+  // The key confirmed over is the one Approve expects (MENU_PRINT_CHANGED
+  // otherwise), and the proof shown at the press the one it saw (MENU_PROOF_CHANGED).
   const onApprove = () => {
     if (st.approve.disabled || approve.approving) return;
     approve.clearError();
-    if (print.print_key) setConfirm({ id: 'replace', key: print.print_key });
-    else approve.run({ expectedPrintKey: '' });
+    review.clearNotice();
+    setConfirm({ id: 'approve', key: print.print_key || '', seen: seenProof(payload && payload.proof) });
   };
   const onConfirm = () => {
     const c = confirm;
     if (c.id === 'close') { finishClose(); return; }
     setConfirm(null);
     if (c.id === 'start-over') onAction({ id: 'generate' });
-    if (c.id === 'replace') approve.run({ expectedPrintKey: c.key });
+    if (c.id === 'approve') approve.run({ expectedPrintKey: c.key, seen: c.seen });
   };
+  const confirmCopy = (c) => (c.id === 'approve' ? approveConfirm({ noEmail: !hasClientEmail(proposal) })
+    : editorConfirm(c.id, { need: st.generate.need, drawings: layoutPieceKeys(content).length > 0 }));
 
   const onPatch = useCallback((patch = {}) => {
     const m = menuRef.current;
@@ -244,11 +280,18 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
     referenceFile: menu.referenceFile, onReferenceFile: menu.setReferenceFile,
     // The GET's plan block: the Brief tab's From the planner box (spec 2026-10-19 section 7.1).
     plan: (payload && payload.plan) || null,
+    // The Client review section and its Close request (spec 2026-10-19 sections 10.3 and 14).
+    proof: (payload && payload.proof) || null, print,
+    onCloseRequest: () => review.ask('close'), closing: review.busy === 'close',
+    closeError: review.error && review.error.kind === 'close' ? review.error.text : '',
   };
   const Tab = { design: DesignTab, drinks: DrinksTab, brief: BriefTab }[activeTab];
 
-  const banners = readOnly ? st.banners.map((b) => ({ ...b, buttons: b.buttons.filter((x) => x.id !== 'reroll') })) : st.banners;
-  const waitBusy = busy || (approve.approving ? 'approving' : null);
+  const shownBanners = readOnly ? st.banners.map((b) => ({ ...b, buttons: b.buttons.filter((x) => x.id !== 'reroll') })) : st.banners;
+  const banners = link.copied ? shownBanners.map((b) => ({ ...b, buttons: b.buttons.map((x) => (x.id === 'copy-link' ? { ...x, label: 'Copied' } : x)) }))
+    : shownBanners;
+  const waitBusy = busy || (approve.approving ? 'approving' : null) || review.busy;
+  const reviewAlert = (review.error && review.error.kind !== 'close' ? review.error.text : '') || link.error;
   const allowance = banners.length ? 14 + 46 * banners.length : 14;
   const scale = clamp(Math.min((vp.h - 48 - 56 - allowance - 60) / 1000, (vp.w - 56 - 340 - 64) / 800), 0.3, 0.8);
   const shown = Array.isArray(content.drinks) ? content.drinks.filter((d) => d && !d.hidden).length : 0;
@@ -262,9 +305,11 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
         retryLabel={busy === 'retry-save' ? BUSY['retry-save'] : 'Retry'} approve={st.approve} onApprove={onApprove} />
       <div className="md-ed-body">
         <section className="md-ed-preview" aria-label="Menu preview">
-          {banners.length > 0 && (
-            <div className="md-ed-banners">
+          {(banners.length > 0 || reviewAlert || review.notice) && (
+            <div className="md-ed-banners" ref={bannersRef} tabIndex={-1}>
               {banners.map((b) => <EditorBanner key={b.id} banner={b} onAction={onAction} busy={waitBusy} busyLabel={busyLabel} />)}
+              {reviewAlert && <p className="chip danger md-alert" role="alert">{reviewAlert}</p>}
+              {review.notice && <p className="chip info md-alert" role="status">{review.notice}</p>}
             </div>
           )}
           <div className="md-ed-scroll scroll-thin">
@@ -307,9 +352,9 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
         </aside>
       </div>
       <ExportCanvas {...approve.exportProps} />
-      {confirm && (
-        <ConfirmDialog {...editorConfirm(confirm.id, { need: st.generate.need, print, drawings: layoutPieceKeys(content).length > 0 })}
-          onAction={onConfirm} onCancel={() => setConfirm(null)} />
+      {confirm && <ConfirmDialog {...confirmCopy(confirm)} onAction={onConfirm} onCancel={() => setConfirm(null)} />}
+      {review.confirm && !confirm && (
+        <ConfirmDialog {...reviewConfirm(review.confirm.kind, review.confirm)} onAction={review.go} onCancel={review.cancel} />
       )}
     </div>
   );

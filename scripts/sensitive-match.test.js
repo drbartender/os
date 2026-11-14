@@ -17,6 +17,8 @@ test('matches known sensitive files (exact patterns)', () => {
     'server/routes/sms.js',
     'server/middleware/auth.js',
     'server/middleware/rateLimiters.js',
+    // The held-file test the menu release guard runs (isHeldFile; lane menu-approve-send).
+    'server/utils/menuPrintState.js',
     '.env.example',
   ]) {
     assert.ok(isSensitive([p]), `${p} should be sensitive`);

@@ -7,6 +7,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { activityLabel } from '../../utils/menuActivityLabels';
 import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { formatPhone } from '../../utils/formatPhone';
 import useDrawerParam, { drawerHref } from '../../hooks/useDrawerParam';
@@ -619,7 +620,7 @@ function EventDetailPageDesktop() {
                         } size={12} />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div>{a.action || a.event_type || 'Update'}</div>
+                        <div>{activityLabel(a.action) || a.event_type || 'Update'}</div>
                         {a.metadata && typeof a.metadata === 'object' && (
                           <div className="tiny muted">{a.metadata.note || a.metadata.message || ''}</div>
                         )}

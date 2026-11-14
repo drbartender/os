@@ -4986,7 +4986,7 @@ CREATE TABLE IF NOT EXISTS menu_drafts (
   approved_print_key TEXT,
   approved_planner_image_key TEXT,
   approved_at TIMESTAMPTZ,
-  approved_by INTEGER REFERENCES users(id),
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -5141,9 +5141,10 @@ END $$;
 -- (server/utils/menuProofs.js), so moving the event moves the end. The latest
 -- proof of a draft is the row with superseded_at IS NULL. Writers: Approve
 -- (insert, supersede), the email step (email_status, sent_to), the answer
--- route (answer, answer_note, answered_at, once), and Dallas's no-menu mark or
--- upload (withdrawn_at, on an unanswered proof). answer_note is the client's
--- plain-text note, never copied into an activity row.
+-- route (answer, answer_note, answered_at, once), and withdrawn_at: Dallas's
+-- no-menu mark (an unanswered proof), his upload (an unanswered proof or one
+-- answered changes) and Close request (one answered changes, nothing held).
+-- answer_note is the client's plain-text note, never copied into an activity row.
 CREATE TABLE IF NOT EXISTS menu_proofs (
   id SERIAL PRIMARY KEY,
   draft_id INTEGER NOT NULL REFERENCES menu_drafts(id) ON DELETE CASCADE,
@@ -5175,6 +5176,43 @@ ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
 ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE menu_drafts ADD COLUMN IF NOT EXISTS released_via TEXT
   CHECK (released_via IS NULL OR released_via IN ('client', 'admin'));
+-- approved_by goes NULL when its user is deleted, as released_by does (spec
+-- 10.3; deleting a user failed while a draft named them). The inline
+-- REFERENCES in the menu art block names it menu_drafts_approved_by_fkey and
+-- says SET NULL for a database created from here on; one created before holds
+-- it with no ON DELETE, so it is dropped and re-added once, guarded by the
+-- live rule (confdeltype 'n' is SET NULL): a replay that finds it runs no DDL.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'menu_drafts_approved_by_fkey'
+      AND conrelid = 'menu_drafts'::regclass
+      AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE menu_drafts DROP CONSTRAINT IF EXISTS menu_drafts_approved_by_fkey;
+    ALTER TABLE menu_drafts ADD CONSTRAINT menu_drafts_approved_by_fkey
+      FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+-- A release is not an edit: the updated_at trigger (the Saved time the card
+-- prints) also skips a write that changes only the four release columns, as
+-- it skips the fingerprint and the dismissal (lane menu-approve-send). Swapped
+-- in place once, like the menu art block's own swap, and only while the live
+-- trigger lacks the clause, so a boot replay runs no DDL.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_menu_drafts_updated_at'
+      AND tgrelid = 'menu_drafts'::regclass
+      AND pg_get_triggerdef(oid) LIKE '%released_via%'
+  ) THEN
+    CREATE OR REPLACE TRIGGER update_menu_drafts_updated_at BEFORE UPDATE ON menu_drafts
+      FOR EACH ROW
+      WHEN ((to_jsonb(OLD) - ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'released_print_key', 'released_at', 'released_by', 'released_via', 'updated_at'])
+            IS DISTINCT FROM (to_jsonb(NEW) - ARRAY['plan_fingerprint', 'dismissed_plan_hash', 'released_print_key', 'released_at', 'released_by', 'released_via', 'updated_at']))
+      EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
 -- ─── end Menu proofs ───
 
 -- ─── Service extensions (on-site added bar time) ──────────────────────────

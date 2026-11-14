@@ -53,6 +53,20 @@
 // (a server before the change) reads today's gate whatever the look. Before a
 // draft the held brief and reference file are the page hook's, which the card
 // and the editor both pass, so both read the look their Generate will post.
+// The client review (spec 2026-10-19 sections 10.3 and 14; lane
+// menu-approve-send) reads the GET's proof block (the draft's latest proof) and
+// print.held. While a file is held, table C reads Client approved (the proof
+// answered approved, its release refused before the blocker went), Client asked
+// for changes (answered changes) or Waiting on the client (no answer), after
+// Notes edited and before the print states, and the editor gets table B's
+// matching banner; once the file is released, Released (the approved state)
+// or Edited since approval wins, and a change request asked after it is
+// closed from the fold (Close request, canCloseRequest). reviewValue is the
+// Client review fold row's line and the Brief tab's latest one; historyValue
+// an earlier proof's. Approve and send replaces Approve in the top bar with
+// the same gate, held off while the no-menu mark is set or the admin's own
+// upload is live (the server refuses Approve then). Released reads who released it (print.released_via); a payload
+// without it keeps the Approved banner as it was.
 // The set-up states read the read model's configured block by provider (spec
 // 2026-10-19 section 16, lane menu-words-claude): Not set up and the empty
 // card's not-set-up read configured.words (wordsReady), Drawing is off and
@@ -71,6 +85,26 @@ export const BAR_LINE = 'The bar picks changed since this draft.';
 const NOTES_LINE = 'Client edited their menu notes.';
 // A planner mark's sub line (spec 2026-10-19 section 15).
 const SKIP_MENU = 'The client chose Skip the Menu.';
+// The client review's lines (spec 2026-10-19 section 14). The skipped email
+// (notifications off, or an address sendEmail skips) reads as one that did not go out.
+const EMAIL_TAIL = { no_address: ' · no email on file', failed: ' · email failed', suppressed: ' · email blocked', skipped: ' · email not sent' };
+const DID_NOT_GO = "The email didn't go out. Copy the link and send it yourself.";
+const EMAIL_SUB = {
+  no_address: 'No email on file. Copy the link and send it yourself.',
+  failed: DID_NOT_GO,
+  skipped: DID_NOT_GO,
+  suppressed: "The email was blocked: the client's address is marked as not working, or the event was archived before it went out. "
+    + 'Copy the link and send it another way.',
+};
+const EXPIRED_SUB = 'The link expired. Approve again to send a fresh one.';
+// A dated link ends at the Chicago midnight after the event day (proof.event_passed), when Approve refuses.
+const expiredSub = (proof) => (proof.event_passed === true ? 'The link ended with the event day.' : EXPIRED_SUB);
+// That link's client can no longer answer, so the card and the banner stop saying they might.
+const linkEnded = (proof) => proof.expired === true && proof.event_passed === true;
+const CLIENT_APPROVED_SUB = "It isn't with staff yet. Release it for printing.";
+const STALE_SUB = 'The draft changed since. Approve again if it matters.';
+const NOTE_CUT = 90;
+const APPROVED_TEXT = 'This is the print file staff download. Edits make a new draft until you approve again.';
 const BAR_SUB = 'refreshes the changed "Also at the bar" lines.';
 // A house card prints bar sections, never "Also at the bar" lines.
 const HOUSE_BAR_SUB = "refreshes the card's bar sections.";
@@ -157,6 +191,44 @@ export function shortDate(v) {
 }
 const clock = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
+// The Client review line (header) of the GET's proof block, or of none.
+export function reviewValue(proof) {
+  if (!isObj(proof)) return 'Not sent yet';
+  if (proof.state === 'approved') return `Looks great, ${shortDate(proof.answered_at)}`;
+  if (proof.state === 'changes') return `Changes requested ${shortDate(proof.answered_at)}`;
+  if (proof.state === 'withdrawn') return `Closed ${shortDate(proof.withdrawn_at)}`;
+  const tail = proof.expired === true ? ' · link expired' : EMAIL_TAIL[proof.email_status] || '';
+  return `Sent ${shortDate(proof.sent_at)}${tail}`;
+}
+
+// An earlier proof's answer, for the Brief tab's history.
+export function historyValue(entry) {
+  const e = isObj(entry) ? entry : {};
+  if (e.answer === 'approved') return `Looks great, ${shortDate(e.answered_at)}`;
+  if (e.answer === 'changes') return `Changes requested ${shortDate(e.answered_at)}`;
+  return e.withdrawn_at ? `Closed ${shortDate(e.withdrawn_at)}` : 'No answer';
+}
+
+// The link still opens a live page: not expired, not withdrawn.
+export const canCopyLink = (proof) => isObj(proof) && typeof proof.url === 'string' && proof.url !== ''
+  && proof.expired !== true && proof.state !== 'withdrawn';
+// A change request with nothing held (released before the client asked): Close request (spec 10.3).
+export const canCloseRequest = (proof, print) => isObj(proof) && proof.state === 'changes' && !(isObj(print) && print.held === true);
+
+// The first NOTE_CUT characters of the client's note, then "..." when cut.
+function noteExcerpt(note) {
+  const chars = Array.from(typeof note === 'string' ? note.trim() : '');
+  return chars.length > NOTE_CUT ? `${chars.slice(0, NOTE_CUT).join('').trimEnd()}...` : chars.join('');
+}
+
+// Who released the live file (table B), or '' when the payload does not say.
+function releasedLine(print) {
+  const day = shortDate(print.released_at || print.approved_at);
+  if (print.released_via === 'client') return `The client said it looks great ${day}.`;
+  if (print.released_via !== 'admin') return '';
+  return print.released_by_name ? `Released ${day} by ${print.released_by_name}.` : `Released ${day}.`;
+}
+
 // "at 3:40 PM", or "tomorrow at 3:40 PM" (the rolling cap frees within 24 hours).
 export function resumeTime(resetsAt, now = Date.now()) {
   const d = asDate(resetsAt);
@@ -238,9 +310,14 @@ function readFacts(p, L = {}) {
     cap: isObj(p.cap) ? p.cap : null,
     configured: isObj(p.configured) ? p.configured : {},
     date: shortDate(print.approved_at),
+    // The day of the file staff download: its release, or a v1 approval's own day.
+    staffDate: shortDate(print.released_at || print.approved_at),
     house: houseGen(p, draft, L),
     // The draft the canvas draws as the house card (its content's look).
     houseDraft: !!draft && content.look === 'house',
+    // The latest proof, and an approved file waiting on its release (spec 2026-10-19 section 10.3).
+    proof: isObj(p.proof) ? p.proof : null,
+    held: print.state === 'held',
   };
 }
 
@@ -312,6 +389,30 @@ function changeLines(f) {
     sub: f.barChanged ? `Update draft removes the drink and ${barSub}` : 'Update the draft to remove it.' };
 }
 
+// A held file whose latest proof the client already approved (its release was
+// refused, then the blocker went away): the answer is in, so never "waiting".
+const clientApproved = (proof) => [`The client said it looks great ${shortDate(proof.answered_at)}.`, CLIENT_APPROVED_SUB];
+
+// Table C's client states (spec 2026-10-19 section 14), while the file is held.
+function reviewState(f) {
+  const proof = f.proof || {};
+  const sent = shortDate(proof.sent_at);
+  const release = act('release', 'Release for printing', 'secondary');
+  if (proof.state === 'approved') {
+    const [message, sub] = clientApproved(proof);
+    return S('client-approved', 'info', 'Client approved', message, sub, { ...release, style: 'primary' });
+  }
+  if (proof.state === 'changes') {
+    const stale = proof.stale === true ? `They saw the version sent ${sent}; the draft changed since.` : '';
+    return S('changes', 'warn', 'Changes requested', 'The client asked for changes.', [noteExcerpt(proof.answer_note), stale].filter(Boolean).join(' ') || null,
+      ed('read-notes', 'Read notes', 'primary', { tab: 'brief' }), { ...release, style: 'ghost' });
+  }
+  const sub = proof.expired === true ? expiredSub(proof) : EMAIL_SUB[proof.email_status] || (proof.stale === true ? STALE_SUB : null);
+  const message = linkEnded(proof) ? `Sent to the client ${sent}.` : `Sent to the client ${sent}. Staff can print once they say it looks great.`;
+  return S('waiting', 'info', 'Waiting on client', message, sub,
+    release, canCopyLink(proof) ? act('copy-link', 'Copy link', 'ghost') : null);
+}
+
 // Table C, the first state that applies.
 function pickState(f, L) {
   if (L.approving) return S('approving', 'info', 'Approving', 'Saving the print file...');
@@ -347,21 +448,28 @@ function pickState(f, L) {
     return S('notes-edited', 'info', 'Notes edited', f.edited.length ? 'Client edited their menu notes.' : 'The client image changed.',
       'Review before approving.', ed('review', 'Review', 'primary', { tab: 'brief' }));
   }
-  const by = f.print.approved_by_name;
+  if (f.held) return reviewState(f);
   switch (f.print.state) {
     case 'not_required': {
-      const draftNote = f.draft ? 'A draft exists; approving it posts a print file.' : null;
+      // Approve refuses while the mark is set (menuDraftApprove.js MENU_MARKED_NONE).
+      const draftNote = f.draft ? 'A draft exists; undo the mark to approve and send it.' : null;
       const sub = f.print.not_required_by === 'planner' ? (draftNote ? `${SKIP_MENU} ${draftNote}` : SKIP_MENU) : draftNote;
       return S('no-menu', 'neutral', 'No menu needed', 'Marked no menu needed.', sub, null, act('undo', 'Undo', 'ghost'));
     }
     case 'replaced':
       return S('replaced', 'neutral', 'Not in use', 'Print file is a manual upload.', "This draft isn't what staff print.", ed('view', 'View', 'secondary'));
     case 'removed':
-      return S('removed', 'warn', 'No print file', 'Print file was removed.', 'Staff have nothing to print.', ed('review-approve', 'Review & approve'));
+      // Put it back for staff re-posts the menu's own removed file (spec 10.3, print.restorable).
+      return S('removed', 'warn', 'No print file', 'Print file was removed.', 'Staff have nothing to print.', ed('review-approve', 'Review & approve'),
+        f.print.restorable === true ? act('put-back', 'Put it back for staff', 'secondary') : null);
     case 'edited_since_approval':
-      return S('edited', 'warn', 'Edited since approval', `Staff still get the ${f.date} version.`, 'Approve again to update it.', ed('review-approve', 'Review & approve'));
-    case 'approved':
-      return S('approved', 'ok', 'Approved', 'Print file ready for staff.', by ? `Approved ${f.date} by ${by}` : `Approved ${f.date}`, ed('view', 'View', 'secondary'));
+      return S('edited', 'warn', 'Edited since approval', `Staff still get the ${f.staffDate} version.`, 'Approve again to update it.', ed('review-approve', 'Review & approve'));
+    case 'approved': {
+      // Released (spec 2026-10-19 section 14): by the client's Looks great, or by the admin (a v1 approval reads as his).
+      const day = shortDate(f.print.released_at || f.print.approved_at);
+      const sub = f.print.released_via === 'client' ? `The client said it looks great ${day}.` : `You released it ${day}.`;
+      return S('approved', 'ok', 'Approved', 'Approved for print. Staff can download it.', sub, ed('view', 'View', 'secondary'), act('download', 'Download', 'ghost'));
+    }
     default:
   }
   if (f.draft) {
@@ -411,12 +519,15 @@ function generateGate(f, L) {
   return { disabled, hint, need };
 }
 
+// Approve and send (spec 2026-10-19 section 10.5): the same gate, its one label,
+// and the no-menu mark or the admin's own upload holds it, since the server
+// refuses Approve while either stands (a Looks great beside an upload could never release).
 function approveGate(f, L, tooLong) {
   const st = f.print.state;
-  const label = L.approving ? 'Approving...' : st === 'approved' ? 'Approved'
-    : st === 'edited_since_approval' || st === 'removed' ? 'Approve again' : st === 'replaced' ? 'Use as print file' : 'Approve';
+  const label = L.approving ? 'Approving...' : st === 'approved' ? 'Approved' : 'Approve and send';
   const long = f.houseDraft ? 'Make the card fit first' : 'Shorten the long description first';
-  const why = tooLong ? long : f.failed.length ? 'Fix the failed drawing first' : '';
+  const held = st === 'not_required' ? 'Undo the mark first' : st === 'replaced' ? 'Remove your uploaded file first' : '';
+  const why = tooLong ? long : f.failed.length ? 'Fix the failed drawing first' : f.hasDraft ? held : '';
   return { label, why, disabled: !f.hasDraft || f.drafting || !!L.approving || st === 'approved' || !!why };
 }
 
@@ -489,6 +600,25 @@ function bannerList(f, L, tooLong) {
     B('notes-edited', 'info', f.edited.length ? 'Client edited their menu notes.' : 'The client image changed since this draft.',
       fields ? `${fields} changed. The draft hasn't been updated.` : "The draft hasn't been updated.", [btn('mark-reviewed', 'Mark reviewed')]);
   }
+  if (f.held && f.hasDraft) {
+    // Table B's client review banners (spec 2026-10-19 section 14).
+    const proof = f.proof || {};
+    const sent = shortDate(proof.sent_at);
+    if (proof.state === 'approved') {
+      const [title, text] = clientApproved(proof);
+      B('client-approved', 'info', title, text, [btn('release', 'Release for printing')]);
+    } else if (proof.state === 'changes') {
+      const note = typeof proof.answer_note === 'string' ? proof.answer_note.trim() : '';
+      B('client-changes', 'warn', 'The client asked for changes.', [note, proof.stale === true ? `They saw the version sent ${sent}.` : ''].filter(Boolean).join(' '));
+    } else {
+      // An email that never reached the client says so, as on the card, with the link to copy beside it.
+      const unsent = proof.expired === true ? expiredSub(proof) : EMAIL_SUB[proof.email_status] || '';
+      const copy = EMAIL_SUB[proof.email_status] && canCopyLink(proof) ? [btn('copy-link', 'Copy link', 'ghost')] : [];
+      const waiting = linkEnded(proof) ? '' : "Waiting on the client's answer. Edits here don't change what they see.";
+      B('client-waiting', 'info', `Proof sent ${sent}.`, [waiting, unsent].filter(Boolean).join(' '),
+        [...copy, btn('release', 'Release for printing')]);
+    }
+  }
   if (L.saveFailed) B('save-failed', 'danger', "Last change didn't save.", 'Your edits are kept in this tab.', [btn('retry-save', 'Retry')]);
   if (typeof L.conflict === 'string') B('save-refused', 'danger', "Last change didn't save.", L.conflict);
   else if (L.conflict) B('save-conflict', 'warn', 'This draft changed elsewhere.', 'It was reloaded.');
@@ -496,11 +626,18 @@ function bannerList(f, L, tooLong) {
   if (L.approveError) B('approve-rejected', 'danger', "Couldn't approve.", L.approveError);
   if (f.hasDraft) {
     const st = f.print.state;
-    if (st === 'approved') B('approved', 'ok', `Approved ${f.date}.`, 'This is the print file staff download. Edits make a new draft until you approve again.', [btn('download', 'Download')]);
-    if (st === 'edited_since_approval') B('edited', 'warn', 'Edited since approval.', `Staff still get the ${f.date} version until you approve again.`);
-    if (st === 'replaced') B('replaced', 'neutral', 'Print file is a manual upload.', 'Approving replaces it with this draft.');
-    if (st === 'removed') B('removed', 'warn', 'Print file was removed.', 'Staff have nothing to print. Approve to restore it.');
-    if (st === 'not_required') B('no-menu', 'neutral', 'Marked no menu needed.', 'Approving still posts this menu and clears the mark.', [btn('undo', 'Undo')]);
+    if (st === 'approved') {
+      const who = releasedLine(f.print);
+      B('approved', 'ok', `Approved ${f.date}.`, who ? `${APPROVED_TEXT} ${who}` : APPROVED_TEXT, [btn('download', 'Download')]);
+    }
+    if (st === 'edited_since_approval') B('edited', 'warn', 'Edited since approval.', `Staff still get the ${f.staffDate} version until you approve again.`);
+    // A held file is never released over an upload (spec 10.3, guard 4), so staff keep it until it goes.
+    if (st === 'replaced') B('replaced', 'neutral', 'Print file is a manual upload.', 'Staff print the upload until you remove it.');
+    if (st === 'removed') {
+      if (f.print.restorable === true) B('removed', 'warn', 'Print file was removed.', 'Staff have nothing to print.', [btn('put-back', 'Put it back for staff')]);
+      else B('removed', 'warn', 'Print file was removed.', 'Staff have nothing to print. Approve to restore it.');
+    }
+    if (st === 'not_required') B('no-menu', 'neutral', 'Marked no menu needed.', 'Undo the mark to approve and send this menu.', [btn('undo', 'Undo')]);
   }
   if (f.draft && f.draft.read_only) B('no-plan', 'neutral', 'No drink plan on this event.', 'The draft is read-only.');
   return out;
@@ -528,7 +665,7 @@ function emptyCard(f) {
 
 export default function menuCardState({ payload, local } = {}) {
   const L = isObj(local) ? local : {};
-  const closed = { approve: { label: 'Approve', disabled: true, why: '' }, generate: { disabled: true, hint: '', need: 0 }, thumb: false, progress: null };
+  const closed = { approve: { label: 'Approve and send', disabled: true, why: '' }, generate: { disabled: true, hint: '', need: 0 }, thumb: false, progress: null };
   if (!isObj(payload)) {
     if (!L.loadError) return { ...S('loading', null, null, null), ...closed, banners: [], empty: { id: 'loading' } };
     return { ...S('load-error', 'danger', 'Error', "Couldn't load the menu draft.", L.loadError, act('reload', 'Retry')), ...closed,
@@ -540,7 +677,7 @@ export default function menuCardState({ payload, local } = {}) {
   if (STAFF_SUB.has(state.id) && f.print.approved_file_in_use) {
     // A failure keeps its fixed reason ahead of the staff line (spec 2026-10-19 section 16).
     const reason = state.id === 'words-failed' ? wordsReason(f) : state.id === 'drawing-failed' ? pieceReason(f) : null;
-    state.sub = sentences(reason, `Staff still get the ${f.date} version.`);
+    state.sub = sentences(reason, `Staff still get the ${f.staffDate} version.`);
   }
   // An unchecked bar line changes no state; the muted sub says it after its own
   // words, and a state with no Update draft of its own offers the bar-only one
@@ -549,7 +686,9 @@ export default function menuCardState({ payload, local } = {}) {
   if (f.unchecked && UNCHECKED_STATES.has(state.id)) {
     state.sub = sentences(state.sub, f.notice.line);
     const offersUpdate = [state.primary, state.secondary].some((a) => a && a.id === 'update');
-    if (!offersUpdate && !state.secondary) state.secondary = { ...act('update', 'Update draft', 'ghost'), ...BAR_SCOPE };
+    // Released's ghost Download gives way: the fold's Print file row downloads too.
+    const free = !state.secondary || state.secondary.id === 'download';
+    if (!offersUpdate && free) state.secondary = { ...act('update', 'Update draft', 'ghost'), ...BAR_SCOPE };
   }
   // The vendored rule: with a draft, a ghost View joins whenever the row has room for it.
   if (f.hasDraft && !state.secondary && state.id !== 'approving' && (!state.primary || state.primary.id !== 'view')) {

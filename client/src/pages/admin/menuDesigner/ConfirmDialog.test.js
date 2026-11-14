@@ -23,3 +23,13 @@ test('Start over on a draft with no drawings leaves the drawings out', () => {
   expect(editorConfirm('start-over', { need: 1, drawings: true }).text)
     .toBe('This discards the draft, its drawings and your text edits, then drafts again from the plan. Uses about 1 image.');
 });
+
+// Approve and send has its own confirm (exportMenu approveConfirm; spec
+// 2026-10-19 section 10.5), so the v1 replace-the-print-file confirm is gone:
+// the editor's ids are start-over and close (lane menu-approve-send).
+test('there is no replace confirm any more; an id it does not know reads as close', () => {
+  const close = editorConfirm('close');
+  expect(close).toEqual({ title: 'Close with an unsaved change?', actionLabel: 'Close anyway', actionClass: 'btn btn-primary', cancelLabel: 'Stay',
+    text: "Your last change didn't save. Close anyway keeps it on the event page, where you can retry it." });
+  expect(editorConfirm('replace', { print: { approved_file_in_use: true, approved_at: '2026-10-09T17:00:00Z' } })).toEqual(close);
+});

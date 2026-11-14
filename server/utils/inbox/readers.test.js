@@ -820,14 +820,16 @@ test('the Zola feed time is the newest lead-linked row: a Zola notice counts, a 
 });
 
 // ─── Menu tasks (spec 2026-10-19 section 13.1) ───
-// Nothing in the app creates a proof yet (lane menu-approve-send does), so the
-// proofs here are inserted directly. Each case is its own invented client
+// The proofs here are inserted directly (the Approve suite covers how they are
+// made); the admin upload's withdraw runs through the one helper the upload
+// route runs (menuProofs.withdrawLatestProof). Each case is its own invented client
 // (named with TAG, so clean() finds them), proposal and draft; deleting the
 // proposals cascades the drafts and the proofs.
 
 const {
   MENU_TASKS_SQL, menuTaskParams, mapMenuTaskRows, __setMenuTaskDeps, __resetMenuTaskDeps,
 } = require('./readMenuTasks');
+const { withdrawLatestProof } = require('../menuProofs');
 const { chicagoTodayYmd } = require('../businessTime');
 const { legalHoldPersonKeys } = require('./engine');
 
@@ -964,6 +966,30 @@ async function seedMenuTasks() {
   await menuProof(M.noClient, { answer: 'changes' });
   M.noDate = await menuEvent('NoDate', { noDate: true });
   M.noDateProof = await menuProof(M.noDate, { sentAgo: '2 days' });
+  // No event date past the link's 30 days (lane menu-approve-send, item c):
+  // a change request outlives the link; an unanswered proof does not.
+  M.noDateOldChanges = await menuEvent('NoDateOldChanges', { noDate: true });
+  M.noDateOldChangesProof = await menuProof(M.noDateOldChanges, { answer: 'changes', note: 'An old request', sentAgo: '40 days', answeredAgo: '35 days' });
+  M.noDateOldOpen = await menuEvent('NoDateOldOpen', { noDate: true });
+  await menuProof(M.noDateOldOpen, { sentAgo: '31 days' });
+  // Carried item i, against real rows: the admin's upload after a change
+  // request withdraws it through the upload route's own helper (and posts his
+  // key), which closes its task; an upload made before the proof (Approve
+  // beside his own live file) hides nothing.
+  M.uploadAfterChanges = await menuEvent('UploadAfterChanges');
+  await menuProof(M.uploadAfterChanges, { answer: 'changes', note: 'Settled by his own file' });
+  await approveDraft(M.uploadAfterChanges, { approved: key(M.uploadAfterChanges.proposalId) });
+  await setPrintKey(M.uploadAfterChanges, key(M.uploadAfterChanges.proposalId));
+  M.uploadAfterChangesWithdrew = await withdrawLatestProof(pool, M.uploadAfterChanges.draftId, { andChanges: true });
+  M.uploadAfterOpen = await menuEvent('UploadAfterOpen', { offset: 3 });
+  await menuProof(M.uploadAfterOpen, { sentAgo: '2 days' });
+  await approveDraft(M.uploadAfterOpen, { approved: key(M.uploadAfterOpen.proposalId) });
+  await setPrintKey(M.uploadAfterOpen, key(M.uploadAfterOpen.proposalId));
+  await withdrawLatestProof(pool, M.uploadAfterOpen.draftId, { andChanges: true });
+  M.uploadBeforeProof = await menuEvent('UploadBeforeProof');
+  await setPrintKey(M.uploadBeforeProof, key(M.uploadBeforeProof.proposalId));
+  await approveDraft(M.uploadBeforeProof, { approved: key(M.uploadBeforeProof.proposalId) });
+  M.uploadBeforeProofProof = await menuProof(M.uploadBeforeProof, { answer: 'changes', note: 'Asked beside his own file' });
   M.noProof = await menuEvent('NoProof');
   // The held client: the held proposal and another of theirs, each with a change request.
   M.held = await menuEvent('Held');
@@ -1068,6 +1094,34 @@ test('menu tasks: the admin\'s own upload live never hides a proof\'s tasks, nor
   assert.deepEqual(tasksOf(events, M.olderLive).map((e) => e.meta.id), [M.olderLiveProof.id], 'the older released file live');
 });
 
+// Item n (lane menu-approve-send): beside his own upload a release would be
+// refused, so the no-answer task drops "Release it for printing?"; the upload
+// changes only the words.
+test('menu tasks: beside the admin\'s own upload the no-answer task reads "No answer on the menu yet." alone; beside the approved or released file it asks to release', async () => {
+  const events = await readMenuTasksNow();
+  assert.deepEqual(tasksOf(events, M.openUpload).map((e) => e.text), ['No answer on the menu yet.']);
+  assert.deepEqual(tasksOf(events, M.due).map((e) => e.text), ['No answer on the menu yet. Release it for printing?'], 'no file live');
+  assert.deepEqual(tasksOf(events, M.changesUpload).map((e) => e.text), ['Asked for menu changes'], 'a change request keeps its text');
+  const [loaded] = mergeDetails(tasksOf(events, M.openUpload), await loadDetails(tasksOf(events, M.openUpload), pool));
+  assert.equal(loaded.text, 'No answer on the menu yet.', 'pass 2 keeps the text');
+});
+
+test('menu tasks: with no event date a change request outlives its 30-day link; an unanswered proof past 30 days raises nothing', async () => {
+  const events = await readMenuTasksNow();
+  assert.deepEqual(tasksOf(events, M.noDateOldChanges).map((e) => [e.kind, e.meta.id]), [['menu_changes', M.noDateOldChangesProof.id]]);
+  assert.equal(tasksOf(events, M.noDateOldChanges)[0].at.toISOString(), M.noDateOldChangesProof.answered_at.toISOString());
+  assert.deepEqual(tasksOf(events, M.noDateOldOpen), [], 'the link expired unanswered');
+});
+
+test('menu tasks: an upload after a change request closes its task through the withdraw; an upload made before the proof hides nothing (real rows)', async () => {
+  const events = await readMenuTasksNow();
+  assert.ok(Number.isInteger(M.uploadAfterChangesWithdrew), 'the upload\'s helper withdrew the change request');
+  assert.deepEqual(tasksOf(events, M.uploadAfterChanges), [], 'the change request closed with the withdraw');
+  assert.deepEqual(tasksOf(events, M.uploadAfterOpen), [], 'so did the unanswered proof');
+  assert.deepEqual(tasksOf(events, M.uploadBeforeProof).map((e) => [e.kind, e.meta.id]), [['menu_changes', M.uploadBeforeProofProof.id]],
+    'a proof sent beside his live file keeps its task');
+});
+
 // Pure: rows as the query returns them, so a row no database would hold can
 // stand in for one the mapper cannot read.
 test('menu tasks: a row the mapper cannot read is skipped and reported once, by its proof id; the rest still show', () => {
@@ -1098,6 +1152,26 @@ test('menu tasks: a row the mapper cannot read is skipped and reported once, by 
 
 // The close an upload owes a change request is the proof's own withdraw (the
 // upload route's, spec 10.3), which the mapper already honors.
+test('menu tasks: owner_upload picks the no-answer words and never closes or hides a task', () => {
+  const now = new Date();
+  const inThreeDays = new Date(Date.parse(`${chicagoTodayYmd()}T12:00:00Z`) + 3 * 86400000).toISOString().slice(0, 10);
+  const row = (id, over) => ({
+    id, draft_id: id, proposal_id: id, client_id: id, sent_at: new Date(now.getTime() - 3 * 86400000), answer: null,
+    answered_at: null, superseded_at: null, withdrawn_at: null, expired: false, event_date: inThreeDays,
+    released: false, released_at: null, owner_upload: false, ...over,
+  });
+  const out = mapMenuTaskRows([
+    row(91021), row(91022, { owner_upload: true }),
+    row(91023, { owner_upload: true, answer: 'changes', answered_at: new Date(now.getTime() - 3600000) }),
+    row(91024, { owner_upload: true, released: true }),
+  ], { now });
+  assert.deepEqual(out.map((e) => [e.meta.id, e.kind, e.text]), [
+    [91021, 'menu_no_answer', 'No answer on the menu yet. Release it for printing?'],
+    [91022, 'menu_no_answer', 'No answer on the menu yet.'],
+    [91023, 'menu_changes', 'Asked for menu changes'],
+  ], 'a released file closes the no-answer task whatever the words');
+});
+
 test('menu tasks: a withdrawn change request raises no task; one with no answer time is skipped and reported, never dated 1970', () => {
   const now = new Date();
   const row = (id, over) => ({

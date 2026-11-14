@@ -2,17 +2,26 @@
 // says Looks great or asks for changes once; public and token-gated, no client name, contact, event date or amounts.
 //
 // It reads GET /api/menu-proof/:token ({ state, answer, answer_note, answered_at,
-// image }) and shows the proof from GET /api/menu-proof/:token/image. States:
+// image, emailed, event_passed }) and shows the proof from GET
+// /api/menu-proof/:token/image only while image is true (an answered proof
+// past its link's life keeps its Thanks lines with the picture off). States:
 // loading, open (Looks great, Request changes with a 1,000 character note and
 // a live counter), approved, changes (the note read-only above the proof),
 // superseded, expired, withdrawn, a failed load with Try again, and the
 // .public-error shell for a 404. While an answer posts every button is
 // disabled and the pressed one reads Sending...; a refused answer (409
-// MENU_PROOF_*) refetches and shows the state the server reports; a 429 (the
-// answer limiter) says to try later or reply to the email, since a plain retry
-// would be refused again; any other failure shows the inline alert. A press
-// that swaps the screen (an answer, a refusal that lands on another screen, a
-// not-found) moves focus to the new heading, so a screen reader announces it.
+// MENU_PROOF_*) refetches and shows the state the server reports, and one
+// whose refetch reads open again keeps the form with the retry alert; a 429
+// (the answer limiter) says to try later, since a plain retry would be refused
+// again; any other failure shows the inline alert. A press that swaps the
+// screen (an answer, a refusal that lands on another screen, a not-found)
+// moves focus to the new heading, so a screen reader announces it.
+// The wording follows two GET booleans (lane menu-approve-send): a proof that
+// was never emailed (emailed false: no address, a blocked or skipped send)
+// says "get in touch with us" wherever an emailed one says "reply to our
+// email" or "check your email"; and once the event day has passed (event_passed) the expired screen
+// stops offering a fresh link, since Approve refuses one then. A body without
+// emailed reads as emailed.
 // A token that is not a UUID is the not-found shell with no request sent: the
 // token goes into the request path. The note is plain React text, never HTML.
 // Benchmark: docs/design-artifacts/2026-11-03-menu-proof/menu-proof-page.html.
@@ -27,17 +36,31 @@ const NOTE_MAX = 1000;
 const KICKER = 'DR. BARTENDER';
 // A link token, the server's rule (server/utils/tokens.js UUID_RE).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// The inline alert under the buttons, by what the failed post was.
-const POST_ALERTS = {
-  retry: "That didn't go through. Please try again.",
-  later: 'Too many tries. Please try again later, or reply to our email.',
+// Each line that points the client somewhere, as [emailed, never emailed]:
+// a link the admin sent by hand never says "reply to our email" (carried item g).
+const LINES = {
+  later: ['Too many tries. Please try again later, or reply to our email.', 'Too many tries. Please try again later, or get in touch with us.'],
+  questions: ['If you have questions, just reply to our email.', 'If you have questions, just get in touch with us.'],
+  fresh: ["Reply to our email and we'll send a fresh one.", "Get in touch with us and we'll send a fresh one."],
+  latest: ['Check your email for the latest link.', 'Get in touch with us for the latest link.'],
+  changes: [
+    "We'll make the changes and send you a fresh look. Reply to our email if you think of anything else.",
+    "We'll make the changes and send you a fresh look. Get in touch with us if you think of anything else.",
+  ],
+  missing: [
+    "We couldn't load the menu picture. Reply to our email and we'll send it again.",
+    "We couldn't load the menu picture. Get in touch with us and we'll send it again.",
+  ],
 };
+const RETRY = "That didn't go through. Please try again.";
 
-// The closed states: a heading and one line, no picture and no buttons.
+// The closed states: a heading and one line (a LINES key, or the line itself),
+// no picture and no buttons. Past the event day an expired link offers no
+// fresh one (carried item d).
 const CLOSED = {
-  superseded: ['A newer version was sent.', 'Check your email for the latest link.'],
-  expired: ['This link has expired.', "Reply to our email and we'll send a fresh one."],
-  withdrawn: ['This menu is no longer open for review.', 'If you have questions, just reply to our email.'],
+  superseded: ['A newer version was sent.', 'latest'],
+  expired: ['This link has expired.', 'fresh'],
+  withdrawn: ['This menu is no longer open for review.', 'questions'],
 };
 
 // The day the client answered, as the business reads it (America/Chicago), e.g. "November 3".
@@ -59,9 +82,9 @@ function Sheet({ heading, headingRef, busy, children }) {
   );
 }
 
-function Proof({ src, small, onMissing, missing }) {
+function Proof({ src, small, onMissing, missing, missingLine }) {
   if (missing) {
-    return <p className="menu-proof-line menu-proof-missing">We couldn't load the menu picture. Reply to our email and we'll send it again.</p>;
+    return <p className="menu-proof-line menu-proof-missing">{missingLine}</p>;
   }
   return (
     <a className={`menu-proof-picture${small ? ' is-small' : ''}`} href={src} target="_blank" rel="noopener noreferrer">
@@ -120,19 +143,23 @@ export default function MenuProofPage() {
     setPostFailed(null);
     try {
       const res = await api.post(`/menu-proof/${encodeURIComponent(linkToken)}/answer`, body);
-      setData({
+      // The wording facts stay the ones the GET gave: the answer moves neither.
+      setData((prev) => ({
+        ...prev,
         state: res.data.state,
         answer: res.data.state,
         answer_note: answer === 'changes' ? trimmed : null,
         answered_at: res.data.answered_at,
         image: true,
-      });
+      }));
       setSwapped((n) => n + 1);
     } catch (err) {
       if (err && err.status === 409 && String(err.code || '').startsWith('MENU_PROOF_')) {
-        // Still open (the proposal moved between two statements): the form stays, so focus does too.
+        // Still open (the proposal moved between two statements): the form
+        // stays, so focus does too, and the press says it did not go through.
         const shown = await load({ quiet: true });
-        if (shown !== 'open') setSwapped((n) => n + 1);
+        if (shown === 'open') setPostFailed('retry');
+        else setSwapped((n) => n + 1);
       } else if (err && err.status === 404) {
         setPhase('notfound');
         setSwapped((n) => n + 1);
@@ -176,15 +203,18 @@ export default function MenuProofPage() {
     );
   }
 
+  // A body without emailed (a server before the field) reads as emailed.
+  const say = (key) => LINES[key][data.emailed === false ? 1 : 0];
   const proof = (small) => (
-    <Proof src={imageSrc} small={small} missing={imageMissing} onMissing={() => setImageMissing(true)} />
+    <Proof src={imageSrc} small={small} missing={imageMissing} missingLine={say('missing')} onMissing={() => setImageMissing(true)} />
   );
 
   if (CLOSED[data.state]) {
     const [heading, line] = CLOSED[data.state];
+    const key = data.state === 'expired' && data.event_passed === true ? 'questions' : line;
     return (
       <Sheet heading={heading} headingRef={headingRef}>
-        <p className="menu-proof-line">{line}</p>
+        <p className="menu-proof-line">{LINES[key] ? say(key) : line}</p>
       </Sheet>
     );
   }
@@ -203,9 +233,7 @@ export default function MenuProofPage() {
   if (data.state === 'changes') {
     return (
       <Sheet heading="Thanks! We've got your notes." headingRef={headingRef}>
-        <p className="menu-proof-line">
-          We'll make the changes and send you a fresh look. Reply to our email if you think of anything else.
-        </p>
+        <p className="menu-proof-line">{say('changes')}</p>
         {data.answer_note && <blockquote className="menu-proof-note">{data.answer_note}</blockquote>}
         {data.image && proof(true)}
       </Sheet>
@@ -261,7 +289,7 @@ export default function MenuProofPage() {
           </div>
         )}
         {postFailed && (
-          <p className="menu-proof-alert" role="alert">{POST_ALERTS[postFailed]}</p>
+          <p className="menu-proof-alert" role="alert">{postFailed === 'later' ? say('later') : RETRY}</p>
         )}
       </div>
       <p className="menu-proof-small">Replying here doesn't change your booking. We'll take it from here.</p>

@@ -1,15 +1,19 @@
 process.env.NODE_ENV = 'test';
 require('dotenv').config();
-// Route tests for menu art Approve (spec 2026-10-01 sections 8, 12 and 14,
-// Approve bullets; plan Task A3): POST /api/proposals/:id/menu-draft/approve,
-// read back through the real GET /api/proposals/:id/menu-draft, beside the
-// real menu-print routes (manual upload, remove, no menu needed) and the real
+// Route tests for menu art Approve and send (spec 2026-10-01 sections 8, 12
+// and 14; spec 2026-10-19 sections 10.2, 10.4 and 11, lane menu-approve-send):
+// POST /api/proposals/:id/menu-draft/approve, read back through the real GET
+// /api/proposals/:id/menu-draft, beside the real menu-print routes (manual
+// upload, remove, no menu needed), the real Release route and the real
 // re-roll. The menuPrint.test.js harness: a minimal express app, the real
 // routers, the real express-fileupload, hand-built multipart, real HTTP.
 //
 // Nothing paid and nothing remote is ever reached:
 // - R2 is an in-memory map installed through require.cache BEFORE anything
 //   requires storage, and global fetch is a tripwire;
+// - sendEmail is a stub (require.cache on utils/email, before the routes
+//   load) whose outcome each test sets: sent, skipped (dev-skipped) or a
+//   throw, and which records every call;
 // - BOTH provider wrappers are stubbed at the SDK-client level, since the
 //   re-roll test runs the real job (only an OpenAI background is drawn);
 // - the job's queued entry points are wrapped (require.cache) so afterEach
@@ -18,9 +22,9 @@ require('dotenv').config();
 //   load) to record WHEN it is called, then runs the real one, which reaches a
 //   fake payrollAccrual (require.cache) that reads the proposal row it sees.
 // The order proof: pool.connect is wrapped so the transaction's statements,
-// its release and the upload are logged in one sequence with the reaccrueDuty
-// call. Rows are removed by the ids recorded here, ledger and drafts before
-// proposals, drafts before the temp users (approved_by has no ON DELETE).
+// its release, the uploads, the email and the Inbox cache are logged in one
+// sequence. Rows are removed by the ids recorded here, ledger and drafts
+// (their proofs cascade) before proposals, then the clients and temp users.
 //
 // Run: node --test server/routes/proposals/menuDraftApprove.test.js
 const { test, before, after, beforeEach, afterEach } = require('node:test');
@@ -48,6 +52,32 @@ require.cache[storagePath].exports = {
   readFile: async (key) => { const f = r2.get(key); if (!f) throw new NotFoundError('File not found.'); return f; },
   getSignedUrl: async () => { throw new Error('menuDraftApprove.test: nothing may presign'); },
 };
+
+// ── The email: a stub whose outcome each test sets ──────────────────────────
+const emailPath = require.resolve('../../utils/email');
+const realEmail = require('../../utils/email');
+const sent = [];
+let emailOutcome = 'sent';
+require.cache[emailPath].exports = {
+  ...realEmail,
+  sendEmail: async (opts) => {
+    events.push('email');
+    sent.push(opts);
+    if (emailOutcome === 'throw') throw new Error('Resend refused it for proof-route@example.com');
+    return { id: emailOutcome === 'skipped' ? 'dev-skipped' : `re_test_${sent.length}` };
+  },
+};
+
+// ── Sentry: recorded, never sent ────────────────────────────────────────────
+const sentryModule = require('@sentry/node');
+const savedCapture = sentryModule.captureException;
+const captured = [];
+sentryModule.captureException = (err, ctx) => { captured.push({ message: err && err.message, ctx }); };
+
+// ── The Inbox cache: each clear is logged ───────────────────────────────────
+const inboxCache = require('../../utils/inbox/cache');
+const realInvalidate = inboxCache.invalidate;
+inboxCache.invalidate = () => { events.push('invalidate'); realInvalidate(); };
 
 // ── The job's queued runs ───────────────────────────────────────────────────
 const jobPath = require.resolve('../../utils/menuArtJob');
@@ -87,16 +117,16 @@ require.cache[printFilePath].exports = {
   },
 };
 
-// derivePrintState can be made to throw once, after COMMIT (the body is built
-// from it), to prove a failure there neither rolls back nor skips reaccrual.
-const printStatePath = require.resolve('../../utils/menuPrintState');
-const realPrintState = require('../../utils/menuPrintState');
-let throwPrintState = false;
-require.cache[printStatePath].exports = {
-  ...realPrintState,
-  derivePrintState: (...args) => {
-    if (throwPrintState) { throwPrintState = false; throw new Error('injected after COMMIT'); }
-    return realPrintState.derivePrintState(...args);
+// readReviewBlocks can be made to throw once, after COMMIT (the body is built
+// from it), to prove a failure there never rolls back the approval.
+const readPath = require.resolve('../../utils/menuDraftRead');
+const realRead = require('../../utils/menuDraftRead');
+let throwBlocks = false;
+require.cache[readPath].exports = {
+  ...realRead,
+  readReviewBlocks: (...args) => {
+    if (throwBlocks) { throwBlocks = false; return Promise.reject(new Error('injected after COMMIT')); }
+    return realRead.readReviewBlocks(...args);
   },
 };
 
@@ -123,12 +153,24 @@ pool.connect = function connect(...args) {
     return client;
   });
 };
+// pool.query: the email status write can be made to fail once.
+let failPoolOn = null;
+const realPoolQuery = pool.query;
+pool.query = function query(text, ...rest) {
+  const sql = String(typeof text === 'string' ? text : (text && text.text) || '').replace(/\s+/g, ' ').trim();
+  if (failPoolOn && failPoolOn.test(sql)) { failPoolOn = null; return Promise.reject(new Error('injected pool failure')); }
+  return realPoolQuery.call(this, text, ...rest);
+};
 
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter, beoReadLimiter } = require('../../middleware/rateLimiters');
 const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
+const { menuProofUrl } = require('../../utils/urls');
+const { buildEmailLogEntry, logClientMessage } = require('../../utils/messageLog');
 const approveRouter = require('./menuDraftApprove');
+const releaseRouter = require('./menuDraftRelease');
 const menuDraftsRouter = require('./menuDrafts');
 const menuPrintRouter = require('./menuPrint');
 
@@ -143,18 +185,21 @@ const users = {};
 const tokens = {};
 const proposalIds = [];
 const planIds = [];
+const clientIds = [];
 const img = {};
 const providerCalls = { openai: 0, gemini: 0, words: 0 };
 let server;
 let baseUrl;
 let realFetch;
 let tripwire = 0;
+let clientSeq = 0;
+let todayYmd;
 
 // ── HTTP ────────────────────────────────────────────────────────────────────
-function multipart(fields, file) {
+function multipart(fields, files) {
   const boundary = `----approve${crypto.randomBytes(8).toString('hex')}`;
   const parts = Object.entries(fields || {}).map(([k, v]) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
-  if (file) {
+  for (const file of files || []) {
     parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name}"\r\n`
       + 'Content-Type: application/octet-stream\r\n\r\n'), file.bytes, Buffer.from('\r\n'));
   }
@@ -174,7 +219,7 @@ async function request(method, urlPath, { token = tokens.admin, json, form } = {
     let payload = null;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     if (form) {
-      const { body, boundary } = multipart(form.fields, form.file);
+      const { body, boundary } = multipart(form.fields, form.files);
       payload = body;
       headers['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
     } else if (json !== undefined) {
@@ -198,14 +243,36 @@ async function request(method, urlPath, { token = tokens.admin, json, form } = {
 }
 
 const base = (id) => `/api/proposals/${id}/menu-draft`;
-function approve(ev, { version = ev.version, artVersion = ev.artVersion, expected = '', expectedRev, file = img.menu, token, omit = [] } = {}) {
-  const fields = { version: String(version), art_version: String(artVersion), expected_print_key: expected };
+// What a page loaded now shows of the draft's latest proof: { id, answer }, '' each for none.
+async function seenNow(ev) {
+  if (!ev.draftId) return { id: '', answer: '' };
+  const { rows: [p] } = await pool.query(
+    'SELECT id, answer FROM menu_proofs WHERE draft_id = $1 AND superseded_at IS NULL ORDER BY sent_at DESC, id DESC LIMIT 1', [ev.draftId]);
+  return { id: p ? p.id : '', answer: p && p.answer ? p.answer : '' };
+}
+// seen: what the page showed of the latest proof (default: what a page loaded now shows).
+async function approve(ev, {
+  version = ev.version, artVersion = ev.artVersion, expected = '', expectedRev, file = img.menu, proof = img.proof, token, omit = [], seen,
+} = {}) {
+  const shown = seen || await seenNow(ev);
+  const fields = {
+    version: String(version), art_version: String(artVersion), expected_print_key: expected,
+    seen_proof_id: String(shown.id), seen_proof_answer: shown.answer,
+  };
   if (expectedRev !== undefined) fields.expected_planner_image_rev = expectedRev;
   for (const k of omit) delete fields[k];
-  return request('POST', `${base(ev.id)}/approve`, { token, form: { fields, file: file && { field: 'file', name: 'menu.jpg', bytes: file } } });
+  const files = [];
+  if (file) files.push({ field: 'file', name: 'menu.jpg', bytes: file });
+  if (proof) files.push({ field: 'proof', name: 'proof.jpg', bytes: proof });
+  return request('POST', `${base(ev.id)}/approve`, { token, form: { fields, files } });
 }
-const printOf = async (id) => (await request('GET', base(id))).body.print;
-const briefRev = async (id) => (await request('GET', base(id))).body.brief.planner_image_rev;
+const release = async (ev, body = { version: ev.version, art_version: ev.artVersion }) => {
+  const shown = await seenNow(ev);
+  return request('POST', `${base(ev.id)}/release`, { json: { seen_proof_id: shown.id, seen_proof_answer: shown.answer, ...body } });
+};
+const getDraft = async (id) => (await request('GET', base(id))).body;
+const printOf = async (id) => (await getDraft(id)).print;
+const briefRev = async (id) => (await getDraft(id)).brief.planner_image_rev;
 
 async function idle() {
   for (let quiet = 0; quiet < 3;) {
@@ -224,15 +291,31 @@ function drink(i, { hidden = false, hasArt = true } = {}) {
   };
 }
 
-// An event with a plan and a finished draft at version 3, art_version 5.
-// pieces maps a piece key to its status ('none' leaves the row out, 'done-nokey'
-// is done with no stored key); by default the background and every drink with
-// art are done.
+// A client on a reserved domain unless email is null or a placeholder.
+async function newClient({ email = 'auto', emailStatus = null } = {}) {
+  clientSeq += 1;
+  const address = email === 'auto' ? `menuapprove-client-${NONCE}-${clientSeq}@example.com` : email;
+  const c = await pool.query('INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING id',
+    [`Robin Zqapprove${clientSeq}`, address]);
+  clientIds.push(c.rows[0].id);
+  if (emailStatus) await pool.query('UPDATE clients SET email_status = $2 WHERE id = $1', [c.rows[0].id, emailStatus]);
+  return { id: c.rows[0].id, email: address };
+}
+
+// An event with a client, a plan and a finished draft at version 3,
+// art_version 5, twenty days out. pieces maps a piece key to its status
+// ('none' leaves the row out, 'done-nokey' is done with no stored key); by
+// default the background and every drink with art are done.
 async function newEvent({
   drinks = [drink(0), drink(1)], role = 'ignore', logo = null, pieces = {}, words = 'done',
   wordsBeat = new Date().toISOString(), printKey = null, notRequired = false,
+  email = 'auto', emailStatus = null, noClient = false, offset = 20, noDate = false, status = 'confirmed',
 } = {}) {
-  const p = await pool.query("INSERT INTO proposals (status, event_type) VALUES ('confirmed', 'birthday-party') RETURNING id");
+  const client = noClient ? null : await newClient({ email, emailStatus });
+  const p = await pool.query(
+    `INSERT INTO proposals (status, event_type, client_id, event_date)
+     VALUES ($1, 'birthday-party', $2, CASE WHEN $3::boolean THEN NULL ELSE $4::date + $5::int END) RETURNING id`,
+    [status, client && client.id, noDate, todayYmd, offset]);
   const id = p.rows[0].id;
   proposalIds.push(id);
   const selections = { menuStyle: 'custom', menuTheme: 'Garden party', customCocktails: NAMES.slice(0, 2), ...(logo ? { _logoFilename: logo } : {}) };
@@ -248,26 +331,28 @@ async function newEvent({
   const statuses = { background: 'done' };
   for (const dr of drinks) if (dr.has_art) statuses[dr.key] = 'done';
   Object.assign(statuses, pieces);
-  for (const [key, status] of Object.entries(statuses)) {
-    if (status === 'none') continue;
-    const r2Key = status === 'done' ? `menu-art/${id}/${runId}/${key.replace(':', '-')}-${crypto.randomUUID()}.png` : null;
-    const stored = status === 'done-nokey' ? 'done' : status;
+  for (const [key, st] of Object.entries(statuses)) {
+    if (st === 'none') continue;
+    const r2Key = st === 'done' ? `menu-art/${id}/${runId}/${key.replace(':', '-')}-${crypto.randomUUID()}.png` : null;
+    const stored = st === 'done-nokey' ? 'done' : st;
     await pool.query(
       `INSERT INTO menu_draft_pieces (draft_id, piece_key, run_id, status, r2_key, provider, model, drawn_count)
        VALUES ($1, $2, $3, $4, $5, 'openai', 'approve-test-model', $6)`, [draftId, key, runId, stored, r2Key, stored === 'done' ? 1 : 0]);
   }
   await pool.query('UPDATE proposals SET menu_print_key = $2, menu_not_required = $3 WHERE id = $1', [id, printKey, notRequired]);
-  return { id, planId: plan.rows[0].id, draftId, version: 3, artVersion: 5 };
+  return { id, planId: plan.rows[0].id, draftId, version: 3, artVersion: 5, client };
 }
 
 const draftOf = async (id) => (await pool.query('SELECT * FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
-const activityOf = async (id) => (await pool.query(
-  "SELECT actor_type, actor_id, details FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'menu_approved' ORDER BY id", [id])).rows;
+const proofsOf = async (id) => (await pool.query('SELECT * FROM menu_proofs WHERE proposal_id = $1 ORDER BY id', [id])).rows;
+const activityOf = async (id, actions = ['menu_approved', 'menu_proof_sent']) => (await pool.query(
+  'SELECT action, actor_type, actor_id, details FROM proposal_activity_log WHERE proposal_id = $1 AND action = ANY($2::text[]) ORDER BY id',
+  [id, actions])).rows;
 const setLogo = (planId, logo) => pool.query(
   `UPDATE drink_plans SET selections = CASE WHEN $2::text IS NULL THEN selections - '_logoFilename'
      ELSE selections || jsonb_build_object('_logoFilename', $2::text) END WHERE id = $1`, [planId, logo]);
 
-// Nothing approved, nothing posted, nothing re-accrued.
+// Nothing approved, nothing posted, no proof, no email, nothing re-accrued.
 async function assertUntouched(ev, { printKey = null, notRequired = false } = {}) {
   const draft = await draftOf(ev.id);
   for (const col of ['approved_version', 'approved_art_version', 'approved_print_key', 'approved_planner_image_key', 'approved_at', 'approved_by']) {
@@ -275,6 +360,8 @@ async function assertUntouched(ev, { printKey = null, notRequired = false } = {}
   }
   assert.deepEqual(await keyRow(ev.id), { menu_print_key: printKey, menu_not_required: notRequired });
   assert.deepEqual(await activityOf(ev.id), []);
+  assert.deepEqual(await proofsOf(ev.id), [], 'no proof');
+  assert.deepEqual(sent, [], 'no email');
   await idle();
   assert.deepEqual(reaccrued, [], 'no reaccrual');
 }
@@ -303,12 +390,16 @@ function stubProviders() {
 before(async () => {
   realFetch = globalThis.fetch;
   globalThis.fetch = (url) => { tripwire += 1; return Promise.reject(new Error(`network tripwire: ${String(url)}`)); };
+  todayYmd = chicagoTodayYmd();
   const jpeg = (w, h) => sharp({ create: { width: w, height: h, channels: 3, background: { r: 30, g: 60, b: 50 } } }).jpeg({ quality: 80 }).toBuffer();
   img.menu = await jpeg(2400, 3000);
+  img.proof = await jpeg(1200, 1556);
   img.short = await jpeg(2400, 2999);
   img.landscape = await jpeg(3000, 2400);
   img.small = await jpeg(800, 1000);
+  img.proofShort = await jpeg(1200, 1500);
   img.png = await sharp({ create: { width: 2400, height: 3000, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
+  img.proofPng = await sharp({ create: { width: 1200, height: 1556, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
   img.background = await jpeg(320, 400);
   process.env.OPENAI_API_KEY = 'sk-test-not-real';
   process.env.GEMINI_API_KEY = 'gem-test-not-real';
@@ -328,10 +419,11 @@ before(async () => {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   app.use(fileUpload({ limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 10 * 1024 * 1024 }, abortOnLimit: true, useTempFiles: false }));
-  // The production mount order (routes/proposals/index.js): menuPrint, menuDrafts, then approve.
+  // The production mount order (routes/proposals/index.js): menuPrint, menuDrafts, approve, release.
   app.use('/api/proposals', menuPrintRouter);
   app.use('/api/proposals', menuDraftsRouter);
   app.use('/api/proposals', approveRouter);
+  app.use('/api/proposals', releaseRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -359,15 +451,20 @@ after(async () => {
   }
   if (planIds.length) await pool.query('DELETE FROM drink_plans WHERE id = ANY($1::int[])', [planIds]);
   if (proposalIds.length) await pool.query('DELETE FROM proposals WHERE id = ANY($1::int[])', [proposalIds]);
+  if (clientIds.length) await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [clientIds]);
   const userIds = Object.values(users);
   if (userIds.length) await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [userIds]);
   await new Promise((resolve) => { server.close(resolve); });
   pool.connect = realConnect;
+  pool.query = realPoolQuery;
   await pool.end();
+  sentryModule.captureException = savedCapture;
+  inboxCache.invalidate = realInvalidate;
   require.cache[storagePath].exports = realStorage;
+  require.cache[emailPath].exports = realEmail;
   require.cache[jobPath].exports = realJob;
   require.cache[printFilePath].exports = realPrintFile;
-  require.cache[printStatePath].exports = realPrintState;
+  require.cache[readPath].exports = realRead;
   if (savedAccrual) require.cache[accrualPath] = savedAccrual;
   else delete require.cache[accrualPath];
 });
@@ -375,15 +472,18 @@ after(async () => {
 beforeEach(() => {
   stubProviders();
   failOn = null;
-  throwPrintState = false;
+  failPoolOn = null;
+  throwBlocks = false;
+  emailOutcome = 'sent';
   tripwire = 0;
-  for (const list of [events, uploads, reaccrued, accrualSeen]) list.length = 0;
+  for (const list of [events, uploads, reaccrued, accrualSeen, sent, captured]) list.length = 0;
   for (const k of Object.keys(providerCalls)) providerCalls[k] = 0;
 });
 
 afterEach(async () => {
   await idle();
   failOn = null;
+  failPoolOn = null;
   assert.equal(tripwire, 0, 'a request reached global fetch');
   assert.equal(providerCalls.gemini + providerCalls.words, 0, 'no words or Gemini call');
 });
@@ -399,6 +499,7 @@ test('auth: no token is 401 and staff is 403, uploading nothing; a manager appro
   const res = await approve(ev, { token: tokens.manager });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal((await draftOf(ev.id)).approved_by, users.manager);
+  assert.equal((await proofsOf(ev.id))[0].sent_by, users.manager);
 });
 
 test('ids: not digits is 400; an unknown proposal, one past int4, or one with no draft is 404, before any upload', async () => {
@@ -414,7 +515,7 @@ test('ids: not digits is 400; an unknown proposal, one past int4, or one with no
   assert.deepEqual(uploads, []);
 });
 
-// ── The file and the fields ─────────────────────────────────────────────────
+// ── The two files and the fields ────────────────────────────────────────────
 
 test('file: only a JPEG by its magic bytes; PNG, PDF, text and no file are 400s and nothing is uploaded', async () => {
   const ev = await newEvent();
@@ -433,7 +534,7 @@ test('file: only a JPEG by its magic bytes; PNG, PDF, text and no file are 400s 
 
 test('file: sharp must read exactly 2400 x 3000; other sizes and an unreadable JPEG are 400s', async () => {
   const ev = await newEvent();
-  for (const bytes of [img.short, img.landscape, img.small]) {
+  for (const bytes of [img.short, img.landscape, img.small, img.proof]) {
     const res = await approve(ev, { file: bytes });
     assert.equal(res.status, 400);
     assert.match(res.body.fieldErrors.file, /2400 x 3000/);
@@ -446,12 +547,34 @@ test('file: sharp must read exactly 2400 x 3000; other sizes and an unreadable J
   await assertUntouched(ev);
 });
 
+test('proof: missing, not a JPEG, the wrong size, over 3 MB, or unreadable is a 400 on proof, and nothing is uploaded or written', async () => {
+  const ev = await newEvent();
+  const sos = img.proof.indexOf(Buffer.from([0xff, 0xda]));
+  const cut = Buffer.concat([img.proof.subarray(0, sos + 14), Buffer.from([0xff, 0xd9])]);
+  const big = Buffer.concat([img.proof, Buffer.alloc(3 * 1024 * 1024, 0x11)]);
+  const cases = [
+    [null, /Attach the proof/], [img.proofPng, /JPEG/], [Buffer.from('not a proof'), /JPEG/],
+    [img.proofShort, /1200 x 1556/], [img.menu, /1200 x 1556/], [big, /3 MB/], [cut, /could not be read/],
+  ];
+  for (const [proof, re] of cases) {
+    const res = await approve(ev, { proof });
+    assert.equal(res.status, 400, String(re));
+    assert.match(res.body.fieldErrors.proof, re);
+  }
+  assert.deepEqual(uploads, [], 'neither file reached R2');
+  await assertUntouched(ev);
+});
+
 test('fields: version, art_version and expected_print_key are required and bounded', async () => {
   const ev = await newEvent();
   const cases = [
     [{ omit: ['version'] }, 'version'], [{ version: '0' }, 'version'], [{ version: '1.5' }, 'version'],
     [{ version: '99999999999' }, 'version'], [{ omit: ['art_version'] }, 'art_version'], [{ artVersion: '-1' }, 'art_version'],
     [{ omit: ['expected_print_key'] }, 'expected_print_key'], [{ expected: 'x'.repeat(513) }, 'expected_print_key'],
+    // What the page saw of the latest proof: digits or empty, an answer or empty, both required.
+    [{ omit: ['seen_proof_id'] }, 'seen_proof_id'], [{ omit: ['seen_proof_answer'] }, 'seen_proof_answer'],
+    [{ seen: { id: '12x', answer: '' } }, 'seen_proof_id'], [{ seen: { id: '0', answer: '' } }, 'seen_proof_id'],
+    [{ seen: { id: '-3', answer: '' } }, 'seen_proof_id'], [{ seen: { id: '', answer: 'maybe' } }, 'seen_proof_answer'],
   ];
   for (const [opts, field] of cases) {
     const res = await approve(ev, opts);
@@ -505,7 +628,7 @@ test('pieces the layout does not use never block: a hidden drink with art, a dri
   const none = await newEvent({ drinks: [drink(0, { hasArt: false }), drink(1, { hidden: true, hasArt: false })] });
   const res = await approve(none);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.equal(res.body.print.state, 'approved');
+  assert.equal(res.body.print.state, 'held');
   const empty = await newEvent({ drinks: [] });
   assert.equal((await approve(empty)).status, 200);
 });
@@ -527,90 +650,321 @@ test('expected_print_key that no longer matches is 409 MENU_PRINT_CHANGED, stamp
   await assertUntouched(empty);
 });
 
-// ── Success, and its order ──────────────────────────────────────────────────
+// ── The hold, the proof and the email ───────────────────────────────────────
 
-test('success: posts the key inside the transaction, clears menu_not_required, stamps the posted versions, logs the activity, reads approved', async () => {
-  const ev = await newEvent({ notRequired: true });
-  const res = await approve(ev);
-  assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.equal(uploads.length, 1);
-  const key = uploads[0];
-  assert.match(key, new RegExp(`^menu-print/${ev.id}/[0-9a-f-]{36}\\.jpg$`));
-  assert.ok(r2.get(key).buffer.equals(img.menu), 'the posted bytes were uploaded as is');
-  assert.deepEqual(await keyRow(ev.id), { menu_print_key: key, menu_not_required: false });
-
-  const draft = await draftOf(ev.id);
-  assert.equal(draft.approved_version, 3);
-  assert.equal(draft.approved_art_version, 5);
-  assert.equal(draft.approved_print_key, key);
-  assert.equal(draft.approved_planner_image_key, null, 'role ignore stamps no planner image key');
-  assert.equal(draft.approved_by, users.admin);
-  assert.ok(draft.approved_at instanceof Date);
-  assert.equal(draft.version, 3, 'approving is not an edit');
-
-  const log = await activityOf(ev.id);
-  assert.equal(log.length, 1);
-  assert.equal(log[0].actor_type, 'admin');
-  assert.equal(log[0].actor_id, users.admin);
-  assert.deepEqual(log[0].details, { draft_id: ev.draftId, version: 3, art_version: 5, print_key: key });
-
-  assert.equal(res.body.version, 3);
-  assert.equal(res.body.art_version, 5);
-  assert.equal(res.body.print.state, 'approved');
-  assert.equal(res.body.print.print_key, key);
-  assert.equal(res.body.print.approved_file_in_use, true);
-  assert.equal(res.body.print.approved_by_name, `menuapprove-route-admin-${NONCE}@example.com`);
-
-  const print = await printOf(ev.id);
-  assert.equal(print.state, 'approved');
-  assert.equal(print.print_key, key, 'the GET hands back the key a later Approve posts as expected_print_key');
-  assert.equal(print.approved_by_name, `menuapprove-route-admin-${NONCE}@example.com`);
-  assert.equal(print.approved_file_in_use, true);
-});
-
-test('order: upload before any client, the key set inside the transaction, reaccrueDuty once and only after COMMIT and release', async () => {
+// The hold test (acceptance): on main Approve set menu_print_key; now it holds the file.
+test('the hold: Approve stamps the held file and never touches menu_print_key or the duty line', async () => {
   const ev = await newEvent();
   const res = await approve(ev);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  const key = uploads[0];
+  assert.equal(uploads.length, 2);
+  const [key, proofKey] = uploads;
+  assert.match(key, new RegExp(`^menu-print/${ev.id}/[0-9a-f-]{36}\\.jpg$`));
+  assert.match(proofKey, new RegExp(`^menu-proof/${ev.id}/[0-9a-f-]{36}\\.jpg$`));
+  assert.ok(r2.get(key).buffer.equals(img.menu), 'the print bytes were uploaded as is');
+  assert.ok(r2.get(proofKey).buffer.equals(img.proof), 'the proof bytes were uploaded as is');
+  assert.deepEqual(await keyRow(ev.id), { menu_print_key: null, menu_not_required: false }, 'staff see no file');
+  assert.ok(!events.some((e) => /^sql:UPDATE proposals SET menu_print_key/.test(e)), 'setMenuPrintKey never ran');
+  await idle();
+  assert.deepEqual(reaccrued, [], 'no duty re-accrual');
+  assert.deepEqual(accrualSeen, []);
+
+  const draft = await draftOf(ev.id);
+  assert.deepEqual([draft.approved_version, draft.approved_art_version, draft.approved_print_key], [3, 5, key]);
+  assert.equal(draft.approved_planner_image_key, null, 'role ignore stamps no planner image key');
+  assert.equal(draft.approved_by, users.admin);
+  assert.ok(draft.approved_at instanceof Date);
+  assert.deepEqual([draft.released_print_key, draft.released_at, draft.released_by, draft.released_via], [null, null, null, null]);
+  assert.equal(draft.version, 3, 'approving is not an edit');
+
+  const print = await printOf(ev.id);
+  assert.deepEqual([print.state, print.held, print.live, print.print_key], ['held', true, 'none', null]);
+  assert.deepEqual([print.approved_version, print.approved_art_version], [3, 5]);
+});
+
+test('success: one proof, pending then sent, the two activity rows, and the response carries the GET\'s proof and print blocks', async () => {
+  const ev = await newEvent();
+  const res = await approve(ev);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const [proof] = await proofsOf(ev.id);
+  assert.deepEqual([proof.draft_id, proof.version, proof.art_version, proof.r2_key, proof.sent_by], [ev.draftId, 3, 5, uploads[1], users.admin]);
+  assert.deepEqual([proof.email_status, proof.sent_to, proof.answer, proof.superseded_at, proof.withdrawn_at], ['sent', ev.client.email, null, null, null]);
+  const log = await activityOf(ev.id);
+  assert.deepEqual(log, [
+    { action: 'menu_approved', actor_type: 'admin', actor_id: users.admin, details: { draft_id: ev.draftId, version: 3, art_version: 5, print_key: uploads[0] } },
+    { action: 'menu_proof_sent', actor_type: 'admin', actor_id: users.admin, details: { proof_id: proof.id, draft_id: ev.draftId, version: 3, art_version: 5 } },
+  ]);
+  assert.ok(!JSON.stringify(log).includes('email'), 'the email outcome lives on the proof row only');
+
+  assert.deepEqual([res.body.version, res.body.art_version], [3, 5]);
+  const get = await getDraft(ev.id);
+  assert.deepEqual(res.body.proof, get.proof);
+  assert.deepEqual(res.body.print, get.print);
+  assert.equal(res.body.proof.url, menuProofUrl(proof.token));
+  assert.deepEqual([res.body.proof.state, res.body.proof.email_status, res.body.proof.stale], ['open', 'sent', false]);
+  assert.equal(res.body.print.state, 'held');
+});
+
+test('the email: one send to the live address after the release, first name only, the link, messageType menu_proof and no sentBy', async () => {
+  const ev = await newEvent();
+  const res = await approve(ev);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(sent.length, 1);
+  const [mail] = sent;
+  const [proof] = await proofsOf(ev.id);
+  assert.equal(mail.to, ev.client.email);
+  assert.equal(mail.subject, 'Your bar menu is ready for a look');
+  assert.deepEqual(mail.meta, { messageType: 'menu_proof', clientId: ev.client.id, proposalId: ev.id },
+    'no sentBy, so the Inbox never reads it as a reply');
+  assert.ok(!('sentBy' in mail.meta));
+  for (const body of [mail.html, mail.text]) {
+    assert.match(body, /Hi Robin,/);
+    assert.ok(!/Zqapprove/.test(body), 'no surname');
+    assert.ok(body.includes(menuProofUrl(proof.token)));
+    assert.match(body, /bar menu for your Birthday Party\./);
+    assert.match(body, /The link works until your event\./);
+    assert.ok(!/\d{4}-\d{2}-\d{2}|\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/.test(body), 'no event date');
+  }
+  const at = (pred) => events.findIndex(pred);
+  assert.ok(at((e) => e === 'release') < at((e) => e === 'email'), 'the email runs after the transaction client is released');
+  assert.ok(at((e) => e === 'email') < at((e) => e === 'invalidate'), 'then the Inbox cache is cleared');
+  assert.ok(at((e) => e === 'sql:COMMIT') < at((e) => e === 'email'));
+});
+
+// The message log files a send with no proposalId under the client's newest proposal.
+test("the email's log entry is filed under the proof's own event when the client has a newer one", async () => {
+  const ev = await newEvent();
+  const { rows: [newer] } = await pool.query(
+    `INSERT INTO proposals (status, event_type, client_id, created_at)
+     VALUES ('confirmed', 'birthday-party', $1, NOW() + INTERVAL '1 minute') RETURNING id`, [ev.client.id]);
+  proposalIds.push(newer.id);
+  assert.equal((await approve(ev)).status, 200);
+  const [mail] = sent;
+  // The ledger write the real sendEmail makes once a send lands (messageLog.js), from the meta the route passed.
+  await logClientMessage(buildEmailLogEntry({ to: mail.to, subject: mail.subject, meta: mail.meta, result: { id: 're_test_log' } }));
+  const { rows } = await pool.query('SELECT proposal_id, message_type, sent_by FROM message_log WHERE client_id = $1', [ev.client.id]);
+  assert.deepEqual(rows, [{ proposal_id: ev.id, message_type: 'menu_proof', sent_by: null }], 'never the newer proposal');
+});
+
+test('the email outcomes: skipped for a send the gate turned off, failed on a throw (a fixed Sentry line), sent_to only when sent', async () => {
+  emailOutcome = 'skipped';
+  const skip = await newEvent();
+  assert.equal((await approve(skip)).status, 200);
+  assert.deepEqual((await proofsOf(skip.id)).map((p) => [p.email_status, p.sent_to]), [['skipped', null]]);
+
+  emailOutcome = 'throw';
+  const fail = await newEvent();
+  const res = await approve(fail);
+  assert.equal(res.status, 200, 'a failed send never fails the request');
+  assert.deepEqual((await proofsOf(fail.id)).map((p) => [p.email_status, p.sent_to]), [['failed', null]]);
+  assert.equal(res.body.proof.email_status, 'failed');
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].message, 'menu proof email failed');
+  assert.ok(!JSON.stringify(captured).includes('@example.com'), 'no address or provider text reaches Sentry');
+});
+
+test('no address: no email on file, an .invalid placeholder, or no client at all writes no_address and sends nothing', async () => {
+  for (const opts of [{ email: null }, { email: `someone-${NONCE}@placeholder.invalid` }, { noClient: true }]) {
+    sent.length = 0;
+    const ev = await newEvent(opts);
+    const res = await approve(ev);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const [proof] = await proofsOf(ev.id);
+    assert.deepEqual([proof.email_status, proof.sent_to], ['no_address', null], JSON.stringify(opts));
+    assert.deepEqual(sent, [], 'nothing sent');
+    assert.equal(res.body.proof.email_status, 'no_address');
+    assert.equal(res.body.proof.url, menuProofUrl(proof.token), 'the link still exists to copy');
+  }
+});
+
+test('the immediate-send gate: an address marked bad writes suppressed and sends nothing', async () => {
+  const ev = await newEvent({ emailStatus: 'bad' });
+  const res = await approve(ev);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual((await proofsOf(ev.id)).map((p) => p.email_status), ['suppressed']);
+  assert.deepEqual(sent, []);
+});
+
+test('a proof whose status write failed stays pending, and reads as failed in the GET once 10 minutes have passed', async () => {
+  const ev = await newEvent();
+  failPoolOn = /^UPDATE menu_proofs SET email_status/;
+  const res = await approve(ev);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(sent.length, 1, 'the email went out');
+  assert.equal((await proofsOf(ev.id))[0].email_status, 'pending');
+  assert.equal((await getDraft(ev.id)).proof.email_status, 'pending');
+  assert.ok(captured.some((c) => c.message === 'menu proof email status not written'));
+  await pool.query("UPDATE menu_proofs SET sent_at = NOW() - INTERVAL '11 minutes' WHERE proposal_id = $1", [ev.id]);
+  assert.equal((await getDraft(ev.id)).proof.email_status, 'failed');
+});
+
+test('approving again supersedes the previous proof; the same pair within 10 minutes is MENU_PROOF_ALREADY_SENT and sends nothing; after 10 minutes it sends', async () => {
+  const ev = await newEvent();
+  assert.equal((await approve(ev)).status, 200);
+  sent.length = 0;
+  const again = await approve(ev);
+  assert.deepEqual([again.status, again.body.code], [409, 'MENU_PROOF_ALREADY_SENT'], JSON.stringify(again.body));
+  assert.deepEqual(sent, [], 'one email');
+  assert.equal((await proofsOf(ev.id)).length, 1, 'one proof');
+  assert.equal((await activityOf(ev.id)).length, 2, 'no second pair of activity rows');
+
+  await pool.query("UPDATE menu_proofs SET sent_at = NOW() - INTERVAL '11 minutes' WHERE proposal_id = $1", [ev.id]);
+  const later = await approve(ev);
+  assert.equal(later.status, 200, JSON.stringify(later.body));
+  const proofs = await proofsOf(ev.id);
+  assert.equal(proofs.length, 2);
+  assert.ok(proofs[0].superseded_at instanceof Date, 'the old link is superseded');
+  assert.equal(proofs[1].superseded_at, null);
+  assert.equal(sent.length, 1, 'a fresh link went out');
+  assert.equal(later.body.proof.id, proofs[1].id);
+  assert.deepEqual(later.body.proof.history.map((h) => [h.id, h.state]), [[proofs[0].id, 'superseded']]);
+
+  // A new pair is never a repeat, and supersedes the open one at once.
+  await pool.query('UPDATE menu_drafts SET version = 4 WHERE id = $1', [ev.draftId]);
+  const fresh = await approve({ ...ev, version: 4 });
+  assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+  assert.equal((await proofsOf(ev.id)).filter((p) => p.superseded_at === null).length, 1, 'one live proof');
+});
+
+// The page does not poll: one loaded before the client answered must not supersede that answer unseen.
+test('409 MENU_PROOF_CHANGED when the latest proof is not what the page saw, superseding nothing; a retried post is still MENU_PROOF_ALREADY_SENT', async () => {
+  const ev = await newEvent();
+  // A post retried by a page that never refetched (it still saw no proof) reads as the first one landing.
+  assert.equal((await approve(ev, { seen: { id: '', answer: '' } })).status, 200);
+  const retried = await approve(ev, { seen: { id: '', answer: '' } });
+  assert.deepEqual([retried.status, retried.body.code], [409, 'MENU_PROOF_ALREADY_SENT']);
+  const [first] = await proofsOf(ev.id);
+  await pool.query("UPDATE menu_proofs SET sent_at = NOW() - INTERVAL '11 minutes' WHERE id = $1", [first.id]);
+  await pool.query("UPDATE menu_proofs SET answer = 'changes', answer_note = 'More gin', answered_at = NOW() WHERE id = $1", [first.id]);
+  sent.length = 0;
+  for (const seen of [{ id: String(first.id), answer: '' }, { id: '', answer: '' }, { id: String(first.id + 1000), answer: 'changes' }]) {
+    const res = await approve(ev, { seen });
+    assert.deepEqual([res.status, res.body.code, res.body.error], [409, 'MENU_PROOF_CHANGED', "The client's review changed. Refresh to see it."],
+      JSON.stringify(seen));
+  }
+  const proofs = await proofsOf(ev.id);
+  assert.equal(proofs.length, 1, 'no new proof');
+  assert.deepEqual([proofs[0].superseded_at, proofs[0].answer], [null, 'changes'], 'the change request is not superseded');
+  assert.deepEqual(sent, [], 'no email');
+  // The page that saw the change request sends knowingly.
+  const ok = await approve(ev, { seen: { id: String(first.id), answer: 'changes' } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.ok((await proofsOf(ev.id))[0].superseded_at instanceof Date);
+});
+
+test('a withdrawn proof of the same pair is no repeat: approving again sends', async () => {
+  const ev = await newEvent();
+  assert.equal((await approve(ev)).status, 200);
+  await pool.query('UPDATE menu_proofs SET withdrawn_at = NOW() WHERE proposal_id = $1', [ev.id]);
+  const res = await approve(ev);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal((await proofsOf(ev.id)).length, 2);
+});
+
+test('the send cap: a sixth approval in 24 hours is 429 MENU_PROOF_SEND_CAP and writes nothing', async () => {
+  const ev = await newEvent();
+  for (let i = 0; i < 5; i += 1) {
+    await pool.query(
+      `INSERT INTO menu_proofs (draft_id, proposal_id, version, art_version, r2_key, email_status, sent_at, superseded_at)
+       VALUES ($1, $2, 1, $3, $4, 'sent', NOW() - INTERVAL '20 hours', NOW())`, [ev.draftId, ev.id, i, `menu-proof/${ev.id}/cap-${i}.jpg`]);
+  }
+  const res = await approve(ev);
+  assert.deepEqual([res.status, res.body.code, res.body.error], [429, 'MENU_PROOF_SEND_CAP', "You've sent this menu 5 times today. Try again tomorrow."]);
+  assert.equal((await proofsOf(ev.id)).length, 5);
+  assert.deepEqual(sent, []);
+  assert.equal((await draftOf(ev.id)).approved_print_key, null);
+  // Older than 24 hours no longer counts.
+  await pool.query("UPDATE menu_proofs SET sent_at = NOW() - INTERVAL '25 hours' WHERE proposal_id = $1 AND version = 1 AND art_version = 0", [ev.id]);
+  assert.equal((await approve(ev)).status, 200);
+});
+
+test('a past event is 409 MENU_EVENT_PASSED before any upload; the event day itself and no date approve', async () => {
+  const past = await newEvent({ offset: -1 });
+  const res = await approve(past);
+  assert.deepEqual([res.status, res.body.code, res.body.error], [409, 'MENU_EVENT_PASSED', "This event has passed, so there's nothing to send."]);
+  assert.deepEqual(uploads, []);
+  await assertUntouched(past);
+  for (const opts of [{ offset: 0 }, { noDate: true }]) {
+    const ev = await newEvent(opts);
+    assert.equal((await approve(ev)).status, 200, JSON.stringify(opts));
+  }
+  const undated = (await proofsOf(proposalIds[proposalIds.length - 1]))[0];
+  assert.equal(undated.email_status, 'sent');
+  assert.match(sent[sent.length - 1].text, /The link works for 30 days\./, 'no event date: the 30-day line');
+});
+
+test('an archived proposal is 409 MENU_PROOF_ARCHIVED and writes nothing', async () => {
+  const ev = await newEvent({ status: 'archived' });
+  const res = await approve(ev);
+  assert.deepEqual([res.status, res.body.code], [409, 'MENU_PROOF_ARCHIVED']);
+  await assertUntouched(ev);
+});
+
+test('the no-menu mark: Approve is 409 MENU_MARKED_NONE and the mark stays (Claude\'s call)', async () => {
+  const ev = await newEvent({ notRequired: true });
+  const res = await approve(ev);
+  assert.deepEqual([res.status, res.body.code], [409, 'MENU_MARKED_NONE']);
+  await assertUntouched(ev, { notRequired: true });
+});
+
+test('the v1 stamp: a menu approved under v1 (its file live, no release recorded) is stamped released first, then the new file is held beside it', async () => {
+  const v1Key = `menu-print/0/v1-${NONCE}.jpg`;
+  const ev = await newEvent({ printKey: v1Key });
+  await pool.query(
+    `UPDATE menu_drafts SET approved_version = 2, approved_art_version = 4, approved_print_key = $2,
+            approved_at = NOW() - INTERVAL '3 days', approved_by = $3 WHERE id = $1`, [ev.draftId, v1Key, users.manager]);
+  const before = await draftOf(ev.id);
+  const res = await approve(ev, { expected: v1Key });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const d = await draftOf(ev.id);
+  assert.equal(d.released_print_key, v1Key, 'the v1 file is the menu\'s own release');
+  assert.equal(d.released_at.toISOString(), before.approved_at.toISOString(), 'released at its approval');
+  assert.deepEqual([d.released_by, d.released_via], [users.manager, 'admin']);
+  assert.equal(d.approved_print_key, uploads[0], 'the new approval holds its own file');
+  assert.equal((await keyRow(ev.id)).menu_print_key, v1Key, 'staff keep the v1 file');
+  const stampAt = events.findIndex((e) => e.startsWith('sql:UPDATE menu_drafts d SET released_print_key = d.approved_print_key'));
+  const approveAt = events.findIndex((e) => e.startsWith('sql:UPDATE menu_drafts SET approved_version'));
+  assert.ok(stampAt >= 0 && stampAt < approveAt, 'the v1 stamp runs before the new approval');
+  assert.deepEqual([res.body.print.state, res.body.print.live], ['held', 'previous']);
+});
+
+test('order: both uploads before any client, the transaction, COMMIT, release, then the email and the Inbox cache; no key write and no reaccrual', async () => {
+  const ev = await newEvent();
+  const res = await approve(ev);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const [key, proofKey] = uploads;
   const at = (pred) => events.findIndex(pred);
   const idx = {
     upload: at((e) => e === `upload:${key}`),
+    uploadProof: at((e) => e === `upload:${proofKey}`),
     connect: at((e) => e === 'connect'),
     begin: at((e) => e === 'sql:BEGIN'),
     lockDraft: at((e) => /^sql:SELECT .* FROM menu_drafts .*FOR UPDATE$/.test(e)),
-    setKey: at((e) => e.startsWith('sql:UPDATE proposals SET menu_print_key = $1, menu_not_required = false, menu_not_required_by = NULL WHERE id = $2')),
+    lockProposal: at((e) => /^sql:SELECT .* FROM proposals .*FOR UPDATE$/.test(e)),
     stamp: at((e) => e.startsWith('sql:UPDATE menu_drafts SET approved_version')),
+    supersede: at((e) => e.startsWith('sql:UPDATE menu_proofs SET superseded_at')),
+    insert: at((e) => e.startsWith('sql:INSERT INTO menu_proofs')),
     activity: at((e) => e.startsWith('sql:INSERT INTO proposal_activity_log')),
     commit: at((e) => e === 'sql:COMMIT'),
     release: at((e) => e === 'release'),
-    reaccrue: at((e) => e === `reaccrue:${ev.id}`),
+    email: at((e) => e === 'email'),
+    invalidate: at((e) => e === 'invalidate'),
   };
   for (const [name, i] of Object.entries(idx)) assert.ok(i >= 0, `${name} happened (${JSON.stringify(events)})`);
-  const order = ['upload', 'connect', 'begin', 'lockDraft', 'setKey', 'stamp', 'activity', 'commit', 'release', 'reaccrue'];
+  const order = ['upload', 'uploadProof', 'connect', 'begin', 'lockDraft', 'lockProposal', 'stamp', 'supersede', 'insert', 'activity', 'commit', 'release', 'email', 'invalidate'];
   for (let i = 1; i < order.length; i += 1) {
     assert.ok(idx[order[i - 1]] < idx[order[i]], `${order[i - 1]} before ${order[i]}: ${JSON.stringify(events)}`);
   }
-  assert.equal(events.filter((e) => e.startsWith('reaccrue:')).length, 1, 'reaccrueDuty called exactly once');
   assert.equal(events.filter((e) => e === 'connect').length, 1, 'one client for the whole transaction');
-
-  // At the moment reaccrueDuty was called, and when the accrual ran, the
-  // committed key was already visible to a second connection.
-  await idle();
-  assert.equal(reaccrued.length, 1);
-  assert.deepEqual(await reaccrued[0].seen, { menu_print_key: key, menu_not_required: false });
-  assert.equal(accrualSeen.length, 1, 'the real hook reached maybeReaccrueForDuty once');
-  assert.equal(accrualSeen[0].pid, ev.id);
-  assert.deepEqual(await accrualSeen[0].seen, { menu_print_key: key, menu_not_required: false });
+  assert.ok(!events.some((e) => e.startsWith('reaccrue:')), 'no reaccrual');
 });
 
-test('a failure after the key is set rolls the key back with everything else; a 40P01 answers 409 MENU_DRAFT_CHANGED', async () => {
+test('a failure inside the transaction rolls everything back; a 40P01 answers 409 MENU_DRAFT_CHANGED', async () => {
   const ev = await newEvent();
   failOn = { re: /^INSERT INTO proposal_activity_log/, code: 'XX000' };
   const res = await approve(ev);
   assert.equal(res.status, 500);
-  const setKey = events.findIndex((e) => e.startsWith('sql:UPDATE proposals SET menu_print_key'));
-  assert.ok(setKey >= 0 && setKey < events.indexOf('sql:ROLLBACK'), 'the key was written, then rolled back');
+  assert.ok(events.indexOf('sql:ROLLBACK') > events.findIndex((e) => e.startsWith('sql:INSERT INTO menu_proofs')), 'the proof was written, then rolled back');
   assert.ok(!events.includes('sql:COMMIT'));
   await assertUntouched(ev);
 
@@ -621,13 +975,27 @@ test('a failure after the key is set rolls the key back with everything else; a 
   await assertUntouched(ev);
 });
 
-// ── The derived print state after an approve ────────────────────────────────
+test('a failure after COMMIT never rolls back the approval or its proof', async () => {
+  const ev = await newEvent();
+  throwBlocks = true;
+  const res = await approve(ev);
+  assert.equal(res.status, 500);
+  const commit = events.indexOf('sql:COMMIT');
+  assert.ok(commit >= 0, 'committed');
+  assert.ok(!events.slice(commit).includes('sql:ROLLBACK'), `no ROLLBACK after COMMIT: ${JSON.stringify(events)}`);
+  assert.equal((await proofsOf(ev.id)).length, 1);
+  assert.equal((await printOf(ev.id)).state, 'held');
+});
 
-test('logo role: stamps the plan\'s planner image key; a replaced or removed logo then reads edited since approval', async () => {
+// ── The derived print state after an approve and a release ──────────────────
+
+test('logo role: stamps the plan\'s planner image key; once released, a replaced or removed logo reads edited since approval', async () => {
   const logo = `drink-plan-logos/0-${NONCE}-a.png`;
   const ev = await newEvent({ role: 'logo', logo });
   assert.equal((await approve(ev, { expectedRev: rev(logo) })).status, 200);
   assert.equal((await draftOf(ev.id)).approved_planner_image_key, logo);
+  assert.equal((await printOf(ev.id)).state, 'held');
+  assert.equal((await release(ev)).status, 200);
   assert.equal((await printOf(ev.id)).state, 'approved');
   await setLogo(ev.planId, `drink-plan-logos/0-${NONCE}-b.png`);
   assert.equal((await printOf(ev.id)).state, 'edited_since_approval');
@@ -640,13 +1008,15 @@ test('logo role: stamps the plan\'s planner image key; a replaced or removed log
   const other = await newEvent({ role: 'reference', logo });
   assert.equal((await approve(other)).status, 200);
   assert.equal((await draftOf(other.id)).approved_planner_image_key, null);
+  assert.equal((await release(other)).status, 200);
   await setLogo(other.planId, `drink-plan-logos/0-${NONCE}-c.png`);
   assert.equal((await printOf(other.id)).state, 'approved');
 });
 
-test('a re-roll after approval reads edited since approval once the new art lands', async () => {
+test('a re-roll after a release reads edited since approval once the new art lands', async () => {
   const ev = await newEvent();
   assert.equal((await approve(ev)).status, 200);
+  assert.equal((await release(ev)).status, 200);
   assert.equal((await printOf(ev.id)).state, 'approved');
   const reroll = await request('POST', `${base(ev.id)}/pieces/background/reroll`, { json: { image_model: 'openai' } });
   assert.equal(reroll.status, 202, JSON.stringify(reroll.body));
@@ -658,35 +1028,31 @@ test('a re-roll after approval reads edited since approval once the new art land
   assert.equal((await printOf(ev.id)).state, 'edited_since_approval');
 });
 
-test('removal, no menu needed and a manual upload read correctly, and approving over the manual file needs its key', async () => {
+test('beside an admin upload: Approve is 409 MENU_UPLOAD_LIVE before anything is superseded or inserted; once the upload goes it approves and holds', async () => {
   const ev = await newEvent();
-  assert.equal((await approve(ev)).status, 200);
-  const approvedKey = uploads[0];
-
-  reaccrued.length = 0;
-  assert.equal((await request('DELETE', `/api/proposals/${ev.id}/menu-print`)).status, 200);
-  assert.equal((await printOf(ev.id)).state, 'removed');
-  assert.equal(reaccrued.length, 1, 'the manual remove still re-accrues');
-
-  assert.equal((await request('PATCH', `/api/proposals/${ev.id}/menu-print`, { json: { not_required: true } })).status, 200);
-  assert.equal((await printOf(ev.id)).state, 'not_required');
-  assert.equal((await request('PATCH', `/api/proposals/${ev.id}/menu-print`, { json: { not_required: false } })).status, 200);
-  assert.equal((await printOf(ev.id)).state, 'removed');
-
   const pdf = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.from('manual\n')]);
-  const manual = await request('POST', `/api/proposals/${ev.id}/menu-print`, { form: { file: { field: 'file', name: 'm.pdf', bytes: pdf } } });
+  // The card saw no file and no proof (the upload posts what it saw).
+  const manual = await request('POST', `/api/proposals/${ev.id}/menu-print`, { form: {
+    fields: { expected_print_key: '', seen_proof_id: '', seen_proof_answer: '' }, files: [{ field: 'file', name: 'm.pdf', bytes: pdf }] } });
   assert.equal(manual.status, 200);
   const manualKey = (await keyRow(ev.id)).menu_print_key;
   assert.match(manualKey, new RegExp(`^menu-print/${ev.id}/.+\\.pdf$`));
-  assert.equal((await printOf(ev.id)).state, 'replaced');
-
-  const stale = await approve(ev, { expected: approvedKey });
-  assert.equal(stale.status, 409);
-  assert.equal(stale.body.code, 'MENU_PRINT_CHANGED');
-  const again = await approve(ev, { expected: manualKey });
-  assert.equal(again.status, 200, JSON.stringify(again.body));
-  assert.equal((await printOf(ev.id)).state, 'approved');
-  assert.equal((await activityOf(ev.id)).length, 2);
+  assert.equal((await approve(ev)).status, 409, 'the page that saw no file is refused');
+  await idle();
+  for (const list of [events, reaccrued, accrualSeen]) list.length = 0;
+  // A Looks great beside the upload could never release (guard 4), so no proof goes out.
+  const refused = await approve(ev, { expected: manualKey });
+  assert.deepEqual([refused.status, refused.body.code, refused.body.error],
+    [409, 'MENU_UPLOAD_LIVE', 'Your uploaded file is what staff print. Remove it first to send this menu.']);
+  for (const write of ['sql:UPDATE menu_drafts SET approved_version', 'sql:UPDATE menu_proofs SET superseded_at', 'sql:INSERT INTO menu_proofs']) {
+    assert.ok(!events.some((e) => e.startsWith(write)), `${write} never ran`);
+  }
+  await assertUntouched(ev, { printKey: manualKey });
+  // Removing the upload lets the menu go out, its file held for the client's answer.
+  assert.equal((await request('DELETE', `/api/proposals/${ev.id}/menu-print`, { json: { expected_print_key: manualKey } })).status, 200);
+  const ok = await approve(ev);
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.deepEqual([ok.body.print.state, ok.body.print.live], ['held', 'none']);
 });
 
 // ── The fleet batch (2026-10-16) ────────────────────────────────────────────
@@ -746,8 +1112,7 @@ test('logo race: rendered with L1, a replaced, removed or newly added logo is 40
   const ok = await approve(ev, { expectedRev: fresh });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal((await draftOf(ev.id)).approved_planner_image_key, l2);
-  assert.equal(ok.body.print.state, 'approved');
-  assert.equal((await printOf(ev.id)).state, 'approved');
+  assert.equal(ok.body.print.state, 'held');
 });
 
 test('expected_planner_image_rev: required for the logo role (a 400 before any upload), 16 hex or empty; ignored for any other role', async () => {
@@ -769,36 +1134,23 @@ test('expected_planner_image_rev: required for the logo role (a 400 before any u
   }
 });
 
-test('logo role with no planner image: an empty rev approves and stamps null; a logo added later reads edited since approval', async () => {
+test('logo role with no planner image: an empty rev approves and stamps null; a logo added after the release reads edited since approval', async () => {
   const ev = await newEvent({ role: 'logo' });
   assert.equal(await briefRev(ev.id), null);
   const res = await approve(ev, { expectedRev: '' });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal((await draftOf(ev.id)).approved_planner_image_key, null);
+  assert.equal((await release(ev)).status, 200);
   assert.equal((await printOf(ev.id)).state, 'approved');
   await setLogo(ev.planId, `drink-plan-logos/0-${NONCE}-late.png`);
   assert.equal((await printOf(ev.id)).state, 'edited_since_approval');
-});
-
-test('a failure after COMMIT never rolls back and still fires reaccrual exactly once', async () => {
-  const ev = await newEvent();
-  throwPrintState = true;
-  const res = await approve(ev);
-  assert.equal(res.status, 500);
-  const commit = events.indexOf('sql:COMMIT');
-  assert.ok(commit >= 0, 'committed');
-  assert.ok(!events.slice(commit).includes('sql:ROLLBACK'), `no ROLLBACK after COMMIT: ${JSON.stringify(events)}`);
-  await idle();
-  assert.equal(reaccrued.length, 1, 'the committed approval still re-accrues');
-  assert.equal((await keyRow(ev.id)).menu_print_key, uploads[0]);
-  assert.equal((await printOf(ev.id)).state, 'approved');
 });
 
 test('the transaction reads the drink plan only for the logo role', async () => {
   const logo = `drink-plan-logos/0-${NONCE}-plan.png`;
   const plain = await newEvent({ role: 'ignore', logo });
   assert.equal((await approve(plain)).status, 200);
-  assert.deepEqual(events.filter((e) => /FROM drink_plans/.test(e)), [], 'no plan read for role ignore');
+  assert.deepEqual(events.filter((e) => /^sql:.*FROM drink_plans/.test(e)), [], 'no plan read for role ignore');
   events.length = 0;
   const withLogo = await newEvent({ role: 'logo', logo });
   assert.equal((await approve(withLogo, { expectedRev: rev(logo) })).status, 200);
@@ -820,30 +1172,31 @@ test('file: complete canvas-style JPEGs pass the full decode, baseline and progr
 
 // ── The legal-hold proposal (money law 15; lane menu-legal-hold-guards) ─────
 
-test('legal hold: Approve answers 409 LEGAL_HOLD before any read, upload or transaction, storing no print key; an unheld twin approves', async () => {
-  const held = await newEvent({ notRequired: true });
-  const twin = await newEvent({ notRequired: true });
+test('legal hold: Approve answers 409 LEGAL_HOLD before any read, upload or transaction, storing no file or proof; an unheld twin approves', async () => {
+  const held = await newEvent();
+  const twin = await newEvent();
   const before = await draftOf(held.id);
   __setLegalHoldIdsForTest([held.id]);
   const seen = [];
-  const realQuery = pool.query;
+  const watchedQuery = pool.query;
   pool.query = function watched(...args) {
     seen.push(String(typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text) || ''));
-    return realQuery.apply(this, args);
+    return watchedQuery.apply(this, args);
   };
   let res;
   try {
-    res = await approve(held);
+    // The page's view is given, so the watched queries are the route's alone.
+    res = await approve(held, { seen: { id: '', answer: '' } });
   } finally {
-    pool.query = realQuery;
+    pool.query = watchedQuery;
     __setLegalHoldIdsForTest(null);
   }
   assert.deepEqual([res.status, res.body && res.body.code], [409, 'LEGAL_HOLD'], JSON.stringify(res.body));
-  assert.deepEqual(seen.filter((q) => /menu_drafts|menu_draft_pieces|drink_plans|proposals/.test(q)), [],
+  assert.deepEqual(seen.filter((q) => /menu_drafts|menu_draft_pieces|menu_proofs|drink_plans|proposals/.test(q)), [],
     'refused before the proposal, its draft or its plan is read');
-  assert.deepEqual(events, [], 'no upload, no transaction, no reaccrual');
+  assert.deepEqual(events, [], 'no upload, no transaction, no email, no reaccrual');
   assert.deepEqual(uploads, []);
-  await assertUntouched(held, { notRequired: true });
+  await assertUntouched(held);
   const after = await draftOf(held.id);
   for (const col of ['version', 'art_version', 'content', 'inputs', 'updated_at']) {
     assert.deepEqual(after[col], before[col], `${col} unchanged`);
@@ -851,5 +1204,5 @@ test('legal hold: Approve answers 409 LEGAL_HOLD before any read, upload or tran
 
   const ok = await approve(twin);
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
-  assert.equal((await keyRow(twin.id)).menu_print_key, uploads[0]);
+  assert.equal((await draftOf(twin.id)).approved_print_key, uploads[0]);
 });

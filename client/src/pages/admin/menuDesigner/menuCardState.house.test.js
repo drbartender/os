@@ -54,7 +54,7 @@ describe('Too long on a house draft', () => {
     // The house card reports its own key when no name is past the footer (HouseCard.js).
     const s = run(P(houseDraft()), { tooLong: ['house_card'] });
     expect(banner(s, 'too-long')).toEqual({ id: 'too-long', tone: 'danger', title: 'Text too long to fit.', text: HOUSE_LONG, buttons: [] });
-    expect(s.approve).toEqual({ label: 'Approve', disabled: true, why: 'Make the card fit first' });
+    expect(s.approve).toEqual({ label: 'Approve and send', disabled: true, why: 'Make the card fit first' });
     expect(JSON.stringify(s)).not.toContain('description');
   });
 
