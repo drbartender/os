@@ -523,8 +523,10 @@ lanes:
     scope: >
       Split from menu-bar-fingerprint by its review (2026-11-03); the design is spec section 17's review
       bullet, amended 2026-11-13 (Claude's call): what the admin has reviewed about a plan change is kept
-      as state, not as one hash. (1) Mark reviewed and Dismiss record what they cover. Both store the
-      plan's current brief and planner-image parts in plan_fingerprint, so a reviewed notes edit or client
+      as state, not as one hash. (1) Mark reviewed and Dismiss record what they cover. A review stores the
+      plan's current brief and planner-image parts in plan_fingerprint (Dismiss both; Mark reviewed the one
+      its banner named: the notes while any field is edited, else the image, so an image change is never
+      recorded unseen; amended 2026-11-13 by the lane review), so a reviewed notes edit or client
       image never returns through a later Update draft or a drink or bar change. Dismiss also stores
       dismissed_plan_hash, now a hash of the drink keys, the bar hash and the bar drift only, so a
       dismissed drink or bar change stays dismissed until the plan's drinks or bar move again. Mark
