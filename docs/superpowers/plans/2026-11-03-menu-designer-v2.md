@@ -929,6 +929,8 @@ lanes:
       - client/src/components/inbox/inboxListViews.test.js  (the row's need line, link and hidden Done)
       - client/src/components/inbox/ItemActions.js  (Done hidden on a row held only by tasks, read from the item's state; added 2026-11-13, the build found the buttons are drawn here)
       - client/src/components/inbox/inboxItemViews.test.js
+      - client/src/components/inbox/useInboxActions.js  (the Done toast while a menu task still holds the person; added 2026-11-14 by the lane review)
+      - client/src/components/inbox/useInboxActions.test.js
       - client/src/index.css  (the task link's own ib- rules on the list row and in the thread, in place of borrowed ones; added 2026-11-13)
       - server/routes/menuProof.js  (inboxCache.invalidate only)
       - README.md, ARCHITECTURE.md  (generated sections, and the menu tasks in ARCHITECTURE's Inbox concept)
@@ -994,6 +996,29 @@ lanes:
       names the source of the two proof actions as the menu proof page, not the proposal page; (g) the
       page lines that point at "our email" for a proof that was never emailed (no_address, suppressed);
       (h) loadLatestProof returns the token, email_status, sent_to and the link's end for the GET's proof block.
+      Carried from the menu-inbox-tasks review (2026-11-14): (i) the upload POST withdraws the latest proof when
+      it is unanswered or answered changes (spec 10.3 as amended), which is what closes a change request the
+      owner settles with his own file; the Inbox reader infers nothing from the print keys, and readers.test.js
+      gains the two cases against real rows (an upload after a change request closes its task through the
+      withdraw; an upload made before the proof hides nothing); (j) every admin writer that opens or closes a
+      proof task (Approve, Release, the mark, the upload) calls inboxCache.invalidate() after its commit; (k) an
+      event-date change wakes a snoozed client who holds an open proof, since a date moved earlier can back-date
+      the no-answer due time to before the snooze, which then keeps the task hidden; (l) a snooze on a row held
+      only by tasks is judged by newer tasks, Wake and Reopen alone, so a text the admin sends does not end it
+      early, and spec 13.2 says so; (m) a change request made after a release has no closer but a re-approve
+      (nothing is held, so Release is not offered): decide whether the card offers one; (n) a proof approved
+      while the owner's own file is live and then left unanswered raises "No answer on the menu yet. Release it
+      for printing?", yet release guard 4 of spec 10.3 refuses a release beside his file: settle what that row
+      should ask for; (o) the Done toast names no one and now lands after the page has moved on, so two Dones
+      in a row can toast out of order: name the person in the line (act already has the name), and read the
+      item's status for "Moved to Handled" instead of inferring it from no task; (p) notes, no code asked: a
+      person a task still holds has no Recently handled row and no Reopen until the task closes, and a row held
+      only by tasks can still show Not read yet for a closed conversation's text; the legal hold reaches a task
+      by client id, so a second client record for the held person would not be covered; with no event date a
+      change request ends with the link's 30 days, so re-run the reader's no-date case when item c reorders
+      proofState; one client with two events that each hold a change request gets two thread links with one
+      name (name the event); readMenuTasks.js's header already says the upload route withdraws the proof it
+      settles, which item i makes true.
     footprint:
       - server/utils/menuProofs.js  (the state precedence; loadLatestProof's columns)
       - server/utils/menuProofs.test.js
@@ -1017,6 +1042,7 @@ lanes:
       - server/routes/menuProof.test.js
       - server/routes/proposals/menuPrint.js  (the withdraw on the mark and on upload; the invalidate)
       - server/routes/proposals/menuPrint.test.js
+      - server/utils/inbox/readers.test.js  (the upload-withdraw cases, carried item i)
       - server/utils/lifecycleEmailTemplates.js  (menuProofReady)
       - server/utils/lifecycleEmailTemplates.test.js
       - server/utils/urls.js  (menuProofUrl)
