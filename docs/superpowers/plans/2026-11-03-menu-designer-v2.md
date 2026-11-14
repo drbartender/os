@@ -839,7 +839,11 @@ lanes:
       - server/middleware/rateLimiters.js  (the two limiters)
       - client/src/pages/public/MenuProofPage.jsx  (new, under 300 lines, with the header comment)
       - client/src/pages/public/MenuProofPage.css  (new)
-      - client/src/pages/public/MenuProofPage.test.jsx  (new)
+      - client/src/pages/public/MenuProofPage.test.js  (new; shipped under this name, since the PII shapes allow a fixture email only on a .test.js path)
+      - server/utils/sentryScrub.js  (the /menu-proof/ rule; added by the lane review, 2026-11-13)
+      - server/utils/sentryScrub.test.js
+      - client/src/utils/sentryScrub.js  (the same rule for the browser)
+      - client/src/utils/sentryScrub.test.js
       - client/src/App.js  (the lazy import and the four route blocks)
       - scripts/sensitive-paths.txt  (server/routes/menuProof.js, server/utils/menuProofs.js)
       - README.md, ARCHITECTURE.md  (generated sections)
@@ -870,12 +874,14 @@ lanes:
       and changes; the answer writes once and refuses a second answer, an older link, a withdrawn proof and an
       expired one with their codes and states, requires a note for changes and caps it at 1,000, writes the
       activity row with no note; the limiter chain is present on each route (the publicFeedback precedent).
-      MenuProofPage.test.jsx with a mocked api: open, approved, changes, superseded, expired, withdrawn, the 404
+      MenuProofPage.test.js with a mocked api: open, approved, changes, superseded, expired, withdrawn, the 404
       shell, loading, a 429 failed load with Try again, sending (buttons disabled), Send changes disabled on an
       empty note, the image-missing line. schema.menuArt.test.js: the table and columns.
     revert: >
       Revert only after menu-inbox-tasks and menu-approve-send if they have merged (both read its table and edit
-      menuProof.js); with neither merged, no proof rows exist; the table and columns stay (idempotent).
+      menuProof.js); with neither merged, no proof rows exist; the table and columns stay (idempotent), so the
+      restored schema.menuArt.test.js, which pins menu_drafts without the four release columns, then fails on
+      every database that kept them until it is re-pinned in the same change.
 
   - id: menu-inbox-tasks
     scope: >
@@ -963,8 +969,26 @@ lanes:
       fold row as a third Print file row, Client review as a .md-brief-box, Release as btn btn-secondary, table B
       tones) and the proof sketch's email screen (docs/design-artifacts/2026-11-03-menu-proof/menu-proof-page.html,
       screen 1), with decision 15's "until your event" line over the sketch's 30 days.
+      Carried from the menu-proof-page review (2026-11-13), all on files this lane already owns or now takes:
+      (a) lock order: once the answer route releases, it takes the draft and the proposal FOR UPDATE before the
+      one-shot answer UPDATE and re-checks archived under that lock, the order Approve, the mark, the upload and
+      Release use, so a client answer and an admin approve in the same instant cannot deadlock or leave an
+      answer on a just-archived proposal; (b) the menu_drafts updated_at trigger also skips the four release
+      columns, so a release never reads as an edit (the Saved time); (c) proofState puts superseded ahead of
+      expired, and an answered proof past its life keeps its Thanks lines with the picture off, instead of
+      "This link has expired."; (d) the expired screen's second line stops promising a fresh link once the
+      event day has passed, when Approve refuses one (copy for the owner to see in the spec amendment); (e) a
+      409 MENU_PROOF_CHANGED whose refetch reads open shows the retry alert; (f) the admin activity popup
+      names the source of the two proof actions as the menu proof page, not the proposal page; (g) the
+      page lines that point at "our email" for a proof that was never emailed (no_address, suppressed);
+      (h) loadLatestProof returns the token, email_status, sent_to and the link's end for the GET's proof block.
     footprint:
-      - server/db/schema.sql  (approved_by ON DELETE SET NULL, an idempotent DO block)
+      - server/utils/menuProofs.js  (the state precedence; loadLatestProof's columns)
+      - server/utils/menuProofs.test.js
+      - client/src/pages/public/MenuProofPage.jsx  (the copy and alert items above)
+      - client/src/pages/public/MenuProofPage.test.js
+      - client/src/pages/admin/ProposalDetail.js  (the activity popup's source for the two proof actions)
+      - server/db/schema.sql  (approved_by ON DELETE SET NULL, an idempotent DO block; the updated_at trigger skipping the release columns)
       - server/db/schema.menuArt.test.js  (the approved_by rule)
       - server/routes/proposals/menuDraftApprove.js
       - server/routes/proposals/menuDraftApprove.test.js
