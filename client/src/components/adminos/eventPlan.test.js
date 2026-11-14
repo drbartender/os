@@ -1,4 +1,6 @@
-import { eventPlanState, eventPaymentState, eventBalanceDue } from './eventPlan';
+import {
+  eventPlanState, eventPaymentState, eventBalanceDue, planTagOwner, MENU_WITH_CLIENT_TAG,
+} from './eventPlan';
 
 // Every case pins `today` so a passing suite never depends on the wall clock.
 const TODAY = '2026-08-25';
@@ -190,6 +192,111 @@ describe('eventPlanState on a BYOB row with input but no list', () => {
   it('still waits on the planner when nothing has landed', () => {
     const s = eventPlanState(base({ package_category: 'byob', plan_input_landed: false }), TODAY);
     expect(s).toEqual({ owner: 'client', tags: ['Planner'] });
+  });
+});
+
+// While a held print file waits on an unanswered proof the next move is the
+// client's (spec 2026-10-19 section 14): the feed's menu_with_client swaps the
+// menu tag for "Menu with client", and when nothing else is owed the row is
+// theirs. A change request or a held file the client approved is the owner's
+// move again, which the feed carries as menu_with_client false.
+describe('eventPlanState with the menu proof out to the client', () => {
+  it('shows Menu with client and hands the row to the client when that is all that is owed', () => {
+    const s = eventPlanState(base({ shopping_list_status: 'approved', menu_with_client: true }), TODAY);
+    expect(s).toEqual({ owner: 'client', tags: ['Menu with client'] });
+  });
+
+  it('does the same on a hosted row, which owes no shopping list', () => {
+    const s = eventPlanState(
+      base({ package_category: 'hosted', plan_input_landed: true, menu_with_client: true }), TODAY);
+    expect(s).toEqual({ owner: 'client', tags: ['Menu with client'] });
+  });
+
+  it('keeps the tag when an older released file already makes menu_done true', () => {
+    const s = eventPlanState(
+      base({ shopping_list_status: 'approved', menu_done: true, menu_with_client: true }), TODAY);
+    expect(s).toEqual({ owner: 'client', tags: ['Menu with client'] });
+  });
+
+  it('reads Menu Design and you again for a change request', () => {
+    const s = eventPlanState(
+      base({ shopping_list_status: 'approved', menu_done: false, menu_with_client: false }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+
+  it('still makes the owner you while the Shopping List is owed', () => {
+    const s = eventPlanState(base({ shopping_list_status: 'pending_review', menu_with_client: true }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Shopping List', 'Menu with client'] });
+  });
+});
+
+// The client answered the held file's proof (menu_answer_waiting): a change
+// request owes edits, a Looks great still needs the owner's Release (Client
+// approved, spec 10.7). Either way it is the owner's move, and an older
+// released file that keeps menu_done true must not hide it as Done.
+describe('eventPlanState with the client\'s answer waiting on a held menu', () => {
+  it('shows Menu Design and you even when an older released file makes menu_done true', () => {
+    const s = eventPlanState(
+      base({ shopping_list_status: 'approved', menu_done: true, menu_answer_waiting: true }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+
+  it('shows Menu Design and you with no older file', () => {
+    const s = eventPlanState(
+      base({ shopping_list_status: 'approved', menu_done: false, menu_answer_waiting: true }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+
+  it('shows both tags, and you, while the Shopping List is also owed', () => {
+    const s = eventPlanState(
+      base({ shopping_list_status: 'pending_review', menu_done: true, menu_answer_waiting: true }), TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Shopping List', 'Menu Design'] });
+  });
+
+  it('never shows Menu with client and Menu Design together, whatever the flags say', () => {
+    for (const menuDone of [false, true]) {
+      for (const withClient of [false, true]) {
+        for (const answerWaiting of [false, true]) {
+          const { tags } = eventPlanState(base({
+            shopping_list_status: 'approved',
+            menu_done: menuDone, menu_with_client: withClient, menu_answer_waiting: answerWaiting,
+          }), TODAY);
+          const menuTags = tags.filter((t) => t === 'Menu Design' || t === 'Menu with client');
+          expect(menuTags.length).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('reads the owner\'s move when the flags ever disagree, never the client\'s', () => {
+    const s = eventPlanState(
+      base({ shopping_list_status: 'approved', menu_done: true, menu_with_client: true, menu_answer_waiting: true }),
+      TODAY);
+    expect(s).toEqual({ owner: 'you', tags: ['Menu Design'] });
+  });
+});
+
+// Whose move each Plan tag is, for its chip's colour: "Menu with client" is
+// always the client's, whatever the row's owner; every other tag is the row's.
+describe('planTagOwner', () => {
+  it('names the tag string the Plan state emits', () => {
+    expect(MENU_WITH_CLIENT_TAG).toBe('Menu with client');
+    const s = eventPlanState(base({ shopping_list_status: 'approved', menu_with_client: true }), TODAY);
+    expect(s.tags).toEqual([MENU_WITH_CLIENT_TAG]);
+  });
+
+  it('makes Menu with client the client\'s on a row that is yours', () => {
+    const { owner, tags } = eventPlanState(base({ shopping_list_status: 'pending_review', menu_with_client: true }), TODAY);
+    expect(owner).toBe('you');
+    expect(tags.map((t) => planTagOwner(t, owner))).toEqual(['you', 'client']);
+  });
+
+  it('keeps every other tag on the row\'s owner', () => {
+    expect(planTagOwner('Shopping List', 'you')).toBe('you');
+    expect(planTagOwner('Menu Design', 'you')).toBe('you');
+    expect(planTagOwner('Consult passed', 'you')).toBe('you');
+    expect(planTagOwner('Planner', 'client')).toBe('client');
+    expect(planTagOwner(MENU_WITH_CLIENT_TAG, 'client')).toBe('client');
   });
 });
 

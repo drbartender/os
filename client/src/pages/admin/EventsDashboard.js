@@ -21,7 +21,7 @@ import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmtDate, fmtTimeRange24, dayDiff, ctDay } from '../../components/adminos/format';
 import { rowRoleFill, isCancelledEvent } from '../../components/adminos/shifts';
-import { eventPlanState, eventPaymentState, eventBalanceDue } from '../../components/adminos/eventPlan';
+import { eventPlanState, eventPaymentState, eventBalanceDue, planTagOwner } from '../../components/adminos/eventPlan';
 import { useMobileView } from '../../context/MobileViewContext';
 import EventsListPhone from '../mobile/EventsListPhone';
 
@@ -276,8 +276,11 @@ function EventsDashboardDesktop() {
 // Memoized row — only re-renders when its event reference changes. Dispatch is
 // a stable callback from the parent, so list-state changes no longer rebuild
 // 5 closures × N rows.
-// Plan-cell chip colours carry the OWNER, the text carries what is owed:
-// grey = the ball is in the client's court, amber = yours, green = settled.
+// Plan-cell chip colours carry whose move each tag is, the text carries what
+// is owed: grey = the ball is in the client's court, amber = yours, green =
+// settled. Each tag takes the row's owner except Menu with client, which is
+// always the client's (planTagOwner), so it stays grey beside an amber
+// Shopping List.
 const PLAN_CHIP_KIND = { client: 'neutral', you: 'warn', done: 'ok' };
 const PAY_CHIP_KIND = { paid: 'ok', owed: 'danger', cancelled: 'neutral' };
 
@@ -308,7 +311,7 @@ function PlanCell({ event: e }) {
   if (owner === 'done') return <StatusChip kind="ok">Done</StatusChip>;
   return (
     <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
-      {tags.map(t => <StatusChip key={t} kind={PLAN_CHIP_KIND[owner]}>{t}</StatusChip>)}
+      {tags.map(t => <StatusChip key={t} kind={PLAN_CHIP_KIND[planTagOwner(t, owner)]}>{t}</StatusChip>)}
     </div>
   );
 }

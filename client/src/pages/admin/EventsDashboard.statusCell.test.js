@@ -4,7 +4,9 @@ import { render, screen } from '@testing-library/react';
 
 // Desktop Events list, two cells from Dallas's 2026-09-22 drop: the Supplies
 // prep chip wears the info blue (Bar stays neutral), and an owed Status chip
-// carries its due date underneath, red once the date has passed.
+// carries its due date underneath, red once the date has passed. Also the Plan
+// cell's chips, each coloured by whose move its tag is (spec 2026-10-19
+// section 14): Menu with client stays the client's grey on a row that is yours.
 
 const mockMobileView = { isPhone: false, desktopView: jest.fn(() => false), setDesktopView: jest.fn() };
 jest.mock('../../context/MobileViewContext', () => ({ useMobileView: () => mockMobileView }));
@@ -36,6 +38,9 @@ beforeEach(() => {
     row({ id: 1, client_name: 'Late Client', proposal_balance_due_date: '2000-01-01T00:00:00.000Z' }),
     row({ id: 2, client_name: 'Upcoming Client', proposal_balance_due_date: '2099-06-15T00:00:00.000Z', supply_run_required: true, bar_required: true }),
     row({ id: 3, client_name: 'Paid Client', proposal_amount_paid: 1200, proposal_balance_due_date: '2000-01-01T00:00:00.000Z' }),
+    // Owes the Shopping List (yours) with the menu proof out (theirs). No due
+    // date, so the due-line count below is unchanged.
+    row({ id: 4, client_name: 'Proof Client', shopping_list_status: 'pending_review', menu_done: false, menu_with_client: true }),
   ] : [] }));
 });
 
@@ -67,4 +72,13 @@ test('Supplies wears the info chip and Bar stays neutral', async () => {
   const supplies = await screen.findByText('Supplies');
   expect(supplies.closest('.chip')).toHaveClass('info');
   expect(screen.getByText('Bar').closest('.chip')).toHaveClass('neutral');
+});
+
+test('the Plan cell colours each tag by whose move it is: Menu with client grey beside an amber Shopping List', async () => {
+  mount();
+  const withClient = (await screen.findByText('Menu with client')).closest('.chip');
+  const list = screen.getByText('Shopping List').closest('.chip');
+  expect(list).toHaveClass('warn');
+  expect(withClient).toHaveClass('neutral');
+  expect(withClient).not.toHaveClass('warn');
 });

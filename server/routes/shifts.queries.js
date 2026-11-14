@@ -170,6 +170,69 @@ const USER_EVENTS_SQL = `
 // per proposal today, so this is a guard against a shape the schema permits
 // rather than a bug being fixed. The staff feed's plain join carries the same
 // latent fan-out and is left alone here.
+//
+// The menu's proof state (spec 2026-10-19 section 14, the events dashboard):
+// MENU_STATE_JOIN is the one place the feed reads the draft and its latest
+// proof (superseded_at IS NULL, newest sent_at then id, as loadLatestProof and
+// the Inbox reader pick it) and states two rules over that one row:
+//   held          the print state's held rule, readPrintState's in
+//                 server/utils/menuPrintState.js (spec 10.3), in its order:
+//                 no no-menu mark; an approved key that is not the released
+//                 key; the latest proof for the approved pair and not
+//                 withdrawn; the live key null or the released key.
+//   changes_open  the Inbox's open change request, the menu_changes task of
+//                 server/utils/inbox/readMenuTasks.js (MENU_TASKS_SQL and
+//                 taskOfRow): no no-menu mark; the latest proof answered
+//                 changes and not withdrawn; and not settled by a release,
+//                 where released means the released key is the approved key
+//                 for the proof's own pair, and it settles the request only
+//                 when released_at is at or after answered_at. Held or not:
+//                 the client can ask for changes after a release.
+// The flags read those columns and the proof's answer:
+//   menu_with_client     held, the proof unanswered: the client's move.
+//   menu_answer_waiting  held with the proof answered either way, or a
+//                        change request open: the owner's move (a change
+//                        request owes edits; a Looks great on a held file
+//                        still needs his Release, Client approved, spec 10.7).
+// Never both true: one needs an unanswered proof, the other an answered one.
+// An older released file live beside a held one keeps menu_done true and
+// leaves either flag as it is; menu_done keeps its meaning for every
+// staff-side reader. Both rules are restatements in SQL, so
+// shifts.planQueue.test.js pins the flags row by row to readPrintState and to
+// the reader's own query and mapper on the same rows; a change to either rule
+// changes both. The reader's other filters (no client, archived, a past
+// event, the legal hold) are not restated: the Plan column is dark on an
+// archived or past event already. menu_drafts is one per proposal (UNIQUE)
+// and the proof LIMIT 1, so the join adds one row at most; no draft, no proof
+// or no proposal reads false, never NULL.
+const MENU_STATE_JOIN = `
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(p.menu_not_required IS NOT TRUE
+                 AND md.approved_print_key IS NOT NULL
+                 AND md.approved_print_key IS DISTINCT FROM md.released_print_key
+                 AND lp.withdrawn_at IS NULL
+                 AND lp.version = md.approved_version
+                 AND lp.art_version = md.approved_art_version
+                 AND (p.menu_print_key IS NULL OR p.menu_print_key = md.released_print_key), false) AS held,
+               COALESCE(p.menu_not_required IS NOT TRUE
+                 AND lp.answer = 'changes'
+                 AND lp.withdrawn_at IS NULL
+                 AND NOT COALESCE(md.released_print_key = md.approved_print_key
+                       AND lp.version = md.approved_version
+                       AND lp.art_version = md.approved_art_version
+                       AND md.released_at >= lp.answered_at, false), false) AS changes_open,
+               lp.answer
+          FROM menu_drafts md
+          CROSS JOIN LATERAL (
+            SELECT mp.version, mp.art_version, mp.withdrawn_at, mp.answer, mp.answered_at
+              FROM menu_proofs mp
+             WHERE mp.draft_id = md.id AND mp.superseded_at IS NULL
+             ORDER BY mp.sent_at DESC, mp.id DESC
+             LIMIT 1
+          ) lp
+         WHERE md.proposal_id = p.id
+      ) mh ON true`;
+
 const planQueueSql = {
   // Newest plan wins, matching the LATERAL guard's intent if a second ever lands.
   drinkPlanJoin: `
@@ -192,14 +255,18 @@ const planQueueSql = {
          WHERE k.proposal_id = s.proposal_id AND k.status <> 'cancelled'
          ORDER BY k.scheduled_at DESC LIMIT 1
       ) cns ON true`,
+  menuStateJoin: MENU_STATE_JOIN,
   // menu_done mirrors AdminMenuPrintBlock's deriveStatus: an uploaded print key
   // and an explicit not-required flag both count as settled. Projected as a
   // boolean because the list needs the fact, never the R2 object key.
+  // menu_with_client and menu_answer_waiting read MENU_STATE_JOIN above.
   select: `
         dpl.shopping_list_status,
         dpl.plan_input_landed,
         cns.scheduled_at AS consult_at,
         (p.menu_print_key IS NOT NULL OR COALESCE(p.menu_not_required, false)) AS menu_done,
+        COALESCE(mh.held AND mh.answer IS NULL, false) AS menu_with_client,
+        COALESCE((mh.held AND mh.answer IS NOT NULL) OR mh.changes_open, false) AS menu_answer_waiting,
         spk.category AS package_category,
         spk.bar_type AS package_bar_type,
         spk.name AS package_name`,
@@ -316,7 +383,7 @@ ${planQueueSql.select}
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN service_packages spk ON spk.id = p.package_id
-      LEFT JOIN clients c ON c.id = p.client_id${planQueueSql.drinkPlanJoin}${planQueueSql.consultJoin}
+      LEFT JOIN clients c ON c.id = p.client_id${planQueueSql.drinkPlanJoin}${planQueueSql.consultJoin}${planQueueSql.menuStateJoin}
       LEFT JOIN LATERAL (
         SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
                COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,

@@ -9,6 +9,19 @@ import { fmt$, fmtDate, ctDay, dayDiff } from './format';
 import { isCancelledEvent } from './shifts';
 import { owesShoppingList } from '../../utils/shoppingListOwed';
 
+// The Plan tag while the menu proof is out to the client (spec 2026-10-19 section 14).
+export const MENU_WITH_CLIENT_TAG = 'Menu with client';
+
+/**
+ * Whose move one Plan tag is, for its chip's colour: Menu with client is
+ * always the client's, whatever the row's owner (a row that owes the Shopping
+ * List is yours, but the proof out beside it is still theirs); every other tag
+ * is the row's owner.
+ */
+export function planTagOwner(tag, rowOwner) {
+  return tag === MENU_WITH_CLIENT_TAG ? 'client' : rowOwner;
+}
+
 /**
  * The Plan cell's state.
  *
@@ -67,10 +80,29 @@ export function eventPlanState(e, todayYmd) {
   // Input has landed, so BOTH deliverables unlock at once (hosted owes only
   // the menu). They are parallel, not sequential: showing only the list would
   // hide the menu on every row where work is actually owed.
+  //
+  // The menu proof (spec 2026-10-19 section 14), two flags off one feed join:
+  //   menu_answer_waiting  the client answered the held file's proof (a change
+  //                        request, or a Looks great whose release was refused:
+  //                        Client approved), or a change request is open on a
+  //                        released file, as the Inbox shows it: Menu Design,
+  //                        yours.
+  //   menu_with_client     the held file's proof waits on their answer: Menu
+  //                        with client, theirs.
+  // Both hold whether or not a released file already makes menu_done true, so
+  // neither the new proof nor the owner's move on it reads as Done.
+  // The feed never sets both; if it ever did, the owner's move wins.
   const tags = [];
-  if (!hosted && listStatus !== 'approved') tags.push('Shopping List');
-  if (!e.menu_done) tags.push('Menu Design');
-  return tags.length ? { owner: 'you', tags } : { owner: 'done', tags: [] };
+  let yours = false;
+  if (!hosted && listStatus !== 'approved') { tags.push('Shopping List'); yours = true; }
+  if (e.menu_answer_waiting === true || (e.menu_with_client !== true && !e.menu_done)) {
+    tags.push('Menu Design');
+    yours = true;
+  } else if (e.menu_with_client === true) {
+    tags.push(MENU_WITH_CLIENT_TAG);
+  }
+  if (!tags.length) return { owner: 'done', tags: [] };
+  return { owner: yours ? 'you' : 'client', tags };
 }
 
 /**
