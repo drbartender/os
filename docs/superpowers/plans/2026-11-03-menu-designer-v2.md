@@ -1146,6 +1146,13 @@ lanes:
       alone, so a text the admin sends does not end it early; spec 13.2 says so. (3) The Done toast names the
       person (act already holds the name), so two Dones in a row cannot be misread, and "Moved to Handled" is
       said only when the read-back shows the item handled, a plain "Done." otherwise.
+      As built 2026-11-14 (Claude's calls, spec 13.2 amended): item 1 was dropped, since either fix needs a
+      stored first-due time, and is written into the spec as a known limit with two more of its class the
+      review found (a restore of an archived booking, and the no-menu mark set and cleared inside a snooze).
+      Item 2 as the review left it: on a tasks-only row the client's newer text ends the snooze for good, and
+      only a text, a reply or a Done of ours leaves it in place. Item 3: the task line is said only for a
+      read-back that shows them waiting, a snoozed read-back gets the plain line, and the toast text wraps
+      so an address standing in for a name cannot push Undo off a phone.
     footprint:
       - server/utils/inbox/rules.js
       - server/utils/inbox/rules.menuTasks.test.js
@@ -1154,6 +1161,8 @@ lanes:
       - server/utils/inbox/readers.test.js
       - client/src/components/inbox/useInboxActions.js
       - client/src/components/inbox/useInboxActions.test.js
+      - client/src/pages/admin/Inbox.test.js  (the page's Done toasts; added by the build)
+      - client/src/index.css  (the toast text wraps; added by the lane's review)
       - README.md, ARCHITECTURE.md  (generated sections, and the Menu tasks paragraph if a rule changes)
     blockedBy: [menu-approve-send]
     lenses: tier A (server/utils/inbox/** is sensitive); lifecycle, business-time (the due time against a snooze), seams, client (the toast), verify, the externals.
