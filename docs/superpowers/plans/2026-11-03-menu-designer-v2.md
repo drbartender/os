@@ -1184,11 +1184,18 @@ lanes:
       not you; a change request is the owner's move again. menu_done itself is unchanged. Split from
       menu-approve-send to keep that lane's diff smaller; it lands after the reminders exist, so a held menu
       never leaves the owner's view unwatched.
+      As built 2026-11-14 (Claude's calls, spec 14 amended): the feed carries a second flag, menu_answer_waiting
+      (held and answered either way, or a change request open by the Inbox reader's rule, so a change request
+      after a release reads Menu Design as the Inbox does), and the Plan chips are coloured per tag, so Menu with
+      client is always the client's grey beside an amber Shopping List.
     footprint:
       - server/routes/shifts.queries.js  (menu_with_client)
       - server/routes/shifts.planQueue.test.js  (where menu_done is tested)
       - client/src/components/adminos/eventPlan.js  (the tag and owner)
       - client/src/components/adminos/eventPlan.test.js
+      - server/routes/shifts.adminScoped.test.js  (the pinned admin column list takes the two flags; added by the build)
+      - client/src/pages/admin/EventsDashboard.js  (the Plan chip's colour per tag; added by the lane's review)
+      - client/src/pages/admin/EventsDashboard.statusCell.test.js  (added by the lane's review)
       - README.md, ARCHITECTURE.md  (generated sections)
     blockedBy: [menu-approve-send]
     lenses: the computed tier; lifecycle (who owns the next move), seams (menu_done readers unchanged), client (a capture of the events list).
