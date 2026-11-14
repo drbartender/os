@@ -1,7 +1,11 @@
 // POST /:id/menu-draft/sync, Update draft (spec 2026-10-01 sections 7 and 9;
-// mounted by menuDrafts.js). Body { version, image_model, scope? }. scope is a
+// mounted by menuDrafts.js). Body { version, plan_hash, image_model, scope? }. scope is a
 // closed value: absent, the full Update draft below; 'bar', the bar-only
-// rebuild (after the full one); anything else 400. The full one brings the draft in
+// rebuild (after the full one); anything else 400. plan_hash, on both scopes,
+// is the GET's diff.plan_hash as the page held it when Update draft was
+// pressed (64 lowercase hex, else 400); a plan that moved since is 409
+// MENU_PLAN_MOVED (requireSamePlan, spec 2026-10-19 section 17), with nothing
+// written, reserved or spent. The full one brings the draft in
 // line with the plan: adds the drinks the plan gained (catalog fields
 // directly; a client-typed drink's name and description from one words call),
 // removes the ones it lost with their pieces, refreshes only the "Also at the
@@ -9,10 +13,13 @@
 // bar picks were tracked (spec 2026-10-19 section 17; every other line keeps
 // its stored text, the owner's words included), clears dismissed_plan_hash,
 // and reserves and queues the added drinks' art, drawn by image_model. 202
-// with the new version. The plan_fingerprint it stores is what it applied: the
+// with the new version. It reads the plan itself (the raw diff), never the
+// GET's shown one, so it applies every drink and bar change, dismissed or not.
+// The plan_fingerprint it stores is what it applied: the
 // plan's drink keys and bar baseline (bar_lines, bar_hash), with the stored
-// brief and planner image parts kept (it applies neither, so a notes edit or a
-// new client image still reads after it). The words call for the added
+// brief and planner image parts kept (the last reviewed ones: it applies
+// neither, so a notes edit nobody reviewed still reads after it, and one
+// Dismiss or Mark reviewed recorded stays reviewed). The words call for the added
 // client-typed drinks reads effectiveBrief(the plan's brief, the draft's
 // inputs.admin_brief) (spec 2026-10-19 section 7.2), the brief the words step
 // reads; the fingerprint never sees the admin brief.
@@ -30,9 +37,10 @@
 //   0. the legal-hold proposal is refused first, 409 LEGAL_HOLD
 //      (assertNotLegalHold, isLegalHold failing closed), before any read,
 //      provider call, reservation or write (money law 15);
-//   1. checks with no transaction: the body, the draft and its version, the
-//      words landed, the plan (fresh catalog maps, never the read model's
-//      cache), then the keys when a words call or art will follow;
+//   1. checks with no transaction: the body (plan_hash with it), the draft
+//      and its version, the words landed, the plan (fresh catalog maps, never
+//      the read model's cache) and the plan-hash echo, then the keys when a
+//      words call or art will follow, so a moved plan spends nothing;
 //   2. when client-typed drinks were added: a short transaction (lockCalls,
 //      the draft row, the image-cap headroom for the added drinks that will
 //      get art, reserveText under the draft's CURRENT run_id, COMMIT), then
@@ -42,7 +50,8 @@
 //   3. ONE transaction (lockCalls, the draft row FOR UPDATE, then pieces): the
 //      version and words checks again, the plan and catalog reloaded through
 //      the client (loadCatalogMaps sends one query at a time, never two on the
-//      held client at once), each dropped drink's reserved ledger rows
+//      held client at once), the echo again (a plan moved during the words
+//      call is refused here, before any release or write), each dropped drink's reserved ledger rows
 //      released and its piece deleted, the added drinks appended (art while
 //      fewer than 8 visible drinks have it), the bar lines refreshed (the
 //      changed ones, and every line with no key rebuilt and keyed),
@@ -64,14 +73,18 @@
 // keeps the stored drink, brief and planner image parts of the fingerprint;
 // the bar baseline takes today's picks for the lines it rebuilt, drops the
 // unkeyed:<place> entries and the categories that print nothing, and keeps
-// the rest. A dismissal that matched before it is re-stamped to the draft it
-// leaves (dismissalHash), so neither a dismissed drink change nor a reviewed
-// notes edit comes back; one that did not match is left as it was. Same
-// refusals and order as the full one, after the legal hold: 404, the version
-// (409), the words (409), the plan (422), all inside ONE transaction on one
-// pooled client (inLockedTx: lockCalls, then the draft row FOR UPDATE, then
-// the plan and catalog through the client), version + 1, COMMIT. With nothing
-// to rebuild it writes nothing and answers 202 with the version it holds.
+// the rest. A dismissal that held before it (either form) is re-stamped to the
+// draft it leaves in the review form (dismissalHash), so a dismissed drink
+// change stays dismissed; when the one that held was the old whole-plan form,
+// the plan's brief and image parts are folded into the fingerprint too
+// (foldReviewed), since the old hash covered them and the review form does
+// not, so a reviewed notes edit does not come back. One that did not hold is
+// left as it was. Same refusals and order as the full one, after the legal
+// hold: 404, the version (409), the words (409), the plan (422), the echo
+// (409 MENU_PLAN_MOVED), all inside ONE transaction on one pooled client
+// (inLockedTx: lockCalls, then the draft row FOR UPDATE, then the plan and
+// catalog through the client), version + 1, COMMIT. With nothing to rebuild it
+// writes nothing and answers 202 with the version it holds.
 
 const express = require('express');
 const crypto = require('crypto');
@@ -82,17 +95,17 @@ const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { reserveImages, reserveText, releasePieceReserved, requireImageHeadroom } = require('../../utils/menuArtCap');
 const job = require('../../utils/menuArtJob');
-const { computeDiff, barBaseline, dismissalHash } = require('../../utils/menuDraftRead');
+const { reviewOf, barBaseline, dismissalHash, DISMISSAL } = require('../../utils/menuDraftRead');
 const { validateImageModel, LIMITS } = require('../../utils/menuDraftValidation');
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, hashBarLines, effectiveBrief,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, hashBarLines, effectiveBrief, foldReviewed,
 } = require('../../utils/menuDrinkSource');
 const { keyedBarLines, keyBarLines, LINE_LABELS } = require('../../utils/menuAlsoAtBar');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
-  isObject, capList, parseId, parseVersion, requireProposal, noDraft, draftChanged, noPlan, requireWords,
-  upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inLockedTx, queue,
+  isObject, capList, parseId, parseVersion, parsePlanHash, requireProposal, noDraft, draftChanged, noPlan, requireWords,
+  requireSamePlan, upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inLockedTx, queue,
 } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -122,13 +135,15 @@ function inPrintOrder(lines) {
     .map(({ line }) => line);
 }
 
-// computeDiff over capped copies of the stored lists: the diff the GET shows,
-// read against the legacy bar baseline when the draft has no bar_lines yet
-// (no list stays no list, which reads as today's picks).
-function diffOf(draft, normalized) {
+// The review state (menuDraftRead.reviewOf) over capped copies of the stored
+// lists: { diff, dismissal }. diff is the raw diff (every drink and bar change,
+// never the GET's shown one), read against the legacy bar baseline when the
+// draft has no bar_lines yet (no list stays no list, which reads as today's
+// picks); dismissal is the form of the stored dismissal that holds.
+function reviewStateOf(draft, normalized) {
   const fp = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
   const content = isObject(draft.content) ? draft.content : {};
-  return computeDiff({
+  return reviewOf({
     ...draft,
     plan_fingerprint: { ...fp, drink_keys: capList(fp.drink_keys) },
     content: {
@@ -137,6 +152,7 @@ function diffOf(draft, normalized) {
     },
   }, normalized);
 }
+const diffOf = (draft, normalized) => reviewStateOf(draft, normalized).diff;
 
 // The "Also at the bar" lines after Update draft, in the builder's print order.
 // A stored line is found by its server-written key (the builder's label), never
@@ -265,7 +281,7 @@ async function typedWords({ id, draft, proposal, typed, brief, artCount }) {
 }
 
 // Scope bar (header): one transaction, on one pooled client, under the row lock.
-function syncBarOnly(id, version) {
+function syncBarOnly(id, version, sentHash) {
   return inLockedTx(async (client) => {
     await requireProposal(id, client);
     const locked = (await client.query(
@@ -277,14 +293,19 @@ function syncBarOnly(id, version) {
     const current = await loadEventPlan(id, client);
     if (!current) throw noPlan();
     const normalized = normalizePlan(current, await loadCatalogMaps(client));
-    const diff = diffOf(locked, normalized);
+    requireSamePlan(sentHash, normalized);
+    const { dismissal } = reviewStateOf(locked, normalized);
     const stored = isObject(locked.plan_fingerprint) ? locked.plan_fingerprint : {};
+    const today = buildFingerprint(normalized);
     const rebuilt = rebuildBarOnly(keyBarLines(capList(locked.content.also_at_bar)).lines, keyedBarLines(normalized.bar),
-      barBaseline(stored, locked.content, normalized), buildFingerprint(normalized).bar_lines);
+      barBaseline(stored, locked.content, normalized), today.bar_lines);
     if (!rebuilt) return { version: locked.version };
     const content = { ...locked.content, also_at_bar: rebuilt.lines };
-    const fingerprint = { ...stored, bar_lines: rebuilt.barLines, bar_hash: hashBarLines(rebuilt.barLines) };
-    const dismissed = diff.dismissed ? dismissalHash({ plan_fingerprint: fingerprint, content }, normalized) : locked.dismissed_plan_hash;
+    let fingerprint = { ...stored, bar_lines: rebuilt.barLines, bar_hash: hashBarLines(rebuilt.barLines) };
+    // An old-form dismissal covered the notes and the image too, which the
+    // review form does not: fold them in, so a notes edit it covered stays reviewed.
+    if (dismissal === DISMISSAL.WHOLE) fingerprint = foldReviewed(fingerprint, today);
+    const dismissed = dismissal ? dismissalHash({ plan_fingerprint: fingerprint, content }, normalized) : locked.dismissed_plan_hash;
     const { rows } = await client.query(
       `UPDATE menu_drafts SET content = $2::jsonb, plan_fingerprint = $3::jsonb, dismissed_plan_hash = $4, version = version + 1
         WHERE id = $1 RETURNING version`,
@@ -299,8 +320,9 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
   const body = isObject(req.body) ? req.body : {};
   const scope = parseScope(body.scope);
   const version = parseVersion(body.version);
+  const sentHash = parsePlanHash(body.plan_hash);
   if (scope === 'bar') {
-    res.status(202).json(await syncBarOnly(id, version));
+    res.status(202).json(await syncBarOnly(id, version, sentHash));
     return;
   }
   const provider = validateImageModel(body.image_model);
@@ -313,6 +335,8 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
   const plan = await loadEventPlan(id);
   if (!plan) throw noPlan();
   const first = normalizePlan(plan, await loadCatalogMaps());
+  // The echo, before the keys and the words call, so a moved plan spends nothing.
+  requireSamePlan(sentHash, first);
   const firstDiff = diffOf(draft, first);
   const typed = addedDrinks(firstDiff, first).filter((d) => d.source !== 'catalog');
   const artCount = layout(draft.content, firstDiff, first).added.filter((a) => a.hasArt).length;
@@ -334,6 +358,8 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
     const current = await loadEventPlan(id, client);
     if (!current) throw noPlan();
     const normalized = normalizePlan(current, await loadCatalogMaps(client));
+    // Again under the row lock, before any release, delete, reservation or write.
+    requireSamePlan(sentHash, normalized);
     const diff = diffOf(locked, normalized);
     const { dropped, kept, added: plannedAdds } = layout(locked.content, diff, normalized);
     const added = plannedAdds.map(({ drink, hasArt }) => {
@@ -360,7 +386,7 @@ router.post('/:id/menu-draft/sync', auth, requireAdminOrManager, adminWriteLimit
     const content = { ...locked.content, drinks: [...kept, ...added] };
     // A line stored before keys existed that still carries a builder label is
     // keyed by it here, under the row lock (keyBarLines, lane
-    // menu-bar-legacy-keys). The diff is the one the GET shows: for a draft
+    // menu-bar-legacy-keys). The diff is the raw one the GET's is built from: for a draft
     // with no baseline yet it reads the one the boot stamp would give it
     // (menuBarBaselineStamp.js), so a category its stored lines prove came or
     // went since Generate is repaired in this same Update draft. Each line

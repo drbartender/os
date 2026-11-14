@@ -17,6 +17,12 @@
 //   background prompt and a background re-roll in menuArtJob.js, and Update
 //   draft's typed-drinks words call); normalizePlan's brief stays the client's,
 //   so the fingerprint and the diff never see the admin brief.
+// - The review state (spec 2026-10-19 section 17): reviewHash is what a Dismiss
+//   stores (the drink keys, the bar hash and the drift, never the brief or the
+//   image, and never equal to a fingerprintHash), foldReviewed the stored
+//   fingerprint with the plan's brief and image parts that Dismiss writes
+//   (Mark reviewed writes the one part its banner named), and planHash the
+//   plan-hash echo's one hash.
 // All pure except loadEventPlan and loadCatalogMaps, which take the db.
 
 const crypto = require('crypto');
@@ -429,7 +435,8 @@ function buildFingerprint(normalized) {
   };
 }
 
-// One hash over a fingerprint (the dismissed_plan_hash value, spec 9), built
+// One hash over a fingerprint (planHash, and the dismissed_plan_hash value
+// before lane menu-plan-review-state, still read as the old form), built
 // from a canonical array so a fingerprint read back from JSONB (which reorders
 // object keys) hashes the same as a freshly built one. brief_hash already
 // covers the three brief fields. bar_hash joins the array only when the
@@ -455,6 +462,54 @@ function fingerprintHash(fingerprint) {
   return sha256(JSON.stringify(parts));
 }
 
+// ─── The review state ────────────────────────────────────────────────────────
+
+// What a Dismiss stores as dismissed_plan_hash (spec 2026-10-19 section 17,
+// lane menu-plan-review-state): one hash over the drink keys, the bar hash and
+// the bar drift ONLY, so a notes edit or a new client image never undoes a
+// dismissed drink or bar change, while a drink or bar move does. The notes and
+// the image are reviewed by foldReviewed instead. Its JSON array opens with
+// REVIEW_TAG, a string where fingerprintHash's opens with an array, so it never
+// equals a fingerprintHash value (the old form, which covered the brief and the
+// image too). The drink keys in any order; the drift in any order, repeats once.
+const REVIEW_TAG = 'menu-review-v1';
+function reviewHash(fingerprint) {
+  const f = fingerprint || {};
+  return sha256(JSON.stringify([
+    REVIEW_TAG,
+    asArray(f.drink_keys).map(String).sort(),
+    typeof f.bar_hash === 'string' && f.bar_hash ? f.bar_hash : null,
+    [...new Set(asArray(f.bar_drift).map(String))].sort(),
+  ]));
+}
+
+// The plan-hash echo's hash (spec 17): the hash of the plan's current
+// fingerprint. The GET hands it out as diff.plan_hash, and Dismiss, Mark
+// reviewed and Update draft compare the posted one with it, each through this
+// one function, so the page and the routes can never disagree on what it covers.
+function planHash(normalized) {
+  return fingerprintHash(buildFingerprint(normalized));
+}
+
+// The notes and the client image a review covers: the stored fingerprint with
+// the plan's current brief parts (brief_hash, brief_fields) and
+// planner_image_key folded in, every other part kept as stored (the drink keys
+// and the bar baseline stay what the draft holds; a fingerprint with no bar
+// baseline yet keeps none). Dismiss stores both parts, as does the bar-only
+// rebuild over an old-form dismissal; Mark reviewed stores the one part its
+// banner named ({ brief: false } or { image: false } leaves that part as
+// stored). Pure; a new object.
+function foldReviewed(stored, current, { brief = true, image = true } = {}) {
+  const now = current || {};
+  const out = { ...(isObject(stored) ? stored : {}) };
+  if (brief) {
+    out.brief_hash = now.brief_hash;
+    out.brief_fields = now.brief_fields;
+  }
+  if (image) out.planner_image_key = now.planner_image_key || null;
+  return out;
+}
+
 module.exports = {
   loadEventPlan,
   loadCatalogMaps,
@@ -462,6 +517,9 @@ module.exports = {
   buildFingerprint,
   legacyBarBaseline,
   fingerprintHash,
+  reviewHash,
+  planHash,
+  foldReviewed,
   hashBarLines,
   drinkKey,
   slugifyTyped,

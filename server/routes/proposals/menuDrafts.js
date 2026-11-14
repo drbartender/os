@@ -6,7 +6,7 @@
 //   POST   /:id/menu-draft/generate                   Start over: a new run, 202
 //   PATCH  /:id/menu-draft                            an edit under the version check
 //   POST   /:id/menu-draft/pieces/:pieceKey/reroll    one piece, 202 (409 until the words land, 422 with no plan)
-//   POST   /:id/menu-draft/dismiss-plan-change        hide the plan-changed banner
+//   POST   /:id/menu-draft/dismiss-plan-change        Dismiss, or Mark reviewed with covers notes
 //   POST   /:id/menu-draft/sync                       Update draft (menuDraftSync.js)
 //   GET    the piece, reference and planner image     (menuDraftImages.js)
 // Approve is Lane 3's (menuDraftApprove.js).
@@ -32,6 +32,25 @@
 // upload, provider call, reservation or write, so the held booking's plan
 // never reaches the AI.
 //
+// Dismiss and Mark reviewed (spec 2026-10-19 section 17, lane
+// menu-plan-review-state) record what the admin reviewed. Body { version,
+// plan_hash, covers? }: covers absent is Dismiss, 'notes' is Mark reviewed,
+// anything else 400; plan_hash is the GET's diff.plan_hash as the page held it
+// (64 lowercase hex, else 400). After the legal-hold refusal and the body
+// checks, ONE transaction on one pooled client (inTx, no calls lock: it
+// reserves nothing): the proposal (404), the draft row FOR UPDATE (404), the
+// version (409 MENU_DRAFT_CHANGED), the plan and catalog through that client
+// (422 with no plan), the echo (409 MENU_PLAN_MOVED, nothing written), then
+// one UPDATE. Each folds what its banner named into plan_fingerprint as
+// reviewed: Dismiss the plan's brief and image parts both (its banner lists
+// both lines) and the review hash (dismissalHash: the drink keys, the bar and
+// its drift) as dismissed_plan_hash; Mark reviewed the brief parts while any
+// notes field is edited (its banner then names those fields and never the
+// image), else the image part, leaving dismissed_plan_hash as it was, so a
+// drink or bar change beside the notes stays on screen and an image change is
+// never recorded unseen. Neither bumps the version nor moves updated_at, so an
+// approved draft stays approved.
+//
 // Generate releases every reserved row of the proposal (the old run's, and any
 // re-roll or sync row stranded by a restart) BEFORE it reserves its own, and
 // upserts the draft in place (version, art_version and the approved_* stamps
@@ -52,15 +71,18 @@ const {
   reserveImages, reserveText, releaseReserved, releaseProposalReserved, releasePieceReserved,
 } = require('../../utils/menuArtCap');
 const job = require('../../utils/menuArtJob');
-const { readDraftPayload, stuck, dismissalHash } = require('../../utils/menuDraftRead');
+const { readDraftPayload, stuck, dismissalHash, reviewOf } = require('../../utils/menuDraftRead');
 const {
   validateGenerateInputs, validatePatch, validateRerollNote, validateImageModel, LIMITS,
 } = require('../../utils/menuDraftValidation');
-const { loadEventPlan, buildFingerprint } = require('../../utils/menuDrinkSource');
+const {
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, foldReviewed,
+} = require('../../utils/menuDrinkSource');
 const { assertNotLegalHold } = require('./patchGuards');
 const {
-  LIST_CAP, isObject, capList, parseId, parseVersion, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan,
-  requireWords, upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inLockedTx, queue,
+  LIST_CAP, isObject, capList, parseId, parseVersion, parsePlanHash, parsePieceKey, requireProposal, noDraft, draftChanged,
+  noPlan, requireWords, requireSamePlan, upsertPendingPieces, requireWordsProvider, requireImageModel, imageModelId, inTx,
+  inLockedTx, queue,
 } = require('./menuDraftShared');
 
 const router = express.Router();
@@ -241,28 +263,60 @@ router.post('/:id/menu-draft/pieces/:pieceKey/reroll', auth, requireAdminOrManag
   queue('reroll', () => job.runPieceReroll({ draftId, pieceKey, pieceRunId, proposalId: id }));
 }));
 
+// Dismiss's covers: absent is Dismiss; 'notes' is Mark reviewed (spec 2026-10-19 section 17).
+function parseCovers(raw) {
+  if (raw === undefined) return null;
+  if (raw !== 'notes') throw new ValidationError({ covers: 'Dismiss takes no covers, or covers notes.' });
+  return raw;
+}
+
 router.post('/:id/menu-draft/dismiss-plan-change', auth, requireAdminOrManager, menuDraftEditLimiter, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
   assertNotLegalHold(id);
-  await requireProposal(id);
-  const version = parseVersion(isObject(req.body) ? req.body.version : undefined);
-  const cur = (await pool.query('SELECT version, content, plan_fingerprint FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0];
-  if (!cur) throw noDraft();
-  if (version !== cur.version) throw draftChanged();
-  const { normalized } = await job.freshPlan(id);
-  if (!normalized) throw noPlan();
-  // The draft as it stands at this version: the hash covers its bar lines'
-  // drift too (a renamed-back gone line), so this dismissal holds over it.
-  const hash = dismissalHash(cur, normalized);
-  // Checked against version but never bumps it: the hash is not menu content,
-  // so dismissing the banner on an approved draft leaves it approved (a bump
-  // would read as edited since approval). Only dismissed_plan_hash is written,
-  // and only while the version still matches (an edit in between is a 409).
-  const { rows } = await pool.query(
-    `UPDATE menu_drafts SET dismissed_plan_hash = $3
-      WHERE proposal_id = $1 AND version = $2 RETURNING version`, [id, version, hash]);
-  if (!rows.length) throw draftChanged();
-  return res.json({ version: rows[0].version });
+  const body = isObject(req.body) ? req.body : {};
+  const version = parseVersion(body.version);
+  const sentHash = parsePlanHash(body.plan_hash);
+  const covers = parseCovers(body.covers);
+  // One transaction on one pooled client, under the draft row lock, so the
+  // plan checked against the page's hash is the plan the write records.
+  const out = await inTx(async (client) => {
+    await requireProposal(id, client);
+    const cur = (await client.query(
+      'SELECT id, version, content, plan_fingerprint, dismissed_plan_hash FROM menu_drafts WHERE proposal_id = $1 FOR UPDATE',
+      [id])).rows[0];
+    if (!cur) throw noDraft();
+    if (version !== cur.version) throw draftChanged();
+    const plan = await loadEventPlan(id, client);
+    if (!plan) throw noPlan();
+    // loadCatalogMaps sends its two queries one after the other on the held client.
+    const normalized = normalizePlan(plan, await loadCatalogMaps(client));
+    requireSamePlan(sentHash, normalized);
+    // Each records what its banner named, as reviewed (the plan's part folded
+    // into the fingerprint). Dismiss's banner lists the notes line and the
+    // image line, so it folds both, and stores the review hash of the draft as
+    // it stands (the drink keys, the bar and its drift), so the drink and bar
+    // changes stay dismissed until they move again. Mark reviewed's banner
+    // (menuCardState.js bannerList, pinned in MenuEditor.test.js) names the
+    // edited notes fields whenever any is edited and never the image beside
+    // them, and names the image only when no field is edited: it folds that
+    // one part, read here from the same diff the GET showed, so an image
+    // change is never recorded unseen (with both changed, the banner returns
+    // naming the image). It leaves the dismissal exactly as it was.
+    const current = buildFingerprint(normalized);
+    const notesNamed = reviewOf(cur, normalized).diff.brief_edited.length > 0;
+    const fingerprint = covers === 'notes'
+      ? foldReviewed(cur.plan_fingerprint, current, { brief: notesNamed, image: !notesNamed })
+      : foldReviewed(cur.plan_fingerprint, current);
+    const dismissed = covers === 'notes' ? cur.dismissed_plan_hash : dismissalHash(cur, normalized);
+    // Never bumps the version: neither is menu content, so an approved draft
+    // stays approved (a bump would read as edited since approval), and the
+    // updated_at trigger skips a write of only these two columns.
+    const { rows } = await client.query(
+      'UPDATE menu_drafts SET plan_fingerprint = $2::jsonb, dismissed_plan_hash = $3 WHERE id = $1 RETURNING version',
+      [cur.id, fingerprint, dismissed]);
+    return rows[0];
+  });
+  return res.json({ version: out.version });
 }));
 
 router.use('/', require('./menuDraftSync'));

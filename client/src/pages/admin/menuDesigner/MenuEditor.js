@@ -175,7 +175,7 @@ export default function MenuEditor({ editor, menu, proposal, eventLabel, drinkPl
     reroll: (b) => (readOnly ? undefined : menu.reroll(b.pieceKey)),
     update: (b) => (b.scope ? menu.sync({ scope: b.scope }) : menu.sync()),
     dismiss: () => menu.dismissPlanChange(),
-    'mark-reviewed': () => menu.dismissPlanChange(),
+    'mark-reviewed': () => menu.dismissPlanChange({ covers: 'notes' }),
     'retry-save': () => menu.retrySave(),
     reload: () => menu.refetch(),
     download: () => downloadMenuPrint(`/proposals/${proposal.id}/menu-print`),

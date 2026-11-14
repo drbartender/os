@@ -1,6 +1,7 @@
 // useMenuDraft (default export): the event page's menu draft hook, the GET and its poll, the
 // debounced autosave, the visit's brief (the admin brief included) and the Generate, Update
-// draft, Dismiss and re-roll actions.
+// draft, Dismiss, Mark reviewed and re-roll actions; the three review actions send back the
+// plan hash the page held when pressed.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../../utils/api';
@@ -22,6 +23,13 @@ import { defaultImageModel } from './menuCardState';
 //   sync({ scope: 'bar' }) is the unchecked notice's bar-only Update draft: it
 //   posts scope bar and no image model, since it draws nothing; any other
 //   sync is the full Update draft, as before.
+// - The plan-hash echo (spec 2026-10-19 section 17): sync (both scopes) and
+//   dismissPlanChange post plan_hash, the GET's diff.plan_hash as the page held
+//   it when the action was called (read before the save flush; the version is
+//   read after it). dismissPlanChange({ covers: 'notes' }) is Mark reviewed,
+//   which covers the notes and the client image only; with no covers it is
+//   Dismiss. A 409 (MENU_PLAN_MOVED when the plan moved since) refetches like
+//   every answer and reaches the caller, which prints the server's sentence.
 // - edit({ content?, inputs? }) overlays top-level keys and PATCHes them 800 ms
 //   after the last edit, to the id they were made for. A 409 drops them,
 //   refetches and sets save.conflict (saveConflictOf: true for a version
@@ -255,12 +263,17 @@ export default function useMenuDraft(proposalId) {
   // The in-place and editor actions. Each settles the pending save first where
   // the server checks the version, keeps the version it returns, and resolves
   // (or rethrows) only once a GET made after it lands, whatever the answer.
+  // run gets { pid, planHash }: planHash is the GET's diff.plan_hash as the
+  // page held it when the action was called, read before the save flush, so a
+  // GET landing during the flush never swaps in a plan the admin did not see.
   const action = useCallback((run, { settle = true } = {}) => async (...args) => {
     const pid = live.current;
     if (!pid) return undefined;
+    const shown = latest.current.payload && latest.current.payload.diff;
+    const planHash = shown && typeof shown.plan_hash === 'string' ? shown.plan_hash : null;
     if (settle) await flush().catch(() => {});
     try {
-      const data = await run(pid, ...args);
+      const data = await run({ pid, planHash }, ...args);
       if (data && Number.isInteger(data.version)) versions.current.set(pid, data.version);
       return data;
     } finally {
@@ -273,7 +286,7 @@ export default function useMenuDraft(proposalId) {
     }
   }, [flush, fetchDraft]);
 
-  const generate = useMemo(() => action(async (pid, { imageModel: model } = {}) => {
+  const generate = useMemo(() => action(async ({ pid }, { imageModel: model } = {}) => {
     const { payload: cur, overlay: ov, brief: b, referenceFile: file, imageModel: chosen } = latest.current;
     const src = cur && cur.draft ? { ...cur.draft.inputs, ...ov.inputs } : b;
     const form = new FormData();
@@ -294,17 +307,20 @@ export default function useMenuDraft(proposalId) {
     return res.data;
   }), [action]);
 
-  const sync = useMemo(() => action(async (pid, { imageModel: model, scope } = {}) => (
+  const sync = useMemo(() => action(async ({ pid, planHash }, { imageModel: model, scope } = {}) => (
     (await api.post(`/proposals/${pid}/menu-draft/sync`, scope === 'bar'
-      ? { version: versions.current.get(pid), scope }
-      : { version: versions.current.get(pid), image_model: model || latest.current.imageModel })).data
+      ? { version: versions.current.get(pid), scope, plan_hash: planHash }
+      : { version: versions.current.get(pid), image_model: model || latest.current.imageModel, plan_hash: planHash })).data
   )), [action]);
 
-  const dismissPlanChange = useMemo(() => action(async (pid) => (
-    (await api.post(`/proposals/${pid}/menu-draft/dismiss-plan-change`, { version: versions.current.get(pid) })).data
-  )), [action]);
+  // Dismiss, or Mark reviewed with { covers: 'notes' } (the notes and the client image only).
+  const dismissPlanChange = useMemo(() => action(async ({ pid, planHash }, { covers } = {}) => {
+    const body = { version: versions.current.get(pid), plan_hash: planHash };
+    if (covers === 'notes') body.covers = 'notes';
+    return (await api.post(`/proposals/${pid}/menu-draft/dismiss-plan-change`, body)).data;
+  }), [action]);
 
-  const reroll = useMemo(() => action(async (pid, pieceKey, { note, imageModel: model } = {}) => {
+  const reroll = useMemo(() => action(async ({ pid }, pieceKey, { note, imageModel: model } = {}) => {
     const body = { image_model: model || latest.current.imageModel };
     if (typeof note === 'string' && note.trim()) body.note = note.trim();
     return (await api.post(`/proposals/${pid}/menu-draft/pieces/${encodeURIComponent(pieceKey)}/reroll`, body)).data;

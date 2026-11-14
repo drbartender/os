@@ -5,7 +5,9 @@
 //
 // inLockedTx(fn) is the ONE way these routes open a reserving transaction:
 // BEGIN, then lockCalls (LOCK TABLE menu_art_calls IN EXCLUSIVE MODE) as the
-// first statement, then fn(client), then COMMIT. Inside fn the order is the
+// first statement, then fn(client), then COMMIT. inTx(fn) is the same without
+// the calls lock, for a write that reserves nothing and locks one draft row
+// only (Dismiss and Mark reviewed). Inside fn the order is the
 // draft row (SELECT ... FOR UPDATE) before any piece row, never the reverse, so
 // Generate, re-roll, sync and the job's finishPiece (draft first, then piece)
 // all take locks in one order. Any error rolls back and goes through
@@ -26,12 +28,21 @@
 // every writer compares it with the stored version in JS (409) before SQL sees
 // it. requireWords and noPlan are the refusals re-roll and Update draft share;
 // Approve uses requireWords too.
+//
+// The plan-hash echo (spec 2026-10-19 section 17, lane menu-plan-review-state):
+// parsePlanHash bounds the posted plan_hash (64 lowercase hex, else 400 "Reload
+// the page, then try again.", as the message and the field error both), and
+// requireSamePlan compares it with planHash of
+// the plan the route read through its own client, under the draft row lock;
+// a different hash is 409 MENU_PLAN_MOVED and drops the read model's catalog
+// cache. Dismiss, Mark reviewed and Update draft (both scopes) share them.
 
 const { pool } = require('../../db');
 const { AppError, ConflictError, ValidationError, NotFoundError } = require('../../utils/errors');
 const { lockCalls, mapDeadlock } = require('../../utils/menuArtCap');
 const { report, describe } = require('../../utils/menuArtJobErrors');
-const { stuck, wordsConfigured } = require('../../utils/menuDraftRead');
+const { stuck, wordsConfigured, dropCatalogCache } = require('../../utils/menuDraftRead');
+const { planHash } = require('../../utils/menuDrinkSource');
 const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 
@@ -50,6 +61,10 @@ const IMAGE_MODEL_DEFAULTS = Object.freeze({ openai: 'gpt-image-2.5-sunburst', g
 const IMAGE_MODEL_ENV = Object.freeze({ openai: 'MENU_ART_IMAGE_MODEL', gemini: 'MENU_ART_GEMINI_IMAGE_MODEL' });
 
 const OPEN = new Set(['pending', 'working']);
+// The GET's diff.plan_hash: a sha256 hex digest (planHash).
+const PLAN_HASH_RE = /^[0-9a-f]{64}$/;
+const PLAN_MOVED_TEXT = 'The drink plan changed while this page was open. Check the change, then try again.';
+const RELOAD_TEXT = 'Reload the page, then try again.';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const asArray = (v) => (Array.isArray(v) ? v : []);
@@ -73,6 +88,28 @@ function parseVersion(raw) {
     throw new ValidationError({ version: 'Send the draft version you saw.' });
   }
   return raw;
+}
+
+// The plan hash the page held when the button was pressed (spec 2026-10-19
+// section 17): 64 lowercase hex characters, else a 400. The sentence is the
+// error's own message as well as the field's: the page that sends no hash is
+// one still on a bundle from before the echo (a tab left open across the
+// ship), and the editor's toast prints only the message.
+function parsePlanHash(raw) {
+  if (typeof raw !== 'string' || !PLAN_HASH_RE.test(raw)) {
+    throw new ValidationError({ plan_hash: RELOAD_TEXT }, RELOAD_TEXT);
+  }
+  return raw;
+}
+
+// The plan-hash echo: the posted hash against planHash of the plan the route
+// read through its own client. A different one is 409 MENU_PLAN_MOVED, and the
+// read model's catalog cache is dropped first, so the page's refetch shows the
+// plan as the route read it rather than a cached view it could never send back.
+function requireSamePlan(sentHash, normalized) {
+  if (planHash(normalized) === sentHash) return;
+  dropCatalogCache();
+  throw new ConflictError(PLAN_MOVED_TEXT, 'MENU_PLAN_MOVED');
 }
 
 function parsePieceKey(raw) {
@@ -125,11 +162,14 @@ function imageModelId(provider) {
   return String(process.env[IMAGE_MODEL_ENV[provider]] || '').trim() || IMAGE_MODEL_DEFAULTS[provider];
 }
 
-async function inLockedTx(fn) {
+// One transaction on one pooled client (header): BEGIN, fn(client), COMMIT;
+// any error rolls back and goes through mapDeadlock; the client is released
+// before it returns. Dismiss and Mark reviewed use it bare, since they reserve
+// nothing; inLockedTx adds the calls lock.
+async function inTx(fn) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await lockCalls(client);
     const out = await fn(client);
     await client.query('COMMIT');
     return out;
@@ -139,6 +179,13 @@ async function inLockedTx(fn) {
   } finally {
     client.release();
   }
+}
+
+function inLockedTx(fn) {
+  return inTx(async (client) => {
+    await lockCalls(client);
+    return fn(client);
+  });
 }
 
 // Inside inLockedTx, after the draft row is locked: each piece key pending
@@ -170,6 +217,6 @@ function queue(step, fn) {
 module.exports = {
   PIECE_KEY_RE, LIST_CAP, IMAGE_MODEL_DEFAULTS,
   isObject, capList,
-  parseId, parseVersion, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan, requireWords,
-  requireWordsProvider, requireImageModel, imageModelId, inLockedTx, upsertPendingPieces, queue,
+  parseId, parseVersion, parsePlanHash, parsePieceKey, requireProposal, noDraft, draftChanged, noPlan, requireWords,
+  requireSamePlan, requireWordsProvider, requireImageModel, imageModelId, inTx, inLockedTx, upsertPendingPieces, queue,
 };

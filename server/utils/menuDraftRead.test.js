@@ -17,6 +17,7 @@ const read = require('./menuDraftRead');
 const { NotFoundError } = require('./errors');
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, legacyBarBaseline, hashBarLines,
+  reviewHash, planHash,
 } = require('./menuDrinkSource');
 
 const { PRINT_STATES: S } = read;
@@ -46,10 +47,16 @@ async function setPlan(patch = {}) {
   await pool.query('UPDATE drink_plans SET selections = $2 WHERE id = $1', [planId, { ...base, ...patch }]);
 }
 
-async function currentFingerprint() {
-  const plan = await loadEventPlan(proposalId, pool);
-  return buildFingerprint(normalizePlan(plan, await loadCatalogMaps(pool)));
+async function currentPlan() {
+  return normalizePlan(await loadEventPlan(proposalId, pool), await loadCatalogMaps(pool));
 }
+
+async function currentFingerprint() {
+  return buildFingerprint(await currentPlan());
+}
+
+// The hash the routes compare a posted plan_hash with (fresh catalog maps, as they read).
+const currentPlanHash = async () => planHash(await currentPlan());
 
 // Back to the base plan and a fresh, never-approved draft fingerprinted to it.
 async function reset() {
@@ -207,6 +214,20 @@ test('the catalog maps are cached for 60 seconds, and a reset reloads them', asy
   await second;
 });
 
+// A MENU_PLAN_MOVED refusal drops the cache (lane menu-plan-review-state), so
+// the page's refetch reads the catalog the route just read.
+test('dropCatalogCache drops the cached maps, so the next read loads fresh ones; the test reset is the same function', async () => {
+  read.dropCatalogCache();
+  const first = read.cachedCatalogMaps();
+  assert.equal(read.cachedCatalogMaps(), first, 'cached');
+  read.dropCatalogCache();
+  const second = read.cachedCatalogMaps();
+  assert.notEqual(second, first, 'dropped: a new load');
+  assert.equal(read.cachedCatalogMaps(), second);
+  assert.equal(read._resetCatalogCacheForTest, read.dropCatalogCache);
+  await Promise.all([first, second]);
+});
+
 // The bar in the diff (spec 2026-10-19 section 17), on plain plan rows.
 const planWith = (sel) => normalizePlan({
   id: 1, serving_type: 'full_bar', selections: { customCocktails: ['Zq Pure One'], menuTheme: 'Garden', ...sel },
@@ -325,14 +346,20 @@ test('computeDiff: a Dismiss stored after a renamed-back gone line holds; one st
   const after = fingerprintHash({ ...fp, bar_drift: ['Spirits'] });
   let d = read.computeDiff(draft(back, after), now);
   assert.deepEqual([d.bar_changed, d.bar_changed_labels, d.dismissed], [true, ['Spirits'], true], 'the Dismiss stored after it holds');
-  assert.equal(read.dismissalHash(draft(back, null), now), after, 'the writers\' hash names the gone key');
   d = read.computeDiff(draft(back, fingerprintHash(fp)), now);
   assert.equal(d.dismissed, false, 'one stored while the line was still renamed never saw it');
-  // While the line is renamed there is no gone key: the dismissal hash is the plan's own, as before.
-  assert.equal(read.dismissalHash(draft(renamed, null), now), fingerprintHash(fp));
   assert.equal(read.computeDiff(draft(renamed, fingerprintHash(fp)), now).dismissed, true);
   // A later pick move undoes the one stored after.
   assert.equal(read.computeDiff(draft(back, after), planWith({ wineFromFullBar: ['White'] })).dismissed, false);
+  // The writers' hash (the review form, lane menu-plan-review-state) names the gone key the same way.
+  const written = read.dismissalHash(draft(back, null), now);
+  assert.equal(written, reviewHash({ ...fp, bar_drift: ['Spirits'] }), 'the writers\' hash names the gone key');
+  assert.equal(read.computeDiff(draft(back, written), now).dismissed, true);
+  assert.equal(read.computeDiff(draft(back, reviewHash(fp)), now).dismissed, false, 'one written while the line was renamed never saw it');
+  // While the line is renamed there is no gone key: the review hash is the plan's own.
+  assert.equal(read.dismissalHash(draft(renamed, null), now), reviewHash(fp));
+  assert.equal(read.computeDiff(draft(renamed, reviewHash(fp)), now).dismissed, true);
+  assert.equal(read.computeDiff(draft(back, written), planWith({ wineFromFullBar: ['White'] })).dismissed, false);
 });
 
 // The verify pass's M1 on menu-bar-chain, the probe's shape: the line the
@@ -422,6 +449,84 @@ test('computeDiff: on a stamped legacy draft a dismissal from before the deploy 
   assert.deepEqual([d.dismissed, d.bar_changed], [true, true], 'a dismissal stored since covers the bar it saw');
   d = read.computeDiff(after, barNormalized(['Sparkling']));
   assert.deepEqual([d.dismissed, d.bar_changed], [false, true], 'and a later bar move undoes it');
+});
+
+// ─── The review state (spec 2026-10-19 section 17, lane menu-plan-review-state)
+// A Dismiss stores the review hash (the drink keys, the bar hash and the drift)
+// and folds the brief and image parts into the fingerprint; Mark reviewed only
+// folds. computeDiff keeps its raw lists; the GET shows what is left.
+
+const generatedPlan = planWith({ customCocktails: ['Zq Pure One'], wineFromFullBar: ['Red'] });
+const reviewDraft = (over = {}) => ({
+  plan_fingerprint: buildFingerprint(generatedPlan), content: { drinks: [] }, dismissed_plan_hash: null, ...over,
+});
+const addedPlan = (over = {}) => planWith({ customCocktails: ['Zq Pure One', 'Zq Pure Two'], wineFromFullBar: ['Red'], ...over });
+const ADDED = [{ key: 'custom:zq-pure-two', name: 'Zq Pure Two' }];
+const SHOWN_KEYS = ['added', 'bar_changed', 'bar_changed_labels', 'bar_unchecked', 'brief_edited', 'dismissed', 'dropped', 'image_changed', 'plan_hash'];
+
+test('dismissalHash is the review hash: the drink keys, the bar hash and the drift, never the brief, the image or the old form', () => {
+  const now = addedPlan();
+  const hash = read.dismissalHash(reviewDraft(), now);
+  assert.equal(hash, reviewHash(buildFingerprint(now)));
+  assert.notEqual(hash, fingerprintHash(buildFingerprint(now)));
+  assert.equal(read.dismissalHash(reviewDraft(), addedPlan({ menuDesignNotes: 'Gold foil', _logoFilename: 'drink-plan-logos/1-2.png' })), hash);
+});
+
+test('computeDiff: a review-form dismissal holds through a notes or image edit, keeps the raw lists, and goes when the drinks or the bar move', () => {
+  const draft = reviewDraft({ dismissed_plan_hash: read.dismissalHash(reviewDraft(), addedPlan()) });
+  let d = read.computeDiff(draft, addedPlan());
+  assert.deepEqual([d.dismissed, d.added], [true, ADDED], 'the raw lists stay for Update draft and the boot stamp');
+  d = read.computeDiff(draft, addedPlan({ menuDesignNotes: 'Gold foil', _logoFilename: 'drink-plan-logos/1-2.png' }));
+  assert.deepEqual([d.dismissed, d.brief_edited, d.image_changed], [true, ['notes'], true], 'a notes edit or a new image never undoes it');
+  assert.equal(read.computeDiff(draft, addedPlan({ customCocktails: ['Zq Pure One', 'Zq Pure Two', 'Zq Pure Three'] })).dismissed, false);
+  assert.equal(read.computeDiff(draft, addedPlan({ wineFromFullBar: ['White'] })).dismissed, false);
+  assert.deepEqual(Object.keys(d).sort(), Object.keys(NO_CHANGE).sort(), 'computeDiff\'s shape is unchanged');
+});
+
+test('reviewOf names the form that holds: review, whole (the old form) or none', () => {
+  const now = addedPlan();
+  const notes = addedPlan({ menuDesignNotes: 'Gold foil' });
+  assert.equal(read.reviewOf(reviewDraft({ dismissed_plan_hash: read.dismissalHash(reviewDraft(), now) }), now).dismissal, 'review');
+  assert.equal(read.reviewOf(reviewDraft({ dismissed_plan_hash: fingerprintHash(buildFingerprint(notes)) }), notes).dismissal, 'whole');
+  const barless = { ...buildFingerprint(now) };
+  delete barless.bar_hash;
+  delete barless.bar_lines;
+  assert.equal(read.reviewOf(reviewDraft({ dismissed_plan_hash: fingerprintHash(barless) }), now).dismissal, 'whole');
+  assert.equal(read.reviewOf(reviewDraft(), now).dismissal, null);
+  assert.equal(read.reviewOf(reviewDraft({ dismissed_plan_hash: 'x' }), now).dismissal, null);
+  assert.deepEqual(read.reviewOf(reviewDraft(), now).diff, read.computeDiff(reviewDraft(), now));
+  assert.equal(read.reviewOf(null, now), null);
+});
+
+test('shownDiff: what is left after the recorded review, with the plan hash; the old form reads as covering everything', () => {
+  const now = addedPlan();
+  const notes = addedPlan({ menuDesignNotes: 'Gold foil' });
+  const held = reviewDraft({ dismissed_plan_hash: read.dismissalHash(reviewDraft(), now) });
+  // Nothing left: nothing shows.
+  let s = read.shownDiff(held, now);
+  assert.deepEqual(s, { ...NO_CHANGE, dismissed: true, plan_hash: planHash(now) });
+  assert.deepEqual(Object.keys(s).sort(), SHOWN_KEYS, 'no internal field leaves');
+  // A later notes edit shows alone; the dismissed drink stays dismissed.
+  s = read.shownDiff(held, notes);
+  assert.deepEqual(s, { ...NO_CHANGE, brief_edited: ['notes'], dismissed: false, plan_hash: planHash(notes) });
+  // A dismissed bar change stays hidden too.
+  const bar = planWith({ customCocktails: ['Zq Pure One'], wineFromFullBar: ['White'] });
+  s = read.shownDiff(reviewDraft({ dismissed_plan_hash: read.dismissalHash(reviewDraft(), bar) }), bar);
+  assert.deepEqual([s.bar_changed, s.bar_changed_labels, s.dismissed], [false, [], true]);
+  // An old-form dismissal: the raw diff, dismissed, the notes included.
+  s = read.shownDiff(reviewDraft({ dismissed_plan_hash: fingerprintHash(buildFingerprint(notes)) }), notes);
+  assert.deepEqual(s, { ...NO_CHANGE, added: ADDED, brief_edited: ['notes'], dismissed: true, plan_hash: planHash(notes) });
+  // No dismissal: the raw diff.
+  s = read.shownDiff(reviewDraft(), notes);
+  assert.deepEqual(s, { ...NO_CHANGE, added: ADDED, brief_edited: ['notes'], dismissed: false, plan_hash: planHash(notes) });
+  // An unchecked line is no review's to cover: it passes through.
+  const lines = { drinks: [], also_at_bar: [{ key: 'Beer and Wine', label: 'Beer and Wine', text: 'Red.' }, { label: 'Liquor', text: 'Tito\'s.' }] };
+  const unchecked = reviewDraft({ content: lines });
+  s = read.shownDiff({ ...unchecked, dismissed_plan_hash: read.dismissalHash(unchecked, now) }, now);
+  assert.deepEqual([s.bar_unchecked, s.dismissed, s.added], [1, true, []]);
+  assert.equal(read.shownDiff(unchecked, now).bar_unchecked, 1);
+  assert.equal(read.shownDiff(null, now), null);
+  assert.equal(read.shownDiff(reviewDraft(), null), null);
 });
 
 // ─── Live ────────────────────────────────────────────────────────────────────
@@ -559,7 +664,8 @@ test('planner_reference: a planner side with no drinks reads an empty list; no p
 test('the diff: added and dropped, by key, dropped named from the draft', async () => {
   await reset();
   let out = await payload();
-  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_changed_labels: [], bar_unchecked: 0, dismissed: false });
+  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_changed_labels: [], bar_unchecked: 0, dismissed: false,
+    plan_hash: await currentPlanHash() });
   await setPlan({ customCocktails: [DRINK_A, DRINK_C] });
   out = await payload();
   assert.deepEqual(out.diff.added, [{ key: KEY.c, name: DRINK_C }]);
@@ -571,8 +677,8 @@ test('brief edited only names the changed field; the planner image reads as chan
   await reset();
   await setPlan({ menuTheme: 'Roaring twenties', drinkNaming: '  Name   them after flowers ' });
   let out = await payload();
-  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: ['theme'], image_changed: false, bar_changed: false, bar_changed_labels: [], bar_unchecked: 0, dismissed: false },
-    'whitespace alone is not an edit');
+  assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: ['theme'], image_changed: false, bar_changed: false, bar_changed_labels: [], bar_unchecked: 0, dismissed: false,
+    plan_hash: await currentPlanHash() }, 'whitespace alone is not an edit');
   assert.equal(out.brief.theme, 'Roaring twenties');
 
   await reset();
@@ -648,6 +754,29 @@ test('dismissed until the plan changes again', async () => {
   assert.deepEqual(out.diff.brief_edited, ['notes']);
 });
 
+test('the GET: diff.plan_hash is the hash the routes compare, and the diff is what is left after the recorded review', async () => {
+  await reset();
+  await setPlan({ customCocktails: [DRINK_A, DRINK_B, DRINK_C] });
+  let out = await payload();
+  assert.equal(out.diff.plan_hash, await currentPlanHash());
+  assert.match(out.diff.plan_hash, /^[0-9a-f]{64}$/);
+  assert.deepEqual([out.diff.added.map((d) => d.key), out.diff.dismissed], [[KEY.c], false]);
+  // A Dismiss stores the review hash of the draft as it stands.
+  const row = (await pool.query('SELECT content, plan_fingerprint FROM menu_drafts WHERE id = $1', [draftId])).rows[0];
+  await pool.query('UPDATE menu_drafts SET dismissed_plan_hash = $2 WHERE id = $1', [draftId, read.dismissalHash(row, await currentPlan())]);
+  out = await payload();
+  assert.deepEqual([out.diff.added, out.diff.dismissed], [[], true], 'the dismissed drink is no longer shown');
+  // A later notes edit shows alone; the drink stays dismissed, and the hash moved with the notes.
+  await setPlan({ customCocktails: [DRINK_A, DRINK_B, DRINK_C], menuDesignNotes: 'Gold foil' });
+  out = await payload();
+  assert.deepEqual([out.diff.added, out.diff.brief_edited, out.diff.dismissed], [[], ['notes'], false]);
+  assert.equal(out.diff.plan_hash, await currentPlanHash());
+  // The drinks move: the dismissal goes and everything shows.
+  await setPlan({ customCocktails: [DRINK_A], menuDesignNotes: 'Gold foil' });
+  out = await payload();
+  assert.deepEqual([out.diff.dropped.map((d) => d.key), out.diff.brief_edited, out.diff.dismissed], [[KEY.b], ['notes'], false]);
+});
+
 test('bar picks through the GET: a changed wine pick reads bar_changed; order is no change', async () => {
   await reset();
   await setPlan({ wineFromFullBar: ['White', 'Red'] });
@@ -656,7 +785,7 @@ test('bar picks through the GET: a changed wine pick reads bar_changed; order is
   await setPlan({ wineFromFullBar: ['Red', 'Sparkling'] });
   out = await payload();
   assert.deepEqual(out.diff, { added: [], dropped: [], brief_edited: [], image_changed: false,
-    bar_changed: true, bar_changed_labels: ['Beer and Wine'], bar_unchecked: 0, dismissed: false });
+    bar_changed: true, bar_changed_labels: ['Beer and Wine'], bar_unchecked: 0, dismissed: false, plan_hash: await currentPlanHash() });
 });
 
 test('a GET on a draft with no bar baseline writes nothing and reads it against the baseline the boot stamp would give it', async () => {

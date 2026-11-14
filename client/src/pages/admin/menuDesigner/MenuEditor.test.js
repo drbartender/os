@@ -351,6 +351,11 @@ describe('table B banners', () => {
       {}, { id: 'notes-edited', tone: 'md-banner-info', title: 'Client edited their menu notes.', text: "Design notes changed. The draft hasn't been updated.", buttons: ['Mark reviewed'] }],
     ['the client image changed', (p) => { p.diff.image_changed = true; },
       {}, { id: 'notes-edited', tone: 'md-banner-info', title: 'The client image changed since this draft.', text: "The draft hasn't been updated.", buttons: ['Mark reviewed'] }],
+    // With both changed the banner names the notes and never the image. The server's Mark reviewed mirrors this rule
+    // (menuDrafts.js: the notes while a brief field is edited, else the image), so the image is never recorded unseen:
+    // a change to this banner's wording must move that rule with it.
+    ['notes edited and the client image changed', (p) => { p.diff.brief_edited = ['notes']; p.diff.image_changed = true; },
+      {}, { id: 'notes-edited', tone: 'md-banner-info', title: 'Client edited their menu notes.', text: "Design notes changed. The draft hasn't been updated.", buttons: ['Mark reviewed'] }],
     ['save failed', (p) => p, { save: { state: 'failed', savedAt: null, conflict: false } },
       { id: 'save-failed', tone: 'md-banner-danger', title: "Last change didn't save.", text: 'Your edits are kept in this tab.', buttons: ['Retry'] }],
     ['save conflict', (p) => p, { save: { state: 'idle', savedAt: null, conflict: true } },
@@ -402,6 +407,7 @@ describe('table B banners', () => {
     const two = mountEditor(plan);
     fireEvent.click(inBanners().getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => expect(plan.dismissPlanChange).toHaveBeenCalledTimes(1));
+    expect(plan.dismissPlanChange).toHaveBeenCalledWith();
     await waitFor(() => expect(inBanners().getByRole('button', { name: 'Update draft' })).toBeEnabled());
     fireEvent.click(inBanners().getByRole('button', { name: 'Update draft' }));
     await waitFor(() => expect(plan.sync).toHaveBeenCalledTimes(1));
@@ -411,6 +417,7 @@ describe('table B banners', () => {
     const three = mountEditor(notes);
     fireEvent.click(inBanners().getByRole('button', { name: 'Mark reviewed' }));
     await waitFor(() => expect(notes.dismissPlanChange).toHaveBeenCalledTimes(1));
+    expect(notes.dismissPlanChange).toHaveBeenCalledWith({ covers: 'notes' });
     three.unmount();
 
     const approved = fakeMenu(P((p) => { p.print = { state: 'approved', approved_at: '2026-10-09T17:00:00Z', print_key: 'k', approved_file_in_use: true }; }));
@@ -425,6 +432,20 @@ describe('table B banners', () => {
     await waitFor(() => expect(noMenu.refetch).toHaveBeenCalledTimes(1));
     expect(api.patch).toHaveBeenCalledWith('/proposals/42/menu-print', { not_required: false });
     expect(loadProposal).toHaveBeenCalledTimes(1);
+  });
+
+  // Spec 2026-10-19 section 17 (lane menu-plan-review-state): Mark reviewed
+  // covers the notes and the image only, so a drink change beside it stays.
+  test('Mark reviewed calls the hook with covers notes; Dismiss beside it with none', async () => {
+    const both = fakeMenu(P((p) => { p.diff.added = [{ key: 'cocktail:9', name: 'Cucumber Mule' }]; p.diff.brief_edited = ['notes']; }));
+    mountEditor(both);
+    fireEvent.click(inBanners().getByRole('button', { name: 'Mark reviewed' }));
+    await waitFor(() => expect(both.dismissPlanChange).toHaveBeenCalledTimes(1));
+    expect(both.dismissPlanChange).toHaveBeenLastCalledWith({ covers: 'notes' });
+    await waitFor(() => expect(inBanners().getByRole('button', { name: 'Dismiss' })).toBeEnabled());
+    fireEvent.click(inBanners().getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(both.dismissPlanChange).toHaveBeenCalledTimes(2));
+    expect(both.dismissPlanChange).toHaveBeenLastCalledWith();
   });
 
   test('a failed action says why in a toast, and the button says it is busy while it runs', async () => {

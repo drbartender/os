@@ -10,7 +10,7 @@ const { performance } = require('node:perf_hooks');
 
 const {
   loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, legacyBarBaseline, fingerprintHash, hashBarLines,
-  drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev, effectiveBrief,
+  drinkKey, slugifyTyped, plannerImageKeyOf, plannerImageRev, effectiveBrief, reviewHash, planHash, foldReviewed,
 } = require('./menuDrinkSource');
 const { buildAlsoAtBar } = require('./menuAlsoAtBar');
 
@@ -827,6 +827,81 @@ test('fingerprintHash: the drift keys join the hash only when there are some, in
   assert.notEqual(drifted, fingerprintHash(fp), 'a drift key moves the hash');
   assert.equal(fingerprintHash({ ...fp, bar_drift: ['Non-Alcoholic', 'Spirits', 'Spirits'] }), drifted, 'order and repeats do not');
   assert.notEqual(fingerprintHash({ ...fp, bar_drift: ['Spirits'] }), drifted);
+});
+
+// ─── The review state (spec 2026-10-19 section 17, lane menu-plan-review-state)
+
+test('reviewHash ignores the brief and the image, and moves with the drink keys, the bar hash and the drift', () => {
+  const fp = buildFingerprint(barPlan());
+  const hash = reviewHash(fp);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  const other = buildFingerprint(barPlan({ menuTheme: 'Something else', menuDesignNotes: 'Gold foil', _logoFilename: 'drink-plan-logos/1-9.png' }));
+  assert.notEqual(other.brief_hash, fp.brief_hash);
+  assert.notEqual(other.planner_image_key, fp.planner_image_key);
+  assert.equal(reviewHash(other), hash, 'a notes edit or a new client image never moves it');
+  // JSONB hands keys back reordered and the drink keys in any order.
+  assert.equal(reviewHash({ bar_hash: fp.bar_hash, drink_keys: [...fp.drink_keys].reverse() }), hash);
+  assert.notEqual(reviewHash({ ...fp, drink_keys: [...fp.drink_keys, 'custom:new'] }), hash);
+  assert.notEqual(reviewHash(buildFingerprint(barPlan({ wineFromFullBar: ['White', 'Other'] }))), hash);
+  const drifted = reviewHash({ ...fp, bar_drift: ['Spirits', 'Non-Alcoholic'] });
+  assert.notEqual(drifted, hash, 'a drift key moves it');
+  assert.equal(reviewHash({ ...fp, bar_drift: ['Non-Alcoholic', 'Spirits', 'Spirits'] }), drifted, 'order and repeats do not');
+  assert.equal(reviewHash({ ...fp, bar_drift: [] }), hash);
+});
+
+test('reviewHash never equals a hash of the old form, with or without a bar or drift', () => {
+  const fingerprints = [buildFingerprint(barPlan()), buildFingerprint(briefPlan({ theme: 'a', naming: '', notes: '' })),
+    { drink_keys: [], brief_hash: null, planner_image_key: null }, {}];
+  for (const fp of fingerprints) {
+    const barless = { ...fp };
+    delete barless.bar_hash;
+    delete barless.bar_lines;
+    const olds = [fingerprintHash(fp), fingerprintHash(barless), fingerprintHash({ ...fp, bar_hash: null }),
+      fingerprintHash({ ...fp, bar_drift: ['Spirits'] })];
+    for (const review of [reviewHash(fp), reviewHash(barless), reviewHash({ ...fp, bar_drift: ['Spirits'] })]) {
+      for (const old of olds) assert.notEqual(review, old, JSON.stringify(Object.keys(fp)));
+    }
+  }
+});
+
+test('planHash is the hash of the plan\'s current fingerprint, so a notes edit moves it', () => {
+  const n = barPlan();
+  assert.equal(planHash(n), fingerprintHash(buildFingerprint(n)));
+  assert.match(planHash(n), /^[0-9a-f]{64}$/);
+  assert.notEqual(planHash(barPlan({ menuDesignNotes: 'Gold foil' })), planHash(n));
+  assert.notEqual(planHash(barPlan({ wineFromFullBar: ['White'] })), planHash(n));
+});
+
+test('foldReviewed takes the plan\'s brief and image parts and keeps the drink keys and the bar baseline', () => {
+  const generated = buildFingerprint(barPlan());
+  const stored = { ...generated, bar_lines: { ...generated.bar_lines, 'unkeyed:2': 'e'.repeat(64) }, bar_hash: 'f'.repeat(64) };
+  const snapshot = JSON.parse(JSON.stringify(stored));
+  const now = buildFingerprint(barPlan({
+    menuDesignNotes: 'Gold foil', _logoFilename: 'drink-plan-logos/1-9.png', wineFromFullBar: ['White'], customCocktails: ['Zq Other'],
+  }));
+  assert.notDeepEqual(now.drink_keys, stored.drink_keys);
+  const folded = foldReviewed(stored, now);
+  assert.deepEqual([folded.brief_hash, folded.brief_fields, folded.planner_image_key], [now.brief_hash, now.brief_fields, now.planner_image_key]);
+  assert.deepEqual([folded.drink_keys, folded.bar_lines, folded.bar_hash], [stored.drink_keys, stored.bar_lines, stored.bar_hash]);
+  assert.deepEqual(stored, snapshot, 'the stored fingerprint is not mutated');
+  // A fingerprint with no bar baseline yet stays without one (the boot stamp and the legacy read still apply).
+  const barless = { ...generated };
+  delete barless.bar_lines;
+  delete barless.bar_hash;
+  const foldedBarless = foldReviewed(barless, now);
+  assert.equal(Object.prototype.hasOwnProperty.call(foldedBarless, 'bar_lines'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(foldedBarless, 'bar_hash'), false);
+  assert.equal(foldReviewed(null, now).brief_hash, now.brief_hash, 'a malformed stored fingerprint still folds');
+  assert.equal(foldReviewed(stored, { ...now, planner_image_key: undefined }).planner_image_key, null);
+  // One part at a time (Mark reviewed records what its banner named): the other part stays as stored.
+  const briefOnly = foldReviewed(stored, now, { image: false });
+  assert.deepEqual([briefOnly.brief_hash, briefOnly.brief_fields, briefOnly.planner_image_key],
+    [now.brief_hash, now.brief_fields, stored.planner_image_key]);
+  const imageOnly = foldReviewed(stored, now, { brief: false });
+  assert.deepEqual([imageOnly.brief_hash, imageOnly.brief_fields, imageOnly.planner_image_key],
+    [stored.brief_hash, stored.brief_fields, now.planner_image_key]);
+  assert.deepEqual(foldReviewed(stored, now, { brief: false, image: false }), stored);
+  assert.deepEqual(stored, snapshot, 'still not mutated');
 });
 
 // The verify pass's M1 on menu-bar-chain: a renamed line renamed back to a

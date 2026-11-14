@@ -73,7 +73,8 @@ const openaiClient = require('../../utils/openaiClient');
 const geminiClient = require('../../utils/geminiClient');
 const anthropicClient = require('../../utils/anthropicClient');
 const { adminWriteLimiter, menuDraftReadLimiter, menuDraftEditLimiter } = require('../../middleware/rateLimiters');
-const { buildFingerprint, normalizePlan, loadEventPlan, loadCatalogMaps, fingerprintHash } = require('../../utils/menuDrinkSource');
+const { buildFingerprint, normalizePlan, loadEventPlan, loadCatalogMaps, reviewHash } = require('../../utils/menuDrinkSource');
+const menuDraftRead = require('../../utils/menuDraftRead');
 const { __setLegalHoldIdsForTest } = require('../../utils/legalHold');
 const menuDraftsRouter = require('./menuDrafts');
 const { queue } = require('./menuDraftShared');
@@ -218,6 +219,14 @@ async function piecesOf(id) {
   return Object.fromEntries(rows.map((r) => [r.piece_key, r]));
 }
 const ledgerOf = async (id) => (await pool.query('SELECT * FROM menu_art_calls WHERE proposal_id = $1 ORDER BY id', [id])).rows;
+// The GET's diff; its plan_hash is what the page holds and sends back with
+// Dismiss, Mark reviewed and Update draft (spec 2026-10-19 section 17).
+const diffNow = async (id) => (await request('GET', base(id))).body.diff;
+const planHashOf = async (id) => (await diffNow(id)).plan_hash;
+// Dismiss (Mark reviewed with covers notes) from a page holding the current plan.
+const dismissAt = async (id, version, extra = {}) => request('POST', `${base(id)}/dismiss-plan-change`,
+  { json: { version, plan_hash: await planHashOf(id), ...extra } });
+const syncNow = async (id, body) => request('POST', `${base(id)}/sync`, { json: { plan_hash: await planHashOf(id), ...body } });
 const setContent = (id, patch) => pool.query('UPDATE menu_drafts SET content = content || $2::jsonb WHERE proposal_id = $1', [id, patch]);
 const setPiece = (id, key, sql, args = []) => pool.query(
   `UPDATE menu_draft_pieces p SET ${sql} FROM menu_drafts d WHERE d.id = p.draft_id AND d.proposal_id = $1 AND p.piece_key = $2`,
@@ -444,7 +453,8 @@ test('generate and re-roll answer 503 MENU_ART_NOT_CONFIGURED without the OpenAI
   const reroll = await request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'openai' } });
   assert.equal(reroll.body.code, 'MENU_ART_NOT_CONFIGURED');
   // Update draft checks the key only where it will call a provider; with no draft there is nothing to update.
-  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
+  // No draft, so no diff and no hash on the page: any well-formed hash reaches the 404.
+  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai', plan_hash: 'a'.repeat(64) } });
   assert.equal(sync.status, 404);
   assert.equal(await draftOf(id), undefined);
   assert.deepEqual(await ledgerOf(id), []);
@@ -529,7 +539,7 @@ test('Update draft by provider: typed drinks need the words key, added art its i
   process.env.MENU_ART_TEXT_MODEL = CLAUDE;
   stubAnthropic();
   await setPlan(planId, selections(3, { wineFromFullBar: ['Red'] }));
-  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'gemini' } });
+  const sync = await syncNow(id, { version: 1, image_model: 'gemini' });
   assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
   await idle();
   assert.deepEqual([calls.claude.length, calls.words.length, calls.gemini.length, calls.openai.length], [1, 0, 1, 0]);
@@ -542,14 +552,14 @@ test('Update draft by provider: typed drinks need the words key, added art its i
   delete process.env.ANTHROPIC_API_KEY;
   await setPlan(planId, selections(4, { wineFromFullBar: ['Red'] }));
   const ledgerBefore = (await ledgerOf(id)).length;
-  const refused = await request('POST', `${base(id)}/sync`, { json: { version: 2, image_model: 'gemini' } });
+  const refused = await syncNow(id, { version: 2, image_model: 'gemini' });
   assert.deepEqual([refused.status, refused.body.code], [503, 'MENU_ART_NOT_CONFIGURED']);
   assert.equal((await ledgerOf(id)).length, ledgerBefore, 'nothing reserved');
 
   // The bar alone: no key of any provider.
   delete process.env.GEMINI_API_KEY;
   await setPlan(planId, selections(3, { wineFromFullBar: ['White'] }));
-  const bar = await request('POST', `${base(id)}/sync`, { json: { version: 2, image_model: 'gemini' } });
+  const bar = await syncNow(id, { version: 2, image_model: 'gemini' });
   assert.deepEqual([bar.status, bar.body.version], [202, 3], JSON.stringify(bar.body));
   assert.equal(calls.words.length + calls.claude.length + imageCalls(), 0);
 });
@@ -599,7 +609,7 @@ test('Update draft: the typed-drinks words call carries the admin brief merged o
   await pool.query('UPDATE menu_drafts SET inputs = inputs || $2::jsonb WHERE proposal_id = $1',
     [id, { admin_brief: { theme: `Navy and brass ${NONCE}`, naming: 'Name them after the dogs', notes: '  ' } }]);
   await setPlan(planId, selections(3));
-  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai' } });
+  const sync = await syncNow(id, { version: 1, image_model: 'openai' });
   assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
   await idle();
   assert.equal(calls.words.length, 1, 'one words call, for the typed drink');
@@ -876,10 +886,11 @@ test('PATCH: refuses inputs.reference_key, inputs.image_model, added_by_sync and
 test('versions: a number past int4 is a 400 on PATCH, dismiss and sync, never a 500, and nothing is written', async () => {
   const { id, planId } = await ready();
   await setPlan(planId, selections(3));
+  const hash = await planHashOf(id);
   for (const version of [1e20, 2147483648, 0, -1, 1.5, '1']) {
     const patch = await request('PATCH', base(id), { json: { version, content: { title: 'Huge' } } });
-    const dismiss = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version } });
-    const sync = await request('POST', `${base(id)}/sync`, { json: { version, image_model: 'openai' } });
+    const dismiss = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version, plan_hash: hash } });
+    const sync = await request('POST', `${base(id)}/sync`, { json: { version, image_model: 'openai', plan_hash: hash } });
     for (const [label, res] of [['PATCH', patch], ['dismiss', dismiss], ['sync', sync]]) {
       assert.equal(res.status, 400, `${label} ${version}`);
       assert.ok(res.body.fieldErrors.version, `${label} ${version}`);
@@ -1149,7 +1160,7 @@ test('planner image: streams the lowest-id plan\'s image with ?w=; 404 when it h
 
 // ── Dismiss ─────────────────────────────────────────────────────────────────
 
-test('dismiss: stores the plan hash under the version check, never bumps the version, and an approved draft stays approved', async () => {
+test('dismiss: stores the review hash under the version check, never bumps the version, and an approved draft stays approved', async () => {
   const { id, planId } = await ready();
   const key = `menu-print/${id}/approved-${NONCE}.jpg`;
   await pool.query('UPDATE proposals SET menu_print_key = $2 WHERE id = $1', [id, key]);
@@ -1161,48 +1172,214 @@ test('dismiss: stores the plan hash under the version check, never bumps the ver
   const seen = await request('GET', base(id));
   assert.deepEqual(seen.body.diff.brief_edited, ['notes']);
   assert.equal(seen.body.diff.dismissed, false);
-  const stale = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 9 } });
-  assert.equal(stale.status, 409);
-  const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  const stale = await dismissAt(id, 9);
+  assert.deepEqual([stale.status, stale.body.code], [409, 'MENU_DRAFT_CHANGED']);
+  const res = await dismissAt(id, 1);
   assert.equal(res.status, 200);
   assert.equal(res.body.version, 1, 'the version is unchanged');
   const draft = await draftOf(id);
   assert.equal(draft.version, 1);
-  const current = normalizePlan(await loadEventPlan(id), await loadCatalogMaps());
-  assert.equal(draft.dismissed_plan_hash, fingerprintHash(buildFingerprint(current)));
+  const current = buildFingerprint(normalizePlan(await loadEventPlan(id), await loadCatalogMaps()));
+  assert.equal(draft.dismissed_plan_hash, reviewHash(current), 'the drink keys and the bar, never the notes');
+  assert.deepEqual([draft.plan_fingerprint.brief_hash, draft.plan_fingerprint.brief_fields], [current.brief_hash, current.brief_fields],
+    'the notes it covered are folded into the fingerprint');
   const read = await request('GET', base(id));
-  assert.equal(read.body.diff.dismissed, true);
+  assert.deepEqual([read.body.diff.dismissed, read.body.diff.brief_edited], [true, []]);
   assert.equal(read.body.print.state, 'approved', 'dismissing the banner is not an edit since approval');
-  const again = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  const again = await dismissAt(id, 1);
   assert.deepEqual([again.status, again.body.version], [200, 1], 'dismissing the same plan again is fine');
   await setPlan(planId, selections(2, { menuDesignNotes: 'Fireworks and sparklers' }));
-  assert.equal((await request('GET', base(id))).body.diff.dismissed, false);
+  const later = (await request('GET', base(id))).body.diff;
+  assert.deepEqual([later.dismissed, later.brief_edited], [false, ['notes']], 'a later notes edit shows');
   assert.equal(calls.words.length + imageCalls(), 0, 'dismiss works without calling anything');
 });
 
 test('dismiss: the stored hash covers the bar picks, so a later bar change shows again', async () => {
   const { id, planId } = await ready();
   await setPlan(planId, selections(2, { wineFromFullBar: ['Red'] }));
-  const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
+  const res = await dismissAt(id, 1);
   assert.deepEqual([res.status, res.body.version], [200, 1]);
   let diff = (await request('GET', base(id))).body.diff;
-  assert.deepEqual([diff.bar_changed, diff.dismissed], [true, true]);
+  assert.deepEqual([diff.bar_changed, diff.dismissed], [false, true], 'the dismissed bar change is no longer shown');
   await setPlan(planId, selections(2, { wineFromFullBar: ['Red', 'White'] }));
   diff = (await request('GET', base(id))).body.diff;
   assert.deepEqual([diff.bar_changed, diff.dismissed], [true, false]);
 });
 
-test('dismiss: leaves the Saved time alone, while an edit moves it (lane menu-bar-baseline)', async () => {
+test('dismiss and Mark reviewed leave the Saved time alone, while an edit moves it (lane menu-bar-baseline)', async () => {
   const { id, planId } = await ready();
   const savedAt = async () => (await pool.query('SELECT updated_at FROM menu_drafts WHERE proposal_id = $1', [id])).rows[0].updated_at.toISOString();
   await pool.query("UPDATE menu_drafts SET updated_at = NOW() - interval '5 days' WHERE proposal_id = $1", [id]);
   const before = await savedAt();
-  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'] }));
-  const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } });
-  assert.equal(res.status, 200);
+  await setPlan(planId, selections(2, { wineFromFullBar: ['Red'], menuDesignNotes: 'Now with fireworks' }));
+  const reviewed = await dismissAt(id, 1, { covers: 'notes' });
+  assert.deepEqual([reviewed.status, reviewed.body.version], [200, 1], JSON.stringify(reviewed.body));
+  assert.equal(await savedAt(), before, 'Mark reviewed is no save');
+  const res = await dismissAt(id, 1);
+  assert.deepEqual([res.status, res.body.version], [200, 1], JSON.stringify(res.body));
   assert.equal(await savedAt(), before, 'a dismissal is no save');
+  assert.equal((await draftOf(id)).version, 1, 'neither bumps the version');
   await setContent(id, { title: `Edited ${NONCE}` });
   assert.notEqual(await savedAt(), before);
+});
+
+// ── The review state (spec 2026-10-19 section 17, lane menu-plan-review-state)
+
+test('review state: Mark reviewed, then a drink added and Update draft: the notes edit stays reviewed', async () => {
+  const { id, planId } = await ready();
+  const notes = { menuDesignNotes: 'Now with fireworks' };
+  await setPlan(planId, selections(2, notes));
+  assert.deepEqual((await diffNow(id)).brief_edited, ['notes']);
+  const reviewed = await dismissAt(id, 1, { covers: 'notes' });
+  assert.deepEqual([reviewed.status, reviewed.body.version], [200, 1], JSON.stringify(reviewed.body));
+  assert.deepEqual((await diffNow(id)).brief_edited, []);
+  await setPlan(planId, selections(3, notes));
+  let diff = await diffNow(id);
+  assert.deepEqual([diff.added.map((d) => d.key), diff.brief_edited], [[KEYS[2]], []], 'the drink shows, the reviewed notes do not');
+  const sync = await request('POST', `${base(id)}/sync`, { json: { version: 1, image_model: 'openai', plan_hash: diff.plan_hash } });
+  assert.deepEqual([sync.status, sync.body.version], [202, 2], JSON.stringify(sync.body));
+  await idle();
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added, diff.brief_edited, diff.image_changed], [[], [], false], 'Update draft brings no reviewed notes edit back');
+});
+
+test('review state: Mark reviewed beside a drink change leaves the drink change showing', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(3, { menuDesignNotes: 'Now with fireworks' }));
+  let diff = await diffNow(id);
+  assert.deepEqual([diff.added.map((d) => d.key), diff.brief_edited], [[KEYS[2]], ['notes']]);
+  const reviewed = await dismissAt(id, 1, { covers: 'notes' });
+  assert.equal(reviewed.status, 200, JSON.stringify(reviewed.body));
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added.map((d) => d.key), diff.brief_edited, diff.dismissed], [[KEYS[2]], [], false]);
+  assert.equal((await draftOf(id)).dismissed_plan_hash, null, 'Mark reviewed dismisses nothing');
+});
+
+test('review state: a dismissed drink stays dismissed through a later notes edit, and returns when the drinks move', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(3));
+  assert.equal((await dismissAt(id, 1)).status, 200);
+  let diff = await diffNow(id);
+  assert.deepEqual([diff.added, diff.dismissed], [[], true]);
+  await setPlan(planId, selections(3, { menuDesignNotes: 'Now with fireworks' }));
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added, diff.brief_edited, diff.dismissed], [[], ['notes'], false], 'the notes edit shows alone');
+  assert.equal((await dismissAt(id, 1, { covers: 'notes' })).status, 200);
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added, diff.brief_edited, diff.dismissed], [[], [], true]);
+  await setPlan(planId, selections(4, { menuDesignNotes: 'Now with fireworks' }));
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added.map((d) => d.key), diff.brief_edited, diff.dismissed], [[KEYS[2], KEYS[3]], [], false],
+    'the drinks moved, so the dismissed drink returns; the reviewed notes do not');
+});
+
+test('review state: Dismiss covers the notes lines its banner lists, so they stay reviewed when the drinks move again', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(3, { menuDesignNotes: 'Now with fireworks', _logoFilename: `drink-plan-logos/${planId}-new-${NONCE}.png` }));
+  let diff = await diffNow(id);
+  assert.deepEqual([diff.added.length, diff.brief_edited, diff.image_changed], [1, ['notes'], true]);
+  assert.equal((await dismissAt(id, 1)).status, 200);
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added, diff.brief_edited, diff.image_changed, diff.dismissed], [[], [], false, true]);
+  await setPlan(planId, selections(4, { menuDesignNotes: 'Now with fireworks', _logoFilename: `drink-plan-logos/${planId}-new-${NONCE}.png` }));
+  diff = await diffNow(id);
+  assert.deepEqual([diff.added.map((d) => d.key), diff.brief_edited, diff.image_changed, diff.dismissed],
+    [[KEYS[2], KEYS[3]], [], false, false]);
+});
+
+// The notes banner names the edited fields and never the image when both
+// changed (menuCardState.js bannerList), so Mark reviewed must not record an
+// image change it did not show.
+test('review state: Mark reviewed records what its banner names: the notes first, the client image only once the banner names it', async () => {
+  const { id, planId } = await ready();
+  const image = `drink-plan-logos/${planId}-new-${NONCE}.png`;
+  const generatedImage = (await draftOf(id)).plan_fingerprint.planner_image_key || null;
+  await setPlan(planId, selections(2, { menuDesignNotes: 'Now with fireworks', _logoFilename: image }));
+  let diff = await diffNow(id);
+  assert.deepEqual([diff.brief_edited, diff.image_changed], [['notes'], true]);
+  // The banner reads "Client edited their menu notes.": the press covers the notes alone.
+  assert.equal((await dismissAt(id, 1, { covers: 'notes' })).status, 200);
+  diff = await diffNow(id);
+  assert.deepEqual([diff.brief_edited, diff.image_changed, diff.dismissed], [[], true, false], 'the image change still shows');
+  assert.equal((await draftOf(id)).plan_fingerprint.planner_image_key || null, generatedImage, 'the image part is not folded yet');
+  // The banner now reads "The client image changed since this draft.": the next press covers it.
+  assert.equal((await dismissAt(id, 1, { covers: 'notes' })).status, 200);
+  diff = await diffNow(id);
+  assert.deepEqual([diff.brief_edited, diff.image_changed], [[], false]);
+  assert.equal((await draftOf(id)).plan_fingerprint.planner_image_key, image);
+  // A later notes edit is recorded without touching the reviewed image; an image change alone is recorded at once.
+  const next = `drink-plan-logos/${planId}-next-${NONCE}.png`;
+  await setPlan(planId, selections(2, { menuDesignNotes: 'Now with sparklers', _logoFilename: next }));
+  assert.equal((await dismissAt(id, 1, { covers: 'notes' })).status, 200);
+  assert.equal((await draftOf(id)).plan_fingerprint.planner_image_key, image, 'the notes press leaves the image part as reviewed');
+  diff = await diffNow(id);
+  assert.deepEqual([diff.brief_edited, diff.image_changed], [[], true]);
+  assert.equal((await dismissAt(id, 1, { covers: 'notes' })).status, 200);
+  diff = await diffNow(id);
+  assert.deepEqual([diff.brief_edited, diff.image_changed], [[], false]);
+  assert.equal((await draftOf(id)).version, 1, 'no press bumps the version');
+});
+
+test('dismiss and Mark reviewed with a stale plan_hash answer 409 MENU_PLAN_MOVED and write nothing; with the current hash they succeed', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(3, { menuDesignNotes: 'Now with fireworks' }));
+  const seen = (await diffNow(id)).plan_hash;
+  // The plan moves while the page sits open.
+  await setPlan(planId, selections(4, { menuDesignNotes: 'Now with fireworks' }));
+  const before = await draftOf(id);
+  for (const extra of [{}, { covers: 'notes' }]) {
+    // The read model's cached catalog is dropped by the refusal, so the refetch reads what the route read.
+    const cached = menuDraftRead.cachedCatalogMaps();
+    const res = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: seen, ...extra } });
+    assert.deepEqual([res.status, res.body.code, res.body.error],
+      [409, 'MENU_PLAN_MOVED', 'The drink plan changed while this page was open. Check the change, then try again.'], JSON.stringify(extra));
+    assert.notEqual(menuDraftRead.cachedCatalogMaps(), cached, 'the catalog cache was dropped');
+    await cached;
+    const after = await draftOf(id);
+    for (const col of ['version', 'plan_fingerprint', 'dismissed_plan_hash']) assert.deepEqual(after[col], before[col], `${col} unchanged`);
+    assert.equal(after.updated_at.toISOString(), before.updated_at.toISOString());
+  }
+  const diff = await diffNow(id);
+  assert.notEqual(diff.plan_hash, seen);
+  assert.deepEqual([diff.added.length, diff.brief_edited, diff.dismissed], [2, ['notes'], false], 'the refetch shows the change');
+  const reviewed = await request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: diff.plan_hash, covers: 'notes' } });
+  assert.deepEqual([reviewed.status, reviewed.body.version], [200, 1], JSON.stringify(reviewed.body));
+  const dismissed = await dismissAt(id, 1);
+  assert.deepEqual([dismissed.status, dismissed.body.version], [200, 1], JSON.stringify(dismissed.body));
+  assert.equal((await diffNow(id)).dismissed, true);
+  assert.equal(calls.words.length + imageCalls(), 0);
+});
+
+test('dismiss: a missing or malformed plan_hash and an unknown covers are 400, before anything is written', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(3));
+  const hash = (await diffNow(id)).plan_hash;
+  const before = await draftOf(id);
+  const send = (body) => request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1, ...body } });
+  for (const planHash of [undefined, null, '', 'abc', hash.toUpperCase(), `${hash} `, `${hash}0`, hash.slice(1), 'g'.repeat(64), 42, [hash], { hash }]) {
+    const res = await send({ plan_hash: planHash });
+    // The sentence is the error's own message too: the editor's toast prints only that (a page still on an older bundle sends no hash).
+    assert.deepEqual([res.status, res.body.error, res.body.fieldErrors && res.body.fieldErrors.plan_hash],
+      [400, 'Reload the page, then try again.', 'Reload the page, then try again.'], JSON.stringify(planHash));
+  }
+  for (const covers of ['all', 'NOTES', '', null, 1, ['notes'], { notes: true }]) {
+    const res = await send({ plan_hash: hash, covers });
+    assert.deepEqual([res.status, Object.keys((res.body && res.body.fieldErrors) || {})], [400, ['covers']], JSON.stringify(covers));
+  }
+  const after = await draftOf(id);
+  for (const col of ['version', 'plan_fingerprint', 'dismissed_plan_hash']) assert.deepEqual(after[col], before[col], col);
+});
+
+test('dismiss: every query runs on one held client, under the draft row lock', async () => {
+  const { id, planId } = await ready();
+  await setPlan(planId, selections(3));
+  const hash = (await diffNow(id)).plan_hash;
+  const { out, seen } = await watchedPool(() => request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: hash } }));
+  assert.deepEqual([out.status, out.body.version], [200, 1], JSON.stringify(out.body));
+  // The auth middleware's own users read is the request's, not the route's.
+  assert.deepEqual(seen.filter((q) => q === 'pool.connect' || /menu_drafts|drink_plans|proposals|menu_art_calls|cocktails|mocktails/.test(q)),
+    ['pool.connect'], 'one pooled connection, no bare pool.query');
+  assert.equal((await diffNow(id)).dismissed, true);
 });
 
 // ── The legal-hold proposal (money law 15; lane menu-legal-hold-guards) ─────
@@ -1229,10 +1406,12 @@ async function watchedPool(send) {
   }
 }
 
-test('legal hold: Generate, the draft PATCH, re-roll and Dismiss answer 409 LEGAL_HOLD before any read, upload, call, reservation or write; an unheld twin still works', async () => {
+test('legal hold: Generate, the draft PATCH, re-roll, Dismiss and Mark reviewed answer 409 LEGAL_HOLD before any read, upload, call, reservation or write; an unheld twin still works', async () => {
   const held = await ready();
   const twin = await ready();
   for (const ev of [held, twin]) await setPlan(ev.planId, selections(2, { menuDesignNotes: `Changed ${NONCE}` }));
+  // The hash each page holds, read before the watch.
+  const hashes = { [held.id]: await planHashOf(held.id), [twin.id]: await planHashOf(twin.id) };
   const before = await draftOf(held.id);
   const piecesBefore = await piecesOf(held.id);
   const ledgerBefore = (await ledgerOf(held.id)).map((r) => [r.id, r.status]);
@@ -1240,7 +1419,8 @@ test('legal hold: Generate, the draft PATCH, re-roll and Dismiss answer 409 LEGA
     generate: () => generate(id, { reference_source: 'upload' }, { name: 'ref.png', bytes: img.reference }),
     patch: () => request('PATCH', base(id), { json: { version: 1, content: { title: `Held ${NONCE}` } } }),
     reroll: () => request('POST', pieceUrl(id, 'background', 'reroll'), { json: { image_model: 'openai' } }),
-    dismiss: () => request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1 } }),
+    dismiss: () => request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: hashes[id] } }),
+    markReviewed: () => request('POST', `${base(id)}/dismiss-plan-change`, { json: { version: 1, plan_hash: hashes[id], covers: 'notes' } }),
   });
   __setLegalHoldIdsForTest([held.id]);
   try {
@@ -1266,7 +1446,7 @@ test('legal hold: Generate, the draft PATCH, re-roll and Dismiss answer 409 LEGA
   const twinSends = sends(twin.id);
   const patch = await twinSends.patch();
   assert.deepEqual([patch.status, patch.body.version], [200, 2], JSON.stringify(patch.body));
-  const dismiss = await request('POST', `${base(twin.id)}/dismiss-plan-change`, { json: { version: 2 } });
+  const dismiss = await request('POST', `${base(twin.id)}/dismiss-plan-change`, { json: { version: 2, plan_hash: hashes[twin.id] } });
   assert.deepEqual([dismiss.status, dismiss.body.version], [200, 2], JSON.stringify(dismiss.body));
   const reroll = await twinSends.reroll();
   assert.equal(reroll.status, 202, JSON.stringify(reroll.body));

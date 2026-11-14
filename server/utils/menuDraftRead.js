@@ -10,7 +10,7 @@
 //   brief: null | { theme, naming, notes, has_planner_image, planner_image_rev },
 //   diff: null | { added: [{ key, name }], dropped: [{ key, name }],
 //     brief_edited: ['theme' | 'naming' | 'notes'], image_changed, bar_changed,
-//     bar_changed_labels: [label], bar_unchecked, dismissed },
+//     bar_changed_labels: [label], bar_unchecked, dismissed, plan_hash },
 //   print: { state, not_required_by, approved_at, approved_by_name, print_key,
 //     approved_file_in_use },
 //   cap: { used, limit, remaining, resets_at },
@@ -38,7 +38,18 @@
 //   clock, the one that wrote the heartbeats.
 // - diff is null without a draft or without a plan (a draft with no plan is
 //   read_only). dropped names come from the draft's own display names.
-//   dismissed is true when the current plan hash equals dismissed_plan_hash.
+//   It is shownDiff: what is left after the recorded review (spec 2026-10-19
+//   section 17, lane menu-plan-review-state). Dismiss and Mark reviewed fold
+//   the plan's brief and image parts into plan_fingerprint, so brief_edited
+//   and image_changed read against the last reviewed ones; Dismiss also stores
+//   the review hash (dismissalHash), and while it holds, added, dropped and
+//   bar_changed read empty and dismissed is true unless a notes or image flag
+//   is left to show. A dismissal stored before the lane (the old whole-plan
+//   hash) still reads as covering everything while the plan has not moved.
+//   The routes read the plan itself (computeDiff, the raw lists), never this.
+//   plan_hash is planHash of the plan read here, which Dismiss, Mark reviewed
+//   and Update draft send back; the catalog maps behind it may be up to a
+//   minute old (Polling cost below), so a refusal drops them (dropCatalogCache).
 //   bar_changed is true when an "Also at the bar" line the plan would print
 //   differs from its baseline (bar_lines), or a line appears or goes (spec
 //   2026-10-19 section 17); bar_changed_labels names those lines by builder
@@ -83,14 +94,17 @@
 // seconds, so a 2-second poll does not reload them. A catalog drink created
 // in the last minute can read as client-typed here until the cache turns over.
 // Writers (Generate, sync, dismiss) never use this cache: they load fresh maps
-// through their own client. computeDiff, barBaseline and dismissalHash (the
-// hash a dismissal of the draft as it stands stores) are exported for them.
+// through their own client, and a MENU_PLAN_MOVED refusal drops it
+// (dropCatalogCache) so the page's refetch reads what the route read.
+// computeDiff, reviewOf, barBaseline and dismissalHash (the review hash a
+// Dismiss of the draft as it stands stores) are exported for them.
 
 const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
 const { readEnvInt } = require('./envInt');
 const {
-  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, plannerImageRev, legacyBarBaseline,
+  loadEventPlan, loadCatalogMaps, normalizePlan, buildFingerprint, fingerprintHash, reviewHash, planHash, plannerImageRev,
+  legacyBarBaseline,
 } = require('./menuDrinkSource');
 const { keyBarLines, buildAlsoAtBar } = require('./menuAlsoAtBar');
 const { capUsage } = require('./menuArtCap');
@@ -114,6 +128,12 @@ const UNKEYED = 'unkeyed:';
 // The draft columns computeDiff and derivePrintState read (internal only).
 const DRAFT_STATE = ['version', 'art_version', 'approved_version', 'approved_art_version', 'approved_print_key',
   'approved_planner_image_key', 'inputs', 'content', 'plan_fingerprint', 'dismissed_plan_hash'];
+// The form of a dismissed_plan_hash that holds (reviewOf): the review hash a
+// Dismiss stores since lane menu-plan-review-state, or the old whole-plan hash.
+// Exported as DISMISSAL, so the bar-only rebuild compares the one constant.
+const REVIEWED = 'review';
+const WHOLE = 'whole';
+const DISMISSAL = Object.freeze({ REVIEWED, WHOLE });
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -145,7 +165,9 @@ function cachedCatalogMaps(now = Date.now()) {
   entry.promise.catch(() => { if (catalogCache === entry) catalogCache = null; });
   return entry.promise;
 }
-function _resetCatalogCacheForTest() {
+// A MENU_PLAN_MOVED refusal drops the cache (menuDraftShared.requireSamePlan),
+// so the page's refetch reads the catalog the refusing route read.
+function dropCatalogCache() {
   catalogCache = null;
 }
 
@@ -167,11 +189,15 @@ function _resetCatalogCacheForTest() {
 // label is not; an unkeyed:<place> baseline entry is never a change.
 // bar_changed and its labels name builder labels only. The GET itself writes
 // nothing.
-// Dismissed: the hash matches the dismissal hash of the draft as it stands
-// (dismissalHash: the current fingerprint and the bar drift), or the current
-// fingerprint with no bar (a dismissal stored before the deploy hashed none,
-// and fingerprintHash keeps that hash), but that one only while the bar has
-// not changed: a bar-less dismissal cannot have covered a bar change, while an
+// Dismissed: a dismissal holds over the drinks and the bar. Since lane
+// menu-plan-review-state a Dismiss stores the review form (dismissalHash:
+// reviewHash over the current drink keys, bar hash and bar drift), which a
+// notes edit or a new client image never undoes. A dismissal stored before it
+// is the old whole-plan form, which still holds exactly as it always did: the
+// current fingerprint and the bar drift, or the current fingerprint with no
+// bar (a dismissal stored before the bar deploy hashed none, and
+// fingerprintHash keeps that hash), but that one only while the bar has not
+// changed: a bar-less dismissal cannot have covered a bar change, while an
 // unchecked line is no change, so it never undoes one. The drift is the keys
 // where the stored lines and the baseline disagree, which no bar_hash shows: a
 // stored keyed line the picks no longer build that the baseline does not name
@@ -217,13 +243,27 @@ function barState(stored, content, normalized, current) {
   return { changed, drift, unchecked: lines.unkeyed };
 }
 
-function computeDiff(draft, normalized) {
+// The form of the stored dismissal that holds over the drinks and the bar
+// (header): REVIEWED, WHOLE (the old form) or null.
+function dismissalForm(dismissedHash, current, bar) {
+  if (dismissedHash === null) return null;
+  if (dismissedHash === reviewHash({ ...current, bar_drift: bar.drift })) return REVIEWED;
+  if (dismissedHash === fingerprintHash({ ...current, bar_drift: bar.drift })) return WHOLE;
+  if (bar.changed.length === 0 && dismissedHash === fingerprintHash({ ...current, bar_hash: null })) return WHOLE;
+  return null;
+}
+
+// The review state of a stored draft against a normalized plan. Pure. -> null
+// without a draft or a plan, else { diff, dismissal }: diff is computeDiff's,
+// dismissal the form of the stored dismissal that holds ('review', 'whole' for
+// the old form, or null). The bar-only rebuild reads the form; the GET's
+// shownDiff presents the diff after it.
+function reviewOf(draft, normalized) {
   if (!isObject(draft) || !normalized) return null;
   const stored = isObject(draft.plan_fingerprint) ? draft.plan_fingerprint : {};
   const current = buildFingerprint(normalized);
   const content = isObject(draft.content) ? draft.content : {};
   const bar = barState(stored, content, normalized, current);
-  const barChanged = bar.changed.length > 0;
   const dismissedHash = typeof draft.dismissed_plan_hash === 'string' ? draft.dismissed_plan_hash : null;
   const storedKeys = asArray(stored.drink_keys).map(String);
   const storedSet = new Set(storedKeys);
@@ -235,28 +275,56 @@ function computeDiff(draft, normalized) {
     }
   }
   const storedFields = isObject(stored.brief_fields) ? stored.brief_fields : {};
+  const dismissal = dismissalForm(dismissedHash, current, bar);
   return {
-    added: normalized.drinks.filter((d) => !storedSet.has(d.key)).map((d) => ({ key: d.key, name: d.name })),
-    dropped: storedKeys.filter((k) => !currentSet.has(k)).map((key) => ({ key, name: names.get(key) || key })),
-    brief_edited: BRIEF_FIELDS.filter((f) => storedFields[f] !== current.brief_fields[f]),
-    image_changed: (stored.planner_image_key || null) !== (current.planner_image_key || null),
-    bar_changed: barChanged,
-    bar_changed_labels: bar.changed,
-    bar_unchecked: bar.unchecked,
-    dismissed: dismissedHash !== null && (dismissedHash === fingerprintHash({ ...current, bar_drift: bar.drift })
-      || (!barChanged && dismissedHash === fingerprintHash({ ...current, bar_hash: null }))),
+    diff: {
+      added: normalized.drinks.filter((d) => !storedSet.has(d.key)).map((d) => ({ key: d.key, name: d.name })),
+      dropped: storedKeys.filter((k) => !currentSet.has(k)).map((key) => ({ key, name: names.get(key) || key })),
+      brief_edited: BRIEF_FIELDS.filter((f) => storedFields[f] !== current.brief_fields[f]),
+      image_changed: (stored.planner_image_key || null) !== (current.planner_image_key || null),
+      bar_changed: bar.changed.length > 0,
+      bar_changed_labels: bar.changed,
+      bar_unchecked: bar.unchecked,
+      dismissed: dismissal !== null,
+    },
+    dismissal,
   };
 }
 
-// The hash a Dismiss or Mark reviewed of the stored draft ({ plan_fingerprint,
-// content }) stores against a normalized plan: the current fingerprint and the
-// bar drift, the one computeDiff's dismissed matches. Pure.
+// The raw diff (header): every drink and bar change since the stored
+// fingerprint, and dismissed when a dismissal (either form) holds over them.
+// Update draft and the boot stamp read it; the GET shows shownDiff.
+function computeDiff(draft, normalized) {
+  const review = reviewOf(draft, normalized);
+  return review ? review.diff : null;
+}
+
+// The GET's diff: what is left after the recorded review (spec 2026-10-19
+// section 17), plus plan_hash (planHash, the plan-hash echo). A review-form
+// dismissal hides the drink and bar changes it covers; the notes and the image
+// read against the stored parts, and dismissed is true only when neither is
+// left to show, so the notes banner shows alone. An old-form dismissal reads,
+// as it always did, as covering everything, the notes included. bar_unchecked
+// passes through: no review covers it. Pure; null without a draft or a plan.
+function shownDiff(draft, normalized) {
+  const review = reviewOf(draft, normalized);
+  if (!review) return null;
+  const shown = { ...review.diff, plan_hash: planHash(normalized) };
+  if (review.dismissal !== REVIEWED) return shown;
+  const left = shown.brief_edited.length > 0 || shown.image_changed;
+  return { ...shown, added: [], dropped: [], bar_changed: false, bar_changed_labels: [], dismissed: !left };
+}
+
+// The hash a Dismiss of the stored draft ({ plan_fingerprint, content })
+// stores against a normalized plan: the review form, reviewHash over the
+// current drink keys, the bar hash and the bar drift, the one reviewOf reads
+// as 'review'. Pure.
 function dismissalHash(draft, normalized) {
   const d = isObject(draft) ? draft : {};
   const stored = isObject(d.plan_fingerprint) ? d.plan_fingerprint : {};
   const content = isObject(d.content) ? d.content : {};
   const current = buildFingerprint(normalized);
-  return fingerprintHash({ ...current, bar_drift: barState(stored, content, normalized, current).drift });
+  return reviewHash({ ...current, bar_drift: barState(stored, content, normalized, current).drift });
 }
 
 function barSummary(bar) {
@@ -413,7 +481,7 @@ async function readDraftPayload(proposalId) {
       has_planner_image: Boolean(normalized.plannerImageKey),
       planner_image_rev: plannerImageRev(normalized.plannerImageKey),
     } : null,
-    diff: computeDiff(draftRow, normalized),
+    diff: shownDiff(draftRow, normalized),
     print: {
       state: derivePrintState({
         menuPrintKey: printKey,
@@ -457,12 +525,16 @@ module.exports = {
   stuck,
   readStaleMs,
   computeDiff,
+  reviewOf,
+  shownDiff,
   barBaseline,
   dismissalHash,
   derivePrintState,
   cachedCatalogMaps,
+  dropCatalogCache,
+  DISMISSAL,
   PRINT_STATES,
   INTERRUPTED,
   STALE_MS_DEFAULT,
-  _resetCatalogCacheForTest,
+  _resetCatalogCacheForTest: dropCatalogCache,
 };

@@ -13,10 +13,15 @@ import api from '../../../utils/api';
 const piece = (key, status = 'done', rev = `rev-${key}`) => ({
   piece_key: key, status, has_image: status === 'done', image_rev: status === 'done' ? rev : null,
 });
-const payload = ({ pieces = [piece('background'), piece('cocktail:1')], words = 'done', version = 3, plannerImage = false } = {}) => ({
+// The GET's diff.plan_hash: the plan the page shows (spec 2026-10-19 section 17).
+const HASH_A = 'a'.repeat(64);
+const HASH_B = 'b'.repeat(64);
+const NO_CHANGE = { added: [], dropped: [], brief_edited: [], image_changed: false, bar_changed: false, bar_changed_labels: [], bar_unchecked: 0, dismissed: false };
+const payload = ({ pieces = [piece('background'), piece('cocktail:1')], words = 'done', version = 3, plannerImage = false, planHash = HASH_A } = {}) => ({
   draft: { id: 1, version, art_version: 2, read_only: false, inputs: { planner_image_role: 'logo', reference_source: 'none' },
     content: { words_status: words, title: 'Bar Menu', drinks: [] } },
-  pieces, brief: { theme: '', naming: '', notes: '', has_planner_image: plannerImage }, diff: null,
+  pieces, brief: { theme: '', naming: '', notes: '', has_planner_image: plannerImage },
+  diff: planHash === null ? null : { ...NO_CHANGE, plan_hash: planHash },
   print: { state: 'none' }, cap: { used: 0, limit: 60, remaining: 60, resets_at: null }, configured: { openai: true, gemini: true },
   plan: { id: 7, menu_style: 'custom', drink_count: 1 },
 });
@@ -375,11 +380,11 @@ describe('the image model (decision 11)', () => {
     form = api.post.mock.calls[1][1];
     expect(form.get('image_model')).toBe('openai');
     await act(async () => { await result.current.sync(); });
-    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/sync', { version: 3, image_model: 'gemini' });
+    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/sync', { version: 3, image_model: 'gemini', plan_hash: HASH_A });
     await act(async () => { await result.current.reroll('cocktail:1', { note: ' add a salt rim ' }); });
     expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/pieces/cocktail%3A1/reroll', { image_model: 'gemini', note: 'add a salt rim' });
     await act(async () => { await result.current.dismissPlanChange(); });
-    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/dismiss-plan-change', { version: 3 });
+    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/dismiss-plan-change', { version: 3, plan_hash: HASH_A });
     unmount();
     const again = await mount();
     expect(again.result.current.imageModel).toBe('openai');
@@ -399,7 +404,7 @@ describe('the image model (decision 11)', () => {
     act(() => { result.current.setImageModel('openai'); });
     expect(result.current.imageModel).toBe('openai');
     await act(async () => { await result.current.sync(); });
-    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/sync', { version: 3, image_model: 'openai' });
+    expect(api.post).toHaveBeenLastCalledWith('/proposals/42/menu-draft/sync', { version: 3, image_model: 'openai', plan_hash: HASH_A });
     // Another event opens at its own default again.
     draftAnswers = [withDefault('openai')];
     rerender({ pid: 43 });
@@ -558,3 +563,66 @@ describe('the review fixes', () => {
   });
 });
 
+// Spec 2026-10-19 section 17 (lane menu-plan-review-state): Dismiss, Mark
+// reviewed and Update draft send back the plan hash the page held when the
+// button was pressed, so a plan that moved since is refused, never applied unseen.
+describe('the plan-hash echo and Mark reviewed', () => {
+  const DISMISS = '/proposals/42/menu-draft/dismiss-plan-change';
+  const SYNC = '/proposals/42/menu-draft/sync';
+
+  test.each([
+    ['Dismiss', (m) => m.dismissPlanChange(), DISMISS, { version: 4, plan_hash: HASH_A }],
+    ['Mark reviewed', (m) => m.dismissPlanChange({ covers: 'notes' }), DISMISS, { version: 4, plan_hash: HASH_A, covers: 'notes' }],
+    ['Update draft', (m) => m.sync({ imageModel: 'openai' }), SYNC, { version: 4, image_model: 'openai', plan_hash: HASH_A }],
+    ['the bar-only Update draft', (m) => m.sync({ scope: 'bar' }), SYNC, { version: 4, scope: 'bar', plan_hash: HASH_A }],
+  ])('%s sends the hash held when it was called, never one a GET brought during the save flush', async (name, press, url, body) => {
+    const { result } = await mount();
+    let land;
+    api.patch.mockImplementation(() => new Promise((resolve) => { land = resolve; }));
+    act(() => { result.current.edit({ content: { title: 'Mine' } }); });
+    let done;
+    act(() => { done = press(result.current); });
+    await settle();
+    expect(api.patch).toHaveBeenCalledTimes(1);
+    expect(api.post).not.toHaveBeenCalled();
+    // The plan moves and a GET lands while the save is still in flight.
+    draftAnswers = [payload({ planHash: HASH_B }), payload({ planHash: HASH_B, version: 4 })];
+    await act(async () => { await result.current.refetch(); });
+    expect(result.current.payload.diff.plan_hash).toBe(HASH_B);
+    await act(async () => { land({ data: { version: 4 } }); await done; });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.post).toHaveBeenCalledWith(url, body);
+  });
+
+  test('Mark reviewed posts covers notes; Dismiss posts no covers', async () => {
+    const { result } = await mount();
+    await act(async () => { await result.current.dismissPlanChange({ covers: 'notes' }); });
+    expect(api.post).toHaveBeenLastCalledWith(DISMISS, { version: 3, plan_hash: HASH_A, covers: 'notes' });
+    await act(async () => { await result.current.dismissPlanChange(); });
+    expect(api.post).toHaveBeenLastCalledWith(DISMISS, { version: 3, plan_hash: HASH_A });
+    expect(api.post.mock.calls[1][1]).not.toHaveProperty('covers');
+  });
+
+  test('both Update draft scopes send plan_hash', async () => {
+    const { result } = await mount();
+    await act(async () => { await result.current.sync({ scope: 'bar' }); });
+    expect(api.post).toHaveBeenLastCalledWith(SYNC, { version: 3, scope: 'bar', plan_hash: HASH_A });
+    await act(async () => { await result.current.sync(); });
+    expect(api.post).toHaveBeenLastCalledWith(SYNC, { version: 3, image_model: 'openai', plan_hash: HASH_A });
+  });
+
+  test('a 409 MENU_PLAN_MOVED reaches the caller and the page refetches, so the next press sends the new hash', async () => {
+    const { result } = await mount();
+    const moved = { status: 409, code: 'MENU_PLAN_MOVED', message: 'The drink plan changed while this page was open. Check the change, then try again.' };
+    api.post.mockRejectedValueOnce(moved);
+    draftAnswers = [payload({ planHash: HASH_B })];
+    const gets = draftGets().length;
+    let caught = null;
+    await act(async () => { await result.current.dismissPlanChange().catch((e) => { caught = e; }); });
+    expect(caught).toBe(moved);
+    expect(draftGets()).toHaveLength(gets + 1);
+    expect(result.current.payload.diff.plan_hash).toBe(HASH_B);
+    await act(async () => { await result.current.dismissPlanChange(); });
+    expect(api.post).toHaveBeenLastCalledWith(DISMISS, { version: 3, plan_hash: HASH_B });
+  });
+});
